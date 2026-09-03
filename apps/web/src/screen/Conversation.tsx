@@ -1,6 +1,8 @@
 import { ChevronDown, ChevronRight, Mic, Paperclip, ArrowUp, Square, UserPlus, PanelRight, ScrollText, Repeat2, Check, Mail, CalendarDays, HardDrive, Globe } from "lucide-react";
-import { useState } from "react";
-import { activeConversation, queuedFor, threadsByConversation, type Msg } from "../data/fixtures";
+import { useFlueAgent, type FlueConversationMessage } from "@flue/react";
+import { createFlueClient } from "@flue/sdk";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { conversations, threadsByConversation, type Msg } from "../data/fixtures";
 import { Button, IconButton } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { cn } from "../ui/cn";
@@ -9,19 +11,32 @@ import { Face } from "../ui/Face";
 export function Conversation({
   onOpenPanel,
   panelOpen,
-  working,
   conversationId = "t1",
+  title,
+  onMessageSent,
 }: {
   onOpenPanel: (kind: "screen" | "log") => void;
   panelOpen: boolean;
-  working: boolean;
   conversationId?: string;
+  title: string;
+  onMessageSent: (message: string) => void;
 }) {
-  const messages: Msg[] = threadsByConversation[conversationId] ?? threadsByConversation.t1 ?? [];
+  const client = useMemo(
+    () => createFlueClient({ url: `/api/konan/${encodeURIComponent(conversationId)}` }),
+    [conversationId],
+  );
+  const agent = useFlueAgent({ client });
+  const endRef = useRef<HTMLLIElement>(null);
+  const working = agent.status === "submitted" || agent.status === "streaming";
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: working ? "smooth" : "auto" });
+  }, [agent.messages, working]);
+
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0" style={{ boxShadow: "var(--content-edge-shadow, none)" }}>
       <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
-        <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">{activeConversation.title}</h1>
+        <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">{title}</h1>
         <Button className="hidden sm:inline-flex" variant="ghost" size="sm" icon={<UserPlus className="size-3.5" />}>Add someone</Button>
         <IconButton label="What Konan did" onClick={() => onOpenPanel("log")}>
           <ScrollText className="size-4" />
@@ -38,20 +53,120 @@ export function Conversation({
             <span className="text-meta font-meta text-ink-4">Today</span>
             <span className="h-px flex-1 bg-line-1" />
           </li>
-          {messages.map((m) => (
-            <li key={m.id} className="animate-rise-in">
-              <Message msg={m} />
+          {!agent.historyReady && agent.messages.length === 0 && (
+            <li className="py-12 text-center text-label text-ink-4">Loading conversation…</li>
+          )}
+          {agent.historyReady && agent.messages.length === 0 && (
+            <li className="py-12 text-center">
+              <Face size={36} mood="happy" className="mx-auto" />
+              <p className="mt-3 text-title font-title text-ink">Konan is ready</p>
+              <p className="mt-1 text-label text-ink-3">What should I take off your plate?</p>
+            </li>
+          )}
+          {agent.messages.filter((message) => message.display !== "hidden").map((message) => (
+            <li key={message.id} className="animate-rise-in">
+              <LiveMessage message={message} />
             </li>
           ))}
+          {agent.error && (
+            <li className="rounded-panel bg-danger-soft px-4 py-3 text-label text-danger ring-line">
+              <div className="flex items-center gap-3">
+                <span className="min-w-0 flex-1">{agent.error.message}</span>
+                <button className="font-title underline" onClick={agent.refresh}>Retry connection</button>
+              </div>
+            </li>
+          )}
+          <li ref={endRef} aria-hidden />
         </ol>
       </div>
 
-      <Composer working={working} queued={queuedFor(conversationId)} />
+      <Composer
+        working={working}
+        status={agent.status}
+        onSend={async (message) => {
+          await agent.sendMessage(message);
+          onMessageSent(message);
+        }}
+        onStop={() => client.abort().then(() => undefined)}
+      />
     </section>
   );
 }
 
-function Message({ msg }: { msg: Msg }) {
+export function DemoConversation({ conversationId }: { conversationId: string }) {
+  const conversation = conversations.find((item) => item.id === conversationId);
+  const messages = threadsByConversation[conversationId] ?? [];
+
+  return (
+    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0">
+      <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
+        <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">{conversation?.title ?? "Demo conversation"}</h1>
+        <span className="rounded-full bg-surface-2 px-2.5 py-1 text-meta font-title text-ink-3 ring-line">Read-only demo</span>
+      </header>
+      <div className="flex-1 overflow-y-auto">
+        <ol className="mx-auto flex w-full max-w-(--thread-max-w) flex-col gap-5 px-4 py-6 sm:px-6">
+          {messages.map((message) => (
+            <li key={message.id}><FixtureMessage msg={message} /></li>
+          ))}
+        </ol>
+      </div>
+    </section>
+  );
+}
+
+function LiveMessage({ message }: { message: FlueConversationMessage }) {
+  const text = message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n\n");
+  const tools = message.parts.filter((part) => part.type === "dynamic-tool");
+  const timestamp = typeof message.metadata?.finishedAt === "number"
+    ? message.metadata.finishedAt
+    : typeof message.metadata?.startedAt === "number"
+      ? message.metadata.startedAt
+      : undefined;
+  const time = timestamp
+    ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(timestamp)
+    : "";
+
+  if (message.role === "user") {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[78%] rounded-panel rounded-br-sm bg-surface-2 px-4 py-3 text-body text-ink">
+          <p className="whitespace-pre-wrap">{text}</p>
+          {time && <span className="mt-1 block text-right text-meta text-ink-4">{time}</span>}
+        </div>
+      </div>
+    );
+  }
+
+  if (message.role === "system") {
+    return (
+      <div className="rounded-panel bg-surface-2 px-4 py-3 text-label text-ink-3 ring-line">
+        {message.settlement?.outcome === "failed" ? "Konan could not complete that response. " : ""}
+        {text}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex gap-3">
+      <Face size={24} className="mt-1" />
+      <div className="min-w-0 flex-1 text-body text-ink">
+        {text ? <p className="whitespace-pre-wrap">{text}</p> : <p className="text-ink-4">Thinking…</p>}
+        {tools.map((tool) => (
+          <div key={tool.toolCallId} className="mt-2 rounded-control bg-surface-2 px-3 py-2 text-label text-ink-3 ring-line">
+            <span className="font-title text-ink-2">{tool.toolName}</span>
+            <span className="ml-2">{tool.state === "input-available" ? "Running" : tool.state === "output-error" ? "Failed" : "Complete"}</span>
+          </div>
+        ))}
+        {time && <span className="mt-1 block text-meta text-ink-4">{time}</span>}
+      </div>
+    </div>
+  );
+}
+
+export function FixtureMessage({ msg }: { msg: Msg }) {
   switch (msg.kind) {
     case "user":
       return (
@@ -230,20 +345,52 @@ function InputCard({ title, question, options }: { title: string; question: stri
   );
 }
 
-function Composer({ working, queued }: { working: boolean; queued: string }) {
+function Composer({
+  working,
+  status,
+  onSend,
+  onStop,
+}: {
+  working: boolean;
+  status: "idle" | "connecting" | "submitted" | "streaming" | "error";
+  onSend: (message: string) => Promise<void>;
+  onStop: () => Promise<void>;
+}) {
+  const [message, setMessage] = useState("");
+
+  async function submit() {
+    const body = message.trim();
+    if (!body) return;
+    setMessage("");
+
+    try {
+      await onSend(body);
+    } catch {
+      // The Flue hook retains failed optimistic sends and exposes the error.
+    }
+  }
+
   return (
     <div className="shrink-0 px-3 pb-3 pt-2 sm:px-6 sm:pb-5">
       <div className="mx-auto w-full max-w-(--thread-max-w)">
         {working && (
           <div className="mx-4 flex items-center gap-2 rounded-t-control bg-surface-2 px-3 py-2 text-meta text-ink-3 ring-line">
             <span className="size-1.5 shrink-0 rounded-full bg-working" />
-            <span className="truncate"><span className="font-title text-ink-2">Next:</span> {queued}</span>
+            <span className="truncate"><span className="font-title text-ink-2">Konan:</span> {status === "streaming" ? "responding" : "starting"}</span>
           </div>
         )}
         <div className="relative rounded-composer bg-surface-3 shadow-composer ring-line">
         <textarea
           rows={1}
           placeholder={working ? "Queue for when Konan finishes" : "Message Konan"}
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              void submit();
+            }
+          }}
           className="block w-full resize-none bg-transparent px-5 pt-4 pb-2 text-body text-ink placeholder:text-ink-4 outline-none"
         />
         <div className="flex items-center gap-1 px-3 pb-3">
@@ -252,9 +399,12 @@ function Composer({ working, queued }: { working: boolean; queued: string }) {
           <IconButton label="Talk"><Mic className="size-4" /></IconButton>
           <button
             aria-label={working ? "Stop" : "Send"}
+            disabled={!working && !message.trim()}
+            onClick={() => void (working ? onStop() : submit())}
             className={cn(
               "inline-flex size-8 items-center justify-center rounded-full text-ink-on-accent shadow-control transition-colors duration-(--dur-fast)",
               working ? "bg-danger" : "bg-accent hover:bg-accent-hover",
+              !working && !message.trim() && "cursor-not-allowed opacity-40",
               "transition-[transform,background-color] duration-(--dur-fast) active:scale-[0.96]",
             )}
           >

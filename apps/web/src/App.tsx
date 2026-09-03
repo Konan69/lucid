@@ -7,11 +7,16 @@ import { Projects } from "./screen/Projects";
 import { Panel } from "./screen/Panel";
 import { Sidebar } from "./screen/Sidebar";
 import { Settings, type ThemePreference } from "./screen/Settings";
-import { Conversation } from "./screen/Conversation";
+import { Conversation, DemoConversation } from "./screen/Conversation";
 import { Tokens } from "./screen/Tokens";
 import { IconButton } from "./ui/Button";
+import {
+  initialRuntimeConversations,
+  titleFromMessage,
+  type RuntimeConversation,
+} from "./data/runtimeConversations";
 
-type View = "conversation" | "empty" | "tokens" | "library" | "projects" | "routines";
+type View = "conversation" | "demo" | "empty" | "tokens" | "library" | "projects" | "routines";
 
 function subscribeToSystemTheme(onChange: () => void) {
   const query = window.matchMedia("(prefers-color-scheme: dark)");
@@ -28,9 +33,21 @@ function initialTheme(): ThemePreference {
   return saved === "light" || saved === "dark" || saved === "system" ? saved : "system";
 }
 
+function initialRuntimeThreads(): RuntimeConversation[] {
+  try {
+    const saved = localStorage.getItem("konan-runtime-conversations");
+    if (saved) return JSON.parse(saved) as RuntimeConversation[];
+  } catch {
+    // A corrupt local index should not prevent access to the durable conversations.
+  }
+  return initialRuntimeConversations;
+}
+
 export default function App() {
   const [view, setView] = useState<View>(() => (location.search.includes("tokens") ? "tokens" : location.search.includes("empty") ? "empty" : location.search.includes("library") ? "library" : location.search.includes("projects") ? "projects" : location.search.includes("routines") ? "routines" : "conversation"));
-  const [activeId, setActiveId] = useState<string | null>("t1");
+  const [runtimeThreads, setRuntimeThreads] = useState<RuntimeConversation[]>(initialRuntimeThreads);
+  const [activeId, setActiveId] = useState<string | null>(() => initialRuntimeThreads()[0]?.id ?? null);
+  const [activeDemoId, setActiveDemoId] = useState("t5");
   const [panel, setPanel] = useState<"screen" | "log" | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [theme, setTheme] = useState<ThemePreference>(initialTheme);
@@ -42,16 +59,45 @@ export default function App() {
     localStorage.setItem("konan-theme", theme);
   }, [resolvedTheme, theme]);
 
-  const working = true;
+  useEffect(() => {
+    localStorage.setItem("konan-runtime-conversations", JSON.stringify(runtimeThreads));
+  }, [runtimeThreads]);
+
+  function createConversation() {
+    const thread: RuntimeConversation = {
+      id: crypto.randomUUID(),
+      title: "New conversation",
+      preview: "No messages yet",
+      updatedAt: Date.now(),
+    };
+    setRuntimeThreads((current) => [thread, ...current]);
+    setActiveId(thread.id);
+    setView("conversation");
+    setPanel(null);
+  }
+
+  function recordMessage(id: string, message: string) {
+    setRuntimeThreads((current) => current
+      .map((thread) => thread.id === id ? {
+        ...thread,
+        title: thread.title === "New conversation" ? titleFromMessage(message) : thread.title,
+        preview: message,
+        updatedAt: Date.now(),
+      } : thread)
+      .sort((left, right) => right.updatedAt - left.updatedAt));
+  }
+
+  const activeThread = runtimeThreads.find((thread) => thread.id === activeId);
 
   return (
     <div className="flex h-full w-full">
       {view !== "tokens" && (
         <Sidebar
-          activeId={view === "empty" ? null : activeId}
-          onSelect={(id) => { if (id === "new") setView("empty"); else if (id === "library") setView("library"); else if (id === "projects") setView("projects"); else if (id === "routines") setView("routines"); else { setActiveId(id); setView("conversation"); } }}
+          activeId={view === "demo" ? activeDemoId : view === "empty" ? null : activeId}
+          runtimeConversations={runtimeThreads}
+          onSelect={(id) => { if (id === "new") createConversation(); else if (id === "library") setView("library"); else if (id === "projects") setView("projects"); else if (id === "routines") setView("routines"); else if (id.startsWith("demo:")) { setActiveDemoId(id.slice(5)); setView("demo"); } else { setActiveId(id); setView("conversation"); } }}
           onOpenSettings={() => setSettingsOpen(true)}
-          workingCount={working ? 1 : 0}
+          workingCount={0}
         />
       )}
       <main className="flex min-w-0 flex-1">
@@ -60,10 +106,12 @@ export default function App() {
         {view === "library" && <Library />}
         {view === "projects" && <Projects />}
         {view === "routines" && <Routines />}
+        {view === "demo" && <DemoConversation conversationId={activeDemoId} />}
         {view === "conversation" && (
           <Conversation
-            working={working}
             conversationId={activeId ?? "t1"}
+            title={activeThread?.title ?? "Conversation"}
+            onMessageSent={(message) => recordMessage(activeId ?? "t1", message)}
             panelOpen={panel !== null}
             onOpenPanel={(k) => setPanel((cur) => (cur === k ? null : k))}
           />

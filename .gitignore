@@ -38,10 +38,11 @@ Thumbs.db
 /docs/11-runtime-platform-research.md
 /docs/13-routines-and-templates.md
 
-# Proprietary execution layer
-# Keep the product backend public; keep agent execution and integrations local.
+# Private execution data and unreleased integration internals
+# The agent-runtime source is shareable; its secrets, state, and generated output
+# are covered by the global rules above and the package-specific state rule below.
 /packages/client-runtime/
-/packages/agent-runtime/
+/packages/agent-runtime/.state/
 /packages/connectors/
 /apps/agent-runtime/
 /apps/executor/

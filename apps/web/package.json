@@ -10,6 +10,8 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
+    "@flue/react": "2.0.3",
+    "@flue/sdk": "2.0.3",
     "@konan/contracts": "workspace:*",
     "@konan/design-tokens": "workspace:*",
     "lucide-react": "^0.560.0",

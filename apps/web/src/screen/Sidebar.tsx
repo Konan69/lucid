@@ -2,6 +2,7 @@ import { Archive, Pin, Plus, Search, ChevronDown, ChevronLeft, ChevronRight, Pan
 import { useEffect, useState } from "react";
 import { doneCount, conversations, type Conversation } from "../data/fixtures";
 import { countProjects, projects, type Project } from "../data/projects";
+import type { RuntimeConversation } from "../data/runtimeConversations";
 
 /* T3's sidebar rule: every thread row carries its project. Here, the
    conversation's project name sits beside the title, quiet but present. */
@@ -64,18 +65,20 @@ function laneConversations(list: Conversation[]) {
 
 export function Sidebar({
   activeId,
+  runtimeConversations,
   onSelect,
   onOpenSettings,
   workingCount,
 }: {
   activeId: string | null;
+  runtimeConversations: RuntimeConversation[];
   onSelect: (id: string) => void;
   onOpenSettings: () => void;
   workingCount: number;
 }) {
-  const { lanes, snoozed } = laneConversations(conversations);
+  const demoConversations = conversations.filter((conversation) => ["t2", "t4", "t5"].includes(conversation.id));
+  const { lanes } = laneConversations(demoConversations);
   const [doneOpen, setDoneOpen] = useState(false);
-  const [snoozedOpen, setSnoozedOpen] = useState(true);
   return (
     <aside className="hidden h-full w-(--sidebar-w) shrink-0 flex-col bg-surface-1 hairline-r md:flex">
       {/* Nav strip */}
@@ -118,6 +121,22 @@ export function Sidebar({
       </div>
 
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 scroll-fade-y">
+        <section>
+          <Caption label="Your conversations" count={runtimeConversations.length} />
+          <ul className="flex flex-col gap-px">
+            {runtimeConversations.map((conversation) => (
+              <li key={conversation.id}>
+                <RuntimeRow
+                  conversation={conversation}
+                  active={conversation.id === activeId}
+                  onSelect={() => onSelect(conversation.id)}
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <Caption label="Demo conversations" />
         {lanes.map((lane) => (
           <section key={lane.key}>
             <Caption label={lane.label} count={lane.count ? lane.items.length : undefined} />
@@ -125,31 +144,15 @@ export function Sidebar({
               {lane.items.map((t) => (
                 <li key={t.id} className={lane.variant === "card" ? "py-0.5" : undefined}>
                   {lane.variant === "card" ? (
-                    <CardRow conversation={t} active={t.id === activeId} onSelect={() => onSelect(t.id)} />
+                    <CardRow conversation={t} active={t.id === activeId} onSelect={() => onSelect(`demo:${t.id}`)} />
                   ) : (
-                    <SlimRow conversation={t} active={t.id === activeId} onSelect={() => onSelect(t.id)} />
+                    <SlimRow conversation={t} active={t.id === activeId} onSelect={() => onSelect(`demo:${t.id}`)} />
                   )}
                 </li>
               ))}
             </ul>
           </section>
         ))}
-
-        {snoozed.length > 0 && (
-          <section>
-            <button onClick={() => setSnoozedOpen((v) => !v)} className={cn("mt-2 flex w-full items-center gap-1.5 px-2.5 text-meta font-title text-working hover:underline", CAPTION)}>
-              <AlarmClock className="size-3.5" />
-              Snoozed <span className="font-meta text-ink-4">{snoozed.length}</span>
-            </button>
-            {snoozedOpen && (
-              <ul className="flex flex-col gap-px">
-                {snoozed.map((t) => (
-                  <li key={t.id}><SlimRow conversation={t} active={t.id === activeId} onSelect={() => onSelect(t.id)} snoozed /></li>
-                ))}
-              </ul>
-            )}
-          </section>
-        )}
 
         <section>
           <button onClick={() => setDoneOpen((v) => !v)} className={cn("mt-2 flex w-full items-center gap-1.5 px-2.5 text-meta font-title text-ink-4 hover:text-ink-2", CAPTION)}>
@@ -173,6 +176,24 @@ export function Sidebar({
         <span className="text-meta font-meta text-ink-4">Personal</span>
       </button>
     </aside>
+  );
+}
+
+function RuntimeRow({ conversation, active, onSelect }: { conversation: RuntimeConversation; active: boolean; onSelect: () => void }) {
+  return (
+    <button
+      onClick={onSelect}
+      aria-current={active ? "page" : undefined}
+      className={cn(ROW, "min-h-12 py-1.5", active ? "bg-wash-selected" : HOVER)}
+    >
+      <span className="inline-flex size-[22px] shrink-0 items-center justify-center">
+        <Face size={18} mood="neutral" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-label font-title text-ink">{conversation.title}</span>
+        <span className="block truncate text-meta font-meta text-ink-4">{conversation.preview}</span>
+      </span>
+    </button>
   );
 }
 
