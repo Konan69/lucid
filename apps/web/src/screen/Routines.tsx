@@ -4,10 +4,12 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { templates, type RoutineTemplate } from "../data/routines";
+import type { RuntimeConversation } from "../data/runtimeConversations";
 import { cn } from "../ui/cn";
 
 type RoutineRun = {
   id: string;
+  conversationId: string;
   status: "running" | "succeeded" | "failed";
   startedAt: number;
   finishedAt: number | null;
@@ -57,7 +59,7 @@ function formatTime(value: number | null) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(value);
 }
 
-export function Routines() {
+export function Routines({ onOpenConversation }: { onOpenConversation(conversation: RuntimeConversation): void }) {
   const [routines, setRoutines] = useState<ScheduledRoutine[]>([]);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,7 +107,7 @@ export function Routines() {
         <div className="mx-auto w-full max-w-[920px] px-5 pb-10 pt-1 sm:px-8">
           {error && <div className="mb-3 rounded-control bg-danger-soft px-3 py-2 text-label text-danger" role="alert">{error}</div>}
           {template ? <TemplateDetail template={template} /> : selected || creating ? (
-            <RoutineEditor routine={selected} onCancel={back} onChanged={async (id) => { await load(); setCreating(false); setSelectedId(id); }} onDeleted={async () => { back(); await load(); }} />
+            <RoutineEditor routine={selected} onOpenConversation={onOpenConversation} onCancel={back} onChanged={async (id) => { await load(); setCreating(false); setSelectedId(id); }} onDeleted={async () => { back(); await load(); }} />
           ) : (
             <>
               <p className="px-0.5 text-meta font-meta text-ink-4">What Konan repeats, so you don&apos;t have to.</p>
@@ -140,7 +142,7 @@ export function Routines() {
   );
 }
 
-function RoutineEditor({ routine, onChanged, onDeleted, onCancel }: { routine: ScheduledRoutine | null; onChanged(id: string): Promise<void>; onDeleted(): Promise<void>; onCancel(): void }) {
+function RoutineEditor({ routine, onChanged, onDeleted, onCancel, onOpenConversation }: { routine: ScheduledRoutine | null; onChanged(id: string): Promise<void>; onDeleted(): Promise<void>; onCancel(): void; onOpenConversation(conversation: RuntimeConversation): void }) {
   const [name, setName] = useState(routine?.name ?? "");
   const [prompt, setPrompt] = useState(routine?.prompt ?? "");
   const [cron, setCron] = useState(routine?.cron ?? "0 9 * * 1-5");
@@ -196,7 +198,7 @@ function RoutineEditor({ routine, onChanged, onDeleted, onCancel }: { routine: S
       {error && <p className="text-label text-danger" role="alert">{error}</p>}
       <div className="flex items-center justify-end gap-2 pt-1"><button type="button" onClick={onCancel} className="h-9 rounded-control px-3 text-label text-ink-3 hover:bg-wash-hover">Cancel</button><button disabled={pending} className="inline-flex h-9 items-center gap-2 rounded-control bg-accent px-4 text-label font-title text-ink-on-accent disabled:opacity-50">{pending && <LoaderCircle className="size-3.5 animate-spin" />}{routine ? "Save changes" : "Create routine"}</button></div>
     </form>
-    {routine && <div className="mt-7 border-t border-line-1 pt-4"><h2 className="text-label font-title text-ink-2">Run history</h2>{routine.runs.length === 0 ? <p className="mt-2 text-label text-ink-4">No runs yet.</p> : <ul className="mt-2 space-y-1">{routine.runs.map((run) => <li key={run.id} className="rounded-row bg-surface-2 px-3 py-2.5 shadow-ring-xs"><div className="flex items-center gap-2"><span className={cn("size-2 rounded-full", run.status === "succeeded" ? "bg-success" : run.status === "failed" ? "bg-danger" : "animate-pulse bg-working")} /><span className="text-label capitalize text-ink">{run.status}</span><time className="ml-auto text-meta font-meta text-ink-4">{formatTime(run.startedAt)}</time></div>{run.output && <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-meta text-ink-3">{run.output}</p>}{run.error && <p className="mt-1 text-meta text-danger">{run.error}</p>}</li>)}</ul>}</div>}
+    {routine && <div className="mt-7 border-t border-line-1 pt-4"><h2 className="text-label font-title text-ink-2">Run history</h2>{routine.runs.length === 0 ? <p className="mt-2 text-label text-ink-4">No runs yet.</p> : <ul className="mt-2 space-y-1">{routine.runs.map((run) => <li key={run.id}><button type="button" title="Open conversation" onClick={() => onOpenConversation({ id: run.conversationId, title: routine.name, preview: run.output ?? run.error ?? routine.prompt, updatedAt: run.finishedAt ?? run.startedAt })} className="group/run w-full rounded-row bg-surface-2 px-3 py-2.5 text-left shadow-ring-xs transition-[background-color,box-shadow] hover:bg-wash-hover hover:shadow-ring-sm"><div className="flex items-center gap-2"><span className={cn("size-2 rounded-full", run.status === "succeeded" ? "bg-success" : run.status === "failed" ? "bg-danger" : "animate-pulse bg-working")} /><span className="text-label capitalize text-ink">{run.status}</span><time className="ml-auto text-meta font-meta text-ink-4">{formatTime(run.startedAt)}</time><ChevronRight className="size-3.5 text-ink-4 transition-transform group-hover/run:translate-x-0.5" /></div>{run.output && <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-meta text-ink-3">{run.output}</p>}{run.error && <p className="mt-1 text-meta text-danger">{run.error}</p>}</button></li>)}</ul>}</div>}
   </div>;
 }
 

@@ -120,8 +120,7 @@ export function Sidebar({
 
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 scroll-fade-y">
         <section>
-          <Caption label="Your conversations" count={runtimeConversations.length} />
-          <ul className="flex flex-col gap-px">
+          <ul className="flex flex-col gap-1 pt-1">
             {runtimeConversations.map((conversation) => (
               <li key={conversation.id}>
                 <RuntimeRow
@@ -181,17 +180,32 @@ function RuntimeRow({ conversation, active, onSelect }: { conversation: RuntimeC
     <button
       onClick={onSelect}
       aria-current={active ? "page" : undefined}
-      className={cn(ROW, "min-h-12 py-1.5", active ? "bg-wash-selected" : HOVER)}
+      className={cn(
+        "group/row relative block h-(--card-row-h) w-full rounded-card px-2.5 py-2 text-left outline-none select-none transition-[background-color,box-shadow] duration-(--dur-fast)",
+        active ? "bg-surface-3 shadow-ring-sm" : "bg-surface-2 shadow-ring-xs hover:bg-wash-hover hover:shadow-ring-sm",
+      )}
     >
-      <span className="inline-flex size-[22px] shrink-0 items-center justify-center">
-        <Face size={18} mood="neutral" />
+      <span className="flex h-5 items-center gap-1.5">
+        <Face size={16} mood="neutral" />
+        <span className="flex-1" />
+        <time className="text-meta font-meta tabular-nums text-ink-4">{relativeTime(conversation.updatedAt)}</time>
       </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-label font-title text-ink">{conversation.title}</span>
-        <span className="block truncate text-meta font-meta text-ink-4">{conversation.preview}</span>
-      </span>
+      <span className="mt-0.5 block truncate text-title text-ink/90">{conversation.title}</span>
+      <span className="mt-0.5 block truncate text-label font-meta text-ink-3">{conversation.preview}</span>
     </button>
   );
+}
+
+function relativeTime(updatedAt: number) {
+  const today = new Date();
+  const updated = new Date(updatedAt);
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const startOfUpdated = new Date(updated.getFullYear(), updated.getMonth(), updated.getDate()).getTime();
+  const days = Math.round((startOfToday - startOfUpdated) / 86_400_000);
+  if (days === 0) return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(updated);
+  if (days === 1) return "Yesterday";
+  if (days > 1 && days < 7) return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(updated);
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(updated);
 }
 
 function ToolRow({ icon, label, children, onClick }: { icon: React.ReactNode; label: string; children?: React.ReactNode; onClick?: () => void }) {

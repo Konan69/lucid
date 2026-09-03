@@ -124,6 +124,16 @@ export default function App() {
     void saveRuntimeThread(changed);
   }
 
+  function openRuntimeConversation(thread: RuntimeConversation) {
+    setRuntimeThreads((current) => [
+      thread,
+      ...current.filter((item) => item.id !== thread.id),
+    ].sort((left, right) => right.updatedAt - left.updatedAt));
+    setActiveId(thread.id);
+    setView("conversation");
+    setPanel(null);
+  }
+
   const activeThread = runtimeThreads.find((thread) => thread.id === activeId);
 
   return (
@@ -142,7 +152,7 @@ export default function App() {
         {view === "empty" && <EmptyState />}
         {view === "library" && <Library />}
         {view === "projects" && <Projects />}
-        {view === "routines" && <Routines />}
+        {view === "routines" && <Routines onOpenConversation={openRuntimeConversation} />}
         {view === "demo" && <DemoConversation conversationId={activeDemoId} />}
         {view === "conversation" && (
           activeId ? <Conversation
