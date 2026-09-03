@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { EmptyState } from "./screen/EmptyState";
-import { Library } from "./screen/Library";
+import { Library, type LibraryDocument } from "./screen/Library";
 import { Routines } from "./screen/Routines";
 import { Projects } from "./screen/Projects";
 import { Panel } from "./screen/Panel";
@@ -43,6 +43,7 @@ async function saveRuntimeThread(thread: RuntimeConversation) {
 export default function App() {
   const [view, setView] = useState<View>(() => (location.search.includes("tokens") ? "tokens" : location.search.includes("empty") ? "empty" : location.search.includes("library") ? "library" : location.search.includes("projects") ? "projects" : location.search.includes("routines") ? "routines" : "conversation"));
   const [runtimeThreads, setRuntimeThreads] = useState<RuntimeConversation[]>([]);
+  const [conversationDrafts, setConversationDrafts] = useState<Record<string, string>>({});
   const [activeId, setActiveId] = useState<string | null>(null);
   const [threadsReady, setThreadsReady] = useState(false);
   const [activeDemoId, setActiveDemoId] = useState("t5");
@@ -102,6 +103,22 @@ export default function App() {
       archived: false,
     };
     setRuntimeThreads((current) => [thread, ...current]);
+    setActiveId(thread.id);
+    setView("conversation");
+    setPanel(null);
+    void saveRuntimeThread(thread);
+  }
+
+  function askAboutLibrary(document: LibraryDocument) {
+    const thread: RuntimeConversation = {
+      id: crypto.randomUUID(),
+      title: `Ask about ${document.name}`.slice(0, 120),
+      preview: `Ready to search ${document.name}`,
+      updatedAt: Date.now(),
+      archived: false,
+    };
+    setRuntimeThreads((current) => [thread, ...current]);
+    setConversationDrafts((current) => ({ ...current, [thread.id]: `Search the Library and answer a question about “${document.name}”: ` }));
     setActiveId(thread.id);
     setView("conversation");
     setPanel(null);
@@ -191,7 +208,7 @@ export default function App() {
       <main className="flex min-w-0 flex-1">
         {view === "tokens" && <Tokens />}
         {view === "empty" && <EmptyState />}
-        {view === "library" && <Library />}
+        {view === "library" && <Library onAsk={askAboutLibrary} />}
         {view === "projects" && <Projects />}
         {view === "routines" && <Routines onOpenConversation={openRuntimeConversation} />}
         {view === "demo" && <DemoConversation conversationId={activeDemoId} />}
@@ -199,7 +216,8 @@ export default function App() {
           activeId ? <Conversation
             conversationId={activeId ?? "t1"}
             title={activeThread?.title ?? "Conversation"}
-            onMessageSent={(message) => recordMessage(activeId ?? "t1", message)}
+            initialDraft={conversationDrafts[activeId]}
+            onMessageSent={(message) => { recordMessage(activeId ?? "t1", message); setConversationDrafts((current) => { const next = { ...current }; delete next[activeId]; return next; }); }}
             panelOpen={panel !== null}
             onOpenPanel={(k) => setPanel((cur) => (cur === k ? null : k))}
           /> : <div className="flex flex-1 items-center justify-center text-label text-ink-4">{threadsReady ? "Start a new conversation" : "Loading conversations…"}</div>

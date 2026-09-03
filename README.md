@@ -1,8 +1,8 @@
-# Konan
+# Vivid
 
-One person, one Konan—simple alone and organizational by design.
+One person, one Vivid—simple alone and organizational by design.
 
-Konan is an AI teammate for everyday work: an agent that works alongside a person on their real
+Vivid is an AI teammate for everyday work: an agent that works alongside a person on their real
 tools. The first screen is already the thread, and nothing has to be configured before the first
 message. It is not a coding tool.
 
@@ -49,7 +49,12 @@ authentication, people and companies, projects, threads, messages, library data,
 persistence, tests, and shared product contracts.
 
 The included `packages/agent-runtime` owns the shareable Flue conversation transport, SQLite
-persistence, model adapter, and a single-process cron adapter for the demo. The application backend
+persistence, model adapter, local document Library, and a single-process cron adapter for the demo. The application backend
 may submit work through this explicit boundary and consume status or results, but it must not absorb
 the production scheduling engine, connectors, tool calls, computer transport, or credential
 handling. Those integrations will be supplied separately.
+
+The Library accepts PDF, Markdown, and plain-text files up to 10 MB. Files and real nested folders
+are stored in SQLite, readable text is chunked into FTS5, and Vivid can call the read-only
+`search_library` tool to answer with filename/page citations. This MVP uses keyword retrieval and
+does not include embeddings, OCR, or a vector database.

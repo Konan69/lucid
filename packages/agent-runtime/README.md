@@ -1,6 +1,6 @@
-# Konan agent runtime
+# Vivid agent runtime
 
-Shareable Flue Node runtime for the initial Konan conversation experience and demo routines.
+Shareable Flue Node runtime for the initial Vivid conversation experience and demo routines.
 Production scheduler orchestration, connectors, tool execution, and computer-control code are
 intentionally not part of this package.
 
@@ -21,9 +21,11 @@ Defaults:
 - development port: `5173`
 - SQLite: `.state/flue.sqlite`
 
-The same SQLite file stores both Flue's durable conversation stream and Konan's lightweight
-conversation index (title, preview, and update time). The index is exposed through authenticated
-`GET /api/conversations` and `PUT /api/conversations/:id` routes.
+The same SQLite file stores Flue's durable conversation stream, Vivid's lightweight conversation
+index, and the local document Library. The Library has real nested folders and accepts multi-file
+PDF, Markdown, and plain-text uploads up to 10 MB each. Text is extracted, chunked, and indexed with
+SQLite FTS5. The read-only `search_library` Flue tool returns citation-ready passages to the model.
+This demo retrieval path is keyword-based; it does not include embeddings, OCR, or a vector store.
 
 Routines use the same database for definitions and run history. On Node, `croner` provides the
 in-process trigger and each fire enters Flue as a durable `schedule` signal. Authenticated
@@ -51,7 +53,7 @@ root repo's ignored `refs/` directory. They are research inputs, not collaborati
 ```sh
 curl http://127.0.0.1:5173/health
 
-curl -X POST http://127.0.0.1:5173/agents/konan/demo-thread \
+curl -X POST http://127.0.0.1:5173/agents/vivid/demo-thread \
   -H 'Authorization: Bearer local-dev-token' \
   -H 'Content-Type: application/json' \
   -d '{"kind":"user","body":"Say hello in one sentence."}'

@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────────────────────
-   Konan design tokens. One language.
+   Vivid design tokens. One language.
 
    Sources, and what each one settled:
    - Open Session   surface ramp (monotonic elevation), type scale, radius factor
@@ -12,7 +12,7 @@
    2. Surfaces step one direction: bg < raised < panel < control in dark, the
       same order descending in light. A token never changes tier between themes.
    3. Text and borders are alpha ink, so they read the same on every tier.
-   4. Accent is Konan's own color. It appears on the face, the focus ring, the
+   4. Accent is Vivid's own color. It appears on the face, the focus ring, the
       one primary button, and "working". Nowhere else.
    ───────────────────────────────────────────────────────────── */
 
@@ -24,7 +24,7 @@
   --surface-1: #1c1c1c;          /* sidebar, chrome */
   --surface-2: #232323;          /* cards, bubbles, rows */
   --surface-3: #2c2c2c;          /* controls, composer, popups */
-  --surface-well: #0e0f12;       /* code, terminal, Konan's screen frame */
+  --surface-well: #0e0f12;       /* code, terminal, Vivid's screen frame */
   --scrim: rgba(10, 10, 10, 0.72);
 
   /* ── Ink (alpha over surface) ────────────────────────────── */
@@ -47,7 +47,7 @@
   --wash-pressed: rgb(var(--ink-base) / 0.10);
   --wash-selected: rgb(var(--ink-base) / 0.08);
 
-  /* ── Accent: Konan ───────────────────────────────────────── */
+  /* ── Accent: Vivid ───────────────────────────────────────── */
   --accent: #7c6cff;
   --accent-ink: #a89cff;         /* accent as text on dark */
   --accent-soft: rgb(124 108 255 / 0.16);

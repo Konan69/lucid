@@ -31,7 +31,7 @@ function ProjectShelf({ onOpen }: { onOpen: (id: string) => void }) {
 
       <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
         <div className="mx-auto w-full max-w-[920px] px-5 pb-10 pt-1 sm:px-8">
-          <p className="px-0.5 text-meta font-meta text-ink-4">Work that spans teams. Konan keeps each project's conversations, people, and context together.</p>
+          <p className="px-0.5 text-meta font-meta text-ink-4">Work that spans teams. Vivid keeps each project&apos;s conversations, people, and context together.</p>
 
           <ul className="mt-4 grid gap-2.5 sm:grid-cols-2">
             {projects.map((p) => <ProjectCard key={p.id} project={p} onOpen={onOpen} />)}

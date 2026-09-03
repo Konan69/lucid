@@ -8,7 +8,7 @@ export type Conversation = {
   pinned?: boolean;
   usingScreen?: boolean;
   startedAt?: number;      // ms; ticking duration when working
-  tools?: string[];        // what Konan is using: "maps" | "calendar" | "gmail" | "drive"
+  tools?: string[];        // what Vivid is using: "maps" | "calendar" | "gmail" | "drive"
   when: "today" | "yesterday" | "week" | "earlier";
   time: string;
   snoozeUntil?: string;

@@ -1,6 +1,6 @@
 import { init } from "@flue/runtime";
 import { Cron } from "croner";
-import { Konan } from "./agents/konan.ts";
+import { Vivid } from "./agents/konan.ts";
 import {
   attachRoutineSubmission,
   failRoutineRun,
@@ -55,7 +55,7 @@ async function executeRoutine(routine: Routine, run: RoutineRun) {
       preview: `Routine: ${routine.prompt}`.slice(0, 500),
       updatedAt: run.startedAt,
     });
-    const agent = init(Konan, { id: run.conversationId });
+    const agent = init(Vivid, { id: run.conversationId });
     const receipt = await agent.dispatch({
       idempotencyKey: run.id,
       message: {

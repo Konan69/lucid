@@ -9,7 +9,7 @@ export function Panel({ kind, conversationId, onClose }: { kind: "screen" | "log
   return (
     <aside className="fixed inset-0 z-30 flex h-full w-full shrink-0 flex-col bg-surface-1 animate-fade-in sm:static sm:w-(--panel-w) sm:hairline-l">
       <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-3 hairline-b">
-        <h2 className="flex-1 text-label font-title text-ink">{kind === "screen" ? "Konan's screen" : "What Konan did"}</h2>
+        <h2 className="flex-1 text-label font-title text-ink">{kind === "screen" ? "Vivid's screen" : "What Vivid did"}</h2>
         {kind === "screen" && <IconButton label="Expand"><Maximize2 className="size-4" /></IconButton>}
         <IconButton label="Close" onClick={onClose}><X className="size-4" /></IconButton>
       </header>
@@ -33,7 +33,7 @@ const FEE_ROWS = [
 function ScreenView() {
   return (
     <div className="flex flex-1 flex-col gap-3 p-3">
-      {/* Konan's desktop: wallpaper, a floating browser window, and a dock */}
+      {/* Vivid's desktop: wallpaper, a floating browser window, and a dock */}
       <div
         className="relative flex aspect-[16/11] w-full flex-col overflow-hidden rounded-card ring-line"
         style={{ background: "radial-gradient(120% 90% at 20% 0%, #3a3f4b 0%, #23262e 55%, #17191f 100%)" }}
@@ -106,14 +106,14 @@ function ScreenView() {
           <i className="size-1.5 rounded-full bg-current animate-status-pulse" />Live
         </span>
         </div>
-        {/* Dock: the tools Konan keeps on its desktop */}
+        {/* Dock: the tools Vivid keeps on its desktop */}
         <div className="absolute inset-x-0 bottom-0 flex h-10 items-center justify-center gap-2.5">
           {["#EA4335", "#3B82F6", "#1FA463", "#F59E0B"].map((c, i) => (
             <i key={i} className="size-5 rounded-md shadow-[0_2px_6px_rgba(0,0,0,0.4)]" style={{ background: `linear-gradient(135deg, ${c}, ${c}CC)` }} aria-hidden />
           ))}
         </div>
       </div>
-      <p className="text-label text-ink-3">Konan is filling the cross-border fee table — blocker 3 from the PRD review. You can take over at any point; it pauses until you hand back.</p>
+      <p className="text-label text-ink-3">Vivid is filling the cross-border fee table — blocker 3 from the PRD review. You can take over at any point; it pauses until you hand back.</p>
       <div className="flex gap-2">
         <Button icon={<Hand className="size-3.5" />}>Take over</Button>
         <Button variant="ghost">Teach a task</Button>
@@ -171,7 +171,7 @@ function activityForMessage(message: FlueConversationMessage): Activity[] {
 }
 
 function LogView({ conversationId }: { conversationId: string | null }) {
-  const client = useMemo(() => createFlueClient({ url: `/api/konan/${encodeURIComponent(conversationId ?? "missing")}` }), [conversationId]);
+  const client = useMemo(() => createFlueClient({ url: `/api/vivid/${encodeURIComponent(conversationId ?? "missing")}` }), [conversationId]);
   const agent = useFlueAgent({ client });
   const activity = useMemo(() => agent.messages.filter((message) => message.display !== "hidden").flatMap(activityForMessage), [agent.messages]);
 

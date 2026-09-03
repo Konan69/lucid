@@ -106,7 +106,7 @@ export function Sidebar({
             <Face size={20} mood={workingCount > 0 ? "thinking" : "neutral"} />
             <i className="absolute -bottom-px -right-px size-2 rounded-full bg-success ring-2 ring-surface-1" aria-label="Online" />
           </span>
-          <span className="min-w-0 flex-1 truncate text-title text-ink">Konan</span>
+          <span className="min-w-0 flex-1 truncate text-title text-ink">Vivid</span>
           <ChevronDown className="size-4 text-ink-3" />
         </button>
 

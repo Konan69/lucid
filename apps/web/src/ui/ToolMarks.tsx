@@ -1,6 +1,6 @@
 import { cn } from "./cn";
 
-/* Tool marks: the services Konan is using in a conversation, drawn as
+/* Tool marks: the services Vivid is using in a conversation, drawn as
    high-fidelity brand marks so a row reads at a glance. All geometry is
    inline SVG in the brands' own colors; the tile carries the shadow. */
 

@@ -5,7 +5,7 @@ export function EmptyState() {
   return (
     <div className="mx-auto flex w-full max-w-(--thread-max-w) flex-1 flex-col items-center justify-center px-6 animate-rise-in">
       <Face size={56} mood="happy" />
-      <h1 className="mt-5 text-page font-title text-ink">Hi, I'm Konan.</h1>
+      <h1 className="mt-5 text-page font-title text-ink">Hi, I&apos;m Vivid.</h1>
       <p className="mt-1 text-body text-ink-3">What should I take off your plate?</p>
       <ul className="mt-8 grid w-full gap-2 sm:grid-cols-3">
         {suggestions.map((s) => (

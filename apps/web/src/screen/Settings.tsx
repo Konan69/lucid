@@ -101,15 +101,15 @@ function GeneralSettings({ theme, onThemeChange }: { theme: ThemePreference; onT
         <SettingRow label="Language"><span className="text-label text-ink-3">Follow system</span></SettingRow>
       </SettingsGroup>
 
-      <SettingsGroup label="Konan">
+      <SettingsGroup label="Vivid">
         <SettingRow label="Timezone"><span className="text-label text-ink-3">Auto-detect · Africa/Lagos</span></SettingRow>
-        <SettingRow label="Ask before acting" note="Konan checks with you before sending, buying, or changing anything important."><Toggle checked /></SettingRow>
+        <SettingRow label="Ask before acting" note="Vivid checks with you before sending, buying, or changing anything important."><Toggle checked /></SettingRow>
       </SettingsGroup>
     </div>
   );
 }
 
-/* ── Connections: the external services Konan may act through ── */
+/* ── Connections: the external services Vivid may act through ── */
 
 type Service = { id: string; name: string; detail: string; icon: React.ReactNode };
 const SERVICES: Service[] = [
@@ -126,7 +126,7 @@ function ConnectionsSettings() {
   return (
     <div className="mx-auto max-w-3xl space-y-7 pt-3">
       <SettingsGroup label={`Connected services · ${connectedCount} of ${SERVICES.length}`}>
-        <p className="px-4 pt-3 text-label font-meta text-ink-4">Konan only acts through the services you connect here. Disconnect any time; history keeps, access stops.</p>
+        <p className="px-4 pt-3 text-label font-meta text-ink-4">Vivid only acts through the services you connect here. Disconnect any time; history keeps, access stops.</p>
         {SERVICES.map((s) => (
           <SettingRow
             key={s.id}
@@ -156,9 +156,9 @@ function ConnectionsSettings() {
 function ComputerSettings() {
   return (
     <div className="mx-auto max-w-3xl space-y-7 pt-3">
-      <SettingsGroup label="Konan's computer">
+      <SettingsGroup label="Vivid's computer">
         <SettingRow label="Status" note="A private computer that stays ready between conversations."><span className="inline-flex items-center gap-1.5 text-label text-success"><i className="size-1.5 rounded-full bg-success" />Ready</span></SettingRow>
-        <SettingRow label="Open links in"><span className="text-label text-ink-3">Konan's browser</span></SettingRow>
+        <SettingRow label="Open links in"><span className="text-label text-ink-3">Vivid's browser</span></SettingRow>
       </SettingsGroup>
     </div>
   );
@@ -178,7 +178,7 @@ function PrivacySettings() {
 function AboutSettings() {
   return (
     <div className="mx-auto max-w-3xl space-y-7 pt-3">
-      <SettingsGroup label="Konan">
+      <SettingsGroup label="Vivid">
         <SettingRow label="Version"><span className="text-label font-meta text-ink-3">Prototype 0.1</span></SettingRow>
         <SettingRow label="Built for"><span className="text-label text-ink-3">Everyday work</span></SettingRow>
       </SettingsGroup>

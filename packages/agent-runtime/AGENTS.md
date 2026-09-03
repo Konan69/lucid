@@ -1,4 +1,4 @@
-# Konan Flue runtime
+# Vivid Flue runtime
 
 This is the shareable [Flue](https://flueframework.com) conversation runtime. Keep its scope narrow:
 chat transport, durable conversation history, and the model adapter.

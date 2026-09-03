@@ -15,16 +15,18 @@ export function Conversation({
   panelOpen,
   conversationId = "t1",
   title,
+  initialDraft,
   onMessageSent,
 }: {
   onOpenPanel: (kind: "screen" | "log") => void;
   panelOpen: boolean;
   conversationId?: string;
   title: string;
+  initialDraft?: string;
   onMessageSent: (message: string) => void;
 }) {
   const client = useMemo(
-    () => createFlueClient({ url: `/api/konan/${encodeURIComponent(conversationId)}` }),
+    () => createFlueClient({ url: `/api/vivid/${encodeURIComponent(conversationId)}` }),
     [conversationId],
   );
   const agent = useFlueAgent({ client });
@@ -43,10 +45,10 @@ export function Conversation({
       <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
         <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">{title}</h1>
         <Button className="hidden sm:inline-flex" variant="ghost" size="sm" icon={<UserPlus className="size-3.5" />}>Add someone</Button>
-        <IconButton label="What Konan did" onClick={() => onOpenPanel("log")}>
+        <IconButton label="What Vivid did" onClick={() => onOpenPanel("log")}>
           <ScrollText className="size-4" />
         </IconButton>
-        <IconButton label="Konan's screen" active={panelOpen} onClick={() => onOpenPanel("screen")}>
+        <IconButton label="Vivid's screen" active={panelOpen} onClick={() => onOpenPanel("screen")}>
           <PanelRight className="size-4" />
         </IconButton>
       </header>
@@ -64,7 +66,7 @@ export function Conversation({
           {agent.historyReady && agent.messages.length === 0 && (
             <li className="py-12 text-center">
               <Face size={36} mood="happy" className="mx-auto" />
-              <p className="mt-3 text-title font-title text-ink">Konan is ready</p>
+              <p className="mt-3 text-title font-title text-ink">Vivid is ready</p>
               <p className="mt-1 text-label text-ink-3">What should I take off your plate?</p>
             </li>
           )}
@@ -92,6 +94,7 @@ export function Conversation({
       </div>
 
       <Composer
+        initialMessage={initialDraft}
         working={working}
         onSend={async (message) => {
           await agent.sendMessage(message);
@@ -153,7 +156,7 @@ function LiveMessage({ message }: { message: FlueConversationMessage }) {
   if (message.role === "system") {
     return (
       <div className="rounded-panel bg-surface-2 px-4 py-3 text-label text-ink-3 ring-line">
-        {message.settlement?.outcome === "failed" ? "Konan could not complete that response. " : ""}
+        {message.settlement?.outcome === "failed" ? "Vivid could not complete that response. " : ""}
         {text}
       </div>
     );
@@ -262,7 +265,7 @@ function AutomationMade({ title, trigger, actions, time }: { title: string; trig
       <Card className="min-w-0 flex-1 p-4">
         <div className="flex items-center gap-2 text-meta text-ink-3">
           <Repeat2 className="size-3.5 text-accent-ink" />
-          Konan set up a routine
+          Vivid set up a routine
         </div>
         <h3 className="mt-2 text-dialog font-title text-ink">{title}</h3>
         <p className="mt-0.5 text-meta font-meta text-ink-4">{trigger}</p>
@@ -275,7 +278,7 @@ function AutomationMade({ title, trigger, actions, time }: { title: string; trig
   );
 }
 
-/* Connect cards in the chat: Konan asks for access mid-conversation and
+/* Connect cards in the chat: Vivid asks for access mid-conversation and
       you authorize each service in place, Grok-Bot style. */
 const SERVICE_ICON: Record<string, { Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>; tone: string }> = {
   gmail: { Icon: Mail, tone: "text-[#EA4335]" },
@@ -347,7 +350,7 @@ function InputCard({ title, question, options }: { title: string; question: stri
       <Card className="min-w-0 flex-1 p-4">
         <div className="flex items-center gap-2 text-meta text-ink-3">
           <i className="size-1.5 rounded-full bg-attention" />
-          Konan needs you
+          Vivid needs you
           <span className="text-ink-4">·</span>
           {title}
         </div>
@@ -385,15 +388,19 @@ function InputCard({ title, question, options }: { title: string; question: stri
 }
 
 function Composer({
+  initialMessage,
   working,
   onSend,
   onStop,
 }: {
+  initialMessage?: string;
   working: boolean;
   onSend: (message: string) => Promise<void>;
   onStop: () => Promise<void>;
 }) {
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(initialMessage ?? "");
+
+  useEffect(() => { setMessage(initialMessage ?? ""); }, [initialMessage]);
 
   async function submit() {
     const body = message.trim();
@@ -413,7 +420,7 @@ function Composer({
         <div className="relative rounded-composer bg-surface-3 shadow-composer ring-line">
         <textarea
           rows={1}
-          placeholder="Message Konan"
+          placeholder="Message Vivid"
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           onKeyDown={(event) => {

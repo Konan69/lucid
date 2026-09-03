@@ -1,7 +1,26 @@
 import { createAgentRouter } from "@flue/runtime/routing";
 import { Hono } from "hono";
 import "./providers/openrouter.ts";
-import { Konan } from "./agents/konan.ts";
+import { Vivid } from "./agents/konan.ts";
+import {
+  LIBRARY_FILE_TYPES,
+  MAX_LIBRARY_FILE_BYTES,
+  digestBytes,
+  ingestLibraryDocument,
+} from "./library-ingest.ts";
+import {
+  createLibraryFolder,
+  createLibraryDocument,
+  deleteLibraryFolder,
+  deleteLibraryDocument,
+  getLibraryFolder,
+  getLibraryDocument,
+  getLibraryDocumentByDigest,
+  getStoredLibraryDocument,
+  listLibraryDocuments,
+  listLibraryFolders,
+  searchLibrary,
+} from "./library-store.ts";
 import {
   getRoutineView,
   listRoutineViews,
@@ -23,7 +42,7 @@ const app = new Hono();
 app.get("/health", (context) =>
   context.json({
     model: process.env.KONAN_MODEL ?? "openrouter/z-ai/glm-5.3-flash",
-    service: "konan-agent-runtime",
+    service: "vivid-agent-runtime",
     status: "ok",
   }),
 );
@@ -42,11 +61,13 @@ const requireRuntimeToken = async (context: Parameters<Parameters<typeof app.use
   return next();
 };
 
-app.use("/agents/konan/*", requireRuntimeToken);
+app.use("/agents/vivid/*", requireRuntimeToken);
 app.use("/api/conversations", requireRuntimeToken);
 app.use("/api/conversations/*", requireRuntimeToken);
 app.use("/api/routines", requireRuntimeToken);
 app.use("/api/routines/*", requireRuntimeToken);
+app.use("/api/library", requireRuntimeToken);
+app.use("/api/library/*", requireRuntimeToken);
 
 app.get("/api/conversations", (context) =>
   context.json({ conversations: listConversations() }),
@@ -106,6 +127,86 @@ app.delete("/api/conversations/:id", (context) => {
     return context.json({ error: "Conversation not found" }, 404);
   }
   return context.body(null, 204);
+});
+
+app.get("/api/library", (context) => {
+  const folderId = context.req.query("folderId") ?? null;
+  if (folderId && !getLibraryFolder(folderId)) return context.json({ error: "Folder not found" }, 404);
+  return context.json({ documents: listLibraryDocuments(folderId), folders: listLibraryFolders(folderId) });
+});
+
+app.post("/api/library/folders", async (context) => {
+  const body = await context.req.json<{ name?: unknown; parentId?: unknown }>();
+  if (typeof body.name !== "string" || !body.name.trim()) return context.json({ error: "Folder name is required" }, 400);
+  const parentId = typeof body.parentId === "string" && body.parentId ? body.parentId : null;
+  if (parentId && !getLibraryFolder(parentId)) return context.json({ error: "Parent folder not found" }, 404);
+  return context.json({ folder: createLibraryFolder(body.name.trim().slice(0, 120), parentId) }, 201);
+});
+
+app.delete("/api/library/folders/:id", (context) => {
+  const outcome = deleteLibraryFolder(context.req.param("id"));
+  if (outcome === "not-found") return context.json({ error: "Folder not found" }, 404);
+  if (outcome === "not-empty") return context.json({ error: "Folder must be empty before it can be deleted" }, 409);
+  return context.body(null, 204);
+});
+
+app.post("/api/library", async (context) => {
+  const form = await context.req.formData();
+  const upload = form.get("file");
+  if (!(upload instanceof File)) return context.json({ error: "A file is required" }, 400);
+  if (upload.size === 0) return context.json({ error: "The file is empty" }, 400);
+  if (upload.size > MAX_LIBRARY_FILE_BYTES) return context.json({ error: "Files must be 10 MB or smaller" }, 413);
+
+  const name = (upload.name.split(/[\\/]/).pop() ?? "document").trim().slice(0, 180);
+  const extension = name.toLocaleLowerCase().split(".").pop();
+  const inferredType = extension === "pdf" ? "application/pdf" : extension === "md" || extension === "markdown" ? "text/markdown" : extension === "txt" ? "text/plain" : upload.type;
+  const mimeType = LIBRARY_FILE_TYPES.includes(inferredType as typeof LIBRARY_FILE_TYPES[number]) ? inferredType : "";
+  if (!mimeType) return context.json({ error: "Only PDF, Markdown, and plain-text files are supported" }, 415);
+  const requestedFolderId = form.get("folderId");
+  const folderId = typeof requestedFolderId === "string" && requestedFolderId ? requestedFolderId : null;
+  if (folderId && !getLibraryFolder(folderId)) return context.json({ error: "Folder not found" }, 404);
+
+  const bytes = new Uint8Array(await upload.arrayBuffer());
+  const sha256 = digestBytes(bytes);
+  const existing = getLibraryDocumentByDigest(sha256);
+  if (existing) return context.json({ document: existing, duplicate: true });
+
+  const document = createLibraryDocument({ name, mimeType, bytes, sha256, folderId });
+  void ingestLibraryDocument(document.id);
+  return context.json({ document, duplicate: false }, 202);
+});
+
+app.post("/api/library/search", async (context) => {
+  const body = await context.req.json<{ limit?: unknown; query?: unknown }>();
+  if (typeof body.query !== "string" || body.query.trim().length < 2) {
+    return context.json({ error: "A search query is required" }, 400);
+  }
+  const limit = typeof body.limit === "number" && Number.isInteger(body.limit) ? body.limit : 6;
+  return context.json({ results: searchLibrary(body.query.trim().slice(0, 500), limit) });
+});
+
+app.get("/api/library/:id/content", (context) => {
+  const document = getStoredLibraryDocument(context.req.param("id"));
+  if (!document) return context.json({ error: "Document not found" }, 404);
+  return new Response(document.bytes, {
+    headers: {
+      "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(document.name)}`,
+      "content-length": String(document.size),
+      "content-type": document.mimeType,
+      "x-content-type-options": "nosniff",
+    },
+  });
+});
+
+app.get("/api/library/:id", (context) => {
+  const document = getLibraryDocument(context.req.param("id"));
+  return document ? context.json({ document }) : context.json({ error: "Document not found" }, 404);
+});
+
+app.delete("/api/library/:id", (context) => {
+  return deleteLibraryDocument(context.req.param("id"))
+    ? context.body(null, 204)
+    : context.json({ error: "Document not found" }, 404);
 });
 
 app.get("/api/routines", (context) =>
@@ -200,6 +301,6 @@ app.post("/api/routines/:id/run", (context) => {
   return context.json({ run }, 202);
 });
 
-app.route("/agents/konan", createAgentRouter(Konan));
+app.route("/agents/vivid", createAgentRouter(Vivid));
 
 export default app;

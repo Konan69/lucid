@@ -1,5 +1,5 @@
-/* Routines: what Konan repeats for you. Some you wrote; some started as
-   templates from the gallery — published by Konan or by other teams, sold,
+/* Routines: what Vivid repeats for you. Some you wrote; some started as
+   templates from the gallery — published by Vivid or by other teams, sold,
    with a cut of every sale going to the author. */
 
 export type RoutineTemplate = {
@@ -8,7 +8,7 @@ export type RoutineTemplate = {
   summary: string;
   trigger: string;
   actions: string[];
-  /** Who published it. "konan" = Konan original. */
+  /** Who published it. "konan" = Vivid original. */
   publisher: string;
   brandColor: "accent" | "working" | "approve" | "success";
   price: string;
@@ -26,7 +26,7 @@ export const templates: RoutineTemplate[] = [
     summary: "One metric, every week, three lines. Signups, revenue, tickets — point it at anything you count.",
     trigger: "Weekly, your pick of day and time",
     actions: ["Pull the metric", "Compare to the prior period", "Post a summary — escalate only past your threshold"],
-    publisher: "konan",
+    publisher: "Vivid",
     brandColor: "accent",
     price: "Free",
     installs: "41k",
@@ -35,10 +35,10 @@ export const templates: RoutineTemplate[] = [
   {
     id: "tpl-contract-watch",
     name: "Contract renewal watch",
-    summary: "Never miss a renewal. Konan reads your contracts and starts the renegotiation conversation 60 days out.",
+    summary: "Never miss a renewal. Vivid reads your contracts and starts the renegotiation conversation 60 days out.",
     trigger: "Daily scan, alerts 60 days before renewal",
     actions: ["Read contract dates from your files", "Alert 60, 30, and 7 days out", "Draft the renewal email for your approval"],
-    publisher: "konan",
+    publisher: "Vivid",
     brandColor: "accent",
     price: "£3/mo",
     installs: "12k",
@@ -47,7 +47,7 @@ export const templates: RoutineTemplate[] = [
   {
     id: "tpl-tender-triage",
     name: "Tender triage",
-    summary: "For ops teams that bid on contracts. Konan reads each tender, scores fit, and drafts the compliance checklist.",
+    summary: "For ops teams that bid on contracts. Vivid reads each tender, scores fit, and drafts the compliance checklist.",
     trigger: "When a new tender lands in the shared folder",
     actions: ["Read the tender end to end", "Score fit against your capability matrix", "Draft the compliance checklist and own the gaps"],
     publisher: "Whitehall Works",
@@ -73,7 +73,7 @@ export const templates: RoutineTemplate[] = [
   {
     id: "tpl-intake",
     name: "Client intake to file",
-    summary: "For legal and admin. New client form comes in, Konan files it, runs conflicts, and opens the matter folder.",
+    summary: "For legal and admin. New client form comes in, Vivid files it, runs conflicts, and opens the matter folder.",
     trigger: "When an intake form is submitted",
     actions: ["File the intake form", "Run the conflicts check", "Open the matter folder and brief the team"],
     publisher: "Kestrel Legal Ops",
@@ -86,10 +86,10 @@ export const templates: RoutineTemplate[] = [
   {
     id: "tpl-close-week",
     name: "Close the week",
-    summary: "Friday afternoon, Konan closes your week: chases what's stuck, archives what's done, and writes the Monday brief.",
+    summary: "Friday afternoon, Vivid closes your week: chases what's stuck, archives what's done, and writes the Monday brief.",
     trigger: "Every Friday at 4pm",
     actions: ["Chase every conversation waiting over 3 days", "Archive settled work", "Write the Monday brief from what moved"],
-    publisher: "konan",
+    publisher: "Vivid",
     brandColor: "accent",
     price: "Free",
     installs: "28k",

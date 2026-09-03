@@ -17,8 +17,8 @@ export function Tokens() {
     <div className="h-full overflow-y-auto bg-surface-0 p-8">
       <div className="mx-auto max-w-4xl space-y-10">
         <header>
-          <h1 className="text-page font-title text-ink">Konan tokens</h1>
-          <p className="mt-1 text-label text-ink-3">One language. Surfaces step one way, ink and lines are alpha, accent is Konan's alone.</p>
+          <h1 className="text-page font-title text-ink">Vivid tokens</h1>
+          <p className="mt-1 text-label text-ink-3">One language. Surfaces step one way, ink and lines are alpha, accent is Vivid&apos;s alone.</p>
         </header>
 
         <Section title="Surfaces">

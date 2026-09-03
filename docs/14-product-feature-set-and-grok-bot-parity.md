@@ -1,13 +1,13 @@
 # Product feature set and Grok Bot parity
 
-This is the collaboration-facing product map for the initial Konan build. “Parity” below is a
-directional product target, not a claim that Konan and Grok Bot are equivalent.
+This is the collaboration-facing product map for the initial Vivid build. “Parity” below is a
+directional product target, not a claim that Vivid and Grok Bot are equivalent.
 
 ## Available now
 
 | Capability | State | Notes |
 | --- | --- | --- |
-| Named AI teammate | Working | Konan is the persistent product identity. |
+| Named AI teammate | Working | Vivid is the persistent product identity. |
 | Live conversation | Working | The web app streams real Flue responses from GLM 5.3 Flash through OpenRouter. |
 | Rich responses | Working | Assistant output renders safe Markdown with GFM lists, tables, links, blockquotes, and code. |
 | Durable thread history | Working | Each product thread ID maps to a Flue conversation stored in local SQLite. |
@@ -16,6 +16,7 @@ directional product target, not a claim that Konan and Grok Bot are equivalent.
 | Connection recovery | Working | The conversation exposes loading, retry, and error states. |
 | Conversation list and creation | Working locally | The sidebar creates/selects real durable Flue conversations; their title index is stored alongside Flue state in SQLite. |
 | Scheduled routines | Working locally | SQLite stores definitions and run history; a Node cron trigger dispatches durable schedule signals into Flue with pause, test-run, edit, and delete controls. |
+| Document Library and RAG | Working locally | Real nested folders and PDF/Markdown/text uploads are stored in SQLite; FTS5 retrieval is exposed to Vivid as a read-only tool with filename/page citations. |
 | Response provenance | Working | Model, timing, usage, and tool-call count are attached to agent responses. |
 | Protected browser-to-runtime path | Working locally | Vite proxies the runtime API and adds the bearer token outside the browser bundle. Production needs an equivalent server-side gateway. |
 
@@ -29,9 +30,9 @@ contracts and should not be mistaken for finished backend behavior.
 | Thread lifecycle | Working locally | Creation, navigation, rename, archive/restore, and delete use the SQLite-backed product index; user ownership remains outside the demo. |
 | Work log | Working locally | The active conversation derives requests, responses, model/timing/usage metadata, failures, and tool calls from its real Flue transcript. |
 | Computer panel | Fixture data | A separately supplied execution boundary and artifact model are still required. |
-| Tool-call presentation | UI-ready | Real tools, policies, approvals, and results are not mounted. |
-| Attachments | Control only | Upload storage, validation, message parts, and retrieval. |
-| People, companies, projects, and library | Product fixtures | CRUD APIs, authorization, persistence, and search. |
+| Tool-call presentation | Partial | Library retrieval is mounted; broader tools, policies, approvals, and results are not. |
+| Chat attachments | Control only | Library upload works, but chat message parts do not yet ingest attachments. |
+| People, companies, and projects | Product fixtures | CRUD APIs, authorization, persistence, and search. |
 
 ## Grok Bot product parity map
 
@@ -39,7 +40,7 @@ The comparison uses xAI's current first-party descriptions of Grok Bot: a persis
 cloud computer, connectors, approvals, reusable skills, scheduled or event-driven routines, and
 multi-bot collaboration.
 
-| Grok Bot capability | Konan today | Target boundary |
+| Grok Bot capability | Vivid today | Target boundary |
 | --- | --- | --- |
 | Persistent conversation and background state | Partial | SQLite conversation history works; durable jobs and cross-thread memory do not. |
 | Browser, terminal, and filesystem computer | UI fixture | Proprietary execution subsystem, supplied separately. |
@@ -48,7 +49,7 @@ multi-bot collaboration.
 | Reusable skills | Research only | Versioned skill definitions, mounting, permissions, and product management. |
 | Scheduled and event-triggered routines | Partial | Cron routines and run history work locally; provider events, catch-up, retry policy, notifications, and production scheduler ownership remain. |
 | Multiple agents collaborating in parallel | Not implemented | Delegation protocol, shared context, ownership, and activity presentation. |
-| Files, links, images, and richer input | Partial | Text is live; attachment ingestion and persisted artifacts remain. |
+| Files, links, images, and richer input | Partial | Library PDF/text ingestion works; chat attachments, links, images, OCR, and persisted generated artifacts remain. |
 | Activity transcript and action visibility | UI fixture | Normalized runtime events and durable work log. |
 | Sharing and organization controls | Product model only | Authentication, roles, tenancy, audit, and sharing APIs. |
 
@@ -57,7 +58,7 @@ multi-bot collaboration.
 1. **Done:** stabilize the live conversation slice and add real thread lifecycle controls.
 2. **Done for the demo:** add recurring routines with next-run time, run history, missed-run visibility, retry, and pause controls.
 3. **Done for current runtime data:** connect the work log to real Flue transcript and response metadata.
-4. Add one harmless tool end to end, including an explicit approval and visible result.
+4. **Done for read-only retrieval:** add one harmless tool end to end; `search_library` needs no approval because it only reads local documents.
 5. Add one connector behind a narrow interface without moving connector credentials into the web app.
 6. Connect the computer panel to the separately supplied execution and artifact boundary.
 

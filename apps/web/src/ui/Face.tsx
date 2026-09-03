@@ -20,7 +20,7 @@ const COLOR_CLASS: Record<FaceColor, string> = {
   gray: "bg-face-gray",
 };
 
-/** Konan's face: a disc with two eyes. Same family as Grok Bot's blobs, its own shape. */
+/** Vivid's face: a disc with two eyes. Same family as Grok Bot's blobs, its own shape. */
 export function Face({
   color = "accent",
   mood = "neutral",
@@ -43,7 +43,7 @@ export function Face({
   return (
     <span
       role="img"
-      aria-label={label ?? "Konan"}
+      aria-label={label ?? "Vivid"}
       className={cn("relative inline-flex shrink-0 items-center justify-center rounded-full", COLOR_CLASS[color], className)}
       style={{
         ...style,
