@@ -27,6 +27,7 @@ chat transport, durable conversation history, and the model adapter.
 - Default model: `openrouter/z-ai/glm-5.3-flash`.
 - Secrets are loaded from the ignored `.env`; never print or commit them.
 - SQLite defaults to `.state/flue.sqlite`.
-- Do not add scheduling, connectors, tools, credential flows, or execution internals here; those
-  remain outside the collaboration repository.
+- Keep the included schedule adapter narrow: cron admission into Flue plus product-facing routine
+  state. Connectors, general orchestration, credential flows, and execution internals remain outside
+  the collaboration repository.
 - A Flue conversation is the durable unit. A bounded job is a harness tool, not a workflow primitive.

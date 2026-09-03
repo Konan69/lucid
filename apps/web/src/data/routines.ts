@@ -2,18 +2,6 @@
    templates from the gallery — published by Konan or by other teams, sold,
    with a cut of every sale going to the author. */
 
-export type Routine = {
-  id: string;
-  name: string;
-  /** What it does, in one line. */
-  summary: string;
-  trigger: string;
-  actions: string[];
-  fromTemplate?: string;
-  lastRun: string;
-  runs: number;
-};
-
 export type RoutineTemplate = {
   id: string;
   name: string;
@@ -30,36 +18,6 @@ export type RoutineTemplate = {
   /** Cut the author keeps on each sale. */
   authorCut?: string;
 };
-
-export const routines: Routine[] = [
-  {
-    id: "r-weekly-arkademy",
-    name: "Weekly Arkademy numbers",
-    summary: "Signups and revenue every Monday, three-line summary",
-    trigger: "Every Monday at 8am",
-    actions: ["Pull signups and revenue", "Compare to the prior week", "Post a summary — more only if something drops over 10%"],
-    lastRun: "Mon 8:01am",
-    runs: 6,
-  },
-  {
-    id: "r-rwa-onepager",
-    name: "Keep the RWA one-pager current",
-    summary: "Refreshes the Legal one-pager when the market scan changes",
-    trigger: "Every Monday, or when the scan changes",
-    actions: ["Re-read the RWA market scan", "Update the comparison table", "Flag anything Legal should re-review"],
-    lastRun: "Yesterday 4:22pm",
-    runs: 11,
-  },
-  {
-    id: "r-launch-watch",
-    name: "Arkademy launch watch",
-    summary: "Friday check for unowned or stalled launch items",
-    trigger: "Every Friday at 9am",
-    actions: ["Check the checklist for unowned items", "Nudge anyone waiting over a week", "Report only what changed"],
-    lastRun: "Last Fri 9:00am",
-    runs: 3,
-  },
-];
 
 export const templates: RoutineTemplate[] = [
   {

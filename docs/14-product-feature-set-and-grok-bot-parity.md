@@ -15,6 +15,7 @@ directional product target, not a claim that Konan and Grok Bot are equivalent.
 | Stop a response | Working | The composer can abort the active response. |
 | Connection recovery | Working | The conversation exposes loading, retry, and error states. |
 | Conversation list and creation | Working locally | The sidebar creates/selects real durable Flue conversations; their title index is stored alongside Flue state in SQLite. |
+| Scheduled routines | Working locally | SQLite stores definitions and run history; a Node cron trigger dispatches durable schedule signals into Flue with pause, test-run, edit, and delete controls. |
 | Response provenance | Working | Model, timing, usage, and tool-call count are attached to agent responses. |
 | Protected browser-to-runtime path | Working locally | Vite proxies the runtime API and adds the bearer token outside the browser bundle. Production needs an equivalent server-side gateway. |
 
@@ -44,7 +45,7 @@ multi-bot collaboration.
 | Connectors and MCP services | Not implemented | Proprietary connector layer, supplied separately. |
 | Approval before sensitive actions | Not implemented | Policy and approval protocol spanning product backend and runtime. |
 | Reusable skills | Research only | Versioned skill definitions, mounting, permissions, and product management. |
-| Scheduled and event-triggered routines | Not implemented | Proprietary scheduler, trigger engine, run history, retries, and notifications. |
+| Scheduled and event-triggered routines | Partial | Cron routines and run history work locally; provider events, catch-up, retry policy, notifications, and production scheduler ownership remain. |
 | Multiple agents collaborating in parallel | Not implemented | Delegation protocol, shared context, ownership, and activity presentation. |
 | Files, links, images, and richer input | Partial | Text is live; attachment ingestion and persisted artifacts remain. |
 | Activity transcript and action visibility | UI fixture | Normalized runtime events and durable work log. |

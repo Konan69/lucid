@@ -24,6 +24,12 @@ The same SQLite file stores both Flue's durable conversation stream and Konan's 
 conversation index (title, preview, and update time). The index is exposed through authenticated
 `GET /api/conversations` and `PUT /api/conversations/:id` routes.
 
+Routines use the same database for definitions and run history. On Node, `croner` provides the
+in-process trigger and each fire enters Flue as a durable `schedule` signal. Authenticated
+`/api/routines` routes provide create, edit, pause, delete, and test-run operations. This is a
+single-process demo adapter: production should use a platform scheduler so deploy downtime does not
+drop fires and multiple replicas do not duplicate them.
+
 Override the model with `KONAN_MODEL` and the database file with `KONAN_RUNTIME_DB`.
 
 ## Flue documentation

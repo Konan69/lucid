@@ -104,9 +104,7 @@ export function Sidebar({
         <ToolRow icon={<SunMedium className="size-4" strokeWidth={1.6} />} label="Today" onClick={() => onSelect("today")}>
           <span className="text-meta font-meta text-ink-4">4</span>
         </ToolRow>
-        <ToolRow icon={<Repeat2 className="size-4" strokeWidth={1.6} />} label="Routines" onClick={() => onSelect("routines")}>
-          <span className="text-meta font-meta text-ink-4">3</span>
-        </ToolRow>
+        <ToolRow icon={<Repeat2 className="size-4" strokeWidth={1.6} />} label="Routines" onClick={() => onSelect("routines")} />
         <ToolRow icon={<FolderKanban className="size-4" strokeWidth={1.6} />} label="Projects" onClick={() => onSelect("projects")}>
           <span className="text-meta font-meta text-ink-4">{countProjects(projects)}</span>
         </ToolRow>

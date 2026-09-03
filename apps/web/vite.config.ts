@@ -16,6 +16,13 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5178,
       proxy: {
+        "/api/routines": {
+          target: runtimeEnvironment.KONAN_RUNTIME_URL ?? "http://127.0.0.1:5173",
+          changeOrigin: true,
+          headers: runtimeToken
+            ? { authorization: `Bearer ${runtimeToken}` }
+            : undefined,
+        },
         "/api/conversations": {
           target: runtimeEnvironment.KONAN_RUNTIME_URL ?? "http://127.0.0.1:5173",
           changeOrigin: true,
