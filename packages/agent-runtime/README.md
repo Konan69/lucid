@@ -20,6 +20,10 @@ Defaults:
 - development port: `5173`
 - SQLite: `.state/flue.sqlite`
 
+The same SQLite file stores both Flue's durable conversation stream and Konan's lightweight
+conversation index (title, preview, and update time). The index is exposed through authenticated
+`GET /api/conversations` and `PUT /api/conversations/:id` routes.
+
 Override the model with `KONAN_MODEL` and the database file with `KONAN_RUNTIME_DB`.
 
 ## Flue documentation

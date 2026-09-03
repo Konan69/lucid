@@ -11,7 +11,6 @@ import { Conversation, DemoConversation } from "./screen/Conversation";
 import { Tokens } from "./screen/Tokens";
 import { IconButton } from "./ui/Button";
 import {
-  initialRuntimeConversations,
   titleFromMessage,
   type RuntimeConversation,
 } from "./data/runtimeConversations";
@@ -33,20 +32,20 @@ function initialTheme(): ThemePreference {
   return saved === "light" || saved === "dark" || saved === "system" ? saved : "system";
 }
 
-function initialRuntimeThreads(): RuntimeConversation[] {
-  try {
-    const saved = localStorage.getItem("konan-runtime-conversations");
-    if (saved) return JSON.parse(saved) as RuntimeConversation[];
-  } catch {
-    // A corrupt local index should not prevent access to the durable conversations.
-  }
-  return initialRuntimeConversations;
+async function saveRuntimeThread(thread: RuntimeConversation) {
+  const response = await fetch(`/api/conversations/${encodeURIComponent(thread.id)}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(thread),
+  });
+  if (!response.ok) throw new Error(`Could not save conversation (${response.status})`);
 }
 
 export default function App() {
   const [view, setView] = useState<View>(() => (location.search.includes("tokens") ? "tokens" : location.search.includes("empty") ? "empty" : location.search.includes("library") ? "library" : location.search.includes("projects") ? "projects" : location.search.includes("routines") ? "routines" : "conversation"));
-  const [runtimeThreads, setRuntimeThreads] = useState<RuntimeConversation[]>(initialRuntimeThreads);
-  const [activeId, setActiveId] = useState<string | null>(() => initialRuntimeThreads()[0]?.id ?? null);
+  const [runtimeThreads, setRuntimeThreads] = useState<RuntimeConversation[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [threadsReady, setThreadsReady] = useState(false);
   const [activeDemoId, setActiveDemoId] = useState("t5");
   const [panel, setPanel] = useState<"screen" | "log" | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -60,8 +59,40 @@ export default function App() {
   }, [resolvedTheme, theme]);
 
   useEffect(() => {
-    localStorage.setItem("konan-runtime-conversations", JSON.stringify(runtimeThreads));
-  }, [runtimeThreads]);
+    let cancelled = false;
+
+    async function loadThreads() {
+      const response = await fetch("/api/conversations");
+      if (!response.ok) throw new Error(`Could not load conversations (${response.status})`);
+      const body = await response.json() as { conversations: RuntimeConversation[] };
+      let conversations = body.conversations;
+
+      if (conversations.length === 0) {
+        try {
+          const legacy = localStorage.getItem("konan-runtime-conversations");
+          const parsed = legacy ? JSON.parse(legacy) as RuntimeConversation[] : [];
+          if (parsed.length > 0) {
+            await Promise.all(parsed.map(saveRuntimeThread));
+            conversations = parsed.sort((left, right) => right.updatedAt - left.updatedAt);
+          }
+        } catch {
+          // Ignore a corrupt legacy index; new conversations still work.
+        }
+      }
+
+      localStorage.removeItem("konan-runtime-conversations");
+      if (!cancelled) {
+        setRuntimeThreads(conversations);
+        setActiveId((current) => current ?? conversations[0]?.id ?? null);
+        setThreadsReady(true);
+      }
+    }
+
+    void loadThreads().catch(() => {
+      if (!cancelled) setThreadsReady(true);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   function createConversation() {
     const thread: RuntimeConversation = {
@@ -74,17 +105,23 @@ export default function App() {
     setActiveId(thread.id);
     setView("conversation");
     setPanel(null);
+    void saveRuntimeThread(thread);
   }
 
   function recordMessage(id: string, message: string) {
-    setRuntimeThreads((current) => current
-      .map((thread) => thread.id === id ? {
-        ...thread,
-        title: thread.title === "New conversation" ? titleFromMessage(message) : thread.title,
-        preview: message,
-        updatedAt: Date.now(),
-      } : thread)
-      .sort((left, right) => right.updatedAt - left.updatedAt));
+    const current = runtimeThreads.find((thread) => thread.id === id);
+    if (!current) return;
+    const changed = {
+      ...current,
+      title: current.title === "New conversation" ? titleFromMessage(message) : current.title,
+      preview: message,
+      updatedAt: Date.now(),
+    };
+    setRuntimeThreads((threads) => [
+      changed,
+      ...threads.filter((thread) => thread.id !== id),
+    ]);
+    void saveRuntimeThread(changed);
   }
 
   const activeThread = runtimeThreads.find((thread) => thread.id === activeId);
@@ -108,13 +145,13 @@ export default function App() {
         {view === "routines" && <Routines />}
         {view === "demo" && <DemoConversation conversationId={activeDemoId} />}
         {view === "conversation" && (
-          <Conversation
+          activeId ? <Conversation
             conversationId={activeId ?? "t1"}
             title={activeThread?.title ?? "Conversation"}
             onMessageSent={(message) => recordMessage(activeId ?? "t1", message)}
             panelOpen={panel !== null}
             onOpenPanel={(k) => setPanel((cur) => (cur === k ? null : k))}
-          />
+          /> : <div className="flex flex-1 items-center justify-center text-label text-ink-4">{threadsReady ? "Start a new conversation" : "Loading conversations…"}</div>
         )}
         {view === "conversation" && panel && <Panel kind={panel} onClose={() => setPanel(null)} />}
       </main>

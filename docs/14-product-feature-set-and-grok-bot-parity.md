@@ -14,7 +14,7 @@ directional product target, not a claim that Konan and Grok Bot are equivalent.
 | Send while working | Working | Flue admits new user messages while a response is active and processes them in order. |
 | Stop a response | Working | The composer can abort the active response. |
 | Connection recovery | Working | The conversation exposes loading, retry, and error states. |
-| Conversation list and creation | Working locally | The sidebar creates/selects real durable Flue conversations; its lightweight title index currently lives in browser storage. |
+| Conversation list and creation | Working locally | The sidebar creates/selects real durable Flue conversations; their title index is stored alongside Flue state in SQLite. |
 | Response provenance | Working | Model, timing, usage, and tool-call count are attached to agent responses. |
 | Protected browser-to-runtime path | Working locally | Vite proxies the runtime API and adds the bearer token outside the browser bundle. Production needs an equivalent server-side gateway. |
 
@@ -25,7 +25,7 @@ contracts and should not be mistaken for finished backend behavior.
 
 | Capability | Current state | Backend work needed |
 | --- | --- | --- |
-| Server-owned thread index | Partial | Creation and navigation work; move the browser-local title index into the product backend for multi-device use, archival, and ownership. |
+| Thread lifecycle | Partial | Server-owned creation and navigation work; archival, deletion, rename controls, and user ownership remain. |
 | Work log and computer panel | Fixture data | Event stream, artifact model, and a separately supplied execution boundary. |
 | Tool-call presentation | UI-ready | Real tools, policies, approvals, and results are not mounted. |
 | Attachments | Control only | Upload storage, validation, message parts, and retrieval. |

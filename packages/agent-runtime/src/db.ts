@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { sqlite } from "@flue/runtime/node";
 
-const databasePath = resolve(
+export const databasePath = resolve(
   process.env.KONAN_RUNTIME_DB ?? "./.state/flue.sqlite",
 );
 
