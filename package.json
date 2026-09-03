@@ -1,0 +1,16 @@
+{
+  "name": "@konan/workspace",
+  "private": true,
+  "packageManager": "pnpm@10.33.2",
+  "scripts": {
+    "dev": "pnpm --filter @konan/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "oxlint apps/*/src packages/*/src"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "oxlint": "1.81.0",
+    "typescript": "^5.9.0"
+  }
+}

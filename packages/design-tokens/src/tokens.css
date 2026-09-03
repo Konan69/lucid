@@ -1,0 +1,325 @@
+/* ─────────────────────────────────────────────────────────────
+   Konan design tokens. One language.
+
+   Sources, and what each one settled:
+   - Open Session   surface ramp (monotonic elevation), type scale, radius factor
+   - Grok Bot       ink and hairlines as alpha over the surface, status hue pairs,
+                    the ten face colors
+   - T3 Code        status is a label on a row, shown only when not ready
+
+   Rules:
+   1. Every color a component uses is a SEMANTIC token from this file. Never a raw hex.
+   2. Surfaces step one direction: bg < raised < panel < control in dark, the
+      same order descending in light. A token never changes tier between themes.
+   3. Text and borders are alpha ink, so they read the same on every tier.
+   4. Accent is Konan's own color. It appears on the face, the focus ring, the
+      one primary button, and "working". Nowhere else.
+   ───────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: dark;
+
+  /* ── Surface ramp (dark) ─────────────────────────────────── */
+  --surface-0: #161616;          /* the page */
+  --surface-1: #1c1c1c;          /* sidebar, chrome */
+  --surface-2: #232323;          /* cards, bubbles, rows */
+  --surface-3: #2c2c2c;          /* controls, composer, popups */
+  --surface-well: #0e0f12;       /* code, terminal, Konan's screen frame */
+  --scrim: rgba(10, 10, 10, 0.72);
+
+  /* ── Ink (alpha over surface) ────────────────────────────── */
+  --ink-base: 252 252 252;       /* rgb triplet */
+  --ink: rgb(var(--ink-base));
+  --ink-2: rgb(var(--ink-base) / 0.62);
+  --ink-3: rgb(var(--ink-base) / 0.42);
+  --ink-4: rgb(var(--ink-base) / 0.28);
+  --ink-on-accent: #ffffff;
+  --ink-on-color: #ffffff;
+
+  /* ── Hairlines (alpha) ───────────────────────────────────── */
+  --line-1: rgb(var(--ink-base) / 0.06);
+  --line-2: rgb(var(--ink-base) / 0.10);
+  --line-3: rgb(var(--ink-base) / 0.16);
+  --line-4: rgb(var(--ink-base) / 0.30);
+
+  /* ── Interaction washes (alpha, compose on any tier) ────── */
+  --wash-hover: rgb(var(--ink-base) / 0.06);
+  --wash-pressed: rgb(var(--ink-base) / 0.10);
+  --wash-selected: rgb(var(--ink-base) / 0.08);
+
+  /* ── Accent: Konan ───────────────────────────────────────── */
+  --accent: #7c6cff;
+  --accent-ink: #a89cff;         /* accent as text on dark */
+  --accent-soft: rgb(124 108 255 / 0.16);
+  --accent-hover: #8b7dff;
+  --ring: var(--accent);
+
+  /* ── Status (Grok Bot's matched pairs) ───────────────────── */
+  --status-working: #459ffe;             /* sky: in flight */
+  --status-working-soft: rgb(69 159 254 / 0.14);
+  --status-attention: var(--accent-ink);  /* a question for you */
+  --status-attention-soft: var(--accent-soft);
+  --status-approve: #ffaf38;              /* amber: permission */
+  --status-approve-soft: rgb(255 175 56 / 0.14);
+  --status-success: #38d591;
+  --status-success-soft: rgb(56 213 145 / 0.14);
+  --status-danger: #ff5667;
+  --status-danger-soft: rgb(255 86 103 / 0.14);
+  --status-info: #459ffe;
+  --status-info-soft: rgb(69 159 254 / 0.14);
+
+  /* ── Faces (Grok Bot palette) ────────────────────────────── */
+  --face-brown: #936439;
+  --face-red: #ff263c;
+  --face-orange: #ff6700;
+  --face-yellow: #ff9800;
+  --face-green: #00c972;
+  --face-cyan: #00bca6;
+  --face-blue: #1084fe;
+  --face-violet: #9159fe;
+  --face-magenta: #ff309b;
+  --face-gray: #777777;
+
+  /* ── Type ────────────────────────────────────────────────── */
+  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  --mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  --type-meta: 11px;
+  --type-label: 13px;
+  --type-title: 14px;
+  --type-body: 15px;
+  --type-dialog: 17px;
+  --type-section: 19px;
+  --type-page: 24px;
+  --type-hero: 28px;
+  --leading-tight: 1.25;
+  --leading-body: 1.5;
+  --weight-meta: 400;
+  --weight-title: 500;
+  --weight-strong: 600;
+
+  /* ── Radius ──────────────────────────────────────────────── */
+  --rf: 1;                       /* radius factor; phone raises it */
+  --radius-xs: calc(4px * var(--rf));
+  --radius-sm: calc(7px * var(--rf));
+  --radius-row: calc(9px * var(--rf));
+  --radius-control: calc(11px * var(--rf));
+  --radius-card: calc(14px * var(--rf));
+  --radius-panel: calc(16px * var(--rf));
+  --radius-composer: calc(24px * var(--rf));
+  --radius-full: 999px;
+
+  /* ── Layout ──────────────────────────────────────────────── */
+  --sidebar-w: 268px;
+  --sidebar-rail-w: 56px;
+  --panel-w: 420px;
+  --thread-max-w: 760px;
+  --topbar-h: 48px;
+  --row-h: 36px;                 /* a full line: navigates */
+  --tool-row-h: 32px;            /* the tool strip, only */
+  --caption-h: 28px;             /* a caption: no mark, no fill */
+  --card-row-h: 78px;            /* a thread that matters */
+  --control-h: 32px;
+
+  /* ── Edges, cast, ring ───────────────────────────────────── */
+  /* The specular top edge every lifted plate carries in dark: the one thing
+     that says "raised" when a cast shadow has nothing to fall on. */
+  --edge: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --edge-strong: inset 0 1px 0 rgb(255 255 255 / 0.10);
+  --cast-a: 0.22;
+  --cast-b: 0.26;
+  --cast-c: 0.34;
+  --ring-color: rgb(var(--ink-base) / 0.14);
+  --ring-90: rgb(var(--ink-base) / 0.126);
+  --ring-80: rgb(var(--ink-base) / 0.112);
+  --ring-65: rgb(var(--ink-base) / 0.091);
+  --ring-50: rgb(var(--ink-base) / 0.07);
+  --ring-35: rgb(var(--ink-base) / 0.049);
+  --shadow-composer: var(--edge-strong), 0 2px 6px rgb(0 0 0 / 0.20), 0 16px 40px rgb(0 0 0 / 0.30), 0 0 0 1px var(--ring-65);
+  --shadow-panel: -8px 0 24px rgb(0 0 0 / 0.18);
+
+  /* ── Motion ──────────────────────────────────────────────── */
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+
+  --surface-0: #ffffff;          /* the page: paper white */
+  --surface-1: #f6f6f6;          /* sidebar, chrome: OpenSession's raised step */
+  --surface-2: #f0f0ef;          /* cards, bubbles, rows */
+  --surface-3: #ffffff;          /* controls: white + hairline + shadow */
+  --surface-well: #f4f5f7;
+  --scrim: rgba(20, 20, 20, 0.42);
+
+  /* The cast on the content column's left edge (OpenSession's light rule):
+     dark drops it — black ink on near-black lands as a smudge — light keeps
+     it, because here it actually says "the sidebar is behind the page". */
+  --content-edge-shadow: -1px 0 8px rgb(0 0 0 / 0.05);
+
+  --ink-base: 20 20 20;
+  --ink-2: rgb(var(--ink-base) / 0.62);
+  --ink-3: rgb(var(--ink-base) / 0.44);
+  --ink-4: rgb(var(--ink-base) / 0.30);
+  --ink-on-accent: #ffffff;
+
+  --line-1: rgb(var(--ink-base) / 0.05);
+  --line-2: rgb(var(--ink-base) / 0.09);
+  --line-3: rgb(var(--ink-base) / 0.14);
+  --line-4: rgb(var(--ink-base) / 0.28);
+
+  --wash-hover: rgb(var(--ink-base) / 0.05);
+  --wash-pressed: rgb(var(--ink-base) / 0.09);
+  --wash-selected: rgb(var(--ink-base) / 0.07);
+
+  --accent: #5b4bff;
+  --accent-ink: #4a3ae6;
+  --accent-soft: rgb(91 75 255 / 0.12);
+  --accent-hover: #4d3df0;
+
+  --status-working: #0c64c1;
+  --status-working-soft: rgb(12 100 193 / 0.10);
+  --status-attention: var(--accent-ink);
+  --status-attention-soft: var(--accent-soft);
+  --status-approve: #c27400;
+  --status-approve-soft: rgb(194 116 0 / 0.12);
+  --status-success: #009957;
+  --status-success-soft: rgb(0 153 87 / 0.12);
+  --status-danger: #c21d2e;
+  --status-danger-soft: rgb(194 29 46 / 0.10);
+  --status-info: #0c64c1;
+  --status-info-soft: rgb(12 100 193 / 0.10);
+
+  --edge: inset 0 1px 0 rgb(255 255 255 / 0.9);
+  --edge-strong: var(--edge);
+  --cast-a: 0.05;
+  --cast-b: 0.07;
+  --cast-c: 0.10;
+  --ring-color: rgb(var(--ink-base) / 0.08);
+  --ring-90: rgb(var(--ink-base) / 0.072);
+  --ring-80: rgb(var(--ink-base) / 0.064);
+  --ring-65: rgb(var(--ink-base) / 0.052);
+  --ring-50: rgb(var(--ink-base) / 0.04);
+  --ring-35: rgb(var(--ink-base) / 0.028);
+  --shadow-composer: 0 2px 4px rgb(0 0 0 / 0.04), 0 14px 36px rgb(0 0 0 / 0.10), 0 0 0 1px var(--ring-80);
+  --shadow-panel: -8px 0 24px rgb(0 0 0 / 0.06);
+}
+
+html[data-theme="light"] body { background: var(--surface-0); }
+
+@media (max-width: 767px) {
+  :root { --rf: 1.3; }
+}
+
+/* Tailwind v4 theme mapping. Utilities read these; components use utilities
+   or the semantic vars above, never a raw value. */
+@theme inline {
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-well: var(--surface-well);
+  --color-scrim: var(--scrim);
+
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-4: var(--ink-4);
+  --color-ink-on-accent: var(--ink-on-accent);
+  --color-ink-on-color: var(--ink-on-color);
+
+  --color-line-1: var(--line-1);
+  --color-line-2: var(--line-2);
+  --color-line-3: var(--line-3);
+  --color-line-4: var(--line-4);
+
+  --color-wash-hover: var(--wash-hover);
+  --color-wash-pressed: var(--wash-pressed);
+  --color-wash-selected: var(--wash-selected);
+
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-hover: var(--accent-hover);
+  --color-ring: var(--ring);
+
+  --color-working: var(--status-working);
+  --color-working-soft: var(--status-working-soft);
+  --color-attention: var(--status-attention);
+  --color-attention-soft: var(--status-attention-soft);
+  --color-approve: var(--status-approve);
+  --color-approve-soft: var(--status-approve-soft);
+  --color-success: var(--status-success);
+  --color-success-soft: var(--status-success-soft);
+  --color-danger: var(--status-danger);
+  --color-danger-soft: var(--status-danger-soft);
+  --color-info: var(--status-info);
+  --color-info-soft: var(--status-info-soft);
+
+  --color-face-brown: var(--face-brown);
+  --color-face-red: var(--face-red);
+  --color-face-orange: var(--face-orange);
+  --color-face-yellow: var(--face-yellow);
+  --color-face-green: var(--face-green);
+  --color-face-cyan: var(--face-cyan);
+  --color-face-blue: var(--face-blue);
+  --color-face-violet: var(--face-violet);
+  --color-face-magenta: var(--face-magenta);
+  --color-face-gray: var(--face-gray);
+
+  --font-sans: var(--sans);
+  --font-mono: var(--mono);
+
+  --text-meta: var(--type-meta);
+  --text-meta--line-height: var(--leading-tight);
+  --text-label: var(--type-label);
+  --text-label--line-height: var(--leading-tight);
+  --text-title: var(--type-title);
+  --text-title--line-height: var(--leading-tight);
+  --text-body: var(--type-body);
+  --text-body--line-height: var(--leading-body);
+  --text-dialog: var(--type-dialog);
+  --text-dialog--line-height: var(--leading-tight);
+  --text-section: var(--type-section);
+  --text-section--line-height: var(--leading-tight);
+  --text-page: var(--type-page);
+  --text-page--line-height: var(--leading-tight);
+  --text-hero: var(--type-hero);
+  --text-hero--line-height: var(--leading-tight);
+
+  --font-weight-meta: var(--weight-meta);
+  --font-weight-title: var(--weight-title);
+  --font-weight-strong: var(--weight-strong);
+
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-row: var(--radius-row);
+  --radius-control: var(--radius-control);
+  --radius-card: var(--radius-card);
+  --radius-panel: var(--radius-panel);
+  --radius-composer: var(--radius-composer);
+  --radius-full: var(--radius-full);
+
+  --shadow-composer: var(--shadow-composer);
+  --shadow-panel: var(--shadow-panel);
+
+  --animate-status-pulse: status-pulse 2s var(--ease-in-out) infinite;
+  --animate-fade-in: fade-in var(--dur-base) var(--ease-out) both;
+  --animate-rise-in: rise-in var(--dur-slow) var(--ease-out) both;
+}
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}

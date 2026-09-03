@@ -1,0 +1,85 @@
+@import "tailwindcss";
+@import "@konan/design-tokens/tokens.css";
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--surface-0);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: var(--type-title);
+    font-weight: 500;                     /* medium is the regular; meta drops to 400 */
+    line-height: var(--leading-tight);
+    text-rendering: optimizeLegibility;
+    font-synthesis: none;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  button, input, textarea, select { font: inherit; font-weight: inherit; color: inherit; }
+  button { cursor: pointer; background: none; border: 0; padding: 0; text-align: inherit; }
+  button:disabled { cursor: not-allowed; }
+  ::selection { background: var(--accent-soft); }
+  :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: var(--radius-xs); }
+  * { scrollbar-width: thin; scrollbar-color: var(--line-3) transparent; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+}
+
+/* ── Hairlines ─────────────────────────────────────────────── */
+@utility hairline-b { box-shadow: inset 0 -1px 0 var(--line-2); }
+@utility hairline-t { box-shadow: inset 0 1px 0 var(--line-2); }
+@utility hairline-r { box-shadow: inset -1px 0 0 var(--line-2); }
+@utility hairline-l { box-shadow: inset 1px 0 0 var(--line-2); }
+@utility ring-line { box-shadow: 0 0 0 1px var(--line-2); }
+
+/* ── Smooth shadows: cast layers + hairline ring in ONE box-shadow.
+      The ring fades as elevation rises. Never add a border to these. ── */
+@utility shadow-xs {
+  box-shadow: var(--edge), 0 1px 2px -1px rgb(0 0 0 / var(--cast-a)), 0 2px 5px -3px rgb(0 0 0 / var(--cast-b));
+}
+@utility shadow-ring-xs {
+  box-shadow: var(--edge), 0 1px 2px -1px rgb(0 0 0 / var(--cast-a)), 0 2px 5px -3px rgb(0 0 0 / var(--cast-b)), 0 0 0 1px var(--ring-90);
+}
+@utility shadow-sm {
+  box-shadow: var(--edge), 0 1px 3px -1px rgb(0 0 0 / var(--cast-a)), 0 4px 10px -4px rgb(0 0 0 / var(--cast-b));
+}
+@utility shadow-ring-sm {
+  box-shadow: var(--edge), 0 1px 3px -1px rgb(0 0 0 / var(--cast-a)), 0 4px 10px -4px rgb(0 0 0 / var(--cast-b)), 0 0 0 1px var(--ring-80);
+}
+@utility shadow-md {
+  box-shadow: var(--edge-strong), 0 2px 6px -2px rgb(0 0 0 / var(--cast-a)), 0 10px 28px -8px rgb(0 0 0 / var(--cast-c));
+}
+@utility shadow-ring-md {
+  box-shadow: var(--edge-strong), 0 2px 6px -2px rgb(0 0 0 / var(--cast-a)), 0 10px 28px -8px rgb(0 0 0 / var(--cast-c)), 0 0 0 1px var(--ring-65);
+}
+@utility shadow-lg {
+  box-shadow: var(--edge-strong), 0 4px 12px -4px rgb(0 0 0 / var(--cast-a)), 0 18px 48px -14px rgb(0 0 0 / var(--cast-c));
+}
+@utility shadow-ring-lg {
+  box-shadow: var(--edge-strong), 0 4px 12px -4px rgb(0 0 0 / var(--cast-a)), 0 18px 48px -14px rgb(0 0 0 / var(--cast-c)), 0 0 0 1px var(--ring-50);
+}
+@utility shadow-ring-soft {
+  box-shadow: var(--edge-strong), 0 3px 10px -3px rgb(0 0 0 / var(--cast-a)), 0 20px 56px -16px rgb(0 0 0 / var(--cast-c)), 0 0 0 1px var(--ring-35);
+}
+
+/* ── Glass: for what floats over live content ─────────────── */
+@utility glass {
+  background: color-mix(in srgb, var(--surface-3) 78%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  backdrop-filter: blur(20px) saturate(1.6);
+  @supports not (backdrop-filter: blur(1px)) { background: var(--surface-3); }
+}
+
+/* ── Scroll fades ──────────────────────────────────────────── */
+@utility scroll-fade-y {
+  mask-image: linear-gradient(to bottom, transparent, black 20px, black calc(100% - 20px), transparent);
+}
+
+/* ── Grain: a whisper of texture so large flat chrome isn't dead ── */
+@utility grain {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0.035 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
