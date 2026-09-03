@@ -8,11 +8,11 @@ message. It is not a coding tool.
 
 This repository is the collaboration-ready product slice. It contains the frontend, application
 backend shell, shared product contracts, mock data, design system, visible behavior, and the small
-Flue runtime adapter needed to power the initial conversation experience.
+Flue runtime adapter needed to power conversations and demo scheduled routines.
 
-The proprietary execution layer is not included: scheduling and recurring-job execution, connector
-and tool-call implementations, computer control, credential handling, and the research or
-reconstructed sources behind those systems. Product screens may show fixture states for these
+The proprietary execution layer is not included: production scheduler ownership and recovery,
+connector and tool-call implementations, computer control, credential handling, and the research
+or reconstructed sources behind those systems. Product screens may show fixture states for these
 features, but the fixtures do not define their implementation.
 
 ## Start
@@ -48,8 +48,8 @@ This is a full-stack collaboration boundary, not a frontend-only one. Work may i
 authentication, people and companies, projects, threads, messages, library data, ordinary HTTP APIs,
 persistence, tests, and shared product contracts.
 
-The included `packages/agent-runtime` owns only the shareable Flue conversation transport,
-persistence, and model adapter. The application backend may submit work through this explicit
-boundary and consume status or results, but it must not implement or absorb the scheduler,
-recurring-task engine, connectors, tool calls, computer transport, or credential handling. Those
-integrations will be supplied separately.
+The included `packages/agent-runtime` owns the shareable Flue conversation transport, SQLite
+persistence, model adapter, and a single-process cron adapter for the demo. The application backend
+may submit work through this explicit boundary and consume status or results, but it must not absorb
+the production scheduling engine, connectors, tool calls, computer transport, or credential
+handling. Those integrations will be supplied separately.

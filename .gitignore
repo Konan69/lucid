@@ -22,6 +22,9 @@ Thumbs.db
 .pi/
 **/.pi/
 **/.pi-subagents/
+/task_plan.md
+/findings.md
+/progress.md
 
 # Internal product, client, pitch, and research material
 # These files remain on the local filesystem but are outside the collaboration repo.

@@ -1,10 +1,10 @@
 import {
-  Check, ChevronRight, Clock3, LoaderCircle, Pause, Play, Plus, Repeat2,
+  AlertTriangle, Check, ChevronRight, Clock3, LoaderCircle, Pause, Play, Plus, Repeat2, RotateCcw,
   Search, ShieldCheck, Star, Store, Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { templates, type RoutineTemplate } from "../data/routines";
-import type { RuntimeConversation } from "../data/runtimeConversations";
+import { plainPreview, type RuntimeConversation } from "../data/runtimeConversations";
 import { cn } from "../ui/cn";
 
 type RoutineRun = {
@@ -24,6 +24,7 @@ type ScheduledRoutine = {
   cron: string;
   timezone: string;
   enabled: boolean;
+  lastMissedAt: number | null;
   nextRunAt: number | null;
   runs: RoutineRun[];
 };
@@ -118,9 +119,10 @@ export function Routines({ onOpenConversation }: { onOpenConversation(conversati
                   <ul className="flex flex-col gap-px">
                     {routines.map((routine) => {
                       const running = routine.runs[0]?.status === "running";
+                      const failed = routine.runs[0]?.status === "failed";
                       return <li key={routine.id}><button onClick={() => setSelectedId(routine.id)} className="group/row flex w-full items-center gap-2.5 rounded-row px-2.5 py-2.5 text-left transition-colors duration-(--dur-fast) hover:bg-wash-hover">
                         <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink">{running ? <LoaderCircle className="size-4 animate-spin" /> : routine.enabled ? <Clock3 className="size-4" /> : <Pause className="size-4" />}</span>
-                        <span className="min-w-0 flex-1"><span className="block truncate text-title text-ink">{routine.name}</span><span className="block truncate text-meta font-meta text-ink-4">{routine.enabled ? `${describeCron(routine.cron)} · ${routine.timezone}` : "Paused"}</span></span>
+                        <span className="min-w-0 flex-1"><span className="block truncate text-title text-ink">{routine.name}</span><span className={cn("block truncate text-meta font-meta", failed || routine.lastMissedAt ? "text-danger" : "text-ink-4")}>{failed ? "Last run failed · open to retry" : routine.lastMissedAt ? `Missed ${formatTime(routine.lastMissedAt)}` : routine.enabled ? `${describeCron(routine.cron)} · ${routine.timezone}` : "Paused"}</span></span>
                         <span className="hidden text-right text-meta font-meta text-ink-4 sm:block">{routine.enabled ? <>Next<br />{formatTime(routine.nextRunAt)}</> : "Paused"}</span>
                         <i className={cn("size-1.5 shrink-0 rounded-full", routine.enabled ? "bg-success" : "bg-ink-4")} aria-label={routine.enabled ? "Active" : "Paused"} />
                       </button></li>;
@@ -150,6 +152,7 @@ function RoutineEditor({ routine, onChanged, onDeleted, onCancel, onOpenConversa
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const running = routine?.runs[0]?.status === "running";
+  const needsRetry = routine?.runs[0]?.status === "failed" || routine?.lastMissedAt != null;
 
   async function mutate(path: string, init: RequestInit) {
     setPending(true);
@@ -189,7 +192,8 @@ function RoutineEditor({ routine, onChanged, onDeleted, onCancel, onOpenConversa
   }
 
   return <div className="pt-2">
-    {routine && <div className="mb-5 flex flex-wrap items-center gap-2 border-b border-line-1 pb-4"><button disabled={pending} onClick={() => void toggle()} className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs disabled:opacity-50">{routine.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}{routine.enabled ? "Pause" : "Resume"}</button><button disabled={pending || running} onClick={() => void runNow()} className="inline-flex h-8 items-center gap-1.5 rounded-control bg-accent px-3 text-label font-title text-ink-on-accent disabled:opacity-50">{running ? <LoaderCircle className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}{running ? "Running…" : "Test run"}</button><button disabled={pending} onClick={() => void remove()} className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-control px-3 text-label text-danger hover:bg-danger-soft disabled:opacity-50"><Trash2 className="size-3.5" />Delete</button></div>}
+    {routine && <div className="mb-5 flex flex-wrap items-center gap-2 border-b border-line-1 pb-4"><button disabled={pending} onClick={() => void toggle()} className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs disabled:opacity-50">{routine.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}{routine.enabled ? "Pause" : "Resume"}</button><button disabled={pending || running} onClick={() => void runNow()} className="inline-flex h-8 items-center gap-1.5 rounded-control bg-accent px-3 text-label font-title text-ink-on-accent disabled:opacity-50">{running ? <LoaderCircle className="size-3.5 animate-spin" /> : needsRetry ? <RotateCcw className="size-3.5" /> : <Play className="size-3.5" />}{running ? "Running…" : needsRetry ? "Retry now" : "Test run"}</button><button disabled={pending} onClick={() => void remove()} className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-control px-3 text-label text-danger hover:bg-danger-soft disabled:opacity-50"><Trash2 className="size-3.5" />Delete</button></div>}
+    {routine?.lastMissedAt && <div className="mb-4 flex items-start gap-2 rounded-control bg-danger-soft px-3 py-2.5 text-label text-danger"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p>Konan was offline for the expected run at {formatTime(routine.lastMissedAt)}. It was not silently replayed. Retry it when ready.</p></div>}
     <form onSubmit={(event) => void save(event)} className="space-y-4">
       <label className="block"><span className="mb-1.5 block text-label font-title text-ink-2">Name</span><input required maxLength={120} value={name} onChange={(event) => setName(event.currentTarget.value)} placeholder="Daily project brief" className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm" /></label>
       <label className="block"><span className="mb-1.5 block text-label font-title text-ink-2">Instruction</span><textarea required maxLength={4000} rows={5} value={prompt} onChange={(event) => setPrompt(event.currentTarget.value)} placeholder="Review recent project activity and prepare a concise brief." className="w-full resize-y rounded-control bg-surface-2 px-3 py-2.5 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm" /></label>
@@ -198,7 +202,7 @@ function RoutineEditor({ routine, onChanged, onDeleted, onCancel, onOpenConversa
       {error && <p className="text-label text-danger" role="alert">{error}</p>}
       <div className="flex items-center justify-end gap-2 pt-1"><button type="button" onClick={onCancel} className="h-9 rounded-control px-3 text-label text-ink-3 hover:bg-wash-hover">Cancel</button><button disabled={pending} className="inline-flex h-9 items-center gap-2 rounded-control bg-accent px-4 text-label font-title text-ink-on-accent disabled:opacity-50">{pending && <LoaderCircle className="size-3.5 animate-spin" />}{routine ? "Save changes" : "Create routine"}</button></div>
     </form>
-    {routine && <div className="mt-7 border-t border-line-1 pt-4"><h2 className="text-label font-title text-ink-2">Run history</h2>{routine.runs.length === 0 ? <p className="mt-2 text-label text-ink-4">No runs yet.</p> : <ul className="mt-2 space-y-1">{routine.runs.map((run) => <li key={run.id}><button type="button" title="Open conversation" onClick={() => onOpenConversation({ id: run.conversationId, title: routine.name, preview: run.output ?? run.error ?? routine.prompt, updatedAt: run.finishedAt ?? run.startedAt })} className="group/run w-full rounded-row bg-surface-2 px-3 py-2.5 text-left shadow-ring-xs transition-[background-color,box-shadow] hover:bg-wash-hover hover:shadow-ring-sm"><div className="flex items-center gap-2"><span className={cn("size-2 rounded-full", run.status === "succeeded" ? "bg-success" : run.status === "failed" ? "bg-danger" : "animate-pulse bg-working")} /><span className="text-label capitalize text-ink">{run.status}</span><time className="ml-auto text-meta font-meta text-ink-4">{formatTime(run.startedAt)}</time><ChevronRight className="size-3.5 text-ink-4 transition-transform group-hover/run:translate-x-0.5" /></div>{run.output && <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-meta text-ink-3">{run.output}</p>}{run.error && <p className="mt-1 text-meta text-danger">{run.error}</p>}</button></li>)}</ul>}</div>}
+    {routine && <div className="mt-7 border-t border-line-1 pt-4"><h2 className="text-label font-title text-ink-2">Run history</h2>{routine.runs.length === 0 ? <p className="mt-2 text-label text-ink-4">No runs yet.</p> : <ul className="mt-2 space-y-1">{routine.runs.map((run) => <li key={run.id}><button type="button" title="Open conversation" onClick={() => onOpenConversation({ id: run.conversationId, title: routine.name, preview: plainPreview(run.output ?? run.error ?? routine.prompt), updatedAt: run.finishedAt ?? run.startedAt, archived: false })} className="group/run w-full rounded-row bg-surface-2 px-3 py-2.5 text-left shadow-ring-xs transition-[background-color,box-shadow] hover:bg-wash-hover hover:shadow-ring-sm"><div className="flex items-center gap-2"><span className={cn("size-2 rounded-full", run.status === "succeeded" ? "bg-success" : run.status === "failed" ? "bg-danger" : "animate-pulse bg-working")} /><span className="text-label capitalize text-ink">{run.status}</span><time className="ml-auto text-meta font-meta text-ink-4">{formatTime(run.startedAt)}</time><ChevronRight className="size-3.5 text-ink-4 transition-transform group-hover/run:translate-x-0.5" /></div>{run.output && <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-meta text-ink-3">{run.output}</p>}{run.error && <p className="mt-1 text-meta text-danger">{run.error}</p>}</button></li>)}</ul>}</div>}
   </div>;
 }
 

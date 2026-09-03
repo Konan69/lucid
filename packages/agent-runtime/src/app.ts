@@ -16,7 +16,7 @@ import {
   getRoutine,
   updateRoutine,
 } from "./routine-store.ts";
-import { listConversations, upsertConversation } from "./thread-store.ts";
+import { deleteConversation, listConversations, upsertConversation } from "./thread-store.ts";
 
 const app = new Hono();
 
@@ -59,6 +59,7 @@ app.put("/api/conversations/:id", async (context) => {
   }
 
   const body = await context.req.json<{
+    archived?: unknown;
     preview?: unknown;
     title?: unknown;
     updatedAt?: unknown;
@@ -68,6 +69,7 @@ app.put("/api/conversations/:id", async (context) => {
   }
 
   const conversation = upsertConversation({
+    archived: typeof body.archived === "boolean" ? body.archived : false,
     id,
     title: body.title.trim().slice(0, 120) || "New conversation",
     preview: body.preview.trim().slice(0, 500),
@@ -77,6 +79,33 @@ app.put("/api/conversations/:id", async (context) => {
   });
 
   return context.json({ conversation });
+});
+
+app.patch("/api/conversations/:id", async (context) => {
+  const id = context.req.param("id");
+  const current = listConversations().find((conversation) => conversation.id === id);
+  if (!current) return context.json({ error: "Conversation not found" }, 404);
+  const body = await context.req.json<{ archived?: unknown; title?: unknown }>();
+  if (body.title !== undefined && (typeof body.title !== "string" || !body.title.trim())) {
+    return context.json({ error: "Invalid title" }, 400);
+  }
+  if (body.archived !== undefined && typeof body.archived !== "boolean") {
+    return context.json({ error: "Invalid archived value" }, 400);
+  }
+  const conversation = upsertConversation({
+    ...current,
+    title: typeof body.title === "string" ? body.title.trim().slice(0, 120) : current.title,
+    archived: typeof body.archived === "boolean" ? body.archived : current.archived,
+    updatedAt: Date.now(),
+  });
+  return context.json({ conversation });
+});
+
+app.delete("/api/conversations/:id", (context) => {
+  if (!deleteConversation(context.req.param("id"))) {
+    return context.json({ error: "Conversation not found" }, 404);
+  }
+  return context.body(null, 204);
 });
 
 app.get("/api/routines", (context) =>

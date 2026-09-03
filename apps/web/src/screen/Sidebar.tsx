@@ -1,4 +1,4 @@
-import { Archive, Pin, Plus, Search, ChevronDown, ChevronLeft, ChevronRight, PanelLeft, SunMedium, Repeat2, Library, ListFilter, AlarmClock, Check, FolderKanban } from "lucide-react";
+import { Archive, ArchiveRestore, Pin, Pencil, Plus, Search, ChevronDown, ChevronLeft, ChevronRight, PanelLeft, SunMedium, Repeat2, Library, ListFilter, AlarmClock, Check, FolderKanban, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { doneCount, conversations, type Conversation } from "../data/fixtures";
 import { countProjects, projects, type Project } from "../data/projects";
@@ -66,12 +66,18 @@ function laneConversations(list: Conversation[]) {
 export function Sidebar({
   activeId,
   runtimeConversations,
+  onArchive,
+  onDelete,
+  onRename,
   onSelect,
   onOpenSettings,
   workingCount,
 }: {
   activeId: string | null;
   runtimeConversations: RuntimeConversation[];
+  onArchive: (id: string, archived: boolean) => void;
+  onDelete: (id: string) => void;
+  onRename: (id: string, title: string) => void;
   onSelect: (id: string) => void;
   onOpenSettings: () => void;
   workingCount: number;
@@ -79,6 +85,10 @@ export function Sidebar({
   const demoConversations = conversations.filter((conversation) => ["t2", "t4", "t5"].includes(conversation.id));
   const { lanes } = laneConversations(demoConversations);
   const [doneOpen, setDoneOpen] = useState(false);
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<RuntimeConversation | null>(null);
+  const activeConversations = runtimeConversations.filter((conversation) => !conversation.archived);
+  const archivedConversations = runtimeConversations.filter((conversation) => conversation.archived);
   return (
     <aside className="hidden h-full w-(--sidebar-w) shrink-0 flex-col bg-surface-1 hairline-r md:flex">
       {/* Nav strip */}
@@ -121,11 +131,14 @@ export function Sidebar({
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 scroll-fade-y">
         <section>
           <ul className="flex flex-col gap-1 pt-1">
-            {runtimeConversations.map((conversation) => (
+            {activeConversations.map((conversation) => (
               <li key={conversation.id}>
                 <RuntimeRow
                   conversation={conversation}
                   active={conversation.id === activeId}
+                  onArchive={() => onArchive(conversation.id, true)}
+                  onDelete={() => onDelete(conversation.id)}
+                  onRename={() => setRenameTarget(conversation)}
                   onSelect={() => onSelect(conversation.id)}
                 />
               </li>
@@ -160,10 +173,12 @@ export function Sidebar({
           )}
         </section>
 
-        <button className={cn(ROW, FULL, HOVER, "mt-2 text-ink-3 hover:text-ink")}>
+        <button onClick={() => setArchivedOpen((open) => !open)} className={cn(ROW, FULL, HOVER, "mt-2 text-ink-3 hover:text-ink")}>
           <span className="inline-flex size-[22px] items-center justify-center"><Archive className="size-4" /></span>
-          <span className="text-label">Archived</span>
+          <span className="min-w-0 flex-1 text-label">Archived</span>
+          {archivedConversations.length > 0 && <span className="text-meta font-meta text-ink-4">{archivedConversations.length}</span>}
         </button>
+        {archivedOpen && <ul className="flex flex-col gap-1 pb-2">{archivedConversations.length === 0 ? <li className="px-2.5 py-2 text-meta text-ink-4">No archived conversations</li> : archivedConversations.map((conversation) => <li key={conversation.id}><RuntimeRow conversation={conversation} active={conversation.id === activeId} onArchive={() => onArchive(conversation.id, false)} onDelete={() => onDelete(conversation.id)} onRename={() => setRenameTarget(conversation)} onSelect={() => onSelect(conversation.id)} /></li>)}</ul>}
       </nav>
 
       <button onClick={onOpenSettings} className={cn(ROW, FULL, HOVER, "m-2 mt-0 w-auto")}>
@@ -171,28 +186,49 @@ export function Sidebar({
         <span className="min-w-0 flex-1 truncate text-label text-ink-2">You</span>
         <span className="text-meta font-meta text-ink-4">Personal</span>
       </button>
+      {renameTarget && <RenameDialog conversation={renameTarget} onCancel={() => setRenameTarget(null)} onSave={(title) => { onRename(renameTarget.id, title); setRenameTarget(null); }} />}
     </aside>
   );
 }
 
-function RuntimeRow({ conversation, active, onSelect }: { conversation: RuntimeConversation; active: boolean; onSelect: () => void }) {
+function RenameDialog({ conversation, onCancel, onSave }: { conversation: RuntimeConversation; onCancel: () => void; onSave: (title: string) => void }) {
+  const [title, setTitle] = useState(conversation.title);
   return (
-    <button
-      onClick={onSelect}
-      aria-current={active ? "page" : undefined}
-      className={cn(
-        "group/row relative block h-(--card-row-h) w-full rounded-card px-2.5 py-2 text-left outline-none select-none transition-[background-color,box-shadow] duration-(--dur-fast)",
-        active ? "bg-surface-3 shadow-ring-sm" : "bg-surface-2 shadow-ring-xs hover:bg-wash-hover hover:shadow-ring-sm",
-      )}
-    >
-      <span className="flex h-5 items-center gap-1.5">
-        <Face size={16} mood="neutral" />
-        <span className="flex-1" />
-        <time className="text-meta font-meta tabular-nums text-ink-4">{relativeTime(conversation.updatedAt)}</time>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
+      <form onSubmit={(event) => { event.preventDefault(); onSave(title); }} className="w-full max-w-sm rounded-panel bg-surface-1 p-4 shadow-popup ring-line" role="dialog" aria-modal="true" aria-labelledby="rename-conversation-title">
+        <h2 id="rename-conversation-title" className="text-dialog font-title text-ink">Rename conversation</h2>
+        <input autoFocus required maxLength={120} value={title} onChange={(event) => setTitle(event.currentTarget.value)} className="mt-3 h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm" />
+        <div className="mt-4 flex justify-end gap-2"><button type="button" onClick={onCancel} className="h-9 rounded-control px-3 text-label text-ink-3 hover:bg-wash-hover">Cancel</button><button disabled={!title.trim()} className="h-9 rounded-control bg-accent px-4 text-label font-title text-ink-on-accent disabled:opacity-50">Rename</button></div>
+      </form>
+    </div>
+  );
+}
+
+function RuntimeRow({ conversation, active, onSelect, onArchive, onDelete, onRename }: { conversation: RuntimeConversation; active: boolean; onSelect: () => void; onArchive: () => void; onDelete: () => void; onRename: () => void }) {
+  return (
+    <div className="group/runtime relative">
+      <button
+        onClick={onSelect}
+        aria-current={active ? "page" : undefined}
+        className={cn(
+          "relative block h-(--card-row-h) w-full rounded-card px-2.5 py-2 text-left outline-none select-none transition-[background-color,box-shadow] duration-(--dur-fast)",
+          active ? "bg-surface-3 shadow-ring-sm" : "bg-surface-2 shadow-ring-xs hover:bg-wash-hover hover:shadow-ring-sm",
+        )}
+      >
+        <span className="flex h-5 items-center gap-1.5">
+          <Face size={16} mood="neutral" />
+          <span className="flex-1" />
+          <time className="text-meta font-meta tabular-nums text-ink-4 transition-opacity group-hover/runtime:opacity-0 group-focus-within/runtime:opacity-0">{relativeTime(conversation.updatedAt)}</time>
+        </span>
+        <span className="mt-0.5 block truncate text-title text-ink/90">{conversation.title}</span>
+        <span className="mt-0.5 block truncate text-label font-meta text-ink-3">{conversation.preview}</span>
+      </button>
+      <span className="pointer-events-none absolute right-2 top-1.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/runtime:pointer-events-auto group-hover/runtime:opacity-100 group-focus-within/runtime:pointer-events-auto group-focus-within/runtime:opacity-100">
+        <button aria-label={`Rename ${conversation.title}`} onClick={onRename} className="inline-flex size-6 items-center justify-center rounded-xs text-ink-3 hover:bg-wash-pressed hover:text-ink"><Pencil className="size-3.5" /></button>
+        <button aria-label={`${conversation.archived ? "Restore" : "Archive"} ${conversation.title}`} onClick={onArchive} className="inline-flex size-6 items-center justify-center rounded-xs text-ink-3 hover:bg-wash-pressed hover:text-ink">{conversation.archived ? <ArchiveRestore className="size-3.5" /> : <Archive className="size-3.5" />}</button>
+        <button aria-label={`Delete ${conversation.title}`} onClick={onDelete} className="inline-flex size-6 items-center justify-center rounded-xs text-ink-3 hover:bg-danger-soft hover:text-danger"><Trash2 className="size-3.5" /></button>
       </span>
-      <span className="mt-0.5 block truncate text-title text-ink/90">{conversation.title}</span>
-      <span className="mt-0.5 block truncate text-label font-meta text-ink-3">{conversation.preview}</span>
-    </button>
+    </div>
   );
 }
 

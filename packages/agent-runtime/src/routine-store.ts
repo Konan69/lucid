@@ -9,6 +9,8 @@ export type Routine = {
   cron: string;
   timezone: string;
   enabled: boolean;
+  nextExpectedAt: number | null;
+  lastMissedAt: number | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -39,6 +41,8 @@ database.exec(`
     cron TEXT NOT NULL,
     timezone TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
+    next_expected_at INTEGER,
+    last_missed_at INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
@@ -57,9 +61,18 @@ database.exec(`
     ON konan_routine_runs(routine_id, started_at DESC);
 `);
 
+const routineTableColumns = database.prepare("PRAGMA table_info(konan_routines)").all() as unknown as Array<{ name: string }>;
+if (!routineTableColumns.some((column) => column.name === "next_expected_at")) {
+  database.exec("ALTER TABLE konan_routines ADD COLUMN next_expected_at INTEGER");
+}
+if (!routineTableColumns.some((column) => column.name === "last_missed_at")) {
+  database.exec("ALTER TABLE konan_routines ADD COLUMN last_missed_at INTEGER");
+}
+
 const routineColumns = `
   id, name, prompt, cron, timezone,
-  enabled, created_at AS createdAt, updated_at AS updatedAt
+  enabled, next_expected_at AS nextExpectedAt, last_missed_at AS lastMissedAt,
+  created_at AS createdAt, updated_at AS updatedAt
 `;
 
 function mapRoutine(row: unknown): Routine {
@@ -83,6 +96,8 @@ export function createRoutine(input: Pick<Routine, "name" | "prompt" | "cron" | 
     ...input,
     id: randomUUID(),
     enabled: true,
+    nextExpectedAt: null,
+    lastMissedAt: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -110,6 +125,14 @@ export function updateRoutine(
 
 export function deleteRoutine(id: string): boolean {
   return database.prepare("DELETE FROM konan_routines WHERE id = ?").run(id).changes > 0;
+}
+
+export function setRoutineScheduleState(id: string, nextExpectedAt: number | null, lastMissedAt?: number | null) {
+  if (lastMissedAt === undefined) {
+    database.prepare("UPDATE konan_routines SET next_expected_at = ? WHERE id = ?").run(nextExpectedAt, id);
+  } else {
+    database.prepare("UPDATE konan_routines SET next_expected_at = ?, last_missed_at = ? WHERE id = ?").run(nextExpectedAt, lastMissedAt, id);
+  }
 }
 
 const runColumns = `

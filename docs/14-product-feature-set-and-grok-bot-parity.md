@@ -26,8 +26,9 @@ contracts and should not be mistaken for finished backend behavior.
 
 | Capability | Current state | Backend work needed |
 | --- | --- | --- |
-| Thread lifecycle | Partial | Server-owned creation and navigation work; archival, deletion, rename controls, and user ownership remain. |
-| Work log and computer panel | Fixture data | Event stream, artifact model, and a separately supplied execution boundary. |
+| Thread lifecycle | Working locally | Creation, navigation, rename, archive/restore, and delete use the SQLite-backed product index; user ownership remains outside the demo. |
+| Work log | Working locally | The active conversation derives requests, responses, model/timing/usage metadata, failures, and tool calls from its real Flue transcript. |
+| Computer panel | Fixture data | A separately supplied execution boundary and artifact model are still required. |
 | Tool-call presentation | UI-ready | Real tools, policies, approvals, and results are not mounted. |
 | Attachments | Control only | Upload storage, validation, message parts, and retrieval. |
 | People, companies, projects, and library | Product fixtures | CRUD APIs, authorization, persistence, and search. |
@@ -53,11 +54,12 @@ multi-bot collaboration.
 
 ## Recommended initial build order
 
-1. Stabilize this live conversation slice and replace fixture thread navigation with real threads.
-2. Add one harmless tool end to end, including an explicit approval and visible result.
-3. Add one connector behind a narrow interface without moving connector credentials into the web app.
-4. Add one recurring routine with schedule, next-run time, run history, retry, and pause controls.
-5. Connect the work log and computer panel to normalized runtime events and artifacts.
+1. **Done:** stabilize the live conversation slice and add real thread lifecycle controls.
+2. **Done for the demo:** add recurring routines with next-run time, run history, missed-run visibility, retry, and pause controls.
+3. **Done for current runtime data:** connect the work log to real Flue transcript and response metadata.
+4. Add one harmless tool end to end, including an explicit approval and visible result.
+5. Add one connector behind a narrow interface without moving connector credentials into the web app.
+6. Connect the computer panel to the separately supplied execution and artifact boundary.
 
 The first vertical slice should prove the complete trust boundary before broadening capability. A
 feature is complete only when its product state, authorization, failure behavior, persistence, and
@@ -66,9 +68,10 @@ observability are all represented.
 ## Collaboration boundary
 
 Engineers may work across the web app, ordinary backend APIs, auth, product entities, shared
-contracts, SQLite-backed conversation transport, and the included Flue model adapter. Do not add
-the scheduler, recurring-task engine, connectors, tool implementations, computer transport,
-credential handling, reconstructed material, research notes, or legacy PRDs to this repository.
+contracts, SQLite-backed conversation transport, the included Flue model adapter, and the included
+single-process demo scheduler. Do not add the production scheduler, connector implementations,
+tool implementations, computer transport, credential handling, reconstructed material, research
+notes, or legacy PRDs to this repository.
 
 ## Sources
 

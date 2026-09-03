@@ -3,7 +3,19 @@ export type RuntimeConversation = {
   title: string;
   preview: string;
   updatedAt: number;
+  archived: boolean;
 };
+
+export function plainPreview(markdown: string) {
+  return markdown
+    .replace(/```[\s\S]*?```/g, " code ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(?:#{1,6}|>|[-+*]|\d+\.)\s+/gm, "")
+    .replace(/[*_~`]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 export function titleFromMessage(message: string) {
   const firstLine = message.trim().split("\n", 1)[0] ?? "New conversation";

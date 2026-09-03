@@ -1,4 +1,3 @@
-import { Moon, Sun, SwatchBook } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { EmptyState } from "./screen/EmptyState";
 import { Library } from "./screen/Library";
@@ -9,8 +8,8 @@ import { Sidebar } from "./screen/Sidebar";
 import { Settings, type ThemePreference } from "./screen/Settings";
 import { Conversation, DemoConversation } from "./screen/Conversation";
 import { Tokens } from "./screen/Tokens";
-import { IconButton } from "./ui/Button";
 import {
+  plainPreview,
   titleFromMessage,
   type RuntimeConversation,
 } from "./data/runtimeConversations";
@@ -70,7 +69,7 @@ export default function App() {
       if (conversations.length === 0) {
         try {
           const legacy = localStorage.getItem("konan-runtime-conversations");
-          const parsed = legacy ? JSON.parse(legacy) as RuntimeConversation[] : [];
+          const parsed = legacy ? (JSON.parse(legacy) as RuntimeConversation[]).map((thread) => ({ ...thread, archived: false })) : [];
           if (parsed.length > 0) {
             await Promise.all(parsed.map(saveRuntimeThread));
             conversations = parsed.sort((left, right) => right.updatedAt - left.updatedAt);
@@ -83,7 +82,7 @@ export default function App() {
       localStorage.removeItem("konan-runtime-conversations");
       if (!cancelled) {
         setRuntimeThreads(conversations);
-        setActiveId((current) => current ?? conversations[0]?.id ?? null);
+        setActiveId((current) => current ?? conversations.find((thread) => !thread.archived)?.id ?? null);
         setThreadsReady(true);
       }
     }
@@ -100,6 +99,7 @@ export default function App() {
       title: "New conversation",
       preview: "No messages yet",
       updatedAt: Date.now(),
+      archived: false,
     };
     setRuntimeThreads((current) => [thread, ...current]);
     setActiveId(thread.id);
@@ -114,7 +114,7 @@ export default function App() {
     const changed = {
       ...current,
       title: current.title === "New conversation" ? titleFromMessage(message) : current.title,
-      preview: message,
+      preview: plainPreview(message),
       updatedAt: Date.now(),
     };
     setRuntimeThreads((threads) => [
@@ -134,6 +134,44 @@ export default function App() {
     setPanel(null);
   }
 
+  async function patchRuntimeThread(id: string, patch: Partial<Pick<RuntimeConversation, "archived" | "title">>) {
+    const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (!response.ok) throw new Error(`Could not update conversation (${response.status})`);
+    const { conversation } = await response.json() as { conversation: RuntimeConversation };
+    setRuntimeThreads((current) => current
+      .map((thread) => thread.id === id ? conversation : thread)
+      .sort((left, right) => right.updatedAt - left.updatedAt));
+  }
+
+  function renameConversation(id: string, title: string) {
+    const current = runtimeThreads.find((thread) => thread.id === id);
+    if (!current) return;
+    const normalized = title.trim();
+    if (!normalized || normalized === current.title) return;
+    void patchRuntimeThread(id, { title: normalized });
+  }
+
+  function archiveConversation(id: string, archived: boolean) {
+    void patchRuntimeThread(id, { archived });
+    if (archived && activeId === id) {
+      setActiveId(runtimeThreads.find((thread) => thread.id !== id && !thread.archived)?.id ?? null);
+    }
+  }
+
+  async function removeConversation(id: string) {
+    const current = runtimeThreads.find((thread) => thread.id === id);
+    if (!current || !window.confirm(`Delete “${current.title}”?`)) return;
+    const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!response.ok) return;
+    const remaining = runtimeThreads.filter((thread) => thread.id !== id);
+    setRuntimeThreads(remaining);
+    if (activeId === id) setActiveId(remaining.find((thread) => !thread.archived)?.id ?? null);
+  }
+
   const activeThread = runtimeThreads.find((thread) => thread.id === activeId);
 
   return (
@@ -142,6 +180,9 @@ export default function App() {
         <Sidebar
           activeId={view === "demo" ? activeDemoId : view === "empty" ? null : activeId}
           runtimeConversations={runtimeThreads}
+          onArchive={archiveConversation}
+          onDelete={(id) => { void removeConversation(id); }}
+          onRename={renameConversation}
           onSelect={(id) => { if (id === "new") createConversation(); else if (id === "library") setView("library"); else if (id === "projects") setView("projects"); else if (id === "routines") setView("routines"); else if (id.startsWith("demo:")) { setActiveDemoId(id.slice(5)); setView("demo"); } else { setActiveId(id); setView("conversation"); } }}
           onOpenSettings={() => setSettingsOpen(true)}
           workingCount={0}
@@ -163,18 +204,8 @@ export default function App() {
             onOpenPanel={(k) => setPanel((cur) => (cur === k ? null : k))}
           /> : <div className="flex flex-1 items-center justify-center text-label text-ink-4">{threadsReady ? "Start a new conversation" : "Loading conversations…"}</div>
         )}
-        {view === "conversation" && panel && <Panel kind={panel} onClose={() => setPanel(null)} />}
+        {view === "conversation" && panel && <Panel kind={panel} conversationId={activeId} onClose={() => setPanel(null)} />}
       </main>
-
-      {/* Dev-only switches. Not product UI. */}
-      <div className="fixed bottom-3 right-3 z-50 flex gap-1 rounded-full bg-surface-3 p-1 shadow-popup ring-line">
-        <IconButton label="Token sheet" active={view === "tokens"} onClick={() => setView(view === "tokens" ? "conversation" : "tokens")}>
-          <SwatchBook className="size-4" />
-        </IconButton>
-        <IconButton label="Toggle theme" onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}>
-          {resolvedTheme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
-        </IconButton>
-      </div>
       {settingsOpen && <Settings theme={theme} onThemeChange={setTheme} onClose={() => setSettingsOpen(false)} />}
     </div>
   );

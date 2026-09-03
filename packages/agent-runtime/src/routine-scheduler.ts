@@ -8,6 +8,7 @@ import {
   getRoutine,
   listRoutineRuns,
   listRoutines,
+  setRoutineScheduleState,
   startRoutineRun,
   type Routine,
   type RoutineRun,
@@ -48,6 +49,7 @@ function nextRunAt(routine: Routine): number | null {
 async function executeRoutine(routine: Routine, run: RoutineRun) {
   try {
     upsertConversation({
+      archived: false,
       id: run.conversationId,
       title: routine.name,
       preview: `Routine: ${routine.prompt}`.slice(0, 500),
@@ -71,6 +73,7 @@ async function executeRoutine(routine: Routine, run: RoutineRun) {
     const reply = await agent.read(receipt);
     finishRoutineRun(run.id, reply.text);
     upsertConversation({
+      archived: false,
       id: run.conversationId,
       title: routine.name,
       preview: reply.text.slice(0, 500),
@@ -82,6 +85,7 @@ async function executeRoutine(routine: Routine, run: RoutineRun) {
 }
 
 export function runRoutineNow(routine: Routine): RoutineRun {
+  setRoutineScheduleState(routine.id, getRoutine(routine.id)?.nextExpectedAt ?? null, null);
   const run = startRoutineRun(routine.id);
   void executeRoutine(routine, run);
   return run;
@@ -90,7 +94,10 @@ export function runRoutineNow(routine: Routine): RoutineRun {
 export function syncRoutineJob(routine: Routine) {
   jobs.get(routine.id)?.stop();
   jobs.delete(routine.id);
-  if (!routine.enabled) return;
+  if (!routine.enabled) {
+    setRoutineScheduleState(routine.id, null);
+    return;
+  }
 
   const job = new Cron(
     routine.cron,
@@ -101,10 +108,14 @@ export function syncRoutineJob(routine: Routine) {
     },
     () => {
       const current = getRoutine(routine.id);
-      if (current?.enabled) runRoutineNow(current);
+      if (current?.enabled) {
+        setRoutineScheduleState(current.id, jobs.get(current.id)?.nextRun()?.getTime() ?? null, null);
+        runRoutineNow(current);
+      }
     },
   );
   jobs.set(routine.id, job);
+  setRoutineScheduleState(routine.id, job.nextRun()?.getTime() ?? null);
 }
 
 export function removeRoutineJob(id: string) {
@@ -120,10 +131,14 @@ export function listRoutineViews(): RoutineView[] {
   return listRoutines().map(getRoutineView);
 }
 
-for (const routine of listRoutines()) {
+for (const storedRoutine of listRoutines()) {
   try {
+    if (storedRoutine.enabled && storedRoutine.nextExpectedAt && storedRoutine.nextExpectedAt < Date.now()) {
+      setRoutineScheduleState(storedRoutine.id, null, storedRoutine.nextExpectedAt);
+    }
+    const routine = getRoutine(storedRoutine.id) ?? storedRoutine;
     syncRoutineJob(routine);
   } catch (error) {
-    console.error(`[routine:${routine.id}] could not start`, error);
+    console.error(`[routine:${storedRoutine.id}] could not start`, error);
   }
 }

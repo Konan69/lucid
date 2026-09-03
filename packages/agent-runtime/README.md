@@ -1,7 +1,8 @@
 # Konan agent runtime
 
-Shareable Flue Node runtime for the initial Konan conversation experience. Proprietary scheduling,
-connectors, tool execution, and computer-control code are intentionally not part of this package.
+Shareable Flue Node runtime for the initial Konan conversation experience and demo routines.
+Production scheduler orchestration, connectors, tool execution, and computer-control code are
+intentionally not part of this package.
 
 ## Run
 
@@ -56,8 +57,9 @@ curl -X POST http://127.0.0.1:5173/agents/konan/demo-thread \
   -d '{"kind":"user","body":"Say hello in one sentence."}'
 ```
 
-The Flue agent instance ID maps directly to the product thread ID. Scheduling, connectors,
-approvals, tools, and computer execution are intentionally outside this first cutover.
+The Flue agent instance ID maps directly to the product thread ID. The included cron adapter proves
+scheduled dispatch locally; production orchestration, connectors, approvals, tools, and computer
+execution remain outside this cutover.
 
 Flue 2.0.3 predates GLM 5.3 in its bundled model catalog, so the runtime adds that
 single OpenRouter model locally while retaining Flue's built-in OpenRouter transport and auth.

@@ -1,8 +1,11 @@
-import { X, Hand, Maximize2, Lock, Plus } from "lucide-react";
+import { useFlueAgent, type FlueConversationMessage } from "@flue/react";
+import { createFlueClient } from "@flue/sdk";
+import { X, Hand, Maximize2, Lock, Plus, Check, CircleAlert, Clock3, MessageSquareText, Wrench } from "lucide-react";
+import { useMemo } from "react";
 import { Button, IconButton } from "../ui/Button";
 import { cn } from "../ui/cn";
 
-export function Panel({ kind, onClose }: { kind: "screen" | "log"; onClose: () => void }) {
+export function Panel({ kind, conversationId, onClose }: { kind: "screen" | "log"; conversationId: string | null; onClose: () => void }) {
   return (
     <aside className="fixed inset-0 z-30 flex h-full w-full shrink-0 flex-col bg-surface-1 animate-fade-in sm:static sm:w-(--panel-w) sm:hairline-l">
       <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-3 hairline-b">
@@ -10,7 +13,7 @@ export function Panel({ kind, onClose }: { kind: "screen" | "log"; onClose: () =
         {kind === "screen" && <IconButton label="Expand"><Maximize2 className="size-4" /></IconButton>}
         <IconButton label="Close" onClick={onClose}><X className="size-4" /></IconButton>
       </header>
-      {kind === "screen" ? <ScreenView /> : <LogView />}
+      {kind === "screen" ? <ScreenView /> : <LogView conversationId={conversationId} />}
     </aside>
   );
 }
@@ -119,23 +122,75 @@ function ScreenView() {
   );
 }
 
-const LOG = [
-  { t: "10:04", what: "Opened the grand sheet, tab: fee table", ask: null },
-  { t: "10:04", what: "Read PRD appendix B for published rates", ask: "Drive · allowed this time" },
-  { t: "10:05", what: "Drafted the NG → GH and KE → TZ rows", ask: null },
-  { t: "10:05", what: "Flagged the GH → NG rate as missing — no source in the PRD", ask: null },
-];
+type Activity = {
+  id: string;
+  detail?: string;
+  failed?: boolean;
+  label: string;
+  timestamp?: number;
+  type: "request" | "response" | "tool";
+};
 
-function LogView() {
+function messageText(message: FlueConversationMessage) {
+  return message.parts.filter((part) => part.type === "text").map((part) => part.text).join(" ").replace(/\s+/g, " ").trim();
+}
+
+function activityForMessage(message: FlueConversationMessage): Activity[] {
+  const metadata = message.metadata as Record<string, unknown> | undefined;
+  const runtimeMessage = message as FlueConversationMessage & { purpose?: string; signal?: { attributes?: Record<string, unknown> } };
+  const startedAt = typeof metadata?.startedAt === "number" ? metadata.startedAt : undefined;
+  const finishedAt = typeof metadata?.finishedAt === "number" ? metadata.finishedAt : startedAt;
+  const text = messageText(message);
+  if (message.role === "user") {
+    return [{ id: message.id, label: "Request submitted", detail: text || undefined, timestamp: startedAt, type: "request" }];
+  }
+  if (message.role === "system" && runtimeMessage.purpose === "dispatch") {
+    const scheduledAt = runtimeMessage.signal?.attributes?.scheduledAt;
+    const timestamp = typeof scheduledAt === "string" ? Date.parse(scheduledAt) : undefined;
+    return [{ id: message.id, label: "Routine triggered", detail: text || undefined, timestamp: Number.isFinite(timestamp) ? timestamp : undefined, type: "request" }];
+  }
+
+  const tools = message.parts.filter((part) => part.type === "dynamic-tool").map((tool) => ({
+    id: `${message.id}:${tool.toolCallId}`,
+    label: tool.state === "output-error" ? `${tool.toolName} failed` : tool.state === "input-available" ? `${tool.toolName} running` : `${tool.toolName} completed`,
+    detail: "Tool call recorded by the runtime",
+    failed: tool.state === "output-error",
+    timestamp: finishedAt,
+    type: "tool" as const,
+  }));
+  const failed = message.settlement?.outcome === "failed";
+  const model = typeof metadata?.model === "string" ? metadata.model.replace(/^openrouter\//, "") : undefined;
+  const duration = startedAt && finishedAt ? `${Math.max(0, (finishedAt - startedAt) / 1000).toFixed(1)}s` : undefined;
+  const usage = metadata?.usage as { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
+  const tokens = usage?.totalTokens ?? (((usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0)) || undefined);
+  const facts = [model, duration, tokens ? `${tokens.toLocaleString()} tokens` : undefined].filter(Boolean).join(" · ");
+  return [
+    ...tools,
+    { id: message.id, label: failed ? "Response failed" : "Response completed", detail: facts || text.slice(0, 120) || undefined, failed, timestamp: finishedAt, type: "response" as const },
+  ];
+}
+
+function LogView({ conversationId }: { conversationId: string | null }) {
+  const client = useMemo(() => createFlueClient({ url: `/api/konan/${encodeURIComponent(conversationId ?? "missing")}` }), [conversationId]);
+  const agent = useFlueAgent({ client });
+  const activity = useMemo(() => agent.messages.filter((message) => message.display !== "hidden").flatMap(activityForMessage), [agent.messages]);
+
+  if (!conversationId) return <p className="p-4 text-label text-ink-4">Open a conversation to see its activity.</p>;
+  if (!agent.historyReady && activity.length === 0) return <div className="flex items-center gap-2 p-4 text-label text-ink-4"><Clock3 className="size-4 animate-pulse" />Loading activity…</div>;
+  if (activity.length === 0) return <p className="p-4 text-label text-ink-4">No activity yet. Send a message to start this timeline.</p>;
+
   return (
     <ol className="flex flex-col p-3">
-      {LOG.map((e, i) => (
-        <li key={i} className={cn("flex gap-3 py-2.5", i < LOG.length - 1 && "hairline-b")}>
-          <span className="w-10 shrink-0 text-meta text-ink-4">{e.t}</span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-label text-ink">{e.what}</span>
-            {e.ask && <span className="block text-meta text-ink-3">{e.ask}</span>}
+      {activity.map((event, index) => (
+        <li key={event.id} className={cn("flex gap-3 py-2.5", index < activity.length - 1 && "hairline-b")}>
+          <span className={cn("mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-surface-2", event.failed ? "text-danger" : event.type === "tool" ? "text-working" : event.type === "request" ? "text-ink-3" : "text-success")}>
+            {event.failed ? <CircleAlert className="size-3.5" /> : event.type === "tool" ? <Wrench className="size-3.5" /> : event.type === "request" ? <MessageSquareText className="size-3.5" /> : <Check className="size-3.5" />}
           </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-label text-ink">{event.label}</span>
+            {event.detail && <span className="mt-0.5 block text-meta text-ink-3">{event.detail}</span>}
+          </span>
+          {event.timestamp && <time className="shrink-0 text-meta font-meta tabular-nums text-ink-4">{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(event.timestamp)}</time>}
         </li>
       ))}
     </ol>
