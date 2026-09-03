@@ -2,6 +2,8 @@ import { ChevronDown, ChevronRight, Mic, Paperclip, ArrowUp, Square, UserPlus, P
 import { useFlueAgent, type FlueConversationMessage } from "@flue/react";
 import { createFlueClient } from "@flue/sdk";
 import { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { conversations, threadsByConversation, type Msg } from "../data/fixtures";
 import { Button, IconButton } from "../ui/Button";
 import { Card } from "../ui/Card";
@@ -28,6 +30,9 @@ export function Conversation({
   const agent = useFlueAgent({ client });
   const endRef = useRef<HTMLLIElement>(null);
   const working = agent.status === "submitted" || agent.status === "streaming";
+  const hasStreamingAssistant = agent.messages.some((message) =>
+    message.role === "assistant" && message.parts.some((part) => "state" in part && part.state === "streaming"),
+  );
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: working ? "smooth" : "auto" });
@@ -68,6 +73,12 @@ export function Conversation({
               <LiveMessage message={message} />
             </li>
           ))}
+          {working && !hasStreamingAssistant && (
+            <li className="flex gap-3 animate-rise-in" aria-live="polite">
+              <Face size={24} mood="thinking" className="mt-1" />
+              <p className="pt-1 text-body text-ink-4">Thinking…</p>
+            </li>
+          )}
           {agent.error && (
             <li className="rounded-panel bg-danger-soft px-4 py-3 text-label text-danger ring-line">
               <div className="flex items-center gap-3">
@@ -82,7 +93,6 @@ export function Conversation({
 
       <Composer
         working={working}
-        status={agent.status}
         onSend={async (message) => {
           await agent.sendMessage(message);
           onMessageSent(message);
@@ -153,7 +163,7 @@ function LiveMessage({ message }: { message: FlueConversationMessage }) {
     <div className="flex gap-3">
       <Face size={24} className="mt-1" />
       <div className="min-w-0 flex-1 text-body text-ink">
-        {text ? <p className="whitespace-pre-wrap">{text}</p> : <p className="text-ink-4">Thinking…</p>}
+        {text ? <Markdown content={text} /> : <p className="text-ink-4">Thinking…</p>}
         {tools.map((tool) => (
           <div key={tool.toolCallId} className="mt-2 rounded-control bg-surface-2 px-3 py-2 text-label text-ink-3 ring-line">
             <span className="font-title text-ink-2">{tool.toolName}</span>
@@ -162,6 +172,35 @@ function LiveMessage({ message }: { message: FlueConversationMessage }) {
         ))}
         {time && <span className="mt-1 block text-meta text-ink-4">{time}</span>}
       </div>
+    </div>
+  );
+}
+
+function Markdown({ content }: { content: string }) {
+  return (
+    <div className="min-w-0 text-body text-ink">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer" className="text-accent-ink underline underline-offset-2">{children}</a>,
+          blockquote: ({ children }) => <blockquote className="my-3 border-l-2 border-line-3 pl-3 text-ink-3">{children}</blockquote>,
+          code: ({ children, className, ...props }) => <code {...props} className={cn("rounded-xs bg-surface-2 px-1 py-0.5 font-mono text-[0.9em]", className)}>{children}</code>,
+          h1: ({ children }) => <h1 className="mb-2 mt-4 text-page font-title first:mt-0">{children}</h1>,
+          h2: ({ children }) => <h2 className="mb-2 mt-4 text-dialog font-title first:mt-0">{children}</h2>,
+          h3: ({ children }) => <h3 className="mb-1.5 mt-3 text-title font-title first:mt-0">{children}</h3>,
+          hr: () => <hr className="my-4 border-line-2" />,
+          li: ({ children }) => <li className="ml-5 pl-1 marker:text-ink-4">{children}</li>,
+          ol: ({ children }) => <ol className="my-2 list-decimal space-y-1">{children}</ol>,
+          p: ({ children }) => <p className="my-2 whitespace-pre-wrap first:mt-0 last:mb-0">{children}</p>,
+          pre: ({ children }) => <pre className="my-3 overflow-x-auto rounded-control bg-surface-2 p-3 text-label ring-line [&_code]:bg-transparent [&_code]:p-0">{children}</pre>,
+          table: ({ children }) => <div className="my-3 overflow-x-auto rounded-control ring-line"><table className="w-full border-collapse text-label">{children}</table></div>,
+          td: ({ children }) => <td className="border-t border-line-2 px-3 py-2 align-top">{children}</td>,
+          th: ({ children }) => <th className="bg-surface-2 px-3 py-2 text-left font-title">{children}</th>,
+          ul: ({ children }) => <ul className="my-2 list-disc space-y-1">{children}</ul>,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -347,12 +386,10 @@ function InputCard({ title, question, options }: { title: string; question: stri
 
 function Composer({
   working,
-  status,
   onSend,
   onStop,
 }: {
   working: boolean;
-  status: "idle" | "connecting" | "submitted" | "streaming" | "error";
   onSend: (message: string) => Promise<void>;
   onStop: () => Promise<void>;
 }) {
@@ -373,16 +410,10 @@ function Composer({
   return (
     <div className="shrink-0 px-3 pb-3 pt-2 sm:px-6 sm:pb-5">
       <div className="mx-auto w-full max-w-(--thread-max-w)">
-        {working && (
-          <div className="mx-4 flex items-center gap-2 rounded-t-control bg-surface-2 px-3 py-2 text-meta text-ink-3 ring-line">
-            <span className="size-1.5 shrink-0 rounded-full bg-working" />
-            <span className="truncate"><span className="font-title text-ink-2">Konan:</span> {status === "streaming" ? "responding" : "starting"}</span>
-          </div>
-        )}
         <div className="relative rounded-composer bg-surface-3 shadow-composer ring-line">
         <textarea
           rows={1}
-          placeholder={working ? "Queue for when Konan finishes" : "Message Konan"}
+          placeholder="Message Konan"
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           onKeyDown={(event) => {

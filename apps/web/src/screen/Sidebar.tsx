@@ -136,7 +136,6 @@ export function Sidebar({
           </ul>
         </section>
 
-        <Caption label="Demo conversations" />
         {lanes.map((lane) => (
           <section key={lane.key}>
             <Caption label={lane.label} count={lane.count ? lane.items.length : undefined} />

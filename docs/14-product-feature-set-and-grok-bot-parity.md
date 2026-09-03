@@ -9,6 +9,7 @@ directional product target, not a claim that Konan and Grok Bot are equivalent.
 | --- | --- | --- |
 | Named AI teammate | Working | Konan is the persistent product identity. |
 | Live conversation | Working | The web app streams real Flue responses from GLM 5.3 Flash through OpenRouter. |
+| Rich responses | Working | Assistant output renders safe Markdown with GFM lists, tables, links, blockquotes, and code. |
 | Durable thread history | Working | Each product thread ID maps to a Flue conversation stored in local SQLite. |
 | Send while working | Working | Flue admits new user messages while a response is active and processes them in order. |
 | Stop a response | Working | The composer can abort the active response. |
