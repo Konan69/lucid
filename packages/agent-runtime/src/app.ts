@@ -22,6 +22,13 @@ import {
   searchLibrary,
 } from "./library-store.ts";
 import {
+  GmailConnector,
+  CalendarConnector,
+  DriveConnector,
+  getConnectorStatus,
+  deleteCredentialsForConnector,
+} from "@konan/connectors";
+import {
   getRoutineView,
   listRoutineViews,
   removeRoutineJob,
@@ -299,6 +306,68 @@ app.post("/api/routines/:id/run", (context) => {
   if (!routine) return context.json({ error: "Routine not found" }, 404);
   const run = runRoutineNow(routine);
   return context.json({ run }, 202);
+});
+
+// Connector routes
+const connectors: Record<string, () => GmailConnector | CalendarConnector | DriveConnector> = {
+  gmail: () => new GmailConnector(),
+  calendar: () => new CalendarConnector(),
+  drive: () => new DriveConnector(),
+};
+
+app.use("/api/connectors", requireRuntimeToken);
+app.use("/api/connectors/*", requireRuntimeToken);
+
+app.get("/api/connectors", (context) => {
+  const status = Object.keys(connectors).map((id) => ({
+    id,
+    status: getConnectorStatus(id as "gmail" | "calendar" | "drive"),
+    metadata: connectors[id]!().metadata(),
+  }));
+  return context.json({ connectors: status });
+});
+
+app.get("/api/connectors/:id/auth", (context) => {
+  const id = context.req.param("id");
+  const factory = connectors[id];
+  if (!factory) return context.json({ error: "Unknown connector" }, 404);
+
+  const state = JSON.stringify({ connector: id, nonce: crypto.randomUUID() });
+  const authUrl = factory().getAuthUrl(Buffer.from(state).toString("base64url"));
+  return context.json({ authUrl });
+});
+
+app.get("/api/connectors/google/callback", async (context) => {
+  const code = context.req.query("code");
+  const stateParam = context.req.query("state");
+  if (!code) return context.json({ error: "Missing code" }, 400);
+
+  let connectorId = "gmail";
+  try {
+    if (stateParam) {
+      const decoded = JSON.parse(Buffer.from(stateParam, "base64url").toString("utf-8")) as { connector?: string };
+      if (decoded.connector && connectors[decoded.connector]) {
+        connectorId = decoded.connector;
+      }
+    }
+  } catch {
+    // Fall back to default connector if state is malformed.
+  }
+
+  try {
+    const connector = connectors[connectorId]!();
+    const credential = await connector.exchangeCode(code);
+    return context.json({ success: true, connectorId: credential.connectorId, credentialId: credential.id });
+  } catch (error) {
+    return context.json({ error: error instanceof Error ? error.message : "OAuth failed" }, 500);
+  }
+});
+
+app.delete("/api/connectors/:id", (context) => {
+  const id = context.req.param("id");
+  if (!connectors[id]) return context.json({ error: "Unknown connector" }, 404);
+  const deleted = deleteCredentialsForConnector(id as "gmail" | "calendar" | "drive");
+  return context.json({ success: true, deleted });
 });
 
 app.route("/agents/vivid", createAgentRouter(Vivid));

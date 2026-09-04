@@ -17,6 +17,7 @@
   "dependencies": {
     "@earendil-works/pi-ai": "0.83.0",
     "@flue/runtime": "2.0.3",
+    "@konan/connectors": "workspace:*",
     "croner": "^10.0.1",
     "hono": "^4.8.3",
     "unpdf": "^1.8.1",

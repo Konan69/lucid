@@ -94,6 +94,9 @@ importers:
       '@flue/runtime':
         specifier: 2.0.3
         version: 2.0.3(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.5.4))(typescript@5.9.3)(ws@8.21.3)(zod@4.5.4)
+      '@konan/connectors':
+        specifier: workspace:*
+        version: link:../connectors
       croner:
         specifier: ^10.0.1
         version: 10.0.1
@@ -122,6 +125,19 @@ importers:
       vite:
         specifier: 8.2.2
         version: 8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
+
+  packages/connectors:
+    dependencies:
+      '@konan/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
 
   packages/contracts:
     dependencies:

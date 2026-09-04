@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Pin, Pencil, Plus, Search, ChevronDown, ChevronLeft, ChevronRight, PanelLeft, SunMedium, Repeat2, Library, ListFilter, AlarmClock, Check, FolderKanban, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Pin, Pencil, Plus, Search, ChevronDown, ChevronLeft, ChevronRight, PanelLeft, SunMedium, Repeat2, Library, ListFilter, AlarmClock, Check, FolderKanban, Trash2, Plug } from "lucide-react";
 import { useEffect, useState } from "react";
 import { doneCount, conversations, type Conversation } from "../data/fixtures";
 import { countProjects, projects, type Project } from "../data/projects";
@@ -119,6 +119,7 @@ export function Sidebar({
           <span className="text-meta font-meta text-ink-4">{countProjects(projects)}</span>
         </ToolRow>
         <ToolRow icon={<Library className="size-4" strokeWidth={1.6} />} label="Library" onClick={() => onSelect("library")} />
+        <ToolRow icon={<Plug className="size-4" strokeWidth={1.6} />} label="Connectors" onClick={() => onSelect("connectors")} />
       </div>
 
       {/* Band header: a heading with controls. Full line, no fill. */}

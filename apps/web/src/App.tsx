@@ -3,6 +3,7 @@ import { EmptyState } from "./screen/EmptyState";
 import { Library, type LibraryDocument } from "./screen/Library";
 import { Routines } from "./screen/Routines";
 import { Projects } from "./screen/Projects";
+import { Connectors } from "./screen/Connectors";
 import { Panel } from "./screen/Panel";
 import { Sidebar } from "./screen/Sidebar";
 import { Settings, type ThemePreference } from "./screen/Settings";
@@ -14,7 +15,7 @@ import {
   type RuntimeConversation,
 } from "./data/runtimeConversations";
 
-type View = "conversation" | "demo" | "empty" | "tokens" | "library" | "projects" | "routines";
+type View = "conversation" | "demo" | "empty" | "tokens" | "library" | "projects" | "routines" | "connectors";
 
 function subscribeToSystemTheme(onChange: () => void) {
   const query = window.matchMedia("(prefers-color-scheme: dark)");
@@ -41,7 +42,7 @@ async function saveRuntimeThread(thread: RuntimeConversation) {
 }
 
 export default function App() {
-  const [view, setView] = useState<View>(() => (location.search.includes("tokens") ? "tokens" : location.search.includes("empty") ? "empty" : location.search.includes("library") ? "library" : location.search.includes("projects") ? "projects" : location.search.includes("routines") ? "routines" : "conversation"));
+  const [view, setView] = useState<View>(() => (location.search.includes("tokens") ? "tokens" : location.search.includes("empty") ? "empty" : location.search.includes("library") ? "library" : location.search.includes("projects") ? "projects" : location.search.includes("routines") ? "routines" : location.search.includes("connectors") ? "connectors" : "conversation"));
   const [runtimeThreads, setRuntimeThreads] = useState<RuntimeConversation[]>([]);
   const [conversationDrafts, setConversationDrafts] = useState<Record<string, string>>({});
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -200,7 +201,7 @@ export default function App() {
           onArchive={archiveConversation}
           onDelete={(id) => { void removeConversation(id); }}
           onRename={renameConversation}
-          onSelect={(id) => { if (id === "new") createConversation(); else if (id === "library") setView("library"); else if (id === "projects") setView("projects"); else if (id === "routines") setView("routines"); else if (id.startsWith("demo:")) { setActiveDemoId(id.slice(5)); setView("demo"); } else { setActiveId(id); setView("conversation"); } }}
+          onSelect={(id) => { if (id === "new") createConversation(); else if (id === "library") setView("library"); else if (id === "projects") setView("projects"); else if (id === "routines") setView("routines"); else if (id === "connectors") setView("connectors"); else if (id.startsWith("demo:")) { setActiveDemoId(id.slice(5)); setView("demo"); } else { setActiveId(id); setView("conversation"); } }}
           onOpenSettings={() => setSettingsOpen(true)}
           workingCount={0}
         />
@@ -211,6 +212,7 @@ export default function App() {
         {view === "library" && <Library onAsk={askAboutLibrary} />}
         {view === "projects" && <Projects />}
         {view === "routines" && <Routines onOpenConversation={openRuntimeConversation} />}
+        {view === "connectors" && <Connectors />}
         {view === "demo" && <DemoConversation conversationId={activeDemoId} />}
         {view === "conversation" && (
           activeId ? <Conversation

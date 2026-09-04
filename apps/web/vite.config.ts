@@ -45,6 +45,13 @@ export default defineConfig(({ mode }) => {
             : undefined,
           rewrite: (path) => path.replace(/^\/api\/vivid/, "/agents/vivid"),
         },
+        "/api/connectors": {
+          target: runtimeEnvironment.KONAN_RUNTIME_URL ?? "http://127.0.0.1:5173",
+          changeOrigin: true,
+          headers: runtimeToken
+            ? { authorization: `Bearer ${runtimeToken}` }
+            : undefined,
+        },
       },
     },
   };
