@@ -135,6 +135,33 @@ function messageText(message: FlueConversationMessage) {
   return message.parts.filter((part) => part.type === "text").map((part) => part.text).join(" ").replace(/\s+/g, " ").trim();
 }
 
+function describeToolCall(toolName: string, input: Record<string, unknown> | undefined, output: Record<string, unknown> | undefined, state: "running" | "failed" | "done"): { label: string; detail?: string } {
+  const outputTask = output?.task as { title?: string; status?: string } | undefined;
+  const outputFollowUp = output?.followUp as { at?: string } | undefined;
+  const title = outputTask?.title ?? (typeof input?.title === "string" ? input.title : undefined);
+  const when = outputFollowUp?.at ? new Intl.DateTimeFormat(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }).format(Date.parse(outputFollowUp.at)) : undefined;
+  switch (toolName) {
+    case "search_library": {
+      const query = typeof input?.query === "string" ? input.query : undefined;
+      const results = Array.isArray(output?.results) ? output.results.length : undefined;
+      return {
+        label: state === "failed" ? "Library search failed" : state === "running" ? "Searching the Library" : "Searched the Library",
+        detail: [query ? `“${query}”` : undefined, results !== undefined ? `${results} ${results === 1 ? "source" : "sources"}` : undefined].filter(Boolean).join(" · ") || undefined,
+      };
+    }
+    case "create_task":
+      return { label: state === "failed" ? "Could not start tracking" : state === "running" ? "Starting to track a task" : "Started tracking a task", detail: [title, when ? `follow-up ${when}` : undefined].filter(Boolean).join(" · ") || undefined };
+    case "update_task":
+      return { label: state === "failed" ? "Could not update the task" : state === "running" ? "Updating a task" : outputTask?.status === "done" ? "Marked a task done" : "Updated a task", detail: title };
+    case "list_tasks":
+      return { label: state === "failed" ? "Could not read the task list" : state === "running" ? "Checking the task list" : "Checked the task list", detail: Array.isArray(output?.tasks) ? `${output.tasks.length} open` : undefined };
+    case "schedule_follow_up":
+      return { label: state === "failed" ? "Could not schedule the follow-up" : state === "running" ? "Scheduling a follow-up" : "Scheduled a follow-up", detail: [title, when].filter(Boolean).join(" · ") || undefined };
+    default:
+      return { label: state === "failed" ? "Action failed" : state === "running" ? "Working" : "Action completed" };
+  }
+}
+
 function activityForMessage(message: FlueConversationMessage): Activity[] {
   const metadata = message.metadata as Record<string, unknown> | undefined;
   const runtimeMessage = message as FlueConversationMessage & { purpose?: string; signal?: { attributes?: Record<string, unknown> } };
@@ -150,14 +177,21 @@ function activityForMessage(message: FlueConversationMessage): Activity[] {
     return [{ id: message.id, label: "Routine triggered", detail: text || undefined, timestamp: Number.isFinite(timestamp) ? timestamp : undefined, type: "request" }];
   }
 
-  const tools = message.parts.filter((part) => part.type === "dynamic-tool").map((tool) => ({
-    id: `${message.id}:${tool.toolCallId}`,
-    label: tool.state === "output-error" ? `${tool.toolName} failed` : tool.state === "input-available" ? `${tool.toolName} running` : `${tool.toolName} completed`,
-    detail: "Tool call recorded by the runtime",
-    failed: tool.state === "output-error",
-    timestamp: finishedAt,
-    type: "tool" as const,
-  }));
+  const tools = message.parts.filter((part) => part.type === "dynamic-tool").map((tool) => {
+    const input = "input" in tool ? tool.input as Record<string, unknown> | undefined : undefined;
+    const output = "output" in tool ? tool.output as Record<string, unknown> | undefined : undefined;
+    const running = tool.state === "input-available";
+    const failed = tool.state === "output-error";
+    const described = describeToolCall(tool.toolName, input, output, running ? "running" : failed ? "failed" : "done");
+    return {
+      id: `${message.id}:${tool.toolCallId}`,
+      label: described.label,
+      detail: described.detail,
+      failed,
+      timestamp: finishedAt,
+      type: "tool" as const,
+    };
+  });
   const failed = message.settlement?.outcome === "failed";
   const model = typeof metadata?.model === "string" ? metadata.model.replace(/^openrouter\//, "") : undefined;
   const duration = startedAt && finishedAt ? `${Math.max(0, (finishedAt - startedAt) / 1000).toFixed(1)}s` : undefined;

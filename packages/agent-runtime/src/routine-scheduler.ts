@@ -6,6 +6,7 @@ import {
   failRoutineRun,
   finishRoutineRun,
   getRoutine,
+  listRunningRoutineRuns,
   listRoutineRuns,
   listRoutines,
   setRoutineScheduleState,
@@ -21,6 +22,7 @@ export type RoutineView = Routine & {
 };
 
 const jobs = new Map<string, Cron>();
+const inFlightRuns = new Set<string>();
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -47,7 +49,12 @@ function nextRunAt(routine: Routine): number | null {
 }
 
 async function executeRoutine(routine: Routine, run: RoutineRun) {
+  if (inFlightRuns.has(run.id)) return;
+  inFlightRuns.add(run.id);
   try {
+    const instruction = routine.libraryFolderId
+      ? `${routine.prompt}\n\nFor this routine, search the Library with folderId "${routine.libraryFolderId}" before answering. Use only results from that folder and its descendants, and cite every source used.`
+      : routine.prompt;
     upsertConversation({
       archived: false,
       id: run.conversationId,
@@ -56,22 +63,27 @@ async function executeRoutine(routine: Routine, run: RoutineRun) {
       updatedAt: run.startedAt,
     });
     const agent = init(Vivid, { id: run.conversationId });
-    const receipt = await agent.dispatch({
-      idempotencyKey: run.id,
-      message: {
-        kind: "signal",
-        type: "schedule",
-        body: routine.prompt,
-        attributes: {
-          routineId: routine.id,
-          routineName: routine.name,
-          scheduledAt: new Date(run.startedAt).toISOString(),
+    let submissionId = run.submissionId;
+    if (!submissionId) {
+      const receipt = await agent.dispatch({
+        idempotencyKey: run.id,
+        message: {
+          kind: "signal",
+          type: "schedule",
+          body: instruction,
+          attributes: {
+            routineId: routine.id,
+            routineName: routine.name,
+            ...(routine.libraryFolderId ? { libraryFolderId: routine.libraryFolderId } : {}),
+            scheduledAt: new Date(run.startedAt).toISOString(),
+          },
         },
-      },
-    });
-    attachRoutineSubmission(run.id, receipt.submissionId);
-    const reply = await agent.read(receipt);
-    finishRoutineRun(run.id, reply.text);
+      });
+      submissionId = receipt.submissionId;
+      attachRoutineSubmission(run.id, submissionId);
+    }
+    const reply = await agent.read(submissionId);
+    if (!finishRoutineRun(run.id, reply.text)) return;
     upsertConversation({
       archived: false,
       id: run.conversationId,
@@ -81,6 +93,8 @@ async function executeRoutine(routine: Routine, run: RoutineRun) {
     });
   } catch (error) {
     failRoutineRun(run.id, errorMessage(error).slice(0, 1000));
+  } finally {
+    inFlightRuns.delete(run.id);
   }
 }
 
@@ -142,3 +156,11 @@ for (const storedRoutine of listRoutines()) {
     console.error(`[routine:${storedRoutine.id}] could not start`, error);
   }
 }
+
+setTimeout(() => {
+  for (const run of listRunningRoutineRuns()) {
+    const routine = getRoutine(run.routineId);
+    if (routine) void executeRoutine(routine, run);
+    else failRoutineRun(run.id, "The routine for this run no longer exists");
+  }
+}, 1500).unref();

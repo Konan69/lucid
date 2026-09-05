@@ -1,7 +1,12 @@
 packages:
+  - "apps/mobile"
   - "apps/server"
   - "apps/web"
   - "packages/contracts"
   - "packages/connectors"
   - "packages/design-tokens"
   - "packages/agent-runtime"
+
+patchedDependencies:
+  '@react-native-menu/menu@2.0.0': patches/@react-native-menu__menu@2.0.0.patch
+  react-native-gesture-handler@2.31.2: patches/react-native-gesture-handler@2.31.2.patch

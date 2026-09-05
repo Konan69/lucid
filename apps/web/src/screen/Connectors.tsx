@@ -1,139 +1,145 @@
+import { Check, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ToolMarks } from "../ui/ToolMarks";
 
-interface ConnectorInfo {
+type ConnectorState = "disconnected" | "connecting" | "connected" | "error";
+
+type Connector = {
   id: string;
-  name: string;
-  description: string;
-  icon: string;
+  status: ConnectorState;
+  metadata: { id: string; name: string; description: string; icon: string };
+};
+
+/* What each connector lets Vivid do, in Vivid's words rather than the API's. */
+const PURPOSE: Record<string, string> = {
+  gmail: "Read your mail, and send the nudges you ask it to send.",
+  calendar: "See what is on and put follow-ups on the calendar.",
+  drive: "Find and read the files you mention.",
+};
+
+function resultFromLocation(): { connected?: string; error?: string } {
+  const params = new URLSearchParams(location.search);
+  return { connected: params.get("connected") ?? undefined, error: params.get("error") ?? undefined };
 }
 
-interface ConnectorStatus {
-  id: string;
-  status: "disconnected" | "connecting" | "connected" | "error";
-  metadata: ConnectorInfo;
-}
+export function Connectors({ embedded = false }: { embedded?: boolean }) {
+  const [connectors, setConnectors] = useState<Connector[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(() => {
+    const result = resultFromLocation();
+    if (result.connected) return { tone: "success", text: `${result.connected} is connected.` };
+    if (result.error) return { tone: "danger", text: `Could not connect: ${result.error}` };
+    return null;
+  });
 
-export function Connectors() {
-  const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
-  const [loading, setLoading] = useState(true);
+  async function load() {
+    try {
+      const response = await fetch("/api/connectors");
+      if (!response.ok) throw new Error(`Runtime replied ${response.status}`);
+      const data = await response.json() as { connectors: Connector[] };
+      setConnectors(data.connectors);
+    } catch (error) {
+      setConnectors([]);
+      setNotice({ tone: "danger", text: error instanceof Error ? error.message : "Could not reach the runtime." });
+    }
+  }
 
   useEffect(() => {
-    fetchConnectors();
+    void load();
+    if (location.search.includes("connected=") || location.search.includes("error=")) {
+      history.replaceState(null, "", "/?settings=connectors");
+    }
   }, []);
 
-  async function fetchConnectors() {
+  async function connect(id: string) {
+    setBusy(id);
     try {
-      const res = await fetch("/api/connectors");
-      if (res.ok) {
-        const data = await res.json() as { connectors: ConnectorStatus[] };
-        setConnectors(data.connectors);
-      }
+      const response = await fetch(`/api/connectors/${id}/auth`);
+      if (!response.ok) throw new Error(`Runtime replied ${response.status}`);
+      const data = await response.json() as { authUrl: string };
+      location.href = data.authUrl;
     } catch (error) {
-      console.error("Failed to fetch connectors:", error);
+      setNotice({ tone: "danger", text: error instanceof Error ? error.message : "Could not start the connection." });
+      setBusy(null);
+    }
+  }
+
+  async function disconnect(id: string) {
+    setBusy(id);
+    try {
+      const response = await fetch(`/api/connectors/${id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error(`Runtime replied ${response.status}`);
+      setNotice(null);
+      await load();
+    } catch (error) {
+      setNotice({ tone: "danger", text: error instanceof Error ? error.message : "Could not disconnect." });
     } finally {
-      setLoading(false);
+      setBusy(null);
     }
   }
 
-  async function handleConnect(connectorId: string) {
-    try {
-      const res = await fetch(`/api/connectors/${connectorId}/auth`);
-      if (res.ok) {
-        const data = await res.json() as { authUrl: string };
-        window.location.href = data.authUrl;
-      }
-    } catch (error) {
-      console.error("Failed to get auth URL:", error);
-    }
-  }
-
-  async function handleDisconnect(connectorId: string) {
-    try {
-      const res = await fetch(`/api/connectors/${connectorId}`, { method: "DELETE" });
-      if (res.ok) {
-        fetchConnectors();
-      }
-    } catch (error) {
-      console.error("Failed to disconnect:", error);
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <div className="text-ink-3 text-sm">Loading connectors...</div>
-      </div>
-    );
-  }
+  const connected = (connectors ?? []).filter((connector) => connector.status === "connected");
+  const named = connected.length > 0 ? connected.map((connector) => connector.metadata.name) : null;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-title text-ink">Connectors</h2>
-        <ToolMarks tools={connectors.filter((c) => c.status === "connected").map((c) => c.id)} size={20} />
-      </div>
-      <p className="text-body text-ink-3">
-        Connect your Google services to let Konan work with your email, calendar, and files.
-      </p>
+    <section className={embedded ? "pt-3" : "flex h-full min-w-0 flex-1 flex-col bg-surface-0"}>
+      {!embedded && <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
+        <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">Connectors</h1>
+        <ToolMarks tools={connected.map((connector) => connector.id)} size={18} />
+      </header>}
 
-      <div className="space-y-3">
-        {connectors.map((connector) => (
-          <div
-            key={connector.id}
-            className="flex items-center justify-between rounded-card bg-surface-2 p-4 shadow-ring-xs"
-          >
-            <div className="flex items-center gap-3">
-              <div className="flex items-center justify-center size-10 rounded-card bg-surface-3 shadow-ring-xs">
-                <ToolMarks tools={[connector.id]} size={24} />
-              </div>
-              <div>
-                <div className="text-body font-medium text-ink">{connector.metadata.name}</div>
-                <div className="text-caption text-ink-3">{connector.metadata.description}</div>
-              </div>
+      <div className={embedded ? "" : "min-h-0 flex-1 overflow-y-auto scroll-fade-y"}>
+        <div className={embedded ? "mx-auto w-full max-w-3xl pb-8" : "mx-auto w-full max-w-[920px] px-5 pb-10 pt-1 sm:px-8"}>
+          <p className="px-0.5 text-meta font-meta text-ink-4">
+            {named ? `Vivid can use ${named.join(", ")}.` : "Vivid works without these. Connect one when you want it to act on your mail, calendar, or files."}
+          </p>
+
+          {notice && (
+            <div role={notice.tone === "danger" ? "alert" : "status"} className={`mt-3 flex items-center gap-2 rounded-control px-3 py-2 text-label ${notice.tone === "danger" ? "bg-danger-soft text-danger" : "bg-success-soft text-success"}`}>
+              {notice.tone === "success" && <Check className="size-3.5" />}
+              {notice.text}
             </div>
+          )}
 
-            <div className="flex items-center gap-3">
-              <span
-                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
-                  connector.status === "connected"
-                    ? "bg-success-soft text-success"
-                    : connector.status === "error"
-                      ? "bg-danger-soft text-danger"
-                      : "bg-surface-3 text-ink-3"
-                }`}
-              >
-                <span
-                  className={`size-1.5 rounded-full ${
-                    connector.status === "connected"
-                      ? "bg-success"
-                      : connector.status === "error"
-                        ? "bg-danger"
-                        : "bg-ink-4"
-                  }`}
-                />
-                {connector.status === "connected" ? "Connected" : connector.status === "error" ? "Error" : "Disconnected"}
-              </span>
+          <ul className="mt-4 flex flex-col gap-1.5">
+            {connectors === null && (
+              <li className="flex items-center gap-2 px-3 py-4 text-label text-ink-4"><LoaderCircle className="size-3.5 animate-spin" />Checking what is connected</li>
+            )}
+            {connectors?.map((connector) => {
+              const isConnected = connector.status === "connected";
+              const isBusy = busy === connector.id;
+              return (
+                <li key={connector.id} className="flex items-center gap-3 rounded-row bg-surface-2 px-3 py-3 shadow-ring-xs">
+                  <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-control bg-surface-1 shadow-ring-xs">
+                    <ToolMarks tools={[connector.id]} size={20} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="truncate text-body text-ink">{connector.metadata.name}</span>
+                      {isConnected && <span className="inline-flex items-center gap-1 rounded-full bg-success-soft px-2 py-0.5 text-meta font-title text-success"><Check className="size-3" />Connected</span>}
+                      {connector.status === "error" && <span className="rounded-full bg-danger-soft px-2 py-0.5 text-meta font-title text-danger">Needs attention</span>}
+                    </span>
+                    <span className="mt-0.5 block truncate text-meta text-ink-3">{PURPOSE[connector.id] ?? connector.metadata.description}</span>
+                  </span>
+                  {isConnected ? (
+                    <button disabled={isBusy} onClick={() => void disconnect(connector.id)} className="inline-flex h-8 shrink-0 items-center rounded-control px-3 text-label text-ink-3 hover:bg-wash-hover hover:text-ink disabled:opacity-50">
+                      {isBusy ? <LoaderCircle className="size-3.5 animate-spin" /> : "Disconnect"}
+                    </button>
+                  ) : (
+                    <button disabled={isBusy} onClick={() => void connect(connector.id)} className="inline-flex h-8 shrink-0 items-center rounded-control bg-surface-3 px-3 text-label font-title text-ink shadow-ring-xs hover:bg-wash-hover disabled:opacity-50">
+                      {isBusy ? <LoaderCircle className="size-3.5 animate-spin" /> : "Connect"}
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
 
-              {connector.status === "connected" ? (
-                <button
-                  onClick={() => handleDisconnect(connector.id)}
-                  className="rounded-card bg-surface-3 px-3 py-1.5 text-xs font-medium text-ink-3 hover:bg-surface-2 hover:text-ink transition-colors"
-                >
-                  Disconnect
-                </button>
-              ) : (
-                <button
-                  onClick={() => handleConnect(connector.id)}
-                  className="rounded-card bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover transition-colors"
-                >
-                  Connect
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
+          <p className="mt-6 px-0.5 text-meta text-ink-4">
+            Google signs you in and Vivid keeps the token on this machine. Disconnect removes it.
+          </p>
+        </div>
       </div>
-    </div>
+    </section>
   );
 }

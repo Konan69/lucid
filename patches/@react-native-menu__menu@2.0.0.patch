@@ -1,0 +1,39 @@
+diff --git a/lib/commonjs/UIMenuView.android.js b/lib/commonjs/UIMenuView.android.js
+index aed934a443b407bc74c02de6adc29d9df67cc1cf..ecd1d6ae177b3e8aa6acbecc8154f20d93484d96 100644
+--- a/lib/commonjs/UIMenuView.android.js
++++ b/lib/commonjs/UIMenuView.android.js
+@@ -15,7 +15,7 @@ const MenuComponent = /*#__PURE__*/(0, _react.forwardRef)((props, ref) => {
+       if (nativeRef.current) {
+         const node = (0, _reactNative.findNodeHandle)(nativeRef.current);
+         const command = _reactNative.UIManager.getViewManagerConfig("MenuView").Commands.show;
+-        _reactNative.UIManager.dispatchViewManagerCommand(node, command, undefined);
++        _reactNative.UIManager.dispatchViewManagerCommand(node, command, []);
+       }
+     }
+   }), []);
+diff --git a/lib/module/UIMenuView.android.js b/lib/module/UIMenuView.android.js
+index e698dd3f12ae3fbe30fd40de64a023225955e6a4..51b6569c97c52460b15f4c44f810e89b68ab2f76 100644
+--- a/lib/module/UIMenuView.android.js
++++ b/lib/module/UIMenuView.android.js
+@@ -11,7 +11,7 @@ const MenuComponent = /*#__PURE__*/forwardRef((props, ref) => {
+       if (nativeRef.current) {
+         const node = findNodeHandle(nativeRef.current);
+         const command = UIManager.getViewManagerConfig("MenuView").Commands.show;
+-        UIManager.dispatchViewManagerCommand(node, command, undefined);
++        UIManager.dispatchViewManagerCommand(node, command, []);
+       }
+     }
+   }), []);
+diff --git a/src/UIMenuView.android.tsx b/src/UIMenuView.android.tsx
+index 967e37571a5cc1d1ca0dafa4495d31f42bb323de..c5dcca824c394fe7a40efa7084177c59472c4d30 100644
+--- a/src/UIMenuView.android.tsx
++++ b/src/UIMenuView.android.tsx
+@@ -24,7 +24,7 @@ const MenuComponent = forwardRef<MenuComponentRef, NativeMenuComponentProps>(
+ 						const command =
+ 							UIManager.getViewManagerConfig("MenuView").Commands.show;
+ 
+-						UIManager.dispatchViewManagerCommand(node, command, undefined);
++						UIManager.dispatchViewManagerCommand(node, command, []);
+ 					}
+ 				},
+ 			}),

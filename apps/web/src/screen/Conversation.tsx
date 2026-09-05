@@ -9,6 +9,8 @@ import { Button, IconButton } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { cn } from "../ui/cn";
 import { Face } from "../ui/Face";
+import { ConnectorRequestCard } from "../ui/ConnectorRequestCard";
+import { readConnectorRequest, connectorContinuation } from "../data/connectorRequests";
 
 export function Conversation({
   onOpenPanel,
@@ -72,7 +74,7 @@ export function Conversation({
           )}
           {agent.messages.filter((message) => message.display !== "hidden").map((message) => (
             <li key={message.id} className="animate-rise-in">
-              <LiveMessage message={message} />
+              <LiveMessage message={message} working={working} onContinue={async (text) => { await agent.sendMessage(text); onMessageSent(text); }} />
             </li>
           ))}
           {working && !hasStreamingAssistant && (
@@ -127,7 +129,7 @@ export function DemoConversation({ conversationId }: { conversationId: string })
   );
 }
 
-function LiveMessage({ message }: { message: FlueConversationMessage }) {
+function LiveMessage({ message, working, onContinue }: { message: FlueConversationMessage; working: boolean; onContinue: (text: string) => Promise<void> }) {
   const text = message.parts
     .filter((part) => part.type === "text")
     .map((part) => part.text)
@@ -162,30 +164,68 @@ function LiveMessage({ message }: { message: FlueConversationMessage }) {
     );
   }
 
+  const tracked = tools.flatMap((tool) => {
+    if (tool.state !== "output-available" || (tool.toolName !== "create_task" && tool.toolName !== "schedule_follow_up")) return [];
+    const output = tool.output as { task?: { title?: string; assignee?: string; dueAt?: string | null }; followUp?: { at?: string; repeatEveryMs?: number | null } | null } | undefined;
+    if (!output?.task?.title) return [];
+    return [{ id: tool.toolCallId, kind: tool.toolName, title: output.task.title, assignee: output.task.assignee, dueAt: output.task.dueAt ?? null, followUpAt: output.followUp?.at ?? null, repeats: !!output.followUp?.repeatEveryMs }];
+  });
+  const connectorRequests = tools.flatMap((tool) => {
+    if (tool.toolName !== "suggest_connector" || tool.state !== "output-available") return [];
+    const request = readConnectorRequest(tool.output);
+    return request ? [{ id: tool.toolCallId, request }] : [];
+  });
+  if (!text && tracked.length === 0 && connectorRequests.length === 0 && tools.length > 0) return null;
+
   return (
     <div className="flex gap-3">
       <Face size={24} className="mt-1" />
       <div className="min-w-0 flex-1 text-body text-ink">
-        {text ? <Markdown content={text} /> : <p className="text-ink-4">Thinking…</p>}
-        {tools.map((tool) => (
-          <div key={tool.toolCallId} className="mt-2 rounded-control bg-surface-2 px-3 py-2 text-label text-ink-3 ring-line">
-            <span className="font-title text-ink-2">{tool.toolName}</span>
-            <span className="ml-2">{tool.state === "input-available" ? "Running" : tool.state === "output-error" ? "Failed" : "Complete"}</span>
-          </div>
-        ))}
+        {text ? <Markdown content={text} /> : tracked.length === 0 && connectorRequests.length === 0 ? <p className="text-ink-4">Thinking…</p> : null}
+        {tracked.map((item) => <TrackedCard key={item.id} {...item} />)}
+        {connectorRequests.map(({ id, request }) => <ConnectorRequestCard key={id} request={request} disabled={working} onContinue={() => onContinue(connectorContinuation(request.connector))} />)}
         {time && <span className="mt-1 block text-meta text-ink-4">{time}</span>}
       </div>
     </div>
   );
 }
 
+/* When Vivid takes something on, the thread shows it where it was agreed:
+      one quiet card per task or follow-up, in the same voice as a routine card. */
+function TrackedCard({ kind, title, assignee, dueAt, followUpAt, repeats }: { kind: string; title: string; assignee?: string; dueAt: string | null; followUpAt: string | null; repeats: boolean }) {
+  const when = (value: string) => new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(Date.parse(value));
+  const meta = [
+    assignee && assignee !== "you" ? `Waiting on ${assignee}` : null,
+    dueAt ? `Due ${when(dueAt)}` : null,
+    followUpAt ? `${repeats ? "Follows up from" : "Follows up"} ${when(followUpAt)}` : null,
+  ].filter(Boolean).join(" · ");
+  return (
+    <div className="mt-3 flex items-start gap-3 rounded-panel bg-surface-2 px-3.5 py-3 shadow-ring-xs">
+      <span className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink"><Check className="size-4" strokeWidth={2} /></span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-meta font-meta text-ink-4">{kind === "create_task" ? "Vivid is tracking this" : "Vivid will follow up"}</span>
+        <span className="mt-0.5 block truncate text-label font-title text-ink">{title}</span>
+        {meta && <span className="mt-0.5 block text-meta font-meta text-ink-3">{meta}</span>}
+      </span>
+    </div>
+  );
+}
+
 function Markdown({ content }: { content: string }) {
+  const linkedContent = content.replace(
+    /\[([^\]\n]+?\.(?:pdf|md|markdown|txt))(?:,\s*p\.(\d+))?\](?!\()/gi,
+    (_match, filename: string, page?: string) => {
+      const label = page ? `${filename}, p.${page}` : filename;
+      const fragment = page ? `#page=${page}` : "";
+      return `[${label}](</api/library/source?name=${encodeURIComponent(filename)}${fragment}>)`;
+    },
+  );
   return (
     <div className="min-w-0 text-body text-ink">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer" className="text-accent-ink underline underline-offset-2">{children}</a>,
+          a: ({ children, href, ...props }) => <a {...props} href={href} target="_blank" rel="noreferrer" className={href?.startsWith("/api/library/source") ? "inline-flex rounded-full bg-accent-soft px-2 py-0.5 text-label font-title text-accent-ink no-underline ring-line" : "text-accent-ink underline underline-offset-2"}>{children}</a>,
           blockquote: ({ children }) => <blockquote className="my-3 border-l-2 border-line-3 pl-3 text-ink-3">{children}</blockquote>,
           code: ({ children, className, ...props }) => <code {...props} className={cn("rounded-xs bg-surface-2 px-1 py-0.5 font-mono text-[0.9em]", className)}>{children}</code>,
           h1: ({ children }) => <h1 className="mb-2 mt-4 text-page font-title first:mt-0">{children}</h1>,
@@ -202,7 +242,7 @@ function Markdown({ content }: { content: string }) {
           ul: ({ children }) => <ul className="my-2 list-disc space-y-1">{children}</ul>,
         }}
       >
-        {content}
+        {linkedContent}
       </ReactMarkdown>
     </div>
   );

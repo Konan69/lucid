@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Pin, Pencil, Plus, Search, ChevronDown, ChevronLeft, ChevronRight, PanelLeft, SunMedium, Repeat2, Library, ListFilter, AlarmClock, Check, FolderKanban, Trash2, Plug } from "lucide-react";
+import { Archive, ArchiveRestore, Pin, Pencil, Plus, Search, ChevronDown, ChevronLeft, ChevronRight, PanelLeft, Repeat2, Library, ListFilter, AlarmClock, Check, FolderKanban, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { doneCount, conversations, type Conversation } from "../data/fixtures";
 import { countProjects, projects, type Project } from "../data/projects";
@@ -39,29 +39,7 @@ const CAPTION = "h-(--caption-h)";
 const HOVER = "hover:bg-wash-hover";
 const ROW = "group/row relative flex w-full items-center gap-2.5 rounded-row px-2.5 text-left outline-none select-none transition-colors duration-(--dur-fast)";
 
-type Lane = { key: string; label: string; count?: boolean; variant: "card" | "slim"; pick: (t: Conversation) => boolean };
-const LANES: Lane[] = [
-  // Pinned wins first pick: a pinned conversation shows under Pinned even
-  // when it also needs attention, instead of being consumed by an earlier lane.
-  { key: "pinned", label: "Pinned", variant: "card", pick: (t) => !!t.pinned },
-  { key: "needs", label: "Needs you", count: true, variant: "card", pick: (t) => t.status === "attention" || t.status === "approve" },
-  { key: "working", label: "Working", count: true, variant: "card", pick: (t) => t.status === "working" },
-  { key: "today", label: "Today", variant: "slim", pick: (t) => t.when === "today" && !t.snoozeUntil },
-  { key: "yesterday", label: "Yesterday", variant: "slim", pick: (t) => t.when === "yesterday" && !t.snoozeUntil },
-  { key: "week", label: "This week", variant: "slim", pick: (t) => t.when === "week" && !t.snoozeUntil },
-  { key: "earlier", label: "Earlier", variant: "slim", pick: (t) => t.when === "earlier" && !t.snoozeUntil },
-];
-
-function laneConversations(list: Conversation[]) {
-  const taken = new Set<string>();
-  const lanes = LANES.map((l) => {
-    const items = list.filter((t) => !taken.has(t.id) && l.pick(t));
-    for (const t of items) taken.add(t.id);
-    return { ...l, items };
-  }).filter((l) => l.items.length > 0);
-  const snoozed = list.filter((t) => !!t.snoozeUntil);
-  return { lanes, snoozed };
-}
+import { laneConversations } from "../data/conversationLanes";
 
 export function Sidebar({
   activeId,
@@ -111,15 +89,11 @@ export function Sidebar({
         </button>
 
         {/* Product entry points, phrased in the user's language. */}
-        <ToolRow icon={<SunMedium className="size-4" strokeWidth={1.6} />} label="Today" onClick={() => onSelect("today")}>
-          <span className="text-meta font-meta text-ink-4">4</span>
-        </ToolRow>
         <ToolRow icon={<Repeat2 className="size-4" strokeWidth={1.6} />} label="Routines" onClick={() => onSelect("routines")} />
         <ToolRow icon={<FolderKanban className="size-4" strokeWidth={1.6} />} label="Projects" onClick={() => onSelect("projects")}>
           <span className="text-meta font-meta text-ink-4">{countProjects(projects)}</span>
         </ToolRow>
         <ToolRow icon={<Library className="size-4" strokeWidth={1.6} />} label="Library" onClick={() => onSelect("library")} />
-        <ToolRow icon={<Plug className="size-4" strokeWidth={1.6} />} label="Connectors" onClick={() => onSelect("connectors")} />
       </div>
 
       {/* Band header: a heading with controls. Full line, no fill. */}

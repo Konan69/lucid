@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "Vivid",
+    "slug": "vivid",
+    "scheme": "vivid",
+    "version": "0.1.0",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "work.vivid.mobile"
+    },
+    "android": {
+      "package": "work.vivid.mobile",
+      "softwareKeyboardLayoutMode": "resize"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-document-picker"
+    ],
+    "web": {
+      "bundler": "metro"
+    },
+    "icon": "./assets/icon.png"
+  }
+}

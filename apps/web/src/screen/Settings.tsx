@@ -1,21 +1,22 @@
-import { Check, CircleUserRound, Info, Monitor, Settings2, ShieldCheck, X, Cable, Mail, CalendarDays, HardDrive, Map, Globe } from "lucide-react";
+import { Check, CircleUserRound, Info, Monitor, Settings2, ShieldCheck, X, Plug } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Avatar } from "../ui/Avatar";
 import { cn } from "../ui/cn";
+import { Connectors } from "./Connectors";
 
 export type ThemePreference = "system" | "light" | "dark";
-type Section = "general" | "connections" | "computer" | "privacy" | "about";
+type Section = "general" | "connectors" | "computer" | "privacy" | "about";
 
 const NAV: Array<{ id: Section; label: string; icon: React.ReactNode }> = [
   { id: "general", label: "General", icon: <Settings2 className="size-4" /> },
-  { id: "connections", label: "Connections", icon: <Cable className="size-4" /> },
+  { id: "connectors", label: "Connectors", icon: <Plug className="size-4" /> },
   { id: "computer", label: "Computer", icon: <Monitor className="size-4" /> },
   { id: "privacy", label: "Privacy", icon: <ShieldCheck className="size-4" /> },
   { id: "about", label: "About", icon: <Info className="size-4" /> },
 ];
 
-export function Settings({ theme, onThemeChange, onClose }: { theme: ThemePreference; onThemeChange: (theme: ThemePreference) => void; onClose: () => void }) {
-  const [section, setSection] = useState<Section>("general");
+export function Settings({ theme, onThemeChange, onClose, initialSection = "general" }: { initialSection?: Section; theme: ThemePreference; onThemeChange: (theme: ThemePreference) => void; onClose: () => void }) {
+  const [section, setSection] = useState<Section>(initialSection);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -53,7 +54,7 @@ export function Settings({ theme, onThemeChange, onClose }: { theme: ThemePrefer
 
           <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 sm:px-7">
             {section === "general" && <GeneralSettings theme={theme} onThemeChange={onThemeChange} />}
-            {section === "connections" && <ConnectionsSettings />}
+            {section === "connectors" && <Connectors embedded />}
             {section === "computer" && <ComputerSettings />}
             {section === "privacy" && <PrivacySettings />}
             {section === "about" && <AboutSettings />}
@@ -104,50 +105,6 @@ function GeneralSettings({ theme, onThemeChange }: { theme: ThemePreference; onT
       <SettingsGroup label="Vivid">
         <SettingRow label="Timezone"><span className="text-label text-ink-3">Auto-detect · Africa/Lagos</span></SettingRow>
         <SettingRow label="Ask before acting" note="Vivid checks with you before sending, buying, or changing anything important."><Toggle checked /></SettingRow>
-      </SettingsGroup>
-    </div>
-  );
-}
-
-/* ── Connections: the external services Vivid may act through ── */
-
-type Service = { id: string; name: string; detail: string; icon: React.ReactNode };
-const SERVICES: Service[] = [
-  { id: "gmail", name: "Gmail", detail: "Read, draft, and send from your address", icon: <Mail className="size-[18px]" strokeWidth={1.7} /> },
-  { id: "calendar", name: "Google Calendar", detail: "See events, move and create them", icon: <CalendarDays className="size-[18px]" strokeWidth={1.7} /> },
-  { id: "drive", name: "Google Drive", detail: "Find files and save work to folders", icon: <HardDrive className="size-[18px]" strokeWidth={1.7} /> },
-  { id: "maps", name: "Maps", detail: "Search places and check travel times", icon: <Map className="size-[18px]" strokeWidth={1.7} /> },
-  { id: "browser", name: "Web", detail: "Browse and act on public sites", icon: <Globe className="size-[18px]" strokeWidth={1.7} /> },
-];
-
-function ConnectionsSettings() {
-  const [connected, setConnected] = useState<Record<string, boolean>>({ gmail: true, calendar: true, drive: true, maps: true, browser: true });
-  const connectedCount = Object.values(connected).filter(Boolean).length;
-  return (
-    <div className="mx-auto max-w-3xl space-y-7 pt-3">
-      <SettingsGroup label={`Connected services · ${connectedCount} of ${SERVICES.length}`}>
-        <p className="px-4 pt-3 text-label font-meta text-ink-4">Vivid only acts through the services you connect here. Disconnect any time; history keeps, access stops.</p>
-        {SERVICES.map((s) => (
-          <SettingRow
-            key={s.id}
-            label={
-              <span className="flex items-center gap-3">
-                <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-surface-2 text-ink-2 shadow-ring-xs">{s.icon}</span>
-                <span className="min-w-0">
-                  <span className="block truncate text-label text-ink">{s.name}</span>
-                  <span className="block truncate text-meta text-ink-4">{s.detail}</span>
-                </span>
-              </span>
-            }
-          >
-            <span className="flex items-center gap-2.5">
-              {connected[s.id]
-                ? <span className="inline-flex items-center gap-1.5 text-meta font-meta text-success"><i className="size-1.5 rounded-full bg-success" />Connected</span>
-                : <span className="text-meta font-meta text-ink-4">Not connected</span>}
-              <Toggle checked={!!connected[s.id]} onChange={(v) => setConnected((c) => ({ ...c, [s.id]: v }))} />
-            </span>
-          </SettingRow>
-        ))}
       </SettingsGroup>
     </div>
   );

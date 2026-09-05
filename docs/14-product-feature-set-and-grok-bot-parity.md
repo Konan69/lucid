@@ -17,6 +17,7 @@ directional product target, not a claim that Vivid and Grok Bot are equivalent.
 | Conversation list and creation | Working locally | The sidebar creates/selects real durable Flue conversations; their title index is stored alongside Flue state in SQLite. |
 | Scheduled routines | Working locally | SQLite stores definitions and run history; a Node cron trigger dispatches durable schedule signals into Flue with pause, test-run, edit, and delete controls. |
 | Document Library and RAG | Working locally | Real nested folders and PDF/Markdown/text uploads are stored in SQLite; FTS5 retrieval is exposed to Vivid as a read-only tool with filename/page citations. |
+| Tasks and follow-ups | Working locally | Vivid creates and updates tasks from conversation; scheduled follow-ups wake it into the task's conversation; overdue work is chased once automatically; in-app notifications and the Today screen surface it. See [Tasks and follow-ups](15-tasks-and-follow-ups.md). |
 | Response provenance | Working | Model, timing, usage, and tool-call count are attached to agent responses. |
 | Protected browser-to-runtime path | Working locally | Vite proxies the runtime API and adds the bearer token outside the browser bundle. Production needs an equivalent server-side gateway. |
 
@@ -59,8 +60,9 @@ multi-bot collaboration.
 2. **Done for the demo:** add recurring routines with next-run time, run history, missed-run visibility, retry, and pause controls.
 3. **Done for current runtime data:** connect the work log to real Flue transcript and response metadata.
 4. **Done for read-only retrieval:** add one harmless tool end to end; `search_library` needs no approval because it only reads local documents.
-5. Add one connector behind a narrow interface without moving connector credentials into the web app.
-6. Connect the computer panel to the separately supplied execution and artifact boundary.
+5. **Done locally:** tasks, follow-ups, and notifications, so Vivid holds work and chases it without a connector.
+6. Add one connector behind a narrow interface without moving connector credentials into the web app.
+7. Connect the computer panel to the separately supplied execution and artifact boundary.
 
 The first vertical slice should prove the complete trust boundary before broadening capability. A
 feature is complete only when its product state, authorization, failure behavior, persistence, and

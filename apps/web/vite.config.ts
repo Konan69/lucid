@@ -16,27 +16,16 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5178,
       proxy: {
-        "/api/library": {
-          target: runtimeEnvironment.KONAN_RUNTIME_URL ?? "http://127.0.0.1:5173",
-          changeOrigin: true,
-          headers: runtimeToken
-            ? { authorization: `Bearer ${runtimeToken}` }
-            : undefined,
-        },
-        "/api/routines": {
-          target: runtimeEnvironment.KONAN_RUNTIME_URL ?? "http://127.0.0.1:5173",
-          changeOrigin: true,
-          headers: runtimeToken
-            ? { authorization: `Bearer ${runtimeToken}` }
-            : undefined,
-        },
-        "/api/conversations": {
-          target: runtimeEnvironment.KONAN_RUNTIME_URL ?? "http://127.0.0.1:5173",
-          changeOrigin: true,
-          headers: runtimeToken
-            ? { authorization: `Bearer ${runtimeToken}` }
-            : undefined,
-        },
+        ...Object.fromEntries(
+          ["/api/library", "/api/routines", "/api/conversations", "/api/tasks", "/api/follow-ups", "/api/notifications"].map((path) => [
+            path,
+            {
+              target: runtimeEnvironment.KONAN_RUNTIME_URL ?? "http://127.0.0.1:5173",
+              changeOrigin: true,
+              headers: runtimeToken ? { authorization: `Bearer ${runtimeToken}` } : undefined,
+            },
+          ]),
+        ),
         "/api/vivid": {
           target: runtimeEnvironment.KONAN_RUNTIME_URL ?? "http://127.0.0.1:5173",
           changeOrigin: true,

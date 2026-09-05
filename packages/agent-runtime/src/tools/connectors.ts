@@ -1,6 +1,18 @@
 import { defineTool, type ToolDefinition } from "@flue/runtime";
 import * as v from "valibot";
-import { gmailTools, calendarTools, driveTools } from "@konan/connectors";
+import { gmailTools, calendarTools, driveTools, getConnectorStatus } from "@konan/connectors";
+
+export const suggestConnectorTool = defineTool({
+  name: "suggest_connector",
+  description: "Offer a connector in this conversation when it is needed for the user's request. Shows an inline card with your reason and a Connect button; it does not authorize access. Only suggest the service needed now. Returns its actual status. If connected, use its tools instead of asking to connect again; otherwise wait for the user to authorize and continue.",
+  input: v.object({
+    connector: v.picklist(["gmail", "calendar", "drive"]),
+    reason: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(400)),
+  }),
+  run({ data }) {
+    return { output: { kind: "connector-request", ...data, status: getConnectorStatus(data.connector) } };
+  },
+});
 
 type JsonSchema = {
   type?: string | string[];

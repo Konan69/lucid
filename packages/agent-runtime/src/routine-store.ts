@@ -8,6 +8,7 @@ export type Routine = {
   prompt: string;
   cron: string;
   timezone: string;
+  libraryFolderId: string | null;
   enabled: boolean;
   nextExpectedAt: number | null;
   lastMissedAt: number | null;
@@ -68,10 +69,14 @@ if (!routineTableColumns.some((column) => column.name === "next_expected_at")) {
 if (!routineTableColumns.some((column) => column.name === "last_missed_at")) {
   database.exec("ALTER TABLE konan_routines ADD COLUMN last_missed_at INTEGER");
 }
+if (!routineTableColumns.some((column) => column.name === "library_folder_id")) {
+  database.exec("ALTER TABLE konan_routines ADD COLUMN library_folder_id TEXT");
+}
 
 const routineColumns = `
   id, name, prompt, cron, timezone,
   enabled, next_expected_at AS nextExpectedAt, last_missed_at AS lastMissedAt,
+  library_folder_id AS libraryFolderId,
   created_at AS createdAt, updated_at AS updatedAt
 `;
 
@@ -90,7 +95,7 @@ export function getRoutine(id: string): Routine | null {
   return row ? mapRoutine(row) : null;
 }
 
-export function createRoutine(input: Pick<Routine, "name" | "prompt" | "cron" | "timezone">): Routine {
+export function createRoutine(input: Pick<Routine, "name" | "prompt" | "cron" | "timezone" | "libraryFolderId">): Routine {
   const now = Date.now();
   const routine: Routine = {
     ...input,
@@ -102,24 +107,24 @@ export function createRoutine(input: Pick<Routine, "name" | "prompt" | "cron" | 
     updatedAt: now,
   };
   database.prepare(`
-    INSERT INTO konan_routines (id, name, prompt, cron, timezone, enabled, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(routine.id, routine.name, routine.prompt, routine.cron, routine.timezone, 1, now, now);
+    INSERT INTO konan_routines (id, name, prompt, cron, timezone, library_folder_id, enabled, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(routine.id, routine.name, routine.prompt, routine.cron, routine.timezone, routine.libraryFolderId, 1, now, now);
   return routine;
 }
 
 export function updateRoutine(
   id: string,
-  patch: Partial<Pick<Routine, "name" | "prompt" | "cron" | "timezone" | "enabled">>,
+  patch: Partial<Pick<Routine, "name" | "prompt" | "cron" | "timezone" | "libraryFolderId" | "enabled">>,
 ): Routine | null {
   const current = getRoutine(id);
   if (!current) return null;
   const next = { ...current, ...patch, updatedAt: Date.now() };
   database.prepare(`
     UPDATE konan_routines
-    SET name = ?, prompt = ?, cron = ?, timezone = ?, enabled = ?, updated_at = ?
+    SET name = ?, prompt = ?, cron = ?, timezone = ?, library_folder_id = ?, enabled = ?, updated_at = ?
     WHERE id = ?
-  `).run(next.name, next.prompt, next.cron, next.timezone, next.enabled ? 1 : 0, next.updatedAt, id);
+  `).run(next.name, next.prompt, next.cron, next.timezone, next.libraryFolderId, next.enabled ? 1 : 0, next.updatedAt, id);
   return next;
 }
 
@@ -148,6 +153,10 @@ export function listRoutineRuns(routineId: string, limit = 12): RoutineRun[] {
   `).all(routineId, limit) as unknown as RoutineRun[];
 }
 
+export function listRunningRoutineRuns(): RoutineRun[] {
+  return database.prepare(`SELECT ${runColumns} FROM konan_routine_runs WHERE status = 'running' ORDER BY started_at ASC`).all() as unknown as RoutineRun[];
+}
+
 export function startRoutineRun(routineId: string): RoutineRun {
   const run: RoutineRun = {
     id: randomUUID(),
@@ -173,18 +182,18 @@ export function attachRoutineSubmission(runId: string, submissionId: string) {
     .run(submissionId, runId);
 }
 
-export function finishRoutineRun(runId: string, output: string) {
-  database.prepare(`
+export function finishRoutineRun(runId: string, output: string): boolean {
+  return database.prepare(`
     UPDATE konan_routine_runs
     SET status = 'succeeded', finished_at = ?, output = ?, error = NULL
-    WHERE id = ?
-  `).run(Date.now(), output, runId);
+    WHERE id = ? AND status = 'running'
+  `).run(Date.now(), output, runId).changes > 0;
 }
 
-export function failRoutineRun(runId: string, error: string) {
-  database.prepare(`
+export function failRoutineRun(runId: string, error: string): boolean {
+  return database.prepare(`
     UPDATE konan_routine_runs
     SET status = 'failed', finished_at = ?, error = ?
-    WHERE id = ?
-  `).run(Date.now(), error, runId);
+    WHERE id = ? AND status = 'running'
+  `).run(Date.now(), error, runId).changes > 0;
 }

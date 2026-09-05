@@ -4,10 +4,12 @@
   "version": "0.0.0",
   "type": "module",
   "exports": {
-    "./tokens.css": "./src/tokens.css"
+    "./tokens.css": "./src/tokens.css",
+    "./native": "./src/native.ts"
   },
   "scripts": {
-    "build": "echo design-tokens:ok",
-    "typecheck": "echo design-tokens:ok"
+    "generate:native": "node generate-native.mjs",
+    "build": "node generate-native.mjs --check",
+    "typecheck": "node generate-native.mjs --check"
   }
 }

@@ -25,6 +25,7 @@ export type LibraryFolder = {
   parentId: string | null;
   createdAt: number;
   updatedAt: number;
+  itemCount: number;
 };
 
 export type LibrarySearchResult = {
@@ -115,14 +116,46 @@ export function listLibraryDocuments(folderId?: string | null): LibraryDocument[
 
 export function listLibraryFolders(parentId: string | null): LibraryFolder[] {
   const rows = parentId === null
-    ? database.prepare("SELECT id, name, parent_id AS parentId, created_at AS createdAt, updated_at AS updatedAt FROM konan_library_folders WHERE parent_id IS NULL ORDER BY name COLLATE NOCASE").all()
-    : database.prepare("SELECT id, name, parent_id AS parentId, created_at AS createdAt, updated_at AS updatedAt FROM konan_library_folders WHERE parent_id = ? ORDER BY name COLLATE NOCASE").all(parentId);
+    ? database.prepare(`SELECT f.id, f.name, f.parent_id AS parentId, f.created_at AS createdAt, f.updated_at AS updatedAt,
+        (SELECT count(*) FROM konan_library_folders child WHERE child.parent_id = f.id) +
+        (SELECT count(*) FROM konan_library_documents document WHERE document.folder_id = f.id) AS itemCount
+      FROM konan_library_folders f WHERE f.parent_id IS NULL ORDER BY f.name COLLATE NOCASE`).all()
+    : database.prepare(`SELECT f.id, f.name, f.parent_id AS parentId, f.created_at AS createdAt, f.updated_at AS updatedAt,
+        (SELECT count(*) FROM konan_library_folders child WHERE child.parent_id = f.id) +
+        (SELECT count(*) FROM konan_library_documents document WHERE document.folder_id = f.id) AS itemCount
+      FROM konan_library_folders f WHERE f.parent_id = ? ORDER BY f.name COLLATE NOCASE`).all(parentId);
   return rows as unknown as LibraryFolder[];
 }
 
+export function listAllLibraryFolders(): LibraryFolder[] {
+  return database.prepare(`SELECT f.id, f.name, f.parent_id AS parentId, f.created_at AS createdAt, f.updated_at AS updatedAt,
+      (SELECT count(*) FROM konan_library_folders child WHERE child.parent_id = f.id) +
+      (SELECT count(*) FROM konan_library_documents document WHERE document.folder_id = f.id) AS itemCount
+    FROM konan_library_folders f ORDER BY f.name COLLATE NOCASE`).all() as unknown as LibraryFolder[];
+}
+
 export function getLibraryFolder(id: string): LibraryFolder | null {
-  const row = database.prepare("SELECT id, name, parent_id AS parentId, created_at AS createdAt, updated_at AS updatedAt FROM konan_library_folders WHERE id = ?").get(id);
+  const row = database.prepare(`SELECT f.id, f.name, f.parent_id AS parentId, f.created_at AS createdAt, f.updated_at AS updatedAt,
+      (SELECT count(*) FROM konan_library_folders child WHERE child.parent_id = f.id) +
+      (SELECT count(*) FROM konan_library_documents document WHERE document.folder_id = f.id) AS itemCount
+    FROM konan_library_folders f WHERE f.id = ?`).get(id);
   return row ? row as unknown as LibraryFolder : null;
+}
+
+export function updateLibraryFolder(id: string, patch: { name?: string; parentId?: string | null }): LibraryFolder | null {
+  const current = getLibraryFolder(id);
+  if (!current) return null;
+  const parentId = patch.parentId === undefined ? current.parentId : patch.parentId;
+  if (parentId === id) throw new Error("A folder cannot contain itself");
+  if (parentId) {
+    const cycle = database.prepare(`WITH RECURSIVE descendants(id) AS (
+      VALUES (?) UNION ALL SELECT f.id FROM konan_library_folders f JOIN descendants d ON f.parent_id = d.id
+    ) SELECT 1 AS found FROM descendants WHERE id = ? LIMIT 1`).get(id, parentId);
+    if (cycle) throw new Error("A folder cannot move inside one of its descendants");
+  }
+  database.prepare("UPDATE konan_library_folders SET name = ?, parent_id = ?, updated_at = ? WHERE id = ?")
+    .run(patch.name ?? current.name, parentId, Date.now(), id);
+  return getLibraryFolder(id);
 }
 
 export function createLibraryFolder(name: string, parentId: string | null): LibraryFolder {
@@ -157,6 +190,24 @@ export function getStoredLibraryDocument(id: string): StoredLibraryDocument | nu
     FROM konan_library_documents d WHERE d.id = ?
   `).get(id);
   return row ? row as unknown as StoredLibraryDocument : null;
+}
+
+export function getStoredLibraryDocumentByName(name: string): StoredLibraryDocument | null {
+  const row = database.prepare(`
+    SELECT ${summaryColumns}, d.bytes, d.extracted_text AS extractedText
+    FROM konan_library_documents d WHERE d.name = ? AND d.status = 'ready'
+    ORDER BY d.updated_at DESC LIMIT 1
+  `).get(name);
+  return row ? row as unknown as StoredLibraryDocument : null;
+}
+
+export function updateLibraryDocument(id: string, patch: { name?: string; folderId?: string | null }): LibraryDocument | null {
+  const current = getLibraryDocument(id);
+  if (!current) return null;
+  const folderId = patch.folderId === undefined ? current.folderId : patch.folderId;
+  database.prepare("UPDATE konan_library_documents SET name = ?, folder_id = ?, updated_at = ? WHERE id = ?")
+    .run(patch.name ?? current.name, folderId, Date.now(), id);
+  return getLibraryDocument(id);
 }
 
 export function createLibraryDocument(input: { name: string; mimeType: string; bytes: Uint8Array; sha256: string; folderId: string | null }): LibraryDocument {
@@ -220,18 +271,25 @@ function ftsQuery(query: string) {
   return [...new Set(terms)].slice(0, 12).map((term) => `"${term.replaceAll('"', '""')}"*`).join(" OR ");
 }
 
-export function searchLibrary(query: string, limit = 6): LibrarySearchResult[] {
+export function searchLibrary(query: string, limit = 6, folderId?: string | null): LibrarySearchResult[] {
   const match = ftsQuery(query);
   if (!match) return [];
-  const rows = database.prepare(`
+  const folderClause = folderId ? "AND d.folder_id IN (SELECT id FROM folder_tree)" : "";
+  const statement = database.prepare(`
+    WITH RECURSIVE folder_tree(id) AS (
+      SELECT ? WHERE ? IS NOT NULL
+      UNION ALL
+      SELECT f.id FROM konan_library_folders f JOIN folder_tree tree ON f.parent_id = tree.id
+    )
     SELECT c.id AS chunkId, c.document_id AS documentId, d.name AS filename,
       c.page, c.text, bm25(konan_library_chunks_fts) AS rank
     FROM konan_library_chunks_fts
     JOIN konan_library_chunks c ON c.id = konan_library_chunks_fts.chunk_id
     JOIN konan_library_documents d ON d.id = c.document_id
-    WHERE konan_library_chunks_fts MATCH ? AND d.status = 'ready'
+    WHERE konan_library_chunks_fts MATCH ? AND d.status = 'ready' ${folderClause}
     ORDER BY rank ASC, c.ordinal ASC
     LIMIT ?
-  `).all(match, Math.max(1, Math.min(limit, 10))) as unknown as Array<Omit<LibrarySearchResult, "score"> & { rank: number }>;
+  `);
+  const rows = statement.all(folderId ?? null, folderId ?? null, match, Math.max(1, Math.min(limit, 10))) as unknown as Array<Omit<LibrarySearchResult, "score"> & { rank: number }>;
   return rows.map(({ rank, ...row }) => ({ ...row, score: Number((1 / (1 + Math.abs(rank))).toFixed(4)) }));
 }

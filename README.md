@@ -25,6 +25,10 @@ pnpm --filter @konan/agent-runtime dev
 pnpm --filter @konan/web dev
 ```
 
+The separate iOS/Android app lives in [apps/mobile](apps/mobile/README.md). Run it
+with `pnpm --filter @konan/mobile dev`; its README covers phone connections and
+the current feature coverage.
+
 Useful checks:
 
 ```sh

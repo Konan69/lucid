@@ -12,6 +12,7 @@
     "dev": "vite dev",
     "docs": "flue docs",
     "start": "node dist/server.mjs",
+    "test": "node --test src/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

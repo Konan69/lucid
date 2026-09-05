@@ -79,6 +79,7 @@
   --face-violet: #9159fe;
   --face-magenta: #ff309b;
   --face-gray: #777777;
+  --face-eye: #0f0f0f;          /* existing Vivid Face eye color */
 
   /* ── Type ────────────────────────────────────────────────── */
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
