@@ -3,7 +3,7 @@ import { KeyboardAvoidingView, Platform, ScrollView, View } from "react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import Animated, { FadeInDown, ReduceMotion } from "react-native-reanimated";
 import { suggestions } from "../../../web/src/data/fixtures";
-import { nativeMetrics as m } from "@konan/design-tokens/native";
+import { nativeMetrics as m } from "@vivid/design-tokens/native";
 import { MotionPressable } from "../components/MotionPressable";
 import { ChatComposer, ChatHeader, useChatKeyboard } from "../components/ChatChrome";
 import { Face, Feedback, Label } from "../components/ui";

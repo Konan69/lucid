@@ -19,7 +19,7 @@ import {
   CircleDashed,
 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { nativeMetrics as m } from "@konan/design-tokens/native";
+import { nativeMetrics as m } from "@vivid/design-tokens/native";
 import { laneConversations } from "../../../web/src/data/conversationLanes";
 import { countProjects, projects } from "../../../web/src/data/projects";
 import {

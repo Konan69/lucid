@@ -113,7 +113,7 @@ function buildTaskTools(conversationId: string) {
         taskId: task.id,
         conversationId,
       }));
-      return { output: { task: describeTask(getTaskView(task)), followUp: followUp ? describeFollowUp(followUp) : null } };
+      return { output: { task: describeTask(await getTaskView(task)), followUp: followUp ? describeFollowUp(followUp) : null } };
     },
   });
 
@@ -140,7 +140,7 @@ function buildTaskTools(conversationId: string) {
         priority: data.priority,
       }));
       if (!task) throw new Error(`No task with id ${data.id}`);
-      return { output: { task: describeTask(getTaskView(task)) } };
+      return { output: { task: describeTask(await getTaskView(task)) } };
     },
   });
 
@@ -152,7 +152,7 @@ function buildTaskTools(conversationId: string) {
       limit: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(50))),
     }),
     async run({ data }) {
-      const tasks = listTaskViews(data.status ?? "open").slice(0, data.limit ?? 20).map(describeTask);
+      const tasks = (await listTaskViews(data.status ?? "open")).slice(0, data.limit ?? 20).map(describeTask);
       return { output: { now: new Date().toISOString(), tasks } };
     },
   });
@@ -168,7 +168,7 @@ function buildTaskTools(conversationId: string) {
     }),
     durable: true,
     async run({ data, step, toolCallId }) {
-      const task = getTask(data.taskId);
+      const task = await getTask(data.taskId);
       if (!task) throw new Error(`No task with id ${data.taskId}`);
       if (task.status !== "open") throw new Error(`Task "${task.title}" is ${task.status}; reopen it before scheduling a follow-up`);
       const at = parseWhen(data.at) ?? Date.now();

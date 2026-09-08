@@ -21,12 +21,12 @@ features, but the fixtures do not define their implementation.
 pnpm install
 cp packages/agent-runtime/.env.example packages/agent-runtime/.env
 # Add an OpenRouter key and a local runtime token to that ignored file.
-pnpm --filter @konan/agent-runtime dev
-pnpm --filter @konan/web dev
+pnpm --filter @vivid/agent-runtime dev
+pnpm --filter @vivid/web dev
 ```
 
 The separate iOS/Android app lives in [apps/mobile](apps/mobile/README.md). Run it
-with `pnpm --filter @konan/mobile dev`; its README covers phone connections and
+with `pnpm --filter @vivid/mobile dev`; its README covers phone connections and
 the current feature coverage.
 
 Useful checks:
@@ -52,13 +52,15 @@ This is a full-stack collaboration boundary, not a frontend-only one. Work may i
 authentication, people and companies, projects, threads, messages, library data, ordinary HTTP APIs,
 persistence, tests, and shared product contracts.
 
-The included `packages/agent-runtime` owns the shareable Flue conversation transport, SQLite
-persistence, model adapter, local document Library, and a single-process cron adapter for the demo. The application backend
-may submit work through this explicit boundary and consume status or results, but it must not absorb
-the production scheduling engine, connectors, tool calls, computer transport, or credential
-handling. Those integrations will be supplied separately.
+The included `packages/agent-runtime` owns the shareable Flue conversation transport, PostgreSQL
+persistence, model adapter, local document Library, and a single-process cron adapter for the demo.
+The application backend may submit work through this explicit boundary and consume status or results,
+but it must not absorb the production scheduling engine, connectors, tool calls, computer transport,
+or credential handling. Those integrations will be supplied separately.
 
 The Library accepts PDF, Markdown, and plain-text files up to 10 MB. Files and real nested folders
-are stored in SQLite, readable text is chunked into FTS5, and Vivid can call the read-only
-`search_library` tool to answer with filename/page citations. This MVP uses keyword retrieval and
-does not include embeddings, OCR, or a vector database.
+are stored in PostgreSQL, readable text is chunked into a `tsvector` column with a GIN index, and
+Vivid can call the read-only `search_library` tool to answer with filename/page citations. This MVP
+uses keyword retrieval and does not include embeddings, OCR, or a vector database. Set
+`DATABASE_URL` alongside `OPENROUTER_API_KEY` and `VIVID_RUNTIME_TOKEN`; runtime state no longer
+needs a `.state/` volume.

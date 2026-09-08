@@ -259,7 +259,7 @@ export function FixtureMessage({ msg }: { msg: Msg }) {
           </div>
         </div>
       );
-    case "konan":
+    case "vivid":
       return (
         <div className="flex gap-3">
           <Face size={24} className="mt-1" />

@@ -6,7 +6,7 @@
     <title>Vivid</title>
     <script>
       (function () {
-        var stored = localStorage.getItem("konan-theme");
+        var stored = localStorage.getItem("vivid-theme");
         var theme = stored || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
         document.documentElement.dataset.theme = theme;
       })();

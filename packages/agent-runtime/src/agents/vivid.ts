@@ -24,7 +24,7 @@ function today() {
 }
 
 export function Vivid({ id }: { id: string }) {
-  const model = process.env.KONAN_MODEL ?? "openrouter/z-ai/glm-5.3-flash";
+  const model = process.env.VIVID_MODEL ?? "openrouter/z-ai/glm-5.3-flash";
   const [createTask, updateTask, listTasks, scheduleFollowUp] = taskToolsFor(id);
 
   useModel(model);

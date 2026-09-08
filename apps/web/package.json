@@ -1,5 +1,5 @@
 {
-  "name": "@konan/web",
+  "name": "@vivid/web",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -12,8 +12,8 @@
   "dependencies": {
     "@flue/react": "2.0.3",
     "@flue/sdk": "2.0.3",
-    "@konan/contracts": "workspace:*",
-    "@konan/design-tokens": "workspace:*",
+    "@vivid/contracts": "workspace:*",
+    "@vivid/design-tokens": "workspace:*",
     "lucide-react": "^0.560.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",

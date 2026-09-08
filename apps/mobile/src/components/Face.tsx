@@ -7,7 +7,7 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
 } from "react-native-reanimated";
-import { nativeMetrics as m } from "@konan/design-tokens/native";
+import { nativeMetrics as m } from "@vivid/design-tokens/native";
 import { useTheme } from "../theme";
 
 // Geometry and colors ported from apps/web/src/ui/Face.tsx, not a new logo.

@@ -32,18 +32,18 @@ export class GmailConnector implements ConnectorWithTools {
   async refreshCredential(credential: ConnectorCredential): Promise<ConnectorCredential> {
     const config = getGoogleConfig();
     const { accessToken, expiresAt } = await refreshGoogleToken(config, credential.refreshToken);
-    const updated = updateCredential(credential.id, { accessToken, expiresAt });
+    const updated = await updateCredential(credential.id, { accessToken, expiresAt });
     if (!updated) throw new Error("Credential not found");
     return updated;
   }
 
   async revokeCredential(credentialId: string): Promise<void> {
-    const creds = getCredentialsForConnector("gmail");
+    const creds = await getCredentialsForConnector("gmail");
     const cred = creds.find((c) => c.id === credentialId);
     if (cred) {
       await revokeGoogleToken(cred.accessToken);
     }
-    deleteCredential(credentialId);
+    await deleteCredential(credentialId);
   }
 
   tools(): ConnectorTool[] {

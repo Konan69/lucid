@@ -20,7 +20,7 @@ import Animated, {
   LinearTransition,
   ReduceMotion,
 } from "react-native-reanimated";
-import { nativeMetrics as m } from "@konan/design-tokens/native";
+import { nativeMetrics as m } from "@vivid/design-tokens/native";
 import { ComposerEditor } from "../native/T3ComposerEditor";
 import type { ComposerEditorHandle } from "../native/T3ComposerEditor.types";
 import { useSidebar, type Routes } from "../workspace";

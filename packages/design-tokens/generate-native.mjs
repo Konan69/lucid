@@ -55,6 +55,6 @@ const target = new URL("./src/native.ts", import.meta.url);
 if (process.argv.includes("--check")) {
   if (readFileSync(target, "utf8") !== output)
     throw new Error(
-      "Native tokens are stale. Run pnpm --filter @konan/design-tokens generate:native",
+      "Native tokens are stale. Run pnpm --filter @vivid/design-tokens generate:native",
     );
 } else writeFileSync(target, output);

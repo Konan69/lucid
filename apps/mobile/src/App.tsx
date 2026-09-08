@@ -40,7 +40,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { WORKSPACE_PANE_TIMING } from "./t3/workspace-pane-animation";
-import { nativeMetrics as m } from "@konan/design-tokens/native";
+import { nativeMetrics as m } from "@vivid/design-tokens/native";
 
 const defaultPreferences: Preferences = {
   url:

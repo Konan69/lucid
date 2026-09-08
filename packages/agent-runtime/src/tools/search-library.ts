@@ -11,7 +11,7 @@ export const searchLibraryTool = defineTool({
     folderId: v.optional(v.pipe(v.string(), v.uuid())),
   }),
   async run({ data }) {
-    const results = searchLibrary(data.query, data.limit ?? 6, data.folderId).map((result) => ({
+    const results = (await searchLibrary(data.query, data.limit ?? 6, data.folderId)).map((result) => ({
       documentId: result.documentId,
       filename: result.filename,
       page: result.page,

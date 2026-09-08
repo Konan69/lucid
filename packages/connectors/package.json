@@ -1,5 +1,5 @@
 {
-  "name": "@konan/connectors",
+  "name": "@vivid/connectors",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -8,10 +8,15 @@
     "./src/*": "./src/*"
   },
   "dependencies": {
-    "@konan/contracts": "workspace:*"
+    "@vivid/contracts": "workspace:*",
+    "drizzle-orm": "1.0.0-rc.5-ab785fc",
+    "effect": "4.0.0-rc.112",
+    "pg": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "typescript": "^5.9.0"
   }
 }

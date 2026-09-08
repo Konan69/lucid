@@ -7,7 +7,7 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
-import { nativeMetrics } from "@konan/design-tokens/native";
+import { nativeMetrics } from "@vivid/design-tokens/native";
 
 // Vivid web Button/EmptyState's 0.98 press treatment, executed on the UI thread.
 export function MotionPressable({

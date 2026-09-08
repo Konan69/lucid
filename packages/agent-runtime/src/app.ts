@@ -1,7 +1,7 @@
 import { createAgentRouter } from "@flue/runtime/routing";
 import { Hono } from "hono";
 import "./providers/openrouter.ts";
-import { Vivid } from "./agents/konan.ts";
+import { Vivid } from "./agents/vivid.ts";
 import {
   LIBRARY_FILE_TYPES,
   MAX_LIBRARY_FILE_BYTES,
@@ -31,7 +31,7 @@ import {
   DriveConnector,
   getConnectorStatus,
   deleteCredentialsForConnector,
-} from "@konan/connectors";
+} from "@vivid/connectors";
 import {
   getRoutineView,
   listRoutineViews,
@@ -73,14 +73,14 @@ const app = new Hono();
 
 app.get("/health", (context) =>
   context.json({
-    model: process.env.KONAN_MODEL ?? "openrouter/z-ai/glm-5.3-flash",
+    model: process.env.VIVID_MODEL ?? "openrouter/z-ai/glm-5.3-flash",
     service: "vivid-agent-runtime",
     status: "ok",
   }),
 );
 
 const requireRuntimeToken = async (context: Parameters<Parameters<typeof app.use>[1]>[0], next: () => Promise<void>) => {
-  const token = process.env.KONAN_RUNTIME_TOKEN;
+  const token = process.env.VIVID_RUNTIME_TOKEN;
 
   if (!token) {
     return context.json({ error: "Runtime token is not configured" }, 503);
@@ -106,8 +106,8 @@ app.use("/api/follow-ups/*", requireRuntimeToken);
 app.use("/api/notifications", requireRuntimeToken);
 app.use("/api/notifications/*", requireRuntimeToken);
 
-app.get("/api/conversations", (context) =>
-  context.json({ conversations: listConversations() }),
+app.get("/api/conversations", async (context) =>
+  context.json({ conversations: await listConversations() }),
 );
 
 app.put("/api/conversations/:id", async (context) => {
@@ -126,7 +126,7 @@ app.put("/api/conversations/:id", async (context) => {
     return context.json({ error: "title and preview must be strings" }, 400);
   }
 
-  const conversation = upsertConversation({
+  const conversation = await upsertConversation({
     archived: typeof body.archived === "boolean" ? body.archived : false,
     id,
     title: body.title.trim().slice(0, 120) || "New conversation",
@@ -141,7 +141,7 @@ app.put("/api/conversations/:id", async (context) => {
 
 app.patch("/api/conversations/:id", async (context) => {
   const id = context.req.param("id");
-  const current = listConversations().find((conversation) => conversation.id === id);
+  const current = (await listConversations()).find((conversation) => conversation.id === id);
   if (!current) return context.json({ error: "Conversation not found" }, 404);
   const body = await context.req.json<{ archived?: unknown; title?: unknown }>();
   if (body.title !== undefined && (typeof body.title !== "string" || !body.title.trim())) {
@@ -150,7 +150,7 @@ app.patch("/api/conversations/:id", async (context) => {
   if (body.archived !== undefined && typeof body.archived !== "boolean") {
     return context.json({ error: "Invalid archived value" }, 400);
   }
-  const conversation = upsertConversation({
+  const conversation = await upsertConversation({
     ...current,
     title: typeof body.title === "string" ? body.title.trim().slice(0, 120) : current.title,
     archived: typeof body.archived === "boolean" ? body.archived : current.archived,
@@ -159,29 +159,29 @@ app.patch("/api/conversations/:id", async (context) => {
   return context.json({ conversation });
 });
 
-app.delete("/api/conversations/:id", (context) => {
-  if (!deleteConversation(context.req.param("id"))) {
+app.delete("/api/conversations/:id", async (context) => {
+  if (!await deleteConversation(context.req.param("id"))) {
     return context.json({ error: "Conversation not found" }, 404);
   }
   return context.body(null, 204);
 });
 
-app.get("/api/library", (context) => {
+app.get("/api/library", async (context) => {
   const folderId = context.req.query("folderId") ?? null;
-  if (folderId && !getLibraryFolder(folderId)) return context.json({ error: "Folder not found" }, 404);
-  return context.json({ documents: listLibraryDocuments(folderId), folders: listLibraryFolders(folderId) });
+  if (folderId && !await getLibraryFolder(folderId)) return context.json({ error: "Folder not found" }, 404);
+  return context.json({ documents: await listLibraryDocuments(folderId), folders: await listLibraryFolders(folderId) });
 });
 
 app.post("/api/library/folders", async (context) => {
   const body = await context.req.json<{ name?: unknown; parentId?: unknown }>();
   if (typeof body.name !== "string" || !body.name.trim()) return context.json({ error: "Folder name is required" }, 400);
   const parentId = typeof body.parentId === "string" && body.parentId ? body.parentId : null;
-  if (parentId && !getLibraryFolder(parentId)) return context.json({ error: "Parent folder not found" }, 404);
-  return context.json({ folder: createLibraryFolder(body.name.trim().slice(0, 120), parentId) }, 201);
+  if (parentId && !await getLibraryFolder(parentId)) return context.json({ error: "Parent folder not found" }, 404);
+  return context.json({ folder: await createLibraryFolder(body.name.trim().slice(0, 120), parentId) }, 201);
 });
 
-app.get("/api/library/folders", (context) =>
-  context.json({ folders: listAllLibraryFolders() }),
+app.get("/api/library/folders", async (context) =>
+  context.json({ folders: await listAllLibraryFolders() }),
 );
 
 app.patch("/api/library/folders/:id", async (context) => {
@@ -194,18 +194,18 @@ app.patch("/api/library/folders/:id", async (context) => {
   if (body.parentId !== undefined) {
     if (body.parentId !== null && typeof body.parentId !== "string") return context.json({ error: "Invalid parent folder" }, 400);
     patch.parentId = typeof body.parentId === "string" && body.parentId ? body.parentId : null;
-    if (patch.parentId && !getLibraryFolder(patch.parentId)) return context.json({ error: "Parent folder not found" }, 404);
+    if (patch.parentId && !await getLibraryFolder(patch.parentId)) return context.json({ error: "Parent folder not found" }, 404);
   }
   try {
-    const folder = updateLibraryFolder(context.req.param("id"), patch);
+    const folder = await updateLibraryFolder(context.req.param("id"), patch);
     return folder ? context.json({ folder }) : context.json({ error: "Folder not found" }, 404);
   } catch (error) {
     return context.json({ error: error instanceof Error ? error.message : "Could not update folder" }, 409);
   }
 });
 
-app.delete("/api/library/folders/:id", (context) => {
-  const outcome = deleteLibraryFolder(context.req.param("id"));
+app.delete("/api/library/folders/:id", async (context) => {
+  const outcome = await deleteLibraryFolder(context.req.param("id"));
   if (outcome === "not-found") return context.json({ error: "Folder not found" }, 404);
   if (outcome === "not-empty") return context.json({ error: "Folder must be empty before it can be deleted" }, 409);
   return context.body(null, 204);
@@ -225,14 +225,14 @@ app.post("/api/library", async (context) => {
   if (!mimeType) return context.json({ error: "Only PDF, Markdown, and plain-text files are supported" }, 415);
   const requestedFolderId = form.get("folderId");
   const folderId = typeof requestedFolderId === "string" && requestedFolderId ? requestedFolderId : null;
-  if (folderId && !getLibraryFolder(folderId)) return context.json({ error: "Folder not found" }, 404);
+  if (folderId && !await getLibraryFolder(folderId)) return context.json({ error: "Folder not found" }, 404);
 
   const bytes = new Uint8Array(await upload.arrayBuffer());
   const sha256 = digestBytes(bytes);
-  const existing = getLibraryDocumentByDigest(sha256);
+  const existing = await getLibraryDocumentByDigest(sha256);
   if (existing) return context.json({ document: existing, duplicate: true });
 
-  const document = createLibraryDocument({ name, mimeType, bytes, sha256, folderId });
+  const document = await createLibraryDocument({ name, mimeType, bytes, sha256, folderId });
   void ingestLibraryDocument(document.id);
   return context.json({ document, duplicate: false }, 202);
 });
@@ -244,14 +244,14 @@ app.post("/api/library/search", async (context) => {
   }
   const limit = typeof body.limit === "number" && Number.isInteger(body.limit) ? body.limit : 6;
   const folderId = typeof body.folderId === "string" && body.folderId ? body.folderId : undefined;
-  if (folderId && !getLibraryFolder(folderId)) return context.json({ error: "Folder not found" }, 404);
-  return context.json({ results: searchLibrary(body.query.trim().slice(0, 500), limit, folderId) });
+  if (folderId && !await getLibraryFolder(folderId)) return context.json({ error: "Folder not found" }, 404);
+  return context.json({ results: await searchLibrary(body.query.trim().slice(0, 500), limit, folderId) });
 });
 
-app.get("/api/library/source", (context) => {
+app.get("/api/library/source", async (context) => {
   const name = context.req.query("name");
   if (!name) return context.json({ error: "Source name is required" }, 400);
-  const document = getStoredLibraryDocumentByName(name);
+  const document = await getStoredLibraryDocumentByName(name);
   if (!document) return context.json({ error: "Document not found" }, 404);
   return new Response(document.bytes, {
     headers: {
@@ -263,8 +263,8 @@ app.get("/api/library/source", (context) => {
   });
 });
 
-app.get("/api/library/:id/content", (context) => {
-  const document = getStoredLibraryDocument(context.req.param("id"));
+app.get("/api/library/:id/content", async (context) => {
+  const document = await getStoredLibraryDocument(context.req.param("id"));
   if (!document) return context.json({ error: "Document not found" }, 404);
   return new Response(document.bytes, {
     headers: {
@@ -276,8 +276,8 @@ app.get("/api/library/:id/content", (context) => {
   });
 });
 
-app.get("/api/library/:id", (context) => {
-  const document = getLibraryDocument(context.req.param("id"));
+app.get("/api/library/:id", async (context) => {
+  const document = await getLibraryDocument(context.req.param("id"));
   return document ? context.json({ document }) : context.json({ error: "Document not found" }, 404);
 });
 
@@ -291,20 +291,20 @@ app.patch("/api/library/:id", async (context) => {
   if (body.folderId !== undefined) {
     if (body.folderId !== null && typeof body.folderId !== "string") return context.json({ error: "Invalid folder" }, 400);
     patch.folderId = typeof body.folderId === "string" && body.folderId ? body.folderId : null;
-    if (patch.folderId && !getLibraryFolder(patch.folderId)) return context.json({ error: "Folder not found" }, 404);
+    if (patch.folderId && !await getLibraryFolder(patch.folderId)) return context.json({ error: "Folder not found" }, 404);
   }
-  const document = updateLibraryDocument(context.req.param("id"), patch);
+  const document = await updateLibraryDocument(context.req.param("id"), patch);
   return document ? context.json({ document }) : context.json({ error: "Document not found" }, 404);
 });
 
-app.delete("/api/library/:id", (context) => {
-  return deleteLibraryDocument(context.req.param("id"))
+app.delete("/api/library/:id", async (context) => {
+  return await deleteLibraryDocument(context.req.param("id"))
     ? context.body(null, 204)
     : context.json({ error: "Document not found" }, 404);
 });
 
-app.get("/api/routines", (context) =>
-  context.json({ routines: listRoutineViews() }),
+app.get("/api/routines", async (context) =>
+  context.json({ routines: await listRoutineViews() }),
 );
 
 app.post("/api/routines", async (context) => {
@@ -331,7 +331,7 @@ app.post("/api/routines", async (context) => {
   if (!input.name || !input.prompt || !input.cron || !input.timezone) {
     return context.json({ error: "Routine fields cannot be empty" }, 400);
   }
-  if (input.libraryFolderId && !getLibraryFolder(input.libraryFolderId)) {
+  if (input.libraryFolderId && !await getLibraryFolder(input.libraryFolderId)) {
     return context.json({ error: "Library folder not found" }, 404);
   }
   try {
@@ -339,13 +339,13 @@ app.post("/api/routines", async (context) => {
   } catch (error) {
     return context.json({ error: error instanceof Error ? error.message : "Invalid schedule" }, 400);
   }
-  const routine = createRoutine(input);
+  const routine = await createRoutine(input);
   syncRoutineJob(routine);
-  return context.json({ routine: getRoutineView(routine) }, 201);
+  return context.json({ routine: await getRoutineView(routine) }, 201);
 });
 
 app.patch("/api/routines/:id", async (context) => {
-  const current = getRoutine(context.req.param("id"));
+  const current = await getRoutine(context.req.param("id"));
   if (!current) return context.json({ error: "Routine not found" }, 404);
   const body = await context.req.json<{
     cron?: unknown;
@@ -379,30 +379,30 @@ app.patch("/api/routines/:id", async (context) => {
   if (body.libraryFolderId !== undefined) {
     if (body.libraryFolderId !== null && typeof body.libraryFolderId !== "string") return context.json({ error: "Invalid Library folder" }, 400);
     patch.libraryFolderId = typeof body.libraryFolderId === "string" && body.libraryFolderId ? body.libraryFolderId : null;
-    if (patch.libraryFolderId && !getLibraryFolder(patch.libraryFolderId)) return context.json({ error: "Library folder not found" }, 404);
+    if (patch.libraryFolderId && !await getLibraryFolder(patch.libraryFolderId)) return context.json({ error: "Library folder not found" }, 404);
   }
   try {
     validateRoutineSchedule(patch.cron ?? current.cron, patch.timezone ?? current.timezone);
   } catch (error) {
     return context.json({ error: error instanceof Error ? error.message : "Invalid schedule" }, 400);
   }
-  const routine = updateRoutine(current.id, patch);
+  const routine = await updateRoutine(current.id, patch);
   if (!routine) return context.json({ error: "Routine not found" }, 404);
   syncRoutineJob(routine);
-  return context.json({ routine: getRoutineView(routine) });
+  return context.json({ routine: await getRoutineView(routine) });
 });
 
-app.delete("/api/routines/:id", (context) => {
+app.delete("/api/routines/:id", async (context) => {
   const id = context.req.param("id");
-  if (!deleteRoutine(id)) return context.json({ error: "Routine not found" }, 404);
+  if (!await deleteRoutine(id)) return context.json({ error: "Routine not found" }, 404);
   removeRoutineJob(id);
   return context.body(null, 204);
 });
 
-app.post("/api/routines/:id/run", (context) => {
-  const routine = getRoutine(context.req.param("id"));
+app.post("/api/routines/:id/run", async (context) => {
+  const routine = await getRoutine(context.req.param("id"));
   if (!routine) return context.json({ error: "Routine not found" }, 404);
-  const run = runRoutineNow(routine);
+  const run = await runRoutineNow(routine);
   return context.json({ run }, 202);
 });
 
@@ -416,12 +416,12 @@ const connectors: Record<string, () => GmailConnector | CalendarConnector | Driv
 app.use("/api/connectors", requireRuntimeToken);
 app.use("/api/connectors/*", requireRuntimeToken);
 
-app.get("/api/connectors", (context) => {
-  const status = Object.keys(connectors).map((id) => ({
+app.get("/api/connectors", async (context) => {
+  const status = await Promise.all(Object.keys(connectors).map(async (id) => ({
     id,
-    status: getConnectorStatus(id as "gmail" | "calendar" | "drive"),
+    status: await getConnectorStatus(id as "gmail" | "calendar" | "drive"),
     metadata: connectors[id]!().metadata(),
-  }));
+  })));
   return context.json({ connectors: status });
 });
 
@@ -468,10 +468,10 @@ app.get("/api/connectors/google/callback", async (context) => {
   }
 });
 
-app.delete("/api/connectors/:id", (context) => {
+app.delete("/api/connectors/:id", async (context) => {
   const id = context.req.param("id");
   if (!connectors[id]) return context.json({ error: "Unknown connector" }, 404);
-  const deleted = deleteCredentialsForConnector(id as "gmail" | "calendar" | "drive");
+  const deleted = await deleteCredentialsForConnector(id as "gmail" | "calendar" | "drive");
   return context.json({ success: true, deleted });
 });
 
@@ -533,10 +533,10 @@ function followUpInputFrom(body: Record<string, unknown>): { at?: number; note?:
   return input;
 }
 
-app.get("/api/tasks", (context) => {
+app.get("/api/tasks", async (context) => {
   const status = context.req.query("status");
   if (status !== undefined && !TASK_STATUSES.includes(status as TaskStatus)) return context.json({ error: "Invalid status" }, 400);
-  return context.json({ tasks: listTaskViews(status as TaskStatus | undefined) });
+  return context.json({ tasks: await listTaskViews(status as TaskStatus | undefined) });
 });
 
 app.post("/api/tasks", async (context) => {
@@ -548,7 +548,7 @@ app.post("/api/tasks", async (context) => {
   const followUp = followUpBody === undefined || followUpBody === null ? undefined : followUpInputFrom(followUpBody as Record<string, unknown>);
   if (typeof followUp === "string") return context.json({ error: followUp }, 400);
   if (followUp && followUp.at === undefined) return context.json({ error: "A follow-up time is required" }, 400);
-  const task = createTask({
+  const task = await createTask({
     title: patch.title,
     detail: patch.detail,
     assignee: patch.assignee,
@@ -557,45 +557,45 @@ app.post("/api/tasks", async (context) => {
     origin: { kind: "manual" },
     createdBy: "you",
   });
-  if (followUp?.at !== undefined) createFollowUp({ taskId: task.id, at: followUp.at, note: followUp.note, repeatEveryMs: followUp.repeatEveryMs, createdBy: "you" });
-  return context.json({ task: getTaskView(task) }, 201);
+  if (followUp?.at !== undefined) await createFollowUp({ taskId: task.id, at: followUp.at, note: followUp.note, repeatEveryMs: followUp.repeatEveryMs, createdBy: "you" });
+  return context.json({ task: await getTaskView(task) }, 201);
 });
 
 app.patch("/api/tasks/:id", async (context) => {
   const body = await context.req.json<Record<string, unknown>>();
   const patch = taskPatchFrom(body);
   if (typeof patch === "string") return context.json({ error: patch }, 400);
-  const task = updateTask(context.req.param("id"), patch);
-  return task ? context.json({ task: getTaskView(task) }) : context.json({ error: "Task not found" }, 404);
+  const task = await updateTask(context.req.param("id"), patch);
+  return task ? context.json({ task: await getTaskView(task) }) : context.json({ error: "Task not found" }, 404);
 });
 
-app.delete("/api/tasks/:id", (context) => {
-  return deleteTask(context.req.param("id")) ? context.body(null, 204) : context.json({ error: "Task not found" }, 404);
+app.delete("/api/tasks/:id", async (context) => {
+  return await deleteTask(context.req.param("id")) ? context.body(null, 204) : context.json({ error: "Task not found" }, 404);
 });
 
 app.post("/api/tasks/:id/nudge", async (context) => {
-  const task = getTask(context.req.param("id"));
+  const task = await getTask(context.req.param("id"));
   if (!task) return context.json({ error: "Task not found" }, 404);
   if (task.status !== "open") return context.json({ error: "Only open tasks can be chased" }, 409);
   const body = await context.req.json<Record<string, unknown>>().catch(() => ({} as Record<string, unknown>));
   const note = optionalText(body.note, 500);
-  const followUp = chaseTaskNow(task, note && note !== "invalid" ? note : "You asked Vivid to chase this now.", "you");
-  return context.json({ followUp, task: getTaskView(task) }, 202);
+  const followUp = await chaseTaskNow(task, note && note !== "invalid" ? note : "You asked Vivid to chase this now.", "you");
+  return context.json({ followUp, task: await getTaskView(task) }, 202);
 });
 
 app.post("/api/tasks/:id/follow-ups", async (context) => {
-  const task = getTask(context.req.param("id"));
+  const task = await getTask(context.req.param("id"));
   if (!task) return context.json({ error: "Task not found" }, 404);
   if (task.status !== "open") return context.json({ error: "Reopen the task before scheduling a follow-up" }, 409);
   const input = followUpInputFrom(await context.req.json<Record<string, unknown>>());
   if (typeof input === "string") return context.json({ error: input }, 400);
   if (input.at === undefined) return context.json({ error: "A follow-up time is required" }, 400);
-  const followUp = createFollowUp({ taskId: task.id, at: input.at, note: input.note, repeatEveryMs: input.repeatEveryMs, createdBy: "you" });
-  return context.json({ followUp, task: getTaskView(task) }, 201);
+  const followUp = await createFollowUp({ taskId: task.id, at: input.at, note: input.note, repeatEveryMs: input.repeatEveryMs, createdBy: "you" });
+  return context.json({ followUp, task: await getTaskView(task) }, 201);
 });
 
 app.patch("/api/follow-ups/:id", async (context) => {
-  const current = getFollowUp(context.req.param("id"));
+  const current = await getFollowUp(context.req.param("id"));
   if (!current) return context.json({ error: "Follow-up not found" }, 404);
   const body = await context.req.json<Record<string, unknown>>();
   const input = followUpInputFrom(body);
@@ -606,24 +606,24 @@ app.patch("/api/follow-ups/:id", async (context) => {
     status = body.status;
   }
   if (current.status === "running") return context.json({ error: "This follow-up is running right now" }, 409);
-  const followUp = updateFollowUp(current.id, { ...input, status: status ?? (input.at !== undefined && current.status !== "scheduled" ? "scheduled" : undefined) });
-  const task = followUp ? getTask(followUp.taskId) : null;
-  return followUp && task ? context.json({ followUp, task: getTaskView(task) }) : context.json({ error: "Follow-up not found" }, 404);
+  const followUp = await updateFollowUp(current.id, { ...input, status: status ?? (input.at !== undefined && current.status !== "scheduled" ? "scheduled" : undefined) });
+  const task = followUp ? await getTask(followUp.taskId) : null;
+  return followUp && task ? context.json({ followUp, task: await getTaskView(task) }) : context.json({ error: "Follow-up not found" }, 404);
 });
 
-app.delete("/api/follow-ups/:id", (context) => {
-  return deleteFollowUp(context.req.param("id")) ? context.body(null, 204) : context.json({ error: "Follow-up not found" }, 404);
+app.delete("/api/follow-ups/:id", async (context) => {
+  return await deleteFollowUp(context.req.param("id")) ? context.body(null, 204) : context.json({ error: "Follow-up not found" }, 404);
 });
 
-app.post("/api/follow-ups/:id/run", (context) => {
-  const followUp = runFollowUpNow(context.req.param("id"));
+app.post("/api/follow-ups/:id/run", async (context) => {
+  const followUp = await runFollowUpNow(context.req.param("id"));
   if (!followUp) return context.json({ error: "Follow-up not found" }, 404);
-  const task = getTask(followUp.taskId);
-  return context.json({ followUp, task: task ? getTaskView(task) : null }, 202);
+  const task = await getTask(followUp.taskId);
+  return context.json({ followUp, task: task ? await getTaskView(task) : null }, 202);
 });
 
-app.get("/api/notifications", (context) =>
-  context.json({ notifications: listNotifications(), unreadCount: unreadNotificationCount() }),
+app.get("/api/notifications", async (context) =>
+  context.json({ notifications: await listNotifications(), unreadCount: await unreadNotificationCount() }),
 );
 
 app.post("/api/notifications/read", async (context) => {
@@ -631,8 +631,8 @@ app.post("/api/notifications/read", async (context) => {
   if (body.ids !== undefined && (!Array.isArray(body.ids) || body.ids.some((id) => typeof id !== "string"))) {
     return context.json({ error: "Invalid notification ids" }, 400);
   }
-  const changed = markNotificationsRead(body.ids as string[] | undefined);
-  return context.json({ changed, unreadCount: unreadNotificationCount() });
+  const changed = await markNotificationsRead(body.ids as string[] | undefined);
+  return context.json({ changed, unreadCount: await unreadNotificationCount() });
 });
 
 app.route("/agents/vivid", createAgentRouter(Vivid));

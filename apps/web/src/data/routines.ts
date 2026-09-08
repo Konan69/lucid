@@ -8,7 +8,7 @@ export type RoutineTemplate = {
   summary: string;
   trigger: string;
   actions: string[];
-  /** Who published it. "konan" = Vivid original. */
+  /** Who published it. "vivid" = Vivid original. */
   publisher: string;
   brandColor: "accent" | "working" | "approve" | "success";
   price: string;

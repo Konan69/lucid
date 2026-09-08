@@ -1,14 +1,31 @@
 {
-  "name": "@konan/server",
+  "name": "@vivid/server",
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
   "dependencies": {
-    "@konan/contracts": "workspace:*",
-    "effect": "4.0.0-rc.112"
+    "@effect/platform-node": "4.0.0-rc.112",
+    "@effect/sql-pg": "4.0.0-rc.112",
+    "@vivid/contracts": "workspace:*",
+    "better-auth": "1.7.3",
+    "@alchemy.run/better-auth": "2.0.0-beta.76",
+    "alchemy": "2.0.0-beta.76",
+    "drizzle-orm": "1.0.0-rc.5-ab785fc",
+    "effect": "4.0.0-rc.112",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "typescript": "^5.9.0"
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "1.0.0-rc.5-ab785fc",
+    "typescript": "^5.9.0",
+    "tsx": "^4.20.0"
   }
 }

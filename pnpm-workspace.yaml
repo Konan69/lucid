@@ -3,6 +3,7 @@ packages:
   - "apps/server"
   - "apps/web"
   - "packages/contracts"
+  - "packages/client-runtime"
   - "packages/connectors"
   - "packages/design-tokens"
   - "packages/agent-runtime"

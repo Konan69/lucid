@@ -52,7 +52,7 @@ async function extractPages(name: string, mimeType: string, bytes: Uint8Array) {
 }
 
 export async function ingestLibraryDocument(id: string) {
-  const document = getStoredLibraryDocument(id);
+  const document = await getStoredLibraryDocument(id);
   if (!document) throw new Error("Library document not found");
   try {
     const pages = await extractPages(document.name, document.mimeType, document.bytes);
@@ -60,9 +60,9 @@ export async function ingestLibraryDocument(id: string) {
     if (!extractedText) throw new Error("No readable text was found in this document");
     const chunks = pages.flatMap((page) => chunkText(page.text, page.page));
     if (chunks.length === 0) throw new Error("No searchable text was found in this document");
-    completeLibraryDocument(id, extractedText, chunks);
+    await completeLibraryDocument(id, extractedText, chunks);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    failLibraryDocument(id, message);
+    await failLibraryDocument(id, message);
   }
 }

@@ -16,19 +16,19 @@ From the repository root:
 
 ```sh
 pnpm install
-pnpm --filter @konan/agent-runtime dev
+pnpm --filter @vivid/agent-runtime dev
 # In another terminal: the existing development gateway keeps the runtime token server-side.
-pnpm --filter @konan/web dev --host 0.0.0.0
+pnpm --filter @vivid/web dev --host 0.0.0.0
 # In another terminal:
-pnpm --filter @konan/mobile dev
+pnpm --filter @vivid/mobile dev
 ```
 
 Build the native app. The local Kotlin/Swift composer requires a development
 build; Expo Go cannot load it:
 
 ```sh
-pnpm --filter @konan/mobile android
-pnpm --filter @konan/mobile ios  # macOS + Xcode required
+pnpm --filter @vivid/mobile android
+pnpm --filter @vivid/mobile ios  # macOS + Xcode required
 ```
 
 These commands generate missing native projects from the pinned SDK 56 template.
@@ -40,7 +40,7 @@ Start the AVD from Windows Android Studio's Device Manager. Run the runtime and
 gateway above in WSL, then start Metro for the installed development build:
 
 ```sh
-pnpm --filter @konan/mobile exec expo start --dev-client --port 8085 --max-workers 2
+pnpm --filter @vivid/mobile exec expo start --dev-client --port 8085 --max-workers 2
 ```
 
 In another terminal, use the serial reported by `adb devices` (the verified
@@ -84,7 +84,7 @@ server address. Never put a runtime token in an `EXPO_PUBLIC_*` variable.
 The React Native web preview is useful for inspecting the same components:
 
 ```sh
-pnpm --filter @konan/mobile web
+pnpm --filter @vivid/mobile web
 ```
 
 ## Feature coverage
@@ -112,11 +112,11 @@ uses a text fallback. Preset routine and repeat choices are tap controls. There 
 ## Validate
 
 ```sh
-pnpm --filter @konan/mobile typecheck
-pnpm --filter @konan/mobile test
-pnpm --filter @konan/mobile exec expo install --check
-pnpm --filter @konan/mobile build
-pnpm --filter @konan/design-tokens typecheck
+pnpm --filter @vivid/mobile typecheck
+pnpm --filter @vivid/mobile test
+pnpm --filter @vivid/mobile exec expo install --check
+pnpm --filter @vivid/mobile build
+pnpm --filter @vivid/design-tokens typecheck
 ```
 
 `build` exports Android/iOS Hermes bundles and the web preview; it is not an APK
@@ -125,5 +125,5 @@ requires macOS/Xcode. A successful JavaScript export does not validate native
 keyboard, picker, sharing, SecureStore or OS lifecycle behavior.
 
 After editing the shared CSS colors or metrics, run
-`pnpm --filter @konan/design-tokens generate:native`. Its build/typecheck rejects
+`pnpm --filter @vivid/design-tokens generate:native`. Its build/typecheck rejects
 stale generated native tokens. See [DESIGN-SOURCES.md](./DESIGN-SOURCES.md) for the source mapping.

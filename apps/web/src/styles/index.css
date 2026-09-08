@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import "@konan/design-tokens/tokens.css";
+@import "@vivid/design-tokens/tokens.css";
 
 @layer base {
   html, body, #root { height: 100%; }

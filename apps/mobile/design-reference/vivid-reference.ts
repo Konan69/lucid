@@ -1,11 +1,11 @@
 // Extracted values, not a recoloring approximation. See ../DESIGN-SOURCES.md.
-export const grokSource = {
+export const vividSource = {
   "source": "Grok Bot 0.39 reconstructed renderer / assets/index-BOQal1n5.js",
   "sha256": "86f9c65b646d35d35bae855041f39a290a7aa54d77c1e9413152a8f4439db5cb",
   "table": "Ole (semantic Sand tokens); mf, T1, cd (primitive palettes)"
 } as const;
 
-export const grokSand = {
+export const vividTokens = {
   "light": {
     "bg/base": "#fcfcfc",
     "bg/subtle": "#f7f7f7",

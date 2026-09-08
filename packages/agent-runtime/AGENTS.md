@@ -13,7 +13,7 @@ chat transport, durable conversation history, and the model adapter.
 
 ## Commands
 
-- `pnpm exec flue run src/agents/konan.ts --message "Hi"` — run without HTTP.
+- `pnpm exec flue run src/agents/vivid.ts --message "Hi"` — run without HTTP.
 - `pnpm dev` — start the Vite/Flue server.
 - `pnpm build && pnpm start` — build and run `dist/server.mjs`.
 - `pnpm check:types` — typecheck.
@@ -26,7 +26,7 @@ chat transport, durable conversation history, and the model adapter.
 
 - Default model: `openrouter/z-ai/glm-5.3-flash`.
 - Secrets are loaded from the ignored `.env`; never print or commit them.
-- SQLite defaults to `.state/flue.sqlite`.
+- PostgreSQL is configured with `DATABASE_URL`; no local SQLite state file is used.
 - Keep the included schedule adapter narrow: cron admission into Flue plus product-facing routine
   state. Connectors, general orchestration, credential flows, and execution internals remain outside
   the collaboration repository.

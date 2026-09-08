@@ -1,6 +1,6 @@
 import { defineTool, type ToolDefinition } from "@flue/runtime";
 import * as v from "valibot";
-import { gmailTools, calendarTools, driveTools, getConnectorStatus } from "@konan/connectors";
+import { gmailTools, calendarTools, driveTools, getConnectorStatus } from "@vivid/connectors";
 
 export const suggestConnectorTool = defineTool({
   name: "suggest_connector",
@@ -9,9 +9,9 @@ export const suggestConnectorTool = defineTool({
     connector: v.picklist(["gmail", "calendar", "drive"]),
     reason: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(400)),
   }),
-  run({ data }) {
-    return { output: { kind: "connector-request", ...data, status: getConnectorStatus(data.connector) } };
-  },
+  async run({ data }) {
+    return { output: { kind: "connector-request", ...data, status: await getConnectorStatus(data.connector) } };
+  }
 });
 
 type JsonSchema = {

@@ -27,7 +27,7 @@ function getSystemTheme(): "dark" | "light" {
 }
 
 function initialTheme(): ThemePreference {
-  const saved = localStorage.getItem("konan-theme");
+  const saved = localStorage.getItem("vivid-theme");
   return saved === "light" || saved === "dark" || saved === "system" ? saved : "system";
 }
 
@@ -56,7 +56,7 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = resolvedTheme;
-    localStorage.setItem("konan-theme", theme);
+    localStorage.setItem("vivid-theme", theme);
   }, [resolvedTheme, theme]);
 
   useEffect(() => {
@@ -70,7 +70,7 @@ export default function App() {
 
       if (conversations.length === 0) {
         try {
-          const legacy = localStorage.getItem("konan-runtime-conversations");
+          const legacy = localStorage.getItem("vivid-runtime-conversations");
           const parsed = legacy ? (JSON.parse(legacy) as RuntimeConversation[]).map((thread) => ({ ...thread, archived: false })) : [];
           if (parsed.length > 0) {
             await Promise.all(parsed.map(saveRuntimeThread));
@@ -81,7 +81,7 @@ export default function App() {
         }
       }
 
-      localStorage.removeItem("konan-runtime-conversations");
+      localStorage.removeItem("vivid-runtime-conversations");
       if (!cancelled) {
         setRuntimeThreads(conversations);
         setActiveId((current) => current ?? conversations.find((thread) => !thread.archived)?.id ?? null);

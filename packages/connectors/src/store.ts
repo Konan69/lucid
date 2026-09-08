@@ -1,89 +1,86 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { desc, eq, sql } from "drizzle-orm";
+import { Pool, types } from "pg";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import type { ConnectorCredential, ConnectorId, ConnectorStatus } from "./types.ts";
+import { credentials } from "./schema.ts";
 
-const databasePath = process.env.KONAN_CONNECTOR_DB ?? ".state/connectors.sqlite";
-mkdirSync(dirname(databasePath), { recursive: true });
-const database = new DatabaseSync(databasePath);
+types.setTypeParser(20, (value) => Number(value));
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const db = drizzle({ client: pool });
+const ready = (async () => {
+  const existing = await db.execute(sql`SELECT to_regclass('public.vivid_credentials') AS name`);
+  if (!existing.rows[0]?.name) {
+    await migrate(db, { migrationsFolder: fileURLToPath(new URL("../drizzle", import.meta.url)) });
+  }
+})();
 
-database.exec(`
-  PRAGMA journal_mode = WAL;
-  PRAGMA foreign_keys = ON;
-  CREATE TABLE IF NOT EXISTS konan_credentials (
-    id TEXT PRIMARY KEY,
-    connector_id TEXT NOT NULL,
-    access_token TEXT NOT NULL,
-    refresh_token TEXT NOT NULL,
-    expires_at INTEGER NOT NULL,
-    scope TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS konan_credentials_connector
-    ON konan_credentials(connector_id);
-`);
+const CredentialSchema = Schema.Struct({
+  id: Schema.String,
+  connectorId: Schema.Union([Schema.Literal("gmail"), Schema.Literal("calendar"), Schema.Literal("drive")]),
+  accessToken: Schema.String,
+  refreshToken: Schema.String,
+  expiresAt: Schema.Number,
+  scope: Schema.String,
+  createdAt: Schema.Number
+});
+const decodeCredential = (value: unknown): ConnectorCredential =>
+  Effect.runSync(Schema.decodeUnknownEffect(CredentialSchema)(value) as Effect.Effect<ConnectorCredential, unknown, never>);
 
-export function listCredentials(): ConnectorCredential[] {
-  return database.prepare(
-    `SELECT id, connector_id AS connectorId, access_token AS accessToken,
-            refresh_token AS refreshToken, expires_at AS expiresAt,
-            scope, created_at AS createdAt
-     FROM konan_credentials ORDER BY created_at DESC`
-  ).all() as unknown as ConnectorCredential[];
+const credentialSelection = {
+  id: credentials.id,
+  connectorId: credentials.connectorId,
+  accessToken: credentials.accessToken,
+  refreshToken: credentials.refreshToken,
+  expiresAt: credentials.expiresAt,
+  scope: credentials.scope,
+  createdAt: credentials.createdAt
+};
+
+export async function listCredentials(): Promise<ConnectorCredential[]> {
+  await ready;
+  return (await db.select(credentialSelection).from(credentials).orderBy(desc(credentials.createdAt))).map(decodeCredential);
 }
 
-export function getCredentialsForConnector(connectorId: ConnectorId): ConnectorCredential[] {
-  return database.prepare(
-    `SELECT id, connector_id AS connectorId, access_token AS accessToken,
-            refresh_token AS refreshToken, expires_at AS expiresAt,
-            scope, created_at AS createdAt
-     FROM konan_credentials WHERE connector_id = ? ORDER BY created_at DESC`
-  ).all(connectorId) as unknown as ConnectorCredential[];
+export async function getCredentialsForConnector(connectorId: ConnectorId): Promise<ConnectorCredential[]> {
+  await ready;
+  return (await db.select(credentialSelection).from(credentials).where(eq(credentials.connectorId, connectorId)).orderBy(desc(credentials.createdAt))).map(decodeCredential);
 }
 
-export function getCredential(id: string): ConnectorCredential | null {
-  const row = database.prepare(
-    `SELECT id, connector_id AS connectorId, access_token AS accessToken,
-            refresh_token AS refreshToken, expires_at AS expiresAt,
-            scope, created_at AS createdAt
-     FROM konan_credentials WHERE id = ?`
-  ).get(id);
-  return (row as unknown as ConnectorCredential) ?? null;
+export async function getCredential(id: string): Promise<ConnectorCredential | null> {
+  await ready;
+  const rows = await db.select(credentialSelection).from(credentials).where(eq(credentials.id, id));
+  return rows[0] ? decodeCredential(rows[0]) : null;
 }
 
-export function saveCredential(credential: Omit<ConnectorCredential, "id" | "createdAt">): ConnectorCredential {
-  const id = randomUUID();
-  const createdAt = Date.now();
-  database.prepare(
-    `INSERT INTO konan_credentials (id, connector_id, access_token, refresh_token, expires_at, scope, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, credential.connectorId, credential.accessToken, credential.refreshToken, credential.expiresAt, credential.scope, createdAt);
-  return { ...credential, id, createdAt };
+export async function saveCredential(credential: Omit<ConnectorCredential, "id" | "createdAt">): Promise<ConnectorCredential> {
+  await ready; const id = randomUUID(); const createdAt = Date.now();
+  await db.insert(credentials).values({ ...credential, id, createdAt });
+  return decodeCredential({ ...credential, id, createdAt });
 }
 
-export function updateCredential(id: string, patch: Partial<Pick<ConnectorCredential, "accessToken" | "refreshToken" | "expiresAt">>): ConnectorCredential | null {
-  const current = getCredential(id);
-  if (!current) return null;
+export async function updateCredential(id: string, patch: Partial<Pick<ConnectorCredential, "accessToken" | "refreshToken" | "expiresAt">>): Promise<ConnectorCredential | null> {
+  const current = await getCredential(id); if (!current) return null;
   const next = { ...current, ...patch };
-  database.prepare(
-    `UPDATE konan_credentials SET access_token = ?, refresh_token = ?, expires_at = ? WHERE id = ?`
-  ).run(next.accessToken, next.refreshToken, next.expiresAt, id);
-  return next;
+  await db.update(credentials).set({ accessToken: next.accessToken, refreshToken: next.refreshToken, expiresAt: next.expiresAt }).where(eq(credentials.id, id));
+  return decodeCredential(next);
 }
 
-export function deleteCredential(id: string): boolean {
-  return Number(database.prepare("DELETE FROM konan_credentials WHERE id = ?").run(id).changes) > 0;
+export async function deleteCredential(id: string): Promise<boolean> {
+  await ready;
+  return (await db.delete(credentials).where(eq(credentials.id, id)).returning({ id: credentials.id })).length > 0;
 }
 
-export function deleteCredentialsForConnector(connectorId: ConnectorId): number {
-  return Number(database.prepare("DELETE FROM konan_credentials WHERE connector_id = ?").run(connectorId).changes);
+export async function deleteCredentialsForConnector(connectorId: ConnectorId): Promise<number> {
+  await ready;
+  return (await db.delete(credentials).where(eq(credentials.connectorId, connectorId)).returning({ id: credentials.id })).length;
 }
 
-export function getConnectorStatus(connectorId: ConnectorId): ConnectorStatus {
-  const creds = getCredentialsForConnector(connectorId);
-  if (creds.length === 0) return "disconnected";
-  const now = Date.now();
-  const hasValid = creds.some((c) => c.expiresAt > now + 60_000);
-  return hasValid ? "connected" : "error";
+export async function getConnectorStatus(connectorId: ConnectorId): Promise<ConnectorStatus> {
+  const creds = await getCredentialsForConnector(connectorId); if (creds.length === 0) return "disconnected";
+  return creds.some((credential) => credential.expiresAt > Date.now() + 60_000) ? "connected" : "error";
 }

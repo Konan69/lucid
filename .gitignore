@@ -44,6 +44,10 @@ Thumbs.db
 /docs/10-product-decisions.md
 /docs/11-runtime-platform-research.md
 /docs/13-routines-and-templates.md
+/docs/16-grok-bot-auth-and-design-evidence.md
+/docs/17-backend-stack-reference.md
+/docs/18-grok-bot-machine-and-product-surface.md
+
 
 # Private execution data and unreleased integration internals
 # The agent-runtime source is shareable; its secrets, state, and generated output

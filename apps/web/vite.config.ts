@@ -9,7 +9,7 @@ const runtimeDirectory = fileURLToPath(
 
 export default defineConfig(({ mode }) => {
   const runtimeEnvironment = loadEnv(mode, runtimeDirectory, "");
-  const runtimeToken = runtimeEnvironment.KONAN_RUNTIME_TOKEN;
+  const runtimeToken = runtimeEnvironment.VIVID_RUNTIME_TOKEN;
 
   return {
     plugins: [react(), tailwindcss()],
@@ -20,14 +20,14 @@ export default defineConfig(({ mode }) => {
           ["/api/library", "/api/routines", "/api/conversations", "/api/tasks", "/api/follow-ups", "/api/notifications"].map((path) => [
             path,
             {
-              target: runtimeEnvironment.KONAN_RUNTIME_URL ?? "http://127.0.0.1:5173",
+              target: runtimeEnvironment.VIVID_RUNTIME_URL ?? "http://127.0.0.1:5173",
               changeOrigin: true,
               headers: runtimeToken ? { authorization: `Bearer ${runtimeToken}` } : undefined,
             },
           ]),
         ),
         "/api/vivid": {
-          target: runtimeEnvironment.KONAN_RUNTIME_URL ?? "http://127.0.0.1:5173",
+          target: runtimeEnvironment.VIVID_RUNTIME_URL ?? "http://127.0.0.1:5173",
           changeOrigin: true,
           headers: runtimeToken
             ? { authorization: `Bearer ${runtimeToken}` }
@@ -35,7 +35,7 @@ export default defineConfig(({ mode }) => {
           rewrite: (path) => path.replace(/^\/api\/vivid/, "/agents/vivid"),
         },
         "/api/connectors": {
-          target: runtimeEnvironment.KONAN_RUNTIME_URL ?? "http://127.0.0.1:5173",
+          target: runtimeEnvironment.VIVID_RUNTIME_URL ?? "http://127.0.0.1:5173",
           changeOrigin: true,
           headers: runtimeToken
             ? { authorization: `Bearer ${runtimeToken}` }
