@@ -1,20 +1,15 @@
-import { getCredentialsForConnector, getConnectorStatus } from "../store.ts";
-import { CalendarConnector } from "../google/calendar.ts";
+import { getConnectorStatus } from "../store.ts"
+import { CalendarConnector } from "../google/calendar.ts"
+import { bindConnectorTools } from "./bind.ts"
 
-const connector = new CalendarConnector();
+const connector = new CalendarConnector()
 
+/** Registers Calendar tools synchronously and loads credentials only at invocation. */
 export function calendarTools() {
-  return connector.tools().map((tool) => ({
-    ...tool,
-    execute: async (args: Record<string, unknown>) => {
-      const credentials = await getCredentialsForConnector("calendar");
-      const valid = credentials.find((c) => c.expiresAt > Date.now() + 60_000);
-      if (!valid) throw new Error("Google Calendar is not connected");
-      return tool.execute(args, valid);
-    },
-  }));
+  return bindConnectorTools("calendar", "Google Calendar", connector.tools())
 }
 
+/** Reads the current Calendar Connection state. */
 export async function calendarStatus() {
-  return getConnectorStatus("calendar");
+  return getConnectorStatus("calendar")
 }

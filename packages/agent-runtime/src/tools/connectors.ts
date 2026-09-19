@@ -1,6 +1,8 @@
 import { defineTool, type ToolDefinition } from "@flue/runtime";
-import * as v from "valibot";
+import type { BoundConnectorTool, ConnectorToolParameters } from "@vivid/connectors";
 import { gmailTools, calendarTools, driveTools, getConnectorStatus } from "@vivid/connectors";
+import { Effect } from "effect";
+import * as v from "valibot";
 
 export const suggestConnectorTool = defineTool({
   name: "suggest_connector",
@@ -14,77 +16,64 @@ export const suggestConnectorTool = defineTool({
   }
 });
 
-type JsonSchema = {
-  type?: string | string[];
-  properties?: Record<string, { type?: string | string[]; description?: string }>;
-  required?: string[];
-};
+type PrimitiveToolSchema =
+  | v.StringSchema<undefined>
+  | v.NumberSchema<undefined>
+  | v.BooleanSchema<undefined>;
+type ToolFieldSchema = PrimitiveToolSchema | v.OptionalSchema<PrimitiveToolSchema, undefined>;
 
-type ConnectorTool = {
-  name: string;
-  description: string;
-  parameters: Record<string, unknown>;
-  execute: (args: Record<string, unknown>) => unknown;
-};
-
-function toValibotType(type: string | string[] | undefined): v.GenericSchema<unknown, unknown> {
-  const t = Array.isArray(type) ? type[0] : type;
-  switch (t) {
+function toValibotType(type: "string" | "number" | "integer" | "boolean"): PrimitiveToolSchema {
+  switch (type) {
     case "string":
-      return v.string() as v.GenericSchema<unknown, unknown>;
+      return v.string();
     case "number":
     case "integer":
-      return v.number() as v.GenericSchema<unknown, unknown>;
+      return v.number();
     case "boolean":
-      return v.boolean() as v.GenericSchema<unknown, unknown>;
-    default:
-      return v.unknown() as v.GenericSchema<unknown, unknown>;
+      return v.boolean();
   }
 }
 
-function buildInputSchema(parameters: Record<string, unknown>): v.GenericSchema<Record<string, unknown>, unknown> {
-  const schema = (parameters ?? {}) as JsonSchema;
-  const props = schema.properties ?? {};
-  const required = schema.required ?? [];
-  const entries: Record<string, v.GenericSchema<unknown, unknown>> = {};
+function buildInputSchema(parameters: ConnectorToolParameters) {
+  const required = parameters.required ?? [];
+  const entries: Record<string, ToolFieldSchema> = {};
 
-  for (const [key, prop] of Object.entries(props)) {
+  for (const [key, prop] of Object.entries(parameters.properties)) {
     const base = toValibotType(prop.type);
-    const field = required.includes(key) ? base : v.optional(base) as v.GenericSchema<unknown, unknown>;
-    entries[key] = field;
+    entries[key] = required.includes(key) ? base : v.optional(base);
   }
 
-  const objectSchema = v.looseObject(entries) as unknown;
-  return objectSchema as v.GenericSchema<Record<string, unknown>, unknown>;
+  return v.looseObject(entries);
 }
 
-function wrapConnectorTool(tool: ConnectorTool): ToolDefinition {
-  const definition = {
+function wrapConnectorTool(tool: BoundConnectorTool): ToolDefinition {
+  return defineTool({
     name: tool.name,
     description: tool.description,
     input: buildInputSchema(tool.parameters),
-    async run(context: { data: unknown }) {
-      const output = await tool.execute((context.data ?? {}) as Record<string, unknown>);
+    async run(context) {
+      // Flue owns this Promise callback; connector code remains in the typed Effect channel.
+      // oxlint-disable-next-line vivid/no-runpromise-in-library
+      const output = await Effect.runPromise(tool.execute(context.data));
       return { output };
     },
-  };
-  return defineTool(definition) as ToolDefinition;
+  });
 }
 
 export function gmailConnectorTools() {
   const tools = gmailTools();
   if (tools.length === 0) return [];
-  return tools.map((tool) => wrapConnectorTool(tool as ConnectorTool));
+  return tools.map((tool) => wrapConnectorTool(tool));
 }
 
 export function calendarConnectorTools() {
   const tools = calendarTools();
   if (tools.length === 0) return [];
-  return tools.map((tool) => wrapConnectorTool(tool as ConnectorTool));
+  return tools.map((tool) => wrapConnectorTool(tool));
 }
 
 export function driveConnectorTools() {
   const tools = driveTools();
   if (tools.length === 0) return [];
-  return tools.map((tool) => wrapConnectorTool(tool as ConnectorTool));
+  return tools.map((tool) => wrapConnectorTool(tool));
 }

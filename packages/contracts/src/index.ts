@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 
-export * from "./runtime"
+export * from "./runtime.js"
 
 const id = (name: string) => Schema.String.pipe(Schema.brand(name))
 

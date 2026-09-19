@@ -1,22 +1,15 @@
-import { getCredentialsForConnector, getConnectorStatus } from "../store.ts";
-import { GmailConnector } from "../google/gmail.ts";
+import { getConnectorStatus } from "../store.ts"
+import { GmailConnector } from "../google/gmail.ts"
+import { bindConnectorTools } from "./bind.ts"
 
-const connector = new GmailConnector();
+const connector = new GmailConnector()
 
-// Tool registration must remain synchronous because Flue renders agent modules synchronously.
-// Credentials are fetched asynchronously at invocation time instead of during agent render.
+/** Registers Gmail tools synchronously and loads credentials only at invocation. */
 export function gmailTools() {
-  return connector.tools().map((tool) => ({
-    ...tool,
-    execute: async (args: Record<string, unknown>) => {
-      const credentials = await getCredentialsForConnector("gmail");
-      const valid = credentials.find((c) => c.expiresAt > Date.now() + 60_000);
-      if (!valid) throw new Error("Gmail is not connected");
-      return tool.execute(args, valid);
-    },
-  }));
+  return bindConnectorTools("gmail", "Gmail", connector.tools())
 }
 
+/** Reads the current Gmail Connection state. */
 export async function gmailStatus() {
-  return getConnectorStatus("gmail");
+  return getConnectorStatus("gmail")
 }
