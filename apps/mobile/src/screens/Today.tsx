@@ -68,8 +68,13 @@ export function Today({ navigation }: NativeStackScreenProps<Routes, "Today">) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const now = useCurrentTime();
-  const selected = tasks.data?.tasks.find((t) => t.id === selectedId);
-  async function act(path: string, method = "POST", body?: unknown) {
+  const tasksData = tasks.data;
+  const notificationsData = notifications.data;
+  const selected = tasksData === undefined
+    ? undefined
+    : tasksData.tasks.find((t) => t.id === selectedId);
+  type RequestBody = Record<string, string | number | boolean | null | readonly string[]>;
+  async function act(path: string, method = "POST", body?: RequestBody) {
     if (busy) return;
     setBusy(true);
     setError("");
@@ -77,15 +82,16 @@ export function Today({ navigation }: NativeStackScreenProps<Routes, "Today">) {
       await api.request(path, method, body);
       await Promise.all([tasks.refresh(), notifications.refresh()]);
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   }
-  const visible =
-    tasks.data?.tasks.filter((t) =>
-      showDone ? t.status !== "open" : t.status === "open",
-    ) ?? [];
+  const visible = tasksData === undefined
+    ? []
+    : tasksData.tasks.filter((t) =>
+        showDone ? t.status !== "open" : t.status === "open",
+      );
   const groups = [
     {
       title: "Overdue",
@@ -132,7 +138,7 @@ export function Today({ navigation }: NativeStackScreenProps<Routes, "Today">) {
             void notifications.refresh();
           }}
         />
-        {!!notifications.data?.unreadCount && (
+        {notificationsData !== undefined && !!notificationsData.unreadCount && (
           <Card>
             <View style={styles.row}>
               <Bell size={18} color={c["ink-2"]} />
@@ -140,7 +146,7 @@ export function Today({ navigation }: NativeStackScreenProps<Routes, "Today">) {
                 While you were away
               </Label>
             </View>
-            {notifications.data.notifications
+            {notificationsData.notifications
               .filter((n) => !n.readAt)
               .slice(0, 6)
               .map((n) => {

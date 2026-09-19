@@ -102,6 +102,8 @@ export function Home({ embedded = false }: { embedded?: boolean }) {
     api,
     "/api/notifications",
   );
+  const conversationData = resource.data;
+  const notificationData = notifications.data;
   // Focus changes trigger the current resource without rebuilding the focus subscription each render.
   const refreshConversations = useEffectEvent(() => {
     void resource.refresh();
@@ -122,12 +124,16 @@ export function Home({ embedded = false }: { embedded?: boolean }) {
   const pinned = preferences.pinnedThreads ?? [];
   const settled = preferences.settledThreads ?? [];
   const unread = new Set(
-    notifications.data?.notifications
-      .filter((n) => !n.readAt && n.conversationId)
-      .map((n) => n.conversationId),
+    notificationData === undefined
+      ? []
+      : notificationData.notifications.flatMap((notification) =>
+          !notification.readAt && notification.conversationId !== null
+            ? [notification.conversationId]
+            : [],
+        ),
   );
   const workingCount = Object.values(activity).filter((s) => s === "working").length;
-  const threads: SidebarThread[] = (resource.data?.conversations ?? [])
+  const threads: SidebarThread[] = (conversationData === undefined ? [] : conversationData.conversations)
     .filter((t) => (t.title + " " + t.preview).toLowerCase().includes(query.toLowerCase()))
     .map((t) => ({
       ...t,
@@ -159,13 +165,14 @@ export function Home({ embedded = false }: { embedded?: boolean }) {
     },
     ...lane.items.map((thread) => ({ id: thread.id, thread })),
   ]);
-  async function change(thread: Thread, method: string, body?: unknown) {
+  type RequestBody = Record<string, string | number | boolean | null>;
+  async function change(thread: Thread, method: string, body?: RequestBody) {
     try {
       await api.request("/api/conversations/" + thread.id, method, body);
       setSelected(undefined);
       await resource.refresh();
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof Error ? e.message : String(e));
     }
   }
   async function toggle(thread: Thread, field: "pinnedThreads" | "settledThreads") {
@@ -179,7 +186,7 @@ export function Home({ embedded = false }: { embedded?: boolean }) {
       });
       setSelected(undefined);
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof Error ? e.message : String(e));
     }
   }
   function start() {
