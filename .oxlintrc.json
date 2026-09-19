@@ -1,6 +1,12 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["eslint", "typescript", "unicorn", "oxc", "react"],
+  "plugins": [
+    "eslint",
+    "typescript",
+    "unicorn",
+    "oxc",
+    "react"
+  ],
   "categories": {
     "correctness": "error",
     "suspicious": "warn",
@@ -318,6 +324,56 @@
       ],
       "rules": {
         "shadcn/no-raw-colors": "off"
+      }
+    },
+    {
+      "files": [
+        "apps/**/*.{ts,tsx,mjs}",
+        "packages/**/*.{ts,tsx,mjs}",
+        "infra/**/*.ts",
+        "scripts/**/*.mjs",
+        "alchemy.run.ts"
+      ],
+      "rules": {
+        "complexity": [
+          "warn",
+          {
+            "max": 12,
+            "variant": "classic"
+          }
+        ],
+        "max-lines-per-function": [
+          "warn",
+          {
+            "max": 120,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "max-depth": [
+          "warn",
+          3
+        ],
+        "max-params": [
+          "warn",
+          4
+        ],
+        "max-nested-callbacks": [
+          "warn",
+          3
+        ]
+      }
+    },
+    {
+      "files": [
+        "**/*.test.{ts,tsx,mjs}",
+        "**/*.live.test.ts",
+        "**/*.d.ts"
+      ],
+      "rules": {
+        "complexity": "off",
+        "max-lines-per-function": "off",
+        "max-nested-callbacks": "off"
       }
     }
   ]

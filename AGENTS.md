@@ -23,6 +23,8 @@ Product feel matters. Keep Vivid fast, snappy, and local-first. Prefer caching, 
 
 Minimal correct code wins. Solve the actual problem with the fewest concepts, indirections, and lines that preserve an honest model. Consolidate before adding. Delete wrappers that only rename a standard combinator or preserve obsolete architecture. Concise is not terse: precise types and explanatory comments still apply.
 
+Complexity is linted: classic cyclomatic complexity 12, 120 lines per function, nesting depth 3, four parameters, three nested callbacks. A finding means the function owns more than one decision; split the variant or extract the pure step rather than flattening syntax to pass. Existing findings are ratcheted in `.husky/pre-push` and may only go down.
+
 Keep one responsibility per module. Split files that own unrelated concerns. Pure domain logic must be testable without booting a server, database, Flue runtime, Expo runtime, or browser.
 
 Keep one source of truth for each vocabulary, invariant, and mapping. Derive dependent values so extending the source makes missing cases fail at typecheck. Where direct derivation is blocked, keep one declaration authoritative and assert total coverage of the other at the type level; never cast to force agreement.

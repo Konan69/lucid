@@ -46,6 +46,12 @@ check_ratchet "async collection callbacks" "vivid" "no-async-callback-api" 2
 check_ratchet "direct process env" "vivid" "no-direct-process-env" 6
 check_ratchet "Effect service methods without Effect.fn" "vivid" "effect-require-effect-fn" 2
 check_ratchet "global process runtime reads" "vivid" "no-global-process-runtime" 1
+# Complexity ceilings match VCOS (classic complexity 12, 120-line functions, depth 3).
+check_ratchet "cyclomatic complexity" "eslint" "complexity" 37
+check_ratchet "long functions" "eslint" "max-lines-per-function" 19
+check_ratchet "nested callbacks" "eslint" "max-nested-callbacks" 6
+check_ratchet "wide parameter lists" "eslint" "max-params" 3
+check_ratchet "deep nesting" "eslint" "max-depth" 2
 check_ratchet "host transform validation" "vivid" "no-host-transform-validation" 135
 check_ratchet "inline Schema compilers" "vivid" "no-inline-schema-compile" 3
 check_ratchet "non-null assertions" "vivid" "no-non-null-assertion" 15
