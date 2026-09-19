@@ -11,27 +11,44 @@
     "dev": "pnpm infra:dev",
     "build": "turbo run build",
     "typecheck": "turbo run typecheck --concurrency=1",
-    "lint": "oxlint .",
-    "lint:fix": "oxlint --fix .",
+    "lint": "oxlint --type-aware .",
+    "lint:fix": "oxlint --type-aware --fix .",
     "format": "oxfmt --check .",
     "format:fix": "oxfmt .",
     "test": "turbo run test",
-    "quality": "pnpm lint && pnpm format && pnpm typecheck && pnpm test",
+    "audit:effect-boundaries": "node scripts/effect-boundary-audit.mjs enforce",
+    "audit:effect-boundaries:report": "node scripts/effect-boundary-audit.mjs report",
+    "check:migrations": "node scripts/migrations.mjs check",
+    "check:versions": "node scripts/versions.mjs",
+    "test:lint-rules": "node --test scripts/oxlint-plugin-vivid.test.mjs",
+    "test:tooling": "node --test scripts/versions.test.mjs scripts/effect-boundary-audit.test.mjs scripts/migrations.test.mjs scripts/oxlint-plugin-vivid.test.mjs scripts/infra-verify.test.mjs",
+    "quality": "pnpm check:versions && pnpm audit:effect-boundaries && pnpm check:migrations && pnpm infra:verify && pnpm lint && pnpm format && pnpm typecheck && pnpm test:tooling && pnpm test",
     "db:migrate": "node scripts/migrate.mjs",
     "infra:dev": "VIVID_DEPLOY_TARGET=local ALCHEMY_TELEMETRY_DISABLED=1 alchemy dev --stage local",
     "infra:verify": "node scripts/infra-verify.mjs",
     "infra:destroy": "VIVID_DEPLOY_TARGET=local ALCHEMY_TELEMETRY_DISABLED=1 alchemy destroy --stage local --yes"
   },
   "devDependencies": {
-    "@effect/language-service": "0.86.6",
-    "@oxlint/plugins": "1.81.0",
+    "@effect/language-service": "0.87.2",
+    "@oxlint/plugins": "1.83.0",
     "@types/node": "^24.0.0",
-    "alchemy": "2.0.0-beta.76",
-    "effect": "4.0.0-rc.112",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "alchemy": "2.0.0-beta.79",
+    "effect": "4.0.0-rc.116",
     "husky": "9.1.7",
-    "oxfmt": "0.50.0",
-    "oxlint": "1.81.0",
-    "turbo": "2.9.14",
-    "typescript": "^5.9.0"
+    "oxfmt": "0.68.0",
+    "oxlint": "1.83.0",
+    "oxlint-tsgolint": "7.0.2002",
+    "turbo": "2.11.2",
+    "typescript": "6.0.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "@effect/platform-node": "4.0.0-rc.116",
+      "@effect/sql-pg": "4.0.0-rc.116",
+      "drizzle-kit": "1.0.0-rc.5-ab785fc",
+      "drizzle-orm": "1.0.0-rc.5-ab785fc",
+      "effect": "4.0.0-rc.116"
+    }
   }
 }
