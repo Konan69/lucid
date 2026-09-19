@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "semi": false,
+  "singleQuote": true,
+  "trailingComma": "all",
+  "printWidth": 100,
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    "**/.alchemy/**",
+    "**/.expo/**",
+    "**/.output/**",
+    "**/.turbo/**",
+    "**/build/**",
+    "**/coverage/**",
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/drizzle/**/snapshot.json",
+    "apps/mobile/android/**",
+    "apps/mobile/ios/**",
+    "packages/design-tokens/src/native.ts",
+    ".agents/**",
+    "tools/oxlint/anti-slop/**",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock"
+  ]
+}
