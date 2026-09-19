@@ -76,6 +76,10 @@ export const ConnectorToolFailure = Schema.Union([
 /** Decoded connector tool failure. */
 export type ConnectorToolFailure = typeof ConnectorToolFailure.Type
 
+/** JSON values accepted at the model-tool boundary before concrete schema decoding. */
+export const ConnectorToolInput = Schema.Json
+export type ConnectorToolInput = typeof ConnectorToolInput.Type
+
 /** Existential connector tool used when heterogeneous tools share one registry. */
 export interface ConnectorTool {
   readonly name: string
@@ -84,17 +88,17 @@ export interface ConnectorTool {
   readonly inputSchema: Schema.Top
   readonly outputSchema: Schema.Top
   execute(
-    input: unknown,
+    input: ConnectorToolInput,
     credential: ConnectorCredential,
   ): Effect.Effect<unknown, ConnectorToolFailure>
 }
 
 /** Connector tool retaining its concrete input and output schemas. */
 export interface TypedConnectorTool<Input, InputEncoded, Output, OutputEncoded> extends ConnectorTool {
-  readonly inputSchema: Schema.Codec<Input, InputEncoded, never, never>
-  readonly outputSchema: Schema.Codec<Output, OutputEncoded, never, never>
+  readonly inputSchema: Schema.Codec<Input, InputEncoded>
+  readonly outputSchema: Schema.Codec<Output, OutputEncoded>
   execute(
-    input: unknown,
+    input: ConnectorToolInput,
     credential: ConnectorCredential,
   ): Effect.Effect<Output, ConnectorToolFailure>
 }
@@ -104,8 +108,8 @@ export interface ConnectorToolDefinition<Input, InputEncoded, Output, OutputEnco
   readonly name: string
   readonly description: string
   readonly parameters: ConnectorToolParameters
-  readonly inputSchema: Schema.Codec<Input, InputEncoded, never, never>
-  readonly outputSchema: Schema.Codec<Output, OutputEncoded, never, never>
+  readonly inputSchema: Schema.Codec<Input, InputEncoded>
+  readonly outputSchema: Schema.Codec<Output, OutputEncoded>
   readonly run: (
     input: Input,
     credential: ConnectorCredential,
@@ -117,8 +121,8 @@ implements TypedConnectorTool<Input, InputEncoded, Output, OutputEncoded> {
   readonly name: string
   readonly description: string
   readonly parameters: ConnectorToolParameters
-  readonly inputSchema: Schema.Codec<Input, InputEncoded, never, never>
-  readonly outputSchema: Schema.Codec<Output, OutputEncoded, never, never>
+  readonly inputSchema: Schema.Codec<Input, InputEncoded>
+  readonly outputSchema: Schema.Codec<Output, OutputEncoded>
   private readonly runTool: ConnectorToolDefinition<Input, InputEncoded, Output, OutputEncoded>["run"]
 
   constructor(definition: ConnectorToolDefinition<Input, InputEncoded, Output, OutputEncoded>) {
@@ -131,7 +135,7 @@ implements TypedConnectorTool<Input, InputEncoded, Output, OutputEncoded> {
   }
 
   /** Decodes model input and provider output around the narrow Promise adapter. */
-  execute(input: unknown, credential: ConnectorCredential): Effect.Effect<Output, ConnectorToolFailure> {
+  execute(input: ConnectorToolInput, credential: ConnectorCredential): Effect.Effect<Output, ConnectorToolFailure> {
     const { inputSchema, name, outputSchema, runTool } = this
     return Effect.fn(`ConnectorTool.${name}`)(function*() {
       const decoded = yield* Schema.decodeUnknownEffect(inputSchema)(input).pipe(
@@ -157,7 +161,7 @@ export interface BoundConnectorTool {
   readonly parameters: ConnectorToolParameters
   readonly inputSchema: Schema.Top
   readonly outputSchema: Schema.Top
-  execute(input: unknown): Effect.Effect<unknown, ConnectorToolFailure>
+  execute(input: ConnectorToolInput): Effect.Effect<unknown, ConnectorToolFailure>
 }
 
 /** Connector that contributes tools to a Vivid runtime. */

@@ -329,6 +329,19 @@ const noRunPromiseInLibrary = rule(
     CallExpression(node) {
       if (!isMemberCall(node, 'Effect', effectTerminalOperations)) return
       if (/(?:^|[/\\])(main|server|cli|app)\.[cm]?[jt]s$/u.test(context.filename)) return
+      let parent = node.parent
+      while (parent !== undefined && parent !== null) {
+        if (
+          parent.type === 'Property' &&
+          ((parent.key?.type === 'Identifier' && parent.key.name === 'run') ||
+            (parent.key?.type === 'Literal' && parent.key.value === 'run')) &&
+          parent.parent?.type === 'ObjectExpression' &&
+          parent.parent.parent?.type === 'CallExpression' &&
+          parent.parent.parent.callee?.type === 'Identifier' &&
+          parent.parent.parent.callee.name === 'defineTool'
+        ) return
+        parent = parent.parent
+      }
       report(node)
     },
   }),
