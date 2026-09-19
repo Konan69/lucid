@@ -1,16 +1,34 @@
 {
   "name": "@vivid/workspace",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
-    "dev": "pnpm --filter @vivid/web dev",
-    "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck",
-    "lint": "oxlint apps/*/src packages/*/src"
+    "prepare": "husky && effect-language-service patch",
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck --concurrency=1",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt --check .",
+    "format:fix": "oxfmt .",
+    "test": "turbo run test",
+    "quality": "pnpm lint && pnpm format && pnpm typecheck && pnpm test",
+    "db:up": "docker compose -f compose.dev.yaml up -d --wait",
+    "db:down": "docker compose -f compose.dev.yaml down",
+    "db:migrate": "pnpm --filter @vivid/server db:migrate && pnpm --filter @vivid/agent-runtime db:migrate && pnpm --filter @vivid/connectors db:migrate"
   },
   "devDependencies": {
+    "@effect/language-service": "0.86.6",
+    "@oxlint/plugins": "1.81.0",
     "@types/node": "^24.0.0",
+    "husky": "9.1.7",
+    "oxfmt": "0.50.0",
     "oxlint": "1.81.0",
+    "turbo": "2.9.14",
     "typescript": "^5.9.0"
   }
 }

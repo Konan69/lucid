@@ -13,7 +13,9 @@
     "docs": "flue docs",
     "start": "node dist/server.mjs",
     "test": "node --test src/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src",
+    "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.83.0",
