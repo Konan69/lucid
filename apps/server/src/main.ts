@@ -41,15 +41,12 @@ const program = Effect.gen(function*() {
   )
   return yield* Layer.launch(HttpRouter.serve(makeAppLayer(config)).pipe(Layer.provide(serverLayer)))
 }).pipe(
-  Effect.catch((error: unknown) => {
-    if (error instanceof ConfigurationError) {
-      return Effect.sync(() => {
-        console.error(`Configuration error: ${error.message}`)
-        process.exitCode = 1
-      })
-    }
-    return Effect.fail(error)
-  })
+  Effect.catchTag("ConfigurationError", (error: ConfigurationError) =>
+    Effect.sync(() => {
+      console.error(`Configuration error: ${error.message}`)
+      process.exitCode = 1
+    })
+  )
 )
 
-NodeRuntime.runMain(program as Effect.Effect<never, unknown, never>)
+NodeRuntime.runMain(program)

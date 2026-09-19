@@ -26,7 +26,7 @@ export class ConfigurationError extends Schema.TaggedError<ConfigurationError>()
   message: Schema.String
 }) {}
 
-export interface ServerConfigShape {
+export interface ServerConfigService {
   readonly DATABASE_URL: Redacted.Redacted<string>
   readonly AUTH_SECRET: Redacted.Redacted<string>
   readonly PORT: number
@@ -36,7 +36,9 @@ export interface ServerConfigShape {
   readonly GOOGLE_REDIRECT_URI?: URL
 }
 
-export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShape>()("vivid/ServerConfig") {}
+type LoadedServerConfig = { -readonly [Key in keyof ServerConfigService]: ServerConfigService[Key] }
+
+export class ServerConfig extends Context.Service<ServerConfig, ServerConfigService>()("vivid/ServerConfig") {}
 
 const configError = (variable: string, expected: string) =>
   new ConfigurationError({
@@ -55,7 +57,7 @@ const optional = <A>(name: string, schema: Schema.ConstraintCodec<A, unknown, ne
     Effect.mapError(() => configError(name, expected))
   )
 
-const loadConfig = Effect.fn("loadServerConfig")(function*(): Effect.fn.Return<ServerConfigShape, ConfigurationError> {
+const loadConfig = Effect.fn("loadServerConfig")(function*(): Effect.fn.Return<ServerConfigService, ConfigurationError> {
   const databaseUrlValue = yield* required("DATABASE_URL", databaseUrl).pipe(
     Effect.mapError(() => configError("DATABASE_URL", "a PostgreSQL connection URL"))
   )
@@ -90,21 +92,19 @@ const loadConfig = Effect.fn("loadServerConfig")(function*(): Effect.fn.Return<S
     return yield* Effect.fail(configError("GOOGLE_REDIRECT_URI", "an absolute URL when Google OAuth is enabled"))
   }
 
-  return {
+  const config: LoadedServerConfig = {
     DATABASE_URL: databaseUrlValue,
     AUTH_SECRET: authSecretValue,
     PORT: port,
-    PUBLIC_URL: publicUrl,
-    ...(googleClientId === undefined ? {} : { GOOGLE_CLIENT_ID: googleClientId }),
-    ...(googleClientSecret === undefined ? {} : { GOOGLE_CLIENT_SECRET: googleClientSecret }),
-    ...(googleRedirectUri === undefined ? {} : { GOOGLE_REDIRECT_URI: googleRedirectUri })
-  } satisfies ServerConfigShape
+    PUBLIC_URL: publicUrl
+  }
+  if (googleClientId !== undefined) config.GOOGLE_CLIENT_ID = googleClientId
+  if (googleClientSecret !== undefined) config.GOOGLE_CLIENT_SECRET = googleClientSecret
+  if (googleRedirectUri !== undefined) config.GOOGLE_REDIRECT_URI = googleRedirectUri
+  return config
 })
 
-export const serverConfigLayer = Layer.effect(
-  ServerConfig,
-  loadConfig() as Effect.Effect<ServerConfigShape, ConfigurationError, never>
-)
+export const serverConfigLayer = Layer.effect(ServerConfig, loadConfig())
 
 /** The validated configuration effect, useful for boot diagnostics and tests. */
 export const loadServerConfig = loadConfig()
