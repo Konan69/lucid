@@ -27,7 +27,7 @@ const CredentialSchema = Schema.Struct({
   scope: Schema.String,
   createdAt: Schema.Number
 });
-const decodeCredential: (value: unknown) => ConnectorCredential = Schema.decodeUnknownSync(CredentialSchema);
+const decodeCredential = Schema.decodeUnknownSync(CredentialSchema);
 
 const credentialSelection = {
   id: credentials.id,
