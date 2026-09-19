@@ -26,7 +26,7 @@ export function Button({
   return (
     <button
       className={cn(
-        "inline-flex select-none items-center justify-center whitespace-nowrap font-title transition-colors duration-(--dur-fast)",
+        "inline-flex items-center justify-center font-title whitespace-nowrap transition-colors duration-(--dur-fast) select-none",
         VARIANT[variant],
         SIZE[size],
         className,
