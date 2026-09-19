@@ -8,7 +8,7 @@ function declarations(block) {
 const base = declarations(css.match(/:root\s*\{([\s\S]*?)\n\}/)[1])
 const light = {
   ...base,
-  ...declarations(css.match(/html\[data-theme="light"\]\s*\{([\s\S]*?)\n\}/)[1]),
+  ...declarations(css.match(/html\[data-theme=["']light["']\]\s*\{([\s\S]*?)\n\}/)[1]),
 }
 function resolve(key, vars) {
   return vars[key].replace(/var\((--[\w-]+)\)/g, (_, name) => resolve(name, vars))

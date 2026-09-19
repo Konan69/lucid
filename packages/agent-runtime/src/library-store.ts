@@ -270,20 +270,18 @@ export async function createLibraryDocument(input: {
   await schemaReady
   const now = Date.now()
   const id = randomUUID()
-  await db
-    .insert(libraryDocuments)
-    .values({
-      id,
-      name: input.name,
-      mimeType: input.mimeType,
-      size: input.bytes.byteLength,
-      sha256: input.sha256,
-      status: 'processing',
-      bytes: Buffer.from(input.bytes),
-      createdAt: now,
-      updatedAt: now,
-      folderId: input.folderId,
-    })
+  await db.insert(libraryDocuments).values({
+    id,
+    name: input.name,
+    mimeType: input.mimeType,
+    size: input.bytes.byteLength,
+    sha256: input.sha256,
+    status: 'processing',
+    bytes: Buffer.from(input.bytes),
+    createdAt: now,
+    updatedAt: now,
+    folderId: input.folderId,
+  })
   return (await getLibraryDocument(id))!
 }
 
