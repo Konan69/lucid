@@ -14,6 +14,10 @@ import {
   EffectPgDatabase,
   makeWithDefaults as makeDrizzle
 } from "drizzle-orm/effect-postgres"
+import type {
+  EffectPgQueryEffectHKT,
+  EffectPgQueryResultHKT
+} from "drizzle-orm/effect-postgres"
 import { EffectDrizzleQueryError } from "drizzle-orm/effect-core/errors"
 import type { PgEffectTransaction } from "drizzle-orm/pg-core/effect/session"
 import { Pool } from "pg"
@@ -29,7 +33,7 @@ type DatabaseInfrastructureError =
 type DatabaseService = Omit<EffectPgDatabase, "transaction"> & {
   run: <A, E, R>(operation: Effect.Effect<A, E, R>) => Effect.Effect<A, Exclude<E, DriverError> | DatabaseInfrastructureError, R>
   transaction: <A, E, R>(
-    operation: (tx: PgEffectTransaction<any, any>) => Effect.Effect<A, E, R>
+    operation: (tx: PgEffectTransaction<EffectPgQueryEffectHKT, EffectPgQueryResultHKT>) => Effect.Effect<A, E, R>
   ) => Effect.Effect<A, Exclude<E, DriverError> | DatabaseInfrastructureError, R>
 }
 

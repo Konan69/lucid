@@ -35,7 +35,7 @@ import {
 } from "@vivid/contracts"
 import { Database } from "./database.ts"
 import { ServerConfig } from "./config.ts"
-import { authEffect } from "./auth.ts"
+import { authEffect, localAuthRuntimeLayer } from "./auth.ts"
 import {
   companyTable,
   invitationTable,
@@ -149,10 +149,8 @@ const requireActiveCompany = Effect.gen(function*() {
 
 export const authenticate = (headers: Headers) => Effect.gen(function*() {
   const auth = yield* authEffect
-  const session = yield* (auth.getSession(headers) as unknown as Effect.Effect<{
-    user: { id: string }
-    session: { id: string }
-  } | null, unknown, never>).pipe(
+  const session = yield* auth.getSession(headers).pipe(
+    Effect.provide(localAuthRuntimeLayer),
     Effect.mapError(() => new Unauthenticated({ message: "Invalid session" }))
   )
   if (session === null) {

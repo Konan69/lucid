@@ -153,7 +153,7 @@ export async function markTaskOverdueNotified(id: string, at: number): Promise<v
 
 export async function listFollowUps(taskId: string): Promise<FollowUp[]> {
   await schemaReady;
-  return (await db.select(followUpSelection).from(followUps).where(eq(followUps.taskId, taskId)).orderBy(desc(followUps.at))).map(decodeFollowUp);
+  return (await db.select(followUpSelection).from(followUps).where(eq(followUps.taskId, taskId)).orderBy(desc(followUps.at))).map((row) => decodeFollowUp(row));
 }
 
 export async function getFollowUp(id: string): Promise<FollowUp | null> {
@@ -190,12 +190,12 @@ export async function deleteFollowUp(id: string): Promise<boolean> {
 
 export async function dueFollowUps(now: number): Promise<FollowUp[]> {
   await schemaReady;
-  return (await db.select(followUpSelection).from(followUps).where(and(eq(followUps.status, "scheduled"), lte(followUps.at, now))).orderBy(asc(followUps.at))).map(decodeFollowUp);
+  return (await db.select(followUpSelection).from(followUps).where(and(eq(followUps.status, "scheduled"), lte(followUps.at, now))).orderBy(asc(followUps.at))).map((row) => decodeFollowUp(row));
 }
 
 export async function listRunningFollowUps(): Promise<FollowUp[]> {
   await schemaReady;
-  return (await db.select(followUpSelection).from(followUps).where(eq(followUps.status, "running")).orderBy(asc(followUps.firedAt))).map(decodeFollowUp);
+  return (await db.select(followUpSelection).from(followUps).where(eq(followUps.status, "running")).orderBy(asc(followUps.firedAt))).map((row) => decodeFollowUp(row));
 }
 
 export async function hasFollowUpCovering(taskId: string, since: number): Promise<boolean> {
@@ -256,7 +256,7 @@ export async function failFollowUp(id: string, error: string): Promise<boolean> 
 
 export async function listNotifications(limit = 50): Promise<Notification[]> {
   await schemaReady;
-  return (await db.select(notificationSelection).from(notifications).orderBy(desc(notifications.createdAt)).limit(limit)).map(decodeNotification);
+  return (await db.select(notificationSelection).from(notifications).orderBy(desc(notifications.createdAt)).limit(limit)).map((row) => decodeNotification(row));
 }
 
 export async function unreadNotificationCount(): Promise<number> {
