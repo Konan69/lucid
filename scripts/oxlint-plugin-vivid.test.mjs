@@ -5,6 +5,14 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import * as Result from 'effect/Result'
+import * as Schema from 'effect/Schema'
+
+const OxlintOutputSchema = Schema.Struct({
+  diagnostics: Schema.Array(Schema.Struct({ code: Schema.String })),
+})
+const ProcessFailureSchema = Schema.Struct({ stdout: Schema.String })
+const decodeOxlintOutput = Schema.decodeUnknownSync(Schema.fromJsonString(OxlintOutputSchema))
 
 const scriptsDirectory = path.dirname(fileURLToPath(import.meta.url))
 const repositoryRoot = path.resolve(scriptsDirectory, '..')
@@ -127,10 +135,11 @@ function lint(ruleName, source, filename = 'module.ts') {
         cwd: repositoryRoot,
         encoding: 'utf8',
       })
-      return JSON.parse(output).diagnostics ?? []
+      return decodeOxlintOutput(output).diagnostics
     } catch (cause) {
-      if (typeof cause.stdout !== 'string') throw cause
-      return JSON.parse(cause.stdout).diagnostics ?? []
+      const failure = Schema.decodeUnknownResult(ProcessFailureSchema)(cause)
+      if (Result.isFailure(failure)) throw cause
+      return decodeOxlintOutput(failure.success.stdout).diagnostics
     }
   } finally {
     rmSync(directory, { recursive: true, force: true })

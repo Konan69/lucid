@@ -10,14 +10,18 @@ void test("a running follow-up preserves the Flue submission needed to resume it
   assert.equal(await store.startFollowUp(followUp.id, 1_700_000_000_000), true);
   assert.equal(await store.attachFollowUpSubmission(followUp.id, "submission-123"), true);
   const resumable = (await store.listRunningFollowUps()).find((item) => item.id === followUp.id);
-  assert.equal(resumable?.submissionId, "submission-123"); assert.equal(resumable?.firedAt, 1_700_000_000_000);
+  assert.ok(resumable);
+  assert.equal(resumable.submissionId, "submission-123"); assert.equal(resumable.firedAt, 1_700_000_000_000);
   await store.failFollowUp(followUp.id, "test cleanup");
 });
 
 void test("a recovered follow-up can only be finalized once", async () => {
   const task = await store.createTask({ title: "Review investor notes", origin: { kind: "manual" }, createdBy: "you" });
   const followUp = await store.createFollowUp({ taskId: task.id, at: Date.now(), createdBy: "you" }); await store.startFollowUp(followUp.id, Date.now());
-  assert.equal(await store.finishFollowUp(followUp.id, "First durable result"), true); assert.equal(await store.finishFollowUp(followUp.id, "Duplicate result"), false); assert.equal((await store.getFollowUp(followUp.id))?.output, "First durable result");
+  assert.equal(await store.finishFollowUp(followUp.id, "First durable result"), true); assert.equal(await store.finishFollowUp(followUp.id, "Duplicate result"), false);
+  const finished = await store.getFollowUp(followUp.id);
+  assert.ok(finished);
+  assert.equal(finished.output, "First durable result");
 });
 
 void test("follow-up completion and its notification materialize once", async () => {
