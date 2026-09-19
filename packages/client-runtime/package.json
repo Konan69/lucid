@@ -11,6 +11,7 @@
     "effect": "4.0.0-rc.116"
   },
   "devDependencies": {
-    "typescript": "^5.9.0"
+    "@typescript/native": "npm:typescript@7.0.2",
+    "typescript": "6.0.3"
   }
 }
