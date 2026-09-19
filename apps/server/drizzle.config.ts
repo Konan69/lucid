@@ -1,9 +1,13 @@
 import { defineConfig } from "drizzle-kit"
-import { config } from "./src/config.ts"
+import * as Config from "effect/Config"
+import * as Effect from "effect/Effect"
+import * as Redacted from "effect/Redacted"
+
+const databaseUrl = Effect.runSync(Config.redacted("DATABASE_URL"))
 
 export default defineConfig({
   dialect: "postgresql",
   schema: "./src/schema.ts",
   out: "./drizzle",
-  dbCredentials: { url: config.DATABASE_URL }
+  dbCredentials: { url: Redacted.value(databaseUrl) }
 })

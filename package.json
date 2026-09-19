@@ -6,10 +6,15 @@
     "dev": "pnpm --filter @vivid/web dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "lint": "oxlint apps/*/src packages/*/src"
+    "lint": "oxlint apps/*/src packages/*/src",
+    "infra:dev": "VIVID_DEPLOY_TARGET=local ALCHEMY_TELEMETRY_DISABLED=1 alchemy dev --stage local",
+    "infra:verify": "node scripts/infra-verify.mjs",
+    "infra:destroy": "VIVID_DEPLOY_TARGET=local ALCHEMY_TELEMETRY_DISABLED=1 alchemy destroy --stage local --yes"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "alchemy": "2.0.0-beta.76",
+    "effect": "4.0.0-rc.112",
     "oxlint": "1.81.0",
     "typescript": "^5.9.0"
   }
