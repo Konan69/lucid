@@ -105,7 +105,7 @@ Expected failures should use custom tagged errors, generally extending:
 
 - `Error`
 - `TaggedError` from `better-result`
-- `Schema.TaggedError` in this Effect 4 rc.112 codebase
+- `Schema.TaggedError` in the project-pinned Effect 4 API (installed rc.112 baseline; rc.116 target)
 
 Custom errors should include:
 
