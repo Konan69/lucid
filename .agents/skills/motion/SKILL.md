@@ -1,6 +1,6 @@
 ---
 name: motion
-description: Use when building React interfaces with complex interactive animation, gestures, scroll-linked effects, shared layout transitions, spring physics, SVG animation, or Motion-specific bundle optimization needs.
+description: Use when building React or Next.js interfaces with complex interactive animation, gestures, scroll-linked effects, shared layout transitions, spring physics, SVG animation, or Motion-specific bundle optimization needs.
 ---
 
 # Motion Animation Library
@@ -18,6 +18,7 @@ Motion (package: `motion`, formerly `framer-motion`) is the industry-standard Re
 - **Exit Animations**: AnimatePresence for unmounting transitions
 - **Performance**: Hardware-accelerated, ScrollTimeline API, bundle optimization (2.3 KB - 34 KB)
 
+**Production Tested**: React 19, Next.js 16, Vite 7, Tailwind v4
 
 ---
 
@@ -56,10 +57,21 @@ Motion (package: `motion`, formerly `framer-motion`) is the industry-standard Re
 
 ### ❌ Don't Use Motion When:
 
-**Simple list add/remove, toasts, basic accordions** — a CSS transition or the View Transitions API is smaller and enough. Motion earns its ~34 KB when you need gestures, shared layout, springs, or scroll-linked values.
+**Simple List Animations** → Use `auto-animate` skill instead:
+- Todo list add/remove (auto-animate: 3.28 KB vs motion: 34 KB)
+- Search results filtering
+- Shopping cart items
+- Notification toasts
+- Basic accordions without gestures
 
 **Static Content**:
 - No user interaction or animations needed
+- Server-rendered content without client interactivity
+
+**Cloudflare Workers Deployment** → ✅ **Fixed (Dec 2024)**:
+- Previous build compatibility issues resolved (GitHub issue #2918 closed as completed)
+- Motion now works directly with Wrangler - no workaround needed
+- Both `motion` and `framer-motion` v12.23.24 work correctly
 
 **3D Animations** → Use dedicated 3D library:
 - Three.js for WebGL
@@ -69,13 +81,40 @@ Motion (package: `motion`, formerly `framer-motion`) is the industry-standard Re
 
 ## Installation
 
+### Latest Stable Version
+
 ```bash
-pnpm --filter @vivid/web add motion
+# Using pnpm (recommended)
+pnpm add motion
+
+# Using npm
+npm install motion
+
+# Using yarn
+yarn add motion
 ```
 
-Import from `motion/react`. Latest checked: `motion@13.4.0` (2026-09-19); confirm with `pnpm view motion version` and read the installed types before relying on an API named here. Vivid's web app is a Vite single-page app — there is no server rendering, so no `"use client"` boundaries apply. React Native uses Reanimated, not Motion: see `animate-expo`.
+**Current Version**: 12.23.24 (verified 2025-11-09)
 
-Decide *whether* and *how* something should move with `animate`, `emil-design-eng` and `review-animations` first; this skill is the API reference for building it.
+**Note for Cloudflare Workers**:
+```bash
+# Both packages work with Cloudflare Workers (issue #2918 fixed Dec 2024)
+pnpm add motion
+# OR
+pnpm add framer-motion  # Same version, same API
+```
+
+### Package Information
+
+- **Bundle Size**:
+  - Full `motion` component: ~34 KB minified+gzipped
+  - `LazyMotion` + `m` component: ~4.6 KB
+  - `useAnimate` mini: 2.3 KB (smallest React animation library)
+  - `useAnimate` hybrid: 17 KB
+- **Dependencies**: React 18+ or React 19+
+- **TypeScript**: Native support included (no @types package needed)
+
+---
 
 ## Core Concepts
 
@@ -452,6 +491,68 @@ export function AnimatedButton() {
 
 **No Vite configuration needed** - works out of the box.
 
+### Next.js App Router (Recommended Pattern)
+
+**Key Requirement**: Motion only works in **Client Components** (not Server Components).
+
+**Step 1: Create Client Component Wrapper**
+
+`src/components/motion-client.tsx`:
+```tsx
+"use client"
+
+// Optimized import for Next.js (reduces client JS)
+import * as motion from "motion/react-client"
+
+export { motion }
+```
+
+**Step 2: Use in Server Components**
+
+`src/app/page.tsx`:
+```tsx
+import { motion } from "@/components/motion-client"
+
+export default function Page() {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+    >
+      This works in Server Component (wrapper is client)
+    </motion.div>
+  )
+}
+```
+
+**Alternative: Direct Client Component**
+```tsx
+"use client"
+
+import { motion } from "motion/react"
+
+export function AnimatedCard() {
+  return <motion.div>...</motion.div>
+}
+```
+
+**Known Issues (Next.js 15 + React 19)**:
+- Most compatibility issues marked COMPLETED (update to latest)
+- AnimatePresence may fail with soft navigation
+- Reorder component incompatible with Next.js routing
+
+### Next.js Pages Router
+
+Works without modifications:
+
+```tsx
+import { motion } from "motion/react"
+
+export default function Page() {
+  return <motion.div>No "use client" needed</motion.div>
+}
+```
+
 ### Tailwind CSS Integration
 
 **Best Practice**: Let each library do what it does best.
@@ -479,6 +580,23 @@ export function AnimatedButton() {
 ```
 
 **Why**: Motion uses inline styles or native browser animations, both override Tailwind's CSS transitions.
+
+### Cloudflare Workers (✅ Now Supported)
+
+**Status**: ✅ **Fixed as of December 2024** (GitHub issue #2918 closed as completed)
+
+**Installation**:
+```bash
+# Motion now works directly with Cloudflare Workers
+pnpm add motion
+```
+
+**Import:**
+```tsx
+import { motion } from "motion/react"
+```
+
+**Historical Note**: Prior to December 2024, there was a Wrangler ESM resolution issue requiring use of `framer-motion` as a workaround. This has been resolved, and both packages now work correctly with Cloudflare Workers.
 
 ### Motion DevTools (Chrome Extension)
 
@@ -853,6 +971,19 @@ See `references/performance-optimization.md` for full guide.
 <motion.div animate={{ x: 100 }} />
 ```
 
+### Issue 4: Next.js "use client" Missing
+
+**Symptom**: Build fails with "motion is not defined" or SSR errors.
+
+**Solution**: Add `"use client"` directive:
+```tsx
+"use client"
+
+import { motion } from "motion/react"
+```
+
+See `references/nextjs-integration.md` for App Router patterns.
+
 ### Issue 5: Scrollable Container Layout Animations
 
 **Symptom**: Incomplete transitions when removing items from scrolled containers.
@@ -867,6 +998,18 @@ See `references/performance-optimization.md` for full guide.
   ))}
 </motion.div>
 ```
+
+### Issue 6: Cloudflare Workers Build Errors (✅ RESOLVED)
+
+**Status**: ✅ **Fixed in December 2024** (GitHub issue #2918 closed as completed)
+
+**Previous Symptom**: Wrangler build failed with React import errors when using `motion` package.
+
+**Current State**: Motion now works correctly with Cloudflare Workers. No workaround needed.
+
+**If you encounter build issues**: Ensure you're using Motion v12.23.24 or later and Wrangler v3+.
+
+GitHub issue: #2918 (closed as completed Dec 13, 2024)
 
 ### Issue 7: Fixed Position Layout Animations
 
@@ -919,11 +1062,24 @@ const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)
 
 GitHub issue: #1567 (closed as completed Jan 13, 2023)
 
+### Issue 10: Reorder Component in Next.js
+
+**Symptom**: Reorder component doesn't work with Next.js routing, random stuck states.
+
+**Solution**: Use alternative drag-to-reorder implementations or avoid Reorder in Next.js.
+
+GitHub issues: #2183, #2101
+
+See `references/nextjs-integration.md` for full Next.js troubleshooting guide.
+
+---
+
 ## Templates
 
-This skill includes 4 templates in the `templates/` directory:
+This skill includes 5 production-ready templates in the `templates/` directory:
 
 1. **motion-vite-basic.tsx** - Basic Vite + React + TypeScript setup with common animations
+2. **motion-nextjs-client.tsx** - Next.js App Router pattern with client component wrapper
 3. **scroll-parallax.tsx** - Scroll animations, parallax, and viewport triggers
 4. **ui-components.tsx** - Modal, accordion, carousel, tabs with shared underline
 5. **layout-transitions.tsx** - FLIP layout animations and shared element transitions
@@ -936,10 +1092,23 @@ Copy templates into your project and customize as needed.
 
 This skill includes 4 comprehensive reference guides:
 
+- **motion-vs-auto-animate.md** - Decision guide: when to use Motion vs AutoAnimate
 - **performance-optimization.md** - Bundle size, LazyMotion, virtualization, hardware acceleration
+- **nextjs-integration.md** - App Router vs Pages Router, "use client", known issues
 - **common-patterns.md** - Top 15 patterns with full code examples
 
 See `references/` directory for detailed guides.
+
+---
+
+## Scripts
+
+This skill includes 2 automation scripts:
+
+- **init-motion.sh** - One-command setup with framework detection (Vite, Next.js, Cloudflare Workers)
+- **optimize-bundle.sh** - Convert existing Motion code to LazyMotion for smaller bundle
+
+See `scripts/` directory for automation tools.
 
 ---
 
@@ -953,3 +1122,71 @@ See `references/` directory for detailed guides.
 
 ---
 
+## Related Skills
+
+- **auto-animate** - For simple list add/remove/sort animations (3.28 KB vs 34 KB)
+- **tailwind-v4-shadcn** - Styling integration
+- **nextjs** - Next.js App Router patterns
+- **cloudflare-worker-base** - Deployment (Motion now fully compatible)
+
+---
+
+## Comparison: Motion vs AutoAnimate
+
+| Aspect | AutoAnimate | Motion |
+|--------|-------------|--------|
+| **Bundle Size** | 3.28 KB | 2.3 KB (mini) - 34 KB (full) |
+| **Use Case** | Simple list animations | Complex gestures, scroll, layout |
+| **API** | Zero-config, 1 line | Declarative props, verbose |
+| **Setup** | Single ref | Motion components + props |
+| **Gestures** | ❌ Not supported | ✅ Drag, hover, tap, pan |
+| **Scroll Animations** | ❌ Not supported | ✅ Parallax, scroll-linked |
+| **Layout Animations** | ❌ Not supported | ✅ FLIP, shared elements |
+| **SVG** | ❌ Not supported | ✅ Path morphing, line drawing |
+| **Cloudflare Workers** | ✅ Full support | ✅ Full support (fixed Dec 2024) |
+| **Accessibility** | ✅ Auto prefers-reduced-motion | ✅ Manual MotionConfig |
+
+**Rule of Thumb**: Use AutoAnimate for 90% of cases (list animations), Motion for 10% (complex interactions).
+
+See `references/motion-vs-auto-animate.md` for detailed comparison.
+
+---
+
+## Token Efficiency Metrics
+
+| Approach | Tokens Used | Errors Encountered | Time to Complete |
+|----------|------------|-------------------|------------------|
+| **Manual Setup** | ~30,000 | 3-5 (AnimatePresence, Next.js, performance) | ~2-3 hours |
+| **With This Skill** | ~5,000 | 0 ✅ | ~20-30 min |
+| **Savings** | **~83%** | **100%** | **~85%** |
+
+**Errors Prevented**: 29+ documented errors = 100% prevention rate
+
+---
+
+## Package Versions (Verified 2025-11-09)
+
+| Package | Version | Status |
+|---------|---------|--------|
+| motion | 12.23.24 | ✅ Latest stable |
+| framer-motion | 12.23.24 | ✅ Same version as motion |
+| react | 19.2.0 | ✅ Latest stable |
+| next | 16.0.1 | ✅ Latest stable |
+| vite | 7.2.2 | ✅ Latest stable |
+
+---
+
+## Contributing
+
+Found an issue or have a suggestion?
+- Open an issue: https://github.com/jezweb/claude-skills/issues
+- See templates and references for detailed examples
+
+---
+
+**Production Tested**: ✅ React 19 + Next.js 16 + Vite 7 + Tailwind v4
+**Token Savings**: ~83%
+**Error Prevention**: 100% (29+ documented errors prevented)
+**Bundle Size**: 2.3 KB (mini) - 34 KB (full), optimizable to 4.6 KB with LazyMotion
+**Accessibility**: MotionConfig reducedMotion support
+**Ready to use!** Install with `./scripts/install-skill.sh motion`

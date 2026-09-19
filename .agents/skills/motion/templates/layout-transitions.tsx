@@ -11,6 +11,7 @@
  * Copy components below into your project.
  * Layout animations use the FLIP technique for smooth, hardware-accelerated transitions.
  *
+ * For Next.js App Router, add "use client" directive at top of file.
  */
 
 import { motion, LayoutGroup } from "motion/react"
@@ -407,6 +408,7 @@ export function ViewSwitcher() {
 
 /**
  * Drag items to reorder with visual feedback.
+ * Note: Motion's Reorder component has Next.js compatibility issues.
  * This is a manual implementation that works everywhere.
  */
 export function DragToReorder() {
@@ -443,7 +445,9 @@ export function DragToReorder() {
 /**
  * Note: Full drag-to-reorder with position updates requires tracking
  * drag position and updating array order. For production, consider:
+ * - @dnd-kit/core (recommended for Next.js)
  * - react-beautiful-dnd
+ * - Motion's Reorder component (has Next.js issues, see GitHub #2183)
  */
 
 // ============================================================================
@@ -600,4 +604,5 @@ export function LayoutAnimationsDemo() {
  *
  * import { motion, LayoutGroup } from "motion/react-client"
  *
+ * See ../references/nextjs-integration.md for comprehensive guide
  */

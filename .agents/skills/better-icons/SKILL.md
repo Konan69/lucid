@@ -14,8 +14,8 @@ Before using any `better-icons` commands, ensure the tool is available in the en
 **Option 1 — Install globally (recommended, matches all examples below):**
 
 ```bash
-# Using pnpm
-pnpm add -g better-icons
+# Using npm
+npm install -g better-icons
 
 # Using Bun (faster)
 bun add -g better-icons
@@ -24,9 +24,9 @@ bun add -g better-icons
 **Option 2 — Run without installing (prefix every command with `npx` or `bunx`):**
 
 ```bash
-# Using pnpm dlx (npm)
-pnpm dlx better-icons search arrow --limit 10
-pnpm dlx better-icons get lucide:home > icon.svg
+# Using npx (npm)
+npx better-icons search arrow --limit 10
+npx better-icons get lucide:home > icon.svg
 
 # Using bunx (Bun — faster)
 bunx better-icons search arrow --limit 10

@@ -11,6 +11,7 @@
  * Copy examples below into your components.
  * All patterns use hardware-accelerated ScrollTimeline API when available.
  *
+ * For Next.js App Router, add "use client" directive at top of file.
  */
 
 import { motion, useScroll, useTransform, useInView, useMotionValue, useSpring } from "motion/react"
@@ -501,4 +502,5 @@ export function ScrollAnimationExamples() {
  *
  * import { motion, useScroll, ... } from "motion/react-client"
  *
+ * See ../references/nextjs-integration.md for comprehensive guide
  */

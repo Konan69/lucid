@@ -11,6 +11,7 @@
  * Copy components below into your project.
  * All components are production-ready and fully typed.
  *
+ * For Next.js App Router, add "use client" directive at top of file.
  */
 
 import { motion, AnimatePresence } from "motion/react"
