@@ -5,10 +5,10 @@ export type ConversationStatus = "ready" | "working" | "attention" | "approve" |
 
 export const STATUS = {
   working: { text: "text-working", dot: "bg-working", label: "Working", pulse: true, Icon: CircleDashed },
-  attention: { text: "text-attention", dot: "bg-attention", label: "Needs you", Icon: CircleHelp },
-  approve: { text: "text-approve", dot: "bg-approve", label: "Approve", Icon: ShieldQuestion },
-  failed: { text: "text-danger", dot: "bg-danger", label: "Failed", Icon: CircleAlert },
-  done: { text: "text-success", dot: "bg-success", label: "Done", Icon: CircleCheck },
+  attention: { text: "text-attention", dot: "bg-attention", label: "Needs you", pulse: false, Icon: CircleHelp },
+  approve: { text: "text-approve", dot: "bg-approve", label: "Approve", pulse: false, Icon: ShieldQuestion },
+  failed: { text: "text-danger", dot: "bg-danger", label: "Failed", pulse: false, Icon: CircleAlert },
+  done: { text: "text-success", dot: "bg-success", label: "Done", pulse: false, Icon: CircleCheck },
 } satisfies Record<Exclude<ConversationStatus, "ready">, { text: string; dot: string; label: string; pulse?: boolean; Icon: typeof CircleDashed }>;
 
 /** T3's rule: a status label is shown only when the row is not ready. */
