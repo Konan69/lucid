@@ -1,7 +1,26 @@
+import * as Schema from "effect/Schema";
 import { View } from "react-native";
 import { Check } from "lucide-react-native";
 import { useTheme } from "../theme";
 import { Card, Label } from "./ui";
+
+const TrackedOutputSchema = Schema.Struct({
+  task: Schema.optional(
+    Schema.Struct({
+      title: Schema.String,
+      assignee: Schema.optional(Schema.String),
+      dueAt: Schema.optional(Schema.NullOr(Schema.Union([Schema.String, Schema.Number]))),
+    }),
+  ),
+  followUp: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        at: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
+        repeatEveryMs: Schema.optional(Schema.NullOr(Schema.Number)),
+      }),
+    ),
+  ),
+});
 
 // The same tracked-work card and copy as web/src/screen/Conversation.tsx.
 export function TrackedCard({
@@ -13,17 +32,12 @@ export function TrackedCard({
 }) {
   const { colors: c } = useTheme();
   if (kind !== "create_task" && kind !== "schedule_follow_up") return null;
-  if (!output || typeof output !== "object") return null;
-  const result = output as {
-    task?: {
-      title?: string;
-      assignee?: string;
-      dueAt?: string | number | null;
-    };
-    followUp?: { at?: string | number; repeatEveryMs?: number | null } | null;
-  };
-  if (typeof result.task?.title !== "string") return null;
-  const when = (value: string | number | null | undefined) => {
+  const decoded = Schema.decodeUnknownOption(TrackedOutputSchema)(output);
+  if (decoded._tag === "None") return null;
+  const result = decoded.value;
+  const task = result.task;
+  if (task === undefined) return null;
+  const when = (value?: string | number | null) => {
     if (value == null) return "";
     const date = new Date(value);
     return Number.isFinite(date.getTime())
@@ -36,15 +50,20 @@ export function TrackedCard({
         })
       : "";
   };
-  const due = when(result.task.dueAt),
-    followUp = when(result.followUp?.at);
+  const due = when(task.dueAt);
+  const followUp = result.followUp;
+  const followUpAt = followUp === null || followUp === undefined ? undefined : followUp.at;
+  const followUpRepeat = followUp === null || followUp === undefined
+    ? false
+    : !!followUp.repeatEveryMs;
+  const followUpTime = when(followUpAt);
   const meta = [
-    result.task.assignee && result.task.assignee !== "you"
-      ? `Waiting on ${result.task.assignee}`
+    task.assignee && task.assignee !== "you"
+      ? `Waiting on ${task.assignee}`
       : "",
     due ? `Due ${due}` : "",
-    followUp
-      ? `${result.followUp?.repeatEveryMs ? "Follows up from" : "Follows up"} ${followUp}`
+    followUpTime
+      ? `${followUpRepeat ? "Follows up from" : "Follows up"} ${followUpTime}`
       : "",
   ]
     .filter(Boolean)
@@ -76,7 +95,7 @@ export function TrackedCard({
             ? "Vivid is tracking this"
             : "Vivid will follow up"}
         </Label>
-        <Label size="label">{result.task.title}</Label>
+        <Label size="label">{task.title}</Label>
         {!!meta && (
           <Label size="micro" tone="ink-3">
             {meta}

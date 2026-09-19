@@ -80,7 +80,7 @@ export function ControlPill({
         activateOnPressIn
           ? () => {
               activatedOnPressIn.current = true;
-              onPress?.();
+              if (onPress !== undefined) onPress();
             }
           : undefined
       }
@@ -94,7 +94,9 @@ export function ControlPill({
           : undefined
       }
       onPress={() => {
-        if (!activateOnPressIn || !activatedOnPressIn.current) onPress?.();
+        if (!activateOnPressIn || !activatedOnPressIn.current) {
+          if (onPress !== undefined) onPress();
+        }
       }}
       style={({ pressed }) => ({
         minHeight: 44,
@@ -146,11 +148,7 @@ export function Header({
   const insets = useSafeAreaInsets();
   const { colors: c } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, undefined>>>();
-  const useNative =
-    Platform.OS === "ios" &&
-    !embedded &&
-    nativeHeader &&
-    typeof navigation.setOptions === "function";
+  const useNative = Platform.OS === "ios" && !embedded && nativeHeader;
   useLayoutEffect(() => {
     if (!useNative) return;
     navigation.setOptions({

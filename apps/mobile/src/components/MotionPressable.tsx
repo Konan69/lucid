@@ -30,11 +30,11 @@ export function MotionPressable({
         {...props}
         onPressIn={(event) => {
           scale.set(withTiming(0.98, timing));
-          onPressIn?.(event);
+          if (onPressIn != null) onPressIn(event);
         }}
         onPressOut={(event) => {
           scale.set(withTiming(1, timing));
-          onPressOut?.(event);
+          if (onPressOut != null) onPressOut(event);
         }}
       />
     </Animated.View>
