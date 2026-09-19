@@ -1,4 +1,4 @@
-import * as Schema from "effect/Schema";
+import { Option, Schema } from "effect";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { EmptyState } from "./screen/EmptyState";
 import { Library, type LibraryDocument } from "./screen/Library";
@@ -36,6 +36,9 @@ const LegacyRuntimeConversationListSchema = Schema.Array(LegacyRuntimeConversati
 const LegacyRuntimeConversationListJsonSchema = Schema.fromJsonString(LegacyRuntimeConversationListSchema);
 const RuntimeConversationResponseSchema = Schema.Struct({ conversation: RuntimeConversationSchema });
 const RuntimeConversationResponseJsonSchema = Schema.fromJsonString(RuntimeConversationResponseSchema);
+const decodeRuntimeConversationList = Schema.decodeUnknownSync(RuntimeConversationListJsonSchema);
+const decodeLegacyRuntimeConversationList = Schema.decodeUnknownOption(LegacyRuntimeConversationListJsonSchema);
+const decodeRuntimeConversationResponse = Schema.decodeUnknownSync(RuntimeConversationResponseJsonSchema);
 
 /** Returns the first non-archived conversation without weakening the missing-state contract. */
 function firstActiveConversationId(conversations: readonly RuntimeConversation[]): string | null {
@@ -93,21 +96,22 @@ export default function App() {
       const response = await fetch("/api/conversations");
       if (!response.ok) throw new Error(`Could not load conversations (${response.status})`);
       const payload = await response.text();
-      const body = Schema.decodeUnknownSync(RuntimeConversationListJsonSchema)(payload);
+      const body = decodeRuntimeConversationList(payload);
       let conversations: RuntimeConversation[] = [...body.conversations];
 
       if (conversations.length === 0) {
-        try {
-          const legacy = localStorage.getItem("vivid-runtime-conversations");
-          const parsed = legacy === null
-            ? []
-            : Schema.decodeUnknownSync(LegacyRuntimeConversationListJsonSchema)(legacy).map((thread) => ({ ...thread, archived: false }));
-          if (parsed.length > 0) {
-            await Promise.all(parsed.map(saveRuntimeThread));
+        const legacy = localStorage.getItem("vivid-runtime-conversations");
+        const decoded = legacy === null ? Option.some([]) : decodeLegacyRuntimeConversationList(legacy);
+        const parsed = Option.isSome(decoded)
+          ? decoded.value.map((thread) => ({ ...thread, archived: false }))
+          : [];
+        if (parsed.length > 0) {
+          // Migration is best-effort because the current runtime list remains authoritative. All
+          // legacy writes must land before that index can replace the empty runtime response.
+          const writes = await Promise.allSettled(parsed.map(saveRuntimeThread));
+          if (writes.every((write) => write.status === "fulfilled")) {
             conversations = parsed.sort((left, right) => right.updatedAt - left.updatedAt);
           }
-        } catch {
-          // Ignore a corrupt legacy index; new conversations still work.
         }
       }
 
@@ -190,7 +194,7 @@ export default function App() {
     });
     if (!response.ok) throw new Error(`Could not update conversation (${response.status})`);
     const payload = await response.text();
-    const { conversation } = Schema.decodeUnknownSync(RuntimeConversationResponseJsonSchema)(payload);
+    const { conversation } = decodeRuntimeConversationResponse(payload);
     setRuntimeThreads((current) => current
       .map((thread) => thread.id === id ? conversation : thread)
       .sort((left, right) => right.updatedAt - left.updatedAt));

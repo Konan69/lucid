@@ -28,6 +28,8 @@ const TrackedOutputSchema = Schema.Struct({
     repeatEveryMs: Schema.optionalKey(Schema.NullOr(Schema.Number)),
   }))),
 });
+const decodeLiveMetadata = Schema.decodeUnknownOption(LiveMetadataSchema);
+const decodeTrackedOutput = Schema.decodeUnknownOption(TrackedOutputSchema);
 export function Conversation({
   onOpenPanel,
   panelOpen,
@@ -153,7 +155,7 @@ function LiveMessage({ message, working, onContinue }: { message: FlueConversati
     .map((part) => part.text)
     .join("\n\n");
   const tools = message.parts.filter((part) => part.type === "dynamic-tool");
-  const metadataResult = Schema.decodeUnknownOption(LiveMetadataSchema)(message.metadata);
+  const metadataResult = decodeLiveMetadata(message.metadata);
   const metadata = Option.isSome(metadataResult) ? metadataResult.value : null;
   const timestamp = metadata ? metadata.finishedAt ?? metadata.startedAt : undefined;
   const time = timestamp
@@ -182,7 +184,7 @@ function LiveMessage({ message, working, onContinue }: { message: FlueConversati
 
   const tracked = tools.flatMap((tool) => {
     if (tool.state !== "output-available" || (tool.toolName !== "create_task" && tool.toolName !== "schedule_follow_up")) return [];
-    const outputResult = Schema.decodeUnknownOption(TrackedOutputSchema)(tool.output);
+    const outputResult = decodeTrackedOutput(tool.output);
     const output = Option.isSome(outputResult) ? outputResult.value : null;
     if (!output || !output.task || !output.task.title) return [];
     return [{ id: tool.toolCallId, kind: tool.toolName, title: output.task.title, assignee: output.task.assignee, dueAt: output.task.dueAt ?? null, followUpAt: output.followUp ? output.followUp.at ?? null : null, repeats: !!(output.followUp && output.followUp.repeatEveryMs) }];
@@ -463,11 +465,9 @@ function Composer({
     if (!body) return;
     setMessage("");
 
-    try {
-      await onSend(body);
-    } catch {
-      // The Flue hook retains failed optimistic sends and exposes the error.
-    }
+    // The Flue hook retains failed optimistic sends and exposes the error, so this event boundary
+    // deliberately settles the rejected Promise after the hook has recorded it.
+    await onSend(body).catch(() => undefined);
   }
 
   return (
