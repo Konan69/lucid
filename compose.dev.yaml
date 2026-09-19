@@ -1,0 +1,20 @@
+# Local development services only. Remote environments are owned by Alchemy.
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - '55433:5432'
+    environment:
+      POSTGRES_USER: vivid
+      POSTGRES_PASSWORD: vivid
+      POSTGRES_DB: vivid
+    volumes:
+      - vivid-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U vivid -d vivid']
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  vivid-postgres-data:
