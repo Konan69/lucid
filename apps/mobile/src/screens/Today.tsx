@@ -2,10 +2,11 @@ import { useState, useSyncExternalStore } from "react";
 import { ScrollView, View, RefreshControl } from "react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Check, Plus, Bell, Circle } from "lucide-react-native";
+import { NotificationListResponse, TaskListResponse } from "@vivid/contracts";
 import { useOpenThread, useWorkspace, type Routes } from "../workspace";
 import { useResource } from "../lib/resource";
 import { useTheme } from "../theme";
-import { type Task, type Notification, when } from "../lib/models";
+import { type Task, when } from "../lib/models";
 import {
   Card,
   ControlPill,
@@ -56,11 +57,8 @@ export function Today({ navigation }: NativeStackScreenProps<Routes, "Today">) {
   const { api } = useWorkspace();
   const { colors: c } = useTheme();
   const openThread = useOpenThread();
-  const tasks = useResource<{ tasks: Task[] }>(api, "/api/tasks");
-  const notifications = useResource<{
-    notifications: Notification[];
-    unreadCount: number;
-  }>(api, "/api/notifications");
+  const tasks = useResource(api, "/api/tasks", TaskListResponse);
+  const notifications = useResource(api, "/api/notifications", NotificationListResponse);
   const [selectedId, setSelectedId] = useState<string>();
   const [editing, setEditing] = useState<Task | "new">();
   const [followUp, setFollowUp] = useState<Task>();

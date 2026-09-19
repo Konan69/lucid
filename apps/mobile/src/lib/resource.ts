@@ -1,53 +1,66 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import { AppState } from "react-native";
+import type { Schema } from "effect";
 import type { Api } from "./api";
+import {
+  createResourceStore,
+  type JsonValue,
+  type ResourceApi,
+  type ResourceEnvironment,
+  type ResourceState,
+} from "./resource-store";
 
-export function useResource<T>(api: Api, path: string) {
-  const [data, setData] = useState<T>();
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const generation = useRef(0);
-  const inFlight = useRef(false);
-  const refresh = useCallback(async () => {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    const current = ++generation.current;
-    try {
-      const next = await api.request<T>(path);
-      if (current === generation.current) {
-        setData(next);
-        setError("");
-      }
-    } catch (cause) {
-      if (current === generation.current)
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : "Could not load this. Try again.",
-        );
-    } finally {
-      if (current === generation.current) {
-        inFlight.current = false;
-        setLoading(false);
-      }
-    }
-  }, [api, path]);
-  useEffect(() => {
-    setData(undefined);
-    setLoading(true);
-    void refresh();
+const nativeResourceEnvironment: ResourceEnvironment = {
+  isActive: () => AppState.currentState === "active",
+  onActive: (listener) => {
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") void refresh();
+      if (state === "active") listener();
     });
-    const timer = setInterval(() => {
-      if (AppState.currentState === "active") void refresh();
-    }, 15_000);
-    return () => {
-      ++generation.current;
-      inFlight.current = false;
-      clearInterval(timer);
-      subscription.remove();
+    return () => subscription.remove();
+  },
+  onInterval: (listener, intervalMs) => {
+    const timer = setInterval(listener, intervalMs);
+    return () => clearInterval(timer);
+  },
+};
+
+export interface ResourceValue<Value> {
+  readonly data?: Value;
+  readonly error: string;
+  readonly loading: boolean;
+  readonly refresh: () => Promise<void>;
+}
+
+/** Maps the tagged store state to the stable legacy hook shape used by mobile screens. */
+function resourceValue<Value>(
+  state: ResourceState<Value>,
+  refresh: () => Promise<void>,
+): ResourceValue<Value> {
+  switch (state._tag) {
+    case "Loading":
+      return { error: "", loading: true, refresh };
+    case "Ready":
+      return { data: state.value, error: "", loading: false, refresh };
+    case "Failed":
+      return { error: state.message, loading: false, refresh };
+  }
+  return state;
+}
+
+/** Subscribes React to a lifecycle-owned, schema-decoding resource store. */
+export function useResource<Value>(
+  api: Api,
+  path: string,
+  schema: Schema.ConstraintDecoder<Value>,
+): ResourceValue<Value> {
+  const store = useMemo(() => {
+    const resourceApi: ResourceApi = {
+      request: (resourcePath) => api.request<JsonValue>(resourcePath),
     };
-  }, [refresh]);
-  return { data, error, loading, refresh };
+    return createResourceStore(resourceApi, path, schema, nativeResourceEnvironment);
+  },
+    [api, path, schema],
+  );
+  const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  return resourceValue(state, store.refresh);
 }

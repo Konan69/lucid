@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Linking, View } from "react-native";
 import { Check, ExternalLink } from "lucide-react-native";
+import { ConnectionListResponse } from "@vivid/contracts";
 import { useWorkspace } from "../workspace";
 import { useResource } from "../lib/resource";
 import { Card, ControlPill, Label } from "./ui";
@@ -9,7 +10,6 @@ import {
   authorizationAddress,
   connectorNames,
   type ConnectorRequest,
-  type ConnectorStatus,
 } from "../../../web/src/data/connectorRequests";
 
 export function ConnectorRequestCard({
@@ -22,7 +22,7 @@ export function ConnectorRequestCard({
   disabled: boolean;
 }) {
   const { api } = useWorkspace();
-  const resource = useResource<{ connectors: ConnectorStatus[] }>(api, "/api/connectors");
+  const resource = useResource(api, "/api/connectors", ConnectionListResponse);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [authUrl, setAuthUrl] = useState("");

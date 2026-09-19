@@ -20,6 +20,7 @@ import {
 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { nativeMetrics as m } from "@vivid/design-tokens/native";
+import { NotificationListResponse, ThreadListResponse } from "@vivid/contracts";
 import { laneConversations } from "../../../web/src/data/conversationLanes";
 import { countProjects, projects } from "../../../web/src/data/projects";
 import {
@@ -31,7 +32,7 @@ import {
   type ThreadActivity,
 } from "../workspace";
 import { useResource } from "../lib/resource";
-import { type Thread, type Notification } from "../lib/models";
+import { type Thread } from "../lib/models";
 import { useTheme } from "../theme";
 import {
   ControlPill,
@@ -97,11 +98,8 @@ export function Home({ embedded = false }: { embedded?: boolean }) {
   const { colors: c } = useTheme();
   const navigation = useNavigation<NavigationProp<Routes>>();
   const open = useOpenThread();
-  const resource = useResource<{ conversations: Thread[] }>(api, "/api/conversations");
-  const notifications = useResource<{ notifications: Notification[]; unreadCount: number }>(
-    api,
-    "/api/notifications",
-  );
+  const resource = useResource(api, "/api/conversations", ThreadListResponse);
+  const notifications = useResource(api, "/api/notifications", NotificationListResponse);
   const conversationData = resource.data;
   const notificationData = notifications.data;
   // Focus changes trigger the current resource without rebuilding the focus subscription each render.

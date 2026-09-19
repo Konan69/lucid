@@ -17,6 +17,7 @@
   "dependencies": {
     "@flue/react": "catalog:",
     "@flue/sdk": "catalog:",
+    "@vivid/contracts": "workspace:*",
     "@vivid/design-tokens": "workspace:*",
     "@react-native-community/datetimepicker": "9.1.0",
     "@react-native-menu/menu": "^2.0.0",
@@ -31,6 +32,7 @@
     "expo-secure-store": "~56.0.4",
     "expo-sharing": "~56.0.26",
     "expo-system-ui": "~56.0.5",
+    "effect": "catalog:",
     "lucide-react-native": "^0.560.0",
     "punycode": "^2.3.1",
     "react": "19.2.3",

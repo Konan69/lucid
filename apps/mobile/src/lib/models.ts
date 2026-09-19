@@ -24,7 +24,7 @@ export type Task = {
   dueAt: number | null;
   conversationId: string;
   nextFollowUpAt: number | null;
-  followUps: FollowUp[];
+  followUps: readonly FollowUp[];
 };
 export type Notification = {
   id: string;
@@ -42,7 +42,7 @@ export type Routine = {
   enabled: boolean;
   nextRunAt: number | null;
   lastMissedAt: number | null;
-  runs: {
+  runs: readonly {
     id: string;
     conversationId: string;
     status: string;
