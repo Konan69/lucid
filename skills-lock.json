@@ -1,21 +1,270 @@
 {
-  "version": 1,
+  "version": 2,
+  "hashAlgorithm": "sha256 over sorted relative-path, NUL, byte-length, NUL, file-bytes; excludes UPSTREAM.md",
   "skills": {
     "better-auth-best-practices": {
       "source": "better-auth/skills",
       "sourceType": "github",
-      "skillPath": "better-auth/best-practices/SKILL.md",
-      "computedHash": "61ba0ef64ed2e7c424401cc848ca33dd6d790a720c44727717dc0c5cba5fc122"
+      "skillPath": "better-auth/best-practices",
+      "mergedCommit": "20c9e88a5c007461a703f1c213572b073196113e",
+      "mergedAt": "2026-09-19",
+      "computedHash": "fbeacebb1f73b0b54ae0aa10297cbdeecd0bc0f4e815d11fd625bd3092adf536"
+    },
+    "better-auth-security-best-practices": {
+      "source": "better-auth/skills",
+      "sourceType": "github",
+      "skillPath": "security",
+      "mergedCommit": "20c9e88a5c007461a703f1c213572b073196113e",
+      "mergedAt": "2026-09-19",
+      "computedHash": "36e9710eaa13c61c00bec00a4902fdc6ed829e6de13127238ae57494e93c1d9d"
+    },
+    "coding-standards": {
+      "source": "dmmulroy/skills",
+      "sourceType": "github",
+      "skillPath": "coding-standards",
+      "mergedCommit": "8603380821fee6a77c82639f364ce8fe4f5a92be",
+      "mergedAt": "2026-09-19",
+      "computedHash": "c73eaa04ceeea08557fe140b18255c59e0d6e32773cd3943da7f1714d7ea2bd6"
+    },
+    "create-auth": {
+      "source": "better-auth/skills",
+      "sourceType": "github",
+      "skillPath": "better-auth/create-auth",
+      "mergedCommit": "20c9e88a5c007461a703f1c213572b073196113e",
+      "mergedAt": "2026-09-19",
+      "computedHash": "0115b96fcf573581a6e8e6df575b96c52336ef3288c24389e43ffc674f86ac5a"
+    },
+    "diagnose": {
+      "source": "VCOS owner skill",
+      "sourceType": "owner",
+      "skillPath": ".agents/skills/diagnose",
+      "mergedCommit": "f5e0e85e460f20dee1db2f954cf9e79ef71da365",
+      "mergedAt": "2026-09-19",
+      "computedHash": "1527bc6760666152a1920dd6072a039093cad3b4c6eea22feafbf705ea1fda7c"
+    },
+    "drizzle": {
+      "source": "drizzle-team/drizzle-orm",
+      "sourceType": "package",
+      "skillPath": "drizzle-kit/skills/drizzle",
+      "mergedCommit": "ab785fcd99710d6d136ffbfd121b7aeb96e4d51d",
+      "mergedAt": "2026-09-19",
+      "computedHash": "0027fd8f8330d1056ecb105041765602de5489dc81e3a688e94519705e56c5c2"
+    },
+    "drizzle-generate": {
+      "source": "drizzle-team/drizzle-orm",
+      "sourceType": "package",
+      "skillPath": "drizzle-kit/skills/drizzle-generate",
+      "mergedCommit": "ab785fcd99710d6d136ffbfd121b7aeb96e4d51d",
+      "mergedAt": "2026-09-19",
+      "computedHash": "9f1f1322cb0a59294b270425089c23b14c4598c62ebf50063cc23cf9c0cc7ecb"
+    },
+    "drizzle-hints": {
+      "source": "drizzle-team/drizzle-orm",
+      "sourceType": "package",
+      "skillPath": "drizzle-kit/skills/drizzle-hints",
+      "mergedCommit": "ab785fcd99710d6d136ffbfd121b7aeb96e4d51d",
+      "mergedAt": "2026-09-19",
+      "computedHash": "47a58f2fd78deee52f90242f0d6804554bc8f3045aca79ca1e6e9f5ce62a0ff0"
+    },
+    "drizzle-migrations": {
+      "source": "drizzle-team/drizzle-orm",
+      "sourceType": "package",
+      "skillPath": "drizzle-kit/skills/drizzle-migrations",
+      "mergedCommit": "ab785fcd99710d6d136ffbfd121b7aeb96e4d51d",
+      "mergedAt": "2026-09-19",
+      "computedHash": "54badcbbb3c8e954f2f5cd41bea1151d0fca46904958ee1b727fff81240353d2"
+    },
+    "drizzle-output-modes": {
+      "source": "drizzle-team/drizzle-orm",
+      "sourceType": "package",
+      "skillPath": "drizzle-kit/skills/drizzle-output-modes",
+      "mergedCommit": "ab785fcd99710d6d136ffbfd121b7aeb96e4d51d",
+      "mergedAt": "2026-09-19",
+      "computedHash": "9a1641e572e02a63ed0a6bfcb027ce2aa11718f26aff92475eb7b205dd379dae"
+    },
+    "drizzle-pull": {
+      "source": "drizzle-team/drizzle-orm",
+      "sourceType": "package",
+      "skillPath": "drizzle-kit/skills/drizzle-pull",
+      "mergedCommit": "ab785fcd99710d6d136ffbfd121b7aeb96e4d51d",
+      "mergedAt": "2026-09-19",
+      "computedHash": "fdfe8458168080d4d55ef1246ff533a6842b635168edc93e96836d18e8f9879a"
+    },
+    "drizzle-push": {
+      "source": "drizzle-team/drizzle-orm",
+      "sourceType": "package",
+      "skillPath": "drizzle-kit/skills/drizzle-push",
+      "mergedCommit": "ab785fcd99710d6d136ffbfd121b7aeb96e4d51d",
+      "mergedAt": "2026-09-19",
+      "computedHash": "7b3d9e2b02792c2075ed9e8ea9ae6785844b9271da6ba3aa379ef67f34fda0b8"
+    },
+    "drizzle-responses-and-errors": {
+      "source": "drizzle-team/drizzle-orm",
+      "sourceType": "package",
+      "skillPath": "drizzle-kit/skills/drizzle-responses-and-errors",
+      "mergedCommit": "ab785fcd99710d6d136ffbfd121b7aeb96e4d51d",
+      "mergedAt": "2026-09-19",
+      "computedHash": "464c1400d02c7d0f79742c337d7d87f5b40cfe24a80a7a24aca429edffd4aab3"
+    },
+    "effect": {
+      "source": "kitlangton/skills",
+      "sourceType": "github",
+      "skillPath": "skills/effect",
+      "mergedCommit": "22c35cb7fd29f931789253fc3c8eb142f2863a8a",
+      "mergedAt": "2026-09-19",
+      "computedHash": "b7656827bf9f1c5e7c466bfce4f84ffc0d7e7b73214db64c5c29c1e6fc931a4c"
+    },
+    "effect-service-design": {
+      "source": "dmmulroy/skills",
+      "sourceType": "github",
+      "skillPath": "effect-service-design",
+      "mergedCommit": "8603380821fee6a77c82639f364ce8fe4f5a92be",
+      "mergedAt": "2026-09-19",
+      "computedHash": "fa5ae52753e6e3a63d67bfba7d19b7810edd6601f50340884f85378d514d3870"
+    },
+    "email-and-password-best-practices": {
+      "source": "better-auth/skills",
+      "sourceType": "github",
+      "skillPath": "better-auth/emailAndPassword",
+      "mergedCommit": "20c9e88a5c007461a703f1c213572b073196113e",
+      "mergedAt": "2026-09-19",
+      "computedHash": "693dbe4a18934d3696d9a15daf4027c1e11ff762e20a79f3030ef12a2c2435a3"
+    },
+    "helix-cli": {
+      "source": "HelixDB/skills",
+      "sourceType": "github",
+      "skillPath": "skills/helix-cli",
+      "mergedCommit": "199e5d03a18181fef535826e78de9922bd6fd9f1",
+      "mergedAt": "2026-09-19",
+      "computedHash": "a5f419d5150888030ba7581ca9266ac69d37b85234c67642941e602549ab2d2c"
+    },
+    "helix-memory-system": {
+      "source": "HelixDB/skills",
+      "sourceType": "github",
+      "skillPath": "skills/helix-memory-system",
+      "mergedCommit": "199e5d03a18181fef535826e78de9922bd6fd9f1",
+      "mergedAt": "2026-09-19",
+      "computedHash": "43b9e5adbeb3d529a2f59a23d11b827133ceee4a567afec9fdd8b56390fad31d"
+    },
+    "helix-query-json-dynamic": {
+      "source": "HelixDB/skills",
+      "sourceType": "github",
+      "skillPath": "skills/helix-query-json-dynamic",
+      "mergedCommit": "199e5d03a18181fef535826e78de9922bd6fd9f1",
+      "mergedAt": "2026-09-19",
+      "computedHash": "2b8aa3870b7d9b2640c378bd78d466d8c3f0b8db1f090862418ce7af179f6e1d"
+    },
+    "helix-query-optimize": {
+      "source": "HelixDB/skills",
+      "sourceType": "github",
+      "skillPath": "skills/helix-query-optimize",
+      "mergedCommit": "199e5d03a18181fef535826e78de9922bd6fd9f1",
+      "mergedAt": "2026-09-19",
+      "computedHash": "33233ec08347940727b62248d36fb7ba6f612a2a73d35b29aeb5071c62130957"
+    },
+    "helix-query-typescript": {
+      "source": "HelixDB/skills",
+      "sourceType": "github",
+      "skillPath": "skills/helix-query-typescript",
+      "mergedCommit": "199e5d03a18181fef535826e78de9922bd6fd9f1",
+      "mergedAt": "2026-09-19",
+      "computedHash": "566025cb464611c4db6f363673ad94314aeb44a28ccf0b0d42216799e05cd193"
+    },
+    "improve-codebase-architecture": {
+      "source": "VCOS owner skill",
+      "sourceType": "owner",
+      "skillPath": ".agents/skills/improve-codebase-architecture",
+      "mergedCommit": "7f38dca4730a480d4ab0481675c38f632a1d8922",
+      "mergedAt": "2026-09-19",
+      "computedHash": "b38ae43aca3729dc0bb6d176b08befaef001a594d9659966274d1c083375427d"
+    },
+    "infra": {
+      "source": "Vivid repository",
+      "sourceType": "local",
+      "skillPath": ".agents/skills/infra",
+      "mergedCommit": "8580c04b7dee2cc2c4936e171ada2a7b4ab09b2e",
+      "mergedAt": "2026-09-19",
+      "computedHash": "931c6cbbb4ca5aee34b6deb70f4156f4c6ad93b92ba59e1859e0a6da3e20f6e0"
+    },
+    "organization-best-practices": {
+      "source": "better-auth/skills",
+      "sourceType": "github",
+      "skillPath": "better-auth/organization",
+      "mergedCommit": "20c9e88a5c007461a703f1c213572b073196113e",
+      "mergedAt": "2026-09-19",
+      "computedHash": "49ea2ddfb898209fb12aa66ad0503510fcc2e04160a05d9f9c81961f73dedcbe"
+    },
+    "product-description": {
+      "source": "VCOS owner skill",
+      "sourceType": "owner",
+      "skillPath": ".agents/skills/product-description",
+      "mergedCommit": "137d962c23e011f67e8903e1c091f2095c05d069",
+      "mergedAt": "2026-09-19",
+      "computedHash": "433bbaae41814cc868e8b259fdad5dc8beca52520c3ca03a2aa3c79290a0bc5b"
+    },
+    "prototype": {
+      "source": "VCOS owner skill",
+      "sourceType": "owner",
+      "skillPath": ".agents/skills/prototype",
+      "mergedCommit": "7f38dca4730a480d4ab0481675c38f632a1d8922",
+      "mergedAt": "2026-09-19",
+      "computedHash": "36f677f1a4fd23c5750b2d1c22663b430679eafd3bf625f1fe6cf5b1724d5a63"
     },
     "react-useeffect": {
       "source": "softaworks/agent-toolkit",
       "sourceType": "github",
-      "computedHash": "8c24990b50f431a570f3ad1f60632dee154431861547103047f6ce80092ca734"
+      "skillPath": "skills/react-useeffect",
+      "mergedCommit": "3027f20f3181758385a1bb8c022d4041dfb4de84",
+      "mergedAt": "2026-09-19",
+      "computedHash": "e450f31d028a1a2670dae02473b1ce8f7c8c2bfa212e7e656c58b444d272bd45"
+    },
+    "runtime-integration-testing": {
+      "source": "Vivid local adaptation of VCOS owner doctrine",
+      "sourceType": "local",
+      "skillPath": ".agents/skills/runtime-integration-testing",
+      "mergedCommit": "local-2026-09-19",
+      "mergedAt": "2026-09-19",
+      "computedHash": "8d318b16652389abcb0ec33711002afacc703a7ab31365a4ab33c189e67bef3c"
+    },
+    "tdd": {
+      "source": "VCOS owner skill",
+      "sourceType": "owner",
+      "skillPath": ".agents/skills/tdd",
+      "mergedCommit": "f5e0e85e460f20dee1db2f954cf9e79ef71da365",
+      "mergedAt": "2026-09-19",
+      "computedHash": "ce64d0ee73f35c0dcb09d1f9ce83c2ab1bc365f38329dc547eb0e1197f2115c6"
+    },
+    "to-issues": {
+      "source": "VCOS owner skill",
+      "sourceType": "owner",
+      "skillPath": ".agents/skills/to-issues",
+      "mergedCommit": "7f38dca4730a480d4ab0481675c38f632a1d8922",
+      "mergedAt": "2026-09-19",
+      "computedHash": "64f101bb88ed9cbddf24ea88f2d50d98d3077ef10bebf298f538fe19ade7bb28"
+    },
+    "to-prd": {
+      "source": "VCOS owner skill",
+      "sourceType": "owner",
+      "skillPath": ".agents/skills/to-prd",
+      "mergedCommit": "7f38dca4730a480d4ab0481675c38f632a1d8922",
+      "mergedAt": "2026-09-19",
+      "computedHash": "edf4510eea36ac5288eca860f2ba4b7361689449ad7b08011828456d9542d319"
     },
     "turborepo": {
       "source": "vercel/turborepo",
       "sourceType": "github",
-      "computedHash": "af51e16468977f0a5db2bad0baa50b6452f690318d81f3c0382f701830acdbdc"
+      "skillPath": "skills/turborepo",
+      "mergedCommit": "bcc853c2cc5586d49f97dd58fe8bc199419df3bb",
+      "mergedAt": "2026-09-19",
+      "computedHash": "eaa573225568a064176c382accadaeceebb8f1e40da3c133e79dc01f1df8d813"
+    },
+    "vitest-evals": {
+      "source": "getsentry/vitest-evals",
+      "sourceType": "github",
+      "skillPath": "skills/vitest-evals",
+      "mergedCommit": "8cff207d4e27a55eca0689722d06b278d70646f1",
+      "mergedAt": "2026-09-19",
+      "computedHash": "dc308e3a59c17587f2765e23065c4fa35fe8e736e4d695f82308b368624ecba2"
     }
   }
 }
