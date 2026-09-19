@@ -1,0 +1,43 @@
+#!/usr/bin/env sh
+set -eu
+
+lint_output="$(mktemp)"
+trap 'rm -f "$lint_output"' EXIT
+
+pnpm lint >"$lint_output" 2>&1 || {
+  cat "$lint_output"
+  exit 1
+}
+cat "$lint_output"
+
+# Legacy warnings are ratcheted per rule. These values are ceilings, not
+# allowances: lower a baseline whenever a change removes findings, and never
+# increase one to make a push pass.
+check_ratchet() {
+  label="$1"
+  plugin="$2"
+  rule="$3"
+  baseline="$4"
+  count="$(grep -E -c "${plugin}(\\(|/)${rule}" "$lint_output" || true)"
+
+  if [ "$count" -gt "$baseline" ]; then
+    echo "$label warning ratchet failed: $count warnings exceed baseline $baseline"
+    exit 1
+  fi
+
+  echo "$label warning ratchet passed: $count/$baseline"
+}
+
+check_ratchet "chained assertions" "anti-slop" "no-chained-type-assertions" 1
+check_ratchet "conditional empty spreads" "anti-slop" "no-conditional-empty-object-spread" 13
+check_ratchet "runtime typeof" "anti-slop" "no-runtime-typeof" 67
+check_ratchet "shape names" "anti-slop" "no-shape-in-symbol-names" 8
+check_ratchet "unknown parameters" "anti-slop" "no-unknown-parameters" 22
+check_ratchet "unknown returns" "anti-slop" "no-unknown-returns" 2
+check_ratchet "unsafe dictionaries" "anti-slop" "no-unsafe-dictionary-type" 27
+check_ratchet "unjustified assertions" "anti-slop" "require-safety-comment-for-type-assertion" 125
+check_ratchet "explicit any" "typescript" "no-explicit-any" 3
+check_ratchet "try/catch" "vivid" "no-try-catch" 37
+
+pnpm format
+pnpm typecheck
