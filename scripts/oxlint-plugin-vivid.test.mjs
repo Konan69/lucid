@@ -218,6 +218,10 @@ for (const [ruleName, invalid, valid, filename] of cases) {
       )
     }
 
+    if (ruleName === 'no-runpromise-in-library') {
+      assert.equal(ruleDiagnostics(ruleName, lint(ruleName, 'Effect.runFork(program)', 'app.ts')).length, 0)
+    }
+
     if (ruleName === 'effect-require-effect-fn') {
       const callback = 'const options = { catch: () => Effect.fail(new DomainError({})) }'
       assert.equal(ruleDiagnostics(ruleName, lint(ruleName, callback)).length, 0)
