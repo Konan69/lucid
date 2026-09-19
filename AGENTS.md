@@ -96,6 +96,8 @@ Test observable behavior through public seams. Delete tautological tests that on
 
 Fixtures must never touch a shared app database. Use disposable PostgreSQL through `VIVID_TEST_DATABASE_URL`, never fallback to `DATABASE_URL` or an app env file, and register cleanup before the first write so failed setup/assertions retain cleanup. Process termination can skip teardown, so database isolation is mandatory.
 
+Vitest is the runner for app and package `.test.ts`/`.test.tsx` suites. Effect programs use `@effect/vitest` (`it.effect`, `it.live`, or shared `layer(...)`) instead of manual Effect runtimes. Tooling suites under `scripts/*.test.mjs` stay on `node --test`.
+
 LLM-behavior live evaluations need real credentials, an explicit opt-in environment flag, and one `.live.test.ts` file per behavioral claim. They stay skipped by default and test observable structured behavior, not prompt wording.
 
 ## Verifying

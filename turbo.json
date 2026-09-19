@@ -16,6 +16,7 @@
     },
     "test": {
       "dependsOn": ["^build"],
+      "env": ["VIVID_TEST_DATABASE_URL"],
       "outputs": ["coverage/**"]
     },
     "dev": {

@@ -12,7 +12,7 @@
     "build": "expo export --platform all",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --type-aware src",
-    "test": "node --experimental-strip-types --test src/lib/*.test.ts"
+    "test": "vitest run"
   },
   "dependencies": {
     "@flue/react": "catalog:",
@@ -48,6 +48,7 @@
   "devDependencies": {
     "@types/react": "~19.2.0",
     "@typescript/native": "catalog:",
+    "vitest": "catalog:",
     "typescript": "catalog:"
   }
 }

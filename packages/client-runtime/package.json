@@ -6,12 +6,17 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "scripts": {
+    "test": "vitest run"
+  },
   "dependencies": {
     "@vivid/contracts": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
+    "@effect/vitest": "catalog:",
     "@typescript/native": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }

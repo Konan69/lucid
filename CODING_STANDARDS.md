@@ -12,10 +12,9 @@ import * as Schema from 'effect/Schema'
 export const ThreadId = Schema.String.pipe(Schema.brand('ThreadId'))
 export type ThreadId = typeof ThreadId.Type
 
-export class ThreadNotFound extends Schema.TaggedError<ThreadNotFound>()(
-  'ThreadNotFound',
-  { threadId: ThreadId },
-) {}
+export class ThreadNotFound extends Schema.TaggedError<ThreadNotFound>()('ThreadNotFound', {
+  threadId: ThreadId,
+}) {}
 ```
 
 Do not replace the contract with a cast:
@@ -152,9 +151,10 @@ const thread = {
 }
 
 // Good: the variant states exactly which boundary value is being built.
-const thread = input._tag === 'CompanyThread'
-  ? CompanyThread.make({ id, companyId: input.companyId, title: input.title })
-  : PersonalThread.make({ id, personId: input.personId, title: input.title })
+const thread =
+  input._tag === 'CompanyThread'
+    ? CompanyThread.make({ id, companyId: input.companyId, title: input.title })
+    : PersonalThread.make({ id, personId: input.personId, title: input.title })
 ```
 
 ## Validate both sides of HTTP
@@ -166,8 +166,8 @@ const thread = input._tag === 'CompanyThread'
 const thread = await request<Thread>(`/api/threads/${id}`)
 
 // Good: trust begins at the shared parser.
-const payload = yield* Effect.tryPromise(() => response.json())
-const thread = yield* Schema.decodeUnknownEffect(ThreadResponse)(payload)
+const payload = yield * Effect.tryPromise(() => response.json())
+const thread = yield * Schema.decodeUnknownEffect(ThreadResponse)(payload)
 ```
 
 ## Configuration and secrets
@@ -197,7 +197,7 @@ const fullName = `${first} ${last}`
 
 Import Node built-ins as canonical namespaces such as `import * as NodePath from 'node:path'`; the lint rule owns acronym aliases such as `NodeFS`, `NodeFSP`, `NodeOS`, and `NodeURL`. Cross package boundaries through `@vivid/client-runtime` and `@vivid/contracts`, never deep relative paths.
 
-Current deterministic suites use `node:test`. The manual Effect-runtime rule is intentionally limited to test files that import Vitest, where `@effect/vitest` `it.effect(...)` and test Layers replace `Effect.runPromise`, `Effect.runSync`, and `Effect.runFork`. Existing `node:test` integration adapters remain explicit runtime boundaries.
+Vitest runs app and package `.test.ts`/`.test.tsx` suites. Effect tests use `@effect/vitest` `it.effect(...)` and test Layers instead of `Effect.runPromise`, `Effect.runSync`, or `Effect.runFork`. Tooling suites under `scripts/*.test.mjs` remain on `node --test`.
 
 ## Review checklist
 

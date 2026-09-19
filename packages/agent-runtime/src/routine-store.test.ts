@@ -1,16 +1,55 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import { describe, expect, layer } from '@effect/vitest'
+import { Effect } from 'effect'
+import { TestDatabase, testDatabaseConfigured, testDatabaseLayer } from './testdb.ts'
 
-process.env.DATABASE_URL ??= "postgres://vivid:vivid@127.0.0.1:55433/vivid";
-const store = await import("./routine-store.ts");
+const routineName = 'Morning brief'
 
-void test("an unfinished routine run remains resumable by its Flue submission", async () => {
-  const routine = await store.createRoutine({ name: "Morning brief", prompt: "Prepare the brief", cron: "0 9 * * *", timezone: "Africa/Lagos", libraryFolderId: null });
-  const run = await store.startRoutineRun(routine.id); await store.attachRoutineSubmission(run.id, "submission-456");
-  const resumable = (await store.listRunningRoutineRuns()).find((item) => item.id === run.id);
-  assert.ok(resumable);
-  assert.equal(resumable.submissionId, "submission-456"); assert.equal(await store.finishRoutineRun(run.id, "First durable result"), true); assert.equal(await store.finishRoutineRun(run.id, "Duplicate result"), false);
-  const [finished] = await store.listRoutineRuns(routine.id);
-  assert.ok(finished);
-  assert.equal(finished.output, "First durable result");
-});
+describe.skipIf(!testDatabaseConfigured)('routine store', () => {
+  layer(testDatabaseLayer)((it) => {
+    it.effect('an unfinished routine run remains resumable by its Flue submission', () =>
+      Effect.gen(function* () {
+        const database = yield* TestDatabase
+        yield* Effect.addFinalizer(() =>
+          database.cleanupRoutinesNamed(routineName).pipe(Effect.orDie),
+        )
+        yield* database.cleanupRoutinesNamed(routineName)
+
+        const routine = yield* Effect.tryPromise(() =>
+          database.routineStore.createRoutine({
+            name: routineName,
+            prompt: 'Prepare the brief',
+            cron: '0 9 * * *',
+            timezone: 'Africa/Lagos',
+            libraryFolderId: null,
+          }),
+        )
+        const run = yield* Effect.tryPromise(() =>
+          database.routineStore.startRoutineRun(routine.id),
+        )
+        yield* Effect.tryPromise(() =>
+          database.routineStore.attachRoutineSubmission(run.id, 'submission-456'),
+        )
+
+        const resumable = (yield* Effect.tryPromise(() =>
+          database.routineStore.listRunningRoutineRuns(),
+        )).find((item) => item.id === run.id)
+        expect(resumable).toMatchObject({ submissionId: 'submission-456' })
+        expect(
+          yield* Effect.tryPromise(() =>
+            database.routineStore.finishRoutineRun(run.id, 'First durable result'),
+          ),
+        ).toBe(true)
+        expect(
+          yield* Effect.tryPromise(() =>
+            database.routineStore.finishRoutineRun(run.id, 'Duplicate result'),
+          ),
+        ).toBe(false)
+
+        const [finished] = yield* Effect.tryPromise(() =>
+          database.routineStore.listRoutineRuns(routine.id),
+        )
+        expect(finished).toMatchObject({ output: 'First durable result' })
+      }),
+    )
+  })
+})

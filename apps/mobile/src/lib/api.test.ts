@@ -1,62 +1,52 @@
-import { test } from "node:test";
-import assert from "node:assert/strict";
-import { createApi, normalizeServerUrl } from "./api.ts";
+import { expect, it } from 'vitest'
+import { createApi, normalizeServerUrl } from './api.ts'
 
-void test("server URLs reject unsafe schemes and embedded credentials", () => {
-  assert.equal(
-    normalizeServerUrl(" https://example.com/vivid/ "),
-    "https://example.com/vivid",
-  );
+it('server URLs reject unsafe schemes and embedded credentials', () => {
+  expect(normalizeServerUrl(' https://example.com/vivid/ ')).toBe('https://example.com/vivid')
   for (const url of [
-    "file:///tmp/a",
-    "javascript:alert(1)",
-    "https://secret@example.com",
-    "https://example.com?token=secret",
-  ])
-    assert.throws(() => normalizeServerUrl(url));
-});
-void test("direct runtime routes authenticate both API and chat; gateway routes stay behind proxy", async () => {
-  let observed: RequestInit | undefined;
-  const api = createApi(
-    { url: "https://example.com", token: "test-token" },
-    async (_, init) => {
-      observed = init;
-      return new Response(null, { status: 204 });
-    },
-  );
-  assert.equal(api.agentUrl("a/b"), "https://example.com/agents/vivid/a%2Fb");
-  assert.equal(await api.request("/api/tasks/one", "DELETE"), undefined);
-  assert.equal(observed?.method, "DELETE");
-  assert.equal(
-    new Headers(observed?.headers).get("authorization"),
-    "Bearer test-token",
-  );
-  assert.equal(
-    createApi({ url: "https://example.com", token: "" }).agentUrl("one"),
-    "https://example.com/api/vivid/one",
-  );
-});
-void test("multipart uploads leave the boundary header to fetch", async () => {
-  const form = new FormData();
-  form.append("file", new Blob(["notes"]), "notes.txt");
-  const api = createApi(
-    { url: "https://example.com", token: "" },
-    async (_, init) => {
-      assert.equal(new Headers(init?.headers).has("content-type"), false);
-      assert.equal(init?.body, form);
-      return Response.json({ document: { name: "notes.txt" } });
-    },
-  );
-  assert.deepEqual(await api.request("/api/library", "POST", form), {
-    document: { name: "notes.txt" },
-  });
-});
-void test("backend errors reach the screen instead of appearing as empty success", async () => {
-  const api = createApi({ url: "https://example.com", token: "" }, async () =>
-    Response.json({ error: "Folder not found" }, { status: 404 }),
-  );
-  await assert.rejects(
-    api.request("/api/library?folderId=missing"),
-    /Folder not found/,
-  );
-});
+    'file:///tmp/a',
+    'javascript:alert(1)',
+    'https://secret@example.com',
+    'https://example.com?token=secret',
+  ]) {
+    expect(() => normalizeServerUrl(url)).toThrow()
+  }
+})
+
+it('direct runtime routes authenticate both API and chat; gateway routes stay behind proxy', async () => {
+  const api = createApi({ url: 'https://example.com', token: 'test-token' }, async (_, init) => {
+    if (init === undefined) throw new Error('Expected request options')
+    expect(init.method).toBe('DELETE')
+    expect(new Headers(init.headers).get('authorization')).toBe('Bearer test-token')
+    return new Response(null, { status: 204 })
+  })
+
+  expect(api.agentUrl('a/b')).toBe('https://example.com/agents/vivid/a%2Fb')
+  await expect(api.request('/api/tasks/one', 'DELETE')).resolves.toBeUndefined()
+  expect(createApi({ url: 'https://example.com', token: '' }).agentUrl('one')).toBe(
+    'https://example.com/api/vivid/one',
+  )
+})
+
+it('multipart uploads leave the boundary header to fetch', async () => {
+  const form = new FormData()
+  form.append('file', new Blob(['notes']), 'notes.txt')
+  const api = createApi({ url: 'https://example.com', token: '' }, async (_, init) => {
+    if (init === undefined) throw new Error('Expected request options')
+    expect(new Headers(init.headers).has('content-type')).toBe(false)
+    expect(init.body).toBe(form)
+    return Response.json({ document: { name: 'notes.txt' } })
+  })
+
+  await expect(api.request('/api/library', 'POST', form)).resolves.toStrictEqual({
+    document: { name: 'notes.txt' },
+  })
+})
+
+it('backend errors reach the screen instead of appearing as empty success', async () => {
+  const api = createApi({ url: 'https://example.com', token: '' }, async () =>
+    Response.json({ error: 'Folder not found' }, { status: 404 }),
+  )
+
+  await expect(api.request('/api/library?folderId=missing')).rejects.toThrow(/Folder not found/)
+})
