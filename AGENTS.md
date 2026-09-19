@@ -20,23 +20,27 @@ Keep one source of truth for each vocabulary, invariant, and mapping. Derive dep
 
 - Use Effect for domain orchestration, asynchronous work, resources, and expected failures. Raw Promises belong only at narrow framework or third-party adapters.
 - Use `Effect.gen` or a named `Effect.fn` with one clear `yield*` per operation. Prefer flat layer composition over nested provisioning pyramids.
-- Model expected failures with `Schema.TaggedError` for the pinned Effect 4 rc.112 API. Do not use JavaScript `try/catch`, `Effect.orDie`, or `Effect.orDieWith` in application/domain code.
+- Model expected failures with `Schema.TaggedError` for the pinned Effect 4 rc.116 API. Do not use JavaScript `try/catch`, `Effect.orDie`, or `Effect.orDieWith` in application/domain code.
 - Use `Context.Service` for a real authority seam and provide implementations with Layers. Keep pure values and per-request inputs out of Effect context. Read `.agents/skills/effect-service-design/SKILL.md` before adding or reshaping a service.
 - Decode request bodies, parsed JSON, database JSON, and SDK payloads with Effect `Schema` at the boundary. Do not re-decode already typed values or cast encoded values.
 - Read configuration with Effect `Config`. Wrap secrets with `Redacted`; never print secrets, credentials, tokens, or database URLs.
 - Preserve receiver semantics for services, SDKs, browser objects, and runtime stubs: `object.method()` only.
-- Read `.agents/skills/effect/SKILL.md` and every matching reference branch before changing Effect code. The installed package source wins when vendored examples differ from rc.112.
+- Read `.agents/skills/effect/SKILL.md` and every matching reference branch before changing Effect code. The installed package source wins when vendored examples differ from rc.116.
 
 ## Drizzle and persistence
 
 Edit the TypeScript schema first, then run the owning package's `db:generate`. Review generated SQL before migration. Never hand-write schema SQL, never use `push` for a shared or remote database, and never edit a snapshot by hand.
 
-The migration order is `@vivid/server`, `@vivid/agent-runtime`, then `@vivid/connectors`; root `pnpm db:migrate` preserves that order. Load `.agents/skills/drizzle/SKILL.md` and `.agents/skills/drizzle-migrations/SKILL.md` before reading or changing a Drizzle schema, config, query, or migration.
+The migration order is `@vivid/server`, `@vivid/agent-runtime`, then `@vivid/connectors`; root `pnpm db:migrate` preserves that order. `pnpm check:migrations` validates the generated SQL/snapshot chain for the two migration owners present in this checkout. Load `.agents/skills/drizzle/SKILL.md` and `.agents/skills/drizzle-migrations/SKILL.md` before reading or changing a Drizzle schema, config, query, or migration.
+
+Alchemy `2.0.0-beta.79` peers on the pinned Drizzle RC. Root `pnpm.overrides` therefore holds Effect `4.0.0-rc.116` and Drizzle `1.0.0-rc.5-ab785fc` in lockstep across direct and transitive dependencies. Do not relax or remove those overrides without validating Alchemy, Better Auth, and both migration owners together.
 
 ## Gates and commits
 
-- Full typecheck is a finishing move. Run it once at the end through `.husky/pre-push`, which runs lint with warning ratchets, format check, and `turbo run typecheck --concurrency=1`.
+- Full typecheck is a finishing move. Run it once at the end through `.husky/pre-push`, which checks version lockstep, Effect boundaries, migration integrity, type-aware lint ratchets, formatting, serialized typecheck, and tooling tests.
 - Never run two TypeScript graphs at once or run typecheck in parallel with a build. A focused leaf check is acceptable while diagnosing one package.
+- Typecheck scripts resolve `tsc` from the pinned native TypeScript preview. Keep each package's `.cache/typescript` build info enabled and keep `@effect/language-service` patched through the root `prepare` script; its warnings and errors must fail typecheck.
+- `pnpm audit:effect-boundaries:report` inventories raw async/Promise/fetch/Effect runtime seams. Enforce mode uses exact file+symbol classifications; add no wildcard or stale allowlist entry.
 - Never use `HUSKY=0` to bypass a failing gate. Fix every real lint, format, typecheck, or test failure.
 - Lower a pre-push warning baseline whenever warnings are removed. Never increase a baseline to land a change.
 - Commit after each major concern with a focused message. Stage by explicit path so unrelated work stays visible.
@@ -51,7 +55,9 @@ Test observable behavior through public seams. Do not add tautological tests, mo
 
 ## Infrastructure and worktrees
 
-Alchemy is the only source of truth for remote deployment. Remote resources and deploy targets belong in `alchemy.run.ts`; do not add hand-written remote provider configuration. The infrastructure lane owns that file unless a task explicitly assigns it here.
+Infrastructure is local-first and nothing is deployed yet. Alchemy is the only source of truth for the intended AWS deployment; resources and deploy targets belong in `alchemy.run.ts`, not hand-written provider files. The infrastructure lane owns that file unless a task explicitly assigns it here.
+
+Local PostgreSQL is `postgres://vivid:vivid@127.0.0.1:55433/vivid` through `compose.dev.yaml`. Keep local examples, tests, and migration configs on that host port and database/user/password.
 
 Worktrees live under `~/agency/vivid-lanes/<name>`, never under `/tmp`. Do not remove or prune another worktree, stop a process you did not start, push without instruction, or rewrite shared history.
 

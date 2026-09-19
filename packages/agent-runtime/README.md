@@ -19,7 +19,7 @@ Defaults:
 
 - model: `openrouter/z-ai/glm-5.3-flash`
 - development port: `5173`
-- PostgreSQL: `DATABASE_URL` (local example uses `127.0.0.1:5434/vivid_runtime`)
+- PostgreSQL: `DATABASE_URL` (local example uses `127.0.0.1:55433/vivid`)
 
 Flue's durable conversation stream and Vivid's application tables are stored in PostgreSQL. Flue
 runs its idempotent `migrate()` at startup; the runtime's versioned application migration creates

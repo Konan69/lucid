@@ -1,6 +1,6 @@
 # Coding standards
 
-`AGENTS.md` is authoritative. The vendored `coding-standards`, `effect`, and `effect-service-design` skills provide the detailed guidance; this file is the short review index for Vivid's Effect 4 code.
+`AGENTS.md` is authoritative. The vendored `coding-standards`, `effect`, and `effect-service-design` skills provide the detailed guidance; this file is the short review index for Vivid's pinned Effect `4.0.0-rc.116` code.
 
 ## Model boundaries first
 
@@ -88,6 +88,10 @@ Follow `apps/server/src/config.ts`: load environment through `Config.schema`, co
 ## Drizzle
 
 Drizzle TypeScript schemas are authoritative. Change the schema, run the package's `db:generate`, review the SQL, then migrate. Never hand-edit schema migrations or snapshots. Keep database-driver failures behind a service boundary like `apps/server/src/database.ts`, where SQL failures become `DatabaseUnavailable`, `DatabaseConstraintViolation`, or `DatabaseFailure`.
+
+## Toolchain contract
+
+`pnpm check:versions` enforces the native TypeScript preview, strict Effect language-service diagnostics, and exact Effect/Alchemy/Better Auth/Drizzle lockstep. `pnpm lint` always runs Oxlint with native type-aware analysis. `pnpm audit:effect-boundaries` rejects new raw async, Promise, fetch, and Effect runtime seams unless their exact file and owning symbol are classified. `pnpm check:migrations` validates generated SQL and snapshot chains without editing them.
 
 ## Review checklist
 

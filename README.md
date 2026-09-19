@@ -19,11 +19,14 @@ features, but the fixtures do not define their implementation.
 
 ```sh
 pnpm install
-cp packages/agent-runtime/.env.example packages/agent-runtime/.env
-# Add an OpenRouter key and a local runtime token to that ignored file.
+pnpm db:up
+cp .env.example .env
+# Add an OpenRouter key, auth secret, and local runtime token to that ignored file.
 pnpm --filter @vivid/agent-runtime dev
 pnpm --filter @vivid/web dev
 ```
+
+The shared local database is `postgres://vivid:vivid@127.0.0.1:55433/vivid`. Infrastructure is local-first and nothing is deployed. Alchemy is the source of truth for the intended AWS deployment when that work begins.
 
 The separate iOS/Android app lives in [apps/mobile](apps/mobile/README.md). Run it
 with `pnpm --filter @vivid/mobile dev`; its README covers phone connections and
@@ -32,9 +35,12 @@ the current feature coverage.
 Useful checks:
 
 ```sh
-pnpm build
-pnpm typecheck
+pnpm check:versions
+pnpm audit:effect-boundaries
+pnpm check:migrations
 pnpm lint
+pnpm typecheck
+pnpm build
 ```
 
 ## Documents

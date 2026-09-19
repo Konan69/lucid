@@ -1,4 +1,4 @@
-# Local development services only. Remote environments are owned by Alchemy.
+# Local development only. Nothing is deployed; future AWS resources are owned by Alchemy.
 services:
   postgres:
     image: postgres:16-alpine
