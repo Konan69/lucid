@@ -53,6 +53,8 @@ export interface AuthState {
   readonly sessionId: string
 }
 
+type MutableAuthState = { -readonly [Key in keyof AuthState]: AuthState[Key] }
+
 export class AuthContext extends Context.Service<AuthContext, AuthState>()("vivid/AuthContext") {}
 
 const errors = [
@@ -126,13 +128,16 @@ const fromMembership = (row: typeof membershipTable.$inferSelect): Membership =>
   role: row.role
 })
 
-const fromProject = (row: typeof projectTable.$inferSelect): Project => new Project({
-  id: row.id as Project["id"],
-  companyId: row.companyId as CompanyId,
-  name: row.name,
-  ...(row.parentProjectId === null ? {} : { parentProjectId: row.parentProjectId as Project["parentProjectId"] }),
-  createdBy: row.createdBy as Project["createdBy"]
-})
+const fromProject = (row: typeof projectTable.$inferSelect): Project => {
+  const project = {
+    id: row.id as Project["id"],
+    companyId: row.companyId as CompanyId,
+    name: row.name,
+    createdBy: row.createdBy as Project["createdBy"]
+  }
+  if (row.parentProjectId === null) return new Project(project)
+  return new Project({ ...project, parentProjectId: row.parentProjectId as Project["parentProjectId"] })
+}
 
 const requireActiveCompany = Effect.gen(function*() {
   const auth = yield* AuthContext
@@ -178,12 +183,13 @@ export const authenticate = (headers: Headers) => Effect.gen(function*() {
       membership = fromMembership(active.membership)
     }
   }
-  return {
+  const state: MutableAuthState = {
     person: fromPerson(personRow),
-    ...(activeCompany === undefined ? {} : { activeCompany }),
-    ...(membership === undefined ? {} : { membership }),
     sessionId: session.session.id
-  } satisfies AuthState
+  }
+  if (activeCompany !== undefined) state.activeCompany = activeCompany
+  if (membership !== undefined) state.membership = membership
+  return state
 })
 
 export const authMiddlewareLayer = Layer.succeed(
@@ -200,10 +206,19 @@ export const handlers = HttpApiBuilder.group(api, "vivid", (handlers) =>
   handlers
     .handle("me", () => Effect.gen(function*() {
       const auth = yield* AuthContext
+      if (auth.activeCompany === undefined && auth.membership === undefined) {
+        return new MeResponse({ person: auth.person })
+      }
+      if (auth.activeCompany === undefined) {
+        return new MeResponse({ person: auth.person, membership: auth.membership })
+      }
+      if (auth.membership === undefined) {
+        return new MeResponse({ person: auth.person, activeCompany: auth.activeCompany })
+      }
       return new MeResponse({
         person: auth.person,
-        ...(auth.activeCompany === undefined ? {} : { activeCompany: auth.activeCompany }),
-        ...(auth.membership === undefined ? {} : { membership: auth.membership })
+        activeCompany: auth.activeCompany,
+        membership: auth.membership
       })
     }))
     .handle("listCompanies", () => Effect.gen(function*() {
