@@ -4,7 +4,7 @@ import { createFlueClient } from "@flue/sdk";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { conversations, threadsByConversation, type Msg } from "../data/fixtures";
+import { conversations, messagesForConversation, type Msg } from "../data/fixtures";
 import { Button, IconButton } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { cn } from "../ui/cn";
@@ -110,7 +110,7 @@ export function Conversation({
 
 export function DemoConversation({ conversationId }: { conversationId: string }) {
   const conversation = conversations.find((item) => item.id === conversationId);
-  const messages = threadsByConversation[conversationId] ?? [];
+  const messages = messagesForConversation(conversationId);
 
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0">
@@ -320,20 +320,21 @@ function AutomationMade({ title, trigger, actions, time }: { title: string; trig
 
 /* Connect cards in the chat: Vivid asks for access mid-conversation and
       you authorize each service in place, Grok-Bot style. */
-const SERVICE_ICON: Record<string, { Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>; tone: string }> = {
-  gmail: { Icon: Mail, tone: "text-[#EA4335]" },
-  calendar: { Icon: CalendarDays, tone: "text-[#3B82F6]" },
-  drive: { Icon: HardDrive, tone: "text-[#1FA463]" },
-  browser: { Icon: Globe, tone: "text-ink-2" },
-  maps: { Icon: Globe, tone: "text-[#34A853]" },
-};
+const BROWSER_SERVICE_ICON = { Icon: Globe, tone: "text-ink-2" };
+const SERVICE_ICON = new Map<string, { Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>; tone: string }>([
+  ["gmail", { Icon: Mail, tone: "text-[#EA4335]" }],
+  ["calendar", { Icon: CalendarDays, tone: "text-[#3B82F6]" }],
+  ["drive", { Icon: HardDrive, tone: "text-[#1FA463]" }],
+  ["browser", BROWSER_SERVICE_ICON],
+  ["maps", { Icon: Globe, tone: "text-[#34A853]" }],
+]);
 
 function ConnectServices({ services }: { services: Array<{ id: string; name: string; detail: string }> }) {
   const [done, setDone] = useState<Record<string, boolean>>({});
   return (
     <div className="flex flex-col gap-2">
       {services.map((s) => {
-        const { Icon, tone } = SERVICE_ICON[s.id] ?? SERVICE_ICON.browser!;
+        const { Icon, tone } = SERVICE_ICON.get(s.id) ?? BROWSER_SERVICE_ICON;
         const ok = done[s.id];
         return (
           <div key={s.id} className="flex items-center gap-3 rounded-panel bg-surface-2 p-3 shadow-ring-xs">

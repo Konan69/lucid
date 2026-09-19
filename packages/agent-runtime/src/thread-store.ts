@@ -1,7 +1,7 @@
 import { asc, desc, eq } from "drizzle-orm";
 import { db, schemaReady } from "./runtime-db.ts";
 import { conversations } from "./runtime-schema.ts";
-import { ConversationSchema, decode } from "./runtime-codecs.ts";
+import { decodeConversation } from "./runtime-codecs.ts";
 
 export type ConversationSummary = {
   id: string;
@@ -30,8 +30,8 @@ const conversationSelection = {
   archived: conversations.archived
 };
 
-function decodeConversation(row: unknown): ConversationSummary {
-  const value = decode(ConversationSchema, row);
+function mapConversation(row: Parameters<typeof decodeConversation>[0]): ConversationSummary {
+  const value = decodeConversation(row);
   return { ...value, preview: plainPreview(value.preview) };
 }
 
@@ -40,7 +40,7 @@ export async function listConversations(): Promise<ConversationSummary[]> {
   const rows = await db.select(conversationSelection)
     .from(conversations)
     .orderBy(desc(conversations.updatedAt), asc(conversations.id));
-  return rows.map(decodeConversation);
+  return rows.map(mapConversation);
 }
 
 export async function upsertConversation(conversation: ConversationSummary): Promise<ConversationSummary> {

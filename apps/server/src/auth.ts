@@ -12,54 +12,58 @@ import { ServerConfig, serverConfigLayer } from "./config.ts"
  * membership, and invitation tables. Public contracts and routes use only
  * the Vivid glossary.
  */
-const makeOptions = (config: ServerConfig["Service"]) => ({
-  id: "VividAuth",
-  migrate: false,
-  basePath: "/api/auth",
-  baseURL: config.PUBLIC_URL.href,
-  secret: config.AUTH_SECRET,
-  trustedOrigins: [config.PUBLIC_URL.href],
-  emailAndPassword: {
-    enabled: true,
-    autoSignIn: true
-  },
-  ...(config.GOOGLE_CLIENT_ID === undefined || config.GOOGLE_CLIENT_SECRET === undefined
-    ? {}
-    : {
-        socialProviders: {
-          google: {
-            clientId: config.GOOGLE_CLIENT_ID,
-            clientSecret: Redacted.value(config.GOOGLE_CLIENT_SECRET),
-            redirectURI: config.GOOGLE_REDIRECT_URI?.href
-          }
-        }
-      }),
-  account: {
-    accountLinking: {
+const makeOptions = (config: ServerConfig["Service"]) => {
+  const options = {
+    id: "VividAuth",
+    migrate: false,
+    basePath: "/api/auth",
+    baseURL: config.PUBLIC_URL.href,
+    secret: config.AUTH_SECRET,
+    trustedOrigins: [config.PUBLIC_URL.href],
+    emailAndPassword: {
       enabled: true,
-      trustedProviders: ["google"]
-    }
-  },
-  plugins: [
-    bearer(),
-    deviceAuthorization({ verificationUri: "/device" }),
-    organization({
-      creatorRole: "owner",
-      schema: {
-        organization: { modelName: "company" },
-        member: {
-          modelName: "membership",
-          fields: { organizationId: "companyId", userId: "userId" }
-        },
-        invitation: {
-          modelName: "invitation",
-          fields: { organizationId: "companyId" }
-        },
-        session: { fields: { activeOrganizationId: "activeCompanyId" } }
+      autoSignIn: true
+    },
+    account: {
+      accountLinking: {
+        enabled: true,
+        trustedProviders: ["google"]
       }
-    })
-  ]
-})
+    },
+    plugins: [
+      bearer(),
+      deviceAuthorization({ verificationUri: "/device" }),
+      organization({
+        creatorRole: "owner",
+        schema: {
+          organization: { modelName: "company" },
+          member: {
+            modelName: "membership",
+            fields: { organizationId: "companyId", userId: "userId" }
+          },
+          invitation: {
+            modelName: "invitation",
+            fields: { organizationId: "companyId" }
+          },
+          session: { fields: { activeOrganizationId: "activeCompanyId" } }
+        }
+      })
+    ]
+  }
+  if (config.GOOGLE_CLIENT_ID === undefined || config.GOOGLE_CLIENT_SECRET === undefined) {
+    return options
+  }
+  return {
+    ...options,
+    socialProviders: {
+      google: {
+        clientId: config.GOOGLE_CLIENT_ID,
+        clientSecret: Redacted.value(config.GOOGLE_CLIENT_SECRET),
+        redirectURI: config.GOOGLE_REDIRECT_URI?.href
+      }
+    }
+  }
+}
 
 export const authEffect = Effect.gen(function*() {
   const config = yield* ServerConfig

@@ -10,7 +10,7 @@ import { ToolMark } from "../components/ToolMark";
 import { useTheme, type ThemePreference } from "../theme";
 import { projects, type Project } from "../../../web/src/data/projects";
 
-const covers: Record<string, ReturnType<typeof require>> = {
+const covers = {
   "/covers/kashplus.png": require("../../../web/public/covers/kashplus.png"),
   "/covers/interlink.png": require("../../../web/public/covers/interlink.png"),
   "/covers/arkchain.png": require("../../../web/public/covers/arkchain.png"),
@@ -18,6 +18,13 @@ const covers: Record<string, ReturnType<typeof require>> = {
   "/covers/arkade.png": require("../../../web/public/covers/arkade.png"),
   "/covers/kash.png": require("../../../web/public/covers/kash.png"),
 };
+
+/** Resolves a fixture cover only when the project path belongs to this bundled asset table. */
+function coverFor(path: string) {
+  if (!Object.hasOwn(covers, path)) return undefined;
+  // SAFETY: Object.hasOwn verifies that path is an own key of covers before indexing it.
+  return covers[path as keyof typeof covers];
+}
 export function Projects({ navigation }: NativeStackScreenProps<Routes, "Projects">) {
   const [path, setPath] = useState<Project[]>([]);
   const selected = path.at(-1);
@@ -36,7 +43,7 @@ export function Projects({ navigation }: NativeStackScreenProps<Routes, "Project
         {selected && (
           <>
             <Image
-              source={covers[selected.cover]}
+              source={coverFor(selected.cover)}
               style={{ height: 170, width: "100%", borderRadius: 18 }}
             />
             <Label size="headline">{selected.brief}</Label>
@@ -65,7 +72,7 @@ export function Projects({ navigation }: NativeStackScreenProps<Routes, "Project
           .filter((p) => `${p.name} ${p.brief}`.toLowerCase().includes(query.toLowerCase()))
           .map((p) => (
             <Card key={p.id} style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
-              <Image source={covers[p.cover]} style={{ width: 56, height: 56, borderRadius: 12 }} />
+              <Image source={coverFor(p.cover)} style={{ width: 56, height: 56, borderRadius: 12 }} />
               <View style={{ flex: 1, gap: 6 }}>
                 <Label size="headline">{p.name}</Label>
                 <Label tone="ink-3" size="label">

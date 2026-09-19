@@ -11,13 +11,13 @@ type Connector = {
 };
 
 /* What each connector lets Vivid do, in Vivid's words rather than the API's. */
-const PURPOSE: Record<string, string> = {
-  gmail: "Read your mail, and send the nudges you ask it to send.",
-  calendar: "See what is on and put follow-ups on the calendar.",
-  drive: "Find and read the files you mention.",
-};
+const PURPOSE = new Map([
+  ["gmail", "Read your mail, and send the nudges you ask it to send."],
+  ["calendar", "See what is on and put follow-ups on the calendar."],
+  ["drive", "Find and read the files you mention."],
+]);
 
-function resultFromLocation(): { connected?: string; error?: string } {
+function resultFromLocation() {
   const params = new URLSearchParams(location.search);
   return { connected: params.get("connected") ?? undefined, error: params.get("error") ?? undefined };
 }
@@ -119,7 +119,7 @@ export function Connectors({ embedded = false }: { embedded?: boolean }) {
                       {isConnected && <span className="inline-flex items-center gap-1 rounded-full bg-success-soft px-2 py-0.5 text-meta font-title text-success"><Check className="size-3" />Connected</span>}
                       {connector.status === "error" && <span className="rounded-full bg-danger-soft px-2 py-0.5 text-meta font-title text-danger">Needs attention</span>}
                     </span>
-                    <span className="mt-0.5 block truncate text-meta text-ink-3">{PURPOSE[connector.id] ?? connector.metadata.description}</span>
+                    <span className="mt-0.5 block truncate text-meta text-ink-3">{PURPOSE.get(connector.id) ?? connector.metadata.description}</span>
                   </span>
                   {isConnected ? (
                     <button disabled={isBusy} onClick={() => void disconnect(connector.id)} className="inline-flex h-8 shrink-0 items-center rounded-control px-3 text-label text-ink-3 hover:bg-wash-hover hover:text-ink disabled:opacity-50">

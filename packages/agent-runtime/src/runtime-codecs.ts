@@ -1,10 +1,6 @@
-import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-export const decode = <A>(schema: Schema.Schema<A>, value: unknown): A =>
-  Effect.runSync(Schema.decodeUnknownEffect(schema)(value) as Effect.Effect<A, unknown, never>);
-
-const nullable = <A extends Schema.Schema<any>>(schema: A) => Schema.NullOr(schema);
+const nullable = <A extends Schema.Top>(schema: A) => Schema.NullOr(schema);
 const taskStatus = Schema.Union([Schema.Literal("open"), Schema.Literal("done"), Schema.Literal("dropped")]);
 const taskPriority = Schema.Union([Schema.Literal("normal"), Schema.Literal("urgent")]);
 const author = Schema.Union([Schema.Literal("you"), Schema.Literal("vivid")]);
@@ -143,3 +139,14 @@ export const LibrarySearchRowSchema = Schema.Struct({
   text: Schema.String,
   score: Schema.Number
 });
+
+export const decodeConversation = Schema.decodeUnknownSync(ConversationSchema);
+export const decodeTaskRow = Schema.decodeUnknownSync(TaskRowSchema);
+export const decodeFollowUp = Schema.decodeUnknownSync(FollowUpSchema);
+export const decodeNotification = Schema.decodeUnknownSync(NotificationSchema);
+export const decodeRoutine = Schema.decodeUnknownSync(RoutineSchema);
+export const decodeRoutineRun = Schema.decodeUnknownSync(RoutineRunSchema);
+export const decodeLibraryDocument = Schema.decodeUnknownSync(LibraryDocumentSchema);
+export const decodeStoredLibraryDocument = Schema.decodeUnknownSync(StoredLibraryDocumentSchema);
+export const decodeLibraryFolder = Schema.decodeUnknownSync(LibraryFolderSchema);
+export const decodeLibrarySearchResult = Schema.decodeUnknownSync(LibrarySearchResultSchema);

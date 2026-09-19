@@ -32,14 +32,11 @@ export function createApi(
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 30_000);
       try {
+        const requestHeaders = { ...headers };
+        if (body !== undefined && !multipart) requestHeaders["content-type"] = "application/json";
         const response = await transport(`${root}${path}`, {
           method,
-          headers: {
-            ...headers,
-            ...(body !== undefined && !multipart
-              ? { "content-type": "application/json" }
-              : {}),
-          },
+          headers: requestHeaders,
           body:
             body === undefined
               ? undefined

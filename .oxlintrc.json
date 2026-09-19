@@ -84,6 +84,12 @@
   },
   "overrides": [
     {
+      "files": ["alchemy.run.ts"],
+      "rules": {
+        "no-restricted-properties": "off"
+      }
+    },
+    {
       "files": ["apps/{server,web}/src/**/*.{ts,tsx}", "packages/*/src/**/*.{ts,tsx}"],
       "rules": {
         "typescript/no-explicit-any": "warn",

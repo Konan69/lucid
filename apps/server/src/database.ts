@@ -26,7 +26,7 @@ type DatabaseInfrastructureError =
   | DatabaseConstraintViolation
   | DatabaseFailure
 
-type DatabaseShape = Omit<EffectPgDatabase, "transaction"> & {
+type DatabaseService = Omit<EffectPgDatabase, "transaction"> & {
   run: <A, E, R>(operation: Effect.Effect<A, E, R>) => Effect.Effect<A, Exclude<E, DriverError> | DatabaseInfrastructureError, R>
   transaction: <A, E, R>(
     operation: (tx: PgEffectTransaction<any, any>) => Effect.Effect<A, E, R>
@@ -63,16 +63,19 @@ const classifyDriverError = (error: DriverError): DatabaseInfrastructureError =>
     : classifySqlError(sqlError)
 }
 
-const mapDriverErrors = <A, E, R>(operation: Effect.Effect<A, E, R>): Effect.Effect<A, Exclude<E, DriverError> | DatabaseInfrastructureError, R> =>
-  operation.pipe(
+const mapDriverErrors = <A, E, R>(operation: Effect.Effect<A, E, R>): Effect.Effect<A, Exclude<E, DriverError> | DatabaseInfrastructureError, R> => {
+  // SAFETY: mapError replaces every DriverError variant and preserves all other success, error, and requirement types.
+  return operation.pipe(
     Effect.mapError((error) => {
       if (SqlErrorModule.isSqlError(error)) return classifyDriverError(error)
       if (Schema.is(EffectDrizzleQueryError)(error)) return classifyDriverError(error)
+      // SAFETY: the two preceding guards remove both members of DriverError from the generic error union.
       return error as Exclude<E, DriverError>
     })
   ) as Effect.Effect<A, Exclude<E, DriverError> | DatabaseInfrastructureError, R>
+}
 
-export class Database extends Context.Service<Database, DatabaseShape>()("vivid/Database") {}
+export class Database extends Context.Service<Database, DatabaseService>()("vivid/Database") {}
 
 export const databaseLayer = Layer.unwrap(Effect.gen(function*() {
   const config = yield* ServerConfig
@@ -87,7 +90,8 @@ export const databaseLayer = Layer.unwrap(Effect.gen(function*() {
     Database,
     Effect.gen(function*() {
       const raw = yield* makeDrizzle()
-      const database = Object.create(raw) as DatabaseShape
+      // SAFETY: Object.create preserves raw as the prototype; this object overrides only run and transaction below.
+      const database = Object.create(raw) as DatabaseService
       database.run = mapDriverErrors
       database.transaction = (operation) => mapDriverErrors(raw.transaction((tx) => operation(tx)))
       return database

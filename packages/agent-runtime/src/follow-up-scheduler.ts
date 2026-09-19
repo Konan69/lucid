@@ -10,6 +10,14 @@ import { upsertConversation } from "./thread-store.ts";
 
 const TICK_MS = 20_000;
 const OVERDUE_GRACE_MS = 60 * 60 * 1000;
+type FollowUpSignalAttributes = {
+  taskId: string;
+  taskTitle: string;
+  followUpId: string;
+  assignee: string;
+  dueAt?: string;
+  scheduledAt: string;
+};
 const inFlight = new Set<string>();
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : String(error); }
 function describeWhen(value: number | null) { return value === null ? "no due date" : new Date(value).toISOString(); }
@@ -30,13 +38,42 @@ async function executeFollowUp(task: Task, followUp: FollowUp) {
     const agent = init(Vivid, { id: task.conversationId });
     let submissionId = followUp.submissionId;
     if (!submissionId) {
-      const receipt = await agent.dispatch({ idempotencyKey: `${followUp.id}:${firedAt}`, message: { kind: "signal", type: "follow-up", body: followUpInstruction(task, followUp), attributes: { taskId: task.id, taskTitle: task.title, followUpId: followUp.id, assignee: task.assignee ?? "you", ...(task.dueAt ? { dueAt: new Date(task.dueAt).toISOString() } : {}), scheduledAt: new Date(followUp.at).toISOString() } } });
+      const attributes: FollowUpSignalAttributes = {
+        taskId: task.id,
+        taskTitle: task.title,
+        followUpId: followUp.id,
+        assignee: task.assignee ?? "you",
+        scheduledAt: new Date(followUp.at).toISOString(),
+      };
+      if (task.dueAt) attributes.dueAt = new Date(task.dueAt).toISOString();
+      const receipt = await agent.dispatch({
+        idempotencyKey: `${followUp.id}:${firedAt}`,
+        message: { kind: "signal", type: "follow-up", body: followUpInstruction(task, followUp), attributes },
+      });
       submissionId = receipt.submissionId;
       await attachFollowUpSubmission(followUp.id, submissionId);
     }
     const reply = await agent.read(submissionId);
     const current = await getTask(task.id);
-    const completed = await completeFollowUp(followUp.id, { output: reply.text, ...(followUp.repeatEveryMs && current?.status === "open" ? { nextFollowUp: { at: nextOnCadence(followUp.at, followUp.repeatEveryMs, Date.now()), note: followUp.note, repeatEveryMs: followUp.repeatEveryMs, createdBy: followUp.createdBy } } : {}), notification: { kind: "follow-up", title: task.assignee ? `Chased ${task.assignee}: ${task.title}` : `Followed up: ${task.title}`, body: reply.text, taskId: task.id, conversationId: task.conversationId } });
+    const completion: Parameters<typeof completeFollowUp>[1] = {
+      output: reply.text,
+      notification: {
+        kind: "follow-up",
+        title: task.assignee ? `Chased ${task.assignee}: ${task.title}` : `Followed up: ${task.title}`,
+        body: reply.text,
+        taskId: task.id,
+        conversationId: task.conversationId,
+      },
+    };
+    if (followUp.repeatEveryMs && current?.status === "open") {
+      completion.nextFollowUp = {
+        at: nextOnCadence(followUp.at, followUp.repeatEveryMs, Date.now()),
+        note: followUp.note,
+        repeatEveryMs: followUp.repeatEveryMs,
+        createdBy: followUp.createdBy,
+      };
+    }
+    const completed = await completeFollowUp(followUp.id, completion);
     if (!completed) return;
     await upsertConversation({ archived: false, id: task.conversationId, title: task.title, preview: reply.text.slice(0, 500), updatedAt: Date.now() });
   } catch (error) {

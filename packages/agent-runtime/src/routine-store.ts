@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { asc, and, desc, eq } from "drizzle-orm";
 import { db, schemaReady } from "./runtime-db.ts";
 import { routineRuns, routines } from "./runtime-schema.ts";
-import { RoutineRunSchema, RoutineSchema, decode } from "./runtime-codecs.ts";
+import { decodeRoutine, decodeRoutineRun } from "./runtime-codecs.ts";
 
 export type Routine = {
   id: string;
@@ -56,14 +56,6 @@ const runSelection = {
   error: routineRuns.error
 };
 
-function decodeRoutine(row: unknown): Routine {
-  return decode(RoutineSchema, row);
-}
-
-function decodeRun(row: unknown): RoutineRun {
-  return decode(RoutineRunSchema, row);
-}
-
 export async function listRoutines(): Promise<Routine[]> {
   await schemaReady;
   return (await db.select(routineSelection).from(routines).orderBy(desc(routines.updatedAt))).map(decodeRoutine);
@@ -107,12 +99,12 @@ export async function setRoutineScheduleState(id: string, nextExpectedAt: number
 
 export async function listRoutineRuns(routineId: string, limit = 12): Promise<RoutineRun[]> {
   await schemaReady;
-  return (await db.select(runSelection).from(routineRuns).where(eq(routineRuns.routineId, routineId)).orderBy(desc(routineRuns.startedAt)).limit(limit)).map(decodeRun);
+  return (await db.select(runSelection).from(routineRuns).where(eq(routineRuns.routineId, routineId)).orderBy(desc(routineRuns.startedAt)).limit(limit)).map(decodeRoutineRun);
 }
 
 export async function listRunningRoutineRuns(): Promise<RoutineRun[]> {
   await schemaReady;
-  return (await db.select(runSelection).from(routineRuns).where(eq(routineRuns.status, "running")).orderBy(asc(routineRuns.startedAt))).map(decodeRun);
+  return (await db.select(runSelection).from(routineRuns).where(eq(routineRuns.status, "running")).orderBy(asc(routineRuns.startedAt))).map(decodeRoutineRun);
 }
 
 export async function startRoutineRun(routineId: string): Promise<RoutineRun> {

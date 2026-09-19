@@ -135,7 +135,9 @@ function messageText(message: FlueConversationMessage) {
   return message.parts.filter((part) => part.type === "text").map((part) => part.text).join(" ").replace(/\s+/g, " ").trim();
 }
 
-function describeToolCall(toolName: string, input: Record<string, unknown> | undefined, output: Record<string, unknown> | undefined, state: "running" | "failed" | "done"): { label: string; detail?: string } {
+type ToolCallDescription = { label: string; detail?: string };
+
+function describeToolCall(toolName: string, input: Record<string, unknown> | undefined, output: Record<string, unknown> | undefined, state: "running" | "failed" | "done"): ToolCallDescription {
   const outputTask = output?.task as { title?: string; status?: string } | undefined;
   const outputFollowUp = output?.followUp as { at?: string } | undefined;
   const title = outputTask?.title ?? (typeof input?.title === "string" ? input.title : undefined);

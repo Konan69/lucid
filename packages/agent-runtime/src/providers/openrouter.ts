@@ -9,7 +9,7 @@ const glm53Flash = {
   provider: "openrouter",
   baseUrl: "https://openrouter.ai/api/v1",
   reasoning: true,
-  input: ["text", "image"] as ("text" | "image")[],
+  input: ["text", "image"] satisfies ("text" | "image")[],
   cost: {
     input: 0.075,
     output: 0.25,

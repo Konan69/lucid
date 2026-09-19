@@ -59,12 +59,12 @@ const REPEAT_OPTIONS = [
   { label: "Every week", value: String(7 * DAY_MS) },
 ] as const;
 
-const NOTIFICATION_TONE: Record<Notification["kind"], string> = {
+const NOTIFICATION_TONE = {
   tracked: "bg-accent",
   overdue: "bg-danger",
   "follow-up": "bg-working",
   "follow-up-failed": "bg-danger",
-};
+} satisfies Record<Notification["kind"], string>;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);

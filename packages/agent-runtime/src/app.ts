@@ -186,7 +186,7 @@ app.get("/api/library/folders", async (context) =>
 
 app.patch("/api/library/folders/:id", async (context) => {
   const body = await context.req.json<{ name?: unknown; parentId?: unknown }>();
-  const patch: { name?: string; parentId?: string | null } = {};
+  const patch: Parameters<typeof updateLibraryFolder>[1] = {};
   if (body.name !== undefined) {
     if (typeof body.name !== "string" || !body.name.trim()) return context.json({ error: "Folder name is required" }, 400);
     patch.name = body.name.trim().slice(0, 120);
@@ -283,7 +283,7 @@ app.get("/api/library/:id", async (context) => {
 
 app.patch("/api/library/:id", async (context) => {
   const body = await context.req.json<{ folderId?: unknown; name?: unknown }>();
-  const patch: { name?: string; folderId?: string | null } = {};
+  const patch: Parameters<typeof updateLibraryDocument>[1] = {};
   if (body.name !== undefined) {
     if (typeof body.name !== "string" || !body.name.trim()) return context.json({ error: "File name is required" }, 400);
     patch.name = body.name.trim().slice(0, 180);
@@ -407,27 +407,27 @@ app.post("/api/routines/:id/run", async (context) => {
 });
 
 // Connector routes
-const connectors: Record<string, () => GmailConnector | CalendarConnector | DriveConnector> = {
-  gmail: () => new GmailConnector(),
-  calendar: () => new CalendarConnector(),
-  drive: () => new DriveConnector(),
-};
+const connectors = new Map<string, () => GmailConnector | CalendarConnector | DriveConnector>([
+  ["gmail", () => new GmailConnector()],
+  ["calendar", () => new CalendarConnector()],
+  ["drive", () => new DriveConnector()],
+]);
 
 app.use("/api/connectors", requireRuntimeToken);
 app.use("/api/connectors/*", requireRuntimeToken);
 
 app.get("/api/connectors", async (context) => {
-  const status = await Promise.all(Object.keys(connectors).map(async (id) => ({
+  const status = await Promise.all(Array.from(connectors, async ([id, createConnector]) => ({
     id,
     status: await getConnectorStatus(id as "gmail" | "calendar" | "drive"),
-    metadata: connectors[id]!().metadata(),
+    metadata: createConnector().metadata(),
   })));
   return context.json({ connectors: status });
 });
 
 app.get("/api/connectors/:id/auth", (context) => {
   const id = context.req.param("id");
-  const factory = connectors[id];
+  const factory = connectors.get(id);
   if (!factory) return context.json({ error: "Unknown connector" }, 404);
 
   const state = JSON.stringify({ connector: id, nonce: crypto.randomUUID() });
@@ -448,7 +448,7 @@ app.get("/api/connectors/google/callback", async (context) => {
   try {
     if (stateParam) {
       const decoded = JSON.parse(Buffer.from(stateParam, "base64url").toString("utf-8")) as { connector?: string };
-      if (decoded.connector && connectors[decoded.connector]) {
+      if (decoded.connector && connectors.has(decoded.connector)) {
         connectorId = decoded.connector;
       }
     }
@@ -459,7 +459,7 @@ app.get("/api/connectors/google/callback", async (context) => {
   // Google lands the browser here through the web dev proxy, so send it back to the Connectors
   // screen with the outcome instead of showing raw JSON.
   try {
-    const connector = connectors[connectorId]!();
+    const connector = connectors.get(connectorId)!();
     const credential = await connector.exchangeCode(code);
     return context.redirect(`/?settings=connectors&connected=${encodeURIComponent(credential.connectorId)}`, 303);
   } catch (error) {
@@ -470,7 +470,7 @@ app.get("/api/connectors/google/callback", async (context) => {
 
 app.delete("/api/connectors/:id", async (context) => {
   const id = context.req.param("id");
-  if (!connectors[id]) return context.json({ error: "Unknown connector" }, 404);
+  if (!connectors.has(id)) return context.json({ error: "Unknown connector" }, 404);
   const deleted = await deleteCredentialsForConnector(id as "gmail" | "calendar" | "drive");
   return context.json({ success: true, deleted });
 });
@@ -517,8 +517,10 @@ function taskPatchFrom(body: Record<string, unknown>): TaskPatch | string {
   return patch;
 }
 
-function followUpInputFrom(body: Record<string, unknown>): { at?: number; note?: string; repeatEveryMs?: number | null } | string {
-  const input: { at?: number; note?: string; repeatEveryMs?: number | null } = {};
+type FollowUpInput = { at?: number; note?: string; repeatEveryMs?: number | null };
+
+function followUpInputFrom(body: Record<string, unknown>): FollowUpInput | string {
+  const input: FollowUpInput = {};
   const at = parseWhen(body.at);
   if (at === "invalid" || at === null) return "A follow-up time is required";
   if (at !== undefined) input.at = at;
@@ -626,12 +628,15 @@ app.get("/api/notifications", async (context) =>
   context.json({ notifications: await listNotifications(), unreadCount: await unreadNotificationCount() }),
 );
 
+type NotificationReadBody = { ids?: unknown };
+
 app.post("/api/notifications/read", async (context) => {
-  const body = await context.req.json<{ ids?: unknown }>().catch(() => ({} as { ids?: unknown }));
-  if (body.ids !== undefined && (!Array.isArray(body.ids) || body.ids.some((id) => typeof id !== "string"))) {
+  const body = await context.req.json<NotificationReadBody>().catch((): NotificationReadBody => ({}));
+  const ids = body.ids;
+  if (ids !== undefined && (!Array.isArray(ids) || !ids.every((id): id is string => typeof id === "string"))) {
     return context.json({ error: "Invalid notification ids" }, 400);
   }
-  const changed = await markNotificationsRead(body.ids as string[] | undefined);
+  const changed = await markNotificationsRead(ids);
   return context.json({ changed, unreadCount: await unreadNotificationCount() });
 });
 
