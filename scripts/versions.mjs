@@ -133,18 +133,21 @@ export function validateVersions(root) {
   const catalog = readWorkspaceMapping(root, 'catalog')
   const overrides = readWorkspaceMapping(root, 'overrides')
   const manifests = [
-    ['package.json', rootManifest],
-    ...workspaceManifestPaths(root).map((relativePath) => [relativePath, readPackageManifest(root, relativePath)]),
+    { relativePath: 'package.json', manifest: rootManifest },
+    ...workspaceManifestPaths(root).map((relativePath) => ({
+      relativePath,
+      manifest: readPackageManifest(root, relativePath),
+    })),
   ]
 
-  for (const [relativePath, manifest] of manifests) {
+  for (const { relativePath, manifest } of manifests) {
     const sections = [
-      ['dependencies', manifest.dependencies],
-      ['devDependencies', manifest.devDependencies],
-      ['peerDependencies', manifest.peerDependencies],
-      ['optionalDependencies', manifest.optionalDependencies],
+      { section: 'dependencies', dependencies: manifest.dependencies },
+      { section: 'devDependencies', dependencies: manifest.devDependencies },
+      { section: 'peerDependencies', dependencies: manifest.peerDependencies },
+      { section: 'optionalDependencies', dependencies: manifest.optionalDependencies },
     ]
-    for (const [section, dependencies] of sections) {
+    for (const { section, dependencies } of sections) {
       if (dependencies === undefined) continue
       for (const [name, expected] of Object.entries(versions)) {
         const declared = dependencies[name]
