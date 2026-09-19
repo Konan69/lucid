@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { EmptyState } from "./screen/EmptyState";
 import { Library, type LibraryDocument } from "./screen/Library";
@@ -15,6 +16,32 @@ import {
 } from "./data/runtimeConversations";
 
 type View = "conversation" | "demo" | "empty" | "tokens" | "library" | "projects" | "routines";
+
+const RuntimeConversationSchema = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  preview: Schema.String,
+  updatedAt: Schema.Number,
+  archived: Schema.Boolean,
+});
+const RuntimeConversationListSchema = Schema.Struct({ conversations: Schema.Array(RuntimeConversationSchema) });
+const RuntimeConversationListJsonSchema = Schema.fromJsonString(RuntimeConversationListSchema);
+const LegacyRuntimeConversationSchema = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  preview: Schema.String,
+  updatedAt: Schema.Number,
+});
+const LegacyRuntimeConversationListSchema = Schema.Array(LegacyRuntimeConversationSchema);
+const LegacyRuntimeConversationListJsonSchema = Schema.fromJsonString(LegacyRuntimeConversationListSchema);
+const RuntimeConversationResponseSchema = Schema.Struct({ conversation: RuntimeConversationSchema });
+const RuntimeConversationResponseJsonSchema = Schema.fromJsonString(RuntimeConversationResponseSchema);
+
+/** Returns the first non-archived conversation without weakening the missing-state contract. */
+function firstActiveConversationId(conversations: readonly RuntimeConversation[]): string | null {
+  const conversation = conversations.find((thread) => !thread.archived);
+  return conversation === undefined ? null : conversation.id;
+}
 
 function subscribeToSystemTheme(onChange: () => void) {
   const query = window.matchMedia("(prefers-color-scheme: dark)");
@@ -65,13 +92,16 @@ export default function App() {
     async function loadThreads() {
       const response = await fetch("/api/conversations");
       if (!response.ok) throw new Error(`Could not load conversations (${response.status})`);
-      const body = await response.json() as { conversations: RuntimeConversation[] };
-      let conversations = body.conversations;
+      const payload = await response.text();
+      const body = Schema.decodeUnknownSync(RuntimeConversationListJsonSchema)(payload);
+      let conversations: RuntimeConversation[] = [...body.conversations];
 
       if (conversations.length === 0) {
         try {
           const legacy = localStorage.getItem("vivid-runtime-conversations");
-          const parsed = legacy ? (JSON.parse(legacy) as RuntimeConversation[]).map((thread) => ({ ...thread, archived: false })) : [];
+          const parsed = legacy === null
+            ? []
+            : Schema.decodeUnknownSync(LegacyRuntimeConversationListJsonSchema)(legacy).map((thread) => ({ ...thread, archived: false }));
           if (parsed.length > 0) {
             await Promise.all(parsed.map(saveRuntimeThread));
             conversations = parsed.sort((left, right) => right.updatedAt - left.updatedAt);
@@ -84,7 +114,7 @@ export default function App() {
       localStorage.removeItem("vivid-runtime-conversations");
       if (!cancelled) {
         setRuntimeThreads(conversations);
-        setActiveId((current) => current ?? conversations.find((thread) => !thread.archived)?.id ?? null);
+        setActiveId((current) => current ?? firstActiveConversationId(conversations));
         setThreadsReady(true);
       }
     }
@@ -159,7 +189,8 @@ export default function App() {
       body: JSON.stringify(patch),
     });
     if (!response.ok) throw new Error(`Could not update conversation (${response.status})`);
-    const { conversation } = await response.json() as { conversation: RuntimeConversation };
+    const payload = await response.text();
+    const { conversation } = Schema.decodeUnknownSync(RuntimeConversationResponseJsonSchema)(payload);
     setRuntimeThreads((current) => current
       .map((thread) => thread.id === id ? conversation : thread)
       .sort((left, right) => right.updatedAt - left.updatedAt));
@@ -176,7 +207,7 @@ export default function App() {
   function archiveConversation(id: string, archived: boolean) {
     void patchRuntimeThread(id, { archived });
     if (archived && activeId === id) {
-      setActiveId(runtimeThreads.find((thread) => thread.id !== id && !thread.archived)?.id ?? null);
+      setActiveId(firstActiveConversationId(runtimeThreads.filter((thread) => thread.id !== id)));
     }
   }
 
@@ -187,13 +218,14 @@ export default function App() {
     if (!response.ok) return;
     const remaining = runtimeThreads.filter((thread) => thread.id !== id);
     setRuntimeThreads(remaining);
-    if (activeId === id) setActiveId(remaining.find((thread) => !thread.archived)?.id ?? null);
+    if (activeId === id) setActiveId(firstActiveConversationId(remaining));
   }
 
   const activeThread = runtimeThreads.find((thread) => thread.id === activeId);
+  const activeTitle = activeThread === undefined ? "Conversation" : activeThread.title;
 
   return (
-    <div className="flex h-full w-full">
+    <div className="flex size-full">
       {view !== "tokens" && (
         <Sidebar
           activeId={view === "demo" ? activeDemoId : view === "empty" ? null : activeId}
@@ -215,8 +247,8 @@ export default function App() {
         {view === "demo" && <DemoConversation conversationId={activeDemoId} />}
         {view === "conversation" && (
           activeId ? <Conversation
-            conversationId={activeId ?? "t1"}
-            title={activeThread?.title ?? "Conversation"}
+            conversationId={activeId}
+            title={activeTitle}
             initialDraft={conversationDrafts[activeId]}
             onMessageSent={(message) => { recordMessage(activeId ?? "t1", message); setConversationDrafts((current) => { const next = { ...current }; delete next[activeId]; return next; }); }}
             panelOpen={panel !== null}
