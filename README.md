@@ -32,9 +32,12 @@ The separate iOS/Android app lives in [apps/mobile](apps/mobile/README.md). Run 
 with `pnpm --filter @vivid/mobile dev`; its README covers phone connections and
 the current feature coverage.
 
+The repository requires pnpm `12.4.2`, pinned by `packageManager` and `engines.pnpm`. Project settings, catalogs, build-script approvals, overrides, and patches live in `pnpm-workspace.yaml`.
+
 Useful checks:
 
 ```sh
+pnpm check:package-manager
 pnpm check:versions
 pnpm audit:effect-boundaries
 pnpm check:migrations
@@ -49,8 +52,9 @@ pnpm build
 2. [Surface](docs/03-surface.md). The user-visible onboarding and conversation behavior.
 3. [Main screen](docs/07-main-screen.md). The screen the user lives in: sidebar, thread, and on-demand panel.
 4. [Design language](docs/08-design-language.md). The visual rules and interaction character.
-5. [Company and projects](docs/12-company-and-projects.md). The organization and project model visible in the demo.
-6. [Feature set and Grok Bot parity](docs/14-product-feature-set-and-grok-bot-parity.md). What works now, what is a fixture, and the product parity target.
+5. [Design-system lint](docs/designlint.md). Web component contracts, Tailwind rule ownership, and warning ratchets.
+6. [Company and projects](docs/12-company-and-projects.md). The organization and project model visible in the demo.
+7. [Feature set and Grok Bot parity](docs/14-product-feature-set-and-grok-bot-parity.md). What works now, what is a fixture, and the product parity target.
 
 ## Collaboration boundary
 

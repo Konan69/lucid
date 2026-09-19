@@ -7,6 +7,21 @@
   "env": {
     "builtin": true
   },
+  "settings": {
+    "shadcn": {
+      "ui": "@/ui",
+      "componentImports": ["(^|/)ui(/|$)"],
+      "note": "Use Vivid's existing component variant or semantic token. Change a component contract only with UI-owner review."
+    },
+    "tailwindcss": {
+      "entryPoint": [
+        {
+          "files": "apps/web/src/**",
+          "use": "apps/web/src/styles/index.css"
+        }
+      ]
+    }
+  },
   "ignorePatterns": [
     "**/node_modules/**",
     "**/dist/**",
@@ -44,7 +59,9 @@
     {
       "name": "anti-slop-effect",
       "specifier": "./tools/oxlint/anti-slop/effect/index.ts"
-    }
+    },
+    "@shadcn/lint",
+    "oxlint-tailwindcss"
   ],
   "rules": {
     "no-restricted-globals": [
@@ -119,6 +136,63 @@
       "files": ["apps/{server,web}/src/**/*.{ts,tsx}", "packages/*/src/**/*.{ts,tsx}"],
       "rules": {
         "typescript/no-explicit-any": "warn"
+      }
+    },
+    {
+      "files": ["apps/web/src/**/*.tsx"],
+      "rules": {
+        "shadcn/no-restyle": [
+          "error",
+          {
+            "allow": ["layout"],
+            "contracts": [
+              {
+                "pattern": "^(Button|IconButton)$",
+                "allow": ["layout"],
+                "message": {
+                  "spacing": "Use a {{component}} size: {{sizes|none defined}}.",
+                  "default": "Use a {{component}} variant: {{variants|none defined}}."
+                }
+              },
+              {
+                "pattern": "^Card$",
+                "allow": ["layout", "spacing"],
+                "message": "Card owns surface, radius, and elevation; callers may control placement and content spacing."
+              },
+              {
+                "pattern": "^(Avatar|Face|StatusLabel|StatusDot|ToolMarks)$",
+                "allow": ["layout"],
+                "message": "This primitive owns its visual treatment; callers may control placement only."
+              }
+            ]
+          }
+        ],
+        "shadcn/no-raw-colors": "warn",
+        "shadcn/no-arbitrary-values": "warn",
+        "shadcn/no-inline-styles": "warn",
+        "shadcn/no-unknown-classes": "warn",
+        "shadcn/require-static-classes": "error",
+        "tailwindcss/no-duplicate-classes": "error",
+        "tailwindcss/no-conflicting-classes": "warn",
+        "tailwindcss/no-deprecated-classes": "error",
+        "tailwindcss/no-unnecessary-whitespace": "error",
+        "tailwindcss/no-dark-without-light": "error",
+        "tailwindcss/no-contradicting-variants": "error",
+        "tailwindcss/enforce-canonical": "warn",
+        "tailwindcss/enforce-sort-order": "warn",
+        "tailwindcss/enforce-shorthand": "warn",
+        "tailwindcss/enforce-consistent-important-position": "error",
+        "tailwindcss/enforce-negative-arbitrary-values": "error",
+        "tailwindcss/enforce-consistent-variable-syntax": "error",
+        "tailwindcss/consistent-variant-order": "error"
+      }
+    },
+    {
+      "files": ["apps/web/src/ui/**/*.{ts,tsx}"],
+      "rules": {
+        "shadcn/no-restyle": "off",
+        "shadcn/no-arbitrary-values": "off",
+        "shadcn/require-static-classes": "off"
       }
     },
     {
