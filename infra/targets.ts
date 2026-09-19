@@ -125,7 +125,7 @@ export const parseDeployTarget = Effect.fn("parseDeployTarget")(function*(value:
 })
 
 /** Local is the safe default; remote targets must always be chosen explicitly. */
-export const deploymentTargetFromConfig = Config.string("VIVID_DEPLOY_TARGET").pipe(
+export const deploymentTargetFromConfig = Config.String("VIVID_DEPLOY_TARGET").pipe(
   Config.withDefault("local"),
   Effect.flatMap(parseDeployTarget)
 )

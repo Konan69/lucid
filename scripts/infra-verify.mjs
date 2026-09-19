@@ -124,7 +124,7 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   assert.match(databaseSource, /external: 55433/, "local database must bind host port 55433")
   assert.match(databaseSource, /POSTGRES_DB: "vivid"/, "local database name must be vivid")
   assert.match(databaseSource, /POSTGRES_USER: "vivid"/, "local database user must be vivid")
-  assert.match(databaseSource, /Config\.redacted\("DATABASE_URL"\)/, "remote database URL must be required through Effect Config")
+  assert.match(databaseSource, /Config\.Redacted\("DATABASE_URL"\)/, "remote database URL must be required through Effect Config")
 
   assertEnvironmentWiring(root, stackSource)
 
