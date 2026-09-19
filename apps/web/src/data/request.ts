@@ -26,24 +26,22 @@ export const request = Effect.fn("WebClient.request")(function*<Value>(
   decode: (input: string) => Value,
   init: RequestInit = {},
 ): Effect.fn.Return<Value, ClientRequestFailed> {
-  const response = yield* Effect.tryPromise({
-    try: () => fetch(path, init),
-    catch: (cause) => new ClientRequestFailed({
+  const response = yield* Effect.tryPromise(() => fetch(path, init)).pipe(
+    Effect.mapError((cause) => new ClientRequestFailed({
       path,
       status: null,
       message: "Could not reach Vivid.",
       cause,
-    }),
-  });
-  const payload = yield* Effect.tryPromise({
-    try: () => response.text(),
-    catch: (cause) => new ClientRequestFailed({
+    })),
+  );
+  const payload = yield* Effect.tryPromise(() => response.text()).pipe(
+    Effect.mapError((cause) => new ClientRequestFailed({
       path,
       status: response.status,
       message: "Vivid returned an unreadable response.",
       cause,
-    }),
-  });
+    })),
+  );
   if (!response.ok) {
     const body = decodeErrorResponse(payload);
     const message = Option.isSome(body)
@@ -56,15 +54,14 @@ export const request = Effect.fn("WebClient.request")(function*<Value>(
       cause: payload,
     }));
   }
-  return yield* Effect.try({
-    try: () => decode(payload),
-    catch: (cause) => new ClientRequestFailed({
+  return yield* Effect.try(() => decode(payload)).pipe(
+    Effect.mapError((cause) => new ClientRequestFailed({
       path,
       status: response.status,
       message: "Vivid returned invalid data.",
       cause,
-    }),
-  });
+    })),
+  );
 });
 
 /** Successful empty responses have no value to decode. */
