@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { AppState, FlatList, KeyboardAvoidingView, Linking, Platform, View } from "react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Monitor } from "lucide-react-native";
@@ -51,11 +51,11 @@ function ThreadChat({ route, navigation }: NativeStackScreenProps<Routes, "Chat"
     report(id, working ? "working" : agent.error ? "failed" : undefined);
     return () => report(id, undefined);
   }, [id, working, agent.error, report]);
-  const refresh = useRef(agent.refresh);
-  refresh.current = agent.refresh;
+  // App-state subscriptions stay stable while the Effect Event reads the current Flue client.
+  const refresh = useEffectEvent(() => agent.refresh());
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") refresh.current();
+      if (state === "active") refresh();
     });
     return () => subscription.remove();
   }, []);
@@ -177,7 +177,7 @@ function ThreadChat({ route, navigation }: NativeStackScreenProps<Routes, "Chat"
                   ? "Vivid couldn’t connect. Check the server connection and try again."
                   : agent.error?.message?.replace(/^direct\([^)]*\) failed: /, ""))
               }
-              retry={agent.refresh}
+              retry={() => agent.refresh()}
               retryLabel="Reconnect"
             />
           </View>
