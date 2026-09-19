@@ -1,8 +1,13 @@
 import { defineConfig } from "drizzle-kit";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+
+const databaseUrl = Effect.runSync(Config.redacted("DATABASE_URL"));
 
 export default defineConfig({
   dialect: "postgresql",
   schema: "./src/runtime-schema.ts",
   out: "./drizzle",
-  dbCredentials: { url: process.env.DATABASE_URL ?? "postgres://vivid:vivid@127.0.0.1:5434/vivid_runtime" }
+  dbCredentials: { url: Redacted.value(databaseUrl) }
 });
