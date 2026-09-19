@@ -12,6 +12,16 @@ packages:
 # untracked .npmrc when a private registry eventually requires them.
 autoInstallPeers: false
 strictPeerDependencies: true
+# Strict peers stay on. These four are transitive peers of tools we do not run:
+# @shadcn/lint's ESLint parser (we load it through oxlint), @effect/vitest pulled by
+# alchemy, Flue's decorator transform, and alchemy's Cloudflare types pin.
+peerDependencyRules:
+  ignoreMissing:
+    - eslint
+    - vitest
+    - '@babel/core'
+  allowedVersions:
+    '@cloudflare/workers-types': '5'
 verifyDepsBeforeRun: false
 pmOnFail: error
 
@@ -53,6 +63,7 @@ allowBuilds:
   esbuild: true
   sharp: true
   workerd: true
+  '@google/genai': false
   core-js-pure: false
   msgpackr-extract: false
   protobufjs: false
@@ -60,3 +71,19 @@ allowBuilds:
 patchedDependencies:
   '@react-native-menu/menu@2.0.0': patches/@react-native-menu__menu@2.0.0.patch
   react-native-gesture-handler@2.31.2: patches/react-native-gesture-handler@2.31.2.patch
+minimumReleaseAgeExclude:
+  - '@cloudflare/workers-types@5.20260919.1'
+  - '@effect/platform-node-shared@4.0.0-rc.116'
+  - '@effect/platform-node@4.0.0-rc.116'
+  - '@effect/sql-d1@4.0.0-rc.116'
+  - '@effect/sql-pg@4.0.0-rc.116'
+  - '@effect/sql-sqlite-do@4.0.0-rc.116'
+  - '@effect/vitest@4.0.0-rc.116'
+  - '@turbo/darwin-64@2.11.2'
+  - '@turbo/darwin-arm64@2.11.2'
+  - '@turbo/linux-64@2.11.2'
+  - '@turbo/linux-arm64@2.11.2'
+  - '@turbo/windows-64@2.11.2'
+  - '@turbo/windows-arm64@2.11.2'
+  - effect@4.0.0-rc.116
+  - turbo@2.11.2
