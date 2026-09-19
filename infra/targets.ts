@@ -31,6 +31,10 @@ const DeploymentTargetsSchema = Schema.Struct({
   preview: DeploymentTargetSchema,
   production: DeploymentTargetSchema
 })
+const decodeDeploymentTargetsJson = Schema.decodeUnknownSync(
+  Schema.fromJsonString(DeploymentTargetsSchema)
+)
+const decodeDeployTargetName = Schema.decodeUnknownEffect(DeployTargetName)
 
 export type DeploymentTarget = typeof DeploymentTargetSchema.Type
 
@@ -95,25 +99,23 @@ export const deploymentTargetsJson = String.raw`{
   }
 }`
 
-export const deploymentTargets = Schema.decodeUnknownSync(
-  Schema.fromJsonString(DeploymentTargetsSchema)
-)(deploymentTargetsJson)
+export const deploymentTargets = decodeDeploymentTargetsJson(deploymentTargetsJson)
 
 export class InvalidDeployTarget extends Schema.TaggedError<InvalidDeployTarget>()("InvalidDeployTarget", {
   variable: Schema.Literal("VIVID_DEPLOY_TARGET"),
   received: Schema.String,
   expected: Schema.String,
   message: Schema.String
-}) {}
+}, { title: "Invalid deploy target" }) {}
 
 export class RemoteDeploymentDisabled extends Schema.TaggedError<RemoteDeploymentDisabled>()("RemoteDeploymentDisabled", {
   target: DeployTargetName,
   message: Schema.String
-}) {}
+}, { title: "Remote deployment disabled" }) {}
 
 /** Decode the external target selector and keep a misspelled target in the typed error channel. */
 export const parseDeployTarget = Effect.fn("parseDeployTarget")(function*(value: string) {
-  const key = yield* Schema.decodeUnknownEffect(DeployTargetName)(value).pipe(
+  const key = yield* decodeDeployTargetName(value).pipe(
     Effect.mapError(() => new InvalidDeployTarget({
       variable: "VIVID_DEPLOY_TARGET",
       received: value,

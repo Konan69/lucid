@@ -7,15 +7,15 @@ import * as Schema from "effect/Schema"
 export class InfrastructureEnvironmentError extends Schema.TaggedError<InfrastructureEnvironmentError>()("InfrastructureEnvironmentError", {
   variable: Schema.String,
   message: Schema.String
-}) {}
+}, { title: "Infrastructure environment error" }) {}
 
 export interface InfrastructureEnvironment {
-  readonly authSecret: Redacted.Redacted<string>
-  readonly runtimeToken: Redacted.Redacted<string>
-  readonly openRouterApiKey: Redacted.Redacted<string>
+  readonly authSecret: Redacted.Redacted
+  readonly runtimeToken: Redacted.Redacted
+  readonly openRouterApiKey: Redacted.Redacted
   readonly model: string
   readonly googleClientId: Option.Option<string>
-  readonly googleClientSecret: Option.Option<Redacted.Redacted<string>>
+  readonly googleClientSecret: Option.Option<Redacted.Redacted>
   readonly googleRedirectUri: Option.Option<string>
 }
 
@@ -37,7 +37,7 @@ const optionalSecret = (name: string) => Config.option(Config.redacted(name)).pi
 )
 
 /** Read application credentials once so resource declarations only receive typed values. */
-export const loadInfrastructureEnvironment = Effect.gen(function*() {
+export const loadInfrastructureEnvironment = Effect.fn("loadInfrastructureEnvironment")(function*() {
   const authSecret = yield* requiredSecret("AUTH_SECRET")
   const runtimeToken = yield* requiredSecret("VIVID_RUNTIME_TOKEN")
   const openRouterApiKey = yield* requiredSecret("OPENROUTER_API_KEY")
@@ -70,4 +70,4 @@ export const loadInfrastructureEnvironment = Effect.gen(function*() {
     googleClientSecret,
     googleRedirectUri
   } satisfies InfrastructureEnvironment
-})
+})()
