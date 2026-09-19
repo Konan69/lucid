@@ -2,6 +2,7 @@ import {
   AlertTriangle, BellRing, Check, ChevronRight, Circle, CircleCheck, Clock3, LoaderCircle,
   MessageSquareText, Plus, Repeat2, RotateCcw, Trash2, UserRound, X,
 } from "lucide-react";
+import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
 import { cn } from "../ui/cn";
 import { Face } from "../ui/Face";
@@ -102,16 +103,70 @@ const NOTIFICATION_TONE = {
   "follow-up-failed": "bg-danger",
 } satisfies Record<Notification["kind"], string>;
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+const FollowUpSchema = Schema.Struct({
+  id: Schema.String,
+  taskId: Schema.String,
+  at: Schema.Number,
+  note: Schema.String,
+  repeatEveryMs: Schema.NullOr(Schema.Number),
+  status: Schema.Literals(["scheduled", "running", "fired", "cancelled", "failed"]),
+  firedAt: Schema.NullOr(Schema.Number),
+  output: Schema.NullOr(Schema.String),
+  error: Schema.NullOr(Schema.String),
+  createdBy: Schema.Literals(["you", "vivid"]),
+  createdAt: Schema.Number,
+});
+const TaskSchema = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  detail: Schema.String,
+  status: Schema.Literals(["open", "done", "dropped"]),
+  priority: Schema.Literals(["normal", "urgent"]),
+  assignee: Schema.NullOr(Schema.String),
+  dueAt: Schema.NullOr(Schema.Number),
+  origin: Schema.Union([
+    Schema.Struct({ kind: Schema.Literal("conversation"), conversationId: Schema.String }),
+    Schema.Struct({ kind: Schema.Literal("routine"), routineId: Schema.String }),
+    Schema.Struct({ kind: Schema.Literal("manual") }),
+  ]),
+  createdBy: Schema.Literals(["you", "vivid"]),
+  conversationId: Schema.String,
+  completedAt: Schema.NullOr(Schema.Number),
+  createdAt: Schema.Number,
+  updatedAt: Schema.Number,
+  followUps: Schema.mutable(Schema.Array(FollowUpSchema)),
+  nextFollowUpAt: Schema.NullOr(Schema.Number),
+});
+const NotificationSchema = Schema.Struct({
+  id: Schema.String,
+  kind: Schema.Literals(["tracked", "overdue", "follow-up", "follow-up-failed"]),
+  title: Schema.String,
+  body: Schema.String,
+  taskId: Schema.NullOr(Schema.String),
+  conversationId: Schema.NullOr(Schema.String),
+  createdAt: Schema.Number,
+  readAt: Schema.NullOr(Schema.Number),
+});
+const TasksResponseSchema = Schema.fromJsonString(Schema.Struct({ tasks: Schema.mutable(Schema.Array(TaskSchema)) }));
+const NotificationsResponseSchema = Schema.fromJsonString(Schema.Struct({ notifications: Schema.mutable(Schema.Array(NotificationSchema)) }));
+const TaskResponseSchema = Schema.fromJsonString(Schema.Struct({ task: TaskSchema }));
+const ErrorResponseSchema = Schema.fromJsonString(Schema.Struct({ error: Schema.optional(Schema.String) }));
+type JsonValue = string | number | boolean | null | JsonValue[] | { readonly [key: string]: JsonValue };
+type JsonObject = { readonly [key: string]: JsonValue };
+
+async function request<T>(path: string, decode: (input: string) => T, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, init);
   if (!response.ok) {
-    const body = await response.json().catch(() => null) as { error?: string } | null;
-    throw new Error(body?.error ?? `Request failed (${response.status})`);
+    const body = Schema.decodeUnknownOption(ErrorResponseSchema)(await response.text());
+    const message = body._tag === "Some" && body.value.error ? body.value.error : `Request failed (${response.status})`;
+    throw new Error(message);
   }
-  return response.status === 204 ? undefined as T : response.json() as Promise<T>;
+  return decode(await response.text());
 }
 
-function json(method: string, body: unknown): RequestInit {
+function emptyResponse(): void {}
+
+function json(method: string, body: JsonObject): RequestInit {
   return { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
 }
 
@@ -155,17 +210,19 @@ function groupTasks(tasks: Task[], now: number): Group[] {
   const endOfToday = startOfDay(now) + DAY_MS;
   const open = tasks.filter((task) => task.status === "open");
   const taken = new Set<string>();
-  const pick = (key: string, label: string, note: string | undefined, test: (task: Task) => boolean): Group => {
+  const pick = (key: string, label: string, note: string | null, test: (task: Task) => boolean): Group => {
     const picked = open.filter((task) => !taken.has(task.id) && test(task));
     for (const task of picked) taken.add(task.id);
-    return { key, label, note, tasks: picked };
+    const group = { key, label, tasks: picked };
+    if (note === null) return group;
+    return { ...group, note };
   };
   return [
     pick("overdue", "Overdue", "Vivid has already started chasing these.", (task) => task.dueAt !== null && task.dueAt < now),
-    pick("today", "Due today", undefined, (task) => task.dueAt !== null && task.dueAt < endOfToday),
+    pick("today", "Due today", null, (task) => task.dueAt !== null && task.dueAt < endOfToday),
     pick("waiting", "Waiting on others", "Vivid drafts the nudge; you send it.", (task) => task.assignee !== null),
-    pick("upcoming", "Vivid follows up", undefined, (task) => task.nextFollowUpAt !== null),
-    pick("later", "Later", undefined, () => true),
+    pick("upcoming", "Vivid follows up", null, (task) => task.nextFollowUpAt !== null),
+    pick("later", "Later", null, () => true),
   ].filter((group) => group.tasks.length > 0);
 }
 
@@ -181,8 +238,8 @@ export function Today({ onOpenConversation }: { onOpenConversation(conversationI
   const load = useCallback(async () => {
     try {
       const [taskBody, notificationBody] = await Promise.all([
-        request<{ tasks: Task[] }>("/api/tasks"),
-        request<{ notifications: Notification[] }>("/api/notifications"),
+        request("/api/tasks", Schema.decodeUnknownSync(TasksResponseSchema)),
+        request("/api/notifications", Schema.decodeUnknownSync(NotificationsResponseSchema)),
       ]);
       setTasks(taskBody.tasks);
       setNotifications(notificationBody.notifications);
@@ -200,8 +257,8 @@ export function Today({ onOpenConversation }: { onOpenConversation(conversationI
     // Initial hydration is an external request. Polling and user-triggered refreshes continue to
     // use `load`, while this mount request ignores responses after the screen is removed.
     void Promise.all([
-      request<{ tasks: Task[] }>("/api/tasks"),
-      request<{ notifications: Notification[] }>("/api/notifications"),
+      request("/api/tasks", Schema.decodeUnknownSync(TasksResponseSchema)),
+      request("/api/notifications", Schema.decodeUnknownSync(NotificationsResponseSchema)),
     ]).then(([taskBody, notificationBody]) => {
       if (cancelled) return;
       setTasks(taskBody.tasks);
@@ -231,7 +288,7 @@ export function Today({ onOpenConversation }: { onOpenConversation(conversationI
 
   async function toggleDone(task: Task) {
     try {
-      await request(`/api/tasks/${task.id}`, json("PATCH", { status: task.status === "open" ? "done" : "open" }));
+      await request(`/api/tasks/${task.id}`, emptyResponse, json("PATCH", { status: task.status === "open" ? "done" : "open" }));
       await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not update the task");
@@ -240,7 +297,7 @@ export function Today({ onOpenConversation }: { onOpenConversation(conversationI
 
   async function markAllRead() {
     try {
-      await request("/api/notifications/read", json("POST", {}));
+      await request("/api/notifications/read", emptyResponse, json("POST", {}));
       await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not mark notifications read");
@@ -249,7 +306,7 @@ export function Today({ onOpenConversation }: { onOpenConversation(conversationI
 
   async function openNotification(notification: Notification) {
     if (notification.readAt === null) {
-      void request("/api/notifications/read", json("POST", { ids: [notification.id] })).then(load).catch(() => undefined);
+      void request("/api/notifications/read", emptyResponse, json("POST", { ids: [notification.id] })).then(load).catch(() => undefined);
     }
     if (notification.taskId && tasks.some((task) => task.id === notification.taskId)) setSelectedId(notification.taskId);
     else if (notification.conversationId) onOpenConversation(notification.conversationId, notification.title);
@@ -261,12 +318,12 @@ export function Today({ onOpenConversation }: { onOpenConversation(conversationI
     <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0" style={{ boxShadow: "var(--content-edge-shadow, none)" }}>
       <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
         {inDetail && <button onClick={back} aria-label="Back to today" className="mr-1 inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"><ChevronRight className="size-4 rotate-180" /></button>}
-        <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">{selected?.title ?? (creating ? "New task" : "Today")}</h1>
+        <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">{selected ? selected.title : creating ? "New task" : "Today"}</h1>
         {!inDetail && <button aria-label="New task" onClick={() => setCreating(true)} className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"><Plus className="size-4" /></button>}
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
-        <div className="mx-auto w-full max-w-[920px] px-5 pb-10 pt-1 sm:px-8">
+        <div className="mx-auto w-full max-w-230 px-5 pt-1 pb-10 sm:px-8">
           {error && <div className="mb-3 rounded-control bg-danger-soft px-3 py-2 text-label text-danger" role="alert">{error}</div>}
           {selected || creating ? (
             <TaskDetail
@@ -286,12 +343,12 @@ export function Today({ onOpenConversation }: { onOpenConversation(conversationI
                     {unread.map((notification) => (
                       <li key={notification.id}>
                         <button onClick={() => void openNotification(notification)} className="group/row flex w-full items-start gap-3 rounded-row bg-surface-2 px-3 py-2.5 text-left shadow-ring-xs transition-[background-color,box-shadow] duration-(--dur-fast) hover:bg-wash-hover hover:shadow-ring-sm">
-                          <i className={cn("mt-[7px] size-2 shrink-0 rounded-full", NOTIFICATION_TONE[notification.kind])} aria-hidden />
+                          <i className={cn("mt-1.75 size-2 shrink-0 rounded-full", NOTIFICATION_TONE[notification.kind])} aria-hidden />
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-label font-title text-ink">{notification.title}</span>
-                            {notification.body && <span className="mt-0.5 line-clamp-2 block text-label text-ink-3">{notification.body}</span>}
+                            {notification.body && <span className="mt-0.5 block text-label text-ink-3">{notification.body}</span>}
                           </span>
-                          <time className="shrink-0 pt-0.5 text-meta font-meta tabular-nums text-ink-4">{formatWhen(notification.createdAt)}</time>
+                          <time className="shrink-0 pt-0.5 text-meta font-meta text-ink-4 tabular-nums">{formatWhen(notification.createdAt)}</time>
                         </button>
                       </li>
                     ))}
@@ -319,7 +376,7 @@ export function Today({ onOpenConversation }: { onOpenConversation(conversationI
               )}
 
               {ready && groups.length > 0 && (
-                <button onClick={() => setCreating(true)} className="mt-2 flex w-full items-center gap-2.5 rounded-row px-2.5 py-2.5 text-left text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"><span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-surface-2"><Plus className="size-4" /></span><span className="text-title">New task</span></button>
+                <button onClick={() => setCreating(true)} className="mt-2 flex w-full items-center gap-2.5 rounded-row p-2.5 text-left text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"><span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-surface-2"><Plus className="size-4" /></span><span className="text-title">New task</span></button>
               )}
 
               {settled.length > 0 && (
@@ -351,7 +408,7 @@ function TaskRow({ task, onOpen, onToggle }: { task: Task; onOpen(): void; onTog
   return (
     <div className={cn("group/row flex items-center gap-2.5 rounded-row px-2.5 py-2 transition-colors duration-(--dur-fast) hover:bg-wash-hover", settled && "opacity-70 hover:opacity-100")}>
       <button onClick={onToggle} aria-label={settled ? "Reopen" : "Mark done"} className="inline-flex size-8 shrink-0 items-center justify-center rounded-control text-ink-3 hover:text-success">
-        {task.status === "done" ? <CircleCheck className="size-[18px] text-success" /> : task.status === "dropped" ? <X className="size-4" /> : <Circle className="size-[18px]" strokeWidth={1.6} />}
+        {task.status === "done" ? <CircleCheck className="size-4.5 text-success" /> : task.status === "dropped" ? <X className="size-4" /> : <Circle className="size-4.5" strokeWidth={1.6} />}
       </button>
       <button onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left">
         <span className="min-w-0 flex-1">
@@ -375,17 +432,17 @@ function TaskRow({ task, onOpen, onToggle }: { task: Task; onOpen(): void; onTog
 
 function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }: { task: Task | null; onChanged(id: string): Promise<void>; onDeleted(): Promise<void>; onCancel(): void; onOpenConversation(conversationId: string, fallbackTitle: string): void }) {
   const now = useCurrentTime();
-  const [title, setTitle] = useState(task?.title ?? "");
-  const [detail, setDetail] = useState(task?.detail ?? "");
-  const [assignee, setAssignee] = useState(task?.assignee ?? "");
-  const [dueAt, setDueAt] = useState(toLocalInput(task?.dueAt ?? null));
-  const [priority, setPriority] = useState<TaskPriority>(task?.priority ?? "normal");
+  const [title, setTitle] = useState(task === null ? "" : task.title);
+  const [detail, setDetail] = useState(task === null ? "" : task.detail);
+  const [assignee, setAssignee] = useState(task === null ? "" : task.assignee ?? "");
+  const [dueAt, setDueAt] = useState(toLocalInput(task === null ? null : task.dueAt));
+  const [priority, setPriority] = useState<TaskPriority>(task === null ? "normal" : task.priority);
   const [followUpAt, setFollowUpAt] = useState("");
   const [followUpNote, setFollowUpNote] = useState("");
   const [repeat, setRepeat] = useState<string>("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const chasing = task?.followUps.some((followUp) => followUp.status === "running") ?? false;
+  const chasing = task !== null && task.followUps.some((followUp) => followUp.status === "running");
   const dirty = task ? title !== task.title || detail !== task.detail || (assignee.trim() || null) !== task.assignee || fromLocalInput(dueAt) !== task.dueAt || priority !== task.priority : true;
 
   async function run<T>(work: () => Promise<T>, fallback: string) {
@@ -398,24 +455,28 @@ function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }
 
   async function save(event: FormEvent) {
     event.preventDefault();
-    const payload = { title: title.trim(), detail: detail.trim(), assignee: assignee.trim() || null, dueAt: fromLocalInput(dueAt), priority };
-    const body = await run(() => request<{ task: Task }>(task ? `/api/tasks/${task.id}` : "/api/tasks", json(task ? "PATCH" : "POST", task ? payload : { ...payload, followUp: fromLocalInput(followUpAt) ? { at: fromLocalInput(followUpAt), note: followUpNote.trim(), repeatEveryMs: repeat ? Number(repeat) : null } : undefined })), "Could not save the task");
+    const payload = { title: title.trim(), detail: detail.trim(), assignee: assignee.trim() || null, dueAt: fromLocalInput(dueAt), priority } satisfies JsonObject;
+    const firstFollowUpAt = fromLocalInput(followUpAt);
+    const createPayload = firstFollowUpAt === null
+      ? payload
+      : { ...payload, followUp: { at: firstFollowUpAt, note: followUpNote.trim(), repeatEveryMs: repeat ? Number(repeat) : null } } satisfies JsonObject;
+    const body = await run(() => request(task ? `/api/tasks/${task.id}` : "/api/tasks", Schema.decodeUnknownSync(TaskResponseSchema), json(task ? "PATCH" : "POST", task ? payload : createPayload)), "Could not save the task");
     if (body) await onChanged(body.task.id);
   }
 
   async function setStatus(status: TaskStatus) {
     if (!task) return;
-    if (await run(() => request(`/api/tasks/${task.id}`, json("PATCH", { status })), "Could not update the task")) await onChanged(task.id);
+    if (await run(() => request(`/api/tasks/${task.id}`, emptyResponse, json("PATCH", { status })), "Could not update the task")) await onChanged(task.id);
   }
 
   async function chaseNow() {
     if (!task) return;
-    if (await run(() => request(`/api/tasks/${task.id}/nudge`, json("POST", {})), "Could not start the chase")) await onChanged(task.id);
+    if (await run(() => request(`/api/tasks/${task.id}/nudge`, emptyResponse, json("POST", {})), "Could not start the chase")) await onChanged(task.id);
   }
 
   async function remove() {
     if (!task || !window.confirm(`Delete “${task.title}”? Its follow-ups go with it.`)) return;
-    if (await run(() => request(`/api/tasks/${task.id}`, { method: "DELETE" }), "Could not delete the task")) await onDeleted();
+    if (await run(() => request(`/api/tasks/${task.id}`, emptyResponse, { method: "DELETE" }), "Could not delete the task")) await onDeleted();
   }
 
   async function addFollowUp(event: FormEvent) {
@@ -423,7 +484,7 @@ function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }
     if (!task) return;
     const at = fromLocalInput(followUpAt);
     if (at === null) { setError("Pick a time for the follow-up"); return; }
-    if (await run(() => request(`/api/tasks/${task.id}/follow-ups`, json("POST", { at, note: followUpNote.trim(), repeatEveryMs: repeat ? Number(repeat) : null })), "Could not schedule the follow-up")) {
+    if (await run(() => request(`/api/tasks/${task.id}/follow-ups`, emptyResponse, json("POST", { at, note: followUpNote.trim(), repeatEveryMs: repeat ? Number(repeat) : null })), "Could not schedule the follow-up")) {
       setFollowUpAt(""); setFollowUpNote(""); setRepeat("");
       await onChanged(task.id);
     }
@@ -432,10 +493,10 @@ function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }
   async function followUpAction(followUp: FollowUp, action: "run" | "cancel" | "delete") {
     if (!task) return;
     const work = action === "run"
-      ? () => request(`/api/follow-ups/${followUp.id}/run`, { method: "POST" })
+      ? () => request(`/api/follow-ups/${followUp.id}/run`, emptyResponse, { method: "POST" })
       : action === "cancel"
-        ? () => request(`/api/follow-ups/${followUp.id}`, json("PATCH", { status: "cancelled" }))
-        : () => request(`/api/follow-ups/${followUp.id}`, { method: "DELETE" });
+        ? () => request(`/api/follow-ups/${followUp.id}`, emptyResponse, json("PATCH", { status: "cancelled" }))
+        : () => request(`/api/follow-ups/${followUp.id}`, emptyResponse, { method: "DELETE" });
     if (await run(work, "Could not update the follow-up")) await onChanged(task.id);
   }
 
@@ -477,9 +538,12 @@ function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }
         <label className="block"><span className={labelClass}>What</span><input autoFocus={!task} required maxLength={200} value={title} onChange={(event) => setTitle(event.currentTarget.value)} placeholder="Get the signed contract back from Dami" className={fieldClass} /></label>
         <label className="block"><span className={labelClass}>Detail <span className="font-meta text-ink-4">optional</span></span><textarea maxLength={2000} rows={3} value={detail} onChange={(event) => setDetail(event.currentTarget.value)} placeholder="Anything Vivid should know when it follows up." className="w-full resize-y rounded-control bg-surface-2 px-3 py-2.5 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm" /></label>
         <div className="grid gap-3 sm:grid-cols-3">
-          <label className="block"><span className={labelClass}>Waiting on</span><span className="relative block"><UserRound className="pointer-events-none absolute left-3 top-3 size-4 text-ink-4" /><input maxLength={80} value={assignee} onChange={(event) => setAssignee(event.currentTarget.value)} placeholder="You" className={cn(fieldClass, "pl-9")} /></span></label>
+          <label className="block"><span className={labelClass}>Waiting on</span><span className="relative block"><UserRound className="pointer-events-none absolute top-3 left-3 size-4 text-ink-4" /><input maxLength={80} value={assignee} onChange={(event) => setAssignee(event.currentTarget.value)} placeholder="You" className={cn(fieldClass, "pl-9")} /></span></label>
           <label className="block"><span className={labelClass}>Due</span><input type="datetime-local" value={dueAt} onChange={(event) => setDueAt(event.currentTarget.value)} className={fieldClass} /></label>
-          <label className="block"><span className={labelClass}>Priority</span><select value={priority} onChange={(event) => setPriority(event.currentTarget.value as TaskPriority)} className={fieldClass}><option value="normal">Normal</option><option value="urgent">Urgent</option></select></label>
+          <label className="block"><span className={labelClass}>Priority</span><select value={priority} onChange={(event) => {
+            const value = event.currentTarget.value;
+            if (value === "normal" || value === "urgent") setPriority(value);
+          }} className={fieldClass}><option value="normal">Normal</option><option value="urgent">Urgent</option></select></label>
         </div>
 
         {!task && (
@@ -508,7 +572,7 @@ function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }
             <form onSubmit={(event) => void addFollowUp(event)} className="mt-3 rounded-card bg-surface-2 p-4 shadow-ring-xs">
               <div className="flex items-center gap-2 text-label font-title text-ink-2"><Plus className="size-3.5" />Add a follow-up</div>
               <FollowUpFields at={followUpAt} note={followUpNote} repeat={repeat} onAt={setFollowUpAt} onNote={setFollowUpNote} onRepeat={setRepeat} quickTimes={quickTimes} />
-              <div className="mt-3 flex justify-end"><button disabled={pending || !followUpAt} className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-3 px-3 text-label font-title text-ink shadow-ring-xs disabled:opacity-50 hover:bg-wash-hover"><Clock3 className="size-3.5" />Schedule</button></div>
+              <div className="mt-3 flex justify-end"><button disabled={pending || !followUpAt} className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-3 px-3 text-label font-title text-ink shadow-ring-xs hover:bg-wash-hover disabled:opacity-50"><Clock3 className="size-3.5" />Schedule</button></div>
             </form>
           )}
         </div>
@@ -550,7 +614,7 @@ function FollowUpRow({ followUp, onAction, onOpen }: { followUp: FollowUp; onAct
       <div className="flex items-center gap-2">
         <i className={cn("size-2 shrink-0 rounded-full", tone)} aria-hidden />
         <span className="text-label text-ink">{label}</span>
-        <time className="text-meta font-meta tabular-nums text-ink-4">{formatWhen(followUp.firedAt ?? followUp.at)}</time>
+        <time className="text-meta font-meta text-ink-4 tabular-nums">{formatWhen(followUp.firedAt ?? followUp.at)}</time>
         {repeat && <span className="inline-flex items-center gap-1 text-meta font-meta text-ink-4"><Repeat2 className="size-3" />{repeat}</span>}
         {followUp.createdBy === "vivid" && <span className="text-meta font-meta text-ink-4">· by Vivid</span>}
         <span className="ml-auto flex items-center gap-1">
@@ -563,7 +627,7 @@ function FollowUpRow({ followUp, onAction, onOpen }: { followUp: FollowUp; onAct
         </span>
       </div>
       {followUp.note && <p className="mt-1 text-meta text-ink-3">{followUp.note}</p>}
-      {followUp.output && <p className="mt-1.5 line-clamp-3 whitespace-pre-wrap text-label text-ink-2">{followUp.output}</p>}
+      {followUp.output && <p className="mt-1.5 line-clamp-3 text-label whitespace-pre-wrap text-ink-2">{followUp.output}</p>}
       {followUp.error && <p className="mt-1 text-meta text-danger">{followUp.error}</p>}
     </div>
   );
