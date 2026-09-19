@@ -1,10 +1,26 @@
-import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import path from 'node:path'
-import test from 'node:test'
-import { fileURLToPath } from 'node:url'
+import * as NodeAssert from 'node:assert/strict'
+import * as NodeChildProcess from 'node:child_process'
+import * as NodeFS from 'node:fs'
+import * as NodeOS from 'node:os'
+import * as NodePath from 'node:path'
+import * as NodeTest from 'node:test'
+import * as NodeURL from 'node:url'
+import * as Result from 'effect/Result'
+import * as Schema from 'effect/Schema'
+
+const assert = NodeAssert
+const { execFileSync } = NodeChildProcess
+const { mkdtempSync, rmSync, writeFileSync } = NodeFS
+const { tmpdir } = NodeOS
+const path = NodePath
+const test = NodeTest.default
+const { fileURLToPath } = NodeURL
+const OxlintOutputSchema = Schema.Struct({
+  diagnostics: Schema.Array(Schema.Struct({ code: Schema.String, message: Schema.String })),
+})
+const ProcessFailureSchema = Schema.Struct({ stdout: Schema.String })
+const decodeProcessFailure = Schema.decodeUnknownResult(ProcessFailureSchema)
+const decodeOxlintOutput = Schema.decodeUnknownSync(Schema.fromJsonString(OxlintOutputSchema))
 
 const scriptsDirectory = path.dirname(fileURLToPath(import.meta.url))
 const repositoryRoot = path.resolve(scriptsDirectory, '..')
@@ -144,10 +160,11 @@ function lint(ruleName, source, filename = 'module.ts') {
         cwd: repositoryRoot,
         encoding: 'utf8',
       })
-      return JSON.parse(output).diagnostics ?? []
+      return decodeOxlintOutput(output).diagnostics
     } catch (cause) {
-      if (typeof cause.stdout !== 'string') throw cause
-      return JSON.parse(cause.stdout).diagnostics ?? []
+      const failure = decodeProcessFailure(cause)
+      if (Result.isFailure(failure)) throw cause
+      return decodeOxlintOutput(failure.success.stdout).diagnostics
     }
   } finally {
     rmSync(directory, { recursive: true, force: true })
@@ -173,9 +190,13 @@ for (const [ruleName, invalid, valid, filename] of cases) {
       )
       const mediumFindings = ruleDiagnostics(ruleName, medium)
       const highFindings = ruleDiagnostics(ruleName, high)
-      assert.match(mediumFindings[0]?.message ?? '', /compiled function is rebuilt/u)
-      assert.doesNotMatch(mediumFindings[0]?.message ?? '', /inline schema literal/u)
-      assert.match(highFindings[0]?.message ?? '', /inline schema literal and the compiled function/u)
+      const mediumFinding = mediumFindings[0]
+      const highFinding = highFindings[0]
+      assert.ok(mediumFinding)
+      assert.ok(highFinding)
+      assert.match(mediumFinding.message, /compiled function is rebuilt/u)
+      assert.doesNotMatch(mediumFinding.message, /inline schema literal/u)
+      assert.match(highFinding.message, /inline schema literal and the compiled function/u)
     }
 
     if (ruleName === 'no-manual-effect-runtime-in-tests') {
