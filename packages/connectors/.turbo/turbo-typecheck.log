@@ -1,4 +1,1 @@
-
-> @vivid/connectors@0.0.0 typecheck /home/kixey/agency/vivid/packages/connectors
-> tsc --noEmit
-
+$ tsc --noEmit

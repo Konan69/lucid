@@ -1,3 +1,4 @@
+import { Option, Schema } from "effect";
 import { ChevronDown, ChevronRight, Mic, Paperclip, ArrowUp, Square, UserPlus, PanelRight, ScrollText, Repeat2, Check, Mail, CalendarDays, HardDrive, Globe } from "lucide-react";
 import { useFlueAgent, type FlueConversationMessage } from "@flue/react";
 import { createFlueClient } from "@flue/sdk";
@@ -12,6 +13,21 @@ import { Face } from "../ui/Face";
 import { ConnectorRequestCard } from "../ui/ConnectorRequestCard";
 import { readConnectorRequest, connectorContinuation } from "../data/connectorRequests";
 
+const LiveMetadataSchema = Schema.Struct({
+  finishedAt: Schema.optionalKey(Schema.Number),
+  startedAt: Schema.optionalKey(Schema.Number),
+});
+const TrackedOutputSchema = Schema.Struct({
+  task: Schema.optionalKey(Schema.Struct({
+    title: Schema.optionalKey(Schema.String),
+    assignee: Schema.optionalKey(Schema.String),
+    dueAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  })),
+  followUp: Schema.optionalKey(Schema.NullOr(Schema.Struct({
+    at: Schema.optionalKey(Schema.String),
+    repeatEveryMs: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  }))),
+});
 export function Conversation({
   onOpenPanel,
   panelOpen,
@@ -39,7 +55,8 @@ export function Conversation({
   );
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: working ? "smooth" : "auto" });
+    const endElement = endRef.current;
+    if (endElement) endElement.scrollIntoView({ behavior: working ? "smooth" : "auto" });
   }, [agent.messages, working]);
 
   return (
@@ -56,7 +73,7 @@ export function Conversation({
       </header>
 
       <div className="flex-1 overflow-y-auto">
-        <ol className="mx-auto flex w-full max-w-(--thread-max-w) flex-col gap-5 px-4 py-5 sm:px-6 sm:py-6">
+        <ol className="mx-auto flex w-full max-w-(--thread-max-w) flex-col gap-5 px-4 py-5 sm:p-6">
           <li className="flex items-center gap-3" aria-hidden>
             <span className="h-px flex-1 bg-line-1" />
             <span className="text-meta font-meta text-ink-4">Today</span>
@@ -78,7 +95,7 @@ export function Conversation({
             </li>
           ))}
           {working && !hasStreamingAssistant && (
-            <li className="flex gap-3 animate-rise-in" aria-live="polite">
+            <li className="flex animate-rise-in gap-3" aria-live="polite">
               <Face size={24} mood="thinking" className="mt-1" />
               <p className="pt-1 text-body text-ink-4">Thinking…</p>
             </li>
@@ -87,7 +104,7 @@ export function Conversation({
             <li className="rounded-panel bg-danger-soft px-4 py-3 text-label text-danger ring-line">
               <div className="flex items-center gap-3">
                 <span className="min-w-0 flex-1">{agent.error.message}</span>
-                <button className="font-title underline" onClick={agent.refresh}>Retry connection</button>
+                <button className="font-title underline" onClick={() => agent.refresh()}>Retry connection</button>
               </div>
             </li>
           )}
@@ -96,6 +113,7 @@ export function Conversation({
       </div>
 
       <Composer
+        key={`${conversationId}:${initialDraft ?? ""}`}
         initialMessage={initialDraft}
         working={working}
         onSend={async (message) => {
@@ -115,7 +133,7 @@ export function DemoConversation({ conversationId }: { conversationId: string })
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0">
       <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
-        <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">{conversation?.title ?? "Demo conversation"}</h1>
+        <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">{conversation ? conversation.title : "Demo conversation"}</h1>
         <span className="rounded-full bg-surface-2 px-2.5 py-1 text-meta font-title text-ink-3 ring-line">Read-only demo</span>
       </header>
       <div className="flex-1 overflow-y-auto">
@@ -135,11 +153,9 @@ function LiveMessage({ message, working, onContinue }: { message: FlueConversati
     .map((part) => part.text)
     .join("\n\n");
   const tools = message.parts.filter((part) => part.type === "dynamic-tool");
-  const timestamp = typeof message.metadata?.finishedAt === "number"
-    ? message.metadata.finishedAt
-    : typeof message.metadata?.startedAt === "number"
-      ? message.metadata.startedAt
-      : undefined;
+  const metadataResult = Schema.decodeUnknownOption(LiveMetadataSchema)(message.metadata);
+  const metadata = Option.isSome(metadataResult) ? metadataResult.value : null;
+  const timestamp = metadata ? metadata.finishedAt ?? metadata.startedAt : undefined;
   const time = timestamp
     ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(timestamp)
     : "";
@@ -158,7 +174,7 @@ function LiveMessage({ message, working, onContinue }: { message: FlueConversati
   if (message.role === "system") {
     return (
       <div className="rounded-panel bg-surface-2 px-4 py-3 text-label text-ink-3 ring-line">
-        {message.settlement?.outcome === "failed" ? "Vivid could not complete that response. " : ""}
+        {message.settlement && message.settlement.outcome === "failed" ? "Vivid could not complete that response. " : ""}
         {text}
       </div>
     );
@@ -166,9 +182,10 @@ function LiveMessage({ message, working, onContinue }: { message: FlueConversati
 
   const tracked = tools.flatMap((tool) => {
     if (tool.state !== "output-available" || (tool.toolName !== "create_task" && tool.toolName !== "schedule_follow_up")) return [];
-    const output = tool.output as { task?: { title?: string; assignee?: string; dueAt?: string | null }; followUp?: { at?: string; repeatEveryMs?: number | null } | null } | undefined;
-    if (!output?.task?.title) return [];
-    return [{ id: tool.toolCallId, kind: tool.toolName, title: output.task.title, assignee: output.task.assignee, dueAt: output.task.dueAt ?? null, followUpAt: output.followUp?.at ?? null, repeats: !!output.followUp?.repeatEveryMs }];
+    const outputResult = Schema.decodeUnknownOption(TrackedOutputSchema)(tool.output);
+    const output = Option.isSome(outputResult) ? outputResult.value : null;
+    if (!output || !output.task || !output.task.title) return [];
+    return [{ id: tool.toolCallId, kind: tool.toolName, title: output.task.title, assignee: output.task.assignee, dueAt: output.task.dueAt ?? null, followUpAt: output.followUp ? output.followUp.at ?? null : null, repeats: !!(output.followUp && output.followUp.repeatEveryMs) }];
   });
   const connectorRequests = tools.flatMap((tool) => {
     if (tool.toolName !== "suggest_connector" || tool.state !== "output-available") return [];
@@ -225,12 +242,12 @@ function Markdown({ content }: { content: string }) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          a: ({ children, href, ...props }) => <a {...props} href={href} target="_blank" rel="noreferrer" className={href?.startsWith("/api/library/source") ? "inline-flex rounded-full bg-accent-soft px-2 py-0.5 text-label font-title text-accent-ink no-underline ring-line" : "text-accent-ink underline underline-offset-2"}>{children}</a>,
+          a: ({ children, href, ...props }) => <a {...props} href={href} target="_blank" rel="noreferrer" className={href && href.startsWith("/api/library/source") ? "inline-flex rounded-full bg-accent-soft px-2 py-0.5 text-label font-title text-accent-ink no-underline ring-line" : "text-accent-ink underline underline-offset-2"}>{children}</a>,
           blockquote: ({ children }) => <blockquote className="my-3 border-l-2 border-line-3 pl-3 text-ink-3">{children}</blockquote>,
           code: ({ children, className, ...props }) => <code {...props} className={cn("rounded-xs bg-surface-2 px-1 py-0.5 font-mono text-[0.9em]", className)}>{children}</code>,
-          h1: ({ children }) => <h1 className="mb-2 mt-4 text-page font-title first:mt-0">{children}</h1>,
-          h2: ({ children }) => <h2 className="mb-2 mt-4 text-dialog font-title first:mt-0">{children}</h2>,
-          h3: ({ children }) => <h3 className="mb-1.5 mt-3 text-title font-title first:mt-0">{children}</h3>,
+          h1: ({ children }) => <h1 className="mt-4 mb-2 text-page font-title first:mt-0">{children}</h1>,
+          h2: ({ children }) => <h2 className="mt-4 mb-2 text-dialog font-title first:mt-0">{children}</h2>,
+          h3: ({ children }) => <h3 className="mt-3 mb-1.5 text-title font-title first:mt-0">{children}</h3>,
           hr: () => <hr className="my-4 border-line-2" />,
           li: ({ children }) => <li className="ml-5 pl-1 marker:text-ink-4">{children}</li>,
           ol: ({ children }) => <ol className="my-2 list-decimal space-y-1">{children}</ol>,
@@ -269,7 +286,7 @@ export function FixtureMessage({ msg }: { msg: Msg }) {
               <ul className="mt-3 flex flex-col gap-2">
                 {msg.bullets.map((item) => (
                   <li key={item.lead} className="flex gap-2 text-label text-ink-2">
-                    <span className="mt-[7px] size-1 shrink-0 rounded-full bg-ink-4" />
+                    <span className="mt-1.75 size-1 shrink-0 rounded-full bg-ink-4" />
                     <span><strong className="font-title text-ink">{item.lead}</strong> · {item.rest}</span>
                   </li>
                 ))}
@@ -348,7 +365,7 @@ function ConnectServices({ services }: { services: Array<{ id: string; name: str
             {ok ? (
               <span className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-success-soft px-3 text-label text-success"><Check className="size-3.5" />Connected</span>
             ) : (
-              <button onClick={() => setDone((d) => ({ ...d, [s.id]: true }))} className="inline-flex h-8 shrink-0 items-center rounded-full bg-surface-3 px-4 text-label text-ink shadow-ring-xs ring-line transition-colors duration-(--dur-fast) hover:bg-wash-hover active:scale-[0.97]">Authorize</button>
+              <button onClick={() => setDone((d) => ({ ...d, [s.id]: true }))} className="inline-flex h-8 shrink-0 items-center rounded-full bg-surface-3 px-4 text-label text-ink shadow-ring-xs transition-colors duration-(--dur-fast) hover:bg-wash-hover active:scale-[0.97]">Authorize</button>
             )}
           </div>
         );
@@ -362,7 +379,7 @@ function WorkingBlock({ summary, steps, duration, delta, initiallyOpen }: { summ
   return (
     <div className="flex gap-3">
       <span className="mt-1 flex size-6 items-center justify-center">
-        <i className="size-2 rounded-full bg-working animate-status-pulse" />
+        <i className="size-2 animate-status-pulse rounded-full bg-working" />
       </span>
       <div className="min-w-0 flex-1">
         <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 rounded-row py-1 text-left hover:bg-wash-hover">
@@ -372,7 +389,7 @@ function WorkingBlock({ summary, steps, duration, delta, initiallyOpen }: { summ
           {delta && <span className="text-meta font-meta text-success">{delta}</span>}
         </button>
         {open && (
-          <ol className="ml-1.5 mt-1 flex flex-col gap-1.5 border-l border-line-2 pl-4 text-label text-ink-2">
+          <ol className="mt-1 ml-1.5 flex flex-col gap-1.5 border-l border-line-2 pl-4 text-label text-ink-2">
             {steps.map((s) => (
               <li key={s}>{s}</li>
             ))}
@@ -402,7 +419,7 @@ function InputCard({ title, question, options }: { title: string; question: stri
               <button
                 onClick={() => setPicked(i)}
                 className={cn(
-                  "flex w-full items-start gap-3 rounded-control px-3 py-2.5 text-left transition-colors duration-(--dur-fast) ring-line",
+                  "flex w-full items-start gap-3 rounded-control px-3 py-2.5 text-left ring-line transition-colors duration-(--dur-fast)",
                   picked === i ? "bg-accent-soft ring-accent" : "bg-surface-3 hover:bg-wash-hover",
                 )}
               >
@@ -418,7 +435,7 @@ function InputCard({ title, question, options }: { title: string; question: stri
         </ul>
         <input
           placeholder="Or type your own answer"
-          className="mt-2 h-9 w-full rounded-control bg-surface-3 px-3 text-label text-ink placeholder:text-ink-4 ring-line"
+          className="mt-2 h-9 w-full rounded-control bg-surface-3 px-3 text-label text-ink ring-line placeholder:text-ink-4"
         />
         <div className="mt-3 flex justify-end">
           <Button variant="primary" disabled={picked === null}>Answer</Button>
@@ -441,8 +458,6 @@ function Composer({
 }) {
   const [message, setMessage] = useState(initialMessage ?? "");
 
-  useEffect(() => { setMessage(initialMessage ?? ""); }, [initialMessage]);
-
   async function submit() {
     const body = message.trim();
     if (!body) return;
@@ -456,9 +471,9 @@ function Composer({
   }
 
   return (
-    <div className="shrink-0 px-3 pb-3 pt-2 sm:px-6 sm:pb-5">
+    <div className="shrink-0 px-3 pt-2 pb-3 sm:px-6 sm:pb-5">
       <div className="mx-auto w-full max-w-(--thread-max-w)">
-        <div className="relative rounded-composer bg-surface-3 shadow-composer ring-line">
+        <div className="relative rounded-composer bg-surface-3 shadow-composer">
         <textarea
           rows={1}
           placeholder="Message Vivid"
@@ -470,7 +485,7 @@ function Composer({
               void submit();
             }
           }}
-          className="block w-full resize-none bg-transparent px-5 pt-4 pb-2 text-body text-ink placeholder:text-ink-4 outline-none"
+          className="block w-full resize-none bg-transparent px-5 pt-4 pb-2 text-body text-ink outline-none placeholder:text-ink-4"
         />
         <div className="flex items-center gap-1 px-3 pb-3">
           <IconButton label="Attach"><Paperclip className="size-4" /></IconButton>
@@ -481,7 +496,7 @@ function Composer({
             disabled={!working && !message.trim()}
             onClick={() => void (working ? onStop() : submit())}
             className={cn(
-              "inline-flex size-8 items-center justify-center rounded-full text-ink-on-accent shadow-control transition-colors duration-(--dur-fast)",
+              "shadow-control inline-flex size-8 items-center justify-center rounded-full text-ink-on-accent transition-colors duration-(--dur-fast)",
               working ? "bg-danger" : "bg-accent hover:bg-accent-hover",
               !working && !message.trim() && "cursor-not-allowed opacity-40",
               "transition-[transform,background-color] duration-(--dur-fast) active:scale-[0.96]",

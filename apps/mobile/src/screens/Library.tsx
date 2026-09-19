@@ -35,7 +35,8 @@ export function Library({
   const { colors: c } = useTheme();
   const open = useOpenThread();
   const [path, setPath] = useState<Folder[]>([]);
-  const folderId = path.at(-1)?.id;
+  const currentFolder = path.at(-1);
+  const folderId = currentFolder === undefined ? undefined : currentFolder.id;
   const resource = useResource<{ documents: Document[]; folders: Folder[] }>(
     api,
     `/api/library${folderId ? `?folderId=${encodeURIComponent(folderId)}` : ""}`,
@@ -56,6 +57,8 @@ export function Library({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const data = resource.data;
+  const folderData = allFolders.data;
   const [results, setResults] = useState<
     {
       chunkId: string;
@@ -74,7 +77,7 @@ export function Library({
       await resource.refresh();
       await allFolders.refresh();
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -106,7 +109,7 @@ export function Library({
   return (
     <View style={{ flex: 1 }}>
       <Header
-        title={path.at(-1)?.name ?? "Library"}
+        title={currentFolder === undefined ? "Library" : currentFolder.name}
         onBack={() => {
           setResults(undefined);
           if (path.length) setPath((p) => p.slice(0, -1));
@@ -187,10 +190,10 @@ export function Library({
             />
           )}
         </View>
-        {results?.length === 0 && (
+        {results !== undefined && results.length === 0 && (
           <Label tone="ink-3">No passages found. Try a different phrase.</Label>
         )}
-        {results?.map((result) => (
+        {results !== undefined && results.map((result) => (
           <Card key={result.chunkId}>
             <Label size="label">
               {result.filename}
@@ -219,14 +222,15 @@ export function Library({
         </Label>
         {!resource.loading &&
           !resource.error &&
-          resource.data?.documents.length === 0 &&
-          resource.data.folders.length === 0 && (
+          data !== undefined &&
+          data.documents.length === 0 &&
+          data.folders.length === 0 && (
             <Empty
               title="Put a little context here."
               detail="Notes, briefs, the document you always have to explain. Vivid can read them when you ask."
             />
           )}
-        {resource.data?.folders.map((f) => (
+        {data !== undefined && data.folders.map((f) => (
           <Card key={f.id}>
             <View style={styles.row}>
               <FolderIcon size={22} color={c["ink-2"]} />
@@ -250,7 +254,7 @@ export function Library({
             </View>
           </Card>
         ))}
-        {resource.data?.documents.map((d) => (
+        {data !== undefined && data.documents.map((d) => (
           <Card key={d.id}>
             <View style={styles.row}>
               <FileText size={22} color={c["ink-2"]} />
@@ -363,7 +367,7 @@ export function Library({
           <Feedback error={error || allFolders.error} />
           {[
             { id: "", name: "Library" },
-            ...(allFolders.data?.folders ?? []).filter(
+            ...(folderData === undefined ? [] : folderData.folders).filter(
               (f) => f.id !== move.item.id,
             ),
           ].map((f) => (

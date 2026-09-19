@@ -8,6 +8,83 @@ packages:
   - "packages/design-tokens"
   - "packages/agent-runtime"
 
+# pnpm 12 reads project settings here. Keep registry credentials only in an
+# untracked .npmrc when a private registry eventually requires them.
+autoInstallPeers: false
+strictPeerDependencies: true
+# Strict peers stay on. These three are transitive peers of tools we do not run:
+# @shadcn/lint's ESLint parser (we load it through oxlint), Flue's decorator
+# transform, and alchemy's Cloudflare types pin.
+peerDependencyRules:
+  ignoreMissing:
+    - eslint
+    - '@babel/core'
+  allowedVersions:
+    '@cloudflare/workers-types': '5'
+verifyDepsBeforeRun: false
+pmOnFail: error
+
+# Every repeated stack pin has one owner. Manifests reference these entries with
+# catalog: so Effect/Drizzle/Flue/native TypeScript cannot drift by package.
+catalog:
+  '@alchemy.run/better-auth': 2.0.0-beta.79
+  '@effect/platform-node': 4.0.0-rc.116
+  '@effect/sql-pg': 4.0.0-rc.116
+  '@effect/vitest': 4.0.0-rc.116
+  '@flue/cli': 2.0.3
+  '@flue/postgres': 2.0.3
+  '@flue/react': 2.0.3
+  '@flue/runtime': 2.0.3
+  '@flue/sdk': 2.0.3
+  '@flue/vite': 2.0.3
+  '@types/node': ^24.0.0
+  vitest: 5.0.1
+  '@typescript/native': 'npm:typescript@7.0.2'
+  alchemy: 2.0.0-beta.79
+  better-auth: 1.7.5
+  drizzle-kit: 1.0.0-rc.5-ab785fc
+  drizzle-orm: 1.0.0-rc.5-ab785fc
+  effect: 4.0.0-rc.116
+  pg: ^8.23.0
+  typescript: 6.0.3
+  vite: 8.3.0
+
+# Root-only convergence keeps transitive peers on the same RCs as the direct
+# stack. Catalog references keep the override and direct declaration identical.
+overrides:
+  '@effect/platform-node': 'catalog:'
+  '@effect/sql-pg': 'catalog:'
+  drizzle-kit: 'catalog:'
+  drizzle-orm: 'catalog:'
+  effect: 'catalog:'
+
+# Only dependencies whose working artifact requires an install script may run
+# one. Optional accelerators and donation messages stay blocked.
+allowBuilds:
+  esbuild: true
+  sharp: true
+  workerd: true
+  '@google/genai': false
+  core-js-pure: false
+  msgpackr-extract: false
+  protobufjs: false
+
 patchedDependencies:
   '@react-native-menu/menu@2.0.0': patches/@react-native-menu__menu@2.0.0.patch
   react-native-gesture-handler@2.31.2: patches/react-native-gesture-handler@2.31.2.patch
+minimumReleaseAgeExclude:
+  - '@cloudflare/workers-types@5.20260919.1'
+  - '@effect/platform-node-shared@4.0.0-rc.116'
+  - '@effect/platform-node@4.0.0-rc.116'
+  - '@effect/sql-d1@4.0.0-rc.116'
+  - '@effect/sql-pg@4.0.0-rc.116'
+  - '@effect/sql-sqlite-do@4.0.0-rc.116'
+  - '@effect/vitest@4.0.0-rc.116'
+  - '@turbo/darwin-64@2.11.2'
+  - '@turbo/darwin-arm64@2.11.2'
+  - '@turbo/linux-64@2.11.2'
+  - '@turbo/linux-arm64@2.11.2'
+  - '@turbo/windows-64@2.11.2'
+  - '@turbo/windows-arm64@2.11.2'
+  - effect@4.0.0-rc.116
+  - turbo@2.11.2

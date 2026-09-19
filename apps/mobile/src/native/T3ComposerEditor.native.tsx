@@ -68,6 +68,42 @@ interface NativeComposerEditorProps extends ViewProps {
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
 
+/**
+ * Owns the mutable revision history exchanged with the native editor. Reads are stable during
+ * render; writes happen only from native event handlers or post-commit effects.
+ */
+class ComposerNativeEventHistory {
+  private renderedSequence = 0;
+  private snapshots: ComposerNativeEventSnapshot[];
+
+  constructor(initialSnapshot: ComposerNativeEventSnapshot) {
+    this.snapshots = [initialSnapshot];
+  }
+
+  includesUncommittedEvent(sequence: number) {
+    return sequence !== this.renderedSequence;
+  }
+
+  readSnapshots() {
+    return this.snapshots;
+  }
+
+  markRendered(sequence: number) {
+    this.renderedSequence = sequence;
+  }
+
+  append(snapshot: ComposerNativeEventSnapshot) {
+    this.snapshots.push(snapshot);
+  }
+
+  prune(acknowledgedEventCount: number) {
+    this.snapshots = pruneAcknowledgedComposerNativeEvents(
+      this.snapshots,
+      acknowledgedEventCount,
+    );
+  }
+}
+
 export function ComposerEditor({
   ref,
   skills: _skills = EMPTY_SKILLS,
@@ -86,10 +122,13 @@ export function ComposerEditor({
   const mostRecentEventCountRef = useRef(0);
   const [mostRecentEventCount, setMostRecentEventCount] = useState(0);
   const [nativeEventSequence, setNativeEventSequence] = useState(0);
-  const previousRenderedEventSequenceRef = useRef(0);
-  const nativeEventSnapshotsRef = useRef<ComposerNativeEventSnapshot[]>([
-    { eventCount: 0, value: props.value, selection: selection ?? null },
-  ]);
+  const [nativeEventHistory] = useState(
+    () => new ComposerNativeEventHistory({
+      eventCount: 0,
+      value: props.value,
+      selection: selection ?? null,
+    }),
+  );
   const textColor = useThemeColor("--color-foreground");
   const placeholderColor = useThemeColor("--color-placeholder");
   const chipBackground = useThemeColor("--color-subtle");
@@ -103,30 +142,39 @@ export function ComposerEditor({
   useImperativeHandle(
     ref,
     () => ({
-      focus: () => void nativeRef.current?.focus(),
-      blur: () => void nativeRef.current?.blur(),
-      setSelection: (nextSelection) =>
-        void nativeRef.current?.setSelection(nextSelection.start, nextSelection.end),
+      focus: () => {
+        const current = nativeRef.current;
+        if (current !== null) void current.focus();
+      },
+      blur: () => {
+        const current = nativeRef.current;
+        if (current !== null) void current.blur();
+      },
+      setSelection: (nextSelection) => {
+        const current = nativeRef.current;
+        if (current !== null) void current.setSelection(nextSelection.start, nextSelection.end);
+      },
     }),
     [],
   );
 
   // Vivid sends plain text; T3 file/skill chips are not exposed by its API.
   const tokensJson = "[]";
-  const includesNativeEvent = nativeEventSequence !== previousRenderedEventSequenceRef.current;
+  const nativeEventSnapshots = nativeEventHistory.readSnapshots();
+  const includesNativeEvent = nativeEventHistory.includesUncommittedEvent(nativeEventSequence);
   const controlledEventCount = includesNativeEvent
     ? resolveComposerControlledEventCount(
         props.value,
         selection ?? null,
         mostRecentEventCount,
-        nativeEventSnapshotsRef.current,
+        nativeEventSnapshots,
       )
     : mostRecentEventCount;
   const acknowledgesLatestNativeEvent = isComposerNativeEcho(
     props.value,
     selection ?? null,
     mostRecentEventCount,
-    nativeEventSnapshotsRef.current,
+    nativeEventSnapshots,
   );
   const isNativeEcho =
     includesNativeEvent &&
@@ -140,15 +188,12 @@ export function ComposerEditor({
     isNativeEcho,
   });
   useEffect(() => {
-    previousRenderedEventSequenceRef.current = nativeEventSequence;
-  }, [nativeEventSequence]);
+    nativeEventHistory.markRendered(nativeEventSequence);
+  }, [nativeEventHistory, nativeEventSequence]);
   useEffect(() => {
     if (!acknowledgesLatestNativeEvent) return;
-    nativeEventSnapshotsRef.current = pruneAcknowledgedComposerNativeEvents(
-      nativeEventSnapshotsRef.current,
-      mostRecentEventCount,
-    );
-  }, [acknowledgesLatestNativeEvent, mostRecentEventCount]);
+    nativeEventHistory.prune(mostRecentEventCount);
+  }, [acknowledgesLatestNativeEvent, mostRecentEventCount, nativeEventHistory]);
   const acceptNativeEvent = useCallback(
     (eventCount: number, value: string, nextSelection: ComposerEditorSelection) => {
       const acknowledgedEventCount = acknowledgeComposerNativeEvent(
@@ -159,14 +204,14 @@ export function ComposerEditor({
         return false;
       }
       mostRecentEventCountRef.current = acknowledgedEventCount;
-      nativeEventSnapshotsRef.current.push({
+      nativeEventHistory.append({
         eventCount: acknowledgedEventCount,
         value,
         selection: nextSelection,
       });
       return acknowledgedEventCount;
     },
-    [],
+    [nativeEventHistory],
   );
   const themeJson = JSON.stringify({
     text: composerColor(textColor, Platform.OS),
@@ -188,21 +233,9 @@ export function ComposerEditor({
         controlledDocumentJson={controlledDocumentJson}
         themeJson={themeJson}
         placeholder={props.placeholder ?? ""}
-        fontFamily={
-          typeof resolvedTextStyle.fontFamily === "string"
-            ? resolvedTextStyle.fontFamily
-            : regularFontFamily
-        }
-        fontSize={
-          typeof resolvedTextStyle.fontSize === "number"
-            ? resolvedTextStyle.fontSize
-            : MOBILE_TYPOGRAPHY.body.fontSize
-        }
-        lineHeight={
-          typeof resolvedTextStyle.lineHeight === "number"
-            ? resolvedTextStyle.lineHeight
-            : MOBILE_TYPOGRAPHY.body.lineHeight
-        }
+        fontFamily={resolvedTextStyle.fontFamily ?? regularFontFamily}
+        fontSize={resolvedTextStyle.fontSize ?? MOBILE_TYPOGRAPHY.body.fontSize}
+        lineHeight={resolvedTextStyle.lineHeight ?? MOBILE_TYPOGRAPHY.body.lineHeight}
         contentInsetVertical={contentInsetVertical}
         singleLineCentered={props.singleLineCentered ?? false}
         editable={props.editable ?? true}
@@ -219,7 +252,8 @@ export function ComposerEditor({
           );
           if (acknowledgedEventCount === false) return;
           onChangeText(event.nativeEvent.value);
-          onSelectionChange?.(event.nativeEvent.selection);
+          if (onSelectionChange !== undefined)
+            onSelectionChange(event.nativeEvent.selection);
           setMostRecentEventCount(acknowledgedEventCount);
           setNativeEventSequence((sequence) => sequence + 1);
         }}
@@ -230,16 +264,20 @@ export function ComposerEditor({
             event.nativeEvent.selection,
           );
           if (acknowledgedEventCount === false) return;
-          onSelectionChange?.(event.nativeEvent.selection);
+          if (onSelectionChange !== undefined)
+            onSelectionChange(event.nativeEvent.selection);
           setMostRecentEventCount(acknowledgedEventCount);
           setNativeEventSequence((sequence) => sequence + 1);
         }}
-        onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
+        onComposerPasteImages={(event) => {
+          if (onPasteImages !== undefined) onPasteImages(event.nativeEvent.uris);
+        }}
         onComposerFocus={onFocus}
         onComposerBlur={onBlur}
-        onComposerContentSizeChange={(event) =>
-          props.onContentHeightChange?.(event.nativeEvent.height)
-        }
+        onComposerContentSizeChange={(event) => {
+          if (props.onContentHeightChange !== undefined)
+            props.onContentHeightChange(event.nativeEvent.height);
+        }}
       />
     </View>
   );

@@ -15,8 +15,8 @@
     "test": "node --experimental-strip-types --test src/lib/*.test.ts"
   },
   "dependencies": {
-    "@flue/react": "2.0.3",
-    "@flue/sdk": "2.0.3",
+    "@flue/react": "catalog:",
+    "@flue/sdk": "catalog:",
     "@vivid/design-tokens": "workspace:*",
     "@react-native-community/datetimepicker": "9.1.0",
     "@react-native-menu/menu": "^2.0.0",
@@ -47,7 +47,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.0",
-    "@typescript/native": "npm:typescript@7.0.2",
-    "typescript": "6.0.3"
+    "@typescript/native": "catalog:",
+    "typescript": "catalog:"
   }
 }

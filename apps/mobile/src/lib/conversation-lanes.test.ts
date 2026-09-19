@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { laneConversations } from "../../../web/src/data/conversationLanes.ts";
 
-test("web and native grouping prioritizes pinned work without duplicating conversations", () => {
+void test("web and native grouping prioritizes pinned work without duplicating conversations", () => {
   const { lanes } = laneConversations([
     { id: "pinned-working", pinned: true, status: "working", when: "today" },
     { id: "approval", status: "approve", when: "today" },
@@ -23,7 +23,7 @@ test("web and native grouping prioritizes pinned work without duplicating conver
   assert.equal(new Set(lanes.flatMap((lane) => lane.items.map((t) => t.id))).size, 5);
 });
 
-test("snoozed conversations stay out of date groups and empty sections disappear", () => {
+void test("snoozed conversations stay out of date groups and empty sections disappear", () => {
   const { lanes, snoozed } = laneConversations([
     { id: "later", status: "ready", when: "today", snoozeUntil: "2099-01-01" },
     { id: "yesterday", status: "ready", when: "yesterday" },

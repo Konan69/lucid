@@ -1,4 +1,1 @@
-
-> @vivid/mobile@0.1.0 typecheck /home/kixey/agency/vivid/apps/mobile
-> tsc --noEmit
-
+$ tsc --noEmit

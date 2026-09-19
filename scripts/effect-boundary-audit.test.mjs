@@ -28,7 +28,7 @@ export const lazy = Effect.promise(() => Promise.resolve(1));
 `
 
 /** The fixture exercises every inventoried syntax family with stable owning symbols. */
-test('inventories requested boundary syntax with enclosing symbols', () => {
+void test('inventories requested boundary syntax with enclosing symbols', () => {
   const findings = scanSource(fixtureFile, fixtureSource)
   const kinds = findings.map((finding) => finding.kind).toSorted((left, right) => left.localeCompare(right))
 
@@ -59,7 +59,7 @@ test('inventories requested boundary syntax with enclosing symbols', () => {
 })
 
 /** Exclusions protect the production signal without hiding similarly named domain modules. */
-test('selects tracked production TypeScript paths narrowly', () => {
+void test('selects tracked production TypeScript paths narrowly', () => {
   assert.equal(isProductionTypeScript('apps/server/src/config.ts'), true)
   assert.equal(isProductionTypeScript('packages/contracts/src/schema.ts'), true)
   assert.equal(isProductionTypeScript('apps/web/src/App.tsx'), false)
@@ -69,7 +69,7 @@ test('selects tracked production TypeScript paths narrowly', () => {
 })
 
 /** Grouping symbols by file remains exact while duplicates, wildcards, and stale entries fail loudly. */
-test('validates exact allowlist entries', () => {
+void test('validates exact allowlist entries', () => {
   const findings = scanSource(fixtureFile, fixtureSource)
   const exact = [{ file: fixtureFile, symbols: ['load'], classification: 'legacy-runtime-boundary' }]
   assert.equal(validateAllowlist(exact, findings).size, 1)
@@ -93,7 +93,7 @@ test('validates exact allowlist entries', () => {
 })
 
 /** JSON-facing reports remain ordered and enforce mode still exposes migration debt. */
-test('builds deterministic reports and readable summaries', () => {
+void test('builds deterministic reports and readable summaries', () => {
   const findings = scanSource(fixtureFile, fixtureSource)
   const allowed = validateAllowlist(
     [{ file: fixtureFile, symbols: ['load'], classification: 'legacy-runtime-boundary' }],

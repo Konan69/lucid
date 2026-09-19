@@ -19,10 +19,10 @@ Skip unnecessary builds when a package hasn't changed using `turbo-ignore`.
 ### Installation
 
 ```bash
-npx turbo-ignore
+pnpm exec turbo-ignore
 ```
 
-Or install globally in your project:
+Or install it in the project:
 
 ```bash
 pnpm add -D turbo-ignore
@@ -35,7 +35,7 @@ pnpm add -D turbo-ignore
 3. Select "Custom" and enter:
 
 ```bash
-npx turbo-ignore
+pnpm exec turbo-ignore
 ```
 
 ### How It Works
@@ -51,13 +51,13 @@ npx turbo-ignore
 
 ```bash
 # Check specific package
-npx turbo-ignore web
+pnpm exec turbo-ignore web
 
 # Use specific comparison ref
-npx turbo-ignore --fallback=HEAD~1
+pnpm exec turbo-ignore --fallback=HEAD~1
 
 # Verbose output
-npx turbo-ignore --verbose
+pnpm exec turbo-ignore --verbose
 ```
 
 ## Environment Variables

@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { useEffect, useState } from "react";
 import { Check, ExternalLink } from "lucide-react";
 import {
@@ -8,6 +9,21 @@ import {
 } from "../data/connectorRequests";
 import { ToolMarks } from "./ToolMarks";
 
+const ConnectorStatusResponseSchema = Schema.Struct({
+  connectors: Schema.Array(Schema.Struct({
+    id: Schema.String,
+    status: Schema.Literals(["disconnected", "connecting", "connected", "error"] as const),
+  })),
+});
+const ConnectorStatusResponseJsonSchema = Schema.fromJsonString(ConnectorStatusResponseSchema);
+const ConnectorAuthResponseSchema = Schema.Struct({ authUrl: Schema.String });
+const ConnectorAuthResponseJsonSchema = Schema.fromJsonString(ConnectorAuthResponseSchema);
+
+/** Converts an unknown async failure into the message shown by this card. */
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : "Could not complete the connection. Try again.";
+}
+
 export function ConnectorRequestCard({
   request,
   onContinue,
@@ -17,7 +33,7 @@ export function ConnectorRequestCard({
   onContinue: () => Promise<void>;
   disabled: boolean;
 }) {
-  const [status, setStatus] = useState<ConnectorStatus["status"]>();
+  const [status, setStatus] = useState<ConnectorStatus["status"] | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [authUrl, setAuthUrl] = useState("");
@@ -28,12 +44,14 @@ export function ConnectorRequestCard({
       try {
         const response = await fetch("/api/connectors");
         if (!response.ok) throw new Error("Could not check this connection. Try again.");
-        const data = (await response.json()) as { connectors: ConnectorStatus[] };
+        const payload = await response.text();
+        const data = Schema.decodeUnknownSync(ConnectorStatusResponseJsonSchema)(payload);
+        const connector = data.connectors.find((item) => item.id === request.connector);
         if (active) {
-          setStatus(data.connectors.find((item) => item.id === request.connector)?.status);
+          setStatus(connector === undefined ? "disconnected" : connector.status);
         }
       } catch (cause) {
-        if (active) setError((cause as Error).message);
+        if (active) setError(errorMessage(cause));
       }
     }
     void refresh();
@@ -65,14 +83,15 @@ export function ConnectorRequestCard({
       else {
         const response = await fetch(`/api/connectors/${request.connector}/auth`);
         if (!response.ok) throw new Error("Could not start sign-in. Try again.");
-        const data = (await response.json()) as { authUrl: unknown };
+        const payload = await response.text();
+        const data = Schema.decodeUnknownSync(ConnectorAuthResponseJsonSchema)(payload);
         const url = authorizationAddress(data.authUrl);
         setAuthUrl(url);
         if (popup) popup.location.href = url;
       }
     } catch (cause) {
-      popup?.close();
-      setError((cause as Error).message);
+      if (popup) popup.close();
+      setError(errorMessage(cause));
     } finally {
       setBusy(false);
     }

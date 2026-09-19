@@ -42,7 +42,7 @@ export function productionFiles(root = repositoryRoot) {
     }
   }
   for (const rootPath of roots) visit(rootPath)
-  return files.sort()
+  return files.sort((left, right) => left.localeCompare(right))
 }
 
 const propertyName = (node) => {

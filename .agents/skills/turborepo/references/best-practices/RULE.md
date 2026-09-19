@@ -133,11 +133,7 @@ Only these belong in root `package.json`:
 Use workspace protocol for internal packages:
 
 ```json
-// pnpm/bun
 { "@repo/ui": "workspace:*" }
-
-// npm/yarn
-{ "@repo/ui": "*" }
 ```
 
 ## Exports Best Practices
@@ -181,7 +177,7 @@ export * from './modal';
 { "name": "@repo/ui" }
 { "name": "@acme/utils" }
 
-// Avoid (conflicts with npm registry)
+// Avoid (conflicts with the public package registry)
 { "name": "ui" }
 { "name": "utils" }
 ```

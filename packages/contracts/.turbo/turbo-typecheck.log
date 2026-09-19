@@ -1,4 +1,1 @@
-
-> @vivid/contracts@0.0.0 typecheck /home/kixey/agency/vivid/packages/contracts
-> tsc --noEmit
-
+$ tsc --noEmit

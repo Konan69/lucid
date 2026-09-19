@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-process.env.DATABASE_URL ??= "postgres://vivid:vivid@127.0.0.1:5434/vivid_runtime";
+process.env.DATABASE_URL ??= "postgres://vivid:vivid@127.0.0.1:55433/vivid";
 const store = await import("./routine-store.ts");
 
 void test("an unfinished routine run remains resumable by its Flue submission", async () => {

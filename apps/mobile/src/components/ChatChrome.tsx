@@ -118,7 +118,9 @@ export function ChatComposer({
   const [height, setHeight] = useState(44);
   const [tools, setTools] = useState(false);
   useEffect(() => {
-    if (focusRequest) editor.current?.focus();
+    if (!focusRequest) return;
+    const currentEditor = editor.current;
+    if (currentEditor !== null) currentEditor.focus();
   }, [focusRequest]);
   return (
     <View

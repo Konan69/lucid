@@ -1,4 +1,1 @@
-
-> @vivid/web@0.0.0 typecheck /home/kixey/agency/vivid/apps/web
-> tsc -b
-
+$ tsc -b

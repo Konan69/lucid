@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { ScrollView, View, RefreshControl } from "react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Check, Plus, Bell, Circle } from "lucide-react-native";
@@ -19,6 +19,39 @@ import {
   styles,
 } from "../components/ui";
 
+const CURRENT_TIME_REFRESH_MS = 15_000;
+const currentTimeListeners = new Set<() => void>();
+let currentTime = Date.now();
+let currentTimeTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Keeps overdue groups and follow-up defaults on a stable, periodically refreshed snapshot. */
+function subscribeCurrentTime(listener: () => void) {
+  currentTimeListeners.add(listener);
+  if (currentTimeTimer === null) {
+    const update = () => {
+      currentTime = Date.now();
+      for (const currentListener of currentTimeListeners) currentListener();
+    };
+    update();
+    currentTimeTimer = setInterval(update, CURRENT_TIME_REFRESH_MS);
+  }
+  return () => {
+    currentTimeListeners.delete(listener);
+    if (currentTimeListeners.size === 0 && currentTimeTimer !== null) {
+      clearInterval(currentTimeTimer);
+      currentTimeTimer = null;
+    }
+  };
+}
+
+function getCurrentTime() {
+  return currentTime;
+}
+
+function useCurrentTime() {
+  return useSyncExternalStore(subscribeCurrentTime, getCurrentTime, getCurrentTime);
+}
+
 export function Today({ navigation }: NativeStackScreenProps<Routes, "Today">) {
   const { api } = useWorkspace();
   const { colors: c } = useTheme();
@@ -34,8 +67,14 @@ export function Today({ navigation }: NativeStackScreenProps<Routes, "Today">) {
   const [showDone, setShowDone] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const selected = tasks.data?.tasks.find((t) => t.id === selectedId);
-  async function act(path: string, method = "POST", body?: unknown) {
+  const now = useCurrentTime();
+  const tasksData = tasks.data;
+  const notificationsData = notifications.data;
+  const selected = tasksData === undefined
+    ? undefined
+    : tasksData.tasks.find((t) => t.id === selectedId);
+  type RequestBody = Record<string, string | number | boolean | null | readonly string[]>;
+  async function act(path: string, method = "POST", body?: RequestBody) {
     if (busy) return;
     setBusy(true);
     setError("");
@@ -43,26 +82,27 @@ export function Today({ navigation }: NativeStackScreenProps<Routes, "Today">) {
       await api.request(path, method, body);
       await Promise.all([tasks.refresh(), notifications.refresh()]);
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   }
-  const visible =
-    tasks.data?.tasks.filter((t) =>
-      showDone ? t.status !== "open" : t.status === "open",
-    ) ?? [];
+  const visible = tasksData === undefined
+    ? []
+    : tasksData.tasks.filter((t) =>
+        showDone ? t.status !== "open" : t.status === "open",
+      );
   const groups = [
     {
       title: "Overdue",
       items: visible.filter(
-        (t) => t.status === "open" && t.dueAt !== null && t.dueAt < Date.now(),
+        (t) => t.status === "open" && t.dueAt !== null && t.dueAt < now,
       ),
     },
     {
       title: showDone ? "Settled" : "On your plate",
       items: visible.filter(
-        (t) => t.status !== "open" || t.dueAt === null || t.dueAt >= Date.now(),
+        (t) => t.status !== "open" || t.dueAt === null || t.dueAt >= now,
       ),
     },
   ];
@@ -98,7 +138,7 @@ export function Today({ navigation }: NativeStackScreenProps<Routes, "Today">) {
             void notifications.refresh();
           }}
         />
-        {!!notifications.data?.unreadCount && (
+        {notificationsData !== undefined && !!notificationsData.unreadCount && (
           <Card>
             <View style={styles.row}>
               <Bell size={18} color={c["ink-2"]} />
@@ -106,39 +146,42 @@ export function Today({ navigation }: NativeStackScreenProps<Routes, "Today">) {
                 While you were away
               </Label>
             </View>
-            {notifications.data.notifications
+            {notificationsData.notifications
               .filter((n) => !n.readAt)
               .slice(0, 6)
-              .map((n) => (
-                <View key={n.id} style={{ gap: 8 }}>
-                  <Label size="footnote">{n.title}</Label>
-                  <Label size="label" tone="ink-3">
-                    {n.body}
-                  </Label>
-                  <View style={styles.wrap}>
-                    {n.conversationId && (
+              .map((n) => {
+                const conversationId = n.conversationId;
+                return (
+                  <View key={n.id} style={{ gap: 8 }}>
+                    <Label size="footnote">{n.title}</Label>
+                    <Label size="label" tone="ink-3">
+                      {n.body}
+                    </Label>
+                    <View style={styles.wrap}>
+                      {conversationId && (
+                        <ControlPill
+                          label="Open conversation"
+                          onPress={() => {
+                            openThread(conversationId, n.title);
+                            void act("/api/notifications/read", "POST", {
+                              ids: [n.id],
+                            });
+                          }}
+                        />
+                      )}
                       <ControlPill
-                        label="Open conversation"
-                        onPress={() => {
-                          openThread(n.conversationId!, n.title);
+                        label="Mark read"
+                        disabled={busy}
+                        onPress={() =>
                           void act("/api/notifications/read", "POST", {
                             ids: [n.id],
-                          });
-                        }}
+                          })
+                        }
                       />
-                    )}
-                    <ControlPill
-                      label="Mark read"
-                      disabled={busy}
-                      onPress={() =>
-                        void act("/api/notifications/read", "POST", {
-                          ids: [n.id],
-                        })
-                      }
-                    />
+                    </View>
                   </View>
-                </View>
-              ))}
+                );
+              })}
             <ControlPill
               label="Mark all read"
               disabled={busy}
@@ -397,7 +440,7 @@ export function Today({ navigation }: NativeStackScreenProps<Routes, "Today">) {
               key: "at",
               label: "When",
               date: true,
-              value: localDate(Date.now() + 86_400_000),
+              value: localDate(now + 86_400_000),
             },
             { key: "note", label: "What should Vivid check?", multiline: true },
             {

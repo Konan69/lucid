@@ -91,12 +91,14 @@ export function ToolMarks({ tools, size = 16, className }: { tools: string[]; si
       {tools.map((t) => {
         const Mark = TOOLS.get(t);
         if (!Mark) return null;
+        // SAFETY: React forwards this validated CSS custom property to the element.
+        const markStyle = { "--tool-size": `${size}px` } as React.CSSProperties;
         return (
           <span
             key={t}
             title={t}
-            className="inline-flex shrink-0 items-center justify-center overflow-hidden rounded-[4px] shadow-ring-xs"
-            style={{ width: size, height: size }}
+            className="inline-flex size-(--tool-size) shrink-0 items-center justify-center overflow-hidden rounded-[4px] shadow-ring-xs"
+            style={markStyle}
           >
             <Mark />
           </span>

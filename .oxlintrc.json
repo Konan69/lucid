@@ -1,11 +1,30 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "unicorn", "oxc", "react"],
+  "plugins": ["eslint", "typescript", "unicorn", "oxc", "react"],
   "categories": {
-    "correctness": "error"
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
   },
   "env": {
     "builtin": true
+  },
+  "settings": {
+    "shadcn": {
+      "ui": "@/ui",
+      "componentImports": [
+        "(^|/)ui(/|$)"
+      ],
+      "note": "Use Vivid's existing component variant or semantic token. Change a component contract only with UI-owner review."
+    },
+    "tailwindcss": {
+      "entryPoint": [
+        {
+          "files": "apps/web/src/**",
+          "use": "apps/web/src/styles/index.css"
+        }
+      ]
+    }
   },
   "ignorePatterns": [
     "**/node_modules/**",
@@ -44,7 +63,9 @@
     {
       "name": "anti-slop-effect",
       "specifier": "./tools/oxlint/anti-slop/effect/index.ts"
-    }
+    },
+    "@shadcn/lint",
+    "oxlint-tailwindcss"
   ],
   "rules": {
     "no-restricted-globals": [
@@ -67,6 +88,26 @@
         "message": "Keep typed Effect failures in the error channel until the owning runtime boundary."
       }
     ],
+    "eslint/no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "regex": "^\\.\\.?/(?:.*?/)*(?:packages/)?(?:client-runtime|contracts)(?:/|$)",
+            "message": "Import from @vivid/client-runtime or @vivid/contracts instead of crossing a package boundary with a relative path."
+          }
+        ]
+      }
+    ],
+    "eslint/no-await-in-loop": "off",
+    "eslint/no-underscore-dangle": "off",
+    "react/capitalized-calls": "off",
+    "react/exhaustive-effect-dependencies": "off",
+    "react/hooks": "off",
+    "react/jsx-no-constructed-context-values": "off",
+    "react/react-in-jsx-scope": "off",
+    "typescript/no-unsafe-type-assertion": "off",
+    "unicorn/consistent-function-scoping": "off",
     "anti-slop/no-chained-type-assertions": "warn",
     "anti-slop/no-conditional-empty-object-spread": "warn",
     "anti-slop/no-known-value-widening": "error",
@@ -97,7 +138,10 @@
     "vivid/no-effect-option-constructors": "error",
     "vivid/no-effect-runtime-api": "error",
     "vivid/no-effect-wrapper-for-sync-callback-api": "error",
+    "vivid/no-global-process-runtime": "warn",
     "vivid/no-host-transform-validation": "warn",
+    "vivid/no-inline-schema-compile": "warn",
+    "vivid/no-manual-effect-runtime-in-tests": "error",
     "vivid/no-non-null-assertion": "warn",
     "vivid/no-optional-chaining": "warn",
     "vivid/no-parse-method-alias": "error",
@@ -109,6 +153,7 @@
     "vivid/no-try-catch": "warn",
     "vivid/no-undefined-in-union": "warn",
     "vivid/no-unnecessary-die": "error",
+    "vivid/namespace-node-imports": "warn",
     "vivid/require-named-effect-fn": "warn",
     "vivid/require-schema-class-identifier": "error",
     "vivid/require-schema-class-title": "warn",
@@ -116,19 +161,96 @@
   },
   "overrides": [
     {
-      "files": ["alchemy.run.ts"],
+      "files": [
+        "alchemy.run.ts"
+      ],
       "rules": {
         "no-restricted-properties": "off"
       }
     },
     {
-      "files": ["apps/{server,web}/src/**/*.{ts,tsx}", "packages/*/src/**/*.{ts,tsx}"],
+      "files": [
+        "apps/{server,web}/src/**/*.{ts,tsx}",
+        "packages/*/src/**/*.{ts,tsx}"
+      ],
       "rules": {
         "typescript/no-explicit-any": "warn"
       }
     },
     {
-      "files": ["apps/{mobile,web}/**/*.{ts,tsx}"],
+      "files": [
+        "apps/web/src/**/*.tsx"
+      ],
+      "rules": {
+        "shadcn/no-restyle": [
+          "error",
+          {
+            "allow": [
+              "layout"
+            ],
+            "contracts": [
+              {
+                "pattern": "^(Button|IconButton)$",
+                "allow": [
+                  "layout"
+                ],
+                "message": {
+                  "spacing": "Use a {{component}} size: {{sizes|none defined}}.",
+                  "default": "Use a {{component}} variant: {{variants|none defined}}."
+                }
+              },
+              {
+                "pattern": "^Card$",
+                "allow": [
+                  "layout",
+                  "spacing"
+                ],
+                "message": "Card owns surface, radius, and elevation; callers may control placement and content spacing."
+              },
+              {
+                "pattern": "^(Avatar|Face|StatusLabel|StatusDot|ToolMarks)$",
+                "allow": [
+                  "layout"
+                ],
+                "message": "This primitive owns its visual treatment; callers may control placement only."
+              }
+            ]
+          }
+        ],
+        "shadcn/no-raw-colors": "warn",
+        "shadcn/no-arbitrary-values": "warn",
+        "shadcn/no-inline-styles": "warn",
+        "shadcn/no-unknown-classes": "warn",
+        "shadcn/require-static-classes": "error",
+        "tailwindcss/no-duplicate-classes": "error",
+        "tailwindcss/no-conflicting-classes": "warn",
+        "tailwindcss/no-deprecated-classes": "error",
+        "tailwindcss/no-unnecessary-whitespace": "error",
+        "tailwindcss/no-dark-without-light": "error",
+        "tailwindcss/no-contradicting-variants": "error",
+        "tailwindcss/enforce-canonical": "warn",
+        "tailwindcss/enforce-sort-order": "warn",
+        "tailwindcss/enforce-shorthand": "warn",
+        "tailwindcss/enforce-consistent-important-position": "error",
+        "tailwindcss/enforce-negative-arbitrary-values": "error",
+        "tailwindcss/enforce-consistent-variable-syntax": "error",
+        "tailwindcss/consistent-variant-order": "error"
+      }
+    },
+    {
+      "files": [
+        "apps/web/src/ui/**/*.{ts,tsx}"
+      ],
+      "rules": {
+        "shadcn/no-restyle": "off",
+        "shadcn/no-arbitrary-values": "off",
+        "shadcn/require-static-classes": "off"
+      }
+    },
+    {
+      "files": [
+        "apps/{mobile,web}/**/*.{ts,tsx}"
+      ],
       "rules": {
         "vivid/react-no-derived-state-effect": "warn",
         "vivid/react-no-inline-context-value": "warn",
@@ -136,19 +258,25 @@
       }
     },
     {
-      "files": ["apps/server/src/auth.ts"],
+      "files": [
+        "apps/server/src/auth.ts"
+      ],
       "rules": {
         "vivid/better-auth-secure-options": "error"
       }
     },
     {
-      "files": ["**/drizzle.config.ts"],
+      "files": [
+        "**/drizzle.config.ts"
+      ],
       "rules": {
         "vivid/require-drizzle-config-paths": "error"
       }
     },
     {
-      "files": ["apps/mobile/**/*.{ts,tsx}"],
+      "files": [
+        "apps/mobile/**/*.{ts,tsx}"
+      ],
       "rules": {
         "anti-slop-effect/no-service-constructor-imports": "off",
         "no-restricted-properties": "off",
@@ -156,7 +284,12 @@
       }
     },
     {
-      "files": ["**/*.test.{ts,tsx}", "**/*.spec.{ts,tsx}", "**/test/**", "**/tests/**"],
+      "files": [
+        "**/*.test.{ts,tsx}",
+        "**/*.spec.{ts,tsx}",
+        "**/test/**",
+        "**/tests/**"
+      ],
       "rules": {
         "typescript/no-explicit-any": "off",
         "no-restricted-properties": "off",
@@ -166,13 +299,25 @@
       }
     },
     {
-      "files": ["**/*.config.*", "scripts/**", "**/scripts/**"],
+      "files": [
+        "**/*.config.*",
+        "scripts/**",
+        "**/scripts/**"
+      ],
       "rules": {
         "typescript/no-explicit-any": "off",
         "no-restricted-properties": "off",
         "vivid/no-direct-process-env": "off",
         "vivid/no-runtime-env-mutation": "off",
         "vivid/no-try-catch": "off"
+      }
+    },
+    {
+      "files": [
+        "apps/web/src/ui/ToolMarks.tsx"
+      ],
+      "rules": {
+        "shadcn/no-raw-colors": "off"
       }
     }
   ]

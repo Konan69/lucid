@@ -21,53 +21,33 @@ jobs:
         with:
           fetch-depth: 2
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
+          cache: "pnpm"
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build and Test
-        run: turbo run build test lint
+        run: pnpm exec turbo run build test lint
 ```
 
 ## Package Manager Setup
 
-### pnpm
+Vivid's `packageManager` field owns the exact pnpm version, so the setup action reads it directly.
 
 ```yaml
-- uses: pnpm/action-setup@v3
-  with:
-    version: 9
+- uses: pnpm/action-setup@v4
 
 - uses: actions/setup-node@v4
   with:
-    node-version: 20
+    node-version: 24
     cache: "pnpm"
 
 - run: pnpm install --frozen-lockfile
-```
-
-### Yarn
-
-```yaml
-- uses: actions/setup-node@v4
-  with:
-    node-version: 20
-    cache: "yarn"
-
-- run: yarn install --frozen-lockfile
-```
-
-### Bun
-
-```yaml
-- uses: oven-sh/setup-bun@v1
-  with:
-    bun-version: latest
-
-- run: bun install --frozen-lockfile
 ```
 
 ## Remote Cache Setup
@@ -109,7 +89,7 @@ If you can't use remote cache, cache Turborepo's local cache directory:
 - uses: actions/cache@v4
   with:
     path: .turbo
-    key: turbo-${{ runner.os }}-${{ hashFiles('**/turbo.json', '**/package-lock.json') }}
+    key: turbo-${{ runner.os }}-${{ hashFiles('**/turbo.json', '**/pnpm-lock.yaml') }}
     restore-keys: |
       turbo-${{ runner.os }}-
 ```

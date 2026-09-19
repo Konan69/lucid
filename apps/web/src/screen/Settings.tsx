@@ -7,6 +7,14 @@ import { Connectors } from "./Connectors";
 export type ThemePreference = "system" | "light" | "dark";
 type Section = "general" | "connectors" | "computer" | "privacy" | "about";
 
+const SECTION_LABELS = {
+  general: "General",
+  connectors: "Connectors",
+  computer: "Computer",
+  privacy: "Privacy",
+  about: "About",
+} satisfies Record<Section, string>;
+
 const NAV: Array<{ id: Section; label: string; icon: React.ReactNode }> = [
   { id: "general", label: "General", icon: <Settings2 className="size-4" /> },
   { id: "connectors", label: "Connectors", icon: <Plug className="size-4" /> },
@@ -28,11 +36,11 @@ export function Settings({ theme, onThemeChange, onClose, initialSection = "gene
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-scrim p-0 sm:p-6"
+      className="fixed inset-0 z-60 flex items-center justify-center bg-scrim p-0 sm:p-6"
       role="presentation"
       onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
     >
-      <section aria-label="Settings" aria-modal="true" role="dialog" className="flex h-full max-h-[720px] w-full max-w-[1040px] overflow-hidden bg-surface-0 shadow-ring-lg animate-fade-in sm:rounded-panel">
+      <section aria-label="Settings" aria-modal="true" role="dialog" className="flex size-full max-h-180 max-w-260 animate-fade-in overflow-hidden bg-surface-0 shadow-ring-lg sm:rounded-panel">
         <aside className="hidden w-56 shrink-0 flex-col bg-surface-1 p-3 hairline-r sm:flex">
           <div className="mb-2 flex h-10 items-center px-3 text-title font-title text-ink">Settings</div>
           <SettingsNav section={section} onChange={setSection} />
@@ -40,7 +48,7 @@ export function Settings({ theme, onThemeChange, onClose, initialSection = "gene
 
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="flex h-14 shrink-0 items-center gap-2 px-4 sm:px-7">
-            <h1 className="min-w-0 flex-1 truncate text-section font-title text-ink">{NAV.find((item) => item.id === section)?.label}</h1>
+            <h1 className="min-w-0 flex-1 truncate text-section font-title text-ink">{SECTION_LABELS[section]}</h1>
             <button onClick={onClose} aria-label="Close settings" className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"><X className="size-4" /></button>
           </header>
 
@@ -93,7 +101,10 @@ function GeneralSettings({ theme, onThemeChange }: { theme: ThemePreference; onT
 
       <SettingsGroup label="Appearance">
         <SettingRow label="Theme">
-          <select aria-label="Theme" value={theme} onChange={(event) => onThemeChange(event.target.value as ThemePreference)} className="h-8 rounded-control bg-surface-3 px-3 text-label text-ink ring-line outline-none focus:ring-2 focus:ring-ring">
+          <select aria-label="Theme" value={theme} onChange={(event) => {
+            const value = event.currentTarget.value;
+            if (value === "system" || value === "light" || value === "dark") onThemeChange(value);
+          }} className="h-8 rounded-control bg-surface-3 px-3 text-label text-ink ring-line outline-none focus:ring-2 focus:ring-ring">
             <option value="system">Follow system</option>
             <option value="light">Light</option>
             <option value="dark">Dark</option>
@@ -147,7 +158,7 @@ function SettingsGroup({ label, children }: { label: string; children: React.Rea
   return (
     <section>
       <h2 className="mb-2 px-1 text-label font-meta text-ink-3">{label}</h2>
-      <div className="overflow-hidden rounded-panel bg-surface-2 ring-line divide-y divide-line-2">{children}</div>
+      <div className="divide-y divide-line-2 overflow-hidden rounded-panel bg-surface-2 ring-line">{children}</div>
     </section>
   );
 }
@@ -157,7 +168,7 @@ function SettingRow({ label, note, children }: { label: React.ReactNode; note?: 
     <div className="flex min-h-14 items-center gap-4 px-4 py-3">
       <span className="min-w-0 flex-1">
         <span className="block text-label font-title text-ink">{label}</span>
-        {note && <span className="mt-0.5 block max-w-xl text-meta font-meta leading-body text-ink-3">{note}</span>}
+        {note && <span className="mt-0.5 block max-w-xl text-meta leading-(--leading-body) font-meta text-ink-3">{note}</span>}
       </span>
       <span className="shrink-0">{children}</span>
     </div>
@@ -166,7 +177,7 @@ function SettingRow({ label, note, children }: { label: React.ReactNode; note?: 
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange?: (v: boolean) => void }) {
   return (
-    <button type="button" role="switch" aria-checked={checked} onClick={() => onChange?.(!checked)} className={cn("inline-flex h-6 w-10 items-center rounded-full p-0.5", checked ? "justify-end bg-accent" : "justify-start bg-line-4")}>
+    <button type="button" role="switch" aria-checked={checked} onClick={() => { if (onChange) onChange(!checked); }} className={cn("inline-flex h-6 w-10 items-center rounded-full p-0.5", checked ? "justify-end bg-accent" : "justify-start bg-line-4")}>
       <i className="flex size-5 items-center justify-center rounded-full bg-ink-on-accent shadow-xs">{checked && <Check className="size-3 text-accent" />}</i>
     </button>
   );

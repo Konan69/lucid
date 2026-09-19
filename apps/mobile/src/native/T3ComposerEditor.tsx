@@ -30,10 +30,18 @@ export function ComposerEditor({
   useImperativeHandle(
     ref,
     () => ({
-      focus: () => inputRef.current?.focus(),
-      blur: () => inputRef.current?.blur(),
-      setSelection: (nextSelection) =>
-        inputRef.current?.setSelection(nextSelection.start, nextSelection.end),
+      focus: () => {
+        const input = inputRef.current;
+        if (input !== null) input.focus();
+      },
+      blur: () => {
+        const input = inputRef.current;
+        if (input !== null) input.blur();
+      },
+      setSelection: (nextSelection) => {
+        const input = inputRef.current;
+        if (input !== null) input.setSelection(nextSelection.start, nextSelection.end);
+      },
     }),
     [],
   );
@@ -44,13 +52,15 @@ export function ComposerEditor({
         ref={inputRef}
         {...props}
         selection={selection}
-        onSelectionChange={(event) =>
-          props.onSelectionChange?.(event.nativeEvent.selection)
-        }
+        onSelectionChange={(event) => {
+          if (props.onSelectionChange !== undefined)
+            props.onSelectionChange(event.nativeEvent.selection);
+        }}
         multiline={props.multiline ?? true}
-        onContentSizeChange={(event) =>
-          onContentHeightChange?.(event.nativeEvent.contentSize.height)
-        }
+        onContentSizeChange={(event) => {
+          if (onContentHeightChange !== undefined)
+            onContentHeightChange(event.nativeEvent.contentSize.height);
+        }}
         placeholderTextColor={placeholderColor}
         style={[
           {

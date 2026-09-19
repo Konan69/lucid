@@ -9,13 +9,13 @@ import { migrationOwners, validateMigrationOwner, validateMigrations } from './m
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 /** Both checked-in Drizzle owners retain a valid generated snapshot chain. */
-test('validates every checked-in migration owner', () => {
+void test('validates every checked-in migration owner', () => {
   assert.deepEqual(migrationOwners, ['apps/server', 'packages/agent-runtime'])
   assert.deepEqual(validateMigrations(repositoryRoot).flatMap((report) => report.errors), [])
 })
 
 /** A broken prevIds chain fails even when the JSON and SQL are otherwise valid. */
-test('rejects a snapshot that does not link to its predecessor', () => {
+void test('rejects a snapshot that does not link to its predecessor', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'vivid-migrations-'))
   const owner = 'apps/server'
   const ownerRoot = path.join(root, owner)

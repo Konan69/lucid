@@ -12,7 +12,7 @@ Use current Effect v4 APIs and the production defaults in this skill. Establishe
 
 ## Upstream And Project Policy
 
-This skill uses [`kitlangton/skills`](https://github.com/kitlangton/skills) commit `30dee8607214c893dd89f6eee65c669ef3dce8c9` as its API and style baseline. The upstream files remain the primary general Effect guidance. `references/VIVID.md` adds only repository integration constraints, while `references/STANDARD_LIBRARY.md` preserves project-tested discovery guidance that upstream does not cover.
+This skill uses [`kitlangton/skills`](https://github.com/kitlangton/skills) commit `22c35cb7fd29f931789253fc3c8eb142f2863a8a` as its API and style baseline. The upstream files remain the primary general Effect guidance. `references/VIVID.md` adds only repository integration constraints, while `references/STANDARD_LIBRARY.md` preserves project-tested discovery guidance that upstream does not cover.
 
 When guidance conflicts, follow the nearest `AGENTS.md`, then the project-pinned Effect package, then this skill. Do not copy old local patterns over newer upstream APIs.
 
@@ -49,7 +49,7 @@ If a task spans several branches, read all matching files before editing.
 - Prefer `Context.Service` for application services when the codebase has not standardized on another current service-tag style.
 - Build real service implementations with `Layer.effect(Service, Effect.gen(...))` and return `Service.of({ ... })`.
 - Model records with `Schema.Struct(...)` plus a same-name `interface`.
-- Model typed Effect errors with `Schema.TaggedError` in the pinned Effect 4 rc.112 API.
+- Model typed Effect errors with `Schema.TaggedError` in the pinned Effect 4 rc.116 API.
 - Read runtime config through `Config`, not direct `process.env` access in application logic.
 - Use `Schedule` for retry, repeat, polling, pacing, and backoff policies.
 - Use `Stream` for effectful sources that emit many values over time and need pull, backpressure, interruption, or transformation.

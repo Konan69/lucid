@@ -27,7 +27,7 @@ export function Welcome({ navigation }: NativeStackScreenProps<Routes, "Home">) 
       navigation.navigate("Chat", { ...thread, sendOnOpen: true });
       setDraft("");
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }

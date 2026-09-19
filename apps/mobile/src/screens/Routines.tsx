@@ -30,8 +30,12 @@ export function Routines({
   const [gallery, setGallery] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const selected = resource.data?.routines.find((r) => r.id === selectedId);
-  async function act(id: string, method: string, body?: unknown, suffix = "") {
+  const data = resource.data;
+  const selected = data === undefined
+    ? undefined
+    : data.routines.find((r) => r.id === selectedId);
+  type RequestBody = Record<string, string | number | boolean | null> | FormData;
+  async function act(id: string, method: string, body?: RequestBody, suffix = "") {
     if (busy) return;
     setBusy(true);
     setError("");
@@ -39,7 +43,7 @@ export function Routines({
       await api.request(`/api/routines/${id}${suffix}`, method, body);
       await resource.refresh();
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -74,13 +78,14 @@ export function Routines({
         />
         {!resource.loading &&
           !resource.error &&
-          resource.data?.routines.length === 0 && (
+          data !== undefined &&
+          data.routines.length === 0 && (
             <Empty
               title="One less thing to remember."
               detail="A morning brief, a weekly check-in. Tell Vivid what to repeat and when."
             />
           )}
-        {resource.data?.routines.map((r) => (
+        {data !== undefined && data.routines.map((r) => (
           <Card key={r.id}>
             <Label size="headline">{r.name}</Label>
             <Label size="label" tone="ink-3">
