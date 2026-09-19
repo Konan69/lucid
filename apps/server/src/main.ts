@@ -1,4 +1,4 @@
-import { createServer } from "node:http"
+import * as NodeHttp from "node:http"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
@@ -28,10 +28,10 @@ const appLayer = Layer.mergeAll(apiLayer, authRoute, healthRoute).pipe(
   Layer.provide(HttpRouter.layer)
 )
 
-const serverProgram = Effect.gen(function*() {
+const serverProgram = Effect.fn("serverProgram")(function*() {
   const config = yield* loadServerConfig
   const serverLayer = NodeHttpServer.layer(
-    () => createServer(),
+    () => NodeHttp.createServer(),
     {
       host: "127.0.0.1",
       port: config.PORT
@@ -46,7 +46,7 @@ const serverProgram = Effect.gen(function*() {
     Layer.provide(configLayer)
   )
   return yield* Layer.launch(liveAppLayer)
-})
+})()
 
 const program = Effect.catchTag(
   serverProgram,

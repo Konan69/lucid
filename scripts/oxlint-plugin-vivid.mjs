@@ -333,7 +333,7 @@ const noRunPromiseInLibrary = rule(
   (report, context) => ({
     CallExpression(node) {
       if (!isMemberCall(node, 'Effect', effectTerminalOperations)) return
-      if (/(?:^|[/\\])(?:(?:main|server|cli|app)\.[cm]?[jt]s|drizzle\.config\.ts)$/u.test(context.filename)) return
+      if (/(?:^|[/\\])(?:(?:main|server|cli|app)\.[cm]?[jt]s|drizzle\.config\.ts|alchemy\.run\.ts)$/u.test(context.filename)) return
       let parent = node.parent
       while (parent !== undefined && parent !== null) {
         if (
@@ -352,13 +352,17 @@ const noRunPromiseInLibrary = rule(
   }),
 )
 
-const noPlatformRuntimeRunMainInLibrary = memberCallRule({
-  description: 'Keep platform runtime launch at the executable entry point.',
-  message:
-    'Do not call NodeRuntime.runMain from a library module. Export the Effect and launch it from main.ts.',
-  owner: 'NodeRuntime',
-  methods: new Set(['runMain']),
-})
+const noPlatformRuntimeRunMainInLibrary = rule(
+  'Keep platform runtime launch at the executable entry point.',
+  'Do not call NodeRuntime.runMain from a library module. Export the Effect and launch it from main.ts.',
+  (report, context) => ({
+    CallExpression(node) {
+      if (!isMemberCall(node, 'NodeRuntime', new Set(['runMain']))) return
+      if (/(?:^|[/\\])main\.[cm]?[jt]s$/u.test(context.filename)) return
+      report(node)
+    },
+  }),
+)
 
 const noEffectRuntimeApi = memberCallRule({
   description: 'Avoid creating hidden Effect runtimes in application modules.',
