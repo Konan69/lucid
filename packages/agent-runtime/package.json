@@ -23,6 +23,7 @@
     "@flue/postgres": "2.0.3",
     "@flue/runtime": "2.0.3",
     "@vivid/connectors": "workspace:*",
+    "@vivid/contracts": "workspace:*",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.0-rc.116",
     "croner": "^10.0.1",
