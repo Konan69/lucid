@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "unicorn", "oxc"],
+  "plugins": ["typescript", "unicorn", "oxc", "react"],
   "categories": {
     "correctness": "error"
   },
@@ -11,6 +11,7 @@
     "**/node_modules/**",
     "**/dist/**",
     "**/build/**",
+    "**/.cache/**",
     "**/.output/**",
     "**/.turbo/**",
     ".agent/**",
@@ -25,6 +26,7 @@
     ".roo/**",
     ".windsurf/**",
     "tools/oxlint/anti-slop/**",
+    "scripts/__fixtures__/**",
     "scripts/oxlint-plugin-vivid.mjs",
     "apps/mobile/android/**",
     "apps/mobile/ios/**",
@@ -80,14 +82,63 @@
     "anti-slop/no-unsafe-dictionary-type": "warn",
     "anti-slop/no-widen-then-assert": "error",
     "anti-slop/require-safety-comment-for-type-assertion": "warn",
-    "anti-slop-effect/no-service-constructor-imports": "error"
+    "anti-slop-effect/no-service-constructor-imports": "error",
+    "vivid/effect-no-context-generic-service": "error",
+    "vivid/effect-no-service-accessor": "error",
+    "vivid/effect-no-service-inside-method": "error",
+    "vivid/effect-no-service-object-syntax": "error",
+    "vivid/effect-prefer-match-effect": "error",
+    "vivid/effect-require-effect-fn": "warn",
+    "vivid/no-async-callback-api": "warn",
+    "vivid/no-config-provider-from-env-in-library": "error",
+    "vivid/no-direct-process-env": "warn",
+    "vivid/no-direct-schema-safeparse": "error",
+    "vivid/no-effect-catch-raw-error": "error",
+    "vivid/no-effect-option-constructors": "error",
+    "vivid/no-effect-runtime-api": "error",
+    "vivid/no-effect-wrapper-for-sync-callback-api": "error",
+    "vivid/no-host-transform-validation": "warn",
+    "vivid/no-non-null-assertion": "warn",
+    "vivid/no-optional-chaining": "warn",
+    "vivid/no-parse-method-alias": "error",
+    "vivid/no-platform-runtime-runmain-in-library": "warn",
+    "vivid/no-promise-constructor": "warn",
+    "vivid/no-runpromise-in-library": "warn",
+    "vivid/no-runpromise-nested": "error",
+    "vivid/no-runtime-env-mutation": "error",
+    "vivid/no-try-catch": "warn",
+    "vivid/no-undefined-in-union": "warn",
+    "vivid/no-unnecessary-die": "error",
+    "vivid/require-named-effect-fn": "warn",
+    "vivid/require-schema-class-identifier": "error",
+    "vivid/require-schema-class-title": "warn",
+    "vivid/require-schema-decode-in-boundary": "warn"
   },
   "overrides": [
     {
       "files": ["apps/{server,web}/src/**/*.{ts,tsx}", "packages/*/src/**/*.{ts,tsx}"],
       "rules": {
-        "typescript/no-explicit-any": "warn",
-        "vivid/no-try-catch": "warn"
+        "typescript/no-explicit-any": "warn"
+      }
+    },
+    {
+      "files": ["apps/{mobile,web}/**/*.{ts,tsx}"],
+      "rules": {
+        "vivid/react-no-derived-state-effect": "warn",
+        "vivid/react-no-inline-context-value": "warn",
+        "vivid/react-no-useless-memo": "error"
+      }
+    },
+    {
+      "files": ["apps/server/src/auth.ts"],
+      "rules": {
+        "vivid/better-auth-secure-options": "error"
+      }
+    },
+    {
+      "files": ["**/drizzle.config.ts"],
+      "rules": {
+        "vivid/require-drizzle-config-paths": "error"
       }
     },
     {
@@ -103,14 +154,18 @@
       "rules": {
         "typescript/no-explicit-any": "off",
         "no-restricted-properties": "off",
+        "vivid/no-direct-process-env": "off",
+        "vivid/no-runtime-env-mutation": "off",
         "vivid/no-try-catch": "off"
       }
     },
     {
-      "files": ["*.config.*", "scripts/**", "**/scripts/**"],
+      "files": ["**/*.config.*", "scripts/**", "**/scripts/**"],
       "rules": {
         "typescript/no-explicit-any": "off",
         "no-restricted-properties": "off",
+        "vivid/no-direct-process-env": "off",
+        "vivid/no-runtime-env-mutation": "off",
         "vivid/no-try-catch": "off"
       }
     }

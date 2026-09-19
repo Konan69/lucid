@@ -11,7 +11,7 @@
     "web": "expo start --web",
     "build": "expo export --platform all",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint src",
+    "lint": "oxlint --type-aware src",
     "test": "node --experimental-strip-types --test src/lib/*.test.ts"
   },
   "dependencies": {
@@ -47,6 +47,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.0",
-    "typescript": "^6.0.3"
+    "@typescript/native": "npm:typescript@7.0.2",
+    "typescript": "6.0.3"
   }
 }

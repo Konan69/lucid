@@ -19,20 +19,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/vivid
+      DATABASE_URL: postgresql://vivid:vivid@localhost:55433/vivid
     services:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: vivid
+          POSTGRES_PASSWORD: vivid
           POSTGRES_DB: vivid
         options: >-
-          --health-cmd "pg_isready -U postgres -d vivid"
+          --health-cmd "pg_isready -U vivid -d vivid"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
         ports:
-          - 5432:5432
+          - 55433:5432
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,7 +50,19 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Lint
+      - name: Check version lockstep
+        run: pnpm check:versions
+
+      - name: Audit Effect boundaries
+        run: pnpm audit:effect-boundaries
+
+      - name: Check migration integrity
+        run: pnpm check:migrations
+
+      - name: Test tooling rules
+        run: pnpm test:tooling
+
+      - name: Lint with native type analysis
         run: pnpm lint
 
       - name: Check formatting

@@ -9,6 +9,7 @@
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
+    "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo",
     "skipLibCheck": true
   },
   "include": ["src", "flue.config.ts"]

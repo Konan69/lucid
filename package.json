@@ -11,24 +11,40 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "typecheck": "turbo run typecheck --concurrency=1",
-    "lint": "oxlint .",
-    "lint:fix": "oxlint --fix .",
+    "lint": "oxlint --type-aware .",
+    "lint:fix": "oxlint --type-aware --fix .",
     "format": "oxfmt --check .",
     "format:fix": "oxfmt .",
     "test": "turbo run test",
-    "quality": "pnpm lint && pnpm format && pnpm typecheck && pnpm test",
+    "audit:effect-boundaries": "node scripts/effect-boundary-audit.mjs enforce",
+    "audit:effect-boundaries:report": "node scripts/effect-boundary-audit.mjs report",
+    "check:migrations": "node scripts/migrations.mjs check",
+    "check:versions": "node scripts/versions.mjs",
+    "test:lint-rules": "node --test scripts/oxlint-plugin-vivid.test.mjs",
+    "test:tooling": "node --test scripts/versions.test.mjs scripts/effect-boundary-audit.test.mjs scripts/migrations.test.mjs scripts/oxlint-plugin-vivid.test.mjs",
+    "quality": "pnpm check:versions && pnpm audit:effect-boundaries && pnpm check:migrations && pnpm lint && pnpm format && pnpm typecheck && pnpm test:tooling && pnpm test",
     "db:up": "docker compose -f compose.dev.yaml up -d --wait",
     "db:down": "docker compose -f compose.dev.yaml down",
     "db:migrate": "pnpm --filter @vivid/server db:migrate && pnpm --filter @vivid/agent-runtime db:migrate && pnpm --filter @vivid/connectors db:migrate"
   },
   "devDependencies": {
-    "@effect/language-service": "0.86.6",
+    "@effect/language-service": "0.87.2",
     "@oxlint/plugins": "1.81.0",
     "@types/node": "^24.0.0",
+    "@typescript/native": "npm:typescript@7.0.2",
     "husky": "9.1.7",
     "oxfmt": "0.50.0",
     "oxlint": "1.81.0",
     "turbo": "2.9.14",
-    "typescript": "^5.9.0"
+    "typescript": "6.0.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "@effect/platform-node": "4.0.0-rc.116",
+      "@effect/sql-pg": "4.0.0-rc.116",
+      "drizzle-kit": "1.0.0-rc.5-ab785fc",
+      "drizzle-orm": "1.0.0-rc.5-ab785fc",
+      "effect": "4.0.0-rc.116"
+    }
   }
 }
