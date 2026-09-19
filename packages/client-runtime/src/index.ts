@@ -1,6 +1,8 @@
 import { RuntimeErrorResponse } from "@vivid/contracts"
 import { Effect, Schema } from "effect"
 
+const decodeRuntimeErrorText = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeErrorResponse))
+
 /** Minimal transport request understood by the schema client. */
 export interface TransportRequest {
   readonly url: string
@@ -123,13 +125,13 @@ export interface ClientOptions {
 export interface SchemaClient {
   readonly baseUrl: string
   readonly request: <Response, ResponseEncoded>(
-    responseSchema: Schema.Codec<Response, ResponseEncoded, never, never>,
+    responseSchema: Schema.Codec<Response, ResponseEncoded>,
     path: string,
     options?: RequestOptions,
   ) => Effect.Effect<Response, ClientFailure>
   readonly requestJson: <Body, BodyEncoded, Response, ResponseEncoded>(
-    bodySchema: Schema.Codec<Body, BodyEncoded, never, never>,
-    responseSchema: Schema.Codec<Response, ResponseEncoded, never, never>,
+    bodySchema: Schema.Codec<Body, BodyEncoded>,
+    responseSchema: Schema.Codec<Response, ResponseEncoded>,
     path: string,
     body: Body,
     options?: Omit<RequestOptions, "multipart">,
@@ -163,7 +165,7 @@ const readFailureMessage = Effect.fn("SchemaClient.readFailureMessage")(function
   if (payload._tag === "None") {
     return `Vivid returned status ${response.status}.`
   }
-  const envelope = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeErrorResponse))(payload.value).pipe(
+  const envelope = yield* decodeRuntimeErrorText(payload.value).pipe(
     Effect.option,
   )
   return envelope._tag === "Some"
@@ -198,7 +200,7 @@ class SchemaClientImplementation implements SchemaClient {
 
   /** Decodes one response after the transport returns it. */
   private execute<Response, ResponseEncoded>(
-    responseSchema: Schema.Codec<Response, ResponseEncoded, never, never>,
+    responseSchema: Schema.Codec<Response, ResponseEncoded>,
     path: string,
     requestOptions: RequestOptions = {},
     encodedBody?: string,
@@ -241,7 +243,7 @@ class SchemaClientImplementation implements SchemaClient {
 
   /** Executes one request without a JSON body. */
   request<Response, ResponseEncoded>(
-    responseSchema: Schema.Codec<Response, ResponseEncoded, never, never>,
+    responseSchema: Schema.Codec<Response, ResponseEncoded>,
     path: string,
     options?: RequestOptions,
   ): Effect.Effect<Response, ClientFailure> {
@@ -250,8 +252,8 @@ class SchemaClientImplementation implements SchemaClient {
 
   /** Encodes one request body before handing it to the transport. */
   requestJson<Body, BodyEncoded, Response, ResponseEncoded>(
-    bodySchema: Schema.Codec<Body, BodyEncoded, never, never>,
-    responseSchema: Schema.Codec<Response, ResponseEncoded, never, never>,
+    bodySchema: Schema.Codec<Body, BodyEncoded>,
+    responseSchema: Schema.Codec<Response, ResponseEncoded>,
     path: string,
     body: Body,
     options: Omit<RequestOptions, "multipart"> = {},
