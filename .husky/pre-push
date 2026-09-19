@@ -79,3 +79,5 @@ check_ratchet "Tailwind shorthand" "tailwindcss" "enforce-shorthand" 0
 pnpm format
 pnpm typecheck
 pnpm test:tooling
+# Database suites skip unless VIVID_TEST_DATABASE_URL names a disposable database.
+pnpm exec vitest run
