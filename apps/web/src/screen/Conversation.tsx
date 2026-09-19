@@ -96,6 +96,7 @@ export function Conversation({
       </div>
 
       <Composer
+        key={`${conversationId}:${initialDraft ?? ""}`}
         initialMessage={initialDraft}
         working={working}
         onSend={async (message) => {
@@ -440,8 +441,6 @@ function Composer({
   onStop: () => Promise<void>;
 }) {
   const [message, setMessage] = useState(initialMessage ?? "");
-
-  useEffect(() => { setMessage(initialMessage ?? ""); }, [initialMessage]);
 
   async function submit() {
     const body = message.trim();

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createApi, normalizeServerUrl } from "./api.ts";
 
-test("server URLs reject unsafe schemes and embedded credentials", () => {
+void test("server URLs reject unsafe schemes and embedded credentials", () => {
   assert.equal(
     normalizeServerUrl(" https://example.com/vivid/ "),
     "https://example.com/vivid",
@@ -15,7 +15,7 @@ test("server URLs reject unsafe schemes and embedded credentials", () => {
   ])
     assert.throws(() => normalizeServerUrl(url));
 });
-test("direct runtime routes authenticate both API and chat; gateway routes stay behind proxy", async () => {
+void test("direct runtime routes authenticate both API and chat; gateway routes stay behind proxy", async () => {
   let observed: RequestInit | undefined;
   const api = createApi(
     { url: "https://example.com", token: "test-token" },
@@ -36,7 +36,7 @@ test("direct runtime routes authenticate both API and chat; gateway routes stay 
     "https://example.com/api/vivid/one",
   );
 });
-test("multipart uploads leave the boundary header to fetch", async () => {
+void test("multipart uploads leave the boundary header to fetch", async () => {
   const form = new FormData();
   form.append("file", new Blob(["notes"]), "notes.txt");
   const api = createApi(
@@ -51,7 +51,7 @@ test("multipart uploads leave the boundary header to fetch", async () => {
     document: { name: "notes.txt" },
   });
 });
-test("backend errors reach the screen instead of appearing as empty success", async () => {
+void test("backend errors reach the screen instead of appearing as empty success", async () => {
   const api = createApi({ url: "https://example.com", token: "" }, async () =>
     Response.json({ error: "Folder not found" }, { status: 404 }),
   );

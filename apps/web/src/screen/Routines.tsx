@@ -80,7 +80,23 @@ export function Routines({ onOpenConversation }: { onOpenConversation(conversati
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+
+    // The first request hydrates the screen from the runtime; later refreshes still use `load`
+    // from explicit mutations and the running-routine poll below.
+    void request<{ routines: ScheduledRoutine[] }>("/api/routines").then((body) => {
+      if (cancelled) return;
+      setRoutines(body.routines);
+      setError(null);
+    }).catch((cause: unknown) => {
+      if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load routines");
+    }).finally(() => {
+      if (!cancelled) setReady(true);
+    });
+
+    return () => { cancelled = true; };
+  }, []);
   useEffect(() => {
     if (!routines.some((routine) => routine.runs.some((run) => run.status === "running"))) return;
     const timer = window.setInterval(() => { void load(); }, 1500);

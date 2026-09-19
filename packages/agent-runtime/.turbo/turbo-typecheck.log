@@ -1,7 +1,4 @@
-
-> @vivid/agent-runtime@0.0.0 typecheck /home/kixey/agency/vivid/packages/agent-runtime
-> tsc --noEmit
-
+$ tsc --noEmit
 src/routine-store.ts(61,99): error TS2345: Argument of type '(input: unknown, options?: ParseOptions | undefined) => { readonly id: string; readonly name: string; readonly prompt: string; readonly cron: string; readonly timezone: string; ... 5 more ...; readonly updatedAt: number; }' is not assignable to parameter of type '(value: { id: string; name: string; prompt: string; cron: string; timezone: string; libraryFolderId: string | null; enabled: boolean; nextExpectedAt: number | null; lastMissedAt: number | null; createdAt: number; updatedAt: number; }, index: number, array: { ...; }[]) => { ...; }'.
   Types of parameters 'options' and 'index' are incompatible.
     Type 'number' has no properties in common with type 'ParseOptions'.
@@ -29,4 +26,4 @@ src/task-store.ts(259,127): error TS2345: Argument of type '(input: unknown, opt
 ../connectors/src/store.ts(49,156): error TS2345: Argument of type '(input: unknown, options?: ParseOptions | undefined) => { readonly id: string; readonly connectorId: "calendar" | "drive" | "gmail"; readonly accessToken: string; readonly refreshToken: string; readonly expiresAt: number; readonly scope: string; readonly createdAt: number; }' is not assignable to parameter of type '(value: { id: string; connectorId: string; accessToken: string; refreshToken: string; expiresAt: number; scope: string; createdAt: number; }, index: number, array: { id: string; connectorId: string; ... 4 more ...; createdAt: number; }[]) => { ...; }'.
   Types of parameters 'options' and 'index' are incompatible.
     Type 'number' has no properties in common with type 'ParseOptions'.
- ELIFECYCLE  Command failed with exit code 1.
+[ELIFECYCLE] Command failed with exit code 1.

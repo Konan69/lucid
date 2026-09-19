@@ -1,11 +1,8 @@
-
-> @vivid/connectors@0.0.0 typecheck /home/kixey/agency/vivid/packages/connectors
-> tsc --noEmit
-
+$ tsc --noEmit
 src/store.ts(44,108): error TS2345: Argument of type '(input: unknown, options?: ParseOptions | undefined) => { readonly id: string; readonly connectorId: "calendar" | "drive" | "gmail"; readonly accessToken: string; readonly refreshToken: string; readonly expiresAt: number; readonly scope: string; readonly createdAt: number; }' is not assignable to parameter of type '(value: { id: string; connectorId: string; accessToken: string; refreshToken: string; expiresAt: number; scope: string; createdAt: number; }, index: number, array: { id: string; connectorId: string; ... 4 more ...; createdAt: number; }[]) => { ...; }'.
   Types of parameters 'options' and 'index' are incompatible.
     Type 'number' has no properties in common with type 'ParseOptions'.
 src/store.ts(49,156): error TS2345: Argument of type '(input: unknown, options?: ParseOptions | undefined) => { readonly id: string; readonly connectorId: "calendar" | "drive" | "gmail"; readonly accessToken: string; readonly refreshToken: string; readonly expiresAt: number; readonly scope: string; readonly createdAt: number; }' is not assignable to parameter of type '(value: { id: string; connectorId: string; accessToken: string; refreshToken: string; expiresAt: number; scope: string; createdAt: number; }, index: number, array: { id: string; connectorId: string; ... 4 more ...; createdAt: number; }[]) => { ...; }'.
   Types of parameters 'options' and 'index' are incompatible.
     Type 'number' has no properties in common with type 'ParseOptions'.
- ELIFECYCLE  Command failed with exit code 1.
+[ELIFECYCLE] Command failed with exit code 1.

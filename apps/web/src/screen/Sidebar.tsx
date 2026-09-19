@@ -324,9 +324,9 @@ function RowActions() {
 
 /** T3's WorkingDuration: mono, tabular, ticking once a second. */
 function Ticking({ startedAt }: { startedAt: number }) {
-  const [, tick] = useState(0);
-  useEffect(() => { const id = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(id); }, []);
-  const s = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
+  const s = Math.max(0, Math.floor((now - startedAt) / 1000));
   const m = Math.floor(s / 60);
   return <span className="ml-0.5 font-mono font-meta text-ink-3">{m > 0 ? `${m}m ${String(s % 60).padStart(2, "0")}s` : `${s}s`}</span>;
 }

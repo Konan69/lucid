@@ -45,10 +45,25 @@ export function Connectors({ embedded = false }: { embedded?: boolean }) {
   }
 
   useEffect(() => {
-    void load();
+    let cancelled = false;
+
+    // The initial request synchronizes the screen with the connector runtime. Applying the
+    // response asynchronously avoids a redundant synchronous state transition on mount.
+    void fetch("/api/connectors").then(async (response) => {
+      if (!response.ok) throw new Error(`Runtime replied ${response.status}`);
+      const data = await response.json() as { connectors: Connector[] };
+      if (!cancelled) setConnectors(data.connectors);
+    }).catch((error: unknown) => {
+      if (cancelled) return;
+      setConnectors([]);
+      setNotice({ tone: "danger", text: error instanceof Error ? error.message : "Could not reach the runtime." });
+    });
+
     if (location.search.includes("connected=") || location.search.includes("error=")) {
       history.replaceState(null, "", "/?settings=connectors");
     }
+
+    return () => { cancelled = true; };
   }, []);
 
   async function connect(id: string) {
@@ -57,7 +72,7 @@ export function Connectors({ embedded = false }: { embedded?: boolean }) {
       const response = await fetch(`/api/connectors/${id}/auth`);
       if (!response.ok) throw new Error(`Runtime replied ${response.status}`);
       const data = await response.json() as { authUrl: string };
-      location.href = data.authUrl;
+      location.assign(data.authUrl);
     } catch (error) {
       setNotice({ tone: "danger", text: error instanceof Error ? error.message : "Could not start the connection." });
       setBusy(null);
