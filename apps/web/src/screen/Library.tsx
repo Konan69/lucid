@@ -133,7 +133,28 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
     }
   }, [currentFolderId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+    const path = currentFolderId ? `/api/library?folderId=${encodeURIComponent(currentFolderId)}` : "/api/library";
+
+    // Folder navigation hydrates from the Library runtime. Responses from a folder the person has
+    // already left are ignored so they cannot replace the current folder's contents.
+    void Promise.all([
+      request<{ documents: LibraryDocument[]; folders: LibraryFolder[] }>(path),
+      request<{ folders: LibraryFolder[] }>("/api/library/folders"),
+    ]).then(([body, folderBody]) => {
+      if (cancelled) return;
+      setDocuments(body.documents);
+      setFolders(body.folders);
+      setAllFolders(folderBody.folders);
+      setSelected((current) => current ? body.documents.find((document) => document.id === current.id) ?? current : null);
+      setError(null);
+    }).catch((cause: unknown) => {
+      if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load the Library");
+    });
+
+    return () => { cancelled = true; };
+  }, [currentFolderId]);
   useEffect(() => {
     if (!documents.some((document) => document.status === "processing") && !uploads.some((upload) => upload.status === "indexing")) return;
     const timer = window.setInterval(() => { void load(); }, 900);
@@ -144,14 +165,15 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
     const states = files.map((file) => ({ id: `${file.name}-${file.size}-${file.lastModified}`, name: file.name, progress: 0, status: "uploading" as const }));
     setUploads((current) => [...states, ...current].slice(0, 8));
     setError(null);
-    await Promise.all(files.map(async (file, index) => {
-      const id = states[index]!.id;
+    const uploadsByFile = files.map((file, index) => ({ file, upload: states[index] }));
+    await Promise.all(uploadsByFile.map(async ({ file, upload }) => {
+      if (upload === undefined) throw new Error("Upload state did not match the selected file");
       try {
-        await uploadWithProgress(file, currentFolderId, (progress) => setUploads((current) => current.map((item) => item.id === id ? { ...item, progress } : item)));
-        setUploads((current) => current.map((item) => item.id === id ? { ...item, progress: 100, status: "indexing" } : item));
+        await uploadWithProgress(file, currentFolderId, (progress) => setUploads((current) => current.map((item) => item.id === upload.id ? { ...item, progress } : item)));
+        setUploads((current) => current.map((item) => item.id === upload.id ? { ...item, progress: 100, status: "indexing" } : item));
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : "Upload failed";
-        setUploads((current) => current.map((item) => item.id === id ? { ...item, status: "failed", error: message } : item));
+        setUploads((current) => current.map((item) => item.id === upload.id ? { ...item, status: "failed", error: message } : item));
       }
     }));
     if (inputRef.current) inputRef.current.value = "";
@@ -208,8 +230,12 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
 
   const tiles = buildTiles(documents, folders);
   const open = (tile: Tile) => {
-    if (tile.document) setSelected(tile.document);
-    else if (tile.folder) setFolderStack((current) => [...current, tile.folder!]);
+    if (tile.document) {
+      setSelected(tile.document);
+      return;
+    }
+    const folder = tile.folder;
+    if (folder) setFolderStack((current) => [...current, folder]);
   };
   const back = () => {
     if (selected) setSelected(null);
@@ -260,7 +286,8 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
       </div>
       {dragging && <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-card border-2 border-dashed border-accent bg-surface-0/90 text-center"><div><Upload className="mx-auto size-7 text-accent-ink" /><p className="mt-2 text-title font-title text-ink">Drop files into {currentFolder?.name ?? "Library"}</p><p className="mt-1 text-meta font-meta text-ink-4">PDF, Markdown, or text · up to 10 MB each</p></div></div>}
       {dialog && <LibraryDialog state={dialog} folders={allFolders} currentFolderId={currentFolderId} onClose={() => setDialog(null)} onSaved={async (result) => {
-        if (result.folder && dialog.kind === "rename-folder") setFolderStack((current) => current.map((folder) => folder.id === result.folder!.id ? result.folder! : folder));
+        const savedFolder = result.folder;
+        if (savedFolder && dialog.kind === "rename-folder") setFolderStack((current) => current.map((folder) => folder.id === savedFolder.id ? savedFolder : folder));
         if (result.document) setSelected(result.document.folderId === currentFolderId ? result.document : null);
         if (dialog.kind === "move-folder") setFolderStack([]);
         setDialog(null);
