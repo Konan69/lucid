@@ -25,6 +25,37 @@ Do not replace the contract with a cast:
 const threadId = request.params.id as ThreadId
 ```
 
+## Close domain states
+
+Use `Schema.TaggedUnion` when the variants are a closed set. Its generated cases, guards, subset predicates, and matcher keep construction and branching derived from one declaration.
+
+```ts
+const RunState = Schema.TaggedUnion({
+  Queued: { runId: RunId },
+  Working: { runId: RunId, startedAt: Schema.DateTimeUtc },
+  Failed: { runId: RunId, reason: Schema.String },
+})
+
+const queued = RunState.cases.Queued.make({ runId })
+const isActive = RunState.isAnyOf(['Queued', 'Working'])
+const label = RunState.match({
+  Queued: () => 'Queued',
+  Working: () => 'Working',
+  Failed: () => 'Failed',
+})
+```
+
+Do not rebuild the same state with optional fields and ad hoc comparisons:
+
+```ts
+// Bad: invalid combinations compile and every consumer re-invents readiness.
+type RunState = {
+  status: string
+  startedAt?: Date
+  reason?: string
+}
+```
+
 ## Keep failures typed
 
 Application and domain code returns expected failures through Effect. Translate Promise rejection or thrown third-party failures once in the adapter that owns them.
@@ -47,6 +78,25 @@ async function loadThread(id: string) {
     return null
   }
 }
+```
+
+Different recovery paths require different error tags, not one stringly catch-all:
+
+```ts
+// Bad: callers must parse a free-form code to decide what to do.
+class OperationFailed extends Schema.TaggedError<OperationFailed>()('OperationFailed', {
+  code: Schema.String,
+  message: Schema.String,
+}) {}
+
+// Good: handling is exhaustive and carries the identity that failed.
+class ThreadNotFound extends Schema.TaggedError<ThreadNotFound>()('ThreadNotFound', {
+  threadId: ThreadId,
+}) {}
+class ThreadAccessDenied extends Schema.TaggedError<ThreadAccessDenied>()('ThreadAccessDenied', {
+  threadId: ThreadId,
+  personId: PersonId,
+}) {}
 ```
 
 ## Services own capabilities
@@ -81,6 +131,37 @@ export const threadStoreLayer = Layer.effect(
 
 Call methods through their owner (`database.getThread(id)`). Do not destructure a method and lose its receiver.
 
+## Construct explicit boundaries
+
+Do not hide shape changes behind conditional spreads or fallback values.
+
+```ts
+// Bad: silently omits tenancy and invents an empty title.
+const thread = {
+  id,
+  title: input.title ?? '',
+  ...(input.companyId ? { companyId: input.companyId } : {}),
+}
+
+// Good: the variant states exactly which boundary value is being built.
+const thread = input._tag === 'CompanyThread'
+  ? CompanyThread.make({ id, companyId: input.companyId, title: input.title })
+  : PersonalThread.make({ id, personId: input.personId, title: input.title })
+```
+
+## Validate both sides of HTTP
+
+`response.json()` and `request<T>()` are unknown input. Producer and consumer use the same schema from `packages/contracts`.
+
+```ts
+// Bad: a generic annotation cannot prove the payload.
+const thread = await request<Thread>(`/api/threads/${id}`)
+
+// Good: trust begins at the shared parser.
+const payload = yield* Effect.tryPromise(() => response.json())
+const thread = yield* Schema.decodeUnknownEffect(ThreadResponse)(payload)
+```
+
 ## Configuration and secrets
 
 Follow `apps/server/src/config.ts`: load environment through `Config.schema`, convert expected startup failures into `ConfigurationError`, and keep database URLs, auth secrets, and provider secrets in `Redacted` values. Log the variable name and expected form, never the supplied value.
@@ -89,14 +170,27 @@ Follow `apps/server/src/config.ts`: load environment through `Config.schema`, co
 
 Drizzle TypeScript schemas are authoritative. Change the schema, run the package's `db:generate`, review the SQL, then migrate. Never hand-edit schema migrations or snapshots. Keep database-driver failures behind a service boundary like `apps/server/src/database.ts`, where SQL failures become `DatabaseUnavailable`, `DatabaseConstraintViolation`, or `DatabaseFailure`.
 
+## React owns events, not synchronization effects
+
+Prefer derived values, loaders, query primitives, subscriptions, and event handlers on web and mobile. `useLayoutEffect` is only for preventing a visibly wrong frame.
+
+```tsx
+// Bad: derived state adds a stale render and synchronization loop.
+const [fullName, setFullName] = useState('')
+useEffect(() => setFullName(`${first} ${last}`), [first, last])
+
+// Good: derive during render.
+const fullName = `${first} ${last}`
+```
+
 ## Toolchain contract
 
-`pnpm check:versions` enforces the native TypeScript preview, strict Effect language-service diagnostics, and exact Effect/Alchemy/Better Auth/Drizzle lockstep. `pnpm lint` always runs Oxlint with native type-aware analysis. `pnpm audit:effect-boundaries` rejects new raw async, Promise, fetch, and Effect runtime seams unless their exact file and owning symbol are classified. `pnpm check:migrations` validates generated SQL and snapshot chains without editing them.
+`pnpm check:package-manager` rejects package-manager drift and foreign lockfiles. `pnpm check:versions` enforces the native TypeScript preview, strict Effect language-service diagnostics, and exact Effect/Alchemy/Better Auth/Drizzle lockstep. `pnpm lint` always runs Oxlint with native type-aware analysis, including web design-system contracts and Tailwind correctness. `pnpm audit:effect-boundaries` rejects new raw async, Promise, fetch, and Effect runtime seams unless their exact file and owning symbol are classified. `pnpm check:migrations` validates generated SQL and snapshot chains without editing them.
 
 ## Review checklist
 
 1. Does every ingress parse into a named domain type?
-2. Are expected failures precise and typed?
+2. Are closed states and expected failures precise, tagged, and exhaustive?
 3. Does each service own a real capability rather than rename a function?
 4. Are Layers composed at the owning boundary without hidden dependencies?
-5. Do tests prove behavior through the public seam rather than implementation details?
+5. Do HTTP consumers validate the shared wire schema, and do tests prove behavior through public seams?
