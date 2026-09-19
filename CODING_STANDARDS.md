@@ -12,10 +12,9 @@ import * as Schema from 'effect/Schema'
 export const ThreadId = Schema.String.pipe(Schema.brand('ThreadId'))
 export type ThreadId = typeof ThreadId.Type
 
-export class ThreadNotFound extends Schema.TaggedError<ThreadNotFound>()(
-  'ThreadNotFound',
-  { threadId: ThreadId },
-) {}
+export class ThreadNotFound extends Schema.TaggedError<ThreadNotFound>()('ThreadNotFound', {
+  threadId: ThreadId,
+}) {}
 ```
 
 Do not replace the contract with a cast:
@@ -152,9 +151,10 @@ const thread = {
 }
 
 // Good: the variant states exactly which boundary value is being built.
-const thread = input._tag === 'CompanyThread'
-  ? CompanyThread.make({ id, companyId: input.companyId, title: input.title })
-  : PersonalThread.make({ id, personId: input.personId, title: input.title })
+const thread =
+  input._tag === 'CompanyThread'
+    ? CompanyThread.make({ id, companyId: input.companyId, title: input.title })
+    : PersonalThread.make({ id, personId: input.personId, title: input.title })
 ```
 
 ## Validate both sides of HTTP
@@ -166,8 +166,8 @@ const thread = input._tag === 'CompanyThread'
 const thread = await request<Thread>(`/api/threads/${id}`)
 
 // Good: trust begins at the shared parser.
-const payload = yield* Effect.tryPromise(() => response.json())
-const thread = yield* Schema.decodeUnknownEffect(ThreadResponse)(payload)
+const payload = yield * Effect.tryPromise(() => response.json())
+const thread = yield * Schema.decodeUnknownEffect(ThreadResponse)(payload)
 ```
 
 ## Configuration and secrets
