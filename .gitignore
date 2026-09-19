@@ -51,3 +51,6 @@ Thumbs.db
 
 # Runtime state (source for every workspace package is tracked)
 /packages/agent-runtime/.state/
+
+# Turbo local task cache
+.turbo/
