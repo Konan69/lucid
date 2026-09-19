@@ -7,7 +7,7 @@ const testEnvironment: Record<string, string> = Option.isSome(testDatabaseUrl)
   ? { DATABASE_URL: Redacted.value(testDatabaseUrl.value) }
   : {}
 
-export default defineProject({
+const project = {
   test: {
     name: '@vivid/agent-runtime',
     environment: 'node',
@@ -15,4 +15,6 @@ export default defineProject({
     passWithNoTests: true,
     env: testEnvironment,
   },
-})
+}
+
+export default defineProject(project)
