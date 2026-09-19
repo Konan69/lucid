@@ -28,7 +28,7 @@ const requiredSecret = (name: string) => Config.Redacted(name).pipe(
   Effect.mapError(() => environmentError(name))
 )
 
-const optionalString = (name: string) => Config.option(Config.string(name)).pipe(
+const optionalString = (name: string) => Config.option(Config.String(name)).pipe(
   Effect.mapError(() => environmentError(name))
 )
 
@@ -41,7 +41,7 @@ export const loadInfrastructureEnvironment = Effect.gen(function*() {
   const authSecret = yield* requiredSecret("AUTH_SECRET")
   const runtimeToken = yield* requiredSecret("VIVID_RUNTIME_TOKEN")
   const openRouterApiKey = yield* requiredSecret("OPENROUTER_API_KEY")
-  const model = yield* Config.string("VIVID_MODEL").pipe(
+  const model = yield* Config.String("VIVID_MODEL").pipe(
     Config.withDefault("openrouter/z-ai/glm-5.3-flash"),
     Effect.mapError(() => environmentError("VIVID_MODEL"))
   )
