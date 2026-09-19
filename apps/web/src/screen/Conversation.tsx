@@ -1,6 +1,7 @@
 import { Option, Schema } from "effect";
 import { ChevronDown, ChevronRight, Mic, Paperclip, ArrowUp, Square, UserPlus, PanelRight, ScrollText, Repeat2, Check, Mail, CalendarDays, HardDrive, Globe } from "lucide-react";
 import { useFlueAgent, type FlueConversationMessage } from "@flue/react";
+import { ConnectionRequestMessage } from "@vivid/contracts";
 import { createFlueClient } from "@flue/sdk";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -11,7 +12,7 @@ import { Card } from "../ui/Card";
 import { cn } from "../ui/cn";
 import { Face } from "../ui/Face";
 import { ConnectorRequestCard } from "../ui/ConnectorRequestCard";
-import { readConnectorRequest, connectorContinuation } from "../data/connectorRequests";
+import { normalizeConnectorRequest, connectorContinuation } from "../data/connectorRequests";
 
 const LiveMetadataSchema = Schema.Struct({
   finishedAt: Schema.optionalKey(Schema.Number),
@@ -30,6 +31,7 @@ const TrackedOutputSchema = Schema.Struct({
 });
 const decodeLiveMetadata = Schema.decodeUnknownOption(LiveMetadataSchema);
 const decodeTrackedOutput = Schema.decodeUnknownOption(TrackedOutputSchema);
+const decodeConnectorRequest = Schema.decodeUnknownOption(ConnectionRequestMessage);
 export function Conversation({
   onOpenPanel,
   panelOpen,
@@ -191,7 +193,10 @@ function LiveMessage({ message, working, onContinue }: { message: FlueConversati
   });
   const connectorRequests = tools.flatMap((tool) => {
     if (tool.toolName !== "suggest_connector" || tool.state !== "output-available") return [];
-    const request = readConnectorRequest(tool.output);
+    const decoded = decodeConnectorRequest(tool.output);
+    const request = Option.isSome(decoded)
+      ? normalizeConnectorRequest(decoded.value)
+      : null;
     return request ? [{ id: tool.toolCallId, request }] : [];
   });
   if (!text && tracked.length === 0 && connectorRequests.length === 0 && tools.length > 0) return null;

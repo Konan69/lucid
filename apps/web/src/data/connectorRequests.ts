@@ -1,34 +1,43 @@
-import { ConnectionRequestMessage, type ConnectionId } from "@vivid/contracts";
 import { Option, Schema } from "effect";
 
 export const connectorNames = {
   gmail: "Gmail",
   calendar: "Google Calendar",
   drive: "Google Drive",
-} as const satisfies Record<ConnectionId, string>;
+} as const;
 
-export type ConnectorId = ConnectionId;
-export type ConnectorRequest = ConnectionRequestMessage;
+export type ConnectorId = keyof typeof connectorNames;
+const ConnectorRequestSchema = Schema.Struct({
+  kind: Schema.Literal("connector-request"),
+  connector: Schema.Literals(["gmail", "calendar", "drive"] as const),
+  reason: Schema.String,
+});
+export type ConnectorRequest = typeof ConnectorRequestSchema.Type;
 export type ConnectorStatus = {
   id: string;
   status: "disconnected" | "connecting" | "connected" | "error";
 };
 
-const decodeConnectorRequest = Schema.decodeUnknownOption(ConnectionRequestMessage);
+const decodeConnectorRequest = Schema.decodeUnknownOption(ConnectorRequestSchema);
 const decodeString = Schema.decodeUnknownOption(Schema.String);
 
-// Persisted tool output is untrusted data. The shared wire contract establishes the connector
-// vocabulary before the UI applies its stricter display-length invariant.
-export function readConnectorRequest(output: unknown): ConnectorRequest | null {
-  const decoded = decodeConnectorRequest(output);
-  if (Option.isNone(decoded)) return null;
-  const reason = decoded.value.reason.trim();
+// The wire decoder establishes the connector vocabulary before the UI applies its stricter
+// display-length invariant.
+export function normalizeConnectorRequest(value: ConnectorRequest): ConnectorRequest | null {
+  const reason = value.reason.trim();
   if (reason.length === 0 || reason.length > 400) return null;
-  return ConnectionRequestMessage.make({
+  return ConnectorRequestSchema.make({
     kind: "connector-request",
-    connector: decoded.value.connector,
+    connector: value.connector,
     reason,
   });
+}
+
+// This compatibility boundary supports persisted messages read outside the live Conversation
+// adapter; live Flue output is decoded with the shared contract before normalization.
+export function readConnectorRequest(output: unknown): ConnectorRequest | null {
+  const decoded = decodeConnectorRequest(output);
+  return Option.isSome(decoded) ? normalizeConnectorRequest(decoded.value) : null;
 }
 
 export function connectorContinuation(id: ConnectorId) {
