@@ -17,10 +17,10 @@ Free, zero-config when deploying on Vercel. For local dev and other CI:
 
 ```bash
 # Authenticate with Vercel
-npx turbo login
+pnpm exec turbo login
 
 # Link repo to your Vercel team
-npx turbo link
+pnpm exec turbo link
 ```
 
 This creates `.turbo/config.json` with your team info (gitignored by default).
@@ -40,7 +40,7 @@ Get your token from Vercel dashboard → Settings → Tokens.
 
 ```yaml
 - name: Build
-  run: npx turbo build
+  run: pnpm exec turbo build
   env:
     TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     TURBO_TEAM: ${{ vars.TURBO_TEAM }}

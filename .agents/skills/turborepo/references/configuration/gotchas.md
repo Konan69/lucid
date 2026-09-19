@@ -10,8 +10,8 @@ Root `package.json` scripts for turbo tasks MUST use `turbo run`, not direct com
 // WRONG - bypasses turbo, no parallelization or caching
 {
   "scripts": {
-    "build": "bun build",
-    "dev": "bun dev"
+    "build": "pnpm --filter web build",
+    "dev": "pnpm --filter web dev"
   }
 }
 
@@ -24,7 +24,7 @@ Root `package.json` scripts for turbo tasks MUST use `turbo run`, not direct com
 }
 ```
 
-**Why this matters:** Running `bun build` or `npm run build` at root bypasses Turborepo entirely - no parallelization, no caching, no dependency graph awareness.
+**Why this matters:** Running a leaf package script at the root bypasses Turborepo entirely: no graph scheduling, cache coordination, or dependency ordering.
 
 ## #2 Using `&&` to Chain Turbo Tasks
 
@@ -34,7 +34,7 @@ Don't use `&&` to chain tasks that turbo should orchestrate.
 // WRONG - changeset:publish chains turbo task with non-turbo command
 {
   "scripts": {
-    "changeset:publish": "bun build && changeset publish"
+    "changeset:publish": "pnpm --filter web build && changeset publish"
   }
 }
 

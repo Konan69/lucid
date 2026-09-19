@@ -25,7 +25,8 @@ never the supplied value.
 | `GOOGLE_CLIENT_SECRET` | No | Optional, but must be paired with `GOOGLE_CLIENT_ID`; kept redacted. |
 | `GOOGLE_REDIRECT_URI` | No | Required when Google OAuth is enabled and must be an absolute URL. |
 
-Copy `.env.example` for a local starting point. Do not put secret values in logs, traces, health
+Copy `.env.example` for a local starting point. Local PostgreSQL is
+`postgres://vivid:vivid@127.0.0.1:55433/vivid`. Do not put secret values in logs, traces, health
 responses, or error messages.
 
 ## Run
@@ -35,5 +36,5 @@ pnpm --filter @vivid/server dev
 ```
 
 Generate/apply the Drizzle migration from this package with `pnpm db:generate` and
-`pnpm db:migrate`. Better Auth is mounted directly under `/api/auth`; the request/response API is
+`pnpm db:migrate`; root `pnpm check:migrations` verifies its SQL/snapshot chain. Better Auth is mounted directly under `/api/auth`; the request/response API is
 declared with Effect HttpApi under `/api`.

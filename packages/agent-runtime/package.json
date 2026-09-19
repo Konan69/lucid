@@ -20,25 +20,25 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.83.0",
-    "@flue/postgres": "2.0.3",
-    "@flue/runtime": "2.0.3",
+    "@flue/postgres": "catalog:",
+    "@flue/runtime": "catalog:",
     "@vivid/connectors": "workspace:*",
-    "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.0-rc.116",
+    "drizzle-orm": "catalog:",
+    "effect": "catalog:",
     "croner": "^10.0.1",
     "hono": "^4.8.3",
-    "pg": "^8.23.0",
+    "pg": "catalog:",
     "unpdf": "^1.8.1",
     "valibot": "^1.4.2"
   },
   "devDependencies": {
-    "@flue/cli": "2.0.3",
-    "@flue/vite": "2.0.3",
-    "@types/node": "^24.0.0",
-    "drizzle-kit": "1.0.0-rc.5-ab785fc",
+    "@flue/cli": "catalog:",
+    "@flue/vite": "catalog:",
+    "@types/node": "catalog:",
+    "drizzle-kit": "catalog:",
     "@types/pg": "^8.20.0",
-    "@typescript/native": "npm:typescript@7.0.2",
-    "typescript": "6.0.3",
-    "vite": "8.2.2"
+    "@typescript/native": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
   }
 }

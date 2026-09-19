@@ -4,7 +4,7 @@ Detailed guidance on structuring a Turborepo monorepo.
 
 ## Workspace Configuration
 
-### pnpm (Recommended)
+### pnpm
 
 ```yaml
 # pnpm-workspace.yaml
@@ -13,22 +13,13 @@ packages:
   - "packages/*"
 ```
 
-### npm/yarn/bun
-
-```json
-// package.json
-{
-  "workspaces": ["apps/*", "packages/*"]
-}
-```
-
 ## Root package.json
 
 ```json
 {
   "name": "my-monorepo",
   "private": true,
-  "packageManager": "pnpm@9.0.0",
+  "packageManager": "pnpm@12.4.2",
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
