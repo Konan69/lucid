@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-import { readFileSync, readdirSync } from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import * as NodeFS from 'node:fs'
+import * as NodePath from 'node:path'
+import * as NodeURL from 'node:url'
+import * as Option from 'effect/Option'
+import * as Schema from 'effect/Schema'
 
 export const packageManagerVersion = '12.4.2'
 const ignoredDirectories = new Set([
@@ -17,6 +19,12 @@ const ignoredDirectories = new Set([
   'refs',
 ])
 const foreignLockfiles = new Set(['package-lock.json', 'yarn.lock'])
+const PackageManagerDocument = Schema.Struct({
+  packageManager: Schema.String,
+  engines: Schema.Struct({ pnpm: Schema.String }),
+  pnpm: Schema.OptionFromOptionalKey(Schema.Unknown),
+})
+const decodePackageManagerDocument = Schema.decodeUnknownSync(Schema.fromJsonString(PackageManagerDocument))
 
 /** Find lockfiles that would let another package manager resolve a different dependency graph. */
 export function findForeignLockfiles(root) {
@@ -27,31 +35,31 @@ export function findForeignLockfiles(root) {
     const directory = pending.pop()
     if (directory === undefined) break
 
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    for (const entry of NodeFS.readdirSync(directory, { withFileTypes: true })) {
       if (entry.isDirectory()) {
-        if (!ignoredDirectories.has(entry.name)) pending.push(path.join(directory, entry.name))
+        if (!ignoredDirectories.has(entry.name)) pending.push(NodePath.join(directory, entry.name))
       } else if (foreignLockfiles.has(entry.name)) {
-        found.push(path.relative(root, path.join(directory, entry.name)))
+        found.push(NodePath.relative(root, NodePath.join(directory, entry.name)))
       }
     }
   }
 
-  return found.sort()
+  return found.toSorted((left, right) => left.localeCompare(right))
 }
 
 /** Enforce the repository's package-manager pin and pnpm 12 configuration ownership. */
 export function validatePackageManager(root) {
   const errors = []
-  const manifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
-  const workspace = readFileSync(path.join(root, 'pnpm-workspace.yaml'), 'utf8')
+  const manifest = decodePackageManagerDocument(NodeFS.readFileSync(NodePath.join(root, 'package.json'), 'utf8'))
+  const workspace = NodeFS.readFileSync(NodePath.join(root, 'pnpm-workspace.yaml'), 'utf8')
 
   if (manifest.packageManager !== `pnpm@${packageManagerVersion}`) {
     errors.push(`package.json: packageManager must be pnpm@${packageManagerVersion}`)
   }
-  if (manifest.engines?.pnpm !== packageManagerVersion) {
+  if (manifest.engines.pnpm !== packageManagerVersion) {
     errors.push(`package.json: engines.pnpm must be ${packageManagerVersion}`)
   }
-  if (manifest.pnpm !== undefined) {
+  if (Option.isSome(manifest.pnpm)) {
     errors.push('package.json: pnpm 12 project settings belong in pnpm-workspace.yaml')
   }
   if (!/^autoInstallPeers: false$/mu.test(workspace)) {
@@ -77,9 +85,9 @@ export function validatePackageManager(root) {
 }
 
 const isMain =
-  process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+  process.argv[1] !== undefined && NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)
 if (isMain) {
-  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const root = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), '..')
   const errors = validatePackageManager(root)
   if (errors.length > 0) {
     process.stderr.write(
