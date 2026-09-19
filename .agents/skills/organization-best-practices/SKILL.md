@@ -7,7 +7,7 @@ description: Configure multi-tenant organizations, manage members and invitation
 
 1. Add `organization()` plugin to server config
 2. Add `organizationClient()` plugin to client config
-3. Run `pnpm dlx @better-auth/cli@latest migrate` (built-in adapter) or generate + push for Drizzle/Prisma
+3. Outside Vivid, run `pnpm dlx auth@latest migrate` for the built-in adapter. In Vivid, put plugin schema changes in `apps/server/src/schema.ts`, run `pnpm --filter @vivid/server db:generate`, review the SQL, then migrate; never push a shared database.
 4. Verify: check that organization, member, invitation tables exist in your database
 
 ```ts

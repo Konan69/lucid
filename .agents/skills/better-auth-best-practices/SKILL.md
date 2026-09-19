@@ -5,24 +5,35 @@ description: Configure Better Auth server and client, set up database adapters, 
 
 # Better Auth Integration Guide
 
-**Always consult [better-auth.com/docs](https://better-auth.com/docs) for code examples and latest API.**
-
 ## Vivid override
 
-Vivid pins Better Auth `1.7.3` behind `@alchemy.run/better-auth`. Its validated variables are `AUTH_SECRET` and `PUBLIC_URL`, not Better Auth's default environment names. The combined auth and application schema lives in `apps/server/src/schema.ts`. Edit that schema, run `pnpm --filter @vivid/server db:generate`, review the generated SQL, then migrate. Never use `drizzle-kit push` for this repository.
+Vivid targets Better Auth `1.7.5` through `@alchemy.run/better-auth` beta.79. Its validated variables are `AUTH_SECRET` and `PUBLIC_URL`, not Better Auth's default environment names. The combined auth and application schema lives in `apps/server/src/schema.ts`. Edit that schema, run `pnpm --filter @vivid/server db:generate`, review the generated SQL, then migrate. Never use `drizzle-kit push` for this repository.
+
+## Documentation Version
+
+Use documentation for Better Auth `1.7.5` when working in Vivid. For another project, use documentation that matches its resolved package version because APIs and plugin names can differ across maintained release lines.
+
+1. Prefer a version explicitly named by the user.
+2. Otherwise, inspect the resolved `better-auth` version in the lockfile, falling back to the package manifest when no lockfile is available.
+3. When the Better Auth MCP is available, call `get_doc` with `/llms.txt` to resolve that package version to a documentation identifier. Pass the identifier to every `search_docs` call and pass result paths to `get_doc` unchanged.
+4. Without MCP, start at [better-auth.com/llms.txt](https://better-auth.com/llms.txt) and follow the matching version index.
+5. Use the latest documentation only when the project version cannot be determined or the user explicitly asks about the latest release or an upgrade.
+
+When planning an upgrade, separate guidance for the currently installed version from guidance for the target version.
 
 ---
 
 ## Setup Workflow
 
-1. Install: `npm install better-auth`
+1. Install: `pnpm add better-auth`
 2. Set env vars: `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL`
 3. Create `auth.ts` with database + config
 4. Create route handler for your framework
 5. Run migrations:
-   - **Built-in adapter:** `npx @better-auth/cli@latest migrate`
-   - **Drizzle:** `npx @better-auth/cli@latest generate --output src/db/auth-schema.ts` then `npx drizzle-kit push` (dev) or `npx drizzle-kit generate && npx drizzle-kit migrate` (prod)
-   - **Prisma:** `npx @better-auth/cli@latest generate --output prisma/schema.prisma` then `npx prisma migrate dev`
+   - **Vivid:** edit `apps/server/src/schema.ts`, run `pnpm --filter @vivid/server db:generate`, review the generated SQL, then migrate.
+   - **Built-in adapter in another pnpm project:** `pnpm dlx auth@latest migrate`
+   - **Drizzle in another pnpm project:** `pnpm dlx auth@latest generate --output src/db/auth-schema.ts`, then use reviewed generated migrations. Do not push a shared database.
+   - **Prisma in another pnpm project:** `pnpm dlx auth@latest generate --output prisma/schema.prisma` then `pnpm dlx prisma migrate dev`
 6. Verify: call `GET /api/auth/ok` — should return `{ status: "ok" }`
 
 ---
@@ -39,9 +50,9 @@ Only define `baseURL`/`secret` in config if env vars are NOT set.
 CLI looks for `auth.ts` in: `./`, `./lib`, `./utils`, or under `./src`. Use `--config` for custom path.
 
 ### CLI Commands
-- `npx @better-auth/cli@latest migrate` - Apply schema (built-in adapter)
-- `npx @better-auth/cli@latest generate` - Generate schema for Prisma/Drizzle
-- `npx @better-auth/cli mcp --cursor` - Add MCP to AI tools
+- `pnpm dlx auth@latest migrate` - Apply schema with the built-in adapter outside Vivid
+- `pnpm dlx auth@latest generate` - Generate a schema for Prisma/Drizzle outside Vivid
+- `pnpm dlx auth@latest mcp --cursor` - Add MCP to AI tools
 
 **Re-run after adding/changing plugins.**
 
