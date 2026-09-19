@@ -771,7 +771,7 @@ const effectRequireEffectFn = rule(
   'Service operations that return Effect must use a named Effect.fn for traceability.',
   (report, context) => ({
     Property(node) {
-      if (!isFunction(node.value) || node.value.async === true || node.value.returnType === undefined) return
+      if (!isFunction(node.value) || node.value.async === true || node.value.returnType == null) return
       const returnType = sourceText(context, node.value.returnType)
       if (
         /\bEffect(?:\.|<)/u.test(returnType) &&

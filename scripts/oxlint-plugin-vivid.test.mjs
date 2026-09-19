@@ -218,6 +218,11 @@ for (const [ruleName, invalid, valid, filename] of cases) {
       )
     }
 
+    if (ruleName === 'effect-require-effect-fn') {
+      const callback = 'const options = { catch: () => Effect.fail(new DomainError({})) }'
+      assert.equal(ruleDiagnostics(ruleName, lint(ruleName, callback)).length, 0)
+    }
+
     if (ruleName === 'no-global-process-runtime') {
       const source = [
         "import * as NodeOS from 'node:os'",
