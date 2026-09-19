@@ -31,13 +31,15 @@ export function resolveComposerControlledEventCount(
   let newestValueEventCount: number | null = null;
   for (let index = snapshots.length - 1; index >= 0; index -= 1) {
     const snapshot = snapshots[index];
-    if (snapshot?.value !== value) continue;
+    if (snapshot === undefined || snapshot.value !== value) continue;
 
     newestValueEventCount ??= snapshot.eventCount;
+    const snapshotSelection = snapshot.selection;
     if (
       selection === null ||
-      (snapshot.selection?.start === selection.start &&
-        snapshot.selection.end === selection.end)
+      (snapshotSelection !== null &&
+        snapshotSelection.start === selection.start &&
+        snapshotSelection.end === selection.end)
     ) {
       return snapshot.eventCount;
     }
@@ -66,7 +68,8 @@ export function isComposerNativeEcho(
       snapshot.eventCount === eventCount &&
       snapshot.value === value &&
       (selection === null ||
-        (snapshot.selection?.start === selection.start &&
+        (snapshot.selection !== null &&
+          snapshot.selection.start === selection.start &&
           snapshot.selection.end === selection.end))
     ) {
       return true;
