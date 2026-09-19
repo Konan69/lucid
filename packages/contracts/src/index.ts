@@ -1,5 +1,7 @@
 import { Schema } from "effect"
 
+export * from "./runtime"
+
 const id = (name: string) => Schema.String.pipe(Schema.brand(name))
 
 export const PersonId = id("PersonId")
