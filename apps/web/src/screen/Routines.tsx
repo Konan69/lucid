@@ -88,7 +88,7 @@ function formatTime(value: number | null) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(value);
 }
 
-export function Routines({ onOpenConversation }: { onOpenConversation(conversation: RuntimeConversation): void }) {
+export function Routines({ onOpenConversation }: { onOpenConversation: (conversation: RuntimeConversation) => void }) {
   const [routines, setRoutines] = useState<ScheduledRoutine[]>([]);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -189,7 +189,7 @@ export function Routines({ onOpenConversation }: { onOpenConversation(conversati
   );
 }
 
-function RoutineEditor({ routine, onChanged, onDeleted, onCancel, onOpenConversation }: { routine: ScheduledRoutine | null; onChanged(id: string): Promise<void>; onDeleted(): Promise<void>; onCancel(): void; onOpenConversation(conversation: RuntimeConversation): void }) {
+function RoutineEditor({ routine, onChanged, onDeleted, onCancel, onOpenConversation }: { routine: ScheduledRoutine | null; onChanged: (id: string) => Promise<void>; onDeleted: () => Promise<void>; onCancel: () => void; onOpenConversation: (conversation: RuntimeConversation) => void }) {
   const [name, setName] = useState(routine === null ? "" : routine.name);
   const [prompt, setPrompt] = useState(routine === null ? "" : routine.prompt);
   const [cron, setCron] = useState(routine === null ? "0 9 * * 1-5" : routine.cron);
@@ -252,7 +252,7 @@ function RoutineEditor({ routine, onChanged, onDeleted, onCancel, onOpenConversa
   </div>;
 }
 
-function TemplateCard({ template: item, onOpen }: { template: RoutineTemplate; onOpen(): void }) {
+function TemplateCard({ template: item, onOpen }: { template: RoutineTemplate; onOpen: () => void }) {
   return <button onClick={onOpen} className="group/card flex h-full flex-col rounded-card bg-surface-2 p-4 text-left shadow-ring-xs transition-[background-color,box-shadow] duration-(--dur-fast) hover:bg-wash-hover hover:shadow-ring-sm"><span className="flex h-6 items-center gap-2"><span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-meta font-title", brandText[item.brandColor])}>{item.publisher}</span><span className="flex-1" /><span className="text-meta font-title text-ink">{item.price}</span></span><span className="mt-2.5 block text-title text-ink">{item.name}</span><span className="mt-0.5 line-clamp-2 text-label text-ink-3">{item.summary}</span><span className="mt-auto flex items-center gap-2 pt-3 text-meta font-meta text-ink-4"><Star className="size-3.5 fill-current text-approve" />{item.rating}<span>·</span>{item.installs} using it<ChevronRight className="ml-auto size-3.5 transition-transform duration-(--dur-fast) group-hover/card:translate-x-0.5" /></span></button>;
 }
 

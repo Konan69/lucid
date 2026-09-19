@@ -226,7 +226,7 @@ function groupTasks(tasks: Task[], now: number): Group[] {
   ].filter((group) => group.tasks.length > 0);
 }
 
-export function Today({ onOpenConversation }: { onOpenConversation(conversationId: string, fallbackTitle: string): void }) {
+export function Today({ onOpenConversation }: { onOpenConversation: (conversationId: string, fallbackTitle: string) => void }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [ready, setReady] = useState(false);
@@ -395,7 +395,7 @@ export function Today({ onOpenConversation }: { onOpenConversation(conversationI
   );
 }
 
-function TaskRow({ task, onOpen, onToggle }: { task: Task; onOpen(): void; onToggle(): void }) {
+function TaskRow({ task, onOpen, onToggle }: { task: Task; onOpen: () => void; onToggle: () => void }) {
   const now = useCurrentTime();
   const overdue = task.status === "open" && task.dueAt !== null && task.dueAt < now;
   const running = task.followUps.some((followUp) => followUp.status === "running");
@@ -430,7 +430,7 @@ function TaskRow({ task, onOpen, onToggle }: { task: Task; onOpen(): void; onTog
   );
 }
 
-function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }: { task: Task | null; onChanged(id: string): Promise<void>; onDeleted(): Promise<void>; onCancel(): void; onOpenConversation(conversationId: string, fallbackTitle: string): void }) {
+function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }: { task: Task | null; onChanged: (id: string) => Promise<void>; onDeleted: () => Promise<void>; onCancel: () => void; onOpenConversation: (conversationId: string, fallbackTitle: string) => void }) {
   const now = useCurrentTime();
   const [title, setTitle] = useState(task === null ? "" : task.title);
   const [detail, setDetail] = useState(task === null ? "" : task.detail);
@@ -589,7 +589,7 @@ function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }
   );
 }
 
-function FollowUpFields({ at, note, repeat, onAt, onNote, onRepeat, quickTimes }: { at: string; note: string; repeat: string; onAt(value: string): void; onNote(value: string): void; onRepeat(value: string): void; quickTimes: Array<{ label: string; at: () => number }> }) {
+function FollowUpFields({ at, note, repeat, onAt, onNote, onRepeat, quickTimes }: { at: string; note: string; repeat: string; onAt: (value: string) => void; onNote: (value: string) => void; onRepeat: (value: string) => void; quickTimes: Array<{ label: string; at: () => number }> }) {
   const fieldClass = "h-9 w-full rounded-control bg-surface-3 px-3 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm";
   return (
     <div className="mt-3 space-y-2.5">
@@ -605,7 +605,7 @@ function FollowUpFields({ at, note, repeat, onAt, onNote, onRepeat, quickTimes }
   );
 }
 
-function FollowUpRow({ followUp, onAction, onOpen }: { followUp: FollowUp; onAction(action: "run" | "cancel" | "delete"): void; onOpen(): void }) {
+function FollowUpRow({ followUp, onAction, onOpen }: { followUp: FollowUp; onAction: (action: "run" | "cancel" | "delete") => void; onOpen: () => void }) {
   const tone = followUp.status === "scheduled" ? "bg-accent" : followUp.status === "running" ? "animate-status-pulse bg-working" : followUp.status === "fired" ? "bg-success" : followUp.status === "failed" ? "bg-danger" : "bg-ink-4";
   const label = followUp.status === "scheduled" ? "Scheduled" : followUp.status === "running" ? "Vivid is on it" : followUp.status === "fired" ? "Followed up" : followUp.status === "failed" ? "Failed" : "Cancelled";
   const repeat = describeRepeat(followUp.repeatEveryMs);

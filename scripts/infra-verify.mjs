@@ -91,8 +91,10 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   validateTargets(targets)
 
   const packageDocument = JSON.parse(source(root, "package.json"))
-  assert.equal(packageDocument.devDependencies.alchemy, "2.0.0-beta.76", "root Alchemy version must stay pinned")
-  assert.equal(packageDocument.devDependencies.effect, "4.0.0-rc.112", "root Effect version must match Alchemy")
+  // scripts/versions.mjs owns the exact pins; here we only require the catalog so the
+  // stack file and every package resolve the same Alchemy and Effect builds.
+  assert.equal(packageDocument.devDependencies.alchemy, "catalog:", "root Alchemy version must come from the catalog")
+  assert.equal(packageDocument.devDependencies.effect, "catalog:", "root Effect version must come from the catalog")
   assert.match(packageDocument.scripts["infra:dev"], /alchemy dev/, "infra:dev must use alchemy dev")
   assert.match(packageDocument.scripts["infra:destroy"], /VIVID_DEPLOY_TARGET=local/, "infra:destroy must be local-only")
   assert.equal(packageDocument.scripts["infra:deploy"], undefined, "remote deploy script must not exist")

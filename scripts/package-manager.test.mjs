@@ -9,12 +9,12 @@ import { findForeignLockfiles, validatePackageManager } from './package-manager.
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 /** The checked-in repository keeps the package-manager pin and workspace policy aligned. */
-test('repository package-manager policy passes', () => {
+void test('repository package-manager policy passes', () => {
   assert.deepEqual(validatePackageManager(repositoryRoot), [])
 })
 
 /** Foreign lockfiles are found in workspaces but ignored inside dependency/cache directories. */
-test('foreign lockfile discovery covers the workspace without traversing generated trees', () => {
+void test('foreign lockfile discovery covers the workspace without traversing generated trees', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'vivid-package-manager-'))
   try {
     mkdirSync(path.join(root, 'apps', 'web'), { recursive: true })

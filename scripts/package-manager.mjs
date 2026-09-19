@@ -13,6 +13,8 @@ const ignoredDirectories = new Set([
   'coverage',
   'dist',
   'node_modules',
+  // Untracked third-party reference checkouts; their lockfiles never resolve this workspace.
+  'refs',
 ])
 const foreignLockfiles = new Set(['package-lock.json', 'yarn.lock'])
 

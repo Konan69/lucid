@@ -14,19 +14,19 @@ const decodePackageManagerManifest = Schema.decodeUnknownSync(Schema.fromJsonStr
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 /** The checked-in manifests are the lockstep contract, not only a synthetic fixture. */
-test('workspace versions and compiler paths remain locked', () => {
+void test('workspace versions and compiler paths remain locked', () => {
   assert.deepEqual(validateVersions(repositoryRoot), [])
 })
 
 /** Every visible package remains part of lockstep discovery as the monorepo grows. */
-test('workspace manifest discovery covers both apps and packages', () => {
+void test('workspace manifest discovery covers both apps and packages', () => {
   const manifests = workspaceManifestPaths(repositoryRoot)
   assert.ok(manifests.includes('apps/server/package.json'))
   assert.ok(manifests.includes('packages/contracts/package.json'))
 })
 
 /** Exact prerelease pins are deliberate because semver drift changes Effect and Drizzle APIs. */
-test('critical prerelease versions are exact', () => {
+void test('critical prerelease versions are exact', () => {
   assert.equal(versions.effect, '4.0.0-rc.116')
   assert.equal(versions['drizzle-orm'], '1.0.0-rc.5-ab785fc')
   assert.equal(versions.alchemy, '2.0.0-beta.79')
