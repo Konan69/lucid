@@ -78,7 +78,13 @@ import {
   getRoutine,
   updateRoutine,
 } from "./routine-store.ts";
-import { chaseTaskNow, runFollowUpNow } from "./follow-up-scheduler.ts";
+import {
+  chaseTaskNow,
+  FOLLOW_UP_TICK_MS,
+  initializeFollowUpScheduler,
+  runFollowUpNow,
+  runFollowUpSchedulerTick,
+} from "./follow-up-scheduler.ts";
 import {
   createFollowUp,
   createTask,
@@ -147,6 +153,20 @@ const runRuntimeEffect = <Value, Failure>(
   // oxlint-disable-next-line vivid/no-runpromise-in-library
   return Effect.runPromise(Effect.result(effect));
 };
+
+/** Starts one observed runtime fiber from a Hono-owned timer callback. */
+const observeRuntimeEffect = <Failure>(label: string, effect: Effect.Effect<void, Failure>): void => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(label, cause))));
+};
+
+setInterval(
+  () => observeRuntimeEffect("follow-up tick", runFollowUpSchedulerTick()),
+  FOLLOW_UP_TICK_MS,
+).unref();
+setTimeout(
+  () => observeRuntimeEffect("follow-up recovery", initializeFollowUpScheduler()),
+  1500,
+).unref();
 
 /** Decodes route and query records synchronously at Hono's string boundary. */
 const decodeIngress = <Value>(
@@ -662,8 +682,13 @@ app.post("/api/tasks/:id/nudge", async (context) => {
   const decoded = await decodeJsonBody(context, NudgeTaskRequest, true);
   if (Result.isFailure(decoded)) return context.json({ error: "Invalid nudge" }, 400);
   const note = optionalText(decoded.success.note, 500);
-  const followUp = await chaseTaskNow(task, note && note.length > 0 ? note : "You asked Vivid to chase this now.", "you");
-  return context.json({ followUp, task: await getTaskView(task) }, 202);
+  const chased = await runRuntimeEffect(chaseTaskNow(
+    task,
+    note && note.length > 0 ? note : "You asked Vivid to chase this now.",
+    "you",
+  ));
+  if (Result.isFailure(chased)) return context.json({ error: "Could not start the follow-up" }, 500);
+  return context.json({ followUp: chased.success, task: await getTaskView(task) }, 202);
 });
 
 app.post("/api/tasks/:id/follow-ups", async (context) => {
@@ -711,8 +736,10 @@ app.delete("/api/follow-ups/:id", async (context) => {
 app.post("/api/follow-ups/:id/run", async (context) => {
   const params = decodeIngress(FollowUpParams, { id: context.req.param("id") });
   if (Result.isFailure(params)) return context.json({ error: "Follow-up not found" }, 404);
-  const followUp = await runFollowUpNow(params.success.id);
-  if (!followUp) return context.json({ error: "Follow-up not found" }, 404);
+  const started = await runRuntimeEffect(runFollowUpNow(params.success.id));
+  if (Result.isFailure(started)) return context.json({ error: "Could not start the follow-up" }, 500);
+  const followUp = started.success;
+  if (followUp === null) return context.json({ error: "Follow-up not found" }, 404);
   const task = await getTask(followUp.taskId);
   return context.json({ followUp, task: task ? await getTaskView(task) : null }, 202);
 });
