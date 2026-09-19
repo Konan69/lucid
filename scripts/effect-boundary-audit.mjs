@@ -21,6 +21,17 @@ const Allowlist = Schema.Array(AllowlistEntry)
 const decodeAllowlist = Schema.decodeUnknownResult(Allowlist)
 const decodeAllowlistJson = Schema.decodeUnknownSync(Schema.fromJsonString(Allowlist))
 const wildcard = /[*?{}[\]]/u
+const promiseOperationKinds = new Map([
+  ['all', 'promise-all'],
+  ['allSettled', 'promise-all-settled'],
+])
+const effectOperationKinds = new Map([
+  ['runPromise', 'effect-run-promise'],
+  ['runPromiseExit', 'effect-run-promise'],
+  ['tryPromise', 'effect-try-promise'],
+  ['promise', 'effect-promise-adapter'],
+  ['async', 'effect-async-adapter'],
+])
 
 /** Production TypeScript only; tests, declarations, generated files, and migration state are separate gates. */
 export function isProductionTypeScript(relativePath) {
@@ -120,6 +131,69 @@ function owningSymbol(node) {
   return moduleBinding ?? '<module>'
 }
 
+const importBoundaryKinds = (node) =>
+  ts.isImportDeclaration(node) &&
+  ts.isStringLiteral(node.moduleSpecifier) &&
+  node.moduleSpecifier.text === 'better-result'
+    ? ['better-result-import']
+    : []
+
+const functionBoundaryKinds = (node) => {
+  if (!ts.isFunctionLike(node)) return []
+  const kinds = []
+  if (
+    node.modifiers !== undefined &&
+    node.modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+  ) {
+    kinds.push('async-function')
+  }
+  if (
+    node.type !== undefined &&
+    ts.isTypeReferenceNode(node.type) &&
+    ts.isIdentifier(node.type.typeName) &&
+    node.type.typeName.text === 'Promise'
+  ) {
+    kinds.push('promise-return')
+  }
+  return kinds
+}
+
+const syntaxBoundaryKinds = (node) => {
+  if (ts.isAwaitExpression(node)) return ['await']
+  if (ts.isTryStatement(node) && node.catchClause !== undefined) return ['try-catch']
+  if (
+    ts.isNewExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === 'Promise'
+  ) {
+    return ['promise-constructor']
+  }
+  return []
+}
+
+const callBoundaryKinds = (node) => {
+  if (!ts.isCallExpression(node)) return []
+  const owner = expressionOwner(node.expression)
+  const operation = propertyName(node.expression)
+  const promiseKind = owner === 'Promise' ? promiseOperationKinds.get(operation) : undefined
+  if (promiseKind !== undefined) return [promiseKind]
+  if (
+    (ts.isIdentifier(node.expression) && node.expression.text === 'fetch') ||
+    (owner === 'globalThis' && operation === 'fetch')
+  ) {
+    return ['raw-fetch']
+  }
+  const effectKind = owner === 'Effect' ? effectOperationKinds.get(operation) : undefined
+  return effectKind === undefined ? [] : [effectKind]
+}
+
+const boundaryKinds = (node) => [
+  ...importBoundaryKinds(node),
+  ...functionBoundaryKinds(node),
+  ...syntaxBoundaryKinds(node),
+  ...callBoundaryKinds(node),
+]
+
 /** Inventory raw async and Effect runtime boundaries in one source file. */
 export function scanSource(file, source) {
   const sourceFile = ts.createSourceFile(
@@ -141,54 +215,7 @@ export function scanSource(file, source) {
     })
   }
   const visit = (node) => {
-    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
-      if (node.moduleSpecifier.text === 'better-result') add('better-result-import', node)
-    }
-    if (ts.isFunctionLike(node)) {
-      if (
-        node.modifiers !== undefined &&
-        node.modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
-      ) {
-        add('async-function', node)
-      }
-      if (
-        node.type !== undefined &&
-        ts.isTypeReferenceNode(node.type) &&
-        ts.isIdentifier(node.type.typeName) &&
-        node.type.typeName.text === 'Promise'
-      ) {
-        add('promise-return', node)
-      }
-    }
-    if (ts.isAwaitExpression(node)) add('await', node)
-    if (ts.isTryStatement(node) && node.catchClause !== undefined)
-      add('try-catch', node.catchClause)
-    if (
-      ts.isNewExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === 'Promise'
-    ) {
-      add('promise-constructor', node)
-    }
-    if (ts.isCallExpression(node)) {
-      const owner = expressionOwner(node.expression)
-      const operation = propertyName(node.expression)
-      if (owner === 'Promise' && operation === 'all') add('promise-all', node)
-      if (owner === 'Promise' && operation === 'allSettled') add('promise-all-settled', node)
-      if (
-        (ts.isIdentifier(node.expression) && node.expression.text === 'fetch') ||
-        (owner === 'globalThis' && operation === 'fetch')
-      ) {
-        add('raw-fetch', node)
-      }
-      if (owner === 'Effect') {
-        if (operation === 'runPromise' || operation === 'runPromiseExit')
-          add('effect-run-promise', node)
-        if (operation === 'tryPromise') add('effect-try-promise', node)
-        if (operation === 'promise') add('effect-promise-adapter', node)
-        if (operation === 'async') add('effect-async-adapter', node)
-      }
-    }
+    for (const kind of boundaryKinds(node)) add(kind, node)
     ts.forEachChild(node, visit)
   }
   visit(sourceFile)
