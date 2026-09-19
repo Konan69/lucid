@@ -702,7 +702,11 @@ const noHostTransformValidation = rule(
   'Host JSON transforms do not establish a domain type. Decode the result with a named Effect Schema at ingress.',
   (report) => ({
     CallExpression(node) {
-      if (node.callee?.type === 'MemberExpression' && propertyName(node.callee) === 'json') report(node)
+      if (
+        node.arguments.length === 0 &&
+        node.callee?.type === 'MemberExpression' &&
+        propertyName(node.callee) === 'json'
+      ) report(node)
     },
   }),
 )

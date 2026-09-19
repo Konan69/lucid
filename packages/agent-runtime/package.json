@@ -23,6 +23,7 @@
     "@flue/postgres": "catalog:",
     "@flue/runtime": "catalog:",
     "@vivid/connectors": "workspace:*",
+    "@vivid/contracts": "workspace:*",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",
     "croner": "^10.0.1",

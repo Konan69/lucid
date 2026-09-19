@@ -30,7 +30,7 @@ export const lazy = Effect.promise(() => Promise.resolve(1));
 /** The fixture exercises every inventoried syntax family with stable owning symbols. */
 test('inventories requested boundary syntax with enclosing symbols', () => {
   const findings = scanSource(fixtureFile, fixtureSource)
-  const kinds = findings.map((finding) => finding.kind).toSorted()
+  const kinds = findings.map((finding) => finding.kind).toSorted((left, right) => left.localeCompare(right))
 
   assert.deepEqual(kinds, [
     'async-function',
@@ -50,8 +50,12 @@ test('inventories requested boundary syntax with enclosing symbols', () => {
     'raw-fetch',
     'try-catch',
   ])
-  assert.equal(findings.find((finding) => finding.kind === 'async-function')?.symbol, 'load')
-  assert.equal(findings.find((finding) => finding.kind === 'promise-all-settled')?.symbol, 'settle')
+  const asyncFunction = findings.find((finding) => finding.kind === 'async-function')
+  const settled = findings.find((finding) => finding.kind === 'promise-all-settled')
+  assert.ok(asyncFunction)
+  assert.ok(settled)
+  assert.equal(asyncFunction.symbol, 'load')
+  assert.equal(settled.symbol, 'settle')
 })
 
 /** Exclusions protect the production signal without hiding similarly named domain modules. */

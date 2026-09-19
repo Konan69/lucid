@@ -265,7 +265,7 @@ export async function unreadNotificationCount(): Promise<number> {
   return Number(rows[0]?.count ?? 0);
 }
 
-export async function markNotificationsRead(ids?: string[]): Promise<number> {
+export async function markNotificationsRead(ids?: ReadonlyArray<string>): Promise<number> {
   await schemaReady; const now = Date.now();
   if (!ids) return (await db.update(notifications).set({ readAt: now }).where(isNull(notifications.readAt)).returning({ id: notifications.id })).length;
   if (ids.length === 0) return 0;

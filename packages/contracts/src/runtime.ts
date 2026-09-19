@@ -86,6 +86,8 @@ export const PatchThreadRequest = Schema.Struct({
 /** Decoded Thread patch input. */
 export interface PatchThreadRequest extends Schema.Schema.Type<typeof PatchThreadRequest> {}
 
+/** Thread path parameters used by conversation routes. */
+export const ThreadParams = Schema.Struct({ id: ThreadId })
 /** List response for Threads. */
 export const ThreadListResponse = Schema.Struct({ conversations: Schema.Array(Thread) })
 /** Decoded Thread list response. */
@@ -94,6 +96,11 @@ export interface ThreadListResponse extends Schema.Schema.Type<typeof ThreadList
 export const ThreadResponse = Schema.Struct({ conversation: Thread })
 /** Decoded single Thread response. */
 export interface ThreadResponse extends Schema.Schema.Type<typeof ThreadResponse> {}
+
+/** Epoch milliseconds or an ISO 8601 timestamp accepted by mutation routes. */
+export const TimestampInput = Schema.Union([Schema.Number, Schema.String])
+/** Decoded timestamp input. */
+export type TimestampInput = typeof TimestampInput.Type
 
 /** One scheduled follow-up attached to a Task. */
 export const FollowUp = Schema.Struct({
@@ -148,7 +155,7 @@ export interface Task extends Schema.Schema.Type<typeof Task> {}
 
 /** Follow-up values accepted while creating or rescheduling one. */
 export const FollowUpInput = Schema.Struct({
-  at: Schema.Number,
+  at: TimestampInput,
   note: Schema.optionalKey(Schema.String),
   repeatEveryMs: Schema.optionalKey(Schema.NullOr(Schema.Number)),
 }).annotate({ identifier: "FollowUpInput", title: "Follow-up input" })
@@ -160,7 +167,7 @@ export const CreateTaskRequest = Schema.Struct({
   title: Schema.String,
   detail: Schema.optionalKey(Schema.String),
   assignee: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  dueAt: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  dueAt: Schema.optionalKey(Schema.NullOr(TimestampInput)),
   priority: Schema.optionalKey(TaskPriority),
   followUp: Schema.optionalKey(FollowUpInput),
 }).annotate({ identifier: "CreateTaskRequest", title: "Create Task request" })
@@ -172,18 +179,24 @@ export const PatchTaskRequest = Schema.Struct({
   title: Schema.optionalKey(Schema.String),
   detail: Schema.optionalKey(Schema.String),
   assignee: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  dueAt: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  dueAt: Schema.optionalKey(Schema.NullOr(TimestampInput)),
   priority: Schema.optionalKey(TaskPriority),
   status: Schema.optionalKey(TaskStatus),
 }).annotate({ identifier: "PatchTaskRequest", title: "Patch Task request" })
 /** Decoded Task patch input. */
 export interface PatchTaskRequest extends Schema.Schema.Type<typeof PatchTaskRequest> {}
 
+/** Task path parameters. */
+export const TaskParams = Schema.Struct({ id: TaskId })
+/** Follow-up path parameters. */
+export const FollowUpParams = Schema.Struct({ id: FollowUpId })
+/** Optional Task status filter. */
+export const TaskListQuery = Schema.Struct({ status: Schema.optionalKey(TaskStatus) })
 /** Optional note accepted by the immediate Task nudge route. */
 export const NudgeTaskRequest = Schema.Struct({ note: Schema.optionalKey(Schema.String) })
 /** Follow-up patch fields accepted by the runtime. */
 export const PatchFollowUpRequest = Schema.Struct({
-  at: Schema.optionalKey(Schema.Number),
+  at: Schema.optionalKey(TimestampInput),
   note: Schema.optionalKey(Schema.String),
   repeatEveryMs: Schema.optionalKey(Schema.NullOr(Schema.Number)),
   status: Schema.optionalKey(Schema.Literals(["scheduled", "cancelled"] as const)),
@@ -268,6 +281,8 @@ export const PatchRoutineRequest = Schema.Struct({
   libraryFolderId: Schema.optionalKey(Schema.NullOr(LibraryFolderId)),
   enabled: Schema.optionalKey(Schema.Boolean),
 })
+/** Routine path parameters. */
+export const RoutineParams = Schema.Struct({ id: RoutineId })
 /** Routine list response. */
 export const RoutineListResponse = Schema.Struct({ routines: Schema.Array(Routine) })
 /** Single Routine response. */
@@ -314,6 +329,14 @@ export const LibrarySearchResult = Schema.Struct({
   text: Schema.String,
   score: Schema.Number,
 })
+/** Optional folder filter for Library list routes. */
+export const LibraryListQuery = Schema.Struct({ folderId: Schema.optionalKey(LibraryFolderId) })
+/** Source-name query for Library content lookup. */
+export const LibrarySourceQuery = Schema.Struct({ name: Schema.String })
+/** Library item path parameters. */
+export const LibraryItemParams = Schema.Struct({ id: LibraryItemId })
+/** Library folder path parameters. */
+export const LibraryFolderParams = Schema.Struct({ id: LibraryFolderId })
 /** Library list response. */
 export const LibraryListResponse = Schema.Struct({
   documents: Schema.Array(LibraryItem),
@@ -325,6 +348,13 @@ export const LibraryItemResponse = Schema.Struct({ document: LibraryItem })
 export const LibraryFolderResponse = Schema.Struct({ folder: LibraryFolder })
 /** Library folder list response. */
 export const LibraryFolderListResponse = Schema.Struct({ folders: Schema.Array(LibraryFolder) })
+/** Decoded metadata extracted from a multipart Library upload. */
+export const LibraryUploadMetadata = Schema.Struct({
+  name: Schema.String,
+  mimeType: Schema.Literals(["application/pdf", "text/markdown", "text/plain"] as const),
+  size: Schema.Number,
+  folderId: Schema.NullOr(LibraryFolderId),
+})
 /** Library upload response. */
 export const LibraryUploadResponse = Schema.Struct({
   document: LibraryItem,
@@ -341,7 +371,7 @@ export const LibrarySearchResponse = Schema.Struct({ results: Schema.Array(Libra
 /** Library folder creation request. */
 export const CreateLibraryFolderRequest = Schema.Struct({
   name: Schema.String,
-  parentId: Schema.NullOr(LibraryFolderId),
+  parentId: Schema.optionalKey(Schema.NullOr(LibraryFolderId)),
 })
 /** Library folder patch request. */
 export const PatchLibraryFolderRequest = Schema.Struct({
@@ -368,6 +398,15 @@ export const Connection = Schema.Struct({
 }).annotate({ identifier: "Connection", title: "Connection" })
 /** Decoded external Connection metadata. */
 export interface Connection extends Schema.Schema.Type<typeof Connection> {}
+/** Connection path parameters. */
+export const ConnectionParams = Schema.Struct({ id: ConnectionId })
+/** OAuth callback query returned by Google. */
+export const ConnectionCallbackQuery = Schema.Struct({
+  code: Schema.String,
+  state: Schema.optionalKey(Schema.String),
+})
+/** Signed state payload carried through the OAuth redirect. */
+export const ConnectionCallbackState = Schema.Struct({ connector: ConnectionId, nonce: Schema.String })
 /** Connection list response. */
 export const ConnectionListResponse = Schema.Struct({ connectors: Schema.Array(Connection) })
 /** Connection authorization response. */
