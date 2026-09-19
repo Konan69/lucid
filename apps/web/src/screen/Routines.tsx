@@ -2,34 +2,15 @@ import {
   AlertTriangle, Check, ChevronRight, Clock3, LoaderCircle, Pause, Play, Plus, Repeat2, RotateCcw,
   Search, ShieldCheck, Star, Store, Trash2,
 } from "lucide-react";
-import { Effect, Schema } from "effect";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { templates, type RoutineTemplate } from "../data/routines";
+import * as routinesData from "../data/routines";
+import { run as runClient } from "../data/runtime";
 import { plainPreview, type RuntimeConversation } from "../data/runtimeConversations";
 import { cn } from "../ui/cn";
-import { emptyResponse, request } from "../data/request";
 
-type RoutineRun = {
-  id: string;
-  conversationId: string;
-  status: "running" | "succeeded" | "failed";
-  startedAt: number;
-  finishedAt: number | null;
-  output: string | null;
-  error: string | null;
-};
-
-type ScheduledRoutine = {
-  id: string;
-  name: string;
-  prompt: string;
-  cron: string;
-  timezone: string;
-  enabled: boolean;
-  lastMissedAt: number | null;
-  nextRunAt: number | null;
-  runs: RoutineRun[];
-};
+type RoutineTemplate = routinesData.RoutineTemplate;
+type ScheduledRoutine = routinesData.ScheduledRoutine;
+const templates = routinesData.templates;
 
 const brandText = {
   accent: "text-accent-ink bg-accent-soft",
@@ -37,32 +18,6 @@ const brandText = {
   approve: "text-approve bg-approve-soft",
   success: "text-success bg-success-soft",
 } satisfies Record<RoutineTemplate["brandColor"], string>;
-
-const RoutineRunSchema = Schema.Struct({
-  id: Schema.String,
-  conversationId: Schema.String,
-  status: Schema.Literals(["running", "succeeded", "failed"]),
-  startedAt: Schema.Number,
-  finishedAt: Schema.NullOr(Schema.Number),
-  output: Schema.NullOr(Schema.String),
-  error: Schema.NullOr(Schema.String),
-});
-const ScheduledRoutineSchema = Schema.Struct({
-  id: Schema.String,
-  name: Schema.String,
-  prompt: Schema.String,
-  cron: Schema.String,
-  timezone: Schema.String,
-  enabled: Schema.Boolean,
-  lastMissedAt: Schema.NullOr(Schema.Number),
-  nextRunAt: Schema.NullOr(Schema.Number),
-  runs: Schema.mutable(Schema.Array(RoutineRunSchema)),
-});
-const RoutinesResponseSchema = Schema.fromJsonString(Schema.Struct({ routines: Schema.mutable(Schema.Array(ScheduledRoutineSchema)) }));
-const RoutineResponseSchema = Schema.fromJsonString(Schema.Struct({ routine: ScheduledRoutineSchema }));
-const decodeRoutinesResponse = Schema.decodeUnknownSync(RoutinesResponseSchema);
-const decodeRoutineResponse = Schema.decodeUnknownSync(RoutineResponseSchema);
-const loadRoutines = request("/api/routines", decodeRoutinesResponse);
 
 function describeCron(cron: string) {
   const known = new Map([
@@ -88,16 +43,17 @@ export function Routines({ onOpenConversation }: { onOpenConversation: (conversa
   const [templateId, setTemplateId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    await Effect.runPromise(loadRoutines.pipe(
-      Effect.match({
-        onFailure: (failure) => setError(failure.message),
-        onSuccess: (body) => {
-          setRoutines(body.routines);
-          setError(null);
-        },
-      }),
-      Effect.ensuring(Effect.sync(() => setReady(true))),
-    ));
+    const result = await runClient(routinesData.load());
+    setReady(true);
+    if (result._tag === "Failure") {
+      switch (result.failure._tag) {
+        case "ClientRequestFailed":
+          setError(result.failure.message);
+          return;
+      }
+    }
+    setRoutines(result.success);
+    setError(null);
   }, []);
 
   useEffect(() => {
@@ -105,21 +61,19 @@ export function Routines({ onOpenConversation }: { onOpenConversation: (conversa
 
     // The first request hydrates the screen from the runtime; later refreshes still use `load`
     // from explicit mutations and the running-routine poll below.
-    void Effect.runPromise(loadRoutines.pipe(
-      Effect.match({
-        onFailure: (failure) => {
-          if (!cancelled) setError(failure.message);
-        },
-        onSuccess: (body) => {
-          if (cancelled) return;
-          setRoutines(body.routines);
-          setError(null);
-        },
-      }),
-      Effect.ensuring(Effect.sync(() => {
-        if (!cancelled) setReady(true);
-      })),
-    ));
+    void runClient(routinesData.load()).then((result) => {
+      if (cancelled) return;
+      setReady(true);
+      if (result._tag === "Failure") {
+        switch (result.failure._tag) {
+          case "ClientRequestFailed":
+            setError(result.failure.message);
+            return;
+        }
+      }
+      setRoutines(result.success);
+      setError(null);
+    });
 
     return () => { cancelled = true; };
   }, []);
@@ -198,51 +152,46 @@ function RoutineEditor({ routine, onChanged, onDeleted, onCancel, onOpenConversa
   const running = latestRun !== null && latestRun.status === "running";
   const needsRetry = (latestRun !== null && latestRun.status === "failed") || (routine !== null && routine.lastMissedAt !== null);
 
-  async function run<Value>(work: Effect.Effect<Value, { readonly message: string }>) {
+  async function execute<Value>(program: routinesData.Program<Value>) {
     setPending(true);
     setError(null);
-    return Effect.runPromise(work.pipe(
-      Effect.match({
-        onFailure: (failure) => {
-          setError(failure.message);
+    const result = await runClient(program);
+    setPending(false);
+    if (result._tag === "Failure") {
+      switch (result.failure._tag) {
+        case "ClientRequestFailed":
+          setError(result.failure.message);
           return null;
-        },
-        onSuccess: (value) => value,
-      }),
-      Effect.ensuring(Effect.sync(() => setPending(false))),
-    ));
+      }
+    }
+    return result.success;
   }
 
   async function save(event: FormEvent) {
     event.preventDefault();
-    const body = await run(request(
-      routine ? `/api/routines/${routine.id}` : "/api/routines",
-      decodeRoutineResponse,
-      { method: routine ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, prompt, cron, timezone }) },
-    ));
-    if (body !== null) await onChanged(body.routine.id);
+    const input = { name, prompt, cron, timezone } satisfies routinesData.RoutineInput;
+    const saved = routine === null
+      ? await execute(routinesData.create(input))
+      : await execute(routinesData.update(routine.id, input));
+    if (saved !== null) await onChanged(saved.id);
   }
 
   async function toggle() {
     if (!routine) return;
-    const body = await run(request(`/api/routines/${routine.id}`, decodeRoutineResponse, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled: !routine.enabled }),
-    }));
-    if (body !== null) await onChanged(routine.id);
+    const saved = await execute(routinesData.setEnabled(routine.id, !routine.enabled));
+    if (saved !== null) await onChanged(saved.id);
   }
 
   async function runNow() {
     if (!routine) return;
-    if (await run(request(`/api/routines/${routine.id}/run`, emptyResponse, { method: "POST" })) !== null) {
+    if (await execute(routinesData.runNow(routine.id)) !== null) {
       await onChanged(routine.id);
     }
   }
 
   async function remove() {
     if (!routine || !window.confirm(`Delete “${routine.name}”? Its run history will also be removed.`)) return;
-    if (await run(request(`/api/routines/${routine.id}`, emptyResponse, { method: "DELETE" })) !== null) {
+    if (await execute(routinesData.remove(routine.id)) !== null) {
       await onDeleted();
     }
   }

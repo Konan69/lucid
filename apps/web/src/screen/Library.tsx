@@ -1,115 +1,31 @@
-import { Effect, Option, Schema } from "effect";
 import {
   Check, ChevronRight, CircleAlert, ExternalLink, FileInput, FileText, Folder,
   FolderInput, FolderPlus, LayoutGrid, LoaderCircle, MessageSquareText,
   MoreHorizontal, Pencil, Rows3, Search, Trash2, Upload, X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type DragEvent, type FormEvent } from "react";
+import * as libraryData from "../data/library";
+import { run as runClient } from "../data/runtime";
 import { cn } from "../ui/cn";
-import { emptyResponse, request, type ClientRequestFailed } from "../data/request";
 
-export type LibraryDocument = {
-  id: string;
-  name: string;
-  mimeType: string;
-  size: number;
-  sha256: string;
-  status: "processing" | "ready" | "failed";
-  error: string | null;
-  preview: string;
-  chunkCount: number;
-  createdAt: number;
-  updatedAt: number;
-  folderId: string | null;
-};
-
-export type LibraryFolder = {
-  id: string;
-  name: string;
-  parentId: string | null;
-  createdAt: number;
-  updatedAt: number;
-  itemCount: number;
-};
-
-type SearchResult = { chunkId: string; documentId: string; filename: string; page: number | null; text: string; score: number };
+export type LibraryDocument = libraryData.LibraryDocument;
+export type LibraryFolder = libraryData.LibraryFolder;
+type SearchResult = libraryData.SearchResult;
+type DialogState = libraryData.DialogState;
 type Tile = { id: string; kind: "folder" | "file"; name: string; meta: string; document?: LibraryDocument; folder?: LibraryFolder };
 type UploadState = { id: string; name: string; progress: number; status: "uploading" | "indexing" | "failed"; error?: string };
-type DialogState =
-  | { kind: "new-folder" }
-  | { kind: "rename-folder"; folder: LibraryFolder }
-  | { kind: "move-folder"; folder: LibraryFolder }
-  | { kind: "rename-file"; document: LibraryDocument }
-  | { kind: "move-file"; document: LibraryDocument };
-
-const LibraryDocumentSchema = Schema.Struct({
-  id: Schema.String,
-  name: Schema.String,
-  mimeType: Schema.String,
-  size: Schema.Number,
-  sha256: Schema.String,
-  status: Schema.Literals(["processing", "ready", "failed"] as const),
-  error: Schema.NullOr(Schema.String),
-  preview: Schema.String,
-  chunkCount: Schema.Number,
-  createdAt: Schema.Number,
-  updatedAt: Schema.Number,
-  folderId: Schema.NullOr(Schema.String),
-});
-const LibraryFolderSchema = Schema.Struct({
-  id: Schema.String,
-  name: Schema.String,
-  parentId: Schema.NullOr(Schema.String),
-  createdAt: Schema.Number,
-  updatedAt: Schema.Number,
-  itemCount: Schema.Number,
-});
-const SearchResultSchema = Schema.Struct({
-  chunkId: Schema.String,
-  documentId: Schema.String,
-  filename: Schema.String,
-  page: Schema.NullOr(Schema.Number),
-  text: Schema.String,
-  score: Schema.Number,
-});
-const LibraryListResponseSchema = Schema.Struct({
-  documents: Schema.Array(LibraryDocumentSchema),
-  folders: Schema.Array(LibraryFolderSchema),
-});
-const FoldersResponseSchema = Schema.Struct({ folders: Schema.Array(LibraryFolderSchema) });
-const SearchResponseSchema = Schema.Struct({ results: Schema.Array(SearchResultSchema) });
-const DocumentResponseSchema = Schema.Struct({ document: LibraryDocumentSchema });
-const FolderResponseSchema = Schema.Struct({ folder: LibraryFolderSchema });
-const UploadResponseSchema = Schema.Struct({ document: LibraryDocumentSchema });
-const ErrorResponseSchema = Schema.Struct({ error: Schema.optionalKey(Schema.String) });
-const decodeLibraryListResponse = Schema.decodeUnknownSync(
-  Schema.fromJsonString(LibraryListResponseSchema),
-);
-const decodeFoldersResponse = Schema.decodeUnknownSync(
-  Schema.fromJsonString(FoldersResponseSchema),
-);
-const decodeSearchResponse = Schema.decodeUnknownSync(
-  Schema.fromJsonString(SearchResponseSchema),
-);
-const decodeDocumentResponse = Schema.decodeUnknownSync(
-  Schema.fromJsonString(DocumentResponseSchema),
-);
-const decodeFolderResponse = Schema.decodeUnknownSync(
-  Schema.fromJsonString(FolderResponseSchema),
-);
-const decodeUploadResponse = Schema.decodeUnknownOption(UploadResponseSchema);
-const decodeErrorResponse = Schema.decodeUnknownOption(ErrorResponseSchema);
-
-class LibraryActionFailed extends Schema.TaggedError<LibraryActionFailed>()(
-  "LibraryActionFailed",
-  { message: Schema.String, cause: Schema.Defect() },
-  { title: "Library action failed" },
-) {}
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function retainSelectedDocument(
+  current: LibraryDocument | null,
+  documents: readonly LibraryDocument[],
+): LibraryDocument | null {
+  return current ? documents.find((document) => document.id === current.id) ?? current : null;
 }
 
 function buildTiles(documents: LibraryDocument[], folders: LibraryFolder[]): Tile[] {
@@ -133,38 +49,6 @@ function buildTiles(documents: LibraryDocument[], folders: LibraryFolder[]): Til
   ];
 }
 
-function uploadWithProgress(file: File, folderId: string | null, onProgress: (progress: number) => void): Effect.Effect<LibraryDocument, LibraryActionFailed> {
-  return Effect.callback((resume) => {
-    const form = new FormData();
-    form.set("file", file);
-    if (folderId) form.set("folderId", folderId);
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/library");
-    xhr.responseType = "json";
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
-    };
-    xhr.onerror = () => resume(Effect.fail(new LibraryActionFailed({
-      message: "Upload failed",
-      cause: xhr.statusText,
-    })));
-    xhr.onload = () => {
-      const body = decodeUploadResponse(xhr.response);
-      if (xhr.status >= 200 && xhr.status < 300 && Option.isSome(body)) {
-        resume(Effect.succeed(body.value.document));
-        return;
-      }
-      const failure = decodeErrorResponse(xhr.response);
-      const message = Option.isSome(failure) ? failure.value.error : undefined;
-      resume(Effect.fail(new LibraryActionFailed({
-        message: message ?? `Upload failed (${xhr.status})`,
-        cause: xhr.response,
-      })));
-    };
-    xhr.send(form);
-  });
-}
-
 export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void }) {
   const [grid, setGrid] = useState(true);
   const [folderStack, setFolderStack] = useState<LibraryFolder[]>([]);
@@ -185,44 +69,40 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
   const currentFolderId = currentFolder ? currentFolder.id : null;
 
   const load = useCallback(async () => {
-    const path = currentFolderId ? `/api/library?folderId=${encodeURIComponent(currentFolderId)}` : "/api/library";
-    await Effect.runPromise(Effect.all([
-      request(path, decodeLibraryListResponse),
-      request("/api/library/folders", decodeFoldersResponse),
-    ]).pipe(Effect.match({
-      onFailure: (failure) => setError(failure.message),
-      onSuccess: ([body, folderBody]) => {
-        setDocuments([...body.documents]);
-        setFolders([...body.folders]);
-        setAllFolders([...folderBody.folders]);
-        setSelected((current) => current ? body.documents.find((document) => document.id === current.id) ?? current : null);
-        setError(null);
-      },
-    })));
+    const result = await runClient(libraryData.load(currentFolderId));
+    if (result._tag === "Failure") {
+      switch (result.failure._tag) {
+        case "ClientRequestFailed":
+          setError(result.failure.message);
+          return;
+      }
+    }
+    setDocuments(result.success.documents);
+    setFolders(result.success.folders);
+    setAllFolders(result.success.allFolders);
+    setSelected((current) => retainSelectedDocument(current, result.success.documents));
+    setError(null);
   }, [currentFolderId]);
 
   useEffect(() => {
     let cancelled = false;
-    const path = currentFolderId ? `/api/library?folderId=${encodeURIComponent(currentFolderId)}` : "/api/library";
-
     // Folder navigation hydrates from the Library runtime. Responses from a folder the person has
     // already left are ignored so they cannot replace the current folder's contents.
-    void Effect.runPromise(Effect.all([
-      request(path, decodeLibraryListResponse),
-      request("/api/library/folders", decodeFoldersResponse),
-    ]).pipe(Effect.match({
-      onFailure: (failure) => {
-        if (!cancelled) setError(failure.message);
-      },
-      onSuccess: ([body, folderBody]) => {
-        if (cancelled) return;
-        setDocuments([...body.documents]);
-        setFolders([...body.folders]);
-        setAllFolders([...folderBody.folders]);
-        setSelected((current) => current ? body.documents.find((document) => document.id === current.id) ?? current : null);
-        setError(null);
-      },
-    })));
+    void runClient(libraryData.load(currentFolderId)).then((result) => {
+      if (cancelled) return;
+      if (result._tag === "Failure") {
+        switch (result.failure._tag) {
+          case "ClientRequestFailed":
+            setError(result.failure.message);
+            return;
+        }
+      }
+      setDocuments(result.success.documents);
+      setFolders(result.success.folders);
+      setAllFolders(result.success.allFolders);
+      setSelected((current) => retainSelectedDocument(current, result.success.documents));
+      setError(null);
+    });
 
     return () => { cancelled = true; };
   }, [currentFolderId]);
@@ -233,14 +113,19 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
   }, [documents, load, uploads]);
 
   async function uploadOne(file: File, upload: UploadState) {
-    await Effect.runPromise(uploadWithProgress(
+    const result = await runClient(libraryData.upload(
       file,
       currentFolderId,
       (progress) => setUploads((current) => current.map((item) => item.id === upload.id ? { ...item, progress } : item)),
-    ).pipe(Effect.match({
-      onFailure: (failure) => setUploads((current) => current.map((item) => item.id === upload.id ? { ...item, status: "failed", error: failure.message } : item)),
-      onSuccess: () => setUploads((current) => current.map((item) => item.id === upload.id ? { ...item, progress: 100, status: "indexing" } : item)),
-    })));
+    ));
+    if (result._tag === "Failure") {
+      switch (result.failure._tag) {
+        case "ClientRequestFailed":
+          setUploads((current) => current.map((item) => item.id === upload.id ? { ...item, status: "failed", error: result.failure.message } : item));
+          return;
+      }
+    }
+    setUploads((current) => current.map((item) => item.id === upload.id ? { ...item, progress: 100, status: "indexing" } : item));
   }
 
   async function uploadFiles(files: File[]) {
@@ -260,67 +145,58 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
 
   async function search(event: FormEvent) {
     event.preventDefault();
-    if (query.trim().length < 2) return;
-    await Effect.runPromise(request("/api/library/search", decodeSearchResponse, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ query: query.trim(), limit: 8, folderId: currentFolderId }),
-    }).pipe(Effect.match({
-      onFailure: (failure) => setError(failure.message),
-      onSuccess: (body) => {
-        setResults([...body.results]);
-        setError(null);
-      },
-    })));
+    const normalized = query.trim();
+    if (normalized.length < 2) return;
+    const result = await runClient(libraryData.search(normalized, currentFolderId));
+    if (result._tag === "Failure") {
+      switch (result.failure._tag) {
+        case "ClientRequestFailed":
+          setError(result.failure.message);
+          return;
+      }
+    }
+    setResults(result.success);
+    setError(null);
   }
 
   async function removeDocument(document: LibraryDocument) {
     if (!window.confirm(`Delete “${document.name}” from the Library?`)) return;
-    const deleted = await Effect.runPromise(
-      request(`/api/library/${encodeURIComponent(document.id)}`, emptyResponse, {
-        method: "DELETE",
-      }).pipe(Effect.match({
-        onFailure: (failure) => {
-          setError(failure.message);
-          return false;
-        },
-        onSuccess: () => true,
-      })),
-    );
-    if (!deleted) return;
+    const result = await runClient(libraryData.removeDocument(document.id));
+    if (result._tag === "Failure") {
+      switch (result.failure._tag) {
+        case "ClientRequestFailed":
+          setError(result.failure.message);
+          return;
+      }
+    }
     setSelected(null);
     await load();
   }
 
   async function removeCurrentFolder() {
     if (!currentFolder || !window.confirm(`Delete the empty folder “${currentFolder.name}”?`)) return;
-    const deleted = await Effect.runPromise(
-      request(`/api/library/folders/${encodeURIComponent(currentFolder.id)}`, emptyResponse, {
-        method: "DELETE",
-      }).pipe(Effect.match({
-        onFailure: (failure) => {
-          setError(failure.message);
-          return false;
-        },
-        onSuccess: () => true,
-      })),
-    );
-    if (deleted) setFolderStack((current) => current.slice(0, -1));
+    const result = await runClient(libraryData.removeFolder(currentFolder.id));
+    if (result._tag === "Failure") {
+      switch (result.failure._tag) {
+        case "ClientRequestFailed":
+          setError(result.failure.message);
+          return;
+      }
+    }
+    setFolderStack((current) => current.slice(0, -1));
   }
 
   async function openSearchResult(result: SearchResult) {
-    await Effect.runPromise(
-      request(
-        `/api/library/${encodeURIComponent(result.documentId)}`,
-        decodeDocumentResponse,
-      ).pipe(Effect.match({
-        onFailure: (failure) => setError(failure.message),
-        onSuccess: (body) => {
-          setSelected(body.document);
-          setResults(null);
-        },
-      })),
-    );
+    const opened = await runClient(libraryData.readDocument(result.documentId));
+    if (opened._tag === "Failure") {
+      switch (opened.failure._tag) {
+        case "ClientRequestFailed":
+          setError(opened.failure.message);
+          return;
+      }
+    }
+    setSelected(opened.success);
+    setResults(null);
   }
 
   const tiles = buildTiles(documents, folders);
@@ -396,7 +272,7 @@ function UploadProgress({ uploads }: { uploads: UploadState[] }) {
   return <ul className="mb-3 space-y-1">{uploads.map((upload) => <li key={upload.id} className="flex items-center gap-3 rounded-row bg-surface-2 px-3 py-2 shadow-ring-xs"><FileText className="size-4 shrink-0 text-ink-3" /><span className="min-w-0 flex-1"><span className="block truncate text-label text-ink">{upload.name}</span><span className="mt-1 block h-1 overflow-hidden rounded-full bg-line-2"><i className={cn("block h-full rounded-full transition-[width]", upload.status === "failed" ? "bg-danger" : "bg-accent")} style={{ width: `${upload.progress}%` }} /></span></span><span className={cn("text-meta font-meta", upload.status === "failed" ? "text-danger" : "text-ink-4")}>{upload.status === "uploading" ? `${upload.progress}%` : upload.status === "indexing" ? "Indexing" : upload.error}</span></li>)}</ul>;
 }
 
-function LibraryDialog({ state, folders, currentFolderId, onClose, onSaved }: { state: DialogState; folders: LibraryFolder[]; currentFolderId: string | null; onClose: () => void; onSaved: (result: { folder?: LibraryFolder; document?: LibraryDocument }) => Promise<void> }) {
+function LibraryDialog({ state, folders, currentFolderId, onClose, onSaved }: { state: DialogState; folders: LibraryFolder[]; currentFolderId: string | null; onClose: () => void; onSaved: (result: libraryData.DialogResult) => Promise<void> }) {
   const moving = state.kind === "move-file" || state.kind === "move-folder";
   const originalName = "folder" in state ? state.folder.name : "document" in state ? state.document.name : "";
   const [name, setName] = useState(originalName);
@@ -409,53 +285,21 @@ function LibraryDialog({ state, folders, currentFolderId, onClose, onSaved }: { 
     event.preventDefault();
     setPending(true);
     setError(null);
-    let operation: Effect.Effect<
-      { folder?: LibraryFolder; document?: LibraryDocument },
-      ClientRequestFailed
-    >;
-    if (state.kind === "new-folder") {
-      operation = request("/api/library/folders", decodeFolderResponse, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, parentId: currentFolderId }),
-      }).pipe(Effect.map((body) => ({ folder: body.folder })));
-    } else if (state.kind === "rename-folder" || state.kind === "move-folder") {
-      operation = request(
-        `/api/library/folders/${encodeURIComponent(state.folder.id)}`,
-        decodeFolderResponse,
-        {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(state.kind === "rename-folder" ? { name } : { parentId: destination || null }),
-        },
-      ).pipe(Effect.map((body) => ({ folder: body.folder })));
-    } else {
-      operation = request(
-        `/api/library/${encodeURIComponent(state.document.id)}`,
-        decodeDocumentResponse,
-        {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(state.kind === "rename-file" ? { name } : { folderId: destination || null }),
-        },
-      ).pipe(Effect.map((body) => ({ document: body.document })));
-    }
-    await Effect.runPromise(operation.pipe(
-      Effect.flatMap((result) => Effect.tryPromise({
-        try: () => onSaved(result),
-        catch: (cause) => new LibraryActionFailed({
-          message: "Could not save changes",
-          cause,
-        }),
-      })),
-      Effect.match({
-        onFailure: (failure) => {
-          setError(failure.message);
-          setPending(false);
-        },
-        onSuccess: () => undefined,
-      }),
+    const result = await runClient(libraryData.saveDialog(
+      state,
+      name,
+      destination,
+      currentFolderId,
     ));
+    if (result._tag === "Failure") {
+      switch (result.failure._tag) {
+        case "ClientRequestFailed":
+          setError(result.failure.message);
+          setPending(false);
+          return;
+      }
+    }
+    await onSaved(result.success);
   }
 
   const title = state.kind === "new-folder" ? "New folder" : state.kind === "rename-folder" ? "Rename folder" : state.kind === "move-folder" ? "Move folder" : state.kind === "rename-file" ? "Rename file" : "Move file";

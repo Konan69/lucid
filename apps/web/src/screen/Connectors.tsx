@@ -1,32 +1,8 @@
 import { Check, LoaderCircle } from "lucide-react";
-import { Effect, Schema } from "effect";
 import { useEffect, useState } from "react";
-import { emptyResponse, request } from "../data/request";
+import * as connectorsData from "../data/connectors";
+import { run } from "../data/runtime";
 import { ToolMarks } from "../ui/ToolMarks";
-
-type ConnectorState = "disconnected" | "connecting" | "connected" | "error";
-
-type Connector = {
-  id: string;
-  status: ConnectorState;
-  metadata: { id: string; name: string; description: string; icon: string };
-};
-
-const ConnectorSchema = Schema.Struct({
-  id: Schema.String,
-  status: Schema.Literals(["disconnected", "connecting", "connected", "error"]),
-  metadata: Schema.Struct({
-    id: Schema.String,
-    name: Schema.String,
-    description: Schema.String,
-    icon: Schema.String,
-  }),
-});
-const ConnectorResponseSchema = Schema.fromJsonString(Schema.Struct({ connectors: Schema.mutable(Schema.Array(ConnectorSchema)) }));
-const AuthResponseSchema = Schema.fromJsonString(Schema.Struct({ authUrl: Schema.String }));
-const decodeConnectorResponse = Schema.decodeUnknownSync(ConnectorResponseSchema);
-const decodeAuthResponse = Schema.decodeUnknownSync(AuthResponseSchema);
-const loadConnectors = request("/api/connectors", decodeConnectorResponse);
 
 /* What each connector lets Vivid do, in Vivid's words rather than the API's. */
 const PURPOSE = new Map([
@@ -41,7 +17,7 @@ function resultFromLocation() {
 }
 
 export function Connectors({ embedded = false }: { embedded?: boolean }) {
-  const [connectors, setConnectors] = useState<Connector[] | null>(null);
+  const [connectors, setConnectors] = useState<connectorsData.Connector[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(() => {
     const result = resultFromLocation();
@@ -55,16 +31,18 @@ export function Connectors({ embedded = false }: { embedded?: boolean }) {
 
     // The initial request synchronizes the screen with the connector runtime. Applying the
     // response asynchronously avoids a redundant synchronous state transition on mount.
-    void Effect.runPromise(loadConnectors.pipe(Effect.match({
-      onFailure: (failure) => {
-        if (cancelled) return;
-        setConnectors([]);
-        setNotice({ tone: "danger", text: failure.message });
-      },
-      onSuccess: (data) => {
-        if (!cancelled) setConnectors(data.connectors);
-      },
-    })));
+    void run(connectorsData.list()).then((result) => {
+      if (cancelled) return;
+      if (result._tag === "Failure") {
+        switch (result.failure._tag) {
+          case "ClientRequestFailed":
+            setConnectors([]);
+            setNotice({ tone: "danger", text: result.failure.message });
+            return;
+        }
+      }
+      setConnectors(result.success);
+    });
 
     if (location.search.includes("connected=") || location.search.includes("error=")) {
       history.replaceState(null, "", "/?settings=connectors");
@@ -75,32 +53,32 @@ export function Connectors({ embedded = false }: { embedded?: boolean }) {
 
   async function connect(id: string) {
     setBusy(id);
-    await Effect.runPromise(
-      request(`/api/connectors/${id}/auth`, decodeAuthResponse).pipe(Effect.match({
-        onFailure: (failure) => {
-          setNotice({ tone: "danger", text: failure.message });
+    const result = await run(connectorsData.authorize(id));
+    if (result._tag === "Failure") {
+      switch (result.failure._tag) {
+        case "ClientRequestFailed":
+          setNotice({ tone: "danger", text: result.failure.message });
           setBusy(null);
-        },
-        onSuccess: (data) => location.assign(data.authUrl),
-      })),
-    );
+          return;
+      }
+    }
+    location.assign(result.success);
   }
 
   async function disconnect(id: string) {
     setBusy(id);
-    await Effect.runPromise(
-      request(`/api/connectors/${id}`, emptyResponse, { method: "DELETE" }).pipe(
-        Effect.flatMap(() => loadConnectors),
-        Effect.match({
-          onFailure: (failure) => setNotice({ tone: "danger", text: failure.message }),
-          onSuccess: (data) => {
-            setNotice(null);
-            setConnectors(data.connectors);
-          },
-        }),
-        Effect.ensuring(Effect.sync(() => setBusy(null))),
-      ),
-    );
+    const result = await run(connectorsData.disconnect(id));
+    if (result._tag === "Failure") {
+      switch (result.failure._tag) {
+        case "ClientRequestFailed":
+          setNotice({ tone: "danger", text: result.failure.message });
+          setBusy(null);
+          return;
+      }
+    }
+    setNotice(null);
+    setConnectors(result.success);
+    setBusy(null);
   }
 
   const connected = (connectors ?? []).filter((connector) => connector.status === "connected");
