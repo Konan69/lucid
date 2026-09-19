@@ -77,30 +77,13 @@ Only repository-level tools:
 ### Single Package
 
 ```bash
-# pnpm
-pnpm add lodash --filter=@repo/utils
-
-# npm
-npm install lodash --workspace=@repo/utils
-
-# yarn
-yarn workspace @repo/utils add lodash
-
-# bun
-cd packages/utils && bun add lodash
+pnpm --filter @repo/utils add lodash
 ```
 
 ### Multiple Packages
 
 ```bash
-# pnpm
-pnpm add jest --save-dev --filter=web --filter=@repo/ui
-
-# npm
-npm install jest --save-dev --workspace=web --workspace=@repo/ui
-
-# yarn (v2+)
-yarn workspaces foreach -R --from '{web,@repo/ui}' add jest --dev
+pnpm --filter web --filter @repo/ui add -D jest
 ```
 
 ### Internal Packages
@@ -123,25 +106,21 @@ pnpm add @repo/ui --filter=web
 
 ```bash
 # syncpack - Check and fix version mismatches
-npx syncpack list-mismatches
-npx syncpack fix-mismatches
+pnpm dlx syncpack list-mismatches
+pnpm dlx syncpack fix-mismatches
 
 # manypkg - Similar functionality
-npx @manypkg/cli check
-npx @manypkg/cli fix
+pnpm dlx @manypkg/cli check
+pnpm dlx @manypkg/cli fix
 
 # sherif - Rust-based, very fast
-npx sherif
+pnpm dlx sherif
 ```
 
 ### Option 2: Package Manager Commands
 
 ```bash
-# pnpm - Update everywhere
 pnpm up --recursive typescript@latest
-
-# npm - Update in all workspaces
-npm install typescript@latest --workspaces
 ```
 
 ### Option 3: pnpm Catalogs (pnpm 9.5+)
@@ -171,22 +150,18 @@ catalog:
 ### Internal (Workspace)
 
 ```json
-// pnpm/bun
 { "@repo/ui": "workspace:*" }
-
-// npm/yarn
-{ "@repo/ui": "*" }
 ```
 
 Turborepo understands these relationships and orders builds accordingly.
 
-### External (npm Registry)
+### External Registry Dependencies
 
 ```json
 { "lodash": "^4.17.21" }
 ```
 
-Standard semver versioning from npm.
+Use standard semantic version ranges for external registry packages.
 
 ## Peer Dependencies
 
@@ -211,7 +186,7 @@ For library packages that expect the consumer to provide dependencies:
 ### "Module not found"
 
 1. Check the dependency is installed in the right package
-2. Run `pnpm install` / `npm install` to update lockfile
+2. Run `pnpm install` to update the lockfile
 3. Check exports are defined in the package
 
 ### Version Conflicts

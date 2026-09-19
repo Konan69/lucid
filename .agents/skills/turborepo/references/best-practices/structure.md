@@ -13,14 +13,10 @@ packages:
   - "packages/*"
 ```
 
-### npm/yarn/bun
+### Polyglot workspaces (experimental)
 
-```json
-// package.json
-{
-  "workspaces": ["apps/*", "packages/*"]
-}
-```
+- `futureFlags.experimentalCargoWorkspaces` - Treat Cargo workspace crates as Turborepo packages
+- `futureFlags.experimentalPythonWorkspaces` - Treat uv workspace members as Turborepo packages
 
 ## Root package.json
 
@@ -95,11 +91,11 @@ Package tasks enable Turborepo to:
 
 ```json
 {
-  "$schema": "https://v2-9-7-canary-13.turborepo.dev/schema.json",
+  "$schema": "https://v2-11-2.turborepo.dev/schema.json",
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**", "!.next/dev/**"]
     },
     "lint": {},
     "test": {
@@ -117,7 +113,7 @@ With `futureFlags.globalConfiguration`, global settings move under a `global` ke
 
 ```json
 {
-  "$schema": "https://v2-9-7-canary-13.turborepo.dev/schema.json",
+  "$schema": "https://v2-11-2.turborepo.dev/schema.json",
   "futureFlags": { "globalConfiguration": true },
   "global": {
     "inputs": ["tsconfig.json"],
@@ -126,7 +122,7 @@ With `futureFlags.globalConfiguration`, global settings move under a `global` ke
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**", "!.next/dev/**"]
     },
     "lint": {},
     "test": {
@@ -262,28 +258,34 @@ packages/
     ├── package.json
     ├── base.js
     ├── next.js
-    └── library.js
+    └── react-internal.js
 ```
 
 ```json
 // packages/eslint-config/package.json
 {
   "name": "@repo/eslint-config",
+  "type": "module",
   "exports": {
     "./base": "./base.js",
-    "./next": "./next.js",
-    "./library": "./library.js"
+    "./next-js": "./next.js",
+    "./react-internal": "./react-internal.js"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.1"
   }
 }
 ```
 
 ### Using in Packages
 
+ESLint 9 flat config:
+
 ```js
-// apps/web/.eslintrc.js
-module.exports = {
-  extends: ["@repo/eslint-config/next"]
-};
+// apps/web/eslint.config.js
+import { nextJsConfig } from "@repo/eslint-config/next-js";
+
+export default nextJsConfig;
 ```
 
 ## Lockfile

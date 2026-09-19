@@ -24,7 +24,7 @@ Root `package.json` scripts for turbo tasks MUST use `turbo run`, not direct com
 }
 ```
 
-**Why this matters:** Running `bun build` or `npm run build` at root bypasses Turborepo entirely - no parallelization, no caching, no dependency graph awareness.
+**Why this matters:** Running `pnpm run build` at root bypasses Turborepo entirely - no parallelization, no caching, no dependency graph awareness.
 
 ## #2 Using `&&` to Chain Turbo Tasks
 
@@ -138,9 +138,9 @@ Don't use relative paths like `../` to reference files outside the package. Use 
 
 ## #6 MOST COMMON MISTAKE: Creating Root Tasks
 
-**DO NOT create Root Tasks. ALWAYS create package tasks.**
+**Prefer package tasks over Root Tasks.**
 
-When you need to create a task (build, lint, test, typecheck, etc.):
+When you need to create a task (build, lint, test, typecheck, etc.), default to package tasks:
 
 1. Add the script to **each relevant package's** `package.json`
 2. Register the task in root `turbo.json`
@@ -186,7 +186,7 @@ When you need to create a task (build, lint, test, typecheck, etc.):
 - Each package's output is cached **individually**
 - You can **filter** to specific packages: `turbo run test --filter=web`
 
-Root Tasks (`//#taskname`) defeat all these benefits. Only use them for tasks that truly cannot exist in any package (extremely rare).
+Root Tasks (`//#taskname`) defeat all these benefits when a task can live in packages. Only use them for tasks that truly cannot exist in any package, such as Vitest Projects' `//#test`, repo-wide release scripts, or tooling that does not invoke `turbo` itself.
 
 ## #7 Tasks That Need Parallel Execution + Cache Invalidation
 

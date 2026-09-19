@@ -124,8 +124,7 @@ Package handles its own compilation.
 // apps/web/package.json
 {
   "dependencies": {
-    "@repo/ui": "workspace:*" // pnpm/bun
-    // "@repo/ui": "*"         // npm/yarn
+    "@repo/ui": "workspace:*"
   }
 }
 ```
@@ -238,12 +237,7 @@ packages/
 ### Wrong Workspace Syntax
 
 ```json
-// pnpm/bun
-{ "@repo/ui": "workspace:*" }  // Correct
-
-// npm/yarn
-{ "@repo/ui": "*" }            // Correct
-{ "@repo/ui": "workspace:*" }  // Wrong for npm/yarn!
+{ "@repo/ui": "workspace:*" }
 ```
 
 ### Missing from turbo.json Outputs
