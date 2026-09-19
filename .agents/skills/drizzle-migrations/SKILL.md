@@ -44,7 +44,6 @@ export default defineConfig({
 
 Choose `generate` for production releases and review workflows; choose `push` for rapid local iteration. Both operations share one JSON envelope (decoded by the `drizzle-responses-and-errors` skill) and one hint vocabulary.
 
-To go the other direction — introspect an existing database into a Drizzle schema instead of driving the database from a schema — see the `drizzle-pull` skill.
 
 ## Dialect notes
 
