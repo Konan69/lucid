@@ -191,9 +191,13 @@ const noUndefinedInUnion = rule(
 const noDirectProcessEnv = rule(
   'Read process configuration through Effect Config.',
   'Do not read process.env directly in production code. Decode configuration once through Effect Config.',
-  (report) => ({
+  (report, context) => {
+    const firstStatement = context.sourceCode.ast.body[0]
+    const isAgentModule = firstStatement?.type === 'ExpressionStatement' && firstStatement.directive === 'use agent'
+    return {
     MemberExpression(node) {
       if (
+        !isAgentModule &&
         node.object?.type === 'MemberExpression' &&
         node.object.object?.type === 'Identifier' &&
         node.object.object.name === 'process' &&
@@ -202,7 +206,8 @@ const noDirectProcessEnv = rule(
         report(node)
       }
     },
-  }),
+  }
+  },
 )
 
 const noRuntimeEnvMutation = rule(
@@ -328,19 +333,36 @@ const noRunPromiseInLibrary = rule(
   (report, context) => ({
     CallExpression(node) {
       if (!isMemberCall(node, 'Effect', effectTerminalOperations)) return
-      if (/(?:^|[/\\])(main|server|cli)\.[cm]?[jt]s$/u.test(context.filename)) return
+      if (/(?:^|[/\\])(?:(?:main|server|cli|app)\.[cm]?[jt]s|drizzle\.config\.ts|alchemy\.run\.ts)$/u.test(context.filename)) return
+      let parent = node.parent
+      while (parent !== undefined && parent !== null) {
+        if (
+          parent.type === 'Property' &&
+          ((parent.key?.type === 'Identifier' && parent.key.name === 'run') ||
+            (parent.key?.type === 'Literal' && parent.key.value === 'run')) &&
+          parent.parent?.type === 'ObjectExpression' &&
+          parent.parent.parent?.type === 'CallExpression' &&
+          parent.parent.parent.callee?.type === 'Identifier' &&
+          parent.parent.parent.callee.name === 'defineTool'
+        ) return
+        parent = parent.parent
+      }
       report(node)
     },
   }),
 )
 
-const noPlatformRuntimeRunMainInLibrary = memberCallRule({
-  description: 'Keep platform runtime launch at the executable entry point.',
-  message:
-    'Do not call NodeRuntime.runMain from a library module. Export the Effect and launch it from main.ts.',
-  owner: 'NodeRuntime',
-  methods: new Set(['runMain']),
-})
+const noPlatformRuntimeRunMainInLibrary = rule(
+  'Keep platform runtime launch at the executable entry point.',
+  'Do not call NodeRuntime.runMain from a library module. Export the Effect and launch it from main.ts.',
+  (report, context) => ({
+    CallExpression(node) {
+      if (!isMemberCall(node, 'NodeRuntime', new Set(['runMain']))) return
+      if (/(?:^|[/\\])main\.[cm]?[jt]s$/u.test(context.filename)) return
+      report(node)
+    },
+  }),
+)
 
 const noEffectRuntimeApi = memberCallRule({
   description: 'Avoid creating hidden Effect runtimes in application modules.',
@@ -771,7 +793,7 @@ const effectRequireEffectFn = rule(
   'Service operations that return Effect must use a named Effect.fn for traceability.',
   (report, context) => ({
     Property(node) {
-      if (!isFunction(node.value) || node.value.async === true || node.value.returnType === undefined) return
+      if (!isFunction(node.value) || node.value.async === true || node.value.returnType == null) return
       const returnType = sourceText(context, node.value.returnType)
       if (
         /\bEffect(?:\.|<)/u.test(returnType) &&

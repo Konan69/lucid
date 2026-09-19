@@ -3,6 +3,7 @@ import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as SqlErrorModule from "effect/unstable/sql/SqlError"
 import {
@@ -50,19 +51,21 @@ const classifySqlError = (error: SqlErrorModule.SqlError): DatabaseInfrastructur
   }
 }
 
-const nestedSqlError = (error: EffectDrizzleQueryError): SqlErrorModule.SqlError | undefined => {
-  if (!Cause.isCause(error.cause)) return undefined
+const isDrizzleQueryError = Schema.is(EffectDrizzleQueryError)
+
+const nestedSqlError = (error: EffectDrizzleQueryError): Option.Option<SqlErrorModule.SqlError> => {
+  if (!Cause.isCause(error.cause)) return Option.none()
   const reason = error.cause.reasons.find(Cause.isFailReason)
-  const failure = reason?.error
-  return SqlErrorModule.isSqlError(failure) ? failure : undefined
+  if (reason === undefined) return Option.none()
+  return Option.liftPredicate(reason.error, SqlErrorModule.isSqlError)
 }
 
 const classifyDriverError = (error: DriverError): DatabaseInfrastructureError => {
   if (error._tag === "SqlError") return classifySqlError(error)
-  const sqlError = nestedSqlError(error)
-  return sqlError === undefined
-    ? new DatabaseFailure({ message: "Database query failed" })
-    : classifySqlError(sqlError)
+  return Option.match(nestedSqlError(error), {
+    onNone: () => new DatabaseFailure({ message: "Database query failed" }),
+    onSome: classifySqlError
+  })
 }
 
 const mapDriverErrors = <A, E, R>(operation: Effect.Effect<A, E, R>): Effect.Effect<A, Exclude<E, DriverError> | DatabaseInfrastructureError, R> => {
@@ -70,9 +73,8 @@ const mapDriverErrors = <A, E, R>(operation: Effect.Effect<A, E, R>): Effect.Eff
   return operation.pipe(
     Effect.mapError((error) => {
       if (SqlErrorModule.isSqlError(error)) return classifyDriverError(error)
-      if (Schema.is(EffectDrizzleQueryError)(error)) return classifyDriverError(error)
-      // SAFETY: the two preceding guards remove both members of DriverError from the generic error union.
-      return error as Exclude<E, DriverError>
+      if (isDrizzleQueryError(error)) return classifyDriverError(error)
+      return error
     })
   ) as Effect.Effect<A, Exclude<E, DriverError> | DatabaseInfrastructureError, R>
 }

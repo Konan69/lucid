@@ -66,11 +66,13 @@ import {
 } from "@vivid/connectors";
 import {
   getRoutineView,
+  initializeRoutineScheduler,
   listRoutineViews,
   removeRoutineJob,
   runRoutineNow,
   syncRoutineJob,
   validateRoutineSchedule,
+  type RoutineSchedulerBoundary,
 } from "./routine-scheduler.ts";
 import {
   createRoutine,
@@ -115,10 +117,31 @@ class RuntimeOperationFailed extends Schema.TaggedError<RuntimeOperationFailed>(
   message: Schema.String,
 }, { title: "Runtime operation failed" }) {}
 
+class InvalidTaskMutation extends Schema.TaggedError<InvalidTaskMutation>()("InvalidTaskMutation", {
+  message: Schema.String,
+}, { title: "Invalid Task mutation" }) {}
+
+class InvalidFollowUpMutation extends Schema.TaggedError<InvalidFollowUpMutation>()("InvalidFollowUpMutation", {
+  message: Schema.String,
+}, { title: "Invalid follow-up mutation" }) {}
+
+type IngressValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ReadonlyArray<IngressValue>
+  | { readonly [key: string]: IngressValue };
+
+const decodeConnectionCallbackState = Schema.decodeUnknownResult(
+  Schema.fromJsonString(ConnectionCallbackState),
+);
+const isNumber = Schema.is(Schema.Number);
+
 /** Reads one JSON body and decodes it before domain code can observe the value. */
 const decodeJsonBody = <Value, Encoded>(
   context: AppContext,
-  schema: Schema.Codec<Value, Encoded, never, never>,
+  schema: Schema.Codec<Value, Encoded>,
   emptyObject = false,
 ): Promise<Result.Result<Value, InvalidIngress>> => {
   const program = Effect.fn("RuntimeIngress.decodeJsonBody")(function*() {
@@ -158,20 +181,26 @@ const runRuntimeEffect = <Value, Failure>(
 const observeRuntimeEffect = <Failure>(label: string, effect: Effect.Effect<void, Failure>): void => {
   Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(label, cause))));
 };
+const routineSchedulerBoundary: RoutineSchedulerBoundary = {
+  run: (label, effect) => observeRuntimeEffect(label, effect),
+};
 
 setInterval(
   () => observeRuntimeEffect("follow-up tick", runFollowUpSchedulerTick()),
   FOLLOW_UP_TICK_MS,
 ).unref();
 setTimeout(
-  () => observeRuntimeEffect("follow-up recovery", initializeFollowUpScheduler()),
+  () => {
+    observeRuntimeEffect("follow-up recovery", initializeFollowUpScheduler());
+    observeRuntimeEffect("routine recovery", initializeRoutineScheduler(routineSchedulerBoundary));
+  },
   1500,
 ).unref();
 
 /** Decodes route and query records synchronously at Hono's string boundary. */
 const decodeIngress = <Value>(
-  schema: Schema.ConstraintDecoder<Value, never>,
-  value: unknown,
+  schema: Schema.ConstraintDecoder<Value>,
+  value: IngressValue,
 ): Result.Result<Value, InvalidIngress> => Schema.decodeUnknownResult(schema)(value).pipe(
   Result.mapError(() => new InvalidIngress({ message: "Request values did not match their contract" })),
 );
@@ -333,7 +362,9 @@ app.post("/api/library", async (context) => {
     name,
     mimeType: inferredType,
     size: upload.size,
-    folderId: typeof requestedFolderId === "string" && requestedFolderId.length > 0 ? requestedFolderId : null,
+    folderId: requestedFolderId === null || requestedFolderId instanceof File || requestedFolderId.length === 0
+      ? null
+      : requestedFolderId,
   });
   if (Result.isFailure(metadata)) return context.json({ error: "Only PDF, Markdown, and plain-text files are supported" }, 415);
   const { folderId, mimeType } = metadata.success;
@@ -362,7 +393,8 @@ app.post("/api/library/search", async (context) => {
 });
 
 app.get("/api/library/source", async (context) => {
-  const query = decodeIngress(LibrarySourceQuery, { name: context.req.query("name") });
+  const rawName = context.req.query("name");
+  const query = decodeIngress(LibrarySourceQuery, rawName === undefined ? {} : { name: rawName });
   if (Result.isFailure(query) || query.success.name.length === 0) return context.json({ error: "Source name is required" }, 400);
   const name = query.success.name;
   const document = await getStoredLibraryDocumentByName(name);
@@ -425,9 +457,12 @@ app.delete("/api/library/:id", async (context) => {
     : context.json({ error: "Document not found" }, 404);
 });
 
-app.get("/api/routines", async (context) =>
-  context.json({ routines: await listRoutineViews() }),
-);
+app.get("/api/routines", async (context) => {
+  const listed = await runRuntimeEffect(listRoutineViews());
+  return Result.isSuccess(listed)
+    ? context.json({ routines: listed.success })
+    : context.json({ error: "Could not load Routines" }, 500);
+});
 
 app.post("/api/routines", async (context) => {
   const decoded = await decodeJsonBody(context, CreateRoutineRequest);
@@ -448,11 +483,15 @@ app.post("/api/routines", async (context) => {
   if (input.libraryFolderId && !await getLibraryFolder(input.libraryFolderId)) {
     return context.json({ error: "Library folder not found" }, 404);
   }
-  const schedule = await runOperation(() => validateRoutineSchedule(input.cron, input.timezone));
+  const schedule = await runRuntimeEffect(validateRoutineSchedule(input.cron, input.timezone));
   if (Result.isFailure(schedule)) return context.json({ error: schedule.failure.message }, 400);
   const routine = await createRoutine(input);
-  syncRoutineJob(routine);
-  return context.json({ routine: await getRoutineView(routine) }, 201);
+  const synced = await runRuntimeEffect(syncRoutineJob(routine, routineSchedulerBoundary));
+  if (Result.isFailure(synced)) return context.json({ error: "Could not schedule the Routine" }, 500);
+  const view = await runRuntimeEffect(getRoutineView(routine));
+  return Result.isSuccess(view)
+    ? context.json({ routine: view.success }, 201)
+    : context.json({ error: "Could not load the Routine" }, 500);
 });
 
 app.patch("/api/routines/:id", async (context) => {
@@ -485,15 +524,19 @@ app.patch("/api/routines/:id", async (context) => {
     patch.libraryFolderId = body.libraryFolderId === "" ? null : body.libraryFolderId;
     if (patch.libraryFolderId && !await getLibraryFolder(patch.libraryFolderId)) return context.json({ error: "Library folder not found" }, 404);
   }
-  const schedule = await runOperation(() => validateRoutineSchedule(
+  const schedule = await runRuntimeEffect(validateRoutineSchedule(
     patch.cron ?? current.cron,
     patch.timezone ?? current.timezone,
   ));
   if (Result.isFailure(schedule)) return context.json({ error: schedule.failure.message }, 400);
   const routine = await updateRoutine(current.id, patch);
   if (!routine) return context.json({ error: "Routine not found" }, 404);
-  syncRoutineJob(routine);
-  return context.json({ routine: await getRoutineView(routine) });
+  const synced = await runRuntimeEffect(syncRoutineJob(routine, routineSchedulerBoundary));
+  if (Result.isFailure(synced)) return context.json({ error: "Could not schedule the Routine" }, 500);
+  const view = await runRuntimeEffect(getRoutineView(routine));
+  return Result.isSuccess(view)
+    ? context.json({ routine: view.success })
+    : context.json({ error: "Could not load the Routine" }, 500);
 });
 
 app.delete("/api/routines/:id", async (context) => {
@@ -501,8 +544,10 @@ app.delete("/api/routines/:id", async (context) => {
   if (Result.isFailure(params)) return context.json({ error: "Routine not found" }, 404);
   const id = params.success.id;
   if (!await deleteRoutine(id)) return context.json({ error: "Routine not found" }, 404);
-  removeRoutineJob(id);
-  return context.body(null, 204);
+  const removed = await runRuntimeEffect(removeRoutineJob(id));
+  return Result.isSuccess(removed)
+    ? context.body(null, 204)
+    : context.json({ error: "Could not stop the Routine" }, 500);
 });
 
 app.post("/api/routines/:id/run", async (context) => {
@@ -510,8 +555,10 @@ app.post("/api/routines/:id/run", async (context) => {
   if (Result.isFailure(params)) return context.json({ error: "Routine not found" }, 404);
   const routine = await getRoutine(params.success.id);
   if (!routine) return context.json({ error: "Routine not found" }, 404);
-  const run = await runRoutineNow(routine);
-  return context.json({ run }, 202);
+  const started = await runRuntimeEffect(runRoutineNow(routine, routineSchedulerBoundary));
+  return Result.isSuccess(started)
+    ? context.json({ run: started.success }, 202)
+    : context.json({ error: "Could not start the Routine" }, 500);
 });
 
 // Connector routes
@@ -548,16 +595,20 @@ app.get("/api/connectors/:id/auth", async (context) => {
 
 app.get("/api/connectors/google/callback", async (context) => {
   const rawState = context.req.query("state");
-  const query = decodeIngress(ConnectionCallbackQuery, rawState === undefined
-    ? { code: context.req.query("code") }
-    : { code: context.req.query("code"), state: rawState });
+  const rawCode = context.req.query("code");
+  const callbackQuery: IngressValue = rawCode === undefined
+    ? {}
+    : rawState === undefined
+      ? { code: rawCode }
+      : { code: rawCode, state: rawState };
+  const query = decodeIngress(ConnectionCallbackQuery, callbackQuery);
   if (Result.isFailure(query)) return context.json({ error: "Missing code" }, 400);
   const { code } = query.success;
   let connectorId: ConnectionId = "gmail";
   if (query.success.state !== undefined) {
-    const decodedState = Schema.decodeUnknownResult(
-      Schema.fromJsonString(ConnectionCallbackState),
-    )(Buffer.from(query.success.state, "base64url").toString("utf-8"));
+    const decodedState = decodeConnectionCallbackState(
+      Buffer.from(query.success.state, "base64url").toString("utf-8"),
+    );
     if (Result.isSuccess(decodedState)) connectorId = decodedState.success.connector;
   }
 
@@ -581,50 +632,68 @@ app.delete("/api/connectors/:id", async (context) => {
 
 const MAX_REPEAT_MS = 366 * 86_400_000;
 
-/** Accepts the wire timestamp forms and normalizes them to epoch milliseconds. */
-function parseWhen(value: TimestampInput | null | undefined): number | null | undefined | "invalid" {
-  if (value === undefined || value === null || typeof value === "number") return value;
-  return Number.isFinite(Date.parse(value)) ? Date.parse(value) : "invalid";
+type ParsedTimestamp =
+  | { readonly _tag: "Omitted" }
+  | { readonly _tag: "Cleared" }
+  | { readonly _tag: "Value"; readonly value: number };
+
+/** Accepts the decoded wire timestamp forms and normalizes them to epoch milliseconds. */
+function parseWhen(value?: TimestampInput | null): Result.Result<ParsedTimestamp, InvalidTaskMutation> {
+  if (value === undefined) return Result.succeed({ _tag: "Omitted" });
+  if (value === null) return Result.succeed({ _tag: "Cleared" });
+  if (isNumber(value)) return Result.succeed({ _tag: "Value", value });
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed)
+    ? Result.succeed({ _tag: "Value", value: parsed })
+    : Result.fail(new InvalidTaskMutation({ message: "Invalid due date" }));
 }
 
-function optionalText(value: string | undefined, max: number): string | undefined {
-  return value === undefined ? undefined : value.trim().slice(0, max);
-}
-
-function taskPatchFrom(body: PatchTaskRequest | CreateTaskRequest): TaskPatch | string {
+/** Normalizes a decoded Task request without using string errors as control flow. */
+function taskPatchFrom(body: PatchTaskRequest | CreateTaskRequest): Result.Result<TaskPatch, InvalidTaskMutation> {
   const patch: TaskPatch = {};
-  const title = optionalText(body.title, 200);
-  if (title === "") return "Title is required";
-  if (title !== undefined) patch.title = title;
-  const detail = optionalText(body.detail, 2_000);
-  if (detail !== undefined) patch.detail = detail;
+  if (body.title !== undefined) {
+    const title = body.title.trim().slice(0, 200);
+    if (title.length === 0) return Result.fail(new InvalidTaskMutation({ message: "Title is required" }));
+    patch.title = title;
+  }
+  if (body.detail !== undefined) patch.detail = body.detail.trim().slice(0, 2_000);
   if (body.assignee !== undefined) {
     patch.assignee = body.assignee !== null && body.assignee.trim() ? body.assignee.trim().slice(0, 80) : null;
   }
   const dueAt = parseWhen(body.dueAt);
-  if (dueAt === "invalid") return "Invalid due date";
-  if (dueAt !== undefined) patch.dueAt = dueAt;
+  if (Result.isFailure(dueAt)) return Result.fail(dueAt.failure);
+  if (dueAt.success._tag === "Cleared") patch.dueAt = null;
+  if (dueAt.success._tag === "Value") patch.dueAt = dueAt.success.value;
   if (body.priority !== undefined) patch.priority = body.priority;
   if ("status" in body && body.status !== undefined) patch.status = body.status;
-  return patch;
+  return Result.succeed(patch);
 }
 
 type NormalizedFollowUpInput = { at?: number; note?: string; repeatEveryMs?: number | null };
 type FollowUpMutationInput = FollowUpInput | typeof PatchFollowUpRequest.Type;
 
-function followUpInputFrom(body: FollowUpMutationInput): NormalizedFollowUpInput | string {
+/** Normalizes a decoded follow-up request into one valid mutation. */
+function followUpInputFrom(
+  body: FollowUpMutationInput,
+): Result.Result<NormalizedFollowUpInput, InvalidFollowUpMutation> {
   const input: NormalizedFollowUpInput = {};
   const at = parseWhen(body.at);
-  if (at === "invalid" || at === null) return "A follow-up time is required";
-  if (at !== undefined) input.at = at;
-  const note = optionalText(body.note, 500);
-  if (note !== undefined) input.note = note;
+  if (Result.isFailure(at)) {
+    return Result.fail(new InvalidFollowUpMutation({ message: at.failure.message }));
+  }
+  if (at.success._tag === "Cleared") {
+    return Result.fail(new InvalidFollowUpMutation({ message: "A follow-up time is required" }));
+  }
+  if (at.success._tag === "Value") input.at = at.success.value;
+  if (body.note !== undefined) input.note = body.note.trim().slice(0, 500);
   const repeat = body.repeatEveryMs;
   if (repeat !== undefined) {
-    if (repeat !== null && (!Number.isSafeInteger(repeat) || repeat < 60_000 || repeat > MAX_REPEAT_MS)) return "Repeat must be between one minute and one year";
+    if (repeat !== null && (!Number.isSafeInteger(repeat) || repeat < 60_000 || repeat > MAX_REPEAT_MS)) {
+      return Result.fail(new InvalidFollowUpMutation({ message: "Repeat must be between one minute and one year" }));
+    }
     input.repeatEveryMs = repeat;
   }
-  return input;
+  return Result.succeed(input);
 }
 
 app.get("/api/tasks", async (context) => {
@@ -639,21 +708,33 @@ app.post("/api/tasks", async (context) => {
   if (Result.isFailure(decoded)) return context.json({ error: "Invalid Task" }, 400);
   const body = decoded.success;
   const patch = taskPatchFrom(body);
-  if (typeof patch === "string") return context.json({ error: patch }, 400);
-  if (!patch.title) return context.json({ error: "Title is required" }, 400);
-  const followUp = body.followUp === undefined ? undefined : followUpInputFrom(body.followUp);
-  if (typeof followUp === "string") return context.json({ error: followUp }, 400);
-  if (followUp !== undefined && followUp.at === undefined) return context.json({ error: "A follow-up time is required" }, 400);
+  if (Result.isFailure(patch)) return context.json({ error: patch.failure.message }, 400);
+  if (patch.success.title === undefined) return context.json({ error: "Title is required" }, 400);
+  const followUp = body.followUp === undefined ? null : followUpInputFrom(body.followUp);
+  if (followUp !== null && Result.isFailure(followUp)) {
+    return context.json({ error: followUp.failure.message }, 400);
+  }
+  if (followUp !== null && followUp.success.at === undefined) {
+    return context.json({ error: "A follow-up time is required" }, 400);
+  }
   const task = await createTask({
-    title: patch.title,
-    detail: patch.detail,
-    assignee: patch.assignee,
-    dueAt: patch.dueAt,
-    priority: patch.priority,
+    title: patch.success.title,
+    detail: patch.success.detail,
+    assignee: patch.success.assignee,
+    dueAt: patch.success.dueAt,
+    priority: patch.success.priority,
     origin: { kind: "manual" },
     createdBy: "you",
   });
-  if (followUp !== undefined && followUp.at !== undefined) await createFollowUp({ taskId: task.id, at: followUp.at, note: followUp.note, repeatEveryMs: followUp.repeatEveryMs, createdBy: "you" });
+  if (followUp !== null && Result.isSuccess(followUp) && followUp.success.at !== undefined) {
+    await createFollowUp({
+      taskId: task.id,
+      at: followUp.success.at,
+      note: followUp.success.note,
+      repeatEveryMs: followUp.success.repeatEveryMs,
+      createdBy: "you",
+    });
+  }
   return context.json({ task: await getTaskView(task) }, 201);
 });
 
@@ -662,8 +743,8 @@ app.patch("/api/tasks/:id", async (context) => {
   const decoded = await decodeJsonBody(context, PatchTaskRequest);
   if (Result.isFailure(params) || Result.isFailure(decoded)) return context.json({ error: "Invalid Task update" }, 400);
   const patch = taskPatchFrom(decoded.success);
-  if (typeof patch === "string") return context.json({ error: patch }, 400);
-  const task = await updateTask(params.success.id, patch);
+  if (Result.isFailure(patch)) return context.json({ error: patch.failure.message }, 400);
+  const task = await updateTask(params.success.id, patch.success);
   return task ? context.json({ task: await getTaskView(task) }) : context.json({ error: "Task not found" }, 404);
 });
 
@@ -681,10 +762,10 @@ app.post("/api/tasks/:id/nudge", async (context) => {
   if (task.status !== "open") return context.json({ error: "Only open tasks can be chased" }, 409);
   const decoded = await decodeJsonBody(context, NudgeTaskRequest, true);
   if (Result.isFailure(decoded)) return context.json({ error: "Invalid nudge" }, 400);
-  const note = optionalText(decoded.success.note, 500);
+  const note = decoded.success.note === undefined ? "" : decoded.success.note.trim().slice(0, 500);
   const chased = await runRuntimeEffect(chaseTaskNow(
     task,
-    note && note.length > 0 ? note : "You asked Vivid to chase this now.",
+    note.length > 0 ? note : "You asked Vivid to chase this now.",
     "you",
   ));
   if (Result.isFailure(chased)) return context.json({ error: "Could not start the follow-up" }, 500);
@@ -700,9 +781,15 @@ app.post("/api/tasks/:id/follow-ups", async (context) => {
   const decoded = await decodeJsonBody(context, FollowUpInput);
   if (Result.isFailure(decoded)) return context.json({ error: "Invalid follow-up" }, 400);
   const input = followUpInputFrom(decoded.success);
-  if (typeof input === "string") return context.json({ error: input }, 400);
-  if (input.at === undefined) return context.json({ error: "A follow-up time is required" }, 400);
-  const followUp = await createFollowUp({ taskId: task.id, at: input.at, note: input.note, repeatEveryMs: input.repeatEveryMs, createdBy: "you" });
+  if (Result.isFailure(input)) return context.json({ error: input.failure.message }, 400);
+  if (input.success.at === undefined) return context.json({ error: "A follow-up time is required" }, 400);
+  const followUp = await createFollowUp({
+    taskId: task.id,
+    at: input.success.at,
+    note: input.success.note,
+    repeatEveryMs: input.success.repeatEveryMs,
+    createdBy: "you",
+  });
   return context.json({ followUp, task: await getTaskView(task) }, 201);
 });
 
@@ -715,14 +802,12 @@ app.patch("/api/follow-ups/:id", async (context) => {
   if (Result.isFailure(decoded)) return context.json({ error: "Invalid follow-up update" }, 400);
   const body = decoded.success;
   const input = followUpInputFrom(body);
-  if (typeof input === "string") return context.json({ error: input }, 400);
-  let status: "scheduled" | "cancelled" | undefined;
-  if (body.status !== undefined) {
-    if (body.status !== "scheduled" && body.status !== "cancelled") return context.json({ error: "A follow-up can only be rescheduled or cancelled" }, 400);
-    status = body.status;
-  }
+  if (Result.isFailure(input)) return context.json({ error: input.failure.message }, 400);
   if (current.status === "running") return context.json({ error: "This follow-up is running right now" }, 409);
-  const followUp = await updateFollowUp(current.id, { ...input, status: status ?? (input.at !== undefined && current.status !== "scheduled" ? "scheduled" : undefined) });
+  const followUpPatch: Parameters<typeof updateFollowUp>[1] = { ...input.success };
+  if (body.status !== undefined) followUpPatch.status = body.status;
+  else if (input.success.at !== undefined && current.status !== "scheduled") followUpPatch.status = "scheduled";
+  const followUp = await updateFollowUp(current.id, followUpPatch);
   const task = followUp ? await getTask(followUp.taskId) : null;
   return followUp && task ? context.json({ followUp, task: await getTaskView(task) }) : context.json({ error: "Follow-up not found" }, 404);
 });

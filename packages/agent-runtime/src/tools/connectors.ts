@@ -1,8 +1,10 @@
 import { defineTool, type ToolDefinition } from "@flue/runtime";
 import type { BoundConnectorTool, ConnectorToolParameters } from "@vivid/connectors";
 import { gmailTools, calendarTools, driveTools, getConnectorStatus } from "@vivid/connectors";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import * as v from "valibot";
+
+const decodeConnectorToolInput = Schema.decodeUnknownEffect(Schema.Json);
 
 export const suggestConnectorTool = defineTool({
   name: "suggest_connector",
@@ -32,6 +34,7 @@ function toValibotType(type: "string" | "number" | "integer" | "boolean"): Primi
     case "boolean":
       return v.boolean();
   }
+  return type;
 }
 
 function buildInputSchema(parameters: ConnectorToolParameters) {
@@ -54,7 +57,10 @@ function wrapConnectorTool(tool: BoundConnectorTool): ToolDefinition {
     async run(context) {
       // Flue owns this Promise callback; connector code remains in the typed Effect channel.
       // oxlint-disable-next-line vivid/no-runpromise-in-library
-      const output = await Effect.runPromise(tool.execute(context.data));
+      const program = decodeConnectorToolInput(context.data).pipe(
+        Effect.flatMap((input) => tool.execute(input)),
+      );
+      const output = await Effect.runPromise(program);
       return { output };
     },
   });

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ScrollView, View, RefreshControl } from "react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Plus, Pause, Play, Repeat2 } from "lucide-react-native";
+import { RoutineListResponse } from "@vivid/contracts";
 import { useOpenThread, useWorkspace, type Routes } from "../workspace";
 import { useResource } from "../lib/resource";
 import { type Routine, when } from "../lib/models";
@@ -24,7 +25,7 @@ export function Routines({
 }: NativeStackScreenProps<Routes, "Routines">) {
   const { api } = useWorkspace();
   const open = useOpenThread();
-  const resource = useResource<{ routines: Routine[] }>(api, "/api/routines");
+  const resource = useResource(api, "/api/routines", RoutineListResponse);
   const [selectedId, setSelectedId] = useState<string>();
   const [editing, setEditing] = useState<Partial<Routine>>();
   const [gallery, setGallery] = useState(false);

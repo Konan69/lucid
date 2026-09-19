@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Image, Linking, RefreshControl, ScrollView, View } from "react-native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Check, ChevronRight, Plug } from "lucide-react-native";
+import { ConnectionListResponse } from "@vivid/contracts";
 import { useWorkspace, type Routes } from "../workspace";
 import { useResource } from "../lib/resource";
 import { normalizeServerUrl } from "../lib/api";
@@ -108,7 +109,7 @@ type Connector = {
 export function Connectors({ navigation }: NativeStackScreenProps<Routes, "Connectors">) {
   const { api } = useWorkspace();
   const { colors: c } = useTheme();
-  const resource = useResource<{ connectors: Connector[] }>(api, "/api/connectors");
+  const resource = useResource(api, "/api/connectors", ConnectionListResponse);
   const connectorData = resource.data;
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string>();

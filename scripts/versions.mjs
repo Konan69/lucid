@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { readFileSync, readdirSync } from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import * as NodeFS from 'node:fs'
+import * as NodePath from 'node:path'
+import * as NodeURL from 'node:url'
+import * as Schema from 'effect/Schema'
 
 export const versions = Object.freeze({
   '@alchemy.run/better-auth': '2.0.0-beta.79',
@@ -51,12 +52,35 @@ const requiredByManifest = Object.freeze({
   'packages/contracts/package.json': ['effect'],
 })
 
-const readJson = (root, relativePath) =>
-  JSON.parse(readFileSync(path.join(root, relativePath), 'utf8'))
+const DependencyMap = Schema.Record(Schema.String, Schema.String)
+const PackageManifest = Schema.Struct({
+  dependencies: Schema.optionalKey(DependencyMap),
+  devDependencies: Schema.optionalKey(DependencyMap),
+  optionalDependencies: Schema.optionalKey(DependencyMap),
+  peerDependencies: Schema.optionalKey(DependencyMap),
+  pnpm: Schema.optionalKey(Schema.Unknown),
+  scripts: Schema.optionalKey(DependencyMap),
+})
+const TypeScriptConfig = Schema.Struct({
+  compilerOptions: Schema.optionalKey(Schema.Struct({
+    plugins: Schema.optionalKey(Schema.Array(Schema.Struct({
+      name: Schema.String,
+      diagnostics: Schema.optionalKey(Schema.Boolean),
+      ignoreEffectErrorsInTscExitCode: Schema.optionalKey(Schema.Boolean),
+      ignoreEffectWarningsInTscExitCode: Schema.optionalKey(Schema.Boolean),
+    }))),
+  })),
+})
+const decodePackageManifest = Schema.decodeUnknownSync(Schema.fromJsonString(PackageManifest))
+const decodeTypeScriptConfig = Schema.decodeUnknownSync(Schema.fromJsonString(TypeScriptConfig))
+const readPackageManifest = (root, relativePath) =>
+  decodePackageManifest(NodeFS.readFileSync(NodePath.join(root, relativePath), 'utf8'))
+const readTypeScriptConfig = (root, relativePath) =>
+  decodeTypeScriptConfig(NodeFS.readFileSync(NodePath.join(root, relativePath), 'utf8'))
 
 /** Read one flat mapping from pnpm-workspace.yaml without adding a bootstrap dependency. */
 function readWorkspaceMapping(root, section) {
-  const lines = readFileSync(path.join(root, 'pnpm-workspace.yaml'), 'utf8').split('\n')
+  const lines = NodeFS.readFileSync(NodePath.join(root, 'pnpm-workspace.yaml'), 'utf8').split('\n')
   const values = {}
   let active = false
 
@@ -88,12 +112,12 @@ function resolveWorkspaceVersion(name, value, catalog) {
 /** Return every workspace package manifest that is present in this collaboration checkout. */
 export function workspaceManifestPaths(root) {
   return ['apps', 'packages'].flatMap((parent) =>
-    readdirSync(path.join(root, parent), { withFileTypes: true })
+    NodeFS.readdirSync(NodePath.join(root, parent), { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => `${parent}/${entry.name}/package.json`)
       .filter((relativePath) => {
         try {
-          readFileSync(path.join(root, relativePath))
+          NodeFS.readFileSync(NodePath.join(root, relativePath))
           return true
         } catch {
           return false
@@ -105,19 +129,28 @@ export function workspaceManifestPaths(root) {
 /** Validate dependency lockstep and the native TypeScript/Effect compiler path. */
 export function validateVersions(root) {
   const errors = []
-  const rootManifest = readJson(root, 'package.json')
+  const rootManifest = readPackageManifest(root, 'package.json')
   const catalog = readWorkspaceMapping(root, 'catalog')
   const overrides = readWorkspaceMapping(root, 'overrides')
   const manifests = [
-    ['package.json', rootManifest],
-    ...workspaceManifestPaths(root).map((relativePath) => [relativePath, readJson(root, relativePath)]),
+    { relativePath: 'package.json', manifest: rootManifest },
+    ...workspaceManifestPaths(root).map((relativePath) => ({
+      relativePath,
+      manifest: readPackageManifest(root, relativePath),
+    })),
   ]
 
-  for (const [relativePath, manifest] of manifests) {
-    const sections = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']
-    for (const section of sections) {
+  for (const { relativePath, manifest } of manifests) {
+    const sections = [
+      { section: 'dependencies', dependencies: manifest.dependencies },
+      { section: 'devDependencies', dependencies: manifest.devDependencies },
+      { section: 'peerDependencies', dependencies: manifest.peerDependencies },
+      { section: 'optionalDependencies', dependencies: manifest.optionalDependencies },
+    ]
+    for (const { section, dependencies } of sections) {
+      if (dependencies === undefined) continue
       for (const [name, expected] of Object.entries(versions)) {
-        const declared = manifest[section]?.[name]
+        const declared = dependencies[name]
         const actual = resolveWorkspaceVersion(name, declared, catalog)
         if (declared !== undefined && actual !== expected) {
           errors.push(`${relativePath}: ${section}.${name} must resolve to ${expected}; found ${declared}`)
@@ -125,11 +158,13 @@ export function validateVersions(root) {
       }
     }
 
-    const typecheck = manifest.scripts?.typecheck
-    if (typeof typecheck === 'string' && /(?:^|\s)tsc(?:\s|$)/u.test(typecheck)) {
+    const typecheck = manifest.scripts === undefined ? undefined : manifest.scripts.typecheck
+    if (typecheck !== undefined && /(?:^|\s)tsc(?:\s|$)/u.test(typecheck)) {
       const nativeTypeScript = resolveWorkspaceVersion(
         '@typescript/native',
-        manifest.devDependencies?.['@typescript/native'],
+        manifest.devDependencies === undefined
+          ? undefined
+          : manifest.devDependencies['@typescript/native'],
         catalog,
       )
       if (nativeTypeScript !== versions['@typescript/native']) {
@@ -139,7 +174,7 @@ export function validateVersions(root) {
       }
       const toolingTypeScript = resolveWorkspaceVersion(
         'typescript',
-        manifest.devDependencies?.typescript,
+        manifest.devDependencies === undefined ? undefined : manifest.devDependencies.typescript,
         catalog,
       )
       if (toolingTypeScript !== versions.typescript) {
@@ -149,9 +184,11 @@ export function validateVersions(root) {
   }
 
   for (const [relativePath, names] of Object.entries(requiredByManifest)) {
-    const manifest = readJson(root, relativePath)
+    const manifest = readPackageManifest(root, relativePath)
     for (const name of names) {
-      const declared = manifest.dependencies?.[name] ?? manifest.devDependencies?.[name]
+      const production = manifest.dependencies === undefined ? undefined : manifest.dependencies[name]
+      const development = manifest.devDependencies === undefined ? undefined : manifest.devDependencies[name]
+      const declared = production ?? development
       const actual = resolveWorkspaceVersion(name, declared, catalog)
       if (actual !== versions[name]) {
         errors.push(
@@ -178,7 +215,9 @@ export function validateVersions(root) {
   if (
     resolveWorkspaceVersion(
       '@effect/language-service',
-      rootManifest.devDependencies?.['@effect/language-service'],
+      rootManifest.devDependencies === undefined
+        ? undefined
+        : rootManifest.devDependencies['@effect/language-service'],
       catalog,
     ) !== versions['@effect/language-service']
   ) {
@@ -186,17 +225,20 @@ export function validateVersions(root) {
       `package.json: @effect/language-service must resolve to ${versions['@effect/language-service']}`,
     )
   }
-  if (!rootManifest.scripts?.prepare?.includes('effect-language-service patch')) {
+  const prepare = rootManifest.scripts === undefined ? undefined : rootManifest.scripts.prepare
+  if (prepare === undefined || !prepare.includes('effect-language-service patch')) {
     errors.push('package.json: prepare must patch TypeScript with effect-language-service')
   }
-  if (!rootManifest.scripts?.lint?.includes('--type-aware')) {
+  const lint = rootManifest.scripts === undefined ? undefined : rootManifest.scripts.lint
+  if (lint === undefined || !lint.includes('--type-aware')) {
     errors.push('package.json: lint must enable Oxlint --type-aware analysis')
   }
 
-  const tsconfig = readJson(root, 'tsconfig.base.json')
-  const effectPlugin = tsconfig.compilerOptions?.plugins?.find(
-    (plugin) => plugin.name === '@effect/language-service',
-  )
+  const tsconfig = readTypeScriptConfig(root, 'tsconfig.base.json')
+  const plugins = tsconfig.compilerOptions === undefined ? undefined : tsconfig.compilerOptions.plugins
+  const effectPlugin = plugins === undefined
+    ? undefined
+    : plugins.find((plugin) => plugin.name === '@effect/language-service')
   if (effectPlugin === undefined) {
     errors.push('tsconfig.base.json: @effect/language-service plugin is required')
   } else {
@@ -214,9 +256,9 @@ export function validateVersions(root) {
   return errors
 }
 
-const isMain = process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+const isMain = process.argv[1] !== undefined && NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)
 if (isMain) {
-  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const root = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), '..')
   const errors = validateVersions(root)
   if (errors.length > 0) {
     process.stderr.write(`version lockstep failed:\n${errors.map((error) => `  - ${error}`).join('\n')}\n`)

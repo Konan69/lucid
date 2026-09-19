@@ -9,6 +9,7 @@ import {
 } from "lucide-react-native";
 import * as DocumentPicker from "expo-document-picker";
 import { File } from "expo-file-system";
+import { LibraryFolderListResponse, LibraryListResponse } from "@vivid/contracts";
 import { openDocument } from "../lib/documents";
 import { useOpenThread, useWorkspace, type Routes } from "../workspace";
 import { useResource } from "../lib/resource";
@@ -37,14 +38,12 @@ export function Library({
   const [path, setPath] = useState<Folder[]>([]);
   const currentFolder = path.at(-1);
   const folderId = currentFolder === undefined ? undefined : currentFolder.id;
-  const resource = useResource<{ documents: Document[]; folders: Folder[] }>(
+  const resource = useResource(
     api,
     `/api/library${folderId ? `?folderId=${encodeURIComponent(folderId)}` : ""}`,
+    LibraryListResponse,
   );
-  const allFolders = useResource<{ folders: Folder[] }>(
-    api,
-    "/api/library/folders",
-  );
+  const allFolders = useResource(api, "/api/library/folders", LibraryFolderListResponse);
   const [selected, setSelected] = useState<
     { kind: "file"; item: Document } | { kind: "folder"; item: Folder }
   >();

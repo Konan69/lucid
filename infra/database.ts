@@ -9,7 +9,7 @@ export class DatabaseConfigurationError extends Schema.TaggedError<DatabaseConfi
   variable: Schema.Literal("DATABASE_URL"),
   target: Schema.String,
   message: Schema.String
-}) {}
+}, { title: "Database configuration error" }) {}
 
 /** Remote targets bring a database URL; this stack deliberately provisions no hosted database. */
 const configuredDatabaseUrl = (target: DeploymentTarget) => Config.Redacted("DATABASE_URL").pipe(

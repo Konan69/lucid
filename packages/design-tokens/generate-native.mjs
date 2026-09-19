@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync } from "node:fs";
-const css = readFileSync(new URL("./src/tokens.css", import.meta.url), "utf8");
+import * as NodeFS from "node:fs";
+const css = NodeFS.readFileSync(new URL("./src/tokens.css", import.meta.url), "utf8");
 function declarations(block) {
   return Object.fromEntries(
     [...block.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map(([, key, value]) => [
@@ -53,8 +53,8 @@ const output =
   " as const;\n\nexport const nativeMetrics = " + JSON.stringify(metrics, null, 2) + " as const;\n";
 const target = new URL("./src/native.ts", import.meta.url);
 if (process.argv.includes("--check")) {
-  if (readFileSync(target, "utf8") !== output)
+  if (NodeFS.readFileSync(target, "utf8") !== output)
     throw new Error(
       "Native tokens are stale. Run pnpm --filter @vivid/design-tokens generate:native",
     );
-} else writeFileSync(target, output);
+} else NodeFS.writeFileSync(target, output);

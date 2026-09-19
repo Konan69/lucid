@@ -1,23 +1,37 @@
 #!/usr/bin/env node
-import { readFileSync, readdirSync } from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import * as NodeFS from 'node:fs'
+import * as NodePath from 'node:path'
+import * as NodeURL from 'node:url'
+import * as Schema from 'effect/Schema'
 
-const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const repositoryRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), '..')
 const initialSnapshotId = '00000000-0000-0000-0000-000000000000'
 export const migrationOwners = Object.freeze(['apps/server', 'packages/agent-runtime'])
 
-const readJson = (filename) => JSON.parse(readFileSync(filename, 'utf8'))
+const MigrationManifest = Schema.Struct({
+  scripts: Schema.Struct({
+    'db:generate': Schema.String,
+    'db:migrate': Schema.String,
+  }),
+})
+const MigrationSnapshot = Schema.Struct({
+  version: Schema.Union([Schema.Literal('8'), Schema.Literal(8)]),
+  dialect: Schema.Literals(['postgresql', 'postgres']),
+  id: Schema.String,
+  prevIds: Schema.Array(Schema.String),
+})
+const decodeManifestText = Schema.decodeUnknownSync(Schema.fromJsonString(MigrationManifest))
+const decodeSnapshotText = Schema.decodeUnknownSync(Schema.fromJsonString(MigrationSnapshot))
 
 /** Validate one Drizzle owner's generated SQL/snapshot chain without rewriting generated state. */
 export function validateMigrationOwner(root, owner) {
   const errors = []
-  const ownerRoot = path.join(root, owner)
-  const configPath = path.join(ownerRoot, 'drizzle.config.ts')
-  const manifestPath = path.join(ownerRoot, 'package.json')
-  const migrationsPath = path.join(ownerRoot, 'drizzle')
-  const config = readFileSync(configPath, 'utf8')
-  const manifest = readJson(manifestPath)
+  const ownerRoot = NodePath.join(root, owner)
+  const configPath = NodePath.join(ownerRoot, 'drizzle.config.ts')
+  const manifestPath = NodePath.join(ownerRoot, 'package.json')
+  const migrationsPath = NodePath.join(ownerRoot, 'drizzle')
+  const config = NodeFS.readFileSync(configPath, 'utf8')
+  const manifest = decodeManifestText(NodeFS.readFileSync(manifestPath, 'utf8'))
 
   if (!/schema\s*:\s*["'][^"']+["']/u.test(config)) {
     errors.push(`${owner}/drizzle.config.ts: schema must be a literal owned path`)
@@ -25,17 +39,17 @@ export function validateMigrationOwner(root, owner) {
   if (!/out\s*:\s*["']\.\/drizzle["']/u.test(config)) {
     errors.push(`${owner}/drizzle.config.ts: out must be "./drizzle"`)
   }
-  if (manifest.scripts?.['db:generate'] !== 'drizzle-kit generate') {
+  if (manifest.scripts['db:generate'] !== 'drizzle-kit generate') {
     errors.push(`${owner}/package.json: db:generate must run drizzle-kit generate`)
   }
-  if (manifest.scripts?.['db:migrate'] !== 'drizzle-kit migrate') {
+  if (manifest.scripts['db:migrate'] !== 'drizzle-kit migrate') {
     errors.push(`${owner}/package.json: db:migrate must run drizzle-kit migrate`)
   }
 
-  const directories = readdirSync(migrationsPath, { withFileTypes: true })
+  const directories = NodeFS.readdirSync(migrationsPath, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
-    .sort()
+    .toSorted((left, right) => left.localeCompare(right))
   if (directories.length === 0) errors.push(`${owner}/drizzle: at least one generated migration is required`)
 
   let previousId = initialSnapshotId
@@ -44,17 +58,17 @@ export function validateMigrationOwner(root, owner) {
     if (!/^\d{14}_[a-z0-9_-]+$/u.test(directory)) {
       errors.push(`${owner}/drizzle/${directory}: migration directory must start with a 14-digit timestamp`)
     }
-    const migrationPath = path.join(migrationsPath, directory, 'migration.sql')
-    const snapshotPath = path.join(migrationsPath, directory, 'snapshot.json')
+    const migrationPath = NodePath.join(migrationsPath, directory, 'migration.sql')
+    const snapshotPath = NodePath.join(migrationsPath, directory, 'snapshot.json')
     let migration
     let snapshot
     try {
-      migration = readFileSync(migrationPath, 'utf8')
+      migration = NodeFS.readFileSync(migrationPath, 'utf8')
     } catch {
       errors.push(`${owner}/drizzle/${directory}: migration.sql is missing`)
     }
     try {
-      snapshot = readJson(snapshotPath)
+      snapshot = decodeSnapshotText(NodeFS.readFileSync(snapshotPath, 'utf8'))
     } catch {
       errors.push(`${owner}/drizzle/${directory}: snapshot.json is missing or invalid JSON`)
     }
@@ -68,19 +82,19 @@ export function validateMigrationOwner(root, owner) {
     if (snapshot.dialect !== 'postgresql' && snapshot.dialect !== 'postgres') {
       errors.push(`${owner}/drizzle/${directory}: snapshot dialect must be PostgreSQL`)
     }
-    if (typeof snapshot.id !== 'string' || snapshot.id.length === 0) {
+    if (snapshot.id.length === 0) {
       errors.push(`${owner}/drizzle/${directory}: snapshot id is required`)
     } else if (ids.has(snapshot.id)) {
       errors.push(`${owner}/drizzle/${directory}: snapshot id ${snapshot.id} is duplicated`)
     } else {
       ids.add(snapshot.id)
     }
-    if (!Array.isArray(snapshot.prevIds) || !snapshot.prevIds.includes(previousId)) {
+    if (!snapshot.prevIds.includes(previousId)) {
       errors.push(
         `${owner}/drizzle/${directory}: prevIds must link to the previous snapshot ${previousId}`,
       )
     }
-    if (typeof snapshot.id === 'string') previousId = snapshot.id
+    previousId = snapshot.id
   }
   return { owner, migrations: directories.length, errors }
 }
@@ -108,4 +122,4 @@ function main() {
   )
 }
 
-if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()
+if (process.argv[1] !== undefined && NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)) main()
