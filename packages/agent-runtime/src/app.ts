@@ -66,11 +66,13 @@ import {
 } from "@vivid/connectors";
 import {
   getRoutineView,
+  initializeRoutineScheduler,
   listRoutineViews,
   removeRoutineJob,
   runRoutineNow,
   syncRoutineJob,
   validateRoutineSchedule,
+  type RoutineSchedulerBoundary,
 } from "./routine-scheduler.ts";
 import {
   createRoutine,
@@ -158,13 +160,19 @@ const runRuntimeEffect = <Value, Failure>(
 const observeRuntimeEffect = <Failure>(label: string, effect: Effect.Effect<void, Failure>): void => {
   Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(label, cause))));
 };
+const routineSchedulerBoundary: RoutineSchedulerBoundary = {
+  run: (label, effect) => observeRuntimeEffect(label, effect),
+};
 
 setInterval(
   () => observeRuntimeEffect("follow-up tick", runFollowUpSchedulerTick()),
   FOLLOW_UP_TICK_MS,
 ).unref();
 setTimeout(
-  () => observeRuntimeEffect("follow-up recovery", initializeFollowUpScheduler()),
+  () => {
+    observeRuntimeEffect("follow-up recovery", initializeFollowUpScheduler());
+    observeRuntimeEffect("routine recovery", initializeRoutineScheduler(routineSchedulerBoundary));
+  },
   1500,
 ).unref();
 
@@ -425,9 +433,12 @@ app.delete("/api/library/:id", async (context) => {
     : context.json({ error: "Document not found" }, 404);
 });
 
-app.get("/api/routines", async (context) =>
-  context.json({ routines: await listRoutineViews() }),
-);
+app.get("/api/routines", async (context) => {
+  const listed = await runRuntimeEffect(listRoutineViews());
+  return Result.isSuccess(listed)
+    ? context.json({ routines: listed.success })
+    : context.json({ error: "Could not load Routines" }, 500);
+});
 
 app.post("/api/routines", async (context) => {
   const decoded = await decodeJsonBody(context, CreateRoutineRequest);
@@ -448,11 +459,15 @@ app.post("/api/routines", async (context) => {
   if (input.libraryFolderId && !await getLibraryFolder(input.libraryFolderId)) {
     return context.json({ error: "Library folder not found" }, 404);
   }
-  const schedule = await runOperation(() => validateRoutineSchedule(input.cron, input.timezone));
+  const schedule = await runRuntimeEffect(validateRoutineSchedule(input.cron, input.timezone));
   if (Result.isFailure(schedule)) return context.json({ error: schedule.failure.message }, 400);
   const routine = await createRoutine(input);
-  syncRoutineJob(routine);
-  return context.json({ routine: await getRoutineView(routine) }, 201);
+  const synced = await runRuntimeEffect(syncRoutineJob(routine, routineSchedulerBoundary));
+  if (Result.isFailure(synced)) return context.json({ error: "Could not schedule the Routine" }, 500);
+  const view = await runRuntimeEffect(getRoutineView(routine));
+  return Result.isSuccess(view)
+    ? context.json({ routine: view.success }, 201)
+    : context.json({ error: "Could not load the Routine" }, 500);
 });
 
 app.patch("/api/routines/:id", async (context) => {
@@ -485,15 +500,19 @@ app.patch("/api/routines/:id", async (context) => {
     patch.libraryFolderId = body.libraryFolderId === "" ? null : body.libraryFolderId;
     if (patch.libraryFolderId && !await getLibraryFolder(patch.libraryFolderId)) return context.json({ error: "Library folder not found" }, 404);
   }
-  const schedule = await runOperation(() => validateRoutineSchedule(
+  const schedule = await runRuntimeEffect(validateRoutineSchedule(
     patch.cron ?? current.cron,
     patch.timezone ?? current.timezone,
   ));
   if (Result.isFailure(schedule)) return context.json({ error: schedule.failure.message }, 400);
   const routine = await updateRoutine(current.id, patch);
   if (!routine) return context.json({ error: "Routine not found" }, 404);
-  syncRoutineJob(routine);
-  return context.json({ routine: await getRoutineView(routine) });
+  const synced = await runRuntimeEffect(syncRoutineJob(routine, routineSchedulerBoundary));
+  if (Result.isFailure(synced)) return context.json({ error: "Could not schedule the Routine" }, 500);
+  const view = await runRuntimeEffect(getRoutineView(routine));
+  return Result.isSuccess(view)
+    ? context.json({ routine: view.success })
+    : context.json({ error: "Could not load the Routine" }, 500);
 });
 
 app.delete("/api/routines/:id", async (context) => {
@@ -501,8 +520,10 @@ app.delete("/api/routines/:id", async (context) => {
   if (Result.isFailure(params)) return context.json({ error: "Routine not found" }, 404);
   const id = params.success.id;
   if (!await deleteRoutine(id)) return context.json({ error: "Routine not found" }, 404);
-  removeRoutineJob(id);
-  return context.body(null, 204);
+  const removed = await runRuntimeEffect(removeRoutineJob(id));
+  return Result.isSuccess(removed)
+    ? context.body(null, 204)
+    : context.json({ error: "Could not stop the Routine" }, 500);
 });
 
 app.post("/api/routines/:id/run", async (context) => {
@@ -510,8 +531,10 @@ app.post("/api/routines/:id/run", async (context) => {
   if (Result.isFailure(params)) return context.json({ error: "Routine not found" }, 404);
   const routine = await getRoutine(params.success.id);
   if (!routine) return context.json({ error: "Routine not found" }, 404);
-  const run = await runRoutineNow(routine);
-  return context.json({ run }, 202);
+  const started = await runRuntimeEffect(runRoutineNow(routine, routineSchedulerBoundary));
+  return Result.isSuccess(started)
+    ? context.json({ run: started.success }, 202)
+    : context.json({ error: "Could not start the Routine" }, 500);
 });
 
 // Connector routes
