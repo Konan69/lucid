@@ -1,13 +1,10 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": [
-    "typescript",
-    "unicorn",
-    "oxc",
-    "react"
-  ],
+  "plugins": ["eslint", "typescript", "unicorn", "oxc", "react"],
   "categories": {
-    "correctness": "error"
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
   },
   "env": {
     "builtin": true
@@ -91,6 +88,26 @@
         "message": "Keep typed Effect failures in the error channel until the owning runtime boundary."
       }
     ],
+    "eslint/no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "regex": "^\\.\\.?/(?:.*?/)*(?:packages/)?(?:client-runtime|contracts)(?:/|$)",
+            "message": "Import from @vivid/client-runtime or @vivid/contracts instead of crossing a package boundary with a relative path."
+          }
+        ]
+      }
+    ],
+    "eslint/no-await-in-loop": "off",
+    "eslint/no-underscore-dangle": "off",
+    "react/capitalized-calls": "off",
+    "react/exhaustive-effect-dependencies": "off",
+    "react/hooks": "off",
+    "react/jsx-no-constructed-context-values": "off",
+    "react/react-in-jsx-scope": "off",
+    "typescript/no-unsafe-type-assertion": "off",
+    "unicorn/consistent-function-scoping": "off",
     "anti-slop/no-chained-type-assertions": "warn",
     "anti-slop/no-conditional-empty-object-spread": "warn",
     "anti-slop/no-known-value-widening": "error",
@@ -121,7 +138,10 @@
     "vivid/no-effect-option-constructors": "error",
     "vivid/no-effect-runtime-api": "error",
     "vivid/no-effect-wrapper-for-sync-callback-api": "error",
+    "vivid/no-global-process-runtime": "warn",
     "vivid/no-host-transform-validation": "warn",
+    "vivid/no-inline-schema-compile": "warn",
+    "vivid/no-manual-effect-runtime-in-tests": "error",
     "vivid/no-non-null-assertion": "warn",
     "vivid/no-optional-chaining": "warn",
     "vivid/no-parse-method-alias": "error",
@@ -133,6 +153,7 @@
     "vivid/no-try-catch": "warn",
     "vivid/no-undefined-in-union": "warn",
     "vivid/no-unnecessary-die": "error",
+    "vivid/namespace-node-imports": "warn",
     "vivid/require-named-effect-fn": "warn",
     "vivid/require-schema-class-identifier": "error",
     "vivid/require-schema-class-title": "warn",

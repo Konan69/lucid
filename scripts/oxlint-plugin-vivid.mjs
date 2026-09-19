@@ -7,6 +7,48 @@ const effectTerminalOperations = new Set([
   'runSyncExit',
 ])
 const schemaClassFactories = new Set(['Class', 'TaggedClass', 'TaggedError'])
+// These Schema APIs compile reusable functions; rebuilding them on each call adds avoidable work.
+const schemaCompilerMethods = new Set([
+  'is',
+  'asserts',
+  'decodeEffect',
+  'decodeExit',
+  'decodeOption',
+  'decodePromise',
+  'decodeResult',
+  'decodeSync',
+  'decodeUnknownEffect',
+  'decodeUnknownExit',
+  'decodeUnknownOption',
+  'decodeUnknownPromise',
+  'decodeUnknownResult',
+  'decodeUnknownSync',
+  'encodeEffect',
+  'encodeExit',
+  'encodeOption',
+  'encodePromise',
+  'encodeResult',
+  'encodeSync',
+  'encodeUnknownEffect',
+  'encodeUnknownExit',
+  'encodeUnknownOption',
+  'encodeUnknownPromise',
+  'encodeUnknownResult',
+  'encodeUnknownSync',
+])
+const manualEffectRuntimeMethods = new Set(['runFork', 'runPromise', 'runSync'])
+const nodeModuleAliases = new Map([
+  ['assert/strict', 'Assert'],
+  ['fs/promises', 'FSP'],
+])
+const nodeSegmentAliases = new Map([
+  ['fs', 'FS'],
+  ['os', 'OS'],
+  ['url', 'URL'],
+  ['vm', 'VM'],
+])
+const processRuntimeProperties = new Set(['arch', 'platform'])
+const nodeOsModules = new Set(['node:os', 'os'])
 const syncCallbackMethods = new Set([
   'every',
   'filter',
@@ -45,6 +87,38 @@ const isFunction = (node) =>
 
 const isStringLiteral = (node) =>
   (node?.type === 'Literal' || node?.type === 'StringLiteral') && typeof node.value === 'string'
+
+// Oxlint exposes TypeScript and parenthesized wrappers around the expression a rule needs to inspect.
+const unwrapExpression = (node) => {
+  let current = node
+  while (
+    current?.type === 'ChainExpression' ||
+    current?.type === 'ParenthesizedExpression' ||
+    current?.type === 'TSNonNullExpression' ||
+    current?.type === 'TSAsExpression' ||
+    current?.type === 'TSTypeAssertion'
+  ) {
+    current = current.expression
+  }
+  return current
+}
+
+const toPascalCase = (value) =>
+  value
+    .split(/[_-]/u)
+    .filter((segment) => segment.length > 0)
+    .map((segment) => segment[0]?.toUpperCase() + segment.slice(1))
+    .join('')
+
+const expectedNodeNamespace = (source) => {
+  const moduleName = source.slice('node:'.length)
+  const knownAlias = nodeModuleAliases.get(moduleName)
+  if (knownAlias !== undefined) return `Node${knownAlias}`
+  return `Node${moduleName
+    .split('/')
+    .map((segment) => nodeSegmentAliases.get(segment) ?? toPascalCase(segment))
+    .join('')}`
+}
 
 const objectProperty = (node, name) =>
   node?.type === 'ObjectExpression'
@@ -150,6 +224,76 @@ const noRuntimeEnvMutation = rule(
   }),
 )
 
+const isGlobalProcessObject = (node) => {
+  const expression = unwrapExpression(node)
+  if (expression?.type === 'Identifier' && expression.name === 'process') return true
+  return (
+    expression?.type === 'MemberExpression' &&
+    unwrapExpression(expression.object)?.type === 'Identifier' &&
+    unwrapExpression(expression.object).name === 'globalThis' &&
+    propertyName(expression) === 'process'
+  )
+}
+
+const processRuntimeMessage = (property) =>
+  `Do not read process.${property} directly. Inject the host runtime ${property} at the adapter boundary and provide it explicitly in tests.`
+
+// Ambient platform checks hide a runtime dependency and make cross-platform behavior hard to test.
+const noGlobalProcessRuntime = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description: 'Disallow ambient host platform and architecture reads.',
+    },
+    schema: [],
+  },
+  create(context) {
+    const nodeOsNamespaces = new Set()
+    const nodeOsRuntimeImports = new Map()
+
+    return {
+      ImportDeclaration(node) {
+        if (!isStringLiteral(node.source) || !nodeOsModules.has(node.source.value)) return
+        for (const specifier of node.specifiers) {
+          const localName = specifier.local?.name
+          if (typeof localName !== 'string') continue
+          if (
+            specifier.type === 'ImportNamespaceSpecifier' ||
+            specifier.type === 'ImportDefaultSpecifier'
+          ) {
+            nodeOsNamespaces.add(localName)
+            continue
+          }
+          const imported = specifier.imported?.name ?? specifier.imported?.value
+          if (processRuntimeProperties.has(imported)) nodeOsRuntimeImports.set(localName, imported)
+        }
+      },
+      MemberExpression(node) {
+        const property = propertyName(node)
+        if (processRuntimeProperties.has(property) && isGlobalProcessObject(node.object)) {
+          context.report({ node, message: processRuntimeMessage(property) })
+        }
+      },
+      CallExpression(node) {
+        const callee = unwrapExpression(node.callee)
+        let property
+        if (callee?.type === 'Identifier') {
+          property = nodeOsRuntimeImports.get(callee.name)
+        } else if (
+          callee?.type === 'MemberExpression' &&
+          unwrapExpression(callee.object)?.type === 'Identifier' &&
+          nodeOsNamespaces.has(unwrapExpression(callee.object).name)
+        ) {
+          property = propertyName(callee)
+        }
+        if (processRuntimeProperties.has(property)) {
+          context.report({ node, message: processRuntimeMessage(property) })
+        }
+      },
+    }
+  },
+}
+
 const noPromiseConstructor = rule(
   'Use Effect async adapters instead of constructing raw Promises.',
   'Do not construct Promise in application code. Wrap the external callback boundary with Effect.async or Effect.tryPromise.',
@@ -244,6 +388,159 @@ const noDirectSchemaSafeParse = rule(
     },
   }),
 )
+
+const isStaticSchemaReference = (node) => {
+  const expression = unwrapExpression(node)
+  if (expression?.type === 'Identifier') {
+    const firstCharacter = expression.name[0]
+    return firstCharacter !== undefined && firstCharacter.toUpperCase() === firstCharacter
+  }
+  return expression?.type === 'MemberExpression'
+}
+
+const isNestedStaticSchemaCall = (node) => {
+  const expression = unwrapExpression(node)
+  if (expression?.type !== 'CallExpression') return false
+  const callee = unwrapExpression(expression.callee)
+  if (
+    callee?.type !== 'MemberExpression' ||
+    unwrapExpression(callee.object)?.type !== 'Identifier' ||
+    unwrapExpression(callee.object).name !== 'Schema'
+  ) {
+    return false
+  }
+  if (propertyName(callee) === 'fromJsonString') {
+    return (
+      isStaticSchemaReference(expression.arguments[0]) ||
+      isNestedStaticSchemaCall(expression.arguments[0])
+    )
+  }
+  return true
+}
+
+const isImmediatelyInvoked = (node) => {
+  const expression = unwrapExpression(node)
+  const parent = unwrapExpression(expression?.parent)
+  return parent?.type === 'CallExpression' && unwrapExpression(parent.callee) === expression
+}
+
+// Static schema references can be compiled once at module scope; dynamic schema factories remain valid.
+const noInlineSchemaCompile = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description: 'Hoist Effect Schema compiler calls out of function bodies.',
+    },
+    schema: [],
+  },
+  createOnce(context) {
+    let functionDepth = 0
+    return {
+      before() {
+        functionDepth = 0
+      },
+      FunctionDeclaration() {
+        functionDepth += 1
+      },
+      'FunctionDeclaration:exit'() {
+        functionDepth -= 1
+      },
+      FunctionExpression() {
+        functionDepth += 1
+      },
+      'FunctionExpression:exit'() {
+        functionDepth -= 1
+      },
+      ArrowFunctionExpression() {
+        functionDepth += 1
+      },
+      'ArrowFunctionExpression:exit'() {
+        functionDepth -= 1
+      },
+      CallExpression(node) {
+        if (functionDepth === 0 || !isImmediatelyInvoked(node)) return
+        const callee = unwrapExpression(node.callee)
+        if (
+          callee?.type !== 'MemberExpression' ||
+          unwrapExpression(callee.object)?.type !== 'Identifier' ||
+          unwrapExpression(callee.object).name !== 'Schema'
+        ) {
+          return
+        }
+        const method = propertyName(callee)
+        if (!schemaCompilerMethods.has(method)) return
+        const schema = node.arguments[0]
+        const highConfidence = schema !== undefined && isNestedStaticSchemaCall(schema)
+        if (!highConfidence && !isStaticSchemaReference(schema)) return
+        const message = highConfidence
+          ? `Hoist Schema.${method}(...) to module scope: both the inline schema literal and the compiled function are rebuilt on every call. Move the compiled function to a module-level const.`
+          : `Hoist Schema.${method}(...) to module scope: the compiled function is rebuilt on every call. Move it to a module-level const.`
+        context.report({ node: node.callee, message })
+      },
+    }
+  },
+}
+
+// Vivid still has node:test integration adapters, so enforce Effect-native execution only after a file opts into Vitest.
+const noManualEffectRuntimeInTests = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description: 'Use @effect/vitest instead of manually running Effect programs in Vitest files.',
+    },
+    schema: [],
+  },
+  create(context) {
+    let importsVitest = false
+    return {
+      Program(node) {
+        importsVitest = node.body.some(
+          (statement) =>
+            statement.type === 'ImportDeclaration' &&
+            isStringLiteral(statement.source) &&
+            (statement.source.value === 'vitest' || statement.source.value === '@effect/vitest'),
+        )
+      },
+      CallExpression(node) {
+        if (!importsVitest || !/\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(context.filename)) return
+        if (!isMemberCall(node, 'Effect', manualEffectRuntimeMethods)) return
+        const method = propertyName(node.callee)
+        context.report({
+          node: node.callee,
+          message: `Do not use Effect.${method} in Vitest tests. Use @effect/vitest it.effect(...) with test layers instead.`,
+        })
+      },
+    }
+  },
+}
+
+// One predictable namespace per built-in keeps receiver calls intact and Node dependencies obvious.
+const namespaceNodeImports = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description: 'Require canonical namespace imports for Node.js built-in modules.',
+    },
+    schema: [],
+  },
+  create(context) {
+    return {
+      ImportDeclaration(node) {
+        if (!isStringLiteral(node.source) || !node.source.value.startsWith('node:')) return
+        const expectedAlias = expectedNodeNamespace(node.source.value)
+        const namespaceImport =
+          node.specifiers.length === 1 && node.specifiers[0]?.type === 'ImportNamespaceSpecifier'
+            ? node.specifiers[0]
+            : undefined
+        if (namespaceImport?.local?.name === expectedAlias) return
+        context.report({
+          node,
+          message: `Import ${node.source.value} as a namespace named ${expectedAlias}.`,
+        })
+      },
+    }
+  },
+}
 
 const noParseMethodAlias = rule(
   'Keep schema decode operations explicit at their call sites.',
@@ -591,7 +888,10 @@ export default {
     'no-effect-option-constructors': noEffectOptionConstructors,
     'no-effect-runtime-api': noEffectRuntimeApi,
     'no-effect-wrapper-for-sync-callback-api': noEffectWrapperForSyncCallbackApi,
+    'no-global-process-runtime': noGlobalProcessRuntime,
     'no-host-transform-validation': noHostTransformValidation,
+    'no-inline-schema-compile': noInlineSchemaCompile,
+    'no-manual-effect-runtime-in-tests': noManualEffectRuntimeInTests,
     'no-non-null-assertion': noNonNullAssertion,
     'no-optional-chaining': noOptionalChaining,
     'no-parse-method-alias': noParseMethodAlias,
@@ -603,6 +903,7 @@ export default {
     'no-try-catch': noTryCatch,
     'no-undefined-in-union': noUndefinedInUnion,
     'no-unnecessary-die': noUnnecessaryDie,
+    'namespace-node-imports': namespaceNodeImports,
     'react-no-derived-state-effect': reactNoDerivedStateEffect,
     'react-no-inline-context-value': reactNoInlineContextValue,
     'react-no-useless-memo': reactNoUselessMemo,

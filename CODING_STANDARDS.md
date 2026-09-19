@@ -25,6 +25,14 @@ Do not replace the contract with a cast:
 const threadId = request.params.id as ThreadId
 ```
 
+Effect Schema decoder, encoder, predicate, and assertion factories compile work. When the schema is a module-level value, compile the adapter once beside it rather than rebuilding it inside a function. A genuinely dynamic schema parameter stays in its owning factory.
+
+```ts
+const decodeThread = Schema.decodeUnknownEffect(Thread)
+
+const handleThread = (input: unknown) => decodeThread(input)
+```
+
 ## Close domain states
 
 Use `Schema.TaggedUnion` when the variants are a closed set. Its generated cases, guards, subset predicates, and matcher keep construction and branching derived from one declaration.
@@ -186,6 +194,10 @@ const fullName = `${first} ${last}`
 ## Toolchain contract
 
 `pnpm check:package-manager` rejects package-manager drift and foreign lockfiles. `pnpm check:versions` enforces the native TypeScript preview, strict Effect language-service diagnostics, and exact Effect/Alchemy/Better Auth/Drizzle lockstep. `pnpm lint` always runs Oxlint with native type-aware analysis, including web design-system contracts and Tailwind correctness. `pnpm audit:effect-boundaries` rejects new raw async, Promise, fetch, and Effect runtime seams unless their exact file and owning symbol are classified. `pnpm check:migrations` validates generated SQL and snapshot chains without editing them.
+
+Import Node built-ins as canonical namespaces such as `import * as NodePath from 'node:path'`; the lint rule owns acronym aliases such as `NodeFS`, `NodeFSP`, `NodeOS`, and `NodeURL`. Cross package boundaries through `@vivid/client-runtime` and `@vivid/contracts`, never deep relative paths.
+
+Current deterministic suites use `node:test`. The manual Effect-runtime rule is intentionally limited to test files that import Vitest, where `@effect/vitest` `it.effect(...)` and test Layers replace `Effect.runPromise`, `Effect.runSync`, and `Effect.runFork`. Existing `node:test` integration adapters remain explicit runtime boundaries.
 
 ## Review checklist
 

@@ -45,12 +45,15 @@ check_ratchet "explicit any" "typescript" "no-explicit-any" 3
 check_ratchet "async collection callbacks" "vivid" "no-async-callback-api" 2
 check_ratchet "direct process env" "vivid" "no-direct-process-env" 6
 check_ratchet "Effect service methods without Effect.fn" "vivid" "effect-require-effect-fn" 2
+check_ratchet "global process runtime reads" "vivid" "no-global-process-runtime" 1
 check_ratchet "host transform validation" "vivid" "no-host-transform-validation" 135
+check_ratchet "inline Schema compilers" "vivid" "no-inline-schema-compile" 3
 check_ratchet "non-null assertions" "vivid" "no-non-null-assertion" 15
 check_ratchet "optional chaining" "vivid" "no-optional-chaining" 167
 check_ratchet "platform runtime terminals" "vivid" "no-platform-runtime-runmain-in-library" 1
 check_ratchet "raw Promise constructors" "vivid" "no-promise-constructor" 1
 check_ratchet "library runtime terminals" "vivid" "no-runpromise-in-library" 1
+check_ratchet "Node built-in import namespaces" "vivid" "namespace-node-imports" 78
 check_ratchet "try/catch" "vivid" "no-try-catch" 37
 check_ratchet "undefined unions" "vivid" "no-undefined-in-union" 28
 check_ratchet "unnamed Effect programs" "vivid" "require-named-effect-fn" 1
