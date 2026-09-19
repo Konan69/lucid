@@ -1,5 +1,5 @@
-import { Effect } from "effect"
-import { getCredentialsForConnector } from "../store.ts"
+import { Effect } from 'effect'
+import { getCredentialsForConnector } from '../store.ts'
 import type {
   BoundConnectorTool,
   ConnectorId,
@@ -7,9 +7,9 @@ import type {
   ConnectorToolFailure,
   ConnectorToolInput,
   ConnectorToolParameters,
-} from "../types.ts"
-import { ConnectorToolExecutionFailed } from "../types.ts"
-import type { Schema } from "effect"
+} from '../types.ts'
+import { ConnectorToolExecutionFailed } from '../types.ts'
+import type { Schema } from 'effect'
 
 class CredentialBoundTool implements BoundConnectorTool {
   readonly name: string
@@ -33,16 +33,22 @@ class CredentialBoundTool implements BoundConnectorTool {
   /** Loads a current credential before invoking the schema-owned tool. */
   execute(input: ConnectorToolInput): Effect.Effect<unknown, ConnectorToolFailure> {
     const { connectorId, connectorName, name, tool } = this
-    return Effect.fn(`ConnectorTool.${name}.credential`)(function*() {
-      const credentials = yield* Effect.tryPromise(() => getCredentialsForConnector(connectorId)).pipe(
-        Effect.mapError((error) => new ConnectorToolExecutionFailed({ tool: name, message: error.message })),
+    return Effect.fn(`ConnectorTool.${name}.credential`)(function* () {
+      const credentials = yield* Effect.tryPromise(() =>
+        getCredentialsForConnector(connectorId),
+      ).pipe(
+        Effect.mapError(
+          (error) => new ConnectorToolExecutionFailed({ tool: name, message: error.message }),
+        ),
       )
       const credential = credentials.find((candidate) => candidate.expiresAt > Date.now() + 60_000)
       if (credential === undefined) {
-        return yield* Effect.fail(new ConnectorToolExecutionFailed({
-          tool: name,
-          message: `${connectorName} is not connected`,
-        }))
+        return yield* Effect.fail(
+          new ConnectorToolExecutionFailed({
+            tool: name,
+            message: `${connectorName} is not connected`,
+          }),
+        )
       }
       return yield* tool.execute(input, credential)
     })()
@@ -54,4 +60,5 @@ export const bindConnectorTools = (
   connectorId: ConnectorId,
   connectorName: string,
   tools: ReadonlyArray<ConnectorTool>,
-): ReadonlyArray<BoundConnectorTool> => tools.map((tool) => new CredentialBoundTool(connectorId, connectorName, tool))
+): ReadonlyArray<BoundConnectorTool> =>
+  tools.map((tool) => new CredentialBoundTool(connectorId, connectorName, tool))

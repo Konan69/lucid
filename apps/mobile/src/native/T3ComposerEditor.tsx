@@ -1,12 +1,12 @@
-import { View } from "react-native";
-import { useImperativeHandle, useRef } from "react";
-import { TextInput, type TextInput as RNTextInput } from "react-native";
+import { View } from 'react-native'
+import { useImperativeHandle, useRef } from 'react'
+import { TextInput, type TextInput as RNTextInput } from 'react-native'
 
-import { useThemeColor } from "../lib/useThemeColor";
-import { useFontFamily } from "../lib/useFontFamily";
-import { MOBILE_TYPOGRAPHY } from "../lib/typography";
+import { useThemeColor } from '../lib/useThemeColor'
+import { useFontFamily } from '../lib/useFontFamily'
+import { MOBILE_TYPOGRAPHY } from '../lib/typography'
 
-import type { ComposerEditorProps } from "./T3ComposerEditor.types";
+import type { ComposerEditorProps } from './T3ComposerEditor.types'
 
 export function ComposerEditor({
   ref,
@@ -21,30 +21,30 @@ export function ComposerEditor({
   onSubmit: _onSubmit,
   ...props
 }: ComposerEditorProps) {
-  const inputRef = useRef<RNTextInput>(null);
-  const bodyText = MOBILE_TYPOGRAPHY.body;
-  const foregroundColor = useThemeColor("--color-foreground");
-  const placeholderColor = useThemeColor("--color-placeholder");
-  const fontFamily = useFontFamily("regular");
+  const inputRef = useRef<RNTextInput>(null)
+  const bodyText = MOBILE_TYPOGRAPHY.body
+  const foregroundColor = useThemeColor('--color-foreground')
+  const placeholderColor = useThemeColor('--color-placeholder')
+  const fontFamily = useFontFamily('regular')
 
   useImperativeHandle(
     ref,
     () => ({
       focus: () => {
-        const input = inputRef.current;
-        if (input !== null) input.focus();
+        const input = inputRef.current
+        if (input !== null) input.focus()
       },
       blur: () => {
-        const input = inputRef.current;
-        if (input !== null) input.blur();
+        const input = inputRef.current
+        if (input !== null) input.blur()
       },
       setSelection: (nextSelection) => {
-        const input = inputRef.current;
-        if (input !== null) input.setSelection(nextSelection.start, nextSelection.end);
+        const input = inputRef.current
+        if (input !== null) input.setSelection(nextSelection.start, nextSelection.end)
       },
     }),
     [],
-  );
+  )
 
   return (
     <View style={[{ minHeight: 0 }, style]}>
@@ -54,12 +54,12 @@ export function ComposerEditor({
         selection={selection}
         onSelectionChange={(event) => {
           if (props.onSelectionChange !== undefined)
-            props.onSelectionChange(event.nativeEvent.selection);
+            props.onSelectionChange(event.nativeEvent.selection)
         }}
         multiline={props.multiline ?? true}
         onContentSizeChange={(event) => {
           if (onContentHeightChange !== undefined)
-            onContentHeightChange(event.nativeEvent.contentSize.height);
+            onContentHeightChange(event.nativeEvent.contentSize.height)
         }}
         placeholderTextColor={placeholderColor}
         style={[
@@ -75,11 +75,11 @@ export function ComposerEditor({
         ]}
       />
     </View>
-  );
+  )
 }
 
 export type {
   ComposerEditorHandle,
   ComposerEditorProps,
   ComposerEditorSelection,
-} from "./T3ComposerEditor.types";
+} from './T3ComposerEditor.types'

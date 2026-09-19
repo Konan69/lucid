@@ -62,14 +62,20 @@ const PackageManifest = Schema.Struct({
   scripts: Schema.optionalKey(DependencyMap),
 })
 const TypeScriptConfig = Schema.Struct({
-  compilerOptions: Schema.optionalKey(Schema.Struct({
-    plugins: Schema.optionalKey(Schema.Array(Schema.Struct({
-      name: Schema.String,
-      diagnostics: Schema.optionalKey(Schema.Boolean),
-      ignoreEffectErrorsInTscExitCode: Schema.optionalKey(Schema.Boolean),
-      ignoreEffectWarningsInTscExitCode: Schema.optionalKey(Schema.Boolean),
-    }))),
-  })),
+  compilerOptions: Schema.optionalKey(
+    Schema.Struct({
+      plugins: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({
+            name: Schema.String,
+            diagnostics: Schema.optionalKey(Schema.Boolean),
+            ignoreEffectErrorsInTscExitCode: Schema.optionalKey(Schema.Boolean),
+            ignoreEffectWarningsInTscExitCode: Schema.optionalKey(Schema.Boolean),
+          }),
+        ),
+      ),
+    }),
+  ),
 })
 const decodePackageManifest = Schema.decodeUnknownSync(Schema.fromJsonString(PackageManifest))
 const decodeTypeScriptConfig = Schema.decodeUnknownSync(Schema.fromJsonString(TypeScriptConfig))
@@ -89,7 +95,12 @@ function readWorkspaceMapping(root, section) {
       active = line === `${section}:`
       continue
     }
-    if (!active || !line.startsWith('  ') || line.startsWith('    ') || line.trimStart().startsWith('#')) {
+    if (
+      !active ||
+      !line.startsWith('  ') ||
+      line.startsWith('    ') ||
+      line.trimStart().startsWith('#')
+    ) {
       continue
     }
 
@@ -153,7 +164,9 @@ export function validateVersions(root) {
         const declared = dependencies[name]
         const actual = resolveWorkspaceVersion(name, declared, catalog)
         if (declared !== undefined && actual !== expected) {
-          errors.push(`${relativePath}: ${section}.${name} must resolve to ${expected}; found ${declared}`)
+          errors.push(
+            `${relativePath}: ${section}.${name} must resolve to ${expected}; found ${declared}`,
+          )
         }
       }
     }
@@ -186,14 +199,14 @@ export function validateVersions(root) {
   for (const [relativePath, names] of Object.entries(requiredByManifest)) {
     const manifest = readPackageManifest(root, relativePath)
     for (const name of names) {
-      const production = manifest.dependencies === undefined ? undefined : manifest.dependencies[name]
-      const development = manifest.devDependencies === undefined ? undefined : manifest.devDependencies[name]
+      const production =
+        manifest.dependencies === undefined ? undefined : manifest.dependencies[name]
+      const development =
+        manifest.devDependencies === undefined ? undefined : manifest.devDependencies[name]
       const declared = production ?? development
       const actual = resolveWorkspaceVersion(name, declared, catalog)
       if (actual !== versions[name]) {
-        errors.push(
-          `${relativePath}: ${name} must resolve to ${versions[name]}; found ${declared}`,
-        )
+        errors.push(`${relativePath}: ${name} must resolve to ${versions[name]}; found ${declared}`)
       }
     }
   }
@@ -235,10 +248,12 @@ export function validateVersions(root) {
   }
 
   const tsconfig = readTypeScriptConfig(root, 'tsconfig.base.json')
-  const plugins = tsconfig.compilerOptions === undefined ? undefined : tsconfig.compilerOptions.plugins
-  const effectPlugin = plugins === undefined
-    ? undefined
-    : plugins.find((plugin) => plugin.name === '@effect/language-service')
+  const plugins =
+    tsconfig.compilerOptions === undefined ? undefined : tsconfig.compilerOptions.plugins
+  const effectPlugin =
+    plugins === undefined
+      ? undefined
+      : plugins.find((plugin) => plugin.name === '@effect/language-service')
   if (effectPlugin === undefined) {
     errors.push('tsconfig.base.json: @effect/language-service plugin is required')
   } else {
@@ -256,12 +271,16 @@ export function validateVersions(root) {
   return errors
 }
 
-const isMain = process.argv[1] !== undefined && NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)
+const isMain =
+  process.argv[1] !== undefined &&
+  NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)
 if (isMain) {
   const root = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), '..')
   const errors = validateVersions(root)
   if (errors.length > 0) {
-    process.stderr.write(`version lockstep failed:\n${errors.map((error) => `  - ${error}`).join('\n')}\n`)
+    process.stderr.write(
+      `version lockstep failed:\n${errors.map((error) => `  - ${error}`).join('\n')}\n`,
+    )
     process.exitCode = 1
   } else {
     process.stdout.write('version lockstep passed\n')

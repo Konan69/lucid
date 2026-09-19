@@ -5,11 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Vivid</title>
     <script>
-      (function () {
-        var stored = localStorage.getItem("vivid-theme");
-        var theme = stored || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
-        document.documentElement.dataset.theme = theme;
-      })();
+      ;(function () {
+        var stored = localStorage.getItem('vivid-theme')
+        var theme =
+          stored || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+        document.documentElement.dataset.theme = theme
+      })()
     </script>
   </head>
   <body>

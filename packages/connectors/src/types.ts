@@ -1,11 +1,11 @@
-import type { ConnectionId } from "@vivid/contracts"
-import { Effect, Schema } from "effect"
+import type { ConnectionId } from '@vivid/contracts'
+import { Effect, Schema } from 'effect'
 
 /** Connector identifier shared with the runtime HTTP contract. */
 export type ConnectorId = ConnectionId
 
 /** Current authorization state for one Connection. */
-export type ConnectorStatus = "disconnected" | "connecting" | "connected" | "error"
+export type ConnectorStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 
 /** Stable product metadata for one Connection implementation. */
 export interface ConnectorMetadata {
@@ -38,34 +38,46 @@ export interface Connector {
 
 /** Primitive JSON Schema property supported by the Flue tool adapter. */
 export interface ConnectorToolProperty {
-  readonly type: "string" | "number" | "integer" | "boolean"
+  readonly type: 'string' | 'number' | 'integer' | 'boolean'
   readonly description?: string
 }
 
 /** JSON Schema projection retained for Flue's current Valibot adapter. */
 export interface ConnectorToolParameters {
-  readonly type: "object"
+  readonly type: 'object'
   readonly properties: Readonly<Record<string, ConnectorToolProperty>>
   readonly required?: ReadonlyArray<string>
 }
 
 /** Tool input failed its owned Effect Schema. */
-export class ConnectorToolInputInvalid extends Schema.TaggedError<ConnectorToolInputInvalid>()("ConnectorToolInputInvalid", {
-  tool: Schema.String,
-  message: Schema.String,
-}, { title: "Connector tool input invalid" }) {}
+export class ConnectorToolInputInvalid extends Schema.TaggedError<ConnectorToolInputInvalid>()(
+  'ConnectorToolInputInvalid',
+  {
+    tool: Schema.String,
+    message: Schema.String,
+  },
+  { title: 'Connector tool input invalid' },
+) {}
 
 /** Connector or provider execution failed after valid input. */
-export class ConnectorToolExecutionFailed extends Schema.TaggedError<ConnectorToolExecutionFailed>()("ConnectorToolExecutionFailed", {
-  tool: Schema.String,
-  message: Schema.String,
-}, { title: "Connector tool execution failed" }) {}
+export class ConnectorToolExecutionFailed extends Schema.TaggedError<ConnectorToolExecutionFailed>()(
+  'ConnectorToolExecutionFailed',
+  {
+    tool: Schema.String,
+    message: Schema.String,
+  },
+  { title: 'Connector tool execution failed' },
+) {}
 
 /** Tool output failed its owned Effect Schema. */
-export class ConnectorToolOutputInvalid extends Schema.TaggedError<ConnectorToolOutputInvalid>()("ConnectorToolOutputInvalid", {
-  tool: Schema.String,
-  message: Schema.String,
-}, { title: "Connector tool output invalid" }) {}
+export class ConnectorToolOutputInvalid extends Schema.TaggedError<ConnectorToolOutputInvalid>()(
+  'ConnectorToolOutputInvalid',
+  {
+    tool: Schema.String,
+    message: Schema.String,
+  },
+  { title: 'Connector tool output invalid' },
+) {}
 
 /** Typed failures exposed by connector tool invocation. */
 export const ConnectorToolFailure = Schema.Union([
@@ -94,7 +106,12 @@ export interface ConnectorTool {
 }
 
 /** Connector tool retaining its concrete input and output schemas. */
-export interface TypedConnectorTool<Input, InputEncoded, Output, OutputEncoded> extends ConnectorTool {
+export interface TypedConnectorTool<
+  Input,
+  InputEncoded,
+  Output,
+  OutputEncoded,
+> extends ConnectorTool {
   readonly inputSchema: Schema.Codec<Input, InputEncoded>
   readonly outputSchema: Schema.Codec<Output, OutputEncoded>
   execute(
@@ -116,14 +133,23 @@ export interface ConnectorToolDefinition<Input, InputEncoded, Output, OutputEnco
   ) => Effect.Effect<Output, ConnectorToolExecutionFailed>
 }
 
-class ConnectorToolImplementation<Input, InputEncoded, Output, OutputEncoded>
-implements TypedConnectorTool<Input, InputEncoded, Output, OutputEncoded> {
+class ConnectorToolImplementation<
+  Input,
+  InputEncoded,
+  Output,
+  OutputEncoded,
+> implements TypedConnectorTool<Input, InputEncoded, Output, OutputEncoded> {
   readonly name: string
   readonly description: string
   readonly parameters: ConnectorToolParameters
   readonly inputSchema: Schema.Codec<Input, InputEncoded>
   readonly outputSchema: Schema.Codec<Output, OutputEncoded>
-  private readonly runTool: ConnectorToolDefinition<Input, InputEncoded, Output, OutputEncoded>["run"]
+  private readonly runTool: ConnectorToolDefinition<
+    Input,
+    InputEncoded,
+    Output,
+    OutputEncoded
+  >['run']
 
   constructor(definition: ConnectorToolDefinition<Input, InputEncoded, Output, OutputEncoded>) {
     this.name = definition.name
@@ -135,15 +161,22 @@ implements TypedConnectorTool<Input, InputEncoded, Output, OutputEncoded> {
   }
 
   /** Decodes model input and provider output around the narrow Promise adapter. */
-  execute(input: ConnectorToolInput, credential: ConnectorCredential): Effect.Effect<Output, ConnectorToolFailure> {
+  execute(
+    input: ConnectorToolInput,
+    credential: ConnectorCredential,
+  ): Effect.Effect<Output, ConnectorToolFailure> {
     const { inputSchema, name, outputSchema, runTool } = this
-    return Effect.fn(`ConnectorTool.${name}`)(function*() {
+    return Effect.fn(`ConnectorTool.${name}`)(function* () {
       const decoded = yield* Schema.decodeUnknownEffect(inputSchema)(input).pipe(
-        Effect.mapError((error) => new ConnectorToolInputInvalid({ tool: name, message: error.message })),
+        Effect.mapError(
+          (error) => new ConnectorToolInputInvalid({ tool: name, message: error.message }),
+        ),
       )
       const output = yield* runTool(decoded, credential)
       return yield* Schema.decodeUnknownEffect(outputSchema)(output).pipe(
-        Effect.mapError((error) => new ConnectorToolOutputInvalid({ tool: name, message: error.message })),
+        Effect.mapError(
+          (error) => new ConnectorToolOutputInvalid({ tool: name, message: error.message }),
+        ),
       )
     })()
   }
@@ -152,7 +185,8 @@ implements TypedConnectorTool<Input, InputEncoded, Output, OutputEncoded> {
 /** Creates one connector tool whose implementation receives only decoded input. */
 export const defineConnectorTool = <Input, InputEncoded, Output, OutputEncoded>(
   definition: ConnectorToolDefinition<Input, InputEncoded, Output, OutputEncoded>,
-): TypedConnectorTool<Input, InputEncoded, Output, OutputEncoded> => new ConnectorToolImplementation(definition)
+): TypedConnectorTool<Input, InputEncoded, Output, OutputEncoded> =>
+  new ConnectorToolImplementation(definition)
 
 /** Credential-bound connector tool exposed to one Vivid runtime. */
 export interface BoundConnectorTool {

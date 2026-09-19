@@ -49,16 +49,16 @@ Local development creates no AWS bill. Its only ongoing cost is developer-machin
 
 ## Why these resources
 
-| Need now | Declared resource | Local implementation in beta.76 | Decision |
-|---|---|---|---|
-| PostgreSQL | `Docker.RemoteImage`, `Docker.Volume`, `Docker.Container` | Native Docker provider | Use now; required PostgreSQL 18 and persistent local volume. |
-| Server/runtime | `Command.Dev` | Alchemy dev sidecar | Use now; stable localhost URLs are required by callbacks and proxies. ECS is deferred. |
-| SPA | `AWS.Website.StaticSite` | Website dev-server provider | Use now; in dev it runs Vite and does not create S3/CloudFront. |
-| Migrations | `Command.Exec` | Local command provider | Use now; one finite command enforces the required order. |
-| Hosted compute | ECS | Specialized Floci providers for Task and Service | Defer until remote deployment is enabled. |
-| Object storage | S3 | Floci dual provider exists | Do not declare; product files and artifacts remain in Postgres. |
-| Managed secrets | Secrets Manager/SSM | Floci dual providers exist | Do not declare; Effect Config is the current source and duplicate secret stores add no value. |
-| App Runner | App Runner Service | No dual/local registration found | Do not use for this local-first stack. |
+| Need now        | Declared resource                                         | Local implementation in beta.76                  | Decision                                                                                      |
+| --------------- | --------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| PostgreSQL      | `Docker.RemoteImage`, `Docker.Volume`, `Docker.Container` | Native Docker provider                           | Use now; required PostgreSQL 18 and persistent local volume.                                  |
+| Server/runtime  | `Command.Dev`                                             | Alchemy dev sidecar                              | Use now; stable localhost URLs are required by callbacks and proxies. ECS is deferred.        |
+| SPA             | `AWS.Website.StaticSite`                                  | Website dev-server provider                      | Use now; in dev it runs Vite and does not create S3/CloudFront.                               |
+| Migrations      | `Command.Exec`                                            | Local command provider                           | Use now; one finite command enforces the required order.                                      |
+| Hosted compute  | ECS                                                       | Specialized Floci providers for Task and Service | Defer until remote deployment is enabled.                                                     |
+| Object storage  | S3                                                        | Floci dual provider exists                       | Do not declare; product files and artifacts remain in Postgres.                               |
+| Managed secrets | Secrets Manager/SSM                                       | Floci dual providers exist                       | Do not declare; Effect Config is the current source and duplicate secret stores add no value. |
+| App Runner      | App Runner Service                                        | No dual/local registration found                 | Do not use for this local-first stack.                                                        |
 
 The AWS Website Vite construct was considered, but beta.76 needs the optional `@alchemy.run/frontend-frameworks` package. `StaticSite` already has the required Vite dev-command behavior, so adding that dependency would provide no current value.
 

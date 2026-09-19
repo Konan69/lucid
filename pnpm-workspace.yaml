@@ -1,12 +1,12 @@
 packages:
-  - "apps/mobile"
-  - "apps/server"
-  - "apps/web"
-  - "packages/contracts"
-  - "packages/client-runtime"
-  - "packages/connectors"
-  - "packages/design-tokens"
-  - "packages/agent-runtime"
+  - 'apps/mobile'
+  - 'apps/server'
+  - 'apps/web'
+  - 'packages/contracts'
+  - 'packages/client-runtime'
+  - 'packages/connectors'
+  - 'packages/design-tokens'
+  - 'packages/agent-runtime'
 
 # pnpm 12 reads project settings here. Keep registry credentials only in an
 # untracked .npmrc when a private registry eventually requires them.

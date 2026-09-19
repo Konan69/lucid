@@ -1,5 +1,5 @@
-import { defineConfig } from "@flue/runtime/config";
+import { defineConfig } from '@flue/runtime/config'
 
 export default defineConfig({
-  target: "node",
-});
+  target: 'node',
+})

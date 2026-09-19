@@ -1,7 +1,6 @@
 import * as NodeAssert from 'node:assert/strict'
 import * as NodeTest from 'node:test'
 import {
-
   buildReport,
   formatSummary,
   isProductionTypeScript,
@@ -33,7 +32,9 @@ export const lazy = Effect.promise(() => Promise.resolve(1));
 /** The fixture exercises every inventoried syntax family with stable owning symbols. */
 void test('inventories requested boundary syntax with enclosing symbols', () => {
   const findings = scanSource(fixtureFile, fixtureSource)
-  const kinds = findings.map((finding) => finding.kind).toSorted((left, right) => left.localeCompare(right))
+  const kinds = findings
+    .map((finding) => finding.kind)
+    .toSorted((left, right) => left.localeCompare(right))
 
   assert.deepEqual(kinds, [
     'async-function',
@@ -74,9 +75,14 @@ void test('selects tracked production TypeScript paths narrowly', () => {
 /** Grouping symbols by file remains exact while duplicates, wildcards, and stale entries fail loudly. */
 void test('validates exact allowlist entries', () => {
   const findings = scanSource(fixtureFile, fixtureSource)
-  const exact = [{ file: fixtureFile, symbols: ['load'], classification: 'legacy-runtime-boundary' }]
+  const exact = [
+    { file: fixtureFile, symbols: ['load'], classification: 'legacy-runtime-boundary' },
+  ]
   assert.equal(validateAllowlist(exact, findings).size, 1)
-  assert.throws(() => validateAllowlist([...exact, ...exact], findings), /Duplicate allowlist entry/u)
+  assert.throws(
+    () => validateAllowlist([...exact, ...exact], findings),
+    /Duplicate allowlist entry/u,
+  )
   assert.throws(
     () =>
       validateAllowlist(
@@ -109,5 +115,8 @@ void test('builds deterministic reports and readable summaries', () => {
   assert.equal(report.unallowlistedFindings, 4)
   assert.equal(report.counts['promise-all'], 1)
   assert.match(formatSummary(report), /16 findings; 4 unallowlisted/u)
-  assert.deepEqual(report.findings, buildReport('report', [fixtureFile], findings, allowed).findings)
+  assert.deepEqual(
+    report.findings,
+    buildReport('report', [fixtureFile], findings, allowed).findings,
+  )
 })

@@ -9,5 +9,5 @@ export {
   projectTable as project,
   sessionTable as session,
   settingsTable as settings,
-  verificationTable as verification
-} from "../schema.ts"
+  verificationTable as verification,
+} from '../schema.ts'

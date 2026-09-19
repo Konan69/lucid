@@ -6,7 +6,10 @@ import * as NodeURL from 'node:url'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 
-const repositoryRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), '..')
+const repositoryRoot = NodePath.resolve(
+  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
+  '..',
+)
 const allowlistPath = NodePath.join(repositoryRoot, 'scripts', 'effect-boundary-allowlist.json')
 const AllowlistEntry = Schema.Struct({
   file: Schema.String,
@@ -25,7 +28,9 @@ export function isProductionTypeScript(relativePath) {
   if (/(?:^|[/\\])(?:node_modules|dist|build|drizzle)(?:[/\\]|$)/u.test(relativePath)) return false
   if (/(?:\.test|\.spec|\.gen|worker-test-entry)\.[cm]?tsx?$/u.test(relativePath)) return false
   if (/\.d\.[cm]?ts$/u.test(relativePath)) return false
-  return relativePath.startsWith('apps/server/src/') || /^packages\/[^/]+\/src\//u.test(relativePath)
+  return (
+    relativePath.startsWith('apps/server/src/') || /^packages\/[^/]+\/src\//u.test(relativePath)
+  )
 }
 
 /** List files deterministically so reports and allowlist checks are stable across machines. */
@@ -65,7 +70,8 @@ const propertyName = (node) => {
 }
 
 const expressionOwner = (node) => {
-  if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) return node.expression.text
+  if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression))
+    return node.expression.text
   if (
     ts.isElementAccessExpression(node) &&
     ts.isIdentifier(node.expression) &&
@@ -89,7 +95,8 @@ const declaredFunctionName = (node) => {
   if (ts.isCallExpression(parent)) {
     const routeArgument = parent.arguments.find(ts.isStringLiteral)
     const operation = propertyName(parent.expression)
-    if (routeArgument !== undefined && operation !== undefined) return `${operation}:${routeArgument.text}`
+    if (routeArgument !== undefined && operation !== undefined)
+      return `${operation}:${routeArgument.text}`
   }
   return undefined
 }
@@ -115,7 +122,13 @@ function owningSymbol(node) {
 
 /** Inventory raw async and Effect runtime boundaries in one source file. */
 export function scanSource(file, source) {
-  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const sourceFile = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  )
   const findings = []
   const add = (kind, node) => {
     const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile))
@@ -132,7 +145,10 @@ export function scanSource(file, source) {
       if (node.moduleSpecifier.text === 'better-result') add('better-result-import', node)
     }
     if (ts.isFunctionLike(node)) {
-      if (node.modifiers !== undefined && node.modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) {
+      if (
+        node.modifiers !== undefined &&
+        node.modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+      ) {
         add('async-function', node)
       }
       if (
@@ -145,8 +161,13 @@ export function scanSource(file, source) {
       }
     }
     if (ts.isAwaitExpression(node)) add('await', node)
-    if (ts.isTryStatement(node) && node.catchClause !== undefined) add('try-catch', node.catchClause)
-    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'Promise') {
+    if (ts.isTryStatement(node) && node.catchClause !== undefined)
+      add('try-catch', node.catchClause)
+    if (
+      ts.isNewExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'Promise'
+    ) {
       add('promise-constructor', node)
     }
     if (ts.isCallExpression(node)) {
@@ -161,7 +182,8 @@ export function scanSource(file, source) {
         add('raw-fetch', node)
       }
       if (owner === 'Effect') {
-        if (operation === 'runPromise' || operation === 'runPromiseExit') add('effect-run-promise', node)
+        if (operation === 'runPromise' || operation === 'runPromiseExit')
+          add('effect-run-promise', node)
         if (operation === 'tryPromise') add('effect-try-promise', node)
         if (operation === 'promise') add('effect-promise-adapter', node)
         if (operation === 'async') add('effect-async-adapter', node)
@@ -253,10 +275,17 @@ function main() {
   if (mode === 'enforce' && report.unallowlistedFindings > 0) {
     const offenders = report.findings
       .filter((finding) => !finding.allowed)
-      .map((finding) => `  ${finding.file}:${finding.line}:${finding.column} ${finding.symbol} [${finding.kind}]`)
+      .map(
+        (finding) =>
+          `  ${finding.file}:${finding.line}:${finding.column} ${finding.symbol} [${finding.kind}]`,
+      )
     process.stderr.write(`${offenders.join('\n')}\n`)
     process.exitCode = 1
   }
 }
 
-if (process.argv[1] !== undefined && NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)) main()
+if (
+  process.argv[1] !== undefined &&
+  NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)
+)
+  main()

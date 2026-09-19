@@ -4,7 +4,10 @@ import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
 
-const repositoryRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), '..')
+const repositoryRoot = NodePath.resolve(
+  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
+  '..',
+)
 const initialSnapshotId = '00000000-0000-0000-0000-000000000000'
 export const migrationOwners = Object.freeze(['apps/server', 'packages/agent-runtime'])
 
@@ -50,13 +53,16 @@ export function validateMigrationOwner(root, owner) {
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .toSorted((left, right) => left.localeCompare(right))
-  if (directories.length === 0) errors.push(`${owner}/drizzle: at least one generated migration is required`)
+  if (directories.length === 0)
+    errors.push(`${owner}/drizzle: at least one generated migration is required`)
 
   let previousId = initialSnapshotId
   const ids = new Set()
   for (const directory of directories) {
     if (!/^\d{14}_[a-z0-9_-]+$/u.test(directory)) {
-      errors.push(`${owner}/drizzle/${directory}: migration directory must start with a 14-digit timestamp`)
+      errors.push(
+        `${owner}/drizzle/${directory}: migration directory must start with a 14-digit timestamp`,
+      )
     }
     const migrationPath = NodePath.join(migrationsPath, directory, 'migration.sql')
     const snapshotPath = NodePath.join(migrationsPath, directory, 'snapshot.json')
@@ -113,7 +119,9 @@ function main() {
   const reports = validateMigrations()
   const errors = reports.flatMap((report) => report.errors)
   if (errors.length > 0) {
-    process.stderr.write(`migration integrity failed:\n${errors.map((error) => `  - ${error}`).join('\n')}\n`)
+    process.stderr.write(
+      `migration integrity failed:\n${errors.map((error) => `  - ${error}`).join('\n')}\n`,
+    )
     process.exitCode = 1
     return
   }
@@ -122,4 +130,8 @@ function main() {
   )
 }
 
-if (process.argv[1] !== undefined && NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)) main()
+if (
+  process.argv[1] !== undefined &&
+  NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)
+)
+  main()

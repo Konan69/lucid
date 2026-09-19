@@ -77,7 +77,6 @@ Validation used an isolated runtime database under `/tmp/vivid-native-validation
 The APK is a development build requiring Metro, not a signed production release
 or an ARM64 device build. Feature boundaries are listed in [README.md](./README.md).
 
-
 ## Navigation and connector follow-up
 
 - Web and native navigation no longer expose Today or Connectors; native Settings

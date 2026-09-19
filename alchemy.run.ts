@@ -1,16 +1,13 @@
-import * as Alchemy from "alchemy"
-import * as AWS from "alchemy/AWS"
-import * as Command from "alchemy/Command"
-import * as Docker from "alchemy/Docker"
-import * as Effect from "effect/Effect"
-import * as Layer from "effect/Layer"
-import * as Option from "effect/Option"
-import { databaseUrlFor } from "./infra/database.ts"
-import { loadInfrastructureEnvironment } from "./infra/env.ts"
-import {
-  deploymentTargetFromConfig,
-  requireRunnableTarget
-} from "./infra/targets.ts"
+import * as Alchemy from 'alchemy'
+import * as AWS from 'alchemy/AWS'
+import * as Command from 'alchemy/Command'
+import * as Docker from 'alchemy/Docker'
+import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
+import * as Option from 'effect/Option'
+import { databaseUrlFor } from './infra/database.ts'
+import { loadInfrastructureEnvironment } from './infra/env.ts'
+import { deploymentTargetFromConfig, requireRunnableTarget } from './infra/targets.ts'
 
 /**
  * Stack identity must exist before Alchemy builds the Effect graph. The target
@@ -28,9 +25,9 @@ export default Alchemy.Stack(
      * `alchemy/lib/Docker/Providers.d.ts`.
      */
     providers: Layer.mergeAll(AWS.providers(), Docker.providers()),
-    state: Alchemy.localState()
+    state: Alchemy.localState(),
   },
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     const target = yield* requireRunnableTarget(deployTarget)
     const databaseUrl = yield* databaseUrlFor(target)
     const environment = yield* loadInfrastructureEnvironment
@@ -41,22 +38,22 @@ export default Alchemy.Stack(
      * `alchemy/lib/Command/Exec.d.ts`.
      */
     yield* Command.Exec(target.migrationsId, {
-      command: "node scripts/migrate.mjs",
-      cwd: ".",
+      command: 'node scripts/migrate.mjs',
+      cwd: '.',
       env: { DATABASE_URL: databaseUrl },
-      timeout: "5 minutes",
+      timeout: '5 minutes',
       memo: {
         include: [
-          "apps/server/drizzle/**",
-          "apps/server/drizzle.config.ts",
-          "packages/agent-runtime/drizzle/**",
-          "packages/agent-runtime/drizzle.config.ts",
-          "packages/connectors/drizzle/**",
-          "packages/connectors/drizzle.config.ts",
-          "scripts/migrate.mjs"
+          'apps/server/drizzle/**',
+          'apps/server/drizzle.config.ts',
+          'packages/agent-runtime/drizzle/**',
+          'packages/agent-runtime/drizzle.config.ts',
+          'packages/connectors/drizzle/**',
+          'packages/connectors/drizzle.config.ts',
+          'scripts/migrate.mjs',
         ],
-        lockfile: true
-      }
+        lockfile: true,
+      },
     })
 
     /**
@@ -66,32 +63,32 @@ export default Alchemy.Stack(
      * `alchemy/lib/Command/Dev.d.ts`.
      */
     yield* Command.Dev(target.runtimeProcessId, {
-      command: "pnpm dev -- --host 127.0.0.1 --port 5173",
-      cwd: "./packages/agent-runtime",
+      command: 'pnpm dev -- --host 127.0.0.1 --port 5173',
+      cwd: './packages/agent-runtime',
       env: {
         DATABASE_URL: databaseUrl,
-        PORT: "5173",
+        PORT: '5173',
         OPENROUTER_API_KEY: environment.openRouterApiKey,
         VIVID_RUNTIME_TOKEN: environment.runtimeToken,
         VIVID_MODEL: environment.model,
         GOOGLE_CLIENT_ID: Option.getOrUndefined(environment.googleClientId),
         GOOGLE_CLIENT_SECRET: Option.getOrUndefined(environment.googleClientSecret),
-        GOOGLE_REDIRECT_URI: Option.getOrUndefined(environment.googleRedirectUri)
-      }
+        GOOGLE_REDIRECT_URI: Option.getOrUndefined(environment.googleRedirectUri),
+      },
     })
 
     yield* Command.Dev(target.serverProcessId, {
-      command: "pnpm dev",
-      cwd: "./apps/server",
+      command: 'pnpm dev',
+      cwd: './apps/server',
       env: {
         DATABASE_URL: databaseUrl,
         AUTH_SECRET: environment.authSecret,
-        PORT: "8787",
+        PORT: '8787',
         PUBLIC_URL: target.serverUrl,
         GOOGLE_CLIENT_ID: Option.getOrUndefined(environment.googleClientId),
         GOOGLE_CLIENT_SECRET: Option.getOrUndefined(environment.googleClientSecret),
-        GOOGLE_REDIRECT_URI: Option.getOrUndefined(environment.googleRedirectUri)
-      }
+        GOOGLE_REDIRECT_URI: Option.getOrUndefined(environment.googleRedirectUri),
+      },
     })
 
     /**
@@ -101,27 +98,27 @@ export default Alchemy.Stack(
      * `alchemy/lib/AWS/Website/StaticSite.d.ts`.
      */
     yield* AWS.Website.StaticSite(target.webId, {
-      path: "./apps/web",
+      path: './apps/web',
       build: {
-        command: "pnpm build",
-        output: "dist"
+        command: 'pnpm build',
+        output: 'dist',
       },
       spa: true,
       dev: {
-        command: "pnpm dev -- --host 127.0.0.1 --port 5178",
-        cwd: "./apps/web",
+        command: 'pnpm dev -- --host 127.0.0.1 --port 5178',
+        cwd: './apps/web',
         env: {
           VIVID_RUNTIME_URL: target.runtimeUrl,
-          VIVID_RUNTIME_TOKEN: environment.runtimeToken
+          VIVID_RUNTIME_TOKEN: environment.runtimeToken,
         },
-        url: target.webUrl
-      }
+        url: target.webUrl,
+      },
     })
 
     return {
       webUrl: target.webUrl,
       serverUrl: target.serverUrl,
-      runtimeUrl: target.runtimeUrl
+      runtimeUrl: target.runtimeUrl,
     }
-  }).pipe(Effect.orDie)
+  }).pipe(Effect.orDie),
 )

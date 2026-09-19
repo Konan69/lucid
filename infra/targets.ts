@@ -1,11 +1,11 @@
-import * as Config from "effect/Config"
-import * as Effect from "effect/Effect"
-import * as Schema from "effect/Schema"
+import * as Config from 'effect/Config'
+import * as Effect from 'effect/Effect'
+import * as Schema from 'effect/Schema'
 
-export const DeployTargetName = Schema.Literals(["local", "preview", "production"] as const)
+export const DeployTargetName = Schema.Literals(['local', 'preview', 'production'] as const)
 export type DeployTargetName = typeof DeployTargetName.Type
 
-const DatabaseMode = Schema.Literals(["docker", "required"] as const)
+const DatabaseMode = Schema.Literals(['docker', 'required'] as const)
 
 const DeploymentTargetSchema = Schema.Struct({
   key: DeployTargetName,
@@ -23,16 +23,16 @@ const DeploymentTargetSchema = Schema.Struct({
   webId: Schema.String,
   serverUrl: Schema.String,
   runtimeUrl: Schema.String,
-  webUrl: Schema.String
+  webUrl: Schema.String,
 })
 
 const DeploymentTargetsSchema = Schema.Struct({
   local: DeploymentTargetSchema,
   preview: DeploymentTargetSchema,
-  production: DeploymentTargetSchema
+  production: DeploymentTargetSchema,
 })
 const decodeDeploymentTargetsJson = Schema.decodeUnknownSync(
-  Schema.fromJsonString(DeploymentTargetsSchema)
+  Schema.fromJsonString(DeploymentTargetsSchema),
 )
 const decodeDeployTargetName = Schema.decodeUnknownEffect(DeployTargetName)
 
@@ -101,44 +101,59 @@ export const deploymentTargetsJson = String.raw`{
 
 export const deploymentTargets = decodeDeploymentTargetsJson(deploymentTargetsJson)
 
-export class InvalidDeployTarget extends Schema.TaggedError<InvalidDeployTarget>()("InvalidDeployTarget", {
-  variable: Schema.Literal("VIVID_DEPLOY_TARGET"),
-  received: Schema.String,
-  expected: Schema.String,
-  message: Schema.String
-}, { title: "Invalid deploy target" }) {}
+export class InvalidDeployTarget extends Schema.TaggedError<InvalidDeployTarget>()(
+  'InvalidDeployTarget',
+  {
+    variable: Schema.Literal('VIVID_DEPLOY_TARGET'),
+    received: Schema.String,
+    expected: Schema.String,
+    message: Schema.String,
+  },
+  { title: 'Invalid deploy target' },
+) {}
 
-export class RemoteDeploymentDisabled extends Schema.TaggedError<RemoteDeploymentDisabled>()("RemoteDeploymentDisabled", {
-  target: DeployTargetName,
-  message: Schema.String
-}, { title: "Remote deployment disabled" }) {}
+export class RemoteDeploymentDisabled extends Schema.TaggedError<RemoteDeploymentDisabled>()(
+  'RemoteDeploymentDisabled',
+  {
+    target: DeployTargetName,
+    message: Schema.String,
+  },
+  { title: 'Remote deployment disabled' },
+) {}
 
 /** Decode the external target selector and keep a misspelled target in the typed error channel. */
-export const parseDeployTarget = Effect.fn("parseDeployTarget")(function*(value: string) {
+export const parseDeployTarget = Effect.fn('parseDeployTarget')(function* (value: string) {
   const key = yield* decodeDeployTargetName(value).pipe(
-    Effect.mapError(() => new InvalidDeployTarget({
-      variable: "VIVID_DEPLOY_TARGET",
-      received: value,
-      expected: "local, preview, or production",
-      message: `VIVID_DEPLOY_TARGET '${value}' is invalid; expected local, preview, or production`
-    }))
+    Effect.mapError(
+      () =>
+        new InvalidDeployTarget({
+          variable: 'VIVID_DEPLOY_TARGET',
+          received: value,
+          expected: 'local, preview, or production',
+          message: `VIVID_DEPLOY_TARGET '${value}' is invalid; expected local, preview, or production`,
+        }),
+    ),
   )
   return deploymentTargets[key]
 })
 
 /** Local is the safe default; remote targets must always be chosen explicitly. */
-export const deploymentTargetFromConfig = Config.String("VIVID_DEPLOY_TARGET").pipe(
-  Config.withDefault("local"),
-  Effect.flatMap(parseDeployTarget)
+export const deploymentTargetFromConfig = Config.String('VIVID_DEPLOY_TARGET').pipe(
+  Config.withDefault('local'),
+  Effect.flatMap(parseDeployTarget),
 )
 
 /** Fail before resource registration when a disabled remote target is selected. */
-export const requireRunnableTarget = Effect.fn("requireRunnableTarget")(function*(target: DeploymentTarget) {
+export const requireRunnableTarget = Effect.fn('requireRunnableTarget')(function* (
+  target: DeploymentTarget,
+) {
   if (!target.runnable) {
-    return yield* Effect.fail(new RemoteDeploymentDisabled({
-      target: target.key,
-      message: `Remote deployment target '${target.key}' is not enabled yet`
-    }))
+    return yield* Effect.fail(
+      new RemoteDeploymentDisabled({
+        target: target.key,
+        message: `Remote deployment target '${target.key}' is not enabled yet`,
+      }),
+    )
   }
   return target
 })

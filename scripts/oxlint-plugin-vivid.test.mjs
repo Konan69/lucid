@@ -35,14 +35,22 @@ const cases = [
   ['no-direct-process-env', 'const value = process.env.KEY', 'const value = config.KEY'],
   ['no-global-process-runtime', 'const value = process.platform', 'const value = runtime.platform'],
   ['no-runtime-env-mutation', "process.env.KEY = 'x'", 'config.setKey()'],
-  ['no-promise-constructor', 'const value = new Promise(() => {})', 'const value = Effect.async(() => {})'],
+  [
+    'no-promise-constructor',
+    'const value = new Promise(() => {})',
+    'const value = Effect.async(() => {})',
+  ],
   [
     'no-runpromise-nested',
     'const value = Effect.gen(function* () { Effect.runPromise(program); yield* program })',
     'const value = Effect.gen(function* () { return yield* program })',
   ],
   ['no-runpromise-in-library', 'Effect.runPromise(program)', 'const programValue = program'],
-  ['no-platform-runtime-runmain-in-library', 'NodeRuntime.runMain(program)', 'const programValue = program'],
+  [
+    'no-platform-runtime-runmain-in-library',
+    'NodeRuntime.runMain(program)',
+    'const programValue = program',
+  ],
   ['no-effect-runtime-api', 'Runtime.runPromise(runtime)(program)', 'const programValue = program'],
   ['no-unnecessary-die', 'Effect.orDie(program)', 'Effect.catchTag(program, "Expected", recover)'],
   [
@@ -51,7 +59,11 @@ const cases = [
     'Effect.catchAll(program, () => Effect.fail(new DomainError({})))',
   ],
   ['no-effect-option-constructors', 'Effect.some(value)', 'Option.some(value)'],
-  ['no-direct-schema-safeparse', 'UserSchema.safeParse(value)', 'Schema.decodeUnknownEither(UserSchema)(value)'],
+  [
+    'no-direct-schema-safeparse',
+    'UserSchema.safeParse(value)',
+    'Schema.decodeUnknownEither(UserSchema)(value)',
+  ],
   [
     'no-inline-schema-compile',
     'const parse = (input) => Schema.decodeUnknownEffect(UserSchema)(input)',
@@ -79,7 +91,11 @@ const cases = [
     "class User extends Schema.Class<User>('User')({ name: Schema.String }) {}",
     "class User extends Schema.Class<User>('User')({ name: Schema.String }, { title: 'User' }) {}",
   ],
-  ['require-schema-decode-in-boundary', "JSON.parse('{}')", 'Schema.decodeUnknownSync(Payload)({})'],
+  [
+    'require-schema-decode-in-boundary',
+    "JSON.parse('{}')",
+    'Schema.decodeUnknownSync(Payload)({})',
+  ],
   [
     'require-named-effect-fn',
     'const load = Effect.gen(function* () { yield* task })',
@@ -90,7 +106,11 @@ const cases = [
     "Effect.match(program, { onFailure: () => Effect.fail('x'), onSuccess: Effect.succeed })",
     "Effect.matchEffect(program, { onFailure: () => Effect.fail('x'), onSuccess: Effect.succeed })",
   ],
-  ['no-async-callback-api', 'items.map(async (item) => item)', 'Effect.forEach(items, (item) => Effect.succeed(item))'],
+  [
+    'no-async-callback-api',
+    'items.map(async (item) => item)',
+    'Effect.forEach(items, (item) => Effect.succeed(item))',
+  ],
   [
     'no-effect-wrapper-for-sync-callback-api',
     'Effect.promise(() => items.map((item) => item))',
@@ -118,8 +138,17 @@ const cases = [
     'const service = { run: (): Effect.Effect<string> => Effect.succeed("ok") }',
     "const service = { run: Effect.fn('Store.run')(function* () { return 'ok' }) }",
   ],
-  ['no-config-provider-from-env-in-library', 'ConfigProvider.fromEnv()', 'const provider = AppConfigProvider'],
-  ['better-auth-secure-options', 'const options = { migrate: true }', 'const options = { migrate: false }', 'auth.ts'],
+  [
+    'no-config-provider-from-env-in-library',
+    'ConfigProvider.fromEnv()',
+    'const provider = AppConfigProvider',
+  ],
+  [
+    'better-auth-secure-options',
+    'const options = { migrate: true }',
+    'const options = { migrate: false }',
+    'auth.ts',
+  ],
   [
     'require-drizzle-config-paths',
     "defineConfig({ dialect: 'postgresql' })",
@@ -138,7 +167,12 @@ const cases = [
     '<Context.Provider value={contextValue} />',
     'component.tsx',
   ],
-  ['react-no-useless-memo', 'useMemo(() => input, [input])', 'useMemo(() => derive(input), [input])', 'component.tsx'],
+  [
+    'react-no-useless-memo',
+    'useMemo(() => input, [input])',
+    'useMemo(() => derive(input), [input])',
+    'component.tsx',
+  ],
 ]
 
 /** Lint one isolated snippet with exactly one Vivid rule enabled. */
@@ -156,10 +190,14 @@ function lint(ruleName, source, filename = 'module.ts') {
       }),
     )
     try {
-      const output = execFileSync(oxlint, ['--config', configPath, '--format', 'json', sourcePath], {
-        cwd: repositoryRoot,
-        encoding: 'utf8',
-      })
+      const output = execFileSync(
+        oxlint,
+        ['--config', configPath, '--format', 'json', sourcePath],
+        {
+          cwd: repositoryRoot,
+          encoding: 'utf8',
+        },
+      )
       return decodeOxlintOutput(output).diagnostics
     } catch (cause) {
       const failure = decodeProcessFailure(cause)
@@ -219,15 +257,29 @@ for (const [ruleName, invalid, valid, filename] of cases) {
     }
 
     if (ruleName === 'no-runpromise-in-library') {
-      assert.equal(ruleDiagnostics(ruleName, lint(ruleName, 'Effect.runFork(program)', 'app.ts')).length, 0)
-      assert.equal(ruleDiagnostics(ruleName, lint(ruleName, 'Effect.runSync(config)', 'drizzle.config.ts')).length, 0)
-      assert.equal(ruleDiagnostics(ruleName, lint(ruleName, 'Effect.runSync(config)', 'alchemy.run.ts')).length, 0)
+      assert.equal(
+        ruleDiagnostics(ruleName, lint(ruleName, 'Effect.runFork(program)', 'app.ts')).length,
+        0,
+      )
+      assert.equal(
+        ruleDiagnostics(ruleName, lint(ruleName, 'Effect.runSync(config)', 'drizzle.config.ts'))
+          .length,
+        0,
+      )
+      assert.equal(
+        ruleDiagnostics(ruleName, lint(ruleName, 'Effect.runSync(config)', 'alchemy.run.ts'))
+          .length,
+        0,
+      )
       const flueBoundary = 'defineTool({ async run() { return Effect.runPromise(program) } })'
       assert.equal(ruleDiagnostics(ruleName, lint(ruleName, flueBoundary)).length, 0)
     }
 
     if (ruleName === 'no-platform-runtime-runmain-in-library') {
-      assert.equal(ruleDiagnostics(ruleName, lint(ruleName, 'NodeRuntime.runMain(program)', 'main.ts')).length, 0)
+      assert.equal(
+        ruleDiagnostics(ruleName, lint(ruleName, 'NodeRuntime.runMain(program)', 'main.ts')).length,
+        0,
+      )
     }
 
     if (ruleName === 'effect-require-effect-fn') {

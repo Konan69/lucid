@@ -15,15 +15,15 @@ Configuration is loaded once, before the HTTP listener is created, through Effec
 `Schema`. Secret fields are `Redacted` values. Startup reports the variable name and expected shape,
 never the supplied value.
 
-| Variable | Required | Validation |
-| --- | --- | --- |
-| `DATABASE_URL` | Yes | Must parse as a PostgreSQL URL with a host (`postgres://` or `postgresql://`). |
-| `AUTH_SECRET` | Yes | At least 32 characters, 12 distinct characters, and 3 character classes. |
-| `PORT` | No | Integer from 1 through 65535; defaults to `8787`. |
-| `PUBLIC_URL` | No | If supplied, must be an absolute URL; defaults to `http://localhost:3000`. |
-| `GOOGLE_CLIENT_ID` | No | Optional, but must be paired with `GOOGLE_CLIENT_SECRET`. |
-| `GOOGLE_CLIENT_SECRET` | No | Optional, but must be paired with `GOOGLE_CLIENT_ID`; kept redacted. |
-| `GOOGLE_REDIRECT_URI` | No | Required when Google OAuth is enabled and must be an absolute URL. |
+| Variable               | Required | Validation                                                                     |
+| ---------------------- | -------- | ------------------------------------------------------------------------------ |
+| `DATABASE_URL`         | Yes      | Must parse as a PostgreSQL URL with a host (`postgres://` or `postgresql://`). |
+| `AUTH_SECRET`          | Yes      | At least 32 characters, 12 distinct characters, and 3 character classes.       |
+| `PORT`                 | No       | Integer from 1 through 65535; defaults to `8787`.                              |
+| `PUBLIC_URL`           | No       | If supplied, must be an absolute URL; defaults to `http://localhost:3000`.     |
+| `GOOGLE_CLIENT_ID`     | No       | Optional, but must be paired with `GOOGLE_CLIENT_SECRET`.                      |
+| `GOOGLE_CLIENT_SECRET` | No       | Optional, but must be paired with `GOOGLE_CLIENT_ID`; kept redacted.           |
+| `GOOGLE_REDIRECT_URI`  | No       | Required when Google OAuth is enabled and must be an absolute URL.             |
 
 Copy `.env.example` for a local starting point. Local PostgreSQL is
 `postgres://vivid:vivid@127.0.0.1:55433/vivid`. Do not put secret values in logs, traces, health

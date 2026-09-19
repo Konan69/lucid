@@ -1,12 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": [
-    "eslint",
-    "typescript",
-    "unicorn",
-    "oxc",
-    "react"
-  ],
+  "plugins": ["eslint", "typescript", "unicorn", "oxc", "react"],
   "categories": {
     "correctness": "error",
     "suspicious": "warn",
@@ -18,9 +12,7 @@
   "settings": {
     "shadcn": {
       "ui": "@/ui",
-      "componentImports": [
-        "(^|/)ui(/|$)"
-      ],
+      "componentImports": ["(^|/)ui(/|$)"],
       "note": "Use Vivid's existing component variant or semantic token. Change a component contract only with UI-owner review."
     },
     "tailwindcss": {
@@ -167,39 +159,28 @@
   },
   "overrides": [
     {
-      "files": [
-        "alchemy.run.ts"
-      ],
+      "files": ["alchemy.run.ts"],
       "rules": {
         "no-restricted-properties": "off"
       }
     },
     {
-      "files": [
-        "apps/{server,web}/src/**/*.{ts,tsx}",
-        "packages/*/src/**/*.{ts,tsx}"
-      ],
+      "files": ["apps/{server,web}/src/**/*.{ts,tsx}", "packages/*/src/**/*.{ts,tsx}"],
       "rules": {
         "typescript/no-explicit-any": "warn"
       }
     },
     {
-      "files": [
-        "apps/web/src/**/*.tsx"
-      ],
+      "files": ["apps/web/src/**/*.tsx"],
       "rules": {
         "shadcn/no-restyle": [
           "error",
           {
-            "allow": [
-              "layout"
-            ],
+            "allow": ["layout"],
             "contracts": [
               {
                 "pattern": "^(Button|IconButton)$",
-                "allow": [
-                  "layout"
-                ],
+                "allow": ["layout"],
                 "message": {
                   "spacing": "Use a {{component}} size: {{sizes|none defined}}.",
                   "default": "Use a {{component}} variant: {{variants|none defined}}."
@@ -207,17 +188,12 @@
               },
               {
                 "pattern": "^Card$",
-                "allow": [
-                  "layout",
-                  "spacing"
-                ],
+                "allow": ["layout", "spacing"],
                 "message": "Card owns surface, radius, and elevation; callers may control placement and content spacing."
               },
               {
                 "pattern": "^(Avatar|Face|StatusLabel|StatusDot|ToolMarks)$",
-                "allow": [
-                  "layout"
-                ],
+                "allow": ["layout"],
                 "message": "This primitive owns its visual treatment; callers may control placement only."
               }
             ]
@@ -244,9 +220,7 @@
       }
     },
     {
-      "files": [
-        "apps/web/src/ui/**/*.{ts,tsx}"
-      ],
+      "files": ["apps/web/src/ui/**/*.{ts,tsx}"],
       "rules": {
         "shadcn/no-restyle": "off",
         "shadcn/no-arbitrary-values": "off",
@@ -254,9 +228,7 @@
       }
     },
     {
-      "files": [
-        "apps/{mobile,web}/**/*.{ts,tsx}"
-      ],
+      "files": ["apps/{mobile,web}/**/*.{ts,tsx}"],
       "rules": {
         "vivid/react-no-derived-state-effect": "warn",
         "vivid/react-no-inline-context-value": "warn",
@@ -264,25 +236,19 @@
       }
     },
     {
-      "files": [
-        "apps/server/src/auth.ts"
-      ],
+      "files": ["apps/server/src/auth.ts"],
       "rules": {
         "vivid/better-auth-secure-options": "error"
       }
     },
     {
-      "files": [
-        "**/drizzle.config.ts"
-      ],
+      "files": ["**/drizzle.config.ts"],
       "rules": {
         "vivid/require-drizzle-config-paths": "error"
       }
     },
     {
-      "files": [
-        "apps/mobile/**/*.{ts,tsx}"
-      ],
+      "files": ["apps/mobile/**/*.{ts,tsx}"],
       "rules": {
         "anti-slop-effect/no-service-constructor-imports": "off",
         "no-restricted-properties": "off",
@@ -290,12 +256,7 @@
       }
     },
     {
-      "files": [
-        "**/*.test.{ts,tsx}",
-        "**/*.spec.{ts,tsx}",
-        "**/test/**",
-        "**/tests/**"
-      ],
+      "files": ["**/*.test.{ts,tsx}", "**/*.spec.{ts,tsx}", "**/test/**", "**/tests/**"],
       "rules": {
         "typescript/no-explicit-any": "off",
         "no-restricted-properties": "off",
@@ -305,11 +266,7 @@
       }
     },
     {
-      "files": [
-        "**/*.config.*",
-        "scripts/**",
-        "**/scripts/**"
-      ],
+      "files": ["**/*.config.*", "scripts/**", "**/scripts/**"],
       "rules": {
         "typescript/no-explicit-any": "off",
         "no-restricted-properties": "off",
@@ -319,9 +276,7 @@
       }
     },
     {
-      "files": [
-        "apps/web/src/ui/ToolMarks.tsx"
-      ],
+      "files": ["apps/web/src/ui/ToolMarks.tsx"],
       "rules": {
         "shadcn/no-raw-colors": "off"
       }
@@ -350,26 +305,13 @@
             "skipComments": true
           }
         ],
-        "max-depth": [
-          "warn",
-          3
-        ],
-        "max-params": [
-          "warn",
-          4
-        ],
-        "max-nested-callbacks": [
-          "warn",
-          3
-        ]
+        "max-depth": ["warn", 3],
+        "max-params": ["warn", 4],
+        "max-nested-callbacks": ["warn", 3]
       }
     },
     {
-      "files": [
-        "**/*.test.{ts,tsx,mjs}",
-        "**/*.live.test.ts",
-        "**/*.d.ts"
-      ],
+      "files": ["**/*.test.{ts,tsx,mjs}", "**/*.live.test.ts", "**/*.d.ts"],
       "rules": {
         "complexity": "off",
         "max-lines-per-function": "off",

@@ -1,13 +1,13 @@
-import type { PressableProps, StyleProp, ViewStyle } from "react-native";
-import { Pressable } from "react-native";
+import type { PressableProps, StyleProp, ViewStyle } from 'react-native'
+import { Pressable } from 'react-native'
 import Animated, {
   Easing,
   ReduceMotion,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
-} from "react-native-reanimated";
-import { nativeMetrics } from "@vivid/design-tokens/native";
+} from 'react-native-reanimated'
+import { nativeMetrics } from '@vivid/design-tokens/native'
 
 // Vivid web Button/EmptyState's 0.98 press treatment, executed on the UI thread.
 export function MotionPressable({
@@ -16,27 +16,27 @@ export function MotionPressable({
   onPressOut,
   ...props
 }: PressableProps & { containerStyle?: StyleProp<ViewStyle> }) {
-  const scale = useSharedValue(1);
+  const scale = useSharedValue(1)
   // Reanimated's get/set API is the compiler-safe equivalent of reading and assigning `.value`.
-  const animated = useAnimatedStyle(() => ({ transform: [{ scale: scale.get() }] }));
+  const animated = useAnimatedStyle(() => ({ transform: [{ scale: scale.get() }] }))
   const timing = {
-    duration: nativeMetrics["dur-fast"],
+    duration: nativeMetrics['dur-fast'],
     easing: Easing.bezier(0.2, 0, 0, 1),
     reduceMotion: ReduceMotion.System,
-  };
+  }
   return (
     <Animated.View style={[containerStyle, animated]}>
       <Pressable
         {...props}
         onPressIn={(event) => {
-          scale.set(withTiming(0.98, timing));
-          if (onPressIn != null) onPressIn(event);
+          scale.set(withTiming(0.98, timing))
+          if (onPressIn != null) onPressIn(event)
         }}
         onPressOut={(event) => {
-          scale.set(withTiming(1, timing));
-          if (onPressOut != null) onPressOut(event);
+          scale.set(withTiming(1, timing))
+          if (onPressOut != null) onPressOut(event)
         }}
       />
     </Animated.View>
-  );
+  )
 }

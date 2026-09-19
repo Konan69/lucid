@@ -12,11 +12,11 @@ a thread list, a thread, a settings gear. Vivid is the agent — the word
 
 ## Sources, and what each settled
 
-| Source | What Vivid took |
-| --- | --- |
-| Open Session | Surface ramp, shadow tiers, edge shadow rule, type weights, composer radius, rail heights |
-| Grok Bot (Sand) | Alpha ink from one base, status hue pairs, the ten face colors, and theme tokens |
-| T3 Code | Card vs slim rows by lifecycle, rows recede, status yields to actions in one slot |
+| Source          | What Vivid took                                                                           |
+| --------------- | ----------------------------------------------------------------------------------------- |
+| Open Session    | Surface ramp, shadow tiers, edge shadow rule, type weights, composer radius, rail heights |
+| Grok Bot (Sand) | Alpha ink from one base, status hue pairs, the ten face colors, and theme tokens          |
+| T3 Code         | Card vs slim rows by lifecycle, rows recede, status yields to actions in one slot         |
 
 ## Tokens — the only allowed colors
 
@@ -97,9 +97,9 @@ Anything that ticks (durations, countdowns) is mono tabular.
 
 ## Where things live
 
-| Thing | Path |
-| --- | --- |
-| Tokens (single source of truth) | `packages/design-tokens/src/tokens.css` |
-| Shadow + glass + hairline utilities | `apps/web/src/styles/index.css` |
-| Design-language essays | `docs/08-design-language.md`, `docs/01-principle.md` |
-| Token sheet (every token, one page) | run dev server, open `/?tokens` |
+| Thing                               | Path                                                 |
+| ----------------------------------- | ---------------------------------------------------- |
+| Tokens (single source of truth)     | `packages/design-tokens/src/tokens.css`              |
+| Shadow + glass + hairline utilities | `apps/web/src/styles/index.css`                      |
+| Design-language essays              | `docs/08-design-language.md`, `docs/01-principle.md` |
+| Token sheet (every token, one page) | run dev server, open `/?tokens`                      |

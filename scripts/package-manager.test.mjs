@@ -8,7 +8,10 @@ import { findForeignLockfiles, validatePackageManager } from './package-manager.
 
 const assert = NodeAssert
 const test = NodeTest.default
-const repositoryRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), '..')
+const repositoryRoot = NodePath.resolve(
+  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
+  '..',
+)
 
 /** The checked-in repository keeps the package-manager pin and workspace policy aligned. */
 void test('repository package-manager policy passes', () => {

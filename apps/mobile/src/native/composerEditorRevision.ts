@@ -1,25 +1,22 @@
 export interface ComposerNativeEventSnapshot {
-  readonly eventCount: number;
-  readonly value: string;
-  readonly selection: ComposerEditorSelection | null;
+  readonly eventCount: number
+  readonly value: string
+  readonly selection: ComposerEditorSelection | null
 }
 
 interface ComposerEditorSelection {
-  readonly start: number;
-  readonly end: number;
+  readonly start: number
+  readonly end: number
 }
 
 export function acknowledgeComposerNativeEvent(
   mostRecentEventCount: number,
   incomingEventCount: number,
 ): number | null {
-  if (
-    !Number.isSafeInteger(incomingEventCount) ||
-    incomingEventCount < mostRecentEventCount
-  ) {
-    return null;
+  if (!Number.isSafeInteger(incomingEventCount) || incomingEventCount < mostRecentEventCount) {
+    return null
   }
-  return incomingEventCount;
+  return incomingEventCount
 }
 
 export function resolveComposerControlledEventCount(
@@ -28,20 +25,20 @@ export function resolveComposerControlledEventCount(
   mostRecentEventCount: number,
   snapshots: ReadonlyArray<ComposerNativeEventSnapshot>,
 ): number {
-  let newestValueEventCount: number | null = null;
+  let newestValueEventCount: number | null = null
   for (let index = snapshots.length - 1; index >= 0; index -= 1) {
-    const snapshot = snapshots[index];
-    if (snapshot === undefined || snapshot.value !== value) continue;
+    const snapshot = snapshots[index]
+    if (snapshot === undefined || snapshot.value !== value) continue
 
-    newestValueEventCount ??= snapshot.eventCount;
-    const snapshotSelection = snapshot.selection;
+    newestValueEventCount ??= snapshot.eventCount
+    const snapshotSelection = snapshot.selection
     if (
       selection === null ||
       (snapshotSelection !== null &&
         snapshotSelection.start === selection.start &&
         snapshotSelection.end === selection.end)
     ) {
-      return snapshot.eventCount;
+      return snapshot.eventCount
     }
   }
 
@@ -49,10 +46,10 @@ export function resolveComposerControlledEventCount(
   // intermediate React render. Keep it behind the native revision so it
   // cannot move the caret while newer keystrokes are being processed.
   if (newestValueEventCount !== null && mostRecentEventCount > 0) {
-    return Math.min(newestValueEventCount, mostRecentEventCount - 1);
+    return Math.min(newestValueEventCount, mostRecentEventCount - 1)
   }
 
-  return mostRecentEventCount;
+  return mostRecentEventCount
 }
 
 export function isComposerNativeEcho(
@@ -62,7 +59,7 @@ export function isComposerNativeEcho(
   snapshots: ReadonlyArray<ComposerNativeEventSnapshot>,
 ): boolean {
   for (let index = snapshots.length - 1; index >= 0; index -= 1) {
-    const snapshot = snapshots[index];
+    const snapshot = snapshots[index]
     if (
       snapshot !== undefined &&
       snapshot.eventCount === eventCount &&
@@ -72,17 +69,15 @@ export function isComposerNativeEcho(
           snapshot.selection.start === selection.start &&
           snapshot.selection.end === selection.end))
     ) {
-      return true;
+      return true
     }
   }
-  return false;
+  return false
 }
 
 export function pruneAcknowledgedComposerNativeEvents(
   snapshots: ReadonlyArray<ComposerNativeEventSnapshot>,
   acknowledgedEventCount: number,
 ): ComposerNativeEventSnapshot[] {
-  return snapshots.filter(
-    (snapshot) => snapshot.eventCount > acknowledgedEventCount,
-  );
+  return snapshots.filter((snapshot) => snapshot.eventCount > acknowledgedEventCount)
 }

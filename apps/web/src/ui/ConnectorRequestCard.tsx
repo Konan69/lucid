@@ -1,85 +1,83 @@
-import { useEffect, useState } from "react";
-import { Check, ExternalLink } from "lucide-react";
-import * as connectorRequestsData from "../data/connectorRequests";
-import * as connectorsData from "../data/connectors";
-import { run } from "../data/runtime";
-import { ToolMarks } from "./ToolMarks";
+import { useEffect, useState } from 'react'
+import { Check, ExternalLink } from 'lucide-react'
+import * as connectorRequestsData from '../data/connectorRequests'
+import * as connectorsData from '../data/connectors'
+import { run } from '../data/runtime'
+import { ToolMarks } from './ToolMarks'
 
 export function ConnectorRequestCard({
   request,
   onContinue,
   disabled,
 }: {
-  request: connectorRequestsData.ConnectorRequest;
-  onContinue: () => Promise<void>;
-  disabled: boolean;
+  request: connectorRequestsData.ConnectorRequest
+  onContinue: () => Promise<void>
+  disabled: boolean
 }) {
-  const [status, setStatus] = useState<connectorRequestsData.ConnectorStatus["status"] | null>(null);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [authUrl, setAuthUrl] = useState("");
-  const name = connectorRequestsData.connectorNames[request.connector];
+  const [status, setStatus] = useState<connectorRequestsData.ConnectorStatus['status'] | null>(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [authUrl, setAuthUrl] = useState('')
+  const name = connectorRequestsData.connectorNames[request.connector]
   useEffect(() => {
-    let active = true;
+    let active = true
     async function refresh() {
-      const result = await run(connectorsData.readRequestStatus(request.connector));
-      if (!active) return;
-      if (result._tag === "Failure") {
+      const result = await run(connectorsData.readRequestStatus(request.connector))
+      if (!active) return
+      if (result._tag === 'Failure') {
         switch (result.failure._tag) {
-          case "ClientRequestFailed":
-            setError(result.failure.message);
-            return;
+          case 'ClientRequestFailed':
+            setError(result.failure.message)
+            return
         }
       }
-      setStatus(result.success);
+      setStatus(result.success)
     }
-    void refresh();
+    void refresh()
     const onFocus = () => {
-      void refresh();
-    };
-    window.addEventListener("focus", onFocus);
+      void refresh()
+    }
+    window.addEventListener('focus', onFocus)
     const timer = setInterval(
       () => {
-        if (!document.hidden) void refresh();
+        if (!document.hidden) void refresh()
       },
       authUrl ? 3000 : 15000,
-    );
+    )
     return () => {
-      active = false;
-      clearInterval(timer);
-      window.removeEventListener("focus", onFocus);
-    };
-  }, [request.connector, authUrl]);
+      active = false
+      clearInterval(timer)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [request.connector, authUrl])
 
   async function act() {
-    setBusy(true);
-    setError("");
+    setBusy(true)
+    setError('')
     // Open synchronously from the click so browser popup blockers don't eat the handoff.
-    const popup = status === "connected" ? null : window.open("about:blank", "_blank");
-    if (popup) popup.opener = null;
-    const result = await run(connectorsData.actOnRequest(
-      request.connector,
-      status === "connected",
-      onContinue,
-    ));
-    if (result._tag === "Failure") {
+    const popup = status === 'connected' ? null : window.open('about:blank', '_blank')
+    if (popup) popup.opener = null
+    const result = await run(
+      connectorsData.actOnRequest(request.connector, status === 'connected', onContinue),
+    )
+    if (result._tag === 'Failure') {
       switch (result.failure._tag) {
-        case "ClientRequestFailed":
-          if (popup) popup.close();
-          setError(result.failure.message);
-          setBusy(false);
-          return;
+        case 'ClientRequestFailed':
+          if (popup) popup.close()
+          setError(result.failure.message)
+          setBusy(false)
+          return
       }
     }
-    const url = result.success;
+    const url = result.success
     if (url !== null) {
-      setAuthUrl(url);
-      if (popup) popup.location.href = url;
+      setAuthUrl(url)
+      if (popup) popup.location.href = url
     }
-    setBusy(false);
+    setBusy(false)
   }
 
-  const connected = status === "connected";
+  const connected = status === 'connected'
   return (
     <div className="my-3 rounded-panel bg-surface-2 px-3.5 py-3 shadow-ring-xs">
       <div className="flex items-center gap-3">
@@ -100,7 +98,7 @@ export function ConnectorRequestCard({
       )}
       {authUrl && !connected && (
         <p role="status" className="mt-2 text-meta text-ink-3">
-          Finish signing in, then return here.{" "}
+          Finish signing in, then return here.{' '}
           <a href={authUrl} target="_blank" rel="noreferrer" className="text-accent-ink underline">
             Open sign-in again
           </a>
@@ -112,14 +110,14 @@ export function ConnectorRequestCard({
         className="mt-3 inline-flex h-8 items-center gap-2 rounded-control bg-surface-3 px-3 text-label font-title text-ink shadow-ring-xs hover:bg-wash-hover disabled:opacity-50"
       >
         {busy
-          ? "Working…"
+          ? 'Working…'
           : connected
-            ? "Continue"
+            ? 'Continue'
             : authUrl
-              ? "Retry connection"
+              ? 'Retry connection'
               : `Connect ${name}`}
         {!connected && <ExternalLink className="size-3.5" />}
       </button>
     </div>
-  );
+  )
 }

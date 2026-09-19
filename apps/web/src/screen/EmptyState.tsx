@@ -1,5 +1,5 @@
-import { suggestions } from "../data/fixtures";
-import { Face } from "../ui/Face";
+import { suggestions } from '../data/fixtures'
+import { Face } from '../ui/Face'
 
 export function EmptyState() {
   return (
@@ -17,5 +17,5 @@ export function EmptyState() {
         ))}
       </ul>
     </div>
-  );
+  )
 }

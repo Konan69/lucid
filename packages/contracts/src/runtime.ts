@@ -1,61 +1,77 @@
-import { Schema } from "effect"
+import { Schema } from 'effect'
 
 /** Creates a branded identifier schema for one Vivid ownership boundary. */
 const identifier = <Name extends string>(name: Name) => Schema.String.pipe(Schema.brand(name))
 
 /** Durable Thread identifier used by collaboration and Flue transport routes. */
-export const ThreadId = identifier("ThreadId")
+export const ThreadId = identifier('ThreadId')
 /** Decoded Thread identifier. */
 export type ThreadId = typeof ThreadId.Type
 /** Durable Task identifier. */
-export const TaskId = identifier("TaskId")
+export const TaskId = identifier('TaskId')
 /** Decoded Task identifier. */
 export type TaskId = typeof TaskId.Type
 /** Durable follow-up identifier. */
-export const FollowUpId = identifier("FollowUpId")
+export const FollowUpId = identifier('FollowUpId')
 /** Decoded follow-up identifier. */
 export type FollowUpId = typeof FollowUpId.Type
 /** Durable notification identifier. */
-export const NotificationId = identifier("NotificationId")
+export const NotificationId = identifier('NotificationId')
 /** Decoded notification identifier. */
 export type NotificationId = typeof NotificationId.Type
 /** Durable Routine identifier. */
-export const RoutineId = identifier("RoutineId")
+export const RoutineId = identifier('RoutineId')
 /** Decoded Routine identifier. */
 export type RoutineId = typeof RoutineId.Type
 /** Durable Routine occurrence identifier. */
-export const OccurrenceId = identifier("OccurrenceId")
+export const OccurrenceId = identifier('OccurrenceId')
 /** Decoded Routine occurrence identifier. */
 export type OccurrenceId = typeof OccurrenceId.Type
 /** Durable Library item identifier. */
-export const LibraryItemId = identifier("LibraryItemId")
+export const LibraryItemId = identifier('LibraryItemId')
 /** Decoded Library item identifier. */
 export type LibraryItemId = typeof LibraryItemId.Type
 /** Durable Library folder identifier. */
-export const LibraryFolderId = identifier("LibraryFolderId")
+export const LibraryFolderId = identifier('LibraryFolderId')
 /** Decoded Library folder identifier. */
 export type LibraryFolderId = typeof LibraryFolderId.Type
 /** Supported external Connection identifier. */
-export const ConnectionId = Schema.Literals(["gmail", "calendar", "drive"] as const)
+export const ConnectionId = Schema.Literals(['gmail', 'calendar', 'drive'] as const)
 /** Decoded Connection identifier. */
 export type ConnectionId = typeof ConnectionId.Type
 
 /** Closed Thread lifecycle values encoded by the current HTTP protocol. */
-export const ThreadStatus = Schema.Literals(["active", "archived"] as const)
+export const ThreadStatus = Schema.Literals(['active', 'archived'] as const)
 /** Closed Task lifecycle values encoded by the current HTTP protocol. */
-export const TaskStatus = Schema.Literals(["open", "done", "dropped"] as const)
+export const TaskStatus = Schema.Literals(['open', 'done', 'dropped'] as const)
 /** Closed Task priority values encoded by the current HTTP protocol. */
-export const TaskPriority = Schema.Literals(["normal", "urgent"] as const)
+export const TaskPriority = Schema.Literals(['normal', 'urgent'] as const)
 /** Closed follow-up lifecycle values encoded by the current HTTP protocol. */
-export const FollowUpStatus = Schema.Literals(["scheduled", "running", "fired", "failed", "cancelled"] as const)
+export const FollowUpStatus = Schema.Literals([
+  'scheduled',
+  'running',
+  'fired',
+  'failed',
+  'cancelled',
+] as const)
 /** Closed notification variants encoded by the current HTTP protocol. */
-export const NotificationKind = Schema.Literals(["tracked", "overdue", "follow-up", "follow-up-failed"] as const)
+export const NotificationKind = Schema.Literals([
+  'tracked',
+  'overdue',
+  'follow-up',
+  'follow-up-failed',
+] as const)
 /** Closed Routine occurrence lifecycle values encoded by the current HTTP protocol. */
-export const OccurrenceStatus = Schema.Literals(["running", "succeeded", "failed"] as const)
+export const OccurrenceStatus = Schema.Literals(['running', 'succeeded', 'failed'] as const)
 /** Closed Library processing lifecycle values encoded by the current HTTP protocol. */
-export const LibraryItemStatus = Schema.Literals(["processing", "ready", "failed"] as const)
+export const LibraryItemStatus = Schema.Literals(['processing', 'ready', 'failed'] as const)
 /** Closed Connection lifecycle values encoded by the current HTTP protocol. */
-export const ConnectionStatus = Schema.Literals(["disconnected", "connecting", "connected", "error"] as const)
+export const ConnectionStatus = Schema.Literals([
+  'disconnected',
+  'connecting',
+  'connected',
+  'error',
+] as const)
 
 /** Thread summary exchanged by web, mobile, and the conversation runtime. */
 export const Thread = Schema.Struct({
@@ -64,7 +80,7 @@ export const Thread = Schema.Struct({
   preview: Schema.String,
   updatedAt: Schema.Number,
   archived: Schema.Boolean,
-}).annotate({ identifier: "Thread", title: "Thread" })
+}).annotate({ identifier: 'Thread', title: 'Thread' })
 /** Decoded Thread summary. */
 export interface Thread extends Schema.Schema.Type<typeof Thread> {}
 
@@ -74,7 +90,7 @@ export const PutThreadRequest = Schema.Struct({
   preview: Schema.String,
   updatedAt: Schema.optionalKey(Schema.Number),
   archived: Schema.optionalKey(Schema.Boolean),
-}).annotate({ identifier: "PutThreadRequest", title: "Put Thread request" })
+}).annotate({ identifier: 'PutThreadRequest', title: 'Put Thread request' })
 /** Decoded Thread replacement input. */
 export interface PutThreadRequest extends Schema.Schema.Type<typeof PutThreadRequest> {}
 
@@ -82,7 +98,7 @@ export interface PutThreadRequest extends Schema.Schema.Type<typeof PutThreadReq
 export const PatchThreadRequest = Schema.Struct({
   title: Schema.optionalKey(Schema.String),
   archived: Schema.optionalKey(Schema.Boolean),
-}).annotate({ identifier: "PatchThreadRequest", title: "Patch Thread request" })
+}).annotate({ identifier: 'PatchThreadRequest', title: 'Patch Thread request' })
 /** Decoded Thread patch input. */
 export interface PatchThreadRequest extends Schema.Schema.Type<typeof PatchThreadRequest> {}
 
@@ -114,18 +130,21 @@ export const FollowUp = Schema.Struct({
   firedAt: Schema.NullOr(Schema.Number),
   output: Schema.NullOr(Schema.String),
   error: Schema.NullOr(Schema.String),
-  createdBy: Schema.Literals(["you", "vivid"] as const),
+  createdBy: Schema.Literals(['you', 'vivid'] as const),
   createdAt: Schema.Number,
-}).annotate({ identifier: "FollowUp", title: "Follow-up" })
+}).annotate({ identifier: 'FollowUp', title: 'Follow-up' })
 /** Decoded follow-up. */
 export interface FollowUp extends Schema.Schema.Type<typeof FollowUp> {}
 
 /** Manual origin for a Task. */
-const ManualTaskOrigin = Schema.Struct({ kind: Schema.Literal("manual") })
+const ManualTaskOrigin = Schema.Struct({ kind: Schema.Literal('manual') })
 /** Thread origin for a Task. */
-const ThreadTaskOrigin = Schema.Struct({ kind: Schema.Literal("conversation"), conversationId: ThreadId })
+const ThreadTaskOrigin = Schema.Struct({
+  kind: Schema.Literal('conversation'),
+  conversationId: ThreadId,
+})
 /** Routine origin for a Task. */
-const RoutineTaskOrigin = Schema.Struct({ kind: Schema.Literal("routine"), routineId: RoutineId })
+const RoutineTaskOrigin = Schema.Struct({ kind: Schema.Literal('routine'), routineId: RoutineId })
 /** Closed Task origin variants used by the runtime wire. */
 export const TaskOrigin = Schema.Union([ManualTaskOrigin, ThreadTaskOrigin, RoutineTaskOrigin])
 /** Decoded Task origin. */
@@ -141,7 +160,7 @@ export const Task = Schema.Struct({
   assignee: Schema.NullOr(Schema.String),
   dueAt: Schema.NullOr(Schema.Number),
   origin: TaskOrigin,
-  createdBy: Schema.Literals(["you", "vivid"] as const),
+  createdBy: Schema.Literals(['you', 'vivid'] as const),
   conversationId: ThreadId,
   overdueNotifiedAt: Schema.NullOr(Schema.Number),
   completedAt: Schema.NullOr(Schema.Number),
@@ -149,7 +168,7 @@ export const Task = Schema.Struct({
   updatedAt: Schema.Number,
   followUps: Schema.Array(FollowUp),
   nextFollowUpAt: Schema.NullOr(Schema.Number),
-}).annotate({ identifier: "Task", title: "Task" })
+}).annotate({ identifier: 'Task', title: 'Task' })
 /** Decoded Task projection. */
 export interface Task extends Schema.Schema.Type<typeof Task> {}
 
@@ -158,7 +177,7 @@ export const FollowUpInput = Schema.Struct({
   at: TimestampInput,
   note: Schema.optionalKey(Schema.String),
   repeatEveryMs: Schema.optionalKey(Schema.NullOr(Schema.Number)),
-}).annotate({ identifier: "FollowUpInput", title: "Follow-up input" })
+}).annotate({ identifier: 'FollowUpInput', title: 'Follow-up input' })
 /** Decoded follow-up input. */
 export interface FollowUpInput extends Schema.Schema.Type<typeof FollowUpInput> {}
 
@@ -170,7 +189,7 @@ export const CreateTaskRequest = Schema.Struct({
   dueAt: Schema.optionalKey(Schema.NullOr(TimestampInput)),
   priority: Schema.optionalKey(TaskPriority),
   followUp: Schema.optionalKey(FollowUpInput),
-}).annotate({ identifier: "CreateTaskRequest", title: "Create Task request" })
+}).annotate({ identifier: 'CreateTaskRequest', title: 'Create Task request' })
 /** Decoded Task creation input. */
 export interface CreateTaskRequest extends Schema.Schema.Type<typeof CreateTaskRequest> {}
 
@@ -182,7 +201,7 @@ export const PatchTaskRequest = Schema.Struct({
   dueAt: Schema.optionalKey(Schema.NullOr(TimestampInput)),
   priority: Schema.optionalKey(TaskPriority),
   status: Schema.optionalKey(TaskStatus),
-}).annotate({ identifier: "PatchTaskRequest", title: "Patch Task request" })
+}).annotate({ identifier: 'PatchTaskRequest', title: 'Patch Task request' })
 /** Decoded Task patch input. */
 export interface PatchTaskRequest extends Schema.Schema.Type<typeof PatchTaskRequest> {}
 
@@ -199,7 +218,7 @@ export const PatchFollowUpRequest = Schema.Struct({
   at: Schema.optionalKey(TimestampInput),
   note: Schema.optionalKey(Schema.String),
   repeatEveryMs: Schema.optionalKey(Schema.NullOr(Schema.Number)),
-  status: Schema.optionalKey(Schema.Literals(["scheduled", "cancelled"] as const)),
+  status: Schema.optionalKey(Schema.Literals(['scheduled', 'cancelled'] as const)),
 })
 /** List response for Tasks. */
 export const TaskListResponse = Schema.Struct({ tasks: Schema.Array(Task) })
@@ -218,18 +237,23 @@ export const Notification = Schema.Struct({
   conversationId: Schema.NullOr(ThreadId),
   createdAt: Schema.Number,
   readAt: Schema.NullOr(Schema.Number),
-}).annotate({ identifier: "Notification", title: "Notification" })
+}).annotate({ identifier: 'Notification', title: 'Notification' })
 /** Decoded notification. */
 export interface Notification extends Schema.Schema.Type<typeof Notification> {}
 /** Input for marking selected or all notifications read. */
-export const ReadNotificationsRequest = Schema.Struct({ ids: Schema.optionalKey(Schema.Array(NotificationId)) })
+export const ReadNotificationsRequest = Schema.Struct({
+  ids: Schema.optionalKey(Schema.Array(NotificationId)),
+})
 /** Notification list response. */
 export const NotificationListResponse = Schema.Struct({
   notifications: Schema.Array(Notification),
   unreadCount: Schema.Number,
 })
 /** Notification mutation response. */
-export const NotificationReadResponse = Schema.Struct({ changed: Schema.Number, unreadCount: Schema.Number })
+export const NotificationReadResponse = Schema.Struct({
+  changed: Schema.Number,
+  unreadCount: Schema.Number,
+})
 
 /** One bounded Routine occurrence. */
 export const Occurrence = Schema.Struct({
@@ -242,7 +266,7 @@ export const Occurrence = Schema.Struct({
   finishedAt: Schema.NullOr(Schema.Number),
   output: Schema.NullOr(Schema.String),
   error: Schema.NullOr(Schema.String),
-}).annotate({ identifier: "Occurrence", title: "Routine occurrence" })
+}).annotate({ identifier: 'Occurrence', title: 'Routine occurrence' })
 /** Decoded Routine occurrence. */
 export interface Occurrence extends Schema.Schema.Type<typeof Occurrence> {}
 
@@ -261,7 +285,7 @@ export const Routine = Schema.Struct({
   updatedAt: Schema.Number,
   nextRunAt: Schema.NullOr(Schema.Number),
   runs: Schema.Array(Occurrence),
-}).annotate({ identifier: "Routine", title: "Routine" })
+}).annotate({ identifier: 'Routine', title: 'Routine' })
 /** Decoded Routine. */
 export interface Routine extends Schema.Schema.Type<typeof Routine> {}
 /** Input accepted while creating a Routine. */
@@ -304,7 +328,7 @@ export const LibraryItem = Schema.Struct({
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
   folderId: Schema.NullOr(LibraryFolderId),
-}).annotate({ identifier: "LibraryItem", title: "Library item" })
+}).annotate({ identifier: 'LibraryItem', title: 'Library item' })
 /** Decoded Library item. */
 export interface LibraryItem extends Schema.Schema.Type<typeof LibraryItem> {}
 
@@ -316,7 +340,7 @@ export const LibraryFolder = Schema.Struct({
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
   itemCount: Schema.Number,
-}).annotate({ identifier: "LibraryFolder", title: "Library folder" })
+}).annotate({ identifier: 'LibraryFolder', title: 'Library folder' })
 /** Decoded Library folder. */
 export interface LibraryFolder extends Schema.Schema.Type<typeof LibraryFolder> {}
 
@@ -351,7 +375,7 @@ export const LibraryFolderListResponse = Schema.Struct({ folders: Schema.Array(L
 /** Decoded metadata extracted from a multipart Library upload. */
 export const LibraryUploadMetadata = Schema.Struct({
   name: Schema.String,
-  mimeType: Schema.Literals(["application/pdf", "text/markdown", "text/plain"] as const),
+  mimeType: Schema.Literals(['application/pdf', 'text/markdown', 'text/plain'] as const),
   size: Schema.Number,
   folderId: Schema.NullOr(LibraryFolderId),
 })
@@ -395,7 +419,7 @@ export const Connection = Schema.Struct({
     icon: Schema.String,
     scopes: Schema.Array(Schema.String),
   }),
-}).annotate({ identifier: "Connection", title: "Connection" })
+}).annotate({ identifier: 'Connection', title: 'Connection' })
 /** Decoded external Connection metadata. */
 export interface Connection extends Schema.Schema.Type<typeof Connection> {}
 /** Connection path parameters. */
@@ -406,22 +430,30 @@ export const ConnectionCallbackQuery = Schema.Struct({
   state: Schema.optionalKey(Schema.String),
 })
 /** Signed state payload carried through the OAuth redirect. */
-export const ConnectionCallbackState = Schema.Struct({ connector: ConnectionId, nonce: Schema.String })
+export const ConnectionCallbackState = Schema.Struct({
+  connector: ConnectionId,
+  nonce: Schema.String,
+})
 /** Connection list response. */
 export const ConnectionListResponse = Schema.Struct({ connectors: Schema.Array(Connection) })
 /** Connection authorization response. */
 export const ConnectionAuthorizationResponse = Schema.Struct({ authUrl: Schema.String })
 /** Connection deletion response. */
-export const ConnectionDeletionResponse = Schema.Struct({ success: Schema.Boolean, deleted: Schema.Number })
+export const ConnectionDeletionResponse = Schema.Struct({
+  success: Schema.Boolean,
+  deleted: Schema.Number,
+})
 
 /** Runtime message requesting authorization for one external Connection. */
 export const ConnectionRequestMessage = Schema.Struct({
-  kind: Schema.Literal("connector-request"),
+  kind: Schema.Literal('connector-request'),
   connector: ConnectionId,
   reason: Schema.String,
-}).annotate({ identifier: "ConnectionRequestMessage", title: "Connection request message" })
+}).annotate({ identifier: 'ConnectionRequestMessage', title: 'Connection request message' })
 /** Decoded Connection request message. */
-export interface ConnectionRequestMessage extends Schema.Schema.Type<typeof ConnectionRequestMessage> {}
+export interface ConnectionRequestMessage extends Schema.Schema.Type<
+  typeof ConnectionRequestMessage
+> {}
 
 /** Existing runtime error envelope retained on the HTTP wire. */
 export const RuntimeErrorResponse = Schema.Struct({ error: Schema.String })

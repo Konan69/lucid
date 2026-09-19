@@ -89,16 +89,16 @@ pnpm --filter @vivid/mobile web
 
 ## Feature coverage
 
-| Area | Mobile behavior |
-| --- | --- |
-| Conversations | Grouped list, search, filter, create, rename, pin/unpin, mark done/reopen, archive, restore, delete; durable history, streaming Markdown, tool results, stop, reconnect on foreground. |
-| Activity | Work log from the actual transcript; Library citations open authenticated originals. |
-| Tasks | Conversation tracking and follow-ups remain. Today is removed from navigation; its task screen implementation is retained but not exposed. |
-| Routines | Create/edit, schedule presets/custom cron, timezone, pause/resume/delete, run now, missed runs, run history, retry and opening run conversations. Template ideas share the web fixtures. |
-| Library | Native file picker for PDF/text/Markdown, 10 MB limit, indexing/error states, nested folders, rename/move/delete, passage search, original document sharing, ask-about draft. |
-| Projects | Shared sample projects, covers, members, nested projects and conversation titles. Same fixture boundary as web. |
-| Connectors | Contextual Connect cards in conversation; management under Settings. Server status, browser authorization, foreground refresh, Continue after connection, and disconnect. Requires server OAuth configuration. |
-| Settings | Shared light/dark colors, system theme, server connection, secure native token storage. |
+| Area          | Mobile behavior                                                                                                                                                                                                |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Conversations | Grouped list, search, filter, create, rename, pin/unpin, mark done/reopen, archive, restore, delete; durable history, streaming Markdown, tool results, stop, reconnect on foreground.                         |
+| Activity      | Work log from the actual transcript; Library citations open authenticated originals.                                                                                                                           |
+| Tasks         | Conversation tracking and follow-ups remain. Today is removed from navigation; its task screen implementation is retained but not exposed.                                                                     |
+| Routines      | Create/edit, schedule presets/custom cron, timezone, pause/resume/delete, run now, missed runs, run history, retry and opening run conversations. Template ideas share the web fixtures.                       |
+| Library       | Native file picker for PDF/text/Markdown, 10 MB limit, indexing/error states, nested folders, rename/move/delete, passage search, original document sharing, ask-about draft.                                  |
+| Projects      | Shared sample projects, covers, members, nested projects and conversation titles. Same fixture boundary as web.                                                                                                |
+| Connectors    | Contextual Connect cards in conversation; management under Settings. Server status, browser authorization, foreground refresh, Continue after connection, and disconnect. Requires server OAuth configuration. |
+| Settings      | Shared light/dark colors, system theme, server connection, secure native token storage.                                                                                                                        |
 
 Pins and settled conversations are device-local. Working status reflects the
 active native stream; remote background activity is not exposed by the index API.

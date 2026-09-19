@@ -1,26 +1,39 @@
-import * as Schema from "effect/Schema";
+import * as Schema from 'effect/Schema'
 
-const nullable = <A extends Schema.Top>(schema: A) => Schema.NullOr(schema);
-const taskStatus = Schema.Union([Schema.Literal("open"), Schema.Literal("done"), Schema.Literal("dropped")]);
-const taskPriority = Schema.Union([Schema.Literal("normal"), Schema.Literal("urgent")]);
-const author = Schema.Union([Schema.Literal("you"), Schema.Literal("vivid")]);
+const nullable = <A extends Schema.Top>(schema: A) => Schema.NullOr(schema)
+const taskStatus = Schema.Union([
+  Schema.Literal('open'),
+  Schema.Literal('done'),
+  Schema.Literal('dropped'),
+])
+const taskPriority = Schema.Union([Schema.Literal('normal'), Schema.Literal('urgent')])
+const author = Schema.Union([Schema.Literal('you'), Schema.Literal('vivid')])
 const followUpStatus = Schema.Union([
-  Schema.Literal("scheduled"), Schema.Literal("running"), Schema.Literal("fired"),
-  Schema.Literal("cancelled"), Schema.Literal("failed")
-]);
+  Schema.Literal('scheduled'),
+  Schema.Literal('running'),
+  Schema.Literal('fired'),
+  Schema.Literal('cancelled'),
+  Schema.Literal('failed'),
+])
 const notificationKind = Schema.Union([
-  Schema.Literal("tracked"), Schema.Literal("overdue"), Schema.Literal("follow-up"),
-  Schema.Literal("follow-up-failed")
-]);
-const routineRunStatus = Schema.Union([Schema.Literal("running"), Schema.Literal("succeeded"), Schema.Literal("failed")]);
+  Schema.Literal('tracked'),
+  Schema.Literal('overdue'),
+  Schema.Literal('follow-up'),
+  Schema.Literal('follow-up-failed'),
+])
+const routineRunStatus = Schema.Union([
+  Schema.Literal('running'),
+  Schema.Literal('succeeded'),
+  Schema.Literal('failed'),
+])
 
 export const ConversationSchema = Schema.Struct({
   id: Schema.String,
   title: Schema.String,
   preview: Schema.String,
   updatedAt: Schema.Number,
-  archived: Schema.Boolean
-});
+  archived: Schema.Boolean,
+})
 
 export const TaskRowSchema = Schema.Struct({
   id: Schema.String,
@@ -30,15 +43,19 @@ export const TaskRowSchema = Schema.Struct({
   priority: taskPriority,
   assignee: nullable(Schema.String),
   dueAt: nullable(Schema.Number),
-  originKind: Schema.Union([Schema.Literal("conversation"), Schema.Literal("routine"), Schema.Literal("manual")]),
+  originKind: Schema.Union([
+    Schema.Literal('conversation'),
+    Schema.Literal('routine'),
+    Schema.Literal('manual'),
+  ]),
   originId: nullable(Schema.String),
   createdBy: author,
   conversationId: Schema.String,
   overdueNotifiedAt: nullable(Schema.Number),
   completedAt: nullable(Schema.Number),
   createdAt: Schema.Number,
-  updatedAt: Schema.Number
-});
+  updatedAt: Schema.Number,
+})
 
 export const FollowUpSchema = Schema.Struct({
   id: Schema.String,
@@ -52,8 +69,8 @@ export const FollowUpSchema = Schema.Struct({
   output: nullable(Schema.String),
   error: nullable(Schema.String),
   createdBy: author,
-  createdAt: Schema.Number
-});
+  createdAt: Schema.Number,
+})
 
 export const NotificationSchema = Schema.Struct({
   id: Schema.String,
@@ -63,8 +80,8 @@ export const NotificationSchema = Schema.Struct({
   taskId: nullable(Schema.String),
   conversationId: nullable(Schema.String),
   createdAt: Schema.Number,
-  readAt: nullable(Schema.Number)
-});
+  readAt: nullable(Schema.Number),
+})
 
 export const RoutineSchema = Schema.Struct({
   id: Schema.String,
@@ -77,8 +94,8 @@ export const RoutineSchema = Schema.Struct({
   nextExpectedAt: nullable(Schema.Number),
   lastMissedAt: nullable(Schema.Number),
   createdAt: Schema.Number,
-  updatedAt: Schema.Number
-});
+  updatedAt: Schema.Number,
+})
 
 export const RoutineRunSchema = Schema.Struct({
   id: Schema.String,
@@ -89,8 +106,8 @@ export const RoutineRunSchema = Schema.Struct({
   startedAt: Schema.Number,
   finishedAt: nullable(Schema.Number),
   output: nullable(Schema.String),
-  error: nullable(Schema.String)
-});
+  error: nullable(Schema.String),
+})
 
 export const LibraryDocumentSchema = Schema.Struct({
   id: Schema.String,
@@ -98,20 +115,24 @@ export const LibraryDocumentSchema = Schema.Struct({
   mimeType: Schema.String,
   size: Schema.Number,
   sha256: Schema.String,
-  status: Schema.Union([Schema.Literal("processing"), Schema.Literal("ready"), Schema.Literal("failed")]),
+  status: Schema.Union([
+    Schema.Literal('processing'),
+    Schema.Literal('ready'),
+    Schema.Literal('failed'),
+  ]),
   error: nullable(Schema.String),
   preview: Schema.String,
   chunkCount: Schema.Number,
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
-  folderId: nullable(Schema.String)
-});
+  folderId: nullable(Schema.String),
+})
 
 export const StoredLibraryDocumentSchema = Schema.Struct({
   ...LibraryDocumentSchema.fields,
   bytes: Schema.Uint8Array,
-  extractedText: Schema.String
-});
+  extractedText: Schema.String,
+})
 
 export const LibraryFolderSchema = Schema.Struct({
   id: Schema.String,
@@ -119,8 +140,8 @@ export const LibraryFolderSchema = Schema.Struct({
   parentId: nullable(Schema.String),
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
-  itemCount: Schema.Number
-});
+  itemCount: Schema.Number,
+})
 
 export const LibrarySearchResultSchema = Schema.Struct({
   chunkId: Schema.String,
@@ -128,8 +149,8 @@ export const LibrarySearchResultSchema = Schema.Struct({
   filename: Schema.String,
   page: nullable(Schema.Number),
   text: Schema.String,
-  score: Schema.Number
-});
+  score: Schema.Number,
+})
 
 export const LibrarySearchRowSchema = Schema.Struct({
   chunkId: Schema.String,
@@ -137,16 +158,16 @@ export const LibrarySearchRowSchema = Schema.Struct({
   filename: Schema.String,
   page: nullable(Schema.Number),
   text: Schema.String,
-  score: Schema.Number
-});
+  score: Schema.Number,
+})
 
-export const decodeConversation = Schema.decodeUnknownSync(ConversationSchema);
-export const decodeTaskRow = Schema.decodeUnknownSync(TaskRowSchema);
-export const decodeFollowUp = Schema.decodeUnknownSync(FollowUpSchema);
-export const decodeNotification = Schema.decodeUnknownSync(NotificationSchema);
-export const decodeRoutine = Schema.decodeUnknownSync(RoutineSchema);
-export const decodeRoutineRun = Schema.decodeUnknownSync(RoutineRunSchema);
-export const decodeLibraryDocument = Schema.decodeUnknownSync(LibraryDocumentSchema);
-export const decodeStoredLibraryDocument = Schema.decodeUnknownSync(StoredLibraryDocumentSchema);
-export const decodeLibraryFolder = Schema.decodeUnknownSync(LibraryFolderSchema);
-export const decodeLibrarySearchResult = Schema.decodeUnknownSync(LibrarySearchResultSchema);
+export const decodeConversation = Schema.decodeUnknownSync(ConversationSchema)
+export const decodeTaskRow = Schema.decodeUnknownSync(TaskRowSchema)
+export const decodeFollowUp = Schema.decodeUnknownSync(FollowUpSchema)
+export const decodeNotification = Schema.decodeUnknownSync(NotificationSchema)
+export const decodeRoutine = Schema.decodeUnknownSync(RoutineSchema)
+export const decodeRoutineRun = Schema.decodeUnknownSync(RoutineRunSchema)
+export const decodeLibraryDocument = Schema.decodeUnknownSync(LibraryDocumentSchema)
+export const decodeStoredLibraryDocument = Schema.decodeUnknownSync(StoredLibraryDocumentSchema)
+export const decodeLibraryFolder = Schema.decodeUnknownSync(LibraryFolderSchema)
+export const decodeLibrarySearchResult = Schema.decodeUnknownSync(LibrarySearchResultSchema)

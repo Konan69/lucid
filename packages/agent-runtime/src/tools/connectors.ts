@@ -1,52 +1,59 @@
-import { defineTool, type ToolDefinition } from "@flue/runtime";
-import type { BoundConnectorTool, ConnectorToolParameters } from "@vivid/connectors";
-import { gmailTools, calendarTools, driveTools, getConnectorStatus } from "@vivid/connectors";
-import { Effect, Schema } from "effect";
-import * as v from "valibot";
+import { defineTool, type ToolDefinition } from '@flue/runtime'
+import type { BoundConnectorTool, ConnectorToolParameters } from '@vivid/connectors'
+import { gmailTools, calendarTools, driveTools, getConnectorStatus } from '@vivid/connectors'
+import { Effect, Schema } from 'effect'
+import * as v from 'valibot'
 
-const decodeConnectorToolInput = Schema.decodeUnknownEffect(Schema.Json);
+const decodeConnectorToolInput = Schema.decodeUnknownEffect(Schema.Json)
 
 export const suggestConnectorTool = defineTool({
-  name: "suggest_connector",
-  description: "Offer a connector in this conversation when it is needed for the user's request. Shows an inline card with your reason and a Connect button; it does not authorize access. Only suggest the service needed now. Returns its actual status. If connected, use its tools instead of asking to connect again; otherwise wait for the user to authorize and continue.",
+  name: 'suggest_connector',
+  description:
+    "Offer a connector in this conversation when it is needed for the user's request. Shows an inline card with your reason and a Connect button; it does not authorize access. Only suggest the service needed now. Returns its actual status. If connected, use its tools instead of asking to connect again; otherwise wait for the user to authorize and continue.",
   input: v.object({
-    connector: v.picklist(["gmail", "calendar", "drive"]),
+    connector: v.picklist(['gmail', 'calendar', 'drive']),
     reason: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(400)),
   }),
   async run({ data }) {
-    return { output: { kind: "connector-request", ...data, status: await getConnectorStatus(data.connector) } };
-  }
-});
+    return {
+      output: {
+        kind: 'connector-request',
+        ...data,
+        status: await getConnectorStatus(data.connector),
+      },
+    }
+  },
+})
 
 type PrimitiveToolSchema =
   | v.StringSchema<undefined>
   | v.NumberSchema<undefined>
-  | v.BooleanSchema<undefined>;
-type ToolFieldSchema = PrimitiveToolSchema | v.OptionalSchema<PrimitiveToolSchema, undefined>;
+  | v.BooleanSchema<undefined>
+type ToolFieldSchema = PrimitiveToolSchema | v.OptionalSchema<PrimitiveToolSchema, undefined>
 
-function toValibotType(type: "string" | "number" | "integer" | "boolean"): PrimitiveToolSchema {
+function toValibotType(type: 'string' | 'number' | 'integer' | 'boolean'): PrimitiveToolSchema {
   switch (type) {
-    case "string":
-      return v.string();
-    case "number":
-    case "integer":
-      return v.number();
-    case "boolean":
-      return v.boolean();
+    case 'string':
+      return v.string()
+    case 'number':
+    case 'integer':
+      return v.number()
+    case 'boolean':
+      return v.boolean()
   }
-  return type;
+  return type
 }
 
 function buildInputSchema(parameters: ConnectorToolParameters) {
-  const required = parameters.required ?? [];
-  const entries: Record<string, ToolFieldSchema> = {};
+  const required = parameters.required ?? []
+  const entries: Record<string, ToolFieldSchema> = {}
 
   for (const [key, prop] of Object.entries(parameters.properties)) {
-    const base = toValibotType(prop.type);
-    entries[key] = required.includes(key) ? base : v.optional(base);
+    const base = toValibotType(prop.type)
+    entries[key] = required.includes(key) ? base : v.optional(base)
   }
 
-  return v.looseObject(entries);
+  return v.looseObject(entries)
 }
 
 function wrapConnectorTool(tool: BoundConnectorTool): ToolDefinition {
@@ -59,27 +66,27 @@ function wrapConnectorTool(tool: BoundConnectorTool): ToolDefinition {
       // oxlint-disable-next-line vivid/no-runpromise-in-library
       const program = decodeConnectorToolInput(context.data).pipe(
         Effect.flatMap((input) => tool.execute(input)),
-      );
-      const output = await Effect.runPromise(program);
-      return { output };
+      )
+      const output = await Effect.runPromise(program)
+      return { output }
     },
-  });
+  })
 }
 
 export function gmailConnectorTools() {
-  const tools = gmailTools();
-  if (tools.length === 0) return [];
-  return tools.map((tool) => wrapConnectorTool(tool));
+  const tools = gmailTools()
+  if (tools.length === 0) return []
+  return tools.map((tool) => wrapConnectorTool(tool))
 }
 
 export function calendarConnectorTools() {
-  const tools = calendarTools();
-  if (tools.length === 0) return [];
-  return tools.map((tool) => wrapConnectorTool(tool));
+  const tools = calendarTools()
+  if (tools.length === 0) return []
+  return tools.map((tool) => wrapConnectorTool(tool))
 }
 
 export function driveConnectorTools() {
-  const tools = driveTools();
-  if (tools.length === 0) return [];
-  return tools.map((tool) => wrapConnectorTool(tool));
+  const tools = driveTools()
+  if (tools.length === 0) return []
+  return tools.map((tool) => wrapConnectorTool(tool))
 }

@@ -32,27 +32,27 @@ The component-definition directory turns `no-restyle`, `no-arbitrary-values`, an
 
 Counts were measured against the current web source without modifying components. Warning values are ceilings; lower them when findings disappear.
 
-| Rule | Level | Baseline |
-| --- | --- | ---: |
-| `shadcn/no-restyle` | error | 0 |
-| `shadcn/no-raw-colors` | warn | 32 |
-| `shadcn/no-arbitrary-values` | warn | 51 |
-| `shadcn/no-inline-styles` | warn | 27 |
-| `shadcn/no-unknown-classes` | warn | 3 |
-| `shadcn/require-static-classes` | error | 0 |
-| `tailwindcss/no-duplicate-classes` | error | 0 |
-| `tailwindcss/no-conflicting-classes` | warn | 6 |
-| `tailwindcss/no-deprecated-classes` | error | 0 |
-| `tailwindcss/no-unnecessary-whitespace` | error | 0 |
-| `tailwindcss/no-dark-without-light` | error | 0 |
-| `tailwindcss/no-contradicting-variants` | error | 0 |
-| `tailwindcss/enforce-canonical` | warn | 3 |
-| `tailwindcss/enforce-sort-order` | warn | 60 |
-| `tailwindcss/enforce-shorthand` | warn | 10 |
-| `tailwindcss/enforce-consistent-important-position` | error | 0 |
-| `tailwindcss/enforce-negative-arbitrary-values` | error | 0 |
-| `tailwindcss/enforce-consistent-variable-syntax` | error | 0 |
-| `tailwindcss/consistent-variant-order` | error | 0 |
+| Rule                                                | Level | Baseline |
+| --------------------------------------------------- | ----- | -------: |
+| `shadcn/no-restyle`                                 | error |        0 |
+| `shadcn/no-raw-colors`                              | warn  |       32 |
+| `shadcn/no-arbitrary-values`                        | warn  |       51 |
+| `shadcn/no-inline-styles`                           | warn  |       27 |
+| `shadcn/no-unknown-classes`                         | warn  |        3 |
+| `shadcn/require-static-classes`                     | error |        0 |
+| `tailwindcss/no-duplicate-classes`                  | error |        0 |
+| `tailwindcss/no-conflicting-classes`                | warn  |        6 |
+| `tailwindcss/no-deprecated-classes`                 | error |        0 |
+| `tailwindcss/no-unnecessary-whitespace`             | error |        0 |
+| `tailwindcss/no-dark-without-light`                 | error |        0 |
+| `tailwindcss/no-contradicting-variants`             | error |        0 |
+| `tailwindcss/enforce-canonical`                     | warn  |        3 |
+| `tailwindcss/enforce-sort-order`                    | warn  |       60 |
+| `tailwindcss/enforce-shorthand`                     | warn  |       10 |
+| `tailwindcss/enforce-consistent-important-position` | error |        0 |
+| `tailwindcss/enforce-negative-arbitrary-values`     | error |        0 |
+| `tailwindcss/enforce-consistent-variable-syntax`    | error |        0 |
+| `tailwindcss/consistent-variant-order`              | error |        0 |
 
 ## Brand marks keep literal colours
 

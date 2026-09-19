@@ -5,35 +5,35 @@ directional product target, not a claim that Vivid and Grok Bot are equivalent.
 
 ## Available now
 
-| Capability | State | Notes |
-| --- | --- | --- |
-| Named AI teammate | Working | Vivid is the persistent product identity. |
-| Live conversation | Working | The web app streams real Flue responses from GLM 5.3 Flash through OpenRouter. |
-| Rich responses | Working | Assistant output renders safe Markdown with GFM lists, tables, links, blockquotes, and code. |
-| Durable thread history | Working | Each product thread ID maps to a Flue conversation stored in local SQLite. |
-| Send while working | Working | Flue admits new user messages while a response is active and processes them in order. |
-| Stop a response | Working | The composer can abort the active response. |
-| Connection recovery | Working | The conversation exposes loading, retry, and error states. |
-| Conversation list and creation | Working locally | The sidebar creates/selects real durable Flue conversations; their title index is stored alongside Flue state in SQLite. |
-| Scheduled routines | Working locally | SQLite stores definitions and run history; a Node cron trigger dispatches durable schedule signals into Flue with pause, test-run, edit, and delete controls. |
-| Document Library and RAG | Working locally | Real nested folders and PDF/Markdown/text uploads are stored in SQLite; FTS5 retrieval is exposed to Vivid as a read-only tool with filename/page citations. |
-| Tasks and follow-ups | Working locally | Vivid creates and updates tasks from conversation; scheduled follow-ups wake it into the task's conversation; overdue work is chased once automatically; in-app notifications and the Today screen surface it. See [Tasks and follow-ups](15-tasks-and-follow-ups.md). |
-| Response provenance | Working | Model, timing, usage, and tool-call count are attached to agent responses. |
-| Protected browser-to-runtime path | Working locally | Vite proxies the runtime API and adds the bearer token outside the browser bundle. Production needs an equivalent server-side gateway. |
+| Capability                        | State           | Notes                                                                                                                                                                                                                                                                  |
+| --------------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Named AI teammate                 | Working         | Vivid is the persistent product identity.                                                                                                                                                                                                                              |
+| Live conversation                 | Working         | The web app streams real Flue responses from GLM 5.3 Flash through OpenRouter.                                                                                                                                                                                         |
+| Rich responses                    | Working         | Assistant output renders safe Markdown with GFM lists, tables, links, blockquotes, and code.                                                                                                                                                                           |
+| Durable thread history            | Working         | Each product thread ID maps to a Flue conversation stored in local SQLite.                                                                                                                                                                                             |
+| Send while working                | Working         | Flue admits new user messages while a response is active and processes them in order.                                                                                                                                                                                  |
+| Stop a response                   | Working         | The composer can abort the active response.                                                                                                                                                                                                                            |
+| Connection recovery               | Working         | The conversation exposes loading, retry, and error states.                                                                                                                                                                                                             |
+| Conversation list and creation    | Working locally | The sidebar creates/selects real durable Flue conversations; their title index is stored alongside Flue state in SQLite.                                                                                                                                               |
+| Scheduled routines                | Working locally | SQLite stores definitions and run history; a Node cron trigger dispatches durable schedule signals into Flue with pause, test-run, edit, and delete controls.                                                                                                          |
+| Document Library and RAG          | Working locally | Real nested folders and PDF/Markdown/text uploads are stored in SQLite; FTS5 retrieval is exposed to Vivid as a read-only tool with filename/page citations.                                                                                                           |
+| Tasks and follow-ups              | Working locally | Vivid creates and updates tasks from conversation; scheduled follow-ups wake it into the task's conversation; overdue work is chased once automatically; in-app notifications and the Today screen surface it. See [Tasks and follow-ups](15-tasks-and-follow-ups.md). |
+| Response provenance               | Working         | Model, timing, usage, and tool-call count are attached to agent responses.                                                                                                                                                                                             |
+| Protected browser-to-runtime path | Working locally | Vite proxies the runtime API and adds the bearer token outside the browser bundle. Production needs an equivalent server-side gateway.                                                                                                                                 |
 
 ## Visible but not implemented
 
 These surfaces are product fixtures. They demonstrate the intended experience but are not runtime
 contracts and should not be mistaken for finished backend behavior.
 
-| Capability | Current state | Backend work needed |
-| --- | --- | --- |
-| Thread lifecycle | Working locally | Creation, navigation, rename, archive/restore, and delete use the SQLite-backed product index; user ownership remains outside the demo. |
-| Work log | Working locally | The active conversation derives requests, responses, model/timing/usage metadata, failures, and tool calls from its real Flue transcript. |
-| Computer panel | Fixture data | A separately supplied execution boundary and artifact model are still required. |
-| Tool-call presentation | Partial | Library retrieval is mounted; broader tools, policies, approvals, and results are not. |
-| Chat attachments | Control only | Library upload works, but chat message parts do not yet ingest attachments. |
-| People, companies, and projects | Product fixtures | CRUD APIs, authorization, persistence, and search. |
+| Capability                      | Current state    | Backend work needed                                                                                                                       |
+| ------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Thread lifecycle                | Working locally  | Creation, navigation, rename, archive/restore, and delete use the SQLite-backed product index; user ownership remains outside the demo.   |
+| Work log                        | Working locally  | The active conversation derives requests, responses, model/timing/usage metadata, failures, and tool calls from its real Flue transcript. |
+| Computer panel                  | Fixture data     | A separately supplied execution boundary and artifact model are still required.                                                           |
+| Tool-call presentation          | Partial          | Library retrieval is mounted; broader tools, policies, approvals, and results are not.                                                    |
+| Chat attachments                | Control only     | Library upload works, but chat message parts do not yet ingest attachments.                                                               |
+| People, companies, and projects | Product fixtures | CRUD APIs, authorization, persistence, and search.                                                                                        |
 
 ## Grok Bot product parity map
 
@@ -41,18 +41,18 @@ The comparison uses xAI's current first-party descriptions of Grok Bot: a persis
 cloud computer, connectors, approvals, reusable skills, scheduled or event-driven routines, and
 multi-bot collaboration.
 
-| Grok Bot capability | Vivid today | Target boundary |
-| --- | --- | --- |
-| Persistent conversation and background state | Partial | SQLite conversation history works; durable jobs and cross-thread memory do not. |
-| Browser, terminal, and filesystem computer | UI fixture | Proprietary execution subsystem, supplied separately. |
-| Connectors and MCP services | Not implemented | Proprietary connector layer, supplied separately. |
-| Approval before sensitive actions | Not implemented | Policy and approval protocol spanning product backend and runtime. |
-| Reusable skills | Research only | Versioned skill definitions, mounting, permissions, and product management. |
-| Scheduled and event-triggered routines | Partial | Cron routines and run history work locally; provider events, catch-up, retry policy, notifications, and production scheduler ownership remain. |
-| Multiple agents collaborating in parallel | Not implemented | Delegation protocol, shared context, ownership, and activity presentation. |
-| Files, links, images, and richer input | Partial | Library PDF/text ingestion works; chat attachments, links, images, OCR, and persisted generated artifacts remain. |
-| Activity transcript and action visibility | UI fixture | Normalized runtime events and durable work log. |
-| Sharing and organization controls | Product model only | Authentication, roles, tenancy, audit, and sharing APIs. |
+| Grok Bot capability                          | Vivid today        | Target boundary                                                                                                                                |
+| -------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Persistent conversation and background state | Partial            | SQLite conversation history works; durable jobs and cross-thread memory do not.                                                                |
+| Browser, terminal, and filesystem computer   | UI fixture         | Proprietary execution subsystem, supplied separately.                                                                                          |
+| Connectors and MCP services                  | Not implemented    | Proprietary connector layer, supplied separately.                                                                                              |
+| Approval before sensitive actions            | Not implemented    | Policy and approval protocol spanning product backend and runtime.                                                                             |
+| Reusable skills                              | Research only      | Versioned skill definitions, mounting, permissions, and product management.                                                                    |
+| Scheduled and event-triggered routines       | Partial            | Cron routines and run history work locally; provider events, catch-up, retry policy, notifications, and production scheduler ownership remain. |
+| Multiple agents collaborating in parallel    | Not implemented    | Delegation protocol, shared context, ownership, and activity presentation.                                                                     |
+| Files, links, images, and richer input       | Partial            | Library PDF/text ingestion works; chat attachments, links, images, OCR, and persisted generated artifacts remain.                              |
+| Activity transcript and action visibility    | UI fixture         | Normalized runtime events and durable work log.                                                                                                |
+| Sharing and organization controls            | Product model only | Authentication, roles, tenancy, audit, and sharing APIs.                                                                                       |
 
 ## Recommended initial build order
 

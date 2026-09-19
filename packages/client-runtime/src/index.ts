@@ -1,7 +1,9 @@
-import { RuntimeErrorResponse } from "@vivid/contracts"
-import { Effect, Schema } from "effect"
+import { RuntimeErrorResponse } from '@vivid/contracts'
+import { Effect, Schema } from 'effect'
 
-const decodeRuntimeErrorText = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeErrorResponse))
+const decodeRuntimeErrorText = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(RuntimeErrorResponse),
+)
 
 /** Minimal transport request understood by the schema client. */
 export interface TransportRequest {
@@ -55,44 +57,73 @@ class FetchTransport implements ClientTransport {
 }
 
 /** Turns a Fetch-compatible function into the transport authority used by the client. */
-export const fetchTransport = (fetcher: typeof fetch): ClientTransport => new FetchTransport(fetcher)
+export const fetchTransport = (fetcher: typeof fetch): ClientTransport =>
+  new FetchTransport(fetcher)
 
 /** Invalid local client configuration. */
-export class InvalidServerAddress extends Schema.TaggedError<InvalidServerAddress>()("InvalidServerAddress", {
-  message: Schema.String,
-}, { title: "Invalid server address" }) {}
+export class InvalidServerAddress extends Schema.TaggedError<InvalidServerAddress>()(
+  'InvalidServerAddress',
+  {
+    message: Schema.String,
+  },
+  { title: 'Invalid server address' },
+) {}
 
 /** A request value could not be encoded by its declared wire schema. */
-export class RequestEncodingFailed extends Schema.TaggedError<RequestEncodingFailed>()("RequestEncodingFailed", {
-  message: Schema.String,
-}, { title: "Request encoding failed" }) {}
+export class RequestEncodingFailed extends Schema.TaggedError<RequestEncodingFailed>()(
+  'RequestEncodingFailed',
+  {
+    message: Schema.String,
+  },
+  { title: 'Request encoding failed' },
+) {}
 
 /** The transport failed before an HTTP response was available. */
-export class TransportFailed extends Schema.TaggedError<TransportFailed>()("TransportFailed", {
-  message: Schema.String,
-}, { title: "Transport failed" }) {}
+export class TransportFailed extends Schema.TaggedError<TransportFailed>()(
+  'TransportFailed',
+  {
+    message: Schema.String,
+  },
+  { title: 'Transport failed' },
+) {}
 
 /** The server rejected a valid request. */
-export class RequestRejected extends Schema.TaggedError<RequestRejected>()("RequestRejected", {
-  status: Schema.Number,
-  message: Schema.String,
-}, { title: "Request rejected" }) {}
+export class RequestRejected extends Schema.TaggedError<RequestRejected>()(
+  'RequestRejected',
+  {
+    status: Schema.Number,
+    message: Schema.String,
+  },
+  { title: 'Request rejected' },
+) {}
 
 /** The requested resource does not exist. */
-export class ResourceNotFound extends Schema.TaggedError<ResourceNotFound>()("ResourceNotFound", {
-  message: Schema.String,
-}, { title: "Resource not found" }) {}
+export class ResourceNotFound extends Schema.TaggedError<ResourceNotFound>()(
+  'ResourceNotFound',
+  {
+    message: Schema.String,
+  },
+  { title: 'Resource not found' },
+) {}
 
 /** The server failed while handling a valid request. */
-export class ServerFailed extends Schema.TaggedError<ServerFailed>()("ServerFailed", {
-  status: Schema.Number,
-  message: Schema.String,
-}, { title: "Server failed" }) {}
+export class ServerFailed extends Schema.TaggedError<ServerFailed>()(
+  'ServerFailed',
+  {
+    status: Schema.Number,
+    message: Schema.String,
+  },
+  { title: 'Server failed' },
+) {}
 
 /** A successful response did not match its declared wire schema. */
-export class ResponseDecodingFailed extends Schema.TaggedError<ResponseDecodingFailed>()("ResponseDecodingFailed", {
-  message: Schema.String,
-}, { title: "Response decoding failed" }) {}
+export class ResponseDecodingFailed extends Schema.TaggedError<ResponseDecodingFailed>()(
+  'ResponseDecodingFailed',
+  {
+    message: Schema.String,
+  },
+  { title: 'Response decoding failed' },
+) {}
 
 /** Every typed failure exposed by the transport-neutral client. */
 export const ClientFailure = Schema.Union([
@@ -134,7 +165,7 @@ export interface SchemaClient {
     responseSchema: Schema.Codec<Response, ResponseEncoded>,
     path: string,
     body: Body,
-    options?: Omit<RequestOptions, "multipart">,
+    options?: Omit<RequestOptions, 'multipart'>,
   ) => Effect.Effect<Response, ClientFailure>
 }
 
@@ -142,39 +173,41 @@ export interface SchemaClient {
 export const normalizeServerUrl = (value: string): string => {
   const candidate = value.trim()
   if (!URL.canParse(candidate)) {
-    throw new InvalidServerAddress({ message: "Use a valid Vivid server address." })
+    throw new InvalidServerAddress({ message: 'Use a valid Vivid server address.' })
   }
   const url = new URL(candidate)
   if (
-    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
     url.username.length > 0 ||
     url.password.length > 0 ||
     url.search.length > 0 ||
     url.hash.length > 0
   ) {
     throw new InvalidServerAddress({
-      message: "Use an http or https server address without credentials or query parameters.",
+      message: 'Use an http or https server address without credentials or query parameters.',
     })
   }
-  return url.toString().replace(/\/+$/, "")
+  return url.toString().replace(/\/+$/, '')
 }
 
 /** Reads a server-owned error envelope while retaining a useful status fallback. */
-const readFailureMessage = Effect.fn("SchemaClient.readFailureMessage")(function*(response: TransportResponse) {
+const readFailureMessage = Effect.fn('SchemaClient.readFailureMessage')(function* (
+  response: TransportResponse,
+) {
   const payload = yield* Effect.tryPromise(() => response.readText()).pipe(Effect.option)
-  if (payload._tag === "None") {
+  if (payload._tag === 'None') {
     return `Vivid returned status ${response.status}.`
   }
-  const envelope = yield* decodeRuntimeErrorText(payload.value).pipe(
-    Effect.option,
-  )
-  return envelope._tag === "Some"
+  const envelope = yield* decodeRuntimeErrorText(payload.value).pipe(Effect.option)
+  return envelope._tag === 'Some'
     ? envelope.value.error
     : `Vivid returned status ${response.status}.`
 })
 
 /** Maps status families to failures that callers can handle independently. */
-const failResponse = Effect.fn("SchemaClient.failResponse")(function*(response: TransportResponse) {
+const failResponse = Effect.fn('SchemaClient.failResponse')(function* (
+  response: TransportResponse,
+) {
   const message = yield* readFailureMessage(response)
   if (response.status === 404) {
     return yield* Effect.fail(new ResourceNotFound({ message }))
@@ -193,9 +226,8 @@ class SchemaClientImplementation implements SchemaClient {
   constructor(private readonly options: ClientOptions) {
     this.baseUrl = normalizeServerUrl(options.baseUrl)
     this.timeoutMs = options.timeoutMs ?? 30_000
-    this.authorizationHeaders = options.token && options.token.length > 0
-      ? { authorization: `Bearer ${options.token}` }
-      : {}
+    this.authorizationHeaders =
+      options.token && options.token.length > 0 ? { authorization: `Bearer ${options.token}` } : {}
   }
 
   /** Decodes one response after the transport returns it. */
@@ -206,24 +238,24 @@ class SchemaClientImplementation implements SchemaClient {
     encodedBody?: string,
   ): Effect.Effect<Response, ClientFailure> {
     const { authorizationHeaders, baseUrl, options, timeoutMs } = this
-    return Effect.fn("SchemaClient.execute")(function*() {
+    return Effect.fn('SchemaClient.execute')(function* () {
       const body = requestOptions.multipart ?? encodedBody
-      const contentHeaders = encodedBody === undefined
-        ? authorizationHeaders
-        : { ...authorizationHeaders, "content-type": "application/json" }
+      const contentHeaders =
+        encodedBody === undefined
+          ? authorizationHeaders
+          : { ...authorizationHeaders, 'content-type': 'application/json' }
       const headers = { ...contentHeaders, ...requestOptions.headers }
       const requestWithoutBody: TransportRequest = {
         url: `${baseUrl}${path}`,
-        method: requestOptions.method ?? "GET",
+        method: requestOptions.method ?? 'GET',
         headers,
         signal: AbortSignal.timeout(timeoutMs),
       }
-      const transportRequest: TransportRequest = body === undefined
-        ? requestWithoutBody
-        : { ...requestWithoutBody, body }
-      const response = yield* Effect.tryPromise(() => options.transport.request(transportRequest)).pipe(
-        Effect.mapError((cause) => new TransportFailed({ message: cause.message })),
-      )
+      const transportRequest: TransportRequest =
+        body === undefined ? requestWithoutBody : { ...requestWithoutBody, body }
+      const response = yield* Effect.tryPromise(() =>
+        options.transport.request(transportRequest),
+      ).pipe(Effect.mapError((cause) => new TransportFailed({ message: cause.message })))
       if (!response.ok) {
         return yield* failResponse(response)
       }
@@ -233,7 +265,9 @@ class SchemaClientImplementation implements SchemaClient {
         )
       }
       const payload = yield* Effect.tryPromise(() => response.readText()).pipe(
-        Effect.mapError(() => new ResponseDecodingFailed({ message: "Vivid returned an unreadable response." })),
+        Effect.mapError(
+          () => new ResponseDecodingFailed({ message: 'Vivid returned an unreadable response.' }),
+        ),
       )
       return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(responseSchema))(payload).pipe(
         Effect.mapError((error) => new ResponseDecodingFailed({ message: error.message })),
@@ -256,7 +290,7 @@ class SchemaClientImplementation implements SchemaClient {
     responseSchema: Schema.Codec<Response, ResponseEncoded>,
     path: string,
     body: Body,
-    options: Omit<RequestOptions, "multipart"> = {},
+    options: Omit<RequestOptions, 'multipart'> = {},
   ): Effect.Effect<Response, ClientFailure> {
     return Schema.encodeEffect(bodySchema)(body).pipe(
       Effect.mapError((error) => new RequestEncodingFailed({ message: error.message })),
@@ -264,8 +298,8 @@ class SchemaClientImplementation implements SchemaClient {
       Effect.flatMap((encoded) => this.execute(responseSchema, path, options, encoded)),
     )
   }
-
 }
 
 /** Constructs a client whose only untyped seam is its injected transport response. */
-export const createSchemaClient = (options: ClientOptions): SchemaClient => new SchemaClientImplementation(options)
+export const createSchemaClient = (options: ClientOptions): SchemaClient =>
+  new SchemaClientImplementation(options)

@@ -193,20 +193,21 @@ const noDirectProcessEnv = rule(
   'Do not read process.env directly in production code. Decode configuration once through Effect Config.',
   (report, context) => {
     const firstStatement = context.sourceCode.ast.body[0]
-    const isAgentModule = firstStatement?.type === 'ExpressionStatement' && firstStatement.directive === 'use agent'
+    const isAgentModule =
+      firstStatement?.type === 'ExpressionStatement' && firstStatement.directive === 'use agent'
     return {
-    MemberExpression(node) {
-      if (
-        !isAgentModule &&
-        node.object?.type === 'MemberExpression' &&
-        node.object.object?.type === 'Identifier' &&
-        node.object.object.name === 'process' &&
-        propertyName(node.object) === 'env'
-      ) {
-        report(node)
-      }
-    },
-  }
+      MemberExpression(node) {
+        if (
+          !isAgentModule &&
+          node.object?.type === 'MemberExpression' &&
+          node.object.object?.type === 'Identifier' &&
+          node.object.object.name === 'process' &&
+          propertyName(node.object) === 'env'
+        ) {
+          report(node)
+        }
+      },
+    }
   },
 )
 
@@ -333,7 +334,12 @@ const noRunPromiseInLibrary = rule(
   (report, context) => ({
     CallExpression(node) {
       if (!isMemberCall(node, 'Effect', effectTerminalOperations)) return
-      if (/(?:^|[/\\])(?:(?:main|server|cli|app)\.[cm]?[jt]s|drizzle\.config\.ts|alchemy\.run\.ts)$/u.test(context.filename)) return
+      if (
+        /(?:^|[/\\])(?:(?:main|server|cli|app)\.[cm]?[jt]s|drizzle\.config\.ts|alchemy\.run\.ts)$/u.test(
+          context.filename,
+        )
+      )
+        return
       let parent = node.parent
       while (parent !== undefined && parent !== null) {
         if (
@@ -344,7 +350,8 @@ const noRunPromiseInLibrary = rule(
           parent.parent.parent?.type === 'CallExpression' &&
           parent.parent.parent.callee?.type === 'Identifier' &&
           parent.parent.parent.callee.name === 'defineTool'
-        ) return
+        )
+          return
         parent = parent.parent
       }
       report(node)
@@ -374,7 +381,8 @@ const noEffectRuntimeApi = memberCallRule({
 
 const noUnnecessaryDie = memberCallRule({
   description: 'Preserve expected failures in the typed error channel.',
-  message: 'Do not terminate an expected failure with orDie/orDieWith. Keep it typed until the owning boundary.',
+  message:
+    'Do not terminate an expected failure with orDie/orDieWith. Keep it typed until the owning boundary.',
   owner: 'Effect',
   methods: new Set(['orDie', 'orDieWith']),
 })
@@ -384,7 +392,8 @@ const noEffectCatchRawError = rule(
   'Do not construct or fail with a raw Error inside Effect recovery. Return a schema-backed tagged error.',
   (report, context) => ({
     CallExpression(node) {
-      if (!isMemberCall(node, 'Effect', new Set(['catch', 'catchAll', 'catchTag', 'catchTags']))) return
+      if (!isMemberCall(node, 'Effect', new Set(['catch', 'catchAll', 'catchTag', 'catchTags'])))
+        return
       const callback = node.arguments.at(-1)
       if (!isFunction(callback)) return
       if (sourceText(context, callback).includes('new Error(')) report(callback)
@@ -404,7 +413,8 @@ const noDirectSchemaSafeParse = rule(
   'Do not invent a safeParse facade over Effect Schema. Use Schema.decodeUnknownEffect/Option/Either at the boundary.',
   (report) => ({
     CallExpression(node) {
-      if (node.callee?.type !== 'MemberExpression' || propertyName(node.callee) !== 'safeParse') return
+      if (node.callee?.type !== 'MemberExpression' || propertyName(node.callee) !== 'safeParse')
+        return
       const owner = node.callee.object
       if (owner?.type === 'Identifier' && /Schema$/u.test(owner.name)) report(node)
     },
@@ -508,7 +518,8 @@ const noManualEffectRuntimeInTests = {
   meta: {
     type: 'problem',
     docs: {
-      description: 'Use @effect/vitest instead of manually running Effect programs in Vitest files.',
+      description:
+        'Use @effect/vitest instead of manually running Effect programs in Vitest files.',
     },
     schema: [],
   },
@@ -617,7 +628,8 @@ const hasSchemaTitle = (node) => {
         current.callee?.type === 'MemberExpression' &&
         new Set(['annotate', 'annotations']).has(propertyName(current.callee))
       if (annotationCall && objectProperty(current.arguments[0], 'title') !== undefined) return true
-      if (current.arguments.some((argument) => objectProperty(argument, 'title') !== undefined)) return true
+      if (current.arguments.some((argument) => objectProperty(argument, 'title') !== undefined))
+        return true
     }
     current = current.type === 'CallExpression' ? current.callee : current.object
   }
@@ -629,7 +641,10 @@ const requireSchemaClassIdentifier = rule(
   'Schema classes require a stable string identifier so diagnostics and encoded contracts remain traceable.',
   (report) => ({
     ClassDeclaration(node) {
-      if (schemaFactoryCall(node.superClass) !== undefined && !hasSchemaIdentifier(node.superClass)) {
+      if (
+        schemaFactoryCall(node.superClass) !== undefined &&
+        !hasSchemaIdentifier(node.superClass)
+      ) {
         report(node.superClass)
       }
     },
@@ -694,7 +709,8 @@ const noAsyncCallbackApi = rule(
     CallExpression(node) {
       if (node.callee?.type !== 'MemberExpression') return
       if (!syncCallbackMethods.has(propertyName(node.callee))) return
-      if (node.arguments.some((argument) => isFunction(argument) && argument.async === true)) report(node)
+      if (node.arguments.some((argument) => isFunction(argument) && argument.async === true))
+        report(node)
     },
   }),
 )
@@ -728,7 +744,8 @@ const noHostTransformValidation = rule(
         node.arguments.length === 0 &&
         node.callee?.type === 'MemberExpression' &&
         propertyName(node.callee) === 'json'
-      ) report(node)
+      )
+        report(node)
     },
   }),
 )
@@ -756,7 +773,8 @@ const effectNoServiceInsideMethod = rule(
 
 const effectNoContextGenericService = memberCallRule({
   description: 'Use Context.Service for named capability seams.',
-  message: 'Do not create a generic Context tag for an application service. Define a named Context.Service contract.',
+  message:
+    'Do not create a generic Context tag for an application service. Define a named Context.Service contract.',
   owner: 'Context',
   methods: new Set(['GenericTag', 'Tag']),
 })
@@ -793,7 +811,8 @@ const effectRequireEffectFn = rule(
   'Service operations that return Effect must use a named Effect.fn for traceability.',
   (report, context) => ({
     Property(node) {
-      if (!isFunction(node.value) || node.value.async === true || node.value.returnType == null) return
+      if (!isFunction(node.value) || node.value.async === true || node.value.returnType == null)
+        return
       const returnType = sourceText(context, node.value.returnType)
       if (
         /\bEffect(?:\.|<)/u.test(returnType) &&
@@ -889,7 +908,11 @@ const reactNoUselessMemo = rule(
       const callback = node.arguments[0]
       if (!isFunction(callback)) return
       const body = callback.body
-      if (body?.type === 'Identifier' || body?.type === 'Literal' || body?.type === 'StringLiteral') {
+      if (
+        body?.type === 'Identifier' ||
+        body?.type === 'Literal' ||
+        body?.type === 'StringLiteral'
+      ) {
         report(node)
       }
     },

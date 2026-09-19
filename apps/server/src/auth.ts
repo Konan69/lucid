@@ -1,11 +1,11 @@
-import { BetterAuth } from "@alchemy.run/better-auth"
-import { Postgres } from "@alchemy.run/better-auth/Postgres"
-import { bearer, deviceAuthorization, organization } from "better-auth/plugins"
-import { RuntimeContext } from "alchemy"
-import * as Effect from "effect/Effect"
-import * as Redacted from "effect/Redacted"
-import { DatabaseFailure } from "@vivid/contracts"
-import { ServerConfig, serverConfigLayer } from "./config.ts"
+import { BetterAuth } from '@alchemy.run/better-auth'
+import { Postgres } from '@alchemy.run/better-auth/Postgres'
+import { bearer, deviceAuthorization, organization } from 'better-auth/plugins'
+import { RuntimeContext } from 'alchemy'
+import * as Effect from 'effect/Effect'
+import * as Redacted from 'effect/Redacted'
+import { DatabaseFailure } from '@vivid/contracts'
+import { ServerConfig, serverConfigLayer } from './config.ts'
 
 /**
  * Better Auth's internal identity model is mapped once at this boundary:
@@ -13,43 +13,43 @@ import { ServerConfig, serverConfigLayer } from "./config.ts"
  * membership, and invitation tables. Public contracts and routes use only
  * the Vivid glossary.
  */
-const makeOptions = (config: ServerConfig["Service"]) => {
+const makeOptions = (config: ServerConfig['Service']) => {
   const options = {
-    id: "VividAuth",
+    id: 'VividAuth',
     migrate: false,
-    basePath: "/api/auth",
+    basePath: '/api/auth',
     baseURL: config.PUBLIC_URL.href,
     secret: config.AUTH_SECRET,
     trustedOrigins: [config.PUBLIC_URL.href],
     emailAndPassword: {
       enabled: true,
-      autoSignIn: true
+      autoSignIn: true,
     },
     account: {
       accountLinking: {
         enabled: true,
-        trustedProviders: ["google"]
-      }
+        trustedProviders: ['google'],
+      },
     },
     plugins: [
       bearer(),
-      deviceAuthorization({ verificationUri: "/device" }),
+      deviceAuthorization({ verificationUri: '/device' }),
       organization({
-        creatorRole: "owner",
+        creatorRole: 'owner',
         schema: {
-          organization: { modelName: "company" },
+          organization: { modelName: 'company' },
           member: {
-            modelName: "membership",
-            fields: { organizationId: "companyId", userId: "userId" }
+            modelName: 'membership',
+            fields: { organizationId: 'companyId', userId: 'userId' },
           },
           invitation: {
-            modelName: "invitation",
-            fields: { organizationId: "companyId" }
+            modelName: 'invitation',
+            fields: { organizationId: 'companyId' },
           },
-          session: { fields: { activeOrganizationId: "activeCompanyId" } }
-        }
-      })
-    ]
+          session: { fields: { activeOrganizationId: 'activeCompanyId' } },
+        },
+      }),
+    ],
   }
   if (config.GOOGLE_CLIENT_ID === undefined || config.GOOGLE_CLIENT_SECRET === undefined) {
     return options
@@ -60,23 +60,23 @@ const makeOptions = (config: ServerConfig["Service"]) => {
       google: {
         clientId: config.GOOGLE_CLIENT_ID,
         clientSecret: Redacted.value(config.GOOGLE_CLIENT_SECRET),
-        redirectURI: config.GOOGLE_REDIRECT_URI?.href
-      }
-    }
+        redirectURI: config.GOOGLE_REDIRECT_URI?.href,
+      },
+    },
   }
 }
 
 /** Closes Better Auth's type-only Alchemy context requirement for this static Node runtime. */
 export const localAuthRuntimeLayer = RuntimeContext.phantom
 
-export const authEffect = Effect.gen(function*() {
+export const authEffect = Effect.gen(function* () {
   const config = yield* ServerConfig
   return yield* BetterAuth(makeOptions(config)).pipe(
-    Effect.provide(Postgres(config.DATABASE_URL, { migrate: false }))
+    Effect.provide(Postgres(config.DATABASE_URL, { migrate: false })),
   )
 }).pipe(
   Effect.provide(serverConfigLayer),
-  Effect.mapError(() => new DatabaseFailure({ message: "Server configuration is invalid" }))
+  Effect.mapError(() => new DatabaseFailure({ message: 'Server configuration is invalid' })),
 )
 
 export type AuthInstance = Effect.Success<typeof authEffect>

@@ -24,7 +24,9 @@ const PackageManagerDocument = Schema.Struct({
   engines: Schema.Struct({ pnpm: Schema.String }),
   pnpm: Schema.OptionFromOptionalKey(Schema.Unknown),
 })
-const decodePackageManagerDocument = Schema.decodeUnknownSync(Schema.fromJsonString(PackageManagerDocument))
+const decodePackageManagerDocument = Schema.decodeUnknownSync(
+  Schema.fromJsonString(PackageManagerDocument),
+)
 
 /** Find lockfiles that would let another package manager resolve a different dependency graph. */
 export function findForeignLockfiles(root) {
@@ -50,7 +52,9 @@ export function findForeignLockfiles(root) {
 /** Enforce the repository's package-manager pin and pnpm 12 configuration ownership. */
 export function validatePackageManager(root) {
   const errors = []
-  const manifest = decodePackageManagerDocument(NodeFS.readFileSync(NodePath.join(root, 'package.json'), 'utf8'))
+  const manifest = decodePackageManagerDocument(
+    NodeFS.readFileSync(NodePath.join(root, 'package.json'), 'utf8'),
+  )
   const workspace = NodeFS.readFileSync(NodePath.join(root, 'pnpm-workspace.yaml'), 'utf8')
 
   if (manifest.packageManager !== `pnpm@${packageManagerVersion}`) {
@@ -85,7 +89,8 @@ export function validatePackageManager(root) {
 }
 
 const isMain =
-  process.argv[1] !== undefined && NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)
+  process.argv[1] !== undefined &&
+  NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)
 if (isMain) {
   const root = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), '..')
   const errors = validatePackageManager(root)

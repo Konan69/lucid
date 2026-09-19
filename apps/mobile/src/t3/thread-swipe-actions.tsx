@@ -1,7 +1,7 @@
-import { SymbolView } from "./SymbolView";
-import { ControlPillMenu } from "./ControlPillMenu";
-import type { MenuAction } from "@react-native-menu/menu";
-import * as Haptics from "expo-haptics";
+import { SymbolView } from './SymbolView'
+import { ControlPillMenu } from './ControlPillMenu'
+import type { MenuAction } from '@react-native-menu/menu'
+import * as Haptics from 'expo-haptics'
 import {
   createContext,
   use,
@@ -12,18 +12,18 @@ import {
   useState,
   type ComponentProps,
   type ReactNode,
-} from "react";
+} from 'react'
 import type {
   ColorValue,
   NativeScrollEvent,
   NativeSyntheticEvent,
   StyleProp,
   ViewStyle,
-} from "react-native";
-import { Pressable, View } from "react-native";
+} from 'react-native'
+import { Pressable, View } from 'react-native'
 import ReanimatedSwipeable, {
   type SwipeableMethods,
-} from "react-native-gesture-handler/ReanimatedSwipeable";
+} from 'react-native-gesture-handler/ReanimatedSwipeable'
 import Animated, {
   Extrapolation,
   interpolate,
@@ -31,82 +31,80 @@ import Animated, {
   type SharedValue,
   useAnimatedReaction,
   useAnimatedStyle,
-} from "react-native-reanimated";
+} from 'react-native-reanimated'
 
-import { Label as Text } from "../components/ui";
-import { useTheme } from "../theme";
+import { Label as Text } from '../components/ui'
+import { useTheme } from '../theme'
 
 // Wide enough for the longest action label ("Unarchive").
-const ACTION_ITEM_WIDTH = 58;
-const ACTION_CIRCLE_SIZE = 36;
-const ACTION_ICON_SIZE = 15;
-const COMPACT_ACTION_CIRCLE_SIZE = 28;
-const COMPACT_ACTION_ICON_SIZE = 13;
+const ACTION_ITEM_WIDTH = 58
+const ACTION_CIRCLE_SIZE = 36
+const ACTION_ICON_SIZE = 15
+const COMPACT_ACTION_CIRCLE_SIZE = 28
+const COMPACT_ACTION_ICON_SIZE = 13
 
 function closeSwipeable(ref: { readonly current: SwipeableMethods | null }) {
-  const current = ref.current;
-  if (current !== null) current.close();
+  const current = ref.current
+  if (current !== null) current.close()
 }
 
 function resetSwipeable(ref: { readonly current: SwipeableMethods | null }) {
-  const current = ref.current;
-  if (current !== null) current.reset();
+  const current = ref.current
+  if (current !== null) current.reset()
 }
 
-export const THREAD_SWIPE_ACTIONS_WIDTH = ACTION_ITEM_WIDTH * 2;
+export const THREAD_SWIPE_ACTIONS_WIDTH = ACTION_ITEM_WIDTH * 2
 export const THREAD_SWIPE_SPRING = {
   damping: 26,
   mass: 0.7,
   overshootClamping: true,
   stiffness: 330,
-};
+}
 
 interface ThreadSwipeAction {
-  readonly accessibilityLabel: string;
-  readonly icon: ComponentProps<typeof SymbolView>["name"];
-  readonly label: string;
+  readonly accessibilityLabel: string
+  readonly icon: ComponentProps<typeof SymbolView>['name']
+  readonly label: string
   readonly menu?: {
-    readonly actions: MenuAction[];
-    readonly onPressAction: NonNullable<
-      ComponentProps<typeof ControlPillMenu>["onPressAction"]
-    >;
-    readonly title?: string;
-  };
-  readonly onPress: () => void;
+    readonly actions: MenuAction[]
+    readonly onPressAction: NonNullable<ComponentProps<typeof ControlPillMenu>['onPressAction']>
+    readonly title?: string
+  }
+  readonly onPress: () => void
 }
 
 interface ThreadSwipeSecondaryAction extends ThreadSwipeAction {
-  readonly backgroundColor: string;
+  readonly backgroundColor: string
 }
 
 function swipeActionsWidth(hasSecondaryAction: boolean) {
-  return hasSecondaryAction ? THREAD_SWIPE_ACTIONS_WIDTH : ACTION_ITEM_WIDTH;
+  return hasSecondaryAction ? THREAD_SWIPE_ACTIONS_WIDTH : ACTION_ITEM_WIDTH
 }
 
 /** `undefined` keeps the v1 Delete default; `null` means one action only. */
 function resolveSecondaryAction(input: {
-  readonly close: () => void;
-  readonly onDelete: () => void;
-  readonly secondaryAction?: ThreadSwipeAction | null;
-  readonly threadTitle: string;
-  readonly dangerColor: string;
-  readonly actionColor: string;
+  readonly close: () => void
+  readonly onDelete: () => void
+  readonly secondaryAction?: ThreadSwipeAction | null
+  readonly threadTitle: string
+  readonly dangerColor: string
+  readonly actionColor: string
 }): ThreadSwipeSecondaryAction | null {
-  if (input.secondaryAction === null) return null;
+  if (input.secondaryAction === null) return null
   if (input.secondaryAction === undefined) {
     return {
       accessibilityLabel: `Delete ${input.threadTitle}`,
       backgroundColor: input.dangerColor,
-      icon: "trash",
-      label: "Delete",
+      icon: 'trash',
+      label: 'Delete',
       onPress: () => {
-        input.close();
-        input.onDelete();
+        input.close()
+        input.onDelete()
       },
-    };
+    }
   }
-  const action = input.secondaryAction;
-  const menu = action.menu;
+  const action = input.secondaryAction
+  const menu = action.menu
   return {
     ...action,
     backgroundColor: input.actionColor,
@@ -116,15 +114,15 @@ function resolveSecondaryAction(input: {
         : {
             ...menu,
             onPressAction: (event) => {
-              input.close();
-              menu.onPressAction(event);
+              input.close()
+              menu.onPressAction(event)
             },
           },
     onPress: () => {
-      input.close();
-      action.onPress();
+      input.close()
+      action.onPress()
     },
-  };
+  }
 }
 
 /**
@@ -134,60 +132,60 @@ function resolveSecondaryAction(input: {
  * scroll start — peak frame pressure. As a context value only the
  * ThreadSwipeable consumers re-render.
  */
-const SwipeableScrollGateContext = createContext(true);
+const SwipeableScrollGateContext = createContext(true)
 
 export function SwipeableScrollGateProvider(props: {
-  readonly enabled: boolean;
-  readonly children: ReactNode;
+  readonly enabled: boolean
+  readonly children: ReactNode
 }) {
   return (
     <SwipeableScrollGateContext.Provider value={props.enabled}>
       {props.children}
     </SwipeableScrollGateContext.Provider>
-  );
+  )
 }
 
 /**
  * T3's scroll gate disables swipes while the list is dragging or decelerating.
  * T3's Gesture Handler patch also rejects vertically dominant initial pans.
  */
-export function useSwipeableScrollGate(options: {
-  readonly onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
-  readonly onScrollBeginDrag?: (
-    event: NativeSyntheticEvent<NativeScrollEvent>,
-  ) => void;
-} = {}) {
-  const [gateActive, setGateActive] = useState(false);
-  const gateActiveRef = useRef(false);
-  const draggingRef = useRef(false);
-  const dragStartYRef = useRef(0);
-  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const externalOnScroll = options.onScroll;
-  const externalOnScrollBeginDrag = options.onScrollBeginDrag;
+export function useSwipeableScrollGate(
+  options: {
+    readonly onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void
+    readonly onScrollBeginDrag?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void
+  } = {},
+) {
+  const [gateActive, setGateActive] = useState(false)
+  const gateActiveRef = useRef(false)
+  const draggingRef = useRef(false)
+  const dragStartYRef = useRef(0)
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const externalOnScroll = options.onScroll
+  const externalOnScrollBeginDrag = options.onScrollBeginDrag
 
   const update = useCallback((next: boolean) => {
     if (gateActiveRef.current !== next) {
-      gateActiveRef.current = next;
-      setGateActive(next);
+      gateActiveRef.current = next
+      setGateActive(next)
     }
-  }, []);
+  }, [])
   const clearSettle = useCallback(() => {
     if (settleTimerRef.current !== null) {
-      clearTimeout(settleTimerRef.current);
-      settleTimerRef.current = null;
+      clearTimeout(settleTimerRef.current)
+      settleTimerRef.current = null
     }
-  }, []);
-  useEffect(() => clearSettle, [clearSettle]);
+  }, [])
+  useEffect(() => clearSettle, [clearSettle])
 
   const onScrollBeginDrag = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      draggingRef.current = true;
-      dragStartYRef.current = event.nativeEvent.contentOffset.y;
-      clearSettle();
-      if (externalOnScrollBeginDrag !== undefined) externalOnScrollBeginDrag(event);
+      draggingRef.current = true
+      dragStartYRef.current = event.nativeEvent.contentOffset.y
+      clearSettle()
+      if (externalOnScrollBeginDrag !== undefined) externalOnScrollBeginDrag(event)
     },
     [clearSettle, externalOnScrollBeginDrag],
-  );
+  )
   const onScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       // Only vertical movement during a user drag arms the gate — a purely
@@ -198,25 +196,25 @@ export function useSwipeableScrollGate(options: {
         !gateActiveRef.current &&
         Math.abs(event.nativeEvent.contentOffset.y - dragStartYRef.current) > 4
       ) {
-        update(true);
+        update(true)
       }
-      if (externalOnScroll !== undefined) externalOnScroll(event);
+      if (externalOnScroll !== undefined) externalOnScroll(event)
     },
     [externalOnScroll, update],
-  );
+  )
   const onScrollEndDrag = useCallback(() => {
-    draggingRef.current = false;
-    clearSettle();
+    draggingRef.current = false
+    clearSettle()
     // If momentum follows, onMomentumScrollBegin cancels this and the gate
     // stays armed until the deceleration finishes.
-    settleTimerRef.current = setTimeout(() => update(false), 160);
-  }, [clearSettle, update]);
+    settleTimerRef.current = setTimeout(() => update(false), 160)
+  }, [clearSettle, update])
   const onMomentumScrollBegin = useCallback(() => {
-    clearSettle();
-  }, [clearSettle]);
+    clearSettle()
+  }, [clearSettle])
   const onMomentumScrollEnd = useCallback(() => {
-    update(false);
-  }, [update]);
+    update(false)
+  }, [update])
 
   return {
     swipeEnabled: !gateActive,
@@ -227,118 +225,109 @@ export function useSwipeableScrollGate(options: {
       onMomentumScrollBegin,
       onMomentumScrollEnd,
     },
-  };
+  }
 }
 
 export function ThreadSwipeable(props: {
-  readonly backgroundColor: ColorValue;
-  readonly children: (close: () => void) => ReactNode;
+  readonly backgroundColor: ColorValue
+  readonly children: (close: () => void) => ReactNode
   /** Uses action visuals that fit inside compact 44pt rows. The press target
    * still spans the row's full height and width. */
-  readonly compactActions?: boolean;
-  readonly containerStyle?: StyleProp<ViewStyle>;
+  readonly compactActions?: boolean
+  readonly containerStyle?: StyleProp<ViewStyle>
   /** Disables NEW swipe activations (e.g. while the list scrolls). */
-  readonly enabled?: boolean;
-  readonly enableTrackpadSwipe?: boolean;
+  readonly enabled?: boolean
+  readonly enableTrackpadSwipe?: boolean
   /**
    * What a full swipe commits. Omitted keeps the v1 Delete behavior only when
    * the built-in Delete secondary action is in use; custom or absent
    * secondary actions default to the advertised primary action.
    */
-  readonly fullSwipeAction?: "delete" | "primary";
-  readonly fullSwipeWidth: number;
-  readonly onDelete: () => void;
-  readonly onSwipeableClose?: (methods: SwipeableMethods) => void;
-  readonly onSwipeableWillOpen?: (methods: SwipeableMethods) => void;
-  readonly primaryAction: ThreadSwipeAction;
+  readonly fullSwipeAction?: 'delete' | 'primary'
+  readonly fullSwipeWidth: number
+  readonly onDelete: () => void
+  readonly onSwipeableClose?: (methods: SwipeableMethods) => void
+  readonly onSwipeableWillOpen?: (methods: SwipeableMethods) => void
+  readonly primaryAction: ThreadSwipeAction
   /**
    * Omitted keeps the v1 destructive Delete action. Explicit null opts out of
    * a secondary action entirely so a gated Snooze can never fall back to an
    * unadvertised Delete.
    */
-  readonly secondaryAction?: ThreadSwipeAction | null;
+  readonly secondaryAction?: ThreadSwipeAction | null
   /**
    * Identity of the content being wrapped. When a recycled list reuses this
    * component for a different item, the swipeable snaps back to closed so an
    * open/mid-drag state can't leak onto another row.
    */
-  readonly resetKey?: string;
+  readonly resetKey?: string
   readonly simultaneousWithExternalGesture?: ComponentProps<
     typeof ReanimatedSwipeable
-  >["simultaneousWithExternalGesture"];
-  readonly threadTitle: string;
+  >['simultaneousWithExternalGesture']
+  readonly threadTitle: string
 }) {
-  const { colors: c } = useTheme();
-  const swipeableRef = useRef<SwipeableMethods | null>(null);
-  const fullSwipeArmedRef = useRef(false);
-  const hasSecondaryAction = props.secondaryAction !== null;
-  const actionsWidth = swipeActionsWidth(hasSecondaryAction);
-  const fullSwipeThreshold = Math.max(
-    actionsWidth + 44,
-    props.fullSwipeWidth * 0.58,
-  );
+  const { colors: c } = useTheme()
+  const swipeableRef = useRef<SwipeableMethods | null>(null)
+  const fullSwipeArmedRef = useRef(false)
+  const hasSecondaryAction = props.secondaryAction !== null
+  const actionsWidth = swipeActionsWidth(hasSecondaryAction)
+  const fullSwipeThreshold = Math.max(actionsWidth + 44, props.fullSwipeWidth * 0.58)
   const fullSwipeAction =
-    props.fullSwipeAction ??
-    (props.secondaryAction === undefined ? "delete" : "primary");
-  const close = useEffectEvent(() => closeSwipeable(swipeableRef));
-  const gateEnabled = use(SwipeableScrollGateContext);
-  const resetKey = props.resetKey;
+    props.fullSwipeAction ?? (props.secondaryAction === undefined ? 'delete' : 'primary')
+  const close = useEffectEvent(() => closeSwipeable(swipeableRef))
+  const gateEnabled = use(SwipeableScrollGateContext)
+  const resetKey = props.resetKey
   useEffect(() => {
     if (resetKey === undefined) {
-      return;
+      return
     }
-    fullSwipeArmedRef.current = false;
-    resetSwipeable(swipeableRef);
-  }, [resetKey]);
+    fullSwipeArmedRef.current = false
+    resetSwipeable(swipeableRef)
+  }, [resetKey])
   const handleFullSwipeArmedChange = useCallback((armed: boolean) => {
     if (armed && !fullSwipeArmedRef.current) {
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
     }
-    fullSwipeArmedRef.current = armed;
-  }, []);
+    fullSwipeArmedRef.current = armed
+  }, [])
 
   return (
     <ReanimatedSwipeable
       ref={swipeableRef}
       animationOptions={THREAD_SWIPE_SPRING}
       childrenContainerStyle={{ backgroundColor: props.backgroundColor }}
-      containerStyle={[
-        { backgroundColor: props.backgroundColor },
-        props.containerStyle,
-      ]}
+      containerStyle={[{ backgroundColor: props.backgroundColor }, props.containerStyle]}
       dragOffsetFromRightEdge={8}
       enabled={props.enabled !== false && gateEnabled}
       enableTrackpadTwoFingerGesture={props.enableTrackpadSwipe ?? true}
       failOffsetY={[-10, 10]}
       friction={1}
       onSwipeableClose={() => {
-        fullSwipeArmedRef.current = false;
+        fullSwipeArmedRef.current = false
         if (swipeableRef.current) {
-          if (props.onSwipeableClose !== undefined)
-            props.onSwipeableClose(swipeableRef.current);
+          if (props.onSwipeableClose !== undefined) props.onSwipeableClose(swipeableRef.current)
         }
       }}
       onSwipeableOpenStartDrag={() => {
         if (swipeableRef.current) {
           if (props.onSwipeableWillOpen !== undefined)
-            props.onSwipeableWillOpen(swipeableRef.current);
+            props.onSwipeableWillOpen(swipeableRef.current)
         }
       }}
       onSwipeableWillOpen={() => {
-        const methods = swipeableRef.current;
+        const methods = swipeableRef.current
         if (!methods) {
-          return;
+          return
         }
 
-        if (props.onSwipeableWillOpen !== undefined)
-          props.onSwipeableWillOpen(methods);
+        if (props.onSwipeableWillOpen !== undefined) props.onSwipeableWillOpen(methods)
         if (fullSwipeArmedRef.current) {
-          fullSwipeArmedRef.current = false;
-          methods.close();
-          if (fullSwipeAction === "primary") {
-            props.primaryAction.onPress();
+          fullSwipeArmedRef.current = false
+          methods.close()
+          if (fullSwipeAction === 'primary') {
+            props.primaryAction.onPress()
           } else {
-            props.onDelete();
+            props.onDelete()
           }
         }
       }}
@@ -354,12 +343,12 @@ export function ThreadSwipeable(props: {
           primaryAction={{
             ...props.primaryAction,
             onPress: () => {
-              methods.close();
-              props.primaryAction.onPress();
+              methods.close()
+              props.primaryAction.onPress()
             },
           }}
           secondaryAction={resolveSecondaryAction({
-            dangerColor: c["status-danger"],
+            dangerColor: c['status-danger'],
             actionColor: c.accent,
             close: () => methods.close(),
             onDelete: props.onDelete,
@@ -374,48 +363,39 @@ export function ThreadSwipeable(props: {
     >
       {props.children(close)}
     </ReanimatedSwipeable>
-  );
+  )
 }
 
 function SwipeActionButton(props: {
-  readonly accessibilityLabel: string;
-  readonly actionsWidth: number;
-  readonly backgroundColor: string;
-  readonly compact: boolean;
-  readonly entryRange: readonly [number, number];
-  readonly fullSwipeThreshold: number;
-  readonly icon: ComponentProps<typeof SymbolView>["name"];
-  readonly label: string;
-  readonly menu?: ThreadSwipeAction["menu"];
-  readonly onPress: () => void;
-  readonly stretchesOnFullSwipe: boolean;
-  readonly translation: SharedValue<number>;
+  readonly accessibilityLabel: string
+  readonly actionsWidth: number
+  readonly backgroundColor: string
+  readonly compact: boolean
+  readonly entryRange: readonly [number, number]
+  readonly fullSwipeThreshold: number
+  readonly icon: ComponentProps<typeof SymbolView>['name']
+  readonly label: string
+  readonly menu?: ThreadSwipeAction['menu']
+  readonly onPress: () => void
+  readonly stretchesOnFullSwipe: boolean
+  readonly translation: SharedValue<number>
 }) {
-  const { colors: c } = useTheme();
-  const circleSize = props.compact
-    ? COMPACT_ACTION_CIRCLE_SIZE
-    : ACTION_CIRCLE_SIZE;
-  const iconSize = props.compact ? COMPACT_ACTION_ICON_SIZE : ACTION_ICON_SIZE;
+  const { colors: c } = useTheme()
+  const circleSize = props.compact ? COMPACT_ACTION_CIRCLE_SIZE : ACTION_CIRCLE_SIZE
+  const iconSize = props.compact ? COMPACT_ACTION_ICON_SIZE : ACTION_ICON_SIZE
   const actionStyle = useAnimatedStyle(() => {
-    const reveal = Math.max(-props.translation.value, 0);
-    const entryProgress = interpolate(
-      reveal,
-      props.entryRange,
-      [0, 1],
-      Extrapolation.CLAMP,
-    );
-    const stretch = Math.max(reveal - props.actionsWidth, 0);
+    const reveal = Math.max(-props.translation.value, 0)
+    const entryProgress = interpolate(reveal, props.entryRange, [0, 1], Extrapolation.CLAMP)
+    const stretch = Math.max(reveal - props.actionsWidth, 0)
     const fullSwipeProgress = interpolate(
       reveal,
       [props.actionsWidth, props.fullSwipeThreshold + 20],
       [0, 1],
       Extrapolation.CLAMP,
-    );
+    )
 
     return {
-      opacity: props.stretchesOnFullSwipe
-        ? entryProgress
-        : entryProgress * (1 - fullSwipeProgress),
+      opacity: props.stretchesOnFullSwipe ? entryProgress : entryProgress * (1 - fullSwipeProgress),
       transform: [
         {
           translateX:
@@ -424,42 +404,38 @@ function SwipeActionButton(props: {
         },
         { scale: interpolate(entryProgress, [0, 1], [0.78, 1]) },
       ],
-    };
-  });
+    }
+  })
   const circleStyle = useAnimatedStyle(() => {
-    const reveal = Math.max(-props.translation.value, 0);
-    const stretch = props.stretchesOnFullSwipe
-      ? Math.max(reveal - props.actionsWidth, 0)
-      : 0;
+    const reveal = Math.max(-props.translation.value, 0)
+    const stretch = props.stretchesOnFullSwipe ? Math.max(reveal - props.actionsWidth, 0) : 0
 
     return {
       transform: [{ translateX: -stretch }],
       width: circleSize + stretch,
-    };
-  });
+    }
+  })
   const iconStyle = useAnimatedStyle(() => {
-    const reveal = Math.max(-props.translation.value, 0);
-    const stretch = props.stretchesOnFullSwipe
-      ? Math.max(reveal - props.actionsWidth, 0)
-      : 0;
+    const reveal = Math.max(-props.translation.value, 0)
+    const stretch = props.stretchesOnFullSwipe ? Math.max(reveal - props.actionsWidth, 0) : 0
     const armedProgress = interpolate(
       reveal,
       [props.fullSwipeThreshold, props.fullSwipeThreshold + 20],
       [0, 1],
       Extrapolation.CLAMP,
-    );
+    )
 
     return {
       transform: [{ translateX: -stretch * (0.5 + armedProgress * 0.5) }],
-    };
-  });
+    }
+  })
   const labelStyle = useAnimatedStyle(() => {
     if (!props.stretchesOnFullSwipe) {
-      return { opacity: 1 };
+      return { opacity: 1 }
     }
 
-    const reveal = Math.max(-props.translation.value, 0);
-    const stretch = Math.max(reveal - props.actionsWidth, 0);
+    const reveal = Math.max(-props.translation.value, 0)
+    const stretch = Math.max(reveal - props.actionsWidth, 0)
     return {
       opacity: interpolate(
         reveal,
@@ -468,8 +444,8 @@ function SwipeActionButton(props: {
         Extrapolation.CLAMP,
       ),
       transform: [{ translateX: -stretch * 0.5 }],
-    };
-  });
+    }
+  })
 
   const button = (
     <Pressable
@@ -477,11 +453,11 @@ function SwipeActionButton(props: {
       accessibilityRole="button"
       onPress={props.menu === undefined ? props.onPress : undefined}
       style={({ pressed }) => ({
-        alignItems: "center",
-        height: "100%",
-        justifyContent: "center",
+        alignItems: 'center',
+        height: '100%',
+        justifyContent: 'center',
         opacity: pressed ? 0.72 : 1,
-        width: "100%",
+        width: '100%',
       })}
     >
       <View style={{ height: circleSize, width: circleSize }}>
@@ -492,7 +468,7 @@ function SwipeActionButton(props: {
               borderRadius: 999,
               height: circleSize,
               left: 0,
-              position: "absolute",
+              position: 'absolute',
               top: 0,
             },
             circleStyle,
@@ -501,11 +477,11 @@ function SwipeActionButton(props: {
         <Animated.View
           style={[
             {
-              alignItems: "center",
+              alignItems: 'center',
               height: circleSize,
-              justifyContent: "center",
+              justifyContent: 'center',
               left: 0,
-              position: "absolute",
+              position: 'absolute',
               top: 0,
               width: circleSize,
             },
@@ -515,7 +491,7 @@ function SwipeActionButton(props: {
           <SymbolView
             name={props.icon}
             size={iconSize}
-            tintColor={c["ink-on-color"]}
+            tintColor={c['ink-on-color']}
             type="monochrome"
           />
         </Animated.View>
@@ -524,7 +500,7 @@ function SwipeActionButton(props: {
         style={[
           {
             height: 14,
-            justifyContent: "center",
+            justifyContent: 'center',
             paddingTop: props.compact ? 0 : 2,
           },
           labelStyle,
@@ -535,15 +511,15 @@ function SwipeActionButton(props: {
         </Text>
       </Animated.View>
     </Pressable>
-  );
+  )
 
   return (
     <Animated.View
       style={[
         {
-          alignItems: "center",
-          height: "100%",
-          justifyContent: "center",
+          alignItems: 'center',
+          height: '100%',
+          justifyContent: 'center',
           width: ACTION_ITEM_WIDTH,
           zIndex: props.stretchesOnFullSwipe ? 2 : 1,
         },
@@ -557,46 +533,45 @@ function SwipeActionButton(props: {
           actions={props.menu.actions}
           onPressAction={props.menu.onPressAction}
           title={props.menu.title}
-          style={{ height: "100%", width: "100%" }}
+          style={{ height: '100%', width: '100%' }}
         >
           {button}
         </ControlPillMenu>
       )}
     </Animated.View>
-  );
+  )
 }
 
 export function ThreadSwipeActions(props: {
-  readonly backgroundColor: ColorValue;
-  readonly compact: boolean;
-  readonly fullSwipeAction?: "delete" | "primary";
-  readonly fullSwipeThreshold: number;
-  readonly onFullSwipeArmedChange: (armed: boolean) => void;
-  readonly primaryAction: ThreadSwipeAction;
-  readonly secondaryAction: ThreadSwipeSecondaryAction | null;
-  readonly translation: SharedValue<number>;
+  readonly backgroundColor: ColorValue
+  readonly compact: boolean
+  readonly fullSwipeAction?: 'delete' | 'primary'
+  readonly fullSwipeThreshold: number
+  readonly onFullSwipeArmedChange: (armed: boolean) => void
+  readonly primaryAction: ThreadSwipeAction
+  readonly secondaryAction: ThreadSwipeSecondaryAction | null
+  readonly translation: SharedValue<number>
 }) {
-  const { colors: c } = useTheme();
-  const secondaryAction = props.secondaryAction;
-  const fullSwipeIsPrimary =
-    props.fullSwipeAction === "primary" || secondaryAction === null;
-  const actionsWidth = swipeActionsWidth(secondaryAction !== null);
+  const { colors: c } = useTheme()
+  const secondaryAction = props.secondaryAction
+  const fullSwipeIsPrimary = props.fullSwipeAction === 'primary' || secondaryAction === null
+  const actionsWidth = swipeActionsWidth(secondaryAction !== null)
   useAnimatedReaction(
     () => -props.translation.value >= props.fullSwipeThreshold,
     (armed, previous) => {
       if (armed !== previous) {
-        runOnJS(props.onFullSwipeArmedChange)(armed);
+        runOnJS(props.onFullSwipeArmedChange)(armed)
       }
     },
     [props.fullSwipeThreshold, props.onFullSwipeArmedChange],
-  );
+  )
 
   return (
     <View
       style={{
         backgroundColor: props.backgroundColor,
-        flexDirection: "row",
-        height: "100%",
+        flexDirection: 'row',
+        height: '100%',
         width: actionsWidth,
       }}
     >
@@ -634,5 +609,5 @@ export function ThreadSwipeActions(props: {
         />
       )}
     </View>
-  );
+  )
 }

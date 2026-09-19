@@ -8,12 +8,18 @@ import { migrationOwners, validateMigrationOwner, validateMigrations } from './m
 
 const assert = NodeAssert
 const test = NodeTest.default
-const repositoryRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), '..')
+const repositoryRoot = NodePath.resolve(
+  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
+  '..',
+)
 
 /** Both checked-in Drizzle owners retain a valid generated snapshot chain. */
 void test('validates every checked-in migration owner', () => {
   assert.deepEqual(migrationOwners, ['apps/server', 'packages/agent-runtime'])
-  assert.deepEqual(validateMigrations(repositoryRoot).flatMap((report) => report.errors), [])
+  assert.deepEqual(
+    validateMigrations(repositoryRoot).flatMap((report) => report.errors),
+    [],
+  )
 })
 
 /** A broken prevIds chain fails even when the JSON and SQL are otherwise valid. */
