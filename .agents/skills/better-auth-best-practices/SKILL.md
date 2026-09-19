@@ -9,21 +9,21 @@ description: Configure Better Auth server and client, set up database adapters, 
 
 ## Vivid override
 
-Vivid pins Better Auth `1.7.3` behind `@alchemy.run/better-auth`. Its validated variables are `AUTH_SECRET` and `PUBLIC_URL`, not Better Auth's default environment names. The combined auth and application schema lives in `apps/server/src/schema.ts`. Edit that schema, run `pnpm --filter @vivid/server db:generate`, review the generated SQL, then migrate. Never use `drizzle-kit push` for this repository.
+Vivid pins Better Auth `1.7.5` behind `@alchemy.run/better-auth`. Its validated variables are `AUTH_SECRET` and `PUBLIC_URL`, not Better Auth's default environment names. The combined auth and application schema lives in `apps/server/src/schema.ts`. Edit that schema, run `pnpm --filter @vivid/server db:generate`, review the generated SQL, then migrate. Never use `drizzle-kit push` for this repository.
 
 ---
 
 ## Setup Workflow
 
-1. Install: `npm install better-auth`
-2. Set env vars: `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL`
+1. Add the pinned dependency: `pnpm add better-auth@1.7.5`
+2. Set Vivid's validated `AUTH_SECRET` and `PUBLIC_URL` variables
 3. Create `auth.ts` with database + config
-4. Create route handler for your framework
-5. Run migrations:
-   - **Built-in adapter:** `npx @better-auth/cli@latest migrate`
-   - **Drizzle:** `npx @better-auth/cli@latest generate --output src/db/auth-schema.ts` then `npx drizzle-kit push` (dev) or `npx drizzle-kit generate && npx drizzle-kit migrate` (prod)
-   - **Prisma:** `npx @better-auth/cli@latest generate --output prisma/schema.prisma` then `npx prisma migrate dev`
-6. Verify: call `GET /api/auth/ok` — should return `{ status: "ok" }`
+4. Create the route handler for the owning framework
+5. Generate schema changes through the owning package:
+   - **Built-in adapter:** `pnpm exec better-auth migrate`
+   - **Vivid Drizzle:** edit `apps/server/src/schema.ts`, run `pnpm --filter @vivid/server db:generate`, review SQL, then run the migration
+   - **Prisma elsewhere:** `pnpm exec better-auth generate --output prisma/schema.prisma` then `pnpm exec prisma migrate dev`
+6. Verify: call `GET /api/auth/ok` — it should return `{ status: "ok" }`
 
 ---
 
@@ -39,9 +39,9 @@ Only define `baseURL`/`secret` in config if env vars are NOT set.
 CLI looks for `auth.ts` in: `./`, `./lib`, `./utils`, or under `./src`. Use `--config` for custom path.
 
 ### CLI Commands
-- `npx @better-auth/cli@latest migrate` - Apply schema (built-in adapter)
-- `npx @better-auth/cli@latest generate` - Generate schema for Prisma/Drizzle
-- `npx @better-auth/cli mcp --cursor` - Add MCP to AI tools
+- `pnpm exec better-auth migrate` - Apply schema with the installed built-in adapter
+- `pnpm exec better-auth generate` - Generate schema with the installed CLI
+- `pnpm exec better-auth mcp --cursor` - Add MCP to AI tools
 
 **Re-run after adding/changing plugins.**
 

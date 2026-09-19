@@ -2,9 +2,10 @@
   "name": "@vivid/workspace",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@10.33.2",
+  "packageManager": "pnpm@12.4.2",
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=24.0.0",
+    "pnpm": "12.4.2"
   },
   "scripts": {
     "prepare": "husky && effect-language-service patch",
@@ -19,10 +20,11 @@
     "audit:effect-boundaries": "node scripts/effect-boundary-audit.mjs enforce",
     "audit:effect-boundaries:report": "node scripts/effect-boundary-audit.mjs report",
     "check:migrations": "node scripts/migrations.mjs check",
+    "check:package-manager": "node scripts/package-manager.mjs",
     "check:versions": "node scripts/versions.mjs",
     "test:lint-rules": "node --test scripts/oxlint-plugin-vivid.test.mjs",
-    "test:tooling": "node --test scripts/versions.test.mjs scripts/effect-boundary-audit.test.mjs scripts/migrations.test.mjs scripts/oxlint-plugin-vivid.test.mjs",
-    "quality": "pnpm check:versions && pnpm audit:effect-boundaries && pnpm check:migrations && pnpm lint && pnpm format && pnpm typecheck && pnpm test:tooling && pnpm test",
+    "test:tooling": "node --test scripts/package-manager.test.mjs scripts/versions.test.mjs scripts/effect-boundary-audit.test.mjs scripts/migrations.test.mjs scripts/oxlint-plugin-vivid.test.mjs",
+    "quality": "pnpm check:package-manager && pnpm check:versions && pnpm audit:effect-boundaries && pnpm check:migrations && pnpm lint && pnpm format && pnpm typecheck && pnpm test:tooling && pnpm test",
     "db:up": "docker compose -f compose.dev.yaml up -d --wait",
     "db:down": "docker compose -f compose.dev.yaml down",
     "db:migrate": "pnpm --filter @vivid/server db:migrate && pnpm --filter @vivid/agent-runtime db:migrate && pnpm --filter @vivid/connectors db:migrate"
@@ -30,21 +32,14 @@
   "devDependencies": {
     "@effect/language-service": "0.87.2",
     "@oxlint/plugins": "1.81.0",
+    "@shadcn/lint": "0.1.1",
     "@types/node": "^24.0.0",
     "@typescript/native": "npm:typescript@7.0.2",
     "husky": "9.1.7",
     "oxfmt": "0.50.0",
     "oxlint": "1.81.0",
+    "oxlint-tailwindcss": "1.12.0",
     "turbo": "2.9.14",
     "typescript": "6.0.3"
-  },
-  "pnpm": {
-    "overrides": {
-      "@effect/platform-node": "4.0.0-rc.116",
-      "@effect/sql-pg": "4.0.0-rc.116",
-      "drizzle-kit": "1.0.0-rc.5-ab785fc",
-      "drizzle-orm": "1.0.0-rc.5-ab785fc",
-      "effect": "4.0.0-rc.116"
-    }
   }
 }

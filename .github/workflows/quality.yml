@@ -38,6 +38,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check package-manager policy
+        run: node scripts/package-manager.mjs
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
