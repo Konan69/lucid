@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type DragEvent, type FormEvent } from "react";
 import { cn } from "../ui/cn";
+import { emptyResponse, request, type ClientRequestFailed } from "../data/request";
 
 export type LibraryDocument = {
   id: string;
@@ -81,22 +82,34 @@ const DocumentResponseSchema = Schema.Struct({ document: LibraryDocumentSchema }
 const FolderResponseSchema = Schema.Struct({ folder: LibraryFolderSchema });
 const UploadResponseSchema = Schema.Struct({ document: LibraryDocumentSchema });
 const ErrorResponseSchema = Schema.Struct({ error: Schema.optionalKey(Schema.String) });
+const decodeLibraryListResponse = Schema.decodeUnknownSync(
+  Schema.fromJsonString(LibraryListResponseSchema),
+);
+const decodeFoldersResponse = Schema.decodeUnknownSync(
+  Schema.fromJsonString(FoldersResponseSchema),
+);
+const decodeSearchResponse = Schema.decodeUnknownSync(
+  Schema.fromJsonString(SearchResponseSchema),
+);
+const decodeDocumentResponse = Schema.decodeUnknownSync(
+  Schema.fromJsonString(DocumentResponseSchema),
+);
+const decodeFolderResponse = Schema.decodeUnknownSync(
+  Schema.fromJsonString(FolderResponseSchema),
+);
+const decodeUploadResponse = Schema.decodeUnknownOption(UploadResponseSchema);
+const decodeErrorResponse = Schema.decodeUnknownOption(ErrorResponseSchema);
+
+class LibraryActionFailed extends Schema.TaggedError<LibraryActionFailed>()(
+  "LibraryActionFailed",
+  { message: Schema.String, cause: Schema.Defect() },
+  { title: "Library action failed" },
+) {}
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-async function request<T>(path: string, schema: Schema.ConstraintDecoder<T>, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
-  if (!response.ok) {
-    const body = Schema.decodeUnknownOption(ErrorResponseSchema)(await response.json().catch(() => null));
-    const message = Option.isSome(body) ? body.value.error : undefined;
-    throw new Error(message ?? `Request failed (${response.status})`);
-  }
-  const payload = response.status === 204 ? undefined : await response.json();
-  return Schema.decodeUnknownSync(schema)(payload);
 }
 
 function buildTiles(documents: LibraryDocument[], folders: LibraryFolder[]): Tile[] {
@@ -120,7 +133,7 @@ function buildTiles(documents: LibraryDocument[], folders: LibraryFolder[]): Til
   ];
 }
 
-function uploadWithProgress(file: File, folderId: string | null, onProgress: (progress: number) => void): Effect.Effect<LibraryDocument, Error> {
+function uploadWithProgress(file: File, folderId: string | null, onProgress: (progress: number) => void): Effect.Effect<LibraryDocument, LibraryActionFailed> {
   return Effect.callback((resume) => {
     const form = new FormData();
     form.set("file", file);
@@ -131,16 +144,22 @@ function uploadWithProgress(file: File, folderId: string | null, onProgress: (pr
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
     };
-    xhr.onerror = () => resume(Effect.fail(new Error("Upload failed")));
+    xhr.onerror = () => resume(Effect.fail(new LibraryActionFailed({
+      message: "Upload failed",
+      cause: xhr.statusText,
+    })));
     xhr.onload = () => {
-      const body = Schema.decodeUnknownOption(UploadResponseSchema)(xhr.response);
+      const body = decodeUploadResponse(xhr.response);
       if (xhr.status >= 200 && xhr.status < 300 && Option.isSome(body)) {
         resume(Effect.succeed(body.value.document));
         return;
       }
-      const failure = Schema.decodeUnknownOption(ErrorResponseSchema)(xhr.response);
+      const failure = decodeErrorResponse(xhr.response);
       const message = Option.isSome(failure) ? failure.value.error : undefined;
-      resume(Effect.fail(new Error(message ?? `Upload failed (${xhr.status})`)));
+      resume(Effect.fail(new LibraryActionFailed({
+        message: message ?? `Upload failed (${xhr.status})`,
+        cause: xhr.response,
+      })));
     };
     xhr.send(form);
   });
@@ -166,20 +185,20 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
   const currentFolderId = currentFolder ? currentFolder.id : null;
 
   const load = useCallback(async () => {
-    try {
-      const path = currentFolderId ? `/api/library?folderId=${encodeURIComponent(currentFolderId)}` : "/api/library";
-      const [body, folderBody] = await Promise.all([
-        request(path, LibraryListResponseSchema),
-        request("/api/library/folders", FoldersResponseSchema),
-      ]);
-      setDocuments([...body.documents]);
-      setFolders([...body.folders]);
-      setAllFolders([...folderBody.folders]);
-      setSelected((current) => current ? body.documents.find((document) => document.id === current.id) ?? current : null);
-      setError(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not load the Library");
-    }
+    const path = currentFolderId ? `/api/library?folderId=${encodeURIComponent(currentFolderId)}` : "/api/library";
+    await Effect.runPromise(Effect.all([
+      request(path, decodeLibraryListResponse),
+      request("/api/library/folders", decodeFoldersResponse),
+    ]).pipe(Effect.match({
+      onFailure: (failure) => setError(failure.message),
+      onSuccess: ([body, folderBody]) => {
+        setDocuments([...body.documents]);
+        setFolders([...body.folders]);
+        setAllFolders([...folderBody.folders]);
+        setSelected((current) => current ? body.documents.find((document) => document.id === current.id) ?? current : null);
+        setError(null);
+      },
+    })));
   }, [currentFolderId]);
 
   useEffect(() => {
@@ -188,19 +207,22 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
 
     // Folder navigation hydrates from the Library runtime. Responses from a folder the person has
     // already left are ignored so they cannot replace the current folder's contents.
-    void Promise.all([
-      request(path, LibraryListResponseSchema),
-      request("/api/library/folders", FoldersResponseSchema),
-    ]).then(([body, folderBody]) => {
-      if (cancelled) return;
-      setDocuments([...body.documents]);
-      setFolders([...body.folders]);
-      setAllFolders([...folderBody.folders]);
-      setSelected((current) => current ? body.documents.find((document) => document.id === current.id) ?? current : null);
-      setError(null);
-    }).catch((cause: unknown) => {
-      if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load the Library");
-    });
+    void Effect.runPromise(Effect.all([
+      request(path, decodeLibraryListResponse),
+      request("/api/library/folders", decodeFoldersResponse),
+    ]).pipe(Effect.match({
+      onFailure: (failure) => {
+        if (!cancelled) setError(failure.message);
+      },
+      onSuccess: ([body, folderBody]) => {
+        if (cancelled) return;
+        setDocuments([...body.documents]);
+        setFolders([...body.folders]);
+        setAllFolders([...folderBody.folders]);
+        setSelected((current) => current ? body.documents.find((document) => document.id === current.id) ?? current : null);
+        setError(null);
+      },
+    })));
 
     return () => { cancelled = true; };
   }, [currentFolderId]);
@@ -211,13 +233,14 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
   }, [documents, load, uploads]);
 
   async function uploadOne(file: File, upload: UploadState) {
-    try {
-      await Effect.runPromise(uploadWithProgress(file, currentFolderId, (progress) => setUploads((current) => current.map((item) => item.id === upload.id ? { ...item, progress } : item))));
-      setUploads((current) => current.map((item) => item.id === upload.id ? { ...item, progress: 100, status: "indexing" } : item));
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "Upload failed";
-      setUploads((current) => current.map((item) => item.id === upload.id ? { ...item, status: "failed", error: message } : item));
-    }
+    await Effect.runPromise(uploadWithProgress(
+      file,
+      currentFolderId,
+      (progress) => setUploads((current) => current.map((item) => item.id === upload.id ? { ...item, progress } : item)),
+    ).pipe(Effect.match({
+      onFailure: (failure) => setUploads((current) => current.map((item) => item.id === upload.id ? { ...item, status: "failed", error: failure.message } : item)),
+      onSuccess: () => setUploads((current) => current.map((item) => item.id === upload.id ? { ...item, progress: 100, status: "indexing" } : item)),
+    })));
   }
 
   async function uploadFiles(files: File[]) {
@@ -238,48 +261,66 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
   async function search(event: FormEvent) {
     event.preventDefault();
     if (query.trim().length < 2) return;
-    try {
-      const body = await request("/api/library/search", SearchResponseSchema, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ query: query.trim(), limit: 8, folderId: currentFolderId }),
-      });
-      setResults([...body.results]);
-      setError(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Search failed");
-    }
+    await Effect.runPromise(request("/api/library/search", decodeSearchResponse, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: query.trim(), limit: 8, folderId: currentFolderId }),
+    }).pipe(Effect.match({
+      onFailure: (failure) => setError(failure.message),
+      onSuccess: (body) => {
+        setResults([...body.results]);
+        setError(null);
+      },
+    })));
   }
 
   async function removeDocument(document: LibraryDocument) {
     if (!window.confirm(`Delete “${document.name}” from the Library?`)) return;
-    try {
-      await request(`/api/library/${encodeURIComponent(document.id)}`, Schema.Void, { method: "DELETE" });
-      setSelected(null);
-      await load();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not delete the file");
-    }
+    const deleted = await Effect.runPromise(
+      request(`/api/library/${encodeURIComponent(document.id)}`, emptyResponse, {
+        method: "DELETE",
+      }).pipe(Effect.match({
+        onFailure: (failure) => {
+          setError(failure.message);
+          return false;
+        },
+        onSuccess: () => true,
+      })),
+    );
+    if (!deleted) return;
+    setSelected(null);
+    await load();
   }
 
   async function removeCurrentFolder() {
     if (!currentFolder || !window.confirm(`Delete the empty folder “${currentFolder.name}”?`)) return;
-    try {
-      await request(`/api/library/folders/${encodeURIComponent(currentFolder.id)}`, Schema.Void, { method: "DELETE" });
-      setFolderStack((current) => current.slice(0, -1));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not delete the folder");
-    }
+    const deleted = await Effect.runPromise(
+      request(`/api/library/folders/${encodeURIComponent(currentFolder.id)}`, emptyResponse, {
+        method: "DELETE",
+      }).pipe(Effect.match({
+        onFailure: (failure) => {
+          setError(failure.message);
+          return false;
+        },
+        onSuccess: () => true,
+      })),
+    );
+    if (deleted) setFolderStack((current) => current.slice(0, -1));
   }
 
   async function openSearchResult(result: SearchResult) {
-    try {
-      const body = await request(`/api/library/${encodeURIComponent(result.documentId)}`, DocumentResponseSchema);
-      setSelected(body.document);
-      setResults(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not open the file");
-    }
+    await Effect.runPromise(
+      request(
+        `/api/library/${encodeURIComponent(result.documentId)}`,
+        decodeDocumentResponse,
+      ).pipe(Effect.match({
+        onFailure: (failure) => setError(failure.message),
+        onSuccess: (body) => {
+          setSelected(body.document);
+          setResults(null);
+        },
+      })),
+    );
   }
 
   const tiles = buildTiles(documents, folders);
@@ -368,21 +409,53 @@ function LibraryDialog({ state, folders, currentFolderId, onClose, onSaved }: { 
     event.preventDefault();
     setPending(true);
     setError(null);
-    try {
-      if (state.kind === "new-folder") {
-        const body = await request("/api/library/folders", FolderResponseSchema, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, parentId: currentFolderId }) });
-        await onSaved({ folder: body.folder });
-      } else if (state.kind === "rename-folder" || state.kind === "move-folder") {
-        const body = await request(`/api/library/folders/${encodeURIComponent(state.folder.id)}`, FolderResponseSchema, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(state.kind === "rename-folder" ? { name } : { parentId: destination || null }) });
-        await onSaved({ folder: body.folder });
-      } else {
-        const body = await request(`/api/library/${encodeURIComponent(state.document.id)}`, DocumentResponseSchema, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(state.kind === "rename-file" ? { name } : { folderId: destination || null }) });
-        await onSaved({ document: body.document });
-      }
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not save changes");
-      setPending(false);
+    let operation: Effect.Effect<
+      { folder?: LibraryFolder; document?: LibraryDocument },
+      ClientRequestFailed
+    >;
+    if (state.kind === "new-folder") {
+      operation = request("/api/library/folders", decodeFolderResponse, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, parentId: currentFolderId }),
+      }).pipe(Effect.map((body) => ({ folder: body.folder })));
+    } else if (state.kind === "rename-folder" || state.kind === "move-folder") {
+      operation = request(
+        `/api/library/folders/${encodeURIComponent(state.folder.id)}`,
+        decodeFolderResponse,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(state.kind === "rename-folder" ? { name } : { parentId: destination || null }),
+        },
+      ).pipe(Effect.map((body) => ({ folder: body.folder })));
+    } else {
+      operation = request(
+        `/api/library/${encodeURIComponent(state.document.id)}`,
+        decodeDocumentResponse,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(state.kind === "rename-file" ? { name } : { folderId: destination || null }),
+        },
+      ).pipe(Effect.map((body) => ({ document: body.document })));
     }
+    await Effect.runPromise(operation.pipe(
+      Effect.flatMap((result) => Effect.tryPromise({
+        try: () => onSaved(result),
+        catch: (cause) => new LibraryActionFailed({
+          message: "Could not save changes",
+          cause,
+        }),
+      })),
+      Effect.match({
+        onFailure: (failure) => {
+          setError(failure.message);
+          setPending(false);
+        },
+        onSuccess: () => undefined,
+      }),
+    ));
   }
 
   const title = state.kind === "new-folder" ? "New folder" : state.kind === "rename-folder" ? "Rename folder" : state.kind === "move-folder" ? "Move folder" : state.kind === "rename-file" ? "Rename file" : "Move file";
