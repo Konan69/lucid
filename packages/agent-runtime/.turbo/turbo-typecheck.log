@@ -1,0 +1,4 @@
+
+> @vivid/agent-runtime@0.0.0 typecheck /home/kixey/agency/vivid/packages/agent-runtime
+> tsc --noEmit
+

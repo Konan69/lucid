@@ -1,0 +1,23 @@
+
+> @vivid/server@0.0.0 typecheck /home/kixey/agency/vivid/apps/server
+> tsc --noEmit
+
+src/api.ts(140,12): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/api.ts(154,12): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/api.ts(160,12): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/api.ts(222,39): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/api.ts(231,41): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/api.ts(248,41): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/api.ts(258,41): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/api.ts(264,16): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/api.ts(277,44): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/api.ts(285,44): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/api.ts(287,16): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/api.ts(291,38): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/api.ts(299,40): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/api.ts(319,37): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/config.ts(67,12): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/config.ts(70,12): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/config.ts(84,12): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/config.ts(87,12): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)
+src/config.ts(90,12): message TS29: This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`.    effect(unnecessaryFailYieldableError)

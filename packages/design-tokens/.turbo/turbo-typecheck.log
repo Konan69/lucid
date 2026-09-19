@@ -1,0 +1,4 @@
+
+> @vivid/design-tokens@0.0.0 typecheck /home/kixey/agency/vivid/packages/design-tokens
+> node generate-native.mjs --check
+

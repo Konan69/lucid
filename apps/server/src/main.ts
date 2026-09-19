@@ -39,7 +39,7 @@ const program = Effect.gen(function*() {
       port: config.PORT
     }
   )
-  yield* Layer.launch(HttpRouter.serve(makeAppLayer(config)).pipe(Layer.provide(serverLayer)))
+  return yield* Layer.launch(HttpRouter.serve(makeAppLayer(config)).pipe(Layer.provide(serverLayer)))
 }).pipe(
   Effect.catch((error: unknown) => {
     if (error instanceof ConfigurationError) {
