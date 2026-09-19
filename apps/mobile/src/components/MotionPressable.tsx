@@ -17,7 +17,8 @@ export function MotionPressable({
   ...props
 }: PressableProps & { containerStyle?: StyleProp<ViewStyle> }) {
   const scale = useSharedValue(1);
-  const animated = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  // Reanimated's get/set API is the compiler-safe equivalent of reading and assigning `.value`.
+  const animated = useAnimatedStyle(() => ({ transform: [{ scale: scale.get() }] }));
   const timing = {
     duration: nativeMetrics["dur-fast"],
     easing: Easing.bezier(0.2, 0, 0, 1),
@@ -28,11 +29,11 @@ export function MotionPressable({
       <Pressable
         {...props}
         onPressIn={(event) => {
-          scale.value = withTiming(0.98, timing);
+          scale.set(withTiming(0.98, timing));
           onPressIn?.(event);
         }}
         onPressOut={(event) => {
-          scale.value = withTiming(1, timing);
+          scale.set(withTiming(1, timing));
           onPressOut?.(event);
         }}
       />

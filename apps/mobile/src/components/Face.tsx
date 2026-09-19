@@ -28,13 +28,14 @@ export function Face({
   const tilt = mood === "thinking" ? -8 : mood === "happy" ? 4 : 0;
   const rotation = useSharedValue(tilt);
   useEffect(() => {
-    rotation.value = withTiming(tilt, {
+    // Reanimated exposes `set` specifically so compiler-enabled React can update shared values.
+    rotation.set(withTiming(tilt, {
       duration: m["dur-base"],
       easing: Easing.bezier(0.2, 0, 0, 1),
       reduceMotion: ReduceMotion.System,
-    });
+    }));
   }, [tilt, rotation]);
-  const motion = useAnimatedStyle(() => ({ transform: [{ rotate: `${rotation.value}deg` }] }));
+  const motion = useAnimatedStyle(() => ({ transform: [{ rotate: `${rotation.get()}deg` }] }));
   return (
     <Animated.View style={[{ width: size, height: size }, motion]}>
       <Svg width={size} height={size} accessibilityRole="image" accessibilityLabel="Vivid">
