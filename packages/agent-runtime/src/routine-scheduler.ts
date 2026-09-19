@@ -5,6 +5,12 @@ import { attachRoutineSubmission, failRoutineRun, finishRoutineRun, getRoutine, 
 import { upsertConversation } from "./thread-store.ts";
 
 export type RoutineView = Routine & { nextRunAt: number | null; runs: RoutineRun[] };
+type RoutineSignalAttributes = {
+  routineId: string;
+  routineName: string;
+  libraryFolderId?: string;
+  scheduledAt: string;
+};
 const jobs = new Map<string, Cron>();
 const inFlightRuns = new Set<string>();
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : String(error); }
@@ -19,7 +25,20 @@ async function executeRoutine(routine: Routine, run: RoutineRun) {
     const instruction = routine.libraryFolderId ? `${routine.prompt}\n\nFor this routine, search the Library with folderId "${routine.libraryFolderId}" before answering. Use only results from that folder and its descendants, and cite every source used.` : routine.prompt;
     await upsertConversation({ archived: false, id: run.conversationId, title: routine.name, preview: `Routine: ${routine.prompt}`.slice(0, 500), updatedAt: run.startedAt });
     const agent = init(Vivid, { id: run.conversationId }); let submissionId = run.submissionId;
-    if (!submissionId) { const receipt = await agent.dispatch({ idempotencyKey: run.id, message: { kind: "signal", type: "schedule", body: instruction, attributes: { routineId: routine.id, routineName: routine.name, ...(routine.libraryFolderId ? { libraryFolderId: routine.libraryFolderId } : {}), scheduledAt: new Date(run.startedAt).toISOString() } } }); submissionId = receipt.submissionId; await attachRoutineSubmission(run.id, submissionId); }
+    if (!submissionId) {
+      const attributes: RoutineSignalAttributes = {
+        routineId: routine.id,
+        routineName: routine.name,
+        scheduledAt: new Date(run.startedAt).toISOString(),
+      };
+      if (routine.libraryFolderId) attributes.libraryFolderId = routine.libraryFolderId;
+      const receipt = await agent.dispatch({
+        idempotencyKey: run.id,
+        message: { kind: "signal", type: "schedule", body: instruction, attributes },
+      });
+      submissionId = receipt.submissionId;
+      await attachRoutineSubmission(run.id, submissionId);
+    }
     const reply = await agent.read(submissionId); if (!await finishRoutineRun(run.id, reply.text)) return;
     await upsertConversation({ archived: false, id: run.conversationId, title: routine.name, preview: reply.text.slice(0, 500), updatedAt: Date.now() });
   } catch (error) { await failRoutineRun(run.id, errorMessage(error).slice(0, 1000)); } finally { inFlightRuns.delete(run.id); }
