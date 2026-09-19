@@ -220,6 +220,7 @@ for (const [ruleName, invalid, valid, filename] of cases) {
 
     if (ruleName === 'no-runpromise-in-library') {
       assert.equal(ruleDiagnostics(ruleName, lint(ruleName, 'Effect.runFork(program)', 'app.ts')).length, 0)
+      assert.equal(ruleDiagnostics(ruleName, lint(ruleName, 'Effect.runSync(config)', 'drizzle.config.ts')).length, 0)
       const flueBoundary = 'defineTool({ async run() { return Effect.runPromise(program) } })'
       assert.equal(ruleDiagnostics(ruleName, lint(ruleName, flueBoundary)).length, 0)
     }

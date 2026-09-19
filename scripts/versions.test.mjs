@@ -1,8 +1,8 @@
-import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
-import test from 'node:test'
-import { fileURLToPath } from 'node:url'
+import * as NodeAssert from 'node:assert/strict'
+import * as NodeFS from 'node:fs'
+import * as NodePath from 'node:path'
+import * as NodeTest from 'node:test'
+import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
 import { validateVersions, versions, workspaceManifestPaths } from './versions.mjs'
 
@@ -11,7 +11,9 @@ const PackageManagerManifest = Schema.Struct({
   engines: Schema.Struct({ pnpm: Schema.String }),
 })
 const decodePackageManagerManifest = Schema.decodeUnknownSync(Schema.fromJsonString(PackageManagerManifest))
-const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const assert = NodeAssert
+const test = NodeTest.default
+const repositoryRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), '..')
 
 /** The checked-in manifests are the lockstep contract, not only a synthetic fixture. */
 void test('workspace versions and compiler paths remain locked', () => {
@@ -34,7 +36,7 @@ void test('critical prerelease versions are exact', () => {
   assert.equal(versions['@typescript/native'], 'npm:typescript@7.0.2')
   assert.equal(versions['@shadcn/lint'], '0.1.1')
   assert.equal(versions['oxlint-tailwindcss'], '1.12.0')
-  const manifest = decodePackageManagerManifest(readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
+  const manifest = decodePackageManagerManifest(NodeFS.readFileSync(NodePath.join(repositoryRoot, 'package.json'), 'utf8'))
   assert.equal(manifest.packageManager, 'pnpm@12.4.2')
   assert.equal(manifest.engines.pnpm, '12.4.2')
 })

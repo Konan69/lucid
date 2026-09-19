@@ -328,7 +328,7 @@ const noRunPromiseInLibrary = rule(
   (report, context) => ({
     CallExpression(node) {
       if (!isMemberCall(node, 'Effect', effectTerminalOperations)) return
-      if (/(?:^|[/\\])(main|server|cli|app)\.[cm]?[jt]s$/u.test(context.filename)) return
+      if (/(?:^|[/\\])(?:(?:main|server|cli|app)\.[cm]?[jt]s|drizzle\.config\.ts)$/u.test(context.filename)) return
       let parent = node.parent
       while (parent !== undefined && parent !== null) {
         if (
