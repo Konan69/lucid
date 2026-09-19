@@ -57,6 +57,7 @@ function Shell() {
   const layout = deriveLayout(dimensions);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
+  const [previousLayoutVariant, setPreviousLayoutVariant] = useState(layout.variant);
   const progress = useSharedValue(0);
   const drawerWidth = Math.min(dimensions.width - 48, m["sidebar-w"] * 1.15);
   const [activeThread, setActiveThread] = useState("");
@@ -71,17 +72,24 @@ function Shell() {
       return next;
     });
   }, []);
-  const close = useCallback(() => setDrawerOpen(false), []);
-  const open = useCallback(() => {
-    Keyboard.dismiss();
-    setDrawerOpen(true);
-  }, []);
-  useEffect(() => {
-    if (drawerOpen) setDrawerVisible(true);
-    progress.value = withTiming(drawerOpen ? 1 : 0, WORKSPACE_PANE_TIMING, (finished) => {
-      if (finished && !drawerOpen) runOnJS(setDrawerVisible)(false);
-    });
-  }, [drawerOpen, progress]);
+  // A layout-mode change owns a fresh compact drawer state; split mode renders its own sidebar.
+  if (previousLayoutVariant !== layout.variant) {
+    setPreviousLayoutVariant(layout.variant);
+    setDrawerOpen(false);
+    setDrawerVisible(false);
+  }
+  const setDrawer = useCallback((open: boolean) => {
+    if (open) {
+      Keyboard.dismiss();
+      setDrawerVisible(true);
+    }
+    setDrawerOpen(open);
+    progress.set(withTiming(open ? 1 : 0, WORKSPACE_PANE_TIMING, (finished) => {
+      if (finished && !open) runOnJS(setDrawerVisible)(false);
+    }));
+  }, [progress]);
+  const close = useCallback(() => setDrawer(false), [setDrawer]);
+  const open = useCallback(() => setDrawer(true), [setDrawer]);
   useEffect(() => {
     if (!drawerOpen) return;
     const listener = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -90,12 +98,19 @@ function Shell() {
     });
     return () => listener.remove();
   }, [drawerOpen, close]);
-  useEffect(close, [layout.usesSplitView, close]);
+  useEffect(() => {
+    if (layout.usesSplitView) progress.set(0);
+  }, [layout.usesSplitView, progress]);
   const paneStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: (progress.value - 1) * drawerWidth }],
-    opacity: Math.min(1, (progress.value * drawerWidth) / 80),
+    transform: [{ translateX: (progress.get() - 1) * drawerWidth }],
+    opacity: Math.min(1, (progress.get() * drawerWidth) / 80),
   }));
-  const scrimStyle = useAnimatedStyle(() => ({ opacity: progress.value }));
+  const scrimStyle = useAnimatedStyle(() => ({ opacity: progress.get() }));
+  const activityContextValue = useMemo(() => ({ activity, report }), [activity, report]);
+  const sidebarContextValue = useMemo(
+    () => ({ open, close, activeThread, activeRoute }),
+    [open, close, activeThread, activeRoute],
+  );
   const theme = {
     ...(dark ? DarkTheme : DefaultTheme),
     colors: {
@@ -120,8 +135,8 @@ function Shell() {
         if (nextRoute !== activeRoute || nextThread !== activeThread) close();
       }}
     >
-      <ActivityContext.Provider value={{ activity, report }}>
-        <SidebarContext.Provider value={{ open, close, activeThread, activeRoute }}>
+      <ActivityContext.Provider value={activityContextValue}>
+        <SidebarContext.Provider value={sidebarContextValue}>
           <StatusBar barStyle={dark ? "light-content" : "dark-content"} />
           <View
             style={{
@@ -131,8 +146,8 @@ function Shell() {
               overflow: "hidden",
             }}
           >
-            {layout.usesSplitView && (
-              <View style={{ width: layout.listPaneWidth! }}>
+            {layout.usesSplitView && layout.listPaneWidth !== null && (
+              <View style={{ width: layout.listPaneWidth }}>
                 <Home embedded />
               </View>
             )}
@@ -212,51 +227,56 @@ export default function App() {
   const [preferences, setPreferences] = useState(defaultPreferences);
   const [ready, setReady] = useState(false);
   useEffect(() => {
-    async function load() {
-      try {
-        const saved =
-          Platform.OS === "web"
-            ? localStorage.getItem("vivid-mobile")
-            : await SecureStore.getItemAsync("vivid-mobile");
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (
-            typeof parsed.url === "string" &&
-            typeof parsed.token === "string" &&
-            ["light", "dark", "system"].includes(parsed.theme)
-          ) {
-            createApi(parsed);
-            setPreferences({
-              ...parsed,
-              pinnedThreads: Array.isArray(parsed.pinnedThreads)
-                ? parsed.pinnedThreads.filter((id: unknown) => typeof id === "string")
-                : [],
-              settledThreads: Array.isArray(parsed.settledThreads)
-                ? parsed.settledThreads.filter((id: unknown) => typeof id === "string")
-                : [],
-            });
-          }
-        }
-      } catch {
-        /* An invalid preference file falls back to the initial connection. */
+    let cancelled = false;
+    const savedPreferences = Platform.OS === "web"
+      ? Promise.resolve(localStorage.getItem("vivid-mobile"))
+      : SecureStore.getItemAsync("vivid-mobile");
+
+    // Preferences arrive from an external store. The asynchronous continuation prevents stale
+    // storage reads from updating an App instance that has already unmounted.
+    void savedPreferences.then((saved) => {
+      if (!saved || cancelled) return;
+      const parsed = JSON.parse(saved);
+      if (
+        typeof parsed.url === "string" &&
+        typeof parsed.token === "string" &&
+        ["light", "dark", "system"].includes(parsed.theme)
+      ) {
+        createApi(parsed);
+        setPreferences({
+          ...parsed,
+          pinnedThreads: Array.isArray(parsed.pinnedThreads)
+            ? parsed.pinnedThreads.filter((id: unknown) => typeof id === "string")
+            : [],
+          settledThreads: Array.isArray(parsed.settledThreads)
+            ? parsed.settledThreads.filter((id: unknown) => typeof id === "string")
+            : [],
+        });
       }
-      setReady(true);
-    }
-    void load();
+    }).catch(() => {
+      /* An invalid preference file falls back to the initial connection. */
+    }).finally(() => {
+      if (!cancelled) setReady(true);
+    });
+
+    return () => { cancelled = true; };
   }, []);
   const api = useMemo(
-    () => createApi(preferences, expoFetch.bind(globalThis) as typeof fetch),
+    () => createApi(
+      { url: preferences.url, token: preferences.token },
+      expoFetch.bind(globalThis) as typeof fetch,
+    ),
     [preferences.url, preferences.token],
   );
-  async function savePreferences(next: Preferences) {
+  const savePreferences = useCallback(async (next: Preferences) => {
     createApi(next);
     // Preview does not persist credentials in browser storage.
     if (Platform.OS === "web")
       localStorage.setItem("vivid-mobile", JSON.stringify({ ...next, token: "" }));
     else await SecureStore.setItemAsync("vivid-mobile", JSON.stringify(next));
     setPreferences(next);
-  }
-  async function createThread(draft?: string) {
+  }, []);
+  const createThread = useCallback(async (draft?: string) => {
     const thread = {
       id: randomUUID(),
       title: "New conversation",
@@ -266,12 +286,16 @@ export default function App() {
     };
     await api.request(`/api/conversations/${thread.id}`, "PUT", thread);
     return { id: thread.id, title: thread.title, draft };
-  }
+  }, [api]);
+  const workspaceContextValue = useMemo(
+    () => ({ api, preferences, savePreferences, createThread }),
+    [api, preferences, savePreferences, createThread],
+  );
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider preference={preferences.theme}>
-          <WorkspaceContext.Provider value={{ api, preferences, savePreferences, createThread }}>
+          <WorkspaceContext.Provider value={workspaceContextValue}>
             {ready && <Shell />}
           </WorkspaceContext.Provider>
         </ThemeProvider>
