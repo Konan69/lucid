@@ -2,57 +2,17 @@ import {
   AlertTriangle, BellRing, Check, ChevronRight, Circle, CircleCheck, Clock3, LoaderCircle,
   MessageSquareText, Plus, Repeat2, RotateCcw, Trash2, UserRound, X,
 } from "lucide-react";
-import { Effect, Schema } from "effect";
 import { useCallback, useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
+import * as tasksData from "../data/tasks";
+import { run } from "../data/runtime";
 import { cn } from "../ui/cn";
 import { Face } from "../ui/Face";
-import { emptyResponse, request } from "../data/request";
 
-export type TaskStatus = "open" | "done" | "dropped";
-export type TaskPriority = "normal" | "urgent";
-
-export type FollowUp = {
-  id: string;
-  taskId: string;
-  at: number;
-  note: string;
-  repeatEveryMs: number | null;
-  status: "scheduled" | "running" | "fired" | "cancelled" | "failed";
-  firedAt: number | null;
-  output: string | null;
-  error: string | null;
-  createdBy: "you" | "vivid";
-  createdAt: number;
-};
-
-export type Task = {
-  id: string;
-  title: string;
-  detail: string;
-  status: TaskStatus;
-  priority: TaskPriority;
-  assignee: string | null;
-  dueAt: number | null;
-  origin: { kind: "conversation"; conversationId: string } | { kind: "routine"; routineId: string } | { kind: "manual" };
-  createdBy: "you" | "vivid";
-  conversationId: string;
-  completedAt: number | null;
-  createdAt: number;
-  updatedAt: number;
-  followUps: FollowUp[];
-  nextFollowUpAt: number | null;
-};
-
-export type Notification = {
-  id: string;
-  kind: "tracked" | "overdue" | "follow-up" | "follow-up-failed";
-  title: string;
-  body: string;
-  taskId: string | null;
-  conversationId: string | null;
-  createdAt: number;
-  readAt: number | null;
-};
+export type TaskStatus = tasksData.TaskStatus;
+export type TaskPriority = tasksData.TaskPriority;
+export type FollowUp = tasksData.FollowUp;
+export type Task = tasksData.Task;
+export type Notification = tasksData.Notification;
 
 const DAY_MS = 86_400_000;
 const CURRENT_TIME_REFRESH_MS = 15_000;
@@ -103,67 +63,6 @@ const NOTIFICATION_TONE = {
   "follow-up": "bg-working",
   "follow-up-failed": "bg-danger",
 } satisfies Record<Notification["kind"], string>;
-
-const FollowUpSchema = Schema.Struct({
-  id: Schema.String,
-  taskId: Schema.String,
-  at: Schema.Number,
-  note: Schema.String,
-  repeatEveryMs: Schema.NullOr(Schema.Number),
-  status: Schema.Literals(["scheduled", "running", "fired", "cancelled", "failed"]),
-  firedAt: Schema.NullOr(Schema.Number),
-  output: Schema.NullOr(Schema.String),
-  error: Schema.NullOr(Schema.String),
-  createdBy: Schema.Literals(["you", "vivid"]),
-  createdAt: Schema.Number,
-});
-const TaskSchema = Schema.Struct({
-  id: Schema.String,
-  title: Schema.String,
-  detail: Schema.String,
-  status: Schema.Literals(["open", "done", "dropped"]),
-  priority: Schema.Literals(["normal", "urgent"]),
-  assignee: Schema.NullOr(Schema.String),
-  dueAt: Schema.NullOr(Schema.Number),
-  origin: Schema.Union([
-    Schema.Struct({ kind: Schema.Literal("conversation"), conversationId: Schema.String }),
-    Schema.Struct({ kind: Schema.Literal("routine"), routineId: Schema.String }),
-    Schema.Struct({ kind: Schema.Literal("manual") }),
-  ]),
-  createdBy: Schema.Literals(["you", "vivid"]),
-  conversationId: Schema.String,
-  completedAt: Schema.NullOr(Schema.Number),
-  createdAt: Schema.Number,
-  updatedAt: Schema.Number,
-  followUps: Schema.mutable(Schema.Array(FollowUpSchema)),
-  nextFollowUpAt: Schema.NullOr(Schema.Number),
-});
-const NotificationSchema = Schema.Struct({
-  id: Schema.String,
-  kind: Schema.Literals(["tracked", "overdue", "follow-up", "follow-up-failed"]),
-  title: Schema.String,
-  body: Schema.String,
-  taskId: Schema.NullOr(Schema.String),
-  conversationId: Schema.NullOr(Schema.String),
-  createdAt: Schema.Number,
-  readAt: Schema.NullOr(Schema.Number),
-});
-const TasksResponseSchema = Schema.fromJsonString(Schema.Struct({ tasks: Schema.mutable(Schema.Array(TaskSchema)) }));
-const NotificationsResponseSchema = Schema.fromJsonString(Schema.Struct({ notifications: Schema.mutable(Schema.Array(NotificationSchema)) }));
-const TaskResponseSchema = Schema.fromJsonString(Schema.Struct({ task: TaskSchema }));
-const decodeTasksResponse = Schema.decodeUnknownSync(TasksResponseSchema);
-const decodeNotificationsResponse = Schema.decodeUnknownSync(NotificationsResponseSchema);
-const decodeTaskResponse = Schema.decodeUnknownSync(TaskResponseSchema);
-const loadToday = Effect.all([
-  request("/api/tasks", decodeTasksResponse),
-  request("/api/notifications", decodeNotificationsResponse),
-]);
-type JsonValue = string | number | boolean | null | JsonValue[] | { readonly [key: string]: JsonValue };
-type JsonObject = { readonly [key: string]: JsonValue };
-
-function json(method: string, body: JsonObject): RequestInit {
-  return { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
-}
 
 function startOfDay(value: number) {
   const date = new Date(value);
@@ -231,17 +130,18 @@ export function Today({ onOpenConversation }: { onOpenConversation: (conversatio
   const [doneOpen, setDoneOpen] = useState(false);
 
   const load = useCallback(async () => {
-    await Effect.runPromise(loadToday.pipe(
-      Effect.match({
-        onFailure: (failure) => setError(failure.message),
-        onSuccess: ([taskBody, notificationBody]) => {
-          setTasks(taskBody.tasks);
-          setNotifications(notificationBody.notifications);
-          setError(null);
-        },
-      }),
-      Effect.ensuring(Effect.sync(() => setReady(true))),
-    ));
+    const result = await run(tasksData.load());
+    setReady(true);
+    if (result._tag === "Failure") {
+      switch (result.failure._tag) {
+        case "ClientRequestFailed":
+          setError(result.failure.message);
+          return;
+      }
+    }
+    setTasks(result.success.tasks);
+    setNotifications(result.success.notifications);
+    setError(null);
   }, []);
 
   useEffect(() => {
@@ -249,19 +149,20 @@ export function Today({ onOpenConversation }: { onOpenConversation: (conversatio
 
     // Initial hydration is an external request. Polling and user-triggered refreshes continue to
     // use `load`, while this mount request ignores responses after the screen is removed.
-    void Effect.runPromise(loadToday.pipe(Effect.match({
-      onFailure: (failure) => {
-        if (!cancelled) setError(failure.message);
-      },
-      onSuccess: ([taskBody, notificationBody]) => {
-        if (cancelled) return;
-        setTasks(taskBody.tasks);
-        setNotifications(notificationBody.notifications);
-        setError(null);
-      },
-    }), Effect.ensuring(Effect.sync(() => {
-      if (!cancelled) setReady(true);
-    }))));
+    void run(tasksData.load()).then((result) => {
+      if (cancelled) return;
+      setReady(true);
+      if (result._tag === "Failure") {
+        switch (result.failure._tag) {
+          case "ClientRequestFailed":
+            setError(result.failure.message);
+            return;
+        }
+      }
+      setTasks(result.success.tasks);
+      setNotifications(result.success.notifications);
+      setError(null);
+    });
 
     return () => { cancelled = true; };
   }, []);
@@ -280,39 +181,41 @@ export function Today({ onOpenConversation }: { onOpenConversation: (conversatio
   const back = () => { setSelectedId(null); setCreating(false); };
 
   async function toggleDone(task: Task) {
-    await Effect.runPromise(
-      request(`/api/tasks/${task.id}`, emptyResponse, json("PATCH", {
-        status: task.status === "open" ? "done" : "open",
-      })).pipe(
-        Effect.match({
-          onFailure: (failure) => setError(failure.message),
-          onSuccess: () => void load(),
-        }),
-      ),
-    );
+    const status = task.status === "open" ? "done" : "open";
+    const result = await run(tasksData.setStatus(task.id, status));
+    if (result._tag === "Failure") {
+      switch (result.failure._tag) {
+        case "ClientRequestFailed":
+          setError(result.failure.message);
+          return;
+      }
+    }
+    await load();
   }
 
   async function markAllRead() {
-    await Effect.runPromise(
-      request("/api/notifications/read", emptyResponse, json("POST", {})).pipe(
-        Effect.match({
-          onFailure: (failure) => setError(failure.message),
-          onSuccess: () => void load(),
-        }),
-      ),
-    );
+    const result = await run(tasksData.markAllNotificationsRead());
+    if (result._tag === "Failure") {
+      switch (result.failure._tag) {
+        case "ClientRequestFailed":
+          setError(result.failure.message);
+          return;
+      }
+    }
+    await load();
   }
 
   async function openNotification(notification: Notification) {
     if (notification.readAt === null) {
-      void Effect.runPromise(
-        request("/api/notifications/read", emptyResponse, json("POST", {
-          ids: [notification.id],
-        })).pipe(Effect.match({
-          onFailure: () => undefined,
-          onSuccess: () => void load(),
-        })),
-      );
+      void run(tasksData.markNotificationRead(notification.id)).then((result) => {
+        if (result._tag === "Failure") {
+          switch (result.failure._tag) {
+            case "ClientRequestFailed":
+              return;
+          }
+        }
+        void load();
+      });
     }
     if (notification.taskId && tasks.some((task) => task.id === notification.taskId)) setSelectedId(notification.taskId);
     else if (notification.conversationId) onOpenConversation(notification.conversationId, notification.title);
@@ -451,49 +354,55 @@ function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }
   const chasing = task !== null && task.followUps.some((followUp) => followUp.status === "running");
   const dirty = task ? title !== task.title || detail !== task.detail || (assignee.trim() || null) !== task.assignee || fromLocalInput(dueAt) !== task.dueAt || priority !== task.priority : true;
 
-  async function run<Value>(work: Effect.Effect<Value, { readonly message: string }>) {
+  async function execute<Value>(program: tasksData.Program<Value>) {
     setPending(true);
     setError(null);
-    return Effect.runPromise(work.pipe(
-      Effect.match({
-        onFailure: (failure) => {
-          setError(failure.message);
+    const result = await run(program);
+    setPending(false);
+    if (result._tag === "Failure") {
+      switch (result.failure._tag) {
+        case "ClientRequestFailed":
+          setError(result.failure.message);
           return null;
-        },
-        onSuccess: (value) => value,
-      }),
-      Effect.ensuring(Effect.sync(() => setPending(false))),
-    ));
+      }
+    }
+    return result.success;
   }
 
   async function save(event: FormEvent) {
     event.preventDefault();
-    const payload = { title: title.trim(), detail: detail.trim(), assignee: assignee.trim() || null, dueAt: fromLocalInput(dueAt), priority } satisfies JsonObject;
+    const input = {
+      title: title.trim(),
+      detail: detail.trim(),
+      assignee: assignee.trim() || null,
+      dueAt: fromLocalInput(dueAt),
+      priority,
+    } satisfies tasksData.TaskInput;
     const firstFollowUpAt = fromLocalInput(followUpAt);
-    const createPayload = firstFollowUpAt === null
-      ? payload
-      : { ...payload, followUp: { at: firstFollowUpAt, note: followUpNote.trim(), repeatEveryMs: repeat ? Number(repeat) : null } } satisfies JsonObject;
-    const body = await run(request(
-      task ? `/api/tasks/${task.id}` : "/api/tasks",
-      decodeTaskResponse,
-      json(task ? "PATCH" : "POST", task ? payload : createPayload),
-    ));
-    if (body !== null) await onChanged(body.task.id);
+    const firstFollowUp = firstFollowUpAt === null ? null : {
+      at: firstFollowUpAt,
+      note: followUpNote.trim(),
+      repeatEveryMs: repeat ? Number(repeat) : null,
+    } satisfies tasksData.FollowUpInput;
+    const saved = task === null
+      ? await execute(tasksData.create(input, firstFollowUp))
+      : await execute(tasksData.update(task.id, input));
+    if (saved !== null) await onChanged(saved.id);
   }
 
   async function setStatus(status: TaskStatus) {
     if (!task) return;
-    if (await run(request(`/api/tasks/${task.id}`, emptyResponse, json("PATCH", { status }))) !== null) await onChanged(task.id);
+    if (await execute(tasksData.setStatus(task.id, status)) !== null) await onChanged(task.id);
   }
 
   async function chaseNow() {
     if (!task) return;
-    if (await run(request(`/api/tasks/${task.id}/nudge`, emptyResponse, json("POST", {}))) !== null) await onChanged(task.id);
+    if (await execute(tasksData.nudge(task.id)) !== null) await onChanged(task.id);
   }
 
   async function remove() {
     if (!task || !window.confirm(`Delete “${task.title}”? Its follow-ups go with it.`)) return;
-    if (await run(request(`/api/tasks/${task.id}`, emptyResponse, { method: "DELETE" })) !== null) await onDeleted();
+    if (await execute(tasksData.remove(task.id)) !== null) await onDeleted();
   }
 
   async function addFollowUp(event: FormEvent) {
@@ -501,7 +410,12 @@ function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }
     if (!task) return;
     const at = fromLocalInput(followUpAt);
     if (at === null) { setError("Pick a time for the follow-up"); return; }
-    if (await run(request(`/api/tasks/${task.id}/follow-ups`, emptyResponse, json("POST", { at, note: followUpNote.trim(), repeatEveryMs: repeat ? Number(repeat) : null }))) !== null) {
+    const added = await execute(tasksData.addFollowUp(task.id, {
+      at,
+      note: followUpNote.trim(),
+      repeatEveryMs: repeat ? Number(repeat) : null,
+    }));
+    if (added !== null) {
       setFollowUpAt(""); setFollowUpNote(""); setRepeat("");
       await onChanged(task.id);
     }
@@ -509,12 +423,12 @@ function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }
 
   async function followUpAction(followUp: FollowUp, action: "run" | "cancel" | "delete") {
     if (!task) return;
-    const work = action === "run"
-      ? request(`/api/follow-ups/${followUp.id}/run`, emptyResponse, { method: "POST" })
+    const result = action === "run"
+      ? await execute(tasksData.runFollowUp(followUp.id))
       : action === "cancel"
-        ? request(`/api/follow-ups/${followUp.id}`, emptyResponse, json("PATCH", { status: "cancelled" }))
-        : request(`/api/follow-ups/${followUp.id}`, emptyResponse, { method: "DELETE" });
-    if (await run(work) !== null) await onChanged(task.id);
+        ? await execute(tasksData.cancelFollowUp(followUp.id))
+        : await execute(tasksData.removeFollowUp(followUp.id));
+    if (result !== null) await onChanged(task.id);
   }
 
   const quickTimes: Array<{ label: string; at: () => number }> = [
