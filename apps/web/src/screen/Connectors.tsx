@@ -1,6 +1,7 @@
 import { Check, LoaderCircle } from "lucide-react";
-import * as Schema from "effect/Schema";
+import { Effect, Schema } from "effect";
 import { useEffect, useState } from "react";
+import { emptyResponse, request } from "../data/request";
 import { ToolMarks } from "../ui/ToolMarks";
 
 type ConnectorState = "disconnected" | "connecting" | "connected" | "error";
@@ -23,6 +24,9 @@ const ConnectorSchema = Schema.Struct({
 });
 const ConnectorResponseSchema = Schema.fromJsonString(Schema.Struct({ connectors: Schema.mutable(Schema.Array(ConnectorSchema)) }));
 const AuthResponseSchema = Schema.fromJsonString(Schema.Struct({ authUrl: Schema.String }));
+const decodeConnectorResponse = Schema.decodeUnknownSync(ConnectorResponseSchema);
+const decodeAuthResponse = Schema.decodeUnknownSync(AuthResponseSchema);
+const loadConnectors = request("/api/connectors", decodeConnectorResponse);
 
 /* What each connector lets Vivid do, in Vivid's words rather than the API's. */
 const PURPOSE = new Map([
@@ -46,32 +50,21 @@ export function Connectors({ embedded = false }: { embedded?: boolean }) {
     return null;
   });
 
-  async function load() {
-    try {
-      const response = await fetch("/api/connectors");
-      if (!response.ok) throw new Error(`Runtime replied ${response.status}`);
-      const data = Schema.decodeUnknownSync(ConnectorResponseSchema)(await response.text());
-      setConnectors(data.connectors);
-    } catch (error) {
-      setConnectors([]);
-      setNotice({ tone: "danger", text: error instanceof Error ? error.message : "Could not reach the runtime." });
-    }
-  }
-
   useEffect(() => {
     let cancelled = false;
 
     // The initial request synchronizes the screen with the connector runtime. Applying the
     // response asynchronously avoids a redundant synchronous state transition on mount.
-    void fetch("/api/connectors").then(async (response) => {
-      if (!response.ok) throw new Error(`Runtime replied ${response.status}`);
-      const data = Schema.decodeUnknownSync(ConnectorResponseSchema)(await response.text());
-      if (!cancelled) setConnectors(data.connectors);
-    }).catch((error) => {
-      if (cancelled) return;
-      setConnectors([]);
-      setNotice({ tone: "danger", text: error instanceof Error ? error.message : "Could not reach the runtime." });
-    });
+    void Effect.runPromise(loadConnectors.pipe(Effect.match({
+      onFailure: (failure) => {
+        if (cancelled) return;
+        setConnectors([]);
+        setNotice({ tone: "danger", text: failure.message });
+      },
+      onSuccess: (data) => {
+        if (!cancelled) setConnectors(data.connectors);
+      },
+    })));
 
     if (location.search.includes("connected=") || location.search.includes("error=")) {
       history.replaceState(null, "", "/?settings=connectors");
@@ -82,29 +75,32 @@ export function Connectors({ embedded = false }: { embedded?: boolean }) {
 
   async function connect(id: string) {
     setBusy(id);
-    try {
-      const response = await fetch(`/api/connectors/${id}/auth`);
-      if (!response.ok) throw new Error(`Runtime replied ${response.status}`);
-      const data = Schema.decodeUnknownSync(AuthResponseSchema)(await response.text());
-      location.assign(data.authUrl);
-    } catch (error) {
-      setNotice({ tone: "danger", text: error instanceof Error ? error.message : "Could not start the connection." });
-      setBusy(null);
-    }
+    await Effect.runPromise(
+      request(`/api/connectors/${id}/auth`, decodeAuthResponse).pipe(Effect.match({
+        onFailure: (failure) => {
+          setNotice({ tone: "danger", text: failure.message });
+          setBusy(null);
+        },
+        onSuccess: (data) => location.assign(data.authUrl),
+      })),
+    );
   }
 
   async function disconnect(id: string) {
     setBusy(id);
-    try {
-      const response = await fetch(`/api/connectors/${id}`, { method: "DELETE" });
-      if (!response.ok) throw new Error(`Runtime replied ${response.status}`);
-      setNotice(null);
-      await load();
-    } catch (error) {
-      setNotice({ tone: "danger", text: error instanceof Error ? error.message : "Could not disconnect." });
-    } finally {
-      setBusy(null);
-    }
+    await Effect.runPromise(
+      request(`/api/connectors/${id}`, emptyResponse, { method: "DELETE" }).pipe(
+        Effect.flatMap(() => loadConnectors),
+        Effect.match({
+          onFailure: (failure) => setNotice({ tone: "danger", text: failure.message }),
+          onSuccess: (data) => {
+            setNotice(null);
+            setConnectors(data.connectors);
+          },
+        }),
+        Effect.ensuring(Effect.sync(() => setBusy(null))),
+      ),
+    );
   }
 
   const connected = (connectors ?? []).filter((connector) => connector.status === "connected");
