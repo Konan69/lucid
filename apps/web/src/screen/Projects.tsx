@@ -30,13 +30,13 @@ function ProjectShelf({ onOpen }: { onOpen: (id: string) => void }) {
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
-        <div className="mx-auto w-full max-w-[920px] px-5 pb-10 pt-1 sm:px-8">
+        <div className="mx-auto w-full max-w-230 px-5 pt-1 pb-10 sm:px-8">
           <p className="px-0.5 text-meta font-meta text-ink-4">Work that spans teams. Vivid keeps each project&apos;s conversations, people, and context together.</p>
 
           <ul className="mt-4 grid gap-2.5 sm:grid-cols-2">
             {projects.map((p) => <ProjectCard key={p.id} project={p} onOpen={onOpen} />)}
             <li>
-              <button className="flex h-full min-h-32 w-full flex-col items-start rounded-card p-4 text-left ring-line transition-[background-color,box-shadow] duration-(--dur-fast) hover:bg-surface-2 hover:shadow-ring-xs">
+              <button className="flex size-full min-h-32 flex-col items-start rounded-card p-4 text-left ring-line transition-[background-color,box-shadow] duration-(--dur-fast) hover:bg-surface-2 hover:shadow-ring-xs">
                 <span className="inline-flex size-8 items-center justify-center rounded-control bg-surface-2 text-ink-3"><Plus className="size-4" /></span>
                 <span className="mt-2.5 text-title text-ink-3">New project</span>
                 <span className="mt-0.5 text-meta font-meta text-ink-4">Name it, add people, start a conversation</span>
@@ -68,7 +68,7 @@ function ProjectCard({ project: p, onOpen }: { project: Project; onOpen: (id: st
       </span>
 
       <span className="flex flex-1 flex-col p-4">
-        <span className="text-meta font-meta tabular-nums text-ink-4">{p.lastActive}</span>
+        <span className="text-meta font-meta text-ink-4 tabular-nums">{p.lastActive}</span>
         <span className="mt-1 block truncate text-title text-ink">{p.name}</span>
         <span className="mt-0.5 line-clamp-2 text-label text-ink-3">{p.brief}</span>
         <span className="mt-auto flex items-center gap-2.5 pt-3">
@@ -76,7 +76,7 @@ function ProjectCard({ project: p, onOpen }: { project: Project; onOpen: (id: st
           {p.teams.length > 0 && <span className="inline-flex min-w-0 items-center gap-1 text-meta font-meta text-ink-4"><Users className="size-3.5" /><span className="truncate">{p.teams.join(", ")}</span></span>}
           <span className="ml-auto flex -space-x-1.5">
             {p.members.slice(0, 3).map((m) => <Avatar key={m.name} name={m.name} size={18} />)}
-            {p.members.length > 3 && <span className="inline-flex size-[18px] items-center justify-center rounded-full bg-surface-3 text-meta font-meta text-ink-3 ring-2 ring-surface-0">+{p.members.length - 3}</span>}
+            {p.members.length > 3 && <span className="inline-flex size-4.5 items-center justify-center rounded-full bg-surface-3 text-meta font-meta text-ink-3 ring-2 ring-surface-0">+{p.members.length - 3}</span>}
           </span>
         </span>
         {p.children && p.children.length > 0 && (
@@ -112,7 +112,7 @@ function ProjectPage({ project: p, trail, onBack, onOpen }: { project: Project; 
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
-        <div className="mx-auto w-full max-w-[720px] px-5 pb-10 pt-2 sm:px-8">
+        <div className="mx-auto w-full max-w-180 px-5 pt-2 pb-10 sm:px-8">
           <div className="flex items-center gap-3">
             <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink"><FolderKanban className="size-5" strokeWidth={1.7} /></span>
             <div className="min-w-0">
@@ -125,10 +125,10 @@ function ProjectPage({ project: p, trail, onBack, onOpen }: { project: Project; 
             <ul className="flex flex-col gap-px">
               {p.conversations.map((t, i) => (
                 <li key={t}>
-                  <button className={cn("group/row flex w-full items-center gap-2.5 rounded-row px-2.5 py-2 text-left outline-none select-none transition-colors duration-(--dur-fast) hover:bg-wash-hover", i === 0 && "bg-surface-2")}>
+                  <button className={cn("group/row flex w-full items-center gap-2.5 rounded-row px-2.5 py-2 text-left transition-colors duration-(--dur-fast) outline-none select-none hover:bg-wash-hover", i === 0 && "bg-surface-2")}>
                     <i className={cn("size-1.5 shrink-0 rounded-full", i === 0 ? "bg-working" : "bg-line-2")} />
                     <span className="min-w-0 flex-1 truncate text-label text-ink">{t}</span>
-                    <span className="text-meta font-meta tabular-nums text-ink-4">{i === 0 ? p.lastActive : ""}</span>
+                    <span className="text-meta font-meta text-ink-4 tabular-nums">{i === 0 ? p.lastActive : ""}</span>
                   </button>
                 </li>
               ))}
@@ -161,7 +161,7 @@ function ProjectPage({ project: p, trail, onBack, onOpen }: { project: Project; 
           <Section title="People" note={p.teams.length ? `Teams: ${p.teams.join(", ")}` : "Individual members only"}>
             <div className="flex flex-wrap gap-2">
               {p.members.map((m) => (
-                <span key={m.name} className="flex items-center gap-2 rounded-full bg-surface-2 py-1 pl-1 pr-3 shadow-ring-xs">
+                <span key={m.name} className="flex items-center gap-2 rounded-full bg-surface-2 py-1 pr-3 pl-1 shadow-ring-xs">
                   <Avatar name={m.name} size={22} />
                   <span className="text-label text-ink-2">{m.name}</span>
                 </span>
