@@ -12,7 +12,7 @@
     "dev": "vite dev",
     "docs": "flue docs",
     "start": "node dist/server.mjs",
-    "test": "node --test src/*.test.ts",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --type-aware src",
     "db:generate": "drizzle-kit generate",
@@ -33,6 +33,7 @@
     "valibot": "^1.4.2"
   },
   "devDependencies": {
+    "@effect/vitest": "catalog:",
     "@flue/cli": "catalog:",
     "@flue/vite": "catalog:",
     "@types/node": "catalog:",
@@ -40,6 +41,7 @@
     "@types/pg": "^8.20.0",
     "@typescript/native": "catalog:",
     "typescript": "catalog:",
-    "vite": "catalog:"
+    "vite": "catalog:",
+    "vitest": "catalog:"
   }
 }

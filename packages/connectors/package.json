@@ -10,6 +10,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --type-aware src",
+    "test": "vitest run",
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
@@ -19,10 +20,12 @@
     "pg": "catalog:"
   },
   "devDependencies": {
+    "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
     "@types/pg": "^8.20.0",
     "drizzle-kit": "catalog:",
     "@typescript/native": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }
