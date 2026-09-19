@@ -38,10 +38,10 @@ export function findForeignLockfiles(root) {
     if (directory === undefined) break
 
     for (const entry of NodeFS.readdirSync(directory, { withFileTypes: true })) {
-      if (entry.isDirectory()) {
-        if (!ignoredDirectories.has(entry.name)) pending.push(NodePath.join(directory, entry.name))
-      } else if (foreignLockfiles.has(entry.name)) {
-        found.push(NodePath.relative(root, NodePath.join(directory, entry.name)))
+      const entryPath = NodePath.join(directory, entry.name)
+      if (entry.isDirectory() && !ignoredDirectories.has(entry.name)) pending.push(entryPath)
+      if (!entry.isDirectory() && foreignLockfiles.has(entry.name)) {
+        found.push(NodePath.relative(root, entryPath))
       }
     }
   }
