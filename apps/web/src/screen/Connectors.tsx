@@ -1,4 +1,5 @@
 import { Check, LoaderCircle } from "lucide-react";
+import * as Schema from "effect/Schema";
 import { useEffect, useState } from "react";
 import { ToolMarks } from "../ui/ToolMarks";
 
@@ -9,6 +10,19 @@ type Connector = {
   status: ConnectorState;
   metadata: { id: string; name: string; description: string; icon: string };
 };
+
+const ConnectorSchema = Schema.Struct({
+  id: Schema.String,
+  status: Schema.Literals(["disconnected", "connecting", "connected", "error"]),
+  metadata: Schema.Struct({
+    id: Schema.String,
+    name: Schema.String,
+    description: Schema.String,
+    icon: Schema.String,
+  }),
+});
+const ConnectorResponseSchema = Schema.fromJsonString(Schema.Struct({ connectors: Schema.mutable(Schema.Array(ConnectorSchema)) }));
+const AuthResponseSchema = Schema.fromJsonString(Schema.Struct({ authUrl: Schema.String }));
 
 /* What each connector lets Vivid do, in Vivid's words rather than the API's. */
 const PURPOSE = new Map([
@@ -36,7 +50,7 @@ export function Connectors({ embedded = false }: { embedded?: boolean }) {
     try {
       const response = await fetch("/api/connectors");
       if (!response.ok) throw new Error(`Runtime replied ${response.status}`);
-      const data = await response.json() as { connectors: Connector[] };
+      const data = Schema.decodeUnknownSync(ConnectorResponseSchema)(await response.text());
       setConnectors(data.connectors);
     } catch (error) {
       setConnectors([]);
@@ -51,9 +65,9 @@ export function Connectors({ embedded = false }: { embedded?: boolean }) {
     // response asynchronously avoids a redundant synchronous state transition on mount.
     void fetch("/api/connectors").then(async (response) => {
       if (!response.ok) throw new Error(`Runtime replied ${response.status}`);
-      const data = await response.json() as { connectors: Connector[] };
+      const data = Schema.decodeUnknownSync(ConnectorResponseSchema)(await response.text());
       if (!cancelled) setConnectors(data.connectors);
-    }).catch((error: unknown) => {
+    }).catch((error) => {
       if (cancelled) return;
       setConnectors([]);
       setNotice({ tone: "danger", text: error instanceof Error ? error.message : "Could not reach the runtime." });
@@ -71,7 +85,7 @@ export function Connectors({ embedded = false }: { embedded?: boolean }) {
     try {
       const response = await fetch(`/api/connectors/${id}/auth`);
       if (!response.ok) throw new Error(`Runtime replied ${response.status}`);
-      const data = await response.json() as { authUrl: string };
+      const data = Schema.decodeUnknownSync(AuthResponseSchema)(await response.text());
       location.assign(data.authUrl);
     } catch (error) {
       setNotice({ tone: "danger", text: error instanceof Error ? error.message : "Could not start the connection." });
@@ -104,7 +118,7 @@ export function Connectors({ embedded = false }: { embedded?: boolean }) {
       </header>}
 
       <div className={embedded ? "" : "min-h-0 flex-1 overflow-y-auto scroll-fade-y"}>
-        <div className={embedded ? "mx-auto w-full max-w-3xl pb-8" : "mx-auto w-full max-w-[920px] px-5 pb-10 pt-1 sm:px-8"}>
+        <div className={embedded ? "mx-auto w-full max-w-3xl pb-8" : "mx-auto w-full max-w-230 px-5 pt-1 pb-10 sm:px-8"}>
           <p className="px-0.5 text-meta font-meta text-ink-4">
             {named ? `Vivid can use ${named.join(", ")}.` : "Vivid works without these. Connect one when you want it to act on your mail, calendar, or files."}
           </p>
@@ -120,11 +134,11 @@ export function Connectors({ embedded = false }: { embedded?: boolean }) {
             {connectors === null && (
               <li className="flex items-center gap-2 px-3 py-4 text-label text-ink-4"><LoaderCircle className="size-3.5 animate-spin" />Checking what is connected</li>
             )}
-            {connectors?.map((connector) => {
+            {connectors !== null && connectors.map((connector) => {
               const isConnected = connector.status === "connected";
               const isBusy = busy === connector.id;
               return (
-                <li key={connector.id} className="flex items-center gap-3 rounded-row bg-surface-2 px-3 py-3 shadow-ring-xs">
+                <li key={connector.id} className="flex items-center gap-3 rounded-row bg-surface-2 p-3 shadow-ring-xs">
                   <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-control bg-surface-1 shadow-ring-xs">
                     <ToolMarks tools={[connector.id]} size={20} />
                   </span>
