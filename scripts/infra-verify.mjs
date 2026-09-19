@@ -1,10 +1,12 @@
-import assert from "node:assert/strict"
-import { existsSync, readFileSync, readdirSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
-import { fileURLToPath, pathToFileURL } from "node:url"
+import * as NodeAssert from "node:assert/strict"
+import * as NodeFS from "node:fs"
+import * as NodePath from "node:path"
+import * as NodeURL from "node:url"
+import * as Schema from "effect/Schema"
 
-const scriptDirectory = dirname(fileURLToPath(import.meta.url))
-const defaultRoot = resolve(scriptDirectory, "..")
+const assert = NodeAssert
+const scriptDirectory = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url))
+const defaultRoot = NodePath.resolve(scriptDirectory, "..")
 const targetKeys = ["local", "preview", "production"]
 const physicalNameKeys = [
   "stackName",
@@ -18,26 +20,56 @@ const physicalNameKeys = [
   "webId"
 ]
 
-const source = (root, relativePath) => readFileSync(join(root, relativePath), "utf8")
+const Target = Schema.Struct({
+  key: Schema.Literals(["local", "preview", "production"]),
+  runnable: Schema.Boolean,
+  destroyOnTeardown: Schema.Boolean,
+  database: Schema.Literals(["docker", "required"]),
+  stackName: Schema.String,
+  stage: Schema.String,
+  postgresImageId: Schema.String,
+  postgresVolumeName: Schema.String,
+  postgresContainerName: Schema.String,
+  migrationsId: Schema.String,
+  serverProcessId: Schema.String,
+  runtimeProcessId: Schema.String,
+  webId: Schema.String,
+  serverUrl: Schema.String,
+  runtimeUrl: Schema.String,
+  webUrl: Schema.String,
+})
+const TargetDocument = Schema.Struct({ local: Target, preview: Target, production: Target })
+const PackageDocument = Schema.Struct({
+  devDependencies: Schema.Struct({ alchemy: Schema.String, effect: Schema.String }),
+  scripts: Schema.Struct({
+    "infra:dev": Schema.String,
+    "infra:destroy": Schema.String,
+    "infra:deploy": Schema.optionalKey(Schema.String),
+    "infra:preview": Schema.optionalKey(Schema.String),
+  }),
+})
+const decodeTargetDocument = Schema.decodeUnknownSync(Schema.fromJsonString(TargetDocument))
+const decodePackageDocument = Schema.decodeUnknownSync(Schema.fromJsonString(PackageDocument))
+const source = (root, relativePath) => NodeFS.readFileSync(NodePath.join(root, relativePath), "utf8")
 
 export const readTargetDocument = (root = defaultRoot) => {
   const targetSource = source(root, "infra/targets.ts")
   const match = targetSource.match(/deploymentTargetsJson = String\.raw`([\s\S]*?)`/)
   assert.notEqual(match, null, "infra/targets.ts must expose deploymentTargetsJson")
-  return JSON.parse(match[1])
+  return decodeTargetDocument(match[1])
 }
 
 export const validateTargets = (targets) => {
-  assert.deepEqual(Object.keys(targets).sort(), [...targetKeys].sort(), "target keys changed")
+  assert.deepEqual(
+    Object.keys(targets).toSorted((left, right) => left.localeCompare(right)),
+    targetKeys.toSorted((left, right) => left.localeCompare(right)),
+    "target keys changed",
+  )
 
   for (const key of targetKeys) {
     const target = targets[key]
     assert.equal(target.key, key, `${key} must decode to its own key`)
-    assert.equal(typeof target.runnable, "boolean", `${key}.runnable must be boolean`)
-    assert.equal(typeof target.destroyOnTeardown, "boolean", `${key}.destroyOnTeardown must be boolean`)
-    assert.ok(["docker", "required"].includes(target.database), `${key}.database is invalid`)
     for (const property of [...physicalNameKeys, "serverUrl", "runtimeUrl", "webUrl"]) {
-      assert.equal(typeof target[property], "string", `${key}.${property} must be a string`)
       assert.ok(target[property].length > 0, `${key}.${property} must not be empty`)
     }
   }
@@ -56,8 +88,8 @@ export const validateTargets = (targets) => {
   }
 }
 
-const walkTypeScript = (directory) => readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-  const entryPath = join(directory, entry.name)
+const walkTypeScript = (directory) => NodeFS.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+  const entryPath = NodePath.join(directory, entry.name)
   if (entry.isDirectory()) return walkTypeScript(entryPath)
   if (!entry.name.endsWith(".ts") || entry.name.endsWith(".test.ts")) return []
   return [entryPath]
@@ -74,10 +106,13 @@ const assertEnvironmentWiring = (root, stackSource) => {
   )
 
   const runtimeFiles = [
-    ...walkTypeScript(join(root, "packages/agent-runtime/src")),
-    ...walkTypeScript(join(root, "packages/connectors/src"))
+    ...walkTypeScript(NodePath.join(root, "packages/agent-runtime/src")),
+    ...walkTypeScript(NodePath.join(root, "packages/connectors/src"))
   ]
-  const runtimeNames = new Set(runtimeFiles.flatMap((file) => [...extractEnvironmentNames(readFileSync(file, "utf8"))]))
+  const runtimeNames = new Set()
+  for (const file of runtimeFiles) {
+    for (const name of extractEnvironmentNames(NodeFS.readFileSync(file, "utf8"))) runtimeNames.add(name)
+  }
   const runtimeExample = source(root, "packages/agent-runtime/.env.example")
   for (const match of runtimeExample.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)) runtimeNames.add(match[1])
 
@@ -90,7 +125,7 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   const targets = readTargetDocument(root)
   validateTargets(targets)
 
-  const packageDocument = JSON.parse(source(root, "package.json"))
+  const packageDocument = decodePackageDocument(source(root, "package.json"))
   // scripts/versions.mjs owns the exact pins; here we only require the catalog so the
   // stack file and every package resolve the same Alchemy and Effect builds.
   assert.equal(packageDocument.devDependencies.alchemy, "catalog:", "root Alchemy version must come from the catalog")
@@ -135,12 +170,12 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   assert.ok(serverMigration >= 0 && serverMigration < runtimeMigration && runtimeMigration < connectorMigration, "migration order must be server → agent-runtime → connectors")
   assert.doesNotMatch(migrationSource, /\bgenerate\b/, "startup must never generate migrations")
 
-  assert.equal(existsSync(join(root, "apps/web/wrangler.jsonc")), false, "Wrangler config must be removed")
-  const workflowDirectory = join(root, ".github/workflows")
-  const workflowNames = existsSync(workflowDirectory) ? readdirSync(workflowDirectory) : []
+  assert.equal(NodeFS.existsSync(NodePath.join(root, "apps/web/wrangler.jsonc")), false, "Wrangler config must be removed")
+  const workflowDirectory = NodePath.join(root, ".github/workflows")
+  const workflowNames = NodeFS.existsSync(workflowDirectory) ? NodeFS.readdirSync(workflowDirectory) : []
   assert.deepEqual(workflowNames.filter((name) => name.startsWith("deploy")), [], "deploy workflows must not be added while remote deployment is disabled")
-  assert.ok(existsSync(join(root, ".agents/skills/infra/SKILL.md")), "infra operator skill is missing")
-  assert.ok(existsSync(join(root, "docs/19-infrastructure.md")), "infrastructure documentation is missing")
+  assert.ok(NodeFS.existsSync(NodePath.join(root, ".agents/skills/infra/SKILL.md")), "infra operator skill is missing")
+  assert.ok(NodeFS.existsSync(NodePath.join(root, "docs/19-infrastructure.md")), "infrastructure documentation is missing")
 
   const outputBlock = stackSource.slice(stackSource.lastIndexOf("return {"))
   assert.doesNotMatch(outputBlock, /DATABASE_URL|SECRET|TOKEN|PASSWORD/, "stack outputs must contain only public URLs")
@@ -152,7 +187,7 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   }
 }
 
-const invokedUrl = process.argv[1] === undefined ? "" : pathToFileURL(resolve(process.argv[1])).href
+const invokedUrl = process.argv[1] === undefined ? "" : NodeURL.pathToFileURL(NodePath.resolve(process.argv[1])).href
 if (import.meta.url === invokedUrl) {
   const result = verifyInfrastructure()
   console.log(`Infrastructure verification passed (${result.targets} targets)`)

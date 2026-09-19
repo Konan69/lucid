@@ -1,10 +1,13 @@
-import assert from "node:assert/strict"
-import test from "node:test"
+import * as NodeAssert from "node:assert/strict"
+import * as NodeTest from "node:test"
 import {
   readTargetDocument,
   validateTargets,
   verifyInfrastructure
 } from "./infra-verify.mjs"
+
+const assert = NodeAssert
+const test = NodeTest.default
 
 void test("current infrastructure satisfies offline invariants", () => {
   assert.deepEqual(verifyInfrastructure(), {
