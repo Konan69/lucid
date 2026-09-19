@@ -1,184 +1,110 @@
 ---
 name: helix-cli
-description: Drive the HelixDB `helix` CLI to run, query, and deploy Helix instances. Use when the task is to scaffold a project (helix init / chef / add), manage a local Docker/Podman instance (helix start, stop, restart, status, logs, prune), send a dynamic query to a running instance (helix query with --file / --json / -e TypeScript DSL / --ts-file, against POST /v2/query), or operate on Helix Cloud (helix auth, push, sync, workspace, project, cluster). Covers helix.toml, the local-vs-cloud workflow, and the v3 mental model (NO helix compile / helix check / .hx files). For writing the query bodies themselves, defer to the helix-query-* skills. See REFERENCE.md for the full command catalog and EXAMPLES.md for end-to-end walkthroughs.
+description: Drive the HelixDB v3 `helix` CLI for local Docker/Podman instances and WorkOS-session-authenticated Helix Cloud discovery, resource management, query, shell, status, and logs. Use for helix init/add/start/stop/query/shell/auth/workspace/project/cluster/database/service-credential/api and helix.toml. Cloud CLI auth is WorkOS-only; never supply API keys or service credentials as CLI login. Defer query-body authoring to helix-query-* skills.
 license: MIT
 metadata:
   author: HelixDB
-  version: 3.0.0
+  version: 4.0.1
 ---
 
 # Helix CLI
 
-Drive the `helix` CLI (crate `helix-cli`, binary `helix`) to operate live Helix instances. In v3 the CLI is a **runtime orchestrator, not a compiler**.
+Use the CLI as a runtime and control-plane client. It does not compile `.hx` files, deploy query
+bundles, push source, or sync gateway metadata.
 
-The mental model that matters most:
+## Choose the execution boundary
 
-- **There is no `helix compile`, no `helix check`, and no `.hx` query workflow.** Those are stale v2 concepts — the v3 CLI hides them and errors with a hint if you try them.
-- **Queries are JSON "dynamic queries"** sent to a *running* instance via `POST /v2/query` (`helix query`). Validation happens server-side, in the instance.
-- **Local instances are Docker/Podman containers** (image `ghcr.io/helixdb/helixdb:v0.0.3`). `helix start` runs one; in-memory by default, MinIO-backed with `--disk`.
-- **Helix Cloud instances deploy via `helix push`**, with auth and metadata managed by `helix auth`, `helix sync`, and the `workspace`/`project`/`cluster` commands.
+- Local `[local.<name>]`: Docker/Podman, auth-disabled local `/v2/query`.
+- Cloud `[enterprise.<name>]`: stable `tenant:<id>` or dedicated `cluster:<id>` linkage.
+- Cloud `query` and `shell`: backend query broker, never a direct gateway request.
+- Direct application gateway access: outside CLI authentication; explicitly created database key.
 
-This skill is about *driving the CLI*. For authoring the query bodies themselves, use the query skills (`helix-query-rust`, `helix-query-typescript`, `helix-query-json-dynamic`, etc.).
+## Local image and storage
 
-## When To Use
+Use `ghcr.io/helixdb/helixdb:v0.0.5`. Set `tag = "v0.0.5"` in the relevant
+`[local.<name>]` block before starting an existing project or using a CLI with an
+older default. The server exposes `/healthz`, `/readyz`, and `/v2/query` on port
+8080; the CLI defaults to host port 6969 and waits for `/healthz`.
 
-Use this skill when the task is to:
+Memory is the default and loses data on stop/restart. The CLI's `--disk` uses
+MinIO; `--storage-uri` selects an existing S3-compatible store. Direct Docker
+native persistence uses `HELIX_DATA_DIR` with a writable mounted directory.
+`HELIX_DATA_DIR` and `S3_BUCKET` are mutually exclusive; omit both for memory.
+Use `REFERENCE.md` for S3 flags and `EXAMPLES.md` for the distinct storage setups.
 
-- scaffold a Helix project (`helix init`, `helix chef`, `helix add`)
-- start, stop, restart, or inspect a local instance (`helix start`/`stop`/`restart`/`status`/`logs`)
-- send a query to a running instance (`helix query`)
-- clean up local resources (`helix prune`, `helix delete`)
-- authenticate to and deploy on Helix Cloud (`helix auth`, `helix push`, `helix sync`)
-- manage cloud workspace / project / cluster selection
-- read or edit `helix.toml`
+## Cloud authentication
 
-Do not use this skill to write the query AST/DSL itself — defer to `helix-query-rust`, `helix-query-typescript`, or `helix-query-json-dynamic`. This skill only covers *getting that query to a running instance and back*.
-
-## First Steps
-
-Before running anything:
-
-1. **Find the project.** Check for a `helix.toml` (the CLI walks up the directory tree to find it). Run `helix status` to see configured instances and their state. If there is no project yet, you are in scaffold territory (`helix init local`).
-2. **For local work, confirm a container runtime is up.** `helix start` needs Docker or Podman running. The runtime is chosen by `[project] container_runtime` (default `docker`).
-3. **Decide local vs cloud.** Local instances live in `[local.<name>]` and run as containers; cloud instances live in `[enterprise.<name>]` and run on Helix Cloud.
-4. **For cloud, ensure auth and tenant context.** Cloud commands require `helix auth login` (credentials in `~/.helix/credentials`), and `helix query` against a cloud instance needs the API key in `HELIX_API_KEY` (or the env named by `query_auth_env`), readable from the shell or a project-root `.env`. GA requests also require the active tenant ID in `x-helix-tenant-id`.
-
-If you need a builder/flag beyond the common surface, open `REFERENCE.md` — do not guess flag names. For copy-pasteable sessions, see `EXAMPLES.md`.
-
-
-## Live-instance facts (verified 2026-08-30, CLI v3.1.1)
-
-These were confirmed against a running local instance; they contradict some
-assumptions elsewhere in this skill.
-
-- **`helix init local` writes `image = "ghcr.io/helixdb/enterprise-dev"`, tag
-  `latest`** — not `ghcr.io/helixdb/helixdb:v0.0.3`. Check `helix.toml` rather
-  than assuming the image.
-- **That image serves `POST /v1/query`, not `/v2/query`.** `/v2/query` returns
-  `404`. It also expects the **older PascalCase envelope**, not the v3
-  `entries`/`root` snake_case AST:
-  ```json
-  {"parameters":{},"request_type":"write",
-   "query":{"queries":[{"Query":{"name":"n","condition":null,"steps":[ ... ]}}],
-            "returns":["n"]}}
-  ```
-  Posting v3-shaped JSON fails with ``missing field `queries` ``. Values are
-  tagged PascalCase too: `{"Value":{"String":"x"}}`, `{"Value":{"I64":3}}`,
-  `{"Value":{"F64Array":[...]}}`. `request_type` stays lowercase.
-- **`helix query` works even when direct HTTP guesses are wrong** — use it to
-  confirm reachability before debugging your own client.
-- **`helix start` reports `error: local Helix did not become ready in time`
-  while the container is actually healthy.** Check `helix logs` for
-  `Listening on 0.0.0.0:8080` / `WriterReady`, or poll `/v1/query` yourself,
-  before concluding the start failed.
-- **Port collisions are silent until start fails.** A second project defaulting
-  to 6969 dies with `Bind for 0.0.0.0:6969 failed: port is already allocated`.
-  Pass `--port` (with `--persist` to record it) for every additional project.
-- **The CLI's `--version` under-reports.** The v3.1.1 release binary prints
-  `Helix CLI 3.0.8`; verify by sha256 against the GitHub release asset rather
-  than trusting the string. Install script: `curl -sSL https://install.helix-db.com | bash`.
-- **`--disk` persistence is real and survives `stop`/`start`** — including
-  broken indexes. `helix prune <instance>` is the reset.
-
-## Core Workflows
-
-### 1. Local Dev Loop (start here)
+Use only:
 
 ```bash
-helix init local                          # scaffold helix.toml + .helix/ + examples/request.json
-helix start dev                           # start the 'dev' container (waits until /v2/query is ready)
-helix status dev                          # confirm it is running and note the URL
-helix query dev --file examples/request.json   # send a dynamic query
-# ...edit the request and re-run helix query to iterate...
-helix stop dev                            # stop the container
+helix auth login
+helix auth status
+helix auth logout
 ```
 
-Key facts:
+Login is WorkOS PKCE. The CLI rotates the session through WFE. Never ask for or set a Cloud API key,
+legacy admin/user key, service credential, custom authorization header, or gateway URL. Do not retry
+a Cloud mutation: the client may retry once only when WFE explicitly rejects the session before
+handler dispatch.
 
-- The instance name defaults to `dev`; the default port is **6969** (host → container port 8080).
-- **In-memory is the default — the runtime leaves `S3_BUCKET` unset and data is lost when the container is replaced.** Use `--disk` for persistence (MinIO-backed). With disk mode, `stop` keeps the volume; use `helix prune <instance>` to delete the data. Never set `S3_BUCKET=IN_MEMORY`: every defined bucket value selects S3-compatible storage.
-- `--port <p>` and `--disk` apply to a single `start`; add `--persist` to write those choices back to `helix.toml`.
-- `helix logs dev -f` streams container logs; `helix restart dev` restarts in place (re-creating fresh if the container was removed).
+## Target resolution
 
-### 2. Helix Cloud
+Prefer an explicit `--workspace`, `--project`, `cluster:<id>`, or `tenant:<id>`. For `query` and
+`shell`, an explicit instance wins; otherwise use local `dev`, then the sole linked instance. If
+multiple instances remain, list them and require an explicit instance. Other Cloud commands use the
+database/project linked in the current `helix.toml` only when unambiguous. There is no global
+workspace selection and no `workspace switch`.
+
+## Main workflows
 
 ```bash
-helix auth login                          # GitHub device-code flow → ~/.helix/credentials
-helix workspace switch my-team            # pick the active workspace
-helix project switch payments-api         # link the project (writes ids to helix.toml)
-helix cluster list                        # find the cluster id
-helix add cloud --name production --cluster-id ec_01HX...   # add an [enterprise.production] block
-helix sync production                      # fetch gateway_url + auth metadata into helix.toml
-export HELIX_API_KEY="hlxk_..."           # or put it in a project-root .env
-helix push production                      # deploy to Helix Cloud
-helix query production --file examples/request.json   # query the cloud gateway
+# Local
+helix init local
+helix start dev
+helix query dev --file examples/request.json
+helix shell dev
+helix stop dev
+
+# Cloud discovery and linkage
+helix auth login
+helix workspace list
+helix project list --workspace-id <workspace>
+helix database list --project <project>
+helix project link <project>
+helix add cloud --name production --database tenant:<tenant>
+helix query production --file request.json
 ```
 
-Key facts:
+Cloud read/write envelopes require independent `database.query.read` / `database.query.write` access.
+Management `read`/`write` does not imply query access.
 
-- `helix push` **deploys**; it errors on a local instance. (The old `helix deploy` is removed.)
-- `helix sync` reconciles metadata (gateway URL, auth header/env, node types) between local and cloud; `--dry-run` previews without writing, `-y/--yes` skips conflict prompts (for CI).
-- Cloud queries post to the instance's `gateway_url` with the header named by `query_auth_header` (default `Authorization`), valued from the env named by `query_auth_env` (default `HELIX_API_KEY`). GA requests also carry `x-helix-tenant-id` for the active tenant.
+## Secret lifecycle
 
-## Core Usage Rules
+- `helix database create` creates a default read-write application key and prints its token once;
+  the CLI never stores or uses it.
+- `helix database key create ... --access read-only|read-write` prints an application token once;
+  the CLI never stores or uses it.
+- `helix service-credential create` prints a headless API/MCP token once; the CLI never stores or
+  authenticates with it.
+- Never put any token in `helix.toml`, agent instructions, source control, or command history.
 
-### 1. Query A Running Instance, By Name
+## Removed and excluded surfaces
 
-`helix query [instance]` defaults to `dev`. The instance must be running (local) or deployed + synced (cloud). If a local query connection fails, check `helix status` first.
+Do not use or recommend `push`, `sync`, `auth create-key`, `workspace switch`, query bundles,
+dedicated-cluster lifecycle, networking, regions/SKUs, branches/backups, schema introspection,
+execution polling/cancellation, webhooks, or project update.
 
-### 2. Exactly One Query Input Flag
+Open `REFERENCE.md` for exact commands/config and `EXAMPLES.md` for safe sessions. Use a
+`helix-query-*` skill to author v3 request bodies.
 
-`helix query` requires exactly one of `--file <req.json>`, `--json '<body>'`, `-e/--ts '<expr>'`, or `--ts-file <query.ts>` (enforced by a clap arg group). `--file`/`--json` carry raw dynamic-query JSON; `-e`/`--ts-file` carry a TypeScript DSL expression that the CLI evaluates in Node (needs Node 20+) and converts via `.toQueryJson()`.
+## Legacy compatibility note — unverified against current CLI
 
-### 3. `request_type` Is Lowercase
+The following live-instance facts were verified on 2026-08-30 with CLI v3.1.1. They conflict with the current v4.0.1/v0.0.5 contract above. Use them only when diagnosing a known legacy installation; do not apply them to a current project without revalidation.
 
-In a JSON request body, `request_type` must be lowercase `"read"` or `"write"`. With the TS DSL, the type is inferred from `readBatch()` vs `writeBatch()`.
-
-### 4. `--warm` Is Read-Only
-
-`--warm` adds the `X-Helix-Warm` header to execute a read through warm mode and
-populate caches. It is read-only. A standalone local instance prints the normal
-query result; Helix Cloud fans out to every eligible backend and succeeds
-silently with `204 No Content` after at least one target succeeds. At the raw
-HTTP/SDK layer, add `X-Helix-Require-Writer: true` to warm only the writer.
-
-### 5. Prefer `helix push`, Not Removed Commands
-
-`compile`, `check`, and `deploy` are removed. Use `helix push <instance>` to deploy; there is no compile/check step (validation is server-side).
-
-### 6. Never Commit Secrets
-
-`~/.helix/credentials` and the `HELIX_API_KEY` value (or `.env`) are secrets. Do not commit them. `helix init` already adds `.helix/` to `.gitignore`.
-
-### 7. Use `helix prune`, Not `docker system prune`
-
-To remove Helix-owned containers/volumes/networks, use `helix prune [instance]` (or `--all`). It scopes to Helix resources only — never run a broad `docker system prune`.
-
-## Anti-Patterns
-
-Do not:
-
-- run `helix compile`, `helix check`, or `helix deploy` — they are removed (compile/check don't exist; use `push` to deploy)
-- create or edit `.hx` query files — v3 uses JSON dynamic queries to `POST /v2/query`
-- assume local data survives `stop`/`restart` — it does not unless the instance uses `--disk`
-- run `helix query` before the instance is ready (local: not started; cloud: not pushed/synced)
-- hardcode the cloud API key in a command or file — read it from `HELIX_API_KEY` / `.env`
-- pass more than one query input flag, or use uppercase `READ`/`WRITE` in `request_type`
-- reach for `docker system prune` to clean up — use `helix prune`
-- guess at flags from memory — confirm against `REFERENCE.md`
-
-## Validation Checklist
-
-Before running (or after, to debug):
-
-- the instance exists in `helix.toml` and the name passed matches it
-- local: the instance is started (`helix status`) and the container runtime is up
-- cloud: `helix auth login` done, instance `push`ed + `sync`ed, `HELIX_API_KEY` set, and the GA tenant context available
-- `helix query` has exactly one input flag and (for JSON) lowercase `request_type`
-- not using any removed command (`compile`/`check`/`deploy`) or `.hx` workflow
-- secrets (`credentials`, API key) are not being committed
-
-## Reference Files
-
-- `REFERENCE.md` — full command catalog (every subcommand, flag, alias, default) plus the `helix.toml` / `~/.helix/*` config formats, key constants, and environment variables.
-- `EXAMPLES.md` — copy-pasteable end-to-end sessions: local dev loop (memory + disk), each `helix query` input form, a full Helix Cloud deploy, and a troubleshooting block.
+- `helix init local` wrote `ghcr.io/helixdb/enterprise-dev:latest` rather than the current image.
+- That image served `POST /v1/query`, not `/v2/query`, and expected the older PascalCase `queries` envelope and PascalCase value tags.
+- `helix query` remained the best reachability check when direct HTTP assumptions were wrong.
+- `helix start` could report a readiness timeout while logs showed `Listening on 0.0.0.0:8080` and `WriterReady`.
+- Port collisions surfaced only at start; additional projects needed an explicit persisted port.
+- The v3.1.1 release binary printed `Helix CLI 3.0.8`; release-asset checksums were more reliable than its version string.
+- Disk state survived stop/start, including broken indexes; `helix prune <instance>` reset it.

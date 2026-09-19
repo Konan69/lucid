@@ -1,27 +1,23 @@
 ---
 name: helix-query-typescript
-description: Write and revise queries with the published HelixDB v3 TypeScript SDK (`@helix-db/helix-db@3.0.0`). Use for `readBatch`, `writeBatch`, traversal builders, direct `toQueryRequest`/`toQueryJson` payloads, projections, indexes, vector and BM25 search with traversal-scoped prefiltering, and `Client.query`. Stored routes, registration, and query bundles are not v3 SDK APIs. When the target is Helix Cloud, always use helix-mcp first.
+description: Write and revise queries with the published HelixDB TypeScript SDK (`@helix-db/helix-db@3.0.4`, Node.js 20+). Use for `readBatch`, `writeBatch`, traversal builders, direct `toQueryRequest`/`toQueryJson` payloads, projections, indexes, vector and BM25 search with traversal-scoped prefiltering, structured remote errors, and `Client.query`. Stored routes, registration, and query bundles are not v3 SDK APIs. When the target is Helix Cloud, always use helix-mcp first.
 license: MIT
 metadata:
   author: HelixDB
-  version: 3.0.0
+  version: 3.0.4
 ---
 
 # Helix Query Authoring — TypeScript
 
 Write Helix TypeScript DSL queries in a way that is schema-aware, explicit,
-and easy for agents to reason about. Install with
-`pnpm add @helix-db/helix-db` — **published; npm `latest` was 3.0.4 on 2026-08-30**
-(the 3.0.x line: 3.0.0-3.0.4). Pin `^3`, not `3.0.0`.
+and easy for agents to reason about. The published package is
+`@helix-db/helix-db@3.0.4`, is ESM-only, and requires Node.js 20 or newer. In Vivid, install it with `pnpm add @helix-db/helix-db@3.0.4`.
 
-**Do not use the SDK bundled in `~/.helix/ts-runtime`** (what `helix query -e`
-evaluates against): it pins `@helix-db/helix-db@^2.0.2`, whose
-`createVectorIndexNodes(label, property, tenantProperty)` has **arity 3 — no
-dimension or metric argument**. Passing `(label, property, 1536, 'Cosine')`
-there silently creates an index with `tenant_property: 1536`; every later insert
-carrying that vector property then fails with
-`vector index Chunk:embedding requires tenant property '1536'`. Always install
-v3 into the project and build requests from that.
+### Legacy CLI compatibility note — unverified against current CLI
+
+On 2026-08-30, CLI v3.1.1's bundled `~/.helix/ts-runtime` resolved the v2.0.2 SDK even though the published package was v3.0.4. Its `createVectorIndexNodes(label, property, tenantProperty)` accepted only three arguments. Supplying v3 dimension/metric arguments could silently make `1536` the tenant property and break later inserts. Current upstream documents the published v3.0.4 package and a newer CLI; use the published project dependency by default and revalidate the bundled runtime before relying on this legacy observation.
+
+Legacy vector-index observations from the same environment also require revalidation: use `VectorDistanceMetric.Cosine` rather than a capitalized raw string; dimensions must be safe integers; create a vector index before inserting vector-bearing nodes; and remember a malformed disk-backed index can survive restarts until dropped or pruned.
 
 This is the preferred way to author Helix queries in a TypeScript codebase — type-checked, and it emits the dynamic-request JSON for you. Drop to raw dynamic JSON (`helix-query-json-dynamic`) only for debugging or dynamically-shaped requests.
 
@@ -159,26 +155,17 @@ function findUsers(p = params) {
 
 - **Request:** `findUsers().toQueryJson(params, { tenantId: "acme", limit: 25n }, { queryName: "find_users" })` produces JSON for `POST /v2/query`. Use `toQueryRequest(...)` for the object or `toQueryBytes(...)` for bytes. No-parameter queries take no schema argument: `countUsers().toQueryJson({ queryName: "count_users" })`. Unnamed requests serialize `query_name: null`.
 - **Raw batch JSON:** `findUsers().toJsonString()` — the inline `query` body only (no envelope).
-- **Send it:** `new Client(url).withApiKey(key).query<R>(findUsers().toQueryRequest(params, values, { queryName: "find_users" })).send()` posts to `/v2/query`. Advanced headers use `client.requestBuilder<R>().writerOnly().query(request).send()` and the equivalent `warmOnly` / `shouldAwaitDurability` builders.
+- **Send it:** `new Client(url).withApiKey(key).query<R>(findUsers().toQueryRequest(params, values, { queryName: "find_users" })).send()` posts to `/v2/query`. A remote `HelixError` exposes `statusCode`, open-string `code`, `serverMessage`, structured `serverDetails`, `rawBody`, compatibility `details`, and `kind`. Advanced headers use `client.requestBuilder<R>().writerOnly().query(request).send()` and the equivalent `warmOnly` / `shouldAwaitDurability` builders.
 
 `warmOnly()` is read-only. Helix Cloud fans the read out to every eligible
 backend and returns `204 No Content` with no query payload after at least one
 target succeeds; chain `writerOnly()` to target only the authoritative writer.
-Standalone `v0.0.3` warming returns the normal query response.
+The published TypeScript 3.0.4 transport accepts only HTTP 200, so it currently
+throws a remote `HelixError` for the Cloud `204`; use direct
+HTTP for Cloud warming. Standalone `v0.0.5` warming returns the normal 200
+response.
 
-## Vector Index Gotchas (verified 2026-08-30)
-
-- `VectorDistanceMetric` values are lowercase strings — `cosine`, `euclidean`,
-  `manhattan`. Passing `'Cosine'` throws
-  `TypeError: unsupported vector distance metric: Cosine`. Use
-  `VectorDistanceMetric.Cosine`, never the bare string.
-- `IndexSpec.nodeVector` validates `dimension` with `Number.isSafeInteger`, so a
-  stringified `"1536"` is rejected by v3 (and silently misread by v2).
-- **Create the vector index before inserting any node carrying that vector
-  property.** Inserting first returns HTTP 500
-  `vector index <Label>:<prop> requires tenant property ...`, and an index
-  created with the wrong shape persists on disk across restarts — with
-  `--disk` you must `helix prune` (or drop the index) to clear it.
+`isConflict()` and `isRateLimited()` classify HTTP 409 and 429. Reconcile a `query_timeout` write before resubmitting, honor `Retry-After` through a transport that exposes response headers, and use bounded backoff for retryable 429/503 failures. On a write conflict, reload current state before rebuilding the mutation; never blindly retry a write after a general server failure because its commit outcome may be unknown. See `../helix-query-json-dynamic/ERROR-HANDLING.md`.
 
 ## Number & DateTime Handling
 
@@ -206,7 +193,7 @@ Standalone `v0.0.3` warming returns the normal query response.
 | Mutations | `addN`, `addE`, `setProperty`, `removeProperty`, `drop`, `dropEdge`, `dropEdgeLabeled`, `dropEdgeById` | `dropEdgeById` is multigraph-safe. |
 | Indexes | `createIndexIfNotExists(spec)`, `dropIndex(spec)`, plus `createVectorIndexNodes/Edges`, `createTextIndexNodes/Edges`; `IndexSpec.nodeEquality/nodeUniqueEquality/nodeRange/nodeRangeDesc/nodeRangeWithDirection/edgeEquality/edgeRange/edgeRangeDesc/edgeRangeWithDirection/nodeVector/nodeText/edgeVector/edgeText` | All write-only and top-level only for indexed properties. `RangeIndexDirection.Desc` sets descending physical order. |
 | Output | `toJsonString`, `toQueryJson`, `toQueryRequest`, `toQueryBytes` | Dynamic forms take `(params, values, options)` unless the query has no parameters; pass `{ queryName }` to set top-level `query_name`. |
-| Client / transport | `new Client(url)`, `Client.server(url)`, `.withApiKey`, `.query<R>(request)`, `.requestBuilder<R>()`, `.writerOnly`/`.warmOnly`/`.shouldAwaitDurability`, `.send()` | Direct requests use `POST /v2/query`; stored routes are not supported. |
+| Client / transport | `new Client(url)`, `Client.server(url)`, `.withApiKey`, `.query<R>(request)`, `.requestBuilder<R>()`, `.writerOnly`/`.warmOnly`/`.shouldAwaitDurability`, `.send()` | Direct requests use `POST /v2/query`; remote failures preserve HTTP status, code, message, structured details, and raw text; stored routes are not supported. |
 
 See `REFERENCE.md` for full signatures and typestate constraints.
 
