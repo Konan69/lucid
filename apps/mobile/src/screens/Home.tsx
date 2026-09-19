@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useEffectEvent, useState } from "react";
 import { FlatList, Platform, Pressable, View } from "react-native";
 import { useFocusEffect, useNavigation, type NavigationProp } from "@react-navigation/native";
 import {
@@ -102,11 +102,11 @@ export function Home({ embedded = false }: { embedded?: boolean }) {
     api,
     "/api/notifications",
   );
-  useFocusEffect(
-    useCallback(() => {
-      void resource.refresh();
-    }, [resource.refresh]),
-  );
+  // Focus changes trigger the current resource without rebuilding the focus subscription each render.
+  const refreshConversations = useEffectEvent(() => {
+    void resource.refresh();
+  });
+  useFocusEffect(refreshConversations);
   const [query, setQuery] = useState("");
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [doneOpen, setDoneOpen] = useState(false);
