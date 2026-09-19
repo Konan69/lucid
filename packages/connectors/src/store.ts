@@ -1,22 +1,20 @@
-import { randomUUID } from 'node:crypto'
-import { fileURLToPath } from 'node:url'
+import * as NodeCrypto from 'node:crypto'
 import { drizzle } from 'drizzle-orm/node-postgres'
-import { migrate } from 'drizzle-orm/node-postgres/migrator'
-import { desc, eq, sql } from 'drizzle-orm'
-import { Pool, types } from 'pg'
+import { desc, eq } from 'drizzle-orm'
+import * as Config from 'effect/Config'
+import * as Effect from 'effect/Effect'
+import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
+import { Pool, types } from 'pg'
 import type { ConnectorCredential, ConnectorId, ConnectorStatus } from './types.ts'
+import { bootstrapConnectorSchema } from './migration.ts'
 import { credentials } from './schema.ts'
 
 types.setTypeParser(20, (value) => Number(value))
-const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+const databaseUrl = Redacted.value(Effect.runSync(Config.Redacted('DATABASE_URL')))
+const pool = new Pool({ connectionString: databaseUrl })
 const db = drizzle({ client: pool })
-const ready = (async () => {
-  const existing = await db.execute(sql`SELECT to_regclass('public.vivid_credentials') AS name`)
-  if (!existing.rows[0]?.name) {
-    await migrate(db, { migrationsFolder: fileURLToPath(new URL('../drizzle', import.meta.url)) })
-  }
-})()
+const ready = Effect.runPromise(bootstrapConnectorSchema(pool))
 
 const CredentialSchema = Schema.Struct({
   id: Schema.String,
@@ -73,7 +71,7 @@ export async function saveCredential(
   credential: Omit<ConnectorCredential, 'id' | 'createdAt'>,
 ): Promise<ConnectorCredential> {
   await ready
-  const id = randomUUID()
+  const id = NodeCrypto.randomUUID()
   const createdAt = Date.now()
   await db.insert(credentials).values({ ...credential, id, createdAt })
   return decodeCredential({ ...credential, id, createdAt })
