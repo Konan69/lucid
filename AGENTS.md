@@ -9,6 +9,12 @@
 - Use pnpm only. Never write commands for another JavaScript package manager in scripts, hooks, CI, documentation, skills, or agent guidance. Keep `packageManager`, `engines.pnpm`, workspace settings, CI, and the lockfile aligned.
 - Prefer `rg` for search. Preserve method receivers: call `object.method(...)`; never call a destructured method loose unless it is explicitly bound.
 
+## The three ways to hurt yourself
+
+1. **Killing by pattern.** Never use `pkill -f`, `pgrep | kill`, or kill a PID found by matching a name, path, command, or worktree string. A `pkill -f <pattern>` matched the invoking agent's own command line in this repository today. Kill only a PID captured when you spawned the process, or the owner of your port after confirming that process belongs to this worktree.
+2. **Writing to live data.** The developer's real local database and volumes are read/copy only: the `vivid` PostgreSQL instance on port 55433, Alchemy `.alchemy` state, and `packages/agent-runtime/.state`. Never point tests, migrations, cleanup, or fixtures at them. Tests use an isolated disposable database supplied only through `VIVID_TEST_DATABASE_URL`.
+3. **Baking in origins.** Development is single-origin through the Vite proxy. Never bake a `localhost` URL, service origin, or runtime token into a client bundle; doing so breaks remote access and exposes runtime authority.
+
 ## Engineering standard
 
 No overengineering means no speculative abstraction, indirection, or plumbing you do not yet need — it does **not** mean skimping on rigor. Always model the domain first: strong types, Effect `Schema` contracts, branded identifiers, and tagged variants are the baseline, never the “complex” option. “Simplest” means the simplest design that keeps the model honest, not the fewest keystrokes. Do not cite simplicity to avoid a schema, precise failure, or exhaustive state model.
@@ -20,6 +26,10 @@ Minimal correct code wins. Solve the actual problem with the fewest concepts, in
 Keep one responsibility per module. Split files that own unrelated concerns. Pure domain logic must be testable without booting a server, database, Flue runtime, Expo runtime, or browser.
 
 Keep one source of truth for each vocabulary, invariant, and mapping. Derive dependent values so extending the source makes missing cases fail at typecheck. Where direct derivation is blocked, keep one declaration authoritative and assert total coverage of the other at the type level; never cast to force agreement.
+
+## Taste
+
+Keep complexity at the adapter boundary, orchestration pure, and UI dumb. Prefer inferred types over annotations when inference preserves the full domain contract. Do not add continuously repainting animations; they waste power and drop frames on high-refresh displays. If a rule fights the task, say so loudly and get human sign-off before breaking it.
 
 ## Domain honesty
 
@@ -62,6 +72,10 @@ Edit the Drizzle TypeScript schema first, run the owning package's `db:generate`
 
 Alchemy `2.0.0-beta.79` peers on the pinned Drizzle RC. Workspace overrides hold Effect `4.0.0-rc.116` and Drizzle `1.0.0-rc.5-ab785fc` in lockstep. Do not relax them without validating Alchemy, Better Auth, and every migration owner together.
 
+## Hit every surface
+
+A feature is incomplete when it works only on the path first tested. Check web, mobile, and the future desktop surface. Check every applicable entry point: its Thread, Today, Settings, and notifications. Put shared client behavior in `packages/client-runtime` and shared wire contracts in `packages/contracts`; do not reimplement them per surface.
+
 ## Web and mobile UI
 
 Avoid React `useEffect` in both Vite React and Expo. Prefer loaders, query primitives, event handlers, subscriptions, external-store APIs, or derived render state. `useLayoutEffect` is not an escape hatch; use it only when a frame would otherwise visibly render the wrong layout or stale content. Never put work keyed to high-frequency streamed values on the pre-paint path.
@@ -81,6 +95,10 @@ Test observable behavior through public seams. Delete tautological tests that on
 Fixtures must never touch a shared app database. Use disposable PostgreSQL through `VIVID_TEST_DATABASE_URL`, never fallback to `DATABASE_URL` or an app env file, and register cleanup before the first write so failed setup/assertions retain cleanup. Process termination can skip teardown, so database isolation is mandatory.
 
 LLM-behavior live evaluations need real credentials, an explicit opt-in environment flag, and one `.live.test.ts` file per behavioral claim. They stay skipped by default and test observable structured behavior, not prompt wording.
+
+## Verifying
+
+Use the smallest proof that demonstrates the changed behavior: focused tests first, then the narrow lint or typecheck surface. Never use sleeps or polling in tests; wait on a typed signal, an observable receipt, or a controllable clock. A test that needs a timeout to pass is wrong. The primary agent performs one integrated pass in a real client for user-visible work; subagents never launch dev servers.
 
 ## SDKs, servers, and tools
 

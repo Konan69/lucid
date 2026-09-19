@@ -17,6 +17,7 @@ const cases = [
   ['no-optional-chaining', 'const value = input?.value', 'const value = input.value'],
   ['no-undefined-in-union', 'type Value = string | undefined', 'type Value = string | null'],
   ['no-direct-process-env', 'const value = process.env.KEY', 'const value = config.KEY'],
+  ['no-global-process-runtime', 'const value = process.platform', 'const value = runtime.platform'],
   ['no-runtime-env-mutation', "process.env.KEY = 'x'", 'config.setKey()'],
   ['no-promise-constructor', 'const value = new Promise(() => {})', 'const value = Effect.async(() => {})'],
   [
@@ -35,6 +36,22 @@ const cases = [
   ],
   ['no-effect-option-constructors', 'Effect.some(value)', 'Option.some(value)'],
   ['no-direct-schema-safeparse', 'UserSchema.safeParse(value)', 'Schema.decodeUnknownEither(UserSchema)(value)'],
+  [
+    'no-inline-schema-compile',
+    'const parse = (input) => Schema.decodeUnknownEffect(UserSchema)(input)',
+    'const decodeUser = Schema.decodeUnknownEffect(UserSchema); const parse = (input) => decodeUser(input)',
+  ],
+  [
+    'no-manual-effect-runtime-in-tests',
+    "import { it } from '@effect/vitest'; it('x', () => Effect.runPromise(program))",
+    "import test from 'node:test'; test('x', () => Effect.runPromise(program))",
+    'module.test.ts',
+  ],
+  [
+    'namespace-node-imports',
+    "import path from 'node:path'",
+    "import * as NodePath from 'node:path'",
+  ],
   ['no-parse-method-alias', 'const { parse } = UserSchema', 'const schema = UserSchema'],
   [
     'require-schema-class-identifier',
@@ -137,10 +154,69 @@ function lint(ruleName, source, filename = 'module.ts') {
   }
 }
 
+const ruleDiagnostics = (ruleName, diagnostics) =>
+  diagnostics.filter((diagnostic) => diagnostic.code === `vivid(${ruleName})`)
+
 for (const [ruleName, invalid, valid, filename] of cases) {
-  test(`${ruleName} reports the forbidden form and accepts the owned alternative`, () => {
-    const diagnostics = lint(ruleName, invalid, filename)
-    assert.equal(diagnostics.filter((diagnostic) => diagnostic.code === `vivid(${ruleName})`).length, 1)
-    assert.equal(lint(ruleName, valid, filename).length, 0)
+  void test(`${ruleName} reports the forbidden form and accepts the owned alternative`, () => {
+    assert.equal(ruleDiagnostics(ruleName, lint(ruleName, invalid, filename)).length, 1)
+    assert.equal(ruleDiagnostics(ruleName, lint(ruleName, valid, filename)).length, 0)
+
+    if (ruleName === 'no-inline-schema-compile') {
+      const medium = lint(
+        ruleName,
+        'const parse = (input) => Schema.decodeUnknownEffect(UserSchema)(input)',
+      )
+      const high = lint(
+        ruleName,
+        'const parse = (input) => Schema.decodeUnknownEffect(Schema.Struct({ value: Schema.String }))(input)',
+      )
+      const mediumFindings = ruleDiagnostics(ruleName, medium)
+      const highFindings = ruleDiagnostics(ruleName, high)
+      assert.match(mediumFindings[0]?.message ?? '', /compiled function is rebuilt/u)
+      assert.doesNotMatch(mediumFindings[0]?.message ?? '', /inline schema literal/u)
+      assert.match(highFindings[0]?.message ?? '', /inline schema literal and the compiled function/u)
+    }
+
+    if (ruleName === 'no-manual-effect-runtime-in-tests') {
+      const vitestSource = [
+        "import { it } from '@effect/vitest'",
+        "it('runs', () => Effect.runPromise(program))",
+        "it('syncs', () => Effect.runSync(program))",
+        "it('forks', () => Effect.runFork(program))",
+      ].join('\n')
+      assert.equal(
+        ruleDiagnostics(ruleName, lint(ruleName, vitestSource, 'runtime.test.ts')).length,
+        3,
+      )
+      const nodeTestSource =
+        "import test from 'node:test'; test('runs', () => Effect.runSync(program))"
+      assert.equal(
+        ruleDiagnostics(ruleName, lint(ruleName, nodeTestSource, 'adapter.test.ts')).length,
+        0,
+      )
+    }
+
+    if (ruleName === 'no-global-process-runtime') {
+      const source = [
+        "import * as NodeOS from 'node:os'",
+        "import { arch as hostArch } from 'node:os'",
+        'const architecture = process.arch',
+        'const platform = globalThis.process.platform',
+        'const osPlatform = NodeOS.platform()',
+        'const osArchitecture = hostArch()',
+      ].join('\n')
+      assert.equal(ruleDiagnostics(ruleName, lint(ruleName, source)).length, 4)
+    }
+
+    if (ruleName === 'namespace-node-imports') {
+      const source = [
+        "import * as NodeAssert from 'node:assert/strict'",
+        "import * as NodeFSP from 'node:fs/promises'",
+        "import * as NodeOS from 'node:os'",
+        "import * as NodeURL from 'node:url'",
+      ].join('\n')
+      assert.equal(ruleDiagnostics(ruleName, lint(ruleName, source)).length, 0)
+    }
   })
 }
