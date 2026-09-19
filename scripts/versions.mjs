@@ -8,6 +8,7 @@ export const versions = Object.freeze({
   '@effect/language-service': '0.87.2',
   '@effect/platform-node': '4.0.0-rc.116',
   '@effect/sql-pg': '4.0.0-rc.116',
+  '@effect/vitest': '4.0.0-rc.116',
   '@shadcn/lint': '0.1.1',
   '@typescript/native': 'npm:typescript@7.0.2',
   alchemy: '2.0.0-beta.79',
@@ -15,11 +16,12 @@ export const versions = Object.freeze({
   'drizzle-kit': '1.0.0-rc.5-ab785fc',
   'drizzle-orm': '1.0.0-rc.5-ab785fc',
   effect: '4.0.0-rc.116',
-  oxlint: '1.81.0',
+  oxlint: '1.83.0',
   'oxlint-tailwindcss': '1.12.0',
   pg: '^8.23.0',
   tailwindcss: '4.3.0',
   typescript: '6.0.3',
+  vitest: '5.0.1',
 })
 
 const forcedVersions = Object.freeze({
@@ -31,7 +33,7 @@ const forcedVersions = Object.freeze({
 })
 
 const requiredByManifest = Object.freeze({
-  'package.json': ['@shadcn/lint', 'oxlint', 'oxlint-tailwindcss'],
+  'package.json': ['@effect/vitest', '@shadcn/lint', 'oxlint', 'oxlint-tailwindcss', 'vitest'],
   'apps/web/package.json': ['tailwindcss'],
   'apps/server/package.json': [
     '@alchemy.run/better-auth',

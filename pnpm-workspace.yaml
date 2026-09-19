@@ -12,13 +12,12 @@ packages:
 # untracked .npmrc when a private registry eventually requires them.
 autoInstallPeers: false
 strictPeerDependencies: true
-# Strict peers stay on. These four are transitive peers of tools we do not run:
-# @shadcn/lint's ESLint parser (we load it through oxlint), @effect/vitest pulled by
-# alchemy, Flue's decorator transform, and alchemy's Cloudflare types pin.
+# Strict peers stay on. These three are transitive peers of tools we do not run:
+# @shadcn/lint's ESLint parser (we load it through oxlint), Flue's decorator
+# transform, and alchemy's Cloudflare types pin.
 peerDependencyRules:
   ignoreMissing:
     - eslint
-    - vitest
     - '@babel/core'
   allowedVersions:
     '@cloudflare/workers-types': '5'
@@ -31,6 +30,7 @@ catalog:
   '@alchemy.run/better-auth': 2.0.0-beta.79
   '@effect/platform-node': 4.0.0-rc.116
   '@effect/sql-pg': 4.0.0-rc.116
+  '@effect/vitest': 4.0.0-rc.116
   '@flue/cli': 2.0.3
   '@flue/postgres': 2.0.3
   '@flue/react': 2.0.3
@@ -38,6 +38,7 @@ catalog:
   '@flue/sdk': 2.0.3
   '@flue/vite': 2.0.3
   '@types/node': ^24.0.0
+  vitest: 5.0.1
   '@typescript/native': 'npm:typescript@7.0.2'
   alchemy: 2.0.0-beta.79
   better-auth: 1.7.5
