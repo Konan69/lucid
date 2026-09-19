@@ -473,7 +473,7 @@ function Composer({
   return (
     <div className="shrink-0 px-3 pt-2 pb-3 sm:px-6 sm:pb-5">
       <div className="mx-auto w-full max-w-(--thread-max-w)">
-        <div className="relative rounded-composer bg-surface-3 ring-line">
+        <div className="relative rounded-composer bg-surface-3 shadow-composer">
         <textarea
           rows={1}
           placeholder="Message Vivid"
