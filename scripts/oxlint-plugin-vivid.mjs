@@ -293,12 +293,12 @@ const hasSchemaIdentifier = (node) => {
 const hasSchemaTitle = (node) => {
   let current = node
   while (current?.type === 'CallExpression' || current?.type === 'MemberExpression') {
-    if (
-      current.type === 'CallExpression' &&
-      current.callee?.type === 'MemberExpression' &&
-      propertyName(current.callee) === 'annotations'
-    ) {
-      return objectProperty(current.arguments[0], 'title') !== undefined
+    if (current.type === 'CallExpression') {
+      const annotationCall =
+        current.callee?.type === 'MemberExpression' &&
+        new Set(['annotate', 'annotations']).has(propertyName(current.callee))
+      if (annotationCall && objectProperty(current.arguments[0], 'title') !== undefined) return true
+      if (current.arguments.some((argument) => objectProperty(argument, 'title') !== undefined)) return true
     }
     current = current.type === 'CallExpression' ? current.callee : current.object
   }
@@ -470,7 +470,7 @@ const effectRequireEffectFn = rule(
   'Service operations that return Effect must use a named Effect.fn for traceability.',
   (report, context) => ({
     Property(node) {
-      if (!isFunction(node.value) || node.value.returnType === undefined) return
+      if (!isFunction(node.value) || node.value.async === true || node.value.returnType === undefined) return
       const returnType = sourceText(context, node.value.returnType)
       if (
         /\bEffect(?:\.|<)/u.test(returnType) &&
