@@ -131,7 +131,12 @@ const marks = {
 };
 export function ToolMark({ id, size = 24 }: { id: string; size?: number }) {
   const { colors: c } = useTheme();
-  const Mark = marks[id as keyof typeof marks];
+  const Mark = Object.hasOwn(marks, id)
+    ? (
+      // SAFETY: Object.hasOwn verifies that id is an own key before indexing marks.
+      marks[id as keyof typeof marks]
+    )
+    : undefined;
   return (
     <View
       accessibilityLabel={id}

@@ -32,6 +32,7 @@ function ThreadChat({ route, navigation }: NativeStackScreenProps<Routes, "Chat"
       createFlueClient({
         url: api.agentUrl(id),
         headers: api.headers,
+        // SAFETY: expo/fetch exposes the Fetch API signature expected by Flue.
         fetch: expoFetch.bind(globalThis) as typeof fetch,
       }),
     [api, id],
@@ -60,6 +61,12 @@ function ThreadChat({ route, navigation }: NativeStackScreenProps<Routes, "Chat"
     return () => subscription.remove();
   }, []);
   const messages = agent.messages.filter((message) => message.display !== "hidden");
+  const agentErrorMessage = agent.error === undefined ? undefined : agent.error.message;
+  const connectionError = agentErrorMessage === undefined
+    ? undefined
+    : agentErrorMessage.includes("Connection error")
+      ? "Vivid couldn’t connect. Check the server connection and try again."
+      : agentErrorMessage.replace(/^direct\([^)]*\) failed: /, "");
   async function send(continuation?: string) {
     const text = (continuation ?? draft).trim();
     if (!text || sending || working) return;
@@ -83,7 +90,7 @@ function ThreadChat({ route, navigation }: NativeStackScreenProps<Routes, "Chat"
         setError("Your message was sent. The conversation list could not update yet.");
       }
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSending(false);
     }
@@ -132,7 +139,10 @@ function ThreadChat({ route, navigation }: NativeStackScreenProps<Routes, "Chat"
         }}
         scrollEventThrottle={100}
         onContentSizeChange={() => {
-          if (nearBottom.current) list.current?.scrollToEnd({ animated: false });
+          if (nearBottom.current) {
+            const currentList = list.current;
+            if (currentList !== null) currentList.scrollToEnd({ animated: false });
+          }
         }}
         ListEmptyComponent={
           agent.historyReady ? (
@@ -173,9 +183,7 @@ function ThreadChat({ route, navigation }: NativeStackScreenProps<Routes, "Chat"
             <Feedback
               error={
                 error ||
-                (agent.error?.message?.includes("Connection error")
-                  ? "Vivid couldn’t connect. Check the server connection and try again."
-                  : agent.error?.message?.replace(/^direct\([^)]*\) failed: /, ""))
+                connectionError
               }
               retry={() => agent.refresh()}
               retryLabel="Reconnect"
@@ -264,6 +272,8 @@ function Message({
     .join("\n\n");
   const tools = message.parts.filter((p) => p.type === "dynamic-tool");
   const user = message.role === "user";
+  const settlement = message.settlement;
+  const metadata = message.metadata;
   const tracked = tools.filter(
     (tool) =>
       tool.state === "output-available" &&
@@ -279,21 +289,23 @@ function Message({
     return (
       <Card>
         <Label size="label" tone="ink-3">
-          {message.settlement?.outcome === "failed"
+          {settlement !== undefined && settlement.outcome === "failed"
             ? "Vivid could not complete that response. "
             : ""}
           {text}
         </Label>
       </Card>
     );
-  const timestamp = message.metadata?.finishedAt ?? message.metadata?.startedAt;
-  const time =
-    typeof timestamp === "number"
-      ? new Date(timestamp).toLocaleTimeString(undefined, {
-          hour: "numeric",
-          minute: "2-digit",
-        })
-      : "";
+  const rawTimestamp = metadata === undefined
+    ? undefined
+    : metadata.finishedAt ?? metadata.startedAt;
+  const timestamp = rawTimestamp == null ? undefined : Number(rawTimestamp);
+  const time = timestamp === undefined || !Number.isFinite(timestamp)
+    ? ""
+    : new Date(timestamp).toLocaleTimeString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+      });
   return (
     <View
       style={{

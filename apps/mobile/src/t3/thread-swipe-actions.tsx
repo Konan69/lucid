@@ -6,6 +6,7 @@ import {
   createContext,
   use,
   useCallback,
+  useEffectEvent,
   useEffect,
   useRef,
   useState,
@@ -42,6 +43,16 @@ const ACTION_ICON_SIZE = 15;
 const COMPACT_ACTION_CIRCLE_SIZE = 28;
 const COMPACT_ACTION_ICON_SIZE = 13;
 
+function closeSwipeable(ref: { readonly current: SwipeableMethods | null }) {
+  const current = ref.current;
+  if (current !== null) current.close();
+}
+
+function resetSwipeable(ref: { readonly current: SwipeableMethods | null }) {
+  const current = ref.current;
+  if (current !== null) current.reset();
+}
+
 export const THREAD_SWIPE_ACTIONS_WIDTH = ACTION_ITEM_WIDTH * 2;
 export const THREAD_SWIPE_SPRING = {
   damping: 26,
@@ -76,7 +87,7 @@ function swipeActionsWidth(hasSecondaryAction: boolean) {
 function resolveSecondaryAction(input: {
   readonly close: () => void;
   readonly onDelete: () => void;
-  readonly secondaryAction: ThreadSwipeAction | null | undefined;
+  readonly secondaryAction?: ThreadSwipeAction | null;
   readonly threadTitle: string;
   readonly dangerColor: string;
   readonly actionColor: string;
@@ -95,17 +106,18 @@ function resolveSecondaryAction(input: {
     };
   }
   const action = input.secondaryAction;
+  const menu = action.menu;
   return {
     ...action,
     backgroundColor: input.actionColor,
     menu:
-      action.menu === undefined
+      menu === undefined
         ? undefined
         : {
-            ...action.menu,
+            ...menu,
             onPressAction: (event) => {
               input.close();
-              action.menu?.onPressAction(event);
+              menu.onPressAction(event);
             },
           },
     onPress: () => {
@@ -139,19 +151,19 @@ export function SwipeableScrollGateProvider(props: {
  * T3's scroll gate disables swipes while the list is dragging or decelerating.
  * T3's Gesture Handler patch also rejects vertically dominant initial pans.
  */
-export function useSwipeableScrollGate(options?: {
+export function useSwipeableScrollGate(options: {
   readonly onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   readonly onScrollBeginDrag?: (
     event: NativeSyntheticEvent<NativeScrollEvent>,
   ) => void;
-}) {
+} = {}) {
   const [gateActive, setGateActive] = useState(false);
   const gateActiveRef = useRef(false);
   const draggingRef = useRef(false);
   const dragStartYRef = useRef(0);
   const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const externalOnScroll = options?.onScroll;
-  const externalOnScrollBeginDrag = options?.onScrollBeginDrag;
+  const externalOnScroll = options.onScroll;
+  const externalOnScrollBeginDrag = options.onScrollBeginDrag;
 
   const update = useCallback((next: boolean) => {
     if (gateActiveRef.current !== next) {
@@ -172,7 +184,7 @@ export function useSwipeableScrollGate(options?: {
       draggingRef.current = true;
       dragStartYRef.current = event.nativeEvent.contentOffset.y;
       clearSettle();
-      externalOnScrollBeginDrag?.(event);
+      if (externalOnScrollBeginDrag !== undefined) externalOnScrollBeginDrag(event);
     },
     [clearSettle, externalOnScrollBeginDrag],
   );
@@ -188,7 +200,7 @@ export function useSwipeableScrollGate(options?: {
       ) {
         update(true);
       }
-      externalOnScroll?.(event);
+      if (externalOnScroll !== undefined) externalOnScroll(event);
     },
     [externalOnScroll, update],
   );
@@ -268,7 +280,7 @@ export function ThreadSwipeable(props: {
   const fullSwipeAction =
     props.fullSwipeAction ??
     (props.secondaryAction === undefined ? "delete" : "primary");
-  const close = useCallback(() => swipeableRef.current?.close(), []);
+  const close = useEffectEvent(() => closeSwipeable(swipeableRef));
   const gateEnabled = use(SwipeableScrollGateContext);
   const resetKey = props.resetKey;
   useEffect(() => {
@@ -276,7 +288,7 @@ export function ThreadSwipeable(props: {
       return;
     }
     fullSwipeArmedRef.current = false;
-    swipeableRef.current?.reset();
+    resetSwipeable(swipeableRef);
   }, [resetKey]);
   const handleFullSwipeArmedChange = useCallback((armed: boolean) => {
     if (armed && !fullSwipeArmedRef.current) {
@@ -302,12 +314,14 @@ export function ThreadSwipeable(props: {
       onSwipeableClose={() => {
         fullSwipeArmedRef.current = false;
         if (swipeableRef.current) {
-          props.onSwipeableClose?.(swipeableRef.current);
+          if (props.onSwipeableClose !== undefined)
+            props.onSwipeableClose(swipeableRef.current);
         }
       }}
       onSwipeableOpenStartDrag={() => {
         if (swipeableRef.current) {
-          props.onSwipeableWillOpen?.(swipeableRef.current);
+          if (props.onSwipeableWillOpen !== undefined)
+            props.onSwipeableWillOpen(swipeableRef.current);
         }
       }}
       onSwipeableWillOpen={() => {
@@ -316,7 +330,8 @@ export function ThreadSwipeable(props: {
           return;
         }
 
-        props.onSwipeableWillOpen?.(methods);
+        if (props.onSwipeableWillOpen !== undefined)
+          props.onSwipeableWillOpen(methods);
         if (fullSwipeArmedRef.current) {
           fullSwipeArmedRef.current = false;
           methods.close();

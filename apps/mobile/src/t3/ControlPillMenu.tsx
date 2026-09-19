@@ -3,28 +3,39 @@ import { Platform, StyleSheet, View } from "react-native";
 import {
   cloneElement,
   isValidElement,
+  useEffectEvent,
   useRef,
   type ComponentProps,
   type ReactElement,
 } from "react";
 import { useTheme } from "../theme";
 
+function showAndroidMenu(menu: { readonly current: MenuComponentRef | null }) {
+  const currentMenu = menu.current;
+  if (currentMenu !== null) currentMenu.show();
+}
+
 // T3's long-press suppression: releasing a menu gesture must not open the row.
 export function ControlPillMenu(props: ComponentProps<typeof MenuView>) {
   const { dark } = useTheme();
   const menu = useRef<MenuComponentRef>(null);
+  const openMenu = useEffectEvent(() => {
+    if (Platform.OS === "android") showAndroidMenu(menu);
+  });
   let children = props.children;
   if (props.shouldOpenOnLongPress && isValidElement(children)) {
+    // SAFETY: isValidElement confirms that children is a React element before its props are read.
     const child = children as ReactElement<{
       onLongPress?: () => void;
       delayLongPress?: number;
     }>;
+    const childProps = child.props;
     children = cloneElement(child, {
       onLongPress: () => {
-        child.props.onLongPress?.();
-        if (Platform.OS === "android") menu.current?.show();
+        if (childProps.onLongPress !== undefined) childProps.onLongPress();
+        openMenu();
       },
-      delayLongPress: child.props.delayLongPress ?? 350,
+      delayLongPress: childProps.delayLongPress ?? 350,
     });
   }
   // Android MenuView intercepts row touches before the swipe recognizer can

@@ -28,12 +28,13 @@ function coverFor(path: string) {
 export function Projects({ navigation }: NativeStackScreenProps<Routes, "Projects">) {
   const [path, setPath] = useState<Project[]>([]);
   const selected = path.at(-1);
+  const projectTitle = selected === undefined ? "Projects" : selected.name;
   const [query, setQuery] = useState("");
   const items = selected ? (selected.children ?? []) : projects;
   return (
     <View style={{ flex: 1 }}>
       <Header
-        title={selected?.name ?? "Projects"}
+        title={projectTitle}
         onBack={() => (selected ? setPath((p) => p.slice(0, -1)) : navigation.goBack())}
       />
       <ScrollView contentContainerStyle={styles.page}>
@@ -108,6 +109,7 @@ export function Connectors({ navigation }: NativeStackScreenProps<Routes, "Conne
   const { api } = useWorkspace();
   const { colors: c } = useTheme();
   const resource = useResource<{ connectors: Connector[] }>(api, "/api/connectors");
+  const connectorData = resource.data;
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string>();
   async function change(connector: Connector) {
@@ -126,7 +128,7 @@ export function Connectors({ navigation }: NativeStackScreenProps<Routes, "Conne
       }
       await resource.refresh();
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(undefined);
     }
@@ -148,7 +150,7 @@ export function Connectors({ navigation }: NativeStackScreenProps<Routes, "Conne
           loading={resource.loading}
           retry={resource.refresh}
         />
-        {resource.data?.connectors.map((item) => (
+        {connectorData !== undefined && connectorData.connectors.map((item) => (
           <Card key={item.id}>
             <View style={styles.row}>
               <ToolMark id={item.id} size={28} />
@@ -171,7 +173,7 @@ export function Connectors({ navigation }: NativeStackScreenProps<Routes, "Conne
             />
           </Card>
         ))}
-        {resource.data?.connectors.length === 0 && (
+        {connectorData !== undefined && connectorData.connectors.length === 0 && (
           <Label tone="ink-3">No connectors are available on this server yet.</Label>
         )}
       </ScrollView>

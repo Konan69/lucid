@@ -26,9 +26,11 @@ export function ConnectorRequestCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [authUrl, setAuthUrl] = useState("");
-  const connected = resource.data?.connectors.some(
-    (item) => item.id === request.connector && item.status === "connected",
-  );
+  const connected = resource.data === undefined
+    ? false
+    : resource.data.connectors.some(
+        (item) => item.id === request.connector && item.status === "connected",
+      );
   const name = connectorNames[request.connector];
   async function act() {
     setBusy(true);
@@ -44,7 +46,7 @@ export function ConnectorRequestCard({
         setAuthUrl(url);
       }
     } catch (cause) {
-      setError((cause as Error).message);
+      setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(false);
     }

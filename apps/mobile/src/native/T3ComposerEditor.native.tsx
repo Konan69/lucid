@@ -142,10 +142,18 @@ export function ComposerEditor({
   useImperativeHandle(
     ref,
     () => ({
-      focus: () => void nativeRef.current?.focus(),
-      blur: () => void nativeRef.current?.blur(),
-      setSelection: (nextSelection) =>
-        void nativeRef.current?.setSelection(nextSelection.start, nextSelection.end),
+      focus: () => {
+        const current = nativeRef.current;
+        if (current !== null) void current.focus();
+      },
+      blur: () => {
+        const current = nativeRef.current;
+        if (current !== null) void current.blur();
+      },
+      setSelection: (nextSelection) => {
+        const current = nativeRef.current;
+        if (current !== null) void current.setSelection(nextSelection.start, nextSelection.end);
+      },
     }),
     [],
   );
@@ -225,21 +233,9 @@ export function ComposerEditor({
         controlledDocumentJson={controlledDocumentJson}
         themeJson={themeJson}
         placeholder={props.placeholder ?? ""}
-        fontFamily={
-          typeof resolvedTextStyle.fontFamily === "string"
-            ? resolvedTextStyle.fontFamily
-            : regularFontFamily
-        }
-        fontSize={
-          typeof resolvedTextStyle.fontSize === "number"
-            ? resolvedTextStyle.fontSize
-            : MOBILE_TYPOGRAPHY.body.fontSize
-        }
-        lineHeight={
-          typeof resolvedTextStyle.lineHeight === "number"
-            ? resolvedTextStyle.lineHeight
-            : MOBILE_TYPOGRAPHY.body.lineHeight
-        }
+        fontFamily={resolvedTextStyle.fontFamily ?? regularFontFamily}
+        fontSize={resolvedTextStyle.fontSize ?? MOBILE_TYPOGRAPHY.body.fontSize}
+        lineHeight={resolvedTextStyle.lineHeight ?? MOBILE_TYPOGRAPHY.body.lineHeight}
         contentInsetVertical={contentInsetVertical}
         singleLineCentered={props.singleLineCentered ?? false}
         editable={props.editable ?? true}
@@ -256,7 +252,8 @@ export function ComposerEditor({
           );
           if (acknowledgedEventCount === false) return;
           onChangeText(event.nativeEvent.value);
-          onSelectionChange?.(event.nativeEvent.selection);
+          if (onSelectionChange !== undefined)
+            onSelectionChange(event.nativeEvent.selection);
           setMostRecentEventCount(acknowledgedEventCount);
           setNativeEventSequence((sequence) => sequence + 1);
         }}
@@ -267,16 +264,20 @@ export function ComposerEditor({
             event.nativeEvent.selection,
           );
           if (acknowledgedEventCount === false) return;
-          onSelectionChange?.(event.nativeEvent.selection);
+          if (onSelectionChange !== undefined)
+            onSelectionChange(event.nativeEvent.selection);
           setMostRecentEventCount(acknowledgedEventCount);
           setNativeEventSequence((sequence) => sequence + 1);
         }}
-        onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
+        onComposerPasteImages={(event) => {
+          if (onPasteImages !== undefined) onPasteImages(event.nativeEvent.uris);
+        }}
         onComposerFocus={onFocus}
         onComposerBlur={onBlur}
-        onComposerContentSizeChange={(event) =>
-          props.onContentHeightChange?.(event.nativeEvent.height)
-        }
+        onComposerContentSizeChange={(event) => {
+          if (props.onContentHeightChange !== undefined)
+            props.onContentHeightChange(event.nativeEvent.height);
+        }}
       />
     </View>
   );
