@@ -2,7 +2,7 @@ import {
   AlertTriangle, BellRing, Check, ChevronRight, Circle, CircleCheck, Clock3, LoaderCircle,
   MessageSquareText, Plus, Repeat2, RotateCcw, Trash2, UserRound, X,
 } from "lucide-react";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
 import { cn } from "../ui/cn";
 import { Face } from "../ui/Face";
 
@@ -53,6 +53,42 @@ export type Notification = {
 };
 
 const DAY_MS = 86_400_000;
+const CURRENT_TIME_REFRESH_MS = 15_000;
+const currentTimeListeners = new Set<() => void>();
+let currentTime = Date.now();
+let currentTimeTimer: number | null = null;
+
+/**
+ * Keeps render-time date comparisons on one stable snapshot while the Today screen is mounted.
+ * The shared timer matches the screen's idle refresh cadence and is released with the last row.
+ */
+function subscribeCurrentTime(listener: () => void) {
+  currentTimeListeners.add(listener);
+  if (currentTimeTimer === null) {
+    const update = () => {
+      currentTime = Date.now();
+      for (const currentListener of currentTimeListeners) currentListener();
+    };
+    update();
+    currentTimeTimer = window.setInterval(update, CURRENT_TIME_REFRESH_MS);
+  }
+  return () => {
+    currentTimeListeners.delete(listener);
+    if (currentTimeListeners.size === 0 && currentTimeTimer !== null) {
+      window.clearInterval(currentTimeTimer);
+      currentTimeTimer = null;
+    }
+  };
+}
+
+function getCurrentTime() {
+  return currentTime;
+}
+
+function useCurrentTime() {
+  return useSyncExternalStore(subscribeCurrentTime, getCurrentTime, getCurrentTime);
+}
+
 const REPEAT_OPTIONS = [
   { label: "Once", value: "" },
   { label: "Every day", value: String(DAY_MS) },
@@ -115,8 +151,7 @@ function describeRepeat(repeatEveryMs: number | null) {
 
 type Group = { key: string; label: string; note?: string; tasks: Task[] };
 
-function groupTasks(tasks: Task[]): Group[] {
-  const now = Date.now();
+function groupTasks(tasks: Task[], now: number): Group[] {
   const endOfToday = startOfDay(now) + DAY_MS;
   const open = tasks.filter((task) => task.status === "open");
   const taken = new Set<string>();
@@ -159,16 +194,37 @@ export function Today({ onOpenConversation }: { onOpenConversation(conversationI
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+
+    // Initial hydration is an external request. Polling and user-triggered refreshes continue to
+    // use `load`, while this mount request ignores responses after the screen is removed.
+    void Promise.all([
+      request<{ tasks: Task[] }>("/api/tasks"),
+      request<{ notifications: Notification[] }>("/api/notifications"),
+    ]).then(([taskBody, notificationBody]) => {
+      if (cancelled) return;
+      setTasks(taskBody.tasks);
+      setNotifications(notificationBody.notifications);
+      setError(null);
+    }).catch((cause: unknown) => {
+      if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load today");
+    }).finally(() => {
+      if (!cancelled) setReady(true);
+    });
+
+    return () => { cancelled = true; };
+  }, []);
   useEffect(() => {
     const running = tasks.some((task) => task.followUps.some((followUp) => followUp.status === "running"));
     const timer = window.setInterval(() => { void load(); }, running ? 1500 : 15_000);
     return () => window.clearInterval(timer);
   }, [load, tasks]);
 
+  const now = useCurrentTime();
   const selected = tasks.find((task) => task.id === selectedId) ?? null;
   const unread = notifications.filter((notification) => notification.readAt === null);
-  const groups = groupTasks(tasks);
+  const groups = groupTasks(tasks, now);
   const settled = tasks.filter((task) => task.status !== "open").slice(0, 12);
   const inDetail = selected !== null || creating;
   const back = () => { setSelectedId(null); setCreating(false); };
@@ -199,7 +255,7 @@ export function Today({ onOpenConversation }: { onOpenConversation(conversationI
     else if (notification.conversationId) onOpenConversation(notification.conversationId, notification.title);
   }
 
-  const today = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long" }).format(Date.now());
+  const today = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long" }).format(now);
 
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0" style={{ boxShadow: "var(--content-edge-shadow, none)" }}>
@@ -283,7 +339,7 @@ export function Today({ onOpenConversation }: { onOpenConversation(conversationI
 }
 
 function TaskRow({ task, onOpen, onToggle }: { task: Task; onOpen(): void; onToggle(): void }) {
-  const now = Date.now();
+  const now = useCurrentTime();
   const overdue = task.status === "open" && task.dueAt !== null && task.dueAt < now;
   const running = task.followUps.some((followUp) => followUp.status === "running");
   const settled = task.status !== "open";
@@ -318,6 +374,7 @@ function TaskRow({ task, onOpen, onToggle }: { task: Task; onOpen(): void; onTog
 }
 
 function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }: { task: Task | null; onChanged(id: string): Promise<void>; onDeleted(): Promise<void>; onCancel(): void; onOpenConversation(conversationId: string, fallbackTitle: string): void }) {
+  const now = useCurrentTime();
   const [title, setTitle] = useState(task?.title ?? "");
   const [detail, setDetail] = useState(task?.detail ?? "");
   const [assignee, setAssignee] = useState(task?.assignee ?? "");
@@ -412,7 +469,7 @@ function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }
         </div>
       )}
 
-      {task && task.status === "open" && task.dueAt !== null && task.dueAt < Date.now() && (
+      {task && task.status === "open" && task.dueAt !== null && task.dueAt < now && (
         <div className="mb-4 flex items-start gap-2 rounded-control bg-danger-soft px-3 py-2.5 text-label text-danger"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p>Past due since {formatWhen(task.dueAt)}. Vivid chased it once automatically; chase again, move the date, or close it.</p></div>
       )}
 
