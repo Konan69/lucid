@@ -1,4 +1,1 @@
 $ tsc -b
-tsconfig.json(6,5): error TS5102: Option 'baseUrl' has been removed. Please remove it from your configuration.
-  Use '"paths": {"*": ["./*"]}' instead.
-[ELIFECYCLE] Command failed with exit code 1.

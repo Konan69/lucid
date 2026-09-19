@@ -53,3 +53,7 @@ Counts were measured against the current web source without modifying components
 | `tailwindcss/enforce-negative-arbitrary-values` | error | 0 |
 | `tailwindcss/enforce-consistent-variable-syntax` | error | 0 |
 | `tailwindcss/consistent-variant-order` | error | 0 |
+
+## Brand marks keep literal colours
+
+`apps/web/src/ui/ToolMarks.tsx` draws third-party logos (Google, Gmail, Drive, Calendar). Their colours belong to those brands, not to Vivid's theme, so they stay literal hex values and `shadcn/no-raw-colors` is off for that one file. Never point a brand mark at a theme token: it would change when the theme does.
