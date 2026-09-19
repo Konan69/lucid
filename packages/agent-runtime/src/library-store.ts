@@ -3,11 +3,10 @@ import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { db, schemaReady } from "./runtime-db.ts";
 import { libraryChunks, libraryDocuments, libraryFolders } from "./runtime-schema.ts";
 import {
-  LibraryDocumentSchema,
-  LibraryFolderSchema,
-  LibrarySearchResultSchema,
-  StoredLibraryDocumentSchema,
-  decode
+  decodeLibraryDocument,
+  decodeLibraryFolder,
+  decodeLibrarySearchResult,
+  decodeStoredLibraryDocument
 } from "./runtime-codecs.ts";
 
 export type LibraryDocumentStatus = "processing" | "ready" | "failed";
@@ -49,15 +48,15 @@ const folderSelection = {
 };
 
 function decodeDocument<T extends { size: unknown; chunkCount: unknown }>(row: T): LibraryDocument {
-  return decode(LibraryDocumentSchema, { ...row, size: Number(row.size), chunkCount: Number(row.chunkCount) });
+  return decodeLibraryDocument({ ...row, size: Number(row.size), chunkCount: Number(row.chunkCount) });
 }
 
 function decodeStoredDocument<T extends { size: unknown; chunkCount: unknown; bytes: Uint8Array; extractedText: string }>(row: T): StoredLibraryDocument {
-  return decode(StoredLibraryDocumentSchema, { ...row, bytes: new Uint8Array(row.bytes), size: Number(row.size), chunkCount: Number(row.chunkCount) });
+  return decodeStoredLibraryDocument({ ...row, bytes: new Uint8Array(row.bytes), size: Number(row.size), chunkCount: Number(row.chunkCount) });
 }
 
 function decodeFolder<T extends { itemCount: unknown }>(row: T): LibraryFolder {
-  return decode(LibraryFolderSchema, { ...row, itemCount: Number(row.itemCount) });
+  return decodeLibraryFolder({ ...row, itemCount: Number(row.itemCount) });
 }
 
 export async function listLibraryDocuments(folderId?: string | null): Promise<LibraryDocument[]> {
@@ -194,7 +193,7 @@ export async function searchLibrary(search: string, limit = 6, folderId?: string
     ORDER BY score DESC, c.ordinal ASC LIMIT ${boundedLimit}
   `);
   return result.rows.map((row) => {
-    const parsed = decode(LibrarySearchResultSchema, { ...row, score: Number(row.score) });
+    const parsed = decodeLibrarySearchResult({ ...row, score: Number(row.score) });
     return { ...parsed, score: Number(parsed.score.toFixed(4)) };
   });
 }

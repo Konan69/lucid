@@ -3,10 +3,9 @@ import { and, asc, desc, eq, gte, inArray, isNull, isNotNull, lte, lt, or, sql }
 import { db, schemaReady } from "./runtime-db.ts";
 import { followUps, notifications, tasks } from "./runtime-schema.ts";
 import {
-  FollowUpSchema,
-  NotificationSchema,
-  TaskRowSchema,
-  decode
+  decodeFollowUp,
+  decodeNotification,
+  decodeTaskRow
 } from "./runtime-codecs.ts";
 
 export type TaskStatus = "open" | "done" | "dropped";
@@ -79,19 +78,11 @@ const notificationSelection = {
   readAt: notifications.readAt
 };
 
-function mapTask(row: unknown): Task {
-  const { originKind, originId, ...value } = decode(TaskRowSchema, row);
+function mapTask(row: Parameters<typeof decodeTaskRow>[0]): Task {
+  const { originKind, originId, ...value } = decodeTaskRow(row);
   const origin: TaskOrigin = originKind === "conversation" && originId ? { kind: "conversation", conversationId: originId }
     : originKind === "routine" && originId ? { kind: "routine", routineId: originId } : { kind: "manual" };
   return { ...value, origin };
-}
-
-function decodeFollowUp(row: unknown): FollowUp {
-  return decode(FollowUpSchema, row);
-}
-
-function decodeNotification(row: unknown): Notification {
-  return decode(NotificationSchema, row);
 }
 
 export async function listTasks(status?: TaskStatus): Promise<Task[]> {
