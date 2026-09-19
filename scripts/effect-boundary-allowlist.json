@@ -2,17 +2,26 @@
   {
     "file": "packages/agent-runtime/src/app.ts",
     "classification": "framework-runtime-boundary",
-    "symbols": ["decodeJsonBody", "runOperation"]
+    "symbols": [
+      "decodeJsonBody",
+      "runOperation"
+    ]
   },
   {
     "file": "packages/agent-runtime/src/db.ts",
     "classification": "legacy-runtime-boundary",
-    "symbols": ["query", "transaction"]
+    "symbols": [
+      "query",
+      "transaction"
+    ]
   },
   {
     "file": "packages/agent-runtime/src/library-ingest.ts",
     "classification": "legacy-runtime-boundary",
-    "symbols": ["extractPages", "ingestLibraryDocument"]
+    "symbols": [
+      "extractPages",
+      "ingestLibraryDocument"
+    ]
   },
   {
     "file": "packages/agent-runtime/src/library-store.ts",
@@ -40,7 +49,10 @@
   {
     "file": "packages/agent-runtime/src/routine-scheduler.ts",
     "classification": "legacy-store-adapter",
-    "symbols": ["executionOperation", "storeOperation"]
+    "symbols": [
+      "executionOperation",
+      "storeOperation"
+    ]
   },
   {
     "file": "packages/agent-runtime/src/routine-store.ts",
@@ -63,7 +75,9 @@
   {
     "file": "packages/agent-runtime/src/runtime-db.ts",
     "classification": "legacy-runtime-boundary",
-    "symbols": ["schemaReady"]
+    "symbols": [
+      "schemaReady"
+    ]
   },
   {
     "file": "packages/agent-runtime/src/task-store.ts",
@@ -99,74 +113,128 @@
     ]
   },
   {
+    "file": "packages/agent-runtime/src/testdb.ts",
+    "classification": "test-harness-adapter",
+    "symbols": [
+      "testDatabaseLayer"
+    ]
+  },
+  {
     "file": "packages/agent-runtime/src/thread-store.ts",
     "classification": "legacy-runtime-boundary",
-    "symbols": ["deleteConversation", "listConversations", "upsertConversation"]
+    "symbols": [
+      "deleteConversation",
+      "listConversations",
+      "upsertConversation"
+    ]
   },
   {
     "file": "packages/agent-runtime/src/tools/connectors.ts",
     "classification": "legacy-runtime-boundary",
-    "symbols": ["run"]
+    "symbols": [
+      "run"
+    ]
   },
   {
     "file": "packages/agent-runtime/src/tools/search-library.ts",
     "classification": "legacy-runtime-boundary",
-    "symbols": ["run"]
+    "symbols": [
+      "run"
+    ]
   },
   {
     "file": "packages/agent-runtime/src/tools/tasks.ts",
     "classification": "legacy-runtime-boundary",
-    "symbols": ["run"]
+    "symbols": [
+      "run"
+    ]
   },
   {
     "file": "packages/client-runtime/src/index.ts",
     "classification": "injected-transport-adapter",
-    "symbols": ["<module>", "execute", "readFailureMessage", "readText", "request"]
+    "symbols": [
+      "<module>",
+      "execute",
+      "readFailureMessage",
+      "readText",
+      "request"
+    ]
   },
   {
     "file": "packages/connectors/src/google/calendar.ts",
     "classification": "third-party-adapter",
-    "symbols": ["exchangeCode", "getAccessToken", "refreshCredential", "revokeCredential"]
+    "symbols": [
+      "exchangeCode",
+      "getAccessToken",
+      "refreshCredential",
+      "revokeCredential"
+    ]
   },
   {
     "file": "packages/connectors/src/google/drive.ts",
     "classification": "third-party-adapter",
-    "symbols": ["exchangeCode", "getAccessToken", "refreshCredential", "revokeCredential"]
+    "symbols": [
+      "exchangeCode",
+      "getAccessToken",
+      "refreshCredential",
+      "revokeCredential"
+    ]
   },
   {
     "file": "packages/connectors/src/google/gmail.ts",
     "classification": "third-party-adapter",
-    "symbols": ["exchangeCode", "getAccessToken", "refreshCredential", "revokeCredential"]
+    "symbols": [
+      "exchangeCode",
+      "getAccessToken",
+      "refreshCredential",
+      "revokeCredential"
+    ]
   },
   {
     "file": "packages/connectors/src/google/oauth.ts",
     "classification": "third-party-adapter",
-    "symbols": ["exchangeGoogleCode", "refreshGoogleToken", "revokeGoogleToken"]
+    "symbols": [
+      "exchangeGoogleCode",
+      "refreshGoogleToken",
+      "revokeGoogleToken"
+    ]
   },
   {
     "file": "packages/connectors/src/google/request.ts",
     "classification": "third-party-adapter",
-    "symbols": ["requestGoogle", "requestGoogleJson", "requestGoogleText"]
+    "symbols": [
+      "requestGoogle",
+      "requestGoogleJson",
+      "requestGoogleText"
+    ]
   },
   {
     "file": "packages/connectors/src/skills/bind.ts",
     "classification": "legacy-store-adapter",
-    "symbols": ["execute"]
+    "symbols": [
+      "execute"
+    ]
   },
   {
     "file": "packages/connectors/src/skills/calendar-skill.ts",
     "classification": "third-party-adapter",
-    "symbols": ["calendarStatus"]
+    "symbols": [
+      "calendarStatus"
+    ]
   },
   {
     "file": "packages/connectors/src/skills/drive-skill.ts",
     "classification": "third-party-adapter",
-    "symbols": ["driveStatus"]
+    "symbols": [
+      "driveStatus"
+    ]
   },
   {
     "file": "packages/connectors/src/skills/gmail-skill.ts",
     "classification": "third-party-adapter",
-    "symbols": ["gmailStatus"]
+    "symbols": [
+      "gmailStatus"
+    ]
   },
   {
     "file": "packages/connectors/src/store.ts",
@@ -186,6 +254,10 @@
   {
     "file": "packages/connectors/src/types.ts",
     "classification": "third-party-adapter",
-    "symbols": ["exchangeCode", "refreshCredential", "revokeCredential"]
+    "symbols": [
+      "exchangeCode",
+      "refreshCredential",
+      "revokeCredential"
+    ]
   }
 ]
