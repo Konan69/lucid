@@ -1,0 +1,12 @@
+{
+  // Root files that belong to no package: the Alchemy stack, its infra modules, and every
+  // Drizzle config. Without this graph they are only ever executed, never typechecked.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"],
+    "tsBuildInfoFile": ".cache/typescript/root.tsbuildinfo"
+  },
+  "include": ["alchemy.run.ts", "infra/**/*.ts", "vitest.config.ts", "apps/*/drizzle.config.ts", "packages/*/drizzle.config.ts", "apps/*/vitest.config.ts", "packages/*/vitest.config.ts"]
+}

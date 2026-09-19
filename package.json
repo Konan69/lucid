@@ -11,7 +11,7 @@
     "prepare": "husky && effect-language-service patch",
     "dev": "pnpm infra:dev",
     "build": "turbo run build",
-    "typecheck": "turbo run typecheck --concurrency=1",
+    "typecheck": "tsc -p tsconfig.json && turbo run typecheck --concurrency=1",
     "lint": "oxlint --type-aware .",
     "lint:fix": "oxlint --type-aware --fix .",
     "format": "oxfmt --check .",

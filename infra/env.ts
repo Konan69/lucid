@@ -24,7 +24,7 @@ const environmentError = (variable: string) => new InfrastructureEnvironmentErro
   message: `${variable} is missing or invalid`
 })
 
-const requiredSecret = (name: string) => Config.redacted(name).pipe(
+const requiredSecret = (name: string) => Config.Redacted(name).pipe(
   Effect.mapError(() => environmentError(name))
 )
 
@@ -32,7 +32,7 @@ const optionalString = (name: string) => Config.option(Config.string(name)).pipe
   Effect.mapError(() => environmentError(name))
 )
 
-const optionalSecret = (name: string) => Config.option(Config.redacted(name)).pipe(
+const optionalSecret = (name: string) => Config.option(Config.Redacted(name)).pipe(
   Effect.mapError(() => environmentError(name))
 )
 

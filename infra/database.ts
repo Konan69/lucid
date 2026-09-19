@@ -12,7 +12,7 @@ export class DatabaseConfigurationError extends Schema.TaggedError<DatabaseConfi
 }) {}
 
 /** Remote targets bring a database URL; this stack deliberately provisions no hosted database. */
-const configuredDatabaseUrl = (target: DeploymentTarget) => Config.redacted("DATABASE_URL").pipe(
+const configuredDatabaseUrl = (target: DeploymentTarget) => Config.Redacted("DATABASE_URL").pipe(
   Effect.mapError(() => new DatabaseConfigurationError({
     variable: "DATABASE_URL",
     target: target.key,
