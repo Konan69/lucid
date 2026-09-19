@@ -20,13 +20,18 @@ export type Preferences = Connection & {
   pinnedThreads?: string[];
   settledThreads?: string[];
 };
-export const WorkspaceContext = createContext<{
+type WorkspaceValue = {
   api: Api;
   preferences: Preferences;
   savePreferences: (next: Preferences) => Promise<void>;
   createThread: (draft?: string) => Promise<{ id: string; title: string; draft?: string }>;
-}>(null!);
-export const useWorkspace = () => useContext(WorkspaceContext);
+};
+export const WorkspaceContext = createContext<WorkspaceValue | null>(null);
+export function useWorkspace() {
+  const workspace = useContext(WorkspaceContext);
+  if (workspace === null) throw new Error("Workspace context is unavailable.");
+  return workspace;
+}
 export const SidebarContext = createContext({
   open: () => {},
   close: () => {},
@@ -37,7 +42,7 @@ export const useSidebar = () => useContext(SidebarContext);
 export type ThreadActivity = "ready" | "working" | "attention" | "approve" | "failed" | "done";
 export const ActivityContext = createContext<{
   activity: Record<string, ThreadActivity>;
-  report: (id: string, status: ThreadActivity | undefined) => void;
+  report: (id: string, status?: ThreadActivity) => void;
 }>({ activity: {}, report: () => {} });
 export const useThreadActivity = () => useContext(ActivityContext);
 export function useOpenThread() {
@@ -46,15 +51,18 @@ export function useOpenThread() {
   const dimensions = useWindowDimensions();
   return (id: string, title: string, draft?: string) => {
     sidebar.close();
-    const current = navigation.getState()?.routes.at(-1);
+    const current = navigation.getState().routes.at(-1);
+    let pathname = "/";
+    if (current !== undefined) {
+      pathname = current.name === "Home"
+        ? "/"
+        : current.name === "Chat"
+          ? `/threads/vivid/${id}`
+          : `/${current.name}`;
+    }
     const action = resolveThreadSelectionNavigationAction({
       usesSplitView: deriveLayout(dimensions).usesSplitView,
-      pathname:
-        current?.name === "Home"
-          ? "/"
-          : current?.name === "Chat"
-            ? `/threads/vivid/${id}`
-            : `/${current?.name}`,
+      pathname,
     });
     if (action === "set-params") navigation.navigate("Chat", { id, title, draft });
     else if (action === "replace")

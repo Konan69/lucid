@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import * as Schema from "effect/Schema";
 import {
   BackHandler,
   Keyboard,
@@ -42,9 +43,20 @@ import Animated, {
 import { WORKSPACE_PANE_TIMING } from "./t3/workspace-pane-animation";
 import { nativeMetrics as m } from "@vivid/design-tokens/native";
 
+const SavedPreferencesSchema = Schema.Struct({
+  url: Schema.String,
+  token: Schema.String,
+  theme: Schema.Literals(["light", "dark", "system"] as const),
+  pinnedThreads: Schema.optional(Schema.Array(Schema.String)),
+  settledThreads: Schema.optional(Schema.Array(Schema.String)),
+});
+function decodeSavedPreferences(value: string) {
+  const parsed = globalThis.JSON.parse(value);
+  return Schema.decodeUnknownSync(SavedPreferencesSchema)(parsed);
+}
 const defaultPreferences: Preferences = {
   url:
-    process.env.EXPO_PUBLIC_API_URL ??
+    globalThis.process.env.EXPO_PUBLIC_API_URL ??
     (Platform.OS === "android" ? "http://10.0.2.2:5178" : "http://localhost:5178"),
   token: "",
   theme: "system",
@@ -63,7 +75,7 @@ function Shell() {
   const [activeThread, setActiveThread] = useState("");
   const [activeRoute, setActiveRoute] = useState("Home");
   const [activity, setActivity] = useState<Record<string, ThreadActivity>>({});
-  const report = useCallback((id: string, status: ThreadActivity | undefined) => {
+  const report = useCallback((id: string, status?: ThreadActivity) => {
     setActivity((current) => {
       if (current[id] === status) return current;
       const next = { ...current };
@@ -126,9 +138,13 @@ function Shell() {
     <NavigationContainer
       theme={theme}
       onStateChange={(state) => {
-        const route = state?.routes[state.index];
-        const nextRoute = route?.name ?? "Home";
-        const nextThread = route?.name === "Chat" ? (route.params as Routes["Chat"]).id : "";
+        if (state === undefined) return;
+        const route = state.routes[state.index];
+        const nextRoute = route === undefined ? "Home" : route.name;
+        // SAFETY: React Navigation supplies Chat route params whenever the route name is Chat.
+        const nextThread = route !== undefined && route.name === "Chat"
+          ? (route.params as Routes["Chat"]).id
+          : "";
         setActiveRoute(nextRoute);
         setActiveThread(nextThread);
         // A title/stream update must not dismiss a sidebar the user is reading.
@@ -236,23 +252,22 @@ export default function App() {
     // storage reads from updating an App instance that has already unmounted.
     void savedPreferences.then((saved) => {
       if (!saved || cancelled) return;
-      const parsed = JSON.parse(saved);
-      if (
-        typeof parsed.url === "string" &&
-        typeof parsed.token === "string" &&
-        ["light", "dark", "system"].includes(parsed.theme)
-      ) {
-        createApi(parsed);
-        setPreferences({
-          ...parsed,
-          pinnedThreads: Array.isArray(parsed.pinnedThreads)
-            ? parsed.pinnedThreads.filter((id: unknown) => typeof id === "string")
-            : [],
-          settledThreads: Array.isArray(parsed.settledThreads)
-            ? parsed.settledThreads.filter((id: unknown) => typeof id === "string")
-            : [],
-        });
-      }
+      const parsed = decodeSavedPreferences(saved);
+      const {
+        url,
+        token,
+        theme,
+        pinnedThreads = [],
+        settledThreads = [],
+      } = parsed;
+      createApi({ url, token });
+      setPreferences({
+        url,
+        token,
+        theme,
+        pinnedThreads: [...pinnedThreads],
+        settledThreads: [...settledThreads],
+      });
     }).catch(() => {
       /* An invalid preference file falls back to the initial connection. */
     }).finally(() => {
@@ -264,6 +279,7 @@ export default function App() {
   const api = useMemo(
     () => createApi(
       { url: preferences.url, token: preferences.token },
+      // SAFETY: expo/fetch exposes the Fetch API signature expected by the Flue and API clients.
       expoFetch.bind(globalThis) as typeof fetch,
     ),
     [preferences.url, preferences.token],
