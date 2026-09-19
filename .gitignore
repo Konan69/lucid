@@ -49,15 +49,5 @@ Thumbs.db
 /docs/18-grok-bot-machine-and-product-surface.md
 
 
-# Private execution data and unreleased integration internals
-# The agent-runtime source is shareable; its secrets, state, and generated output
-# are covered by the global rules above and the package-specific state rule below.
-/packages/client-runtime/
+# Runtime state (source for every workspace package is tracked)
 /packages/agent-runtime/.state/
-/packages/connectors/
-/apps/agent-runtime/
-/apps/executor/
-/apps/server/src/agent-runtime/
-/apps/server/src/connectors/
-/apps/server/src/executors/
-/apps/server/src/scheduling/

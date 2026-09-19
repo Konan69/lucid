@@ -51,8 +51,8 @@ export default Alchemy.Stack(
           "apps/server/drizzle.config.ts",
           "packages/agent-runtime/drizzle/**",
           "packages/agent-runtime/drizzle.config.ts",
-          "infra/connectors/**",
-          "infra/connectors.ts",
+          "packages/connectors/drizzle/**",
+          "packages/connectors/drizzle.config.ts",
           "scripts/migrate.mjs"
         ],
         lockfile: true

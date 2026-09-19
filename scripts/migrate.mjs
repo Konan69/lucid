@@ -44,7 +44,7 @@ const migrations = [
   {
     name: "connectors",
     cwd: "packages/connectors",
-    args: ["exec", "drizzle-kit", "migrate", "--config", "../../infra/connectors.ts"]
+    args: ["exec", "drizzle-kit", "migrate", "--config", "drizzle.config.ts"]
   }
 ]
 

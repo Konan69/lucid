@@ -4,7 +4,7 @@
 
 ```text
 pnpm infra:dev
-  ├─ Docker: PostgreSQL 16 → 127.0.0.1:55433
+  ├─ Docker: PostgreSQL 18 → 127.0.0.1:55433
   ├─ ordered Drizzle migrations: server → agent-runtime → connectors
   ├─ Command.Dev: agent runtime → 127.0.0.1:5173 (one long-lived instance)
   ├─ Command.Dev: server → 127.0.0.1:8787
@@ -41,7 +41,7 @@ Local development creates no AWS bill. Its only ongoing cost is developer-machin
 
 ## Deliberately not in IaC yet
 
-- **Managed PostgreSQL:** a future remote target will add one database variant behind `infra/database.ts`; RDS/Aurora is the AWS candidate.
+- **Managed PostgreSQL:** not planned. PostgreSQL is local; a remote target supplies its own `DATABASE_URL` through the one seam in `infra/database.ts`.
 - **Persistent Computer machine:** the product does not provision one today; an EC2 Instance is the likely Alchemy resource after its lifecycle is decided.
 - **Desktop client:** it is distributed software, not a cloud resource, so it does not belong in this stack.
 - **Artifact object storage:** files remain in PostgreSQL today; an S3 Bucket can be added when the product needs object-storage semantics.
@@ -51,12 +51,11 @@ Local development creates no AWS bill. Its only ongoing cost is developer-machin
 
 | Need now | Declared resource | Local implementation in beta.76 | Decision |
 |---|---|---|---|
-| PostgreSQL | `Docker.RemoteImage`, `Docker.Volume`, `Docker.Container` | Native Docker provider | Use now; required PostgreSQL 16 and persistent local volume. |
+| PostgreSQL | `Docker.RemoteImage`, `Docker.Volume`, `Docker.Container` | Native Docker provider | Use now; required PostgreSQL 18 and persistent local volume. |
 | Server/runtime | `Command.Dev` | Alchemy dev sidecar | Use now; stable localhost URLs are required by callbacks and proxies. ECS is deferred. |
 | SPA | `AWS.Website.StaticSite` | Website dev-server provider | Use now; in dev it runs Vite and does not create S3/CloudFront. |
 | Migrations | `Command.Exec` | Local command provider | Use now; one finite command enforces the required order. |
 | Hosted compute | ECS | Specialized Floci providers for Task and Service | Defer until remote deployment is enabled. |
-| Hosted database | RDS/Aurora | Floci dual providers exist | Do not declare; the owner-selected local database is Docker and hosted Postgres is outside IaC. |
 | Object storage | S3 | Floci dual provider exists | Do not declare; product files and artifacts remain in Postgres. |
 | Managed secrets | Secrets Manager/SSM | Floci dual providers exist | Do not declare; Effect Config is the current source and duplicate secret stores add no value. |
 | App Runner | App Runner Service | No dual/local registration found | Do not use for this local-first stack. |

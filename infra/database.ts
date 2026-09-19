@@ -22,6 +22,8 @@ const configuredDatabaseUrl = (target: DeploymentTarget) => Config.redacted("DAT
 
 /**
  * Resolve the one database seam used by migrations and both Node processes.
+ * PostgreSQL 18+ images place PGDATA at /var/lib/postgresql/<major>/docker, so the
+ * volume mounts the parent directory and survives a major upgrade side by side.
  * Docker props match `alchemy/lib/Docker/{RemoteImage,Volume,Container}.d.ts`.
  */
 export const databaseUrlFor = Effect.fn("databaseUrlFor")(function*(target: DeploymentTarget) {
@@ -29,7 +31,7 @@ export const databaseUrlFor = Effect.fn("databaseUrlFor")(function*(target: Depl
 
   const image = yield* Docker.RemoteImage(target.postgresImageId, {
     name: "postgres",
-    tag: "16-alpine",
+    tag: "18-alpine",
     alwaysPull: false
   })
   const volume = yield* Docker.Volume("postgres-data", {
@@ -44,7 +46,7 @@ export const databaseUrlFor = Effect.fn("databaseUrlFor")(function*(target: Depl
       POSTGRES_PASSWORD: Redacted.make("vivid")
     },
     ports: [{ external: 55433, internal: 5432 }],
-    volumes: [{ hostPath: volume.name, containerPath: "/var/lib/postgresql/data" }],
+    volumes: [{ hostPath: volume.name, containerPath: "/var/lib/postgresql" }],
     restart: "unless-stopped",
     start: true,
     healthcheck: {

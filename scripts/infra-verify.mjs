@@ -118,7 +118,7 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   assert.match(databaseSource, /Docker\.RemoteImage/, "local database must declare Docker.RemoteImage")
   assert.match(databaseSource, /Docker\.Volume/, "local database must declare Docker.Volume")
   assert.match(databaseSource, /Docker\.Container/, "local database must declare Docker.Container")
-  assert.match(databaseSource, /tag: "16-alpine"/, "local database must use PostgreSQL 16")
+  assert.match(databaseSource, /tag: "18-alpine"/, "local database must use PostgreSQL 18")
   assert.match(databaseSource, /external: 55433/, "local database must bind host port 55433")
   assert.match(databaseSource, /POSTGRES_DB: "vivid"/, "local database name must be vivid")
   assert.match(databaseSource, /POSTGRES_USER: "vivid"/, "local database user must be vivid")
@@ -134,7 +134,9 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   assert.doesNotMatch(migrationSource, /\bgenerate\b/, "startup must never generate migrations")
 
   assert.equal(existsSync(join(root, "apps/web/wrangler.jsonc")), false, "Wrangler config must be removed")
-  assert.equal(existsSync(join(root, ".github/workflows")), false, "remote CI workflows must not be added")
+  const workflowDirectory = join(root, ".github/workflows")
+  const workflowNames = existsSync(workflowDirectory) ? readdirSync(workflowDirectory) : []
+  assert.deepEqual(workflowNames.filter((name) => name.startsWith("deploy")), [], "deploy workflows must not be added while remote deployment is disabled")
   assert.ok(existsSync(join(root, ".agents/skills/infra/SKILL.md")), "infra operator skill is missing")
   assert.ok(existsSync(join(root, "docs/19-infrastructure.md")), "infrastructure documentation is missing")
 
