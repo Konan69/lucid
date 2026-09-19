@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { defineTool } from "@flue/runtime";
 import * as v from "valibot";
 import {
@@ -23,7 +23,7 @@ const isoDateTime = v.pipe(
   v.check((value) => HAS_OFFSET.test(value) && Number.isFinite(Date.parse(value)), "Expected an ISO 8601 date-time with a timezone offset, like 2026-09-04T09:00:00+01:00"),
 );
 
-function parseWhen(value: string | undefined | null): number | null {
+function parseWhen(value?: string | null): number | null {
   if (value === undefined || value === null) return null;
   return Date.parse(value);
 }
@@ -34,11 +34,12 @@ function originFor(conversationId: string): TaskOrigin {
 }
 
 function operationId(conversationId: string, toolCallId: string, purpose: string) {
-  const bytes = createHash("sha256").update(`${conversationId}:${toolCallId}:${purpose}`).digest().subarray(0, 16);
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  const hex = NodeCrypto.createHash("sha256")
+    .update(`${conversationId}:${toolCallId}:${purpose}`)
+    .digest("hex")
+    .slice(0, 32);
+  const variant = ((Number.parseInt(hex.slice(16, 17), 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20)}`;
 }
 
 function describeFollowUp(followUp: FollowUp) {
@@ -90,8 +91,8 @@ function buildTaskTools(conversationId: string) {
       const task = await step.do("create-task", () => createTask({
         id: operationId(conversationId, toolCallId, "task"),
         title: data.title.trim(),
-        detail: data.detail?.trim(),
-        assignee: data.assignee?.trim() || null,
+        detail: data.detail === undefined ? undefined : data.detail.trim(),
+        assignee: data.assignee === undefined ? null : data.assignee.trim() || null,
         dueAt: parseWhen(data.dueAt),
         priority: data.priority,
         origin: originFor(conversationId),
@@ -99,7 +100,7 @@ function buildTaskTools(conversationId: string) {
       }));
       const followUpAt = parseWhen(data.followUpAt);
       const followUp = followUpAt
-        ? await step.do("schedule-follow-up", () => createFollowUp({ id: operationId(conversationId, toolCallId, "follow-up"), taskId: task.id, at: followUpAt, note: data.followUpNote?.trim(), repeatEveryMs: REPEAT_MS[data.repeat ?? "none"], createdBy: "vivid" }))
+        ? await step.do("schedule-follow-up", () => createFollowUp({ id: operationId(conversationId, toolCallId, "follow-up"), taskId: task.id, at: followUpAt, note: data.followUpNote === undefined ? undefined : data.followUpNote.trim(), repeatEveryMs: REPEAT_MS[data.repeat ?? "none"], createdBy: "vivid" }))
         : null;
       await step.do("create-notification", () => createNotification({
         id: operationId(conversationId, toolCallId, "notification"),
@@ -133,9 +134,13 @@ function buildTaskTools(conversationId: string) {
     async run({ data, step }) {
       const task = await step.do("update-task", () => updateTask(data.id, {
         status: data.status,
-        title: data.title?.trim(),
-        detail: data.detail?.trim(),
-        assignee: data.assignee === undefined ? undefined : data.assignee?.trim() || null,
+        title: data.title === undefined ? undefined : data.title.trim(),
+        detail: data.detail === undefined ? undefined : data.detail.trim(),
+        assignee: data.assignee === undefined
+          ? undefined
+          : data.assignee === null
+            ? null
+            : data.assignee.trim() || null,
         dueAt: data.dueAt === undefined ? undefined : parseWhen(data.dueAt),
         priority: data.priority,
       }));
@@ -172,7 +177,7 @@ function buildTaskTools(conversationId: string) {
       if (!task) throw new Error(`No task with id ${data.taskId}`);
       if (task.status !== "open") throw new Error(`Task "${task.title}" is ${task.status}; reopen it before scheduling a follow-up`);
       const at = parseWhen(data.at) ?? Date.now();
-      const followUp = await step.do("schedule-follow-up", () => createFollowUp({ id: operationId(conversationId, toolCallId, "follow-up"), taskId: task.id, at, note: data.note?.trim(), repeatEveryMs: REPEAT_MS[data.repeat ?? "none"], createdBy: "vivid" }));
+      const followUp = await step.do("schedule-follow-up", () => createFollowUp({ id: operationId(conversationId, toolCallId, "follow-up"), taskId: task.id, at, note: data.note === undefined ? undefined : data.note.trim(), repeatEveryMs: REPEAT_MS[data.repeat ?? "none"], createdBy: "vivid" }));
       return { output: { task: { id: task.id, title: task.title }, followUp: describeFollowUp(followUp) } };
     },
   });
