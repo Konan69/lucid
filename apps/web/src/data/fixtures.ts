@@ -43,7 +43,7 @@ export type Msg =
   | { kind: "card"; id: string; title: string; question: string; options: Array<{ label: string; note: string }> };
 
 /** A full thread for every conversation in the sidebar. */
-export const threadsByConversation: Record<string, Msg[]> = {
+const threadFixtures = {
   t1: [
     { kind: "user", id: "t1m1", text: "Read the Kash Plus PRD and tell me what's blocking the MVP. Focus on payments and the Worldstreet dependency.", time: "10:04" },
     { kind: "vivid", id: "t1m1b", text: "Drive and Gmail — adding those now.", time: "10:04" },
@@ -153,23 +153,30 @@ export const threadsByConversation: Record<string, Msg[]> = {
     { kind: "automation", id: "t11m2", title: "Arkademy launch watch", trigger: "Every Friday at 9am", actions: ["Check the checklist for unowned items", "Nudge anyone waiting over a week", "Report only what changed"], time: "Aug 20 5:01pm" },
     { kind: "vivid", id: "t11m3", text: "Done. I'll check every Friday and only ping you when something moved. Snoozed until then.", chip: { label: "Routine created", tone: "accent" }, time: "Aug 20 5:01pm" },
   ],
-};
+} satisfies Record<string, Msg[]>;
+
+const threadsByConversation = new Map<string, Msg[]>(Object.entries(threadFixtures));
+
+/** Returns the fixture messages owned by one conversation. */
+export function messagesForConversation(id: string): Msg[] {
+  return threadsByConversation.get(id) ?? [];
+}
 
 export const activeConversation = {
   id: "t1",
   title: "Kash Plus PRD review",
   startedAt: "10:04",
   tools: ["drive", "gmail"],
-  messages: threadsByConversation.t1,
+  messages: threadFixtures.t1,
 };
 
-export const queued: Record<string, string> = {
-  t1: "Check what the ARKchain spec says about fee abstraction first.",
-  t2: "Assign an owner to the indexing workstream when you reply.",
-};
+const queued = new Map([
+  ["t1", "Check what the ARKchain spec says about fee abstraction first."],
+  ["t2", "Assign an owner to the indexing workstream when you reply."],
+]);
 
 export function queuedFor(id: string): string {
-  return queued[id] ?? "I'll pick this back up as soon as the current step finishes.";
+  return queued.get(id) ?? "I'll pick this back up as soon as the current step finishes.";
 }
 
 export const suggestions = [

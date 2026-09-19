@@ -3,13 +3,13 @@ import { cn } from "./cn";
 
 export type ConversationStatus = "ready" | "working" | "attention" | "approve" | "failed" | "done";
 
-export const STATUS: Record<Exclude<ConversationStatus, "ready">, { text: string; dot: string; label: string; pulse?: boolean; Icon: typeof CircleDashed }> = {
+export const STATUS = {
   working: { text: "text-working", dot: "bg-working", label: "Working", pulse: true, Icon: CircleDashed },
   attention: { text: "text-attention", dot: "bg-attention", label: "Needs you", Icon: CircleHelp },
   approve: { text: "text-approve", dot: "bg-approve", label: "Approve", Icon: ShieldQuestion },
   failed: { text: "text-danger", dot: "bg-danger", label: "Failed", Icon: CircleAlert },
   done: { text: "text-success", dot: "bg-success", label: "Done", Icon: CircleCheck },
-};
+} satisfies Record<Exclude<ConversationStatus, "ready">, { text: string; dot: string; label: string; pulse?: boolean; Icon: typeof CircleDashed }>;
 
 /** T3's rule: a status label is shown only when the row is not ready. */
 export function StatusLabel({ status, className, children }: { status: ConversationStatus; className?: string; children?: React.ReactNode }) {

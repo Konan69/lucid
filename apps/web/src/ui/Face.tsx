@@ -6,7 +6,7 @@ export type FaceColor =
 
 export type FaceMood = "neutral" | "happy" | "thinking" | "asleep";
 
-const COLOR_CLASS: Record<FaceColor, string> = {
+const COLOR_CLASS = {
   accent: "bg-accent",
   brown: "bg-face-brown",
   red: "bg-face-red",
@@ -18,7 +18,7 @@ const COLOR_CLASS: Record<FaceColor, string> = {
   violet: "bg-face-violet",
   magenta: "bg-face-magenta",
   gray: "bg-face-gray",
-};
+} satisfies Record<FaceColor, string>;
 
 /** Vivid's face: a disc with two eyes. Same family as Grok Bot's blobs, its own shape. */
 export function Face({

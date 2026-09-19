@@ -75,21 +75,21 @@ function KeepMark() {
   );
 }
 
-const TOOLS: Record<string, () => React.ReactNode> = {
-  gmail: () => <GmailMark />,
-  calendar: () => <CalendarMark />,
-  drive: () => <DriveMark />,
-  maps: () => <MapsMark />,
-  browser: () => <ChromeMark />,
-  notes: () => <KeepMark />,
-};
+const TOOLS = new Map<string, () => React.ReactNode>([
+  ["gmail", () => <GmailMark />],
+  ["calendar", () => <CalendarMark />],
+  ["drive", () => <DriveMark />],
+  ["maps", () => <MapsMark />],
+  ["browser", () => <ChromeMark />],
+  ["notes", () => <KeepMark />],
+]);
 
 export function ToolMarks({ tools, size = 16, className }: { tools: string[]; size?: number; className?: string }) {
   if (tools.length === 0) return null;
   return (
     <span className={cn("inline-flex shrink-0 items-center gap-1", className)}>
       {tools.map((t) => {
-        const Mark = TOOLS[t];
+        const Mark = TOOLS.get(t);
         if (!Mark) return null;
         return (
           <span

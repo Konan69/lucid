@@ -29,12 +29,12 @@ type ScheduledRoutine = {
   runs: RoutineRun[];
 };
 
-const brandText: Record<RoutineTemplate["brandColor"], string> = {
+const brandText = {
   accent: "text-accent-ink bg-accent-soft",
   working: "text-working bg-working-soft",
   approve: "text-approve bg-approve-soft",
   success: "text-success bg-success-soft",
-};
+} satisfies Record<RoutineTemplate["brandColor"], string>;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -46,13 +46,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function describeCron(cron: string) {
-  const known: Record<string, string> = {
-    "0 * * * *": "Every hour",
-    "0 9 * * *": "Every day at 9:00 AM",
-    "0 9 * * 1-5": "Weekdays at 9:00 AM",
-    "0 9 * * 1": "Mondays at 9:00 AM",
-  };
-  return known[cron] ?? `Cron ${cron}`;
+  const known = new Map([
+    ["0 * * * *", "Every hour"],
+    ["0 9 * * *", "Every day at 9:00 AM"],
+    ["0 9 * * 1-5", "Weekdays at 9:00 AM"],
+    ["0 9 * * 1", "Mondays at 9:00 AM"],
+  ]);
+  return known.get(cron) ?? `Cron ${cron}`;
 }
 
 function formatTime(value: number | null) {
