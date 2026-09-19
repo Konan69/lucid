@@ -1,4 +1,4 @@
-import * as Schema from "effect/Schema";
+import { Effect, Schema } from "effect";
 import { useEffect, useState } from "react";
 import { Check, ExternalLink } from "lucide-react";
 import {
@@ -7,6 +7,7 @@ import {
   type ConnectorRequest,
   type ConnectorStatus,
 } from "../data/connectorRequests";
+import { request as clientRequest, type ClientRequestFailed } from "../data/request";
 import { ToolMarks } from "./ToolMarks";
 
 const ConnectorStatusResponseSchema = Schema.Struct({
@@ -18,11 +19,22 @@ const ConnectorStatusResponseSchema = Schema.Struct({
 const ConnectorStatusResponseJsonSchema = Schema.fromJsonString(ConnectorStatusResponseSchema);
 const ConnectorAuthResponseSchema = Schema.Struct({ authUrl: Schema.String });
 const ConnectorAuthResponseJsonSchema = Schema.fromJsonString(ConnectorAuthResponseSchema);
+const decodeConnectorStatusResponse = Schema.decodeUnknownSync(ConnectorStatusResponseJsonSchema);
+const decodeConnectorAuthResponse = Schema.decodeUnknownSync(ConnectorAuthResponseJsonSchema);
 
-/** Converts an unknown async failure into the message shown by this card. */
-function errorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : "Could not complete the connection. Try again.";
-}
+class ConnectorActionFailed extends Schema.TaggedError<ConnectorActionFailed>()(
+  "ConnectorActionFailed",
+  { message: Schema.String, cause: Schema.Defect() },
+  { title: "Connector action failed" },
+) {}
+
+const readConnectorStatus = Effect.fn("ConnectorRequestCard.readStatus")(function*(
+  connector: ConnectorRequest["connector"],
+) {
+  const data = yield* clientRequest("/api/connectors", decodeConnectorStatusResponse);
+  const current = data.connectors.find((item) => item.id === connector);
+  return current === undefined ? "disconnected" as const : current.status;
+});
 
 export function ConnectorRequestCard({
   request,
@@ -41,18 +53,14 @@ export function ConnectorRequestCard({
   useEffect(() => {
     let active = true;
     async function refresh() {
-      try {
-        const response = await fetch("/api/connectors");
-        if (!response.ok) throw new Error("Could not check this connection. Try again.");
-        const payload = await response.text();
-        const data = Schema.decodeUnknownSync(ConnectorStatusResponseJsonSchema)(payload);
-        const connector = data.connectors.find((item) => item.id === request.connector);
-        if (active) {
-          setStatus(connector === undefined ? "disconnected" : connector.status);
-        }
-      } catch (cause) {
-        if (active) setError(errorMessage(cause));
-      }
+      await Effect.runPromise(readConnectorStatus(request.connector).pipe(Effect.match({
+        onFailure: (failure) => {
+          if (active) setError(failure.message);
+        },
+        onSuccess: (nextStatus) => {
+          if (active) setStatus(nextStatus);
+        },
+      })));
     }
     void refresh();
     const onFocus = () => {
@@ -78,23 +86,43 @@ export function ConnectorRequestCard({
     // Open synchronously from the click so browser popup blockers don't eat the handoff.
     const popup = status === "connected" ? null : window.open("about:blank", "_blank");
     if (popup) popup.opener = null;
-    try {
-      if (status === "connected") await onContinue();
-      else {
-        const response = await fetch(`/api/connectors/${request.connector}/auth`);
-        if (!response.ok) throw new Error("Could not start sign-in. Try again.");
-        const payload = await response.text();
-        const data = Schema.decodeUnknownSync(ConnectorAuthResponseJsonSchema)(payload);
-        const url = authorizationAddress(data.authUrl);
-        setAuthUrl(url);
-        if (popup) popup.location.href = url;
-      }
-    } catch (cause) {
-      if (popup) popup.close();
-      setError(errorMessage(cause));
-    } finally {
-      setBusy(false);
-    }
+    const action: Effect.Effect<
+      string | null,
+      ClientRequestFailed | ConnectorActionFailed
+    > = status === "connected"
+      ? Effect.tryPromise({
+          try: onContinue,
+          catch: (cause) => new ConnectorActionFailed({
+            message: "Could not complete the connection. Try again.",
+            cause,
+          }),
+        }).pipe(Effect.as<string | null>(null))
+      : clientRequest(
+          `/api/connectors/${request.connector}/auth`,
+          decodeConnectorAuthResponse,
+        ).pipe(
+          Effect.flatMap((data) => Effect.try({
+            try: () => authorizationAddress(data.authUrl),
+            catch: (cause) => new ConnectorActionFailed({
+              message: "The connection returned an invalid sign-in address.",
+              cause,
+            }),
+          })),
+        );
+    await Effect.runPromise(action.pipe(
+      Effect.match({
+        onFailure: (failure) => {
+          if (popup) popup.close();
+          setError(failure.message);
+        },
+        onSuccess: (url) => {
+          if (url === null) return;
+          setAuthUrl(url);
+          if (popup) popup.location.href = url;
+        },
+      }),
+      Effect.ensuring(Effect.sync(() => setBusy(false))),
+    ));
   }
 
   const connected = status === "connected";

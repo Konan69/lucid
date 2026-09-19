@@ -2,10 +2,11 @@ import {
   AlertTriangle, BellRing, Check, ChevronRight, Circle, CircleCheck, Clock3, LoaderCircle,
   MessageSquareText, Plus, Repeat2, RotateCcw, Trash2, UserRound, X,
 } from "lucide-react";
-import * as Schema from "effect/Schema";
+import { Effect, Schema } from "effect";
 import { useCallback, useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
 import { cn } from "../ui/cn";
 import { Face } from "../ui/Face";
+import { emptyResponse, request } from "../data/request";
 
 export type TaskStatus = "open" | "done" | "dropped";
 export type TaskPriority = "normal" | "urgent";
@@ -150,21 +151,15 @@ const NotificationSchema = Schema.Struct({
 const TasksResponseSchema = Schema.fromJsonString(Schema.Struct({ tasks: Schema.mutable(Schema.Array(TaskSchema)) }));
 const NotificationsResponseSchema = Schema.fromJsonString(Schema.Struct({ notifications: Schema.mutable(Schema.Array(NotificationSchema)) }));
 const TaskResponseSchema = Schema.fromJsonString(Schema.Struct({ task: TaskSchema }));
-const ErrorResponseSchema = Schema.fromJsonString(Schema.Struct({ error: Schema.optional(Schema.String) }));
+const decodeTasksResponse = Schema.decodeUnknownSync(TasksResponseSchema);
+const decodeNotificationsResponse = Schema.decodeUnknownSync(NotificationsResponseSchema);
+const decodeTaskResponse = Schema.decodeUnknownSync(TaskResponseSchema);
+const loadToday = Effect.all([
+  request("/api/tasks", decodeTasksResponse),
+  request("/api/notifications", decodeNotificationsResponse),
+]);
 type JsonValue = string | number | boolean | null | JsonValue[] | { readonly [key: string]: JsonValue };
 type JsonObject = { readonly [key: string]: JsonValue };
-
-async function request<T>(path: string, decode: (input: string) => T, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, init);
-  if (!response.ok) {
-    const body = Schema.decodeUnknownOption(ErrorResponseSchema)(await response.text());
-    const message = body._tag === "Some" && body.value.error ? body.value.error : `Request failed (${response.status})`;
-    throw new Error(message);
-  }
-  return decode(await response.text());
-}
-
-function emptyResponse(): void {}
 
 function json(method: string, body: JsonObject): RequestInit {
   return { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
@@ -236,19 +231,17 @@ export function Today({ onOpenConversation }: { onOpenConversation: (conversatio
   const [doneOpen, setDoneOpen] = useState(false);
 
   const load = useCallback(async () => {
-    try {
-      const [taskBody, notificationBody] = await Promise.all([
-        request("/api/tasks", Schema.decodeUnknownSync(TasksResponseSchema)),
-        request("/api/notifications", Schema.decodeUnknownSync(NotificationsResponseSchema)),
-      ]);
-      setTasks(taskBody.tasks);
-      setNotifications(notificationBody.notifications);
-      setError(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not load today");
-    } finally {
-      setReady(true);
-    }
+    await Effect.runPromise(loadToday.pipe(
+      Effect.match({
+        onFailure: (failure) => setError(failure.message),
+        onSuccess: ([taskBody, notificationBody]) => {
+          setTasks(taskBody.tasks);
+          setNotifications(notificationBody.notifications);
+          setError(null);
+        },
+      }),
+      Effect.ensuring(Effect.sync(() => setReady(true))),
+    ));
   }, []);
 
   useEffect(() => {
@@ -256,19 +249,19 @@ export function Today({ onOpenConversation }: { onOpenConversation: (conversatio
 
     // Initial hydration is an external request. Polling and user-triggered refreshes continue to
     // use `load`, while this mount request ignores responses after the screen is removed.
-    void Promise.all([
-      request("/api/tasks", Schema.decodeUnknownSync(TasksResponseSchema)),
-      request("/api/notifications", Schema.decodeUnknownSync(NotificationsResponseSchema)),
-    ]).then(([taskBody, notificationBody]) => {
-      if (cancelled) return;
-      setTasks(taskBody.tasks);
-      setNotifications(notificationBody.notifications);
-      setError(null);
-    }).catch((cause: unknown) => {
-      if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load today");
-    }).finally(() => {
+    void Effect.runPromise(loadToday.pipe(Effect.match({
+      onFailure: (failure) => {
+        if (!cancelled) setError(failure.message);
+      },
+      onSuccess: ([taskBody, notificationBody]) => {
+        if (cancelled) return;
+        setTasks(taskBody.tasks);
+        setNotifications(notificationBody.notifications);
+        setError(null);
+      },
+    }), Effect.ensuring(Effect.sync(() => {
       if (!cancelled) setReady(true);
-    });
+    }))));
 
     return () => { cancelled = true; };
   }, []);
@@ -287,26 +280,39 @@ export function Today({ onOpenConversation }: { onOpenConversation: (conversatio
   const back = () => { setSelectedId(null); setCreating(false); };
 
   async function toggleDone(task: Task) {
-    try {
-      await request(`/api/tasks/${task.id}`, emptyResponse, json("PATCH", { status: task.status === "open" ? "done" : "open" }));
-      await load();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not update the task");
-    }
+    await Effect.runPromise(
+      request(`/api/tasks/${task.id}`, emptyResponse, json("PATCH", {
+        status: task.status === "open" ? "done" : "open",
+      })).pipe(
+        Effect.match({
+          onFailure: (failure) => setError(failure.message),
+          onSuccess: () => void load(),
+        }),
+      ),
+    );
   }
 
   async function markAllRead() {
-    try {
-      await request("/api/notifications/read", emptyResponse, json("POST", {}));
-      await load();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not mark notifications read");
-    }
+    await Effect.runPromise(
+      request("/api/notifications/read", emptyResponse, json("POST", {})).pipe(
+        Effect.match({
+          onFailure: (failure) => setError(failure.message),
+          onSuccess: () => void load(),
+        }),
+      ),
+    );
   }
 
   async function openNotification(notification: Notification) {
     if (notification.readAt === null) {
-      void request("/api/notifications/read", emptyResponse, json("POST", { ids: [notification.id] })).then(load).catch(() => undefined);
+      void Effect.runPromise(
+        request("/api/notifications/read", emptyResponse, json("POST", {
+          ids: [notification.id],
+        })).pipe(Effect.match({
+          onFailure: () => undefined,
+          onSuccess: () => void load(),
+        })),
+      );
     }
     if (notification.taskId && tasks.some((task) => task.id === notification.taskId)) setSelectedId(notification.taskId);
     else if (notification.conversationId) onOpenConversation(notification.conversationId, notification.title);
@@ -445,12 +451,19 @@ function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }
   const chasing = task !== null && task.followUps.some((followUp) => followUp.status === "running");
   const dirty = task ? title !== task.title || detail !== task.detail || (assignee.trim() || null) !== task.assignee || fromLocalInput(dueAt) !== task.dueAt || priority !== task.priority : true;
 
-  async function run<T>(work: () => Promise<T>, fallback: string) {
+  async function run<Value>(work: Effect.Effect<Value, { readonly message: string }>) {
     setPending(true);
     setError(null);
-    try { return await work(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : fallback); return undefined; }
-    finally { setPending(false); }
+    return Effect.runPromise(work.pipe(
+      Effect.match({
+        onFailure: (failure) => {
+          setError(failure.message);
+          return null;
+        },
+        onSuccess: (value) => value,
+      }),
+      Effect.ensuring(Effect.sync(() => setPending(false))),
+    ));
   }
 
   async function save(event: FormEvent) {
@@ -460,23 +473,27 @@ function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }
     const createPayload = firstFollowUpAt === null
       ? payload
       : { ...payload, followUp: { at: firstFollowUpAt, note: followUpNote.trim(), repeatEveryMs: repeat ? Number(repeat) : null } } satisfies JsonObject;
-    const body = await run(() => request(task ? `/api/tasks/${task.id}` : "/api/tasks", Schema.decodeUnknownSync(TaskResponseSchema), json(task ? "PATCH" : "POST", task ? payload : createPayload)), "Could not save the task");
-    if (body) await onChanged(body.task.id);
+    const body = await run(request(
+      task ? `/api/tasks/${task.id}` : "/api/tasks",
+      decodeTaskResponse,
+      json(task ? "PATCH" : "POST", task ? payload : createPayload),
+    ));
+    if (body !== null) await onChanged(body.task.id);
   }
 
   async function setStatus(status: TaskStatus) {
     if (!task) return;
-    if (await run(() => request(`/api/tasks/${task.id}`, emptyResponse, json("PATCH", { status })), "Could not update the task")) await onChanged(task.id);
+    if (await run(request(`/api/tasks/${task.id}`, emptyResponse, json("PATCH", { status }))) !== null) await onChanged(task.id);
   }
 
   async function chaseNow() {
     if (!task) return;
-    if (await run(() => request(`/api/tasks/${task.id}/nudge`, emptyResponse, json("POST", {})), "Could not start the chase")) await onChanged(task.id);
+    if (await run(request(`/api/tasks/${task.id}/nudge`, emptyResponse, json("POST", {}))) !== null) await onChanged(task.id);
   }
 
   async function remove() {
     if (!task || !window.confirm(`Delete “${task.title}”? Its follow-ups go with it.`)) return;
-    if (await run(() => request(`/api/tasks/${task.id}`, emptyResponse, { method: "DELETE" }), "Could not delete the task")) await onDeleted();
+    if (await run(request(`/api/tasks/${task.id}`, emptyResponse, { method: "DELETE" })) !== null) await onDeleted();
   }
 
   async function addFollowUp(event: FormEvent) {
@@ -484,7 +501,7 @@ function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }
     if (!task) return;
     const at = fromLocalInput(followUpAt);
     if (at === null) { setError("Pick a time for the follow-up"); return; }
-    if (await run(() => request(`/api/tasks/${task.id}/follow-ups`, emptyResponse, json("POST", { at, note: followUpNote.trim(), repeatEveryMs: repeat ? Number(repeat) : null })), "Could not schedule the follow-up")) {
+    if (await run(request(`/api/tasks/${task.id}/follow-ups`, emptyResponse, json("POST", { at, note: followUpNote.trim(), repeatEveryMs: repeat ? Number(repeat) : null }))) !== null) {
       setFollowUpAt(""); setFollowUpNote(""); setRepeat("");
       await onChanged(task.id);
     }
@@ -493,11 +510,11 @@ function TaskDetail({ task, onChanged, onDeleted, onCancel, onOpenConversation }
   async function followUpAction(followUp: FollowUp, action: "run" | "cancel" | "delete") {
     if (!task) return;
     const work = action === "run"
-      ? () => request(`/api/follow-ups/${followUp.id}/run`, emptyResponse, { method: "POST" })
+      ? request(`/api/follow-ups/${followUp.id}/run`, emptyResponse, { method: "POST" })
       : action === "cancel"
-        ? () => request(`/api/follow-ups/${followUp.id}`, emptyResponse, json("PATCH", { status: "cancelled" }))
-        : () => request(`/api/follow-ups/${followUp.id}`, emptyResponse, { method: "DELETE" });
-    if (await run(work, "Could not update the follow-up")) await onChanged(task.id);
+        ? request(`/api/follow-ups/${followUp.id}`, emptyResponse, json("PATCH", { status: "cancelled" }))
+        : request(`/api/follow-ups/${followUp.id}`, emptyResponse, { method: "DELETE" });
+    if (await run(work) !== null) await onChanged(task.id);
   }
 
   const quickTimes: Array<{ label: string; at: () => number }> = [

@@ -62,6 +62,9 @@ const RuntimeMessageSchema = Schema.Struct({
     attributes: Schema.optionalKey(Schema.Struct({ scheduledAt: Schema.optionalKey(Schema.String) })),
   })),
 });
+const decodeMessageMetadata = Schema.decodeUnknownOption(MessageMetadataSchema);
+const decodeRuntimeMessage = Schema.decodeUnknownOption(RuntimeMessageSchema);
+const decodeToolPayload = Schema.decodeUnknownOption(ToolPayloadSchema);
 
 function ScreenView() {
   return (
@@ -199,9 +202,9 @@ function describeToolCall(toolName: string, input: ToolPayload | null, output: T
 }
 
 function activityForMessage(message: FlueConversationMessage): Activity[] {
-  const metadataResult = Schema.decodeUnknownOption(MessageMetadataSchema)(message.metadata);
+  const metadataResult = decodeMessageMetadata(message.metadata);
   const metadata = Option.isSome(metadataResult) ? metadataResult.value : null;
-  const runtimeMessageResult = Schema.decodeUnknownOption(RuntimeMessageSchema)(message);
+  const runtimeMessageResult = decodeRuntimeMessage(message);
   const runtimeMessage = Option.isSome(runtimeMessageResult) ? runtimeMessageResult.value : null;
   const startedAt = metadata ? metadata.startedAt : undefined;
   const finishedAt = metadata ? metadata.finishedAt ?? startedAt : startedAt;
@@ -216,9 +219,9 @@ function activityForMessage(message: FlueConversationMessage): Activity[] {
   }
 
   const tools = message.parts.filter((part) => part.type === "dynamic-tool").map((tool) => {
-    const inputResult = Schema.decodeUnknownOption(ToolPayloadSchema)("input" in tool ? tool.input : null);
+    const inputResult = decodeToolPayload("input" in tool ? tool.input : null);
     const input = Option.isSome(inputResult) ? inputResult.value : null;
-    const outputResult = Schema.decodeUnknownOption(ToolPayloadSchema)("output" in tool ? tool.output : null);
+    const outputResult = decodeToolPayload("output" in tool ? tool.output : null);
     const output = Option.isSome(outputResult) ? outputResult.value : null;
     const running = tool.state === "input-available";
     const failed = tool.state === "output-error";

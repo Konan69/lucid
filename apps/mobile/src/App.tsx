@@ -50,9 +50,11 @@ const SavedPreferencesSchema = Schema.Struct({
   pinnedThreads: Schema.optional(Schema.Array(Schema.String)),
   settledThreads: Schema.optional(Schema.Array(Schema.String)),
 });
+const decodeSavedPreferencesJson = Schema.decodeUnknownSync(
+  Schema.fromJsonString(SavedPreferencesSchema),
+);
 function decodeSavedPreferences(value: string) {
-  const parsed = globalThis.JSON.parse(value);
-  return Schema.decodeUnknownSync(SavedPreferencesSchema)(parsed);
+  return decodeSavedPreferencesJson(value);
 }
 const defaultPreferences: Preferences = {
   url:

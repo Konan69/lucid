@@ -1,4 +1,13 @@
+import { Option, Schema } from "effect";
+
 export type Connection = { url: string; token: string };
+
+const ErrorResponseSchema = Schema.fromJsonString(
+  Schema.Struct({ error: Schema.String }),
+);
+const JsonResponseSchema = Schema.fromJsonString(Schema.Json);
+const decodeErrorResponse = Schema.decodeUnknownOption(ErrorResponseSchema);
+const decodeJsonResponse = Schema.decodeUnknownSync(JsonResponseSchema);
 export function normalizeServerUrl(value: string) {
   const url = new URL(value.trim());
   if (
@@ -46,17 +55,20 @@ export function createApi(
           signal: controller.signal,
         });
         if (!response.ok) {
-          const result = (await response.json().catch(() => null)) as {
-            error?: string;
-          } | null;
+          const result = decodeErrorResponse(await response.text());
           throw new Error(
-            result?.error ??
-              `Could not reach Vivid (${response.status}). Check your server in Settings.`,
+            Option.isSome(result)
+              ? result.value.error
+              : `Could not reach Vivid (${response.status}). Check your server in Settings.`,
           );
         }
-        return response.status === 204
-          ? (undefined as T)
-          : (response.json() as Promise<T>);
+        if (response.status === 204) {
+          // SAFETY: HTTP 204 has no representation; callers select void for no-content routes.
+          return undefined as T;
+        }
+        const decoded = decodeJsonResponse(await response.text());
+        // SAFETY: this legacy generic is chosen by the route-owning caller after JSON validation.
+        return decoded as T;
       } finally {
         clearTimeout(timeout);
       }

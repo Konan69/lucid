@@ -2,11 +2,12 @@ import {
   AlertTriangle, Check, ChevronRight, Clock3, LoaderCircle, Pause, Play, Plus, Repeat2, RotateCcw,
   Search, ShieldCheck, Star, Store, Trash2,
 } from "lucide-react";
-import * as Schema from "effect/Schema";
+import { Effect, Schema } from "effect";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { templates, type RoutineTemplate } from "../data/routines";
 import { plainPreview, type RuntimeConversation } from "../data/runtimeConversations";
 import { cn } from "../ui/cn";
+import { emptyResponse, request } from "../data/request";
 
 type RoutineRun = {
   id: string;
@@ -59,19 +60,9 @@ const ScheduledRoutineSchema = Schema.Struct({
 });
 const RoutinesResponseSchema = Schema.fromJsonString(Schema.Struct({ routines: Schema.mutable(Schema.Array(ScheduledRoutineSchema)) }));
 const RoutineResponseSchema = Schema.fromJsonString(Schema.Struct({ routine: ScheduledRoutineSchema }));
-const ErrorResponseSchema = Schema.fromJsonString(Schema.Struct({ error: Schema.optional(Schema.String) }));
-
-async function request<T>(path: string, decode: (input: string) => T, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, init);
-  if (!response.ok) {
-    const body = Schema.decodeUnknownOption(ErrorResponseSchema)(await response.text());
-    const message = body._tag === "Some" && body.value.error ? body.value.error : `Request failed (${response.status})`;
-    throw new Error(message);
-  }
-  return decode(await response.text());
-}
-
-function emptyResponse(): void {}
+const decodeRoutinesResponse = Schema.decodeUnknownSync(RoutinesResponseSchema);
+const decodeRoutineResponse = Schema.decodeUnknownSync(RoutineResponseSchema);
+const loadRoutines = request("/api/routines", decodeRoutinesResponse);
 
 function describeCron(cron: string) {
   const known = new Map([
@@ -97,15 +88,16 @@ export function Routines({ onOpenConversation }: { onOpenConversation: (conversa
   const [templateId, setTemplateId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    try {
-      const body = await request("/api/routines", Schema.decodeUnknownSync(RoutinesResponseSchema));
-      setRoutines(body.routines);
-      setError(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not load routines");
-    } finally {
-      setReady(true);
-    }
+    await Effect.runPromise(loadRoutines.pipe(
+      Effect.match({
+        onFailure: (failure) => setError(failure.message),
+        onSuccess: (body) => {
+          setRoutines(body.routines);
+          setError(null);
+        },
+      }),
+      Effect.ensuring(Effect.sync(() => setReady(true))),
+    ));
   }, []);
 
   useEffect(() => {
@@ -113,15 +105,21 @@ export function Routines({ onOpenConversation }: { onOpenConversation: (conversa
 
     // The first request hydrates the screen from the runtime; later refreshes still use `load`
     // from explicit mutations and the running-routine poll below.
-    void request("/api/routines", Schema.decodeUnknownSync(RoutinesResponseSchema)).then((body) => {
-      if (cancelled) return;
-      setRoutines(body.routines);
-      setError(null);
-    }).catch((cause: unknown) => {
-      if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load routines");
-    }).finally(() => {
-      if (!cancelled) setReady(true);
-    });
+    void Effect.runPromise(loadRoutines.pipe(
+      Effect.match({
+        onFailure: (failure) => {
+          if (!cancelled) setError(failure.message);
+        },
+        onSuccess: (body) => {
+          if (cancelled) return;
+          setRoutines(body.routines);
+          setError(null);
+        },
+      }),
+      Effect.ensuring(Effect.sync(() => {
+        if (!cancelled) setReady(true);
+      })),
+    ));
 
     return () => { cancelled = true; };
   }, []);
@@ -200,41 +198,53 @@ function RoutineEditor({ routine, onChanged, onDeleted, onCancel, onOpenConversa
   const running = latestRun !== null && latestRun.status === "running";
   const needsRetry = (latestRun !== null && latestRun.status === "failed") || (routine !== null && routine.lastMissedAt !== null);
 
-  async function mutate(path: string, init: RequestInit) {
+  async function run<Value>(work: Effect.Effect<Value, { readonly message: string }>) {
     setPending(true);
     setError(null);
-    try { return await request(path, Schema.decodeUnknownSync(RoutineResponseSchema), init); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save routine"); throw cause; }
-    finally { setPending(false); }
+    return Effect.runPromise(work.pipe(
+      Effect.match({
+        onFailure: (failure) => {
+          setError(failure.message);
+          return null;
+        },
+        onSuccess: (value) => value,
+      }),
+      Effect.ensuring(Effect.sync(() => setPending(false))),
+    ));
   }
 
   async function save(event: FormEvent) {
     event.preventDefault();
-    try {
-      const body = await mutate(routine ? `/api/routines/${routine.id}` : "/api/routines", { method: routine ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, prompt, cron, timezone }) });
-      await onChanged(body.routine.id);
-    } catch { /* Error is displayed in the editor. */ }
+    const body = await run(request(
+      routine ? `/api/routines/${routine.id}` : "/api/routines",
+      decodeRoutineResponse,
+      { method: routine ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, prompt, cron, timezone }) },
+    ));
+    if (body !== null) await onChanged(body.routine.id);
   }
 
   async function toggle() {
     if (!routine) return;
-    try { await mutate(`/api/routines/${routine.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: !routine.enabled }) }); await onChanged(routine.id); }
-    catch { /* Error is displayed in the editor. */ }
+    const body = await run(request(`/api/routines/${routine.id}`, decodeRoutineResponse, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: !routine.enabled }),
+    }));
+    if (body !== null) await onChanged(routine.id);
   }
 
   async function runNow() {
     if (!routine) return;
-    setPending(true); setError(null);
-    try { await request(`/api/routines/${routine.id}/run`, emptyResponse, { method: "POST" }); await onChanged(routine.id); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not start routine"); }
-    finally { setPending(false); }
+    if (await run(request(`/api/routines/${routine.id}/run`, emptyResponse, { method: "POST" })) !== null) {
+      await onChanged(routine.id);
+    }
   }
 
   async function remove() {
     if (!routine || !window.confirm(`Delete “${routine.name}”? Its run history will also be removed.`)) return;
-    setPending(true);
-    try { await request(`/api/routines/${routine.id}`, emptyResponse, { method: "DELETE" }); await onDeleted(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not delete routine"); setPending(false); }
+    if (await run(request(`/api/routines/${routine.id}`, emptyResponse, { method: "DELETE" })) !== null) {
+      await onDeleted();
+    }
   }
 
   return <div className="pt-2">

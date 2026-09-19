@@ -1,3 +1,5 @@
+import { Option, Schema } from "effect";
+
 export const connectorNames = {
   gmail: "Gmail",
   calendar: "Google Calendar",
@@ -5,35 +7,37 @@ export const connectorNames = {
 } as const;
 
 export type ConnectorId = keyof typeof connectorNames;
-export type ConnectorRequest = {
-  kind: "connector-request";
-  connector: ConnectorId;
-  reason: string;
-};
+const ConnectorRequestSchema = Schema.Struct({
+  kind: Schema.Literal("connector-request"),
+  connector: Schema.Literals(["gmail", "calendar", "drive"] as const),
+  reason: Schema.String,
+});
+export type ConnectorRequest = typeof ConnectorRequestSchema.Type;
 export type ConnectorStatus = {
   id: string;
   status: "disconnected" | "connecting" | "connected" | "error";
 };
 
-// Persisted tool output is untrusted data. Only known connector IDs become actions;
-// authorization addresses always come from the authenticated connector API.
-export function readConnectorRequest(output: unknown): ConnectorRequest | null {
-  if (!output || typeof output !== "object") return null;
-  const value = output as Record<string, unknown>;
-  if (
-    value.kind !== "connector-request" ||
-    typeof value.connector !== "string" ||
-    !Object.hasOwn(connectorNames, value.connector) ||
-    typeof value.reason !== "string" ||
-    !value.reason.trim() ||
-    value.reason.length > 400
-  )
-    return null;
-  return {
+const decodeConnectorRequest = Schema.decodeUnknownOption(ConnectorRequestSchema);
+const decodeString = Schema.decodeUnknownOption(Schema.String);
+
+// The wire decoder establishes the connector vocabulary before the UI applies its stricter
+// display-length invariant.
+export function normalizeConnectorRequest(value: ConnectorRequest): ConnectorRequest | null {
+  const reason = value.reason.trim();
+  if (reason.length === 0 || reason.length > 400) return null;
+  return ConnectorRequestSchema.make({
     kind: "connector-request",
-    connector: value.connector as ConnectorId,
-    reason: value.reason.trim(),
-  };
+    connector: value.connector,
+    reason,
+  });
+}
+
+// This compatibility boundary supports persisted messages read outside the live Conversation
+// adapter; live Flue output is decoded with the shared contract before normalization.
+export function readConnectorRequest(output: unknown): ConnectorRequest | null {
+  const decoded = decodeConnectorRequest(output);
+  return Option.isSome(decoded) ? normalizeConnectorRequest(decoded.value) : null;
 }
 
 export function connectorContinuation(id: ConnectorId) {
@@ -41,9 +45,10 @@ export function connectorContinuation(id: ConnectorId) {
 }
 
 export function authorizationAddress(value: unknown): string {
-  if (typeof value !== "string")
+  const decoded = decodeString(value);
+  if (Option.isNone(decoded))
     throw new Error("The connection returned an invalid sign-in address.");
-  const url = new URL(value);
+  const url = new URL(decoded.value);
   if (url.protocol !== "https:" || url.username || url.password)
     throw new Error("The connection returned an invalid sign-in address.");
   return url.href;
