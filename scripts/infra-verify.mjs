@@ -107,7 +107,7 @@ const extractEnvironmentNames = (text) =>
 const assertEnvironmentWiring = (root, stackSource) => {
   const serverConfig = source(root, 'apps/server/src/config.ts')
   const serverNames = new Set(
-    [...serverConfig.matchAll(/(?:required|optional)\("([A-Z][A-Z0-9_]*)"/g)].map(
+    [...serverConfig.matchAll(/(?:required|optional)\(["']([A-Z][A-Z0-9_]*)["']/g)].map(
       (match) => match[1],
     ),
   )
@@ -219,22 +219,22 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   )
   assert.match(databaseSource, /Docker\.Volume/, 'local database must declare Docker.Volume')
   assert.match(databaseSource, /Docker\.Container/, 'local database must declare Docker.Container')
-  assert.match(databaseSource, /tag: "18-alpine"/, 'local database must use PostgreSQL 18')
+  assert.match(databaseSource, /tag: ["']18-alpine["']/, 'local database must use PostgreSQL 18')
   assert.match(databaseSource, /external: 55433/, 'local database must bind host port 55433')
-  assert.match(databaseSource, /POSTGRES_DB: "vivid"/, 'local database name must be vivid')
-  assert.match(databaseSource, /POSTGRES_USER: "vivid"/, 'local database user must be vivid')
+  assert.match(databaseSource, /POSTGRES_DB: ["']vivid["']/, 'local database name must be vivid')
+  assert.match(databaseSource, /POSTGRES_USER: ["']vivid["']/, 'local database user must be vivid')
   assert.match(
     databaseSource,
-    /Config\.Redacted\("DATABASE_URL"\)/,
+    /Config\.Redacted\(["']DATABASE_URL["']\)/,
     'remote database URL must be required through Effect Config',
   )
 
   assertEnvironmentWiring(root, stackSource)
 
   const migrationSource = source(root, 'scripts/migrate.mjs')
-  const serverMigration = migrationSource.indexOf('name: "server"')
-  const runtimeMigration = migrationSource.indexOf('name: "agent-runtime"')
-  const connectorMigration = migrationSource.indexOf('name: "connectors"')
+  const serverMigration = migrationSource.search(/name: ["']server["']/)
+  const runtimeMigration = migrationSource.search(/name: ["']agent-runtime["']/)
+  const connectorMigration = migrationSource.search(/name: ["']connectors["']/)
   assert.ok(
     serverMigration >= 0 &&
       serverMigration < runtimeMigration &&
