@@ -6,6 +6,10 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src"
+  },
   "dependencies": {
     "effect": "4.0.0-rc.112"
   },

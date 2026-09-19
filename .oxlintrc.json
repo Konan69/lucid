@@ -1,0 +1,118 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error"
+  },
+  "env": {
+    "builtin": true
+  },
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/.output/**",
+    "**/.turbo/**",
+    ".agent/**",
+    ".agents/**",
+    ".claude/**",
+    ".codex/**",
+    ".continue/**",
+    ".cursor/**",
+    ".gemini/**",
+    ".opencode/**",
+    ".pi/**",
+    ".roo/**",
+    ".windsurf/**",
+    "tools/oxlint/anti-slop/**",
+    "scripts/oxlint-plugin-vivid.mjs",
+    "apps/mobile/android/**",
+    "apps/mobile/ios/**",
+    "**/drizzle/**/snapshot.json"
+  ],
+  "jsPlugins": [
+    {
+      "name": "vivid",
+      "specifier": "./scripts/oxlint-plugin-vivid.mjs"
+    },
+    {
+      "name": "anti-slop",
+      "specifier": "./tools/oxlint/anti-slop/index.ts"
+    },
+    {
+      "name": "anti-slop-effect",
+      "specifier": "./tools/oxlint/anti-slop/effect/index.ts"
+    }
+  ],
+  "rules": {
+    "no-restricted-globals": [
+      "error",
+      {
+        "name": "Option",
+        "message": "Bare `Option` is the DOM <option> constructor. Import Option from effect/Option."
+      }
+    ],
+    "no-restricted-properties": [
+      "error",
+      {
+        "object": "Effect",
+        "property": "orDie",
+        "message": "Keep typed Effect failures in the error channel until the owning runtime boundary."
+      },
+      {
+        "object": "Effect",
+        "property": "orDieWith",
+        "message": "Keep typed Effect failures in the error channel until the owning runtime boundary."
+      }
+    ],
+    "anti-slop/no-chained-type-assertions": "warn",
+    "anti-slop/no-conditional-empty-object-spread": "warn",
+    "anti-slop/no-known-value-widening": "error",
+    "anti-slop/no-module-mocking": "error",
+    "anti-slop/no-object-parameters": "error",
+    "anti-slop/no-reflect-apply": "error",
+    "anti-slop/no-reflect-get": "error",
+    "anti-slop/no-runtime-typeof": "warn",
+    "anti-slop/no-shape-in-symbol-names": "warn",
+    "anti-slop/no-unknown-parameters": "warn",
+    "anti-slop/no-unknown-returns": "warn",
+    "anti-slop/no-unknown-type-aliases": "error",
+    "anti-slop/no-unsafe-dictionary-type": "warn",
+    "anti-slop/no-widen-then-assert": "error",
+    "anti-slop/require-safety-comment-for-type-assertion": "warn",
+    "anti-slop-effect/no-service-constructor-imports": "error"
+  },
+  "overrides": [
+    {
+      "files": ["apps/{server,web}/src/**/*.{ts,tsx}", "packages/*/src/**/*.{ts,tsx}"],
+      "rules": {
+        "typescript/no-explicit-any": "warn",
+        "vivid/no-try-catch": "warn"
+      }
+    },
+    {
+      "files": ["apps/mobile/**/*.{ts,tsx}"],
+      "rules": {
+        "anti-slop-effect/no-service-constructor-imports": "off",
+        "no-restricted-properties": "off",
+        "vivid/no-try-catch": "off"
+      }
+    },
+    {
+      "files": ["**/*.test.{ts,tsx}", "**/*.spec.{ts,tsx}", "**/test/**", "**/tests/**"],
+      "rules": {
+        "typescript/no-explicit-any": "off",
+        "no-restricted-properties": "off",
+        "vivid/no-try-catch": "off"
+      }
+    },
+    {
+      "files": ["*.config.*", "scripts/**", "**/scripts/**"],
+      "rules": {
+        "typescript/no-explicit-any": "off",
+        "no-restricted-properties": "off",
+        "vivid/no-try-catch": "off"
+      }
+    }
+  ]
+}

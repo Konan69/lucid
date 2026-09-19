@@ -10,6 +10,7 @@
   "scripts": {
     "generate:native": "node generate-native.mjs",
     "build": "node generate-native.mjs --check",
-    "typecheck": "node generate-native.mjs --check"
+    "typecheck": "node generate-native.mjs --check",
+    "lint": "oxlint generate-native.mjs src/native.ts"
   }
 }

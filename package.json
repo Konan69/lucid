@@ -1,21 +1,37 @@
 {
   "name": "@vivid/workspace",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
-    "dev": "pnpm --filter @vivid/web dev",
-    "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck",
-    "lint": "oxlint apps/*/src packages/*/src",
+    "prepare": "husky && effect-language-service patch",
+    "dev": "pnpm infra:dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck --concurrency=1",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt --check .",
+    "format:fix": "oxfmt .",
+    "test": "turbo run test",
+    "quality": "pnpm lint && pnpm format && pnpm typecheck && pnpm test",
+    "db:migrate": "node scripts/migrate.mjs",
     "infra:dev": "VIVID_DEPLOY_TARGET=local ALCHEMY_TELEMETRY_DISABLED=1 alchemy dev --stage local",
     "infra:verify": "node scripts/infra-verify.mjs",
     "infra:destroy": "VIVID_DEPLOY_TARGET=local ALCHEMY_TELEMETRY_DISABLED=1 alchemy destroy --stage local --yes"
   },
   "devDependencies": {
+    "@effect/language-service": "0.86.6",
+    "@oxlint/plugins": "1.81.0",
     "@types/node": "^24.0.0",
     "alchemy": "2.0.0-beta.76",
     "effect": "4.0.0-rc.112",
+    "husky": "9.1.7",
+    "oxfmt": "0.50.0",
     "oxlint": "1.81.0",
+    "turbo": "2.9.14",
     "typescript": "^5.9.0"
   }
 }

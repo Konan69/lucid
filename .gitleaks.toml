@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Example environment files intentionally document empty secret fields"
+paths = ['''(?:^|/)\.env\.example$''']
+regexTarget = "line"
+regexes = ['''^[A-Z][A-Z0-9_]*=$''']

@@ -11,6 +11,7 @@
     "web": "expo start --web",
     "build": "expo export --platform all",
     "typecheck": "tsc --noEmit",
+    "lint": "oxlint src",
     "test": "node --experimental-strip-types --test src/lib/*.test.ts"
   },
   "dependencies": {
