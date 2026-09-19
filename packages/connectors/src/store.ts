@@ -41,12 +41,12 @@ const credentialSelection = {
 
 export async function listCredentials(): Promise<ConnectorCredential[]> {
   await ready;
-  return (await db.select(credentialSelection).from(credentials).orderBy(desc(credentials.createdAt))).map(decodeCredential);
+  return (await db.select(credentialSelection).from(credentials).orderBy(desc(credentials.createdAt))).map((row) => decodeCredential(row));
 }
 
 export async function getCredentialsForConnector(connectorId: ConnectorId): Promise<ConnectorCredential[]> {
   await ready;
-  return (await db.select(credentialSelection).from(credentials).where(eq(credentials.connectorId, connectorId)).orderBy(desc(credentials.createdAt))).map(decodeCredential);
+  return (await db.select(credentialSelection).from(credentials).where(eq(credentials.connectorId, connectorId)).orderBy(desc(credentials.createdAt))).map((row) => decodeCredential(row));
 }
 
 export async function getCredential(id: string): Promise<ConnectorCredential | null> {

@@ -1,6 +1,7 @@
 import { BetterAuth } from "@alchemy.run/better-auth"
 import { Postgres } from "@alchemy.run/better-auth/Postgres"
 import { bearer, deviceAuthorization, organization } from "better-auth/plugins"
+import { RuntimeContext } from "alchemy"
 import * as Effect from "effect/Effect"
 import * as Redacted from "effect/Redacted"
 import { DatabaseFailure } from "@vivid/contracts"
@@ -64,6 +65,9 @@ const makeOptions = (config: ServerConfig["Service"]) => {
     }
   }
 }
+
+/** Closes Better Auth's type-only Alchemy context requirement for this static Node runtime. */
+export const localAuthRuntimeLayer = RuntimeContext.phantom
 
 export const authEffect = Effect.gen(function*() {
   const config = yield* ServerConfig

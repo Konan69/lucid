@@ -1,6 +1,7 @@
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Schema from "effect/Schema"
 import * as HttpApi from "effect/unstable/httpapi/HttpApi"
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder"
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint"
@@ -12,7 +13,6 @@ import { and, desc, eq } from "drizzle-orm"
 import {
   AcceptMembershipRequest,
   Company,
-  CompanyId,
   CompanyListResponse,
   Conflict,
   CreateCompanyRequest,
@@ -35,7 +35,7 @@ import {
 } from "@vivid/contracts"
 import { Database } from "./database.ts"
 import { ServerConfig } from "./config.ts"
-import { authEffect } from "./auth.ts"
+import { authEffect, localAuthRuntimeLayer } from "./auth.ts"
 import {
   companyTable,
   invitationTable,
@@ -52,8 +52,6 @@ export interface AuthState {
   readonly membership?: Membership
   readonly sessionId: string
 }
-
-type MutableAuthState = { -readonly [Key in keyof AuthState]: AuthState[Key] }
 
 export class AuthContext extends Context.Service<AuthContext, AuthState>()("vivid/AuthContext") {}
 
@@ -108,38 +106,58 @@ const ApiGroup = HttpApiGroup.make("vivid")
 
 export const api = HttpApi.make("VividApi").add(ApiGroup).prefix("/api")
 
-const fromPerson = (row: typeof personTable.$inferSelect): Person => new Person({
-  id: row.id as Person["id"],
+const decodePersistence = <Value>(
+  schema: Schema.ConstraintDecoder<Value, never>,
+  value: unknown
+): Effect.Effect<Value, DatabaseFailure> => Schema.decodeUnknownEffect(schema)(value).pipe(
+  Effect.mapError(() => new DatabaseFailure({ message: "Database returned invalid application data" }))
+)
+
+const fromPerson = Effect.fn("Persistence.fromPerson")((row: typeof personTable.$inferSelect) => decodePersistence(Person, {
+  id: row.id,
   name: row.name,
   email: row.email,
   image: row.image
-})
+}))
 
-const fromCompany = (row: typeof companyTable.$inferSelect): Company => new Company({
-  id: row.id as Company["id"],
+const fromCompany = Effect.fn("Persistence.fromCompany")((row: typeof companyTable.$inferSelect) => decodePersistence(Company, {
+  id: row.id,
   name: row.name,
   slug: row.slug
-})
+}))
 
-const fromMembership = (row: typeof membershipTable.$inferSelect): Membership => new Membership({
-  id: row.id as Membership["id"],
-  companyId: row.companyId as CompanyId,
-  personId: row.userId as Membership["personId"],
+const fromMembership = Effect.fn("Persistence.fromMembership")((row: typeof membershipTable.$inferSelect) => decodePersistence(Membership, {
+  id: row.id,
+  companyId: row.companyId,
+  personId: row.userId,
   role: row.role
+}))
+
+const fromProject = Effect.fn("Persistence.fromProject")(function*(
+  row: typeof projectTable.$inferSelect
+): Effect.fn.Return<Project, DatabaseFailure> {
+  const project = {
+    id: row.id,
+    companyId: row.companyId,
+    name: row.name,
+    createdBy: row.createdBy
+  }
+  return yield* (row.parentProjectId === null
+    ? decodePersistence(Project, project)
+    : decodePersistence(Project, { ...project, parentProjectId: row.parentProjectId }))
 })
 
-const fromProject = (row: typeof projectTable.$inferSelect): Project => {
-  const project = {
-    id: row.id as Project["id"],
-    companyId: row.companyId as CompanyId,
-    name: row.name,
-    createdBy: row.createdBy as Project["createdBy"]
-  }
-  if (row.parentProjectId === null) return new Project(project)
-  return new Project({ ...project, parentProjectId: row.parentProjectId as Project["parentProjectId"] })
+interface ActiveCompanyAuth {
+  readonly auth: AuthState
+  readonly company: Company
+  readonly membership: Membership
 }
 
-const requireActiveCompany = Effect.gen(function*() {
+const requireActiveCompany = Effect.fn("Auth.requireActiveCompany")(function*(): Effect.fn.Return<
+  ActiveCompanyAuth,
+  Forbidden,
+  AuthContext
+> {
   const auth = yield* AuthContext
   if (auth.activeCompany === undefined || auth.membership === undefined) {
     return yield* Effect.fail(new Forbidden({ message: "An active Company is required" }))
@@ -147,12 +165,10 @@ const requireActiveCompany = Effect.gen(function*() {
   return { auth, company: auth.activeCompany, membership: auth.membership }
 })
 
-export const authenticate = (headers: Headers) => Effect.gen(function*() {
+export const authenticate = Effect.fn("Auth.authenticate")(function*(headers: Headers) {
   const auth = yield* authEffect
-  const session = yield* (auth.getSession(headers) as unknown as Effect.Effect<{
-    user: { id: string }
-    session: { id: string }
-  } | null, unknown, never>).pipe(
+  const session = yield* auth.getSession(headers).pipe(
+    Effect.provide(localAuthRuntimeLayer),
     Effect.mapError(() => new Unauthenticated({ message: "Invalid session" }))
   )
   if (session === null) {
@@ -168,28 +184,22 @@ export const authenticate = (headers: Headers) => Effect.gen(function*() {
     .from(sessionTable)
     .where(eq(sessionTable.id, session.session.id))
     .limit(1))
-  const activeCompanyId = sessionRows[0]?.activeCompanyId
-  let activeCompany: Company | undefined
-  let membership: Membership | undefined
-  if (activeCompanyId !== null && activeCompanyId !== undefined) {
-    const rows = yield* db.run(db.select({ company: companyTable, membership: membershipTable })
-      .from(membershipTable)
-      .innerJoin(companyTable, eq(membershipTable.companyId, companyTable.id))
-      .where(and(eq(membershipTable.companyId, activeCompanyId), eq(membershipTable.userId, personRow.id)))
-      .limit(1))
-    const active = rows[0]
-    if (active !== undefined) {
-      activeCompany = fromCompany(active.company)
-      membership = fromMembership(active.membership)
-    }
-  }
-  const state: MutableAuthState = {
-    person: fromPerson(personRow),
-    sessionId: session.session.id
-  }
-  if (activeCompany !== undefined) state.activeCompany = activeCompany
-  if (membership !== undefined) state.membership = membership
-  return state
+  const person = yield* fromPerson(personRow)
+  const baseState: AuthState = { person, sessionId: session.session.id }
+  const sessionRow = sessionRows[0]
+  if (sessionRow === undefined || sessionRow.activeCompanyId === null) return baseState
+  const rows = yield* db.run(db.select({ company: companyTable, membership: membershipTable })
+    .from(membershipTable)
+    .innerJoin(companyTable, eq(membershipTable.companyId, companyTable.id))
+    .where(and(eq(membershipTable.companyId, sessionRow.activeCompanyId), eq(membershipTable.userId, personRow.id)))
+    .limit(1))
+  const active = rows[0]
+  if (active === undefined) return baseState
+  const [activeCompany, membership] = yield* Effect.all([
+    fromCompany(active.company),
+    fromMembership(active.membership)
+  ])
+  return { ...baseState, activeCompany, membership }
 })
 
 export const authMiddlewareLayer = Layer.succeed(
@@ -228,7 +238,8 @@ export const handlers = HttpApiBuilder.group(api, "vivid", (handlers) =>
         .innerJoin(companyTable, eq(membershipTable.companyId, companyTable.id))
         .where(eq(membershipTable.userId, auth.person.id))
         .orderBy(desc(companyTable.createdAt)))
-      return new CompanyListResponse({ companies: rows.map((row) => fromCompany(row.company)) })
+      const companies = yield* Effect.forEach(rows, (row) => fromCompany(row.company))
+      return new CompanyListResponse({ companies })
     }))
     .handle("createCompany", ({ payload }) => Effect.gen(function*() {
       const auth = yield* AuthContext
@@ -244,18 +255,19 @@ export const handlers = HttpApiBuilder.group(api, "vivid", (handlers) =>
       }))
       const company = companyRows[0]
       if (company === undefined) return yield* Effect.fail(new Conflict({ message: "Company could not be created" }))
-      return fromCompany(company)
+      return yield* fromCompany(company)
     }))
     .handle("listProjects", () => Effect.gen(function*() {
-      const { company } = yield* requireActiveCompany
+      const { company } = yield* requireActiveCompany()
       const db = yield* Database
       const rows = yield* db.run(db.select().from(projectTable)
         .where(eq(projectTable.companyId, company.id))
         .orderBy(desc(projectTable.createdAt)))
-      return new ProjectListResponse({ projects: rows.map(fromProject) })
+      const projects = yield* Effect.forEach(rows, fromProject)
+      return new ProjectListResponse({ projects })
     }))
     .handle("createProject", ({ payload }) => Effect.gen(function*() {
-      const { auth, company } = yield* requireActiveCompany
+      const { auth, company } = yield* requireActiveCompany()
       const db = yield* Database
       if (payload.parentProjectId !== undefined) {
         const parent = yield* db.run(db.select().from(projectTable)
@@ -271,10 +283,10 @@ export const handlers = HttpApiBuilder.group(api, "vivid", (handlers) =>
       }).returning())
       const project = rows[0]
       if (project === undefined) return yield* Effect.fail(new Conflict({ message: "Project could not be created" }))
-      return fromProject(project)
+      return yield* fromProject(project)
     }))
     .handle("inviteMembership", ({ payload }) => Effect.gen(function*() {
-      const { auth, company, membership } = yield* requireActiveCompany
+      const { auth, company, membership } = yield* requireActiveCompany()
       if (membership.role !== "owner" && membership.role !== "admin") {
         return yield* Effect.fail(new Forbidden({ message: "Only Company administrators can invite" }))
       }
@@ -290,7 +302,13 @@ export const handlers = HttpApiBuilder.group(api, "vivid", (handlers) =>
       }).returning())
       const invitation = rows[0]
       if (invitation === undefined) return yield* Effect.fail(new Conflict({ message: "Invitation could not be created" }))
-      return new InvitationResponse({ id: invitation.id, companyId: company.id as CompanyId, email: invitation.email, role: invitation.role, status: invitation.status })
+      return yield* decodePersistence(InvitationResponse, {
+        id: invitation.id,
+        companyId: company.id,
+        email: invitation.email,
+        role: invitation.role,
+        status: invitation.status
+      })
     }))
     .handle("acceptMembership", ({ payload }) => Effect.gen(function*() {
       const auth = yield* AuthContext
@@ -312,27 +330,28 @@ export const handlers = HttpApiBuilder.group(api, "vivid", (handlers) =>
       }))
       const member = result[0]
       if (member === undefined) return yield* Effect.fail(new Conflict({ message: "Membership could not be created" }))
-      return fromMembership(member)
+      return yield* fromMembership(member)
     }))
     .handle("getSettings", () => Effect.gen(function*() {
       const auth = yield* AuthContext
       const db = yield* Database
       const rows = yield* db.run(db.select().from(settingsTable).where(eq(settingsTable.personId, auth.person.id)).limit(1))
       const row = rows[0]
-      if (row !== undefined) return new Settings({ personId: auth.person.id, theme: row.theme as "system" | "light" | "dark" })
+      if (row !== undefined) return yield* decodePersistence(Settings, { personId: auth.person.id, theme: row.theme })
       yield* db.run(db.insert(settingsTable).values({ personId: auth.person.id, theme: "system" }))
-      return new Settings({ personId: auth.person.id, theme: "system" })
+      return yield* decodePersistence(Settings, { personId: auth.person.id, theme: "system" })
     }))
     .handle("patchSettings", ({ payload }) => Effect.gen(function*() {
       const auth = yield* AuthContext
       const db = yield* Database
       const current = yield* db.run(db.select().from(settingsTable).where(eq(settingsTable.personId, auth.person.id)).limit(1))
-      const theme = payload.theme ?? (current[0]?.theme as "system" | "light" | "dark" | undefined) ?? "system"
+      const currentRow = current[0]
+      const theme = payload.theme ?? (currentRow === undefined ? "system" : currentRow.theme)
       const rows = yield* db.run(db.insert(settingsTable).values({ personId: auth.person.id, theme })
         .onConflictDoUpdate({ target: settingsTable.personId, set: { theme, updatedAt: new Date() } }).returning())
       const row = rows[0]
       if (row === undefined) return yield* Effect.fail(new Conflict({ message: "Settings could not be saved" }))
-      return new Settings({ personId: auth.person.id, theme: row.theme as "system" | "light" | "dark" })
+      return yield* decodePersistence(Settings, { personId: auth.person.id, theme: row.theme })
     }))
 )
 

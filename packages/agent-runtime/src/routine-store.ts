@@ -58,7 +58,7 @@ const runSelection = {
 
 export async function listRoutines(): Promise<Routine[]> {
   await schemaReady;
-  return (await db.select(routineSelection).from(routines).orderBy(desc(routines.updatedAt))).map(decodeRoutine);
+  return (await db.select(routineSelection).from(routines).orderBy(desc(routines.updatedAt))).map((row) => decodeRoutine(row));
 }
 
 export async function getRoutine(id: string): Promise<Routine | null> {
@@ -99,12 +99,12 @@ export async function setRoutineScheduleState(id: string, nextExpectedAt: number
 
 export async function listRoutineRuns(routineId: string, limit = 12): Promise<RoutineRun[]> {
   await schemaReady;
-  return (await db.select(runSelection).from(routineRuns).where(eq(routineRuns.routineId, routineId)).orderBy(desc(routineRuns.startedAt)).limit(limit)).map(decodeRoutineRun);
+  return (await db.select(runSelection).from(routineRuns).where(eq(routineRuns.routineId, routineId)).orderBy(desc(routineRuns.startedAt)).limit(limit)).map((row) => decodeRoutineRun(row));
 }
 
 export async function listRunningRoutineRuns(): Promise<RoutineRun[]> {
   await schemaReady;
-  return (await db.select(runSelection).from(routineRuns).where(eq(routineRuns.status, "running")).orderBy(asc(routineRuns.startedAt))).map(decodeRoutineRun);
+  return (await db.select(runSelection).from(routineRuns).where(eq(routineRuns.status, "running")).orderBy(asc(routineRuns.startedAt))).map((row) => decodeRoutineRun(row));
 }
 
 export async function startRoutineRun(routineId: string): Promise<RoutineRun> {

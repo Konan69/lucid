@@ -1,4 +1,4 @@
-import { fromPool, layerFrom } from "@effect/sql-pg/PgClient"
+import { layer as pgClientLayer } from "@effect/sql-pg/PgClient"
 import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
@@ -14,10 +14,12 @@ import {
   EffectPgDatabase,
   makeWithDefaults as makeDrizzle
 } from "drizzle-orm/effect-postgres"
+import type {
+  EffectPgQueryEffectHKT,
+  EffectPgQueryResultHKT
+} from "drizzle-orm/effect-postgres"
 import { EffectDrizzleQueryError } from "drizzle-orm/effect-core/errors"
 import type { PgEffectTransaction } from "drizzle-orm/pg-core/effect/session"
-import { Pool } from "pg"
-import * as Redacted from "effect/Redacted"
 import { ServerConfig } from "./config.ts"
 
 type DriverError = SqlErrorModule.SqlError | EffectDrizzleQueryError
@@ -29,7 +31,7 @@ type DatabaseInfrastructureError =
 type DatabaseService = Omit<EffectPgDatabase, "transaction"> & {
   run: <A, E, R>(operation: Effect.Effect<A, E, R>) => Effect.Effect<A, Exclude<E, DriverError> | DatabaseInfrastructureError, R>
   transaction: <A, E, R>(
-    operation: (tx: PgEffectTransaction<any, any>) => Effect.Effect<A, E, R>
+    operation: (tx: PgEffectTransaction<EffectPgQueryEffectHKT, EffectPgQueryResultHKT>) => Effect.Effect<A, E, R>
   ) => Effect.Effect<A, Exclude<E, DriverError> | DatabaseInfrastructureError, R>
 }
 
@@ -79,13 +81,10 @@ export class Database extends Context.Service<Database, DatabaseService>()("vivi
 
 export const databaseLayer = Layer.unwrap(Effect.gen(function*() {
   const config = yield* ServerConfig
-  const pool = new Pool({ connectionString: Redacted.value(config.DATABASE_URL) })
-  const pgClientLayer = layerFrom(
-    fromPool({
-      acquire: Effect.succeed(pool),
-      applicationName: "vivid-server"
-    })
-  )
+  const postgresLayer = pgClientLayer({
+    url: config.DATABASE_URL,
+    applicationName: "vivid-server"
+  })
   return Layer.effect(
     Database,
     Effect.gen(function*() {
@@ -96,5 +95,5 @@ export const databaseLayer = Layer.unwrap(Effect.gen(function*() {
       database.transaction = (operation) => mapDriverErrors(raw.transaction((tx) => operation(tx)))
       return database
     })
-  ).pipe(Layer.provide(pgClientLayer))
+  ).pipe(Layer.provide(postgresLayer))
 }))

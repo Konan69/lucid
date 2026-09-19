@@ -44,7 +44,7 @@ const cases = [
   [
     'require-schema-class-title',
     "class User extends Schema.Class<User>('User')({ name: Schema.String }) {}",
-    "class User extends Schema.Class<User>('User')({ name: Schema.String }).annotations({ title: 'User' }) {}",
+    "class User extends Schema.Class<User>('User')({ name: Schema.String }, { title: 'User' }) {}",
   ],
   ['require-schema-decode-in-boundary', "JSON.parse('{}')", 'Schema.decodeUnknownSync(Payload)({})'],
   [

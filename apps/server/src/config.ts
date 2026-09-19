@@ -75,7 +75,12 @@ const loadConfig = Effect.fn("loadServerConfig")(function*(): Effect.fn.Return<S
   const authSecretValue = yield* required("AUTH_SECRET", authSecret).pipe(
     Effect.mapError(() => configError("AUTH_SECRET", "at least 32 characters, 12 distinct characters, and 3 character classes"))
   )
-  const port = Option.getOrUndefined(yield* optional("PORT", Config.Port)) ?? 8787
+  const port = Option.getOrElse(
+    yield* Config.option(Config.Port("PORT")).pipe(
+      Effect.mapError(() => configError("PORT", "a valid TCP port"))
+    ),
+    () => 8787
+  )
   const publicUrl = Option.getOrUndefined(yield* optional("PUBLIC_URL", Schema.URLFromString, "an absolute URL"))
     ?? new URL("http://localhost:3000")
   const googleClientId = Option.getOrUndefined(yield* optional("GOOGLE_CLIENT_ID", nonEmptyString, "a non-empty string"))

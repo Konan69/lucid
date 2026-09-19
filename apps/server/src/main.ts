@@ -5,16 +5,16 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { apiLayer } from "./api.ts"
-import { authEffect } from "./auth.ts"
+import { authEffect, localAuthRuntimeLayer } from "./auth.ts"
 import { databaseLayer } from "./database.ts"
-import { ConfigurationError, ServerConfig, loadServerConfig } from "./config.ts"
+import { ServerConfig, loadServerConfig } from "./config.ts"
 
 const authRoute = HttpRouter.add(
   "*",
   "/api/auth/*",
   Effect.gen(function*() {
     const auth = yield* authEffect
-    return yield* auth.fetch
+    return yield* auth.fetch.pipe(Effect.provide(localAuthRuntimeLayer))
   })
 )
 
@@ -24,13 +24,11 @@ const healthRoute = HttpRouter.add(
   HttpServerResponse.jsonUnsafe({ ok: true, service: "vivid" })
 )
 
-const makeAppLayer = (config: ServerConfig["Service"]) => Layer.mergeAll(apiLayer, authRoute, healthRoute).pipe(
-  Layer.provide(databaseLayer),
-  Layer.provide(Layer.succeed(ServerConfig, config)),
+const appLayer = Layer.mergeAll(apiLayer, authRoute, healthRoute).pipe(
   Layer.provide(HttpRouter.layer)
 )
 
-const program = Effect.gen(function*() {
+const serverProgram = Effect.gen(function*() {
   const config = yield* loadServerConfig
   const serverLayer = NodeHttpServer.layer(
     () => createServer(),
@@ -39,14 +37,24 @@ const program = Effect.gen(function*() {
       port: config.PORT
     }
   )
-  return yield* Layer.launch(HttpRouter.serve(makeAppLayer(config)).pipe(Layer.provide(serverLayer)))
-}).pipe(
-  Effect.catchTag("ConfigurationError", (error: ConfigurationError) =>
-    Effect.sync(() => {
-      console.error(`Configuration error: ${error.message}`)
-      process.exitCode = 1
-    })
+  const configLayer = Layer.succeed(ServerConfig, config)
+  const liveDatabaseLayer = databaseLayer.pipe(Layer.provide(configLayer))
+  const servedAppLayer = HttpRouter.serve(appLayer)
+  const nodeAppLayer = servedAppLayer.pipe(Layer.provide(serverLayer))
+  const liveAppLayer = nodeAppLayer.pipe(
+    Layer.provide(liveDatabaseLayer),
+    Layer.provide(configLayer)
   )
+  return yield* Layer.launch(liveAppLayer)
+})
+
+const program = Effect.catchTag(
+  serverProgram,
+  "ConfigurationError",
+  (error) => Effect.sync(() => {
+    console.error(`Configuration error: ${error.message}`)
+    process.exitCode = 1
+  })
 )
 
 NodeRuntime.runMain(program)

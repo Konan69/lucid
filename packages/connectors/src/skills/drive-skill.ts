@@ -1,20 +1,15 @@
-import { getCredentialsForConnector, getConnectorStatus } from "../store.ts";
-import { DriveConnector } from "../google/drive.ts";
+import { getConnectorStatus } from "../store.ts"
+import { DriveConnector } from "../google/drive.ts"
+import { bindConnectorTools } from "./bind.ts"
 
-const connector = new DriveConnector();
+const connector = new DriveConnector()
 
+/** Registers Drive tools synchronously and loads credentials only at invocation. */
 export function driveTools() {
-  return connector.tools().map((tool) => ({
-    ...tool,
-    execute: async (args: Record<string, unknown>) => {
-      const credentials = await getCredentialsForConnector("drive");
-      const valid = credentials.find((c) => c.expiresAt > Date.now() + 60_000);
-      if (!valid) throw new Error("Google Drive is not connected");
-      return tool.execute(args, valid);
-    },
-  }));
+  return bindConnectorTools("drive", "Google Drive", connector.tools())
 }
 
+/** Reads the current Drive Connection state. */
 export async function driveStatus() {
-  return getConnectorStatus("drive");
+  return getConnectorStatus("drive")
 }
