@@ -4,7 +4,6 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { desc, eq, sql } from "drizzle-orm";
 import { Pool, types } from "pg";
-import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type { ConnectorCredential, ConnectorId, ConnectorStatus } from "./types.ts";
 import { credentials } from "./schema.ts";
@@ -28,8 +27,7 @@ const CredentialSchema = Schema.Struct({
   scope: Schema.String,
   createdAt: Schema.Number
 });
-const decodeCredential = (value: unknown): ConnectorCredential =>
-  Effect.runSync(Schema.decodeUnknownEffect(CredentialSchema)(value) as Effect.Effect<ConnectorCredential, unknown, never>);
+const decodeCredential: (value: unknown) => ConnectorCredential = Schema.decodeUnknownSync(CredentialSchema);
 
 const credentialSelection = {
   id: credentials.id,

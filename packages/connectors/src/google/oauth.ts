@@ -1,8 +1,22 @@
+import * as Schema from "effect/Schema";
 import type { ConnectorCredential } from "../types.ts";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke";
+
+const GoogleCodeTokenResponse = Schema.Struct({
+  access_token: Schema.String,
+  refresh_token: Schema.String,
+  expires_in: Schema.Number,
+  scope: Schema.String,
+});
+const GoogleRefreshTokenResponse = Schema.Struct({
+  access_token: Schema.String,
+  expires_in: Schema.Number,
+});
+const decodeCodeTokenResponse = Schema.decodeUnknownSync(GoogleCodeTokenResponse);
+const decodeRefreshTokenResponse = Schema.decodeUnknownSync(GoogleRefreshTokenResponse);
 
 export interface GoogleOAuthConfig {
   clientId: string;
@@ -41,12 +55,7 @@ export async function exchangeGoogleCode(config: GoogleOAuthConfig, code: string
     throw new Error(`Token exchange failed: ${error}`);
   }
 
-  const data = await response.json() as {
-    access_token: string;
-    refresh_token: string;
-    expires_in: number;
-    scope: string;
-  };
+  const data = decodeCodeTokenResponse(await response.json());
 
   return {
     connectorId: "gmail",
@@ -74,10 +83,7 @@ export async function refreshGoogleToken(config: GoogleOAuthConfig, refreshToken
     throw new Error(`Token refresh failed: ${error}`);
   }
 
-  const data = await response.json() as {
-    access_token: string;
-    expires_in: number;
-  };
+  const data = decodeRefreshTokenResponse(await response.json());
 
   return {
     accessToken: data.access_token,
