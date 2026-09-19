@@ -9,4 +9,4 @@
 
 ## Merge notes
 
-The owner file is byte-identical to the target package bundle. No owner customization, Vivid adaptation, content delta, or conflict was found; this refresh adds provenance only.
+The owner file matched the target package bundle. This refresh keeps all response/error semantics and applies only Vivid's package-manager-neutral wording (`registry packages`) so it does not direct readers toward another package manager. No owner conflict occurred.

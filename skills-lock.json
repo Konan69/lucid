@@ -38,7 +38,7 @@
       "source": "VCOS owner skill",
       "sourceType": "owner",
       "skillPath": ".agents/skills/diagnose",
-      "mergedCommit": "f5e0e85e460f20dee1db2f954cf9e79ef71da365",
+      "mergedCommit": "7f38dca4730a480d4ab0481675c38f632a1d8922",
       "mergedAt": "2026-09-19",
       "computedHash": "1527bc6760666152a1920dd6072a039093cad3b4c6eea22feafbf705ea1fda7c"
     },
@@ -104,7 +104,7 @@
       "skillPath": "drizzle-kit/skills/drizzle-responses-and-errors",
       "mergedCommit": "ab785fcd99710d6d136ffbfd121b7aeb96e4d51d",
       "mergedAt": "2026-09-19",
-      "computedHash": "464c1400d02c7d0f79742c337d7d87f5b40cfe24a80a7a24aca429edffd4aab3"
+      "computedHash": "f7795b79669a47e5e1d6a1e96f3b363af183642b3994bc3176c50514c9cd4cf4"
     },
     "effect": {
       "source": "kitlangton/skills",
@@ -120,7 +120,7 @@
       "skillPath": "effect-service-design",
       "mergedCommit": "8603380821fee6a77c82639f364ce8fe4f5a92be",
       "mergedAt": "2026-09-19",
-      "computedHash": "fa5ae52753e6e3a63d67bfba7d19b7810edd6601f50340884f85378d514d3870"
+      "computedHash": "930773d96339c6decd50293d9d711d69419b0d0165e2c2ae35599dee8467567a"
     },
     "email-and-password-best-practices": {
       "source": "better-auth/skills",
@@ -198,7 +198,7 @@
       "source": "VCOS owner skill",
       "sourceType": "owner",
       "skillPath": ".agents/skills/product-description",
-      "mergedCommit": "137d962c23e011f67e8903e1c091f2095c05d069",
+      "mergedCommit": "11b030f9a765c1635bf8acda25a0a7249e9d481e",
       "mergedAt": "2026-09-19",
       "computedHash": "433bbaae41814cc868e8b259fdad5dc8beca52520c3ca03a2aa3c79290a0bc5b"
     },
@@ -224,13 +224,13 @@
       "skillPath": ".agents/skills/runtime-integration-testing",
       "mergedCommit": "local-2026-09-19",
       "mergedAt": "2026-09-19",
-      "computedHash": "8d318b16652389abcb0ec33711002afacc703a7ab31365a4ab33c189e67bef3c"
+      "computedHash": "ef41392f6dee23ef9d218206cdc10ddb05f638f9f5013799540536f7f2a0ee52"
     },
     "tdd": {
       "source": "VCOS owner skill",
       "sourceType": "owner",
       "skillPath": ".agents/skills/tdd",
-      "mergedCommit": "f5e0e85e460f20dee1db2f954cf9e79ef71da365",
+      "mergedCommit": "7f38dca4730a480d4ab0481675c38f632a1d8922",
       "mergedAt": "2026-09-19",
       "computedHash": "ce64d0ee73f35c0dcb09d1f9ce83c2ab1bc365f38329dc547eb0e1197f2115c6"
     },
@@ -256,7 +256,7 @@
       "skillPath": "skills/turborepo",
       "mergedCommit": "bcc853c2cc5586d49f97dd58fe8bc199419df3bb",
       "mergedAt": "2026-09-19",
-      "computedHash": "eaa573225568a064176c382accadaeceebb8f1e40da3c133e79dc01f1df8d813"
+      "computedHash": "b3165de9690dc0de3ae02791d9c09c5ff573f3ebd78ab9f3524516f182a3a596"
     },
     "vitest-evals": {
       "source": "getsentry/vitest-evals",

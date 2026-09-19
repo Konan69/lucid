@@ -7,4 +7,4 @@
 
 ## Merge notes
 
-Upstream remains at the recorded commit. `SKILL.md` and `references/AUDIT.md` retain the owner's current content. There were no Vivid content adaptations, upstream deltas, or conflicts in this refresh; provenance now covers the complete copied surface.
+Upstream remains at the recorded commit. The owner's `SKILL.md` is preserved byte-identically. This refresh adds the upstream `references/AUDIT.md` and `agents/openai.yaml` files that the owner directory did not contain, completing the recorded upstream surface. There were no Vivid content conflicts.

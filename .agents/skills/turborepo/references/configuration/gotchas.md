@@ -10,8 +10,8 @@ Root `package.json` scripts for turbo tasks MUST use `turbo run`, not direct com
 // WRONG - bypasses turbo, no parallelization or caching
 {
   "scripts": {
-    "build": "bun build",
-    "dev": "bun dev"
+    "build": "vite build",
+    "dev": "vite"
   }
 }
 
@@ -34,7 +34,7 @@ Don't use `&&` to chain tasks that turbo should orchestrate.
 // WRONG - changeset:publish chains turbo task with non-turbo command
 {
   "scripts": {
-    "changeset:publish": "bun build && changeset publish"
+    "changeset:publish": "pnpm build && changeset publish"
   }
 }
 

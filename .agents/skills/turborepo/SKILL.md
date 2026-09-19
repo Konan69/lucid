@@ -255,8 +255,8 @@ Root `package.json` scripts MUST delegate to `turbo run`, not run tasks directly
 // WRONG - bypasses turbo entirely
 {
   "scripts": {
-    "build": "bun build",
-    "dev": "bun dev"
+    "build": "vite build",
+    "dev": "vite"
   }
 }
 
@@ -277,7 +277,7 @@ Don't chain turbo tasks with `&&`. Let turbo orchestrate.
 // WRONG - turbo task not using turbo run
 {
   "scripts": {
-    "changeset:publish": "bun build && changeset publish"
+    "changeset:publish": "pnpm build && changeset publish"
   }
 }
 
@@ -297,7 +297,7 @@ Scripts like `prebuild` that manually build other packages bypass Turborepo's de
 // WRONG - manually building dependencies
 {
   "scripts": {
-    "prebuild": "cd ../../packages/types && bun run build && cd ../utils && bun run build",
+    "prebuild": "pnpm --dir ../../packages/types build && pnpm --dir ../utils build",
     "build": "next build"
   }
 }

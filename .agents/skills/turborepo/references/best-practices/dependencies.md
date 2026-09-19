@@ -217,5 +217,5 @@ public-hoist-pattern[]=*prettier*
 
 ```bash
 # Commit your lockfile!
-git add pnpm-lock.yaml  # or package-lock.json, yarn.lock
+git add pnpm-lock.yaml
 ```
