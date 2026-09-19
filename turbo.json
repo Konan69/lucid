@@ -8,7 +8,7 @@
     },
     "typecheck": {
       "dependsOn": ["^typecheck"],
-      "outputs": []
+      "outputs": [".cache/typescript/**", "*.tsbuildinfo"]
     },
     "lint": {
       "dependsOn": ["^lint"],

@@ -1,0 +1,233 @@
+[
+  {
+    "file": "packages/agent-runtime/src/app.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": [
+      "delete:/api/connectors/:id",
+      "delete:/api/conversations/:id",
+      "delete:/api/follow-ups/:id",
+      "delete:/api/library/:id",
+      "delete:/api/library/folders/:id",
+      "delete:/api/routines/:id",
+      "delete:/api/tasks/:id",
+      "get:/api/connectors",
+      "get:/api/connectors/:id/auth",
+      "get:/api/connectors/google/callback",
+      "get:/api/conversations",
+      "get:/api/library",
+      "get:/api/library/:id",
+      "get:/api/library/:id/content",
+      "get:/api/library/folders",
+      "get:/api/library/source",
+      "get:/api/notifications",
+      "get:/api/routines",
+      "get:/api/tasks",
+      "patch:/api/conversations/:id",
+      "patch:/api/follow-ups/:id",
+      "patch:/api/library/:id",
+      "patch:/api/library/folders/:id",
+      "patch:/api/routines/:id",
+      "patch:/api/tasks/:id",
+      "post:/api/follow-ups/:id/run",
+      "post:/api/library",
+      "post:/api/library/folders",
+      "post:/api/library/search",
+      "post:/api/notifications/read",
+      "post:/api/routines",
+      "post:/api/routines/:id/run",
+      "post:/api/tasks",
+      "post:/api/tasks/:id/follow-ups",
+      "post:/api/tasks/:id/nudge",
+      "put:/api/conversations/:id",
+      "requireRuntimeToken"
+    ]
+  },
+  {
+    "file": "packages/agent-runtime/src/db.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": ["query", "transaction"]
+  },
+  {
+    "file": "packages/agent-runtime/src/follow-up-scheduler.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": [
+      "chaseTaskNow",
+      "executeFollowUp",
+      "recoverRunningFollowUps",
+      "runFollowUpNow",
+      "tick"
+    ]
+  },
+  {
+    "file": "packages/agent-runtime/src/library-ingest.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": ["extractPages", "ingestLibraryDocument"]
+  },
+  {
+    "file": "packages/agent-runtime/src/library-store.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": [
+      "completeLibraryDocument",
+      "createLibraryDocument",
+      "createLibraryFolder",
+      "deleteLibraryDocument",
+      "deleteLibraryFolder",
+      "failLibraryDocument",
+      "getLibraryDocument",
+      "getLibraryDocumentByDigest",
+      "getLibraryFolder",
+      "getStoredLibraryDocument",
+      "getStoredLibraryDocumentByName",
+      "listAllLibraryFolders",
+      "listLibraryDocuments",
+      "listLibraryFolders",
+      "searchLibrary",
+      "updateLibraryDocument",
+      "updateLibraryFolder"
+    ]
+  },
+  {
+    "file": "packages/agent-runtime/src/routine-scheduler.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": [
+      "executeRoutine",
+      "getRoutineView",
+      "initializeRoutineJobs",
+      "listRoutineViews",
+      "nextRunAt",
+      "runRoutineNow",
+      "syncRoutineJob"
+    ]
+  },
+  {
+    "file": "packages/agent-runtime/src/routine-store.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": [
+      "attachRoutineSubmission",
+      "createRoutine",
+      "deleteRoutine",
+      "failRoutineRun",
+      "finishRoutineRun",
+      "getRoutine",
+      "listRoutineRuns",
+      "listRoutines",
+      "listRunningRoutineRuns",
+      "setRoutineScheduleState",
+      "startRoutineRun",
+      "updateRoutine"
+    ]
+  },
+  {
+    "file": "packages/agent-runtime/src/runtime-db.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": ["schemaReady"]
+  },
+  {
+    "file": "packages/agent-runtime/src/task-store.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": [
+      "attachFollowUpSubmission",
+      "completeFollowUp",
+      "createFollowUp",
+      "createNotification",
+      "createNotificationWithDb",
+      "createTask",
+      "deleteFollowUp",
+      "deleteTask",
+      "dueFollowUps",
+      "failFollowUp",
+      "finishFollowUp",
+      "getFollowUp",
+      "getTask",
+      "getTaskView",
+      "hasFollowUpCovering",
+      "listFollowUps",
+      "listNotifications",
+      "listRunningFollowUps",
+      "listTaskViews",
+      "listTasks",
+      "markNotificationsRead",
+      "markTaskOverdueNotified",
+      "overdueTasks",
+      "startFollowUp",
+      "unreadNotificationCount",
+      "updateFollowUp",
+      "updateTask"
+    ]
+  },
+  {
+    "file": "packages/agent-runtime/src/thread-store.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": ["deleteConversation", "listConversations", "upsertConversation"]
+  },
+  {
+    "file": "packages/agent-runtime/src/tools/connectors.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": ["run"]
+  },
+  {
+    "file": "packages/agent-runtime/src/tools/search-library.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": ["run"]
+  },
+  {
+    "file": "packages/agent-runtime/src/tools/tasks.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": ["run"]
+  },
+  {
+    "file": "packages/connectors/src/google/calendar.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["exchangeCode", "execute", "getAccessToken", "refreshCredential", "revokeCredential"]
+  },
+  {
+    "file": "packages/connectors/src/google/drive.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["exchangeCode", "execute", "getAccessToken", "refreshCredential", "revokeCredential"]
+  },
+  {
+    "file": "packages/connectors/src/google/gmail.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["exchangeCode", "execute", "getAccessToken", "refreshCredential", "revokeCredential"]
+  },
+  {
+    "file": "packages/connectors/src/google/oauth.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["exchangeGoogleCode", "refreshGoogleToken", "revokeGoogleToken"]
+  },
+  {
+    "file": "packages/connectors/src/skills/calendar-skill.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["calendarStatus", "execute"]
+  },
+  {
+    "file": "packages/connectors/src/skills/drive-skill.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["driveStatus", "execute"]
+  },
+  {
+    "file": "packages/connectors/src/skills/gmail-skill.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["execute", "gmailStatus"]
+  },
+  {
+    "file": "packages/connectors/src/store.ts",
+    "classification": "third-party-adapter",
+    "symbols": [
+      "deleteCredential",
+      "deleteCredentialsForConnector",
+      "getConnectorStatus",
+      "getCredential",
+      "getCredentialsForConnector",
+      "listCredentials",
+      "ready",
+      "saveCredential",
+      "updateCredential"
+    ]
+  },
+  {
+    "file": "packages/connectors/src/types.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["exchangeCode", "execute", "refreshCredential", "revokeCredential"]
+  }
+]
