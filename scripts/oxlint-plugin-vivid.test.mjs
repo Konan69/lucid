@@ -230,6 +230,10 @@ for (const [ruleName, invalid, valid, filename] of cases) {
       assert.equal(ruleDiagnostics(ruleName, lint(ruleName, callback)).length, 0)
     }
 
+    if (ruleName === 'no-direct-process-env') {
+      const agentBoundary = "'use agent'; const model = process.env.VIVID_MODEL"
+      assert.equal(ruleDiagnostics(ruleName, lint(ruleName, agentBoundary, 'agent.ts')).length, 0)
+    }
     if (ruleName === 'no-global-process-runtime') {
       const source = [
         "import * as NodeOS from 'node:os'",

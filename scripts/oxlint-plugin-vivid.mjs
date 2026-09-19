@@ -191,9 +191,13 @@ const noUndefinedInUnion = rule(
 const noDirectProcessEnv = rule(
   'Read process configuration through Effect Config.',
   'Do not read process.env directly in production code. Decode configuration once through Effect Config.',
-  (report) => ({
+  (report, context) => {
+    const firstStatement = context.sourceCode.ast.body[0]
+    const isAgentModule = firstStatement?.type === 'ExpressionStatement' && firstStatement.directive === 'use agent'
+    return {
     MemberExpression(node) {
       if (
+        !isAgentModule &&
         node.object?.type === 'MemberExpression' &&
         node.object.object?.type === 'Identifier' &&
         node.object.object.name === 'process' &&
@@ -202,7 +206,8 @@ const noDirectProcessEnv = rule(
         report(node)
       }
     },
-  }),
+  }
+  },
 )
 
 const noRuntimeEnvMutation = rule(
