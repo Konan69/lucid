@@ -1,11 +1,22 @@
 #!/usr/bin/env node
-import { readFileSync, readdirSync } from 'node:fs'
-import path from 'node:path'
+import * as NodeFS from 'node:fs'
+import * as NodePath from 'node:path'
 import ts from 'typescript'
-import { fileURLToPath } from 'node:url'
+import * as NodeURL from 'node:url'
+import * as Result from 'effect/Result'
+import * as Schema from 'effect/Schema'
 
-const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const allowlistPath = path.join(repositoryRoot, 'scripts', 'effect-boundary-allowlist.json')
+const repositoryRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), '..')
+const allowlistPath = NodePath.join(repositoryRoot, 'scripts', 'effect-boundary-allowlist.json')
+const AllowlistEntry = Schema.Struct({
+  file: Schema.String,
+  symbol: Schema.optionalKey(Schema.String),
+  symbols: Schema.optionalKey(Schema.Array(Schema.String)),
+  classification: Schema.String,
+})
+const Allowlist = Schema.Array(AllowlistEntry)
+const decodeAllowlist = Schema.decodeUnknownResult(Allowlist)
+const decodeAllowlistJson = Schema.decodeUnknownSync(Schema.fromJsonString(Allowlist))
 const wildcard = /[*?{}[\]]/u
 
 /** Production TypeScript only; tests, declarations, generated files, and migration state are separate gates. */
@@ -19,30 +30,30 @@ export function isProductionTypeScript(relativePath) {
 
 /** List files deterministically so reports and allowlist checks are stable across machines. */
 export function productionFiles(root = repositoryRoot) {
-  const roots = [path.join(root, 'apps', 'server', 'src')]
-  const packagesRoot = path.join(root, 'packages')
-  for (const entry of readdirSync(packagesRoot, { withFileTypes: true })) {
-    if (entry.isDirectory()) roots.push(path.join(packagesRoot, entry.name, 'src'))
+  const roots = [NodePath.join(root, 'apps', 'server', 'src')]
+  const packagesRoot = NodePath.join(root, 'packages')
+  for (const entry of NodeFS.readdirSync(packagesRoot, { withFileTypes: true })) {
+    if (entry.isDirectory()) roots.push(NodePath.join(packagesRoot, entry.name, 'src'))
   }
   const files = []
   const visit = (directory) => {
     let entries
     try {
-      entries = readdirSync(directory, { withFileTypes: true })
+      entries = NodeFS.readdirSync(directory, { withFileTypes: true })
     } catch {
       return
     }
     for (const entry of entries) {
-      const absolute = path.join(directory, entry.name)
+      const absolute = NodePath.join(directory, entry.name)
       if (entry.isDirectory()) visit(absolute)
       else {
-        const relative = path.relative(root, absolute).split(path.sep).join('/')
+        const relative = NodePath.relative(root, absolute).split(NodePath.sep).join('/')
         if (isProductionTypeScript(relative)) files.push(relative)
       }
     }
   }
   for (const rootPath of roots) visit(rootPath)
-  return files.sort((left, right) => left.localeCompare(right))
+  return files.toSorted((left, right) => left.localeCompare(right))
 }
 
 const propertyName = (node) => {
@@ -76,9 +87,9 @@ const declaredFunctionName = (node) => {
     return parent.name.text
   }
   if (ts.isCallExpression(parent)) {
-    const route = parent.arguments.find(ts.isStringLiteral)?.text
+    const routeArgument = parent.arguments.find(ts.isStringLiteral)
     const operation = propertyName(parent.expression)
-    if (route !== undefined && operation !== undefined) return `${operation}:${route}`
+    if (routeArgument !== undefined && operation !== undefined) return `${operation}:${routeArgument.text}`
   }
   return undefined
 }
@@ -121,7 +132,7 @@ export function scanSource(file, source) {
       if (node.moduleSpecifier.text === 'better-result') add('better-result-import', node)
     }
     if (ts.isFunctionLike(node)) {
-      if (node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) {
+      if (node.modifiers !== undefined && node.modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) {
         add('async-function', node)
       }
       if (
@@ -166,17 +177,15 @@ const entryKey = ({ file, symbol }) => `${file}\u0000${symbol}`
 
 /** Exact file+symbol allowlists fail on duplicates, wildcards, and stale classifications. */
 export function validateAllowlist(entries, findings) {
+  const decoded = decodeAllowlist(entries)
+  if (Result.isFailure(decoded)) {
+    throw new Error('Every allowlist entry requires file, symbol(s), and classification strings')
+  }
   const findingKeys = new Set(findings.map(entryKey))
   const allowed = new Set()
-  for (const entry of entries) {
-    const symbols = typeof entry.symbol === 'string' ? [entry.symbol] : entry.symbols
-    if (
-      typeof entry.file !== 'string' ||
-      !Array.isArray(symbols) ||
-      symbols.some((symbol) => typeof symbol !== 'string') ||
-      typeof entry.classification !== 'string' ||
-      entry.classification.length === 0
-    ) {
+  for (const entry of decoded.success) {
+    const symbols = entry.symbol === undefined ? entry.symbols : [entry.symbol]
+    if (symbols === undefined || entry.classification.length === 0) {
       throw new Error('Every allowlist entry requires file, symbol(s), and classification strings')
     }
     for (const symbol of symbols) {
@@ -194,7 +203,7 @@ export function validateAllowlist(entries, findings) {
 
 /** Build a deterministic machine-readable report for migration planning and CI enforcement. */
 export function buildReport(mode, files, findings, allowed) {
-  const ordered = [...findings].sort(
+  const ordered = findings.toSorted(
     (left, right) =>
       left.file.localeCompare(right.file) ||
       left.line - right.line ||
@@ -211,7 +220,11 @@ export function buildReport(mode, files, findings, allowed) {
     unallowlistedFindings: unallowlisted.length,
     counts,
     findings: ordered.map((finding) => ({
-      ...finding,
+      file: finding.file,
+      symbol: finding.symbol,
+      kind: finding.kind,
+      line: finding.line,
+      column: finding.column,
       allowed: allowed.has(entryKey(finding)),
     })),
   }
@@ -230,9 +243,9 @@ function main() {
   }
   const files = productionFiles()
   const findings = files.flatMap((file) =>
-    scanSource(file, readFileSync(path.join(repositoryRoot, file), 'utf8')),
+    scanSource(file, NodeFS.readFileSync(NodePath.join(repositoryRoot, file), 'utf8')),
   )
-  const entries = JSON.parse(readFileSync(allowlistPath, 'utf8'))
+  const entries = decodeAllowlistJson(NodeFS.readFileSync(allowlistPath, 'utf8'))
   const allowed = validateAllowlist(entries, findings)
   const report = buildReport(mode, files, findings, allowed)
   if (mode === 'report') process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
@@ -246,4 +259,4 @@ function main() {
   }
 }
 
-if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()
+if (process.argv[1] !== undefined && NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)) main()

@@ -1,6 +1,7 @@
-import assert from 'node:assert/strict'
-import test from 'node:test'
+import * as NodeAssert from 'node:assert/strict'
+import * as NodeTest from 'node:test'
 import {
+
   buildReport,
   formatSummary,
   isProductionTypeScript,
@@ -8,6 +9,8 @@ import {
   validateAllowlist,
 } from './effect-boundary-audit.mjs'
 
+const assert = NodeAssert
+const test = NodeTest.default
 const fixtureFile = 'packages/contracts/src/audit-fixture.ts'
 const fixtureSource = `
 import { Result } from "better-result";
