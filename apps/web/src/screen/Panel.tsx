@@ -1,3 +1,4 @@
+import { Option, Schema } from "effect";
 import { useFlueAgent, type FlueConversationMessage } from "@flue/react";
 import { createFlueClient } from "@flue/sdk";
 import { X, Hand, Maximize2, Lock, Plus, Check, CircleAlert, Clock3, MessageSquareText, Wrench } from "lucide-react";
@@ -7,7 +8,7 @@ import { cn } from "../ui/cn";
 
 export function Panel({ kind, conversationId, onClose }: { kind: "screen" | "log"; conversationId: string | null; onClose: () => void }) {
   return (
-    <aside className="fixed inset-0 z-30 flex h-full w-full shrink-0 flex-col bg-surface-1 animate-fade-in sm:static sm:w-(--panel-w) sm:hairline-l">
+    <aside className="fixed inset-0 z-30 flex size-full shrink-0 animate-fade-in flex-col bg-surface-1 sm:static sm:w-(--panel-w) sm:hairline-l">
       <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-3 hairline-b">
         <h2 className="flex-1 text-label font-title text-ink">{kind === "screen" ? "Vivid's screen" : "What Vivid did"}</h2>
         {kind === "screen" && <IconButton label="Expand"><Maximize2 className="size-4" /></IconButton>}
@@ -30,12 +31,44 @@ const FEE_ROWS = [
   ["GH → NG", "Mobile money", "", "—", "filling"],
 ] as const;
 
+const ToolTaskSchema = Schema.Struct({
+  title: Schema.optionalKey(Schema.String),
+  status: Schema.optionalKey(Schema.String),
+});
+const ToolFollowUpSchema = Schema.Struct({ at: Schema.optionalKey(Schema.String) });
+const ToolPayloadSchema = Schema.Struct({
+  task: Schema.optionalKey(ToolTaskSchema),
+  followUp: Schema.optionalKey(ToolFollowUpSchema),
+  title: Schema.optionalKey(Schema.String),
+  query: Schema.optionalKey(Schema.String),
+  results: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+  tasks: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+});
+type ToolPayload = typeof ToolPayloadSchema.Type;
+const MessageUsageSchema = Schema.Struct({
+  inputTokens: Schema.optionalKey(Schema.Number),
+  outputTokens: Schema.optionalKey(Schema.Number),
+  totalTokens: Schema.optionalKey(Schema.Number),
+});
+const MessageMetadataSchema = Schema.Struct({
+  startedAt: Schema.optionalKey(Schema.Number),
+  finishedAt: Schema.optionalKey(Schema.Number),
+  model: Schema.optionalKey(Schema.String),
+  usage: Schema.optionalKey(MessageUsageSchema),
+});
+const RuntimeMessageSchema = Schema.Struct({
+  purpose: Schema.optionalKey(Schema.String),
+  signal: Schema.optionalKey(Schema.Struct({
+    attributes: Schema.optionalKey(Schema.Struct({ scheduledAt: Schema.optionalKey(Schema.String) })),
+  })),
+});
+
 function ScreenView() {
   return (
     <div className="flex flex-1 flex-col gap-3 p-3">
       {/* Vivid's desktop: wallpaper, a floating browser window, and a dock */}
       <div
-        className="relative flex aspect-[16/11] w-full flex-col overflow-hidden rounded-card ring-line"
+        className="relative flex aspect-16/11 w-full flex-col overflow-hidden rounded-card ring-line"
         style={{ background: "radial-gradient(120% 90% at 20% 0%, #3a3f4b 0%, #23262e 55%, #17191f 100%)" }}
       >
         {/* Browser window, floating on the wallpaper */}
@@ -49,7 +82,7 @@ function ScreenView() {
             <div
               key={t.title}
               className={cn(
-                "ml-1 flex min-w-0 max-w-40 flex-1 items-center gap-1.5 rounded-t-control px-2 py-1.5 text-meta",
+                "ml-1 flex max-w-40 min-w-0 flex-1 items-center gap-1.5 rounded-t-control px-2 py-1.5 text-meta",
                 t.active ? "bg-well text-ink shadow-xs" : "text-ink-3",
               )}
             >
@@ -57,7 +90,7 @@ function ScreenView() {
               <span className="truncate">{t.title}</span>
             </div>
           ))}
-          <span className="ml-1 mb-1.5 flex size-4 shrink-0 items-center justify-center rounded-xs text-ink-4 hover:bg-wash-hover"><Plus className="size-3" /></span>
+          <span className="mb-1.5 ml-1 flex size-4 shrink-0 items-center justify-center rounded-xs text-ink-4 hover:bg-wash-hover"><Plus className="size-3" /></span>
         </div>
         {/* URL bar */}
         <div className="shrink-0 bg-well px-2 py-1.5">
@@ -97,13 +130,13 @@ function ScreenView() {
               </tbody>
             </table>
           </div>
-          <div className="mt-2 flex items-center gap-2 rounded-control bg-surface-3 px-2 py-1.5 shadow-ring-xs ring-line" aria-current="step">
+          <div className="mt-2 flex items-center gap-2 rounded-control bg-surface-3 px-2 py-1.5 shadow-ring-xs" aria-current="step">
             <i className="size-1.5 shrink-0 animate-status-pulse rounded-full bg-working" />
             <span className="text-meta text-ink-3">Filling the GH → NG row from PRD appendix B</span>
           </div>
         </div>
-        <span className="absolute bottom-2 right-2 inline-flex items-center gap-1.5 rounded-full bg-surface-1/80 px-2 py-0.5 text-meta text-working">
-          <i className="size-1.5 rounded-full bg-current animate-status-pulse" />Live
+        <span className="absolute right-2 bottom-2 inline-flex items-center gap-1.5 rounded-full bg-surface-1/80 px-2 py-0.5 text-meta text-working">
+          <i className="size-1.5 animate-status-pulse rounded-full bg-current" />Live
         </span>
         </div>
         {/* Dock: the tools Vivid keeps on its desktop */}
@@ -137,26 +170,27 @@ function messageText(message: FlueConversationMessage) {
 
 type ToolCallDescription = { label: string; detail?: string };
 
-function describeToolCall(toolName: string, input: Record<string, unknown> | undefined, output: Record<string, unknown> | undefined, state: "running" | "failed" | "done"): ToolCallDescription {
-  const outputTask = output?.task as { title?: string; status?: string } | undefined;
-  const outputFollowUp = output?.followUp as { at?: string } | undefined;
-  const title = outputTask?.title ?? (typeof input?.title === "string" ? input.title : undefined);
-  const when = outputFollowUp?.at ? new Intl.DateTimeFormat(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }).format(Date.parse(outputFollowUp.at)) : undefined;
+function describeToolCall(toolName: string, input: ToolPayload | null, output: ToolPayload | null, state: "running" | "failed" | "done"): ToolCallDescription {
+  const outputTask = output && output.task ? output.task : null;
+  const outputFollowUp = output && output.followUp ? output.followUp : null;
+  const title = outputTask ? outputTask.title ?? null : input ? input.title ?? null : null;
+  const followUpAt = outputFollowUp ? outputFollowUp.at ?? null : null;
+  const when = followUpAt ? new Intl.DateTimeFormat(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }).format(Date.parse(followUpAt)) : null;
   switch (toolName) {
     case "search_library": {
-      const query = typeof input?.query === "string" ? input.query : undefined;
-      const results = Array.isArray(output?.results) ? output.results.length : undefined;
+      const query = input ? input.query ?? null : null;
+      const results = output && output.results ? output.results.length : null;
       return {
         label: state === "failed" ? "Library search failed" : state === "running" ? "Searching the Library" : "Searched the Library",
-        detail: [query ? `“${query}”` : undefined, results !== undefined ? `${results} ${results === 1 ? "source" : "sources"}` : undefined].filter(Boolean).join(" · ") || undefined,
+        detail: [query ? `“${query}”` : null, results !== null ? `${results} ${results === 1 ? "source" : "sources"}` : null].filter(Boolean).join(" · ") || undefined,
       };
     }
     case "create_task":
-      return { label: state === "failed" ? "Could not start tracking" : state === "running" ? "Starting to track a task" : "Started tracking a task", detail: [title, when ? `follow-up ${when}` : undefined].filter(Boolean).join(" · ") || undefined };
+      return { label: state === "failed" ? "Could not start tracking" : state === "running" ? "Starting to track a task" : "Started tracking a task", detail: [title, when ? `follow-up ${when}` : null].filter(Boolean).join(" · ") || undefined };
     case "update_task":
-      return { label: state === "failed" ? "Could not update the task" : state === "running" ? "Updating a task" : outputTask?.status === "done" ? "Marked a task done" : "Updated a task", detail: title };
+      return { label: state === "failed" ? "Could not update the task" : state === "running" ? "Updating a task" : outputTask && outputTask.status === "done" ? "Marked a task done" : "Updated a task", detail: title ?? undefined };
     case "list_tasks":
-      return { label: state === "failed" ? "Could not read the task list" : state === "running" ? "Checking the task list" : "Checked the task list", detail: Array.isArray(output?.tasks) ? `${output.tasks.length} open` : undefined };
+      return { label: state === "failed" ? "Could not read the task list" : state === "running" ? "Checking the task list" : "Checked the task list", detail: output && output.tasks ? `${output.tasks.length} open` : undefined };
     case "schedule_follow_up":
       return { label: state === "failed" ? "Could not schedule the follow-up" : state === "running" ? "Scheduling a follow-up" : "Scheduled a follow-up", detail: [title, when].filter(Boolean).join(" · ") || undefined };
     default:
@@ -165,23 +199,27 @@ function describeToolCall(toolName: string, input: Record<string, unknown> | und
 }
 
 function activityForMessage(message: FlueConversationMessage): Activity[] {
-  const metadata = message.metadata as Record<string, unknown> | undefined;
-  const runtimeMessage = message as FlueConversationMessage & { purpose?: string; signal?: { attributes?: Record<string, unknown> } };
-  const startedAt = typeof metadata?.startedAt === "number" ? metadata.startedAt : undefined;
-  const finishedAt = typeof metadata?.finishedAt === "number" ? metadata.finishedAt : startedAt;
+  const metadataResult = Schema.decodeUnknownOption(MessageMetadataSchema)(message.metadata);
+  const metadata = Option.isSome(metadataResult) ? metadataResult.value : null;
+  const runtimeMessageResult = Schema.decodeUnknownOption(RuntimeMessageSchema)(message);
+  const runtimeMessage = Option.isSome(runtimeMessageResult) ? runtimeMessageResult.value : null;
+  const startedAt = metadata ? metadata.startedAt : undefined;
+  const finishedAt = metadata ? metadata.finishedAt ?? startedAt : startedAt;
   const text = messageText(message);
   if (message.role === "user") {
     return [{ id: message.id, label: "Request submitted", detail: text || undefined, timestamp: startedAt, type: "request" }];
   }
-  if (message.role === "system" && runtimeMessage.purpose === "dispatch") {
-    const scheduledAt = runtimeMessage.signal?.attributes?.scheduledAt;
-    const timestamp = typeof scheduledAt === "string" ? Date.parse(scheduledAt) : undefined;
+  if (message.role === "system" && runtimeMessage && runtimeMessage.purpose === "dispatch") {
+    const scheduledAt = runtimeMessage.signal && runtimeMessage.signal.attributes ? runtimeMessage.signal.attributes.scheduledAt : undefined;
+    const timestamp = scheduledAt ? Date.parse(scheduledAt) : undefined;
     return [{ id: message.id, label: "Routine triggered", detail: text || undefined, timestamp: Number.isFinite(timestamp) ? timestamp : undefined, type: "request" }];
   }
 
   const tools = message.parts.filter((part) => part.type === "dynamic-tool").map((tool) => {
-    const input = "input" in tool ? tool.input as Record<string, unknown> | undefined : undefined;
-    const output = "output" in tool ? tool.output as Record<string, unknown> | undefined : undefined;
+    const inputResult = Schema.decodeUnknownOption(ToolPayloadSchema)("input" in tool ? tool.input : null);
+    const input = Option.isSome(inputResult) ? inputResult.value : null;
+    const outputResult = Schema.decodeUnknownOption(ToolPayloadSchema)("output" in tool ? tool.output : null);
+    const output = Option.isSome(outputResult) ? outputResult.value : null;
     const running = tool.state === "input-available";
     const failed = tool.state === "output-error";
     const described = describeToolCall(tool.toolName, input, output, running ? "running" : failed ? "failed" : "done");
@@ -194,11 +232,11 @@ function activityForMessage(message: FlueConversationMessage): Activity[] {
       type: "tool" as const,
     };
   });
-  const failed = message.settlement?.outcome === "failed";
-  const model = typeof metadata?.model === "string" ? metadata.model.replace(/^openrouter\//, "") : undefined;
+  const failed = message.settlement ? message.settlement.outcome === "failed" : false;
+  const model = metadata ? metadata.model ? metadata.model.replace(/^openrouter\//, "") : undefined : undefined;
   const duration = startedAt && finishedAt ? `${Math.max(0, (finishedAt - startedAt) / 1000).toFixed(1)}s` : undefined;
-  const usage = metadata?.usage as { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined;
-  const tokens = usage?.totalTokens ?? (((usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0)) || undefined);
+  const usage = metadata ? metadata.usage : undefined;
+  const tokens = usage ? usage.totalTokens ?? ((usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) || undefined) : undefined;
   const facts = [model, duration, tokens ? `${tokens.toLocaleString()} tokens` : undefined].filter(Boolean).join(" · ");
   return [
     ...tools,
@@ -226,7 +264,7 @@ function LogView({ conversationId }: { conversationId: string | null }) {
             <span className="block text-label text-ink">{event.label}</span>
             {event.detail && <span className="mt-0.5 block text-meta text-ink-3">{event.detail}</span>}
           </span>
-          {event.timestamp && <time className="shrink-0 text-meta font-meta tabular-nums text-ink-4">{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(event.timestamp)}</time>}
+          {event.timestamp && <time className="shrink-0 text-meta font-meta text-ink-4 tabular-nums">{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(event.timestamp)}</time>}
         </li>
       ))}
     </ol>
