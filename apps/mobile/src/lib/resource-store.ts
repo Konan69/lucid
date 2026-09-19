@@ -48,13 +48,37 @@ export interface ResourceStore<Value> {
   readonly subscribe: (listener: () => void) => () => void;
 }
 
+/** Shares one polling lifecycle for every mounted consumer of an API path. */
+export interface ResourceStoreCache {
+  readonly get: (api: ResourceApi, path: string) => ResourceStore<JsonValue>;
+}
+
 const FailureMessage = Schema.Struct({ message: Schema.String });
 const decodeFailureMessage = Schema.decodeUnknownResult(FailureMessage);
 
 /** Preserves useful adapter messages without trusting arbitrary rejection values. */
-function failureMessage(cause: unknown): string {
+export function failureMessage(cause: unknown): string {
   const decoded = decodeFailureMessage(cause);
   return Result.isSuccess(decoded) ? decoded.success.message : "Could not load this. Try again.";
+}
+
+/** Creates a cache keyed by API authority and path, preventing duplicate polling loops. */
+export function createResourceStoreCache(environment: ResourceEnvironment): ResourceStoreCache {
+  const stores = new WeakMap<ResourceApi, Map<string, ResourceStore<JsonValue>>>();
+  return {
+    get: (api, path) => {
+      let paths = stores.get(api);
+      if (paths === undefined) {
+        paths = new Map();
+        stores.set(api, paths);
+      }
+      const existing = paths.get(path);
+      if (existing !== undefined) return existing;
+      const store = createResourceStore(api, path, Schema.Json, environment);
+      paths.set(path, store);
+      return store;
+    },
+  };
 }
 
 /**

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { Schema } from "effect";
 import {
   createResourceStore,
+  createResourceStoreCache,
   type JsonValue,
   type ResourceApi,
   type ResourceEnvironment,
@@ -38,6 +39,17 @@ function testEnvironment() {
 }
 
 describe("resource store", () => {
+  it("reuses one store per API authority and path", () => {
+    const lifecycle = testEnvironment();
+    const cache = createResourceStoreCache(lifecycle.environment);
+    const firstApi: ResourceApi = { request: () => Promise.resolve({ value: "first" }) };
+    const secondApi: ResourceApi = { request: () => Promise.resolve({ value: "second" }) };
+
+    expect(cache.get(firstApi, "/resource")).toBe(cache.get(firstApi, "/resource"));
+    expect(cache.get(firstApi, "/resource")).not.toBe(cache.get(firstApi, "/other"));
+    expect(cache.get(firstApi, "/resource")).not.toBe(cache.get(secondApi, "/resource"));
+  });
+
   it("owns polling while subscribed and ignores an obsolete request generation", async () => {
     const first = Promise.withResolvers<JsonValue>();
     const second = Promise.withResolvers<JsonValue>();

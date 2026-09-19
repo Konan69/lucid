@@ -1,9 +1,10 @@
-import { useMemo, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { AppState } from "react-native";
-import type { Schema } from "effect";
+import { Result, Schema } from "effect";
 import type { Api } from "./api";
 import {
-  createResourceStore,
+  createResourceStoreCache,
+  failureMessage,
   type JsonValue,
   type ResourceApi,
   type ResourceEnvironment,
@@ -24,6 +25,20 @@ const nativeResourceEnvironment: ResourceEnvironment = {
   },
 };
 
+const resourceStoreCache = createResourceStoreCache(nativeResourceEnvironment);
+const resourceApis = new WeakMap<Api, ResourceApi>();
+
+/** Returns one stable resource authority for each API client. */
+function resourceApiFor(api: Api): ResourceApi {
+  const existing = resourceApis.get(api);
+  if (existing !== undefined) return existing;
+  const resourceApi: ResourceApi = {
+    request: (resourcePath) => api.request<JsonValue>(resourcePath),
+  };
+  resourceApis.set(api, resourceApi);
+  return resourceApi;
+}
+
 export interface ResourceValue<Value> {
   readonly data?: Value;
   readonly error: string;
@@ -33,14 +48,19 @@ export interface ResourceValue<Value> {
 
 /** Maps the tagged store state to the stable legacy hook shape used by mobile screens. */
 function resourceValue<Value>(
-  state: ResourceState<Value>,
+  state: ResourceState<JsonValue>,
+  schema: Schema.ConstraintDecoder<Value>,
   refresh: () => Promise<void>,
 ): ResourceValue<Value> {
   switch (state._tag) {
     case "Loading":
       return { error: "", loading: true, refresh };
-    case "Ready":
-      return { data: state.value, error: "", loading: false, refresh };
+    case "Ready": {
+      const decoded = Schema.decodeUnknownResult(schema)(state.value);
+      return Result.isSuccess(decoded)
+        ? { data: decoded.success, error: "", loading: false, refresh }
+        : { error: failureMessage(decoded.failure), loading: false, refresh };
+    }
     case "Failed":
       return { error: state.message, loading: false, refresh };
   }
@@ -53,14 +73,7 @@ export function useResource<Value>(
   path: string,
   schema: Schema.ConstraintDecoder<Value>,
 ): ResourceValue<Value> {
-  const store = useMemo(() => {
-    const resourceApi: ResourceApi = {
-      request: (resourcePath) => api.request<JsonValue>(resourcePath),
-    };
-    return createResourceStore(resourceApi, path, schema, nativeResourceEnvironment);
-  },
-    [api, path, schema],
-  );
+  const store = resourceStoreCache.get(resourceApiFor(api), path);
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
-  return resourceValue(state, store.refresh);
+  return resourceValue(state, schema, store.refresh);
 }
