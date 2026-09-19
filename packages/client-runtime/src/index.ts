@@ -122,18 +122,18 @@ export interface ClientOptions {
 /** Schema-decoding client shared by browser and native adapters. */
 export interface SchemaClient {
   readonly baseUrl: string
-  request<Response, ResponseEncoded>(
+  readonly request: <Response, ResponseEncoded>(
     responseSchema: Schema.Codec<Response, ResponseEncoded, never, never>,
     path: string,
     options?: RequestOptions,
-  ): Effect.Effect<Response, ClientFailure>
-  requestJson<Body, BodyEncoded, Response, ResponseEncoded>(
+  ) => Effect.Effect<Response, ClientFailure>
+  readonly requestJson: <Body, BodyEncoded, Response, ResponseEncoded>(
     bodySchema: Schema.Codec<Body, BodyEncoded, never, never>,
     responseSchema: Schema.Codec<Response, ResponseEncoded, never, never>,
     path: string,
     body: Body,
     options?: Omit<RequestOptions, "multipart">,
-  ): Effect.Effect<Response, ClientFailure>
+  ) => Effect.Effect<Response, ClientFailure>
 }
 
 /** Validates and normalizes a server root without carrying credentials in its URL. */

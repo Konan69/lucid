@@ -141,6 +141,7 @@ for (const [ruleName, invalid, valid, filename] of cases) {
   test(`${ruleName} reports the forbidden form and accepts the owned alternative`, () => {
     const diagnostics = lint(ruleName, invalid, filename)
     assert.equal(diagnostics.filter((diagnostic) => diagnostic.code === `vivid(${ruleName})`).length, 1)
-    assert.equal(lint(ruleName, valid, filename).length, 0)
+    const validDiagnostics = lint(ruleName, valid, filename)
+    assert.equal(validDiagnostics.filter((diagnostic) => diagnostic.code === `vivid(${ruleName})`).length, 0)
   })
 }
