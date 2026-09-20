@@ -169,14 +169,6 @@ const requiredByManifest = Object.freeze({
     'vite',
   ],
   'packages/computer/state/package.json': ['@effect/platform-node', '@types/node', 'effect'],
-  'packages/connectors/package.json': [
-    '@types/node',
-    '@types/pg',
-    'drizzle-kit',
-    'drizzle-orm',
-    'effect',
-    'pg',
-  ],
   'packages/contracts/package.json': ['effect'],
 })
 

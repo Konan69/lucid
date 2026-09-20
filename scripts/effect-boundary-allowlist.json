@@ -20,75 +20,6 @@
     "symbols": ["run", "do:create-task", "do:update-task", "do:schedule-follow-up"]
   },
   {
-    "file": "packages/connectors/src/google/calendar.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["exchangeCode", "getAccessToken", "refreshCredential", "revokeCredential"]
-  },
-  {
-    "file": "packages/connectors/src/google/drive.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["exchangeCode", "getAccessToken", "refreshCredential", "revokeCredential"]
-  },
-  {
-    "file": "packages/connectors/src/google/gmail.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["exchangeCode", "getAccessToken", "refreshCredential", "revokeCredential"]
-  },
-  {
-    "file": "packages/connectors/src/google/oauth.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["exchangeGoogleCode", "refreshGoogleToken", "revokeGoogleToken"]
-  },
-  {
-    "file": "packages/connectors/src/google/request.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["requestGoogle", "requestGoogleJson", "requestGoogleText"]
-  },
-  {
-    "file": "packages/connectors/src/skills/bind.ts",
-    "classification": "legacy-store-adapter",
-    "symbols": ["execute"]
-  },
-  {
-    "file": "packages/connectors/src/skills/calendar.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["calendarStatus"]
-  },
-  {
-    "file": "packages/connectors/src/skills/drive.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["driveStatus"]
-  },
-  {
-    "file": "packages/connectors/src/skills/gmail.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["gmailStatus"]
-  },
-  {
-    "file": "packages/connectors/src/store.ts",
-    "classification": "third-party-adapter",
-    "symbols": [
-      "deleteCredential",
-      "deleteCredentialsForConnector",
-      "getConnectorStatus",
-      "getCredential",
-      "getCredentialsForConnector",
-      "listCredentials",
-      "saveCredential",
-      "updateCredential"
-    ]
-  },
-  {
-    "file": "packages/connectors/src/types.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["exchangeCode", "refreshCredential", "revokeCredential"]
-  },
-  {
-    "file": "apps/server/src/connections/store.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["connectionStoreLayer"]
-  },
-  {
     "file": "apps/server/src/library/ingest.ts",
     "classification": "third-party-adapter",
     "symbols": ["extractPages"]
@@ -99,18 +30,23 @@
     "symbols": ["runResult", "requireRuntimeToken", "get:/health", "post:/internal/runs"]
   },
   {
-    "file": "packages/connectors/src/store.ts",
-    "classification": "legacy-store-adapter",
-    "symbols": ["configureConnectorStore"]
-  },
-  {
-    "file": "apps/server/src/connections/store.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["readConnection"]
-  },
-  {
     "file": "packages/agent/runtime/src/app.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["acceptRun"]
+  },
+  {
+    "file": "apps/server/src/connections/google/oauth.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["exchangeGoogleCode", "refreshGoogleToken", "revokeGoogleToken", "try"]
+  },
+  {
+    "file": "apps/server/src/connections/google/request.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["requestGoogle", "requestGoogleJson", "requestGoogleText", "try"]
+  },
+  {
+    "file": "packages/client/state/src/resource.ts",
+    "classification": "legacy-store-adapter",
+    "symbols": ["<module>", "refresh"]
   }
 ]

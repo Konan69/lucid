@@ -6,11 +6,7 @@ import { useWorkspace } from '../../workspace'
 import { useResource } from '../../lib/resource/hook'
 import { Card, ControlPill, Label } from '../ui'
 import { ToolMark } from '../Mark'
-import {
-  authorizationAddress,
-  connectorNames,
-  type ConnectorRequest,
-} from '@vivid/state'
+import { authorizationAddress, connectorNames, type ConnectorRequest } from '@vivid/state'
 
 /** Keeps connector action copy aligned with the current request state. */
 function connectorActionLabel(input: {

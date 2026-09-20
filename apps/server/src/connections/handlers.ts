@@ -1,5 +1,6 @@
 import * as Effect from 'effect/Effect'
-import { ConnectionDeletionResponse, ConnectionListResponse } from '@vivid/contracts'
+import { ConnectionDeletionResponse, ConnectionListResponse, Forbidden } from '@vivid/contracts'
+import { AuthContext, AuthState } from '@vivid/contracts/api'
 import { invalidRequest } from '../rpc/failures.ts'
 import { ConnectionStore } from './store.ts'
 
@@ -20,6 +21,12 @@ export const connectionHandlers = {
     tool,
     input,
   }) {
+    // Only Vivid's runtime acts through a Connection. A Person's session manages Connections but
+    // never drives a provider action directly, so a browser cannot send mail by calling this RPC.
+    const auth = yield* AuthContext
+    if (!AuthState.$is('Runtime')(auth)) {
+      return yield* new Forbidden({ message: 'Connection actions run only for Vivid' })
+    }
     const store = yield* ConnectionStore
     return {
       output: yield* store.execute(connector, tool, input).pipe(Effect.mapError(invalidRequest)),

@@ -8,11 +8,7 @@ import { fetch as expoFetch } from 'expo/fetch'
 import Markdown from 'react-native-markdown-display'
 import { useThreadActivity, useWorkspace, type Routes } from '../workspace'
 import { ConnectorRequestCard } from '../components/connector/Card'
-import {
-  readConnectorRequest,
-  connectorContinuation,
-  type ConnectorRequest,
-} from '@vivid/state'
+import { readConnectorRequest, connectorContinuation, type ConnectorRequest } from '@vivid/state'
 import { TrackedCard } from '../components/Tracked'
 import { ChatComposer, ChatHeader, useChatKeyboard } from '../components/chat/Chrome'
 import { openDocument, linkCitations } from '../lib/documents'

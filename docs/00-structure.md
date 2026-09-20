@@ -124,10 +124,7 @@ Mobile's `screens/`, `components/` and `lib/` become `screen/`, `ui/` and `data/
 
 These are duplicates the structure above removes. Each is one change.
 
-| Today                                                                             | Becomes                                                                               |
-| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `packages/connectors`: tables, credential store, Google calls, its own migrations | `apps/server/src/connections/` — it is backend logic; Vivid's tools reach it over RPC |
-| mobile `lib/resource/` polling store and web's reload-after-write                 | `client/state`, one implementation                                                    |
-| Thread lanes and connector-request logic in web, tested from mobile               | `client/state`                                                                        |
-| Service marks drawn twice (web 144 lines, mobile 127) and the face twice          | `design/marks` as data, two thin renderers                                            |
-| `contracts/src/runtime.ts`, one 461-line file                                     | `contracts/src/<domain>.ts`                                                           |
+| Today                                                                    | Becomes                                    |
+| ------------------------------------------------------------------------ | ------------------------------------------ |
+| Service marks drawn twice (web 144 lines, mobile 127) and the face twice | `design/marks` as data, two thin renderers |
+| `contracts/src/runtime.ts`, one 461-line file                            | `contracts/src/<domain>.ts`                |

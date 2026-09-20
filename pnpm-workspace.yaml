@@ -6,7 +6,7 @@ packages:
   - 'packages/contracts'
   - 'packages/client/rpc'
   - 'packages/computer/state'
-  - 'packages/connectors'
+  - 'packages/client/state'
   - 'packages/design/tokens'
   - 'packages/agent/runtime'
 
