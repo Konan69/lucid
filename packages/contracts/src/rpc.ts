@@ -8,52 +8,62 @@ import {
   DatabaseFailure,
   DatabaseUnavailable,
   Forbidden,
+  InvalidRequest,
   NotFound,
+  RuntimeUnavailable,
   Unauthenticated,
-} from './index.js'
+} from './failures.js'
+import { AuthContext } from './api.js'
 import {
-  ConnectionDeletionResponse,
-  ConnectionId,
-  ConnectionListResponse,
-  CreateLibraryFolderRequest,
-  CreateRoutineRequest,
-  CreateTaskRequest,
   FollowUpId,
-  FollowUpInput,
-  FollowUpResponse,
   LibraryFolderId,
+  LibraryItemId,
+  RoutineId,
+  TaskId,
+  ThreadId,
+} from './identity.js'
+import { ConnectionDeletionResponse, ConnectionId, ConnectionListResponse } from './connections.js'
+import {
   LibraryFolderListResponse,
   LibraryFolderResponse,
-  LibraryItemId,
   LibraryItemResponse,
   LibraryListQuery,
   LibraryListResponse,
   LibrarySearchRequest,
   LibrarySearchResponse,
-  NotificationListResponse,
-  NotificationReadResponse,
-  NudgeTaskRequest,
-  OccurrenceResponse,
-  PatchFollowUpRequest,
+  CreateLibraryFolderRequest,
   PatchLibraryFolderRequest,
   PatchLibraryItemRequest,
-  PatchRoutineRequest,
-  PatchTaskRequest,
-  PatchThreadRequest,
-  PutThreadRequest,
+} from './library.js'
+import {
+  NotificationListResponse,
+  NotificationReadResponse,
   ReadNotificationsRequest,
-  RoutineId,
+} from './notifications.js'
+import {
+  CreateRoutineRequest,
+  OccurrenceResponse,
+  PatchRoutineRequest,
   RoutineListResponse,
   RoutineResponse,
-  TaskId,
+} from './routines.js'
+import {
+  CreateTaskRequest,
+  FollowUpInput,
+  FollowUpResponse,
+  NudgeTaskRequest,
+  PatchFollowUpRequest,
+  PatchTaskRequest,
   TaskListQuery,
   TaskListResponse,
   TaskResponse,
-  ThreadId,
+} from './tasks.js'
+import {
   ThreadListResponse,
   ThreadResponse,
-} from './runtime.js'
-import { AuthContext } from './api.js'
+  PatchThreadRequest,
+  PutThreadRequest,
+} from './threads.js'
 
 /**
  * Every product call a Vivid client makes to the application server, declared once.
@@ -69,19 +79,7 @@ import { AuthContext } from './api.js'
  * keeps its own conversation transport.
  */
 
-/** The request was well-formed wire data but breaks a domain rule, such as an invalid schedule. */
-export class InvalidRequest extends Schema.TaggedError<InvalidRequest>()(
-  'InvalidRequest',
-  { message: Schema.String },
-  { title: 'Invalid request' },
-) {}
-
-/** Vivid's runtime could not accept the work the server tried to start. */
-export class RuntimeUnavailable extends Schema.TaggedError<RuntimeUnavailable>()(
-  'RuntimeUnavailable',
-  { message: Schema.String },
-  { title: 'Runtime unavailable' },
-) {}
+export { InvalidRequest, RuntimeUnavailable } from './failures.js'
 
 /** Every failure a product call can return. Clients branch on `_tag`, never on a message. */
 export const RpcFailure = Schema.Union([
