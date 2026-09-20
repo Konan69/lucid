@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react'
 import { Appearance, Platform, useColorScheme } from 'react-native'
 import { nativeTokens } from '@vivid/design-tokens/native'
 import * as SystemUI from 'expo-system-ui'
@@ -24,8 +24,12 @@ export function ThemeProvider({
   useEffect(() => {
     void SystemUI.setBackgroundColorAsync(nativeTokens[mode]['surface-0'])
   }, [mode])
+  const contextValue = useMemo(
+    () => ({ colors: nativeTokens[mode], dark: mode === 'dark' }),
+    [mode],
+  )
   return (
-    <ThemeContext.Provider value={{ colors: nativeTokens[mode], dark: mode === 'dark' }}>
+    <ThemeContext.Provider value={contextValue}>
       {children}
     </ThemeContext.Provider>
   )

@@ -56,7 +56,7 @@ export function deriveThreadFeedInitialContentInset(input: {
   readonly platform: string
   readonly usesNativeAutomaticInsets: boolean
   readonly bottomContentInset: number
-}): { readonly bottom: number } | undefined {
+}) {
   if (input.platform !== 'android' || input.usesNativeAutomaticInsets) {
     return undefined
   }
@@ -91,14 +91,51 @@ export function deriveLayout(input: { readonly width: number; readonly height: n
   }
 }
 
-export function deriveWorkspacePaneLayout(input: {
+type WorkspacePaneLayoutInput = {
   readonly layout: Layout
   readonly viewportWidth: number
   readonly primarySidebarPreferredVisible: boolean
   readonly auxiliaryPanePreferredVisible: boolean
   readonly auxiliaryPaneRole?: WorkspaceAuxiliaryPaneRole
   readonly auxiliaryPanePreferredWidth?: number
-}): WorkspacePaneLayout {
+}
+
+/** Keeps inspector-specific sidebar suppression separate from supplementary-pane policy. */
+function deriveInspectorWorkspacePaneLayout(
+  input: WorkspacePaneLayoutInput,
+  viewportWidth: number,
+  preferredPrimarySidebarVisible: boolean,
+  preferredPrimarySidebarWidth: number,
+): WorkspacePaneLayout {
+  const fileInspector = deriveFileInspectorPaneLayout({
+    layout: input.layout,
+    viewportWidth,
+    preferredWidth: input.auxiliaryPanePreferredWidth,
+    reservedLeadingWidth: preferredPrimarySidebarWidth,
+  })
+  const auxiliaryPaneVisible = fileInspector.supported && input.auxiliaryPanePreferredVisible
+  const primarySidebarSuppressedByAuxiliary =
+    preferredPrimarySidebarVisible &&
+    auxiliaryPaneVisible &&
+    fileInspector.width !== null &&
+    input.layout.listPaneWidth !== null &&
+    viewportWidth - input.layout.listPaneWidth - fileInspector.width <
+      FILE_INSPECTOR_MIN_MAIN_WIDTH
+  const primarySidebarVisible =
+    preferredPrimarySidebarVisible && !primarySidebarSuppressedByAuxiliary
+  const primarySidebarWidth = primarySidebarVisible ? (input.layout.listPaneWidth ?? 0) : 0
+
+  return {
+    primarySidebarVisible,
+    primarySidebarSuppressedByAuxiliary,
+    contentPaneWidth: Math.max(0, viewportWidth - primarySidebarWidth),
+    supportsAuxiliaryPane: fileInspector.supported,
+    auxiliaryPaneVisible,
+    auxiliaryPaneWidth: fileInspector.width,
+  }
+}
+
+export function deriveWorkspacePaneLayout(input: WorkspacePaneLayoutInput): WorkspacePaneLayout {
   const viewportWidth = Math.max(0, input.viewportWidth)
   const auxiliaryPaneRole = input.auxiliaryPaneRole ?? 'supplementary'
   const preferredPrimarySidebarVisible =
@@ -108,32 +145,12 @@ export function deriveWorkspacePaneLayout(input: {
     : 0
 
   if (auxiliaryPaneRole === 'inspector') {
-    const fileInspector = deriveFileInspectorPaneLayout({
-      layout: input.layout,
+    return deriveInspectorWorkspacePaneLayout(
+      input,
       viewportWidth,
-      preferredWidth: input.auxiliaryPanePreferredWidth,
-      reservedLeadingWidth: preferredPrimarySidebarWidth,
-    })
-    const auxiliaryPaneVisible = fileInspector.supported && input.auxiliaryPanePreferredVisible
-    const primarySidebarSuppressedByAuxiliary =
-      preferredPrimarySidebarVisible &&
-      auxiliaryPaneVisible &&
-      fileInspector.width !== null &&
-      input.layout.listPaneWidth !== null &&
-      viewportWidth - input.layout.listPaneWidth - fileInspector.width <
-        FILE_INSPECTOR_MIN_MAIN_WIDTH
-    const primarySidebarVisible =
-      preferredPrimarySidebarVisible && !primarySidebarSuppressedByAuxiliary
-    const primarySidebarWidth = primarySidebarVisible ? (input.layout.listPaneWidth ?? 0) : 0
-
-    return {
-      primarySidebarVisible,
-      primarySidebarSuppressedByAuxiliary,
-      contentPaneWidth: Math.max(0, viewportWidth - primarySidebarWidth),
-      supportsAuxiliaryPane: fileInspector.supported,
-      auxiliaryPaneVisible,
-      auxiliaryPaneWidth: fileInspector.width,
-    }
+      preferredPrimarySidebarVisible,
+      preferredPrimarySidebarWidth,
+    )
   }
 
   const contentPaneWidth = Math.max(0, viewportWidth - preferredPrimarySidebarWidth)

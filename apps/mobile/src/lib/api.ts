@@ -2,6 +2,17 @@ import { Option, Schema } from 'effect'
 
 export type Connection = { url: string; token: string }
 
+/** A JSON object accepted by the outbound API adapter. */
+export interface ApiJsonObject {
+  readonly [key: string]: ApiJsonValue
+}
+
+/** A JSON value accepted by the outbound API adapter. */
+export type ApiJsonValue = null | boolean | number | string | readonly ApiJsonValue[] | ApiJsonObject
+
+/** A multipart payload or JSON value accepted by the outbound API adapter. */
+export type ApiRequestBody = FormData | ApiJsonValue
+
 const ErrorResponseSchema = Schema.fromJsonString(Schema.Struct({ error: Schema.String }))
 const JsonResponseSchema = Schema.fromJsonString(Schema.Json)
 const decodeErrorResponse = Schema.decodeUnknownOption(ErrorResponseSchema)
@@ -29,7 +40,7 @@ export function createApi(connection: Connection, transport: typeof fetch = glob
     // Direct runtime connections use its native route; the web gateway rewrites /api/vivid.
     agentUrl: (id: string) =>
       `${root}/${connection.token ? 'agents/vivid' : 'api/vivid'}/${encodeURIComponent(id)}`,
-    async request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+    async request<T>(path: string, method = 'GET', body?: ApiRequestBody): Promise<T> {
       const multipart = body instanceof FormData
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 30_000)
