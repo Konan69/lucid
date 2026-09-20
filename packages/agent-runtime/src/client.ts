@@ -16,6 +16,6 @@ const rpcLayer = Layer.unwrap(
   }),
 )
 
-/** Runs one generated server RPC at Flue's Promise-based tool boundary. */
+/** Provides one generated server RPC program with the runtime's server connection. */
 export const runServerRpc = <A, E>(effect: Effect.Effect<A, E, VividRpcClient>) =>
-  Effect.runPromise(effect.pipe(Effect.provide(rpcLayer)))
+  effect.pipe(Effect.provide(rpcLayer))
