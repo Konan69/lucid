@@ -3,7 +3,7 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import { ComputerArchive } from './archive.ts'
-import { type Found, describeHome } from './home.ts'
+import { Found, describeHome } from './home.ts'
 import { type ComputerId, type Manifest, changeBetween, emptyManifest } from './manifest.ts'
 
 /** What one capture did. `Unchanged` writes nothing, so an idle Computer costs one walk. */
@@ -63,9 +63,8 @@ export const captureComputer = Effect.fn('Computer.capture')(function* (input: {
 
   const changedPaths = new Set(change.write.map(([path]) => path))
   const uploads = yield* Effect.forEach(
-    found.filter((item) => item._tag === 'File' && changedPaths.has(item.path)),
+    found.filter(Found.guards.File).filter((item) => changedPaths.has(item.path)),
     Effect.fn('Computer.uploadObject')(function* (item) {
-      if (item._tag !== 'File' || item.entry._tag !== 'File') return 0
       if (yield* archive.hasObject(input.computerId, item.entry.digest)) return 0
       yield* archive.writeObject(input.computerId, item.entry.digest, item.bytes)
       return 1

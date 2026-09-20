@@ -5,7 +5,7 @@ import * as Option from 'effect/Option'
 import * as Path from 'effect/Path'
 import * as Schema from 'effect/Schema'
 import { isRegenerable } from './ignore.ts'
-import { Digest, type Entry, HomePath } from './manifest.ts'
+import { Digest, Entry, HomePath } from './manifest.ts'
 
 /** The home directory could not be read or written at `path`. */
 export class HomeAccessFailed extends Schema.TaggedError<HomeAccessFailed>()(
@@ -17,15 +17,15 @@ export class HomeAccessFailed extends Schema.TaggedError<HomeAccessFailed>()(
   { title: 'Home directory access failed' },
 ) {}
 
-/** One thing found under the home directory, with file bytes kept so capture hashes them once. */
-export type Found =
-  | {
-      readonly _tag: 'File'
-      readonly path: HomePath
-      readonly entry: Entry
-      readonly bytes: Uint8Array
-    }
-  | { readonly _tag: 'Link'; readonly path: HomePath; readonly entry: Entry }
+/**
+ * One thing found under the home directory. A file keeps its bytes so capture hashes and uploads
+ * from a single read; a link has no bytes to keep.
+ */
+export const Found = Schema.TaggedUnion({
+  File: { path: HomePath, entry: Entry.cases.File, bytes: Schema.Uint8Array },
+  Link: { path: HomePath, entry: Entry.cases.Link },
+})
+export type Found = typeof Found.Type
 
 const failedAt = (operation: string, path: string) => () =>
   new HomeAccessFailed({ operation, path })
@@ -55,19 +55,23 @@ export const describeHome = Effect.fn('ComputerHome.describe')(function* (home: 
     const absolute = path.join(home, relative)
     const link = yield* fs.readLink(absolute).pipe(Effect.option)
     if (Option.isSome(link)) {
-      return [{ _tag: 'Link', path: relative, entry: { _tag: 'Link', target: link.value } }]
+      return [
+        Found.cases.Link.make({
+          path: relative,
+          entry: Entry.cases.Link.make({ target: link.value }),
+        }),
+      ]
     }
     const info = yield* fs.stat(absolute).pipe(Effect.mapError(failedAt('stat', relative)))
     if (info.type === 'Directory') return yield* describeDirectory(relative)
     if (info.type !== 'File') return []
     const bytes = yield* fs.readFile(absolute).pipe(Effect.mapError(failedAt('read', relative)))
-    const entry: Entry = {
-      _tag: 'File',
+    const entry = Entry.cases.File.make({
       digest: digestOf(bytes),
       size: bytes.byteLength,
       mode: info.mode & 0o777,
-    }
-    return [{ _tag: 'File', path: relative, entry, bytes }]
+    })
+    return [Found.cases.File.make({ path: relative, entry, bytes })]
   })
 
   const describeDirectory = (

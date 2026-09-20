@@ -8,7 +8,7 @@ import { HomeAccessFailed, describeHome, digestOf } from './home.ts'
 import {
   ComputerId,
   Digest,
-  type Entry,
+  Entry,
   type HomePath,
   type Manifest,
   changeBetween,
@@ -94,7 +94,7 @@ export const restoreComputer = Effect.fn('Computer.restore')(function* (input: {
     yield* fs
       .remove(absolute, { recursive: true, force: true })
       .pipe(Effect.mapError(failedAt('replace', relative)))
-    if (entry._tag === 'Link') {
+    if (Entry.guards.Link(entry)) {
       yield* fs.symlink(entry.target, absolute).pipe(Effect.mapError(failedAt('link', relative)))
       return undefined
     }

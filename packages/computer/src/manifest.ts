@@ -77,11 +77,11 @@ export const emptyManifest = (computerId: ComputerId): Manifest => ({
 const sameEntry = (left: Entry, right: Entry): boolean =>
   Entry.match(left, {
     File: (file) =>
-      right._tag === 'File' &&
+      Entry.guards.File(right) &&
       file.digest === right.digest &&
       file.size === right.size &&
       file.mode === right.mode,
-    Link: (link) => right._tag === 'Link' && link.target === right.target,
+    Link: (link) => Entry.guards.Link(right) && link.target === right.target,
   })
 
 /** What must change on one side to turn `from` into `to`. */
@@ -114,7 +114,7 @@ export const changeBetween = (from: Manifest, to: Manifest): ManifestChange => {
 /** Every distinct file digest a manifest names: exactly the set of objects it needs to exist. */
 export const digestsOf = (manifest: Manifest): ReadonlySet<Digest> =>
   new Set(
-    Object.values(manifest.entries).flatMap((entry) =>
-      entry._tag === 'File' ? [entry.digest] : [],
-    ),
+    Object.values(manifest.entries)
+      .filter(Entry.guards.File)
+      .map((entry) => entry.digest),
   )

@@ -6,8 +6,8 @@ import * as FileSystem from 'effect/FileSystem'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Path from 'effect/Path'
-import { ComputerArchive, directoryArchive } from './archive.ts'
-import { captureComputer } from './capture.ts'
+import { ComputerArchive, ManifestConflict, directoryArchive } from './archive.ts'
+import { CaptureResult, captureComputer } from './capture.ts'
 import { ComputerId } from './manifest.ts'
 import { restoreComputer, restoredRevision } from './restore.ts'
 
@@ -89,13 +89,10 @@ describe('Computer state', () => {
       const idle = yield* captureComputer({ computerId, home: first }).pipe(Effect.provide(archive))
       yield* restoreComputer({ computerId, home: second }).pipe(Effect.provide(archive))
 
-      expect(second_capture).toMatchObject({
-        _tag: 'Captured',
-        revision: 2,
-        uploaded: 1,
-        removed: 1,
-      })
-      expect(idle).toEqual({ _tag: 'Unchanged', revision: 2 })
+      expect(second_capture).toEqual(
+        CaptureResult.cases.Captured.make({ revision: 2, uploaded: 1, written: 1, removed: 1 }),
+      )
+      expect(idle).toEqual(CaptureResult.cases.Unchanged.make({ revision: 2 }))
       expect(yield* read(second, 'edit.txt')).toBe('after')
       expect(yield* read(second, 'keep.txt')).toBe('same')
       expect(yield* fs.exists(path.join(second, 'gone.txt'))).toBe(false)
@@ -143,7 +140,7 @@ describe('Computer state', () => {
         })
       }).pipe(Effect.provide(archive), Effect.flip)
 
-      expect(stale).toMatchObject({ _tag: 'ManifestConflict', held: 2, offered: 2 })
+      expect(stale).toEqual(new ManifestConflict({ computerId, held: 2, offered: 2 }))
     }).pipe(Effect.provide(platform)),
   )
 
