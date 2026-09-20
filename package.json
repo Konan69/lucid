@@ -10,6 +10,7 @@
   "scripts": {
     "prepare": "husky && effect-language-service patch",
     "dev": "pnpm infra:dev",
+    "desktop": "pnpm --filter @vivid/desktop dev",
     "build": "turbo run build",
     "typecheck": "tsc -p tsconfig.json && turbo run typecheck --concurrency=1",
     "lint": "oxlint --type-aware .",
