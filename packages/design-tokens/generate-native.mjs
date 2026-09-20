@@ -23,7 +23,12 @@ function native(vars) {
       continue
     const value = resolve(key, vars).replace(
       /rgb\(([\d.]+) ([\d.]+) ([\d.]+)(?:\s*\/\s*([\d.]+))?\)/g,
-      (_, r, g, b, a) => (a ? `rgba(${r}, ${g}, ${b}, ${a})` : `rgb(${r}, ${g}, ${b})`),
+      (...parts) => {
+        const [, red, green, blue, alpha] = parts
+        return alpha === undefined
+          ? `rgb(${red}, ${green}, ${blue})`
+          : `rgba(${red}, ${green}, ${blue}, ${alpha})`
+      },
     )
     result[key.slice(2)] = value
   }
