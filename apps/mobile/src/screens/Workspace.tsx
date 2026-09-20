@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Image, Linking, RefreshControl, ScrollView, View } from 'react-native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { Check, ChevronRight, Plug } from 'lucide-react-native'
-import { ConnectionListResponse } from '@vivid/contracts'
+import { ConnectionId, ConnectionListResponse, type Connection } from '@vivid/contracts'
 import { useWorkspace, type Routes } from '../workspace'
 import { useResource } from '../lib/resource/hook'
 import { normalizeServerUrl } from '../lib/api'
@@ -110,26 +110,28 @@ export function Projects({ navigation }: NativeStackScreenProps<Routes, 'Project
   )
 }
 
-type Connector = {
-  id: string
-  status: string
-  metadata: { name: string; description: string }
-}
 export function Connectors({ navigation }: NativeStackScreenProps<Routes, 'Connectors'>) {
   const { api } = useWorkspace()
   const { colors: c } = useTheme()
-  const resource = useResource(api, '/api/connectors', ConnectionListResponse)
+  const resource = useResource(
+    api,
+    'connections',
+    api.rpc((client) => client.ListConnections()),
+    ConnectionListResponse,
+  )
   const connectorData = resource.data
   const [error, setError] = useState('')
   const [busy, setBusy] = useState<string>()
-  async function change(connector: Connector) {
+  async function change(connector: Connection) {
     setBusy(connector.id)
     setError('')
     try {
       if (connector.status === 'connected')
-        await api.request(`/api/connectors/${connector.id}`, 'DELETE')
+        await api.run(
+          api.rpc((client) => client.DeleteConnection({ id: ConnectionId.make(connector.id) })),
+        )
       else {
-        const { authUrl } = await api.request<{ authUrl: string }>(
+        const { authUrl } = await api.fetchConnectionAuthorization(
           `/api/connectors/${connector.id}/auth`,
         )
         if (!/^https?:\/\//i.test(authUrl))

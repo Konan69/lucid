@@ -34,7 +34,12 @@ export function ConnectorRequestCard({
   disabled: boolean
 }) {
   const { api } = useWorkspace()
-  const resource = useResource(api, '/api/connectors', ConnectionListResponse)
+  const resource = useResource(
+    api,
+    'connections',
+    api.rpc((client) => client.ListConnections()),
+    ConnectionListResponse,
+  )
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [authUrl, setAuthUrl] = useState('')
@@ -51,7 +56,7 @@ export function ConnectorRequestCard({
     try {
       if (connected) await onContinue()
       else {
-        const data = await api.request<{ authUrl: unknown }>(
+        const data = await api.fetchConnectionAuthorization(
           `/api/connectors/${request.connector}/auth`,
         )
         const url = authorizationAddress(data.authUrl)

@@ -16,6 +16,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import * as SecureStore from 'expo-secure-store'
 import { randomUUID } from 'expo-crypto'
 import { fetch as expoFetch } from 'expo/fetch'
+import { ThreadId } from '@vivid/contracts'
 import { createApi } from './lib/api'
 import { deriveLayout, type Layout } from './lib/layout'
 import {
@@ -322,7 +323,6 @@ export default function App() {
         if (!saved || cancelled) return
         const parsed = decodeSavedPreferences(saved)
         const { url, token, theme, pinnedThreads = [], settledThreads = [] } = parsed
-        createApi({ url, token })
         setPreferences({
           url,
           token,
@@ -352,7 +352,6 @@ export default function App() {
     [preferences.url, preferences.token],
   )
   const savePreferences = useCallback(async (next: Preferences) => {
-    createApi(next)
     // Preview does not persist credentials in browser storage.
     if (Platform.OS === 'web')
       localStorage.setItem('vivid-mobile', JSON.stringify({ ...next, token: '' }))
@@ -368,7 +367,19 @@ export default function App() {
         updatedAt: Date.now(),
         archived: false,
       }
-      await api.request(`/api/conversations/${thread.id}`, 'PUT', thread)
+      await api.run(
+        api.rpc((client) =>
+          client.PutThread({
+            id: ThreadId.make(thread.id),
+            thread: {
+              title: thread.title,
+              preview: thread.preview,
+              updatedAt: thread.updatedAt,
+              archived: thread.archived,
+            },
+          }),
+        ),
+      )
       return { id: thread.id, title: thread.title, draft }
     },
     [api],

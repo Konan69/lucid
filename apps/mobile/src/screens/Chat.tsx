@@ -20,6 +20,8 @@ import { Card, ControlPill, Empty, Face, Feedback, Label, Sheet, styles } from '
 import { nativeMetrics as m } from '@vivid/tokens/native'
 import { useTheme } from '../theme'
 import { deriveCenteredContentHorizontalPadding } from '../lib/layout'
+import { ThreadId, type ThreadResponse } from '@vivid/contracts'
+import type { RpcOperation } from '../lib/api'
 
 /** The heading above each entry of the activity log, by who contributed the Message. */
 const ROLE_HEADING = {
@@ -27,6 +29,15 @@ const ROLE_HEADING = {
   assistant: 'Vivid responded',
   system: 'Conversation update',
 } satisfies Record<FlueConversationMessage['role'], string>
+
+/** Builds the sidebar Thread update after Flue accepts a new Message. */
+function updateThread(id: string, title: string, preview: string): RpcOperation<ThreadResponse> {
+  return (client) =>
+    client.PutThread({
+      id: ThreadId.make(id),
+      thread: { title, preview, updatedAt: Date.now(), archived: false },
+    })
+}
 
 export function Chat(props: NativeStackScreenProps<Routes, 'Chat'>) {
   return <ThreadChat key={props.route.params.id} {...props} />
@@ -274,12 +285,7 @@ function ThreadChat({ route, navigation }: NativeStackScreenProps<Routes, 'Chat'
       navigation.setParams({ title: nextTitle, draft: undefined, sendOnOpen: undefined })
       // The accepted message must not be resent if only the sidebar index update fails.
       try {
-        await api.request(`/api/conversations/${id}`, 'PUT', {
-          title: nextTitle,
-          preview: text.slice(0, 500),
-          updatedAt: Date.now(),
-          archived: false,
-        })
+        await api.run(api.rpc(updateThread(id, nextTitle, text.slice(0, 500))))
       } catch {
         setError('Your message was sent. The conversation list could not update yet.')
       }

@@ -1,12 +1,27 @@
 import { useState, useSyncExternalStore } from 'react'
+import { Schema } from 'effect'
 import { ScrollView, View, RefreshControl } from 'react-native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { Check, Plus, Bell, Circle } from 'lucide-react-native'
-import { NotificationListResponse, TaskListResponse } from '@vivid/contracts'
+import {
+  FollowUpId,
+  NotificationId,
+  NotificationListResponse,
+  NotificationReadResponse,
+  NudgeTaskRequest,
+  TaskId,
+  TaskListResponse,
+  TaskPriority,
+  FollowUpResponse,
+  type Notification,
+  type Task,
+  TaskResponse,
+} from '@vivid/contracts'
 import { useOpenThread, useWorkspace, type Routes } from '../workspace'
 import { useResource } from '../lib/resource/hook'
 import { useTheme } from '../theme'
-import { type Notification, type Task, when } from '../lib/models'
+import { when } from '../lib/date'
+import type { RpcOperation } from '../lib/api'
 import {
   Card,
   ControlPill,
@@ -36,6 +51,7 @@ const REPEAT_EVERY_MS = { once: null, daily: 86_400_000, weekly: 604_800_000 } s
 >
 const isRepeat = (value: string): value is keyof typeof REPEAT_EVERY_MS =>
   Object.hasOwn(REPEAT_EVERY_MS, value)
+const decodeTaskPriority = Schema.decodeUnknownSync(TaskPriority)
 
 function subscribeCurrentTime(listener: () => void) {
   currentTimeListeners.add(listener)
@@ -69,10 +85,57 @@ function shouldShowTaskEmpty(loading: boolean, error: string, visibleCount: numb
   return !loading && !error && visibleCount === 0
 }
 
-type RequestBody = Record<string, string | number | boolean | null | readonly string[]>
-type TodayAct = (path: string, method?: string, body?: RequestBody) => Promise<void>
-type TaskGroup = { readonly title: string; readonly items: readonly Task[] }
 type TodayApi = ReturnType<typeof useWorkspace>['api']
+type TodayAct = <Value>(operation: RpcOperation<Value>) => Promise<void>
+type TaskGroup = { readonly title: string; readonly items: readonly Task[] }
+type FollowUpResult = typeof FollowUpResponse.Type
+type NotificationReadResult = typeof NotificationReadResponse.Type
+type TaskResult = typeof TaskResponse.Type
+
+/** Builds the typed notification acknowledgement used by both notification controls. */
+function readNotification(id: string): RpcOperation<NotificationReadResult> {
+  return (client) => client.ReadNotifications({ ids: [NotificationId.make(id)] })
+}
+
+/** Builds the typed Task status transition used by grouped Task rows. */
+function toggleTask(task: Task): RpcOperation<TaskResult> {
+  return (client) =>
+    client.PatchTask({
+      id: TaskId.make(task.id),
+      patch: { status: task.status === 'open' ? 'done' : 'open' },
+    })
+}
+
+/** Builds the typed immediate Task chase operation. */
+function nudgeTask(id: string): RpcOperation<TaskResult> {
+  return (client) => client.NudgeTask({ id: TaskId.make(id), nudge: NudgeTaskRequest.make({}) })
+}
+
+/** Builds the typed Task drop operation. */
+function dropTask(id: string): RpcOperation<TaskResult> {
+  return (client) => client.PatchTask({ id: TaskId.make(id), patch: { status: 'dropped' } })
+}
+
+/** Builds the typed follow-up run operation. */
+function runFollowUp(id: string): RpcOperation<FollowUpResult> {
+  return (client) => client.RunFollowUp({ id: FollowUpId.make(id) })
+}
+
+/** Builds the typed follow-up cancellation operation. */
+function cancelFollowUp(id: string): RpcOperation<FollowUpResult> {
+  return (client) =>
+    client.PatchFollowUp({ id: FollowUpId.make(id), patch: { status: 'cancelled' } })
+}
+
+/** Builds the typed follow-up deletion operation. */
+function deleteFollowUp(id: string): RpcOperation<void> {
+  return (client) => client.DeleteFollowUp({ id: FollowUpId.make(id) })
+}
+
+/** Builds the typed Task deletion operation. */
+function deleteTask(id: string): RpcOperation<void> {
+  return (client) => client.DeleteTask({ id: TaskId.make(id) })
+}
 
 /** Renders unread notifications and preserves their read/open ordering. */
 function NotificationsCard({
@@ -116,16 +179,14 @@ function NotificationsCard({
                     label="Open conversation"
                     onPress={() => {
                       openThread(conversationId, notification.title)
-                      void act('/api/notifications/read', 'POST', { ids: [notification.id] })
+                      void act(readNotification(notification.id))
                     }}
                   />
                 )}
                 <ControlPill
                   label="Mark read"
                   disabled={busy}
-                  onPress={() =>
-                    void act('/api/notifications/read', 'POST', { ids: [notification.id] })
-                  }
+                  onPress={() => void act(readNotification(notification.id))}
                 />
               </View>
             </View>
@@ -134,7 +195,7 @@ function NotificationsCard({
       <ControlPill
         label="Mark all read"
         disabled={busy}
-        onPress={() => void act('/api/notifications/read', 'POST', {})}
+        onPress={() => void act((client) => client.ReadNotifications({}))}
       />
     </Card>
   )
@@ -170,11 +231,7 @@ function TaskGroups({
                       task.status === 'open' ? `Complete ${task.title}` : `Reopen ${task.title}`
                     }
                     disabled={busy}
-                    onPress={() =>
-                      void act(`/api/tasks/${task.id}`, 'PATCH', {
-                        status: task.status === 'open' ? 'done' : 'open',
-                      })
-                    }
+                    onPress={() => void act(toggleTask(task))}
                   />
                   <View style={{ flex: 1, gap: 4 }}>
                     <Label>{task.title}</Label>
@@ -240,13 +297,13 @@ function TaskDetailSheet({
             <ControlPill
               label="Chase now"
               disabled={busy}
-              onPress={() => void act(`/api/tasks/${selected.id}/nudge`, 'POST', {})}
+              onPress={() => void act(nudgeTask(selected.id))}
             />
             <ControlPill label="Follow up later" onPress={onFollowUp} />
             <ControlPill
               label="Drop task"
               disabled={busy}
-              onPress={() => void act(`/api/tasks/${selected.id}`, 'PATCH', { status: 'dropped' })}
+              onPress={() => void act(dropTask(selected.id))}
             />
           </>
         )}
@@ -275,16 +332,14 @@ function TaskDetailSheet({
               <ControlPill
                 label="Run now"
                 disabled={busy}
-                onPress={() => void act(`/api/follow-ups/${followUp.id}/run`)}
+                onPress={() => void act(runFollowUp(followUp.id))}
               />
             )}
             {followUp.status === 'scheduled' && (
               <ControlPill
                 label="Cancel"
                 disabled={busy}
-                onPress={() =>
-                  void act(`/api/follow-ups/${followUp.id}`, 'PATCH', { status: 'cancelled' })
-                }
+                onPress={() => void act(cancelFollowUp(followUp.id))}
               />
             )}
             {['cancelled', 'failed'].includes(followUp.status) && (
@@ -292,7 +347,7 @@ function TaskDetailSheet({
                 danger
                 label="Remove"
                 disabled={busy}
-                onPress={() => void act(`/api/follow-ups/${followUp.id}`, 'DELETE')}
+                onPress={() => void act(deleteFollowUp(followUp.id))}
               />
             )}
           </View>
@@ -302,9 +357,7 @@ function TaskDetailSheet({
         danger
         label="Delete task"
         disabled={busy}
-        onPress={() =>
-          confirmDelete(selected.title, () => void act(`/api/tasks/${selected.id}`, 'DELETE'))
-        }
+        onPress={() => confirmDelete(selected.title, () => void act(deleteTask(selected.id)))}
       />
     </Sheet>
   )
@@ -361,16 +414,27 @@ function TaskEditor({
       onClose={onClose}
       onSave={async (values) => {
         const dueAt = values.due.trim() ? parseDate(values.due) : null
-        await api.request(
-          editing === 'new' ? '/api/tasks' : `/api/tasks/${editing.id}`,
-          editing === 'new' ? 'POST' : 'PATCH',
-          {
-            title: values.title,
-            detail: values.detail,
-            assignee: values.assignee || null,
-            dueAt,
-            priority: values.priority,
-          },
+        await api.run(
+          api.rpc((client) =>
+            editing === 'new'
+              ? client.CreateTask({
+                  title: values.title,
+                  detail: values.detail,
+                  assignee: values.assignee || null,
+                  dueAt,
+                  priority: decodeTaskPriority(values.priority),
+                })
+              : client.PatchTask({
+                  id: TaskId.make(editing.id),
+                  patch: {
+                    title: values.title,
+                    detail: values.detail,
+                    assignee: values.assignee || null,
+                    dueAt,
+                    priority: decodeTaskPriority(values.priority),
+                  },
+                }),
+          ),
         )
         await onRefresh()
       }}
@@ -418,11 +482,18 @@ function FollowUpEditor({
       onSave={async (values) => {
         const repeat = values.repeat
         if (!isRepeat(repeat)) throw new Error('Choose once, daily, or weekly.')
-        await api.request(`/api/tasks/${task.id}/follow-ups`, 'POST', {
-          at: parseDate(values.at),
-          note: values.note,
-          repeatEveryMs: REPEAT_EVERY_MS[repeat],
-        })
+        await api.run(
+          api.rpc((client) =>
+            client.AddFollowUp({
+              taskId: TaskId.make(task.id),
+              followUp: {
+                at: parseDate(values.at),
+                note: values.note,
+                repeatEveryMs: REPEAT_EVERY_MS[repeat],
+              },
+            }),
+          ),
+        )
         await onRefresh()
       }}
     />
@@ -543,8 +614,18 @@ export function Today({ navigation }: NativeStackScreenProps<Routes, 'Today'>) {
   const { api } = useWorkspace()
   const { colors: c } = useTheme()
   const openThread = useOpenThread()
-  const tasks = useResource(api, '/api/tasks', TaskListResponse)
-  const notifications = useResource(api, '/api/notifications', NotificationListResponse)
+  const tasks = useResource(
+    api,
+    'tasks',
+    api.rpc((client) => client.ListTasks({})),
+    TaskListResponse,
+  )
+  const notifications = useResource(
+    api,
+    'notifications',
+    api.rpc((client) => client.ListNotifications()),
+    NotificationListResponse,
+  )
   const [selectedId, setSelectedId] = useState<string>()
   const [editing, setEditing] = useState<Task | 'new'>()
   const [followUp, setFollowUp] = useState<Task>()
@@ -556,12 +637,12 @@ export function Today({ navigation }: NativeStackScreenProps<Routes, 'Today'>) {
   const notificationsData = notifications.data
   const selected =
     tasksData === undefined ? undefined : tasksData.tasks.find((t) => t.id === selectedId)
-  async function act(path: string, method = 'POST', body?: RequestBody) {
+  async function act<Value>(operation: RpcOperation<Value>) {
     if (busy) return
     setBusy(true)
     setError('')
     try {
-      await api.request(path, method, body)
+      await api.run(api.rpc(operation))
       await Promise.all([tasks.refresh(), notifications.refresh()])
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))

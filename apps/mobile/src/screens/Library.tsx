@@ -4,12 +4,20 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { FileText, Folder as FolderIcon, FolderPlus, Upload } from 'lucide-react-native'
 import * as DocumentPicker from 'expo-document-picker'
 import { File } from 'expo-file-system'
-import { LibraryFolderListResponse, LibraryListResponse } from '@vivid/contracts'
+import {
+  LibraryFolderId,
+  LibraryFolderListResponse,
+  LibraryItemId,
+  LibraryListResponse,
+  type LibraryFolder,
+  type LibraryItem,
+  LibrarySearchResult,
+} from '@vivid/contracts'
 import { openDocument } from '../lib/documents'
+import type { RpcOperation } from '../lib/api'
 import { useOpenThread, useWorkspace, type Routes } from '../workspace'
 import { useResource } from '../lib/resource/hook'
 import { useTheme } from '../theme'
-import { type Document, type Folder } from '../lib/models'
 import {
   Card,
   ControlPill,
@@ -25,18 +33,12 @@ import {
 } from '../components/ui'
 
 type Selection =
-  | { readonly kind: 'file'; readonly item: Document }
+  | { readonly kind: 'file'; readonly item: LibraryItem }
   | {
       readonly kind: 'folder'
-      readonly item: Folder
+      readonly item: LibraryFolder
     }
-type SearchResult = {
-  readonly chunkId: string
-  readonly documentId: string
-  readonly filename: string
-  readonly page: number | null
-  readonly text: string
-}
+type SearchResult = typeof LibrarySearchResult.Type
 type EditState = {
   readonly title: string
   readonly fields: { readonly key: string; readonly label: string; readonly value?: string }[]
@@ -44,6 +46,18 @@ type EditState = {
 }
 type LibraryAction = (work: () => Promise<void>) => Promise<void>
 type LibraryApi = ReturnType<typeof useWorkspace>['api']
+type LibraryMutation =
+  | void
+  | { readonly document: LibraryItem }
+  | { readonly folder: LibraryFolder }
+type LibraryEndpoint = (
+  value: Selection,
+  operation: LibraryOperationInput,
+) => RpcOperation<LibraryMutation>
+type LibraryOperationInput =
+  | { readonly kind: 'delete' }
+  | { readonly kind: 'rename'; readonly name: string }
+  | { readonly kind: 'move'; readonly folderId: string | null }
 
 /** Owns the shared busy/error lifecycle around Library mutations. */
 function useLibraryAction(
@@ -74,7 +88,7 @@ function useLibraryAction(
  * The status half of a document row. A failed document shows the reason the server recorded; the
  * generic sentence covers only a failure that arrived without one.
  */
-function statusNote(document: Document): string {
+function statusNote(document: LibraryItem): string {
   if (document.status === 'failed') return document.error ?? 'Could not read this file'
   return document.status === 'ready' ? 'Ready to read' : 'Getting it ready…'
 }
@@ -99,36 +113,63 @@ async function uploadLibraryDocument(input: {
     asset.name,
   )
   if (input.folderId !== null) form.append('folderId', input.folderId)
-  await input.api.request('/api/library', 'POST', form)
+  await input.api.fetchBytes('/api/library', { method: 'POST', body: form })
   input.onUploaded()
 }
 
 /** Derives the visible Library title from the current folder path. */
-function libraryTitle(path: readonly Folder[]) {
+function libraryTitle(path: readonly LibraryFolder[]) {
   const currentFolder = path.at(-1)
   return currentFolder === undefined ? 'Library' : currentFolder.name
 }
 
-/** Selects the existing file or folder endpoint for one decoded Library selection. */
-function libraryEndpoint(value: Selection) {
-  return value.kind === 'file'
-    ? `/api/library/${value.item.id}`
-    : `/api/library/folders/${value.item.id}`
+/** Builds the typed Library mutation selected by the existing screen action. */
+function libraryEndpoint(
+  value: Selection,
+  operation: LibraryOperationInput,
+): RpcOperation<LibraryMutation> {
+  return (client) => {
+    if (value.kind === 'file') {
+      if (operation.kind === 'delete')
+        return client.DeleteLibraryItem({ id: LibraryItemId.make(value.item.id) })
+      if (operation.kind === 'rename')
+        return client.PatchLibraryItem({
+          id: LibraryItemId.make(value.item.id),
+          patch: { name: operation.name },
+        })
+      return client.PatchLibraryItem({
+        id: LibraryItemId.make(value.item.id),
+        patch: {
+          folderId: operation.folderId === null ? null : LibraryFolderId.make(operation.folderId),
+        },
+      })
+    }
+    if (operation.kind === 'delete')
+      return client.DeleteLibraryFolder({ id: LibraryFolderId.make(value.item.id) })
+    if (operation.kind === 'rename')
+      return client.PatchLibraryFolder({
+        id: LibraryFolderId.make(value.item.id),
+        patch: { name: operation.name },
+      })
+    return client.PatchLibraryFolder({
+      id: LibraryFolderId.make(value.item.id),
+      patch: {
+        parentId: operation.folderId === null ? null : LibraryFolderId.make(operation.folderId),
+      },
+    })
+  }
 }
 
 /** Searches the current Library scope without serializing an absent folder identifier. */
 function searchLibrary(api: LibraryApi, query: string, folderId: string | null) {
   if (folderId === null) {
-    return api.request<{ results: SearchResult[] }>('/api/library/search', 'POST', {
-      query,
-      limit: 8,
-    })
+    return api.run(api.rpc((client) => client.SearchLibrary({ query, limit: 8 })))
   }
-  return api.request<{ results: SearchResult[] }>('/api/library/search', 'POST', {
-    query,
-    folderId,
-    limit: 8,
-  })
+  return api.run(
+    api.rpc((client) =>
+      client.SearchLibrary({ query, folderId: LibraryFolderId.make(folderId), limit: 8 }),
+    ),
+  )
 }
 
 /** Renders Library passage matches without owning search state. */
@@ -179,9 +220,9 @@ function FolderCards({
   onOpen,
   onSelect,
 }: {
-  readonly folders: readonly Folder[]
+  readonly folders: readonly LibraryFolder[]
   readonly colors: ReturnType<typeof useTheme>['colors']
-  readonly onOpen: (folder: Folder) => void
+  readonly onOpen: (folder: LibraryFolder) => void
   readonly onSelect: (selection: Selection) => void
 }) {
   return folders.map((folder) => (
@@ -207,7 +248,7 @@ function DocumentCards({
   colors: c,
   onSelect,
 }: {
-  readonly documents: readonly Document[]
+  readonly documents: readonly LibraryItem[]
   readonly colors: ReturnType<typeof useTheme>['colors']
   readonly onSelect: (selection: Selection) => void
 }) {
@@ -260,16 +301,16 @@ function LibraryContent({
   readonly onEdit: (edit: EditState) => void
   readonly query: string
   readonly onQueryChange: (query: string) => void
-  readonly onResults: (results: SearchResult[]) => void
+  readonly onResults: (results: readonly SearchResult[]) => void
   readonly results: readonly SearchResult[] | null
   readonly onClearSearch: () => void
-  readonly folders: readonly Folder[]
-  readonly documents: readonly Document[]
+  readonly folders: readonly LibraryFolder[]
+  readonly documents: readonly LibraryItem[]
   readonly hasData: boolean
   readonly colors: ReturnType<typeof useTheme>['colors']
   readonly api: LibraryApi
   readonly action: LibraryAction
-  readonly onOpenFolder: (folder: Folder) => void
+  readonly onOpenFolder: (folder: LibraryFolder) => void
   readonly onSelect: (selection: Selection) => void
 }) {
   return (
@@ -292,10 +333,14 @@ function LibraryContent({
               title: 'A place for related things',
               fields: [{ key: 'name', label: 'Folder name' }],
               save: async (values) => {
-                await api.request('/api/library/folders', 'POST', {
-                  name: values.name,
-                  parentId: folderId,
-                })
+                await api.run(
+                  api.rpc((client) =>
+                    client.CreateLibraryFolder({
+                      name: values.name,
+                      parentId: folderId === null ? null : LibraryFolderId.make(folderId),
+                    }),
+                  ),
+                )
               },
             })
           }}
@@ -360,7 +405,7 @@ function SelectionSheet({
   readonly createThread: ReturnType<typeof useWorkspace>['createThread']
   readonly open: ReturnType<typeof useOpenThread>
   readonly action: LibraryAction
-  readonly endpoint: (selection: Selection) => string
+  readonly endpoint: LibraryEndpoint
   readonly onClose: () => void
   readonly onRename: (selection: Selection) => void
   readonly onMove: (selection: Selection) => void
@@ -412,7 +457,7 @@ function SelectionSheet({
             selected.item.name,
             () =>
               void action(async () => {
-                await api.request(endpoint(selected), 'DELETE')
+                await api.run(api.rpc(endpoint(selected, { kind: 'delete' })))
                 onDeleted()
               }),
           )
@@ -435,12 +480,12 @@ function MoveSheet({
   onClose,
 }: {
   readonly move: Selection
-  readonly folders: readonly Folder[]
+  readonly folders: readonly LibraryFolder[]
   readonly busy: boolean
   readonly error: string
   readonly api: LibraryApi
   readonly action: LibraryAction
-  readonly endpoint: (selection: Selection) => string
+  readonly endpoint: LibraryEndpoint
   readonly onMoved: () => void
   readonly onClose: () => void
 }) {
@@ -455,12 +500,13 @@ function MoveSheet({
             disabled={busy}
             onPress={() =>
               void action(async () => {
-                await api.request(
-                  endpoint(move),
-                  'PATCH',
-                  move.kind === 'file'
-                    ? { folderId: folder.id || null }
-                    : { parentId: folder.id || null },
+                await api.run(
+                  api.rpc(
+                    endpoint(move, {
+                      kind: 'move',
+                      folderId: folder.id === '' ? null : folder.id,
+                    }),
+                  ),
                 )
                 onMoved()
               })
@@ -498,22 +544,22 @@ type LibraryViewProps = {
   readonly onEdit: (edit: EditState) => void
   readonly query: string
   readonly onQueryChange: (query: string) => void
-  readonly onResults: (results: SearchResult[]) => void
+  readonly onResults: (results: readonly SearchResult[]) => void
   readonly results: readonly SearchResult[] | null
   readonly onClearSearch: () => void
-  readonly folders: readonly Folder[]
-  readonly allFolders: readonly Folder[]
-  readonly documents: readonly Document[]
+  readonly folders: readonly LibraryFolder[]
+  readonly allFolders: readonly LibraryFolder[]
+  readonly documents: readonly LibraryItem[]
   readonly hasData: boolean
   readonly colors: ReturnType<typeof useTheme>['colors']
   readonly api: LibraryApi
   readonly action: LibraryAction
-  readonly onOpenFolder: (folder: Folder) => void
+  readonly onOpenFolder: (folder: LibraryFolder) => void
   readonly onSelect: (selection: Selection) => void
   readonly selected: Selection | null
   readonly createThread: ReturnType<typeof useWorkspace>['createThread']
   readonly open: ReturnType<typeof useOpenThread>
-  readonly endpoint: (selection: Selection) => string
+  readonly endpoint: LibraryEndpoint
   readonly onCloseSelected: () => void
   readonly onRename: (selection: Selection) => void
   readonly onMove: (selection: Selection) => void
@@ -605,15 +651,25 @@ export function Library({ navigation }: NativeStackScreenProps<Routes, 'Library'
   const { api, createThread } = useWorkspace()
   const { colors: c } = useTheme()
   const open = useOpenThread()
-  const [path, setPath] = useState<Folder[]>([])
+  const [path, setPath] = useState<LibraryFolder[]>([])
   const currentFolder = path.at(-1)
   const folderId = currentFolder === undefined ? undefined : currentFolder.id
   const resource = useResource(
     api,
-    `/api/library${folderId ? `?folderId=${encodeURIComponent(folderId)}` : ''}`,
+    folderId === undefined ? 'library' : `library:${folderId}`,
+    api.rpc((client) =>
+      folderId === undefined
+        ? client.ListLibrary({})
+        : client.ListLibrary({ folderId: LibraryFolderId.make(folderId) }),
+    ),
     LibraryListResponse,
   )
-  const allFolders = useResource(api, '/api/library/folders', LibraryFolderListResponse)
+  const allFolders = useResource(
+    api,
+    'library-folders',
+    api.rpc((client) => client.ListLibraryFolders()),
+    LibraryFolderListResponse,
+  )
   const [selected, setSelected] = useState<Selection>()
   const [edit, setEdit] = useState<EditState>()
   const [move, setMove] = useState<Selection>()
@@ -621,7 +677,7 @@ export function Library({ navigation }: NativeStackScreenProps<Routes, 'Library'
   const [query, setQuery] = useState('')
   const data = resource.data
   const folderData = allFolders.data
-  const [results, setResults] = useState<SearchResult[]>()
+  const [results, setResults] = useState<readonly SearchResult[]>()
   const upload = () =>
     uploadLibraryDocument({
       api,
@@ -677,7 +733,7 @@ export function Library({ navigation }: NativeStackScreenProps<Routes, 'Library'
           title: 'Rename',
           fields: [{ key: 'name', label: 'Name', value: value.item.name }],
           save: async (values) => {
-            await api.request(libraryEndpoint(value), 'PATCH', { name: values.name })
+            await api.run(api.rpc(libraryEndpoint(value, { kind: 'rename', name: values.name })))
           },
         })
       }}

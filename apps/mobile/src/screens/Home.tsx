@@ -20,7 +20,13 @@ import {
 } from 'lucide-react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { nativeMetrics as m } from '@vivid/tokens/native'
-import { NotificationListResponse, ThreadListResponse } from '@vivid/contracts'
+import {
+  NotificationListResponse,
+  ThreadId,
+  ThreadListResponse,
+  type Notification,
+  type Thread,
+} from '@vivid/contracts'
 import { laneConversations } from '../../../web/src/data/lanes'
 import { countProjects, projects } from '../../../web/src/data/projects'
 import {
@@ -33,7 +39,7 @@ import {
   type ThreadActivity,
 } from '../workspace'
 import { useResource } from '../lib/resource/hook'
-import { type Notification, type Thread } from '../lib/models'
+import type { Api } from '../lib/api'
 import { useTheme } from '../theme'
 import {
   ControlPill,
@@ -60,7 +66,23 @@ type SidebarThread = Thread & {
 type Row = { id: string; thread: SidebarThread } | { id: string; label: string; count?: number }
 type ThemeColors = ReturnType<typeof useTheme>['colors']
 type ThreadAction = (thread: SidebarThread, name: string) => void
-type RequestBody = Record<string, string | number | boolean | null>
+
+/** Keeps the two sidebar snapshots on stable RPC resource keys. */
+function useHomeResources(api: Api) {
+  const conversations = useResource(
+    api,
+    'threads',
+    api.rpc((client) => client.ListThreads()),
+    ThreadListResponse,
+  )
+  const notifications = useResource(
+    api,
+    'notifications',
+    api.rpc((client) => client.ListNotifications()),
+    NotificationListResponse,
+  )
+  return { conversations, notifications }
+}
 
 function threadDate(updatedAt: number) {
   const now = new Date()
@@ -784,7 +806,11 @@ function HomeSheets({
           fields={[{ key: 'title', label: 'Name', value: rename.title }]}
           onClose={onCloseRename}
           onSave={async (values) => {
-            await api.request('/api/conversations/' + rename.id, 'PATCH', values)
+            await api.run(
+              api.rpc((client) =>
+                client.PatchThread({ id: ThreadId.make(rename.id), patch: values }),
+              ),
+            )
             await onRenamed()
           }}
         />
@@ -850,9 +876,18 @@ function createThreadAction(input: {
   readonly onRename: (thread: Thread) => void
   readonly onError: (message: string) => void
 }) {
-  const change = async (thread: Thread, method: string, body?: RequestBody) => {
+  const change = async (thread: Thread, action: 'archive' | 'delete') => {
     try {
-      await input.api.request('/api/conversations/' + thread.id, method, body)
+      await input.api.run(
+        input.api.rpc((client) =>
+          action === 'delete'
+            ? client.DeleteThread({ id: ThreadId.make(thread.id) })
+            : client.PatchThread({
+                id: ThreadId.make(thread.id),
+                patch: { archived: !thread.archived },
+              }),
+        ),
+      )
       input.onClearSelection()
       await input.refresh()
     } catch (cause) {
@@ -877,8 +912,8 @@ function createThreadAction(input: {
     if (name === 'rename') input.onRename(thread)
     else if (name === 'pin') void toggle(thread, 'pinnedThreads')
     else if (name === 'done') void toggle(thread, 'settledThreads')
-    else if (name === 'archive') void change(thread, 'PATCH', { archived: !thread.archived })
-    else if (name === 'delete') confirmDelete(thread.title, () => void change(thread, 'DELETE'))
+    else if (name === 'archive') void change(thread, 'archive')
+    else if (name === 'delete') confirmDelete(thread.title, () => void change(thread, 'delete'))
   }
 }
 
@@ -1003,8 +1038,7 @@ export function Home({ embedded = false }: { embedded?: boolean }) {
   const { colors: c } = useTheme()
   const navigation = useNavigation<NavigationProp<Routes>>()
   const open = useOpenThread()
-  const resource = useResource(api, '/api/conversations', ThreadListResponse)
-  const notifications = useResource(api, '/api/notifications', NotificationListResponse)
+  const { conversations: resource, notifications } = useHomeResources(api)
   const conversationData = resource.data
   const notificationData = notifications.data
   // Focus changes trigger the current resource without rebuilding the focus subscription each render.

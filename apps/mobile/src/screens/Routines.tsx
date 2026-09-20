@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { ScrollView, View, RefreshControl } from 'react-native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { Plus, Pause, Play, Repeat2 } from 'lucide-react-native'
-import { RoutineListResponse } from '@vivid/contracts'
+import { RoutineId, RoutineListResponse, type Routine } from '@vivid/contracts'
 import { useOpenThread, useWorkspace, type Routes } from '../workspace'
 import { useResource } from '../lib/resource/hook'
-import { type Routine, when } from '../lib/models'
+import { when } from '../lib/date'
+import type { RpcProgram } from '../lib/api'
 import {
   Card,
   ControlPill,
@@ -20,8 +21,11 @@ import {
 } from '../components/ui'
 import { templates } from '../../../web/src/data/routines'
 
-type RequestBody = Record<string, string | number | boolean | null> | FormData
-type RoutineAct = (id: string, method: string, body?: RequestBody, suffix?: string) => Promise<void>
+type RoutineApi = ReturnType<typeof useWorkspace>['api']
+type RoutineAct = <Value>(
+  id: string,
+  build: (api: RoutineApi, id: string) => RpcProgram<Value>,
+) => Promise<void>
 
 /** Renders routine collection states while the screen owns resource orchestration. */
 function RoutineList({
@@ -82,7 +86,16 @@ function RoutineList({
                 routine.enabled ? `Pause ${routine.name}` : `Resume ${routine.name}`
               }
               disabled={busy}
-              onPress={() => void onAct(routine.id, 'PATCH', { enabled: !routine.enabled })}
+              onPress={() =>
+                void onAct(routine.id, (api, id) =>
+                  api.rpc((client) =>
+                    client.PatchRoutine({
+                      id: RoutineId.make(id),
+                      patch: { enabled: !routine.enabled },
+                    }),
+                  ),
+                )
+              }
             />
           </View>
         </Card>
@@ -121,7 +134,11 @@ function RoutineDetail({
           primary
           label="Run now"
           disabled={busy}
-          onPress={() => void onAct(selected.id, 'POST', undefined, '/run')}
+          onPress={() =>
+            void onAct(selected.id, (api, id) =>
+              api.rpc((client) => client.RunRoutine({ id: RoutineId.make(id) })),
+            )
+          }
         />
         <ControlPill label="Edit routine" onPress={onEdit} />
       </View>
@@ -150,7 +167,11 @@ function RoutineDetail({
             <ControlPill
               label="Try again"
               disabled={busy}
-              onPress={() => void onAct(selected.id, 'POST', undefined, '/run')}
+              onPress={() =>
+                void onAct(selected.id, (api, id) =>
+                  api.rpc((client) => client.RunRoutine({ id: RoutineId.make(id) })),
+                )
+              }
             />
           )}
         </Card>
@@ -159,7 +180,15 @@ function RoutineDetail({
         danger
         label="Delete routine"
         disabled={busy}
-        onPress={() => confirmDelete(selected.name, () => void onAct(selected.id, 'DELETE'))}
+        onPress={() =>
+          confirmDelete(
+            selected.name,
+            () =>
+              void onAct(selected.id, (api, id) =>
+                api.rpc((client) => client.DeleteRoutine({ id: RoutineId.make(id) })),
+              ),
+          )
+        }
       />
     </Sheet>
   )
@@ -243,7 +272,12 @@ function RoutineEditor({
 export function Routines({ navigation }: NativeStackScreenProps<Routes, 'Routines'>) {
   const { api } = useWorkspace()
   const open = useOpenThread()
-  const resource = useResource(api, '/api/routines', RoutineListResponse)
+  const resource = useResource(
+    api,
+    'routines',
+    api.rpc((client) => client.ListRoutines()),
+    RoutineListResponse,
+  )
   const [selectedId, setSelectedId] = useState<string>()
   const [editing, setEditing] = useState<Partial<Routine>>()
   const [gallery, setGallery] = useState(false)
@@ -251,12 +285,12 @@ export function Routines({ navigation }: NativeStackScreenProps<Routes, 'Routine
   const [busy, setBusy] = useState(false)
   const data = resource.data
   const selected = data === undefined ? undefined : data.routines.find((r) => r.id === selectedId)
-  async function act(id: string, method: string, body?: RequestBody, suffix = '') {
+  async function act<Value>(id: string, build: (api: RoutineApi, id: string) => RpcProgram<Value>) {
     if (busy) return
     setBusy(true)
     setError('')
     try {
-      await api.request(`/api/routines/${id}${suffix}`, method, body)
+      await api.run(build(api, id))
       await resource.refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -321,10 +355,25 @@ export function Routines({ navigation }: NativeStackScreenProps<Routes, 'Routine
           editing={editing}
           onClose={() => setEditing(undefined)}
           onSave={async (values) => {
-            await api.request(
-              editing.id ? `/api/routines/${editing.id}` : '/api/routines',
-              editing.id ? 'PATCH' : 'POST',
-              values,
+            await api.run(
+              api.rpc((client) =>
+                editing.id
+                  ? client.PatchRoutine({
+                      id: RoutineId.make(editing.id),
+                      patch: {
+                        name: values.name,
+                        prompt: values.prompt,
+                        cron: values.cron,
+                        timezone: values.timezone,
+                      },
+                    })
+                  : client.CreateRoutine({
+                      name: values.name,
+                      prompt: values.prompt,
+                      cron: values.cron,
+                      timezone: values.timezone,
+                    }),
+              ),
             )
             await resource.refresh()
           }}
