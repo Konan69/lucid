@@ -6,7 +6,9 @@ import { ConnectionStore } from './store.ts'
 export const connectionHandlers = {
   ListConnections: Effect.fn('Rpc.ListConnections')(function* () {
     const store = yield* ConnectionStore
-    return ConnectionListResponse.make({ connectors: yield* store.list().pipe(Effect.mapError(invalidRequest)) })
+    return ConnectionListResponse.make({
+      connectors: yield* store.list().pipe(Effect.mapError(invalidRequest)),
+    })
   }),
   DeleteConnection: Effect.fn('Rpc.DeleteConnection')(function* ({ id }) {
     const store = yield* ConnectionStore

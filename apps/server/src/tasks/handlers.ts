@@ -1,5 +1,11 @@
 import * as Effect from 'effect/Effect'
-import { FollowUpResponse, NotFound, RoutineId, TaskListResponse, TaskResponse } from '@vivid/contracts'
+import {
+  FollowUpResponse,
+  NotFound,
+  RoutineId,
+  TaskListResponse,
+  TaskResponse,
+} from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/api'
 import { FollowUps } from './followups.ts'
 import { TaskStore } from './store.ts'
@@ -18,12 +24,18 @@ export const taskHandlers = {
     const store = yield* TaskStore
     const auth = yield* AuthContext
     const runtime = AuthState.$is('Runtime')(auth)
-    const origin = runtime && request.threadId !== undefined
-      ? request.threadId.startsWith('routine-')
-        ? { kind: 'routine' as const, routineId: RoutineId.make(request.threadId.slice('routine-'.length)) }
-        : { kind: 'conversation' as const, conversationId: request.threadId }
-      : { kind: 'manual' as const }
-    return TaskResponse.make({ task: yield* store.create({ request, origin, createdBy: runtime ? 'vivid' : 'you' }) })
+    const origin =
+      runtime && request.threadId !== undefined
+        ? request.threadId.startsWith('routine-')
+          ? {
+              kind: 'routine' as const,
+              routineId: RoutineId.make(request.threadId.slice('routine-'.length)),
+            }
+          : { kind: 'conversation' as const, conversationId: request.threadId }
+        : { kind: 'manual' as const }
+    return TaskResponse.make({
+      task: yield* store.create({ request, origin, createdBy: runtime ? 'vivid' : 'you' }),
+    })
   }),
   PatchTask: Effect.fn('Rpc.PatchTask')(function* ({ id, patch }) {
     const store = yield* TaskStore
@@ -33,7 +45,8 @@ export const taskHandlers = {
   }),
   DeleteTask: Effect.fn('Rpc.DeleteTask')(function* ({ id }) {
     const store = yield* TaskStore
-    if (!(yield* store.remove(id))) return yield* Effect.fail(new NotFound({ message: 'Task not found' }))
+    if (!(yield* store.remove(id)))
+      return yield* Effect.fail(new NotFound({ message: 'Task not found' }))
   }),
   NudgeTask: Effect.fn('Rpc.NudgeTask')(function* ({ id, nudge }) {
     const store = yield* TaskStore
@@ -51,17 +64,20 @@ export const taskHandlers = {
   PatchFollowUp: Effect.fn('Rpc.PatchFollowUp')(function* ({ id, patch }) {
     const store = yield* TaskStore
     const followUp = yield* store.patchFollowUp(id, patch)
-    if (followUp === undefined) return yield* Effect.fail(new NotFound({ message: 'Follow-up not found' }))
+    if (followUp === undefined)
+      return yield* Effect.fail(new NotFound({ message: 'Follow-up not found' }))
     return FollowUpResponse.make({ followUp, task: yield* withTask(store, followUp.taskId) })
   }),
   DeleteFollowUp: Effect.fn('Rpc.DeleteFollowUp')(function* ({ id }) {
     const store = yield* TaskStore
-    if (!(yield* store.removeFollowUp(id))) return yield* Effect.fail(new NotFound({ message: 'Follow-up not found' }))
+    if (!(yield* store.removeFollowUp(id)))
+      return yield* Effect.fail(new NotFound({ message: 'Follow-up not found' }))
   }),
   RunFollowUp: Effect.fn('Rpc.RunFollowUp')(function* ({ id }) {
     const service = yield* FollowUps
     const followUp = yield* service.run(id)
-    if (followUp === undefined) return yield* Effect.fail(new NotFound({ message: 'Follow-up not found' }))
+    if (followUp === undefined)
+      return yield* Effect.fail(new NotFound({ message: 'Follow-up not found' }))
     const store = yield* TaskStore
     return FollowUpResponse.make({ followUp, task: yield* withTask(store, followUp.taskId) })
   }),

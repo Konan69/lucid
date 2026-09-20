@@ -5,7 +5,7 @@ import * as Layer from 'effect/Layer'
 import * as Schema from 'effect/Schema'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
-import { VividClient } from './api'
+import { VividClient } from './api.js'
 
 /** A transport that answers every request with one canned response and records what was asked. */
 const transport = (respond: (url: string) => Response) => {

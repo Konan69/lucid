@@ -17,10 +17,12 @@ export const suggestConnectorTool = defineTool({
     reason: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(400)),
   }),
   async run({ data }) {
-    const response = await runServerRpc(Effect.gen(function* () {
-      const client = yield* VividRpcClient
-      return yield* client.ListConnections()
-    }))
+    const response = await runServerRpc(
+      Effect.gen(function* () {
+        const client = yield* VividRpcClient
+        return yield* client.ListConnections()
+      }),
+    )
     const connection = response.connectors.find((item) => item.id === data.connector)
     return {
       output: {

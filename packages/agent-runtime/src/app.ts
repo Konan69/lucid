@@ -15,8 +15,9 @@ const app = new Hono()
 
 type AppContext = Parameters<Parameters<typeof app.use>[1]>[0]
 
-const runResult = <A, E>(effect: Effect.Effect<A, E>) =>
-  Effect.runPromise(Effect.result(effect))
+const runResult = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(Effect.result(effect))
+
+const runtimeRunRequestDecoder = Schema.decodeUnknownEffect(RuntimeRunRequest)
 
 /** The runtime token protects Flue transport and the server-only Run admission endpoint. */
 const requireRuntimeToken = async (context: AppContext, next: () => Promise<void>) => {
@@ -24,7 +25,9 @@ const requireRuntimeToken = async (context: AppContext, next: () => Promise<void
   if (Result.isFailure(configured) || Option.isNone(configured.success)) {
     return context.json({ error: 'Runtime token is not configured' }, 503)
   }
-  if (context.req.header('authorization') !== `Bearer ${Redacted.value(configured.success.value)}`) {
+  if (
+    context.req.header('authorization') !== `Bearer ${Redacted.value(configured.success.value)}`
+  ) {
     return context.json({ error: 'Unauthorized' }, 401)
   }
   return next()
@@ -51,18 +54,19 @@ app.post('/internal/runs', async (context) => {
       try: () => context.req.json(),
       catch: () => new Error('Run request body could not be read'),
     })
-    const request = yield* Schema.decodeUnknownEffect(RuntimeRunRequest)(body)
+    const request = yield* runtimeRunRequestDecoder(body)
     const runtime = init(Vivid, { id: request.threadId })
     const receipt = yield* Effect.tryPromise({
-      try: () => runtime.dispatch({
-        idempotencyKey: request.idempotencyKey,
-        message: {
-          kind: 'signal',
-          type: request.type,
-          body: request.body,
-          attributes: request.attributes,
-        },
-      }),
+      try: () =>
+        runtime.dispatch({
+          idempotencyKey: request.idempotencyKey,
+          message: {
+            kind: 'signal',
+            type: request.type,
+            body: request.body,
+            attributes: request.attributes,
+          },
+        }),
       catch: () => new Error('Flue did not accept the Run'),
     })
     return RuntimeRunResponse.make({ submissionId: receipt.submissionId })

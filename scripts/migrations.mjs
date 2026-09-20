@@ -90,9 +90,7 @@ const readSnapshot = (path) => {
 function migrationErrors({ owner, migrationsPath, directory, previousId, ids }) {
   const errors = []
   if (!/^\d{14}_[a-z0-9_-]+$/u.test(directory)) {
-    errors.push(
-      `${owner}/${directory}: migration directory must start with a 14-digit timestamp`,
-    )
+    errors.push(`${owner}/${directory}: migration directory must start with a 14-digit timestamp`)
   }
   const migration = readMigration(NodePath.join(migrationsPath, directory, 'migration.sql'))
   const snapshot = readSnapshot(NodePath.join(migrationsPath, directory, 'snapshot.json'))
@@ -113,9 +111,7 @@ function migrationErrors({ owner, migrationsPath, directory, previousId, ids }) 
     ids.add(snapshot.value.id)
   }
   if (!snapshot.value.prevIds.includes(previousId)) {
-    errors.push(
-      `${owner}/${directory}: prevIds must link to the previous snapshot ${previousId}`,
-    )
+    errors.push(`${owner}/${directory}: prevIds must link to the previous snapshot ${previousId}`)
   }
   return { errors, nextPreviousId: snapshot.value.id }
 }
@@ -126,10 +122,7 @@ export function validateMigrationOwner(root, owner) {
   const config = NodeFS.readFileSync(paths.config, 'utf8')
   const manifest = decodeManifestText(NodeFS.readFileSync(paths.manifest, 'utf8'))
   const directories = migrationDirectories(paths.migrations)
-  const errors = [
-    ...configErrors(owner, config, paths),
-    ...manifestErrors(owner, manifest, paths),
-  ]
+  const errors = [...configErrors(owner, config, paths), ...manifestErrors(owner, manifest, paths)]
   if (directories.length === 0) {
     errors.push(`${owner}: at least one generated migration is required`)
   }

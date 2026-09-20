@@ -4,7 +4,12 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Schema from 'effect/Schema'
-import { DatabaseFailure, type Thread, Thread as ThreadSchema, type ThreadId } from '@vivid/contracts'
+import {
+  DatabaseFailure,
+  type Thread,
+  Thread as ThreadSchema,
+  type ThreadId,
+} from '@vivid/contracts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
 import { threads } from './tables.ts'
 
@@ -21,11 +26,19 @@ const plainPreview = (markdown: string) =>
     .replace(/\s+/gu, ' ')
     .trim()
 
-const decodeThread = Effect.fn('ThreadStore.decode')(function* (value: unknown) {
-  const row = yield* Schema.decodeUnknownEffect(ThreadRow)(value).pipe(
+const threadRowDecoder = Schema.decodeUnknownEffect(ThreadRow)
+const threadSchemaDecoder = Schema.decodeUnknownEffect(ThreadSchema)
+
+const decodeThread = Effect.fn('ThreadStore.decode')(function* (
+  value: typeof threads.$inferSelect,
+) {
+  const row = yield* threadRowDecoder(value).pipe(
     Effect.mapError(() => new DatabaseFailure({ message: 'Database returned an invalid Thread' })),
   )
-  return yield* Schema.decodeUnknownEffect(ThreadSchema)({ ...row, preview: plainPreview(row.preview) }).pipe(
+  return yield* threadSchemaDecoder({
+    ...row,
+    preview: plainPreview(row.preview),
+  }).pipe(
     Effect.mapError(() => new DatabaseFailure({ message: 'Database returned an invalid Thread' })),
   )
 })
@@ -37,7 +50,9 @@ export interface ThreadStoreService {
   readonly remove: (id: ThreadId) => Effect.Effect<boolean, DatabaseInfrastructureError>
 }
 
-export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreService>()('vivid/ThreadStore') {}
+export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreService>()(
+  'vivid/ThreadStore',
+) {}
 
 export const threadStoreLayer = Layer.effect(
   ThreadStore,
@@ -52,23 +67,36 @@ export const threadStoreLayer = Layer.effect(
     })
 
     const get = Effect.fn('ThreadStore.get')(function* (id: ThreadId) {
-      const rows = yield* database.run(database.select().from(threads).where(eq(threads.id, id)).limit(1))
+      const rows = yield* database.run(
+        database.select().from(threads).where(eq(threads.id, id)).limit(1),
+      )
       const row = rows[0]
       return row === undefined ? undefined : yield* decodeThread(row)
     })
 
     const put = Effect.fn('ThreadStore.put')(function* (thread: Thread) {
-      const normalized = { ...thread, preview: plainPreview(thread.preview) }
+      // Built field by field: a Thread is an interface over a schema, and spreading it would copy
+      // whatever else the caller's object happened to carry into the row.
+      const normalized = {
+        id: thread.id,
+        title: thread.title,
+        preview: plainPreview(thread.preview),
+        updatedAt: thread.updatedAt,
+        archived: thread.archived,
+      }
       yield* database.run(
-        database.insert(threads).values(normalized).onConflictDoUpdate({
-          target: threads.id,
-          set: {
-            title: normalized.title,
-            preview: normalized.preview,
-            updatedAt: normalized.updatedAt,
-            archived: normalized.archived,
-          },
-        }),
+        database
+          .insert(threads)
+          .values(normalized)
+          .onConflictDoUpdate({
+            target: threads.id,
+            set: {
+              title: normalized.title,
+              preview: normalized.preview,
+              updatedAt: normalized.updatedAt,
+              archived: normalized.archived,
+            },
+          }),
       )
       return normalized
     })

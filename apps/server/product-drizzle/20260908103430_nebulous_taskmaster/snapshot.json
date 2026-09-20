@@ -2,9 +2,7 @@
   "version": "8",
   "dialect": "postgres",
   "id": "2aae9864-4b6c-4fa9-8d53-0549cf5ca6a1",
-  "prevIds": [
-    "00000000-0000-0000-0000-000000000000"
-  ],
+  "prevIds": ["00000000-0000-0000-0000-000000000000"],
   "ddl": [
     {
       "isRlsEnabled": false,
@@ -1379,14 +1377,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "task_id"
-      ],
+      "columns": ["task_id"],
       "schemaTo": "public",
       "tableTo": "vivid_tasks",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_follow_ups_task_id_vivid_tasks_id_fkey",
@@ -1396,14 +1390,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "document_id"
-      ],
+      "columns": ["document_id"],
       "schemaTo": "public",
       "tableTo": "vivid_library_documents",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_library_chunks_lTJBbfSt8ZfB_fkey",
@@ -1413,14 +1403,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "parent_id"
-      ],
+      "columns": ["parent_id"],
       "schemaTo": "public",
       "tableTo": "vivid_library_folders",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_library_folders_parent_id_vivid_library_folders_id_fkey",
@@ -1430,14 +1416,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "routine_id"
-      ],
+      "columns": ["routine_id"],
       "schemaTo": "public",
       "tableTo": "vivid_routines",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_routine_runs_routine_id_vivid_routines_id_fkey",
@@ -1446,9 +1428,7 @@
       "table": "vivid_routine_runs"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_conversations_pkey",
       "schema": "public",
@@ -1456,9 +1436,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_follow_ups_pkey",
       "schema": "public",
@@ -1466,9 +1444,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_library_chunks_pkey",
       "schema": "public",
@@ -1476,9 +1452,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_library_documents_pkey",
       "schema": "public",
@@ -1486,9 +1460,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_library_folders_pkey",
       "schema": "public",
@@ -1496,9 +1468,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_notifications_pkey",
       "schema": "public",
@@ -1506,9 +1476,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_routine_runs_pkey",
       "schema": "public",
@@ -1516,9 +1484,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_routines_pkey",
       "schema": "public",
@@ -1526,9 +1492,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "version"
-      ],
+      "columns": ["version"],
       "nameExplicit": false,
       "name": "vivid_schema_migrations_pkey",
       "schema": "public",
@@ -1536,9 +1500,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_tasks_pkey",
       "schema": "public",
@@ -1547,9 +1509,7 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "sha256"
-      ],
+      "columns": ["sha256"],
       "nullsNotDistinct": false,
       "name": "vivid_library_documents_sha256_key",
       "schema": "public",

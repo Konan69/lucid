@@ -5,7 +5,11 @@ import * as Redacted from 'effect/Redacted'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
-import { RuntimeRunRequest, RuntimeRunResponse, type RuntimeRunResponse as RuntimeReceipt } from '@vivid/contracts'
+import {
+  RuntimeRunRequest,
+  RuntimeRunResponse,
+  type RuntimeRunResponse as RuntimeReceipt,
+} from '@vivid/contracts'
 import { RuntimeUnavailable } from '@vivid/contracts/rpc'
 import { ServerConfig } from '../config.ts'
 
@@ -27,14 +31,20 @@ export const runtimeLayer = Layer.effect(
       const request = yield* HttpClientRequest.post(endpoint).pipe(
         HttpClientRequest.bearerToken(Redacted.value(config.RUNTIME_TOKEN)),
         HttpClientRequest.schemaBodyJson(RuntimeRunRequest)(input),
-        Effect.mapError(() => new RuntimeUnavailable({ message: 'Run request could not be encoded' })),
+        Effect.mapError(
+          () => new RuntimeUnavailable({ message: 'Run request could not be encoded' }),
+        ),
       )
       const response = yield* client.execute(request).pipe(
         Effect.flatMap(HttpClientResponse.filterStatusOk),
-        Effect.mapError(() => new RuntimeUnavailable({ message: 'Vivid runtime did not accept the Run' })),
+        Effect.mapError(
+          () => new RuntimeUnavailable({ message: 'Vivid runtime did not accept the Run' }),
+        ),
       )
       return yield* HttpClientResponse.schemaBodyJson(RuntimeRunResponse)(response).pipe(
-        Effect.mapError(() => new RuntimeUnavailable({ message: 'Vivid runtime returned an invalid receipt' })),
+        Effect.mapError(
+          () => new RuntimeUnavailable({ message: 'Vivid runtime returned an invalid receipt' }),
+        ),
       )
     })
 

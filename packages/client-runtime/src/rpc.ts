@@ -26,9 +26,13 @@ export class VividRpcClient extends Context.Service<VividRpcClient, VividRpcClie
       Layer.provide(
         RpcClient.layerProtocolHttp({
           url: options.url,
-          transformClient: headers === undefined
-            ? undefined
-            : (client) => HttpClient.mapRequest(client, (request) => HttpClientRequest.setHeaders(request, headers)),
+          transformClient:
+            headers === undefined
+              ? undefined
+              : (client) =>
+                  HttpClient.mapRequest(client, (request) =>
+                    HttpClientRequest.setHeaders(request, headers),
+                  ),
         }),
       ),
       Layer.provide(RpcSerialization.layerNdjson),

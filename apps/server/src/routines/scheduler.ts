@@ -5,7 +5,7 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Schedule from 'effect/Schedule'
 import * as Schema from 'effect/Schema'
-import { Thread as ThreadSchema, type Occurrence, type Routine, type RoutineId } from '@vivid/contracts'
+import { Thread as ThreadSchema, Occurrence, type Routine, type RoutineId } from '@vivid/contracts'
 import { RuntimeUnavailable } from '@vivid/contracts/rpc'
 import type { DatabaseInfrastructureError } from '../database/client.ts'
 import { Runtime } from '../runtime/client.ts'
@@ -21,12 +21,21 @@ export class InvalidRoutineSchedule extends Schema.TaggedError<InvalidRoutineSch
 
 export interface RoutineSchedulerService {
   readonly validate: (cron: string, timezone: string) => Effect.Effect<void, InvalidRoutineSchedule>
-  readonly schedule: (routine: Routine) => Effect.Effect<void, InvalidRoutineSchedule | DatabaseInfrastructureError>
-  readonly run: (id: RoutineId) => Effect.Effect<Occurrence | undefined, DatabaseInfrastructureError | RuntimeUnavailable>
-  readonly runDue: () => Effect.Effect<void, InvalidRoutineSchedule | DatabaseInfrastructureError | RuntimeUnavailable>
+  readonly schedule: (
+    routine: Routine,
+  ) => Effect.Effect<void, InvalidRoutineSchedule | DatabaseInfrastructureError>
+  readonly run: (
+    id: RoutineId,
+  ) => Effect.Effect<Occurrence | undefined, DatabaseInfrastructureError | RuntimeUnavailable>
+  readonly runDue: () => Effect.Effect<
+    void,
+    InvalidRoutineSchedule | DatabaseInfrastructureError | RuntimeUnavailable
+  >
 }
 
-export class RoutineScheduler extends Context.Service<RoutineScheduler, RoutineSchedulerService>()('vivid/RoutineScheduler') {}
+export class RoutineScheduler extends Context.Service<RoutineScheduler, RoutineSchedulerService>()(
+  'vivid/RoutineScheduler',
+) {}
 
 export const routineSchedulerServiceLayer = Layer.effect(
   RoutineScheduler,
@@ -41,11 +50,15 @@ export const routineSchedulerServiceLayer = Layer.effect(
           new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format()
           return new Cron(cron, { paused: true, timezone })
         },
-        catch: () => new InvalidRoutineSchedule({ message: 'Routine schedule or timezone is invalid' }),
+        catch: () =>
+          new InvalidRoutineSchedule({ message: 'Routine schedule or timezone is invalid' }),
       })
     })
 
-    const validate = Effect.fn('RoutineScheduler.validate')(function* (cron: string, timezone: string) {
+    const validate = Effect.fn('RoutineScheduler.validate')(function* (
+      cron: string,
+      timezone: string,
+    ) {
       const value = yield* probe(cron, timezone)
       value.stop()
     })
@@ -64,22 +77,30 @@ export const routineSchedulerServiceLayer = Layer.effect(
 
     const submit = Effect.fn('RoutineScheduler.submit')(function* (routine: Routine) {
       const occurrence = yield* routines.startOccurrence(routine.id)
-      yield* threads.put(ThreadSchema.make({
-        id: occurrence.conversationId,
-        title: routine.name,
-        preview: `Routine: ${routine.prompt}`.slice(0, 500),
-        updatedAt: occurrence.startedAt,
-        archived: false,
-      }))
-      const body = routine.libraryFolderId === null
-        ? routine.prompt
-        : `${routine.prompt}\n\nSearch Library folder "${routine.libraryFolderId}" and cite every source used.`
-      const attributes: Record<string, string> = {
+      yield* threads.put(
+        ThreadSchema.make({
+          id: occurrence.conversationId,
+          title: routine.name,
+          preview: `Routine: ${routine.prompt}`.slice(0, 500),
+          updatedAt: occurrence.startedAt,
+          archived: false,
+        }),
+      )
+      const body =
+        routine.libraryFolderId === null
+          ? routine.prompt
+          : `${routine.prompt}\n\nSearch Library folder "${routine.libraryFolderId}" and cite every source used.`
+      // The Library folder is present only for a Routine scoped to one; the two shapes are built
+      // whole so no key is added to an object after the fact.
+      const base = {
         routineId: routine.id,
         routineName: routine.name,
         scheduledAt: new Date(occurrence.startedAt).toISOString(),
       }
-      if (routine.libraryFolderId !== null) attributes.libraryFolderId = routine.libraryFolderId
+      const attributes =
+        routine.libraryFolderId === null
+          ? base
+          : Object.assign({}, base, { libraryFolderId: routine.libraryFolderId })
       const receipt = yield* runtime.start({
         threadId: occurrence.conversationId,
         idempotencyKey: occurrence.id,
@@ -88,7 +109,17 @@ export const routineSchedulerServiceLayer = Layer.effect(
         attributes,
       })
       yield* routines.attachSubmission(occurrence.id, receipt.submissionId)
-      return { ...occurrence, submissionId: receipt.submissionId }
+      return Occurrence.make({
+        id: occurrence.id,
+        routineId: occurrence.routineId,
+        conversationId: occurrence.conversationId,
+        submissionId: receipt.submissionId,
+        status: occurrence.status,
+        startedAt: occurrence.startedAt,
+        finishedAt: occurrence.finishedAt,
+        output: occurrence.output,
+        error: occurrence.error,
+      })
     })
 
     const run = Effect.fn('RoutineScheduler.run')(function* (id: RoutineId) {
@@ -98,11 +129,15 @@ export const routineSchedulerServiceLayer = Layer.effect(
 
     const runDue = Effect.fn('RoutineScheduler.runDue')(function* () {
       const due = yield* routines.claimDue()
-      yield* Effect.forEach(due, (routine) =>
-        Effect.gen(function* () {
-          yield* schedule(routine)
-          yield* submit(routine)
-        }), { discard: true, concurrency: 1 })
+      yield* Effect.forEach(
+        due,
+        (routine) =>
+          Effect.gen(function* () {
+            yield* schedule(routine)
+            yield* submit(routine)
+          }),
+        { discard: true, concurrency: 1 },
+      )
     })
 
     return RoutineScheduler.of({ validate, schedule, run, runDue })
@@ -117,9 +152,6 @@ export const routineSchedulerLayer = Layer.effectDiscard(
       Effect.tapError((error) => Effect.logError('Routine scheduler pass failed', error)),
       Effect.ignore,
     )
-    yield* pass.pipe(
-      Effect.repeat(Schedule.spaced(`${ROUTINE_TICK_MS} millis`)),
-      Effect.forkScoped,
-    )
+    yield* pass.pipe(Effect.repeat(Schedule.spaced(`${ROUTINE_TICK_MS} millis`)), Effect.forkScoped)
   }),
 )

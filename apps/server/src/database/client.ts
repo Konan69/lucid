@@ -109,3 +109,21 @@ export const databaseLayer = Layer.unwrap(
     ).pipe(Layer.provide(postgresLayer))
   }),
 )
+
+/**
+ * The row an `INSERT … RETURNING` or `UPDATE … RETURNING` must have produced. A statement that
+ * returns nothing here is a database fault, not an absent record, so it fails instead of handing
+ * `undefined` to a decoder.
+ */
+export const returned = <Row>(rows: ReadonlyArray<Row>, subject: string) => {
+  const row = rows[0]
+  return row === undefined
+    ? Effect.fail(new DatabaseFailure({ message: `${subject} was not returned by the database` }))
+    : Effect.succeed(row)
+}
+
+/**
+ * A record assembled from database columns on its way into a wire schema. Columns are only ever
+ * these scalars, so a decoder that takes this cannot be handed an arbitrary object.
+ */
+export type PersistedFields = Readonly<Record<string, string | number | boolean | null>>

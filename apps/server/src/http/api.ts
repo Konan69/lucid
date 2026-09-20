@@ -2,7 +2,13 @@ import * as Layer from 'effect/Layer'
 import * as HttpApiBuilder from 'effect/unstable/httpapi/HttpApiBuilder'
 import { VividApi } from '@vivid/contracts/api'
 import { authMiddlewareLayer } from '../auth/middleware.ts'
-import { acceptMembership, createCompany, inviteMembership, listCompanies, me } from '../companies/handlers.ts'
+import {
+  acceptMembership,
+  createCompany,
+  inviteMembership,
+  listCompanies,
+  me,
+} from '../companies/handlers.ts'
 import { createProject, listProjects } from '../projects/handlers.ts'
 import { getSettings, patchSettings } from '../settings/handlers.ts'
 

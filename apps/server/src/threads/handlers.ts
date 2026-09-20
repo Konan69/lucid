@@ -11,19 +11,33 @@ export const threadHandlers = {
   PutThread: Effect.fn('Rpc.PutThread')(function* ({ id, thread }) {
     const store = yield* ThreadStore
     const now = yield* Clock.currentTimeMillis
-    const value = yield* store.put({ id, title: thread.title, preview: thread.preview, updatedAt: thread.updatedAt ?? now, archived: thread.archived ?? false })
+    const value = yield* store.put({
+      id,
+      title: thread.title,
+      preview: thread.preview,
+      updatedAt: thread.updatedAt ?? now,
+      archived: thread.archived ?? false,
+    })
     return ThreadResponse.make({ conversation: value })
   }),
   PatchThread: Effect.fn('Rpc.PatchThread')(function* ({ id, patch }) {
     const store = yield* ThreadStore
     const current = yield* store.get(id)
-    if (current === undefined) return yield* Effect.fail(new NotFound({ message: 'Thread not found' }))
+    if (current === undefined)
+      return yield* Effect.fail(new NotFound({ message: 'Thread not found' }))
     const now = yield* Clock.currentTimeMillis
-    const value = yield* store.put({ ...current, title: patch.title ?? current.title, archived: patch.archived ?? current.archived, updatedAt: now })
+    const value = yield* store.put({
+      id: current.id,
+      preview: current.preview,
+      title: patch.title ?? current.title,
+      archived: patch.archived ?? current.archived,
+      updatedAt: now,
+    })
     return ThreadResponse.make({ conversation: value })
   }),
   DeleteThread: Effect.fn('Rpc.DeleteThread')(function* ({ id }) {
     const store = yield* ThreadStore
-    if (!(yield* store.remove(id))) return yield* Effect.fail(new NotFound({ message: 'Thread not found' }))
+    if (!(yield* store.remove(id)))
+      return yield* Effect.fail(new NotFound({ message: 'Thread not found' }))
   }),
 }

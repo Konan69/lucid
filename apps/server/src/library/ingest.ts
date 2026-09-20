@@ -14,7 +14,11 @@ export const digestBytes = (bytes: Uint8Array) =>
   NodeCrypto.createHash('sha256').update(bytes).digest('hex')
 
 const normalizeText = (text: string) =>
-  text.replace(/\r\n?/gu, '\n').replace(/[ \t]+/gu, ' ').replace(/\n{3,}/gu, '\n\n').trim()
+  text
+    .replace(/\r\n?/gu, '\n')
+    .replace(/[ \t]+/gu, ' ')
+    .replace(/\n{3,}/gu, '\n\n')
+    .trim()
 
 /** Splits extracted text into overlapping search chunks without breaking useful boundaries. */
 const chunkText = (text: string, page: number | null): ReadonlyArray<IndexedChunk> => {
@@ -42,8 +46,11 @@ export class LibraryIngestFailure extends Schema.TaggedError<LibraryIngestFailur
 ) {}
 
 /** `unpdf` is Promise-only; this is the single unsafe extraction edge. */
-const extractPages = Effect.fn('LibraryIngest.extractPages')(function* (document: StoredLibraryItem) {
-  const pdf = document.mimeType === 'application/pdf' || document.name.toLocaleLowerCase().endsWith('.pdf')
+const extractPages = Effect.fn('LibraryIngest.extractPages')(function* (
+  document: StoredLibraryItem,
+) {
+  const pdf =
+    document.mimeType === 'application/pdf' || document.name.toLocaleLowerCase().endsWith('.pdf')
   if (!pdf) {
     const text = new TextDecoder('utf-8', { fatal: false }).decode(document.bytes)
     return [{ page: null, text: normalizeText(text) }]
@@ -57,7 +64,9 @@ const extractPages = Effect.fn('LibraryIngest.extractPages')(function* (document
 })
 
 /** Extracts and indexes one uploaded item, recording expected failures on its durable row. */
-export const ingestLibraryItem = Effect.fn('LibraryIngest.ingestItem')(function* (id: LibraryItemId) {
+export const ingestLibraryItem = Effect.fn('LibraryIngest.ingestItem')(function* (
+  id: LibraryItemId,
+) {
   const library = yield* LibraryStore
   const document = yield* library.getStoredItem(id)
   if (document === undefined) {
@@ -65,17 +74,22 @@ export const ingestLibraryItem = Effect.fn('LibraryIngest.ingestItem')(function*
   }
   const index = Effect.gen(function* () {
     const pages = yield* extractPages(document)
-    const extractedText = pages.map((page) => page.text).filter((text) => text.length > 0).join('\n\n')
+    const extractedText = pages
+      .map((page) => page.text)
+      .filter((text) => text.length > 0)
+      .join('\n\n')
     if (extractedText.length === 0) {
-      return yield* Effect.fail(new LibraryIngestFailure({ message: 'No readable text was found in this document' }))
+      return yield* Effect.fail(
+        new LibraryIngestFailure({ message: 'No readable text was found in this document' }),
+      )
     }
     const chunks = pages.flatMap((page) => chunkText(page.text, page.page))
     if (chunks.length === 0) {
-      return yield* Effect.fail(new LibraryIngestFailure({ message: 'No searchable text was found in this document' }))
+      return yield* Effect.fail(
+        new LibraryIngestFailure({ message: 'No searchable text was found in this document' }),
+      )
     }
     yield* library.completeItem(id, extractedText, chunks)
   })
-  return yield* index.pipe(
-    Effect.catch((failure) => library.failItem(id, failure.message)),
-  )
+  return yield* index.pipe(Effect.catch((failure) => library.failItem(id, failure.message)))
 })

@@ -8,12 +8,20 @@ import { apiLayer } from './api.ts'
 import { bytesRoutes } from './bytes.ts'
 import { oauthRoutes } from './oauth.ts'
 
-const authRoute = HttpRouter.add('*', '/api/auth/*', Effect.gen(function* () {
-  const auth = yield* authEffect
-  return yield* auth.fetch.pipe(Effect.provide(localAuthRuntimeLayer))
-}))
+const authRoute = HttpRouter.add(
+  '*',
+  '/api/auth/*',
+  Effect.gen(function* () {
+    const auth = yield* authEffect
+    return yield* auth.fetch.pipe(Effect.provide(localAuthRuntimeLayer))
+  }),
+)
 
-const healthRoute = HttpRouter.add('GET', '/health', HttpServerResponse.jsonUnsafe({ ok: true, service: 'vivid' }))
+const healthRoute = HttpRouter.add(
+  'GET',
+  '/health',
+  HttpServerResponse.jsonUnsafe({ ok: true, service: 'vivid' }),
+)
 
 export const routerLayer = Layer.mergeAll(
   apiLayer,

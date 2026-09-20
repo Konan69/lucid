@@ -8,11 +8,7 @@ import { VividRpcClient } from '@vivid/client-runtime'
 import { NotFound, TaskId, Unauthenticated } from '@vivid/contracts'
 import { companyStoreLayer } from '../companies/store.ts'
 import { connectionStoreLayer } from '../connections/store.ts'
-import {
-  testConfigLayer,
-  testDatabaseConfigured,
-  testDatabaseLayer,
-} from '../database/testdb.ts'
+import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { libraryStoreLayer } from '../library/store.ts'
 import { projectStoreLayer } from '../projects/store.ts'
 import { routineSchedulerServiceLayer } from '../routines/scheduler.ts'
@@ -30,9 +26,12 @@ const configLayer = testConfigLayer
 const runtimeLayer = Layer.succeed(Runtime, {
   start: () => Effect.succeed({ accepted: true, submissionId: 'test-submission' }),
 })
-const workStores = Layer.mergeAll(routineStoreLayer, taskStoreLayer, threadStoreLayer, runtimeLayer).pipe(
-  Layer.provide(testDatabaseLayer),
-)
+const workStores = Layer.mergeAll(
+  routineStoreLayer,
+  taskStoreLayer,
+  threadStoreLayer,
+  runtimeLayer,
+).pipe(Layer.provide(testDatabaseLayer))
 const schedulerServices = Layer.merge(followUpsLayer, routineSchedulerServiceLayer).pipe(
   Layer.provide(workStores),
 )
@@ -62,32 +61,43 @@ const asRuntime = RpcClient.withHeaders({ authorization: `Bearer ${runtimeToken}
 
 describe.skipIf(!testDatabaseConfigured)('VividRpc HTTP integration', () => {
   layer(integrationLayer)((it) => {
-    it.effect('serves each moved product area through one authenticated RPC client', () => Effect.gen(function* () {
-      const client = yield* VividRpcClient
-      const id = TaskId.make(NodeCrypto.randomUUID())
-      yield* Effect.addFinalizer(() => client.DeleteTask({ id }).pipe(asRuntime).pipe(Effect.ignore))
+    it.effect('serves each moved product area through one authenticated RPC client', () =>
+      Effect.gen(function* () {
+        const client = yield* VividRpcClient
+        const id = TaskId.make(NodeCrypto.randomUUID())
+        yield* Effect.addFinalizer(() =>
+          client.DeleteTask({ id }).pipe(asRuntime).pipe(Effect.ignore),
+        )
 
-      expect((yield* client.ListThreads().pipe(asRuntime)).conversations).toBeInstanceOf(Array)
-      expect((yield* client.CreateTask({ id, title: 'RPC integration task' }).pipe(asRuntime)).task.id).toBe(id)
-      expect((yield* client.ListNotifications().pipe(asRuntime)).notifications).toBeInstanceOf(Array)
-      expect((yield* client.ListRoutines().pipe(asRuntime)).routines).toBeInstanceOf(Array)
-      expect((yield* client.ListLibrary({}).pipe(asRuntime)).documents).toBeInstanceOf(Array)
-      expect((yield* client.ListConnections().pipe(asRuntime)).connectors).toHaveLength(3)
-    }))
+        expect((yield* client.ListThreads().pipe(asRuntime)).conversations).toBeInstanceOf(Array)
+        expect(
+          (yield* client.CreateTask({ id, title: 'RPC integration task' }).pipe(asRuntime)).task.id,
+        ).toBe(id)
+        expect((yield* client.ListNotifications().pipe(asRuntime)).notifications).toBeInstanceOf(
+          Array,
+        )
+        expect((yield* client.ListRoutines().pipe(asRuntime)).routines).toBeInstanceOf(Array)
+        expect((yield* client.ListLibrary({}).pipe(asRuntime)).documents).toBeInstanceOf(Array)
+        expect((yield* client.ListConnections().pipe(asRuntime)).connectors).toHaveLength(3)
+      }),
+    )
 
-    it.effect('returns typed unauthenticated and not-found failures', () => Effect.gen(function* () {
-      const client = yield* VividRpcClient
-      const unauthenticated = yield* client.ListTasks({ status: 'open' }).pipe(
-        RpcClient.withHeaders({ authorization: '' }),
-        Effect.flip,
-      )
-      expect(unauthenticated).toBeInstanceOf(Unauthenticated)
+    it.effect('returns typed unauthenticated and not-found failures', () =>
+      Effect.gen(function* () {
+        const client = yield* VividRpcClient
+        const unauthenticated = yield* client
+          .ListTasks({ status: 'open' })
+          .pipe(RpcClient.withHeaders({ authorization: '' }), Effect.flip)
+        expect(unauthenticated).toBeInstanceOf(Unauthenticated)
 
-      const missing = yield* client.PatchTask({
-        id: TaskId.make(NodeCrypto.randomUUID()),
-        patch: { title: 'Missing' },
-      }).pipe(asRuntime, Effect.flip)
-      expect(missing).toBeInstanceOf(NotFound)
-    }))
+        const missing = yield* client
+          .PatchTask({
+            id: TaskId.make(NodeCrypto.randomUUID()),
+            patch: { title: 'Missing' },
+          })
+          .pipe(asRuntime, Effect.flip)
+        expect(missing).toBeInstanceOf(NotFound)
+      }),
+    )
   })
 })

@@ -22,13 +22,14 @@ import {
   PatchFollowUpRequest,
   type PatchTaskRequest,
 } from '@vivid/contracts'
-import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
+import { Database, type DatabaseInfrastructureError, returned } from '../database/client.ts'
 import { followUps, notifications, tasks } from './tables.ts'
 
 const TaskRow = createSelectSchema(tasks)
 const FollowUpRow = createSelectSchema(followUps)
 const NotificationRow = createSelectSchema(notifications)
-const RawRows = Schema.Struct({ rows: Schema.Array(Schema.Unknown) })
+/** A raw `RETURNING` result: the claim statement is SQL text, so its rows are decoded here. */
+const RawRows = Schema.Struct({ rows: Schema.Array(FollowUpRow) })
 
 type TaskRecord = Omit<Task, 'followUps' | 'nextFollowUpAt'>
 type Author = 'you' | 'vivid'
@@ -38,9 +39,12 @@ type PatchFollowUpInput = typeof PatchFollowUpRequest.Type
 const databaseDecodeFailure = (subject: string) =>
   new DatabaseFailure({ message: `Database returned an invalid ${subject}` })
 
+const taskRowDecoder = Schema.decodeUnknownEffect(TaskRow)
+const taskSchemaDecoder = Schema.decodeUnknownEffect(TaskSchema)
+
 /** Converts the normalized persistence origin columns back into the wire tagged shape. */
-const decodeTask = Effect.fn('TaskStore.decodeTask')(function* (value: unknown) {
-  const row = yield* Schema.decodeUnknownEffect(TaskRow)(value).pipe(
+const decodeTask = Effect.fn('TaskStore.decodeTask')(function* (value: typeof tasks.$inferSelect) {
+  const row = yield* taskRowDecoder(value).pipe(
     Effect.mapError(() => databaseDecodeFailure('Task')),
   )
   const origin =
@@ -49,7 +53,7 @@ const decodeTask = Effect.fn('TaskStore.decodeTask')(function* (value: unknown) 
       : row.originKind === 'routine' && row.originId !== null
         ? { kind: 'routine' as const, routineId: row.originId }
         : { kind: 'manual' as const }
-  const decoded = yield* Schema.decodeUnknownEffect(TaskSchema)({
+  const decoded = yield* taskSchemaDecoder({
     ...row,
     origin,
     followUps: [],
@@ -59,20 +63,30 @@ const decodeTask = Effect.fn('TaskStore.decodeTask')(function* (value: unknown) 
   return record
 })
 
-const decodeFollowUp = Effect.fn('TaskStore.decodeFollowUp')(function* (value: unknown) {
-  const row = yield* Schema.decodeUnknownEffect(FollowUpRow)(value).pipe(
+const followUpRowDecoder = Schema.decodeUnknownEffect(FollowUpRow)
+const followUpSchemaDecoder = Schema.decodeUnknownEffect(FollowUpSchema)
+
+const decodeFollowUp = Effect.fn('TaskStore.decodeFollowUp')(function* (
+  value: typeof followUps.$inferSelect,
+) {
+  const row = yield* followUpRowDecoder(value).pipe(
     Effect.mapError(() => databaseDecodeFailure('follow-up')),
   )
-  return yield* Schema.decodeUnknownEffect(FollowUpSchema)(row).pipe(
+  return yield* followUpSchemaDecoder(row).pipe(
     Effect.mapError(() => databaseDecodeFailure('follow-up')),
   )
 })
 
-const decodeNotification = Effect.fn('TaskStore.decodeNotification')(function* (value: unknown) {
-  const row = yield* Schema.decodeUnknownEffect(NotificationRow)(value).pipe(
+const notificationRowDecoder = Schema.decodeUnknownEffect(NotificationRow)
+const notificationSchemaDecoder = Schema.decodeUnknownEffect(NotificationSchema)
+
+const decodeNotification = Effect.fn('TaskStore.decodeNotification')(function* (
+  value: typeof notifications.$inferSelect,
+) {
+  const row = yield* notificationRowDecoder(value).pipe(
     Effect.mapError(() => databaseDecodeFailure('notification')),
   )
-  return yield* Schema.decodeUnknownEffect(NotificationSchema)(row).pipe(
+  return yield* notificationSchemaDecoder(row).pipe(
     Effect.mapError(() => databaseDecodeFailure('notification')),
   )
 })
@@ -93,24 +107,53 @@ export interface CreateTaskStoreInput {
 }
 
 export interface TaskStoreService {
-  readonly list: (status?: TaskStatus) => Effect.Effect<ReadonlyArray<Task>, DatabaseInfrastructureError>
+  readonly list: (
+    status?: TaskStatus,
+  ) => Effect.Effect<ReadonlyArray<Task>, DatabaseInfrastructureError>
   readonly get: (id: TaskId) => Effect.Effect<Task | undefined, DatabaseInfrastructureError>
   readonly create: (input: CreateTaskStoreInput) => Effect.Effect<Task, DatabaseInfrastructureError>
-  readonly patch: (id: TaskId, patch: PatchTaskRequest) => Effect.Effect<Task | undefined, DatabaseInfrastructureError>
+  readonly patch: (
+    id: TaskId,
+    patch: PatchTaskRequest,
+  ) => Effect.Effect<Task | undefined, DatabaseInfrastructureError>
   readonly remove: (id: TaskId) => Effect.Effect<boolean, DatabaseInfrastructureError>
-  readonly addFollowUp: (taskId: TaskId, input: FollowUpInput, createdBy: Author) => Effect.Effect<FollowUp, DatabaseInfrastructureError>
-  readonly getFollowUp: (id: FollowUpId) => Effect.Effect<FollowUp | undefined, DatabaseInfrastructureError>
-  readonly patchFollowUp: (id: FollowUpId, patch: PatchFollowUpInput) => Effect.Effect<FollowUp | undefined, DatabaseInfrastructureError>
+  readonly addFollowUp: (
+    taskId: TaskId,
+    input: FollowUpInput,
+    createdBy: Author,
+  ) => Effect.Effect<FollowUp, DatabaseInfrastructureError>
+  readonly getFollowUp: (
+    id: FollowUpId,
+  ) => Effect.Effect<FollowUp | undefined, DatabaseInfrastructureError>
+  readonly patchFollowUp: (
+    id: FollowUpId,
+    patch: PatchFollowUpInput,
+  ) => Effect.Effect<FollowUp | undefined, DatabaseInfrastructureError>
   readonly removeFollowUp: (id: FollowUpId) => Effect.Effect<boolean, DatabaseInfrastructureError>
-  readonly claimFollowUp: (id: FollowUpId) => Effect.Effect<FollowUp | undefined, DatabaseInfrastructureError>
-  readonly claimDueFollowUps: () => Effect.Effect<ReadonlyArray<FollowUp>, DatabaseInfrastructureError>
-  readonly attachSubmission: (id: FollowUpId, submissionId: string) => Effect.Effect<boolean, DatabaseInfrastructureError>
-  readonly listNotifications: () => Effect.Effect<ReadonlyArray<Notification>, DatabaseInfrastructureError>
-  readonly markNotificationsRead: (ids?: ReadonlyArray<NotificationId>) => Effect.Effect<number, DatabaseInfrastructureError>
+  readonly claimFollowUp: (
+    id: FollowUpId,
+  ) => Effect.Effect<FollowUp | undefined, DatabaseInfrastructureError>
+  readonly claimDueFollowUps: () => Effect.Effect<
+    ReadonlyArray<FollowUp>,
+    DatabaseInfrastructureError
+  >
+  readonly attachSubmission: (
+    id: FollowUpId,
+    submissionId: string,
+  ) => Effect.Effect<boolean, DatabaseInfrastructureError>
+  readonly listNotifications: () => Effect.Effect<
+    ReadonlyArray<Notification>,
+    DatabaseInfrastructureError
+  >
+  readonly markNotificationsRead: (
+    ids?: ReadonlyArray<NotificationId>,
+  ) => Effect.Effect<number, DatabaseInfrastructureError>
   readonly unreadNotificationCount: () => Effect.Effect<number, DatabaseInfrastructureError>
 }
 
 export class TaskStore extends Context.Service<TaskStore, TaskStoreService>()('vivid/TaskStore') {}
+
+const rawRowsDecoder = Schema.decodeUnknownEffect(RawRows)
 
 export const taskStoreLayer = Layer.effect(
   TaskStore,
@@ -119,7 +162,11 @@ export const taskStoreLayer = Layer.effect(
 
     const listFollowUps = Effect.fn('TaskStore.listFollowUps')(function* (taskId: TaskId) {
       const rows = yield* database.run(
-        database.select().from(followUps).where(eq(followUps.taskId, taskId)).orderBy(desc(followUps.at)),
+        database
+          .select()
+          .from(followUps)
+          .where(eq(followUps.taskId, taskId))
+          .orderBy(desc(followUps.at)),
       )
       return yield* Effect.forEach(rows, decodeFollowUp)
     })
@@ -134,7 +181,9 @@ export const taskStoreLayer = Layer.effect(
     })
 
     const getRecord = Effect.fn('TaskStore.getRecord')(function* (id: TaskId) {
-      const rows = yield* database.run(database.select().from(tasks).where(eq(tasks.id, id)).limit(1))
+      const rows = yield* database.run(
+        database.select().from(tasks).where(eq(tasks.id, id)).limit(1),
+      )
       const row = rows[0]
       return row === undefined ? undefined : yield* decodeTask(row)
     })
@@ -186,7 +235,7 @@ export const taskStoreLayer = Layer.effect(
           })
           .returning(),
       )
-      return yield* decodeFollowUp(rows[0])
+      return yield* decodeFollowUp(yield* returned(rows, 'Task'))
     })
 
     const create = Effect.fn('TaskStore.create')(function* (input: CreateTaskStoreInput) {
@@ -203,7 +252,10 @@ export const taskStoreLayer = Layer.effect(
             status: 'open',
             priority: request.priority ?? 'normal',
             assignee: request.assignee ?? null,
-            dueAt: request.dueAt === undefined || request.dueAt === null ? null : timestamp(request.dueAt),
+            dueAt:
+              request.dueAt === undefined || request.dueAt === null
+                ? null
+                : timestamp(request.dueAt),
             originKind: input.origin.kind,
             originId: originId(input.origin),
             createdBy: input.createdBy,
@@ -215,8 +267,9 @@ export const taskStoreLayer = Layer.effect(
           })
           .returning(),
       )
-      const record = yield* decodeTask(rows[0])
-      if (request.followUp !== undefined) yield* addFollowUp(record.id, request.followUp, input.createdBy)
+      const record = yield* decodeTask(yield* returned(rows, 'Task'))
+      if (request.followUp !== undefined)
+        yield* addFollowUp(record.id, request.followUp, input.createdBy)
       return yield* view(record)
     })
 
@@ -240,7 +293,7 @@ export const taskStoreLayer = Layer.effect(
                   : timestamp(patch.dueAt),
             priority: patch.priority ?? current.priority,
             status,
-            completedAt: status === 'done' ? current.completedAt ?? now : null,
+            completedAt: status === 'done' ? (current.completedAt ?? now) : null,
             overdueNotifiedAt: patch.dueAt === undefined ? current.overdueNotifiedAt : null,
             updatedAt: now,
           })
@@ -260,12 +313,16 @@ export const taskStoreLayer = Layer.effect(
     })
 
     const remove = Effect.fn('TaskStore.remove')(function* (id: TaskId) {
-      const rows = yield* database.run(database.delete(tasks).where(eq(tasks.id, id)).returning({ id: tasks.id }))
+      const rows = yield* database.run(
+        database.delete(tasks).where(eq(tasks.id, id)).returning({ id: tasks.id }),
+      )
       return rows.length > 0
     })
 
     const getFollowUp = Effect.fn('TaskStore.getFollowUp')(function* (id: FollowUpId) {
-      const rows = yield* database.run(database.select().from(followUps).where(eq(followUps.id, id)).limit(1))
+      const rows = yield* database.run(
+        database.select().from(followUps).where(eq(followUps.id, id)).limit(1),
+      )
       return rows[0] === undefined ? undefined : yield* decodeFollowUp(rows[0])
     })
 
@@ -283,7 +340,8 @@ export const taskStoreLayer = Layer.effect(
           .set({
             at: patch.at === undefined ? current.at : timestamp(patch.at),
             note: patch.note ?? current.note,
-            repeatEveryMs: patch.repeatEveryMs === undefined ? current.repeatEveryMs : patch.repeatEveryMs,
+            repeatEveryMs:
+              patch.repeatEveryMs === undefined ? current.repeatEveryMs : patch.repeatEveryMs,
             status,
             submissionId: rerun ? null : current.submissionId,
             firedAt: rerun ? null : current.firedAt,
@@ -297,7 +355,9 @@ export const taskStoreLayer = Layer.effect(
     })
 
     const removeFollowUp = Effect.fn('TaskStore.removeFollowUp')(function* (id: FollowUpId) {
-      const rows = yield* database.run(database.delete(followUps).where(eq(followUps.id, id)).returning({ id: followUps.id }))
+      const rows = yield* database.run(
+        database.delete(followUps).where(eq(followUps.id, id)).returning({ id: followUps.id }),
+      )
       return rows.length > 0
     })
 
@@ -332,7 +392,7 @@ export const taskStoreLayer = Layer.effect(
               target.output, target.error, target.created_by AS "createdBy",
               target.created_at::float8 AS "createdAt"
           `)
-          const claimed = yield* Schema.decodeUnknownEffect(RawRows)(result).pipe(
+          const claimed = yield* rawRowsDecoder(result).pipe(
             Effect.mapError(() => databaseDecodeFailure('follow-up claim')),
           )
           return yield* Effect.forEach(claimed.rows, decodeFollowUp)
@@ -340,33 +400,52 @@ export const taskStoreLayer = Layer.effect(
       )
     })
 
-    const attachSubmission = Effect.fn('TaskStore.attachSubmission')(function* (id: FollowUpId, submissionId: string) {
+    const attachSubmission = Effect.fn('TaskStore.attachSubmission')(function* (
+      id: FollowUpId,
+      submissionId: string,
+    ) {
       const rows = yield* database.run(
-        database.update(followUps).set({ submissionId }).where(and(eq(followUps.id, id), eq(followUps.status, 'running'))).returning({ id: followUps.id }),
+        database
+          .update(followUps)
+          .set({ submissionId })
+          .where(and(eq(followUps.id, id), eq(followUps.status, 'running')))
+          .returning({ id: followUps.id }),
       )
       return rows.length > 0
     })
 
     const listNotifications = Effect.fn('TaskStore.listNotifications')(function* () {
-      const rows = yield* database.run(database.select().from(notifications).orderBy(desc(notifications.createdAt)).limit(50))
+      const rows = yield* database.run(
+        database.select().from(notifications).orderBy(desc(notifications.createdAt)).limit(50),
+      )
       return yield* Effect.forEach(rows, decodeNotification)
     })
 
     const unreadNotificationCount = Effect.fn('TaskStore.unreadNotificationCount')(function* () {
       const rows = yield* database.run(
-        database.select({ count: sql<number>`count(*)`.mapWith(Number) }).from(notifications).where(isNull(notifications.readAt)),
+        database
+          .select({ count: sql<number>`count(*)`.mapWith(Number) })
+          .from(notifications)
+          .where(isNull(notifications.readAt)),
       )
       return rows[0]?.count ?? 0
     })
 
-    const markNotificationsRead = Effect.fn('TaskStore.markNotificationsRead')(function* (ids?: ReadonlyArray<NotificationId>) {
+    const markNotificationsRead = Effect.fn('TaskStore.markNotificationsRead')(function* (
+      ids?: ReadonlyArray<NotificationId>,
+    ) {
       if (ids !== undefined && ids.length === 0) return 0
       const now = yield* Clock.currentTimeMillis
-      const condition = ids === undefined
-        ? isNull(notifications.readAt)
-        : and(isNull(notifications.readAt), inArray(notifications.id, ids))
+      const condition =
+        ids === undefined
+          ? isNull(notifications.readAt)
+          : and(isNull(notifications.readAt), inArray(notifications.id, ids))
       const rows = yield* database.run(
-        database.update(notifications).set({ readAt: now }).where(condition).returning({ id: notifications.id }),
+        database
+          .update(notifications)
+          .set({ readAt: now })
+          .where(condition)
+          .returning({ id: notifications.id }),
       )
       return rows.length
     })

@@ -1,10 +1,18 @@
 import { and, eq } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
-import { DatabaseFailure, Forbidden, SessionId, Unauthenticated, Company, Membership, Person } from '@vivid/contracts'
+import {
+  DatabaseFailure,
+  Forbidden,
+  SessionId,
+  Unauthenticated,
+  Company,
+  Membership,
+  Person,
+} from '@vivid/contracts'
 import { AuthContext } from '@vivid/contracts/api'
 import { AuthState } from '@vivid/contracts/api'
-import { Database } from '../database/client.ts'
+import { Database, type PersistedFields } from '../database/client.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { personTable, sessionTable } from './tables.ts'
 import { authEffect, localAuthRuntimeLayer } from './provider.ts'
@@ -25,9 +33,11 @@ export const requireActiveCompany = Effect.fn('Auth.requireActiveCompany')(funct
   return { auth, company: auth.activeCompany, membership: auth.membership }
 })
 
-const decode = <A>(schema: Schema.ConstraintDecoder<A>, value: unknown) =>
+const decode = <A>(schema: Schema.ConstraintDecoder<A>, value: PersistedFields) =>
   Schema.decodeUnknownEffect(schema)(value).pipe(
-    Effect.mapError(() => new DatabaseFailure({ message: 'Database returned invalid authentication data' })),
+    Effect.mapError(
+      () => new DatabaseFailure({ message: 'Database returned invalid authentication data' }),
+    ),
   )
 
 /** Resolves Better Auth identity into Vivid's Person, Company, and Membership context. */
@@ -37,26 +47,55 @@ export const authenticate = Effect.fn('Auth.authenticate')(function* (headers: H
     Effect.provide(localAuthRuntimeLayer),
     Effect.mapError(() => new Unauthenticated({ message: 'Invalid session' })),
   )
-  if (session === null) return yield* Effect.fail(new Unauthenticated({ message: 'Authentication required' }))
+  if (session === null)
+    return yield* Effect.fail(new Unauthenticated({ message: 'Authentication required' }))
   const database = yield* Database
-  const people = yield* database.run(database.select().from(personTable).where(eq(personTable.id, session.user.id)).limit(1))
+  const people = yield* database.run(
+    database.select().from(personTable).where(eq(personTable.id, session.user.id)).limit(1),
+  )
   const personRow = people[0]
-  if (personRow === undefined) return yield* Effect.fail(new Unauthenticated({ message: 'Person no longer exists' }))
-  const person = yield* decode(Person, { id: personRow.id, name: personRow.name, email: personRow.email, image: personRow.image })
-  const sessions = yield* database.run(database.select({ activeCompanyId: sessionTable.activeCompanyId }).from(sessionTable).where(eq(sessionTable.id, session.session.id)).limit(1))
+  if (personRow === undefined)
+    return yield* Effect.fail(new Unauthenticated({ message: 'Person no longer exists' }))
+  const person = yield* decode(Person, {
+    id: personRow.id,
+    name: personRow.name,
+    email: personRow.email,
+    image: personRow.image,
+  })
+  const sessions = yield* database.run(
+    database
+      .select({ activeCompanyId: sessionTable.activeCompanyId })
+      .from(sessionTable)
+      .where(eq(sessionTable.id, session.session.id))
+      .limit(1),
+  )
   const base = AuthState.Person({ person, sessionId: SessionId.make(session.session.id) })
   const activeCompanyId = sessions[0]?.activeCompanyId
   if (activeCompanyId === undefined || activeCompanyId === null) return base
   const rows = yield* database.run(
-    database.select({ company: companyTable, membership: membershipTable }).from(membershipTable)
+    database
+      .select({ company: companyTable, membership: membershipTable })
+      .from(membershipTable)
       .innerJoin(companyTable, eq(membershipTable.companyId, companyTable.id))
-      .where(and(eq(membershipTable.companyId, activeCompanyId), eq(membershipTable.userId, person.id))).limit(1),
+      .where(
+        and(eq(membershipTable.companyId, activeCompanyId), eq(membershipTable.userId, person.id)),
+      )
+      .limit(1),
   )
   const active = rows[0]
   if (active === undefined) return base
   const [activeCompany, membership] = yield* Effect.all([
-    decode(Company, active.company),
-    decode(Membership, { id: active.membership.id, companyId: active.membership.companyId, personId: active.membership.userId, role: active.membership.role }),
+    decode(Company, {
+      id: active.company.id,
+      name: active.company.name,
+      slug: active.company.slug,
+    }),
+    decode(Membership, {
+      id: active.membership.id,
+      companyId: active.membership.companyId,
+      personId: active.membership.userId,
+      role: active.membership.role,
+    }),
   ])
   return AuthState.Person({ ...base, activeCompany, membership })
 })

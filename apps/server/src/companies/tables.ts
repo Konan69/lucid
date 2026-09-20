@@ -21,8 +21,12 @@ export const membershipTable = pgTable(
   'membership',
   {
     id: id(),
-    companyId: text().notNull().references(() => companyTable.id, { onDelete: 'cascade' }),
-    userId: text().notNull().references(() => personTable.id, { onDelete: 'cascade' }),
+    companyId: text()
+      .notNull()
+      .references(() => companyTable.id, { onDelete: 'cascade' }),
+    userId: text()
+      .notNull()
+      .references(() => personTable.id, { onDelete: 'cascade' }),
     role: text().notNull(),
     createdAt: createdAt(),
   },
@@ -37,12 +41,16 @@ export const invitationTable = pgTable(
   'invitation',
   {
     id: id(),
-    companyId: text().notNull().references(() => companyTable.id, { onDelete: 'cascade' }),
+    companyId: text()
+      .notNull()
+      .references(() => companyTable.id, { onDelete: 'cascade' }),
     email: text().notNull(),
     role: text().notNull(),
     status: text().notNull(),
     expiresAt: timestamp({ withTimezone: true, mode: 'date' }).notNull(),
-    inviterId: text().notNull().references(() => personTable.id, { onDelete: 'cascade' }),
+    inviterId: text()
+      .notNull()
+      .references(() => personTable.id, { onDelete: 'cascade' }),
     createdAt: createdAt(),
   },
   (table) => [

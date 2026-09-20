@@ -7,10 +7,14 @@ export const projectTable = pgTable(
   'project',
   {
     id: text().primaryKey(),
-    companyId: text().notNull().references(() => companyTable.id, { onDelete: 'cascade' }),
+    companyId: text()
+      .notNull()
+      .references(() => companyTable.id, { onDelete: 'cascade' }),
     name: text().notNull(),
     parentProjectId: text().references((): AnyPgColumn => projectTable.id, { onDelete: 'cascade' }),
-    createdBy: text().notNull().references(() => personTable.id, { onDelete: 'restrict' }),
+    createdBy: text()
+      .notNull()
+      .references(() => personTable.id, { onDelete: 'restrict' }),
     createdAt: timestamp({ withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (table) => [

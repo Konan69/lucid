@@ -1,2 +1,2 @@
-export { VividClient } from './api'
-export { VividRpcClient, type VividRpcClientService } from './rpc'
+export { VividClient } from './api.js'
+export { VividRpcClient, type VividRpcClientService } from './rpc.js'

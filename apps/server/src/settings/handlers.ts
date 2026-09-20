@@ -8,7 +8,9 @@ export const getSettings = Effect.fn('Api.getSettings')(function* () {
   const store = yield* SettingsStore
   return yield* store.get(auth.person.id)
 })
-export const patchSettings = Effect.fn('Api.patchSettings')(function* (payload: PatchSettingsRequest) {
+export const patchSettings = Effect.fn('Api.patchSettings')(function* (
+  payload: PatchSettingsRequest,
+) {
   const auth = yield* requirePerson()
   const store = yield* SettingsStore
   return yield* store.patch(auth.person.id, payload)

@@ -74,8 +74,6 @@ export const authEffect = Effect.gen(function* () {
   return yield* BetterAuth(makeOptions(config)).pipe(
     Effect.provide(Postgres(Redacted.value(config.DATABASE_URL), { migrate: false })),
   )
-}).pipe(
-  Effect.mapError(() => new DatabaseFailure({ message: 'Server configuration is invalid' })),
-)
+}).pipe(Effect.mapError(() => new DatabaseFailure({ message: 'Server configuration is invalid' })))
 
 export type AuthInstance = Effect.Success<typeof authEffect>

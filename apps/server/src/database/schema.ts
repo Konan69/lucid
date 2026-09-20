@@ -1,5 +1,11 @@
 import { bigint, integer, pgTable } from 'drizzle-orm/pg-core'
-import { accountTable, deviceCodeTable, personTable, sessionTable, verificationTable } from '../auth/tables.ts'
+import {
+  accountTable,
+  deviceCodeTable,
+  personTable,
+  sessionTable,
+  verificationTable,
+} from '../auth/tables.ts'
 import { companyTable, invitationTable, membershipTable } from '../companies/tables.ts'
 import { libraryChunks, libraryDocuments, libraryFolders } from '../library/tables.ts'
 import { projectTable } from '../projects/tables.ts'

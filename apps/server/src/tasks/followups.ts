@@ -2,7 +2,13 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Schedule from 'effect/Schedule'
-import { Thread as ThreadSchema, type FollowUp, type FollowUpId, type Task, type TaskId } from '@vivid/contracts'
+import {
+  Thread as ThreadSchema,
+  type FollowUp,
+  type FollowUpId,
+  type Task,
+  type TaskId,
+} from '@vivid/contracts'
 import { RuntimeUnavailable } from '@vivid/contracts/rpc'
 import type { DatabaseInfrastructureError } from '../database/client.ts'
 import { Runtime } from '../runtime/client.ts'
@@ -11,17 +17,25 @@ import { TaskStore } from './store.ts'
 
 export const FOLLOW_UP_TICK_MS = 20_000
 
-const instruction = (task: Task, followUp: FollowUp) => [
-  `A follow-up you scheduled is due for the task "${task.title}".`,
-  task.detail.length > 0 ? `Detail: ${task.detail}` : undefined,
-  `Waiting on: ${task.assignee ?? 'the user (this is their own task)'}.`,
-  followUp.note.length > 0 ? `Follow-up note: ${followUp.note}` : undefined,
-  'Act on it now. Do not claim you contacted anyone yourself.',
-].filter((line): line is string => line !== undefined).join('\n')
+const instruction = (task: Task, followUp: FollowUp) =>
+  [
+    `A follow-up you scheduled is due for the task "${task.title}".`,
+    task.detail.length > 0 ? `Detail: ${task.detail}` : undefined,
+    `Waiting on: ${task.assignee ?? 'the user (this is their own task)'}.`,
+    followUp.note.length > 0 ? `Follow-up note: ${followUp.note}` : undefined,
+    'Act on it now. Do not claim you contacted anyone yourself.',
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join('\n')
 
 export interface FollowUpsService {
-  readonly run: (id: FollowUpId) => Effect.Effect<FollowUp | undefined, DatabaseInfrastructureError | RuntimeUnavailable>
-  readonly nudge: (taskId: TaskId, note: string) => Effect.Effect<FollowUp | undefined, DatabaseInfrastructureError | RuntimeUnavailable>
+  readonly run: (
+    id: FollowUpId,
+  ) => Effect.Effect<FollowUp | undefined, DatabaseInfrastructureError | RuntimeUnavailable>
+  readonly nudge: (
+    taskId: TaskId,
+    note: string,
+  ) => Effect.Effect<FollowUp | undefined, DatabaseInfrastructureError | RuntimeUnavailable>
   readonly runDue: () => Effect.Effect<void, DatabaseInfrastructureError | RuntimeUnavailable>
 }
 
@@ -35,15 +49,18 @@ export const followUpsLayer = Layer.effect(
     const runtime = yield* Runtime
 
     const submit = Effect.fn('FollowUps.submit')(function* (task: Task, followUp: FollowUp) {
-      const claimed = followUp.status === 'running' ? followUp : yield* tasks.claimFollowUp(followUp.id)
+      const claimed =
+        followUp.status === 'running' ? followUp : yield* tasks.claimFollowUp(followUp.id)
       if (claimed === undefined || claimed.status !== 'running') return claimed
-      yield* threads.put(ThreadSchema.make({
-        id: task.conversationId,
-        title: task.title,
-        preview: `Following up: ${task.title}`,
-        updatedAt: claimed.firedAt ?? claimed.at,
-        archived: false,
-      }))
+      yield* threads.put(
+        ThreadSchema.make({
+          id: task.conversationId,
+          title: task.title,
+          preview: `Following up: ${task.title}`,
+          updatedAt: claimed.firedAt ?? claimed.at,
+          archived: false,
+        }),
+      )
       if (claimed.submissionId !== null) return claimed
       const receipt = yield* runtime.start({
         threadId: task.conversationId,
@@ -82,10 +99,20 @@ export const followUpsLayer = Layer.effect(
 
     const runDue = Effect.fn('FollowUps.runDue')(function* () {
       const due = yield* tasks.claimDueFollowUps()
-      yield* Effect.forEach(due, (followUp) =>
-        tasks.get(followUp.taskId).pipe(
-          Effect.flatMap((task) => task === undefined || task.status !== 'open' ? Effect.void : Effect.asVoid(submit(task, followUp))),
-        ), { discard: true, concurrency: 1 })
+      yield* Effect.forEach(
+        due,
+        (followUp) =>
+          tasks
+            .get(followUp.taskId)
+            .pipe(
+              Effect.flatMap((task) =>
+                task === undefined || task.status !== 'open'
+                  ? Effect.void
+                  : Effect.asVoid(submit(task, followUp)),
+              ),
+            ),
+        { discard: true, concurrency: 1 },
+      )
     })
 
     return FollowUps.of({ run, nudge, runDue })

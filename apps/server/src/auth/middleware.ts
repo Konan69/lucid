@@ -24,10 +24,15 @@ export const authMiddlewareLayer = Layer.effect(
   AuthMiddleware,
   Effect.gen(function* () {
     const services = yield* Effect.context<Database | ServerConfig>()
-    return (effect) => Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest
-      return yield* withAuthentication(new globalThis.Headers(Object.entries(request.headers)), effect, services)
-    })
+    return (effect) =>
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest
+        return yield* withAuthentication(
+          new globalThis.Headers(Object.entries(request.headers)),
+          effect,
+          services,
+        )
+      })
   }),
 )
 
@@ -41,7 +46,11 @@ export const rpcAuthMiddlewareLayer = Layer.effect(
       if (options.headers.authorization === runtimeAuthorization) {
         return Effect.provideService(effect, AuthContext, AuthState.Runtime())
       }
-      return withAuthentication(new globalThis.Headers(Object.entries(options.headers)), effect, services)
+      return withAuthentication(
+        new globalThis.Headers(Object.entries(options.headers)),
+        effect,
+        services,
+      )
     }
   }),
 )

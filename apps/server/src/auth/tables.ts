@@ -28,7 +28,9 @@ export const sessionTable = pgTable(
     updatedAt: createdAt(),
     ipAddress: text(),
     userAgent: text(),
-    userId: text().notNull().references(() => personTable.id, { onDelete: 'cascade' }),
+    userId: text()
+      .notNull()
+      .references(() => personTable.id, { onDelete: 'cascade' }),
     activeCompanyId: text().references(() => companyTable.id, { onDelete: 'set null' }),
   },
   (table) => [
@@ -43,7 +45,9 @@ export const accountTable = pgTable(
     id: id(),
     accountId: text().notNull(),
     providerId: text().notNull(),
-    userId: text().notNull().references(() => personTable.id, { onDelete: 'cascade' }),
+    userId: text()
+      .notNull()
+      .references(() => personTable.id, { onDelete: 'cascade' }),
     accessToken: text(),
     refreshToken: text(),
     idToken: text(),
