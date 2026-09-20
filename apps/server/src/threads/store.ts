@@ -3,6 +3,7 @@ import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import {
   DatabaseFailure,
@@ -45,7 +46,7 @@ const decodeThread = Effect.fn('ThreadStore.decode')(function* (
 
 export interface ThreadStoreService {
   readonly list: () => Effect.Effect<ReadonlyArray<Thread>, DatabaseInfrastructureError>
-  readonly get: (id: ThreadId) => Effect.Effect<Thread | undefined, DatabaseInfrastructureError>
+  readonly get: (id: ThreadId) => Effect.Effect<Option.Option<Thread>, DatabaseInfrastructureError>
   readonly put: (thread: Thread) => Effect.Effect<Thread, DatabaseInfrastructureError>
   readonly remove: (id: ThreadId) => Effect.Effect<boolean, DatabaseInfrastructureError>
 }
@@ -71,7 +72,7 @@ export const threadStoreLayer = Layer.effect(
         database.select().from(threads).where(eq(threads.id, id)).limit(1),
       )
       const row = rows[0]
-      return row === undefined ? undefined : yield* decodeThread(row)
+      return row === undefined ? Option.none() : Option.some(yield* decodeThread(row))
     })
 
     const put = Effect.fn('ThreadStore.put')(function* (thread: Thread) {

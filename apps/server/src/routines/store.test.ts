@@ -1,6 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
+import * as Option from 'effect/Option'
 import { RoutineId } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import { Database } from '../database/client.ts'
@@ -30,7 +31,10 @@ describe.skipIf(!testDatabaseConfigured)('RoutineStore', () => {
         )
         const occurrence = yield* store.startOccurrence(routine.id)
         expect(occurrence.routineId).toBe(routine.id)
-        expect((yield* store.get(RoutineId.make(routine.id)))?.runs).toHaveLength(1)
+        const stored = yield* store.get(RoutineId.make(routine.id))
+        if (Option.isNone(stored)) return yield* Effect.fail(new Error('Routine was not persisted'))
+        expect(stored.value.runs).toHaveLength(1)
+        return yield* Effect.void
       }),
     )
   })

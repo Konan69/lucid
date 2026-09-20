@@ -130,7 +130,8 @@ export const routineSchedulerServiceLayer = Layer.effect(
 
     const run = Effect.fn('RoutineScheduler.run')(function* (id: RoutineId) {
       const routine = yield* routines.get(id)
-      return routine === undefined ? Option.none() : Option.some(yield* submit(routine))
+      if (Option.isNone(routine)) return Option.none()
+      return Option.some(yield* submit(routine.value))
     })
 
     /** Advances one claimed Routine and submits its occurrence before the next claim. */
