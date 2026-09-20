@@ -144,6 +144,24 @@ const decodeConnectionCallbackState = Schema.decodeUnknownResult(
   Schema.fromJsonString(ConnectionCallbackState),
 )
 const isNumber = Schema.is(Schema.Number)
+const libraryMimeTypes = new Map([
+  ['pdf', 'application/pdf'],
+  ['md', 'text/markdown'],
+  ['markdown', 'text/markdown'],
+  ['txt', 'text/plain'],
+])
+
+/** Maps supported filename extensions before the shared upload schema checks the final MIME type. */
+const inferLibraryMimeType = (name: string, declaredType: string) => {
+  const extension = name.toLocaleLowerCase().split('.').pop()
+  return (extension === undefined ? undefined : libraryMimeTypes.get(extension)) ?? declaredType
+}
+
+/** Converts FormData's absent, file, and empty folder variants into the domain's root-folder value. */
+const libraryUploadFolderId = (value: string | File | null) => {
+  if (value === null || value instanceof File || value.length === 0) return null
+  return value
+}
 
 /** Reads one JSON body and decodes it before domain code can observe the value. */
 const decodeJsonBody = <Value, Encoded>(
@@ -390,26 +408,11 @@ app.post('/api/library', async (context) => {
     return context.json({ error: 'Files must be 10 MB or smaller' }, 413)
 
   const name = (upload.name.split(/[\\/]/).pop() ?? 'document').trim().slice(0, 180)
-  const extension = name.toLocaleLowerCase().split('.').pop()
-  const inferredType =
-    extension === 'pdf'
-      ? 'application/pdf'
-      : extension === 'md' || extension === 'markdown'
-        ? 'text/markdown'
-        : extension === 'txt'
-          ? 'text/plain'
-          : upload.type
-  const requestedFolderId = form.get('folderId')
   const metadata = decodeIngress(LibraryUploadMetadata, {
     name,
-    mimeType: inferredType,
+    mimeType: inferLibraryMimeType(name, upload.type),
     size: upload.size,
-    folderId:
-      requestedFolderId === null ||
-      requestedFolderId instanceof File ||
-      requestedFolderId.length === 0
-        ? null
-        : requestedFolderId,
+    folderId: libraryUploadFolderId(form.get('folderId')),
   })
   if (Result.isFailure(metadata))
     return context.json({ error: 'Only PDF, Markdown, and plain-text files are supported' }, 415)
@@ -522,20 +525,11 @@ app.post('/api/routines', async (context) => {
   if (Result.isFailure(decoded)) {
     return context.json({ error: 'name, prompt, cron, and timezone are required' }, 400)
   }
-  const body = decoded.success
-  const input = {
-    name: body.name.trim().slice(0, 120),
-    prompt: body.prompt.trim().slice(0, 4000),
-    cron: body.cron.trim().slice(0, 120),
-    timezone: body.timezone.trim().slice(0, 120),
-    libraryFolderId:
-      body.libraryFolderId === undefined || body.libraryFolderId === ''
-        ? null
-        : body.libraryFolderId,
+  const normalized = createRoutineInputFrom(decoded.success)
+  if (Result.isFailure(normalized)) {
+    return context.json({ error: normalized.failure.message }, 400)
   }
-  if (!input.name || !input.prompt || !input.cron || !input.timezone) {
-    return context.json({ error: 'Routine fields cannot be empty' }, 400)
-  }
+  const input = normalized.success
   if (input.libraryFolderId && !(await getLibraryFolder(input.libraryFolderId))) {
     return context.json({ error: 'Library folder not found' }, 404)
   }
@@ -558,32 +552,17 @@ app.patch('/api/routines/:id', async (context) => {
   if (!current) return context.json({ error: 'Routine not found' }, 404)
   const decoded = await decodeJsonBody(context, PatchRoutineRequest)
   if (Result.isFailure(decoded)) return context.json({ error: 'Invalid Routine update' }, 400)
-  const body = decoded.success
-  const patch: Parameters<typeof updateRoutine>[1] = {}
-  if (body.name !== undefined) {
-    if (!body.name.trim()) return context.json({ error: 'Invalid name' }, 400)
-    patch.name = body.name.trim().slice(0, 120)
+  const normalized = routinePatchFrom(decoded.success)
+  if (Result.isFailure(normalized)) {
+    return context.json({ error: normalized.failure.message }, 400)
   }
-  if (body.prompt !== undefined) {
-    if (!body.prompt.trim()) return context.json({ error: 'Invalid prompt' }, 400)
-    patch.prompt = body.prompt.trim().slice(0, 4000)
+  const patch = normalized.success
+  if (patch.libraryFolderId && !(await getLibraryFolder(patch.libraryFolderId))) {
+    return context.json({ error: 'Library folder not found' }, 404)
   }
-  if (body.cron !== undefined) {
-    if (!body.cron.trim()) return context.json({ error: 'Invalid cron' }, 400)
-    patch.cron = body.cron.trim().slice(0, 120)
-  }
-  if (body.timezone !== undefined) {
-    if (!body.timezone.trim()) return context.json({ error: 'Invalid timezone' }, 400)
-    patch.timezone = body.timezone.trim().slice(0, 120)
-  }
-  if (body.enabled !== undefined) patch.enabled = body.enabled
-  if (body.libraryFolderId !== undefined) {
-    patch.libraryFolderId = body.libraryFolderId === '' ? null : body.libraryFolderId
-    if (patch.libraryFolderId && !(await getLibraryFolder(patch.libraryFolderId)))
-      return context.json({ error: 'Library folder not found' }, 404)
-  }
+  const scheduleInput = routineScheduleFromPatch(patch, current)
   const schedule = await runRuntimeEffect(
-    validateRoutineSchedule(patch.cron ?? current.cron, patch.timezone ?? current.timezone),
+    validateRoutineSchedule(scheduleInput.cron, scheduleInput.timezone),
   )
   if (Result.isFailure(schedule)) return context.json({ error: schedule.failure.message }, 400)
   const routine = await updateRoutine(current.id, patch)
@@ -704,6 +683,72 @@ app.delete('/api/connectors/:id', async (context) => {
 
 const MAX_REPEAT_MS = 366 * 86_400_000
 
+type RoutineInput = Parameters<typeof createRoutine>[0]
+type RoutinePatch = Parameters<typeof updateRoutine>[1]
+type RoutineRequest = typeof CreateRoutineRequest.Type
+type RoutinePatchRequest = typeof PatchRoutineRequest.Type
+
+/** Normalizes a complete Routine request before persistence and scheduling. */
+function createRoutineInputFrom(body: RoutineRequest): Result.Result<RoutineInput, InvalidIngress> {
+  const input = {
+    name: body.name.trim().slice(0, 120),
+    prompt: body.prompt.trim().slice(0, 4_000),
+    cron: body.cron.trim().slice(0, 120),
+    timezone: body.timezone.trim().slice(0, 120),
+    libraryFolderId:
+      body.libraryFolderId === undefined || body.libraryFolderId === ''
+        ? null
+        : body.libraryFolderId,
+  }
+  return [input.name, input.prompt, input.cron, input.timezone].some((value) => value.length === 0)
+    ? Result.fail(new InvalidIngress({ message: 'Routine fields cannot be empty' }))
+    : Result.succeed(input)
+}
+
+const routineTextFields = [
+  { key: 'name', limit: 120 },
+  { key: 'prompt', limit: 4_000 },
+  { key: 'cron', limit: 120 },
+  { key: 'timezone', limit: 120 },
+] as const
+
+/** Applies the four required non-empty Routine text fields from a partial request. */
+function applyRoutineTextPatch(
+  body: RoutinePatchRequest,
+  patch: RoutinePatch,
+): Result.Result<void, InvalidIngress> {
+  for (const field of routineTextFields) {
+    const value = body[field.key]
+    if (value === undefined) continue
+    const normalized = value.trim().slice(0, field.limit)
+    if (normalized.length === 0) {
+      return Result.fail(new InvalidIngress({ message: `Invalid ${field.key}` }))
+    }
+    patch[field.key] = normalized
+  }
+  return Result.succeed(undefined)
+}
+
+const routineScheduleFromPatch = (
+  patch: RoutinePatch,
+  current: { readonly cron: string; readonly timezone: string },
+) => ({
+  cron: patch.cron ?? current.cron,
+  timezone: patch.timezone ?? current.timezone,
+})
+
+/** Normalizes one partial Routine request without duplicating route decisions. */
+function routinePatchFrom(body: RoutinePatchRequest): Result.Result<RoutinePatch, InvalidIngress> {
+  const patch: RoutinePatch = {}
+  const text = applyRoutineTextPatch(body, patch)
+  if (Result.isFailure(text)) return Result.fail(text.failure)
+  if (body.enabled !== undefined) patch.enabled = body.enabled
+  if (body.libraryFolderId !== undefined) {
+    patch.libraryFolderId = body.libraryFolderId === '' ? null : body.libraryFolderId
+  }
+  return Result.succeed(patch)
+}
+
 type ParsedTimestamp =
   | { readonly _tag: 'Omitted' }
   | { readonly _tag: 'Cleared' }
@@ -722,6 +767,15 @@ function parseWhen(
     : Result.fail(new InvalidTaskMutation({ message: 'Invalid due date' }))
 }
 
+const normalizedAssignee = (assignee: string | null) =>
+  assignee !== null && assignee.trim().length > 0 ? assignee.trim().slice(0, 80) : null
+
+/** Applies timestamp state to the Task patch while preserving omission. */
+function applyTaskDueAt(patch: TaskPatch, dueAt: ParsedTimestamp) {
+  if (dueAt._tag === 'Cleared') patch.dueAt = null
+  if (dueAt._tag === 'Value') patch.dueAt = dueAt.value
+}
+
 /** Normalizes a decoded Task request without using string errors as control flow. */
 function taskPatchFrom(
   body: PatchTaskRequest | CreateTaskRequest,
@@ -734,14 +788,10 @@ function taskPatchFrom(
     patch.title = title
   }
   if (body.detail !== undefined) patch.detail = body.detail.trim().slice(0, 2_000)
-  if (body.assignee !== undefined) {
-    patch.assignee =
-      body.assignee !== null && body.assignee.trim() ? body.assignee.trim().slice(0, 80) : null
-  }
+  if (body.assignee !== undefined) patch.assignee = normalizedAssignee(body.assignee)
   const dueAt = parseWhen(body.dueAt)
   if (Result.isFailure(dueAt)) return Result.fail(dueAt.failure)
-  if (dueAt.success._tag === 'Cleared') patch.dueAt = null
-  if (dueAt.success._tag === 'Value') patch.dueAt = dueAt.success.value
+  applyTaskDueAt(patch, dueAt.success)
   if (body.priority !== undefined) patch.priority = body.priority
   if ('status' in body && body.status !== undefined) patch.status = body.status
   return Result.succeed(patch)
