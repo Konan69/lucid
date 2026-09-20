@@ -1,0 +1,36 @@
+{
+  "name": "@vivid/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Electron host for the Vivid web renderer: window chrome, deep links, and the desktop bridge.",
+  "author": "Vivid",
+  "license": "UNLICENSED",
+  "main": "dist/main/main.cjs",
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "dev": "pnpm build && electron .",
+    "start": "pnpm build && electron .",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit",
+    "lint": "oxlint --type-aware src",
+    "test": "vitest run",
+    "package": "pnpm build && electron-builder"
+  },
+  "exports": {
+    "./bridge": "./src/shared/bridge.ts"
+  },
+  "dependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "@typescript/native": "catalog:",
+    "electron": "catalog:",
+    "electron-builder": "catalog:",
+    "electron-builder-squirrel-windows": "catalog:",
+    "esbuild": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

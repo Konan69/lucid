@@ -1,4 +1,5 @@
 packages:
+  - 'apps/desktop'
   - 'apps/mobile'
   - 'apps/server'
   - 'apps/web'
@@ -54,6 +55,10 @@ catalog:
   drizzle-kit: 1.0.0-rc.5-ab785fc
   drizzle-orm: 1.0.0-rc.5-ab785fc
   effect: 4.0.0-rc.116
+  electron: 44.4.3
+  electron-builder: 26.15.3
+  electron-builder-squirrel-windows: 26.15.3
+  esbuild: 0.28.2
   expo: 57.0.24
   expo-crypto: 57.0.3
   expo-dev-client: 57.0.19
@@ -93,6 +98,8 @@ overrides:
 # Only dependencies whose working artifact requires an install script may run
 # one. Optional accelerators and donation messages stay blocked.
 allowBuilds:
+  electron: true
+  electron-winstaller: true
   esbuild: true
   sharp: true
   workerd: true

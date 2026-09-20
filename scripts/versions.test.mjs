@@ -36,6 +36,10 @@ void test('workspace manifest discovery covers both apps and packages', () => {
 void test('critical prerelease versions are exact', () => {
   assert.equal(versions.effect, '4.0.0-rc.116')
   assert.equal(versions['drizzle-orm'], '1.0.0-rc.5-ab785fc')
+  assert.equal(versions.electron, '44.4.3')
+  assert.equal(versions['electron-builder'], '26.15.3')
+  assert.equal(versions['electron-builder-squirrel-windows'], '26.15.3')
+  assert.equal(versions.esbuild, '0.28.2')
   assert.equal(versions.alchemy, '2.0.0-beta.79')
   assert.equal(versions['better-auth'], '1.7.5')
   assert.equal(versions['@typescript/native'], 'npm:typescript@7.0.2')
