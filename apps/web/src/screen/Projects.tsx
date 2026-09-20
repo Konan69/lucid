@@ -196,31 +196,7 @@ function ProjectPage({
             </div>
           </div>
 
-          <Section title="Conversations" note={`${p.conversations.length} in this project`}>
-            <ul className="flex flex-col gap-px">
-              {p.conversations.map((t, i) => (
-                <li key={t}>
-                  <button
-                    className={cn(
-                      'group/row flex w-full items-center gap-2.5 rounded-row px-2.5 py-2 text-left transition-colors duration-(--dur-fast) outline-none select-none hover:bg-wash-hover',
-                      i === 0 && 'bg-surface-2',
-                    )}
-                  >
-                    <i
-                      className={cn(
-                        'size-1.5 shrink-0 rounded-full',
-                        i === 0 ? 'bg-working' : 'bg-line-2',
-                      )}
-                    />
-                    <span className="min-w-0 flex-1 truncate text-label text-ink">{t}</span>
-                    <span className="text-meta font-meta text-ink-4 tabular-nums">
-                      {i === 0 ? p.lastActive : ''}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </Section>
+          <ProjectConversations project={p} />
 
           {p.children && p.children.length > 0 && (
             <Section
@@ -283,6 +259,37 @@ function ProjectPage({
         </div>
       </div>
     </section>
+  )
+}
+
+/** Renders the project conversation list separately so the page only composes its sections. */
+function ProjectConversations({ project: p }: { project: Project }) {
+  return (
+    <Section title="Conversations" note={`${p.conversations.length} in this project`}>
+      <ul className="flex flex-col gap-px">
+        {p.conversations.map((t, i) => (
+          <li key={t}>
+            <button
+              className={cn(
+                'group/row flex w-full items-center gap-2.5 rounded-row px-2.5 py-2 text-left transition-colors duration-(--dur-fast) outline-none select-none hover:bg-wash-hover',
+                i === 0 && 'bg-surface-2',
+              )}
+            >
+              <i
+                className={cn(
+                  'size-1.5 shrink-0 rounded-full',
+                  i === 0 ? 'bg-working' : 'bg-line-2',
+                )}
+              />
+              <span className="min-w-0 flex-1 truncate text-label text-ink">{t}</span>
+              <span className="text-meta font-meta text-ink-4 tabular-nums">
+                {i === 0 ? p.lastActive : ''}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Section>
   )
 }
 
