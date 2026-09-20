@@ -373,7 +373,7 @@ function TrackedCard({
     .filter(Boolean)
     .join(' · ')
   return (
-    <div className="mt-3 flex items-start gap-3 rounded-panel bg-surface-2 px-3.5 py-3 shadow-ring-xs">
+    <div className="mt-3 flex items-start gap-3 rounded-panel bg-surface-2 px-3.5 py-3 smooth-shadow-ring-xs">
       <span className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink">
         <Check className="size-4" strokeWidth={2} />
       </span>
@@ -598,9 +598,9 @@ function ConnectServices({
         return (
           <div
             key={s.id}
-            className="flex items-center gap-3 rounded-panel bg-surface-2 p-3 shadow-ring-xs"
+            className="flex items-center gap-3 rounded-panel bg-surface-2 p-3 smooth-shadow-ring-xs"
           >
-            <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-control bg-surface-0 shadow-ring-xs">
+            <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-control bg-surface-0 smooth-shadow-ring-xs">
               <Icon className={cn('size-5', tone)} strokeWidth={1.8} />
             </span>
             <span className="min-w-0 flex-1">
@@ -615,7 +615,7 @@ function ConnectServices({
             ) : (
               <button
                 onClick={() => setDone((d) => ({ ...d, [s.id]: true }))}
-                className="inline-flex h-8 shrink-0 items-center rounded-full bg-surface-3 px-4 text-label text-ink shadow-ring-xs transition-colors duration-(--dur-fast) hover:bg-wash-hover active:scale-97"
+                className="inline-flex h-8 shrink-0 items-center rounded-full bg-surface-3 px-4 text-label text-ink smooth-shadow-ring-xs transition-colors duration-(--dur-fast) hover:bg-wash-hover active:scale-97"
               >
                 Authorize
               </button>

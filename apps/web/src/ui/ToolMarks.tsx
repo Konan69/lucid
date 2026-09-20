@@ -132,7 +132,7 @@ export function ToolMarks({
           <span
             key={t}
             title={t}
-            className="inline-flex size-(--tool-size) shrink-0 items-center justify-center overflow-hidden rounded-[4px] shadow-ring-xs"
+            className="inline-flex size-(--tool-size) shrink-0 items-center justify-center overflow-hidden rounded-[4px] smooth-shadow-ring-xs"
             style={markStyle}
           >
             <Mark />

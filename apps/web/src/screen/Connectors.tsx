@@ -172,8 +172,8 @@ function ConnectorRow({
 }) {
   const isConnected = connector.status === 'connected'
   return (
-    <li className="flex items-center gap-3 rounded-row bg-surface-2 p-3 shadow-ring-xs">
-      <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-control bg-surface-1 shadow-ring-xs">
+    <li className="flex items-center gap-3 rounded-row bg-surface-2 p-3 smooth-shadow-ring-xs">
+      <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-control bg-surface-1 smooth-shadow-ring-xs">
         <ToolMarks tools={[connector.id]} size={20} />
       </span>
       <span className="min-w-0 flex-1">
@@ -207,7 +207,7 @@ function ConnectorRow({
         <button
           disabled={busy}
           onClick={() => void onConnect(connector.id)}
-          className="inline-flex h-8 shrink-0 items-center rounded-control bg-surface-3 px-3 text-label font-title text-ink shadow-ring-xs hover:bg-wash-hover disabled:opacity-50"
+          className="inline-flex h-8 shrink-0 items-center rounded-control bg-surface-3 px-3 text-label font-title text-ink smooth-shadow-ring-xs hover:bg-wash-hover disabled:opacity-50"
         >
           {busy ? <LoaderCircle className="size-3.5 animate-spin" /> : 'Connect'}
         </button>

@@ -79,7 +79,7 @@ export function ConnectorRequestCard({
 
   const connected = status === 'connected'
   return (
-    <div className="my-3 rounded-panel bg-surface-2 px-3.5 py-3 shadow-ring-xs">
+    <div className="my-3 rounded-panel bg-surface-2 px-3.5 py-3 smooth-shadow-ring-xs">
       <div className="flex items-center gap-3">
         <ToolMarks tools={[request.connector]} size={28} />
         <span className="min-w-0 flex-1 text-label font-title text-ink">{name}</span>
@@ -107,7 +107,7 @@ export function ConnectorRequestCard({
       <button
         disabled={busy || disabled}
         onClick={() => void act()}
-        className="mt-3 inline-flex h-8 items-center gap-2 rounded-control bg-surface-3 px-3 text-label font-title text-ink shadow-ring-xs hover:bg-wash-hover disabled:opacity-50"
+        className="mt-3 inline-flex h-8 items-center gap-2 rounded-control bg-surface-3 px-3 text-label font-title text-ink smooth-shadow-ring-xs hover:bg-wash-hover disabled:opacity-50"
       >
         {busy
           ? 'Working…'

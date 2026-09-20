@@ -75,7 +75,7 @@ function ScreenView() {
                 key={t.title}
                 className={cn(
                   'ml-1 flex max-w-40 min-w-0 flex-1 items-center gap-1.5 rounded-t-control px-2 py-1.5 text-meta',
-                  t.active ? 'bg-well text-ink shadow-xs' : 'text-ink-3',
+                  t.active ? 'bg-well text-ink smooth-shadow-xs' : 'text-ink-3',
                 )}
               >
                 <span
@@ -90,7 +90,7 @@ function ScreenView() {
           </div>
           {/* URL bar */}
           <div className="shrink-0 bg-well px-2 py-1.5">
-            <div className="flex items-center gap-1.5 rounded-full bg-surface-3 px-2.5 py-1 shadow-xs">
+            <div className="flex items-center gap-1.5 rounded-full bg-surface-3 px-2.5 py-1 smooth-shadow-xs">
               <Lock className="size-2.5 shrink-0 text-success" />
               <span className="truncate text-meta text-ink-2">
                 northgate.procure.example.com/contracts/MSA-2025-114/review
@@ -112,7 +112,7 @@ function ScreenView() {
                 Filling
               </span>
             </div>
-            <div className="mt-2 overflow-hidden rounded-card bg-surface-3 shadow-ring-xs">
+            <div className="mt-2 overflow-hidden rounded-card bg-surface-3 smooth-shadow-ring-xs">
               <table className="w-full text-meta">
                 <thead>
                   <tr className="text-left text-ink-4">
@@ -150,7 +150,7 @@ function ScreenView() {
               </table>
             </div>
             <div
-              className="mt-2 flex items-center gap-2 rounded-control bg-surface-3 px-2 py-1.5 shadow-ring-xs"
+              className="mt-2 flex items-center gap-2 rounded-control bg-surface-3 px-2 py-1.5 smooth-shadow-ring-xs"
               aria-current="step"
             >
               <i className="size-1.5 shrink-0 animate-status-pulse rounded-full bg-working" />

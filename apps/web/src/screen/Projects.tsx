@@ -60,7 +60,7 @@ function ProjectShelf({ onOpen }: { onOpen: (id: string) => void }) {
               <ProjectCard key={p.id} project={p} onOpen={onOpen} />
             ))}
             <li>
-              <button className="flex size-full min-h-32 flex-col items-start rounded-card p-4 text-left ring-line transition-surface duration-(--dur-fast) hover:bg-surface-2 hover:shadow-ring-xs">
+              <button className="flex size-full min-h-32 flex-col items-start rounded-card p-4 text-left ring-line transition-surface duration-(--dur-fast) hover:bg-surface-2 hover:smooth-shadow-ring-xs">
                 <span className="inline-flex size-8 items-center justify-center rounded-control bg-surface-2 text-ink-3">
                   <Plus className="size-4" />
                 </span>
@@ -81,7 +81,7 @@ function ProjectCard({ project: p, onOpen }: { project: Project; onOpen: (id: st
   return (
     <button
       onClick={() => onOpen(p.id)}
-      className="group/card flex h-full flex-col overflow-hidden rounded-card bg-surface-2 text-left shadow-ring-sm transition-press duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-wash-hover hover:shadow-ring-md"
+      className="group/card flex h-full flex-col overflow-hidden rounded-card bg-surface-2 text-left smooth-shadow-ring-sm transition-press duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-wash-hover hover:smooth-shadow-ring-md"
     >
       {/* Cover: art + the project's mark. Children announce themselves here. */}
       <span className="relative flex h-24 items-end overflow-hidden bg-surface-2">
@@ -91,7 +91,7 @@ function ProjectCard({ project: p, onOpen }: { project: Project; onOpen: (id: st
           className="absolute inset-0 bg-linear-to-t from-surface-2/70 to-transparent"
         />
         {p.children && p.children.length > 0 && (
-          <span className="relative z-10 m-2 inline-flex items-center gap-1.5 rounded-full bg-surface-1/85 px-2.5 py-1 text-meta font-title text-ink shadow-ring-xs backdrop-blur-sm">
+          <span className="relative z-10 m-2 inline-flex items-center gap-1.5 rounded-full bg-surface-1/85 px-2.5 py-1 text-meta font-title text-ink smooth-shadow-ring-xs backdrop-blur-sm">
             <Layers className="size-3 text-accent-ink" />
             {p.children.length} {p.children.length === 1 ? 'sub-project' : 'sub-projects'}
           </span>
@@ -129,7 +129,7 @@ function ProjectCard({ project: p, onOpen }: { project: Project; onOpen: (id: st
             {p.children.map((c) => (
               <span
                 key={c.id}
-                className="inline-flex items-center gap-1 rounded-full bg-surface-3 px-2 py-0.5 text-meta font-meta text-ink-3 shadow-ring-xs"
+                className="inline-flex items-center gap-1 rounded-full bg-surface-3 px-2 py-0.5 text-meta font-meta text-ink-3 smooth-shadow-ring-xs"
               >
                 <ChevronRight className="size-2.5 text-ink-4" />
                 {c.name}
@@ -202,7 +202,7 @@ function ProjectPage({
                   <li key={c.id}>
                     <button
                       onClick={() => onOpen(c.id)}
-                      className="group/sub w-full rounded-card bg-surface-2 p-3.5 text-left shadow-ring-sm transition-press duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-wash-hover hover:shadow-ring-md"
+                      className="group/sub w-full rounded-card bg-surface-2 p-3.5 text-left smooth-shadow-ring-sm transition-press duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-wash-hover hover:smooth-shadow-ring-md"
                     >
                       <span className="flex items-center gap-2">
                         <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-xs bg-accent-soft text-accent-ink">
@@ -242,7 +242,7 @@ function ProjectPage({
               {p.members.map((m) => (
                 <span
                   key={m.name}
-                  className="flex items-center gap-2 rounded-full bg-surface-2 py-1 pr-3 pl-1 shadow-ring-xs"
+                  className="flex items-center gap-2 rounded-full bg-surface-2 py-1 pr-3 pl-1 smooth-shadow-ring-xs"
                 >
                   <Avatar name={m.name} size={22} />
                   <span className="text-label text-ink-2">{m.name}</span>

@@ -10,7 +10,7 @@ export function EmptyState() {
       <ul className="mt-8 grid w-full gap-2 sm:grid-cols-3">
         {suggestions.map((s) => (
           <li key={s}>
-            <button className="size-full rounded-card bg-surface-3 p-4 text-left text-label text-ink-2 shadow-ring-xs transition-press duration-(--dur-fast) hover:bg-wash-hover hover:text-ink hover:shadow-ring-sm active:scale-98">
+            <button className="size-full rounded-card bg-surface-3 p-4 text-left text-label text-ink-2 smooth-shadow-ring-xs transition-press duration-(--dur-fast) hover:bg-wash-hover hover:text-ink hover:smooth-shadow-ring-sm active:scale-98">
               {s}
             </button>
           </li>

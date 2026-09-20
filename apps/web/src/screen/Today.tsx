@@ -331,10 +331,7 @@ export function Today({
   }).format(now)
 
   return (
-    <section
-      className="flex h-full min-w-0 flex-1 flex-col bg-surface-0"
-      style={{ boxShadow: 'var(--content-edge-shadow, none)' }}
-    >
+    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge">
       <TodayHeader
         inDetail={inDetail}
         selected={selected}
@@ -589,7 +586,7 @@ function TodayNotifications({
           <li key={notification.id}>
             <button
               onClick={() => void onOpen(notification)}
-              className="group/row flex w-full items-start gap-3 rounded-row bg-surface-2 px-3 py-2.5 text-left shadow-ring-xs transition-[background-color,box-shadow] duration-(--dur-fast) hover:bg-wash-hover hover:shadow-ring-sm"
+              className="group/row flex w-full items-start gap-3 rounded-row bg-surface-2 px-3 py-2.5 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) hover:bg-wash-hover hover:smooth-shadow-ring-sm"
             >
               <i
                 className={cn(
@@ -603,9 +600,7 @@ function TodayNotifications({
                   {notification.title}
                 </span>
                 {notification.body && (
-                  <span className="mt-0.5 block text-label text-ink-3">
-                    {notification.body}
-                  </span>
+                  <span className="mt-0.5 block text-label text-ink-3">{notification.body}</span>
                 )}
               </span>
               <time className="shrink-0 pt-0.5 text-meta font-meta text-ink-4 tabular-nums">
@@ -643,7 +638,7 @@ function OpenTaskSections({
           Loading…
         </div>
       ) : groups.length === 0 && unreadCount === 0 ? (
-        <div className="mt-7 rounded-card bg-surface-2 px-6 py-10 text-center shadow-ring-xs">
+        <div className="mt-7 rounded-card bg-surface-2 px-6 py-10 text-center smooth-shadow-ring-xs">
           <Face size={32} mood="happy" className="mx-auto" />
           <p className="mt-3 text-title font-title text-ink">Nothing needs you.</p>
           <p className="mx-auto mt-1 max-w-sm text-label text-ink-3">
@@ -652,7 +647,7 @@ function OpenTaskSections({
           </p>
           <button
             onClick={onCreate}
-            className="mt-4 inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-3 px-3 text-label font-title text-ink shadow-ring-xs hover:bg-wash-hover"
+            className="mt-4 inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-3 px-3 text-label font-title text-ink smooth-shadow-ring-xs hover:bg-wash-hover"
           >
             <Plus className="size-3.5" />
             New task
@@ -756,9 +751,7 @@ function taskRowMeta(task: Task, settled: boolean, overdue: boolean): string[] {
   if (task.assignee) meta.push(`Waiting on ${task.assignee}`)
   if (task.dueAt !== null && !settled) {
     meta.push(
-      overdue
-        ? `Was due ${formatWhen(task.dueAt, false)}`
-        : `Due ${formatWhen(task.dueAt, false)}`,
+      overdue ? `Was due ${formatWhen(task.dueAt, false)}` : `Due ${formatWhen(task.dueAt, false)}`,
     )
   }
   if (task.status === 'done' && task.completedAt)
@@ -787,16 +780,9 @@ function TaskFollowUpSummary({
   if (task.status !== 'open' || task.nextFollowUpAt === null) return null
   return (
     <span
-      className={cn(
-        'inline-flex shrink-0 items-center gap-1 text-ink-4',
-        hasMeta && "before:mr-0.5 before:content-['·']",
-      )}
+      className={cn('inline-flex shrink-0 items-center gap-1 text-ink-4', hasMeta && 'sep-dot')}
     >
-      {running ? (
-        <LoaderCircle className="size-3 animate-spin text-working" />
-      ) : (
-        <Face size={12} />
-      )}
+      {running ? <LoaderCircle className="size-3 animate-spin text-working" /> : <Face size={12} />}
       {running ? 'Vivid is on it' : `Vivid follows up ${formatWhen(task.nextFollowUpAt)}`}
     </span>
   )
@@ -1108,7 +1094,7 @@ function TaskDetailControls({
         <button
           disabled={pending}
           onClick={() => onStatusChange('done')}
-          className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs disabled:opacity-50"
+          className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs disabled:opacity-50"
         >
           <Check className="size-3.5" />
           Mark done
@@ -1117,7 +1103,7 @@ function TaskDetailControls({
         <button
           disabled={pending}
           onClick={() => onStatusChange('open')}
-          className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs disabled:opacity-50"
+          className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs disabled:opacity-50"
         >
           <RotateCcw className="size-3.5" />
           Reopen
@@ -1236,7 +1222,7 @@ function TaskEditorForm({
 /** Renders the persisted task fields without owning submit or follow-up behavior. */
 function TaskCoreFields({ editor, creating }: { editor: TaskEditorState; creating: boolean }) {
   const fieldClass =
-    'h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm'
+    'h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs outline-none focus:smooth-shadow-ring-sm'
   const labelClass = 'mb-1.5 block text-label font-title text-ink-2'
   return (
     <>
@@ -1262,7 +1248,7 @@ function TaskCoreFields({ editor, creating }: { editor: TaskEditorState; creatin
           value={editor.detail}
           onChange={(event) => editor.setDetail(event.currentTarget.value)}
           placeholder="Anything Vivid should know when it follows up."
-          className="w-full resize-y rounded-control bg-surface-2 px-3 py-2.5 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm"
+          className="w-full resize-y rounded-control bg-surface-2 px-3 py-2.5 text-label text-ink smooth-shadow-ring-xs outline-none focus:smooth-shadow-ring-sm"
         />
       </label>
       <div className="grid gap-3 sm:grid-cols-3">
@@ -1311,7 +1297,7 @@ function TaskCoreFields({ editor, creating }: { editor: TaskEditorState; creatin
 function NewTaskFollowUp({ task, editor }: { task: Task | null; editor: TaskEditorState }) {
   if (task !== null) return null
   return (
-    <div className="rounded-card bg-surface-2 p-4 shadow-ring-xs">
+    <div className="rounded-card bg-surface-2 p-4 smooth-shadow-ring-xs">
       <div className="flex items-center gap-2 text-label font-title text-ink-2">
         <Face size={16} />
         First follow-up <span className="font-meta text-ink-4">optional</span>
@@ -1366,7 +1352,7 @@ function TaskFollowUps({
         </ul>
       )}
       {task.status === 'open' && (
-        <form onSubmit={onAdd} className="mt-3 rounded-card bg-surface-2 p-4 shadow-ring-xs">
+        <form onSubmit={onAdd} className="mt-3 rounded-card bg-surface-2 p-4 smooth-shadow-ring-xs">
           <div className="flex items-center gap-2 text-label font-title text-ink-2">
             <Plus className="size-3.5" />
             Add a follow-up
@@ -1383,7 +1369,7 @@ function TaskFollowUps({
           <div className="mt-3 flex justify-end">
             <button
               disabled={editor.pending || !editor.followUpAt}
-              className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-3 px-3 text-label font-title text-ink shadow-ring-xs hover:bg-wash-hover disabled:opacity-50"
+              className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-3 px-3 text-label font-title text-ink smooth-shadow-ring-xs hover:bg-wash-hover disabled:opacity-50"
             >
               <Clock3 className="size-3.5" />
               Schedule
@@ -1450,7 +1436,7 @@ function FollowUpFields({
   quickTimes: Array<{ label: string; at: () => number }>
 }) {
   const fieldClass =
-    'h-9 w-full rounded-control bg-surface-3 px-3 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm'
+    'h-9 w-full rounded-control bg-surface-3 px-3 text-label text-ink smooth-shadow-ring-xs outline-none focus:smooth-shadow-ring-sm'
   return (
     <div className="mt-3 space-y-2.5">
       <div className="flex flex-wrap gap-1.5">
@@ -1459,13 +1445,13 @@ function FollowUpFields({
             key={quick.label}
             type="button"
             onClick={() => onAt(toLocalInput(quick.at()))}
-            className="h-7 rounded-full bg-surface-3 px-2.5 text-meta font-title text-ink-2 shadow-ring-xs hover:bg-wash-hover hover:text-ink"
+            className="h-7 rounded-full bg-surface-3 px-2.5 text-meta font-title text-ink-2 smooth-shadow-ring-xs hover:bg-wash-hover hover:text-ink"
           >
             {quick.label}
           </button>
         ))}
       </div>
-      <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+      <div className="grid gap-2 sm:grid-cols-followup">
         <input
           type="datetime-local"
           aria-label="When"
@@ -1526,7 +1512,7 @@ function FollowUpRow({
   return (
     <div
       className={cn(
-        'rounded-row bg-surface-2 px-3 py-2.5 shadow-ring-xs',
+        'rounded-row bg-surface-2 px-3 py-2.5 smooth-shadow-ring-xs',
         followUp.status === 'cancelled' && 'opacity-60',
       )}
     >
@@ -1548,11 +1534,7 @@ function FollowUpRow({
         {followUp.createdBy === 'vivid' && (
           <span className="text-meta font-meta text-ink-4">· by Vivid</span>
         )}
-        <FollowUpActions
-          status={followUp.status}
-          onAction={onAction}
-          onOpen={onOpen}
-        />
+        <FollowUpActions status={followUp.status} onAction={onAction} onOpen={onOpen} />
       </div>
       {followUp.note && <p className="mt-1 text-meta text-ink-3">{followUp.note}</p>}
       {followUp.output && (

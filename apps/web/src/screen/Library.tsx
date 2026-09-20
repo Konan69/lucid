@@ -197,15 +197,7 @@ type LibraryState = ReturnType<typeof useLibraryState>
 
 /** Owns upload and drag lifecycle handlers while reusing the screen's stable state setters. */
 function createLibraryUploadActions(state: LibraryState) {
-  const {
-    currentFolderId,
-    dragDepth,
-    inputRef,
-    load,
-    setDragging,
-    setError,
-    setUploads,
-  } = state
+  const { currentFolderId, dragDepth, inputRef, load, setDragging, setError, setUploads } = state
 
   async function uploadOne(file: File, upload: UploadState) {
     const result = await runClient(
@@ -428,8 +420,7 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
       onDragOver={(event) => event.preventDefault()}
       onDragLeave={uploadActions.handleDragLeave}
       onDrop={uploadActions.handleDrop}
-      className="relative flex h-full min-w-0 flex-1 flex-col bg-surface-0"
-      style={{ boxShadow: 'var(--content-edge-shadow, none)' }}
+      className="relative flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge"
     >
       <LibraryHeader
         grid={grid}
@@ -627,7 +618,7 @@ function LibraryHeaderActions({
           onClick={() => onGridChange(true)}
           className={cn(
             'inline-flex size-7 items-center justify-center rounded-sm',
-            grid ? 'bg-surface-3 text-ink shadow-ring-xs' : 'text-ink-3 hover:text-ink',
+            grid ? 'bg-surface-3 text-ink smooth-shadow-ring-xs' : 'text-ink-3 hover:text-ink',
           )}
         >
           <LayoutGrid className="size-4" />
@@ -637,7 +628,7 @@ function LibraryHeaderActions({
           onClick={() => onGridChange(false)}
           className={cn(
             'inline-flex size-7 items-center justify-center rounded-sm',
-            !grid ? 'bg-surface-3 text-ink shadow-ring-xs' : 'text-ink-3 hover:text-ink',
+            !grid ? 'bg-surface-3 text-ink smooth-shadow-ring-xs' : 'text-ink-3 hover:text-ink',
           )}
         >
           <Rows3 className="size-4" />
@@ -708,16 +699,14 @@ function LibraryContent({
             {showSearch && (
               <form
                 onSubmit={onSearch}
-                className="mb-3 flex items-center gap-2 rounded-control bg-surface-2 px-3 shadow-ring-xs"
+                className="mb-3 flex items-center gap-2 rounded-control bg-surface-2 px-3 smooth-shadow-ring-xs"
               >
                 <Search className="size-4 text-ink-4" />
                 <input
                   autoFocus
                   value={query}
                   onChange={(event) => onQueryChange(event.currentTarget.value)}
-                  placeholder={
-                    currentFolder ? `Search ${currentFolder.name}` : 'Search all files'
-                  }
+                  placeholder={currentFolder ? `Search ${currentFolder.name}` : 'Search all files'}
                   className="h-10 min-w-0 flex-1 bg-transparent text-label text-ink outline-none placeholder:text-ink-4"
                 />
               </form>
@@ -766,19 +755,13 @@ function UploadProgress({ uploads }: { uploads: UploadState[] }) {
       {uploads.map((upload) => (
         <li
           key={upload.id}
-          className="flex items-center gap-3 rounded-row bg-surface-2 px-3 py-2 shadow-ring-xs"
+          className="flex items-center gap-3 rounded-row bg-surface-2 px-3 py-2 smooth-shadow-ring-xs"
         >
           <FileText className="size-4 shrink-0 text-ink-3" />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-label text-ink">{upload.name}</span>
             <span className="mt-1 block h-1 overflow-hidden rounded-full bg-line-2">
-              <i
-                className={cn(
-                  'block h-full rounded-full transition-[width]',
-                  upload.status === 'failed' ? 'bg-danger' : 'bg-accent',
-                )}
-                style={{ width: `${upload.progress}%` }}
-              />
+              <UploadBar progress={upload.progress} failed={upload.status === 'failed'} />
             </span>
           </span>
           <span
@@ -861,14 +844,14 @@ function LibraryDialog({
   const title = dialogTitle(state)
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4 backdrop-blur-[2px]"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4 backdrop-blur-scrim"
       role="dialog"
       aria-modal="true"
       aria-label={title}
     >
       <form
         onSubmit={(event) => void submit(event)}
-        className="w-full max-w-sm rounded-panel bg-surface-1 p-4 shadow-ring-md"
+        className="w-full max-w-sm rounded-panel bg-surface-1 p-4 smooth-shadow-ring-md"
       >
         <div className="flex items-center gap-2">
           <h2 className="flex-1 text-dialog font-title text-ink">{title}</h2>
@@ -940,7 +923,7 @@ function LibraryDialogField({
         <select
           value={destination}
           onChange={(event) => onDestinationChange(event.currentTarget.value)}
-          className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs"
+          className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs"
         >
           <option value="">Library</option>
           {folders
@@ -963,7 +946,7 @@ function LibraryDialogField({
         maxLength={state.kind === 'rename-file' ? 180 : 120}
         value={name}
         onChange={(event) => onNameChange(event.currentTarget.value)}
-        className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm"
+        className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs outline-none focus:smooth-shadow-ring-sm"
       />
     </label>
   )
@@ -979,7 +962,7 @@ function TileGrid({ tiles, onOpen }: { tiles: Tile[]; onOpen: (tile: Tile) => vo
           <li key={tile.id}>
             <button
               onClick={() => onOpen(tile)}
-              className="group/row flex w-full items-center gap-2.5 rounded-card bg-surface-2 px-3 py-2.5 text-left shadow-ring-xs transition-[background-color,box-shadow] duration-(--dur-fast) hover:bg-wash-hover hover:shadow-ring-sm"
+              className="group/row flex w-full items-center gap-2.5 rounded-card bg-surface-2 px-3 py-2.5 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) hover:bg-wash-hover hover:smooth-shadow-ring-sm"
             >
               <span className="inline-flex size-7 shrink-0 items-center justify-center text-ink-3">
                 <Folder className="size-5" strokeWidth={1.7} />
@@ -995,7 +978,7 @@ function TileGrid({ tiles, onOpen }: { tiles: Tile[]; onOpen: (tile: Tile) => vo
           <li key={tile.id}>
             <button
               onClick={() => onOpen(tile)}
-              className="group/tile flex w-full flex-col overflow-hidden rounded-card bg-surface-2 p-3 text-left shadow-ring-sm transition-[background-color,box-shadow,transform] duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-surface-3 hover:shadow-ring-md active:scale-[0.98]"
+              className="group/tile flex w-full flex-col overflow-hidden rounded-card bg-surface-2 p-3 text-left smooth-shadow-ring-sm transition-press duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-surface-3 hover:smooth-shadow-ring-md active:scale-98"
             >
               <span className="flex items-center gap-2">
                 <FileText className="size-4 shrink-0 text-ink-3" strokeWidth={1.6} />
@@ -1031,7 +1014,7 @@ function TileList({ tiles, onOpen }: { tiles: Tile[]; onOpen: (tile: Tile) => vo
                 'inline-flex size-8 shrink-0 items-center justify-center rounded-control',
                 tile.kind === 'folder'
                   ? 'bg-accent-soft text-accent-ink'
-                  : 'bg-surface-2 text-ink-3 shadow-ring-xs',
+                  : 'bg-surface-2 text-ink-3 smooth-shadow-ring-xs',
               )}
             >
               {tile.kind === 'file' ? (
@@ -1066,7 +1049,7 @@ function DocumentDetail({
   return (
     <div className="mt-3">
       <div className="flex items-center gap-3">
-        <span className="inline-flex size-9 items-center justify-center rounded-control bg-surface-2 text-ink-3 shadow-ring-xs">
+        <span className="inline-flex size-9 items-center justify-center rounded-control bg-surface-2 text-ink-3 smooth-shadow-ring-xs">
           <FileText className="size-4.5" />
         </span>
         <div className="min-w-0 flex-1">
@@ -1106,7 +1089,7 @@ function DocumentDetail({
           <Trash2 className="size-4" />
         </button>
       </div>
-      <div className="mt-5 rounded-card bg-surface-2 p-5 shadow-ring-xs">
+      <div className="mt-5 rounded-card bg-surface-2 p-5 smooth-shadow-ring-xs">
         <Status document={document} />
         <p className="mt-4 text-label leading-relaxed whitespace-pre-wrap text-ink-3">
           {document.preview || document.error || 'Extracting and indexing text…'}
@@ -1167,7 +1150,7 @@ function SearchResults({
               onClick={() => onOpen(result)}
               className="group/row flex w-full items-start gap-3 rounded-row px-2.5 py-3 text-left hover:bg-wash-hover"
             >
-              <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-surface-2 text-ink-3 shadow-ring-xs">
+              <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-surface-2 text-ink-3 smooth-shadow-ring-xs">
                 <FileText className="size-4" />
               </span>
               <span className="min-w-0 flex-1">
@@ -1189,7 +1172,7 @@ function Preview() {
   return (
     <span
       aria-hidden
-      className="absolute inset-x-7 inset-y-3 flex flex-col gap-1.5 rounded-sm bg-surface-3 p-2.5 shadow-ring-xs"
+      className="absolute inset-x-7 inset-y-3 flex flex-col gap-1.5 rounded-sm bg-surface-3 p-2.5 smooth-shadow-ring-xs"
     >
       <i className="h-2 w-1/2 rounded-full bg-ink/15" />
       <i className="mt-1 h-1 w-full rounded-full bg-line-1" />
@@ -1197,5 +1180,20 @@ function Preview() {
       <i className="h-1 w-4/5 rounded-full bg-line-1" />
       <i className="mt-auto h-1 w-2/3 rounded-full bg-line-1" />
     </span>
+  )
+}
+
+/** The fill of one upload's progress track; failure recolours it without resetting the width. */
+function UploadBar({ progress, failed }: { progress: number; failed: boolean }) {
+  // SAFETY: React forwards this validated CSS custom property; `w-(--upload-progress)` reads it.
+  const barStyle = { '--upload-progress': `${progress}%` } as React.CSSProperties
+  return (
+    <i
+      className={cn(
+        'block h-full w-(--upload-progress) rounded-full transition-width',
+        failed ? 'bg-danger' : 'bg-accent',
+      )}
+      style={barStyle}
+    />
   )
 }

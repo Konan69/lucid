@@ -65,7 +65,7 @@ export function Settings({
         aria-label="Settings"
         aria-modal="true"
         role="dialog"
-        className="flex size-full max-h-180 max-w-260 animate-fade-in overflow-hidden bg-surface-0 shadow-ring-lg sm:rounded-panel"
+        className="flex size-full max-h-180 max-w-260 animate-fade-in overflow-hidden bg-surface-0 smooth-shadow-ring-lg sm:rounded-panel"
       >
         <aside className="hidden w-56 shrink-0 flex-col bg-surface-1 p-3 hairline-r sm:flex">
           <div className="mb-2 flex h-10 items-center px-3 text-title font-title text-ink">
@@ -309,7 +309,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange?: (v: boolea
         checked ? 'justify-end bg-accent' : 'justify-start bg-line-4',
       )}
     >
-      <i className="flex size-5 items-center justify-center rounded-full bg-ink-on-accent shadow-xs">
+      <i className="flex size-5 items-center justify-center rounded-full bg-ink-on-accent smooth-shadow-xs">
         {checked && <Check className="size-3 text-accent" />}
       </i>
     </button>

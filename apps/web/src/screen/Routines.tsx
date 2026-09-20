@@ -117,10 +117,7 @@ export function Routines({
   }
 
   return (
-    <section
-      className="flex h-full min-w-0 flex-1 flex-col bg-surface-0"
-      style={{ boxShadow: 'var(--content-edge-shadow, none)' }}
-    >
+    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge">
       <RoutinesHeader
         inDetail={inDetail}
         selected={selected}
@@ -300,14 +297,10 @@ function RoutinesOverview({
       <Section title="Template gallery" note="Starting points for common recurring work.">
         <ul className="grid gap-2.5 sm:grid-cols-2">
           {templates.map((item) => (
-            <TemplateCard
-              key={item.id}
-              template={item}
-              onOpen={() => onSelectTemplate(item.id)}
-            />
+            <TemplateCard key={item.id} template={item} onOpen={() => onSelectTemplate(item.id)} />
           ))}
         </ul>
-        <div className="mt-4 flex items-center gap-2 rounded-card bg-surface-2 p-4 shadow-ring-xs">
+        <div className="mt-4 flex items-center gap-2 rounded-card bg-surface-2 p-4 smooth-shadow-ring-xs">
           <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink">
             <Store className="size-4.5" strokeWidth={1.7} />
           </span>
@@ -343,7 +336,7 @@ function RoutineList({
           Loading routines…
         </div>
       ) : routines.length === 0 ? (
-        <div className="rounded-card bg-surface-2 px-4 py-6 text-center shadow-ring-xs">
+        <div className="rounded-card bg-surface-2 px-4 py-6 text-center smooth-shadow-ring-xs">
           <Clock3 className="mx-auto size-5 text-ink-4" />
           <p className="mt-2 text-label text-ink-3">
             No routines yet. Create one to dispatch scheduled work to Vivid.
@@ -564,7 +557,7 @@ function RoutineEditorControls({
       <button
         disabled={pending}
         onClick={onToggle}
-        className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs disabled:opacity-50"
+        className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs disabled:opacity-50"
       >
         {routine.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
         {routine.enabled ? 'Pause' : 'Resume'}
@@ -649,7 +642,7 @@ function RoutineEditorForm({
           value={name}
           onChange={(event) => onNameChange(event.currentTarget.value)}
           placeholder="Daily project brief"
-          className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm"
+          className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs outline-none focus:smooth-shadow-ring-sm"
         />
       </label>
       <label className="block">
@@ -661,7 +654,7 @@ function RoutineEditorForm({
           value={prompt}
           onChange={(event) => onPromptChange(event.currentTarget.value)}
           placeholder="Review recent project activity and prepare a concise brief."
-          className="w-full resize-y rounded-control bg-surface-2 px-3 py-2.5 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm"
+          className="w-full resize-y rounded-control bg-surface-2 px-3 py-2.5 text-label text-ink smooth-shadow-ring-xs outline-none focus:smooth-shadow-ring-sm"
         />
       </label>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -670,7 +663,7 @@ function RoutineEditorForm({
           <select
             value={cron}
             onChange={(event) => onCronChange(event.currentTarget.value)}
-            className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs"
+            className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs"
           >
             <option value="0 * * * *">Every hour</option>
             <option value="0 9 * * *">Every day at 9:00 AM</option>
@@ -684,7 +677,7 @@ function RoutineEditorForm({
             required
             value={timezone}
             onChange={(event) => onTimezoneChange(event.currentTarget.value)}
-            className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs"
+            className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs"
           />
         </label>
       </div>
@@ -696,7 +689,7 @@ function RoutineEditorForm({
           required
           value={cron}
           onChange={(event) => onCronChange(event.currentTarget.value)}
-          className="h-9 w-full rounded-control bg-surface-2 px-3 font-mono text-meta text-ink shadow-ring-xs"
+          className="h-9 w-full rounded-control bg-surface-2 px-3 font-mono text-meta text-ink smooth-shadow-ring-xs"
         />
       </label>
       {error && (
@@ -778,7 +771,7 @@ function RoutineRunRow({
             archived: false,
           })
         }
-        className="group/run w-full rounded-row bg-surface-2 px-3 py-2.5 text-left shadow-ring-xs transition-[background-color,box-shadow] hover:bg-wash-hover hover:shadow-ring-sm"
+        className="group/run w-full rounded-row bg-surface-2 px-3 py-2.5 text-left smooth-shadow-ring-xs transition-surface hover:bg-wash-hover hover:smooth-shadow-ring-sm"
       >
         <div className="flex items-center gap-2">
           <span
@@ -816,7 +809,7 @@ function TemplateCard({
   return (
     <button
       onClick={onOpen}
-      className="group/card flex h-full flex-col rounded-card bg-surface-2 p-4 text-left shadow-ring-xs transition-[background-color,box-shadow] duration-(--dur-fast) hover:bg-wash-hover hover:shadow-ring-sm"
+      className="group/card flex h-full flex-col rounded-card bg-surface-2 p-4 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) hover:bg-wash-hover hover:smooth-shadow-ring-sm"
     >
       <span className="flex h-6 items-center gap-2">
         <span
@@ -873,7 +866,7 @@ function TemplateDetail({ template: item }: { template: RoutineTemplate }) {
           {item.actions.map((action, index) => (
             <li
               key={action}
-              className="flex items-center gap-3 rounded-row bg-surface-2 px-3 py-2.5 shadow-ring-xs"
+              className="flex items-center gap-3 rounded-row bg-surface-2 px-3 py-2.5 smooth-shadow-ring-xs"
             >
               <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-surface-3 text-meta font-meta text-ink-2">
                 {index + 1}
@@ -886,7 +879,7 @@ function TemplateDetail({ template: item }: { template: RoutineTemplate }) {
           ))}
         </ol>
       </div>
-      <div className="mt-5 flex items-start gap-3 rounded-card bg-surface-2 p-4 shadow-ring-xs">
+      <div className="mt-5 flex items-start gap-3 rounded-card bg-surface-2 p-4 smooth-shadow-ring-xs">
         <ShieldCheck className="mt-0.5 size-4 shrink-0 text-success" />
         <p className="text-meta text-ink-3">
           Runs inside your Vivid. The template supplies instructions, not access to your data.

@@ -131,9 +131,7 @@ function useRuntimeThreadHydration(
         const legacy = localStorage.getItem('vivid-runtime-conversations')
         const decoded =
           legacy === null ? Option.some([]) : decodeLegacyRuntimeConversationList(legacy)
-        const parsed = Option.isSome(decoded)
-          ? decoded.value.map(activeLegacyConversation)
-          : []
+        const parsed = Option.isSome(decoded) ? decoded.value.map(activeLegacyConversation) : []
         if (parsed.length > 0) {
           // Migration is best-effort because the current runtime list remains authoritative. All
           // legacy writes must land before that index can replace the empty runtime response.

@@ -356,7 +356,7 @@ function RenameDialog({
           maxLength={120}
           value={title}
           onChange={(event) => setTitle(event.currentTarget.value)}
-          className="mt-3 h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm"
+          className="mt-3 h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs outline-none focus:smooth-shadow-ring-sm"
         />
         <div className="mt-4 flex justify-end gap-2">
           <button
@@ -401,8 +401,8 @@ function RuntimeRow({
         className={cn(
           'relative block h-(--card-row-h) w-full rounded-card px-2.5 py-2 text-left transition-surface duration-(--dur-fast) outline-none select-none',
           active
-            ? 'bg-surface-3 shadow-ring-sm'
-            : 'bg-surface-2 shadow-ring-xs hover:bg-wash-hover hover:shadow-ring-sm',
+            ? 'bg-surface-3 smooth-shadow-ring-sm'
+            : 'bg-surface-2 smooth-shadow-ring-xs hover:bg-wash-hover hover:smooth-shadow-ring-sm',
         )}
       >
         <span className="flex h-5 items-center gap-1.5">
@@ -584,8 +584,8 @@ function CardRow({
       className={cn(
         'group/row relative block h-(--card-row-h) w-full rounded-card px-2.5 py-2 text-left transition-colors duration-(--dur-fast) outline-none select-none',
         active
-          ? 'bg-surface-3 shadow-ring-sm'
-          : 'bg-surface-2 shadow-ring-xs hover:bg-wash-hover hover:shadow-ring-sm',
+          ? 'bg-surface-3 smooth-shadow-ring-sm'
+          : 'bg-surface-2 smooth-shadow-ring-xs hover:bg-wash-hover hover:smooth-shadow-ring-sm',
         quiet && 'opacity-80 hover:opacity-100',
       )}
     >

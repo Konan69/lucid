@@ -5,8 +5,8 @@ type Variant = 'primary' | 'control' | 'ghost' | 'quiet'
 type Size = 'sm' | 'md'
 
 const VARIANT = {
-  primary: 'bg-accent text-ink-on-accent hover:bg-accent-hover shadow-xs',
-  control: 'bg-surface-3 text-ink shadow-ring-xs hover:bg-wash-hover',
+  primary: 'bg-accent text-ink-on-accent hover:bg-accent-hover smooth-shadow-xs',
+  control: 'bg-surface-3 text-ink smooth-shadow-ring-xs hover:bg-wash-hover',
   ghost: 'text-ink-2 hover:bg-wash-hover hover:text-ink',
   quiet: 'text-ink-3 hover:text-ink',
 } satisfies Record<Variant, string>
