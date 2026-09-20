@@ -27,7 +27,8 @@ const nativeResourceEnvironment: ResourceEnvironment = {
 
 type MobileResourceProgram = RpcProgram<JsonValue>
 
-const resourceStoreCache = createResourceStoreCache<MobileResourceProgram>(nativeResourceEnvironment)
+const resourceStoreCache =
+  createResourceStoreCache<MobileResourceProgram>(nativeResourceEnvironment)
 const resourceApis = new WeakMap<Api, ResourceApi<MobileResourceProgram>>()
 
 /** Returns one stable resource authority for each API client. */
