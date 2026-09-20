@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Face, type FaceColor } from '../ui/Face'
 import { Button } from '../ui/Button'
-import { StatusLabel, type ConversationStatus } from '../ui/StatusLabel'
+import { StatusLabel, type ConversationStatus } from '../ui/Status'
 
 const SURFACES = [
   ['surface-0', 'bg-surface-0'],

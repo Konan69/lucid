@@ -1,8 +1,5 @@
 import { expect, it } from 'vitest'
-import {
-  authorizationAddress,
-  readConnectorRequest,
-} from '../../../web/src/data/connectorRequests.ts'
+import { authorizationAddress, readConnectorRequest } from './requests'
 
 it('connector cards accept only supported IDs and bounded, nonempty reasons', () => {
   expect(

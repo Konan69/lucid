@@ -8,7 +8,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from 'react'
-import { EmptyState } from './screen/EmptyState'
+import { EmptyState } from './screen/Empty'
 import { Library, type LibraryDocument } from './screen/Library'
 import { Routines } from './screen/Routines'
 import { Projects } from './screen/Projects'
@@ -17,11 +17,7 @@ import { Sidebar } from './screen/Sidebar'
 import { Settings, type ThemePreference } from './screen/Settings'
 import { Conversation, DemoConversation } from './screen/Conversation'
 import { Tokens } from './screen/Tokens'
-import {
-  plainPreview,
-  titleFromMessage,
-  type RuntimeConversation,
-} from './data/runtimeConversations'
+import { plainPreview, titleFromMessage, type RuntimeConversation } from './data/threads'
 
 type View = 'conversation' | 'demo' | 'empty' | 'tokens' | 'library' | 'projects' | 'routines'
 

@@ -19,7 +19,7 @@ import {
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import * as routinesData from '../data/routines'
 import { run as runClient } from '../data/runtime'
-import { plainPreview, type RuntimeConversation } from '../data/runtimeConversations'
+import { plainPreview, type RuntimeConversation } from '../data/threads'
 import { cn } from '../ui/cn'
 
 type RoutineTemplate = routinesData.RoutineTemplate

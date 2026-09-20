@@ -43,7 +43,7 @@ instead of `undefined`. RN 0.85's Fabric command bridge rejects the latter as
   earlier square smiling face. It does not reproduce CSS inset shadows exactly.
 - `assets/icon.png` is a launcher export of the existing web Face, rendered
   from the retained `assets/icon.html` source at 1024 × 1024.
-- `src/components/ToolMark.tsx` ports the existing web service SVG paths to
+- `src/components/Mark.tsx` ports the existing web service SVG paths to
   React Native SVG without substituting generated service imagery.
 - The six project covers are direct `require` references to
   `apps/web/public/covers/*.png`; no generated replacements or remote imagery.
@@ -59,3 +59,18 @@ The actual renderer's semantic Sand table was extracted as an audit reference,
 including primitive palettes and source hash. Vivid web remains the active design
 source; see [DESIGN-SOURCES.md](./DESIGN-SOURCES.md) and
 [design-reference/grok-sand.ts](./design-reference/grok-sand.ts).
+
+## Where each file lives in Vivid
+
+The left column above is T3's own path. Vivid keeps the code under one-word filenames, with the
+directory carrying the context:
+
+| T3 path                                           | Vivid path                                    |
+| ------------------------------------------------- | --------------------------------------------- |
+| `src/native/T3ComposerEditor*.tsx`, `.types.ts`   | `src/native/composer/Editor*.tsx`, `types.ts` |
+| `src/native/composerEditorRevision.ts`            | `src/native/composer/revision.ts`             |
+| `src/features/home/thread-swipe-actions.tsx`      | `src/t3/swipe.tsx`                            |
+| `src/components/ControlPillMenu.tsx`              | `src/t3/Menu.tsx`                             |
+| `src/features/layout/workspace-pane-animation.ts` | `src/t3/pane.ts`                              |
+| `src/lib/adaptive-navigation.ts`                  | `src/lib/navigation.ts`                       |
+| `src/lib/layoutMetrics.ts`                        | `src/lib/metrics.ts`                          |

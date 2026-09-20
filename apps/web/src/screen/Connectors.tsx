@@ -3,7 +3,7 @@ import * as Result from 'effect/Result'
 import { useEffect, useState } from 'react'
 import * as connectorsData from '../data/connectors'
 import { run } from '../data/runtime'
-import { ToolMarks } from '../ui/ToolMarks'
+import { ToolMarks } from '../ui/Marks'
 
 /* What each connector lets Vivid do, in Vivid's words rather than the API's. */
 const PURPOSE = new Map([

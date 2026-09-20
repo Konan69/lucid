@@ -4,7 +4,7 @@ import {
   isComposerNativeEcho,
   pruneAcknowledgedComposerNativeEvents,
   resolveComposerControlledEventCount,
-} from '../native/composerEditorRevision.ts'
+} from './revision.ts'
 
 const snapshots = [
   { eventCount: 4, value: 'hello', selection: { start: 5, end: 5 } },

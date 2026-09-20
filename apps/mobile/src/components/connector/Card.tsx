@@ -2,15 +2,15 @@ import { useState } from 'react'
 import { Linking, View } from 'react-native'
 import { Check, ExternalLink } from 'lucide-react-native'
 import { ConnectionListResponse } from '@vivid/contracts'
-import { useWorkspace } from '../workspace'
-import { useResource } from '../lib/resource'
-import { Card, ControlPill, Label } from './ui'
-import { ToolMark } from './ToolMark'
+import { useWorkspace } from '../../workspace'
+import { useResource } from '../../lib/resource/hook'
+import { Card, ControlPill, Label } from '../ui'
+import { ToolMark } from '../Mark'
 import {
   authorizationAddress,
   connectorNames,
   type ConnectorRequest,
-} from '../../../web/src/data/connectorRequests'
+} from '../../../../web/src/data/requests'
 
 /** Keeps connector action copy aligned with the current request state. */
 function connectorActionLabel(input: {

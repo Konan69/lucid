@@ -3,16 +3,16 @@
 The product source is Vivid web. The mobile app adapts its existing design system
 and product structure to native views and touch targets.
 
-| Source                                                               | Native implementation                                                                                                                                                                                                 |
-| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/design-tokens/src/tokens.css`                              | Generated `nativeTokens` for both themes and `nativeMetrics` for type, radii, control/row geometry and duration. The CSS phone radius factor is retained. Native actions have at least 44-point touch targets.        |
-| `apps/web/src/screen/Sidebar.tsx`                                    | Navigation strip, Vivid identity, Routines/Projects/Library, Conversations controls, Face/time/title/preview cards, Done/Archived sections, You/Personal footer.                                                      |
-| `apps/web/src/data/conversationLanes.ts`                             | Shared executable grouping function extracted from the web sidebar. Pinned takes priority, then Needs you, Working, and date groups. Native uses live data rather than the web's demonstration working conversations. |
-| `apps/web/src/screen/EmptyState.tsx` and `data/fixtures.ts`          | Original greeting, question and suggested prompts. Suggestions import the existing array and fill the native editor.                                                                                                  |
-| `apps/web/src/screen/Conversation.tsx`                               | Compact left-aligned header, work-log/screen actions, surface-3 composer, Message Vivid placeholder, attachment/tool entry, send/stop.                                                                                |
-| `apps/web/src/ui/Face.tsx`                                           | Actual disc, eye geometry, highlight and whole-face mood rotation, rendered with native SVG. Mood changes animate with Vivid's base duration.                                                                         |
-| `apps/web/src/ui/Button.tsx` and `EmptyState.tsx`                    | Compact control radii, ghost and filled treatments, press feedback. `MotionPressable` runs Vivid's .98 press scale on the UI thread.                                                                                  |
-| `apps/web/src/ui/ToolMarks.tsx`, `data/projects.ts`, `public/covers` | Existing service SVGs, project data and cover assets, retained without replacement imagery.                                                                                                                           |
+| Source                                                           | Native implementation                                                                                                                                                                                                 |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/design-tokens/src/tokens.css`                          | Generated `nativeTokens` for both themes and `nativeMetrics` for type, radii, control/row geometry and duration. The CSS phone radius factor is retained. Native actions have at least 44-point touch targets.        |
+| `apps/web/src/screen/Sidebar.tsx`                                | Navigation strip, Vivid identity, Routines/Projects/Library, Conversations controls, Face/time/title/preview cards, Done/Archived sections, You/Personal footer.                                                      |
+| `apps/web/src/data/lanes.ts`                                     | Shared executable grouping function extracted from the web sidebar. Pinned takes priority, then Needs you, Working, and date groups. Native uses live data rather than the web's demonstration working conversations. |
+| `apps/web/src/screen/Empty.tsx` and `data/fixtures.ts`           | Original greeting, question and suggested prompts. Suggestions import the existing array and fill the native editor.                                                                                                  |
+| `apps/web/src/screen/Conversation.tsx`                           | Compact left-aligned header, work-log/screen actions, surface-3 composer, Message Vivid placeholder, attachment/tool entry, send/stop.                                                                                |
+| `apps/web/src/ui/Face.tsx`                                       | Actual disc, eye geometry, highlight and whole-face mood rotation, rendered with native SVG. Mood changes animate with Vivid's base duration.                                                                         |
+| `apps/web/src/ui/Button.tsx` and `Empty.tsx`                     | Compact control radii, ghost and filled treatments, press feedback. `MotionPressable` runs Vivid's .98 press scale on the UI thread.                                                                                  |
+| `apps/web/src/ui/Marks.tsx`, `data/projects.ts`, `public/covers` | Existing service SVGs, project data and cover assets, retained without replacement imagery.                                                                                                                           |
 
 Pins and settled conversations currently persist on the device in the existing
 preferences store. The backend does not expose those fields. Needs you uses unread notifications linked
@@ -25,7 +25,7 @@ The native composer, revision handling, swipe actions, haptics and native menus
 remain the T3 implementations/adaptations listed in `T3-SOURCE.md`.
 The theme bridge converts Vivid RGB colors to Android ARGB / iOS RGBA hex; the
 Android menu patch supplies the command argument array required by Fabric.
-`src/t3/workspace-pane-animation.ts` is copied from T3's actual layout feature:
+`src/t3/pane.ts` is copied from T3's actual layout feature:
 260 ms, cubic in/out, system reduced-motion handling. The pane fades in over its
 first 80 points; the thread keeps its width during the phone drawer animation.
 The sidebar control and scrim toggle the same pane animation. Android keeps its

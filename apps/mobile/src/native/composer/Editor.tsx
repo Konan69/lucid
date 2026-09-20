@@ -2,11 +2,11 @@ import { View } from 'react-native'
 import { useImperativeHandle, useRef } from 'react'
 import { TextInput, type TextInput as RNTextInput } from 'react-native'
 
-import { useThemeColor } from '../lib/useThemeColor'
-import { useFontFamily } from '../lib/useFontFamily'
-import { MOBILE_TYPOGRAPHY } from '../lib/typography'
+import { useThemeColor } from '../../lib/color'
+import { useFontFamily } from '../../lib/font'
+import { MOBILE_TYPOGRAPHY } from '../../lib/typography'
 
-import type { ComposerEditorProps } from './T3ComposerEditor.types'
+import type { ComposerEditorProps } from './types'
 
 export function ComposerEditor({
   ref,
@@ -78,8 +78,4 @@ export function ComposerEditor({
   )
 }
 
-export type {
-  ComposerEditorHandle,
-  ComposerEditorProps,
-  ComposerEditorSelection,
-} from './T3ComposerEditor.types'
+export type { ComposerEditorHandle, ComposerEditorProps, ComposerEditorSelection } from './types'

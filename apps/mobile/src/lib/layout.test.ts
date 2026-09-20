@@ -4,7 +4,7 @@ import {
   deriveLayout,
   deriveWorkspacePaneLayout,
 } from './layout.ts'
-import { resolveThreadSelectionNavigationAction } from './adaptive-navigation.ts'
+import { resolveThreadSelectionNavigationAction } from './navigation.ts'
 
 it('phone rotation keeps the conversation on a compact back stack', () => {
   for (const dimensions of [

@@ -27,8 +27,8 @@ import { Button, IconButton } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { cn } from '../ui/cn'
 import { Face } from '../ui/Face'
-import { ConnectorRequestCard } from '../ui/ConnectorRequestCard'
-import { normalizeConnectorRequest, connectorContinuation } from '../data/connectorRequests'
+import { ConnectorRequestCard } from '../ui/connector/Card'
+import { normalizeConnectorRequest, connectorContinuation } from '../data/requests'
 
 const LiveMetadataSchema = Schema.Struct({
   finishedAt: Schema.optionalKey(Schema.Number),

@@ -4,7 +4,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { Check, Plus, Bell, Circle } from 'lucide-react-native'
 import { NotificationListResponse, TaskListResponse } from '@vivid/contracts'
 import { useOpenThread, useWorkspace, type Routes } from '../workspace'
-import { useResource } from '../lib/resource'
+import { useResource } from '../lib/resource/hook'
 import { useTheme } from '../theme'
 import { type Notification, type Task, when } from '../lib/models'
 import {

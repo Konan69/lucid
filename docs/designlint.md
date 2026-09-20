@@ -56,4 +56,4 @@ Counts were measured against the current web source without modifying components
 
 ## Brand marks keep literal colours
 
-`apps/web/src/ui/ToolMarks.tsx` draws third-party logos (Google, Gmail, Drive, Calendar). Their colours belong to those brands, not to Vivid's theme, so they stay literal hex values and `shadcn/no-raw-colors` is off for that one file. Never point a brand mark at a theme token: it would change when the theme does.
+`apps/web/src/ui/Marks.tsx` draws third-party logos (Google, Gmail, Drive, Calendar). Their colours belong to those brands, not to Vivid's theme, so they stay literal hex values and `shadcn/no-raw-colors` is off for that one file. Never point a brand mark at a theme token: it would change when the theme does.

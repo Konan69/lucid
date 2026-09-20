@@ -1,6 +1,6 @@
 import { requireNativeView } from 'expo'
 import { Platform, View } from 'react-native'
-import { composerColor } from './composerColor'
+import { composerColor } from './color'
 import {
   useCallback,
   useEffect,
@@ -15,18 +15,18 @@ import {
 import type { NativeSyntheticEvent, TextStyle, ViewProps } from 'react-native'
 import { StyleSheet } from 'react-native'
 
-import { MOBILE_TYPOGRAPHY } from '../lib/typography'
+import { MOBILE_TYPOGRAPHY } from '../../lib/typography'
 
-import { useFontFamily } from '../lib/useFontFamily'
-import { useThemeColor } from '../lib/useThemeColor'
+import { useFontFamily } from '../../lib/font'
+import { useThemeColor } from '../../lib/color'
 import {
   acknowledgeComposerNativeEvent,
   isComposerNativeEcho,
   pruneAcknowledgedComposerNativeEvents,
   resolveComposerControlledEventCount,
   type ComposerNativeEventSnapshot,
-} from './composerEditorRevision'
-import type { ComposerEditorProps, ComposerEditorSelection } from './T3ComposerEditor.types'
+} from './revision'
+import type { ComposerEditorProps, ComposerEditorSelection } from './types'
 
 const NATIVE_MODULE_NAME = 'T3ComposerEditor'
 const EMPTY_SKILLS: NonNullable<ComposerEditorProps['skills']> = []
@@ -435,8 +435,4 @@ export function ComposerEditor({
   )
 }
 
-export type {
-  ComposerEditorHandle,
-  ComposerEditorProps,
-  ComposerEditorSelection,
-} from './T3ComposerEditor.types'
+export type { ComposerEditorHandle, ComposerEditorProps, ComposerEditorSelection } from './types'

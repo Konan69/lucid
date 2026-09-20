@@ -7,7 +7,7 @@ import {
   type ResourceApi,
   type ResourceEnvironment,
   ResourceState,
-} from './resource-store'
+} from './store'
 
 const Payload = Schema.Struct({ value: Schema.String })
 

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { laneConversations } from '../../../web/src/data/conversationLanes.ts'
+import { laneConversations } from './lanes'
 
 it('web and native grouping prioritizes pinned work without duplicating conversations', () => {
   const { lanes } = laneConversations([

@@ -1,5 +1,5 @@
-import { SymbolView } from './SymbolView'
-import { ControlPillMenu } from './ControlPillMenu'
+import { SymbolView } from './Symbol'
+import { ControlPillMenu } from './Menu'
 import type { MenuAction } from '@react-native-menu/menu'
 import * as Haptics from 'expo-haptics'
 import {

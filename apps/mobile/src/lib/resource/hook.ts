@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { AppState } from 'react-native'
 import { Result, Schema } from 'effect'
-import type { Api } from './api'
+import type { Api } from '../api'
 import {
   createResourceStoreCache,
   failureMessage,
@@ -9,7 +9,7 @@ import {
   type ResourceApi,
   type ResourceEnvironment,
   ResourceState,
-} from './resource-store'
+} from './store'
 
 const nativeResourceEnvironment: ResourceEnvironment = {
   isActive: () => AppState.currentState === 'active',

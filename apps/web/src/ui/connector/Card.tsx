@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import * as Result from 'effect/Result'
 import { Check, ExternalLink } from 'lucide-react'
-import * as connectorRequestsData from '../data/connectorRequests'
-import * as connectorsData from '../data/connectors'
-import { run } from '../data/runtime'
-import { ToolMarks } from './ToolMarks'
+import * as connectorRequestsData from '../../data/requests'
+import * as connectorsData from '../../data/connectors'
+import { run } from '../../data/runtime'
+import { ToolMarks } from '../Marks'
 
 export function ConnectorRequestCard({
   request,

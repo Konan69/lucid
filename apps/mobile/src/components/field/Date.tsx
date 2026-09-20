@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Platform, Pressable, Text, TextInput, View } from 'react-native'
 import DateTimePicker from '@react-native-community/datetimepicker'
-import { useTheme } from '../theme'
+import { useTheme } from '../../theme'
 
 function local(value: Date) {
   const pad = (n: number) => String(n).padStart(2, '0')

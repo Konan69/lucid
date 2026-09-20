@@ -20,7 +20,7 @@ import {
 import { useEffect, useState } from 'react'
 import { doneCount, conversations, type Conversation } from '../data/fixtures'
 import { countProjects, projects, type Project } from '../data/projects'
-import type { RuntimeConversation } from '../data/runtimeConversations'
+import type { RuntimeConversation } from '../data/threads'
 
 /* T3's sidebar rule: every thread row carries its project. Here, the
    conversation's project name sits beside the title, quiet but present. */
@@ -43,8 +43,8 @@ function ProjectChip({ name }: { name: string }) {
 import { Avatar } from '../ui/Avatar'
 import { cn } from '../ui/cn'
 import { Face } from '../ui/Face'
-import { StatusDot, StatusLabel } from '../ui/StatusLabel'
-import { ToolMarks } from '../ui/ToolMarks'
+import { StatusDot, StatusLabel } from '../ui/Status'
+import { ToolMarks } from '../ui/Marks'
 
 /* ── Row geometry (Open Session's three heights) ──────────────
    36  a full line: rows and headings that lead with a mark. Navigates → hover fill.
@@ -58,7 +58,7 @@ const HOVER = 'hover:bg-wash-hover'
 const ROW =
   'group/row relative flex w-full items-center gap-2.5 rounded-row px-2.5 text-left outline-none select-none transition-colors duration-(--dur-fast)'
 
-import { laneConversations, type Lane } from '../data/conversationLanes'
+import { laneConversations, type Lane } from '../data/lanes'
 
 export function Sidebar({
   activeId,

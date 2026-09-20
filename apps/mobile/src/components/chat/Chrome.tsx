@@ -21,12 +21,12 @@ import Animated, {
   ReduceMotion,
 } from 'react-native-reanimated'
 import { nativeMetrics as m } from '@vivid/design-tokens/native'
-import { ComposerEditor } from '../native/T3ComposerEditor'
-import type { ComposerEditorHandle } from '../native/T3ComposerEditor.types'
-import { useSidebar, type Routes } from '../workspace'
-import { useTheme } from '../theme'
-import { ControlPill, Face, Label, Sheet } from './ui'
-import { MotionPressable } from './MotionPressable'
+import { ComposerEditor } from '../../native/composer/Editor'
+import type { ComposerEditorHandle } from '../../native/composer/types'
+import { useSidebar, type Routes } from '../../workspace'
+import { useTheme } from '../../theme'
+import { ControlPill, Face, Label, Sheet } from '../ui'
+import { MotionPressable } from '../motion/Pressable'
 
 // T3 ThreadComposer: toolbar 160/120, status 180/140; Android leaves height to IME.
 const toolbarIn = FadeIn.duration(160).reduceMotion(ReduceMotion.System)
