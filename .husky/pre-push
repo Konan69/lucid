@@ -82,6 +82,10 @@ check_ratchet "Tailwind canonical syntax" "tailwindcss" "enforce-canonical" 0
 check_ratchet "Tailwind class order" "tailwindcss" "enforce-sort-order" 0
 check_ratchet "Tailwind shorthand" "tailwindcss" "enforce-shorthand" 0
 
+# Structure: one-word names, no dumping grounds, server layering (docs/00-structure.md).
+# The `!` exceptions in konsistent.json are owed work; delete each one as it lands.
+pnpm exec konsistent
+
 pnpm format
 pnpm typecheck
 pnpm test:tooling

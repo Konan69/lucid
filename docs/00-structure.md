@@ -20,6 +20,16 @@ before adding a file. Extend it in the same change that adds a directory.
 6. **A scaffolded directory holds one `README.md`** saying what belongs there, which document
    defines it, and that it is not built. Delete the README when the first real file lands.
 
+## Enforcement
+
+`pnpm structure` runs [konsistent](https://github.com/vercel-labs/konsistent) against
+`konsistent.json`, and `.husky/pre-push` runs it on every push. It fails on a multi-word source
+file or package directory, on a `utils`/`helpers`/`common`/`shared`/`misc` module, on a server
+`handlers.ts` that imports Drizzle, and on a server `store.ts` that imports an HTTP or RPC module.
+The `!` entries in `konsistent.json` are the consolidations still owed below; delete each exception
+in the change that pays it. Add a convention here whenever this document gains a rule a machine
+can check.
+
 ## The tree
 
 `●` exists · `◐` exists, moving here · `○` scaffolded, not built

@@ -29,7 +29,8 @@
     "db:migrate": "node scripts/migrate.mjs",
     "infra:dev": "VIVID_DEPLOY_TARGET=local ALCHEMY_TELEMETRY_DISABLED=1 alchemy dev --stage local",
     "infra:verify": "node scripts/infra-verify.mjs",
-    "infra:destroy": "VIVID_DEPLOY_TARGET=local ALCHEMY_TELEMETRY_DISABLED=1 alchemy destroy --stage local --yes"
+    "infra:destroy": "VIVID_DEPLOY_TARGET=local ALCHEMY_TELEMETRY_DISABLED=1 alchemy destroy --stage local --yes",
+    "structure": "konsistent"
   },
   "devDependencies": {
     "@effect/language-service": "0.87.2",
@@ -41,6 +42,7 @@
     "alchemy": "catalog:",
     "effect": "catalog:",
     "husky": "9.1.7",
+    "konsistent": "catalog:",
     "oxfmt": "0.68.0",
     "oxlint": "1.83.0",
     "oxlint-tailwindcss": "1.12.0",

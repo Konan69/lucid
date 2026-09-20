@@ -49,6 +49,7 @@ export const versions = Object.freeze({
   hono: '4.12.32',
   'lucide-react': '1.47.0',
   'lucide-react-native': '1.47.0',
+  konsistent: '1.0.0-beta.9',
   oxlint: '1.83.0',
   'oxlint-tailwindcss': '1.12.0',
   pg: '8.23.0',
@@ -79,6 +80,7 @@ const requiredByManifest = Object.freeze({
   'package.json': [
     '@effect/vitest',
     '@shadcn/lint',
+    'konsistent',
     '@types/node',
     'oxlint',
     'oxlint-tailwindcss',
