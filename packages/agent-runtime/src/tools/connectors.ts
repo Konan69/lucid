@@ -17,18 +17,21 @@ export const suggestConnectorTool = defineTool({
     reason: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(400)),
   }),
   async run({ data }) {
-    const response = await runServerRpc(
-      Effect.gen(function* () {
-        const client = yield* VividRpcClient
-        return yield* client.ListConnections()
-      }),
+    const response = await Effect.runPromise(
+      runServerRpc(
+        Effect.gen(function* () {
+          const client = yield* VividRpcClient
+          return yield* client.ListConnections()
+        }),
+      ),
     )
     const connection = response.connectors.find((item) => item.id === data.connector)
+    const status = connection === undefined ? 'disconnected' : connection.status
     return {
       output: {
         kind: 'connector-request',
         ...data,
-        status: connection?.status ?? 'disconnected',
+        status,
       },
     }
   },
@@ -71,12 +74,11 @@ function wrapConnectorTool(tool: BoundConnectorTool): ToolDefinition {
     description: tool.description,
     input: buildInputSchema(tool.parameters),
     async run(context) {
-      // Flue owns this Promise callback; connector code remains in the typed Effect channel.
-      // oxlint-disable-next-line vivid/no-runpromise-in-library
-      const program = decodeConnectorToolInput(context.data).pipe(
-        Effect.flatMap((input) => tool.execute(input)),
+      // Flue decodes the declared Valibot shape before invoking this callback; this boundary
+      // confirms JSON transport values, and execute decodes the connector's concrete schema once.
+      const output = await Effect.runPromise(
+        decodeConnectorToolInput(context.data).pipe(Effect.flatMap((input) => tool.execute(input))),
       )
-      const output = await Effect.runPromise(program)
       return { output }
     },
   })

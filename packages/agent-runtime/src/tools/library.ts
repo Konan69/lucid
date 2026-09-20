@@ -15,21 +15,35 @@ export const searchLibraryTool = defineTool({
     folderId: v.optional(v.pipe(v.string(), v.uuid())),
   }),
   async run({ data }) {
-    const response = await runServerRpc(
-      Effect.gen(function* () {
-        const client = yield* VividRpcClient
-        return yield* client.SearchLibrary({
-          query: data.query,
-          limit: data.limit ?? 6,
-          ...(data.folderId === undefined ? {} : { folderId: LibraryFolderId.make(data.folderId) }),
-        })
-      }),
+    const request =
+      data.folderId === undefined
+        ? { query: data.query, limit: data.limit ?? 6 }
+        : {
+            query: data.query,
+            limit: data.limit ?? 6,
+            folderId: LibraryFolderId.make(data.folderId),
+          }
+    const response = await Effect.runPromise(
+      runServerRpc(
+        Effect.gen(function* () {
+          const client = yield* VividRpcClient
+          return yield* client.SearchLibrary(request)
+        }),
+      ),
     )
-    const results = response.results.map((result) => ({
-      ...result,
-      citation:
-        result.page === null ? `[${result.filename}]` : `[${result.filename}, p.${result.page}]`,
-    }))
+    const results = response.results.map((result) => {
+      const citation =
+        result.page === null ? `[${result.filename}]` : `[${result.filename}, p.${result.page}]`
+      return {
+        chunkId: result.chunkId,
+        documentId: result.documentId,
+        filename: result.filename,
+        page: result.page,
+        text: result.text,
+        score: result.score,
+        citation,
+      }
+    })
     return { output: { query: data.query, results } }
   },
 })
