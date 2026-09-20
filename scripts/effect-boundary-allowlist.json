@@ -1,118 +1,8 @@
 [
   {
-    "file": "packages/agent-runtime/src/app.ts",
-    "classification": "framework-runtime-boundary",
-    "symbols": ["decodeJsonBody", "runOperation"]
-  },
-  {
     "file": "packages/agent-runtime/src/db.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["query", "transaction"]
-  },
-  {
-    "file": "packages/agent-runtime/src/library-ingest.ts",
-    "classification": "legacy-store-adapter",
-    "symbols": [
-      "extractDocumentPages",
-      "extractPages",
-      "indexDocument",
-      "ingestLibraryDocument",
-      "loadDocument"
-    ]
-  },
-  {
-    "file": "packages/agent-runtime/src/library-store.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": [
-      "completeLibraryDocument",
-      "createLibraryDocument",
-      "createLibraryFolder",
-      "deleteLibraryDocument",
-      "deleteLibraryFolder",
-      "failLibraryDocument",
-      "getLibraryDocument",
-      "getLibraryDocumentByDigest",
-      "getLibraryFolder",
-      "getStoredLibraryDocument",
-      "getStoredLibraryDocumentByName",
-      "listAllLibraryFolders",
-      "listLibraryDocuments",
-      "listLibraryFolders",
-      "searchLibrary",
-      "updateLibraryDocument",
-      "updateLibraryFolder"
-    ]
-  },
-  {
-    "file": "packages/agent-runtime/src/routine-scheduler.ts",
-    "classification": "legacy-store-adapter",
-    "symbols": ["executionOperation", "storeOperation"]
-  },
-  {
-    "file": "packages/agent-runtime/src/routine-store.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": [
-      "attachRoutineSubmission",
-      "createRoutine",
-      "deleteRoutine",
-      "failRoutineRun",
-      "finishRoutineRun",
-      "getRoutine",
-      "listRoutineRuns",
-      "listRoutines",
-      "listRunningRoutineRuns",
-      "setRoutineScheduleState",
-      "startRoutineRun",
-      "updateRoutine"
-    ]
-  },
-  {
-    "file": "packages/agent-runtime/src/runtime-db.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": ["schemaReady"]
-  },
-  {
-    "file": "packages/agent-runtime/src/task-store.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": [
-      "attachFollowUpSubmission",
-      "completeFollowUp",
-      "createFollowUp",
-      "createNotification",
-      "createNotificationWithDb",
-      "createTask",
-      "deleteFollowUp",
-      "deleteTask",
-      "dueFollowUps",
-      "failFollowUp",
-      "finishFollowUp",
-      "getFollowUp",
-      "getTask",
-      "getTaskView",
-      "hasFollowUpCovering",
-      "listFollowUps",
-      "listNotifications",
-      "listRunningFollowUps",
-      "listTaskViews",
-      "listTasks",
-      "markNotificationsRead",
-      "markTaskOverdueNotified",
-      "overdueTasks",
-      "startFollowUp",
-      "unreadNotificationCount",
-      "updateFollowUp",
-      "updateTask"
-    ]
-  },
-  {
-    "file": "packages/agent-runtime/src/testdb.ts",
-    "classification": "test-harness-adapter",
-    "symbols": ["testDatabaseLayer"]
-  },
-  {
-    "file": "packages/agent-runtime/src/thread-store.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": ["deleteConversation", "listConversations", "upsertConversation"]
   },
   {
     "file": "packages/agent-runtime/src/tools/connectors.ts",
@@ -120,7 +10,7 @@
     "symbols": ["run"]
   },
   {
-    "file": "packages/agent-runtime/src/tools/search-library.ts",
+    "file": "packages/agent-runtime/src/tools/library.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["run"]
   },
@@ -128,11 +18,6 @@
     "file": "packages/agent-runtime/src/tools/tasks.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["run"]
-  },
-  {
-    "file": "packages/client-runtime/src/index.ts",
-    "classification": "injected-transport-adapter",
-    "symbols": ["<module>", "execute", "readFailureMessage", "readText", "request"]
   },
   {
     "file": "packages/connectors/src/google/calendar.ts",
@@ -189,7 +74,6 @@
       "getCredential",
       "getCredentialsForConnector",
       "listCredentials",
-      "ready",
       "saveCredential",
       "updateCredential"
     ]
@@ -198,5 +82,30 @@
     "file": "packages/connectors/src/types.ts",
     "classification": "third-party-adapter",
     "symbols": ["exchangeCode", "refreshCredential", "revokeCredential"]
+  },
+  {
+    "file": "apps/server/src/connections/store.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["connectionStoreLayer"]
+  },
+  {
+    "file": "apps/server/src/library/ingest.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["extractPages"]
+  },
+  {
+    "file": "packages/agent-runtime/src/app.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": ["runResult", "requireRuntimeToken", "get:/health", "post:/internal/runs"]
+  },
+  {
+    "file": "packages/agent-runtime/src/client.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": ["runServerRpc"]
+  },
+  {
+    "file": "packages/connectors/src/store.ts",
+    "classification": "legacy-store-adapter",
+    "symbols": ["configureConnectorStore"]
   }
 ]

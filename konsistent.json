@@ -10,7 +10,6 @@
         "packages/*/src/**/{name:matches([-_]|[a-z][A-Z])}.tsx",
         "packages/*/*/src/**/{name:matches([-_]|[a-z][A-Z])}.ts",
         "packages/*/*/src/**/{name:matches([-_]|[a-z][A-Z])}.tsx",
-        "!packages/agent-runtime/src/**",
         "!packages/connectors/src/skills/*"
       ],
       "mustNot": {

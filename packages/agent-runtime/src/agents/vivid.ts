@@ -1,7 +1,7 @@
 'use agent'
 
 import { useModel, useResponseFinish, useResponseStart, useTool } from '@flue/runtime'
-import { searchLibraryTool } from '../tools/search-library.ts'
+import { searchLibraryTool } from '../tools/library.ts'
 import {
   gmailConnectorTools,
   calendarConnectorTools,

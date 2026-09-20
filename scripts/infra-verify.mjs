@@ -234,13 +234,15 @@ const assertDatabasePolicy = (databaseSource) => {
 
 const assertMigrationPolicy = (migrationSource) => {
   const serverMigration = migrationSource.search(/name: ["']server["']/)
-  const runtimeMigration = migrationSource.search(/name: ["']agent-runtime["']/)
+  // The product tables moved from the Flue runtime into the server as a second migration owner
+  // with its own history; it still runs after the server's auth and tenancy tables.
+  const productMigration = migrationSource.search(/name: ["']server-product["']/)
   const connectorMigration = migrationSource.search(/name: ["']connectors["']/)
   assert.ok(
     serverMigration >= 0 &&
-      serverMigration < runtimeMigration &&
-      runtimeMigration < connectorMigration,
-    'migration order must be server → agent-runtime → connectors',
+      serverMigration < productMigration &&
+      productMigration < connectorMigration,
+    'migration order must be server → server-product → connectors',
   )
   assert.doesNotMatch(migrationSource, /\bgenerate\b/, 'startup must never generate migrations')
 }
