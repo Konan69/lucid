@@ -75,6 +75,9 @@ export function createApi(connection: Connection, transport: typeof fetch = glob
     agentUrl: (id: string) =>
       `${root}/${connection.token ? 'agents/vivid' : 'api/vivid'}/${encodeURIComponent(id)}`,
     rpc: rpcProgram,
+    // Resource stores need the Effect itself so they own scheduling and typed failure handling.
+    runEffect: <Value>(program: RpcProgram<Value>) =>
+      runtime.contextEffect.pipe(Effect.flatMap((context) => Effect.provide(program, context))),
     run: <Value>(program: RpcProgram<Value>) => runtime.runPromise(program),
     async fetchBytes(path: string, init: RequestInit = {}) {
       const controller = new AbortController()

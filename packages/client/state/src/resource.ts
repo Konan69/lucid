@@ -1,4 +1,4 @@
-import { Data, Effect, Result, Schema } from 'effect'
+import { Data, Effect, Schema } from 'effect'
 
 const POLL_INTERVAL_MS = 15_000
 
@@ -11,7 +11,7 @@ const POLL_INTERVAL_MS = 15_000
 export type ResourceState<Value> = Data.TaggedEnum<{
   Loading: {}
   Ready: { readonly value: Value }
-  Failed: { readonly message: string }
+  Failed: { readonly failure: ResourceFailure }
 }>
 
 interface ResourceStateDefinition extends Data.TaggedEnum.WithGenerics<1> {
@@ -20,6 +20,22 @@ interface ResourceStateDefinition extends Data.TaggedEnum.WithGenerics<1> {
 
 /** Constructors and exhaustive matching for `ResourceState`; callers never write `_tag` by hand. */
 export const ResourceState = Data.taggedEnum<ResourceStateDefinition>()
+
+/** A typed failure from the transport boundary, retaining the server-facing display copy. */
+export class ResourceTransportError extends Schema.TaggedError<ResourceTransportError>()(
+  'ResourceTransportError',
+  { message: Schema.String },
+  { title: 'Resource transport failure' },
+) {}
+
+/** A typed failure from decoding a successful response at the resource boundary. */
+export class ResourceDecodeError extends Schema.TaggedError<ResourceDecodeError>()(
+  'ResourceDecodeError',
+  { message: Schema.String },
+  { title: 'Resource response decode failure' },
+) {}
+
+export type ResourceFailure = ResourceTransportError | ResourceDecodeError
 
 export type JsonValue =
   | string
@@ -38,7 +54,7 @@ export type ResourceProgram<
 
 /** Minimal typed RPC authority needed by the resource store. */
 export interface ResourceApi<Program = ResourceProgram> {
-  readonly load: (program: Program) => Promise<JsonValue>
+  readonly load: (program: Program) => Effect.Effect<JsonValue, ResourceTransportError>
 }
 
 /** Lifecycle authority injected by a platform adapter or a deterministic test. */
@@ -51,6 +67,7 @@ export interface ResourceEnvironment {
 /** External-store contract consumed by `useSyncExternalStore` adapters. */
 export interface ResourceStore<Value> {
   readonly getSnapshot: () => ResourceState<Value>
+  /** A Promise because React Native's RefreshControl awaits it; see `refresh` below. */
   readonly refresh: () => Promise<void>
   readonly subscribe: (listener: () => void) => () => void
 }
@@ -62,15 +79,6 @@ export interface ResourceStoreCache<Program = ResourceProgram> {
     key: string,
     program: Program,
   ) => ResourceStore<JsonValue>
-}
-
-const FailureMessage = Schema.Struct({ message: Schema.String })
-const decodeFailureMessage = Schema.decodeUnknownResult(FailureMessage)
-
-/** Preserves useful adapter messages without trusting arbitrary rejection values at the boundary. */
-export function failureMessage(cause: unknown): string {
-  const decoded = decodeFailureMessage(cause)
-  return Result.isSuccess(decoded) ? decoded.success.message : 'Could not load this. Try again.'
 }
 
 /** Creates a cache keyed by API authority and path, preventing duplicate polling loops. */
@@ -120,20 +128,41 @@ export function createResourceStore<Value, Program = ResourceProgram>(
     if (inFlight) return Promise.resolve()
     inFlight = true
     const current = ++generation
-    const decoded = api.load(program).then((value) => Schema.decodeUnknownPromise(schema)(value))
-    return decoded
-      .then(
-        (value) => {
+
+    /** Decodes only the successful wire value, keeping malformed responses distinct from transport failures. */
+    const decode = (value: JsonValue) =>
+      Schema.decodeUnknownEffect(schema)(value).pipe(
+        Effect.mapError((failure) => ResourceDecodeError.make({ message: failure.message })),
+      )
+
+    const operation = api.load(program).pipe(
+      Effect.flatMap(decode),
+      Effect.match({
+        onFailure: (failure) => {
+          if (current === generation) publish(ResourceState.Failed({ failure }))
+        },
+        onSuccess: (value) => {
           if (current === generation) publish(ResourceState.Ready({ value }))
         },
-        (cause: unknown) => {
-          if (current === generation)
-            publish(ResourceState.Failed({ message: failureMessage(cause) }))
-        },
-      )
-      .finally(() => {
-        if (current === generation) inFlight = false
-      })
+      }),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (current === generation) inFlight = false
+        }),
+      ),
+      Effect.asVoid,
+    )
+
+    // React's useSyncExternalStore requires synchronous getSnapshot/subscribe; fork only the load here.
+    // oxlint-disable-next-line vivid/no-runpromise-in-library -- React's external-store boundary owns this fork.
+    const fiber = Effect.runFork(operation)
+
+    // RefreshControl awaits refresh to decide when to hide its spinner, so the fiber's completion
+    // has to reach React as a Promise. This is the narrow third-party adapter Effect allows.
+    // oxlint-disable-next-line vivid/no-promise-constructor -- React Native's RefreshControl contract.
+    return new Promise<void>((resolve) => {
+      fiber.addObserver(() => resolve())
+    })
   }
 
   const start = () => {
@@ -147,6 +176,7 @@ export function createResourceStore<Value, Program = ResourceProgram>(
   }
 
   const stop = () => {
+    // The transport may outlive fiber interruption; the generation keeps its late response harmless.
     generation += 1
     inFlight = false
     state = ResourceState.Loading()

@@ -1,13 +1,13 @@
 import { useSyncExternalStore } from 'react'
 import { AppState } from 'react-native'
-import { Result, Schema } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 import type { Api, RpcProgram } from '../api'
 import {
   createResourceStoreCache,
-  failureMessage,
   type JsonValue,
   type ResourceApi,
   type ResourceEnvironment,
+  ResourceTransportError,
   ResourceState,
 } from '@vivid/state'
 
@@ -36,7 +36,12 @@ function resourceApiFor(api: Api): ResourceApi<MobileResourceProgram> {
   const existing = resourceApis.get(api)
   if (existing !== undefined) return existing
   const resourceApi: ResourceApi<MobileResourceProgram> = {
-    load: (program) => api.run(program),
+    load: (program) =>
+      api
+        .runEffect(program)
+        .pipe(
+          Effect.mapError((failure) => ResourceTransportError.make({ message: failure.message })),
+        ),
   }
   resourceApis.set(api, resourceApi)
   return resourceApi
@@ -61,9 +66,13 @@ function resourceValue<Value extends JsonValue>(
       const decoded = Schema.decodeUnknownResult(schema)(ready.value)
       return Result.isSuccess(decoded)
         ? { data: decoded.success, error: '', loading: false, refresh }
-        : { error: failureMessage(decoded.failure), loading: false, refresh }
+        : { error: decoded.failure.message, loading: false, refresh }
     },
-    Failed: (failed): ResourceValue<Value> => ({ error: failed.message, loading: false, refresh }),
+    Failed: (failed): ResourceValue<Value> => ({
+      error: failed.failure.message,
+      loading: false,
+      refresh,
+    }),
   })
 }
 

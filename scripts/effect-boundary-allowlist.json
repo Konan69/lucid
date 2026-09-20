@@ -46,7 +46,7 @@
   },
   {
     "file": "packages/client/state/src/resource.ts",
-    "classification": "legacy-store-adapter",
+    "classification": "third-party-adapter",
     "symbols": ["<module>", "refresh"]
   }
 ]
