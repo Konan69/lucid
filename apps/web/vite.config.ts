@@ -16,6 +16,10 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5178,
       proxy: {
+        '/api/rpc': {
+          target: 'http://127.0.0.1:8787',
+          changeOrigin: true,
+        },
         ...Object.fromEntries(
           [
             '/api/library',
