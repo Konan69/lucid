@@ -17,7 +17,7 @@
   {
     "file": "packages/agent-runtime/src/tools/tasks.ts",
     "classification": "legacy-runtime-boundary",
-    "symbols": ["run"]
+    "symbols": ["run", "do:create-task", "do:update-task", "do:schedule-follow-up"]
   },
   {
     "file": "packages/connectors/src/google/calendar.ts",
@@ -99,13 +99,18 @@
     "symbols": ["runResult", "requireRuntimeToken", "get:/health", "post:/internal/runs"]
   },
   {
-    "file": "packages/agent-runtime/src/client.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": ["runServerRpc"]
-  },
-  {
     "file": "packages/connectors/src/store.ts",
     "classification": "legacy-store-adapter",
     "symbols": ["configureConnectorStore"]
+  },
+  {
+    "file": "apps/server/src/connections/store.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["readConnection"]
+  },
+  {
+    "file": "packages/agent-runtime/src/app.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": ["acceptRun"]
   }
 ]
