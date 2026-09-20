@@ -1,4 +1,5 @@
 import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
 import {
   FollowUpResponse,
   NotFound,
@@ -12,7 +13,8 @@ import { TaskStore } from './store.ts'
 
 const withTask = Effect.fn('TaskHandlers.withTask')(function* (store: TaskStore['Service'], id) {
   const task = yield* store.get(id)
-  return task === undefined ? yield* Effect.fail(new NotFound({ message: 'Task not found' })) : task
+  if (Option.isNone(task)) return yield* Effect.fail(new NotFound({ message: 'Task not found' }))
+  return task.value
 })
 
 export const taskHandlers = {
@@ -40,13 +42,13 @@ export const taskHandlers = {
   PatchTask: Effect.fn('Rpc.PatchTask')(function* ({ id, patch }) {
     const store = yield* TaskStore
     const task = yield* store.patch(id, patch)
-    if (task === undefined) return yield* Effect.fail(new NotFound({ message: 'Task not found' }))
-    return TaskResponse.make({ task })
+    if (Option.isNone(task)) return yield* Effect.fail(new NotFound({ message: 'Task not found' }))
+    return TaskResponse.make({ task: task.value })
   }),
   DeleteTask: Effect.fn('Rpc.DeleteTask')(function* ({ id }) {
     const store = yield* TaskStore
-    if (!(yield* store.remove(id)))
-      return yield* Effect.fail(new NotFound({ message: 'Task not found' }))
+    if (!(yield* store.remove(id))) yield* Effect.fail(new NotFound({ message: 'Task not found' }))
+    return yield* Effect.void
   }),
   NudgeTask: Effect.fn('Rpc.NudgeTask')(function* ({ id, nudge }) {
     const store = yield* TaskStore
@@ -59,26 +61,33 @@ export const taskHandlers = {
     const store = yield* TaskStore
     const task = yield* withTask(store, taskId)
     const created = yield* store.addFollowUp(taskId, followUp, 'you')
-    return FollowUpResponse.make({ followUp: created, task: (yield* store.get(task.id)) ?? task })
+    return FollowUpResponse.make({ followUp: created, task: yield* withTask(store, task.id) })
   }),
   PatchFollowUp: Effect.fn('Rpc.PatchFollowUp')(function* ({ id, patch }) {
     const store = yield* TaskStore
     const followUp = yield* store.patchFollowUp(id, patch)
-    if (followUp === undefined)
+    if (Option.isNone(followUp))
       return yield* Effect.fail(new NotFound({ message: 'Follow-up not found' }))
-    return FollowUpResponse.make({ followUp, task: yield* withTask(store, followUp.taskId) })
+    return FollowUpResponse.make({
+      followUp: followUp.value,
+      task: yield* withTask(store, followUp.value.taskId),
+    })
   }),
   DeleteFollowUp: Effect.fn('Rpc.DeleteFollowUp')(function* ({ id }) {
     const store = yield* TaskStore
     if (!(yield* store.removeFollowUp(id)))
-      return yield* Effect.fail(new NotFound({ message: 'Follow-up not found' }))
+      yield* Effect.fail(new NotFound({ message: 'Follow-up not found' }))
+    return yield* Effect.void
   }),
   RunFollowUp: Effect.fn('Rpc.RunFollowUp')(function* ({ id }) {
     const service = yield* FollowUps
     const followUp = yield* service.run(id)
-    if (followUp === undefined)
+    if (Option.isNone(followUp))
       return yield* Effect.fail(new NotFound({ message: 'Follow-up not found' }))
     const store = yield* TaskStore
-    return FollowUpResponse.make({ followUp, task: yield* withTask(store, followUp.taskId) })
+    return FollowUpResponse.make({
+      followUp: followUp.value,
+      task: yield* withTask(store, followUp.value.taskId),
+    })
   }),
 }

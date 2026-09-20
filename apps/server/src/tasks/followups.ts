@@ -1,6 +1,7 @@
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Option from 'effect/Option'
 import * as Schedule from 'effect/Schedule'
 import {
   Thread as ThreadSchema,
@@ -17,25 +18,24 @@ import { TaskStore } from './store.ts'
 
 export const FOLLOW_UP_TICK_MS = 20_000
 
-const instruction = (task: Task, followUp: FollowUp) =>
-  [
-    `A follow-up you scheduled is due for the task "${task.title}".`,
-    task.detail.length > 0 ? `Detail: ${task.detail}` : undefined,
-    `Waiting on: ${task.assignee ?? 'the user (this is their own task)'}.`,
-    followUp.note.length > 0 ? `Follow-up note: ${followUp.note}` : undefined,
-    'Act on it now. Do not claim you contacted anyone yourself.',
-  ]
-    .filter((line): line is string => line !== undefined)
-    .join('\n')
+/** Builds the model instruction without introducing absent lines into its string collection. */
+const instruction = (task: Task, followUp: FollowUp) => {
+  const lines = [`A follow-up you scheduled is due for the task "${task.title}".`]
+  if (task.detail.length > 0) lines.push(`Detail: ${task.detail}`)
+  lines.push(`Waiting on: ${task.assignee ?? 'the user (this is their own task)'}.`)
+  if (followUp.note.length > 0) lines.push(`Follow-up note: ${followUp.note}`)
+  lines.push('Act on it now. Do not claim you contacted anyone yourself.')
+  return lines.join('\n')
+}
 
 export interface FollowUpsService {
   readonly run: (
     id: FollowUpId,
-  ) => Effect.Effect<FollowUp | undefined, DatabaseInfrastructureError | RuntimeUnavailable>
+  ) => Effect.Effect<Option.Option<FollowUp>, DatabaseInfrastructureError | RuntimeUnavailable>
   readonly nudge: (
     taskId: TaskId,
     note: string,
-  ) => Effect.Effect<FollowUp | undefined, DatabaseInfrastructureError | RuntimeUnavailable>
+  ) => Effect.Effect<Option.Option<FollowUp>, DatabaseInfrastructureError | RuntimeUnavailable>
   readonly runDue: () => Effect.Effect<void, DatabaseInfrastructureError | RuntimeUnavailable>
 }
 
@@ -50,69 +50,69 @@ export const followUpsLayer = Layer.effect(
 
     const submit = Effect.fn('FollowUps.submit')(function* (task: Task, followUp: FollowUp) {
       const claimed =
-        followUp.status === 'running' ? followUp : yield* tasks.claimFollowUp(followUp.id)
-      if (claimed === undefined || claimed.status !== 'running') return claimed
+        followUp.status === 'running'
+          ? Option.some(followUp)
+          : yield* tasks.claimFollowUp(followUp.id)
+      if (Option.isNone(claimed)) return Option.none<FollowUp>()
+      const claimedFollowUp = claimed.value
+      if (claimedFollowUp.status !== 'running') return claimed
       yield* threads.put(
         ThreadSchema.make({
           id: task.conversationId,
           title: task.title,
           preview: `Following up: ${task.title}`,
-          updatedAt: claimed.firedAt ?? claimed.at,
+          updatedAt: claimedFollowUp.firedAt ?? claimedFollowUp.at,
           archived: false,
         }),
       )
-      if (claimed.submissionId !== null) return claimed
+      if (claimedFollowUp.submissionId !== null) return claimed
       const receipt = yield* runtime.start({
         threadId: task.conversationId,
-        idempotencyKey: `${claimed.id}:${claimed.firedAt ?? claimed.at}`,
+        idempotencyKey: `${claimedFollowUp.id}:${claimedFollowUp.firedAt ?? claimedFollowUp.at}`,
         type: 'follow-up',
-        body: instruction(task, claimed),
+        body: instruction(task, claimedFollowUp),
         attributes: {
           taskId: task.id,
           taskTitle: task.title,
-          followUpId: claimed.id,
-          scheduledAt: new Date(claimed.at).toISOString(),
+          followUpId: claimedFollowUp.id,
+          scheduledAt: new Date(claimedFollowUp.at).toISOString(),
         },
       })
-      yield* tasks.attachSubmission(claimed.id, receipt.submissionId)
-      return yield* tasks.getFollowUp(claimed.id)
+      yield* tasks.attachSubmission(claimedFollowUp.id, receipt.submissionId)
+      return yield* tasks.getFollowUp(claimedFollowUp.id)
     })
 
     const run = Effect.fn('FollowUps.run')(function* (id: FollowUpId) {
-      let followUp = yield* tasks.getFollowUp(id)
-      if (followUp === undefined) return undefined
-      const task = yield* tasks.get(followUp.taskId)
-      if (task === undefined || task.status !== 'open') return followUp
-      if (followUp.status !== 'scheduled' && followUp.status !== 'running') {
-        followUp = yield* tasks.patchFollowUp(id, { status: 'scheduled' })
-        if (followUp === undefined) return undefined
-      }
-      return yield* submit(task, followUp)
+      const existing = yield* tasks.getFollowUp(id)
+      if (Option.isNone(existing)) return Option.none<FollowUp>()
+      const task = yield* tasks.get(existing.value.taskId)
+      if (Option.isNone(task) || task.value.status !== 'open') return existing
+      const scheduled =
+        existing.value.status === 'scheduled' || existing.value.status === 'running'
+          ? existing
+          : yield* tasks.patchFollowUp(id, { status: 'scheduled' })
+      if (Option.isNone(scheduled)) return Option.none<FollowUp>()
+      return yield* submit(task.value, scheduled.value)
     })
 
     const nudge = Effect.fn('FollowUps.nudge')(function* (taskId: TaskId, note: string) {
       const task = yield* tasks.get(taskId)
-      if (task === undefined || task.status !== 'open') return undefined
-      const followUp = yield* tasks.addFollowUp(task.id, { at: Date.now(), note }, 'you')
-      return yield* submit(task, followUp)
+      if (Option.isNone(task) || task.value.status !== 'open') return Option.none<FollowUp>()
+      const followUp = yield* tasks.addFollowUp(task.value.id, { at: Date.now(), note }, 'you')
+      return yield* submit(task.value, followUp)
+    })
+
+    /** Processes one claimed row so the scheduler's collection traversal stays flat. */
+    const runDueFollowUp = Effect.fn('FollowUps.runDueFollowUp')(function* (followUp: FollowUp) {
+      const task = yield* tasks.get(followUp.taskId)
+      if (Option.isNone(task) || task.value.status !== 'open') return yield* Effect.void
+      yield* submit(task.value, followUp)
+      return yield* Effect.void
     })
 
     const runDue = Effect.fn('FollowUps.runDue')(function* () {
       const due = yield* tasks.claimDueFollowUps()
-      yield* Effect.forEach(
-        due,
-        (followUp) =>
-          tasks
-            .get(followUp.taskId)
-            .pipe(
-              Effect.flatMap((task) =>
-                task === undefined || task.status !== 'open'
-                  ? Effect.void
-                  : Effect.asVoid(submit(task, followUp)),
-              ),
-            ),
-        { discard: true, concurrency: 1 },
-      )
+      yield* Effect.forEach(due, runDueFollowUp, { discard: true, concurrency: 1 })
     })
 
     return FollowUps.of({ run, nudge, runDue })
