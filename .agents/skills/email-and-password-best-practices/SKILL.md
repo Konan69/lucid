@@ -8,7 +8,7 @@ description: Configure email verification, implement password reset flows, set p
 1. Enable email/password: `emailAndPassword: { enabled: true }`
 2. Configure `emailVerification.sendVerificationEmail`
 3. Add `sendResetPassword` for password reset flows
-4. Run `pnpm dlx auth@latest migrate`
+4. Outside Vivid, run `pnpm dlx auth@latest migrate`. In Vivid, edit `apps/server/src/schema.ts`, run `pnpm --filter @vivid/server db:generate`, review the SQL, then migrate; never push a shared database.
 5. Verify: attempt sign-up and confirm verification email triggers
 
 ---

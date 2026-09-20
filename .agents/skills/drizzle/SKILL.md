@@ -15,7 +15,9 @@ Run once per session when this skill is loaded — cache the result for the rest
 
 Locate the working directory where `drizzle-kit` is meant to run. This is the package that owns `drizzle-kit`, which in a monorepo is often a workspace package rather than the repo root — not a bare binary on `PATH`. Use your judgment to find it. Signals you may draw on, none of them binding and none of them a fixed precedence: the current working directory, the Drizzle file being worked on, the nearest `drizzle.config.ts`, and the nearest `package.json` that declares `drizzle-kit`.
 
-Vivid is pnpm-only. Invoke the project-installed `drizzle-kit` with `pnpm --filter <owner> exec drizzle-kit ...` or the owning package script. Never download a latest CLI for this check: it would always report the newest revision and make staleness detection structurally impossible. The installed, pinned binary is the evidence.
+Invoke the project-installed `drizzle-kit` with `pnpm exec drizzle-kit`. Do not download a different binary or run the local executable directly.
+
+The check must run the project-INSTALLED `drizzle-kit` and must NEVER use a download-latest form such as `pnpm dlx`. Downloading latest always reports the newest revision, which would make this check structurally incapable of ever detecting staleness.
 
 Run the resolved `drizzle-kit skills version` in the resolved directory, then compare. The trimmed stdout is the revision the installed `drizzle-kit` ships; this skill's own `metadata.revision` (read from this file's frontmatter when it loads) is the revision of the skills currently in use. Parse both as integers. If the revision `drizzle-kit` ships is strictly greater than this skill's own revision, the skills in use are outdated — surface this message verbatim to the user:
 

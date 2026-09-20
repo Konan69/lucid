@@ -10,8 +10,8 @@ Root `package.json` scripts for turbo tasks MUST use `turbo run`, not direct com
 // WRONG - bypasses turbo, no parallelization or caching
 {
   "scripts": {
-    "build": "pnpm --filter web build",
-    "dev": "pnpm --filter web dev"
+    "build": "vite build",
+    "dev": "vite"
   }
 }
 
@@ -24,7 +24,7 @@ Root `package.json` scripts for turbo tasks MUST use `turbo run`, not direct com
 }
 ```
 
-**Why this matters:** Running a leaf package script at the root bypasses Turborepo entirely: no graph scheduling, cache coordination, or dependency ordering.
+**Why this matters:** Running `pnpm run build` at root bypasses Turborepo entirely - no parallelization, no caching, no dependency graph awareness.
 
 ## #2 Using `&&` to Chain Turbo Tasks
 
@@ -34,7 +34,7 @@ Don't use `&&` to chain tasks that turbo should orchestrate.
 // WRONG - changeset:publish chains turbo task with non-turbo command
 {
   "scripts": {
-    "changeset:publish": "pnpm --filter web build && changeset publish"
+    "changeset:publish": "pnpm build && changeset publish"
   }
 }
 
@@ -138,9 +138,9 @@ Don't use relative paths like `../` to reference files outside the package. Use 
 
 ## #6 MOST COMMON MISTAKE: Creating Root Tasks
 
-**DO NOT create Root Tasks. ALWAYS create package tasks.**
+**Prefer package tasks over Root Tasks.**
 
-When you need to create a task (build, lint, test, typecheck, etc.):
+When you need to create a task (build, lint, test, typecheck, etc.), default to package tasks:
 
 1. Add the script to **each relevant package's** `package.json`
 2. Register the task in root `turbo.json`
@@ -186,7 +186,7 @@ When you need to create a task (build, lint, test, typecheck, etc.):
 - Each package's output is cached **individually**
 - You can **filter** to specific packages: `turbo run test --filter=web`
 
-Root Tasks (`//#taskname`) defeat all these benefits. Only use them for tasks that truly cannot exist in any package (extremely rare).
+Root Tasks (`//#taskname`) defeat all these benefits when a task can live in packages. Only use them for tasks that truly cannot exist in any package, such as Vitest Projects' `//#test`, repo-wide release scripts, or tooling that does not invoke `turbo` itself.
 
 ## #7 Tasks That Need Parallel Execution + Cache Invalidation
 

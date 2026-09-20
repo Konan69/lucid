@@ -19,10 +19,10 @@ Skip unnecessary builds when a package hasn't changed using `turbo-ignore`.
 ### Installation
 
 ```bash
-pnpm exec turbo-ignore
+pnpm dlx turbo-ignore
 ```
 
-Or install it in the project:
+Or install globally in your project:
 
 ```bash
 pnpm add -D turbo-ignore
@@ -35,7 +35,7 @@ pnpm add -D turbo-ignore
 3. Select "Custom" and enter:
 
 ```bash
-pnpm exec turbo-ignore
+pnpm dlx turbo-ignore
 ```
 
 ### How It Works
@@ -51,13 +51,22 @@ pnpm exec turbo-ignore
 
 ```bash
 # Check specific package
-pnpm exec turbo-ignore web
+pnpm dlx turbo-ignore web
 
 # Use specific comparison ref
-pnpm exec turbo-ignore --fallback=HEAD~1
+pnpm dlx turbo-ignore --fallback=HEAD~1
 
-# Verbose output
-pnpm exec turbo-ignore --verbose
+# Check a task other than build
+pnpm dlx turbo-ignore --task=test
+
+# Run in a specific directory
+pnpm dlx turbo-ignore --directory=apps/web
+
+# Explicitly set which version of turbo to invoke
+pnpm dlx turbo-ignore --turbo-version=2.5.0
+
+# Raise child process maxBuffer in KB (default: 1024)
+pnpm dlx turbo-ignore --max-buffer=2048
 ```
 
 ## Environment Variables

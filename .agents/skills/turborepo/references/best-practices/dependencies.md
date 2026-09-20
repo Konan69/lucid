@@ -77,13 +77,13 @@ Only repository-level tools:
 ### Single Package
 
 ```bash
-pnpm add lodash --filter=@repo/utils
+pnpm --filter @repo/utils add lodash
 ```
 
 ### Multiple Packages
 
 ```bash
-pnpm add jest --save-dev --filter=web --filter=@repo/ui
+pnpm --filter web --filter @repo/ui add -D jest
 ```
 
 ### Internal Packages
@@ -106,15 +106,15 @@ pnpm add @repo/ui --filter=web
 
 ```bash
 # syncpack - Check and fix version mismatches
-pnpm exec syncpack list-mismatches
-pnpm exec syncpack fix-mismatches
+pnpm dlx syncpack list-mismatches
+pnpm dlx syncpack fix-mismatches
 
 # manypkg - Similar functionality
-pnpm exec manypkg check
-pnpm exec manypkg fix
+pnpm dlx @manypkg/cli check
+pnpm dlx @manypkg/cli fix
 
 # sherif - Rust-based, very fast
-pnpm exec sherif
+pnpm dlx sherif
 ```
 
 ### Option 2: Package Manager Commands
@@ -155,13 +155,13 @@ catalog:
 
 Turborepo understands these relationships and orders builds accordingly.
 
-### External Registry
+### External Registry Dependencies
 
 ```json
 { "lodash": "^4.17.21" }
 ```
 
-Standard semver versioning from the configured registry.
+Use standard semantic version ranges for external registry packages.
 
 ## Peer Dependencies
 

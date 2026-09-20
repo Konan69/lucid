@@ -109,7 +109,7 @@ Guidance:
 
 ## Errors
 
-`Schema.TaggedError` is the pinned Effect 4 rc.116 class for typed Effect errors.
+`Schema.TaggedError` is the project-pinned Effect 4 class for typed Effect errors; it is valid for the installed rc.112 baseline and the rc.116 target.
 
 ```ts
 export class PersistenceError extends Schema.TaggedError<PersistenceError>()(

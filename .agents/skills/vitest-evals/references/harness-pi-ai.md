@@ -68,7 +68,8 @@ const harness = piAiHarness({
 - Starts sessions with a user message for the input.
 - Uses recorded runtime events as normalized messages.
 - Adds tool calls from wrapped runtime tools and native tool instrumentation.
-- Reads usage from `usage` or `metrics`, and adds tool call counts when absent.
+- Reads usage from `usage` or `metrics`, adds tool counts when absent, and maps
+  Pi's total USD cost to `costUsd` when available.
 - Uses `result.session` or `result.trace` directly when they already match `NormalizedSession`.
 - Attaches partial runs to thrown errors.
 

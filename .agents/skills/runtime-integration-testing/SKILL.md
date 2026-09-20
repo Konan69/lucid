@@ -46,10 +46,10 @@ Do not import `main.ts` as a test harness: it launches `NodeRuntime.runMain` dur
 
 Dependency truth matters:
 
-- The lock currently resolves Effect/platform/sql packages at rc.112; manifests target rc.116.
-- Verified in the installed rc.112 declarations: `NodeHttpServer.layerTest` supplies an ephemeral real listener plus Fetch-backed client, and `HttpRouter.toWebHandler` returns a Fetch handler with `dispose`. Prefer `NodeHttpServer.layerTest` when the claim requires real HTTP; `toWebHandler` is useful only when an in-memory Fetch boundary is sufficient.
-- Recheck those declarations after rc.116 lock convergence before implementing the harness; do not assume unchanged signatures.
-- `@effect/vitest` rc.112 is present only transitively and is not a declared workspace dependency. Its `it`, `live`, and `layer` exports are therefore not available project APIs; do not recommend or import them until explicitly added and pinned.
+- The lock resolves every Effect, platform and sql package at `4.0.0-rc.116`, the same version the manifests pin through the workspace catalog.
+- Verified in the installed rc.116 declarations (`@effect/platform-node/NodeHttpServer`, `effect/unstable/http/HttpRouter`): `NodeHttpServer.layerTest` supplies an ephemeral real listener plus Fetch-backed client, and `HttpRouter.toWebHandler` returns a Fetch handler with `dispose`. Prefer `NodeHttpServer.layerTest` when the claim requires real HTTP; `toWebHandler` is useful only when an in-memory Fetch boundary is sufficient.
+- Recheck those declarations whenever the Effect pin moves; do not assume unchanged signatures.
+- `@effect/vitest` `4.0.0-rc.116` is a declared workspace dependency. Effect programs under test use its `it.effect`, `it.live` and shared `layer(...)`; do not build a manual Effect runtime in a test.
 - Ordinary Node test code may launch the real Layer and use standard HTTP. Keep raw Promises at this narrow test/framework adapter only.
 
 ### Target server skeleton (requires the named extraction)
@@ -75,7 +75,7 @@ test("health is served by the composed router", async (context) => {
 });
 ```
 
-`startTestServer` is an explicitly deferred local adapter, not an installed Effect helper. Build it from the verified rc.112 `NodeHttpServer.layerTest` surface, inject the test database/config/auth layers, then recheck it against rc.116 after lock convergence.
+`startTestServer` is an explicitly deferred local adapter, not an installed Effect helper. Build it from the verified rc.116 `NodeHttpServer.layerTest` surface, inject the test database/config/auth layers.
 
 ## Better Auth: mount, do not stub
 
@@ -226,5 +226,5 @@ Do not use Alchemy dev for destructive database checks, transaction races, sched
 - [ ] Real Drizzle Kit migrations ran against disposable PostgreSQL 18.
 - [ ] Pools, listeners, scheduler jobs, and storage are closed; provider globals are process-isolated or deliberately replaced.
 - [ ] No sleeps, default database URL, shared IDs, secrets, or unbounded retries remain.
-- [ ] rc.112/rc.116 and undeclared test-library APIs are described truthfully.
+- [ ] The Effect pin and the declared test libraries are described as installed, not as remembered.
 - [ ] Restart and outcome-unknown behavior is covered when durability is claimed.

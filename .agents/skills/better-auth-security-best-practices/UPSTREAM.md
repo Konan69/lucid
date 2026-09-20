@@ -1,7 +1,11 @@
-# Upstream
+# Upstream provenance
 
-- Repository: https://github.com/better-auth/skills
-- Commit: `20c9e88a5c007461a703f1c213572b073196113e`
-- Source: `security/SKILL.md`
+- Source: `better-auth/skills`
+- Path: `security/SKILL.md`
+- Base: `6a1636950a1d7fc53602639ce7505a4a5d39c797` (content-derived)
+- Merged commit: `20c9e88a5c007461a703f1c213572b073196113e`
+- Merged at: `2026-09-19`
 
-Copied from upstream head on 2026-09-19. Local edits: commands use pnpm (`pnpm dlx`, `pnpm add`). The previous vendored copy carried no owner customisations; it was an older upstream revision (old `@better-auth/cli` command name, no version-matched documentation section).
+## Merge notes
+
+The current upstream content matches the owner copy. No owner customization or Vivid adaptation was required; this refresh records current provenance. There were no conflicts.

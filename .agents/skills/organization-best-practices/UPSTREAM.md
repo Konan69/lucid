@@ -1,7 +1,11 @@
-# Upstream
+# Upstream provenance
 
-- Repository: https://github.com/better-auth/skills
-- Commit: `20c9e88a5c007461a703f1c213572b073196113e`
-- Source: `better-auth/organization/SKILL.md`
+- Source: `better-auth/skills`
+- Path: `better-auth/organization/SKILL.md`
+- Base: `17dfe3a1da1c3982de723098ba1015d67f35694c` (content-derived)
+- Merged commit: `20c9e88a5c007461a703f1c213572b073196113e`
+- Merged at: `2026-09-19`
 
-Copied from upstream head on 2026-09-19. Local edits: commands use pnpm (`pnpm dlx`, `pnpm add`). The previous vendored copy carried no owner customisations; it was an older upstream revision (old `@better-auth/cli` command name, no version-matched documentation section).
+## Merge notes
+
+Merged the upstream `auth` CLI rename and kept pnpm-only commands. Added Vivid's organization-schema path and reviewed migration workflow. Vivid's no-push rule wins over upstream generic generate-and-push wording.

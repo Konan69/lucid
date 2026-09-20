@@ -1,7 +1,10 @@
-# Upstream
+# Upstream provenance
 
-- Repository: https://github.com/dmmulroy/skills
-- Commit: `8603380821fee6a77c82639f364ce8fe4f5a92be`
-- Source: `skills/coding-standards/SKILL.md`
+- Source: `dmmulroy/skills`
+- Path: `coding-standards/SKILL.md`
+- Base and merged commit: `8603380821fee6a77c82639f364ce8fe4f5a92be`
+- Merged at: `2026-09-19`
 
-`SKILL.md` is copied verbatim from the source file at the pinned commit.
+## Merge notes
+
+Upstream remains at the recorded commit. The owner structure and wording are retained. Vivid adapts upstream's obsolete `Schema.TaggedErrorClass` wording to `Schema.TaggedError` and records the installed rc.112 baseline versus rc.116 target. The former “copied verbatim” claim was incorrect; the Vivid adaptation wins this conflict.

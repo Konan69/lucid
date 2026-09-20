@@ -5,9 +5,13 @@ description: Configure Better Auth server and client, set up database adapters, 
 
 # Better Auth Integration Guide
 
+## Vivid override
+
+Vivid targets Better Auth `1.7.5` through `@alchemy.run/better-auth` beta.79. Its validated variables are `AUTH_SECRET` and `PUBLIC_URL`, not Better Auth's default environment names. The combined auth and application schema lives in `apps/server/src/schema.ts`. Edit that schema, run `pnpm --filter @vivid/server db:generate`, review the generated SQL, then migrate. Never use `drizzle-kit push` for this repository.
+
 ## Documentation Version
 
-Use documentation that matches the Better Auth version installed in the project. APIs and plugin names can differ across maintained release lines.
+Use documentation for Better Auth `1.7.5` when working in Vivid. For another project, use documentation that matches its resolved package version because APIs and plugin names can differ across maintained release lines.
 
 1. Prefer a version explicitly named by the user.
 2. Otherwise, inspect the resolved `better-auth` version in the lockfile, falling back to the package manifest when no lockfile is available.
@@ -26,9 +30,10 @@ When planning an upgrade, separate guidance for the currently installed version 
 3. Create `auth.ts` with database + config
 4. Create route handler for your framework
 5. Run migrations:
-   - **Built-in adapter:** `pnpm dlx auth@latest migrate`
-   - **Drizzle:** `pnpm dlx auth@latest generate --output src/db/auth-schema.ts` then `pnpm dlx drizzle-kit push` (dev) or `pnpm dlx drizzle-kit generate && pnpm dlx drizzle-kit migrate` (prod)
-   - **Prisma:** `pnpm dlx auth@latest generate --output prisma/schema.prisma` then `pnpm dlx prisma migrate dev`
+   - **Vivid:** edit `apps/server/src/schema.ts`, run `pnpm --filter @vivid/server db:generate`, review the generated SQL, then migrate.
+   - **Built-in adapter in another pnpm project:** `pnpm dlx auth@latest migrate`
+   - **Drizzle in another pnpm project:** `pnpm dlx auth@latest generate --output src/db/auth-schema.ts`, then use reviewed generated migrations. Do not push a shared database.
+   - **Prisma in another pnpm project:** `pnpm dlx auth@latest generate --output prisma/schema.prisma` then `pnpm dlx prisma migrate dev`
 6. Verify: call `GET /api/auth/ok` — should return `{ status: "ok" }`
 
 ---
@@ -45,8 +50,8 @@ Only define `baseURL`/`secret` in config if env vars are NOT set.
 CLI looks for `auth.ts` in: `./`, `./lib`, `./utils`, or under `./src`. Use `--config` for custom path.
 
 ### CLI Commands
-- `pnpm dlx auth@latest migrate` - Apply schema (built-in adapter)
-- `pnpm dlx auth@latest generate` - Generate schema for Prisma/Drizzle
+- `pnpm dlx auth@latest migrate` - Apply schema with the built-in adapter outside Vivid
+- `pnpm dlx auth@latest generate` - Generate a schema for Prisma/Drizzle outside Vivid
 - `pnpm dlx auth@latest mcp --cursor` - Add MCP to AI tools
 
 **Re-run after adding/changing plugins.**
@@ -178,7 +183,7 @@ For separate client/server projects: `createAuthClient<typeof auth>()`.
 4. **Cookie cache** - Custom session fields NOT cached, always re-fetched
 5. **Stateless mode** - No DB = session in cookie only, logout on cache expiry
 6. **Change email flow** - Sends to current email first, then new email
-7. **Drizzle: db not initialized** - `drizzleAdapter(db, ...)` requires a `db` instance from `drizzle()`. In this repo the instance is built in `apps/server/src/database.ts`.
+7. **Drizzle: db not initialized** - `drizzleAdapter(db, ...)` requires a `db` instance from `drizzle()`. See `create-auth` skill for setup examples (node-postgres, postgres.js, Neon).
 8. **Drizzle: missing drizzle.config.ts** - `drizzle-kit` commands require a `drizzle.config.ts` pointing to the generated schema file and DB credentials.
 
 ---
