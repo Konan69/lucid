@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto'
+import * as NodeCrypto from 'node:crypto'
+import { Effect, Schema } from 'effect'
 import { extractText } from 'unpdf'
 import {
   completeLibraryDocument,
@@ -14,7 +15,7 @@ export const MAX_LIBRARY_FILE_BYTES = 10 * 1024 * 1024
 export const LIBRARY_FILE_TYPES = ['application/pdf', 'text/markdown', 'text/plain'] as const
 
 export function digestBytes(bytes: Uint8Array) {
-  return createHash('sha256').update(bytes).digest('hex')
+  return NodeCrypto.createHash('sha256').update(bytes).digest('hex')
 }
 
 function normalizeText(text: string) {
@@ -55,21 +56,69 @@ async function extractPages(name: string, mimeType: string, bytes: Uint8Array) {
   return [{ page: null, text: normalizeText(text) }]
 }
 
-export async function ingestLibraryDocument(id: string) {
-  const document = await getStoredLibraryDocument(id)
-  if (!document) throw new Error('Library document not found')
-  try {
-    const pages = await extractPages(document.name, document.mimeType, document.bytes)
-    const extractedText = pages
-      .map((page) => page.text)
-      .filter(Boolean)
-      .join('\n\n')
-    if (!extractedText) throw new Error('No readable text was found in this document')
-    const chunks = pages.flatMap((page) => chunkText(page.text, page.page))
-    if (chunks.length === 0) throw new Error('No searchable text was found in this document')
-    await completeLibraryDocument(id, extractedText, chunks)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    await failLibraryDocument(id, message)
+class LibraryIngestFailure extends Schema.TaggedError<LibraryIngestFailure>()(
+  'LibraryIngestFailure',
+  { message: Schema.String },
+  { title: 'Library ingest failure' },
+) {}
+
+const loadDocument = Effect.fn('LibraryIngest.loadDocument')(function* (id: string) {
+  const document = yield* Effect.tryPromise({
+    try: () => getStoredLibraryDocument(id),
+    catch: () => new LibraryIngestFailure({ message: 'Library document could not be loaded' }),
+  })
+  return yield* document === null
+    ? Effect.fail(new LibraryIngestFailure({ message: 'Library document not found' }))
+    : Effect.succeed(document)
+})
+
+const extractDocumentPages = Effect.fn('LibraryIngest.extractPages')(function* (
+  document: NonNullable<Awaited<ReturnType<typeof getStoredLibraryDocument>>>,
+) {
+  return yield* Effect.tryPromise({
+    try: () => extractPages(document.name, document.mimeType, document.bytes),
+    catch: (error) =>
+      new LibraryIngestFailure({
+        message: error instanceof Error ? error.message : String(error),
+      }),
+  })
+})
+
+const indexDocument = Effect.fn('LibraryIngest.indexDocument')(function* (id: string) {
+  const document = yield* loadDocument(id)
+  const pages = yield* extractDocumentPages(document)
+  const extractedText = pages
+    .map((page) => page.text)
+    .filter(Boolean)
+    .join('\n\n')
+  if (extractedText.length === 0) {
+    return yield* Effect.fail(
+      new LibraryIngestFailure({ message: 'No readable text was found in this document' }),
+    )
   }
-}
+  const chunks = pages.flatMap((page) => chunkText(page.text, page.page))
+  if (chunks.length === 0) {
+    return yield* Effect.fail(
+      new LibraryIngestFailure({ message: 'No searchable text was found in this document' }),
+    )
+  }
+  return yield* Effect.tryPromise({
+    try: () => completeLibraryDocument(id, extractedText, chunks),
+    catch: () => new LibraryIngestFailure({ message: 'Library index could not be saved' }),
+  })
+})
+
+/** Extracts and persists one document while recording expected ingest failures on the document. */
+export const ingestLibraryDocument = Effect.fn('LibraryIngest.ingestDocument')(function* (
+  id: string,
+) {
+  return yield* indexDocument(id).pipe(
+    Effect.catch((failure) =>
+      Effect.tryPromise({
+        try: () => failLibraryDocument(id, failure.message),
+        catch: () =>
+          new LibraryIngestFailure({ message: 'Library ingest failure could not be recorded' }),
+      }),
+    ),
+  )
+})

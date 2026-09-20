@@ -426,7 +426,7 @@ app.post('/api/library', async (context) => {
   if (existing) return context.json({ document: existing, duplicate: true })
 
   const document = await createLibraryDocument({ name, mimeType, bytes, sha256, folderId })
-  void ingestLibraryDocument(document.id)
+  observeRuntimeEffect('library ingest', ingestLibraryDocument(document.id))
   return context.json({ document, duplicate: false }, 202)
 })
 
