@@ -7,6 +7,8 @@ import { bootstrapRuntimeSchema } from './migration.ts'
 
 types.setTypeParser(20, (value) => Number(value))
 
+// This module composes the runtime database before its legacy Promise stores are imported.
+// oxlint-disable-next-line vivid/no-runpromise-in-library
 const databaseUrl = Redacted.value(Effect.runSync(Config.Redacted('DATABASE_URL')))
 
 export const pool = new Pool({ connectionString: databaseUrl })
@@ -15,5 +17,6 @@ export const db = drizzle({ client: pool })
 /** Versioned application schema. Flue's own flue_* migration is separate in db.ts. */
 export const schemaBootstrap = bootstrapRuntimeSchema(pool)
 
-/** Promise adapter retained for the legacy Promise-based stores. */
+/** Promise adapter retained at the composition root for the legacy Promise-based stores. */
+// oxlint-disable-next-line vivid/no-runpromise-in-library
 export const schemaReady = Effect.runPromise(schemaBootstrap)

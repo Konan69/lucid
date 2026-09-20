@@ -11,9 +11,13 @@ import { bootstrapConnectorSchema } from './migration.ts'
 import { credentials } from './schema.ts'
 
 types.setTypeParser(20, (value) => Number(value))
+// This module composes Connector persistence before its legacy Promise API is imported.
+// oxlint-disable-next-line vivid/no-runpromise-in-library
 const databaseUrl = Redacted.value(Effect.runSync(Config.Redacted('DATABASE_URL')))
 const pool = new Pool({ connectionString: databaseUrl })
 const db = drizzle({ client: pool })
+// The Promise adapter is owned here because every legacy store operation awaits the same bootstrap.
+// oxlint-disable-next-line vivid/no-runpromise-in-library
 const ready = Effect.runPromise(bootstrapConnectorSchema(pool))
 
 const CredentialSchema = Schema.Struct({

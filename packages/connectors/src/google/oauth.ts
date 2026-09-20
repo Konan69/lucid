@@ -118,5 +118,7 @@ const loadGoogleConfig = Effect.fn('GoogleOAuth.loadConfig')(function* () {
 
 /** Loads Google OAuth configuration at the synchronous Connector framework boundary. */
 export function getGoogleConfig(): GoogleOAuthConfig {
+  // Connector.getAuthUrl is synchronous, so this method owns the Config runtime adapter.
+  // oxlint-disable-next-line vivid/no-runpromise-in-library
   return Effect.runSync(loadGoogleConfig())
 }
