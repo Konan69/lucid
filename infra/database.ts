@@ -58,7 +58,8 @@ export const databaseUrlFor = Effect.fn('databaseUrlFor')(function* (target: Dep
     restart: 'unless-stopped',
     start: true,
     healthcheck: {
-      cmd: ['CMD-SHELL', 'pg_isready -U vivid -d vivid'],
+      // Alchemy hands this to `--health-cmd`, which Docker already runs through CMD-SHELL.
+      cmd: 'pg_isready -U vivid -d vivid',
       interval: '2 seconds',
       timeout: '3 seconds',
       retries: 20,

@@ -12,7 +12,7 @@ const port = databaseUrl.port.length === 0 ? 5432 : Number(databaseUrl.port)
 
 /** Check one TCP connection without logging the credential-bearing URL. */
 const databaseAcceptsConnections = Effect.fn('migrate.databaseAcceptsConnections')(() =>
-  Effect.async((resume) => {
+  Effect.callback((resume) => {
     const socket = NodeNet.createConnection({ host: databaseUrl.hostname, port })
     let completed = false
     const finish = (connected) => {

@@ -179,10 +179,10 @@ const assertStackPolicy = (stackSource, infrastructureSources) => {
     /AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)/,
     'local stack must not require AWS credentials',
   )
-  assert.match(
+  assert.doesNotMatch(
     stackSource,
-    /AWS\.Website\.StaticSite/,
-    'web SPA must use the AWS Website local implementation',
+    /alchemy\/AWS/,
+    'local stack must not load AWS providers: they boot the Floci emulator for nothing',
   )
   assert.match(
     stackSource,
@@ -217,6 +217,11 @@ const assertDatabasePolicy = (databaseSource) => {
   assert.match(databaseSource, /Docker\.Volume/, 'local database must declare Docker.Volume')
   assert.match(databaseSource, /Docker\.Container/, 'local database must declare Docker.Container')
   assert.match(databaseSource, /tag: ["']18-alpine["']/, 'local database must use PostgreSQL 18')
+  assert.doesNotMatch(
+    databaseSource,
+    /cmd: \[\s*["']CMD-SHELL["']/,
+    'healthcheck cmd goes to --health-cmd; a CMD-SHELL prefix doubles it and the container never turns healthy',
+  )
   assert.match(databaseSource, /external: 55433/, 'local database must bind host port 55433')
   assert.match(databaseSource, /POSTGRES_DB: ["']vivid["']/, 'local database name must be vivid')
   assert.match(databaseSource, /POSTGRES_USER: ["']vivid["']/, 'local database user must be vivid')

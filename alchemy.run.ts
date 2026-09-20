@@ -1,5 +1,4 @@
 import * as Alchemy from 'alchemy'
-import * as AWS from 'alchemy/AWS'
 import * as Command from 'alchemy/Command'
 import * as Docker from 'alchemy/Docker'
 import * as Effect from 'effect/Effect'
@@ -20,11 +19,10 @@ export default Alchemy.Stack(
   deployTarget.stackName,
   {
     /**
-     * AWS beta.76 swaps dual resources to Floci in `alchemy dev`; Docker owns
-     * the local PostgreSQL resources. See `alchemy/lib/AWS/Providers.d.ts` and
-     * `alchemy/lib/Docker/Providers.d.ts`.
+     * Command owns the local processes and Docker the PostgreSQL resources; no cloud provider is loaded, so
+     * `alchemy dev` never starts an emulator. See `alchemy/lib/Docker/Providers.d.ts`.
      */
-    providers: Layer.mergeAll(AWS.providers(), Docker.providers()),
+    providers: Layer.mergeAll(Command.providers(), Docker.providers()),
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
@@ -37,7 +35,7 @@ export default Alchemy.Stack(
      * is the finite, memoized side-effect resource documented by
      * `alchemy/lib/Command/Exec.d.ts`.
      */
-    yield* Command.Exec(target.migrationsId, {
+    const migrations = yield* Command.Exec(target.migrationsId, {
       command: 'node scripts/migrate.mjs',
       cwd: '.',
       env: { DATABASE_URL: databaseUrl },
@@ -66,6 +64,11 @@ export default Alchemy.Stack(
       command: 'pnpm dev -- --host 127.0.0.1 --port 5173',
       cwd: './packages/agent-runtime',
       env: {
+        /**
+         * Unused by the process. Reading the migration output makes Alchemy order this process
+         * after migrations, so it never boots against a schema that does not exist yet.
+         */
+        VIVID_MIGRATIONS_HASH: migrations.hash.input,
         DATABASE_URL: databaseUrl,
         PORT: '5173',
         OPENROUTER_API_KEY: environment.openRouterApiKey,
@@ -81,6 +84,11 @@ export default Alchemy.Stack(
       command: 'pnpm dev',
       cwd: './apps/server',
       env: {
+        /**
+         * Unused by the process. Reading the migration output makes Alchemy order this process
+         * after migrations, so it never boots against a schema that does not exist yet.
+         */
+        VIVID_MIGRATIONS_HASH: migrations.hash.input,
         DATABASE_URL: databaseUrl,
         AUTH_SECRET: environment.authSecret,
         PORT: '8787',
@@ -92,26 +100,17 @@ export default Alchemy.Stack(
     })
 
     /**
-     * StaticSite's dev implementation starts the site's own dev command and
-     * skips S3/CloudFront entirely. This avoids the optional frontend-framework
-     * package required by AWS.Website.Vite. See
-     * `alchemy/lib/AWS/Website/StaticSite.d.ts`.
+     * The SPA is a plain Vite process locally. An AWS website resource would make
+     * `alchemy dev` boot the Floci AWS emulator (a multi-gigabyte image) to serve
+     * nothing: nothing is deployed yet, so no AWS provider is loaded at all.
+     * Declare the hosted site here, behind the target switch, when remote deploys open.
      */
-    yield* AWS.Website.StaticSite(target.webId, {
-      path: './apps/web',
-      build: {
-        command: 'pnpm build',
-        output: 'dist',
-      },
-      spa: true,
-      dev: {
-        command: 'pnpm dev -- --host 127.0.0.1 --port 5178',
-        cwd: './apps/web',
-        env: {
-          VIVID_RUNTIME_URL: target.runtimeUrl,
-          VIVID_RUNTIME_TOKEN: environment.runtimeToken,
-        },
-        url: target.webUrl,
+    yield* Command.Dev(target.webId, {
+      command: 'pnpm dev -- --host 127.0.0.1 --port 5178',
+      cwd: './apps/web',
+      env: {
+        VIVID_RUNTIME_URL: target.runtimeUrl,
+        VIVID_RUNTIME_TOKEN: environment.runtimeToken,
       },
     })
 
