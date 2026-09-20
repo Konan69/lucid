@@ -8,7 +8,7 @@ import {
   type JsonValue,
   type ResourceApi,
   type ResourceEnvironment,
-  type ResourceState,
+  ResourceState,
 } from './resource-store'
 
 const nativeResourceEnvironment: ResourceEnvironment = {
@@ -52,19 +52,16 @@ function resourceValue<Value>(
   schema: Schema.ConstraintDecoder<Value>,
   refresh: () => Promise<void>,
 ): ResourceValue<Value> {
-  switch (state._tag) {
-    case 'Loading':
-      return { error: '', loading: true, refresh }
-    case 'Ready': {
-      const decoded = Schema.decodeUnknownResult(schema)(state.value)
+  return ResourceState.$match(state, {
+    Loading: (): ResourceValue<Value> => ({ error: '', loading: true, refresh }),
+    Ready: (ready): ResourceValue<Value> => {
+      const decoded = Schema.decodeUnknownResult(schema)(ready.value)
       return Result.isSuccess(decoded)
         ? { data: decoded.success, error: '', loading: false, refresh }
         : { error: failureMessage(decoded.failure), loading: false, refresh }
-    }
-    case 'Failed':
-      return { error: state.message, loading: false, refresh }
-  }
-  return state
+    },
+    Failed: (failed): ResourceValue<Value> => ({ error: failed.message, loading: false, refresh }),
+  })
 }
 
 /** Subscribes React to a lifecycle-owned, schema-decoding resource store. */

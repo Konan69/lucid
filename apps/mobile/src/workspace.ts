@@ -45,6 +45,15 @@ export const ActivityContext = createContext<{
   report: (id: string, status?: ThreadActivity) => void
 }>({ activity: {}, report: () => {} })
 export const useThreadActivity = () => useContext(ActivityContext)
+/**
+ * The web-style pathname of the current native route, recorded so a Thread opened from the
+ * sidebar can return to where the Person was. Home is the root and a Chat is its Thread's path.
+ */
+function pathnameOf(route: keyof Routes, id: string): string {
+  if (route === 'Home') return '/'
+  return route === 'Chat' ? `/threads/vivid/${id}` : `/${route}`
+}
+
 export function useOpenThread() {
   const sidebar = useSidebar()
   const navigation = useNavigation<NavigationProp<Routes>>()
@@ -54,12 +63,7 @@ export function useOpenThread() {
     const current = navigation.getState().routes.at(-1)
     let pathname = '/'
     if (current !== undefined) {
-      pathname =
-        current.name === 'Home'
-          ? '/'
-          : current.name === 'Chat'
-            ? `/threads/vivid/${id}`
-            : `/${current.name}`
+      pathname = pathnameOf(current.name, id)
     }
     const action = resolveThreadSelectionNavigationAction({
       usesSplitView: deriveLayout(dimensions).usesSplitView,

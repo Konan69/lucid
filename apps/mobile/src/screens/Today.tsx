@@ -26,6 +26,17 @@ let currentTime = Date.now()
 let currentTimeTimer: ReturnType<typeof setInterval> | null = null
 
 /** Keeps overdue groups and follow-up defaults on a stable, periodically refreshed snapshot. */
+/**
+ * How often a follow-up repeats, in milliseconds; `once` does not repeat, which the wire contract
+ * spells `null`. The keys are the form's choices, so the guard and the interval cannot drift.
+ */
+const REPEAT_EVERY_MS = { once: null, daily: 86_400_000, weekly: 604_800_000 } satisfies Record<
+  string,
+  number | null
+>
+const isRepeat = (value: string): value is keyof typeof REPEAT_EVERY_MS =>
+  Object.hasOwn(REPEAT_EVERY_MS, value)
+
 function subscribeCurrentTime(listener: () => void) {
   currentTimeListeners.add(listener)
   if (currentTimeTimer === null) {
@@ -405,17 +416,12 @@ function FollowUpEditor({
       ]}
       onClose={onClose}
       onSave={async (values) => {
-        if (!['once', 'daily', 'weekly'].includes(values.repeat))
-          throw new Error('Choose once, daily, or weekly.')
+        const repeat = values.repeat
+        if (!isRepeat(repeat)) throw new Error('Choose once, daily, or weekly.')
         await api.request(`/api/tasks/${task.id}/follow-ups`, 'POST', {
           at: parseDate(values.at),
           note: values.note,
-          repeatEveryMs:
-            values.repeat === 'daily'
-              ? 86_400_000
-              : values.repeat === 'weekly'
-                ? 604_800_000
-                : null,
+          repeatEveryMs: REPEAT_EVERY_MS[repeat],
         })
         await onRefresh()
       }}

@@ -11,6 +11,12 @@ import { nativeMetrics as m } from '@vivid/design-tokens/native'
 import { useTheme } from '../theme'
 
 // Geometry and colors ported from apps/web/src/ui/Face.tsx, not a new logo.
+/** Head tilt per mood, in degrees: thinking leans back, happy leans in, the rest sit level. */
+const TILT_DEGREES = { neutral: 0, happy: 4, thinking: -8, asleep: 0 } satisfies Record<
+  'neutral' | 'happy' | 'thinking' | 'asleep',
+  number
+>
+
 export function Face({
   size = 28,
   mood = 'neutral',
@@ -25,7 +31,7 @@ export function Face({
   const gap = Math.round(size * 0.22)
   const left = (size - eye * 2 - gap) / 2
   const y = size * 0.38
-  const tilt = mood === 'thinking' ? -8 : mood === 'happy' ? 4 : 0
+  const tilt = TILT_DEGREES[mood]
   const rotation = useSharedValue(tilt)
   useEffect(() => {
     // Reanimated exposes `set` specifically so compiler-enabled React can update shared values.

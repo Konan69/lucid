@@ -6,6 +6,7 @@ import {
   type JsonValue,
   type ResourceApi,
   type ResourceEnvironment,
+  ResourceState,
 } from './resource-store'
 
 const Payload = Schema.Struct({ value: Schema.String })
@@ -74,7 +75,7 @@ describe('resource store', () => {
     const listener = vi.fn()
 
     const unsubscribeFirst = store.subscribe(listener)
-    expect(store.getSnapshot()).toEqual({ _tag: 'Loading' })
+    expect(store.getSnapshot()).toEqual(ResourceState.Loading())
     unsubscribeFirst()
     expect(lifecycle.stopActive).toHaveBeenCalledOnce()
     expect(lifecycle.stopInterval).toHaveBeenCalledOnce()
@@ -82,12 +83,12 @@ describe('resource store', () => {
     const unsubscribeSecond = store.subscribe(listener)
     first.resolve({ value: 'obsolete' })
     await first.promise
-    await vi.waitFor(() => expect(store.getSnapshot()).toEqual({ _tag: 'Loading' }))
+    await vi.waitFor(() => expect(store.getSnapshot()).toEqual(ResourceState.Loading()))
 
     second.resolve({ value: 'current' })
     await second.promise
     await vi.waitFor(() =>
-      expect(store.getSnapshot()).toEqual({ _tag: 'Ready', value: { value: 'current' } }),
+      expect(store.getSnapshot()).toEqual(ResourceState.Ready({ value: { value: 'current' } })),
     )
 
     lifecycle.setActive(false)

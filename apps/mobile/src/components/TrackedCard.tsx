@@ -1,3 +1,4 @@
+import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import { View } from 'react-native'
 import { Check } from 'lucide-react-native'
@@ -63,7 +64,7 @@ export function TrackedCard({ kind, output }: { kind: string; output: unknown })
   const { colors: c } = useTheme()
   if (kind !== 'create_task' && kind !== 'schedule_follow_up') return null
   const decoded = decodeTrackedOutput(output)
-  if (decoded._tag === 'None') return null
+  if (Option.isNone(decoded)) return null
   const result = decoded.value
   const task = result.task
   if (task === undefined) return null

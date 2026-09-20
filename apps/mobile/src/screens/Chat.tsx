@@ -21,6 +21,13 @@ import { nativeMetrics as m } from '@vivid/design-tokens/native'
 import { useTheme } from '../theme'
 import { deriveCenteredContentHorizontalPadding } from '../lib/layout'
 
+/** The heading above each entry of the activity log, by who contributed the Message. */
+const ROLE_HEADING = {
+  user: 'You asked',
+  assistant: 'Vivid responded',
+  system: 'Conversation update',
+} satisfies Record<FlueConversationMessage['role'], string>
+
 export function Chat(props: NativeStackScreenProps<Routes, 'Chat'>) {
   return <ThreadChat key={props.route.params.id} {...props} />
 }
@@ -148,13 +155,7 @@ function ActivitySheet({
       ) : (
         messages.map((message) => (
           <Card key={message.id}>
-            <Label size="label">
-              {message.role === 'user'
-                ? 'You asked'
-                : message.role === 'assistant'
-                  ? 'Vivid responded'
-                  : 'Conversation update'}
-            </Label>
+            <Label size="label">{ROLE_HEADING[message.role]}</Label>
             <Label tone="ink-3" size="label">
               {message.parts
                 .filter((part) => part.type === 'text')

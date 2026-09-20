@@ -70,6 +70,15 @@ function useLibraryAction(
 }
 
 /** Adapts the native document picker result into the existing multipart API request. */
+/**
+ * The status half of a document row. A failed document shows the reason the server recorded; the
+ * generic sentence covers only a failure that arrived without one.
+ */
+function statusNote(document: Document): string {
+  if (document.status === 'failed') return document.error ?? 'Could not read this file'
+  return document.status === 'ready' ? 'Ready to read' : 'Getting it ready…'
+}
+
 async function uploadLibraryDocument(input: {
   readonly api: LibraryApi
   readonly folderId: string | null
@@ -209,12 +218,7 @@ function DocumentCards({
         <Label style={{ flex: 1 }}>{document.name}</Label>
       </View>
       <Label size="label" tone={document.status === 'failed' ? 'status-danger' : 'ink-3'}>
-        {Math.max(1, Math.round(document.size / 1024))} KB ·{' '}
-        {document.status === 'ready'
-          ? 'Ready to read'
-          : document.status === 'failed'
-            ? (document.error ?? 'Could not read this file')
-            : 'Getting it ready…'}
+        {Math.max(1, Math.round(document.size / 1024))} KB · {statusNote(document)}
       </Label>
       <ControlPill
         label="View document"

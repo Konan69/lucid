@@ -1,25 +1,25 @@
-import { Result, Schema } from 'effect'
+import { Data, Result, Schema } from 'effect'
 
 const POLL_INTERVAL_MS = 15_000
 
-/** A resource has not produced its first valid response for this subscription lifetime. */
-export interface LoadingResource {
-  readonly _tag: 'Loading'
+/**
+ * Where one resource is for the current subscription lifetime.
+ * - `Loading`: no valid response yet.
+ * - `Ready`: the latest response passed its shared wire schema.
+ * - `Failed`: the transport or the schema rejected the latest response.
+ */
+export type ResourceState<Value> = Data.TaggedEnum<{
+  Loading: {}
+  Ready: { readonly value: Value }
+  Failed: { readonly message: string }
+}>
+
+interface ResourceStateDefinition extends Data.TaggedEnum.WithGenerics<1> {
+  readonly taggedEnum: ResourceState<this['A']>
 }
 
-/** A resource response has passed its shared wire schema. */
-export interface ReadyResource<Value> {
-  readonly _tag: 'Ready'
-  readonly value: Value
-}
-
-/** A transport or schema boundary rejected the latest resource response. */
-export interface FailedResource {
-  readonly _tag: 'Failed'
-  readonly message: string
-}
-
-export type ResourceState<Value> = LoadingResource | ReadyResource<Value> | FailedResource
+/** Constructors and the exhaustive `$match` for `ResourceState`; never write its `_tag` by hand. */
+export const ResourceState = Data.taggedEnum<ResourceStateDefinition>()
 
 export type JsonValue =
   | string
@@ -92,7 +92,7 @@ export function createResourceStore<Value>(
   environment: ResourceEnvironment,
 ): ResourceStore<Value> {
   const listeners = new Set<() => void>()
-  let state: ResourceState<Value> = { _tag: 'Loading' }
+  let state: ResourceState<Value> = ResourceState.Loading()
   let generation = 0
   let inFlight = false
   let stopActive: (() => void) | null = null
@@ -111,10 +111,11 @@ export function createResourceStore<Value>(
     return decoded
       .then(
         (value) => {
-          if (current === generation) publish({ _tag: 'Ready', value })
+          if (current === generation) publish(ResourceState.Ready({ value }))
         },
         (cause: unknown) => {
-          if (current === generation) publish({ _tag: 'Failed', message: failureMessage(cause) })
+          if (current === generation)
+            publish(ResourceState.Failed({ message: failureMessage(cause) }))
         },
       )
       .finally(() => {
@@ -135,7 +136,7 @@ export function createResourceStore<Value>(
   const stop = () => {
     generation += 1
     inFlight = false
-    state = { _tag: 'Loading' }
+    state = ResourceState.Loading()
     if (stopActive !== null) stopActive()
     if (stopInterval !== null) stopInterval()
     stopActive = null

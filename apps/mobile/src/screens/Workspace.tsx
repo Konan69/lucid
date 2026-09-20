@@ -11,6 +11,12 @@ import { ToolMark } from '../components/ToolMark'
 import { useTheme, type ThemePreference } from '../theme'
 import { projects, type Project } from '../../../web/src/data/projects'
 
+/** What each theme choice is called in Settings. */
+const THEME_LABEL = { system: 'Follow device', light: 'Light', dark: 'Dark' } satisfies Record<
+  'system' | 'light' | 'dark',
+  string
+>
+
 const covers = {
   '/covers/kashplus.png': require('../../../web/public/covers/kashplus.png'),
   '/covers/interlink.png': require('../../../web/public/covers/interlink.png'),
@@ -227,7 +233,7 @@ export function Settings({ navigation }: NativeStackScreenProps<Routes, 'Setting
               <ControlPill
                 key={value}
                 primary={theme === value}
-                label={value === 'system' ? 'Follow device' : value === 'dark' ? 'Dark' : 'Light'}
+                label={THEME_LABEL[value]}
                 onPress={() => {
                   setTheme(value)
                   void savePreferences({ ...preferences, theme: value }).catch((e) =>
