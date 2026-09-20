@@ -202,6 +202,12 @@ export function DemoConversation({ conversationId }: { conversationId: string })
   )
 }
 
+type DynamicToolPart = Extract<
+  FlueConversationMessage['parts'][number],
+  { type: 'dynamic-tool' }
+>
+
+/** Reads the shared text and timestamp once before selecting the message's visual role. */
 function LiveMessage({
   message,
   working,
@@ -223,29 +229,52 @@ function LiveMessage({
     ? new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(timestamp)
     : ''
 
-  if (message.role === 'user') {
-    return (
-      <div className="flex justify-end">
-        <div className="max-w-[78%] rounded-panel rounded-br-sm bg-surface-2 px-4 py-3 text-body text-ink">
-          <p className="whitespace-pre-wrap">{text}</p>
-          {time && <span className="mt-1 block text-right text-meta text-ink-4">{time}</span>}
-        </div>
-      </div>
-    )
-  }
+  if (message.role === 'user') return <LiveUserMessage text={text} time={time} />
+  if (message.role === 'system') return <LiveSystemMessage message={message} text={text} />
+  return (
+    <LiveAssistantMessage
+      tools={tools}
+      text={text}
+      time={time}
+      working={working}
+      onContinue={onContinue}
+    />
+  )
+}
 
-  if (message.role === 'system') {
-    return (
-      <div className="rounded-panel bg-surface-2 px-4 py-3 text-label text-ink-3 ring-line">
-        {message.settlement && message.settlement.outcome === 'failed'
-          ? 'Vivid could not complete that response. '
-          : ''}
-        {text}
+/** Preserves the right-aligned Person message bubble as a dedicated role variant. */
+function LiveUserMessage({ text, time }: { text: string; time: string }) {
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[78%] rounded-panel rounded-br-sm bg-surface-2 px-4 py-3 text-body text-ink">
+        <p className="whitespace-pre-wrap">{text}</p>
+        {time && <span className="mt-1 block text-right text-meta text-ink-4">{time}</span>}
       </div>
-    )
-  }
+    </div>
+  )
+}
 
-  const tracked = tools.flatMap((tool) => {
+/** Preserves advisory failure wording separately from Person and Vivid messages. */
+function LiveSystemMessage({
+  message,
+  text,
+}: {
+  message: FlueConversationMessage
+  text: string
+}) {
+  return (
+    <div className="rounded-panel bg-surface-2 px-4 py-3 text-label text-ink-3 ring-line">
+      {message.settlement && message.settlement.outcome === 'failed'
+        ? 'Vivid could not complete that response. '
+        : ''}
+      {text}
+    </div>
+  )
+}
+
+/** Decodes task-producing tool results into the cards shown below Vivid's answer. */
+function trackedItems(tools: DynamicToolPart[]) {
+  return tools.flatMap((tool) => {
     if (
       tool.state !== 'output-available' ||
       (tool.toolName !== 'create_task' && tool.toolName !== 'schedule_follow_up')
@@ -266,12 +295,34 @@ function LiveMessage({
       },
     ]
   })
-  const connectorRequests = tools.flatMap((tool) => {
+}
+
+/** Decodes connector suggestions into normalized request cards and rejects unrelated tools. */
+function connectorItems(tools: DynamicToolPart[]) {
+  return tools.flatMap((tool) => {
     if (tool.toolName !== 'suggest_connector' || tool.state !== 'output-available') return []
     const decoded = decodeConnectorRequest(tool.output)
     const request = Option.isSome(decoded) ? normalizeConnectorRequest(decoded.value) : null
     return request ? [{ id: tool.toolCallId, request }] : []
   })
+}
+
+/** Composes Vivid's text, task receipts, connector requests, and timestamp in their original order. */
+function LiveAssistantMessage({
+  tools,
+  text,
+  time,
+  working,
+  onContinue,
+}: {
+  tools: DynamicToolPart[]
+  text: string
+  time: string
+  working: boolean
+  onContinue: (text: string) => Promise<void>
+}) {
+  const tracked = trackedItems(tools)
+  const connectorRequests = connectorItems(tools)
   if (!text && tracked.length === 0 && connectorRequests.length === 0 && tools.length > 0)
     return null
 
@@ -502,6 +553,9 @@ export function FixtureMessage({ msg }: { msg: Msg }) {
       return <ConnectServices services={msg.services} />
     case 'card':
       return <InputCard title={msg.title} question={msg.question} options={msg.options} />
+    default:
+      msg satisfies never
+      return null
   }
 }
 
