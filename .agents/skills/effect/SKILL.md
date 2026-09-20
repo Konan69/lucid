@@ -49,7 +49,7 @@ If a task spans several branches, read all matching files before editing.
 - Prefer `Context.Service` for application services when the codebase has not standardized on another current service-tag style.
 - Build real service implementations with `Layer.effect(Service, Effect.gen(...))` and return `Service.of({ ... })`.
 - Model records with `Schema.Struct(...)` plus a same-name `interface`.
-- Model typed Effect errors with `Schema.TaggedError` in the project-pinned Effect 4 API. The lock currently resolves rc.112; the manifest target is rc.116.
+- Model typed Effect errors with `Schema.TaggedError` in the project-pinned Effect 4 API. The lock and the manifests both pin `4.0.0-rc.116`.
 - Read runtime config through `Config`, not direct `process.env` access in application logic.
 - Use `Schedule` for retry, repeat, polling, pacing, and backoff policies.
 - Use `Stream` for effectful sources that emit many values over time and need pull, backpressure, interruption, or transformation.
