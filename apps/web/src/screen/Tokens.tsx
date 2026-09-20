@@ -172,7 +172,7 @@ export function Tokens() {
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section>
-      <h2 className="mb-3 text-meta font-title tracking-[0.06em] text-ink-4 uppercase">{title}</h2>
+      <h2 className="mb-3 text-meta font-title tracking-caps text-ink-4 uppercase">{title}</h2>
       {children}
     </section>
   )

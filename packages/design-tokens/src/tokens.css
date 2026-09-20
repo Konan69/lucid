@@ -314,6 +314,18 @@ html[data-theme='light'] body {
   --shadow-composer: var(--shadow-composer);
   --shadow-panel: var(--shadow-panel);
 
+  /* Named transition sets: screens name the surface behaviour, never a property list. */
+  --transition-property-surface: background-color, box-shadow;
+  --transition-property-press: background-color, box-shadow, transform;
+  --transition-property-width: width;
+
+  /* One-off measures that recur: caps tracking, scrim blur, message bubble and rail label widths. */
+  --tracking-caps: 0.06em;
+  --blur-scrim: 2px;
+  --container-bubble: 78%;
+  --container-rail-label: 38%;
+  --text-inline-code: 0.9em;
+
   --animate-status-pulse: status-pulse 2s var(--ease-in-out) infinite;
   --animate-fade-in: fade-in var(--dur-base) var(--ease-out) both;
   --animate-rise-in: rise-in var(--dur-slow) var(--ease-out) both;

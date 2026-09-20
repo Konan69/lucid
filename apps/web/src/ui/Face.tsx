@@ -29,6 +29,14 @@ const COLOR_CLASS = {
   gray: 'bg-face-gray',
 } satisfies Record<FaceColor, string>
 
+/** Head tilt per mood: thinking leans back, happy leans in, the rest sit level. */
+const TILT_CLASS = {
+  neutral: '',
+  happy: 'rotate-4',
+  thinking: '-rotate-8',
+  asleep: '',
+} satisfies Record<FaceMood, string>
+
 /** Vivid's face: a disc with two eyes. Same family as Grok Bot's blobs, its own shape. */
 export function Face({
   color = 'accent',
@@ -36,47 +44,38 @@ export function Face({
   size = 28,
   className,
   label,
-  style,
 }: {
   color?: FaceColor
   mood?: FaceMood
   size?: number
   className?: string
   label?: string
-  style?: React.CSSProperties
 }) {
   const eye = Math.max(2, Math.round(size * 0.11))
-  const eyeH = mood === 'asleep' ? Math.max(1.5, eye * 0.35) : Math.round(size * 0.24)
-  const gap = Math.round(size * 0.22)
-  const tilt = mood === 'thinking' ? 'rotate(-8deg)' : mood === 'happy' ? 'rotate(4deg)' : undefined
+  const eyeHeight = mood === 'asleep' ? Math.max(1.5, eye * 0.35) : Math.round(size * 0.24)
+  // SAFETY: React forwards these validated CSS custom properties to the element.
+  // The `face*` utilities in styles/index.css read them, so geometry stays one computation.
+  const faceStyle = {
+    '--face-size': `${size}px`,
+    '--face-eye-w': `${eye}px`,
+    '--face-eye-h': `${eyeHeight}px`,
+    '--face-eye-gap': `${Math.round(size * 0.22)}px`,
+  } as React.CSSProperties
   return (
     <span
       role="img"
       aria-label={label ?? 'Vivid'}
       className={cn(
-        'relative inline-flex shrink-0 items-center justify-center rounded-full',
+        'relative inline-flex face shrink-0 items-center justify-center rounded-full',
         COLOR_CLASS[color],
+        TILT_CLASS[mood],
         className,
       )}
-      style={{
-        ...style,
-        width: size,
-        height: size,
-        transform: tilt,
-        backgroundImage:
-          'radial-gradient(circle at 32% 28%, rgb(255 255 255 / 0.28), transparent 55%)',
-        boxShadow: 'inset 0 -1px 2px rgb(0 0 0 / 0.25), 0 1px 2px rgb(0 0 0 / 0.18)',
-      }}
+      style={faceStyle}
     >
-      <span className="absolute flex items-center" style={{ gap, top: '38%' }}>
-        <i
-          className="block rounded-full bg-[#0f0f0f]"
-          style={{ width: eye, height: eyeH, transform: 'rotate(-6deg)' }}
-        />
-        <i
-          className="block rounded-full bg-[#0f0f0f]"
-          style={{ width: eye, height: eyeH, transform: 'rotate(6deg)' }}
-        />
+      <span className="absolute face-eyes flex items-center">
+        <i className="block face-eye -rotate-6 rounded-full" />
+        <i className="block face-eye rotate-6 rounded-full" />
       </span>
     </span>
   )
