@@ -1,10 +1,10 @@
 import { createContext, useContext } from 'react'
 import { useWindowDimensions } from 'react-native'
 import { useNavigation, type NavigationProp } from '@react-navigation/native'
-import type { Api, Connection } from './lib/api'
+import type { Api, Connection } from './data/api'
 import type { ThemePreference } from './theme'
-import { deriveLayout } from './lib/layout'
-import { resolveThreadSelectionNavigationAction } from './lib/navigation'
+import { deriveLayout } from './data/layout'
+import { resolveThreadSelectionNavigationAction } from './data/navigation'
 export type Routes = {
   Home: undefined
   Chat: { id: string; title: string; draft?: string; sendOnOpen?: boolean }

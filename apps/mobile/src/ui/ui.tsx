@@ -21,7 +21,7 @@ import {
 import { ChevronLeft, X, type LucideIcon } from 'lucide-react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTheme } from '../theme'
-import { MOBILE_TYPOGRAPHY } from '../lib/typography'
+import { MOBILE_TYPOGRAPHY } from '../data/typography'
 import { nativeMetrics } from '@vivid/tokens/native'
 import { MotionPressable } from './motion/Pressable'
 

@@ -18,10 +18,10 @@ import {
   TaskResponse,
 } from '@vivid/contracts'
 import { useOpenThread, useWorkspace, type Routes } from '../workspace'
-import { useResource } from '../lib/resource/hook'
+import { useResource } from '../data/resource/hook'
 import { useTheme } from '../theme'
-import { when } from '../lib/date'
-import type { RpcOperation } from '../lib/api'
+import { when } from '../data/date'
+import type { RpcOperation } from '../data/api'
 import {
   Card,
   ControlPill,
@@ -33,7 +33,7 @@ import {
   Sheet,
   confirmDelete,
   styles,
-} from '../components/ui'
+} from '../ui/ui'
 
 const CURRENT_TIME_REFRESH_MS = 15_000
 const currentTimeListeners = new Set<() => void>()

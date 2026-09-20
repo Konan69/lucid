@@ -2,9 +2,9 @@ import { View } from 'react-native'
 import { useImperativeHandle, useRef } from 'react'
 import { TextInput, type TextInput as RNTextInput } from 'react-native'
 
-import { useThemeColor } from '../../lib/color'
-import { useFontFamily } from '../../lib/font'
-import { MOBILE_TYPOGRAPHY } from '../../lib/typography'
+import { useThemeColor } from '../../data/color'
+import { useFontFamily } from '../../data/font'
+import { MOBILE_TYPOGRAPHY } from '../../data/typography'
 
 import type { ComposerEditorProps } from './types'
 

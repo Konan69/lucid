@@ -33,7 +33,7 @@ import Animated, {
   useAnimatedStyle,
 } from 'react-native-reanimated'
 
-import { Label as Text } from '../components/ui'
+import { Label as Text } from '../ui/ui'
 import { useTheme } from '../theme'
 
 // Wide enough for the longest action label ("Unarchive").

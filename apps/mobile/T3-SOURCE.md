@@ -20,10 +20,10 @@ The MIT notice is retained in [T3-LICENSE](./T3-LICENSE), and in the native modu
 | `src/native/T3ComposerEditor.tsx`                       | TextInput fallback for the web preview. Native platforms resolve the Kotlin/Swift view.                                                                                                                                                                                                                                                                                               |
 | `src/features/home/thread-swipe-actions.tsx`            | Swipe spring, full-swipe thresholds, haptics, reset logic and scroll gating retained; Vivid colors and Lucide icon adapter replace T3 styling.                                                                                                                                                                                                                                        |
 | `patches/react-native-gesture-handler@2.31.2.patch`     | Retained through pnpm patchedDependencies: rejects vertically dominant initial pans before a row swipe activates.                                                                                                                                                                                                                                                                     |
-| `src/components/ControlPillMenu.tsx`                    | Native menu wrapper and long-press release suppression adapted for Vivid's theme. Android uses a separate native menu anchor, opened by the row's cancellable long press, so the menu cannot intercept T3's swipe gesture.                                                                                                                                                            |
-| `src/components/ControlPill.tsx`                        | 44-point touch targets and press-in/release deduplication adapted; shape and visual treatment use Vivid web tokens in `src/components/ui.tsx`.                                                                                                                                                                                                                                        |
-| `src/components/AndroidScreenHeader.tsx`                | Safe-area, embedded header and action layout adapted in `ui.tsx`. Workspace screens use native-stack navigation bars on iOS; chat uses the shared custom header.                                                                                                                                                                                                                      |
-| `src/lib/{layout,adaptive-navigation,layoutMetrics}.ts` | Layout and navigation calculations copied and used in the phone/tablet shell. Typography now consumes Vivid web metrics.                                                                                                                                                                                                                                                              |
+| `src/ui/ControlPillMenu.tsx`                    | Native menu wrapper and long-press release suppression adapted for Vivid's theme. Android uses a separate native menu anchor, opened by the row's cancellable long press, so the menu cannot intercept T3's swipe gesture.                                                                                                                                                            |
+| `src/ui/ControlPill.tsx`                        | 44-point touch targets and press-in/release deduplication adapted; shape and visual treatment use Vivid web tokens in `src/ui/ui.tsx`.                                                                                                                                                                                                                                        |
+| `src/ui/AndroidScreenHeader.tsx`                | Safe-area, embedded header and action layout adapted in `ui.tsx`. Workspace screens use native-stack navigation bars on iOS; chat uses the shared custom header.                                                                                                                                                                                                                      |
+| `src/data/{layout,adaptive-navigation,layoutMetrics}.ts` | Layout and navigation calculations copied and used in the phone/tablet shell. Typography now consumes Vivid web metrics.                                                                                                                                                                                                                                                              |
 | `src/features/layout/workspace-pane-animation.ts`       | Copied unchanged and used for the animated native sidebar.                                                                                                                                                                                                                                                                                                                            |
 
 The product screens and Flue connection are Vivid code. T3's coding providers,
@@ -38,12 +38,12 @@ instead of `undefined`. RN 0.85's Fabric command bridge rejects the latter as
 
 ## Vivid assets
 
-- `src/components/Face.tsx` ports the circular disc, two tilted dark eyes, mood
+- `src/ui/Face.tsx` ports the circular disc, two tilted dark eyes, mood
   geometry and radial highlight from `apps/web/src/ui/Face.tsx`. It replaces the
   earlier square smiling face. It does not reproduce CSS inset shadows exactly.
 - `assets/icon.png` is a launcher export of the existing web Face, rendered
   from the retained `assets/icon.html` source at 1024 × 1024.
-- `src/components/Mark.tsx` ports the existing web service SVG paths to
+- `src/ui/Mark.tsx` ports the existing web service SVG paths to
   React Native SVG without substituting generated service imagery.
 - The six project covers are direct `require` references to
   `apps/web/public/covers/*.png`; no generated replacements or remote imagery.
@@ -70,7 +70,7 @@ directory carrying the context:
 | `src/native/T3ComposerEditor*.tsx`, `.types.ts`   | `src/native/composer/Editor*.tsx`, `types.ts` |
 | `src/native/composerEditorRevision.ts`            | `src/native/composer/revision.ts`             |
 | `src/features/home/thread-swipe-actions.tsx`      | `src/t3/swipe.tsx`                            |
-| `src/components/ControlPillMenu.tsx`              | `src/t3/Menu.tsx`                             |
+| `src/ui/ControlPillMenu.tsx`              | `src/t3/Menu.tsx`                             |
 | `src/features/layout/workspace-pane-animation.ts` | `src/t3/pane.ts`                              |
-| `src/lib/adaptive-navigation.ts`                  | `src/lib/navigation.ts`                       |
-| `src/lib/layoutMetrics.ts`                        | `src/lib/metrics.ts`                          |
+| `src/data/adaptive-navigation.ts`                  | `src/data/navigation.ts`                       |
+| `src/data/layoutMetrics.ts`                        | `src/data/metrics.ts`                          |

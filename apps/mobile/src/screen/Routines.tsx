@@ -4,9 +4,9 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { Plus, Pause, Play, Repeat2 } from 'lucide-react-native'
 import { RoutineId, RoutineListResponse, type Routine } from '@vivid/contracts'
 import { useOpenThread, useWorkspace, type Routes } from '../workspace'
-import { useResource } from '../lib/resource/hook'
-import { when } from '../lib/date'
-import type { RpcProgram } from '../lib/api'
+import { useResource } from '../data/resource/hook'
+import { when } from '../data/date'
+import type { RpcProgram } from '../data/api'
 import {
   Card,
   ControlPill,
@@ -18,7 +18,7 @@ import {
   Sheet,
   confirmDelete,
   styles,
-} from '../components/ui'
+} from '../ui/ui'
 import { templates } from '../../../web/src/data/routines'
 
 type RoutineApi = ReturnType<typeof useWorkspace>['api']

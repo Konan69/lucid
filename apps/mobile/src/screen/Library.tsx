@@ -13,10 +13,10 @@ import {
   type LibraryItem,
   LibrarySearchResult,
 } from '@vivid/contracts'
-import { openDocument } from '../lib/documents'
-import type { RpcOperation } from '../lib/api'
+import { openDocument } from '../data/documents'
+import type { RpcOperation } from '../data/api'
 import { useOpenThread, useWorkspace, type Routes } from '../workspace'
-import { useResource } from '../lib/resource/hook'
+import { useResource } from '../data/resource/hook'
 import { useTheme } from '../theme'
 import {
   Card,
@@ -30,7 +30,7 @@ import {
   Sheet,
   confirmDelete,
   styles,
-} from '../components/ui'
+} from '../ui/ui'
 
 type Selection =
   | { readonly kind: 'file'; readonly item: LibraryItem }

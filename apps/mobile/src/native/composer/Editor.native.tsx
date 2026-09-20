@@ -15,10 +15,10 @@ import {
 import type { NativeSyntheticEvent, TextStyle, ViewProps } from 'react-native'
 import { StyleSheet } from 'react-native'
 
-import { MOBILE_TYPOGRAPHY } from '../../lib/typography'
+import { MOBILE_TYPOGRAPHY } from '../../data/typography'
 
-import { useFontFamily } from '../../lib/font'
-import { useThemeColor } from '../../lib/color'
+import { useFontFamily } from '../../data/font'
+import { useThemeColor } from '../../data/color'
 import {
   acknowledgeComposerNativeEvent,
   isComposerNativeEcho,

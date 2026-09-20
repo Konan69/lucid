@@ -17,8 +17,8 @@ import * as SecureStore from 'expo-secure-store'
 import { randomUUID } from 'expo-crypto'
 import { fetch as expoFetch } from 'expo/fetch'
 import { ThreadId } from '@vivid/contracts'
-import { createApi } from './lib/api'
-import { deriveLayout, type Layout } from './lib/layout'
+import { createApi } from './data/api'
+import { deriveLayout, type Layout } from './data/layout'
 import {
   ActivityContext,
   type ThreadActivity,
@@ -28,12 +28,12 @@ import {
   type Routes,
 } from './workspace'
 import { ThemeProvider, useTheme } from './theme'
-import { Home } from './screens/Home'
-import { Welcome } from './screens/Welcome'
-import { Chat } from './screens/Chat'
-import { Routines } from './screens/Routines'
-import { Library } from './screens/Library'
-import { Projects, Connectors, Settings } from './screens/Workspace'
+import { Home } from './screen/Home'
+import { Welcome } from './screen/Welcome'
+import { Chat } from './screen/Chat'
+import { Routines } from './screen/Routines'
+import { Library } from './screen/Library'
+import { Projects, Connectors, Settings } from './screen/Workspace'
 
 import Animated, {
   runOnJS,

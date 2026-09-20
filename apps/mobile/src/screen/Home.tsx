@@ -38,8 +38,8 @@ import {
   type Routes,
   type ThreadActivity,
 } from '../workspace'
-import { useResource } from '../lib/resource/hook'
-import type { Api } from '../lib/api'
+import { useResource } from '../data/resource/hook'
+import type { Api } from '../data/api'
 import { useTheme } from '../theme'
 import {
   ControlPill,
@@ -50,8 +50,8 @@ import {
   Label,
   Sheet,
   confirmDelete,
-} from '../components/ui'
-import { MotionPressable } from '../components/motion/Pressable'
+} from '../ui/ui'
+import { MotionPressable } from '../ui/motion/Pressable'
 import { ThreadSwipeable, SwipeableScrollGateProvider, useSwipeableScrollGate } from '../t3/swipe'
 import { ControlPillMenu } from '../t3/Menu'
 
