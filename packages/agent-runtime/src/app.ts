@@ -749,21 +749,27 @@ function routinePatchFrom(body: RoutinePatchRequest): Result.Result<RoutinePatch
   return Result.succeed(patch)
 }
 
-type ParsedTimestamp =
-  | { readonly _tag: 'Omitted' }
-  | { readonly _tag: 'Cleared' }
-  | { readonly _tag: 'Value'; readonly value: number }
+/**
+ * What a PATCH said about a timestamp. Omission, an explicit clear and a new value are three
+ * different instructions, and a nullable number cannot tell the first two apart.
+ */
+const ParsedTimestamp = Schema.TaggedUnion({
+  Omitted: {},
+  Cleared: {},
+  Value: { value: Schema.Number },
+})
+type ParsedTimestamp = typeof ParsedTimestamp.Type
 
 /** Accepts the decoded wire timestamp forms and normalizes them to epoch milliseconds. */
 function parseWhen(
   value?: TimestampInput | null,
 ): Result.Result<ParsedTimestamp, InvalidTaskMutation> {
-  if (value === undefined) return Result.succeed({ _tag: 'Omitted' })
-  if (value === null) return Result.succeed({ _tag: 'Cleared' })
-  if (isNumber(value)) return Result.succeed({ _tag: 'Value', value })
+  if (value === undefined) return Result.succeed(ParsedTimestamp.cases.Omitted.make({}))
+  if (value === null) return Result.succeed(ParsedTimestamp.cases.Cleared.make({}))
+  if (isNumber(value)) return Result.succeed(ParsedTimestamp.cases.Value.make({ value }))
   const parsed = Date.parse(value)
   return Number.isFinite(parsed)
-    ? Result.succeed({ _tag: 'Value', value: parsed })
+    ? Result.succeed(ParsedTimestamp.cases.Value.make({ value: parsed }))
     : Result.fail(new InvalidTaskMutation({ message: 'Invalid due date' }))
 }
 
@@ -772,8 +778,8 @@ const normalizedAssignee = (assignee: string | null) =>
 
 /** Applies timestamp state to the Task patch while preserving omission. */
 function applyTaskDueAt(patch: TaskPatch, dueAt: ParsedTimestamp) {
-  if (dueAt._tag === 'Cleared') patch.dueAt = null
-  if (dueAt._tag === 'Value') patch.dueAt = dueAt.value
+  if (ParsedTimestamp.guards.Cleared(dueAt)) patch.dueAt = null
+  if (ParsedTimestamp.guards.Value(dueAt)) patch.dueAt = dueAt.value
 }
 
 /** Normalizes a decoded Task request without using string errors as control flow. */
@@ -809,10 +815,10 @@ function followUpInputFrom(
   if (Result.isFailure(at)) {
     return Result.fail(new InvalidFollowUpMutation({ message: at.failure.message }))
   }
-  if (at.success._tag === 'Cleared') {
+  if (ParsedTimestamp.guards.Cleared(at.success)) {
     return Result.fail(new InvalidFollowUpMutation({ message: 'A follow-up time is required' }))
   }
-  if (at.success._tag === 'Value') input.at = at.success.value
+  if (ParsedTimestamp.guards.Value(at.success)) input.at = at.success.value
   if (body.note !== undefined) input.note = body.note.trim().slice(0, 500)
   const repeat = body.repeatEveryMs
   if (repeat !== undefined) {

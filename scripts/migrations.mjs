@@ -2,6 +2,7 @@
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
+import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 
 const repositoryRoot = NodePath.resolve(
@@ -65,17 +66,17 @@ const migrationDirectories = (path) =>
 
 const readMigration = (path) => {
   try {
-    return { _tag: 'Found', value: NodeFS.readFileSync(path, 'utf8') }
+    return Option.some(NodeFS.readFileSync(path, 'utf8'))
   } catch {
-    return { _tag: 'Missing' }
+    return Option.none()
   }
 }
 
 const readSnapshot = (path) => {
   try {
-    return { _tag: 'Found', value: decodeSnapshotText(NodeFS.readFileSync(path, 'utf8')) }
+    return Option.some(decodeSnapshotText(NodeFS.readFileSync(path, 'utf8')))
   } catch {
-    return { _tag: 'Missing' }
+    return Option.none()
   }
 }
 
@@ -89,12 +90,12 @@ function migrationErrors({ owner, migrationsPath, directory, previousId, ids }) 
   }
   const migration = readMigration(NodePath.join(migrationsPath, directory, 'migration.sql'))
   const snapshot = readSnapshot(NodePath.join(migrationsPath, directory, 'snapshot.json'))
-  if (migration._tag === 'Missing') {
+  if (Option.isNone(migration)) {
     errors.push(`${owner}/drizzle/${directory}: migration.sql is missing`)
   } else if (migration.value.trim().length === 0) {
     errors.push(`${owner}/drizzle/${directory}: migration.sql is empty`)
   }
-  if (snapshot._tag === 'Missing') {
+  if (Option.isNone(snapshot)) {
     errors.push(`${owner}/drizzle/${directory}: snapshot.json is missing or invalid JSON`)
     return { errors, nextPreviousId: previousId }
   }

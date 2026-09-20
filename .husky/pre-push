@@ -38,11 +38,11 @@ check_ratchet "conditional empty spreads" "anti-slop" "no-conditional-empty-obje
 check_ratchet "runtime typeof" "anti-slop" "no-runtime-typeof" 0
 check_ratchet "shape names" "anti-slop" "no-shape-in-symbol-names" 0
 check_ratchet "unknown parameters" "anti-slop" "no-unknown-parameters" 0
-# Added with the 20 Sep 2026 anti-slop re-vendor; baselines are the counts on that day.
-check_ratchet "manual tag comparisons" "anti-slop-effect" "no-manual-tag-comparison" 13
-check_ratchet "manual tagged construction" "anti-slop-effect" "no-manual-tagged-construction" 17
-check_ratchet "literal ternary chains" "anti-slop-effect" "prefer-effect-match" 15
-check_ratchet "map-then-filter passes" "anti-slop" "no-array-filter-map" 1
+# Added with the 20 Sep 2026 anti-slop re-vendor and cleared the same day.
+check_ratchet "manual tag comparisons" "anti-slop-effect" "no-manual-tag-comparison" 0
+check_ratchet "manual tagged construction" "anti-slop-effect" "no-manual-tagged-construction" 0
+check_ratchet "literal ternary chains" "anti-slop-effect" "prefer-effect-match" 0
+check_ratchet "map-then-filter passes" "anti-slop" "no-array-filter-map" 0
 check_ratchet "reduce accumulator copies" "anti-slop" "no-reduce-accumulator-copy" 0
 check_ratchet "unknown returns" "anti-slop" "no-unknown-returns" 0
 check_ratchet "unsafe dictionaries" "anti-slop" "no-unsafe-dictionary-type" 0

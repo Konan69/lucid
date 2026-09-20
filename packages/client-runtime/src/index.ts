@@ -1,5 +1,5 @@
 import { RuntimeErrorResponse } from '@vivid/contracts'
-import { Effect, Schema } from 'effect'
+import { Effect, Option, Schema } from 'effect'
 
 const decodeRuntimeErrorText = Schema.decodeUnknownEffect(
   Schema.fromJsonString(RuntimeErrorResponse),
@@ -200,13 +200,10 @@ const readFailureMessage = Effect.fn('SchemaClient.readFailureMessage')(function
   response: TransportResponse,
 ) {
   const payload = yield* Effect.tryPromise(() => response.readText()).pipe(Effect.option)
-  if (payload._tag === 'None') {
-    return `Vivid returned status ${response.status}.`
-  }
+  const statusOnly = `Vivid returned status ${response.status}.`
+  if (Option.isNone(payload)) return statusOnly
   const envelope = yield* decodeRuntimeErrorText(payload.value).pipe(Effect.option)
-  return envelope._tag === 'Some'
-    ? envelope.value.error
-    : `Vivid returned status ${response.status}.`
+  return Option.match(envelope, { onNone: () => statusOnly, onSome: (body) => body.error })
 })
 
 /** Maps status families to failures that callers can handle independently. */

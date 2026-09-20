@@ -1,5 +1,6 @@
 import * as Config from 'effect/Config'
 import * as Context from 'effect/Context'
+import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
@@ -31,14 +32,21 @@ export class ConfigurationError extends Schema.TaggedError<ConfigurationError>()
   { title: 'Server configuration error' },
 ) {}
 
-export type GoogleOAuthConfiguration =
-  | { readonly _tag: 'Disabled' }
-  | {
-      readonly _tag: 'Enabled'
-      readonly clientId: string
-      readonly clientSecret: Redacted.Redacted
-      readonly redirectUri: URL
-    }
+/**
+ * Google sign-in is either fully configured or off. The three variables are one atomic set, so
+ * "partly configured" is a startup error, never a third state.
+ */
+export type GoogleOAuthConfiguration = Data.TaggedEnum<{
+  Disabled: {}
+  Enabled: {
+    readonly clientId: string
+    readonly clientSecret: Redacted.Redacted
+    readonly redirectUri: URL
+  }
+}>
+
+/** Constructors and the exhaustive `$match`; a `Redacted` secret and a `URL` rule out a Schema. */
+export const GoogleOAuthConfiguration = Data.taggedEnum<GoogleOAuthConfiguration>()
 
 export interface ServerConfigService {
   readonly DATABASE_URL: Redacted.Redacted
@@ -99,7 +107,7 @@ const loadGoogleOAuth = Effect.fn('ServerConfig.loadGoogleOAuth')(function* () {
     'an absolute URL',
   )
   if (Option.isNone(clientId) && Option.isNone(clientSecret) && Option.isNone(redirectUri)) {
-    return { _tag: 'Disabled' } as const
+    return GoogleOAuthConfiguration.Disabled()
   }
   if (Option.isNone(clientId)) {
     return yield* Effect.fail(
@@ -116,12 +124,11 @@ const loadGoogleOAuth = Effect.fn('ServerConfig.loadGoogleOAuth')(function* () {
       configError('GOOGLE_REDIRECT_URI', 'an absolute URL when Google OAuth is enabled'),
     )
   }
-  return {
-    _tag: 'Enabled',
+  return GoogleOAuthConfiguration.Enabled({
     clientId: clientId.value,
     clientSecret: clientSecret.value,
     redirectUri: redirectUri.value,
-  } as const
+  })
 })
 
 const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<

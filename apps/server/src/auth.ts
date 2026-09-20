@@ -5,7 +5,7 @@ import { RuntimeContext } from 'alchemy'
 import * as Effect from 'effect/Effect'
 import * as Redacted from 'effect/Redacted'
 import { DatabaseFailure } from '@vivid/contracts'
-import { ServerConfig, serverConfigLayer } from './config.ts'
+import { GoogleOAuthConfiguration, ServerConfig, serverConfigLayer } from './config.ts'
 
 /**
  * Better Auth's internal identity model is mapped once at this boundary:
@@ -51,22 +51,19 @@ const makeOptions = (config: ServerConfig['Service']) => {
       }),
     ],
   }
-  switch (config.GOOGLE_OAUTH._tag) {
-    case 'Disabled':
-      return options
-    case 'Enabled':
-      return {
-        ...options,
-        socialProviders: {
-          google: {
-            clientId: config.GOOGLE_OAUTH.clientId,
-            clientSecret: Redacted.value(config.GOOGLE_OAUTH.clientSecret),
-            redirectURI: config.GOOGLE_OAUTH.redirectUri.href,
-          },
+  return GoogleOAuthConfiguration.$match(config.GOOGLE_OAUTH, {
+    Disabled: () => options,
+    Enabled: (google) => ({
+      ...options,
+      socialProviders: {
+        google: {
+          clientId: google.clientId,
+          clientSecret: Redacted.value(google.clientSecret),
+          redirectURI: google.redirectUri.href,
         },
-      }
-  }
-  return config.GOOGLE_OAUTH
+      },
+    }),
+  })
 }
 
 /** Closes Better Auth's type-only Alchemy context requirement for this static Node runtime. */

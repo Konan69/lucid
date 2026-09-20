@@ -4,6 +4,7 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
+import * as Predicate from 'effect/Predicate'
 import * as Schema from 'effect/Schema'
 import * as SqlErrorModule from 'effect/unstable/sql/SqlError'
 import { DatabaseConstraintViolation, DatabaseFailure, DatabaseUnavailable } from '@vivid/contracts'
@@ -30,19 +31,29 @@ type DatabaseService = Omit<EffectPgDatabase, 'transaction'> & {
   ) => Effect.Effect<A, Exclude<E, DriverError> | DatabaseInfrastructureError, R>
 }
 
+/**
+ * The driver reasons that mean something more specific than "the database failed". Any reason not
+ * named here is reported as a plain failure, so a new driver reason is safe by default.
+ */
+const SQL_REASON_FAILURE: Partial<
+  Record<SqlErrorModule.SqlError['reason']['_tag'], () => DatabaseInfrastructureError>
+> = {
+  ConnectionError: () => new DatabaseUnavailable({ message: 'Database is unavailable' }),
+  AuthenticationError: () =>
+    new DatabaseFailure({ message: 'Database credentials or permissions are invalid' }),
+  AuthorizationError: () =>
+    new DatabaseFailure({ message: 'Database credentials or permissions are invalid' }),
+  UniqueViolation: () =>
+    new DatabaseConstraintViolation({ message: 'Database constraint was violated' }),
+  ConstraintError: () =>
+    new DatabaseConstraintViolation({ message: 'Database constraint was violated' }),
+}
+
 const classifySqlError = (error: SqlErrorModule.SqlError): DatabaseInfrastructureError => {
-  switch (error.reason._tag) {
-    case 'ConnectionError':
-      return new DatabaseUnavailable({ message: 'Database is unavailable' })
-    case 'AuthenticationError':
-    case 'AuthorizationError':
-      return new DatabaseFailure({ message: 'Database credentials or permissions are invalid' })
-    case 'UniqueViolation':
-    case 'ConstraintError':
-      return new DatabaseConstraintViolation({ message: 'Database constraint was violated' })
-    default:
-      return new DatabaseFailure({ message: 'Database operation failed' })
-  }
+  const specific = SQL_REASON_FAILURE[error.reason._tag]
+  return specific === undefined
+    ? new DatabaseFailure({ message: 'Database operation failed' })
+    : specific()
 }
 
 const isDrizzleQueryError = Schema.is(EffectDrizzleQueryError)
@@ -55,7 +66,7 @@ const nestedSqlError = (error: EffectDrizzleQueryError): Option.Option<SqlErrorM
 }
 
 const classifyDriverError = (error: DriverError): DatabaseInfrastructureError => {
-  if (error._tag === 'SqlError') return classifySqlError(error)
+  if (Predicate.isTagged(error, 'SqlError')) return classifySqlError(error)
   return Option.match(nestedSqlError(error), {
     onNone: () => new DatabaseFailure({ message: 'Database query failed' }),
     onSome: classifySqlError,
