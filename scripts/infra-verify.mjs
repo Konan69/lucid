@@ -113,7 +113,7 @@ const assertEnvironmentWiring = (root, stackSource) => {
   )
 
   const runtimeFiles = [
-    ...walkTypeScript(NodePath.join(root, 'packages/agent-runtime/src')),
+    ...walkTypeScript(NodePath.join(root, 'packages/agent/runtime/src')),
     ...walkTypeScript(NodePath.join(root, 'packages/connectors/src')),
   ]
   const runtimeNames = new Set()
@@ -121,7 +121,7 @@ const assertEnvironmentWiring = (root, stackSource) => {
     for (const name of extractEnvironmentNames(NodeFS.readFileSync(file, 'utf8')))
       runtimeNames.add(name)
   }
-  const runtimeExample = source(root, 'packages/agent-runtime/.env.example')
+  const runtimeExample = source(root, 'packages/agent/runtime/.env.example')
   for (const match of runtimeExample.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)) runtimeNames.add(match[1])
 
   for (const name of new Set([...serverNames, ...runtimeNames])) {

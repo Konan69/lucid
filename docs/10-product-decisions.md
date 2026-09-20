@@ -108,7 +108,7 @@ The full model and remaining questions are in [Company and projects](12-company-
 ## Repository and dependency state
 
 - The repository is now a pnpm workspace with `apps/web`, `apps/server`, `packages/contracts`,
-  `packages/client-runtime`, and `packages/design/tokens`.
+  `packages/client/rpc`, and `packages/design/tokens`.
 - Effect `4.0.0-rc.112` is currently installed in the contracts, runtime, and server packages.
 - Oxlint `1.81.0` is currently installed at the workspace root. Vivid requested the latest RC; the
   installed version must be checked against the registry before claiming that request is complete.

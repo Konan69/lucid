@@ -62,7 +62,7 @@ export default Alchemy.Stack(
      */
     yield* Command.Dev(target.runtimeProcessId, {
       command: 'pnpm dev -- --host 127.0.0.1 --port 5173',
-      cwd: './packages/agent-runtime',
+      cwd: './packages/agent/runtime',
       env: {
         /**
          * Unused by the process. Reading the migration output makes Alchemy order this process

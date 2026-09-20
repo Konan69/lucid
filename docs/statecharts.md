@@ -53,11 +53,11 @@ Local evidence:
   [mobile Connection request card](../apps/mobile/src/components/connector/Card.tsx).
 - [Mobile resource store](../apps/mobile/src/lib/resource/store.ts): subscription lifetime,
   foreground refresh, and stale-response handling already have an owned implementation.
-- [Follow-up scheduler](../packages/agent-runtime/src/follow-up-scheduler.ts) and
-  [task store](../packages/agent-runtime/src/task-store.ts).
-- [Routine scheduler](../packages/agent-runtime/src/routine-scheduler.ts) and
-  [Routine store](../packages/agent-runtime/src/routine-store.ts).
-- [Library ingestion](../packages/agent-runtime/src/library-ingest.ts).
+- [Follow-up scheduler](../packages/agent/runtime/src/follow-up-scheduler.ts) and
+  [task store](../packages/agent/runtime/src/task-store.ts).
+- [Routine scheduler](../packages/agent/runtime/src/routine-scheduler.ts) and
+  [Routine store](../packages/agent/runtime/src/routine-store.ts).
+- [Library ingestion](../packages/agent/runtime/src/library-ingest.ts).
 
 ## Future application fit
 
@@ -103,7 +103,7 @@ mount/background/unmount semantics remain unmeasured.
 
 ## Revisit scope and acceptance criteria
 
-Begin with one Connection controller in `packages/client-runtime`. Shared wire schemas belong in
+Begin with one Connection controller in `packages/client/rpc`. Shared wire schemas belong in
 `packages/contracts`. Browser popup creation must remain synchronous with the user gesture;
 native link opening and foreground notifications remain native adapters. The server remains the
 authority for Connection status and credentials. The machine owns client interaction state.

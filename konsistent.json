@@ -9,8 +9,7 @@
         "packages/*/src/**/{name:matches([-_]|[a-z][A-Z])}.ts",
         "packages/*/src/**/{name:matches([-_]|[a-z][A-Z])}.tsx",
         "packages/*/*/src/**/{name:matches([-_]|[a-z][A-Z])}.ts",
-        "packages/*/*/src/**/{name:matches([-_]|[a-z][A-Z])}.tsx",
-        "!packages/connectors/src/skills/*"
+        "packages/*/*/src/**/{name:matches([-_]|[a-z][A-Z])}.tsx"
       ],
       "mustNot": {
         "haveType": "file"
@@ -22,9 +21,7 @@
         "packages/{name:matches([-_]|[a-z][A-Z])}",
         "packages/*/{name:matches([-_]|[a-z][A-Z])}",
         "!packages/*/node_modules",
-        "!packages/*/*/node_modules",
-        "!packages/agent-runtime",
-        "!packages/client-runtime"
+        "!packages/*/*/node_modules"
       ],
       "mustNot": {
         "haveType": "directory"

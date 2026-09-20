@@ -62,7 +62,7 @@ This is a full-stack collaboration boundary, not a frontend-only one. Work may i
 authentication, people and companies, projects, threads, messages, library data, ordinary HTTP APIs,
 persistence, tests, and shared product contracts.
 
-The included `packages/agent-runtime` owns the shareable Flue conversation transport, PostgreSQL
+The included `packages/agent/runtime` owns the shareable Flue conversation transport, PostgreSQL
 persistence, model adapter, local document Library, and a single-process cron adapter for the demo.
 The application backend may submit work through this explicit boundary and consume status or results,
 but it must not absorb the production scheduling engine, connectors, tool calls, computer transport,

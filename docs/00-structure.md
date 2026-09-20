@@ -48,11 +48,11 @@ packages/
     src/<domain>.ts   ◐ wire schemas, one file per domain (today: index.ts + runtime.ts)
 
   client/             what every app needs to talk to the server
-    rpc/      ◐ derived VividRpc + VividApi clients (today: packages/client-runtime)
+    rpc/      ◐ derived VividRpc + VividApi clients (today: packages/client/rpc)
     state/    ○ one client data layer: cache, live updates, optimistic writes, Thread lanes
 
   agent/              everything that is Vivid-the-model rather than Vivid-the-product
-    runtime/  ◐ Flue: conversation transport, history, model adapter (today: packages/agent-runtime)
+    runtime/  ◐ Flue: conversation transport, history, model adapter (today: packages/agent/runtime)
     prompts/  ○ Vivid's instructions and their fragments, versioned and testable
     tools/    ◐ the tools Vivid can call; each one is an RPC call to the server
     skills/   ○ Agent Skills mounted into a Run
@@ -127,11 +127,7 @@ These are duplicates the structure above removes. Each is one change.
 | Today                                                                             | Becomes                                                                               |
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | `packages/connectors`: tables, credential store, Google calls, its own migrations | `apps/server/src/connections/` — it is backend logic; Vivid's tools reach it over RPC |
-| `packages/agent-runtime`: product stores, schedulers, 37 Hono routes              | `apps/server` domains; the runtime keeps Flue only                                    |
-| mobile `lib/models.ts` (7 types) and 30 hand-written types in web `data/`         | types from `@vivid/contracts`, nothing re-declared                                    |
-| mobile `lib/api.ts` (`request<T>` cast) and web `data/request.ts` (59 call sites) | the derived `client/rpc`                                                              |
 | mobile `lib/resource/` polling store and web's reload-after-write                 | `client/state`, one implementation                                                    |
 | Thread lanes and connector-request logic in web, tested from mobile               | `client/state`                                                                        |
 | Service marks drawn twice (web 144 lines, mobile 127) and the face twice          | `design/marks` as data, two thin renderers                                            |
 | `contracts/src/runtime.ts`, one 461-line file                                     | `contracts/src/<domain>.ts`                                                           |
-| `packages/design-tokens`, `client-runtime`, `agent-runtime`, `computer`           | `design/tokens`, `client/rpc`, `agent/runtime`, `computer/state`                      |

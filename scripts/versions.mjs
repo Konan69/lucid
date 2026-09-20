@@ -152,7 +152,7 @@ const requiredByManifest = Object.freeze({
     'tailwindcss',
     'vite',
   ],
-  'packages/agent-runtime/package.json': [
+  'packages/agent/runtime/package.json': [
     '@earendil-works/pi-ai',
     '@effect/platform-node',
     '@flue/cli',

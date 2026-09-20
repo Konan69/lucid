@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 const runtimeDirectory = NodeURL.fileURLToPath(
-  new URL('../../packages/agent-runtime', import.meta.url),
+  new URL('../../packages/agent/runtime', import.meta.url),
 )
 
 export default defineConfig(({ mode }) => {

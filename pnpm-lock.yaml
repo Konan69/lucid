@@ -444,7 +444,7 @@ importers:
         version: 7.19.2(@react-navigation/native@7.4.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-safe-area-context@5.7.0(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-screens@4.26.2(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
       '@vivid/client-runtime':
         specifier: workspace:*
-        version: link:../../packages/client-runtime
+        version: link:../../packages/client/rpc
       '@vivid/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -593,7 +593,7 @@ importers:
         version: typescript@7.0.2
       '@vivid/client-runtime':
         specifier: workspace:*
-        version: link:../../packages/client-runtime
+        version: link:../../packages/client/rpc
       drizzle-kit:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc
@@ -617,7 +617,7 @@ importers:
         version: 2.1.0
       '@vivid/client-runtime':
         specifier: workspace:*
-        version: link:../../packages/client-runtime
+        version: link:../../packages/client/rpc
       '@vivid/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -674,7 +674,7 @@ importers:
         specifier: 'catalog:'
         version: 5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
 
-  packages/agent-runtime:
+  packages/agent/runtime:
     dependencies:
       '@earendil-works/pi-ai':
         specifier: 'catalog:'
@@ -690,13 +690,13 @@ importers:
         version: 2.1.0(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)
       '@vivid/client-runtime':
         specifier: workspace:*
-        version: link:../client-runtime
+        version: link:../../client/rpc
       '@vivid/connectors':
         specifier: workspace:*
-        version: link:../connectors
+        version: link:../../connectors
       '@vivid/contracts':
         specifier: workspace:*
-        version: link:../contracts
+        version: link:../../contracts
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260919.1)(@effect/sql-d1@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-pg@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-sqlite-do@4.0.0-rc.116(effect@4.0.0-rc.116))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.0-rc.116)(pg@8.23.0)(typebox@1.3.7)(valibot@1.5.0(typescript@6.0.3))(zod@4.5.4)
@@ -741,11 +741,11 @@ importers:
         specifier: 'catalog:'
         version: 5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
 
-  packages/client-runtime:
+  packages/client/rpc:
     dependencies:
       '@vivid/contracts':
         specifier: workspace:*
-        version: link:../contracts
+        version: link:../../contracts
       effect:
         specifier: 4.0.0-rc.116
         version: 4.0.0-rc.116

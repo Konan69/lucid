@@ -1,21 +1,21 @@
 [
   {
-    "file": "packages/agent-runtime/src/db.ts",
+    "file": "packages/agent/runtime/src/db.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["query", "transaction"]
   },
   {
-    "file": "packages/agent-runtime/src/tools/connectors.ts",
+    "file": "packages/agent/runtime/src/tools/connectors.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["run"]
   },
   {
-    "file": "packages/agent-runtime/src/tools/library.ts",
+    "file": "packages/agent/runtime/src/tools/library.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["run"]
   },
   {
-    "file": "packages/agent-runtime/src/tools/tasks.ts",
+    "file": "packages/agent/runtime/src/tools/tasks.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["run", "do:create-task", "do:update-task", "do:schedule-follow-up"]
   },
@@ -50,17 +50,17 @@
     "symbols": ["execute"]
   },
   {
-    "file": "packages/connectors/src/skills/calendar-skill.ts",
+    "file": "packages/connectors/src/skills/calendar.ts",
     "classification": "third-party-adapter",
     "symbols": ["calendarStatus"]
   },
   {
-    "file": "packages/connectors/src/skills/drive-skill.ts",
+    "file": "packages/connectors/src/skills/drive.ts",
     "classification": "third-party-adapter",
     "symbols": ["driveStatus"]
   },
   {
-    "file": "packages/connectors/src/skills/gmail-skill.ts",
+    "file": "packages/connectors/src/skills/gmail.ts",
     "classification": "third-party-adapter",
     "symbols": ["gmailStatus"]
   },
@@ -94,7 +94,7 @@
     "symbols": ["extractPages"]
   },
   {
-    "file": "packages/agent-runtime/src/app.ts",
+    "file": "packages/agent/runtime/src/app.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["runResult", "requireRuntimeToken", "get:/health", "post:/internal/runs"]
   },
@@ -109,7 +109,7 @@
     "symbols": ["readConnection"]
   },
   {
-    "file": "packages/agent-runtime/src/app.ts",
+    "file": "packages/agent/runtime/src/app.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["acceptRun"]
   }

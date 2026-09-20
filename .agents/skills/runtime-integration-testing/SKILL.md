@@ -91,7 +91,7 @@ Use a valid **test-only** `AUTH_SECRET`, a listener-derived test `PUBLIC_URL`, V
 
 ## Runtime: Hono, Flue, scheduler, and provider
 
-Use the real route map from `packages/agent-runtime/src/app.ts`, real `@flue/postgres` conversation storage, and PostgreSQL-backed stores. Current imports eagerly initialize `runtime-db.ts`, handwritten compatibility SQL, both schedulers, and the OpenRouter provider. Before isolated route tests are possible, split app construction from process startup, inject the already-migrated database/store, and disable the import-time `schemaReady`/scheduler path in the test composition. The test must not silently run a second migration mechanism or consult `public` while claiming per-test isolation.
+Use the real route map from `packages/agent/runtime/src/app.ts`, real `@flue/postgres` conversation storage, and PostgreSQL-backed stores. Current imports eagerly initialize `runtime-db.ts`, handwritten compatibility SQL, both schedulers, and the OpenRouter provider. Before isolated route tests are possible, split app construction from process startup, inject the already-migrated database/store, and disable the import-time `schemaReady`/scheduler path in the test composition. The test must not silently run a second migration mechanism or consult `public` while claiming per-test isolation.
 
 The deterministic provider is the one legitimate fake for orchestration tests. Flue 2.0.3's verified seam is Pi AI's `fauxProvider(...)`, scripted with `faux.setResponses([fauxAssistantMessage([fauxText(...)])])`, then registered through `setProvider(faux.provider)`. Do not mock Flue, its Postgres conversation storage, `init`, `dispatch`, or `read`. There is no public provider unregister; isolate provider tests in their own process/file or replace the same provider ID deliberately, and set the test model to the faux provider's model before importing the Vivid definition.
 
@@ -100,7 +100,7 @@ Scheduler tests must inject a controllable Effect `Clock` or an explicit schedul
 ### Store skeleton improving current cleanup
 
 ```ts
-// packages/agent-runtime/src/routine-store.test.ts
+// packages/agent/runtime/src/routine-store.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -130,7 +130,7 @@ test("a completed run cannot be finalized twice", async (context) => {
 ### Route/provider skeleton (API verification required)
 
 ```ts
-// packages/agent-runtime/src/app.test.ts
+// packages/agent/runtime/src/app.test.ts
 import assert from "node:assert/strict";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import { setProvider } from "@flue/runtime";
