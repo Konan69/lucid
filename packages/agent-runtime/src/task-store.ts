@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import * as NodeCrypto from 'node:crypto'
 import { and, asc, desc, eq, gte, inArray, isNull, isNotNull, lte, lt, or, sql } from 'drizzle-orm'
 import { db, schemaReady } from './runtime-db.ts'
 import { followUps, notifications, tasks } from './runtime-schema.ts'
@@ -131,95 +131,112 @@ export async function getTask(id: string): Promise<Task | null> {
   return rows[0] ? mapTask(rows[0]) : null
 }
 
-export async function createTask(input: {
-  id?: string
-  title: string
-  detail?: string
-  assignee?: string | null
-  dueAt?: number | null
-  priority?: TaskPriority
-  origin: TaskOrigin
-  createdBy: Author
-}): Promise<Task> {
+export interface CreateTaskInput {
+  readonly id?: string
+  readonly title: string
+  readonly detail?: string
+  readonly assignee?: string | null
+  readonly dueAt?: number | null
+  readonly priority?: TaskPriority
+  readonly origin: TaskOrigin
+  readonly createdBy: Author
+}
+
+const taskOriginId = (origin: TaskOrigin) => {
+  switch (origin.kind) {
+    case 'conversation':
+      return origin.conversationId
+    case 'routine':
+      return origin.routineId
+    case 'manual':
+      return null
+  }
+  return origin
+}
+
+/** Builds the canonical Task returned when an idempotent insert wins or already exists. */
+function taskFromInput(input: CreateTaskInput, id: string, now: number): Task {
+  return {
+    id,
+    title: input.title,
+    detail: input.detail ?? '',
+    status: 'open',
+    priority: input.priority ?? 'normal',
+    assignee: input.assignee ?? null,
+    dueAt: input.dueAt ?? null,
+    origin: input.origin,
+    createdBy: input.createdBy,
+    conversationId: `task-${id}`,
+    overdueNotifiedAt: null,
+    completedAt: null,
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+export async function createTask(input: CreateTaskInput): Promise<Task> {
   await schemaReady
   const now = Date.now()
-  const id = input.id ?? randomUUID()
-  const originId =
-    input.origin.kind === 'conversation'
-      ? input.origin.conversationId
-      : input.origin.kind === 'routine'
-        ? input.origin.routineId
-        : null
+  const id = input.id ?? NodeCrypto.randomUUID()
+  const task = taskFromInput(input, id, now)
   await db
     .insert(tasks)
     .values({
-      id,
-      title: input.title,
-      detail: input.detail ?? '',
-      status: 'open',
-      priority: input.priority ?? 'normal',
-      assignee: input.assignee ?? null,
-      dueAt: input.dueAt ?? null,
-      originKind: input.origin.kind,
-      originId,
-      createdBy: input.createdBy,
-      conversationId: `task-${id}`,
-      createdAt: now,
-      updatedAt: now,
+      id: task.id,
+      title: task.title,
+      detail: task.detail,
+      status: task.status,
+      priority: task.priority,
+      assignee: task.assignee,
+      dueAt: task.dueAt,
+      originKind: task.origin.kind,
+      originId: taskOriginId(task.origin),
+      createdBy: task.createdBy,
+      conversationId: task.conversationId,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
     })
     .onConflictDoNothing({ target: tasks.id })
-  return (
-    (await getTask(id)) ?? {
-      id,
-      title: input.title,
-      detail: input.detail ?? '',
-      status: 'open',
-      priority: input.priority ?? 'normal',
-      assignee: input.assignee ?? null,
-      dueAt: input.dueAt ?? null,
-      origin: input.origin,
-      createdBy: input.createdBy,
-      conversationId: `task-${id}`,
-      overdueNotifiedAt: null,
-      completedAt: null,
-      createdAt: now,
-      updatedAt: now,
-    }
-  )
+  return (await getTask(id)) ?? task
 }
 
 export type TaskPatch = Partial<
   Pick<Task, 'title' | 'detail' | 'assignee' | 'dueAt' | 'priority' | 'status'>
 >
+
+const taskCompletionAt = (current: Task, status: TaskStatus, now: number) => {
+  if (status !== 'done') return null
+  return current.status === 'done' ? current.completedAt : now
+}
+
+/** Derives one persistence update while preserving omitted nullable fields. */
+function taskUpdateValues(current: Task, patch: TaskPatch, now: number) {
+  const status = patch.status ?? current.status
+  return {
+    title: patch.title ?? current.title,
+    detail: patch.detail ?? current.detail,
+    assignee: patch.assignee === undefined ? current.assignee : patch.assignee,
+    dueAt: patch.dueAt === undefined ? current.dueAt : patch.dueAt,
+    priority: patch.priority ?? current.priority,
+    status,
+    completedAt: taskCompletionAt(current, status, now),
+    overdueNotifiedAt:
+      patch.dueAt !== undefined && patch.dueAt !== current.dueAt ? null : current.overdueNotifiedAt,
+    updatedAt: now,
+  }
+}
+
 export async function updateTask(id: string, patch: TaskPatch): Promise<Task | null> {
   const current = await getTask(id)
   if (!current) return null
-  const now = Date.now()
-  const status = patch.status ?? current.status
-  const completedAt =
-    status === 'done' ? (current.status === 'done' ? current.completedAt : now) : null
-  const dueAt = patch.dueAt === undefined ? current.dueAt : patch.dueAt
-  const overdueNotifiedAt =
-    patch.dueAt !== undefined && patch.dueAt !== current.dueAt ? null : current.overdueNotifiedAt
-  await db
-    .update(tasks)
-    .set({
-      title: patch.title ?? current.title,
-      detail: patch.detail ?? current.detail,
-      assignee: patch.assignee === undefined ? current.assignee : patch.assignee,
-      dueAt,
-      priority: patch.priority ?? current.priority,
-      status,
-      completedAt,
-      overdueNotifiedAt,
-      updatedAt: now,
-    })
-    .where(eq(tasks.id, id))
-  if (status !== 'open')
+  const values = taskUpdateValues(current, patch, Date.now())
+  await db.update(tasks).set(values).where(eq(tasks.id, id))
+  if (values.status !== 'open') {
     await db
       .update(followUps)
       .set({ status: 'cancelled' })
       .where(and(eq(followUps.taskId, id), eq(followUps.status, 'scheduled')))
+  }
   return await getTask(id)
 }
 
@@ -276,7 +293,7 @@ export async function createFollowUp(input: {
 }): Promise<FollowUp> {
   await schemaReady
   const followUp: FollowUp = {
-    id: input.id ?? randomUUID(),
+    id: input.id ?? NodeCrypto.randomUUID(),
     taskId: input.taskId,
     at: input.at,
     note: input.note ?? '',
@@ -407,7 +424,7 @@ async function createNotificationWithDb(
   },
 ): Promise<Notification> {
   const notification: Notification = {
-    id: input.id ?? randomUUID(),
+    id: input.id ?? NodeCrypto.randomUUID(),
     kind: input.kind,
     title: input.title.slice(0, 200),
     body: (input.body ?? '').slice(0, 600),
@@ -472,7 +489,7 @@ export async function completeFollowUp(
       await tx
         .insert(followUps)
         .values({
-          id: randomUUID(),
+          id: NodeCrypto.randomUUID(),
           taskId: current.taskId,
           at: next.at,
           note: next.note ?? '',
@@ -510,10 +527,11 @@ export async function listNotifications(limit = 50): Promise<Notification[]> {
 export async function unreadNotificationCount(): Promise<number> {
   await schemaReady
   const rows = await db
-    .select({ count: sql<number>`count(*)` })
+    .select({ count: sql<number>`count(*)`.mapWith(Number) })
     .from(notifications)
     .where(isNull(notifications.readAt))
-  return Number(rows[0]?.count ?? 0)
+  const [row] = rows
+  return row === undefined ? 0 : row.count
 }
 
 export async function markNotificationsRead(ids?: ReadonlyArray<string>): Promise<number> {
@@ -538,13 +556,13 @@ export async function markNotificationsRead(ids?: ReadonlyArray<string>): Promis
 }
 
 export async function getTaskView(task: Task): Promise<TaskView> {
-  const followUps = await listFollowUps(task.id)
-  const next =
-    followUps
-      .filter((item) => item.status === 'scheduled')
-      .map((item) => item.at)
-      .sort((a, b) => a - b)[0] ?? null
-  return { ...task, followUps, nextFollowUpAt: next }
+  const taskFollowUps = await listFollowUps(task.id)
+  const next = taskFollowUps.reduce<number | null>((earliest, item) => {
+    if (item.status !== 'scheduled') return earliest
+    if (earliest === null || item.at < earliest) return item.at
+    return earliest
+  }, null)
+  return { ...task, followUps: taskFollowUps, nextFollowUpAt: next }
 }
 
 export async function listTaskViews(status?: TaskStatus): Promise<TaskView[]> {

@@ -1,4 +1,4 @@
-import * as Schema from 'effect/Schema'
+import { Config, Effect, Redacted, Schema } from 'effect'
 import type { ConnectorCredential } from '../types.ts'
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
@@ -15,8 +15,12 @@ const GoogleRefreshTokenResponse = Schema.Struct({
   access_token: Schema.String,
   expires_in: Schema.Number,
 })
-const decodeCodeTokenResponse = Schema.decodeUnknownSync(GoogleCodeTokenResponse)
-const decodeRefreshTokenResponse = Schema.decodeUnknownSync(GoogleRefreshTokenResponse)
+const decodeCodeTokenResponse = Schema.decodeUnknownSync(
+  Schema.fromJsonString(GoogleCodeTokenResponse),
+)
+const decodeRefreshTokenResponse = Schema.decodeUnknownSync(
+  Schema.fromJsonString(GoogleRefreshTokenResponse),
+)
 
 export interface GoogleOAuthConfig {
   clientId: string
@@ -62,7 +66,7 @@ export async function exchangeGoogleCode(
     throw new Error(`Token exchange failed: ${error}`)
   }
 
-  const data = decodeCodeTokenResponse(await response.json())
+  const data = decodeCodeTokenResponse(await response.text())
 
   return {
     connectorId: 'gmail',
@@ -93,7 +97,7 @@ export async function refreshGoogleToken(
     throw new Error(`Token refresh failed: ${error}`)
   }
 
-  const data = decodeRefreshTokenResponse(await response.json())
+  const data = decodeRefreshTokenResponse(await response.text())
 
   return {
     accessToken: data.access_token,
@@ -105,15 +109,16 @@ export async function revokeGoogleToken(token: string): Promise<void> {
   await fetch(`${GOOGLE_REVOKE_URL}?token=${token}`, { method: 'POST' })
 }
 
+const loadGoogleConfig = Effect.fn('GoogleOAuth.loadConfig')(function* () {
+  const clientId = yield* Config.String('GOOGLE_CLIENT_ID')
+  const clientSecret = yield* Config.Redacted('GOOGLE_CLIENT_SECRET')
+  const redirectUri = yield* Config.String('GOOGLE_REDIRECT_URI')
+  return { clientId, clientSecret: Redacted.value(clientSecret), redirectUri }
+})
+
+/** Loads Google OAuth configuration at the synchronous Connector framework boundary. */
 export function getGoogleConfig(): GoogleOAuthConfig {
-  const clientId = process.env.GOOGLE_CLIENT_ID
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET
-  const redirectUri =
-    process.env.GOOGLE_REDIRECT_URI ?? 'http://localhost:5178/api/connectors/google/callback'
-
-  if (!clientId || !clientSecret) {
-    throw new Error('GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set')
-  }
-
-  return { clientId, clientSecret, redirectUri }
+  // Connector.getAuthUrl is synchronous, so this method owns the Config runtime adapter.
+  // oxlint-disable-next-line vivid/no-runpromise-in-library
+  return Effect.runSync(loadGoogleConfig())
 }

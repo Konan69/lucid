@@ -51,19 +51,22 @@ const makeOptions = (config: ServerConfig['Service']) => {
       }),
     ],
   }
-  if (config.GOOGLE_CLIENT_ID === undefined || config.GOOGLE_CLIENT_SECRET === undefined) {
-    return options
+  switch (config.GOOGLE_OAUTH._tag) {
+    case 'Disabled':
+      return options
+    case 'Enabled':
+      return {
+        ...options,
+        socialProviders: {
+          google: {
+            clientId: config.GOOGLE_OAUTH.clientId,
+            clientSecret: Redacted.value(config.GOOGLE_OAUTH.clientSecret),
+            redirectURI: config.GOOGLE_OAUTH.redirectUri.href,
+          },
+        },
+      }
   }
-  return {
-    ...options,
-    socialProviders: {
-      google: {
-        clientId: config.GOOGLE_CLIENT_ID,
-        clientSecret: Redacted.value(config.GOOGLE_CLIENT_SECRET),
-        redirectURI: config.GOOGLE_REDIRECT_URI?.href,
-      },
-    },
-  }
+  return config.GOOGLE_OAUTH
 }
 
 /** Closes Better Auth's type-only Alchemy context requirement for this static Node runtime. */

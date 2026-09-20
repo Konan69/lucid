@@ -84,8 +84,8 @@ export function taskToolsFor(conversationId: string) {
   return tools
 }
 
-function buildTaskTools(conversationId: string) {
-  const createTaskTool = defineTool({
+function buildCreateTaskTool(conversationId: string) {
+  return defineTool({
     name: 'create_task',
     description:
       "Track a piece of work as a task Vivid will follow up on. Use it when the user asks for a reminder, a chase, or to keep track of something, or after they accept your offer to track work that depends on another person, has a deadline, or should be checked later. Never file work you can finish right now. Set assignee to the person the work waits on, or omit it when the work is the user's own. Dates are ISO 8601 with a timezone offset. Returns the stored task; tell the user plainly what is now being tracked and when you will follow up.",
@@ -150,7 +150,10 @@ function buildTaskTools(conversationId: string) {
       }
     },
   })
+}
 
+function buildTaskTools(conversationId: string) {
+  const createTaskTool = buildCreateTaskTool(conversationId)
   const updateTaskTool = defineTool({
     name: 'update_task',
     description:

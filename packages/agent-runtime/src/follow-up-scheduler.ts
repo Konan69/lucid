@@ -111,23 +111,26 @@ const recordFollowUpFailure = Effect.fn('FollowUpScheduler.recordFailure')(funct
   )
 })
 
+/** Claims a scheduled occurrence or preserves one already claimed during restart recovery. */
+const claimFollowUp = Effect.fn('FollowUpScheduler.claim')(function* (followUp: FollowUp) {
+  if (followUp.status !== 'scheduled') {
+    return followUp.status === 'running' ? followUp : null
+  }
+  const started = yield* storeOperation('start follow-up', () =>
+    startFollowUp(followUp.id, Date.now()),
+  )
+  if (!started) return null
+  const refreshed = yield* storeOperation('reload follow-up', () => getFollowUp(followUp.id))
+  return refreshed ?? followUp
+})
+
 /** Executes one claimed occurrence; the database compare-and-set preserves idempotency. */
 const executeClaimedFollowUp = Effect.fn('FollowUpScheduler.executeClaimed')(function* (
   task: Task,
   initialFollowUp: FollowUp,
 ) {
-  let followUp = initialFollowUp
-  if (followUp.status === 'scheduled') {
-    const started = yield* storeOperation('start follow-up', () =>
-      startFollowUp(followUp.id, Date.now()),
-    )
-    if (!started) return
-    const refreshed = yield* storeOperation('reload follow-up', () => getFollowUp(followUp.id))
-    if (refreshed !== null) followUp = refreshed
-  } else if (followUp.status !== 'running') {
-    return
-  }
-
+  const followUp = yield* claimFollowUp(initialFollowUp)
+  if (followUp === null) return
   const firedAt = followUp.firedAt ?? Date.now()
   yield* storeOperation('upsert follow-up conversation', () =>
     upsertConversation({

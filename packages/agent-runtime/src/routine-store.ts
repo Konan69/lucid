@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import * as NodeCrypto from 'node:crypto'
 import { asc, and, desc, eq } from 'drizzle-orm'
 import { db, schemaReady } from './runtime-db.ts'
 import { routineRuns, routines } from './runtime-schema.ts'
@@ -76,7 +76,7 @@ export async function createRoutine(
   const now = Date.now()
   const routine: Routine = {
     ...input,
-    id: randomUUID(),
+    id: NodeCrypto.randomUUID(),
     enabled: true,
     nextExpectedAt: null,
     lastMissedAt: null,
@@ -153,7 +153,7 @@ export async function listRunningRoutineRuns(): Promise<RoutineRun[]> {
 export async function startRoutineRun(routineId: string): Promise<RoutineRun> {
   await schemaReady
   const run: RoutineRun = {
-    id: randomUUID(),
+    id: NodeCrypto.randomUUID(),
     routineId,
     conversationId: `routine-${routineId}`,
     submissionId: null,

@@ -152,6 +152,15 @@ export interface ClientOptions {
   readonly transport: ClientTransport
 }
 
+/** One schema-owned JSON request passed through the transport boundary. */
+export interface JsonRequest<Body, BodyEncoded, Response, ResponseEncoded> {
+  readonly bodySchema: Schema.Codec<Body, BodyEncoded>
+  readonly responseSchema: Schema.Codec<Response, ResponseEncoded>
+  readonly path: string
+  readonly body: Body
+  readonly options?: Omit<RequestOptions, 'multipart'>
+}
+
 /** Schema-decoding client shared by browser and native adapters. */
 export interface SchemaClient {
   readonly baseUrl: string
@@ -161,11 +170,7 @@ export interface SchemaClient {
     options?: RequestOptions,
   ) => Effect.Effect<Response, ClientFailure>
   readonly requestJson: <Body, BodyEncoded, Response, ResponseEncoded>(
-    bodySchema: Schema.Codec<Body, BodyEncoded>,
-    responseSchema: Schema.Codec<Response, ResponseEncoded>,
-    path: string,
-    body: Body,
-    options?: Omit<RequestOptions, 'multipart'>,
+    request: JsonRequest<Body, BodyEncoded, Response, ResponseEncoded>,
   ) => Effect.Effect<Response, ClientFailure>
 }
 
@@ -286,12 +291,9 @@ class SchemaClientImplementation implements SchemaClient {
 
   /** Encodes one request body before handing it to the transport. */
   requestJson<Body, BodyEncoded, Response, ResponseEncoded>(
-    bodySchema: Schema.Codec<Body, BodyEncoded>,
-    responseSchema: Schema.Codec<Response, ResponseEncoded>,
-    path: string,
-    body: Body,
-    options: Omit<RequestOptions, 'multipart'> = {},
+    request: JsonRequest<Body, BodyEncoded, Response, ResponseEncoded>,
   ): Effect.Effect<Response, ClientFailure> {
+    const { bodySchema, responseSchema, path, body, options = {} } = request
     return Schema.encodeEffect(bodySchema)(body).pipe(
       Effect.mapError((error) => new RequestEncodingFailed({ message: error.message })),
       Effect.map((encoded) => JSON.stringify(encoded)),

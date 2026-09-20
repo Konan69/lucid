@@ -15,7 +15,11 @@ const repositoryRoot = NodePath.resolve(
 
 /** Both checked-in Drizzle owners retain a valid generated snapshot chain. */
 void test('validates every checked-in migration owner', () => {
-  assert.deepEqual(migrationOwners, ['apps/server', 'packages/agent-runtime'])
+  assert.deepEqual(migrationOwners, [
+    'apps/server',
+    'packages/agent-runtime',
+    'packages/connectors',
+  ])
   assert.deepEqual(
     validateMigrations(repositoryRoot).flatMap((report) => report.errors),
     [],

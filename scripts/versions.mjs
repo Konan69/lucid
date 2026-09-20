@@ -137,138 +137,153 @@ export function workspaceManifestPaths(root) {
   )
 }
 
-/** Validate dependency lockstep and the native TypeScript/Effect compiler path. */
-export function validateVersions(root) {
+const manifestSections = (manifest) => [
+  { section: 'dependencies', dependencies: manifest.dependencies },
+  { section: 'devDependencies', dependencies: manifest.devDependencies },
+  { section: 'peerDependencies', dependencies: manifest.peerDependencies },
+  { section: 'optionalDependencies', dependencies: manifest.optionalDependencies },
+]
+
+/** Report version drift in one dependency section. */
+function dependencySectionErrors(relativePath, section, dependencies, catalog) {
+  if (dependencies === undefined) return []
   const errors = []
-  const rootManifest = readPackageManifest(root, 'package.json')
-  const catalog = readWorkspaceMapping(root, 'catalog')
-  const overrides = readWorkspaceMapping(root, 'overrides')
-  const manifests = [
-    { relativePath: 'package.json', manifest: rootManifest },
-    ...workspaceManifestPaths(root).map((relativePath) => ({
-      relativePath,
-      manifest: readPackageManifest(root, relativePath),
-    })),
+  for (const [name, expected] of Object.entries(versions)) {
+    const declared = dependencies[name]
+    const actual = resolveWorkspaceVersion(name, declared, catalog)
+    if (declared !== undefined && actual !== expected) {
+      errors.push(
+        `${relativePath}: ${section}.${name} must resolve to ${expected}; found ${declared}`,
+      )
+    }
+  }
+  return errors
+}
+
+/** Report native and tooling compiler drift for one package that runs tsc. */
+function compilerErrors(relativePath, manifest, catalog) {
+  const typecheck = manifest.scripts === undefined ? undefined : manifest.scripts.typecheck
+  if (typecheck === undefined || !/(?:^|\s)tsc(?:\s|$)/u.test(typecheck)) return []
+  const development = manifest.devDependencies === undefined ? {} : manifest.devDependencies
+  const nativeTypeScript = resolveWorkspaceVersion(
+    '@typescript/native',
+    development['@typescript/native'],
+    catalog,
+  )
+  const toolingTypeScript = resolveWorkspaceVersion('typescript', development.typescript, catalog)
+  const errors = []
+  if (nativeTypeScript !== versions['@typescript/native']) {
+    errors.push(
+      `${relativePath}: tsc typecheck must resolve @typescript/native ${versions['@typescript/native']}`,
+    )
+  }
+  if (toolingTypeScript !== versions.typescript) {
+    errors.push(`${relativePath}: tooling TypeScript must resolve to ${versions.typescript}`)
+  }
+  return errors
+}
+
+/** Validate one workspace manifest against every authoritative version pin. */
+function manifestErrors(relativePath, manifest, catalog) {
+  return [
+    ...manifestSections(manifest).flatMap(({ section, dependencies }) =>
+      dependencySectionErrors(relativePath, section, dependencies, catalog),
+    ),
+    ...compilerErrors(relativePath, manifest, catalog),
   ]
+}
 
-  for (const { relativePath, manifest } of manifests) {
-    const sections = [
-      { section: 'dependencies', dependencies: manifest.dependencies },
-      { section: 'devDependencies', dependencies: manifest.devDependencies },
-      { section: 'peerDependencies', dependencies: manifest.peerDependencies },
-      { section: 'optionalDependencies', dependencies: manifest.optionalDependencies },
-    ]
-    for (const { section, dependencies } of sections) {
-      if (dependencies === undefined) continue
-      for (const [name, expected] of Object.entries(versions)) {
-        const declared = dependencies[name]
-        const actual = resolveWorkspaceVersion(name, declared, catalog)
-        if (declared !== undefined && actual !== expected) {
-          errors.push(
-            `${relativePath}: ${section}.${name} must resolve to ${expected}; found ${declared}`,
-          )
-        }
-      }
-    }
-
-    const typecheck = manifest.scripts === undefined ? undefined : manifest.scripts.typecheck
-    if (typecheck !== undefined && /(?:^|\s)tsc(?:\s|$)/u.test(typecheck)) {
-      const nativeTypeScript = resolveWorkspaceVersion(
-        '@typescript/native',
-        manifest.devDependencies === undefined
-          ? undefined
-          : manifest.devDependencies['@typescript/native'],
-        catalog,
-      )
-      if (nativeTypeScript !== versions['@typescript/native']) {
-        errors.push(
-          `${relativePath}: tsc typecheck must resolve @typescript/native ${versions['@typescript/native']}`,
-        )
-      }
-      const toolingTypeScript = resolveWorkspaceVersion(
-        'typescript',
-        manifest.devDependencies === undefined ? undefined : manifest.devDependencies.typescript,
-        catalog,
-      )
-      if (toolingTypeScript !== versions.typescript) {
-        errors.push(`${relativePath}: tooling TypeScript must resolve to ${versions.typescript}`)
-      }
-    }
-  }
-
-  for (const [relativePath, names] of Object.entries(requiredByManifest)) {
+/** Report missing or drifting dependencies required on specific package surfaces. */
+function requiredDependencyErrors(root, catalog) {
+  return Object.entries(requiredByManifest).flatMap(([relativePath, names]) => {
     const manifest = readPackageManifest(root, relativePath)
-    for (const name of names) {
-      const production =
-        manifest.dependencies === undefined ? undefined : manifest.dependencies[name]
-      const development =
-        manifest.devDependencies === undefined ? undefined : manifest.devDependencies[name]
-      const declared = production ?? development
+    const production = manifest.dependencies === undefined ? {} : manifest.dependencies
+    const development = manifest.devDependencies === undefined ? {} : manifest.devDependencies
+    return names.flatMap((name) => {
+      const declared = production[name] ?? development[name]
       const actual = resolveWorkspaceVersion(name, declared, catalog)
-      if (actual !== versions[name]) {
-        errors.push(`${relativePath}: ${name} must resolve to ${versions[name]}; found ${declared}`)
-      }
-    }
-  }
+      return actual === versions[name]
+        ? []
+        : [`${relativePath}: ${name} must resolve to ${versions[name]}; found ${declared}`]
+    })
+  })
+}
 
-  for (const [name, expected] of Object.entries(forcedVersions)) {
+/** Report drift in pnpm overrides that force prerelease packages into lockstep. */
+function overrideErrors(overrides, catalog) {
+  return Object.entries(forcedVersions).flatMap(([name, expected]) => {
     const declared = overrides[name]
     const actual = resolveWorkspaceVersion(name, declared, catalog)
-    if (actual !== expected) {
-      errors.push(
-        `pnpm-workspace.yaml: overrides.${name} must resolve to ${expected}; found ${declared}`,
-      )
-    }
-  }
+    return actual === expected
+      ? []
+      : [`pnpm-workspace.yaml: overrides.${name} must resolve to ${expected}; found ${declared}`]
+  })
+}
 
-  if (rootManifest.pnpm !== undefined) {
+/** Report root package policies that keep every compiler path consistent. */
+function rootManifestErrors(manifest, catalog) {
+  const errors = []
+  const development = manifest.devDependencies === undefined ? {} : manifest.devDependencies
+  const scripts = manifest.scripts === undefined ? {} : manifest.scripts
+  const languageService = resolveWorkspaceVersion(
+    '@effect/language-service',
+    development['@effect/language-service'],
+    catalog,
+  )
+  if (manifest.pnpm !== undefined) {
     errors.push('package.json: pnpm settings belong in pnpm-workspace.yaml under pnpm 12')
   }
-
-  if (
-    resolveWorkspaceVersion(
-      '@effect/language-service',
-      rootManifest.devDependencies === undefined
-        ? undefined
-        : rootManifest.devDependencies['@effect/language-service'],
-      catalog,
-    ) !== versions['@effect/language-service']
-  ) {
+  if (languageService !== versions['@effect/language-service']) {
     errors.push(
       `package.json: @effect/language-service must resolve to ${versions['@effect/language-service']}`,
     )
   }
-  const prepare = rootManifest.scripts === undefined ? undefined : rootManifest.scripts.prepare
-  if (prepare === undefined || !prepare.includes('effect-language-service patch')) {
+  if (scripts.prepare === undefined || !scripts.prepare.includes('effect-language-service patch')) {
     errors.push('package.json: prepare must patch TypeScript with effect-language-service')
   }
-  const lint = rootManifest.scripts === undefined ? undefined : rootManifest.scripts.lint
-  if (lint === undefined || !lint.includes('--type-aware')) {
+  if (scripts.lint === undefined || !scripts.lint.includes('--type-aware')) {
     errors.push('package.json: lint must enable Oxlint --type-aware analysis')
   }
-
-  const tsconfig = readTypeScriptConfig(root, 'tsconfig.base.json')
-  const plugins =
-    tsconfig.compilerOptions === undefined ? undefined : tsconfig.compilerOptions.plugins
-  const effectPlugin =
-    plugins === undefined
-      ? undefined
-      : plugins.find((plugin) => plugin.name === '@effect/language-service')
-  if (effectPlugin === undefined) {
-    errors.push('tsconfig.base.json: @effect/language-service plugin is required')
-  } else {
-    if (effectPlugin.diagnostics !== true) {
-      errors.push('tsconfig.base.json: Effect diagnostics must be enabled')
-    }
-    if (effectPlugin.ignoreEffectErrorsInTscExitCode !== false) {
-      errors.push('tsconfig.base.json: Effect errors must fail typecheck')
-    }
-    if (effectPlugin.ignoreEffectWarningsInTscExitCode !== false) {
-      errors.push('tsconfig.base.json: Effect warnings must fail typecheck')
-    }
-  }
-
   return errors
+}
+
+/** Report Effect language-service plugin drift in the shared TypeScript config. */
+function typeScriptConfigErrors(root) {
+  const config = readTypeScriptConfig(root, 'tsconfig.base.json')
+  const compilerOptions = config.compilerOptions === undefined ? {} : config.compilerOptions
+  const plugins = compilerOptions.plugins === undefined ? [] : compilerOptions.plugins
+  const effectPlugin = plugins.find((plugin) => plugin.name === '@effect/language-service')
+  if (effectPlugin === undefined) {
+    return ['tsconfig.base.json: @effect/language-service plugin is required']
+  }
+  const errors = []
+  if (effectPlugin.diagnostics !== true) {
+    errors.push('tsconfig.base.json: Effect diagnostics must be enabled')
+  }
+  if (effectPlugin.ignoreEffectErrorsInTscExitCode !== false) {
+    errors.push('tsconfig.base.json: Effect errors must fail typecheck')
+  }
+  if (effectPlugin.ignoreEffectWarningsInTscExitCode !== false) {
+    errors.push('tsconfig.base.json: Effect warnings must fail typecheck')
+  }
+  return errors
+}
+
+/** Validate dependency lockstep and the native TypeScript/Effect compiler path. */
+export function validateVersions(root) {
+  const rootManifest = readPackageManifest(root, 'package.json')
+  const catalog = readWorkspaceMapping(root, 'catalog')
+  const overrides = readWorkspaceMapping(root, 'overrides')
+  const paths = ['package.json', ...workspaceManifestPaths(root)]
+  return [
+    ...paths.flatMap((relativePath) =>
+      manifestErrors(relativePath, readPackageManifest(root, relativePath), catalog),
+    ),
+    ...requiredDependencyErrors(root, catalog),
+    ...overrideErrors(overrides, catalog),
+    ...rootManifestErrors(rootManifest, catalog),
+    ...typeScriptConfigErrors(root),
+  ]
 }
 
 const isMain =

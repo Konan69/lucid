@@ -28,19 +28,25 @@ export class ConfigurationError extends Schema.TaggedError<ConfigurationError>()
     expected: Schema.String,
     message: Schema.String,
   },
+  { title: 'Server configuration error' },
 ) {}
 
+export type GoogleOAuthConfiguration =
+  | { readonly _tag: 'Disabled' }
+  | {
+      readonly _tag: 'Enabled'
+      readonly clientId: string
+      readonly clientSecret: Redacted.Redacted
+      readonly redirectUri: URL
+    }
+
 export interface ServerConfigService {
-  readonly DATABASE_URL: Redacted.Redacted<string>
-  readonly AUTH_SECRET: Redacted.Redacted<string>
+  readonly DATABASE_URL: Redacted.Redacted
+  readonly AUTH_SECRET: Redacted.Redacted
   readonly PORT: number
   readonly PUBLIC_URL: URL
-  readonly GOOGLE_CLIENT_ID?: string
-  readonly GOOGLE_CLIENT_SECRET?: Redacted.Redacted<string>
-  readonly GOOGLE_REDIRECT_URI?: URL
+  readonly GOOGLE_OAUTH: GoogleOAuthConfiguration
 }
-
-type LoadedServerConfig = { -readonly [Key in keyof ServerConfigService]: ServerConfigService[Key] }
 
 export class ServerConfig extends Context.Service<ServerConfig, ServerConfigService>()(
   'vivid/ServerConfig',
@@ -53,39 +59,76 @@ const configError = (variable: string, expected: string) =>
     message: `${variable} is invalid: expected ${expected}`,
   })
 
-const required = <A>(name: string, schema: Schema.ConstraintCodec<A, unknown, never, never>) =>
+const required = <A>(name: string, schema: Schema.ConstraintCodec<A, unknown>) =>
   Config.schema(schema, name).pipe(Effect.mapError(() => configError(name, 'a valid value')))
 
 const optional = <A>(
   name: string,
-  schema: Schema.ConstraintCodec<A, unknown, never, never>,
+  schema: Schema.ConstraintCodec<A, unknown>,
   expected = 'a valid value',
 ) =>
   Config.option(Config.schema(schema, name)).pipe(
     Effect.mapError(() => configError(name, expected)),
   )
 
-const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
-  ServerConfigService,
-  ConfigurationError
-> {
-  const databaseUrlValue = yield* required('DATABASE_URL', databaseUrl).pipe(
+const loadDatabaseUrl = Effect.fn('ServerConfig.loadDatabaseUrl')(function* () {
+  const value = yield* required('DATABASE_URL', databaseUrl).pipe(
     Effect.mapError(() => configError('DATABASE_URL', 'a PostgreSQL connection URL')),
   )
-  const parsedDatabaseUrl = yield* Effect.try({
-    try: () => new URL(Redacted.value(databaseUrlValue)),
+  const parsed = yield* Effect.try({
+    try: () => new URL(Redacted.value(value)),
     catch: () => configError('DATABASE_URL', 'a PostgreSQL connection URL'),
   })
-  if (parsedDatabaseUrl.protocol !== 'postgres:' && parsedDatabaseUrl.protocol !== 'postgresql:') {
+  if (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') {
     return yield* Effect.fail(configError('DATABASE_URL', 'a PostgreSQL connection URL'))
   }
-  if (parsedDatabaseUrl.hostname.length === 0) {
+  if (parsed.hostname.length === 0) {
     return yield* Effect.fail(
       configError('DATABASE_URL', 'a PostgreSQL connection URL with a host'),
     )
   }
+  return value
+})
 
-  const authSecretValue = yield* required('AUTH_SECRET', authSecret).pipe(
+const loadGoogleOAuth = Effect.fn('ServerConfig.loadGoogleOAuth')(function* () {
+  const clientId = yield* optional('GOOGLE_CLIENT_ID', nonEmptyString, 'a non-empty string')
+  const clientSecret = yield* optional('GOOGLE_CLIENT_SECRET', secret, 'a non-empty secret')
+  const redirectUri = yield* optional(
+    'GOOGLE_REDIRECT_URI',
+    Schema.URLFromString,
+    'an absolute URL',
+  )
+  if (Option.isNone(clientId) && Option.isNone(clientSecret) && Option.isNone(redirectUri)) {
+    return { _tag: 'Disabled' } as const
+  }
+  if (Option.isNone(clientId)) {
+    return yield* Effect.fail(
+      configError('GOOGLE_CLIENT_ID', 'present when Google OAuth is enabled'),
+    )
+  }
+  if (Option.isNone(clientSecret)) {
+    return yield* Effect.fail(
+      configError('GOOGLE_CLIENT_SECRET', 'present when Google OAuth is enabled'),
+    )
+  }
+  if (Option.isNone(redirectUri)) {
+    return yield* Effect.fail(
+      configError('GOOGLE_REDIRECT_URI', 'an absolute URL when Google OAuth is enabled'),
+    )
+  }
+  return {
+    _tag: 'Enabled',
+    clientId: clientId.value,
+    clientSecret: clientSecret.value,
+    redirectUri: redirectUri.value,
+  } as const
+})
+
+const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
+  ServerConfigService,
+  ConfigurationError
+> {
+  const loadedAuthSecret = yield* required('AUTH_SECRET', authSecret).pipe(
     Effect.mapError(() =>
       configError(
         'AUTH_SECRET',
@@ -99,45 +142,17 @@ const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
     ),
     () => 8787,
   )
-  const publicUrl =
-    Option.getOrUndefined(yield* optional('PUBLIC_URL', Schema.URLFromString, 'an absolute URL')) ??
-    new URL('http://localhost:3000')
-  const googleClientId = Option.getOrUndefined(
-    yield* optional('GOOGLE_CLIENT_ID', nonEmptyString, 'a non-empty string'),
+  const publicUrl = Option.getOrElse(
+    yield* optional('PUBLIC_URL', Schema.URLFromString, 'an absolute URL'),
+    () => new URL('http://localhost:3000'),
   )
-  const googleClientSecret = Option.getOrUndefined(
-    yield* optional('GOOGLE_CLIENT_SECRET', secret, 'a non-empty secret'),
-  )
-  const googleRedirectUri = Option.getOrUndefined(
-    yield* optional('GOOGLE_REDIRECT_URI', Schema.URLFromString, 'an absolute URL'),
-  )
-
-  if (googleClientId !== undefined && googleClientSecret === undefined) {
-    return yield* Effect.fail(
-      configError('GOOGLE_CLIENT_SECRET', 'present when GOOGLE_CLIENT_ID is set'),
-    )
-  }
-  if (googleClientId === undefined && googleClientSecret !== undefined) {
-    return yield* Effect.fail(
-      configError('GOOGLE_CLIENT_ID', 'present when GOOGLE_CLIENT_SECRET is set'),
-    )
-  }
-  if (googleClientId !== undefined && googleRedirectUri === undefined) {
-    return yield* Effect.fail(
-      configError('GOOGLE_REDIRECT_URI', 'an absolute URL when Google OAuth is enabled'),
-    )
-  }
-
-  const config: LoadedServerConfig = {
-    DATABASE_URL: databaseUrlValue,
-    AUTH_SECRET: authSecretValue,
+  return {
+    DATABASE_URL: yield* loadDatabaseUrl(),
+    AUTH_SECRET: loadedAuthSecret,
     PORT: port,
     PUBLIC_URL: publicUrl,
+    GOOGLE_OAUTH: yield* loadGoogleOAuth(),
   }
-  if (googleClientId !== undefined) config.GOOGLE_CLIENT_ID = googleClientId
-  if (googleClientSecret !== undefined) config.GOOGLE_CLIENT_SECRET = googleClientSecret
-  if (googleRedirectUri !== undefined) config.GOOGLE_REDIRECT_URI = googleRedirectUri
-  return config
 })
 
 export const serverConfigLayer = Layer.effect(ServerConfig, loadConfig())
