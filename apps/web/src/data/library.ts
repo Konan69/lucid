@@ -125,10 +125,10 @@ export const upload = Effect.fn('Library.upload')(function* (
     const xhr = new XMLHttpRequest()
     xhr.open('POST', '/api/library')
     xhr.responseType = 'json'
-    xhr.upload.onprogress = (event) => {
+    xhr.upload.addEventListener('progress', (event) => {
       if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100))
-    }
-    xhr.onerror = () =>
+    })
+    xhr.addEventListener('error', () =>
       resume(
         Effect.fail(
           new ClientRequestFailed({
@@ -138,8 +138,9 @@ export const upload = Effect.fn('Library.upload')(function* (
             cause: xhr.statusText,
           }),
         ),
-      )
-    xhr.onload = () => {
+      ),
+    )
+    xhr.addEventListener('load', () => {
       const body = decodeUploadResponse(xhr.response)
       if (xhr.status >= 200 && xhr.status < 300 && Option.isSome(body)) {
         resume(Effect.succeed(body.value.document))
@@ -157,7 +158,7 @@ export const upload = Effect.fn('Library.upload')(function* (
           }),
         ),
       )
-    }
+    })
     xhr.send(form)
   })
 })

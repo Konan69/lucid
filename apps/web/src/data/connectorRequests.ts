@@ -35,16 +35,21 @@ export function normalizeConnectorRequest(value: ConnectorRequest): ConnectorReq
 
 // This compatibility boundary supports persisted messages read outside the live Conversation
 // adapter; live Flue output is decoded with the shared contract before normalization.
-export function readConnectorRequest(output: unknown): ConnectorRequest | null {
+function parsePersistedConnectorOutput(
+  output: Parameters<typeof decodeConnectorRequest>[0],
+): ConnectorRequest | null {
   const decoded = decodeConnectorRequest(output)
   return Option.isSome(decoded) ? normalizeConnectorRequest(decoded.value) : null
 }
+
+/** Parses persisted connector output without exposing the boundary parser as a second API. */
+export const readConnectorRequest = parsePersistedConnectorOutput
 
 export function connectorContinuation(id: ConnectorId) {
   return `I've connected ${connectorNames[id]}. Please continue with my request.`
 }
 
-export function authorizationAddress(value: unknown): string {
+function parseAuthorizationAddress(value: Parameters<typeof decodeString>[0]): string {
   const decoded = decodeString(value)
   if (Option.isNone(decoded)) throw new Error('The connection returned an invalid sign-in address.')
   const url = new URL(decoded.value)
@@ -52,3 +57,6 @@ export function authorizationAddress(value: unknown): string {
     throw new Error('The connection returned an invalid sign-in address.')
   return url.href
 }
+
+/** Parses and restricts a provider authorization handoff to safe HTTPS addresses. */
+export const authorizationAddress = parseAuthorizationAddress
