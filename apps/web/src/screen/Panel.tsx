@@ -1,5 +1,4 @@
-import { Option, Schema } from 'effect'
-import { useFlueAgent, type FlueConversationMessage } from '@flue/react'
+import { useFlueAgent } from '@flue/react'
 import { createFlueClient } from '@flue/sdk'
 import {
   X,
@@ -14,6 +13,7 @@ import {
   Wrench,
 } from 'lucide-react'
 import { useMemo } from 'react'
+import { activityForMessage } from '../data/activity'
 import { Button, IconButton } from '../ui/Button'
 import { cn } from '../ui/cn'
 
@@ -57,45 +57,6 @@ const FEE_ROWS = [
   ['KE → TZ', 'Bank transfer', '0.90%', 'Worldstreet, §4.2', 'drafted'],
   ['GH → NG', 'Mobile money', '', '—', 'filling'],
 ] as const
-
-const ToolTaskSchema = Schema.Struct({
-  title: Schema.optionalKey(Schema.String),
-  status: Schema.optionalKey(Schema.String),
-})
-const ToolFollowUpSchema = Schema.Struct({ at: Schema.optionalKey(Schema.String) })
-const ToolPayloadSchema = Schema.Struct({
-  task: Schema.optionalKey(ToolTaskSchema),
-  followUp: Schema.optionalKey(ToolFollowUpSchema),
-  title: Schema.optionalKey(Schema.String),
-  query: Schema.optionalKey(Schema.String),
-  results: Schema.optionalKey(Schema.Array(Schema.Unknown)),
-  tasks: Schema.optionalKey(Schema.Array(Schema.Unknown)),
-})
-type ToolPayload = typeof ToolPayloadSchema.Type
-const MessageUsageSchema = Schema.Struct({
-  inputTokens: Schema.optionalKey(Schema.Number),
-  outputTokens: Schema.optionalKey(Schema.Number),
-  totalTokens: Schema.optionalKey(Schema.Number),
-})
-const MessageMetadataSchema = Schema.Struct({
-  startedAt: Schema.optionalKey(Schema.Number),
-  finishedAt: Schema.optionalKey(Schema.Number),
-  model: Schema.optionalKey(Schema.String),
-  usage: Schema.optionalKey(MessageUsageSchema),
-})
-const RuntimeMessageSchema = Schema.Struct({
-  purpose: Schema.optionalKey(Schema.String),
-  signal: Schema.optionalKey(
-    Schema.Struct({
-      attributes: Schema.optionalKey(
-        Schema.Struct({ scheduledAt: Schema.optionalKey(Schema.String) }),
-      ),
-    }),
-  ),
-})
-const decodeMessageMetadata = Schema.decodeUnknownOption(MessageMetadataSchema)
-const decodeRuntimeMessage = Schema.decodeUnknownOption(RuntimeMessageSchema)
-const decodeToolPayload = Schema.decodeUnknownOption(ToolPayloadSchema)
 
 function ScreenView() {
   return (
@@ -208,18 +169,33 @@ function ScreenView() {
             Live
           </span>
         </div>
-        {/* Dock: the tools Vivid keeps on its desktop */}
-        <div className="absolute inset-x-0 bottom-0 flex h-10 items-center justify-center gap-2.5">
-          {['#EA4335', '#3B82F6', '#1FA463', '#F59E0B'].map((c, i) => (
-            <i
-              key={i}
-              className="size-5 rounded-md shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
-              style={{ background: `linear-gradient(135deg, ${c}, ${c}CC)` }}
-              aria-hidden
-            />
-          ))}
-        </div>
+        <BrowserDock />
       </div>
+      <ScreenSummary />
+    </div>
+  )
+}
+
+/** Keeps the desktop dock isolated from the browser preview without changing its DOM structure. */
+function BrowserDock() {
+  return (
+    <div className="absolute inset-x-0 bottom-0 flex h-10 items-center justify-center gap-2.5">
+      {['#EA4335', '#3B82F6', '#1FA463', '#F59E0B'].map((color) => (
+        <i
+          key={color}
+          className="size-5 rounded-md shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
+          style={{ background: `linear-gradient(135deg, ${color}, ${color}CC)` }}
+          aria-hidden
+        />
+      ))}
+    </div>
+  )
+}
+
+/** Keeps the preview explanation and controls together as the non-browser portion of the screen. */
+function ScreenSummary() {
+  return (
+    <>
       <p className="text-label text-ink-3">
         Vivid is filling the cross-border fee table — blocker 3 from the PRD review. You can take
         over at any point; it pauses until you hand back.
@@ -228,209 +204,8 @@ function ScreenView() {
         <Button icon={<Hand className="size-3.5" />}>Take over</Button>
         <Button variant="ghost">Teach a task</Button>
       </div>
-    </div>
+    </>
   )
-}
-
-type Activity = {
-  id: string
-  detail?: string
-  failed?: boolean
-  label: string
-  timestamp?: number
-  type: 'request' | 'response' | 'tool'
-}
-
-function messageText(message: FlueConversationMessage) {
-  return message.parts
-    .filter((part) => part.type === 'text')
-    .map((part) => part.text)
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-type ToolCallDescription = { label: string; detail?: string }
-
-function describeToolCall(
-  toolName: string,
-  input: ToolPayload | null,
-  output: ToolPayload | null,
-  state: 'running' | 'failed' | 'done',
-): ToolCallDescription {
-  const outputTask = output && output.task ? output.task : null
-  const outputFollowUp = output && output.followUp ? output.followUp : null
-  const title = outputTask ? (outputTask.title ?? null) : input ? (input.title ?? null) : null
-  const followUpAt = outputFollowUp ? (outputFollowUp.at ?? null) : null
-  const when = followUpAt
-    ? new Intl.DateTimeFormat(undefined, {
-        weekday: 'short',
-        hour: 'numeric',
-        minute: '2-digit',
-      }).format(Date.parse(followUpAt))
-    : null
-  switch (toolName) {
-    case 'search_library': {
-      const query = input ? (input.query ?? null) : null
-      const results = output && output.results ? output.results.length : null
-      return {
-        label:
-          state === 'failed'
-            ? 'Library search failed'
-            : state === 'running'
-              ? 'Searching the Library'
-              : 'Searched the Library',
-        detail:
-          [
-            query ? `“${query}”` : null,
-            results !== null ? `${results} ${results === 1 ? 'source' : 'sources'}` : null,
-          ]
-            .filter(Boolean)
-            .join(' · ') || undefined,
-      }
-    }
-    case 'create_task':
-      return {
-        label:
-          state === 'failed'
-            ? 'Could not start tracking'
-            : state === 'running'
-              ? 'Starting to track a task'
-              : 'Started tracking a task',
-        detail: [title, when ? `follow-up ${when}` : null].filter(Boolean).join(' · ') || undefined,
-      }
-    case 'update_task':
-      return {
-        label:
-          state === 'failed'
-            ? 'Could not update the task'
-            : state === 'running'
-              ? 'Updating a task'
-              : outputTask && outputTask.status === 'done'
-                ? 'Marked a task done'
-                : 'Updated a task',
-        detail: title ?? undefined,
-      }
-    case 'list_tasks':
-      return {
-        label:
-          state === 'failed'
-            ? 'Could not read the task list'
-            : state === 'running'
-              ? 'Checking the task list'
-              : 'Checked the task list',
-        detail: output && output.tasks ? `${output.tasks.length} open` : undefined,
-      }
-    case 'schedule_follow_up':
-      return {
-        label:
-          state === 'failed'
-            ? 'Could not schedule the follow-up'
-            : state === 'running'
-              ? 'Scheduling a follow-up'
-              : 'Scheduled a follow-up',
-        detail: [title, when].filter(Boolean).join(' · ') || undefined,
-      }
-    default:
-      return {
-        label:
-          state === 'failed'
-            ? 'Action failed'
-            : state === 'running'
-              ? 'Working'
-              : 'Action completed',
-      }
-  }
-}
-
-function activityForMessage(message: FlueConversationMessage): Activity[] {
-  const metadataResult = decodeMessageMetadata(message.metadata)
-  const metadata = Option.isSome(metadataResult) ? metadataResult.value : null
-  const runtimeMessageResult = decodeRuntimeMessage(message)
-  const runtimeMessage = Option.isSome(runtimeMessageResult) ? runtimeMessageResult.value : null
-  const startedAt = metadata ? metadata.startedAt : undefined
-  const finishedAt = metadata ? (metadata.finishedAt ?? startedAt) : startedAt
-  const text = messageText(message)
-  if (message.role === 'user') {
-    return [
-      {
-        id: message.id,
-        label: 'Request submitted',
-        detail: text || undefined,
-        timestamp: startedAt,
-        type: 'request',
-      },
-    ]
-  }
-  if (message.role === 'system' && runtimeMessage && runtimeMessage.purpose === 'dispatch') {
-    const scheduledAt =
-      runtimeMessage.signal && runtimeMessage.signal.attributes
-        ? runtimeMessage.signal.attributes.scheduledAt
-        : undefined
-    const timestamp = scheduledAt ? Date.parse(scheduledAt) : undefined
-    return [
-      {
-        id: message.id,
-        label: 'Routine triggered',
-        detail: text || undefined,
-        timestamp: Number.isFinite(timestamp) ? timestamp : undefined,
-        type: 'request',
-      },
-    ]
-  }
-
-  const tools = message.parts
-    .filter((part) => part.type === 'dynamic-tool')
-    .map((tool) => {
-      const inputResult = decodeToolPayload('input' in tool ? tool.input : null)
-      const input = Option.isSome(inputResult) ? inputResult.value : null
-      const outputResult = decodeToolPayload('output' in tool ? tool.output : null)
-      const output = Option.isSome(outputResult) ? outputResult.value : null
-      const running = tool.state === 'input-available'
-      const failed = tool.state === 'output-error'
-      const described = describeToolCall(
-        tool.toolName,
-        input,
-        output,
-        running ? 'running' : failed ? 'failed' : 'done',
-      )
-      return {
-        id: `${message.id}:${tool.toolCallId}`,
-        label: described.label,
-        detail: described.detail,
-        failed,
-        timestamp: finishedAt,
-        type: 'tool' as const,
-      }
-    })
-  const failed = message.settlement ? message.settlement.outcome === 'failed' : false
-  const model = metadata
-    ? metadata.model
-      ? metadata.model.replace(/^openrouter\//, '')
-      : undefined
-    : undefined
-  const duration =
-    startedAt && finishedAt
-      ? `${Math.max(0, (finishedAt - startedAt) / 1000).toFixed(1)}s`
-      : undefined
-  const usage = metadata ? metadata.usage : undefined
-  const tokens = usage
-    ? (usage.totalTokens ?? ((usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) || undefined))
-    : undefined
-  const facts = [model, duration, tokens ? `${tokens.toLocaleString()} tokens` : undefined]
-    .filter(Boolean)
-    .join(' · ')
-  return [
-    ...tools,
-    {
-      id: message.id,
-      label: failed ? 'Response failed' : 'Response completed',
-      detail: facts || text.slice(0, 120) || undefined,
-      failed,
-      timestamp: finishedAt,
-      type: 'response' as const,
-    },
-  ]
 }
 
 function LogView({ conversationId }: { conversationId: string | null }) {
