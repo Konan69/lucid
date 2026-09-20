@@ -48,10 +48,11 @@
     "react-native-worklets": "catalog:"
   },
   "devDependencies": {
+    "@effect/vitest": "catalog:",
     "@react-native/metro-config": "catalog:",
     "@types/react": "catalog:",
     "@typescript/native": "catalog:",
-    "vitest": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }

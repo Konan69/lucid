@@ -6,6 +6,7 @@ import type {
   ConnectorTool,
   ConnectorToolFailure,
   ConnectorToolInput,
+  ConnectorToolOutput,
   ConnectorToolParameters,
 } from '../types.ts'
 import { ConnectorToolExecutionFailed } from '../types.ts'
@@ -31,7 +32,7 @@ class CredentialBoundTool implements BoundConnectorTool {
   }
 
   /** Loads a current credential before invoking the schema-owned tool. */
-  execute(input: ConnectorToolInput): Effect.Effect<unknown, ConnectorToolFailure> {
+  execute(input: ConnectorToolInput): Effect.Effect<ConnectorToolOutput, ConnectorToolFailure> {
     const { connectorId, connectorName, name, tool } = this
     return Effect.fn(`ConnectorTool.${name}.credential`)(function* () {
       const credentials = yield* Effect.tryPromise(() =>

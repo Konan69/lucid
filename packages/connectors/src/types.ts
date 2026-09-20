@@ -92,6 +92,14 @@ export type ConnectorToolFailure = typeof ConnectorToolFailure.Type
 export const ConnectorToolInput = Schema.Json
 export type ConnectorToolInput = typeof ConnectorToolInput.Type
 
+/**
+ * What a connector tool hands back to Vivid's runtime. It is serialized into model context, so it
+ * is JSON by construction. `unknown` here would let a Date, a class instance or a credential-bearing
+ * SDK object reach the model unnoticed.
+ */
+export const ConnectorToolOutput = Schema.Json
+export type ConnectorToolOutput = typeof ConnectorToolOutput.Type
+
 /** Existential connector tool used when heterogeneous tools share one registry. */
 export interface ConnectorTool {
   readonly name: string
@@ -102,14 +110,14 @@ export interface ConnectorTool {
   execute(
     input: ConnectorToolInput,
     credential: ConnectorCredential,
-  ): Effect.Effect<unknown, ConnectorToolFailure>
+  ): Effect.Effect<ConnectorToolOutput, ConnectorToolFailure>
 }
 
 /** Connector tool retaining its concrete input and output schemas. */
 export interface TypedConnectorTool<
   Input,
   InputEncoded,
-  Output,
+  Output extends ConnectorToolOutput,
   OutputEncoded,
 > extends ConnectorTool {
   readonly inputSchema: Schema.Codec<Input, InputEncoded>
@@ -121,7 +129,12 @@ export interface TypedConnectorTool<
 }
 
 /** Values required to construct a schema-owned connector tool. */
-export interface ConnectorToolDefinition<Input, InputEncoded, Output, OutputEncoded> {
+export interface ConnectorToolDefinition<
+  Input,
+  InputEncoded,
+  Output extends ConnectorToolOutput,
+  OutputEncoded,
+> {
   readonly name: string
   readonly description: string
   readonly parameters: ConnectorToolParameters
@@ -136,7 +149,7 @@ export interface ConnectorToolDefinition<Input, InputEncoded, Output, OutputEnco
 class ConnectorToolImplementation<
   Input,
   InputEncoded,
-  Output,
+  Output extends ConnectorToolOutput,
   OutputEncoded,
 > implements TypedConnectorTool<Input, InputEncoded, Output, OutputEncoded> {
   readonly name: string
@@ -183,7 +196,12 @@ class ConnectorToolImplementation<
 }
 
 /** Creates one connector tool whose implementation receives only decoded input. */
-export const defineConnectorTool = <Input, InputEncoded, Output, OutputEncoded>(
+export const defineConnectorTool = <
+  Input,
+  InputEncoded,
+  Output extends ConnectorToolOutput,
+  OutputEncoded,
+>(
   definition: ConnectorToolDefinition<Input, InputEncoded, Output, OutputEncoded>,
 ): TypedConnectorTool<Input, InputEncoded, Output, OutputEncoded> =>
   new ConnectorToolImplementation(definition)
@@ -195,7 +213,7 @@ export interface BoundConnectorTool {
   readonly parameters: ConnectorToolParameters
   readonly inputSchema: Schema.Top
   readonly outputSchema: Schema.Top
-  execute(input: ConnectorToolInput): Effect.Effect<unknown, ConnectorToolFailure>
+  execute(input: ConnectorToolInput): Effect.Effect<ConnectorToolOutput, ConnectorToolFailure>
 }
 
 /** Connector that contributes tools to a Vivid runtime. */
