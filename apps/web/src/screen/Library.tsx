@@ -1,3 +1,4 @@
+import * as Result from 'effect/Result'
 import {
   Check,
   ChevronRight,
@@ -111,12 +112,9 @@ function useLibraryState() {
 
   const load = useCallback(async () => {
     const result = await runClient(libraryData.load(currentFolderId))
-    if (result._tag === 'Failure') {
-      switch (result.failure._tag) {
-        case 'ClientRequestFailed':
-          setError(result.failure.message)
-          return
-      }
+    if (Result.isFailure(result)) {
+      setError(result.failure.message)
+      return
     }
     setDocuments(result.success.documents)
     setFolders(result.success.folders)
@@ -131,12 +129,9 @@ function useLibraryState() {
     // already left are ignored so they cannot replace the current folder's contents.
     void runClient(libraryData.load(currentFolderId)).then((result) => {
       if (cancelled) return
-      if (result._tag === 'Failure') {
-        switch (result.failure._tag) {
-          case 'ClientRequestFailed':
-            setError(result.failure.message)
-            return
-        }
+      if (Result.isFailure(result)) {
+        setError(result.failure.message)
+        return
       }
       setDocuments(result.success.documents)
       setFolders(result.success.folders)
@@ -207,18 +202,15 @@ function createLibraryUploadActions(state: LibraryState) {
         ),
       ),
     )
-    if (result._tag === 'Failure') {
-      switch (result.failure._tag) {
-        case 'ClientRequestFailed':
-          setUploads((current) =>
-            current.map((item) =>
-              item.id === upload.id
-                ? { ...item, status: 'failed', error: result.failure.message }
-                : item,
-            ),
-          )
-          return
-      }
+    if (Result.isFailure(result)) {
+      setUploads((current) =>
+        current.map((item) =>
+          item.id === upload.id
+            ? { ...item, status: 'failed', error: result.failure.message }
+            : item,
+        ),
+      )
+      return
     }
     setUploads((current) =>
       current.map((item) =>
@@ -294,12 +286,9 @@ function createLibraryItemActions(state: LibraryState) {
     const normalized = query.trim()
     if (normalized.length < 2) return
     const result = await runClient(libraryData.search(normalized, currentFolderId))
-    if (result._tag === 'Failure') {
-      switch (result.failure._tag) {
-        case 'ClientRequestFailed':
-          setError(result.failure.message)
-          return
-      }
+    if (Result.isFailure(result)) {
+      setError(result.failure.message)
+      return
     }
     setResults(result.success)
     setError(null)
@@ -308,12 +297,9 @@ function createLibraryItemActions(state: LibraryState) {
   async function removeDocument(document: LibraryDocument) {
     if (!window.confirm(`Delete “${document.name}” from the Library?`)) return
     const result = await runClient(libraryData.removeDocument(document.id))
-    if (result._tag === 'Failure') {
-      switch (result.failure._tag) {
-        case 'ClientRequestFailed':
-          setError(result.failure.message)
-          return
-      }
+    if (Result.isFailure(result)) {
+      setError(result.failure.message)
+      return
     }
     setSelected(null)
     await load()
@@ -323,24 +309,18 @@ function createLibraryItemActions(state: LibraryState) {
     if (!currentFolder || !window.confirm(`Delete the empty folder “${currentFolder.name}”?`))
       return
     const result = await runClient(libraryData.removeFolder(currentFolder.id))
-    if (result._tag === 'Failure') {
-      switch (result.failure._tag) {
-        case 'ClientRequestFailed':
-          setError(result.failure.message)
-          return
-      }
+    if (Result.isFailure(result)) {
+      setError(result.failure.message)
+      return
     }
     setFolderStack((current) => current.slice(0, -1))
   }
 
   async function openSearchResult(result: SearchResult) {
     const opened = await runClient(libraryData.readDocument(result.documentId))
-    if (opened._tag === 'Failure') {
-      switch (opened.failure._tag) {
-        case 'ClientRequestFailed':
-          setError(opened.failure.message)
-          return
-      }
+    if (Result.isFailure(opened)) {
+      setError(opened.failure.message)
+      return
     }
     setSelected(opened.success)
     setResults(null)
@@ -830,13 +810,10 @@ function LibraryDialog({
     const result = await runClient(
       libraryData.saveDialog(state, name, destination, currentFolderId),
     )
-    if (result._tag === 'Failure') {
-      switch (result.failure._tag) {
-        case 'ClientRequestFailed':
-          setError(result.failure.message)
-          setPending(false)
-          return
-      }
+    if (Result.isFailure(result)) {
+      setError(result.failure.message)
+      setPending(false)
+      return
     }
     await onSaved(result.success)
   }

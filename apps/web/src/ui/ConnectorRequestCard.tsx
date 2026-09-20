@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import * as Result from 'effect/Result'
 import { Check, ExternalLink } from 'lucide-react'
 import * as connectorRequestsData from '../data/connectorRequests'
 import * as connectorsData from '../data/connectors'
@@ -24,12 +25,9 @@ export function ConnectorRequestCard({
     async function refresh() {
       const result = await run(connectorsData.readRequestStatus(request.connector))
       if (!active) return
-      if (result._tag === 'Failure') {
-        switch (result.failure._tag) {
-          case 'ClientRequestFailed':
-            setError(result.failure.message)
-            return
-        }
+      if (Result.isFailure(result)) {
+        setError(result.failure.message)
+        return
       }
       setStatus(result.success)
     }
@@ -60,14 +58,11 @@ export function ConnectorRequestCard({
     const result = await run(
       connectorsData.actOnRequest(request.connector, status === 'connected', onContinue),
     )
-    if (result._tag === 'Failure') {
-      switch (result.failure._tag) {
-        case 'ClientRequestFailed':
-          if (popup) popup.close()
-          setError(result.failure.message)
-          setBusy(false)
-          return
-      }
+    if (Result.isFailure(result)) {
+      if (popup) popup.close()
+      setError(result.failure.message)
+      setBusy(false)
+      return
     }
     const url = result.success
     if (url !== null) {

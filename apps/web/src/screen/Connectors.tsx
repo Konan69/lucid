@@ -1,4 +1,5 @@
 import { Check, LoaderCircle } from 'lucide-react'
+import * as Result from 'effect/Result'
 import { useEffect, useState } from 'react'
 import * as connectorsData from '../data/connectors'
 import { run } from '../data/runtime'
@@ -38,13 +39,10 @@ export function Connectors({ embedded = false }: { embedded?: boolean }) {
     // response asynchronously avoids a redundant synchronous state transition on mount.
     void run(connectorsData.list()).then((result) => {
       if (cancelled) return
-      if (result._tag === 'Failure') {
-        switch (result.failure._tag) {
-          case 'ClientRequestFailed':
-            setConnectors([])
-            setNotice({ tone: 'danger', text: result.failure.message })
-            return
-        }
+      if (Result.isFailure(result)) {
+        setConnectors([])
+        setNotice({ tone: 'danger', text: result.failure.message })
+        return
       }
       setConnectors(result.success)
     })
@@ -61,13 +59,10 @@ export function Connectors({ embedded = false }: { embedded?: boolean }) {
   async function connect(id: string) {
     setBusy(id)
     const result = await run(connectorsData.authorize(id))
-    if (result._tag === 'Failure') {
-      switch (result.failure._tag) {
-        case 'ClientRequestFailed':
-          setNotice({ tone: 'danger', text: result.failure.message })
-          setBusy(null)
-          return
-      }
+    if (Result.isFailure(result)) {
+      setNotice({ tone: 'danger', text: result.failure.message })
+      setBusy(null)
+      return
     }
     location.assign(result.success)
   }
@@ -75,13 +70,10 @@ export function Connectors({ embedded = false }: { embedded?: boolean }) {
   async function disconnect(id: string) {
     setBusy(id)
     const result = await run(connectorsData.disconnect(id))
-    if (result._tag === 'Failure') {
-      switch (result.failure._tag) {
-        case 'ClientRequestFailed':
-          setNotice({ tone: 'danger', text: result.failure.message })
-          setBusy(null)
-          return
-      }
+    if (Result.isFailure(result)) {
+      setNotice({ tone: 'danger', text: result.failure.message })
+      setBusy(null)
+      return
     }
     setNotice(null)
     setConnectors(result.success)

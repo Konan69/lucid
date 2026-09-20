@@ -1,3 +1,4 @@
+import * as Result from 'effect/Result'
 import {
   AlertTriangle,
   BellRing,
@@ -173,12 +174,9 @@ function useTodayState() {
   const load = useCallback(async () => {
     const result = await run(tasksData.load())
     setReady(true)
-    if (result._tag === 'Failure') {
-      switch (result.failure._tag) {
-        case 'ClientRequestFailed':
-          setError(result.failure.message)
-          return
-      }
+    if (Result.isFailure(result)) {
+      setError(result.failure.message)
+      return
     }
     setTasks(result.success.tasks)
     setNotifications(result.success.notifications)
@@ -193,12 +191,9 @@ function useTodayState() {
     void run(tasksData.load()).then((result) => {
       if (cancelled) return
       setReady(true)
-      if (result._tag === 'Failure') {
-        switch (result.failure._tag) {
-          case 'ClientRequestFailed':
-            setError(result.failure.message)
-            return
-        }
+      if (Result.isFailure(result)) {
+        setError(result.failure.message)
+        return
       }
       setTasks(result.success.tasks)
       setNotifications(result.success.notifications)
@@ -250,24 +245,18 @@ function createTodayActions(
   async function toggleDone(task: Task) {
     const status = task.status === 'open' ? 'done' : 'open'
     const result = await run(tasksData.setStatus(task.id, status))
-    if (result._tag === 'Failure') {
-      switch (result.failure._tag) {
-        case 'ClientRequestFailed':
-          setError(result.failure.message)
-          return
-      }
+    if (Result.isFailure(result)) {
+      setError(result.failure.message)
+      return
     }
     await load()
   }
 
   async function markAllRead() {
     const result = await run(tasksData.markAllNotificationsRead())
-    if (result._tag === 'Failure') {
-      switch (result.failure._tag) {
-        case 'ClientRequestFailed':
-          setError(result.failure.message)
-          return
-      }
+    if (Result.isFailure(result)) {
+      setError(result.failure.message)
+      return
     }
     await load()
   }
@@ -275,11 +264,8 @@ function createTodayActions(
   async function openNotification(notification: Notification) {
     if (notification.readAt === null) {
       void run(tasksData.markNotificationRead(notification.id)).then((result) => {
-        if (result._tag === 'Failure') {
-          switch (result.failure._tag) {
-            case 'ClientRequestFailed':
-              return
-          }
+        if (Result.isFailure(result)) {
+          return
         }
         void load()
       })
@@ -878,12 +864,9 @@ function useTaskEditorState(task: Task | null) {
     setError(null)
     const result = await run(program)
     setPending(false)
-    if (result._tag === 'Failure') {
-      switch (result.failure._tag) {
-        case 'ClientRequestFailed':
-          setError(result.failure.message)
-          return null
-      }
+    if (Result.isFailure(result)) {
+      setError(result.failure.message)
+      return null
     }
     return result.success
   }

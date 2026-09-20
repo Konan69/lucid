@@ -1,3 +1,4 @@
+import * as Result from 'effect/Result'
 import {
   AlertTriangle,
   Check,
@@ -64,12 +65,9 @@ export function Routines({
   const load = useCallback(async () => {
     const result = await runClient(routinesData.load())
     setReady(true)
-    if (result._tag === 'Failure') {
-      switch (result.failure._tag) {
-        case 'ClientRequestFailed':
-          setError(result.failure.message)
-          return
-      }
+    if (Result.isFailure(result)) {
+      setError(result.failure.message)
+      return
     }
     setRoutines(result.success)
     setError(null)
@@ -83,12 +81,9 @@ export function Routines({
     void runClient(routinesData.load()).then((result) => {
       if (cancelled) return
       setReady(true)
-      if (result._tag === 'Failure') {
-        switch (result.failure._tag) {
-          case 'ClientRequestFailed':
-            setError(result.failure.message)
-            return
-        }
+      if (Result.isFailure(result)) {
+        setError(result.failure.message)
+        return
       }
       setRoutines(result.success)
       setError(null)
@@ -457,12 +452,9 @@ function RoutineEditor({
     setError(null)
     const result = await runClient(program)
     setPending(false)
-    if (result._tag === 'Failure') {
-      switch (result.failure._tag) {
-        case 'ClientRequestFailed':
-          setError(result.failure.message)
-          return null
-      }
+    if (Result.isFailure(result)) {
+      setError(result.failure.message)
+      return null
     }
     return result.success
   }
