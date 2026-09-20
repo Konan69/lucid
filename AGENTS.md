@@ -149,6 +149,8 @@ Product copy says **Vivid**, never “agent” or “automation.” Those are im
 
 Use these terms in code, contracts, tests, and copy. Do not create synonyms for established concepts.
 
+**Borrowed code takes Vivid's names.** Any function, type, module, file, table, environment variable, event, or concept adapted from another project — a reference implementation, an SDK example, or one of our own earlier products — is renamed to this document's vocabulary and file conventions before it lands. The source's names never survive: no `box`, `sand`, `agent`, `bot`, `pod`, or another product's prefixes in identifiers, paths, logs, comments, or copy. Name the thing for what it is in Vivid (`Computer`, `Person`, `Thread`, `Run`, `Artifact`), and record where the design came from in the JSDoc, not in the identifier.
+
 ## Agent skills
 
 ### Issue tracker
