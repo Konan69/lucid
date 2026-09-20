@@ -19,7 +19,15 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type FormEvent,
+  type RefObject,
+} from 'react'
 import * as libraryData from '../data/library'
 import { run as runClient } from '../data/runtime'
 import { cn } from '../ui/cn'
@@ -81,7 +89,8 @@ function buildTiles(documents: LibraryDocument[], folders: LibraryFolder[]): Til
   ]
 }
 
-export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void }) {
+/** Owns Library hooks in their original order while exposing typed state to screen actions. */
+function useLibraryState() {
   const [grid, setGrid] = useState(true)
   const [folderStack, setFolderStack] = useState<LibraryFolder[]>([])
   const [folders, setFolders] = useState<LibraryFolder[]>([])
@@ -145,12 +154,58 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
       !documents.some((document) => document.status === 'processing') &&
       !uploads.some((upload) => upload.status === 'indexing')
     )
-      return
+      return undefined
     const timer = window.setInterval(() => {
       void load()
     }, 900)
     return () => window.clearInterval(timer)
   }, [documents, load, uploads])
+
+  return {
+    allFolders,
+    currentFolder,
+    currentFolderId,
+    dialog,
+    documents,
+    dragDepth,
+    dragging,
+    error,
+    folderStack,
+    folders,
+    grid,
+    inputRef,
+    load,
+    query,
+    results,
+    selected,
+    setDialog,
+    setDragging,
+    setError,
+    setFolderStack,
+    setGrid,
+    setQuery,
+    setResults,
+    setSelected,
+    setShowSearch,
+    setUploads,
+    showSearch,
+    uploads,
+  }
+}
+
+type LibraryState = ReturnType<typeof useLibraryState>
+
+/** Owns upload and drag lifecycle handlers while reusing the screen's stable state setters. */
+function createLibraryUploadActions(state: LibraryState) {
+  const {
+    currentFolderId,
+    dragDepth,
+    inputRef,
+    load,
+    setDragging,
+    setError,
+    setUploads,
+  } = state
 
   async function uploadOne(file: File, upload: UploadState) {
     const result = await runClient(
@@ -202,6 +257,45 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
       1800,
     )
   }
+
+  function handleDragEnter(event: DragEvent) {
+    event.preventDefault()
+    dragDepth.current += 1
+    setDragging(true)
+  }
+
+  function handleDragLeave(event: DragEvent) {
+    event.preventDefault()
+    dragDepth.current -= 1
+    if (dragDepth.current <= 0) setDragging(false)
+  }
+
+  function handleDrop(event: DragEvent) {
+    event.preventDefault()
+    dragDepth.current = 0
+    setDragging(false)
+    const files = [...event.dataTransfer.files]
+    if (files.length) void uploadFiles(files)
+  }
+
+  return { handleDragEnter, handleDragLeave, handleDrop, uploadFiles }
+}
+
+/** Owns Library search, deletion, navigation, and dialog-result mutations. */
+function createLibraryItemActions(state: LibraryState) {
+  const {
+    currentFolder,
+    currentFolderId,
+    load,
+    query,
+    results,
+    selected,
+    setDialog,
+    setError,
+    setFolderStack,
+    setResults,
+    setSelected,
+  } = state
 
   async function search(event: FormEvent) {
     event.preventDefault()
@@ -260,8 +354,7 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
     setResults(null)
   }
 
-  const tiles = buildTiles(documents, folders)
-  const open = (tile: Tile) => {
+  function open(tile: Tile) {
     if (tile.document) {
       setSelected(tile.document)
       return
@@ -269,234 +362,401 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
     const folder = tile.folder
     if (folder) setFolderStack((current) => [...current, folder])
   }
-  const back = () => {
+
+  function back() {
     if (selected) setSelected(null)
     else if (results) setResults(null)
     else setFolderStack((current) => current.slice(0, -1))
   }
-  const handleDragEnter = (event: DragEvent) => {
-    event.preventDefault()
-    dragDepth.current += 1
-    setDragging(true)
+
+  async function applyDialogResult(result: libraryData.DialogResult, dialog: DialogState) {
+    const savedFolder = result.folder
+    if (savedFolder && dialog.kind === 'rename-folder')
+      setFolderStack((current) =>
+        current.map((folder) => (folder.id === savedFolder.id ? savedFolder : folder)),
+      )
+    if (result.document)
+      setSelected(result.document.folderId === currentFolderId ? result.document : null)
+    if (dialog.kind === 'move-folder') setFolderStack([])
+    setDialog(null)
+    await load()
   }
-  const handleDragLeave = (event: DragEvent) => {
-    event.preventDefault()
-    dragDepth.current -= 1
-    if (dragDepth.current <= 0) setDragging(false)
+
+  return {
+    applyDialogResult,
+    back,
+    open,
+    openSearchResult,
+    removeCurrentFolder,
+    removeDocument,
+    search,
   }
-  const handleDrop = (event: DragEvent) => {
-    event.preventDefault()
-    dragDepth.current = 0
-    setDragging(false)
-    const files = [...event.dataTransfer.files]
-    if (files.length) void uploadFiles(files)
-  }
+}
+
+export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void }) {
+  const state = useLibraryState()
+  const {
+    allFolders,
+    currentFolder,
+    currentFolderId,
+    dialog,
+    documents,
+    dragging,
+    error,
+    folders,
+    grid,
+    inputRef,
+    query,
+    results,
+    selected,
+    setDialog,
+    setGrid,
+    setQuery,
+    setResults,
+    setShowSearch,
+    showSearch,
+    uploads,
+  } = state
+
+  const tiles = buildTiles(documents, folders)
+  const uploadActions = createLibraryUploadActions(state)
+  const itemActions = createLibraryItemActions(state)
 
   return (
     <section
-      onDragEnter={handleDragEnter}
+      onDragEnter={uploadActions.handleDragEnter}
       onDragOver={(event) => event.preventDefault()}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
+      onDragLeave={uploadActions.handleDragLeave}
+      onDrop={uploadActions.handleDrop}
       className="relative flex h-full min-w-0 flex-1 flex-col bg-surface-0"
       style={{ boxShadow: 'var(--content-edge-shadow, none)' }}
     >
-      <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
-        {(currentFolder || selected || results) && (
-          <button
-            onClick={back}
-            aria-label="Back"
-            className="mr-1 inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-          >
-            <ChevronRight className="size-4 rotate-180" />
-          </button>
-        )}
-        <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">
-          {selected
-            ? selected.name
-            : results
-              ? 'Search results'
-              : currentFolder
-                ? currentFolder.name
-                : 'Library'}
-        </h1>
-        {!selected && (
-          <>
-            {currentFolder && (
-              <>
-                <button
-                  aria-label="Rename folder"
-                  onClick={() => setDialog({ kind: 'rename-folder', folder: currentFolder })}
-                  className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-                >
-                  <Pencil className="size-4" />
-                </button>
-                <button
-                  aria-label="Move folder"
-                  onClick={() => setDialog({ kind: 'move-folder', folder: currentFolder })}
-                  className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-                >
-                  <FolderInput className="size-4" />
-                </button>
-                <button
-                  aria-label="Delete folder"
-                  onClick={() => void removeCurrentFolder()}
-                  className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-danger-soft hover:text-danger"
-                >
-                  <Trash2 className="size-4" />
-                </button>
-              </>
-            )}
-            <button
-              aria-label="New folder"
-              onClick={() => setDialog({ kind: 'new-folder' })}
-              className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-            >
-              <FolderPlus className="size-4" />
-            </button>
-            <button
-              aria-label="Upload files"
-              onClick={() => {
-                const input = inputRef.current
-                if (input) input.click()
-              }}
-              className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-            >
-              <Upload className="size-4" />
-            </button>
-            <button
-              aria-label="Search Library"
-              onClick={() => {
-                setShowSearch((value) => !value)
-                setResults(null)
-              }}
-              className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-            >
-              <Search className="size-4" />
-            </button>
-            <div className="flex items-center rounded-control bg-surface-2 p-0.5">
-              <button
-                aria-label="Grid"
-                onClick={() => setGrid(true)}
-                className={cn(
-                  'inline-flex size-7 items-center justify-center rounded-sm',
-                  grid ? 'bg-surface-3 text-ink shadow-ring-xs' : 'text-ink-3 hover:text-ink',
-                )}
-              >
-                <LayoutGrid className="size-4" />
-              </button>
-              <button
-                aria-label="List"
-                onClick={() => setGrid(false)}
-                className={cn(
-                  'inline-flex size-7 items-center justify-center rounded-sm',
-                  !grid ? 'bg-surface-3 text-ink shadow-ring-xs' : 'text-ink-3 hover:text-ink',
-                )}
-              >
-                <Rows3 className="size-4" />
-              </button>
-            </div>
-          </>
-        )}
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept=".pdf,.md,.markdown,.txt,application/pdf,text/markdown,text/plain"
-          className="hidden"
-          onChange={(event) => {
-            const files = [...(event.currentTarget.files ?? [])]
-            if (files.length) void uploadFiles(files)
-          }}
-        />
-      </header>
+      <LibraryHeader
+        grid={grid}
+        currentFolder={currentFolder}
+        selected={selected}
+        results={results}
+        inputRef={inputRef}
+        onBack={itemActions.back}
+        onGridChange={setGrid}
+        onDialogChange={setDialog}
+        onSearchToggle={() => {
+          setShowSearch((value) => !value)
+          setResults(null)
+        }}
+        onDeleteFolder={() => void itemActions.removeCurrentFolder()}
+        onUpload={(files) => void uploadActions.uploadFiles(files)}
+      />
 
-      <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
-        <div className="mx-auto w-full max-w-230 px-5 pt-2 pb-10 sm:px-8">
-          {error && (
-            <div
-              className="mb-3 rounded-control bg-danger-soft px-3 py-2 text-label text-danger"
-              role="alert"
-            >
-              {error}
-            </div>
-          )}
-          {uploads.length > 0 && <UploadProgress uploads={uploads} />}
-          {selected ? (
-            <DocumentDetail
-              document={selected}
-              onAsk={() => onAsk(selected)}
-              onDelete={() => void removeDocument(selected)}
-              onRename={() => setDialog({ kind: 'rename-file', document: selected })}
-              onMove={() => setDialog({ kind: 'move-file', document: selected })}
-            />
-          ) : (
-            <>
-              {showSearch && (
-                <form
-                  onSubmit={(event) => void search(event)}
-                  className="mb-3 flex items-center gap-2 rounded-control bg-surface-2 px-3 shadow-ring-xs"
-                >
-                  <Search className="size-4 text-ink-4" />
-                  <input
-                    autoFocus
-                    value={query}
-                    onChange={(event) => setQuery(event.currentTarget.value)}
-                    placeholder={
-                      currentFolder ? `Search ${currentFolder.name}` : 'Search all files'
-                    }
-                    className="h-10 min-w-0 flex-1 bg-transparent text-label text-ink outline-none placeholder:text-ink-4"
-                  />
-                </form>
-              )}
-              {results ? (
-                <SearchResults
-                  results={results}
-                  onOpen={(result) => void openSearchResult(result)}
-                />
-              ) : grid ? (
-                <TileGrid tiles={tiles} onOpen={open} />
-              ) : (
-                <TileList tiles={tiles} onOpen={open} />
-              )}
-            </>
-          )}
-        </div>
-      </div>
-      {dragging && (
-        <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-card border-2 border-dashed border-accent bg-surface-0/90 text-center">
-          <div>
-            <Upload className="mx-auto size-7 text-accent-ink" />
-            <p className="mt-2 text-title font-title text-ink">
-              Drop files into {currentFolder ? currentFolder.name : 'Library'}
-            </p>
-            <p className="mt-1 text-meta font-meta text-ink-4">
-              PDF, Markdown, or text · up to 10 MB each
-            </p>
-          </div>
-        </div>
-      )}
+      <LibraryContent
+        error={error}
+        uploads={uploads}
+        selected={selected}
+        showSearch={showSearch}
+        query={query}
+        currentFolder={currentFolder}
+        results={results}
+        grid={grid}
+        tiles={tiles}
+        onAsk={onAsk}
+        onDelete={itemActions.removeDocument}
+        onDialogChange={setDialog}
+        onQueryChange={setQuery}
+        onSearch={(event) => void itemActions.search(event)}
+        onOpenResult={(result) => void itemActions.openSearchResult(result)}
+        onOpenTile={itemActions.open}
+      />
+      <LibraryDropOverlay dragging={dragging} currentFolder={currentFolder} />
       {dialog && (
         <LibraryDialog
           state={dialog}
           folders={allFolders}
           currentFolderId={currentFolderId}
           onClose={() => setDialog(null)}
-          onSaved={async (result) => {
-            const savedFolder = result.folder
-            if (savedFolder && dialog.kind === 'rename-folder')
-              setFolderStack((current) =>
-                current.map((folder) => (folder.id === savedFolder.id ? savedFolder : folder)),
-              )
-            if (result.document)
-              setSelected(result.document.folderId === currentFolderId ? result.document : null)
-            if (dialog.kind === 'move-folder') setFolderStack([])
-            setDialog(null)
-            await load()
-          }}
+          onSaved={(result) => itemActions.applyDialogResult(result, dialog)}
         />
       )}
     </section>
+  )
+}
+
+/** Renders Library navigation and delegates toolbar controls to a focused action component. */
+function LibraryHeader({
+  grid,
+  currentFolder,
+  selected,
+  results,
+  inputRef,
+  onBack,
+  onGridChange,
+  onDialogChange,
+  onSearchToggle,
+  onDeleteFolder,
+  onUpload,
+}: {
+  grid: boolean
+  currentFolder: LibraryFolder | null
+  selected: LibraryDocument | null
+  results: SearchResult[] | null
+  inputRef: RefObject<HTMLInputElement | null>
+  onBack: () => void
+  onGridChange: (grid: boolean) => void
+  onDialogChange: (dialog: DialogState) => void
+  onSearchToggle: () => void
+  onDeleteFolder: () => void
+  onUpload: (files: File[]) => void
+}) {
+  return (
+    <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
+      {(currentFolder || selected || results) && (
+        <button
+          onClick={onBack}
+          aria-label="Back"
+          className="mr-1 inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
+        >
+          <ChevronRight className="size-4 rotate-180" />
+        </button>
+      )}
+      <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">
+        {selected
+          ? selected.name
+          : results
+            ? 'Search results'
+            : currentFolder
+              ? currentFolder.name
+              : 'Library'}
+      </h1>
+      {!selected && (
+        <LibraryHeaderActions
+          grid={grid}
+          currentFolder={currentFolder}
+          inputRef={inputRef}
+          onGridChange={onGridChange}
+          onDialogChange={onDialogChange}
+          onSearchToggle={onSearchToggle}
+          onDeleteFolder={onDeleteFolder}
+        />
+      )}
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        accept=".pdf,.md,.markdown,.txt,application/pdf,text/markdown,text/plain"
+        className="hidden"
+        onChange={(event) => {
+          const files = [...(event.currentTarget.files ?? [])]
+          if (files.length) onUpload(files)
+        }}
+      />
+    </header>
+  )
+}
+
+/** Keeps file input, folder mutations, search, and view controls outside the screen component. */
+function LibraryHeaderActions({
+  grid,
+  currentFolder,
+  inputRef,
+  onGridChange,
+  onDialogChange,
+  onSearchToggle,
+  onDeleteFolder,
+}: {
+  grid: boolean
+  currentFolder: LibraryFolder | null
+  inputRef: RefObject<HTMLInputElement | null>
+  onGridChange: (grid: boolean) => void
+  onDialogChange: (dialog: DialogState) => void
+  onSearchToggle: () => void
+  onDeleteFolder: () => void
+}) {
+  return (
+    <>
+      {currentFolder && (
+        <>
+          <button
+            aria-label="Rename folder"
+            onClick={() => onDialogChange({ kind: 'rename-folder', folder: currentFolder })}
+            className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
+          >
+            <Pencil className="size-4" />
+          </button>
+          <button
+            aria-label="Move folder"
+            onClick={() => onDialogChange({ kind: 'move-folder', folder: currentFolder })}
+            className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
+          >
+            <FolderInput className="size-4" />
+          </button>
+          <button
+            aria-label="Delete folder"
+            onClick={onDeleteFolder}
+            className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-danger-soft hover:text-danger"
+          >
+            <Trash2 className="size-4" />
+          </button>
+        </>
+      )}
+      <button
+        aria-label="New folder"
+        onClick={() => onDialogChange({ kind: 'new-folder' })}
+        className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
+      >
+        <FolderPlus className="size-4" />
+      </button>
+      <button
+        aria-label="Upload files"
+        onClick={() => {
+          const input = inputRef.current
+          if (input) input.click()
+        }}
+        className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
+      >
+        <Upload className="size-4" />
+      </button>
+      <button
+        aria-label="Search Library"
+        onClick={onSearchToggle}
+        className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
+      >
+        <Search className="size-4" />
+      </button>
+      <div className="flex items-center rounded-control bg-surface-2 p-0.5">
+        <button
+          aria-label="Grid"
+          onClick={() => onGridChange(true)}
+          className={cn(
+            'inline-flex size-7 items-center justify-center rounded-sm',
+            grid ? 'bg-surface-3 text-ink shadow-ring-xs' : 'text-ink-3 hover:text-ink',
+          )}
+        >
+          <LayoutGrid className="size-4" />
+        </button>
+        <button
+          aria-label="List"
+          onClick={() => onGridChange(false)}
+          className={cn(
+            'inline-flex size-7 items-center justify-center rounded-sm',
+            !grid ? 'bg-surface-3 text-ink shadow-ring-xs' : 'text-ink-3 hover:text-ink',
+          )}
+        >
+          <Rows3 className="size-4" />
+        </button>
+      </div>
+    </>
+  )
+}
+
+/** Renders document, search, grid, and list states inside the unchanged scroll container. */
+function LibraryContent({
+  error,
+  uploads,
+  selected,
+  showSearch,
+  query,
+  currentFolder,
+  results,
+  grid,
+  tiles,
+  onAsk,
+  onDelete,
+  onDialogChange,
+  onQueryChange,
+  onSearch,
+  onOpenResult,
+  onOpenTile,
+}: {
+  error: string | null
+  uploads: UploadState[]
+  selected: LibraryDocument | null
+  showSearch: boolean
+  query: string
+  currentFolder: LibraryFolder | null
+  results: SearchResult[] | null
+  grid: boolean
+  tiles: Tile[]
+  onAsk: (document: LibraryDocument) => void
+  onDelete: (document: LibraryDocument) => Promise<void>
+  onDialogChange: (dialog: DialogState) => void
+  onQueryChange: (query: string) => void
+  onSearch: (event: FormEvent) => void
+  onOpenResult: (result: SearchResult) => void
+  onOpenTile: (tile: Tile) => void
+}) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
+      <div className="mx-auto w-full max-w-230 px-5 pt-2 pb-10 sm:px-8">
+        {error && (
+          <div
+            className="mb-3 rounded-control bg-danger-soft px-3 py-2 text-label text-danger"
+            role="alert"
+          >
+            {error}
+          </div>
+        )}
+        {uploads.length > 0 && <UploadProgress uploads={uploads} />}
+        {selected ? (
+          <DocumentDetail
+            document={selected}
+            onAsk={() => onAsk(selected)}
+            onDelete={() => void onDelete(selected)}
+            onRename={() => onDialogChange({ kind: 'rename-file', document: selected })}
+            onMove={() => onDialogChange({ kind: 'move-file', document: selected })}
+          />
+        ) : (
+          <>
+            {showSearch && (
+              <form
+                onSubmit={onSearch}
+                className="mb-3 flex items-center gap-2 rounded-control bg-surface-2 px-3 shadow-ring-xs"
+              >
+                <Search className="size-4 text-ink-4" />
+                <input
+                  autoFocus
+                  value={query}
+                  onChange={(event) => onQueryChange(event.currentTarget.value)}
+                  placeholder={
+                    currentFolder ? `Search ${currentFolder.name}` : 'Search all files'
+                  }
+                  className="h-10 min-w-0 flex-1 bg-transparent text-label text-ink outline-none placeholder:text-ink-4"
+                />
+              </form>
+            )}
+            {results ? (
+              <SearchResults results={results} onOpen={onOpenResult} />
+            ) : grid ? (
+              <TileGrid tiles={tiles} onOpen={onOpenTile} />
+            ) : (
+              <TileList tiles={tiles} onOpen={onOpenTile} />
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Preserves the drag target overlay while removing its branch from the screen component. */
+function LibraryDropOverlay({
+  dragging,
+  currentFolder,
+}: {
+  dragging: boolean
+  currentFolder: LibraryFolder | null
+}) {
+  if (!dragging) return null
+  return (
+    <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-card border-2 border-dashed border-accent bg-surface-0/90 text-center">
+      <div>
+        <Upload className="mx-auto size-7 text-accent-ink" />
+        <p className="mt-2 text-title font-title text-ink">
+          Drop files into {currentFolder ? currentFolder.name : 'Library'}
+        </p>
+        <p className="mt-1 text-meta font-meta text-ink-4">
+          PDF, Markdown, or text · up to 10 MB each
+        </p>
+      </div>
+    </div>
   )
 }
 
@@ -539,6 +799,26 @@ function UploadProgress({ uploads }: { uploads: UploadState[] }) {
   )
 }
 
+/** Returns the existing name for rename and move variants without optional state fields. */
+function dialogOriginalName(state: DialogState): string {
+  if (state.kind === 'new-folder') return ''
+  if (state.kind === 'rename-folder' || state.kind === 'move-folder') return state.folder.name
+  return state.document.name
+}
+
+const DIALOG_TITLES = {
+  'new-folder': 'New folder',
+  'rename-folder': 'Rename folder',
+  'move-folder': 'Move folder',
+  'rename-file': 'Rename file',
+  'move-file': 'Move file',
+} satisfies Record<DialogState['kind'], string>
+
+/** Maps each closed dialog variant to the title already shown by the interface. */
+function dialogTitle(state: DialogState): string {
+  return DIALOG_TITLES[state.kind]
+}
+
 function LibraryDialog({
   state,
   folders,
@@ -553,8 +833,7 @@ function LibraryDialog({
   onSaved: (result: libraryData.DialogResult) => Promise<void>
 }) {
   const moving = state.kind === 'move-file' || state.kind === 'move-folder'
-  const originalName =
-    'folder' in state ? state.folder.name : 'document' in state ? state.document.name : ''
+  const originalName = dialogOriginalName(state)
   const [name, setName] = useState(originalName)
   const [destination, setDestination] = useState<string>(moving ? '' : (currentFolderId ?? ''))
   const [pending, setPending] = useState(false)
@@ -579,16 +858,7 @@ function LibraryDialog({
     await onSaved(result.success)
   }
 
-  const title =
-    state.kind === 'new-folder'
-      ? 'New folder'
-      : state.kind === 'rename-folder'
-        ? 'Rename folder'
-        : state.kind === 'move-folder'
-          ? 'Move folder'
-          : state.kind === 'rename-file'
-            ? 'Rename file'
-            : 'Move file'
+  const title = dialogTitle(state)
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4 backdrop-blur-[2px]"
@@ -611,37 +881,16 @@ function LibraryDialog({
             <X className="size-4" />
           </button>
         </div>
-        {moving ? (
-          <label className="mt-4 block">
-            <span className="mb-1.5 block text-label font-title text-ink-2">Destination</span>
-            <select
-              value={destination}
-              onChange={(event) => setDestination(event.currentTarget.value)}
-              className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs"
-            >
-              <option value="">Library</option>
-              {folders
-                .filter((folder) => !unavailable.has(folder.id))
-                .map((folder) => (
-                  <option key={folder.id} value={folder.id}>
-                    {folder.name}
-                  </option>
-                ))}
-            </select>
-          </label>
-        ) : (
-          <label className="mt-4 block">
-            <span className="mb-1.5 block text-label font-title text-ink-2">Name</span>
-            <input
-              autoFocus
-              required
-              maxLength={state.kind === 'rename-file' ? 180 : 120}
-              value={name}
-              onChange={(event) => setName(event.currentTarget.value)}
-              className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm"
-            />
-          </label>
-        )}
+        <LibraryDialogField
+          state={state}
+          moving={moving}
+          folders={folders}
+          unavailable={unavailable}
+          name={name}
+          destination={destination}
+          onNameChange={setName}
+          onDestinationChange={setDestination}
+        />
         {error && <p className="mt-3 text-label text-danger">{error}</p>}
         <div className="mt-5 flex justify-end gap-2">
           <button
@@ -661,6 +910,62 @@ function LibraryDialog({
         </div>
       </form>
     </div>
+  )
+}
+
+/** Renders the destination or name field selected by the dialog's closed variant. */
+function LibraryDialogField({
+  state,
+  moving,
+  folders,
+  unavailable,
+  name,
+  destination,
+  onNameChange,
+  onDestinationChange,
+}: {
+  state: DialogState
+  moving: boolean
+  folders: LibraryFolder[]
+  unavailable: Set<string>
+  name: string
+  destination: string
+  onNameChange: (name: string) => void
+  onDestinationChange: (destination: string) => void
+}) {
+  if (moving) {
+    return (
+      <label className="mt-4 block">
+        <span className="mb-1.5 block text-label font-title text-ink-2">Destination</span>
+        <select
+          value={destination}
+          onChange={(event) => onDestinationChange(event.currentTarget.value)}
+          className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs"
+        >
+          <option value="">Library</option>
+          {folders
+            .filter((folder) => !unavailable.has(folder.id))
+            .map((folder) => (
+              <option key={folder.id} value={folder.id}>
+                {folder.name}
+              </option>
+            ))}
+        </select>
+      </label>
+    )
+  }
+  return (
+    <label className="mt-4 block">
+      <span className="mb-1.5 block text-label font-title text-ink-2">Name</span>
+      <input
+        autoFocus
+        required
+        maxLength={state.kind === 'rename-file' ? 180 : 120}
+        value={name}
+        onChange={(event) => onNameChange(event.currentTarget.value)}
+        className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm"
+      />
+    </label>
   )
 }
 

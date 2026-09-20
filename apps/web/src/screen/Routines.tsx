@@ -99,7 +99,8 @@ export function Routines({
     }
   }, [])
   useEffect(() => {
-    if (!routines.some((routine) => routine.runs.some((run) => run.status === 'running'))) return
+    if (!routines.some((routine) => routine.runs.some((run) => run.status === 'running')))
+      return undefined
     const timer = window.setInterval(() => {
       void load()
     }, 1500)
@@ -120,187 +121,314 @@ export function Routines({
       className="flex h-full min-w-0 flex-1 flex-col bg-surface-0"
       style={{ boxShadow: 'var(--content-edge-shadow, none)' }}
     >
-      <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
-        {inDetail && (
-          <button
-            onClick={back}
-            aria-label="Back to routines"
-            className="mr-1 inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-          >
-            <ChevronRight className="size-4 rotate-180" />
-          </button>
-        )}
-        <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">
-          {template
-            ? template.name
-            : selected
-              ? selected.name
-              : creating
-                ? 'New routine'
-                : 'Routines'}
-        </h1>
-        {!inDetail && (
-          <button
-            aria-label="Search routines"
-            className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-          >
-            <Search className="size-4" />
-          </button>
-        )}
-      </header>
+      <RoutinesHeader
+        inDetail={inDetail}
+        selected={selected}
+        creating={creating}
+        template={template}
+        onBack={back}
+      />
 
-      <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
-        <div className="mx-auto w-full max-w-230 px-5 pt-1 pb-10 sm:px-8">
-          {error && (
-            <div
-              className="mb-3 rounded-control bg-danger-soft px-3 py-2 text-label text-danger"
-              role="alert"
-            >
-              {error}
-            </div>
-          )}
-          {template ? (
-            <TemplateDetail template={template} />
-          ) : selected || creating ? (
-            <RoutineEditor
-              routine={selected}
-              onOpenConversation={onOpenConversation}
-              onCancel={back}
-              onChanged={async (id) => {
-                await load()
-                setCreating(false)
-                setSelectedId(id)
-              }}
-              onDeleted={async () => {
-                back()
-                await load()
-              }}
-            />
-          ) : (
-            <>
-              <p className="px-0.5 text-meta font-meta text-ink-4">
-                What Vivid repeats, so you don&apos;t have to.
-              </p>
-              <Section
-                title="Your routines"
-                note={`${routines.length} routines · ${routines.reduce((count, routine) => count + routine.runs.length, 0)} recent runs`}
-              >
-                {!ready ? (
-                  <div className="flex items-center gap-2 px-2.5 py-5 text-label text-ink-4">
-                    <LoaderCircle className="size-4 animate-spin" />
-                    Loading routines…
-                  </div>
-                ) : routines.length === 0 ? (
-                  <div className="rounded-card bg-surface-2 px-4 py-6 text-center shadow-ring-xs">
-                    <Clock3 className="mx-auto size-5 text-ink-4" />
-                    <p className="mt-2 text-label text-ink-3">
-                      No routines yet. Create one to dispatch scheduled work to Vivid.
-                    </p>
-                  </div>
-                ) : (
-                  <ul className="flex flex-col gap-px">
-                    {routines.map((routine) => {
-                      const latestRun = routine.runs[0]
-                      const running = latestRun !== undefined && latestRun.status === 'running'
-                      const failed = latestRun !== undefined && latestRun.status === 'failed'
-                      return (
-                        <li key={routine.id}>
-                          <button
-                            onClick={() => setSelectedId(routine.id)}
-                            className="group/row flex w-full items-center gap-2.5 rounded-row p-2.5 text-left transition-colors duration-(--dur-fast) hover:bg-wash-hover"
-                          >
-                            <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink">
-                              {running ? (
-                                <LoaderCircle className="size-4 animate-spin" />
-                              ) : routine.enabled ? (
-                                <Clock3 className="size-4" />
-                              ) : (
-                                <Pause className="size-4" />
-                              )}
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-title text-ink">
-                                {routine.name}
-                              </span>
-                              <span
-                                className={cn(
-                                  'block truncate text-meta font-meta',
-                                  failed || routine.lastMissedAt ? 'text-danger' : 'text-ink-4',
-                                )}
-                              >
-                                {failed
-                                  ? 'Last run failed · open to retry'
-                                  : routine.lastMissedAt
-                                    ? `Missed ${formatTime(routine.lastMissedAt)}`
-                                    : routine.enabled
-                                      ? `${describeCron(routine.cron)} · ${routine.timezone}`
-                                      : 'Paused'}
-                              </span>
-                            </span>
-                            <span className="hidden text-right text-meta font-meta text-ink-4 sm:block">
-                              {routine.enabled ? (
-                                <>
-                                  Next
-                                  <br />
-                                  {formatTime(routine.nextRunAt)}
-                                </>
-                              ) : (
-                                'Paused'
-                              )}
-                            </span>
-                            <i
-                              className={cn(
-                                'size-1.5 shrink-0 rounded-full',
-                                routine.enabled ? 'bg-success' : 'bg-ink-4',
-                              )}
-                              aria-label={routine.enabled ? 'Active' : 'Paused'}
-                            />
-                          </button>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-                <button
-                  onClick={() => setCreating(true)}
-                  className="mt-1 flex w-full items-center gap-2.5 rounded-row p-2.5 text-left text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"
-                >
-                  <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-surface-2">
-                    <Plus className="size-4" />
-                  </span>
-                  <span className="text-title">New routine</span>
-                </button>
-              </Section>
-
-              <Section title="Template gallery" note="Starting points for common recurring work.">
-                <ul className="grid gap-2.5 sm:grid-cols-2">
-                  {templates.map((item) => (
-                    <TemplateCard
-                      key={item.id}
-                      template={item}
-                      onOpen={() => setTemplateId(item.id)}
-                    />
-                  ))}
-                </ul>
-                <div className="mt-4 flex items-center gap-2 rounded-card bg-surface-2 p-4 shadow-ring-xs">
-                  <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink">
-                    <Store className="size-4.5" strokeWidth={1.7} />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-label font-title text-ink">
-                      Build from a template
-                    </span>
-                    <span className="block text-meta font-meta text-ink-4">
-                      Templates provide instructions. Your own schedule and access stay private.
-                    </span>
-                  </span>
-                </div>
-              </Section>
-            </>
-          )}
-        </div>
-      </div>
+      <RoutinesContent
+        error={error}
+        template={template}
+        selected={selected}
+        creating={creating}
+        routines={routines}
+        ready={ready}
+        onOpenConversation={onOpenConversation}
+        onBack={back}
+        onCreate={() => setCreating(true)}
+        onSelectRoutine={setSelectedId}
+        onSelectTemplate={setTemplateId}
+        onChanged={async (id) => {
+          await load()
+          setCreating(false)
+          setSelectedId(id)
+        }}
+        onDeleted={async () => {
+          back()
+          await load()
+        }}
+      />
     </section>
+  )
+}
+
+/** Renders detail navigation without making the screen component own title branching. */
+function RoutinesHeader({
+  inDetail,
+  selected,
+  creating,
+  template,
+  onBack,
+}: {
+  inDetail: boolean
+  selected: ScheduledRoutine | null
+  creating: boolean
+  template: RoutineTemplate | null
+  onBack: () => void
+}) {
+  return (
+    <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
+      {inDetail && (
+        <button
+          onClick={onBack}
+          aria-label="Back to routines"
+          className="mr-1 inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
+        >
+          <ChevronRight className="size-4 rotate-180" />
+        </button>
+      )}
+      <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">
+        {template
+          ? template.name
+          : selected
+            ? selected.name
+            : creating
+              ? 'New routine'
+              : 'Routines'}
+      </h1>
+      {!inDetail && (
+        <button
+          aria-label="Search routines"
+          className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
+        >
+          <Search className="size-4" />
+        </button>
+      )}
+    </header>
+  )
+}
+
+/** Selects the detail, editor, or overview body inside the unchanged scrolling container. */
+function RoutinesContent({
+  error,
+  template,
+  selected,
+  creating,
+  routines,
+  ready,
+  onOpenConversation,
+  onBack,
+  onCreate,
+  onSelectRoutine,
+  onSelectTemplate,
+  onChanged,
+  onDeleted,
+}: {
+  error: string | null
+  template: RoutineTemplate | null
+  selected: ScheduledRoutine | null
+  creating: boolean
+  routines: ScheduledRoutine[]
+  ready: boolean
+  onOpenConversation: (conversation: RuntimeConversation) => void
+  onBack: () => void
+  onCreate: () => void
+  onSelectRoutine: (id: string) => void
+  onSelectTemplate: (id: string) => void
+  onChanged: (id: string) => Promise<void>
+  onDeleted: () => Promise<void>
+}) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
+      <div className="mx-auto w-full max-w-230 px-5 pt-1 pb-10 sm:px-8">
+        {error && (
+          <div
+            className="mb-3 rounded-control bg-danger-soft px-3 py-2 text-label text-danger"
+            role="alert"
+          >
+            {error}
+          </div>
+        )}
+        {template ? (
+          <TemplateDetail template={template} />
+        ) : selected || creating ? (
+          <RoutineEditor
+            routine={selected}
+            onOpenConversation={onOpenConversation}
+            onCancel={onBack}
+            onChanged={onChanged}
+            onDeleted={onDeleted}
+          />
+        ) : (
+          <RoutinesOverview
+            routines={routines}
+            ready={ready}
+            onCreate={onCreate}
+            onSelectRoutine={onSelectRoutine}
+            onSelectTemplate={onSelectTemplate}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Renders the routine list and template gallery as one overview fragment. */
+function RoutinesOverview({
+  routines,
+  ready,
+  onCreate,
+  onSelectRoutine,
+  onSelectTemplate,
+}: {
+  routines: ScheduledRoutine[]
+  ready: boolean
+  onCreate: () => void
+  onSelectRoutine: (id: string) => void
+  onSelectTemplate: (id: string) => void
+}) {
+  return (
+    <>
+      <p className="px-0.5 text-meta font-meta text-ink-4">
+        What Vivid repeats, so you don&apos;t have to.
+      </p>
+      <Section
+        title="Your routines"
+        note={`${routines.length} routines · ${routines.reduce((count, routine) => count + routine.runs.length, 0)} recent runs`}
+      >
+        <RoutineList
+          routines={routines}
+          ready={ready}
+          onCreate={onCreate}
+          onSelect={onSelectRoutine}
+        />
+      </Section>
+
+      <Section title="Template gallery" note="Starting points for common recurring work.">
+        <ul className="grid gap-2.5 sm:grid-cols-2">
+          {templates.map((item) => (
+            <TemplateCard
+              key={item.id}
+              template={item}
+              onOpen={() => onSelectTemplate(item.id)}
+            />
+          ))}
+        </ul>
+        <div className="mt-4 flex items-center gap-2 rounded-card bg-surface-2 p-4 shadow-ring-xs">
+          <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink">
+            <Store className="size-4.5" strokeWidth={1.7} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-label font-title text-ink">Build from a template</span>
+            <span className="block text-meta font-meta text-ink-4">
+              Templates provide instructions. Your own schedule and access stay private.
+            </span>
+          </span>
+        </div>
+      </Section>
+    </>
+  )
+}
+
+/** Renders loading, empty, and populated routine states without branching in the overview. */
+function RoutineList({
+  routines,
+  ready,
+  onCreate,
+  onSelect,
+}: {
+  routines: ScheduledRoutine[]
+  ready: boolean
+  onCreate: () => void
+  onSelect: (id: string) => void
+}) {
+  return (
+    <>
+      {!ready ? (
+        <div className="flex items-center gap-2 px-2.5 py-5 text-label text-ink-4">
+          <LoaderCircle className="size-4 animate-spin" />
+          Loading routines…
+        </div>
+      ) : routines.length === 0 ? (
+        <div className="rounded-card bg-surface-2 px-4 py-6 text-center shadow-ring-xs">
+          <Clock3 className="mx-auto size-5 text-ink-4" />
+          <p className="mt-2 text-label text-ink-3">
+            No routines yet. Create one to dispatch scheduled work to Vivid.
+          </p>
+        </div>
+      ) : (
+        <ul className="flex flex-col gap-px">
+          {routines.map((routine) => (
+            <RoutineRow key={routine.id} routine={routine} onOpen={() => onSelect(routine.id)} />
+          ))}
+        </ul>
+      )}
+      <button
+        onClick={onCreate}
+        className="mt-1 flex w-full items-center gap-2.5 rounded-row p-2.5 text-left text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"
+      >
+        <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-surface-2">
+          <Plus className="size-4" />
+        </span>
+        <span className="text-title">New routine</span>
+      </button>
+    </>
+  )
+}
+
+/** Selects the routine subtitle from failure, missed-run, enabled, and paused states. */
+function routineSummary(routine: ScheduledRoutine, failed: boolean): string {
+  if (failed) return 'Last run failed · open to retry'
+  if (routine.lastMissedAt) return `Missed ${formatTime(routine.lastMissedAt)}`
+  if (routine.enabled) return `${describeCron(routine.cron)} · ${routine.timezone}`
+  return 'Paused'
+}
+
+/** Keeps the mutually exclusive running, enabled, and paused icons out of the row component. */
+function RoutineStateIcon({ running, enabled }: { running: boolean; enabled: boolean }) {
+  if (running) return <LoaderCircle className="size-4 animate-spin" />
+  if (enabled) return <Clock3 className="size-4" />
+  return <Pause className="size-4" />
+}
+
+/** Derives one routine's latest-run treatment before rendering the unchanged row markup. */
+function RoutineRow({ routine, onOpen }: { routine: ScheduledRoutine; onOpen: () => void }) {
+  const latestRun = routine.runs[0]
+  const running = latestRun !== undefined && latestRun.status === 'running'
+  const failed = latestRun !== undefined && latestRun.status === 'failed'
+  return (
+    <li>
+      <button
+        onClick={onOpen}
+        className="group/row flex w-full items-center gap-2.5 rounded-row p-2.5 text-left transition-colors duration-(--dur-fast) hover:bg-wash-hover"
+      >
+        <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink">
+          <RoutineStateIcon running={running} enabled={routine.enabled} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-title text-ink">{routine.name}</span>
+          <span
+            className={cn(
+              'block truncate text-meta font-meta',
+              failed || routine.lastMissedAt ? 'text-danger' : 'text-ink-4',
+            )}
+          >
+            {routineSummary(routine, failed)}
+          </span>
+        </span>
+        <span className="hidden text-right text-meta font-meta text-ink-4 sm:block">
+          {routine.enabled ? (
+            <>
+              Next
+              <br />
+              {formatTime(routine.nextRunAt)}
+            </>
+          ) : (
+            'Paused'
+          )}
+        </span>
+        <i
+          className={cn(
+            'size-1.5 shrink-0 rounded-full',
+            routine.enabled ? 'bg-success' : 'bg-ink-4',
+          )}
+          aria-label={routine.enabled ? 'Active' : 'Paused'}
+        />
+      </button>
+    </li>
   )
 }
 
@@ -382,184 +510,299 @@ function RoutineEditor({
 
   return (
     <div className="pt-2">
-      {routine && (
-        <div className="mb-5 flex flex-wrap items-center gap-2 border-b border-line-1 pb-4">
-          <button
-            disabled={pending}
-            onClick={() => void toggle()}
-            className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs disabled:opacity-50"
-          >
-            {routine.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
-            {routine.enabled ? 'Pause' : 'Resume'}
-          </button>
-          <button
-            disabled={pending || running}
-            onClick={() => void runNow()}
-            className="inline-flex h-8 items-center gap-1.5 rounded-control bg-accent px-3 text-label font-title text-ink-on-accent disabled:opacity-50"
-          >
-            {running ? (
-              <LoaderCircle className="size-3.5 animate-spin" />
-            ) : needsRetry ? (
-              <RotateCcw className="size-3.5" />
-            ) : (
-              <Play className="size-3.5" />
-            )}
-            {running ? 'Running…' : needsRetry ? 'Retry now' : 'Test run'}
-          </button>
-          <button
-            disabled={pending}
-            onClick={() => void remove()}
-            className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-control px-3 text-label text-danger hover:bg-danger-soft disabled:opacity-50"
-          >
-            <Trash2 className="size-3.5" />
-            Delete
-          </button>
-        </div>
-      )}
-      {routine !== null && routine.lastMissedAt !== null && (
-        <div className="mb-4 flex items-start gap-2 rounded-control bg-danger-soft px-3 py-2.5 text-label text-danger">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <p>
-            Vivid was offline for the expected run at {formatTime(routine.lastMissedAt)}. It was not
-            silently replayed. Retry it when ready.
-          </p>
-        </div>
-      )}
-      <form onSubmit={(event) => void save(event)} className="space-y-4">
-        <label className="block">
-          <span className="mb-1.5 block text-label font-title text-ink-2">Name</span>
-          <input
-            required
-            maxLength={120}
-            value={name}
-            onChange={(event) => setName(event.currentTarget.value)}
-            placeholder="Daily project brief"
-            className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm"
-          />
-        </label>
-        <label className="block">
-          <span className="mb-1.5 block text-label font-title text-ink-2">Instruction</span>
-          <textarea
-            required
-            maxLength={4000}
-            rows={5}
-            value={prompt}
-            onChange={(event) => setPrompt(event.currentTarget.value)}
-            placeholder="Review recent project activity and prepare a concise brief."
-            className="w-full resize-y rounded-control bg-surface-2 px-3 py-2.5 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm"
-          />
-        </label>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block">
-            <span className="mb-1.5 block text-label font-title text-ink-2">When to run</span>
-            <select
-              value={cron}
-              onChange={(event) => setCron(event.currentTarget.value)}
-              className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs"
-            >
-              <option value="0 * * * *">Every hour</option>
-              <option value="0 9 * * *">Every day at 9:00 AM</option>
-              <option value="0 9 * * 1-5">Weekdays at 9:00 AM</option>
-              <option value="0 9 * * 1">Mondays at 9:00 AM</option>
-            </select>
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-label font-title text-ink-2">Timezone</span>
-            <input
-              required
-              value={timezone}
-              onChange={(event) => setTimezone(event.currentTarget.value)}
-              className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs"
-            />
-          </label>
-        </div>
-        <label className="block">
-          <span className="mb-1.5 block text-meta font-meta text-ink-4">
-            Advanced cron expression
-          </span>
-          <input
-            required
-            value={cron}
-            onChange={(event) => setCron(event.currentTarget.value)}
-            className="h-9 w-full rounded-control bg-surface-2 px-3 font-mono text-meta text-ink shadow-ring-xs"
-          />
-        </label>
-        {error && (
-          <p className="text-label text-danger" role="alert">
-            {error}
-          </p>
+      <RoutineEditorControls
+        routine={routine}
+        pending={pending}
+        running={running}
+        needsRetry={needsRetry}
+        onToggle={() => void toggle()}
+        onRun={() => void runNow()}
+        onRemove={() => void remove()}
+      />
+      <RoutineMissedNotice routine={routine} />
+      <RoutineEditorForm
+        routine={routine}
+        name={name}
+        prompt={prompt}
+        cron={cron}
+        timezone={timezone}
+        pending={pending}
+        error={error}
+        onNameChange={setName}
+        onPromptChange={setPrompt}
+        onCronChange={setCron}
+        onTimezoneChange={setTimezone}
+        onSubmit={(event) => void save(event)}
+        onCancel={onCancel}
+      />
+      <RoutineHistory routine={routine} onOpenConversation={onOpenConversation} />
+    </div>
+  )
+}
+
+/** Renders mutation controls only for an existing routine. */
+function RoutineEditorControls({
+  routine,
+  pending,
+  running,
+  needsRetry,
+  onToggle,
+  onRun,
+  onRemove,
+}: {
+  routine: ScheduledRoutine | null
+  pending: boolean
+  running: boolean
+  needsRetry: boolean
+  onToggle: () => void
+  onRun: () => void
+  onRemove: () => void
+}) {
+  if (routine === null) return null
+  return (
+    <div className="mb-5 flex flex-wrap items-center gap-2 border-b border-line-1 pb-4">
+      <button
+        disabled={pending}
+        onClick={onToggle}
+        className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs disabled:opacity-50"
+      >
+        {routine.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
+        {routine.enabled ? 'Pause' : 'Resume'}
+      </button>
+      <button
+        disabled={pending || running}
+        onClick={onRun}
+        className="inline-flex h-8 items-center gap-1.5 rounded-control bg-accent px-3 text-label font-title text-ink-on-accent disabled:opacity-50"
+      >
+        {running ? (
+          <LoaderCircle className="size-3.5 animate-spin" />
+        ) : needsRetry ? (
+          <RotateCcw className="size-3.5" />
+        ) : (
+          <Play className="size-3.5" />
         )}
-        <div className="flex items-center justify-end gap-2 pt-1">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="h-9 rounded-control px-3 text-label text-ink-3 hover:bg-wash-hover"
+        {running ? 'Running…' : needsRetry ? 'Retry now' : 'Test run'}
+      </button>
+      <button
+        disabled={pending}
+        onClick={onRemove}
+        className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-control px-3 text-label text-danger hover:bg-danger-soft disabled:opacity-50"
+      >
+        <Trash2 className="size-3.5" />
+        Delete
+      </button>
+    </div>
+  )
+}
+
+/** Shows the durable missed-run warning only when the runtime reported a missed timestamp. */
+function RoutineMissedNotice({ routine }: { routine: ScheduledRoutine | null }) {
+  if (routine === null || routine.lastMissedAt === null) return null
+  return (
+    <div className="mb-4 flex items-start gap-2 rounded-control bg-danger-soft px-3 py-2.5 text-label text-danger">
+      <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+      <p>
+        Vivid was offline for the expected run at {formatTime(routine.lastMissedAt)}. It was not
+        silently replayed. Retry it when ready.
+      </p>
+    </div>
+  )
+}
+
+/** Renders routine fields and submit controls while the editor owns their state. */
+function RoutineEditorForm({
+  routine,
+  name,
+  prompt,
+  cron,
+  timezone,
+  pending,
+  error,
+  onNameChange,
+  onPromptChange,
+  onCronChange,
+  onTimezoneChange,
+  onSubmit,
+  onCancel,
+}: {
+  routine: ScheduledRoutine | null
+  name: string
+  prompt: string
+  cron: string
+  timezone: string
+  pending: boolean
+  error: string | null
+  onNameChange: (value: string) => void
+  onPromptChange: (value: string) => void
+  onCronChange: (value: string) => void
+  onTimezoneChange: (value: string) => void
+  onSubmit: (event: FormEvent) => void
+  onCancel: () => void
+}) {
+  return (
+    <form onSubmit={onSubmit} className="space-y-4">
+      <label className="block">
+        <span className="mb-1.5 block text-label font-title text-ink-2">Name</span>
+        <input
+          required
+          maxLength={120}
+          value={name}
+          onChange={(event) => onNameChange(event.currentTarget.value)}
+          placeholder="Daily project brief"
+          className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm"
+        />
+      </label>
+      <label className="block">
+        <span className="mb-1.5 block text-label font-title text-ink-2">Instruction</span>
+        <textarea
+          required
+          maxLength={4000}
+          rows={5}
+          value={prompt}
+          onChange={(event) => onPromptChange(event.currentTarget.value)}
+          placeholder="Review recent project activity and prepare a concise brief."
+          className="w-full resize-y rounded-control bg-surface-2 px-3 py-2.5 text-label text-ink shadow-ring-xs outline-none focus:shadow-ring-sm"
+        />
+      </label>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="mb-1.5 block text-label font-title text-ink-2">When to run</span>
+          <select
+            value={cron}
+            onChange={(event) => onCronChange(event.currentTarget.value)}
+            className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs"
           >
-            Cancel
-          </button>
-          <button
-            disabled={pending}
-            className="inline-flex h-9 items-center gap-2 rounded-control bg-accent px-4 text-label font-title text-ink-on-accent disabled:opacity-50"
-          >
-            {pending && <LoaderCircle className="size-3.5 animate-spin" />}
-            {routine ? 'Save changes' : 'Create routine'}
-          </button>
-        </div>
-      </form>
-      {routine && (
-        <div className="mt-7 border-t border-line-1 pt-4">
-          <h2 className="text-label font-title text-ink-2">Run history</h2>
-          {routine.runs.length === 0 ? (
-            <p className="mt-2 text-label text-ink-4">No runs yet.</p>
-          ) : (
-            <ul className="mt-2 space-y-1">
-              {routine.runs.map((run) => (
-                <li key={run.id}>
-                  <button
-                    type="button"
-                    title="Open conversation"
-                    onClick={() =>
-                      onOpenConversation({
-                        id: run.conversationId,
-                        title: routine.name,
-                        preview: plainPreview(run.output ?? run.error ?? routine.prompt),
-                        updatedAt: run.finishedAt ?? run.startedAt,
-                        archived: false,
-                      })
-                    }
-                    className="group/run w-full rounded-row bg-surface-2 px-3 py-2.5 text-left shadow-ring-xs transition-[background-color,box-shadow] hover:bg-wash-hover hover:shadow-ring-sm"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={cn(
-                          'size-2 rounded-full',
-                          run.status === 'succeeded'
-                            ? 'bg-success'
-                            : run.status === 'failed'
-                              ? 'bg-danger'
-                              : 'animate-pulse bg-working',
-                        )}
-                      />
-                      <span className="text-label text-ink capitalize">{run.status}</span>
-                      <time className="ml-auto text-meta font-meta text-ink-4">
-                        {formatTime(run.startedAt)}
-                      </time>
-                      <ChevronRight className="size-3.5 text-ink-4 transition-transform group-hover/run:translate-x-0.5" />
-                    </div>
-                    {run.output && (
-                      <p className="mt-1 line-clamp-3 text-meta whitespace-pre-wrap text-ink-3">
-                        {run.output}
-                      </p>
-                    )}
-                    {run.error && <p className="mt-1 text-meta text-danger">{run.error}</p>}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+            <option value="0 * * * *">Every hour</option>
+            <option value="0 9 * * *">Every day at 9:00 AM</option>
+            <option value="0 9 * * 1-5">Weekdays at 9:00 AM</option>
+            <option value="0 9 * * 1">Mondays at 9:00 AM</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-label font-title text-ink-2">Timezone</span>
+          <input
+            required
+            value={timezone}
+            onChange={(event) => onTimezoneChange(event.currentTarget.value)}
+            className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink shadow-ring-xs"
+          />
+        </label>
+      </div>
+      <label className="block">
+        <span className="mb-1.5 block text-meta font-meta text-ink-4">
+          Advanced cron expression
+        </span>
+        <input
+          required
+          value={cron}
+          onChange={(event) => onCronChange(event.currentTarget.value)}
+          className="h-9 w-full rounded-control bg-surface-2 px-3 font-mono text-meta text-ink shadow-ring-xs"
+        />
+      </label>
+      {error && (
+        <p className="text-label text-danger" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="flex items-center justify-end gap-2 pt-1">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="h-9 rounded-control px-3 text-label text-ink-3 hover:bg-wash-hover"
+        >
+          Cancel
+        </button>
+        <button
+          disabled={pending}
+          className="inline-flex h-9 items-center gap-2 rounded-control bg-accent px-4 text-label font-title text-ink-on-accent disabled:opacity-50"
+        >
+          {pending && <LoaderCircle className="size-3.5 animate-spin" />}
+          {routine ? 'Save changes' : 'Create routine'}
+        </button>
+      </div>
+    </form>
+  )
+}
+
+/** Renders run history only when editing an existing routine. */
+function RoutineHistory({
+  routine,
+  onOpenConversation,
+}: {
+  routine: ScheduledRoutine | null
+  onOpenConversation: (conversation: RuntimeConversation) => void
+}) {
+  if (routine === null) return null
+  return (
+    <div className="mt-7 border-t border-line-1 pt-4">
+      <h2 className="text-label font-title text-ink-2">Run history</h2>
+      {routine.runs.length === 0 ? (
+        <p className="mt-2 text-label text-ink-4">No runs yet.</p>
+      ) : (
+        <ul className="mt-2 space-y-1">
+          {routine.runs.map((run) => (
+            <RoutineRunRow
+              key={run.id}
+              run={run}
+              routine={routine}
+              onOpenConversation={onOpenConversation}
+            />
+          ))}
+        </ul>
       )}
     </div>
+  )
+}
+
+/** Projects one run into the conversation record opened by its history row. */
+function RoutineRunRow({
+  run,
+  routine,
+  onOpenConversation,
+}: {
+  run: ScheduledRoutine['runs'][number]
+  routine: ScheduledRoutine
+  onOpenConversation: (conversation: RuntimeConversation) => void
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        title="Open conversation"
+        onClick={() =>
+          onOpenConversation({
+            id: run.conversationId,
+            title: routine.name,
+            preview: plainPreview(run.output ?? run.error ?? routine.prompt),
+            updatedAt: run.finishedAt ?? run.startedAt,
+            archived: false,
+          })
+        }
+        className="group/run w-full rounded-row bg-surface-2 px-3 py-2.5 text-left shadow-ring-xs transition-[background-color,box-shadow] hover:bg-wash-hover hover:shadow-ring-sm"
+      >
+        <div className="flex items-center gap-2">
+          <span
+            className={cn(
+              'size-2 rounded-full',
+              run.status === 'succeeded'
+                ? 'bg-success'
+                : run.status === 'failed'
+                  ? 'bg-danger'
+                  : 'animate-pulse bg-working',
+            )}
+          />
+          <span className="text-label text-ink capitalize">{run.status}</span>
+          <time className="ml-auto text-meta font-meta text-ink-4">
+            {formatTime(run.startedAt)}
+          </time>
+          <ChevronRight className="size-3.5 text-ink-4 transition-transform group-hover/run:translate-x-0.5" />
+        </div>
+        {run.output && (
+          <p className="mt-1 line-clamp-3 text-meta whitespace-pre-wrap text-ink-3">{run.output}</p>
+        )}
+        {run.error && <p className="mt-1 text-meta text-danger">{run.error}</p>}
+      </button>
+    </li>
   )
 }
 

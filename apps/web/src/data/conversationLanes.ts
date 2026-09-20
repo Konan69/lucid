@@ -59,11 +59,11 @@ export const LANES: Lane[] = [
 
 export function laneConversations<T extends Conversation>(list: T[]) {
   const taken = new Set<string>()
-  const lanes = LANES.map((l) => {
-    const items = list.filter((t) => !taken.has(t.id) && l.pick(t))
-    for (const t of items) taken.add(t.id)
-    return { ...l, items }
-  }).filter((l) => l.items.length > 0)
-  const snoozed = list.filter((t) => !!t.snoozeUntil)
+  const lanes = LANES.map((lane) => {
+    const items = list.filter((thread) => !taken.has(thread.id) && lane.pick(thread))
+    for (const thread of items) taken.add(thread.id)
+    return Object.assign({}, lane, { items })
+  }).filter((lane) => lane.items.length > 0)
+  const snoozed = list.filter((thread) => !!thread.snoozeUntil)
   return { lanes, snoozed }
 }

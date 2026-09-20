@@ -1,5 +1,13 @@
+/// <reference lib="es2023.array" />
+
 import { Option, Schema } from 'effect'
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import {
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type Dispatch,
+  type SetStateAction,
+} from 'react'
 import { EmptyState } from './screen/EmptyState'
 import { Library, type LibraryDocument } from './screen/Library'
 import { Routines } from './screen/Routines'
@@ -80,20 +88,217 @@ async function saveRuntimeThread(thread: RuntimeConversation) {
   if (!response.ok) throw new Error(`Could not save conversation (${response.status})`)
 }
 
-export default function App() {
-  const [view, setView] = useState<View>(() =>
-    location.search.includes('tokens')
-      ? 'tokens'
-      : location.search.includes('empty')
-        ? 'empty'
-        : location.search.includes('library')
-          ? 'library'
-          : location.search.includes('projects')
-            ? 'projects'
-            : location.search.includes('routines')
-              ? 'routines'
-              : 'conversation',
+/** Preserves the original query-fragment precedence while keeping routing out of the component. */
+function initialView(search: string): View {
+  if (search.includes('tokens')) return 'tokens'
+  if (search.includes('empty')) return 'empty'
+  if (search.includes('library')) return 'library'
+  if (search.includes('projects')) return 'projects'
+  if (search.includes('routines')) return 'routines'
+  return 'conversation'
+}
+
+/** Rebuilds the legacy record explicitly so migration does not rely on per-item object spreading. */
+function activeLegacyConversation(
+  thread: typeof LegacyRuntimeConversationSchema.Type,
+): RuntimeConversation {
+  return {
+    id: thread.id,
+    title: thread.title,
+    preview: thread.preview,
+    updatedAt: thread.updatedAt,
+    archived: false,
+  }
+}
+
+/** Hydrates runtime conversations once and ignores a response after the application unmounts. */
+function useRuntimeThreadHydration(
+  setRuntimeThreads: Dispatch<SetStateAction<RuntimeConversation[]>>,
+  setActiveId: Dispatch<SetStateAction<string | null>>,
+  setThreadsReady: Dispatch<SetStateAction<boolean>>,
+) {
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadThreads() {
+      const response = await fetch('/api/conversations')
+      if (!response.ok) throw new Error(`Could not load conversations (${response.status})`)
+      const payload = await response.text()
+      const body = decodeRuntimeConversationList(payload)
+      let conversations: RuntimeConversation[] = [...body.conversations]
+
+      if (conversations.length === 0) {
+        const legacy = localStorage.getItem('vivid-runtime-conversations')
+        const decoded =
+          legacy === null ? Option.some([]) : decodeLegacyRuntimeConversationList(legacy)
+        const parsed = Option.isSome(decoded)
+          ? decoded.value.map(activeLegacyConversation)
+          : []
+        if (parsed.length > 0) {
+          // Migration is best-effort because the current runtime list remains authoritative. All
+          // legacy writes must land before that index can replace the empty runtime response.
+          const writes = await Promise.allSettled(parsed.map(saveRuntimeThread))
+          if (writes.every((write) => write.status === 'fulfilled')) {
+            conversations = parsed.toSorted((left, right) => right.updatedAt - left.updatedAt)
+          }
+        }
+      }
+
+      localStorage.removeItem('vivid-runtime-conversations')
+      if (!cancelled) {
+        setRuntimeThreads(conversations)
+        setActiveId((current) => current ?? firstActiveConversationId(conversations))
+        setThreadsReady(true)
+      }
+    }
+
+    void loadThreads().catch(() => {
+      if (!cancelled) setThreadsReady(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [setActiveId, setRuntimeThreads, setThreadsReady])
+}
+
+/** Creates the shared runtime record shape for both blank and Library-started conversations. */
+function makeRuntimeConversation(title: string, preview: string): RuntimeConversation {
+  return {
+    id: crypto.randomUUID(),
+    title,
+    preview,
+    updatedAt: Date.now(),
+    archived: false,
+  }
+}
+
+/** Applies a server-authoritative conversation patch and restores recency ordering. */
+async function patchRuntimeThread(
+  id: string,
+  patch: Partial<Pick<RuntimeConversation, 'archived' | 'title'>>,
+  setRuntimeThreads: Dispatch<SetStateAction<RuntimeConversation[]>>,
+) {
+  const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  if (!response.ok) throw new Error(`Could not update conversation (${response.status})`)
+  const payload = await response.text()
+  const { conversation } = decodeRuntimeConversationResponse(payload)
+  setRuntimeThreads((current) =>
+    current
+      .map((thread) => (thread.id === id ? conversation : thread))
+      .toSorted((left, right) => right.updatedAt - left.updatedAt),
   )
+}
+
+/** Owns conversation mutations so the application component only coordinates stable UI state. */
+function createAppActions({
+  runtimeThreads,
+  activeId,
+  setRuntimeThreads,
+  setConversationDrafts,
+  setActiveId,
+  setView,
+  setPanel,
+}: {
+  runtimeThreads: RuntimeConversation[]
+  activeId: string | null
+  setRuntimeThreads: Dispatch<SetStateAction<RuntimeConversation[]>>
+  setConversationDrafts: Dispatch<SetStateAction<Record<string, string>>>
+  setActiveId: Dispatch<SetStateAction<string | null>>
+  setView: Dispatch<SetStateAction<View>>
+  setPanel: Dispatch<SetStateAction<'screen' | 'log' | null>>
+}) {
+  function activateConversation(thread: RuntimeConversation) {
+    setRuntimeThreads((current) => [thread, ...current])
+    setActiveId(thread.id)
+    setView('conversation')
+    setPanel(null)
+    void saveRuntimeThread(thread)
+  }
+
+  function createConversation() {
+    activateConversation(makeRuntimeConversation('New conversation', 'No messages yet'))
+  }
+
+  function askAboutLibrary(document: LibraryDocument) {
+    const thread = makeRuntimeConversation(
+      `Ask about ${document.name}`.slice(0, 120),
+      `Ready to search ${document.name}`,
+    )
+    setConversationDrafts((current) => ({
+      ...current,
+      [thread.id]: `Search the Library and answer a question about “${document.name}”: `,
+    }))
+    activateConversation(thread)
+  }
+
+  function recordMessage(id: string, message: string) {
+    const current = runtimeThreads.find((thread) => thread.id === id)
+    if (!current) return
+    const changed = {
+      ...current,
+      title: current.title === 'New conversation' ? titleFromMessage(message) : current.title,
+      preview: plainPreview(message),
+      updatedAt: Date.now(),
+    }
+    setRuntimeThreads((threads) => [changed, ...threads.filter((thread) => thread.id !== id)])
+    void saveRuntimeThread(changed)
+  }
+
+  function openRuntimeConversation(thread: RuntimeConversation) {
+    setRuntimeThreads((current) =>
+      [thread, ...current.filter((item) => item.id !== thread.id)].toSorted(
+        (left, right) => right.updatedAt - left.updatedAt,
+      ),
+    )
+    setActiveId(thread.id)
+    setView('conversation')
+    setPanel(null)
+  }
+
+  function renameConversation(id: string, title: string) {
+    const current = runtimeThreads.find((thread) => thread.id === id)
+    if (!current) return
+    const normalized = title.trim()
+    if (!normalized || normalized === current.title) return
+    void patchRuntimeThread(id, { title: normalized }, setRuntimeThreads)
+  }
+
+  function archiveConversation(id: string, archived: boolean) {
+    void patchRuntimeThread(id, { archived }, setRuntimeThreads)
+    if (archived && activeId === id) {
+      setActiveId(firstActiveConversationId(runtimeThreads.filter((thread) => thread.id !== id)))
+    }
+  }
+
+  async function removeConversation(id: string) {
+    const current = runtimeThreads.find((thread) => thread.id === id)
+    if (!current || !window.confirm(`Delete “${current.title}”?`)) return
+    const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    })
+    if (!response.ok) return
+    const remaining = runtimeThreads.filter((thread) => thread.id !== id)
+    setRuntimeThreads(remaining)
+    if (activeId === id) setActiveId(firstActiveConversationId(remaining))
+  }
+
+  return {
+    archiveConversation,
+    askAboutLibrary,
+    createConversation,
+    openRuntimeConversation,
+    recordMessage,
+    removeConversation,
+    renameConversation,
+  }
+}
+
+export default function App() {
+  const [view, setView] = useState<View>(() => initialView(location.search))
   const [runtimeThreads, setRuntimeThreads] = useState<RuntimeConversation[]>([])
   const [conversationDrafts, setConversationDrafts] = useState<Record<string, string>>({})
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -113,228 +318,212 @@ export default function App() {
     localStorage.setItem('vivid-theme', theme)
   }, [resolvedTheme, theme])
 
-  useEffect(() => {
-    let cancelled = false
+  useRuntimeThreadHydration(setRuntimeThreads, setActiveId, setThreadsReady)
 
-    async function loadThreads() {
-      const response = await fetch('/api/conversations')
-      if (!response.ok) throw new Error(`Could not load conversations (${response.status})`)
-      const payload = await response.text()
-      const body = decodeRuntimeConversationList(payload)
-      let conversations: RuntimeConversation[] = [...body.conversations]
-
-      if (conversations.length === 0) {
-        const legacy = localStorage.getItem('vivid-runtime-conversations')
-        const decoded =
-          legacy === null ? Option.some([]) : decodeLegacyRuntimeConversationList(legacy)
-        const parsed = Option.isSome(decoded)
-          ? decoded.value.map((thread) => ({ ...thread, archived: false }))
-          : []
-        if (parsed.length > 0) {
-          // Migration is best-effort because the current runtime list remains authoritative. All
-          // legacy writes must land before that index can replace the empty runtime response.
-          const writes = await Promise.allSettled(parsed.map(saveRuntimeThread))
-          if (writes.every((write) => write.status === 'fulfilled')) {
-            conversations = parsed.sort((left, right) => right.updatedAt - left.updatedAt)
-          }
-        }
-      }
-
-      localStorage.removeItem('vivid-runtime-conversations')
-      if (!cancelled) {
-        setRuntimeThreads(conversations)
-        setActiveId((current) => current ?? firstActiveConversationId(conversations))
-        setThreadsReady(true)
-      }
-    }
-
-    void loadThreads().catch(() => {
-      if (!cancelled) setThreadsReady(true)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  function createConversation() {
-    const thread: RuntimeConversation = {
-      id: crypto.randomUUID(),
-      title: 'New conversation',
-      preview: 'No messages yet',
-      updatedAt: Date.now(),
-      archived: false,
-    }
-    setRuntimeThreads((current) => [thread, ...current])
-    setActiveId(thread.id)
-    setView('conversation')
-    setPanel(null)
-    void saveRuntimeThread(thread)
-  }
-
-  function askAboutLibrary(document: LibraryDocument) {
-    const thread: RuntimeConversation = {
-      id: crypto.randomUUID(),
-      title: `Ask about ${document.name}`.slice(0, 120),
-      preview: `Ready to search ${document.name}`,
-      updatedAt: Date.now(),
-      archived: false,
-    }
-    setRuntimeThreads((current) => [thread, ...current])
-    setConversationDrafts((current) => ({
-      ...current,
-      [thread.id]: `Search the Library and answer a question about “${document.name}”: `,
-    }))
-    setActiveId(thread.id)
-    setView('conversation')
-    setPanel(null)
-    void saveRuntimeThread(thread)
-  }
-
-  function recordMessage(id: string, message: string) {
-    const current = runtimeThreads.find((thread) => thread.id === id)
-    if (!current) return
-    const changed = {
-      ...current,
-      title: current.title === 'New conversation' ? titleFromMessage(message) : current.title,
-      preview: plainPreview(message),
-      updatedAt: Date.now(),
-    }
-    setRuntimeThreads((threads) => [changed, ...threads.filter((thread) => thread.id !== id)])
-    void saveRuntimeThread(changed)
-  }
-
-  function openRuntimeConversation(thread: RuntimeConversation) {
-    setRuntimeThreads((current) =>
-      [thread, ...current.filter((item) => item.id !== thread.id)].sort(
-        (left, right) => right.updatedAt - left.updatedAt,
-      ),
-    )
-    setActiveId(thread.id)
-    setView('conversation')
-    setPanel(null)
-  }
-
-  async function patchRuntimeThread(
-    id: string,
-    patch: Partial<Pick<RuntimeConversation, 'archived' | 'title'>>,
-  ) {
-    const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(patch),
-    })
-    if (!response.ok) throw new Error(`Could not update conversation (${response.status})`)
-    const payload = await response.text()
-    const { conversation } = decodeRuntimeConversationResponse(payload)
-    setRuntimeThreads((current) =>
-      current
-        .map((thread) => (thread.id === id ? conversation : thread))
-        .sort((left, right) => right.updatedAt - left.updatedAt),
-    )
-  }
-
-  function renameConversation(id: string, title: string) {
-    const current = runtimeThreads.find((thread) => thread.id === id)
-    if (!current) return
-    const normalized = title.trim()
-    if (!normalized || normalized === current.title) return
-    void patchRuntimeThread(id, { title: normalized })
-  }
-
-  function archiveConversation(id: string, archived: boolean) {
-    void patchRuntimeThread(id, { archived })
-    if (archived && activeId === id) {
-      setActiveId(firstActiveConversationId(runtimeThreads.filter((thread) => thread.id !== id)))
-    }
-  }
-
-  async function removeConversation(id: string) {
-    const current = runtimeThreads.find((thread) => thread.id === id)
-    if (!current || !window.confirm(`Delete “${current.title}”?`)) return
-    const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    })
-    if (!response.ok) return
-    const remaining = runtimeThreads.filter((thread) => thread.id !== id)
-    setRuntimeThreads(remaining)
-    if (activeId === id) setActiveId(firstActiveConversationId(remaining))
-  }
+  const actions = createAppActions({
+    runtimeThreads,
+    activeId,
+    setRuntimeThreads,
+    setConversationDrafts,
+    setActiveId,
+    setView,
+    setPanel,
+  })
 
   const activeThread = runtimeThreads.find((thread) => thread.id === activeId)
   const activeTitle = activeThread === undefined ? 'Conversation' : activeThread.title
 
   return (
     <div className="flex size-full">
-      {view !== 'tokens' && (
-        <Sidebar
-          activeId={view === 'demo' ? activeDemoId : view === 'empty' ? null : activeId}
-          runtimeConversations={runtimeThreads}
-          onArchive={archiveConversation}
-          onDelete={(id) => {
-            void removeConversation(id)
-          }}
-          onRename={renameConversation}
-          onSelect={(id) => {
-            if (id === 'new') createConversation()
-            else if (id === 'library') setView('library')
-            else if (id === 'projects') setView('projects')
-            else if (id === 'routines') setView('routines')
-            else if (id.startsWith('demo:')) {
-              setActiveDemoId(id.slice(5))
-              setView('demo')
-            } else {
-              setActiveId(id)
-              setView('conversation')
-            }
-          }}
-          onOpenSettings={() => setSettingsOpen(true)}
-          workingCount={0}
-        />
-      )}
-      <main className="flex min-w-0 flex-1">
-        {view === 'tokens' && <Tokens />}
-        {view === 'empty' && <EmptyState />}
-        {view === 'library' && <Library onAsk={askAboutLibrary} />}
-        {view === 'projects' && <Projects />}
-        {view === 'routines' && <Routines onOpenConversation={openRuntimeConversation} />}
-        {view === 'demo' && <DemoConversation conversationId={activeDemoId} />}
-        {view === 'conversation' &&
-          (activeId ? (
-            <Conversation
-              conversationId={activeId}
-              title={activeTitle}
-              initialDraft={conversationDrafts[activeId]}
-              onMessageSent={(message) => {
-                recordMessage(activeId ?? 't1', message)
-                setConversationDrafts((current) => {
-                  const next = { ...current }
-                  delete next[activeId]
-                  return next
-                })
-              }}
-              panelOpen={panel !== null}
-              onOpenPanel={(k) => setPanel((cur) => (cur === k ? null : k))}
-            />
-          ) : (
-            <div className="flex flex-1 items-center justify-center text-label text-ink-4">
-              {threadsReady ? 'Start a new conversation' : 'Loading conversations…'}
-            </div>
-          ))}
-        {view === 'conversation' && panel && (
-          <Panel kind={panel} conversationId={activeId} onClose={() => setPanel(null)} />
-        )}
-      </main>
-      {settingsOpen && (
-        <Settings
-          initialSection={connectorSettingsRequested ? 'connectors' : 'general'}
-          theme={theme}
-          onThemeChange={setTheme}
-          onClose={() => {
-            setSettingsOpen(false)
-            if (connectorSettingsRequested) history.replaceState(null, '', location.pathname)
-          }}
-        />
-      )}
+      <AppSidebar
+        view={view}
+        activeId={activeId}
+        activeDemoId={activeDemoId}
+        runtimeThreads={runtimeThreads}
+        onArchive={actions.archiveConversation}
+        onDelete={actions.removeConversation}
+        onRename={actions.renameConversation}
+        onCreate={actions.createConversation}
+        onView={setView}
+        onActiveId={setActiveId}
+        onActiveDemoId={setActiveDemoId}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
+      <AppWorkspace
+        view={view}
+        activeId={activeId}
+        activeTitle={activeTitle}
+        activeDemoId={activeDemoId}
+        runtimeDrafts={conversationDrafts}
+        threadsReady={threadsReady}
+        panel={panel}
+        onAskAboutLibrary={actions.askAboutLibrary}
+        onOpenRuntimeConversation={actions.openRuntimeConversation}
+        onRecordMessage={actions.recordMessage}
+        onDraftsChange={setConversationDrafts}
+        onPanelChange={setPanel}
+      />
+      <AppSettings
+        open={settingsOpen}
+        connectorSettingsRequested={connectorSettingsRequested}
+        theme={theme}
+        onThemeChange={setTheme}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
+  )
+}
+
+/** Keeps sidebar routing decisions separate from the application state and workspace rendering. */
+function AppSidebar({
+  view,
+  activeId,
+  activeDemoId,
+  runtimeThreads,
+  onArchive,
+  onDelete,
+  onRename,
+  onCreate,
+  onView,
+  onActiveId,
+  onActiveDemoId,
+  onOpenSettings,
+}: {
+  view: View
+  activeId: string | null
+  activeDemoId: string
+  runtimeThreads: RuntimeConversation[]
+  onArchive: (id: string, archived: boolean) => void
+  onDelete: (id: string) => Promise<void>
+  onRename: (id: string, title: string) => void
+  onCreate: () => void
+  onView: Dispatch<SetStateAction<View>>
+  onActiveId: Dispatch<SetStateAction<string | null>>
+  onActiveDemoId: Dispatch<SetStateAction<string>>
+  onOpenSettings: () => void
+}) {
+  if (view === 'tokens') return null
+  const sidebarActiveId = view === 'demo' ? activeDemoId : view === 'empty' ? null : activeId
+
+  function select(id: string) {
+    if (id === 'new') onCreate()
+    else if (id === 'library') onView('library')
+    else if (id === 'projects') onView('projects')
+    else if (id === 'routines') onView('routines')
+    else if (id.startsWith('demo:')) {
+      onActiveDemoId(id.slice(5))
+      onView('demo')
+    } else {
+      onActiveId(id)
+      onView('conversation')
+    }
+  }
+
+  return (
+    <Sidebar
+      activeId={sidebarActiveId}
+      runtimeConversations={runtimeThreads}
+      onArchive={onArchive}
+      onDelete={(id) => {
+        void onDelete(id)
+      }}
+      onRename={onRename}
+      onSelect={select}
+      onOpenSettings={onOpenSettings}
+      workingCount={0}
+    />
+  )
+}
+
+/** Renders the selected workspace without making the root component own screen branches. */
+function AppWorkspace({
+  view,
+  activeId,
+  activeTitle,
+  activeDemoId,
+  runtimeDrafts,
+  threadsReady,
+  panel,
+  onAskAboutLibrary,
+  onOpenRuntimeConversation,
+  onRecordMessage,
+  onDraftsChange,
+  onPanelChange,
+}: {
+  view: View
+  activeId: string | null
+  activeTitle: string
+  activeDemoId: string
+  runtimeDrafts: Record<string, string>
+  threadsReady: boolean
+  panel: 'screen' | 'log' | null
+  onAskAboutLibrary: (document: LibraryDocument) => void
+  onOpenRuntimeConversation: (thread: RuntimeConversation) => void
+  onRecordMessage: (id: string, message: string) => void
+  onDraftsChange: Dispatch<SetStateAction<Record<string, string>>>
+  onPanelChange: Dispatch<SetStateAction<'screen' | 'log' | null>>
+}) {
+  return (
+    <main className="flex min-w-0 flex-1">
+      {view === 'tokens' && <Tokens />}
+      {view === 'empty' && <EmptyState />}
+      {view === 'library' && <Library onAsk={onAskAboutLibrary} />}
+      {view === 'projects' && <Projects />}
+      {view === 'routines' && <Routines onOpenConversation={onOpenRuntimeConversation} />}
+      {view === 'demo' && <DemoConversation conversationId={activeDemoId} />}
+      {view === 'conversation' &&
+        (activeId ? (
+          <Conversation
+            conversationId={activeId}
+            title={activeTitle}
+            initialDraft={runtimeDrafts[activeId]}
+            onMessageSent={(message) => {
+              onRecordMessage(activeId ?? 't1', message)
+              onDraftsChange((current) => {
+                const next = { ...current }
+                delete next[activeId]
+                return next
+              })
+            }}
+            panelOpen={panel !== null}
+            onOpenPanel={(k) => onPanelChange((cur) => (cur === k ? null : k))}
+          />
+        ) : (
+          <div className="flex flex-1 items-center justify-center text-label text-ink-4">
+            {threadsReady ? 'Start a new conversation' : 'Loading conversations…'}
+          </div>
+        ))}
+      {view === 'conversation' && panel && (
+        <Panel kind={panel} conversationId={activeId} onClose={() => onPanelChange(null)} />
+      )}
+    </main>
+  )
+}
+
+/** Owns the settings overlay's URL cleanup while preserving its conditional mount behavior. */
+function AppSettings({
+  open,
+  connectorSettingsRequested,
+  theme,
+  onThemeChange,
+  onClose,
+}: {
+  open: boolean
+  connectorSettingsRequested: boolean
+  theme: ThemePreference
+  onThemeChange: Dispatch<SetStateAction<ThemePreference>>
+  onClose: () => void
+}) {
+  if (!open) return null
+  return (
+    <Settings
+      initialSection={connectorSettingsRequested ? 'connectors' : 'general'}
+      theme={theme}
+      onThemeChange={onThemeChange}
+      onClose={() => {
+        onClose()
+        if (connectorSettingsRequested) history.replaceState(null, '', location.pathname)
+      }}
+    />
   )
 }
