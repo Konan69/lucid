@@ -1,49 +1,52 @@
+import { VividRpcClient } from '@vivid/client-runtime'
+import type { Connection } from '@vivid/contracts'
+import { ConnectionAuthorizationResponse, ConnectionId } from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
 import { authorizationAddress, type ConnectorId } from './requests'
-import { ClientRequestFailed, emptyResponse, request } from './request'
+import { clientFailure } from './runtime'
 
-export type ConnectorState = 'disconnected' | 'connecting' | 'connected' | 'error'
+export type Connector = Connection
+export type ConnectorState = Connector['status']
+export type ConnectorStatus = Connector
 
-export type Connector = {
-  id: string
-  status: ConnectorState
-  metadata: { id: string; name: string; description: string; icon: string }
-}
-
-const ConnectorSchema = Schema.Struct({
-  id: Schema.String,
-  status: Schema.Literals(['disconnected', 'connecting', 'connected', 'error']),
-  metadata: Schema.Struct({
-    id: Schema.String,
-    name: Schema.String,
-    description: Schema.String,
-    icon: Schema.String,
-  }),
-})
-const ConnectorResponseSchema = Schema.fromJsonString(
-  Schema.Struct({
-    connectors: Schema.mutable(Schema.Array(ConnectorSchema)),
-  }),
+const decodeAuthorizationJson = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(ConnectionAuthorizationResponse),
 )
-const AuthResponseSchema = Schema.fromJsonString(Schema.Struct({ authUrl: Schema.String }))
-const decodeConnectorResponse = Schema.decodeUnknownSync(ConnectorResponseSchema)
-const decodeAuthResponse = Schema.decodeUnknownSync(AuthResponseSchema)
+const decodeConnectionId = Schema.decodeUnknownEffect(ConnectionId)
 
 /** Reads the current external Connection state from the application server. */
 export const list = Effect.fn('Connectors.list')(function* () {
-  const response = yield* request('/api/connectors', decodeConnectorResponse)
-  return response.connectors
+  const client = yield* VividRpcClient
+  const response = yield* client.ListConnections()
+  return [...response.connectors]
 })
 
 /** Requests the provider-owned authorization address for one Connection. */
 export const authorize = Effect.fn('Connectors.authorize')(function* (id: string) {
-  const response = yield* request(`/api/connectors/${id}/auth`, decodeAuthResponse)
-  return response.authUrl
+  const path = `/api/connectors/${id}/auth`
+  const response = yield* Effect.tryPromise({
+    try: () => fetch(path),
+    catch: (cause) => clientFailure('Could not reach Vivid.', cause),
+  })
+  if (!response.ok)
+    return yield* Effect.fail(clientFailure(`Request failed (${response.status})`, response.status))
+  const payload = yield* Effect.tryPromise({
+    try: () => response.text(),
+    catch: (cause) => clientFailure('Vivid returned an unreadable response.', cause),
+  })
+  const authorization = yield* decodeAuthorizationJson(payload).pipe(
+    Effect.mapError((cause) => clientFailure('Vivid returned invalid data.', cause)),
+  )
+  return authorization.authUrl
 })
 
 /** Deletes one Connection and returns the refreshed Connection list. */
 export const disconnect = Effect.fn('Connectors.disconnect')(function* (id: string) {
-  yield* request(`/api/connectors/${id}`, emptyResponse, { method: 'DELETE' })
+  const client = yield* VividRpcClient
+  const connectionId = yield* decodeConnectionId(id).pipe(
+    Effect.mapError((cause) => clientFailure('The connection id is invalid.', cause)),
+  )
+  yield* client.DeleteConnection({ id: connectionId })
   return yield* list()
 })
 
@@ -64,29 +67,16 @@ export const actOnRequest = Effect.fn('Connectors.actOnRequest')(function* (
 ) {
   if (connected) {
     yield* Effect.tryPromise(() => onContinue()).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ClientRequestFailed({
-            path: '/api/vivid',
-            status: null,
-            message: 'Could not complete the connection. Try again.',
-            cause,
-          }),
+      Effect.mapError((cause) =>
+        clientFailure('Could not complete the connection. Try again.', cause),
       ),
     )
     return null
   }
-  const path = `/api/connectors/${connector}/auth`
   const authUrl = yield* authorize(connector)
   return yield* Effect.try(() => authorizationAddress(authUrl)).pipe(
-    Effect.mapError(
-      (cause) =>
-        new ClientRequestFailed({
-          path,
-          status: null,
-          message: 'The connection returned an invalid sign-in address.',
-          cause,
-        }),
+    Effect.mapError((cause) =>
+      clientFailure('The connection returned an invalid sign-in address.', cause),
     ),
   )
 })

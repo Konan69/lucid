@@ -1,10 +1,6 @@
-export type RuntimeConversation = {
-  id: string
-  title: string
-  preview: string
-  updatedAt: number
-  archived: boolean
-}
+import type { Thread } from '@vivid/contracts'
+
+export type RuntimeConversation = Omit<Thread, 'id'> & { id: string }
 
 export function plainPreview(markdown: string) {
   return markdown

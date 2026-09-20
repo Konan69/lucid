@@ -1,3 +1,5 @@
+import { ConnectionRequestMessage } from '@vivid/contracts'
+import type { Connection } from '@vivid/contracts'
 import { Option, Schema } from 'effect'
 
 export const connectorNames = {
@@ -6,19 +8,11 @@ export const connectorNames = {
   drive: 'Google Drive',
 } as const
 
-export type ConnectorId = keyof typeof connectorNames
-const ConnectorRequestSchema = Schema.Struct({
-  kind: Schema.Literal('connector-request'),
-  connector: Schema.Literals(['gmail', 'calendar', 'drive'] as const),
-  reason: Schema.String,
-})
-export type ConnectorRequest = typeof ConnectorRequestSchema.Type
-export type ConnectorStatus = {
-  id: string
-  status: 'disconnected' | 'connecting' | 'connected' | 'error'
-}
+export type ConnectorId = ConnectionRequestMessage['connector']
+export type ConnectorStatus = Connection
+export type ConnectorRequest = ConnectionRequestMessage
 
-const decodeConnectorRequest = Schema.decodeUnknownOption(ConnectorRequestSchema)
+const decodeConnectorRequest = Schema.decodeUnknownOption(ConnectionRequestMessage)
 const decodeString = Schema.decodeUnknownOption(Schema.String)
 
 // The wire decoder establishes the connector vocabulary before the UI applies its stricter
@@ -26,7 +20,7 @@ const decodeString = Schema.decodeUnknownOption(Schema.String)
 export function normalizeConnectorRequest(value: ConnectorRequest): ConnectorRequest | null {
   const reason = value.reason.trim()
   if (reason.length === 0 || reason.length > 400) return null
-  return ConnectorRequestSchema.make({
+  return ConnectionRequestMessage.make({
     kind: 'connector-request',
     connector: value.connector,
     reason,
