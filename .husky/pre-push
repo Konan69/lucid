@@ -18,8 +18,6 @@ cat "$lint_output"
 # Legacy warnings are ratcheted per rule. These values are ceilings, not
 # allowances: lower a baseline whenever a change removes findings, and never
 # increase one to make a push pass.
-# The server move (20 Sep 2026) rewrote the product stores; the non-zero baselines below are its
-# known findings at their exact counts. They may only go down.
 check_ratchet() {
   label="$1"
   plugin="$2"
@@ -36,8 +34,8 @@ check_ratchet() {
 }
 
 check_ratchet "chained assertions" "anti-slop" "no-chained-type-assertions" 0
-check_ratchet "conditional empty spreads" "anti-slop" "no-conditional-empty-object-spread" 6
-check_ratchet "runtime typeof" "anti-slop" "no-runtime-typeof" 2
+check_ratchet "conditional empty spreads" "anti-slop" "no-conditional-empty-object-spread" 0
+check_ratchet "runtime typeof" "anti-slop" "no-runtime-typeof" 0
 check_ratchet "shape names" "anti-slop" "no-shape-in-symbol-names" 0
 check_ratchet "unknown parameters" "anti-slop" "no-unknown-parameters" 0
 # Added with the 20 Sep 2026 anti-slop re-vendor and cleared the same day.
@@ -48,30 +46,30 @@ check_ratchet "map-then-filter passes" "anti-slop" "no-array-filter-map" 0
 check_ratchet "reduce accumulator copies" "anti-slop" "no-reduce-accumulator-copy" 0
 check_ratchet "unknown returns" "anti-slop" "no-unknown-returns" 0
 check_ratchet "unsafe dictionaries" "anti-slop" "no-unsafe-dictionary-type" 0
-check_ratchet "unjustified assertions" "anti-slop" "require-safety-comment-for-type-assertion" 1
+check_ratchet "unjustified assertions" "anti-slop" "require-safety-comment-for-type-assertion" 0
 check_ratchet "explicit any" "typescript" "no-explicit-any" 0
 check_ratchet "async collection callbacks" "vivid" "no-async-callback-api" 0
 check_ratchet "direct process env" "vivid" "no-direct-process-env" 0
 check_ratchet "Effect service methods without Effect.fn" "vivid" "effect-require-effect-fn" 0
 check_ratchet "global process runtime reads" "vivid" "no-global-process-runtime" 0
 # Complexity ceilings match VCOS (classic complexity 12, 120-line functions, depth 3).
-check_ratchet "cyclomatic complexity" "eslint" "complexity" 1
-check_ratchet "long functions" "eslint" "max-lines-per-function" 5
-check_ratchet "nested callbacks" "eslint" "max-nested-callbacks" 13
+check_ratchet "cyclomatic complexity" "eslint" "complexity" 0
+check_ratchet "long functions" "eslint" "max-lines-per-function" 0
+check_ratchet "nested callbacks" "eslint" "max-nested-callbacks" 0
 check_ratchet "wide parameter lists" "eslint" "max-params" 0
 check_ratchet "deep nesting" "eslint" "max-depth" 0
-check_ratchet "host transform validation" "vivid" "no-host-transform-validation" 1
+check_ratchet "host transform validation" "vivid" "no-host-transform-validation" 0
 check_ratchet "inline Schema compilers" "vivid" "no-inline-schema-compile" 0
 check_ratchet "non-null assertions" "vivid" "no-non-null-assertion" 0
-check_ratchet "optional chaining" "vivid" "no-optional-chaining" 17
+check_ratchet "optional chaining" "vivid" "no-optional-chaining" 0
 check_ratchet "platform runtime terminals" "vivid" "no-platform-runtime-runmain-in-library" 0
 check_ratchet "raw Promise constructors" "vivid" "no-promise-constructor" 0
-check_ratchet "library runtime terminals" "vivid" "no-runpromise-in-library" 3
+check_ratchet "library runtime terminals" "vivid" "no-runpromise-in-library" 0
 check_ratchet "Node built-in import namespaces" "vivid" "namespace-node-imports" 0
 check_ratchet "try/catch" "vivid" "no-try-catch" 0
-check_ratchet "undefined unions" "vivid" "no-undefined-in-union" 24
-check_ratchet "unnamed Effect programs" "vivid" "require-named-effect-fn" 2
-check_ratchet "Schema class titles" "vivid" "require-schema-class-title" 4
+check_ratchet "undefined unions" "vivid" "no-undefined-in-union" 0
+check_ratchet "unnamed Effect programs" "vivid" "require-named-effect-fn" 0
+check_ratchet "Schema class titles" "vivid" "require-schema-class-title" 0
 check_ratchet "unvalidated parsed JSON" "vivid" "require-schema-decode-in-boundary" 0
 check_ratchet "derived state Effects" "vivid" "react-no-derived-state-effect" 0
 check_ratchet "inline Context values" "vivid" "react-no-inline-context-value" 0
