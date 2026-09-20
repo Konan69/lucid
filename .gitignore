@@ -54,3 +54,6 @@ Thumbs.db
 
 # Turbo local task cache
 .turbo/
+
+# Alchemy local state and dev logs
+.alchemy/

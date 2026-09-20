@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import '@vivid/design-tokens/tokens.css';
+@import 'shadow-plugin';
 
 @layer base {
   html,
