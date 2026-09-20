@@ -241,6 +241,12 @@ const DeleteConnection = Rpc.make('DeleteConnection', {
   payload: { id: ConnectionId },
   success: ConnectionDeletionResponse,
 })
+/** Executes a named Connection action while credential values remain inside the server. */
+const ExecuteConnectionTool = Rpc.make('ExecuteConnectionTool', {
+  ...call,
+  payload: { connector: ConnectionId, tool: Schema.String, input: Schema.Json },
+  success: Schema.Struct({ output: Schema.Json }),
+})
 
 export const VividRpc = RpcGroup.make(
   ListThreads,
@@ -274,4 +280,5 @@ export const VividRpc = RpcGroup.make(
   DeleteLibraryFolder,
   ListConnections,
   DeleteConnection,
+  ExecuteConnectionTool,
 ).middleware(RpcAuthMiddleware)

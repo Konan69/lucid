@@ -23,7 +23,6 @@
     "@effect/platform-node": "catalog:",
     "@flue/postgres": "catalog:",
     "@flue/runtime": "catalog:",
-    "@vivid/connectors": "workspace:*",
     "@vivid/contracts": "workspace:*",
     "@vivid/client-runtime": "workspace:*",
     "drizzle-orm": "catalog:",
