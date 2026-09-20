@@ -1,13 +1,7 @@
-import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Schema from 'effect/Schema'
-import * as HttpApi from 'effect/unstable/httpapi/HttpApi'
 import * as HttpApiBuilder from 'effect/unstable/httpapi/HttpApiBuilder'
-import * as HttpApiEndpoint from 'effect/unstable/httpapi/HttpApiEndpoint'
-import * as HttpApiGroup from 'effect/unstable/httpapi/HttpApiGroup'
-import * as HttpApiMiddleware from 'effect/unstable/httpapi/HttpApiMiddleware'
-import * as HttpApiSchema from 'effect/unstable/httpapi/HttpApiSchema'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import { and, desc, eq } from 'drizzle-orm'
 import {
@@ -17,9 +11,7 @@ import {
   Conflict,
   CreateCompanyRequest,
   CreateProjectRequest,
-  DatabaseConstraintViolation,
   DatabaseFailure,
-  DatabaseUnavailable,
   Forbidden,
   InvitationResponse,
   InviteMembershipRequest,
@@ -33,6 +25,7 @@ import {
   Settings,
   Unauthenticated,
 } from '@vivid/contracts'
+import { AuthContext, AuthMiddleware, type AuthState, VividApi } from '@vivid/contracts/api'
 import { Database } from './database.ts'
 import { ServerConfig } from './config.ts'
 import { authEffect, localAuthRuntimeLayer } from './auth.ts'
@@ -46,84 +39,7 @@ import {
   settingsTable,
 } from './schema.ts'
 
-export interface AuthState {
-  readonly person: Person
-  readonly activeCompany?: Company
-  readonly membership?: Membership
-  readonly sessionId: string
-}
-
-export class AuthContext extends Context.Service<AuthContext, AuthState>()('vivid/AuthContext') {}
-
-const errors = [
-  Unauthenticated.pipe(HttpApiSchema.status(401)),
-  Forbidden.pipe(HttpApiSchema.status(403)),
-  NotFound.pipe(HttpApiSchema.status(404)),
-  Conflict.pipe(HttpApiSchema.status(409)),
-  DatabaseConstraintViolation.pipe(HttpApiSchema.status(409)),
-  DatabaseUnavailable.pipe(HttpApiSchema.status(503)),
-  DatabaseFailure.pipe(HttpApiSchema.status(500)),
-] as const
-
-export class AuthMiddleware extends HttpApiMiddleware.Service<
-  AuthMiddleware,
-  { provides: AuthContext; requires: Database | ServerConfig }
->()('vivid/AuthMiddleware', { error: errors }) {}
-
-const me = HttpApiEndpoint.get('me', '/me', { success: MeResponse, error: errors })
-const listCompanies = HttpApiEndpoint.get('listCompanies', '/companies', {
-  success: CompanyListResponse,
-  error: errors,
-})
-const createCompany = HttpApiEndpoint.post('createCompany', '/companies', {
-  payload: CreateCompanyRequest,
-  success: Company.pipe(HttpApiSchema.status(201)),
-  error: errors,
-})
-const listProjects = HttpApiEndpoint.get('listProjects', '/projects', {
-  success: ProjectListResponse,
-  error: errors,
-})
-const createProject = HttpApiEndpoint.post('createProject', '/projects', {
-  payload: CreateProjectRequest,
-  success: Project.pipe(HttpApiSchema.status(201)),
-  error: errors,
-})
-const inviteMembership = HttpApiEndpoint.post('inviteMembership', '/memberships/invite', {
-  payload: InviteMembershipRequest,
-  success: InvitationResponse.pipe(HttpApiSchema.status(201)),
-  error: errors,
-})
-const acceptMembership = HttpApiEndpoint.post('acceptMembership', '/memberships/accept', {
-  payload: AcceptMembershipRequest,
-  success: Membership,
-  error: errors,
-})
-const getSettings = HttpApiEndpoint.get('getSettings', '/settings', {
-  success: Settings,
-  error: errors,
-})
-const patchSettings = HttpApiEndpoint.patch('patchSettings', '/settings', {
-  payload: PatchSettingsRequest,
-  success: Settings,
-  error: errors,
-})
-
-const ApiGroup = HttpApiGroup.make('vivid')
-  .add(
-    me,
-    listCompanies,
-    createCompany,
-    listProjects,
-    createProject,
-    inviteMembership,
-    acceptMembership,
-    getSettings,
-    patchSettings,
-  )
-  .middleware(AuthMiddleware)
-
-export const api = HttpApi.make('VividApi').add(ApiGroup).prefix('/api')
+const api = VividApi
 
 const decodePersistence = <Value>(
   schema: Schema.ConstraintDecoder<Value>,
@@ -244,12 +160,21 @@ export const authenticate = Effect.fn('Auth.authenticate')(function* (headers: H
   return { ...baseState, activeCompany, membership }
 })
 
-export const authMiddlewareLayer = Layer.succeed(AuthMiddleware, (httpEffect) =>
+/**
+ * The middleware's dependencies are captured once, when the Layer is built, and provided to each
+ * request. They are the server's business, so they stay out of the shared `AuthMiddleware` tag.
+ */
+export const authMiddlewareLayer = Layer.effect(
+  AuthMiddleware,
   Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest
-    const headers = new globalThis.Headers(Object.entries(request.headers))
-    const auth = yield* authenticate(headers)
-    return yield* Effect.provideService(httpEffect, AuthContext, auth)
+    const services = yield* Effect.context<Database | ServerConfig>()
+    return (httpEffect) =>
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest
+        const headers = new globalThis.Headers(Object.entries(request.headers))
+        const auth = yield* authenticate(headers).pipe(Effect.provideContext(services))
+        return yield* Effect.provideService(httpEffect, AuthContext, auth)
+      })
   }),
 )
 
