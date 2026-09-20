@@ -242,6 +242,17 @@ function createAppActions({
     activateConversation(thread)
   }
 
+  /**
+   * A suggestion on the first screen opens a Thread with itself already in the composer, so the
+   * Person edits one sentence rather than facing an empty box. The draft is seeded rather than
+   * sent: the suggestion is a starting point, not a message they wrote.
+   */
+  function askSuggestion(suggestion: string) {
+    const thread = makeRuntimeConversation(titleFromMessage(suggestion), plainPreview(suggestion))
+    setConversationDrafts((current) => ({ ...current, [thread.id]: suggestion }))
+    activateConversation(thread)
+  }
+
   function recordMessage(id: string, message: string) {
     const current = runtimeThreads.find((thread) => thread.id === id)
     if (!current) return
@@ -296,6 +307,7 @@ function createAppActions({
   return {
     archiveConversation,
     askAboutLibrary,
+    askSuggestion,
     createConversation,
     openRuntimeConversation,
     recordMessage,
@@ -365,6 +377,7 @@ export default function App() {
         threadsReady={threadsReady}
         panel={panel}
         onAskAboutLibrary={actions.askAboutLibrary}
+        onAskSuggestion={actions.askSuggestion}
         onOpenRuntimeConversation={actions.openRuntimeConversation}
         onRecordMessage={actions.recordMessage}
         onDraftsChange={setConversationDrafts}
@@ -452,6 +465,7 @@ function AppWorkspace({
   threadsReady,
   panel,
   onAskAboutLibrary,
+  onAskSuggestion,
   onOpenRuntimeConversation,
   onRecordMessage,
   onDraftsChange,
@@ -465,6 +479,7 @@ function AppWorkspace({
   threadsReady: boolean
   panel: 'screen' | 'log' | null
   onAskAboutLibrary: (document: LibraryDocument) => void
+  onAskSuggestion: (suggestion: string) => void
   onOpenRuntimeConversation: (thread: RuntimeConversation) => void
   onRecordMessage: (id: string, message: string) => void
   onDraftsChange: Dispatch<SetStateAction<Record<string, string>>>
@@ -473,7 +488,7 @@ function AppWorkspace({
   return (
     <main className="flex min-w-0 flex-1">
       {view === 'tokens' && <Tokens />}
-      {view === 'empty' && <EmptyState />}
+      {view === 'empty' && <EmptyState onAsk={onAskSuggestion} />}
       {view === 'library' && <Library onAsk={onAskAboutLibrary} />}
       {view === 'projects' && <Projects />}
       {view === 'routines' && <Routines onOpenConversation={onOpenRuntimeConversation} />}
@@ -495,9 +510,11 @@ function AppWorkspace({
             panelOpen={panel !== null}
             onOpenPanel={(k) => onPanelChange((cur) => (cur === k ? null : k))}
           />
+        ) : threadsReady ? (
+          <EmptyState onAsk={onAskSuggestion} />
         ) : (
           <div className="flex flex-1 items-center justify-center text-label text-ink-4">
-            {threadsReady ? 'Start a new conversation' : 'Loading conversations…'}
+            Loading conversations…
           </div>
         ))}
       {view === 'conversation' && panel && (

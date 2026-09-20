@@ -1,7 +1,7 @@
 import { suggestions } from '../data/fixtures'
 import { Face } from '../ui/Face'
 
-export function EmptyState() {
+export function EmptyState({ onAsk }: { onAsk: (suggestion: string) => void }) {
   return (
     <div className="mx-auto flex w-full max-w-(--thread-max-w) flex-1 animate-rise-in flex-col items-center justify-center px-6">
       <Face size={56} mood="happy" />
@@ -10,7 +10,10 @@ export function EmptyState() {
       <ul className="mt-8 grid w-full gap-2 sm:grid-cols-3">
         {suggestions.map((s) => (
           <li key={s}>
-            <button className="size-full rounded-card bg-surface-3 p-4 text-left text-label text-ink-2 smooth-shadow-ring-xs transition-press duration-(--dur-fast) hover:bg-wash-hover hover:text-ink hover:smooth-shadow-ring-sm active:scale-98">
+            <button
+              onClick={() => onAsk(s)}
+              className="size-full cursor-pointer rounded-card bg-surface-3 p-4 text-left text-label text-ink-2 smooth-shadow-ring-xs transition-press duration-(--dur-fast) hover:bg-wash-hover hover:text-ink hover:smooth-shadow-ring-sm active:scale-98"
+            >
               {s}
             </button>
           </li>
