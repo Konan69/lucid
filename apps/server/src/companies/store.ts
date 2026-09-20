@@ -37,6 +37,7 @@ const decode = <A>(schema: Schema.ConstraintDecoder<A>, value: PersistedFields) 
   )
 
 type CompanyStoreError = DatabaseInfrastructureError | Conflict | Forbidden | NotFound
+type DatabaseService = Database['Service']
 
 export interface CompanyStoreService {
   readonly list: (personId: PersonId) => Effect.Effect<ReadonlyArray<Company>, CompanyStoreError>
@@ -64,7 +65,7 @@ export class CompanyStore extends Context.Service<CompanyStore, CompanyStoreServ
 ) {}
 
 /** Lists Companies through memberships, keeping membership rows out of the wire response. */
-const makeList = (database: Database.Service) =>
+const makeList = (database: DatabaseService) =>
   Effect.fn('CompanyStore.list')(function* (personId: PersonId) {
     const rows = yield* database.run(
       database
@@ -78,7 +79,7 @@ const makeList = (database: Database.Service) =>
   })
 
 /** Creates the Company, owner Membership, and active session as one transaction. */
-const makeCreate = (database: Database.Service) =>
+const makeCreate = (database: DatabaseService) =>
   Effect.fn('CompanyStore.create')(function* (
     personId: PersonId,
     sessionId: SessionId,
@@ -117,7 +118,7 @@ const makeCreate = (database: Database.Service) =>
   })
 
 /** Adds a pending Membership after checking the caller's Company role. */
-const makeInvite = (database: Database.Service) =>
+const makeInvite = (database: DatabaseService) =>
   Effect.fn('CompanyStore.invite')(function* (
     personId: PersonId,
     companyId: Company['id'],
@@ -156,7 +157,7 @@ const makeInvite = (database: Database.Service) =>
   })
 
 /** Accepts an invitation and activates the new Company on the caller's session. */
-const makeAccept = (database: Database.Service) =>
+const makeAccept = (database: DatabaseService) =>
   Effect.fn('CompanyStore.accept')(function* (
     personId: PersonId,
     personEmail: string,

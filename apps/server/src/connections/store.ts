@@ -53,7 +53,7 @@ export class ConnectionStore extends Context.Service<ConnectionStore, Connection
 
 /** Reads one provider factory as an Option so unknown Connection ids fail at the service boundary. */
 const connector = (id: ConnectionId) =>
-  Option.map(Option.fromNullable(factories.get(id)), (make) => make())
+  Option.map(Option.fromNullishOr(factories.get(id)), (make) => make())
 
 /** Decodes one provider's status into the transport-neutral Connection shape. */
 const readConnection = Effect.fn('ConnectionStore.readConnection')(function* (
