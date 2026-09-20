@@ -12,6 +12,18 @@ import {
   type ConnectorRequest,
 } from '../../../web/src/data/connectorRequests'
 
+/** Keeps connector action copy aligned with the current request state. */
+function connectorActionLabel(input: {
+  readonly busy: boolean
+  readonly connected: boolean
+  readonly authUrl: string
+  readonly name: string
+}) {
+  if (input.busy) return 'Working…'
+  if (input.connected) return 'Continue'
+  return input.authUrl ? 'Retry connection' : `Connect ${input.name}`
+}
+
 export function ConnectorRequestCard({
   request,
   onContinue,
@@ -90,15 +102,7 @@ export function ConnectorRequestCard({
       )}
       <ControlPill
         icon={connected ? Check : ExternalLink}
-        label={
-          busy
-            ? 'Working…'
-            : connected
-              ? 'Continue'
-              : authUrl
-                ? 'Retry connection'
-                : `Connect ${name}`
-        }
+        label={connectorActionLabel({ busy, connected, authUrl, name })}
         disabled={busy || disabled}
         onPress={() => void act()}
       />

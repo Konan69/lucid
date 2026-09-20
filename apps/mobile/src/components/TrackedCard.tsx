@@ -21,42 +21,53 @@ const TrackedOutputSchema = Schema.Struct({
     ),
   ),
 })
+const decodeTrackedOutput = Schema.decodeUnknownOption(TrackedOutputSchema)
+type TrackedOutput = typeof TrackedOutputSchema.Type
 
-// The same tracked-work card and copy as web/src/screen/Conversation.tsx.
-export function TrackedCard({ kind, output }: { kind: string; output: unknown }) {
-  const { colors: c } = useTheme()
-  if (kind !== 'create_task' && kind !== 'schedule_follow_up') return null
-  const decoded = Schema.decodeUnknownOption(TrackedOutputSchema)(output)
-  if (decoded._tag === 'None') return null
-  const result = decoded.value
+/** Formats optional tool timestamps without inventing copy for invalid values. */
+function formatTrackedDate(value?: string | number | null) {
+  if (value == null) return ''
+  const date = new Date(value)
+  return Number.isFinite(date.getTime())
+    ? date.toLocaleString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      })
+    : ''
+}
+
+/** Derives the compact status line from the decoded tracked-work result. */
+function trackedMeta(result: TrackedOutput) {
   const task = result.task
-  if (task === undefined) return null
-  const when = (value?: string | number | null) => {
-    if (value == null) return ''
-    const date = new Date(value)
-    return Number.isFinite(date.getTime())
-      ? date.toLocaleString(undefined, {
-          weekday: 'short',
-          month: 'short',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-        })
-      : ''
-  }
-  const due = when(task.dueAt)
+  if (task === undefined) return ''
+  const due = formatTrackedDate(task.dueAt)
   const followUp = result.followUp
   const followUpAt = followUp === null || followUp === undefined ? undefined : followUp.at
   const followUpRepeat =
     followUp === null || followUp === undefined ? false : !!followUp.repeatEveryMs
-  const followUpTime = when(followUpAt)
-  const meta = [
+  const followUpTime = formatTrackedDate(followUpAt)
+  return [
     task.assignee && task.assignee !== 'you' ? `Waiting on ${task.assignee}` : '',
     due ? `Due ${due}` : '',
     followUpTime ? `${followUpRepeat ? 'Follows up from' : 'Follows up'} ${followUpTime}` : '',
   ]
     .filter(Boolean)
     .join(' · ')
+}
+
+// The same tracked-work card and copy as web/src/screen/Conversation.tsx.
+export function TrackedCard({ kind, output }: { kind: string; output: unknown }) {
+  const { colors: c } = useTheme()
+  if (kind !== 'create_task' && kind !== 'schedule_follow_up') return null
+  const decoded = decodeTrackedOutput(output)
+  if (decoded._tag === 'None') return null
+  const result = decoded.value
+  const task = result.task
+  if (task === undefined) return null
+  const meta = trackedMeta(result)
   return (
     <Card
       style={{

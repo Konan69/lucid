@@ -17,7 +17,7 @@ import * as SecureStore from 'expo-secure-store'
 import { randomUUID } from 'expo-crypto'
 import { fetch as expoFetch } from 'expo/fetch'
 import { createApi } from './lib/api'
-import { deriveLayout } from './lib/layout'
+import { deriveLayout, type Layout } from './lib/layout'
 import {
   ActivityContext,
   type ThreadActivity,
@@ -65,6 +65,135 @@ const defaultPreferences: Preferences = {
 }
 const Stack = createNativeStackNavigator<Routes>()
 
+type ShellContentProps = {
+  readonly colors: ReturnType<typeof useTheme>['colors']
+  readonly dark: boolean
+  readonly layout: Layout
+  readonly drawerOpen: boolean
+  readonly drawerVisible: boolean
+  readonly drawerWidth: number
+  readonly close: () => void
+  readonly paneStyle: ReturnType<typeof useAnimatedStyle>
+  readonly scrimStyle: ReturnType<typeof useAnimatedStyle>
+}
+
+/** Renders the compact overlay drawer while the shell retains animation ownership. */
+function CompactDrawer({
+  colors: c,
+  drawerOpen,
+  drawerVisible,
+  drawerWidth,
+  close,
+  paneStyle,
+  scrimStyle,
+}: Omit<ShellContentProps, 'dark' | 'layout'>) {
+  return (
+    <>
+      {(drawerOpen || drawerVisible) && (
+        <Animated.View
+          style={[{ position: 'absolute', inset: 0, backgroundColor: c.scrim }, scrimStyle]}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close sidebar"
+            onPress={close}
+            style={{ flex: 1 }}
+          />
+        </Animated.View>
+      )}
+      <Animated.View
+        collapsable={false}
+        pointerEvents={drawerOpen ? 'auto' : 'none'}
+        accessibilityElementsHidden={!drawerOpen}
+        importantForAccessibility={drawerOpen ? 'auto' : 'no-hide-descendants'}
+        style={[
+          {
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: drawerWidth,
+            backgroundColor: c['surface-1'],
+            borderRightWidth: 0.5,
+            borderRightColor: c['line-3'],
+            display: drawerOpen || drawerVisible ? 'flex' : 'none',
+          },
+          paneStyle,
+        ]}
+      >
+        <Home embedded />
+      </Animated.View>
+    </>
+  )
+}
+
+/** Renders the responsive workspace panes without owning shell state or navigation policy. */
+function ShellContent({
+  colors: c,
+  dark,
+  layout,
+  drawerOpen,
+  drawerVisible,
+  drawerWidth,
+  close,
+  paneStyle,
+  scrimStyle,
+}: ShellContentProps) {
+  return (
+    <>
+      <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
+      <View
+        style={{
+          flex: 1,
+          flexDirection: 'row',
+          backgroundColor: c['surface-1'],
+          overflow: 'hidden',
+        }}
+      >
+        {layout.usesSplitView && layout.listPaneWidth !== null && (
+          <View style={{ width: layout.listPaneWidth }}>
+            <Home embedded />
+          </View>
+        )}
+        <View
+          collapsable={false}
+          style={{ flex: 1, minWidth: 0 }}
+          accessibilityElementsHidden={!layout.usesSplitView && drawerOpen}
+          importantForAccessibility={
+            !layout.usesSplitView && drawerOpen ? 'no-hide-descendants' : 'auto'
+          }
+        >
+          <Stack.Navigator
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: c['surface-0'] },
+            }}
+          >
+            <Stack.Screen name="Home" component={Welcome} />
+            <Stack.Screen name="Chat" component={Chat} />
+            <Stack.Screen name="Routines" component={Routines} />
+            <Stack.Screen name="Library" component={Library} />
+            <Stack.Screen name="Projects" component={Projects} />
+            <Stack.Screen name="Connectors" component={Connectors} />
+            <Stack.Screen name="Settings" component={Settings} />
+          </Stack.Navigator>
+        </View>
+        {!layout.usesSplitView && (
+          <CompactDrawer
+            colors={c}
+            drawerOpen={drawerOpen}
+            drawerVisible={drawerVisible}
+            drawerWidth={drawerWidth}
+            close={close}
+            paneStyle={paneStyle}
+            scrimStyle={scrimStyle}
+          />
+        )}
+      </View>
+    </>
+  )
+}
+
 function Shell() {
   const { colors: c, dark } = useTheme()
   const dimensions = useWindowDimensions()
@@ -110,7 +239,7 @@ function Shell() {
   const close = useCallback(() => setDrawer(false), [setDrawer])
   const open = useCallback(() => setDrawer(true), [setDrawer])
   useEffect(() => {
-    if (!drawerOpen) return
+    if (!drawerOpen) return () => {}
     const listener = BackHandler.addEventListener('hardwareBackPress', () => {
       close()
       return true
@@ -159,85 +288,17 @@ function Shell() {
     >
       <ActivityContext.Provider value={activityContextValue}>
         <SidebarContext.Provider value={sidebarContextValue}>
-          <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
-          <View
-            style={{
-              flex: 1,
-              flexDirection: 'row',
-              backgroundColor: c['surface-1'],
-              overflow: 'hidden',
-            }}
-          >
-            {layout.usesSplitView && layout.listPaneWidth !== null && (
-              <View style={{ width: layout.listPaneWidth }}>
-                <Home embedded />
-              </View>
-            )}
-            <View
-              collapsable={false}
-              style={{ flex: 1, minWidth: 0 }}
-              accessibilityElementsHidden={!layout.usesSplitView && drawerOpen}
-              importantForAccessibility={
-                !layout.usesSplitView && drawerOpen ? 'no-hide-descendants' : 'auto'
-              }
-            >
-              <Stack.Navigator
-                screenOptions={{
-                  headerShown: false,
-                  contentStyle: { backgroundColor: c['surface-0'] },
-                }}
-              >
-                <Stack.Screen name="Home" component={Welcome} />
-                <Stack.Screen name="Chat" component={Chat} />
-                <Stack.Screen name="Routines" component={Routines} />
-                <Stack.Screen name="Library" component={Library} />
-                <Stack.Screen name="Projects" component={Projects} />
-                <Stack.Screen name="Connectors" component={Connectors} />
-                <Stack.Screen name="Settings" component={Settings} />
-              </Stack.Navigator>
-            </View>
-            {!layout.usesSplitView && (
-              <>
-                {(drawerOpen || drawerVisible) && (
-                  <Animated.View
-                    style={[
-                      { position: 'absolute', inset: 0, backgroundColor: c.scrim },
-                      scrimStyle,
-                    ]}
-                  >
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Close sidebar"
-                      onPress={close}
-                      style={{ flex: 1 }}
-                    />
-                  </Animated.View>
-                )}
-                <Animated.View
-                  collapsable={false}
-                  pointerEvents={drawerOpen ? 'auto' : 'none'}
-                  accessibilityElementsHidden={!drawerOpen}
-                  importantForAccessibility={drawerOpen ? 'auto' : 'no-hide-descendants'}
-                  style={[
-                    {
-                      position: 'absolute',
-                      left: 0,
-                      top: 0,
-                      bottom: 0,
-                      width: drawerWidth,
-                      backgroundColor: c['surface-1'],
-                      borderRightWidth: 0.5,
-                      borderRightColor: c['line-3'],
-                      display: drawerOpen || drawerVisible ? 'flex' : 'none',
-                    },
-                    paneStyle,
-                  ]}
-                >
-                  <Home embedded />
-                </Animated.View>
-              </>
-            )}
-          </View>
+          <ShellContent
+            colors={c}
+            dark={dark}
+            layout={layout}
+            drawerOpen={drawerOpen}
+            drawerVisible={drawerVisible}
+            drawerWidth={drawerWidth}
+            close={close}
+            paneStyle={paneStyle}
+            scrimStyle={scrimStyle}
+          />
         </SidebarContext.Provider>
       </ActivityContext.Provider>
     </NavigationContainer>
