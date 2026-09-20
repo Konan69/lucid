@@ -59,7 +59,7 @@ export const conversations: Conversation[] = [
   {
     id: 't3',
     title: 'Pull the grand sheet into projects',
-    preview: 'Six PRDs filed under Scale Ventures',
+    preview: 'Six PRDs filed under Northfield',
     status: 'done',
     unread: true,
     tools: ['drive'],
@@ -355,7 +355,7 @@ const threadFixtures = {
     {
       kind: 'user',
       id: 't3m1',
-      text: 'Pull the Scale Ventures grand sheet in and make a project for each PRD.',
+      text: 'Pull the Northfield grand sheet in and make a project for each PRD.',
       time: '9:11',
     },
     {
