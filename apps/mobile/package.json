@@ -17,6 +17,7 @@
   "dependencies": {
     "@flue/react": "catalog:",
     "@flue/sdk": "catalog:",
+    "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
     "@vivid/tokens": "workspace:*",
     "@react-native-community/datetimepicker": "9.1.0",
