@@ -38,6 +38,13 @@ let currentTimeTimer: number | null = null
  * Keeps render-time date comparisons on one stable snapshot while the Today screen is mounted.
  * The shared timer matches the screen's idle refresh cadence and is released with the last row.
  */
+/** Each follow-up action's client program, keyed by the action so a new action must be wired. */
+const FOLLOW_UP_ACTION = {
+  run: tasksData.runFollowUp,
+  cancel: tasksData.cancelFollowUp,
+  delete: tasksData.removeFollowUp,
+} satisfies Record<'run' | 'cancel' | 'delete', (id: string) => tasksData.Program<void>>
+
 function subscribeCurrentTime(listener: () => void) {
   currentTimeListeners.add(listener)
   if (currentTimeTimer === null) {
@@ -987,12 +994,7 @@ function createTaskEditorActions({
 
   async function followUpAction(followUp: FollowUp, action: 'run' | 'cancel' | 'delete') {
     if (!task) return
-    const result =
-      action === 'run'
-        ? await editor.execute(tasksData.runFollowUp(followUp.id))
-        : action === 'cancel'
-          ? await editor.execute(tasksData.cancelFollowUp(followUp.id))
-          : await editor.execute(tasksData.removeFollowUp(followUp.id))
+    const result = await editor.execute(FOLLOW_UP_ACTION[action](followUp.id))
     if (result !== null) await onChanged(task.id)
   }
 

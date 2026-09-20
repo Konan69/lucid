@@ -59,11 +59,13 @@ export const LANES: Lane[] = [
 
 export function laneConversations<T extends Conversation>(list: T[]) {
   const taken = new Set<string>()
-  const lanes = LANES.map((lane) => {
+  // One pass per lane, in lane order: an earlier lane claims a thread before a later one sees it,
+  // and a lane that claimed nothing is dropped rather than rendered empty.
+  const lanes = LANES.flatMap((lane) => {
     const items = list.filter((thread) => !taken.has(thread.id) && lane.pick(thread))
     for (const thread of items) taken.add(thread.id)
-    return Object.assign({}, lane, { items })
-  }).filter((lane) => lane.items.length > 0)
+    return items.length > 0 ? [Object.assign({}, lane, { items })] : []
+  })
   const snoozed = list.filter((thread) => !!thread.snoozeUntil)
   return { lanes, snoozed }
 }

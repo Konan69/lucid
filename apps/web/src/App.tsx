@@ -25,6 +25,19 @@ import {
 
 type View = 'conversation' | 'demo' | 'empty' | 'tokens' | 'library' | 'projects' | 'routines'
 
+/**
+ * Which sidebar row is highlighted. The demo view highlights its own fixture, the empty view
+ * highlights nothing, and every other view keeps the open conversation highlighted.
+ */
+function sidebarSelection(input: {
+  view: View
+  activeDemoId: string
+  activeId: string | null
+}): string | null {
+  if (input.view === 'demo') return input.activeDemoId
+  return input.view === 'empty' ? null : input.activeId
+}
+
 const RuntimeConversationSchema = Schema.Struct({
   id: Schema.String,
   title: Schema.String,
@@ -401,7 +414,7 @@ function AppSidebar({
   onOpenSettings: () => void
 }) {
   if (view === 'tokens') return null
-  const sidebarActiveId = view === 'demo' ? activeDemoId : view === 'empty' ? null : activeId
+  const sidebarActiveId = sidebarSelection({ view, activeDemoId, activeId })
 
   function select(id: string) {
     if (id === 'new') onCreate()

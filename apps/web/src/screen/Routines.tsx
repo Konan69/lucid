@@ -33,6 +33,13 @@ const brandText = {
   success: 'text-success bg-success-soft',
 } satisfies Record<RoutineTemplate['brandColor'], string>
 
+/** The status dot of one Occurrence; `running` pulses, the terminal states sit still. */
+const RUN_DOT = {
+  succeeded: 'bg-success',
+  failed: 'bg-danger',
+  running: 'animate-pulse bg-working',
+} satisfies Record<ScheduledRoutine['runs'][number]['status'], string>
+
 function describeCron(cron: string) {
   const known = new Map([
     ['0 * * * *', 'Every hour'],
@@ -766,16 +773,7 @@ function RoutineRunRow({
         className="group/run w-full rounded-row bg-surface-2 px-3 py-2.5 text-left smooth-shadow-ring-xs transition-surface hover:bg-wash-hover hover:smooth-shadow-ring-sm"
       >
         <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              'size-2 rounded-full',
-              run.status === 'succeeded'
-                ? 'bg-success'
-                : run.status === 'failed'
-                  ? 'bg-danger'
-                  : 'animate-pulse bg-working',
-            )}
-          />
+          <span className={cn('size-2 rounded-full', RUN_DOT[run.status])} />
           <span className="text-label text-ink capitalize">{run.status}</span>
           <time className="ml-auto text-meta font-meta text-ink-4">
             {formatTime(run.startedAt)}

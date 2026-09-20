@@ -45,12 +45,40 @@ type Tile = {
   document?: LibraryDocument
   folder?: LibraryFolder
 }
-type UploadState = {
-  id: string
-  name: string
-  progress: number
-  status: 'uploading' | 'indexing' | 'failed'
-  error?: string
+/**
+ * One file on its way into the Library. Only a failed upload has an error, so the failure text
+ * lives on that variant instead of being an optional field every reader has to second-guess.
+ */
+type UploadState = { id: string; name: string; progress: number } & (
+  | { status: 'uploading' }
+  | { status: 'indexing' }
+  | { status: 'failed'; error: string }
+)
+
+/**
+ * How a Library item's status reads everywhere it appears. One table, keyed by the status
+ * vocabulary, so a new status fails to compile here instead of falling into an unlabelled `else`.
+ */
+const DOCUMENT_STATUS = {
+  ready: { label: 'Ready', tone: 'text-success', Icon: Check, spin: false },
+  failed: { label: 'Failed', tone: 'text-danger', Icon: CircleAlert, spin: false },
+  processing: { label: 'Indexing', tone: 'text-working', Icon: LoaderCircle, spin: true },
+} satisfies Record<
+  LibraryDocument['status'],
+  { label: string; tone: string; Icon: typeof Check; spin: boolean }
+>
+
+/** The line under a document tile: its size once usable, otherwise where it is in the pipeline. */
+const TILE_META = {
+  ready: (document) => `${formatBytes(document.size)} · ${document.chunkCount} passages`,
+  failed: () => 'Failed',
+  processing: () => 'Indexing…',
+} satisfies Record<LibraryDocument['status'], (document: LibraryDocument) => string>
+
+/** What an upload row says on the right: progress while sending, then the stage or the failure. */
+const uploadNote = (upload: UploadState): string => {
+  if (upload.status === 'failed') return upload.error
+  return upload.status === 'uploading' ? `${upload.progress}%` : 'Indexing'
 }
 
 function formatBytes(bytes: number) {
@@ -79,12 +107,7 @@ function buildTiles(documents: LibraryDocument[], folders: LibraryFolder[]): Til
       id: document.id,
       kind: 'file',
       name: document.name,
-      meta:
-        document.status === 'ready'
-          ? `${formatBytes(document.size)} · ${document.chunkCount} passages`
-          : document.status === 'failed'
-            ? 'Failed'
-            : 'Indexing…',
+      meta: TILE_META[document.status](document),
       document,
     })),
   ]
@@ -750,11 +773,7 @@ function UploadProgress({ uploads }: { uploads: UploadState[] }) {
               upload.status === 'failed' ? 'text-danger' : 'text-ink-4',
             )}
           >
-            {upload.status === 'uploading'
-              ? `${upload.progress}%`
-              : upload.status === 'indexing'
-                ? 'Indexing'
-                : upload.error}
+            {uploadNote(upload)}
           </span>
         </li>
       ))}
@@ -1086,25 +1105,11 @@ function DocumentDetail({
 }
 
 function Status({ document }: { document: LibraryDocument }) {
+  const { label, tone, Icon, spin } = DOCUMENT_STATUS[document.status]
   return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 text-meta font-meta',
-        document.status === 'ready'
-          ? 'text-success'
-          : document.status === 'failed'
-            ? 'text-danger'
-            : 'text-working',
-      )}
-    >
-      {document.status === 'ready' ? (
-        <Check className="size-3" />
-      ) : document.status === 'failed' ? (
-        <CircleAlert className="size-3" />
-      ) : (
-        <LoaderCircle className="size-3 animate-spin" />
-      )}
-      {document.status === 'ready' ? 'Ready' : document.status === 'failed' ? 'Failed' : 'Indexing'}
+    <span className={cn('inline-flex items-center gap-1 text-meta font-meta', tone)}>
+      <Icon className={cn('size-3', spin && 'animate-spin')} />
+      {label}
     </span>
   )
 }
