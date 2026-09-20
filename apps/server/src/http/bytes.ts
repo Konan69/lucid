@@ -7,14 +7,14 @@ import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
 import * as Multipart from 'effect/unstable/http/Multipart'
-import { LibraryItemId, LibraryUploadMetadata, LibraryUploadResponse } from '@vivid/contracts'
-import { authenticate } from '../auth/session.ts'
 import {
-  digestBytes,
-  ingestLibraryItem,
-  LIBRARY_FILE_TYPES,
-  MAX_LIBRARY_FILE_BYTES,
-} from '../library/ingest.ts'
+  LibraryFolderId,
+  LibraryItemId,
+  LibraryUploadMetadata,
+  LibraryUploadResponse,
+} from '@vivid/contracts'
+import { authenticate } from '../auth/session.ts'
+import { digestBytes, ingestLibraryItem, MAX_LIBRARY_FILE_BYTES } from '../library/ingest.ts'
 import { LibraryStore } from '../library/store.ts'
 
 const mimeByExtension = new Map([
@@ -35,6 +35,7 @@ const requireAuthentication = Effect.fn('Http.requireAuthentication')(function* 
 })
 
 const libraryUploadMetadataDecoder = Schema.decodeUnknownEffect(LibraryUploadMetadata)
+const libraryFolderIdDecoder = Schema.decodeUnknownOption(LibraryFolderId)
 
 const upload = Effect.fn('Http.Library.upload')(function* () {
   yield* requireAuthentication()
@@ -48,18 +49,17 @@ const upload = Effect.fn('Http.Library.upload')(function* () {
   const bytes = yield* fileSystem.readFile(file.path)
   const mimeType = inferMimeType(file.name, file.contentType)
   const folderField = parts.folderId
-  const folderId = typeof folderField === 'string' && folderField.length > 0 ? folderField : null
+  const folderId = Option.match(libraryFolderIdDecoder(folderField), {
+    onNone: () => null,
+    onSome: (value) => value,
+  })
   const metadata = yield* libraryUploadMetadataDecoder({
     name: file.name,
     mimeType,
     size: bytes.byteLength,
     folderId,
   }).pipe(Effect.option)
-  if (
-    Option.isNone(metadata) ||
-    !LIBRARY_FILE_TYPES.includes(mimeType as (typeof LIBRARY_FILE_TYPES)[number]) ||
-    bytes.byteLength > MAX_LIBRARY_FILE_BYTES
-  ) {
+  if (Option.isNone(metadata) || bytes.byteLength > MAX_LIBRARY_FILE_BYTES) {
     return HttpServerResponse.jsonUnsafe(
       { error: 'Unsupported or oversized Library item' },
       { status: 400 },
@@ -68,15 +68,15 @@ const upload = Effect.fn('Http.Library.upload')(function* () {
   const library = yield* LibraryStore
   if (
     metadata.value.folderId !== null &&
-    (yield* library.getFolder(metadata.value.folderId)) === undefined
+    Option.isNone(yield* library.getFolder(metadata.value.folderId))
   ) {
     return HttpServerResponse.jsonUnsafe({ error: 'Library folder not found' }, { status: 404 })
   }
   const digest = digestBytes(bytes)
   const existing = yield* library.getItemByDigest(digest)
-  if (existing !== undefined)
+  if (Option.isSome(existing))
     return HttpServerResponse.jsonUnsafe(
-      LibraryUploadResponse.make({ document: existing, duplicate: true }),
+      LibraryUploadResponse.make({ document: existing.value, duplicate: true }),
       { status: 200 },
     )
   const document = yield* library.createItem({
@@ -87,8 +87,9 @@ const upload = Effect.fn('Http.Library.upload')(function* () {
     folderId: metadata.value.folderId,
   })
   yield* ingestLibraryItem(document.id)
-  const indexed = (yield* library.getItem(document.id)) ?? document
-  return HttpServerResponse.jsonUnsafe(LibraryUploadResponse.make({ document: indexed }), {
+  const indexed = yield* library.getItem(document.id)
+  const responseDocument = Option.isNone(indexed) ? document : indexed.value
+  return HttpServerResponse.jsonUnsafe(LibraryUploadResponse.make({ document: responseDocument }), {
     status: 201,
   })
 })
@@ -101,12 +102,12 @@ const source = Effect.fn('Http.Library.source')(function* () {
     return HttpServerResponse.jsonUnsafe({ error: 'Source name is required' }, { status: 400 })
   const library = yield* LibraryStore
   const document = yield* library.getStoredItemByName(name)
-  return document === undefined
+  return Option.isNone(document)
     ? HttpServerResponse.jsonUnsafe({ error: 'Library source not found' }, { status: 404 })
-    : HttpServerResponse.uint8Array(document.bytes, {
-        contentType: document.mimeType,
+    : HttpServerResponse.uint8Array(document.value.bytes, {
+        contentType: document.value.mimeType,
         headers: {
-          'content-disposition': `inline; filename="${document.name.replaceAll('"', '')}"`,
+          'content-disposition': `inline; filename="${document.value.name.replaceAll('"', '')}"`,
         },
       })
 })
@@ -121,12 +122,12 @@ const content = Effect.fn('Http.Library.content')(function* () {
     return HttpServerResponse.jsonUnsafe({ error: 'Library item not found' }, { status: 404 })
   const library = yield* LibraryStore
   const document = yield* library.getStoredItem(decoded.value)
-  return document === undefined
+  return Option.isNone(document)
     ? HttpServerResponse.jsonUnsafe({ error: 'Library item not found' }, { status: 404 })
-    : HttpServerResponse.uint8Array(document.bytes, {
-        contentType: document.mimeType,
+    : HttpServerResponse.uint8Array(document.value.bytes, {
+        contentType: document.value.mimeType,
         headers: {
-          'content-disposition': `inline; filename="${document.name.replaceAll('"', '')}"`,
+          'content-disposition': `inline; filename="${document.value.name.replaceAll('"', '')}"`,
         },
       })
 })

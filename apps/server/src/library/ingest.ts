@@ -1,5 +1,6 @@
 import * as NodeCrypto from 'node:crypto'
 import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import { extractText } from 'unpdf'
 import type { LibraryItemId } from '@vivid/contracts'
@@ -32,8 +33,8 @@ const chunkText = (text: string, page: number | null): ReadonlyArray<IndexedChun
       const boundary = Math.max(normalized.lastIndexOf('\n', end), normalized.lastIndexOf(' ', end))
       if (boundary > start + MAX_CHUNK_CHARACTERS / 2) end = boundary
     }
-    const text = normalized.slice(start, end).trim()
-    if (text.length > 0) chunks.push({ page, text })
+    const chunk = normalized.slice(start, end).trim()
+    if (chunk.length > 0) chunks.push({ page, text: chunk })
     if (end >= normalized.length) break
     start = Math.max(end - CHUNK_OVERLAP_CHARACTERS, start + 1)
   }
@@ -43,6 +44,7 @@ const chunkText = (text: string, page: number | null): ReadonlyArray<IndexedChun
 export class LibraryIngestFailure extends Schema.TaggedError<LibraryIngestFailure>()(
   'LibraryIngestFailure',
   { message: Schema.String },
+  { title: 'Library ingest failure' },
 ) {}
 
 /** `unpdf` is Promise-only; this is the single unsafe extraction edge. */
@@ -52,8 +54,8 @@ const extractPages = Effect.fn('LibraryIngest.extractPages')(function* (
   const pdf =
     document.mimeType === 'application/pdf' || document.name.toLocaleLowerCase().endsWith('.pdf')
   if (!pdf) {
-    const text = new TextDecoder('utf-8', { fatal: false }).decode(document.bytes)
-    return [{ page: null, text: normalizeText(text) }]
+    const decodedText = new TextDecoder('utf-8', { fatal: false }).decode(document.bytes)
+    return [{ page: null, text: normalizeText(decodedText) }]
   }
   const result = yield* Effect.tryPromise({
     try: () => extractText(document.bytes, { mergePages: false }),
@@ -68,11 +70,12 @@ export const ingestLibraryItem = Effect.fn('LibraryIngest.ingestItem')(function*
   id: LibraryItemId,
 ) {
   const library = yield* LibraryStore
-  const document = yield* library.getStoredItem(id)
-  if (document === undefined) {
+  const storedDocument = yield* library.getStoredItem(id)
+  if (Option.isNone(storedDocument)) {
     return yield* Effect.fail(new LibraryIngestFailure({ message: 'Library item not found' }))
   }
-  const index = Effect.gen(function* () {
+  const document = storedDocument.value
+  const index = Effect.fn('LibraryIngest.indexItem')(function* () {
     const pages = yield* extractPages(document)
     const extractedText = pages
       .map((page) => page.text)
@@ -90,6 +93,7 @@ export const ingestLibraryItem = Effect.fn('LibraryIngest.ingestItem')(function*
       )
     }
     yield* library.completeItem(id, extractedText, chunks)
+    return undefined
   })
-  return yield* index.pipe(Effect.catch((failure) => library.failItem(id, failure.message)))
+  return yield* index().pipe(Effect.catch((failure) => library.failItem(id, failure.message)))
 })
