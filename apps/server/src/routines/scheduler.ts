@@ -3,6 +3,7 @@ import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Option from 'effect/Option'
 import * as Schedule from 'effect/Schedule'
 import * as Schema from 'effect/Schema'
 import { Thread as ThreadSchema, Occurrence, type Routine, type RoutineId } from '@vivid/contracts'
@@ -17,6 +18,7 @@ const ROUTINE_TICK_MS = 20_000
 export class InvalidRoutineSchedule extends Schema.TaggedError<InvalidRoutineSchedule>()(
   'InvalidRoutineSchedule',
   { message: Schema.String },
+  { title: 'Invalid Routine schedule' },
 ) {}
 
 export interface RoutineSchedulerService {
@@ -26,7 +28,7 @@ export interface RoutineSchedulerService {
   ) => Effect.Effect<void, InvalidRoutineSchedule | DatabaseInfrastructureError>
   readonly run: (
     id: RoutineId,
-  ) => Effect.Effect<Occurrence | undefined, DatabaseInfrastructureError | RuntimeUnavailable>
+  ) => Effect.Effect<Option.Option<Occurrence>, DatabaseInfrastructureError | RuntimeUnavailable>
   readonly runDue: () => Effect.Effect<
     void,
     InvalidRoutineSchedule | DatabaseInfrastructureError | RuntimeUnavailable
@@ -72,7 +74,11 @@ export const routineSchedulerServiceLayer = Layer.effect(
       const value = yield* probe(routine.cron, routine.timezone)
       const next = value.nextRun(new Date(now))
       value.stop()
-      yield* routines.setSchedule(routine.id, next?.getTime() ?? null, routine.lastMissedAt)
+      yield* routines.setSchedule(
+        routine.id,
+        next === null ? null : next.getTime(),
+        routine.lastMissedAt,
+      )
     })
 
     const submit = Effect.fn('RoutineScheduler.submit')(function* (routine: Routine) {
@@ -124,20 +130,18 @@ export const routineSchedulerServiceLayer = Layer.effect(
 
     const run = Effect.fn('RoutineScheduler.run')(function* (id: RoutineId) {
       const routine = yield* routines.get(id)
-      return routine === undefined ? undefined : yield* submit(routine)
+      return routine === undefined ? Option.none() : Option.some(yield* submit(routine))
+    })
+
+    /** Advances one claimed Routine and submits its occurrence before the next claim. */
+    const runDueRoutine = Effect.fn('RoutineScheduler.runDueRoutine')(function* (routine: Routine) {
+      yield* schedule(routine)
+      yield* submit(routine)
     })
 
     const runDue = Effect.fn('RoutineScheduler.runDue')(function* () {
       const due = yield* routines.claimDue()
-      yield* Effect.forEach(
-        due,
-        (routine) =>
-          Effect.gen(function* () {
-            yield* schedule(routine)
-            yield* submit(routine)
-          }),
-        { discard: true, concurrency: 1 },
-      )
+      yield* Effect.forEach(due, runDueRoutine, { discard: true, concurrency: 1 })
     })
 
     return RoutineScheduler.of({ validate, schedule, run, runDue })

@@ -13,8 +13,8 @@ export const me = Effect.fn('Api.me')(function* () {
   const auth = yield* requirePerson()
   return new MeResponse({
     person: auth.person,
-    ...(auth.activeCompany === undefined ? {} : { activeCompany: auth.activeCompany }),
-    ...(auth.membership === undefined ? {} : { membership: auth.membership }),
+    activeCompany: auth.activeCompany,
+    membership: auth.membership,
   })
 })
 export const listCompanies = Effect.fn('Api.listCompanies')(function* () {

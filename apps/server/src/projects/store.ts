@@ -24,6 +24,19 @@ const decodeProject = (value: PersistedFields) =>
   projectDecoder(value).pipe(
     Effect.mapError(() => new Conflict({ message: 'Stored Project data is invalid' })),
   )
+
+/** Projects omit the parent key only when the database stores a root Project. */
+const projectFields = (row: typeof projectTable.$inferSelect): PersistedFields => {
+  const fields = {
+    id: row.id,
+    companyId: row.companyId,
+    name: row.name,
+    createdBy: row.createdBy,
+  }
+  if (row.parentProjectId === null) return fields
+  return { ...fields, parentProjectId: row.parentProjectId }
+}
+
 type ProjectStoreError = DatabaseInfrastructureError | Conflict | NotFound
 
 export interface ProjectStoreService {
@@ -50,15 +63,7 @@ export const projectStoreLayer = Layer.effect(
           .where(eq(projectTable.companyId, companyId))
           .orderBy(desc(projectTable.createdAt)),
       )
-      return yield* Effect.forEach(rows, (row) =>
-        decodeProject({
-          id: row.id,
-          companyId: row.companyId,
-          name: row.name,
-          createdBy: row.createdBy,
-          ...(row.parentProjectId === null ? {} : { parentProjectId: row.parentProjectId }),
-        }),
-      )
+      return yield* Effect.forEach(rows, (row) => decodeProject(projectFields(row)))
     })
     const create = Effect.fn('ProjectStore.create')(function* (
       companyId: CompanyId,
@@ -96,13 +101,7 @@ export const projectStoreLayer = Layer.effect(
       const row = rows[0]
       if (row === undefined)
         return yield* Effect.fail(new Conflict({ message: 'Project could not be created' }))
-      return yield* decodeProject({
-        id: row.id,
-        companyId: row.companyId,
-        name: row.name,
-        createdBy: row.createdBy,
-        ...(row.parentProjectId === null ? {} : { parentProjectId: row.parentProjectId }),
-      })
+      return yield* decodeProject(projectFields(row))
     })
     return ProjectStore.of({ list, create })
   }),

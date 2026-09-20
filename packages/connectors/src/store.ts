@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { desc, eq } from 'drizzle-orm'
 import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
 import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
 import { Pool, types } from 'pg'
@@ -18,7 +19,7 @@ interface ConnectorDatabase {
   readonly ready: Promise<void>
 }
 
-let configured: ConnectorDatabase | undefined
+let configured = Option.none<ConnectorDatabase>()
 
 /**
  * Opens the credential database. Nothing happens at import: a module that reads the environment
@@ -31,20 +32,18 @@ let configured: ConnectorDatabase | undefined
  */
 export function configureConnectorStore(databaseUrl: string): void {
   const pool = new Pool({ connectionString: databaseUrl })
-  configured = {
+  configured = Option.some({
     db: drizzle({ client: pool }),
     // oxlint-disable-next-line vivid/no-runpromise-in-library
     ready: Effect.runPromise(bootstrapConnectorSchema(pool)),
-  }
+  })
 }
 
 const connectorDatabase = (): ConnectorDatabase => {
-  if (configured === undefined) {
-    // oxlint-disable-next-line vivid/no-runpromise-in-library
-    configureConnectorStore(Redacted.value(Effect.runSync(Config.Redacted('DATABASE_URL'))))
-  }
-  if (configured === undefined) throw new Error('Connector store could not be configured')
-  return configured
+  if (Option.isSome(configured)) return configured.value
+  // oxlint-disable-next-line vivid/no-runpromise-in-library
+  configureConnectorStore(Redacted.value(Effect.runSync(Config.Redacted('DATABASE_URL'))))
+  return Option.getOrThrow(configured)
 }
 
 const CredentialSchema = Schema.Struct({

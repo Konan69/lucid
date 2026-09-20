@@ -1,6 +1,7 @@
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Option from 'effect/Option'
 import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
 import {
@@ -21,9 +22,13 @@ import {
 export class ConnectionFailure extends Schema.TaggedError<ConnectionFailure>()(
   'ConnectionFailure',
   { message: Schema.String },
+  { title: 'Connection failure' },
 ) {}
 
-const factories = new Map<ConnectionId, () => GmailConnector | CalendarConnector | DriveConnector>([
+type Connector = GmailConnector | CalendarConnector | DriveConnector
+type ConnectorFactory = () => Connector
+
+const factories = new Map<ConnectionId, ConnectorFactory>([
   ['gmail', () => new GmailConnector()],
   ['calendar', () => new CalendarConnector()],
   ['drive', () => new DriveConnector()],
@@ -46,7 +51,27 @@ export class ConnectionStore extends Context.Service<ConnectionStore, Connection
   'vivid/ConnectionStore',
 ) {}
 
-const connector = (id: ConnectionId) => factories.get(id)?.()
+/** Reads one provider factory as an Option so unknown Connection ids fail at the service boundary. */
+const connector = (id: ConnectionId) =>
+  Option.map(Option.fromNullable(factories.get(id)), (make) => make())
+
+/** Decodes one provider's status into the transport-neutral Connection shape. */
+const readConnection = Effect.fn('ConnectionStore.readConnection')(function* (
+  entry: readonly [ConnectionId, ConnectorFactory],
+) {
+  const [id, make] = entry
+  const status = yield* Effect.tryPromise({
+    try: () => getConnectorStatus(id),
+    catch: () => new ConnectionFailure({ message: 'Connection status could not be read' }),
+  })
+  return yield* connectionSchemaDecoder({
+    id,
+    status,
+    metadata: make().metadata(),
+  }).pipe(
+    Effect.mapError(() => new ConnectionFailure({ message: 'Connection status was invalid' })),
+  )
+})
 
 const connectionSchemaDecoder = Schema.decodeUnknownEffect(ConnectionSchema)
 
@@ -61,39 +86,23 @@ export const connectionStoreLayer = Layer.effect(
     configureConnectorStore(Redacted.value(config.DATABASE_URL))
     return ConnectionStore.of({
       list: Effect.fn('ConnectionStore.list')(function* () {
-        return yield* Effect.forEach(Array.from(factories), ([id, make]) =>
-          Effect.tryPromise({
-            try: () => getConnectorStatus(id),
-            catch: () => new ConnectionFailure({ message: 'Connection status could not be read' }),
-          }).pipe(
-            Effect.flatMap((status) =>
-              connectionSchemaDecoder({
-                id,
-                status,
-                metadata: make().metadata(),
-              }),
-            ),
-            Effect.mapError(
-              () => new ConnectionFailure({ message: 'Connection status was invalid' }),
-            ),
-          ),
-        )
+        return yield* Effect.forEach(Array.from(factories), readConnection)
       }),
       authorizationUrl: Effect.fn('ConnectionStore.authorizationUrl')(function* (id, state) {
         const current = connector(id)
-        if (current === undefined)
+        if (Option.isNone(current))
           return yield* Effect.fail(new ConnectionFailure({ message: 'Unknown Connection' }))
         return yield* Effect.try({
-          try: () => current.getAuthUrl(state),
+          try: () => current.value.getAuthUrl(state),
           catch: () => new ConnectionFailure({ message: 'Google sign-in is not configured' }),
         })
       }),
       exchangeCode: Effect.fn('ConnectionStore.exchangeCode')(function* (id, code) {
         const current = connector(id)
-        if (current === undefined)
+        if (Option.isNone(current))
           return yield* Effect.fail(new ConnectionFailure({ message: 'Unknown Connection' }))
         return yield* Effect.tryPromise({
-          try: () => current.exchangeCode(code),
+          try: () => current.value.exchangeCode(code),
           catch: () => new ConnectionFailure({ message: 'Connection authorization failed' }),
         })
       }),

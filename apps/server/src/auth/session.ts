@@ -70,8 +70,9 @@ export const authenticate = Effect.fn('Auth.authenticate')(function* (headers: H
       .limit(1),
   )
   const base = AuthState.Person({ person, sessionId: SessionId.make(session.session.id) })
-  const activeCompanyId = sessions[0]?.activeCompanyId
-  if (activeCompanyId === undefined || activeCompanyId === null) return base
+  const sessionRow = sessions[0]
+  if (sessionRow === undefined || sessionRow.activeCompanyId === null) return base
+  const activeCompanyId = sessionRow.activeCompanyId
   const rows = yield* database.run(
     database
       .select({ company: companyTable, membership: membershipTable })

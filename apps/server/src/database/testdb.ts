@@ -1,10 +1,11 @@
+import * as NodeProcess from 'node:process'
 import * as Layer from 'effect/Layer'
 import * as Redacted from 'effect/Redacted'
 import { GoogleOAuthConfiguration, ServerConfig } from '../config.ts'
 import { databaseLayer } from './client.ts'
 
 /** Synchronous suite gating reads only the isolated test variable, never `DATABASE_URL`. */
-export const testDatabaseConfigured = process.env.VIVID_TEST_DATABASE_URL !== undefined
+export const testDatabaseConfigured = Object.hasOwn(NodeProcess.env, 'VIVID_TEST_DATABASE_URL')
 
 /**
  * The server configuration every integration suite shares. `DATABASE_URL` is the disposable test
