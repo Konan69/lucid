@@ -1,15 +1,10 @@
-import * as Config from 'effect/Config'
-import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
-import * as Option from 'effect/Option'
 import * as Redacted from 'effect/Redacted'
 import { GoogleOAuthConfiguration, ServerConfig } from '../config.ts'
 import { databaseLayer } from './client.ts'
 
 /** Synchronous suite gating reads only the isolated test variable, never `DATABASE_URL`. */
-export const testDatabaseConfigured = Option.isSome(
-  Effect.runSync(Config.option(Config.Redacted('VIVID_TEST_DATABASE_URL'))),
-)
+export const testDatabaseConfigured = process.env.VIVID_TEST_DATABASE_URL !== undefined
 
 /**
  * The server configuration every integration suite shares. `DATABASE_URL` is the disposable test

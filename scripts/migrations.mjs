@@ -56,10 +56,12 @@ const configErrors = (owner, config, paths) => [
 ]
 
 const manifestErrors = (owner, manifest, paths) => [
-  ...(manifest.scripts[paths.generateScript]?.startsWith('drizzle-kit generate') === true
+  ...(manifest.scripts[paths.generateScript] !== undefined &&
+  manifest.scripts[paths.generateScript].startsWith('drizzle-kit generate')
     ? []
     : [`${owner}/package.json: ${paths.generateScript} must run drizzle-kit generate`]),
-  ...(manifest.scripts[paths.migrateScript]?.startsWith('drizzle-kit migrate') === true
+  ...(manifest.scripts[paths.migrateScript] !== undefined &&
+  manifest.scripts[paths.migrateScript].startsWith('drizzle-kit migrate')
     ? []
     : [`${owner}/package.json: ${paths.migrateScript} must run drizzle-kit migrate`]),
 ]
