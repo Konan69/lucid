@@ -4,6 +4,7 @@ packages:
   - 'apps/web'
   - 'packages/contracts'
   - 'packages/client-runtime'
+  - 'packages/computer'
   - 'packages/connectors'
   - 'packages/design-tokens'
   - 'packages/agent-runtime'
