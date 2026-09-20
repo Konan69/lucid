@@ -48,11 +48,6 @@ const migrations = [
     cwd: 'apps/server',
     args: ['exec', 'drizzle-kit', 'migrate', '--config', 'product-drizzle.config.ts'],
   },
-  {
-    name: 'connectors',
-    cwd: 'packages/connectors',
-    args: ['exec', 'drizzle-kit', 'migrate', '--config', 'drizzle.config.ts'],
-  },
 ]
 
 // This executable owns the Effect runtime terminal for its startup boundary.

@@ -10,11 +10,7 @@ const repositoryRoot = NodePath.resolve(
   '..',
 )
 const initialSnapshotId = '00000000-0000-0000-0000-000000000000'
-export const migrationOwners = Object.freeze([
-  'apps/server',
-  'apps/server#product',
-  'packages/connectors',
-])
+export const migrationOwners = Object.freeze(['apps/server', 'apps/server#product'])
 
 const MigrationManifest = Schema.Struct({
   scripts: Schema.Struct({

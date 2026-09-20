@@ -114,7 +114,7 @@ const assertEnvironmentWiring = (root, stackSource) => {
 
   const runtimeFiles = [
     ...walkTypeScript(NodePath.join(root, 'packages/agent/runtime/src')),
-    ...walkTypeScript(NodePath.join(root, 'packages/connectors/src')),
+    ...walkTypeScript(NodePath.join(root, 'apps/server/src/connections')),
   ]
   const runtimeNames = new Set()
   for (const file of runtimeFiles) {
@@ -237,12 +237,14 @@ const assertMigrationPolicy = (migrationSource) => {
   // The product tables moved from the Flue runtime into the server as a second migration owner
   // with its own history; it still runs after the server's auth and tenancy tables.
   const productMigration = migrationSource.search(/name: ["']server-product["']/)
-  const connectorMigration = migrationSource.search(/name: ["']connectors["']/)
   assert.ok(
-    serverMigration >= 0 &&
-      serverMigration < productMigration &&
-      productMigration < connectorMigration,
-    'migration order must be server → server-product → connectors',
+    serverMigration >= 0 && serverMigration < productMigration,
+    'migration order must be server → server-product',
+  )
+  assert.doesNotMatch(
+    migrationSource,
+    /name: ["']connectors["']/,
+    'connector migration owner was dissolved',
   )
   assert.doesNotMatch(migrationSource, /\bgenerate\b/, 'startup must never generate migrations')
 }
