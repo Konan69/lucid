@@ -186,6 +186,23 @@ export function Connectors({ navigation }: NativeStackScreenProps<Routes, 'Conne
   )
 }
 
+/** Keeps version details outside Settings state and persistence orchestration. */
+function AboutSheet({ onClose }: { readonly onClose: () => void }) {
+  return (
+    <Sheet title="Vivid · 0.1.0" onClose={onClose}>
+      <Label>A native home for your everyday work.</Label>
+      <Label tone="ink-3">
+        Conversations, tasks, routines, and your Library connect to your Vivid server. Projects and
+        the computer view are previews. Chat attachments, voice, and system push notifications are
+        not connected in this version.
+      </Label>
+      <Label size="label" tone="ink-3">
+        Includes components adapted from T3 Code. Copyright © 2026 T3 Tools Inc., MIT License.
+      </Label>
+    </Sheet>
+  )
+}
+
 export function Settings({ navigation }: NativeStackScreenProps<Routes, 'Settings'>) {
   const { preferences, savePreferences } = useWorkspace()
   const [url, setUrl] = useState(preferences.url)
@@ -291,19 +308,7 @@ export function Settings({ navigation }: NativeStackScreenProps<Routes, 'Setting
           <ControlPill label="About this version" onPress={() => setAbout(true)} />
         </Card>
       </ScrollView>
-      {about && (
-        <Sheet title="Vivid · 0.1.0" onClose={() => setAbout(false)}>
-          <Label>A native home for your everyday work.</Label>
-          <Label tone="ink-3">
-            Conversations, tasks, routines, and your Library connect to your Vivid server. Projects
-            and the computer view are previews. Chat attachments, voice, and system push
-            notifications are not connected in this version.
-          </Label>
-          <Label size="label" tone="ink-3">
-            Includes components adapted from T3 Code. Copyright © 2026 T3 Tools Inc., MIT License.
-          </Label>
-        </Sheet>
-      )}
+      {about && <AboutSheet onClose={() => setAbout(false)} />}
     </View>
   )
 }
