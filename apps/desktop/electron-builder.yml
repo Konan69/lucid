@@ -19,7 +19,7 @@ protocols:
 
 extraResources:
   # Shared design tokens remain the only source for native window colors.
-  - from: ../../packages/design-tokens/src/tokens.css
+  - from: ../../packages/design/tokens/src/tokens.css
     to: design-tokens/tokens.css
   # Production renderer: run `pnpm --filter @vivid/web build` first.
   - from: ../../apps/web/dist

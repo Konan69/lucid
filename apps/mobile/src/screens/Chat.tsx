@@ -17,7 +17,7 @@ import { TrackedCard } from '../components/Tracked'
 import { ChatComposer, ChatHeader, useChatKeyboard } from '../components/chat/Chrome'
 import { openDocument, linkCitations } from '../lib/documents'
 import { Card, ControlPill, Empty, Face, Feedback, Label, Sheet, styles } from '../components/ui'
-import { nativeMetrics as m } from '@vivid/design-tokens/native'
+import { nativeMetrics as m } from '@vivid/tokens/native'
 import { useTheme } from '../theme'
 import { deriveCenteredContentHorizontalPadding } from '../lib/layout'
 

@@ -1,7 +1,7 @@
 # Vivid — Design language
 
 What any agent (human or AI) must follow to touch Vivid's UI. Ground truth:
-`packages/design-tokens/src/tokens.css` is the single source for every value
+`packages/design/tokens/src/tokens.css` is the single source for every value
 in this file. If code and this file disagree, fix one of them — never fork.
 
 ## The one product rule
@@ -99,7 +99,7 @@ Anything that ticks (durations, countdowns) is mono tabular.
 
 | Thing                               | Path                                                 |
 | ----------------------------------- | ---------------------------------------------------- |
-| Tokens (single source of truth)     | `packages/design-tokens/src/tokens.css`              |
+| Tokens (single source of truth)     | `packages/design/tokens/src/tokens.css`              |
 | Shadow + glass + hairline utilities | `apps/web/src/styles/index.css`                      |
 | Design-language essays              | `docs/08-design-language.md`, `docs/01-principle.md` |
 | Token sheet (every token, one page) | run dev server, open `/?tokens`                      |

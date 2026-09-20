@@ -171,7 +171,11 @@
       }
     },
     {
-      "files": ["apps/{server,web}/src/**/*.{ts,tsx}", "packages/*/src/**/*.{ts,tsx}"],
+      "files": [
+        "apps/{server,web}/src/**/*.{ts,tsx}",
+        "packages/*/src/**/*.{ts,tsx}",
+        "packages/*/*/src/**/*.{ts,tsx}"
+      ],
       "rules": {
         "typescript/no-explicit-any": "warn"
       }

@@ -5,9 +5,9 @@ packages:
   - 'apps/web'
   - 'packages/contracts'
   - 'packages/client-runtime'
-  - 'packages/computer'
+  - 'packages/computer/state'
   - 'packages/connectors'
-  - 'packages/design-tokens'
+  - 'packages/design/tokens'
   - 'packages/agent-runtime'
 
 # pnpm 12 reads project settings here. Keep registry credentials only in an

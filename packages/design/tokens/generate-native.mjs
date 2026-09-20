@@ -51,7 +51,5 @@ const output =
 const target = new URL('./src/native.ts', import.meta.url)
 if (process.argv.includes('--check')) {
   if (NodeFS.readFileSync(target, 'utf8') !== output)
-    throw new Error(
-      'Native tokens are stale. Run pnpm --filter @vivid/design-tokens generate:native',
-    )
+    throw new Error('Native tokens are stale. Run pnpm --filter @vivid/tokens generate:native')
 } else NodeFS.writeFileSync(target, output)

@@ -50,7 +50,7 @@ instead of `undefined`. RN 0.85's Fabric command bridge rejects the latter as
 - Projects and routine ideas import the existing web fixtures. Projects remain
   explicitly labeled sample content, matching the web persistence boundary.
 - All native semantic colors are generated from
-  `packages/design-tokens/src/tokens.css`. `face-eye` records the existing web
+  `packages/design/tokens/src/tokens.css`. `face-eye` records the existing web
   face's `#0f0f0f` eye color in that shared source.
 
 ## Reconstructed Grok Bot inspection

@@ -54,7 +54,7 @@ flowchart LR
 - `packages/client-runtime`: a framework-neutral Vivid store over Flue observation, plus connection
   state, optimistic updates, event reduction, offline queue, and product command methods.
 - `packages/domain`: pure Vivid rules such as thread state and permission decisions.
-- `packages/design-tokens`: colors, type, spacing, radii, and semantic status names. Web exports CSS variables; mobile exports TypeScript values.
+- `packages/design/tokens`: colors, type, spacing, radii, and semantic status names. Web exports CSS variables; mobile exports TypeScript values.
 
 ## Runtime flow
 

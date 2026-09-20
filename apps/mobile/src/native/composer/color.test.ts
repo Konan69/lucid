@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { composerColor } from './color.ts'
-import { nativeTokens } from '../../../../../packages/design-tokens/src/native.ts'
+import { nativeTokens } from '../../../../../packages/design/tokens/src/native.ts'
 
 it('native composer gets readable Vivid text in both appearances', () => {
   for (const platform of ['android', 'ios']) {

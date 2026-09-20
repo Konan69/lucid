@@ -92,7 +92,7 @@ function registerProtocolClient(): void {
 function themeTokensPath(): string {
   return app.isPackaged
     ? NodePath.join(NodeProcess.resourcesPath, 'design-tokens', 'tokens.css')
-    : NodePath.resolve(__dirname, '../../../../packages/design-tokens/src/tokens.css')
+    : NodePath.resolve(__dirname, '../../../../packages/design/tokens/src/tokens.css')
 }
 
 /** Build the renderer source without exposing a service origin to renderer JavaScript. */

@@ -1,6 +1,6 @@
 # Web design-system lint
 
-The root Oxlint config applies design rules only to `apps/web/src/**/*.tsx`. React Native does not share this Tailwind surface. `apps/web/components.json` points component discovery at `apps/web/src/ui` and theme discovery at `apps/web/src/styles/index.css`; that entry imports `packages/design-tokens/src/tokens.css`.
+The root Oxlint config applies design rules only to `apps/web/src/**/*.tsx`. React Native does not share this Tailwind surface. `apps/web/components.json` points component discovery at `apps/web/src/ui` and theme discovery at `apps/web/src/styles/index.css`; that entry imports `packages/design/tokens/src/tokens.css`.
 
 ## Ownership
 

@@ -40,7 +40,9 @@ export function isProductionTypeScript(relativePath) {
   if (/(?:\.test|\.spec|\.gen|worker-test-entry)\.[cm]?tsx?$/u.test(relativePath)) return false
   if (/\.d\.[cm]?ts$/u.test(relativePath)) return false
   return (
-    relativePath.startsWith('apps/server/src/') || /^packages\/[^/]+\/src\//u.test(relativePath)
+    relativePath.startsWith('apps/server/src/') ||
+    // `packages/<name>/src/` or, inside a group directory, `packages/<group>/<name>/src/`.
+    /^packages\/[^/]+(?:\/[^/]+)?\/src\//u.test(relativePath)
   )
 }
 
@@ -48,8 +50,14 @@ export function isProductionTypeScript(relativePath) {
 export function productionFiles(root = repositoryRoot) {
   const roots = [NodePath.join(root, 'apps', 'server', 'src')]
   const packagesRoot = NodePath.join(root, 'packages')
+  // A package is `packages/<name>` or, inside a group directory, `packages/<group>/<name>`.
   for (const entry of NodeFS.readdirSync(packagesRoot, { withFileTypes: true })) {
-    if (entry.isDirectory()) roots.push(NodePath.join(packagesRoot, entry.name, 'src'))
+    if (!entry.isDirectory()) continue
+    const directory = NodePath.join(packagesRoot, entry.name)
+    roots.push(NodePath.join(directory, 'src'))
+    for (const child of NodeFS.readdirSync(directory, { withFileTypes: true })) {
+      if (child.isDirectory()) roots.push(NodePath.join(directory, child.name, 'src'))
+    }
   }
   const files = []
   const visit = (directory) => {
