@@ -44,7 +44,7 @@ import { Avatar } from '../ui/Avatar'
 import { cn } from '../ui/cn'
 import { Face } from '../ui/Face'
 import { StatusDot, StatusLabel } from '../ui/Status'
-import { ToolMarks } from '../ui/Marks'
+import { ServiceMarks } from '../ui/Marks'
 
 /* ── Row geometry (Open Session's three heights) ──────────────
    36  a full line: rows and headings that lead with a mark. Navigates → hover fill.
@@ -591,7 +591,7 @@ function CardRow({
     >
       {/* Line 1: context + status slot */}
       <span className="flex h-5 items-center gap-1.5">
-        <ToolMarks tools={t.tools ?? []} size={14} />
+        <ServiceMarks services={t.tools ?? []} size={14} />
         <span className="flex-1" />
         {t.pinned && <Pin className="size-3 shrink-0 text-ink-4" aria-label="Pinned" />}
         <span className="relative ml-auto flex h-5 min-w-8 shrink-0 items-center justify-end">

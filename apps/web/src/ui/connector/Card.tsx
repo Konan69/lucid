@@ -4,7 +4,7 @@ import { Check, ExternalLink } from 'lucide-react'
 import * as connectorRequestsData from '@vivid/state'
 import * as connectorsData from '../../data/connectors'
 import { run } from '../../data/runtime'
-import { ToolMarks } from '../Marks'
+import { ServiceMarks } from '../Marks'
 
 export function ConnectorRequestCard({
   request,
@@ -76,7 +76,7 @@ export function ConnectorRequestCard({
   return (
     <div className="my-3 rounded-panel bg-surface-2 px-3.5 py-3 smooth-shadow-ring-xs">
       <div className="flex items-center gap-3">
-        <ToolMarks tools={[request.connector]} size={28} />
+        <ServiceMarks services={[request.connector]} size={28} />
         <span className="min-w-0 flex-1 text-label font-title text-ink">{name}</span>
         {connected && (
           <span className="inline-flex items-center gap-1 text-meta text-success">

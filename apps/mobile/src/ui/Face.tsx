@@ -8,41 +8,33 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated'
 import { nativeMetrics as m } from '@vivid/tokens/native'
+import { faceGeometry, type FaceMood } from '@vivid/marks'
 import { useTheme } from '../theme'
 
-// Geometry and colors ported from apps/web/src/ui/Face.tsx, not a new logo.
-/** Head tilt per mood, in degrees: thinking leans back, happy leans in, the rest sit level. */
-const TILT_DEGREES = { neutral: 0, happy: 4, thinking: -8, asleep: 0 } satisfies Record<
-  'neutral' | 'happy' | 'thinking' | 'asleep',
-  number
->
-
-export function Face({
-  size = 28,
-  mood = 'neutral',
-}: {
-  size?: number
-  mood?: 'neutral' | 'happy' | 'thinking' | 'asleep'
-}) {
+/**
+ * Vivid's face, drawn as real SVG so Reanimated can carry the tilt between moods on the UI thread.
+ * The proportions and the tilt angles come from `@vivid/marks`, the same source the web face
+ * reads, so the two surfaces show one face rather than two similar ones.
+ */
+export function Face({ size = 28, mood = 'neutral' }: { size?: number; mood?: FaceMood }) {
   const { colors: c } = useTheme()
+  // `useId` embeds colons, which are not legal in an SVG fragment identifier.
   const id = useId().replace(/:/g, '')
-  const eye = Math.max(2, Math.round(size * 0.11))
-  const eyeH = mood === 'asleep' ? Math.max(1.5, eye * 0.35) : Math.round(size * 0.24)
-  const gap = Math.round(size * 0.22)
-  const left = (size - eye * 2 - gap) / 2
-  const y = size * 0.38
-  const tilt = TILT_DEGREES[mood]
-  const rotation = useSharedValue(tilt)
+  const geometry = faceGeometry(size, mood)
+  const { eyeWidth, eyeHeight, eyeGap } = geometry
+  const left = (size - eyeWidth * 2 - eyeGap) / 2
+  const top = size * geometry.eyeTopFraction
+  const rotation = useSharedValue(geometry.tiltDegrees)
   useEffect(() => {
     // Reanimated exposes `set` specifically so compiler-enabled React can update shared values.
     rotation.set(
-      withTiming(tilt, {
+      withTiming(geometry.tiltDegrees, {
         duration: m['dur-base'],
         easing: Easing.bezier(0.2, 0, 0, 1),
         reduceMotion: ReduceMotion.System,
       }),
     )
-  }, [tilt, rotation])
+  }, [geometry.tiltDegrees, rotation])
   const motion = useAnimatedStyle(() => ({ transform: [{ rotate: `${rotation.get()}deg` }] }))
   return (
     <Animated.View style={[{ width: size, height: size }, motion]}>
@@ -58,21 +50,21 @@ export function Face({
 
         <Rect
           x={left}
-          y={y}
-          width={eye}
-          height={eyeH}
-          rx={eye / 2}
+          y={top}
+          width={eyeWidth}
+          height={eyeHeight}
+          rx={eyeWidth / 2}
           fill={c['face-eye']}
-          transform={`rotate(-6 ${left + eye / 2} ${y + eyeH / 2})`}
+          transform={`rotate(-6 ${left + eyeWidth / 2} ${top + eyeHeight / 2})`}
         />
         <Rect
-          x={left + eye + gap}
-          y={y}
-          width={eye}
-          height={eyeH}
-          rx={eye / 2}
+          x={left + eyeWidth + eyeGap}
+          y={top}
+          width={eyeWidth}
+          height={eyeHeight}
+          rx={eyeWidth / 2}
           fill={c['face-eye']}
-          transform={`rotate(6 ${left + eye * 1.5 + gap} ${y + eyeH / 2})`}
+          transform={`rotate(6 ${left + eyeWidth * 1.5 + eyeGap} ${top + eyeHeight / 2})`}
         />
       </Svg>
     </Animated.View>

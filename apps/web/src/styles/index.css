@@ -118,13 +118,14 @@
 @utility face {
   width: var(--face-size);
   height: var(--face-size);
+  rotate: var(--face-tilt);
   background-image: radial-gradient(circle at 32% 28%, rgb(255 255 255 / 0.28), transparent 55%);
   box-shadow:
     inset 0 -1px 2px rgb(0 0 0 / 0.25),
     0 1px 2px rgb(0 0 0 / 0.18);
 }
 @utility face-eyes {
-  top: 38%;
+  top: var(--face-eye-top);
   gap: var(--face-eye-gap);
 }
 @utility face-eye {

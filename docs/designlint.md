@@ -20,7 +20,7 @@ This is the first draft for UI-owner review. The executable source is the single
 ^Card$                                        allow: layout, spacing
 
 # Small visual primitives own their treatment; callers place them.
-^(Avatar|Face|StatusLabel|StatusDot|ToolMarks)$ allow: layout
+^(Avatar|Face|StatusLabel|StatusDot|ServiceMarks)$ allow: layout
 
 # All other discovered design-system components.
 default                                      allow: layout

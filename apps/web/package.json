@@ -16,6 +16,7 @@
     "@flue/sdk": "catalog:",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
+    "@vivid/marks": "workspace:*",
     "@vivid/state": "workspace:*",
     "@vivid/tokens": "workspace:*",
     "lucide-react": "catalog:",

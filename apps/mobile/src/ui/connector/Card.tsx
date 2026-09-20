@@ -5,7 +5,7 @@ import { ConnectionListResponse } from '@vivid/contracts'
 import { useWorkspace } from '../../workspace'
 import { useResource } from '../../data/resource/hook'
 import { Card, ControlPill, Label } from '../ui'
-import { ToolMark } from '../Mark'
+import { ServiceMark } from '../Mark'
 import { authorizationAddress, connectorNames, type ConnectorRequest } from '@vivid/state'
 
 /** Keeps connector action copy aligned with the current request state. */
@@ -68,7 +68,7 @@ export function ConnectorRequestCard({
   return (
     <Card style={{ marginVertical: 8, gap: 12 }}>
       <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
-        <ToolMark id={request.connector} size={28} />
+        <ServiceMark service={request.connector} size={28} />
         <Label size="label" style={{ flex: 1, fontWeight: '500' }}>
           {name}
         </Label>

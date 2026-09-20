@@ -3,7 +3,7 @@ import * as Result from 'effect/Result'
 import { useEffect, useState } from 'react'
 import * as connectorsData from '../data/connectors'
 import { run } from '../data/runtime'
-import { ToolMarks } from '../ui/Marks'
+import { ServiceMarks } from '../ui/Marks'
 
 /* What each connector lets Vivid do, in Vivid's words rather than the API's. */
 const PURPOSE = new Map([
@@ -88,7 +88,7 @@ export function Connectors({ embedded = false }: { embedded?: boolean }) {
       {!embedded && (
         <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
           <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">Connectors</h1>
-          <ToolMarks tools={connected.map((connector) => connector.id)} size={18} />
+          <ServiceMarks services={connected.map((connector) => connector.id)} size={18} />
         </header>
       )}
 
@@ -166,7 +166,7 @@ function ConnectorRow({
   return (
     <li className="flex items-center gap-3 rounded-row bg-surface-2 p-3 smooth-shadow-ring-xs">
       <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-control bg-surface-1 smooth-shadow-ring-xs">
-        <ToolMarks tools={[connector.id]} size={20} />
+        <ServiceMarks services={[connector.id]} size={20} />
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">

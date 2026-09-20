@@ -45,26 +45,26 @@ packages/
   contracts/  ● The only declaration of every boundary.
     src/api.ts        ● VividApi — the plain-HTTP surface
     src/rpc.ts        ● VividRpc — every product call
-    src/<domain>.ts   ◐ wire schemas, one file per domain (today: index.ts + runtime.ts)
+    src/<domain>.ts   ● wire schemas, one file per domain
 
   client/             what every app needs to talk to the server
-    rpc/      ◐ derived VividRpc + VividApi clients (today: packages/client/rpc)
-    state/    ○ one client data layer: cache, live updates, optimistic writes, Thread lanes
+    rpc/      ● derived VividRpc + VividApi clients
+    state/    ◐ one client data layer: cache, live updates, optimistic writes, Thread lanes
 
   agent/              everything that is Vivid-the-model rather than Vivid-the-product
-    runtime/  ◐ Flue: conversation transport, history, model adapter (today: packages/agent/runtime)
+    runtime/  ● Flue: conversation transport, history, model adapter
     prompts/  ○ Vivid's instructions and their fragments, versioned and testable
     tools/    ◐ the tools Vivid can call; each one is an RPC call to the server
     skills/   ○ Agent Skills mounted into a Run
     evals/    ○ `.live.test.ts` behavioural evaluations, one claim per file
 
   design/             one visual language for three surfaces
-    tokens/   ◐ colour, type, radius, motion values; web CSS + generated native (today: packages/design-tokens)
-    marks/    ○ Vivid's face and third-party service marks as data, drawn by web and native
+    tokens/   ● colour, type, radius, motion values; web CSS + generated native
+    marks/    ● Vivid's face and third-party service marks as data, drawn by web and native
     motion/   ○ shared durations, curves and spring values
 
   computer/           the Person's machine (docs/04-computer.md)
-    state/    ◐ manifest, capture, restore, archive (today: packages/computer)
+    state/    ◐ manifest, capture, restore, archive
     machine/  ○ the MachineProvider boundary and its boat.dev implementation
     desktop/  ○ viewing and taking over the desktop from a client
     device/   ○ the local daemon on the Person's own computer: permissioned exec, copy in and out
@@ -116,11 +116,3 @@ screen/<Name>.tsx     one route or pane; composes ui, owns no request
 ui/<group>/<Name>.tsx presentational components; no data access
 data/<domain>.ts      programs over @vivid/client for one domain; no JSX
 ```
-
-## Consolidation owed
-
-These are duplicates the structure above removes. Each is one change.
-
-| Today                                                                    | Becomes                                    |
-| ------------------------------------------------------------------------ | ------------------------------------------ |
-| Service marks drawn twice (web 144 lines, mobile 127) and the face twice | `design/marks` as data, two thin renderers |

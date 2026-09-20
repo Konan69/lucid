@@ -1,3 +1,4 @@
+import { faceGeometry, type FaceMood } from '@vivid/marks'
 import { cn } from './cn'
 
 export type FaceColor =
@@ -13,7 +14,7 @@ export type FaceColor =
   | 'magenta'
   | 'gray'
 
-export type FaceMood = 'neutral' | 'happy' | 'thinking' | 'asleep'
+export type { FaceMood }
 
 const COLOR_CLASS = {
   accent: 'bg-accent',
@@ -29,15 +30,11 @@ const COLOR_CLASS = {
   gray: 'bg-face-gray',
 } satisfies Record<FaceColor, string>
 
-/** Head tilt per mood: thinking leans back, happy leans in, the rest sit level. */
-const TILT_CLASS = {
-  neutral: '',
-  happy: 'rotate-4',
-  thinking: '-rotate-8',
-  asleep: '',
-} satisfies Record<FaceMood, string>
-
-/** Vivid's face: a disc with two eyes. Same family as Grok Bot's blobs, its own shape. */
+/**
+ * Vivid's face: a disc with two eyes. The proportions, the moods and the tilt come from
+ * `@vivid/marks`, so this disc and the one the native app draws in SVG stay the same face. Only
+ * the colour palette is web-only; native shows Vivid in the accent colour alone.
+ */
 export function Face({
   color = 'accent',
   mood = 'neutral',
@@ -51,15 +48,16 @@ export function Face({
   className?: string
   label?: string
 }) {
-  const eye = Math.max(2, Math.round(size * 0.11))
-  const eyeHeight = mood === 'asleep' ? Math.max(1.5, eye * 0.35) : Math.round(size * 0.24)
+  const geometry = faceGeometry(size, mood)
   // SAFETY: React forwards these validated CSS custom properties to the element.
   // The `face*` utilities in styles/index.css read them, so geometry stays one computation.
   const faceStyle = {
     '--face-size': `${size}px`,
-    '--face-eye-w': `${eye}px`,
-    '--face-eye-h': `${eyeHeight}px`,
-    '--face-eye-gap': `${Math.round(size * 0.22)}px`,
+    '--face-eye-w': `${geometry.eyeWidth}px`,
+    '--face-eye-h': `${geometry.eyeHeight}px`,
+    '--face-eye-gap': `${geometry.eyeGap}px`,
+    '--face-eye-top': `${geometry.eyeTopFraction * 100}%`,
+    '--face-tilt': `${geometry.tiltDegrees}deg`,
   } as React.CSSProperties
   return (
     <span
@@ -68,7 +66,6 @@ export function Face({
       className={cn(
         'relative inline-flex face shrink-0 items-center justify-center rounded-full',
         COLOR_CLASS[color],
-        TILT_CLASS[mood],
         className,
       )}
       style={faceStyle}

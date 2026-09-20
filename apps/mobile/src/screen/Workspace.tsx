@@ -7,7 +7,7 @@ import { useWorkspace, type Routes } from '../workspace'
 import { useResource } from '../data/resource/hook'
 import { normalizeServerUrl } from '../data/api'
 import { Card, ControlPill, Feedback, Field, Header, Label, Sheet, styles } from '../ui/ui'
-import { ToolMark } from '../ui/Mark'
+import { ServiceMark } from '../ui/Mark'
 import { useTheme, type ThemePreference } from '../theme'
 import { projects, type Project } from '../../../web/src/data/projects'
 
@@ -166,7 +166,7 @@ export function Connectors({ navigation }: NativeStackScreenProps<Routes, 'Conne
           connectorData.connectors.map((item) => (
             <Card key={item.id}>
               <View style={styles.row}>
-                <ToolMark id={item.id} size={28} />
+                <ServiceMark service={item.id} size={28} />
                 <Label style={{ flex: 1 }}>{item.metadata.name}</Label>
                 {item.status === 'connected' && <Check size={18} color={c['status-success']} />}
               </View>

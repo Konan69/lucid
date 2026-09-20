@@ -69,7 +69,7 @@ comes from the connector service.
 
 Vivid adapts this behavior to its three existing services through the
 `suggest_connector` tool and web/native `ConnectorRequestCard` components.
-Cards use Vivid's actual ToolMarks and surface/control tokens. They fetch status,
+Cards use Vivid's actual ServiceMarks and surface/control tokens. They fetch status,
 open authorization on a user press, refresh on return, and offer Continue after
 connection. The native button retains T3 menu/composer infrastructure and Vivid
 press motion. Grok's desktop MCP installation and multiple-account catalog are
