@@ -117,9 +117,6 @@ ui/<group>/<Name>.tsx presentational components; no data access
 data/<domain>.ts      programs over @vivid/client for one domain; no JSX
 ```
 
-Mobile's `screens/`, `components/` and `lib/` become `screen/`, `ui/` and `data/` when
-`client/state` replaces its hand-written API client.
-
 ## Consolidation owed
 
 These are duplicates the structure above removes. Each is one change.
@@ -127,4 +124,3 @@ These are duplicates the structure above removes. Each is one change.
 | Today                                                                    | Becomes                                    |
 | ------------------------------------------------------------------------ | ------------------------------------------ |
 | Service marks drawn twice (web 144 lines, mobile 127) and the face twice | `design/marks` as data, two thin renderers |
-| `contracts/src/runtime.ts`, one 461-line file                            | `contracts/src/<domain>.ts`                |

@@ -50,8 +50,8 @@ independent of state-machine choice.
 Local evidence:
 
 - [Web Connection request card](../apps/web/src/ui/connector/Card.tsx) and
-  [mobile Connection request card](../apps/mobile/src/components/connector/Card.tsx).
-- [Mobile resource store](../apps/mobile/src/lib/resource/store.ts): subscription lifetime,
+  [mobile Connection request card](../apps/mobile/src/ui/connector/Card.tsx).
+- [Mobile resource store](../apps/mobile/src/data/resource/store.ts): subscription lifetime,
   foreground refresh, and stale-response handling already have an owned implementation.
 - [Follow-up scheduler](../packages/agent/runtime/src/follow-up-scheduler.ts) and
   [task store](../packages/agent/runtime/src/task-store.ts).
