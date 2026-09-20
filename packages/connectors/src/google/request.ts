@@ -24,7 +24,7 @@ const requestGoogle = (
 /** Decodes a Google API JSON response with the schema owned by its connector tool. */
 export const requestGoogleJson = <Output, Encoded>(
   tool: string,
-  schema: Schema.Codec<Output, Encoded, never, never>,
+  schema: Schema.Codec<Output, Encoded>,
   url: string,
   init?: RequestInit,
 ): Effect.Effect<Output, ConnectorToolExecutionFailed> =>

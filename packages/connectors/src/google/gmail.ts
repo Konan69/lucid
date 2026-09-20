@@ -25,6 +25,9 @@ const SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/gmail.modify',
 ]
+const LIST_TOOL = 'gmail_list_messages'
+const SEND_TOOL = 'gmail_send_email'
+const SEARCH_TOOL = 'gmail_search'
 
 const MessageReference = Schema.Struct({ id: Schema.String })
 const MessageListResponse = Schema.Struct({
@@ -70,8 +73,9 @@ const headerValue = (headers: ReadonlyArray<typeof Header.Type>, name: string): 
 }
 
 /** Decodes the first plain-text body carried by a Gmail message payload. */
-const messageBody = (payload: typeof MessagePayload.Type | undefined): string => {
-  if (payload === undefined) return ''
+const messageBody = (payloadOption: Option.Option<typeof MessagePayload.Type>): string => {
+  if (Option.isNone(payloadOption)) return ''
+  const payload = payloadOption.value
   if (payload.body !== undefined && payload.body.data !== undefined) {
     return Buffer.from(payload.body.data, 'base64url').toString('utf-8')
   }
@@ -127,14 +131,11 @@ export class GmailConnector implements ConnectorWithTools {
 
   /** Returns Gmail tools with owned input and output schemas. */
   tools(): ReadonlyArray<ConnectorTool> {
-    const listTool = 'gmail_list_messages'
-    const sendTool = 'gmail_send_email'
-    const searchTool = 'gmail_search'
     const accessToken = (tool: string, credential: ConnectorCredential) =>
       this.getAccessToken(tool, credential)
     return [
       defineConnectorTool({
-        name: listTool,
+        name: LIST_TOOL,
         description: 'List recent emails from Gmail. Returns subject, sender, date, and snippet.',
         parameters: {
           type: 'object',
@@ -155,11 +156,11 @@ export class GmailConnector implements ConnectorWithTools {
         }),
         outputSchema: Schema.Array(EmailSummary),
         run: Effect.fn('GmailConnector.listMessages')(function* (input, credential) {
-          const token = yield* accessToken(listTool, credential)
+          const token = yield* accessToken(LIST_TOOL, credential)
           const maxResults = input.maxResults ?? 10
           const query = input.query ?? ''
           const list = yield* requestGoogleJson(
-            listTool,
+            LIST_TOOL,
             MessageListResponse,
             `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`,
             { headers: { Authorization: `Bearer ${token}` } },
@@ -169,7 +170,7 @@ export class GmailConnector implements ConnectorWithTools {
             messages.slice(0, maxResults),
             (message) =>
               requestGoogleJson(
-                listTool,
+                LIST_TOOL,
                 GmailMessage,
                 `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
                 { headers: { Authorization: `Bearer ${token}` } },
@@ -191,48 +192,9 @@ export class GmailConnector implements ConnectorWithTools {
           })
         }),
       }),
+      this.sendEmailTool(SEND_TOOL),
       defineConnectorTool({
-        name: sendTool,
-        description: 'Send an email via Gmail.',
-        parameters: {
-          type: 'object',
-          properties: {
-            to: { type: 'string', description: 'Recipient email address' },
-            subject: { type: 'string', description: 'Email subject' },
-            body: { type: 'string', description: 'Email body (plain text)' },
-          },
-          required: ['to', 'subject', 'body'],
-        },
-        inputSchema: Schema.Struct({
-          to: Schema.String,
-          subject: Schema.String,
-          body: Schema.String,
-        }),
-        outputSchema: Schema.Struct({ success: Schema.Literal(true), messageId: Schema.String }),
-        run: Effect.fn('GmailConnector.sendEmail')(function* (input, credential) {
-          const token = yield* accessToken(sendTool, credential)
-          const message = [
-            `To: ${input.to}`,
-            `Subject: ${input.subject}`,
-            'Content-Type: text/plain; charset=utf-8',
-            '',
-            input.body,
-          ].join('\r\n')
-          const data = yield* requestGoogleJson(
-            sendTool,
-            SendResponse,
-            'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
-            {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ raw: Buffer.from(message).toString('base64url') }),
-            },
-          )
-          return { success: true as const, messageId: data.id }
-        }),
-      }),
-      defineConnectorTool({
-        name: searchTool,
+        name: SEARCH_TOOL,
         description: 'Search emails with a Gmail query and return full details.',
         parameters: {
           type: 'object',
@@ -248,10 +210,10 @@ export class GmailConnector implements ConnectorWithTools {
         }),
         outputSchema: Schema.Array(EmailDetails),
         run: Effect.fn('GmailConnector.searchMessages')(function* (input, credential) {
-          const token = yield* accessToken(searchTool, credential)
+          const token = yield* accessToken(SEARCH_TOOL, credential)
           const maxResults = input.maxResults ?? 5
           const list = yield* requestGoogleJson(
-            searchTool,
+            SEARCH_TOOL,
             MessageListResponse,
             `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(input.query)}&maxResults=${maxResults}`,
             { headers: { Authorization: `Bearer ${token}` } },
@@ -260,7 +222,7 @@ export class GmailConnector implements ConnectorWithTools {
             list.messages ?? [],
             (message) =>
               requestGoogleJson(
-                searchTool,
+                SEARCH_TOOL,
                 GmailMessage,
                 `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}?format=full`,
                 { headers: { Authorization: `Bearer ${token}` } },
@@ -278,13 +240,60 @@ export class GmailConnector implements ConnectorWithTools {
               from: headerValue(headers, 'From'),
               to: headerValue(headers, 'To'),
               date: headerValue(headers, 'Date'),
-              body: messageBody(data.payload).slice(0, 2_000),
+              body: messageBody(
+                data.payload === undefined ? Option.none() : Option.some(data.payload),
+              ).slice(0, 2_000),
               snippet: data.snippet,
             }
           })
         }),
       }),
     ]
+  }
+
+  /** Builds the Gmail write tool separately so the public tool registry stays declarative. */
+  private sendEmailTool(tool: string): ConnectorTool {
+    const accessToken = (credential: ConnectorCredential) => this.getAccessToken(tool, credential)
+    return defineConnectorTool({
+      name: tool,
+      description: 'Send an email via Gmail.',
+      parameters: {
+        type: 'object',
+        properties: {
+          to: { type: 'string', description: 'Recipient email address' },
+          subject: { type: 'string', description: 'Email subject' },
+          body: { type: 'string', description: 'Email body (plain text)' },
+        },
+        required: ['to', 'subject', 'body'],
+      },
+      inputSchema: Schema.Struct({
+        to: Schema.String,
+        subject: Schema.String,
+        body: Schema.String,
+      }),
+      outputSchema: Schema.Struct({ success: Schema.Literal(true), messageId: Schema.String }),
+      run: Effect.fn('GmailConnector.sendEmail')(function* (input, credential) {
+        const token = yield* accessToken(credential)
+        const message = [
+          `To: ${input.to}`,
+          `Subject: ${input.subject}`,
+          'Content-Type: text/plain; charset=utf-8',
+          '',
+          input.body,
+        ].join('\r\n')
+        const data = yield* requestGoogleJson(
+          tool,
+          SendResponse,
+          'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ raw: Buffer.from(message).toString('base64url') }),
+          },
+        )
+        return { success: true as const, messageId: data.id }
+      }),
+    })
   }
 
   /** Returns a valid access token, refreshing the credential when required. */

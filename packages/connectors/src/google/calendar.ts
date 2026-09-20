@@ -24,6 +24,9 @@ const SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/calendar.events',
 ]
+const LIST_TOOL = 'calendar_list_events'
+const CREATE_TOOL = 'calendar_create_event'
+const DELETE_TOOL = 'calendar_delete_event'
 
 const CalendarDate = Schema.Struct({
   dateTime: Schema.optionalKey(Schema.String),
@@ -100,14 +103,11 @@ export class CalendarConnector implements ConnectorWithTools {
 
   /** Returns Calendar tools with owned input and output schemas. */
   tools(): ReadonlyArray<ConnectorTool> {
-    const listTool = 'calendar_list_events'
-    const createTool = 'calendar_create_event'
-    const deleteTool = 'calendar_delete_event'
     const accessToken = (tool: string, credential: ConnectorCredential) =>
       this.getAccessToken(tool, credential)
     return [
       defineConnectorTool({
-        name: listTool,
+        name: LIST_TOOL,
         description: 'List upcoming calendar events from Google Calendar.',
         parameters: {
           type: 'object',
@@ -130,13 +130,13 @@ export class CalendarConnector implements ConnectorWithTools {
         }),
         outputSchema: Schema.Array(CalendarEventOutput),
         run: Effect.fn('CalendarConnector.listEvents')(function* (input, credential) {
-          const token = yield* accessToken(listTool, credential)
+          const token = yield* accessToken(LIST_TOOL, credential)
           const timeMin = input.timeMin ?? new Date().toISOString()
           const timeMax =
             input.timeMax ?? new Date(Date.now() + 7 * 24 * 60 * 60 * 1_000).toISOString()
           const maxResults = input.maxResults ?? 10
           const data = yield* requestGoogleJson(
-            listTool,
+            LIST_TOOL,
             CalendarEventList,
             `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&maxResults=${maxResults}&singleEvents=true&orderBy=startTime`,
             { headers: { Authorization: `Bearer ${token}` } },
@@ -152,62 +152,9 @@ export class CalendarConnector implements ConnectorWithTools {
           }))
         }),
       }),
+      this.createEventTool(CREATE_TOOL),
       defineConnectorTool({
-        name: createTool,
-        description: 'Create a new event on Google Calendar.',
-        parameters: {
-          type: 'object',
-          properties: {
-            title: { type: 'string', description: 'Event title' },
-            start: { type: 'string', description: 'Start time (ISO 8601)' },
-            end: { type: 'string', description: 'End time (ISO 8601)' },
-            description: { type: 'string', description: 'Event description' },
-            location: { type: 'string', description: 'Event location' },
-          },
-          required: ['title', 'start', 'end'],
-        },
-        inputSchema: Schema.Struct({
-          title: Schema.String,
-          start: Schema.String,
-          end: Schema.String,
-          description: Schema.optionalKey(Schema.String),
-          location: Schema.optionalKey(Schema.String),
-        }),
-        outputSchema: Schema.Struct({
-          success: Schema.Literal(true),
-          eventId: Schema.String,
-          link: Schema.String,
-          title: Schema.String,
-        }),
-        run: Effect.fn('CalendarConnector.createEvent')(function* (input, credential) {
-          const token = yield* accessToken(createTool, credential)
-          const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
-          const event = yield* requestGoogleJson(
-            createTool,
-            CreatedCalendarEvent,
-            'https://www.googleapis.com/calendar/v3/calendars/primary/events',
-            {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                summary: input.title,
-                description: input.description ?? '',
-                location: input.location ?? '',
-                start: { dateTime: input.start, timeZone: timezone },
-                end: { dateTime: input.end, timeZone: timezone },
-              }),
-            },
-          )
-          return {
-            success: true as const,
-            eventId: event.id,
-            link: event.htmlLink,
-            title: event.summary,
-          }
-        }),
-      }),
-      defineConnectorTool({
-        name: deleteTool,
+        name: DELETE_TOOL,
         description: 'Delete an event from Google Calendar.',
         parameters: {
           type: 'object',
@@ -217,9 +164,9 @@ export class CalendarConnector implements ConnectorWithTools {
         inputSchema: Schema.Struct({ eventId: Schema.String }),
         outputSchema: Schema.Struct({ success: Schema.Literal(true) }),
         run: Effect.fn('CalendarConnector.deleteEvent')(function* (input, credential) {
-          const token = yield* accessToken(deleteTool, credential)
+          const token = yield* accessToken(DELETE_TOOL, credential)
           yield* requestGoogleText(
-            deleteTool,
+            DELETE_TOOL,
             `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(input.eventId)}`,
             { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
           )
@@ -227,6 +174,65 @@ export class CalendarConnector implements ConnectorWithTools {
         }),
       }),
     ]
+  }
+
+  /** Builds the Calendar write tool separately so the public tool registry stays declarative. */
+  private createEventTool(tool: string): ConnectorTool {
+    const accessToken = (credential: ConnectorCredential) => this.getAccessToken(tool, credential)
+    return defineConnectorTool({
+      name: tool,
+      description: 'Create a new event on Google Calendar.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Event title' },
+          start: { type: 'string', description: 'Start time (ISO 8601)' },
+          end: { type: 'string', description: 'End time (ISO 8601)' },
+          description: { type: 'string', description: 'Event description' },
+          location: { type: 'string', description: 'Event location' },
+        },
+        required: ['title', 'start', 'end'],
+      },
+      inputSchema: Schema.Struct({
+        title: Schema.String,
+        start: Schema.String,
+        end: Schema.String,
+        description: Schema.optionalKey(Schema.String),
+        location: Schema.optionalKey(Schema.String),
+      }),
+      outputSchema: Schema.Struct({
+        success: Schema.Literal(true),
+        eventId: Schema.String,
+        link: Schema.String,
+        title: Schema.String,
+      }),
+      run: Effect.fn('CalendarConnector.createEvent')(function* (input, credential) {
+        const token = yield* accessToken(credential)
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+        const event = yield* requestGoogleJson(
+          tool,
+          CreatedCalendarEvent,
+          'https://www.googleapis.com/calendar/v3/calendars/primary/events',
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              summary: input.title,
+              description: input.description ?? '',
+              location: input.location ?? '',
+              start: { dateTime: input.start, timeZone: timezone },
+              end: { dateTime: input.end, timeZone: timezone },
+            }),
+          },
+        )
+        return {
+          success: true as const,
+          eventId: event.id,
+          link: event.htmlLink,
+          title: event.summary,
+        }
+      }),
+    })
   }
 
   /** Returns a valid access token, refreshing the credential when required. */
