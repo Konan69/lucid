@@ -1,4 +1,4 @@
-import { useEffectEvent, useState } from 'react'
+import { useEffectEvent, useState, type ReactElement } from 'react'
 import { FlatList, Platform, Pressable, View } from 'react-native'
 import { useFocusEffect, useNavigation, type NavigationProp } from '@react-navigation/native'
 import {
@@ -28,11 +28,12 @@ import {
   useSidebar,
   useThreadActivity,
   useWorkspace,
+  type Preferences,
   type Routes,
   type ThreadActivity,
 } from '../workspace'
 import { useResource } from '../lib/resource'
-import { type Thread } from '../lib/models'
+import { type Notification, type Thread } from '../lib/models'
 import { useTheme } from '../theme'
 import {
   ControlPill,
@@ -61,6 +62,10 @@ type SidebarThread = Thread & {
   when: 'today' | 'yesterday' | 'week' | 'earlier'
 }
 type Row = { id: string; thread: SidebarThread } | { id: string; label: string; count?: number }
+type ThemeColors = ReturnType<typeof useTheme>['colors']
+type ThreadAction = (thread: SidebarThread, name: string) => void
+type RequestBody = Record<string, string | number | boolean | null>
+
 function threadDate(updatedAt: number) {
   const now = new Date()
   const updated = new Date(updatedAt)
@@ -88,6 +93,910 @@ function threadDate(updatedAt: number) {
               days < 7 ? { weekday: 'short' } : { month: 'short', day: 'numeric' },
             ),
   }
+}
+
+/** Builds sidebar thread state without allocating object spreads inside collection transforms. */
+function buildSidebarThreads(input: {
+  readonly conversations: readonly Thread[]
+  readonly query: string
+  readonly pinned: readonly string[]
+  readonly settled: readonly string[]
+  readonly activity: Readonly<Record<string, ThreadActivity>>
+  readonly unread: ReadonlySet<string>
+}) {
+  const threads: SidebarThread[] = []
+  const normalizedQuery = input.query.toLowerCase()
+  for (const thread of input.conversations) {
+    if (!(thread.title + ' ' + thread.preview).toLowerCase().includes(normalizedQuery)) continue
+    const status =
+      input.activity[thread.id] === 'working'
+        ? 'working'
+        : input.settled.includes(thread.id)
+          ? 'done'
+          : (input.activity[thread.id] ?? (input.unread.has(thread.id) ? 'attention' : 'ready'))
+    threads.push({
+      id: thread.id,
+      title: thread.title,
+      preview: thread.preview,
+      updatedAt: thread.updatedAt,
+      archived: thread.archived,
+      when: threadDate(thread.updatedAt).when,
+      pinned: input.pinned.includes(thread.id),
+      status,
+    })
+  }
+  return threads
+}
+
+/** Preserves lane header and thread ordering without spread allocation inside map. */
+function buildRows(active: SidebarThread[]) {
+  const rows: Row[] = []
+  for (const lane of laneConversations(active).lanes) {
+    rows.push({
+      id: 'lane:' + lane.key,
+      label: lane.label,
+      count: lane.count ? lane.items.length : undefined,
+    })
+    for (const thread of lane.items) rows.push({ id: thread.id, thread })
+  }
+  return rows
+}
+
+/** Renders the status glyph used by the existing conversation row. */
+function renderStatusIcon(status: ThreadActivity, colors: ThemeColors) {
+  const color = colors[statusColorKey(status)]
+  if (status === 'working') return <CircleDashed size={13} color={color} strokeWidth={1.6} />
+  if (status === 'attention') return <CircleHelp size={13} color={color} strokeWidth={1.6} />
+  if (status === 'failed') return <CircleAlert size={13} color={color} strokeWidth={1.6} />
+  if (status === 'done') return <Check size={13} color={color} strokeWidth={1.6} />
+  return null
+}
+
+/** Selects the semantic status color without coupling it to row rendering. */
+function statusColorKey(status: ThreadActivity): keyof ThemeColors {
+  if (status === 'working') return 'status-working'
+  if (status === 'failed') return 'status-danger'
+  if (status === 'done') return 'status-success'
+  return 'status-attention'
+}
+
+/** Selects the face mood used for active and settled conversation states. */
+function statusMood(status: ThreadActivity) {
+  if (status === 'working') return 'thinking' as const
+  if (status === 'done') return 'asleep' as const
+  return 'neutral' as const
+}
+
+/** Builds the existing native and sheet action list for one thread. */
+function threadActions(thread: SidebarThread, settled: readonly string[]) {
+  return [
+    { id: 'pin', title: thread.pinned ? 'Unpin' : 'Pin' },
+    { id: 'done', title: settled.includes(thread.id) ? 'Reopen' : 'Mark done' },
+    { id: 'rename', title: 'Rename' },
+    { id: 'archive', title: thread.archived ? 'Restore' : 'Archive' },
+    { id: 'delete', title: 'Delete', attributes: { destructive: true } },
+  ]
+}
+
+/** Renders one conversation row while the Home screen owns actions and selection. */
+function ThreadRow({
+  thread,
+  activeThread,
+  colors: c,
+  backgroundColor,
+  width,
+  open,
+  settled,
+  onSelect,
+  onAction,
+}: {
+  readonly thread: SidebarThread
+  readonly activeThread: string
+  readonly colors: ThemeColors
+  readonly backgroundColor: string
+  readonly width: number
+  readonly open: ReturnType<typeof useOpenThread>
+  readonly settled: readonly string[]
+  readonly onSelect: (thread: SidebarThread) => void
+  readonly onAction: ThreadAction
+}) {
+  const current = activeThread === thread.id
+  const project = projectByConversation.get(thread.title)
+  const row = (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: current }}
+      accessibilityLabel={thread.title + (thread.status !== 'ready' ? ', ' + thread.status : '')}
+      onPress={() => open(thread.id, thread.title)}
+      onLongPress={Platform.OS === 'web' ? () => onSelect(thread) : () => undefined}
+      style={({ pressed }) => ({
+        minHeight: m['card-row-h'],
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: m['radius-card'] * m['phone-radius-factor'],
+        borderWidth: 0.5,
+        borderColor: current ? c['line-3'] : c['line-1'],
+        backgroundColor: pressed ? c['wash-hover'] : c[current ? 'surface-3' : 'surface-2'],
+        gap: 3,
+      })}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, height: 20 }}>
+        <Face size={18} mood={statusMood(thread.status)} />
+        {renderStatusIcon(thread.status, c)}
+        {thread.pinned && <Pin size={11} color={c['ink-4']} />}
+        <View style={{ flex: 1 }} />
+        <Label size="micro" tone="ink-4">
+          {threadDate(thread.updatedAt).label}
+        </Label>
+      </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <Label size="footnote" numberOfLines={1} style={{ flex: 1, fontWeight: '500' }}>
+          {thread.title}
+        </Label>
+        {!!project && (
+          <Label size="micro" tone="ink-4" numberOfLines={1} style={{ maxWidth: '38%' }}>
+            {project}
+          </Label>
+        )}
+      </View>
+      {!!thread.preview && (
+        <Label size="label" tone="ink-3" numberOfLines={1} style={{ fontWeight: '400' }}>
+          {thread.preview}
+        </Label>
+      )}
+    </Pressable>
+  )
+  const content =
+    Platform.OS === 'web' ? (
+      row
+    ) : (
+      <ControlPillMenu
+        shouldOpenOnLongPress
+        actions={threadActions(thread, settled)}
+        onPressAction={({ nativeEvent }) => onAction(thread, nativeEvent.event)}
+      >
+        {row}
+      </ControlPillMenu>
+    )
+  return (
+    <View style={{ marginBottom: 6 }}>
+      {Platform.OS === 'web' ? (
+        content
+      ) : (
+        <ThreadSwipeable
+          resetKey={thread.id}
+          backgroundColor={backgroundColor}
+          fullSwipeWidth={width}
+          threadTitle={thread.title}
+          fullSwipeAction="primary"
+          onDelete={() => onAction(thread, 'delete')}
+          primaryAction={{
+            icon: thread.archived ? 'arrow.uturn.backward' : 'archivebox',
+            label: thread.archived ? 'Restore' : 'Archive',
+            accessibilityLabel: thread.archived ? 'Restore conversation' : 'Archive conversation',
+            onPress: () => onAction(thread, 'archive'),
+          }}
+        >
+          {() => content}
+        </ThreadSwipeable>
+      )}
+    </View>
+  )
+}
+
+/** Renders sidebar chrome and workspace status above navigation links. */
+function HomeHeader({
+  colors: c,
+  sidebar,
+  workingCount,
+  onToggleSearch,
+  onStart,
+}: {
+  readonly colors: ThemeColors
+  readonly sidebar: ReturnType<typeof useSidebar>
+  readonly workingCount: number
+  readonly onToggleSearch: () => void
+  readonly onStart: () => void
+}) {
+  return (
+    <>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          height: m['topbar-h'],
+          paddingHorizontal: 8,
+        }}
+      >
+        <ControlPill icon={PanelLeft} accessibilityLabel="Close sidebar" onPress={sidebar.close} />
+        <View style={{ flex: 1 }} />
+        <ControlPill
+          icon={Search}
+          accessibilityLabel="Search conversations"
+          onPress={onToggleSearch}
+        />
+      </View>
+      <MotionPressable
+        accessibilityRole="button"
+        accessibilityLabel="Vivid workspace"
+        onPress={onStart}
+        style={({ pressed }) => ({
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          minHeight: 44,
+          marginHorizontal: 8,
+          paddingHorizontal: 10,
+          borderRadius: m['radius-row'],
+          backgroundColor: pressed ? c['wash-hover'] : 'transparent',
+        })}
+      >
+        <Face size={22} mood={workingCount ? 'thinking' : 'neutral'} />
+        <Label size="footnote" style={{ flex: 1 }}>
+          Vivid
+        </Label>
+        {workingCount > 0 && (
+          <Label size="micro" style={{ color: c['status-working'] }}>
+            {workingCount} working
+          </Label>
+        )}
+        <ChevronRight size={16} color={c['ink-3']} />
+      </MotionPressable>
+    </>
+  )
+}
+
+/** Renders either conversation search or the fixed workspace destinations. */
+function WorkspaceLinks({
+  colors: c,
+  sidebar,
+  navigation,
+  searching,
+  query,
+  onQueryChange,
+}: {
+  readonly colors: ThemeColors
+  readonly sidebar: ReturnType<typeof useSidebar>
+  readonly navigation: NavigationProp<Routes>
+  readonly searching: boolean
+  readonly query: string
+  readonly onQueryChange: (query: string) => void
+}) {
+  if (searching) {
+    return (
+      <View style={{ paddingHorizontal: 12, paddingVertical: 8 }}>
+        <Field
+          accessibilityLabel="Search conversations"
+          placeholder="Search conversations"
+          value={query}
+          onChangeText={onQueryChange}
+          autoFocus
+        />
+      </View>
+    )
+  }
+  return (
+    <View style={{ paddingHorizontal: 8 }}>
+      {(
+        [
+          { name: 'Routines', icon: Repeat2 },
+          { name: 'Projects', icon: FolderKanban, count: countProjects(projects) },
+          { name: 'Library', icon: Library },
+        ] as const
+      ).map(({ name, icon: Icon, ...rest }) => (
+        <MotionPressable
+          key={name}
+          accessibilityRole="button"
+          accessibilityState={{ selected: sidebar.activeRoute === name }}
+          onPress={() => {
+            sidebar.close()
+            navigation.navigate(name)
+          }}
+          style={({ pressed }) => ({
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+            minHeight: 44,
+            paddingHorizontal: 10,
+            borderRadius: m['radius-row'] * m['phone-radius-factor'],
+            backgroundColor: pressed
+              ? c['wash-hover']
+              : sidebar.activeRoute === name
+                ? c['wash-selected']
+                : 'transparent',
+          })}
+        >
+          <View style={{ width: 22, alignItems: 'center' }}>
+            <Icon pointerEvents="none" size={18} strokeWidth={1.6} color={c['ink-3']} />
+          </View>
+          <Label size="label" tone="ink-2" style={{ flex: 1 }}>
+            {name}
+          </Label>
+          {'count' in rest && rest.count > 0 && (
+            <Label size="micro" tone="ink-4">
+              {rest.count}
+            </Label>
+          )}
+        </MotionPressable>
+      ))}
+    </View>
+  )
+}
+
+/** Renders the current conversation filter and list actions. */
+function ConversationHeader({
+  filter,
+  onOpenFilter,
+  onStart,
+}: {
+  readonly filter: string
+  readonly onOpenFilter: () => void
+  readonly onStart: () => void
+}) {
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingLeft: 18,
+        paddingRight: 8,
+        marginTop: 12,
+        minHeight: 44,
+      }}
+    >
+      <Label size="label" style={{ flex: 1 }}>
+        {filter === 'All conversations' ? 'Conversations' : filter}
+      </Label>
+      <ControlPill
+        icon={ListFilter}
+        accessibilityLabel="Filter conversations"
+        onPress={onOpenFilter}
+      />
+      <ControlPill icon={Plus} accessibilityLabel="New conversation" onPress={onStart} />
+    </View>
+  )
+}
+
+/** Renders settled and archived conversation sections below active lanes. */
+function ConversationSections({
+  colors: c,
+  done,
+  archives,
+  doneOpen,
+  archivedOpen,
+  onToggleDone,
+  onToggleArchived,
+  renderThread,
+}: {
+  readonly colors: ThemeColors
+  readonly done: readonly SidebarThread[]
+  readonly archives: readonly SidebarThread[]
+  readonly doneOpen: boolean
+  readonly archivedOpen: boolean
+  readonly onToggleDone: () => void
+  readonly onToggleArchived: () => void
+  readonly renderThread: (thread: SidebarThread) => ReactElement | null
+}) {
+  return (
+    <View>
+      <MotionPressable
+        accessibilityRole="button"
+        accessibilityLabel="Done conversations"
+        accessibilityState={{ expanded: doneOpen }}
+        onPress={onToggleDone}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          minHeight: 44,
+          paddingHorizontal: 10,
+        }}
+      >
+        <Check size={16} color={c['ink-4']} />
+        <Label size="label" tone="ink-3" style={{ flex: 1 }}>
+          Done
+        </Label>
+        <Label size="micro" tone="ink-4">
+          {done.length}
+        </Label>
+        {doneOpen ? (
+          <ChevronDown size={14} color={c['ink-4']} />
+        ) : (
+          <ChevronRight size={14} color={c['ink-4']} />
+        )}
+      </MotionPressable>
+      {doneOpen &&
+        (done.length ? (
+          done.map(renderThread)
+        ) : (
+          <Label size="label" tone="ink-4" style={{ padding: 10 }}>
+            Conversations you've settled. They keep their history.
+          </Label>
+        ))}
+      <MotionPressable
+        accessibilityRole="button"
+        accessibilityLabel="Archived conversations"
+        accessibilityState={{ expanded: archivedOpen }}
+        onPress={onToggleArchived}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          minHeight: 44,
+          paddingHorizontal: 10,
+        }}
+      >
+        <Archive size={16} color={c['ink-3']} />
+        <Label size="label" tone="ink-3" style={{ flex: 1 }}>
+          Archived
+        </Label>
+        <Label size="micro" tone="ink-4">
+          {archives.length}
+        </Label>
+        {archivedOpen ? (
+          <ChevronDown size={14} color={c['ink-4']} />
+        ) : (
+          <ChevronRight size={14} color={c['ink-4']} />
+        )}
+      </MotionPressable>
+      {archivedOpen &&
+        (archives.length ? (
+          archives.map(renderThread)
+        ) : (
+          <Label size="label" tone="ink-4" style={{ padding: 10 }}>
+            No archived conversations
+          </Label>
+        ))}
+    </View>
+  )
+}
+
+/** Renders active lanes and the settled/archive footer using the existing scroll gate. */
+function ConversationList({
+  gate,
+  rows,
+  loading,
+  resourceError,
+  error,
+  query,
+  filter,
+  colors,
+  done,
+  archives,
+  doneOpen,
+  archivedOpen,
+  onRefresh,
+  onClearError,
+  onToggleDone,
+  onToggleArchived,
+  renderThread,
+}: {
+  readonly gate: ReturnType<typeof useSwipeableScrollGate>
+  readonly rows: readonly Row[]
+  readonly loading: boolean
+  readonly resourceError: string
+  readonly error: string
+  readonly query: string
+  readonly filter: string
+  readonly colors: ThemeColors
+  readonly done: readonly SidebarThread[]
+  readonly archives: readonly SidebarThread[]
+  readonly doneOpen: boolean
+  readonly archivedOpen: boolean
+  readonly onRefresh: () => Promise<void>
+  readonly onClearError: () => void
+  readonly onToggleDone: () => void
+  readonly onToggleArchived: () => void
+  readonly renderThread: (thread: SidebarThread) => ReactElement | null
+}) {
+  return (
+    <SwipeableScrollGateProvider enabled={gate.swipeEnabled}>
+      <FlatList
+        data={rows}
+        keyExtractor={(row) => row.id}
+        {...gate.scrollGateHandlers}
+        scrollEventThrottle={16}
+        refreshing={loading}
+        onRefresh={onRefresh}
+        keyboardDismissMode="on-drag"
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingHorizontal: 10, paddingBottom: 8 }}
+        ListHeaderComponent={
+          <Feedback
+            error={error || resourceError}
+            retry={() => {
+              onClearError()
+              void onRefresh()
+            }}
+          />
+        }
+        ListEmptyComponent={
+          !loading && !resourceError ? (
+            <Label size="label" tone="ink-4" style={{ padding: 12 }}>
+              {query || filter !== 'All conversations'
+                ? 'No matching conversations'
+                : 'Your conversations will appear here.'}
+            </Label>
+          ) : null
+        }
+        renderItem={({ item }) =>
+          'thread' in item ? (
+            renderThread(item.thread)
+          ) : (
+            <View
+              style={{
+                minHeight: m['caption-h'],
+                paddingHorizontal: 10,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <Label size="micro" tone="ink-3">
+                {item.label}
+              </Label>
+              {item.count !== undefined && (
+                <Label size="micro" tone="ink-4">
+                  {item.count}
+                </Label>
+              )}
+            </View>
+          )
+        }
+        ListFooterComponent={
+          <ConversationSections
+            colors={colors}
+            done={done}
+            archives={archives}
+            doneOpen={doneOpen}
+            archivedOpen={archivedOpen}
+            onToggleDone={onToggleDone}
+            onToggleArchived={onToggleArchived}
+            renderThread={renderThread}
+          />
+        }
+      />
+    </SwipeableScrollGateProvider>
+  )
+}
+
+/** Renders the personal settings destination at the bottom of the sidebar. */
+function PersonalFooter({
+  colors: c,
+  bottomInset,
+  sidebar,
+  navigation,
+}: {
+  readonly colors: ThemeColors
+  readonly bottomInset: number
+  readonly sidebar: ReturnType<typeof useSidebar>
+  readonly navigation: NavigationProp<Routes>
+}) {
+  return (
+    <MotionPressable
+      accessibilityRole="button"
+      accessibilityLabel="You, Personal. Open settings"
+      onPress={() => {
+        sidebar.close()
+        navigation.navigate('Settings')
+      }}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        minHeight: 48,
+        marginHorizontal: 8,
+        marginBottom: Math.max(bottomInset, 8),
+        paddingHorizontal: 10,
+        borderRadius: m['radius-row'],
+        backgroundColor: pressed ? c['wash-hover'] : 'transparent',
+      })}
+    >
+      <View
+        style={{
+          width: 26,
+          height: 26,
+          borderRadius: 13,
+          backgroundColor: c['surface-3'],
+          borderWidth: 0.5,
+          borderColor: c['line-2'],
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Label size="micro">Y</Label>
+      </View>
+      <Label size="label" tone="ink-2" style={{ flex: 1 }}>
+        You
+      </Label>
+      <Label size="micro" tone="ink-4">
+        Personal
+      </Label>
+    </MotionPressable>
+  )
+}
+
+/** Renders filter, action, and rename sheets while Home owns their state. */
+function HomeSheets({
+  colors: c,
+  filterOpen,
+  filter,
+  selected,
+  rename,
+  settled,
+  error,
+  api,
+  onCloseFilter,
+  onFilter,
+  onCloseSelected,
+  onAction,
+  onCloseRename,
+  onRenamed,
+}: {
+  readonly colors: ThemeColors
+  readonly filterOpen: boolean
+  readonly filter: string
+  readonly selected: SidebarThread | null
+  readonly rename: Thread | null
+  readonly settled: readonly string[]
+  readonly error: string
+  readonly api: ReturnType<typeof useWorkspace>['api']
+  readonly onCloseFilter: () => void
+  readonly onFilter: (filter: string) => void
+  readonly onCloseSelected: () => void
+  readonly onAction: ThreadAction
+  readonly onCloseRename: () => void
+  readonly onRenamed: () => Promise<void>
+}) {
+  return (
+    <>
+      {filterOpen && (
+        <Sheet title="Conversations" onClose={onCloseFilter}>
+          {['All conversations', 'Needs you', 'Working', 'Pinned'].map((name) => (
+            <MotionPressable
+              key={name}
+              accessibilityRole="button"
+              accessibilityState={{ selected: filter === name }}
+              onPress={() => onFilter(name)}
+              style={{ flexDirection: 'row', alignItems: 'center', minHeight: 48 }}
+            >
+              <Label style={{ flex: 1 }}>{name}</Label>
+              {filter === name && <Check size={18} color={c.accent} />}
+            </MotionPressable>
+          ))}
+        </Sheet>
+      )}
+      {selected !== null && (
+        <Sheet title={selected.title} onClose={onCloseSelected}>
+          {threadActions(selected, settled).map((item) => (
+            <ControlPill
+              key={item.id}
+              label={item.title}
+              danger={item.id === 'delete'}
+              onPress={() => {
+                onAction(selected, item.id)
+                if (item.id === 'rename') onCloseSelected()
+              }}
+            />
+          ))}
+          <Feedback error={error} />
+        </Sheet>
+      )}
+      {rename !== null && (
+        <EditSheet
+          title="Rename conversation"
+          fields={[{ key: 'title', label: 'Name', value: rename.title }]}
+          onClose={onCloseRename}
+          onSave={async (values) => {
+            await api.request('/api/conversations/' + rename.id, 'PATCH', values)
+            await onRenamed()
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+type HomeCollections = {
+  readonly workingCount: number
+  readonly done: readonly SidebarThread[]
+  readonly archives: readonly SidebarThread[]
+  readonly rows: readonly Row[]
+}
+
+/** Derives sidebar collections from resource, preference, and activity snapshots. */
+function deriveHomeCollections(input: {
+  readonly conversations: readonly Thread[]
+  readonly notifications: readonly Notification[]
+  readonly query: string
+  readonly filter: string
+  readonly pinned: readonly string[]
+  readonly settled: readonly string[]
+  readonly activity: Readonly<Record<string, ThreadActivity>>
+}): HomeCollections {
+  const notificationConversationIds = input.notifications.flatMap((notification) =>
+    !notification.readAt && notification.conversationId !== null
+      ? [notification.conversationId]
+      : [],
+  )
+  const threads = buildSidebarThreads({
+    conversations: input.conversations,
+    query: input.query,
+    pinned: input.pinned,
+    settled: input.settled,
+    activity: input.activity,
+    unread: new Set(notificationConversationIds),
+  })
+  const active = threads.filter(
+    (thread) =>
+      !thread.archived &&
+      thread.status !== 'done' &&
+      (input.filter === 'All conversations' ||
+        (input.filter === 'Pinned' && thread.pinned) ||
+        (input.filter === 'Working' && thread.status === 'working') ||
+        (input.filter === 'Needs you' && ['attention', 'approve'].includes(thread.status))),
+  )
+  return {
+    workingCount: Object.values(input.activity).filter((status) => status === 'working').length,
+    done: threads.filter((thread) => !thread.archived && thread.status === 'done'),
+    archives: threads.filter((thread) => thread.archived),
+    rows: buildRows(active),
+  }
+}
+
+/** Creates thread mutation callbacks while keeping API and preference failures in Home state. */
+function createThreadAction(input: {
+  readonly api: ReturnType<typeof useWorkspace>['api']
+  readonly preferences: Preferences
+  readonly savePreferences: ReturnType<typeof useWorkspace>['savePreferences']
+  readonly refresh: () => Promise<void>
+  readonly onClearSelection: () => void
+  readonly onRename: (thread: Thread) => void
+  readonly onError: (message: string) => void
+}) {
+  const change = async (thread: Thread, method: string, body?: RequestBody) => {
+    try {
+      await input.api.request('/api/conversations/' + thread.id, method, body)
+      input.onClearSelection()
+      await input.refresh()
+    } catch (cause) {
+      input.onError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+  const toggle = async (thread: Thread, field: 'pinnedThreads' | 'settledThreads') => {
+    const ids = input.preferences[field] ?? []
+    try {
+      await input.savePreferences({
+        ...input.preferences,
+        [field]: ids.includes(thread.id)
+          ? ids.filter((id) => id !== thread.id)
+          : [...ids, thread.id],
+      })
+      input.onClearSelection()
+    } catch (cause) {
+      input.onError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+  return (thread: SidebarThread, name: string) => {
+    if (name === 'rename') input.onRename(thread)
+    else if (name === 'pin') void toggle(thread, 'pinnedThreads')
+    else if (name === 'done') void toggle(thread, 'settledThreads')
+    else if (name === 'archive') void change(thread, 'PATCH', { archived: !thread.archived })
+    else if (name === 'delete') confirmDelete(thread.title, () => void change(thread, 'DELETE'))
+  }
+}
+
+type HomeViewProps = {
+  readonly backgroundColor: string
+  readonly topInset: number
+  readonly bottomInset: number
+  readonly onWidth: (width: number) => void
+  readonly colors: ThemeColors
+  readonly sidebar: ReturnType<typeof useSidebar>
+  readonly navigation: NavigationProp<Routes>
+  readonly searching: boolean
+  readonly workingCount: number
+  readonly onToggleSearch: () => void
+  readonly onStart: () => void
+  readonly query: string
+  readonly onQueryChange: (query: string) => void
+  readonly filter: string
+  readonly onOpenFilter: () => void
+  readonly gate: ReturnType<typeof useSwipeableScrollGate>
+  readonly collections: HomeCollections
+  readonly loading: boolean
+  readonly resourceError: string
+  readonly error: string
+  readonly onRefresh: () => Promise<void>
+  readonly onClearError: () => void
+  readonly doneOpen: boolean
+  readonly archivedOpen: boolean
+  readonly onToggleDone: () => void
+  readonly onToggleArchived: () => void
+  readonly renderThread: (thread: SidebarThread) => ReactElement | null
+  readonly filterOpen: boolean
+  readonly onCloseFilter: () => void
+  readonly onFilter: (filter: string) => void
+  readonly selected: SidebarThread | null
+  readonly rename: Thread | null
+  readonly settled: readonly string[]
+  readonly api: ReturnType<typeof useWorkspace>['api']
+  readonly onCloseSelected: () => void
+  readonly onAction: ThreadAction
+  readonly onCloseRename: () => void
+  readonly onRenamed: () => Promise<void>
+}
+
+/** Composes the complete sidebar from focused render-only sections. */
+function HomeView(props: HomeViewProps) {
+  return (
+    <View
+      onLayout={(event) => props.onWidth(event.nativeEvent.layout.width)}
+      style={{ flex: 1, backgroundColor: props.backgroundColor, paddingTop: props.topInset }}
+    >
+      <HomeHeader
+        colors={props.colors}
+        sidebar={props.sidebar}
+        workingCount={props.workingCount}
+        onToggleSearch={props.onToggleSearch}
+        onStart={props.onStart}
+      />
+      <WorkspaceLinks
+        colors={props.colors}
+        sidebar={props.sidebar}
+        navigation={props.navigation}
+        searching={props.searching}
+        query={props.query}
+        onQueryChange={props.onQueryChange}
+      />
+      <ConversationHeader
+        filter={props.filter}
+        onOpenFilter={props.onOpenFilter}
+        onStart={props.onStart}
+      />
+      <ConversationList
+        gate={props.gate}
+        rows={props.collections.rows}
+        loading={props.loading}
+        resourceError={props.resourceError}
+        error={props.error}
+        query={props.query}
+        filter={props.filter}
+        colors={props.colors}
+        done={props.collections.done}
+        archives={props.collections.archives}
+        doneOpen={props.doneOpen}
+        archivedOpen={props.archivedOpen}
+        onRefresh={props.onRefresh}
+        onClearError={props.onClearError}
+        onToggleDone={props.onToggleDone}
+        onToggleArchived={props.onToggleArchived}
+        renderThread={props.renderThread}
+      />
+      <PersonalFooter
+        colors={props.colors}
+        bottomInset={props.bottomInset}
+        sidebar={props.sidebar}
+        navigation={props.navigation}
+      />
+      <HomeSheets
+        colors={props.colors}
+        filterOpen={props.filterOpen}
+        filter={props.filter}
+        selected={props.selected}
+        rename={props.rename}
+        settled={props.settled}
+        error={props.error}
+        api={props.api}
+        onCloseFilter={props.onCloseFilter}
+        onFilter={props.onFilter}
+        onCloseSelected={props.onCloseSelected}
+        onAction={props.onAction}
+        onCloseRename={props.onCloseRename}
+        onRenamed={props.onRenamed}
+      />
+    </View>
+  )
 }
 
 // Vivid web Sidebar's hierarchy and RuntimeRow, with T3's native row interactions.
@@ -121,547 +1030,91 @@ export function Home({ embedded = false }: { embedded?: boolean }) {
   const gate = useSwipeableScrollGate()
   const pinned = preferences.pinnedThreads ?? []
   const settled = preferences.settledThreads ?? []
-  const unread = new Set(
-    notificationData === undefined
-      ? []
-      : notificationData.notifications.flatMap((notification) =>
-          !notification.readAt && notification.conversationId !== null
-            ? [notification.conversationId]
-            : [],
-        ),
-  )
-  const workingCount = Object.values(activity).filter((s) => s === 'working').length
-  const threads: SidebarThread[] = (
-    conversationData === undefined ? [] : conversationData.conversations
-  )
-    .filter((t) => (t.title + ' ' + t.preview).toLowerCase().includes(query.toLowerCase()))
-    .map((t) => ({
-      ...t,
-      when: threadDate(t.updatedAt).when,
-      pinned: pinned.includes(t.id),
-      status:
-        activity[t.id] === 'working'
-          ? 'working'
-          : settled.includes(t.id)
-            ? 'done'
-            : (activity[t.id] ?? (unread.has(t.id) ? 'attention' : 'ready')),
-    }))
-  const active = threads.filter(
-    (t) =>
-      !t.archived &&
-      t.status !== 'done' &&
-      (filter === 'All conversations' ||
-        (filter === 'Pinned' && t.pinned) ||
-        (filter === 'Working' && t.status === 'working') ||
-        (filter === 'Needs you' && ['attention', 'approve'].includes(t.status))),
-  )
-  const done = threads.filter((t) => !t.archived && t.status === 'done')
-  const archives = threads.filter((t) => t.archived)
-  const rows: Row[] = laneConversations(active).lanes.flatMap((lane) => [
-    {
-      id: 'lane:' + lane.key,
-      label: lane.label,
-      count: lane.count ? lane.items.length : undefined,
-    },
-    ...lane.items.map((thread) => ({ id: thread.id, thread })),
-  ])
-  type RequestBody = Record<string, string | number | boolean | null>
-  async function change(thread: Thread, method: string, body?: RequestBody) {
-    try {
-      await api.request('/api/conversations/' + thread.id, method, body)
-      setSelected(undefined)
-      await resource.refresh()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    }
-  }
-  async function toggle(thread: Thread, field: 'pinnedThreads' | 'settledThreads') {
-    const ids = preferences[field] ?? []
-    try {
-      await savePreferences({
-        ...preferences,
-        [field]: ids.includes(thread.id)
-          ? ids.filter((id) => id !== thread.id)
-          : [...ids, thread.id],
-      })
-      setSelected(undefined)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    }
-  }
+  const collections = deriveHomeCollections({
+    conversations: conversationData === undefined ? [] : conversationData.conversations,
+    notifications: notificationData === undefined ? [] : notificationData.notifications,
+    query,
+    filter,
+    pinned,
+    settled,
+    activity,
+  })
+  const action = createThreadAction({
+    api,
+    preferences,
+    savePreferences,
+    refresh: resource.refresh,
+    onClearSelection: () => setSelected(undefined),
+    onRename: setRename,
+    onError: setError,
+  })
   function start() {
     sidebar.close()
     navigation.navigate('Home')
   }
-  function action(thread: SidebarThread, name: string) {
-    if (name === 'rename') setRename(thread)
-    else if (name === 'pin') void toggle(thread, 'pinnedThreads')
-    else if (name === 'done') void toggle(thread, 'settledThreads')
-    else if (name === 'archive') void change(thread, 'PATCH', { archived: !thread.archived })
-    else if (name === 'delete') confirmDelete(thread.title, () => void change(thread, 'DELETE'))
-  }
-  function actions(thread: SidebarThread) {
-    return [
-      { id: 'pin', title: thread.pinned ? 'Unpin' : 'Pin' },
-      { id: 'done', title: settled.includes(thread.id) ? 'Reopen' : 'Mark done' },
-      { id: 'rename', title: 'Rename' },
-      { id: 'archive', title: thread.archived ? 'Restore' : 'Archive' },
-      { id: 'delete', title: 'Delete', attributes: { destructive: true } },
-    ]
-  }
   const bg = c[embedded ? 'surface-1' : 'surface-0']
   function renderThread(thread: SidebarThread) {
-    const current = sidebar.activeThread === thread.id
-    const StatusIcon =
-      thread.status === 'working'
-        ? CircleDashed
-        : thread.status === 'attention'
-          ? CircleHelp
-          : thread.status === 'failed'
-            ? CircleAlert
-            : thread.status === 'done'
-              ? Check
-              : undefined
-    const statusColor =
-      c[
-        thread.status === 'working'
-          ? 'status-working'
-          : thread.status === 'failed'
-            ? 'status-danger'
-            : thread.status === 'done'
-              ? 'status-success'
-              : 'status-attention'
-      ]
-    const project = projectByConversation.get(thread.title)
-    const row = (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ selected: current }}
-        accessibilityLabel={thread.title + (thread.status !== 'ready' ? ', ' + thread.status : '')}
-        onPress={() => open(thread.id, thread.title)}
-        onLongPress={Platform.OS === 'web' ? () => setSelected(thread) : () => undefined}
-        style={({ pressed }) => ({
-          minHeight: m['card-row-h'],
-          paddingHorizontal: 12,
-          paddingVertical: 10,
-          borderRadius: m['radius-card'] * m['phone-radius-factor'],
-          borderWidth: 0.5,
-          borderColor: current ? c['line-3'] : c['line-1'],
-          backgroundColor: pressed ? c['wash-hover'] : c[current ? 'surface-3' : 'surface-2'],
-          gap: 3,
-        })}
-      >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, height: 20 }}>
-          <Face
-            size={18}
-            mood={
-              thread.status === 'working'
-                ? 'thinking'
-                : thread.status === 'done'
-                  ? 'asleep'
-                  : 'neutral'
-            }
-          />
-          {StatusIcon && <StatusIcon size={13} color={statusColor} strokeWidth={1.6} />}
-          {thread.pinned && <Pin size={11} color={c['ink-4']} />}
-          <View style={{ flex: 1 }} />
-          <Label size="micro" tone="ink-4">
-            {threadDate(thread.updatedAt).label}
-          </Label>
-        </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Label size="footnote" numberOfLines={1} style={{ flex: 1, fontWeight: '500' }}>
-            {thread.title}
-          </Label>
-          {!!project && (
-            <Label size="micro" tone="ink-4" numberOfLines={1} style={{ maxWidth: '38%' }}>
-              {project}
-            </Label>
-          )}
-        </View>
-        {!!thread.preview && (
-          <Label size="label" tone="ink-3" numberOfLines={1} style={{ fontWeight: '400' }}>
-            {thread.preview}
-          </Label>
-        )}
-      </Pressable>
-    )
-    const content =
-      Platform.OS === 'web' ? (
-        row
-      ) : (
-        <ControlPillMenu
-          shouldOpenOnLongPress
-          actions={actions(thread)}
-          onPressAction={({ nativeEvent }) => action(thread, nativeEvent.event)}
-        >
-          {row}
-        </ControlPillMenu>
-      )
     return (
-      <View key={thread.id} style={{ marginBottom: 6 }}>
-        {Platform.OS === 'web' ? (
-          content
-        ) : (
-          <ThreadSwipeable
-            resetKey={thread.id}
-            backgroundColor={bg}
-            fullSwipeWidth={width}
-            threadTitle={thread.title}
-            fullSwipeAction="primary"
-            onDelete={() => action(thread, 'delete')}
-            primaryAction={{
-              icon: thread.archived ? 'arrow.uturn.backward' : 'archivebox',
-              label: thread.archived ? 'Restore' : 'Archive',
-              accessibilityLabel: thread.archived ? 'Restore conversation' : 'Archive conversation',
-              onPress: () => action(thread, 'archive'),
-            }}
-          >
-            {() => content}
-          </ThreadSwipeable>
-        )}
-      </View>
+      <ThreadRow
+        key={thread.id}
+        thread={thread}
+        activeThread={sidebar.activeThread}
+        colors={c}
+        backgroundColor={bg}
+        width={width}
+        open={open}
+        settled={settled}
+        onSelect={setSelected}
+        onAction={action}
+      />
     )
   }
   return (
-    <View
-      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
-      style={{ flex: 1, backgroundColor: bg, paddingTop: insets.top }}
-    >
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          height: m['topbar-h'],
-          paddingHorizontal: 8,
-        }}
-      >
-        <ControlPill icon={PanelLeft} accessibilityLabel="Close sidebar" onPress={sidebar.close} />
-        <View style={{ flex: 1 }} />
-        <ControlPill
-          icon={Search}
-          accessibilityLabel="Search conversations"
-          onPress={() => {
-            setSearching(!searching)
-            setQuery('')
-          }}
-        />
-      </View>
-      <MotionPressable
-        accessibilityRole="button"
-        accessibilityLabel="Vivid workspace"
-        onPress={start}
-        style={({ pressed }) => ({
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 10,
-          minHeight: 44,
-          marginHorizontal: 8,
-          paddingHorizontal: 10,
-          borderRadius: m['radius-row'],
-          backgroundColor: pressed ? c['wash-hover'] : 'transparent',
-        })}
-      >
-        <Face size={22} mood={workingCount ? 'thinking' : 'neutral'} />
-        <Label size="footnote" style={{ flex: 1 }}>
-          Vivid
-        </Label>
-        {workingCount > 0 && (
-          <Label size="micro" style={{ color: c['status-working'] }}>
-            {workingCount} working
-          </Label>
-        )}
-        <ChevronRight size={16} color={c['ink-3']} />
-      </MotionPressable>
-      {searching ? (
-        <View style={{ paddingHorizontal: 12, paddingVertical: 8 }}>
-          <Field
-            accessibilityLabel="Search conversations"
-            placeholder="Search conversations"
-            value={query}
-            onChangeText={setQuery}
-            autoFocus
-          />
-        </View>
-      ) : (
-        <View style={{ paddingHorizontal: 8 }}>
-          {(
-            [
-              { name: 'Routines', icon: Repeat2 },
-              { name: 'Projects', icon: FolderKanban, count: countProjects(projects) },
-              { name: 'Library', icon: Library },
-            ] as const
-          ).map(({ name, icon: Icon, ...rest }) => (
-            <MotionPressable
-              key={name}
-              accessibilityRole="button"
-              accessibilityState={{ selected: sidebar.activeRoute === name }}
-              onPress={() => {
-                sidebar.close()
-                navigation.navigate(name)
-              }}
-              style={({ pressed }) => ({
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 10,
-                minHeight: 44,
-                paddingHorizontal: 10,
-                borderRadius: m['radius-row'] * m['phone-radius-factor'],
-                backgroundColor: pressed
-                  ? c['wash-hover']
-                  : sidebar.activeRoute === name
-                    ? c['wash-selected']
-                    : 'transparent',
-              })}
-            >
-              <View style={{ width: 22, alignItems: 'center' }}>
-                <Icon pointerEvents="none" size={18} strokeWidth={1.6} color={c['ink-3']} />
-              </View>
-              <Label size="label" tone="ink-2" style={{ flex: 1 }}>
-                {name}
-              </Label>
-              {'count' in rest && rest.count > 0 && (
-                <Label size="micro" tone="ink-4">
-                  {rest.count}
-                </Label>
-              )}
-            </MotionPressable>
-          ))}
-        </View>
-      )}
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          paddingLeft: 18,
-          paddingRight: 8,
-          marginTop: 12,
-          minHeight: 44,
-        }}
-      >
-        <Label size="label" style={{ flex: 1 }}>
-          {filter === 'All conversations' ? 'Conversations' : filter}
-        </Label>
-        <ControlPill
-          icon={ListFilter}
-          accessibilityLabel="Filter conversations"
-          onPress={() => setFilterOpen(true)}
-        />
-        <ControlPill icon={Plus} accessibilityLabel="New conversation" onPress={start} />
-      </View>
-      <SwipeableScrollGateProvider enabled={gate.swipeEnabled}>
-        <FlatList
-          data={rows}
-          keyExtractor={(row) => row.id}
-          {...gate.scrollGateHandlers}
-          scrollEventThrottle={16}
-          refreshing={resource.loading}
-          onRefresh={resource.refresh}
-          keyboardDismissMode="on-drag"
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingHorizontal: 10, paddingBottom: 8 }}
-          ListHeaderComponent={
-            <Feedback
-              error={error || resource.error}
-              retry={() => {
-                setError('')
-                void resource.refresh()
-              }}
-            />
-          }
-          ListEmptyComponent={
-            !resource.loading && !resource.error ? (
-              <Label size="label" tone="ink-4" style={{ padding: 12 }}>
-                {query || filter !== 'All conversations'
-                  ? 'No matching conversations'
-                  : 'Your conversations will appear here.'}
-              </Label>
-            ) : null
-          }
-          renderItem={({ item }) =>
-            'thread' in item ? (
-              renderThread(item.thread)
-            ) : (
-              <View
-                style={{
-                  minHeight: m['caption-h'],
-                  paddingHorizontal: 10,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
-              >
-                <Label size="micro" tone="ink-3">
-                  {item.label}
-                </Label>
-                {item.count !== undefined && (
-                  <Label size="micro" tone="ink-4">
-                    {item.count}
-                  </Label>
-                )}
-              </View>
-            )
-          }
-          ListFooterComponent={
-            <View>
-              <MotionPressable
-                accessibilityRole="button"
-                accessibilityLabel="Done conversations"
-                accessibilityState={{ expanded: doneOpen }}
-                onPress={() => setDoneOpen(!doneOpen)}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 8,
-                  minHeight: 44,
-                  paddingHorizontal: 10,
-                }}
-              >
-                <Check size={16} color={c['ink-4']} />
-                <Label size="label" tone="ink-3" style={{ flex: 1 }}>
-                  Done
-                </Label>
-                <Label size="micro" tone="ink-4">
-                  {done.length}
-                </Label>
-                {doneOpen ? (
-                  <ChevronDown size={14} color={c['ink-4']} />
-                ) : (
-                  <ChevronRight size={14} color={c['ink-4']} />
-                )}
-              </MotionPressable>
-              {doneOpen &&
-                (done.length ? (
-                  done.map(renderThread)
-                ) : (
-                  <Label size="label" tone="ink-4" style={{ padding: 10 }}>
-                    Conversations you've settled. They keep their history.
-                  </Label>
-                ))}
-              <MotionPressable
-                accessibilityRole="button"
-                accessibilityLabel="Archived conversations"
-                accessibilityState={{ expanded: archivedOpen }}
-                onPress={() => setArchivedOpen(!archivedOpen)}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 8,
-                  minHeight: 44,
-                  paddingHorizontal: 10,
-                }}
-              >
-                <Archive size={16} color={c['ink-3']} />
-                <Label size="label" tone="ink-3" style={{ flex: 1 }}>
-                  Archived
-                </Label>
-                <Label size="micro" tone="ink-4">
-                  {archives.length}
-                </Label>
-                {archivedOpen ? (
-                  <ChevronDown size={14} color={c['ink-4']} />
-                ) : (
-                  <ChevronRight size={14} color={c['ink-4']} />
-                )}
-              </MotionPressable>
-              {archivedOpen &&
-                (archives.length ? (
-                  archives.map(renderThread)
-                ) : (
-                  <Label size="label" tone="ink-4" style={{ padding: 10 }}>
-                    No archived conversations
-                  </Label>
-                ))}
-            </View>
-          }
-        />
-      </SwipeableScrollGateProvider>
-      <MotionPressable
-        accessibilityRole="button"
-        accessibilityLabel="You, Personal. Open settings"
-        onPress={() => {
-          sidebar.close()
-          navigation.navigate('Settings')
-        }}
-        style={({ pressed }) => ({
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 10,
-          minHeight: 48,
-          marginHorizontal: 8,
-          marginBottom: Math.max(insets.bottom, 8),
-          paddingHorizontal: 10,
-          borderRadius: m['radius-row'],
-          backgroundColor: pressed ? c['wash-hover'] : 'transparent',
-        })}
-      >
-        <View
-          style={{
-            width: 26,
-            height: 26,
-            borderRadius: 13,
-            backgroundColor: c['surface-3'],
-            borderWidth: 0.5,
-            borderColor: c['line-2'],
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <Label size="micro">Y</Label>
-        </View>
-        <Label size="label" tone="ink-2" style={{ flex: 1 }}>
-          You
-        </Label>
-        <Label size="micro" tone="ink-4">
-          Personal
-        </Label>
-      </MotionPressable>
-      {filterOpen && (
-        <Sheet title="Conversations" onClose={() => setFilterOpen(false)}>
-          {['All conversations', 'Needs you', 'Working', 'Pinned'].map((name) => (
-            <MotionPressable
-              key={name}
-              accessibilityRole="button"
-              accessibilityState={{ selected: filter === name }}
-              onPress={() => {
-                setFilter(name)
-                setFilterOpen(false)
-              }}
-              style={{ flexDirection: 'row', alignItems: 'center', minHeight: 48 }}
-            >
-              <Label style={{ flex: 1 }}>{name}</Label>
-              {filter === name && <Check size={18} color={c.accent} />}
-            </MotionPressable>
-          ))}
-        </Sheet>
-      )}
-      {selected && (
-        <Sheet title={selected.title} onClose={() => setSelected(undefined)}>
-          {actions(selected).map((item) => (
-            <ControlPill
-              key={item.id}
-              label={item.title}
-              danger={item.id === 'delete'}
-              onPress={() => {
-                action(selected, item.id)
-                if (item.id === 'rename') setSelected(undefined)
-              }}
-            />
-          ))}
-          <Feedback error={error} />
-        </Sheet>
-      )}
-      {rename && (
-        <EditSheet
-          title="Rename conversation"
-          fields={[{ key: 'title', label: 'Name', value: rename.title }]}
-          onClose={() => setRename(undefined)}
-          onSave={async (values) => {
-            await api.request('/api/conversations/' + rename.id, 'PATCH', values)
-            await resource.refresh()
-          }}
-        />
-      )}
-    </View>
+    <HomeView
+      backgroundColor={bg}
+      topInset={insets.top}
+      bottomInset={insets.bottom}
+      onWidth={setWidth}
+      colors={c}
+      sidebar={sidebar}
+      navigation={navigation}
+      searching={searching}
+      workingCount={collections.workingCount}
+      onToggleSearch={() => {
+        setSearching(!searching)
+        setQuery('')
+      }}
+      onStart={start}
+      query={query}
+      onQueryChange={setQuery}
+      filter={filter}
+      onOpenFilter={() => setFilterOpen(true)}
+      gate={gate}
+      collections={collections}
+      loading={resource.loading}
+      resourceError={resource.error}
+      error={error}
+      onRefresh={resource.refresh}
+      onClearError={() => setError('')}
+      doneOpen={doneOpen}
+      archivedOpen={archivedOpen}
+      onToggleDone={() => setDoneOpen(!doneOpen)}
+      onToggleArchived={() => setArchivedOpen(!archivedOpen)}
+      renderThread={renderThread}
+      filterOpen={filterOpen}
+      onCloseFilter={() => setFilterOpen(false)}
+      onFilter={(name) => {
+        setFilter(name)
+        setFilterOpen(false)
+      }}
+      selected={selected ?? null}
+      rename={rename ?? null}
+      settled={settled}
+      api={api}
+      onCloseSelected={() => setSelected(undefined)}
+      onAction={action}
+      onCloseRename={() => setRename(undefined)}
+      onRenamed={resource.refresh}
+    />
   )
 }
