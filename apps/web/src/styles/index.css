@@ -215,3 +215,15 @@
 @utility grid-cols-followup {
   grid-template-columns: 1fr 1fr auto;
 }
+@utility dock-tint-red {
+  --dock-icon-color: #ea4335;
+}
+@utility dock-tint-blue {
+  --dock-icon-color: #3b82f6;
+}
+@utility dock-tint-green {
+  --dock-icon-color: #1fa463;
+}
+@utility dock-tint-amber {
+  --dock-icon-color: #f59e0b;
+}

@@ -62,14 +62,9 @@ function ScreenView() {
   return (
     <div className="flex flex-1 flex-col gap-3 p-3">
       {/* Vivid's desktop: wallpaper, a floating browser window, and a dock */}
-      <div
-        className="relative flex aspect-16/11 w-full flex-col overflow-hidden rounded-card ring-line"
-        style={{
-          background: 'radial-gradient(120% 90% at 20% 0%, #3a3f4b 0%, #23262e 55%, #17191f 100%)',
-        }}
-      >
+      <div className="relative flex aspect-16/11 w-full flex-col overflow-hidden rounded-card ring-line desktop-wallpaper">
         {/* Browser window, floating on the wallpaper */}
-        <div className="absolute inset-x-3 top-3 bottom-10 flex flex-col overflow-hidden rounded-lg bg-well shadow-[0_12px_32px_rgba(0,0,0,0.45)] ring-1 ring-black/20">
+        <div className="absolute inset-x-3 top-3 bottom-10 flex flex-col overflow-hidden rounded-lg bg-well desktop-window">
           {/* Browser chrome: tab strip */}
           <div className="flex shrink-0 items-end gap-1 bg-surface-2 px-2 pt-1.5">
             <i className="mb-2 size-2 shrink-0 rounded-full bg-danger/70" />
@@ -176,17 +171,15 @@ function ScreenView() {
   )
 }
 
+/** Dock tints are static utilities from styles/index.css, so the preview needs no inline style. */
+const DOCK_ICON_CLASSES = ['dock-tint-red', 'dock-tint-blue', 'dock-tint-green', 'dock-tint-amber']
+
 /** Keeps the desktop dock isolated from the browser preview without changing its DOM structure. */
 function BrowserDock() {
   return (
     <div className="absolute inset-x-0 bottom-0 flex h-10 items-center justify-center gap-2.5">
-      {['#EA4335', '#3B82F6', '#1FA463', '#F59E0B'].map((color) => (
-        <i
-          key={color}
-          className="size-5 rounded-md shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
-          style={{ background: `linear-gradient(135deg, ${color}, ${color}CC)` }}
-          aria-hidden
-        />
+      {DOCK_ICON_CLASSES.map((tint) => (
+        <i key={tint} className={cn('size-5 rounded-md dock-icon', tint)} aria-hidden />
       ))}
     </div>
   )

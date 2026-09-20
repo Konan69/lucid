@@ -185,7 +185,8 @@ function describeFollowUp(
 ): ToolCallDescription {
   return {
     label: labelForState(state, TOOL_LABELS.followUp),
-    detail: [taskTitle(input, output), followUpTime(output)].filter(Boolean).join(' · ') || undefined,
+    detail:
+      [taskTitle(input, output), followUpTime(output)].filter(Boolean).join(' · ') || undefined,
   }
 }
 

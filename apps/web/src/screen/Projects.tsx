@@ -37,10 +37,7 @@ export function Projects() {
 
 function ProjectShelf({ onOpen }: { onOpen: (id: string) => void }) {
   return (
-    <section
-      className="flex h-full min-w-0 flex-1 flex-col bg-surface-0"
-      style={{ boxShadow: 'var(--content-edge-shadow, none)' }}
-    >
+    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge">
       <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
         <h1 className="min-w-0 flex-1 text-title font-title text-ink">Projects</h1>
         <button
@@ -63,7 +60,7 @@ function ProjectShelf({ onOpen }: { onOpen: (id: string) => void }) {
               <ProjectCard key={p.id} project={p} onOpen={onOpen} />
             ))}
             <li>
-              <button className="flex size-full min-h-32 flex-col items-start rounded-card p-4 text-left ring-line transition-[background-color,box-shadow] duration-(--dur-fast) hover:bg-surface-2 hover:shadow-ring-xs">
+              <button className="flex size-full min-h-32 flex-col items-start rounded-card p-4 text-left ring-line transition-surface duration-(--dur-fast) hover:bg-surface-2 hover:shadow-ring-xs">
                 <span className="inline-flex size-8 items-center justify-center rounded-control bg-surface-2 text-ink-3">
                   <Plus className="size-4" />
                 </span>
@@ -84,7 +81,7 @@ function ProjectCard({ project: p, onOpen }: { project: Project; onOpen: (id: st
   return (
     <button
       onClick={() => onOpen(p.id)}
-      className="group/card flex h-full flex-col overflow-hidden rounded-card bg-surface-2 text-left shadow-ring-sm transition-[background-color,box-shadow,transform] duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-wash-hover hover:shadow-ring-md"
+      className="group/card flex h-full flex-col overflow-hidden rounded-card bg-surface-2 text-left shadow-ring-sm transition-press duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-wash-hover hover:shadow-ring-md"
     >
       {/* Cover: art + the project's mark. Children announce themselves here. */}
       <span className="relative flex h-24 items-end overflow-hidden bg-surface-2">
@@ -159,10 +156,7 @@ function ProjectPage({
   onOpen: (id: string) => void
 }) {
   return (
-    <section
-      className="flex h-full min-w-0 flex-1 flex-col bg-surface-0"
-      style={{ boxShadow: 'var(--content-edge-shadow, none)' }}
-    >
+    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge">
       <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
         <button
           onClick={onBack}
@@ -208,7 +202,7 @@ function ProjectPage({
                   <li key={c.id}>
                     <button
                       onClick={() => onOpen(c.id)}
-                      className="group/sub w-full rounded-card bg-surface-2 p-3.5 text-left shadow-ring-sm transition-[background-color,box-shadow,transform] duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-wash-hover hover:shadow-ring-md"
+                      className="group/sub w-full rounded-card bg-surface-2 p-3.5 text-left shadow-ring-sm transition-press duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-wash-hover hover:shadow-ring-md"
                     >
                       <span className="flex items-center gap-2">
                         <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-xs bg-accent-soft text-accent-ink">

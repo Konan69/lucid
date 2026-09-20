@@ -20,7 +20,7 @@ import { useFlueAgent, type FlueConversationMessage } from '@flue/react'
 import { ConnectionRequestMessage } from '@vivid/contracts'
 import { createFlueClient } from '@flue/sdk'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { conversations, messagesForConversation, type Msg } from '../data/fixtures'
 import { Button, IconButton } from '../ui/Button'
@@ -88,10 +88,7 @@ export function Conversation({
   }, [agent.messages, working])
 
   return (
-    <section
-      className="flex h-full min-w-0 flex-1 flex-col bg-surface-0"
-      style={{ boxShadow: 'var(--content-edge-shadow, none)' }}
-    >
+    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge">
       <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
         <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">{title}</h1>
         <Button
@@ -202,10 +199,7 @@ export function DemoConversation({ conversationId }: { conversationId: string })
   )
 }
 
-type DynamicToolPart = Extract<
-  FlueConversationMessage['parts'][number],
-  { type: 'dynamic-tool' }
->
+type DynamicToolPart = Extract<FlueConversationMessage['parts'][number], { type: 'dynamic-tool' }>
 
 /** Reads the shared text and timestamp once before selecting the message's visual role. */
 function LiveMessage({
@@ -246,7 +240,7 @@ function LiveMessage({
 function LiveUserMessage({ text, time }: { text: string; time: string }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[78%] rounded-panel rounded-br-sm bg-surface-2 px-4 py-3 text-body text-ink">
+      <div className="max-w-bubble rounded-panel rounded-br-sm bg-surface-2 px-4 py-3 text-body text-ink">
         <p className="whitespace-pre-wrap">{text}</p>
         {time && <span className="mt-1 block text-right text-meta text-ink-4">{time}</span>}
       </div>
@@ -255,13 +249,7 @@ function LiveUserMessage({ text, time }: { text: string; time: string }) {
 }
 
 /** Preserves advisory failure wording separately from Person and Vivid messages. */
-function LiveSystemMessage({
-  message,
-  text,
-}: {
-  message: FlueConversationMessage
-  text: string
-}) {
+function LiveSystemMessage({ message, text }: { message: FlueConversationMessage; text: string }) {
   return (
     <div className="rounded-panel bg-surface-2 px-4 py-3 text-label text-ink-3 ring-line">
       {message.settlement && message.settlement.outcome === 'failed'
@@ -400,6 +388,64 @@ function TrackedCard({
   )
 }
 
+/** Stable plugin list: a fresh array each render would make ReactMarkdown rebuild its processor. */
+const REMARK_PLUGINS = [remarkGfm]
+
+/**
+ * Element renderers for message Markdown. Module scope keeps their identity stable, so a
+ * streamed token re-renders text instead of remounting every paragraph, link and table.
+ */
+const MARKDOWN_COMPONENTS: Components = {
+  a: ({ children, href, ...props }) => (
+    <a
+      {...props}
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className={
+        href && href.startsWith('/api/library/source')
+          ? 'inline-flex rounded-full bg-accent-soft px-2 py-0.5 text-label font-title text-accent-ink no-underline ring-line'
+          : 'text-accent-ink underline underline-offset-2'
+      }
+    >
+      {children}
+    </a>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote className="my-3 border-l-2 border-line-3 pl-3 text-ink-3">{children}</blockquote>
+  ),
+  code: ({ children, className, ...props }) => (
+    <code
+      {...props}
+      className={cn('rounded-xs bg-surface-2 px-1 py-0.5 font-mono text-inline-code', className)}
+    >
+      {children}
+    </code>
+  ),
+  h1: ({ children }) => <h1 className="mt-4 mb-2 text-page font-title first:mt-0">{children}</h1>,
+  h2: ({ children }) => <h2 className="mt-4 mb-2 text-dialog font-title first:mt-0">{children}</h2>,
+  h3: ({ children }) => (
+    <h3 className="mt-3 mb-1.5 text-title font-title first:mt-0">{children}</h3>
+  ),
+  hr: () => <hr className="my-4 border-line-2" />,
+  li: ({ children }) => <li className="ml-5 pl-1 marker:text-ink-4">{children}</li>,
+  ol: ({ children }) => <ol className="my-2 list-decimal space-y-1">{children}</ol>,
+  p: ({ children }) => <p className="my-2 whitespace-pre-wrap first:mt-0 last:mb-0">{children}</p>,
+  pre: ({ children }) => (
+    <pre className="my-3 overflow-x-auto rounded-control bg-surface-2 p-3 text-label ring-line [&_code]:bg-transparent [&_code]:p-0">
+      {children}
+    </pre>
+  ),
+  table: ({ children }) => (
+    <div className="my-3 overflow-x-auto rounded-control ring-line">
+      <table className="w-full border-collapse text-label">{children}</table>
+    </div>
+  ),
+  td: ({ children }) => <td className="border-t border-line-2 px-3 py-2 align-top">{children}</td>,
+  th: ({ children }) => <th className="bg-surface-2 px-3 py-2 text-left font-title">{children}</th>,
+  ul: ({ children }) => <ul className="my-2 list-disc space-y-1">{children}</ul>,
+}
+
 function Markdown({ content }: { content: string }) {
   const linkedContent = content.replace(
     /\[([^\]\n]+?\.(?:pdf|md|markdown|txt))(?:,\s*p\.(\d+))?\](?!\()/gi,
@@ -411,74 +457,7 @@ function Markdown({ content }: { content: string }) {
   )
   return (
     <div className="min-w-0 text-body text-ink">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          a: ({ children, href, ...props }) => (
-            <a
-              {...props}
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-              className={
-                href && href.startsWith('/api/library/source')
-                  ? 'inline-flex rounded-full bg-accent-soft px-2 py-0.5 text-label font-title text-accent-ink no-underline ring-line'
-                  : 'text-accent-ink underline underline-offset-2'
-              }
-            >
-              {children}
-            </a>
-          ),
-          blockquote: ({ children }) => (
-            <blockquote className="my-3 border-l-2 border-line-3 pl-3 text-ink-3">
-              {children}
-            </blockquote>
-          ),
-          code: ({ children, className, ...props }) => (
-            <code
-              {...props}
-              className={cn(
-                'rounded-xs bg-surface-2 px-1 py-0.5 font-mono text-[0.9em]',
-                className,
-              )}
-            >
-              {children}
-            </code>
-          ),
-          h1: ({ children }) => (
-            <h1 className="mt-4 mb-2 text-page font-title first:mt-0">{children}</h1>
-          ),
-          h2: ({ children }) => (
-            <h2 className="mt-4 mb-2 text-dialog font-title first:mt-0">{children}</h2>
-          ),
-          h3: ({ children }) => (
-            <h3 className="mt-3 mb-1.5 text-title font-title first:mt-0">{children}</h3>
-          ),
-          hr: () => <hr className="my-4 border-line-2" />,
-          li: ({ children }) => <li className="ml-5 pl-1 marker:text-ink-4">{children}</li>,
-          ol: ({ children }) => <ol className="my-2 list-decimal space-y-1">{children}</ol>,
-          p: ({ children }) => (
-            <p className="my-2 whitespace-pre-wrap first:mt-0 last:mb-0">{children}</p>
-          ),
-          pre: ({ children }) => (
-            <pre className="my-3 overflow-x-auto rounded-control bg-surface-2 p-3 text-label ring-line [&_code]:bg-transparent [&_code]:p-0">
-              {children}
-            </pre>
-          ),
-          table: ({ children }) => (
-            <div className="my-3 overflow-x-auto rounded-control ring-line">
-              <table className="w-full border-collapse text-label">{children}</table>
-            </div>
-          ),
-          td: ({ children }) => (
-            <td className="border-t border-line-2 px-3 py-2 align-top">{children}</td>
-          ),
-          th: ({ children }) => (
-            <th className="bg-surface-2 px-3 py-2 text-left font-title">{children}</th>
-          ),
-          ul: ({ children }) => <ul className="my-2 list-disc space-y-1">{children}</ul>,
-        }}
-      >
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
         {linkedContent}
       </ReactMarkdown>
     </div>
@@ -490,7 +469,7 @@ export function FixtureMessage({ msg }: { msg: Msg }) {
     case 'user':
       return (
         <div className="flex justify-end">
-          <div className="max-w-[78%] rounded-panel rounded-br-sm bg-surface-2 px-4 py-3 text-body text-ink">
+          <div className="max-w-bubble rounded-panel rounded-br-sm bg-surface-2 px-4 py-3 text-body text-ink">
             <p>{msg.text}</p>
             <span className="mt-1 block text-right text-meta text-ink-4">{msg.time}</span>
           </div>
@@ -636,7 +615,7 @@ function ConnectServices({
             ) : (
               <button
                 onClick={() => setDone((d) => ({ ...d, [s.id]: true }))}
-                className="inline-flex h-8 shrink-0 items-center rounded-full bg-surface-3 px-4 text-label text-ink shadow-ring-xs transition-colors duration-(--dur-fast) hover:bg-wash-hover active:scale-[0.97]"
+                className="inline-flex h-8 shrink-0 items-center rounded-full bg-surface-3 px-4 text-label text-ink shadow-ring-xs transition-colors duration-(--dur-fast) hover:bg-wash-hover active:scale-97"
               >
                 Authorize
               </button>
@@ -808,10 +787,10 @@ function Composer({
               disabled={!working && !message.trim()}
               onClick={() => void (working ? onStop() : submit())}
               className={cn(
-                'shadow-control inline-flex size-8 items-center justify-center rounded-full text-ink-on-accent transition-colors duration-(--dur-fast)',
+                'inline-flex size-8 items-center justify-center rounded-full text-ink-on-accent smooth-shadow-xs transition-colors duration-(--dur-fast)',
                 working ? 'bg-danger' : 'bg-accent hover:bg-accent-hover',
                 !working && !message.trim() && 'cursor-not-allowed opacity-40',
-                'transition-[transform,background-color] duration-(--dur-fast) active:scale-[0.96]',
+                'transition-press duration-(--dur-fast) active:scale-96',
               )}
             >
               {working ? (

@@ -34,7 +34,7 @@ function ProjectMark({ title }: { title: string }) {
 
 function ProjectChip({ name }: { name: string }) {
   return (
-    <span className="inline-flex max-w-[38%] min-w-0 shrink-0 items-center gap-1 text-meta font-meta text-ink-4">
+    <span className="inline-flex max-w-rail-label min-w-0 shrink-0 items-center gap-1 text-meta font-meta text-ink-4">
       <i className="size-1.5 shrink-0 rounded-full bg-ink-4/60" aria-hidden />
       <span className="truncate">{name}</span>
     </span>
@@ -342,7 +342,7 @@ function RenameDialog({
           event.preventDefault()
           onSave(title)
         }}
-        className="shadow-popup w-full max-w-sm rounded-panel bg-surface-1 p-4 ring-line"
+        className="w-full max-w-sm rounded-panel bg-surface-1 p-4 smooth-shadow-ring-lg"
         role="dialog"
         aria-modal="true"
         aria-labelledby="rename-conversation-title"
@@ -399,7 +399,7 @@ function RuntimeRow({
         onClick={onSelect}
         aria-current={active ? 'page' : undefined}
         className={cn(
-          'relative block h-(--card-row-h) w-full rounded-card px-2.5 py-2 text-left transition-[background-color,box-shadow] duration-(--dur-fast) outline-none select-none',
+          'relative block h-(--card-row-h) w-full rounded-card px-2.5 py-2 text-left transition-surface duration-(--dur-fast) outline-none select-none',
           active
             ? 'bg-surface-3 shadow-ring-sm'
             : 'bg-surface-2 shadow-ring-xs hover:bg-wash-hover hover:shadow-ring-sm',
