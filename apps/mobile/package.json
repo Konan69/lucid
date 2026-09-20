@@ -19,6 +19,7 @@
     "@flue/sdk": "catalog:",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
+    "@vivid/state": "workspace:*",
     "@vivid/tokens": "workspace:*",
     "@react-native-community/datetimepicker": "9.1.0",
     "@react-native-menu/menu": "^2.0.0",

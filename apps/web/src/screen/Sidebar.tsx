@@ -20,7 +20,7 @@ import {
 import { useEffect, useState } from 'react'
 import { doneCount, conversations, type Conversation } from '../data/fixtures'
 import { countProjects, projects, type Project } from '../data/projects'
-import type { RuntimeConversation } from '../data/threads'
+import type { RuntimeConversation } from '@vivid/state'
 
 /* T3's sidebar rule: every thread row carries its project. Here, the
    conversation's project name sits beside the title, quiet but present. */
@@ -58,7 +58,7 @@ const HOVER = 'hover:bg-wash-hover'
 const ROW =
   'group/row relative flex w-full items-center gap-2.5 rounded-row px-2.5 text-left outline-none select-none transition-colors duration-(--dur-fast)'
 
-import { laneConversations, type Lane } from '../data/lanes'
+import { laneConversations, type Lane } from '@vivid/state'
 
 export function Sidebar({
   activeId,

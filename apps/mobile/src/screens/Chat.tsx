@@ -12,7 +12,7 @@ import {
   readConnectorRequest,
   connectorContinuation,
   type ConnectorRequest,
-} from '../../../web/src/data/requests'
+} from '@vivid/state'
 import { TrackedCard } from '../components/Tracked'
 import { ChatComposer, ChatHeader, useChatKeyboard } from '../components/chat/Chrome'
 import { openDocument, linkCitations } from '../lib/documents'

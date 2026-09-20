@@ -28,7 +28,7 @@ import { Card } from '../ui/Card'
 import { cn } from '../ui/cn'
 import { Face } from '../ui/Face'
 import { ConnectorRequestCard } from '../ui/connector/Card'
-import { normalizeConnectorRequest, connectorContinuation } from '../data/requests'
+import { normalizeConnectorRequest, connectorContinuation } from '@vivid/state'
 
 const LiveMetadataSchema = Schema.Struct({
   finishedAt: Schema.optionalKey(Schema.Number),

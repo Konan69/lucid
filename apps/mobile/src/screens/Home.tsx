@@ -27,7 +27,7 @@ import {
   type Notification,
   type Thread,
 } from '@vivid/contracts'
-import { laneConversations } from '../../../web/src/data/lanes'
+import { laneConversations } from '@vivid/state'
 import { countProjects, projects } from '../../../web/src/data/projects'
 import {
   useOpenThread,

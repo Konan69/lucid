@@ -2,7 +2,7 @@ import { VividRpcClient } from '@vivid/client-runtime'
 import type { Connection } from '@vivid/contracts'
 import { ConnectionAuthorizationResponse, ConnectionId } from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
-import { authorizationAddress, type ConnectorId } from './requests'
+import { authorizationAddress, type ConnectorId } from '@vivid/state'
 import { clientFailure } from './runtime'
 
 export type Connector = Connection

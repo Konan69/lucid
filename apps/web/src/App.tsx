@@ -17,7 +17,7 @@ import { Sidebar } from './screen/Sidebar'
 import { Settings, type ThemePreference } from './screen/Settings'
 import { Conversation, DemoConversation } from './screen/Conversation'
 import { Tokens } from './screen/Tokens'
-import { plainPreview, titleFromMessage, type RuntimeConversation } from './data/threads'
+import { plainPreview, titleFromMessage, type RuntimeConversation } from '@vivid/state'
 
 type View = 'conversation' | 'demo' | 'empty' | 'tokens' | 'library' | 'projects' | 'routines'
 

@@ -9,7 +9,7 @@ import {
   type ResourceApi,
   type ResourceEnvironment,
   ResourceState,
-} from './store'
+} from '@vivid/state'
 
 const nativeResourceEnvironment: ResourceEnvironment = {
   isActive: () => AppState.currentState === 'active',
@@ -25,14 +25,16 @@ const nativeResourceEnvironment: ResourceEnvironment = {
   },
 }
 
-const resourceStoreCache = createResourceStoreCache(nativeResourceEnvironment)
-const resourceApis = new WeakMap<Api, ResourceApi>()
+type MobileResourceProgram = RpcProgram<JsonValue>
+
+const resourceStoreCache = createResourceStoreCache<MobileResourceProgram>(nativeResourceEnvironment)
+const resourceApis = new WeakMap<Api, ResourceApi<MobileResourceProgram>>()
 
 /** Returns one stable resource authority for each API client. */
-function resourceApiFor(api: Api): ResourceApi {
+function resourceApiFor(api: Api): ResourceApi<MobileResourceProgram> {
   const existing = resourceApis.get(api)
   if (existing !== undefined) return existing
-  const resourceApi: ResourceApi = {
+  const resourceApi: ResourceApi<MobileResourceProgram> = {
     load: (program) => api.run(program),
   }
   resourceApis.set(api, resourceApi)

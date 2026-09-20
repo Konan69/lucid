@@ -10,7 +10,7 @@ import {
   authorizationAddress,
   connectorNames,
   type ConnectorRequest,
-} from '../../../../web/src/data/requests'
+} from '@vivid/state'
 
 /** Keeps connector action copy aligned with the current request state. */
 function connectorActionLabel(input: {
