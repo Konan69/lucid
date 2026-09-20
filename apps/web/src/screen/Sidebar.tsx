@@ -58,7 +58,7 @@ const HOVER = 'hover:bg-wash-hover'
 const ROW =
   'group/row relative flex w-full items-center gap-2.5 rounded-row px-2.5 text-left outline-none select-none transition-colors duration-(--dur-fast)'
 
-import { laneConversations } from '../data/conversationLanes'
+import { laneConversations, type Lane } from '../data/conversationLanes'
 
 export function Sidebar({
   activeId,
@@ -90,6 +90,111 @@ export function Sidebar({
   const archivedConversations = runtimeConversations.filter((conversation) => conversation.archived)
   return (
     <aside className="hidden h-full w-(--sidebar-w) shrink-0 flex-col bg-surface-1 hairline-r md:flex">
+      <SidebarHeader workingCount={workingCount} onSelect={onSelect} />
+
+      {/* Band header: a heading with controls. Full line, no fill. */}
+      <div className="mt-3 flex h-(--row-h) shrink-0 items-center gap-1 pr-2 pl-4.5">
+        <span className="flex-1 text-label text-ink">Conversations</span>
+        <button
+          aria-label="Filter"
+          className="inline-flex size-7 items-center justify-center rounded-control text-ink-3 hover:text-ink"
+        >
+          <ListFilter className="size-4" />
+        </button>
+        <button
+          aria-label="New conversation"
+          onClick={() => onSelect('new')}
+          className="inline-flex size-7 items-center justify-center rounded-control text-ink-3 hover:text-ink"
+        >
+          <Plus className="size-4" />
+        </button>
+      </div>
+
+      <nav className="min-h-0 flex-1 overflow-y-auto scroll-fade-y px-2 pb-2">
+        <section>
+          <ul className="flex flex-col gap-1 pt-1">
+            {activeConversations.map((conversation) => (
+              <li key={conversation.id}>
+                <RuntimeRow
+                  conversation={conversation}
+                  active={conversation.id === activeId}
+                  onArchive={() => onArchive(conversation.id, true)}
+                  onDelete={() => onDelete(conversation.id)}
+                  onRename={() => setRenameTarget(conversation)}
+                  onSelect={() => onSelect(conversation.id)}
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <DemoLanes lanes={lanes} activeId={activeId} onSelect={onSelect} />
+
+        <DoneSection open={doneOpen} onToggle={() => setDoneOpen((v) => !v)} />
+
+        <button
+          onClick={() => setArchivedOpen((open) => !open)}
+          className={cn(ROW, FULL, HOVER, 'mt-2 text-ink-3 hover:text-ink')}
+        >
+          <span className="inline-flex size-5.5 items-center justify-center">
+            <Archive className="size-4" />
+          </span>
+          <span className="min-w-0 flex-1 text-label">Archived</span>
+          {archivedConversations.length > 0 && (
+            <span className="text-meta font-meta text-ink-4">{archivedConversations.length}</span>
+          )}
+        </button>
+        {archivedOpen && (
+          <ul className="flex flex-col gap-1 pb-2">
+            {archivedConversations.length === 0 ? (
+              <li className="px-2.5 py-2 text-meta text-ink-4">No archived conversations</li>
+            ) : (
+              archivedConversations.map((conversation) => (
+                <li key={conversation.id}>
+                  <RuntimeRow
+                    conversation={conversation}
+                    active={conversation.id === activeId}
+                    onArchive={() => onArchive(conversation.id, false)}
+                    onDelete={() => onDelete(conversation.id)}
+                    onRename={() => setRenameTarget(conversation)}
+                    onSelect={() => onSelect(conversation.id)}
+                  />
+                </li>
+              ))
+            )}
+          </ul>
+        )}
+      </nav>
+
+      <button onClick={onOpenSettings} className={cn(ROW, FULL, HOVER, 'm-2 mt-0 w-auto')}>
+        <Avatar name="You" size={22} />
+        <span className="min-w-0 flex-1 truncate text-label text-ink-2">You</span>
+        <span className="text-meta font-meta text-ink-4">Personal</span>
+      </button>
+      {renameTarget && (
+        <RenameDialog
+          conversation={renameTarget}
+          onCancel={() => setRenameTarget(null)}
+          onSave={(title) => {
+            onRename(renameTarget.id, title)
+            setRenameTarget(null)
+          }}
+        />
+      )}
+    </aside>
+  )
+}
+
+/** Keeps the navigation strip and product entry points independent from conversation state. */
+function SidebarHeader({
+  workingCount,
+  onSelect,
+}: {
+  workingCount: number
+  onSelect: (id: string) => void
+}) {
+  return (
+    <>
       {/* Nav strip */}
       <div className="flex h-(--topbar-h) shrink-0 items-center px-2">
         <button
@@ -151,136 +256,66 @@ export function Sidebar({
           onClick={() => onSelect('library')}
         />
       </div>
+    </>
+  )
+}
 
-      {/* Band header: a heading with controls. Full line, no fill. */}
-      <div className="mt-3 flex h-(--row-h) shrink-0 items-center gap-1 pr-2 pl-4.5">
-        <span className="flex-1 text-label text-ink">Conversations</span>
-        <button
-          aria-label="Filter"
-          className="inline-flex size-7 items-center justify-center rounded-control text-ink-3 hover:text-ink"
-        >
-          <ListFilter className="size-4" />
-        </button>
-        <button
-          aria-label="New conversation"
-          onClick={() => onSelect('new')}
-          className="inline-flex size-7 items-center justify-center rounded-control text-ink-3 hover:text-ink"
-        >
-          <Plus className="size-4" />
-        </button>
-      </div>
-
-      <nav className="min-h-0 flex-1 overflow-y-auto scroll-fade-y px-2 pb-2">
-        <section>
-          <ul className="flex flex-col gap-1 pt-1">
-            {activeConversations.map((conversation) => (
-              <li key={conversation.id}>
-                <RuntimeRow
-                  conversation={conversation}
-                  active={conversation.id === activeId}
-                  onArchive={() => onArchive(conversation.id, true)}
-                  onDelete={() => onDelete(conversation.id)}
-                  onRename={() => setRenameTarget(conversation)}
-                  onSelect={() => onSelect(conversation.id)}
-                />
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        {lanes.map((lane) => (
-          <section key={lane.key}>
-            <Caption label={lane.label} count={lane.count ? lane.items.length : undefined} />
-            <ul className="flex flex-col gap-px">
-              {lane.items.map((t) => (
-                <li key={t.id} className={lane.variant === 'card' ? 'py-0.5' : undefined}>
-                  {lane.variant === 'card' ? (
-                    <CardRow
-                      conversation={t}
-                      active={t.id === activeId}
-                      onSelect={() => onSelect(`demo:${t.id}`)}
-                    />
-                  ) : (
-                    <SlimRow
-                      conversation={t}
-                      active={t.id === activeId}
-                      onSelect={() => onSelect(`demo:${t.id}`)}
-                    />
-                  )}
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
-
-        <section>
-          <button
-            onClick={() => setDoneOpen((v) => !v)}
-            className={cn(
-              'mt-2 flex w-full items-center gap-1.5 px-2.5 text-meta font-title text-ink-4 hover:text-ink-2',
-              CAPTION,
-            )}
-          >
-            <Check className="size-3.5" />
-            Done <span className="font-meta">{doneCount}</span>
-          </button>
-          {doneOpen && (
-            <p className="px-2.5 pb-2 text-meta font-meta text-ink-4">
-              Conversations you've settled. They keep their history.
-            </p>
-          )}
-        </section>
-
-        <button
-          onClick={() => setArchivedOpen((open) => !open)}
-          className={cn(ROW, FULL, HOVER, 'mt-2 text-ink-3 hover:text-ink')}
-        >
-          <span className="inline-flex size-5.5 items-center justify-center">
-            <Archive className="size-4" />
-          </span>
-          <span className="min-w-0 flex-1 text-label">Archived</span>
-          {archivedConversations.length > 0 && (
-            <span className="text-meta font-meta text-ink-4">{archivedConversations.length}</span>
-          )}
-        </button>
-        {archivedOpen && (
-          <ul className="flex flex-col gap-1 pb-2">
-            {archivedConversations.length === 0 ? (
-              <li className="px-2.5 py-2 text-meta text-ink-4">No archived conversations</li>
+/** Renders fixture conversation lanes without mixing them into runtime conversation controls. */
+function DemoLanes({
+  lanes,
+  activeId,
+  onSelect,
+}: {
+  lanes: Array<Lane & { items: Conversation[] }>
+  activeId: string | null
+  onSelect: (id: string) => void
+}) {
+  return lanes.map((lane) => (
+    <section key={lane.key}>
+      <Caption label={lane.label} count={lane.count ? lane.items.length : undefined} />
+      <ul className="flex flex-col gap-px">
+        {lane.items.map((t) => (
+          <li key={t.id} className={lane.variant === 'card' ? 'py-0.5' : undefined}>
+            {lane.variant === 'card' ? (
+              <CardRow
+                conversation={t}
+                active={t.id === activeId}
+                onSelect={() => onSelect(`demo:${t.id}`)}
+              />
             ) : (
-              archivedConversations.map((conversation) => (
-                <li key={conversation.id}>
-                  <RuntimeRow
-                    conversation={conversation}
-                    active={conversation.id === activeId}
-                    onArchive={() => onArchive(conversation.id, false)}
-                    onDelete={() => onDelete(conversation.id)}
-                    onRename={() => setRenameTarget(conversation)}
-                    onSelect={() => onSelect(conversation.id)}
-                  />
-                </li>
-              ))
+              <SlimRow
+                conversation={t}
+                active={t.id === activeId}
+                onSelect={() => onSelect(`demo:${t.id}`)}
+              />
             )}
-          </ul>
-        )}
-      </nav>
+          </li>
+        ))}
+      </ul>
+    </section>
+  ))
+}
 
-      <button onClick={onOpenSettings} className={cn(ROW, FULL, HOVER, 'm-2 mt-0 w-auto')}>
-        <Avatar name="You" size={22} />
-        <span className="min-w-0 flex-1 truncate text-label text-ink-2">You</span>
-        <span className="text-meta font-meta text-ink-4">Personal</span>
+/** Owns the disclosure for settled demo conversations while preserving its existing copy. */
+function DoneSection({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <section>
+      <button
+        onClick={onToggle}
+        className={cn(
+          'mt-2 flex w-full items-center gap-1.5 px-2.5 text-meta font-title text-ink-4 hover:text-ink-2',
+          CAPTION,
+        )}
+      >
+        <Check className="size-3.5" />
+        Done <span className="font-meta">{doneCount}</span>
       </button>
-      {renameTarget && (
-        <RenameDialog
-          conversation={renameTarget}
-          onCancel={() => setRenameTarget(null)}
-          onSave={(title) => {
-            onRename(renameTarget.id, title)
-            setRenameTarget(null)
-          }}
-        />
+      {open && (
+        <p className="px-2.5 pb-2 text-meta font-meta text-ink-4">
+          Conversations you've settled. They keep their history.
+        </p>
       )}
-    </aside>
+    </section>
   )
 }
 
