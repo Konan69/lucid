@@ -133,13 +133,8 @@ const assertEnvironmentWiring = (root, stackSource) => {
   }
 }
 
-export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
-  const targets = readTargetDocument(root)
-  validateTargets(targets)
-
-  const packageDocument = decodePackageDocument(source(root, 'package.json'))
-  // scripts/versions.mjs owns the exact pins; here we only require the catalog so the
-  // stack file and every package resolve the same Alchemy and Effect builds.
+const assertPackagePolicy = (packageDocument) => {
+  // scripts/versions.mjs owns exact pins; this verifier requires catalog ownership.
   assert.equal(
     packageDocument.devDependencies.alchemy,
     'catalog:',
@@ -170,14 +165,9 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
     undefined,
     'remote preview script must not exist',
   )
+}
 
-  const stackSource = source(root, 'alchemy.run.ts')
-  const infrastructureSources = [
-    stackSource,
-    source(root, 'infra/database.ts'),
-    source(root, 'infra/env.ts'),
-    source(root, 'infra/targets.ts'),
-  ].join('\n')
+const assertStackPolicy = (stackSource, infrastructureSources) => {
   assert.doesNotMatch(
     infrastructureSources,
     /alchemy\/(Cloudflare|Railway|Neon)/,
@@ -210,8 +200,15 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
     /requireRunnableTarget\(deployTarget\)/,
     'remote targets must fail before resource registration',
   )
+  const outputBlock = stackSource.slice(stackSource.lastIndexOf('return {'))
+  assert.doesNotMatch(
+    outputBlock,
+    /DATABASE_URL|SECRET|TOKEN|PASSWORD/,
+    'stack outputs must contain only public URLs',
+  )
+}
 
-  const databaseSource = source(root, 'infra/database.ts')
+const assertDatabasePolicy = (databaseSource) => {
   assert.match(
     databaseSource,
     /Docker\.RemoteImage/,
@@ -228,10 +225,9 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
     /Config\.Redacted\(["']DATABASE_URL["']\)/,
     'remote database URL must be required through Effect Config',
   )
+}
 
-  assertEnvironmentWiring(root, stackSource)
-
-  const migrationSource = source(root, 'scripts/migrate.mjs')
+const assertMigrationPolicy = (migrationSource) => {
   const serverMigration = migrationSource.search(/name: ["']server["']/)
   const runtimeMigration = migrationSource.search(/name: ["']agent-runtime["']/)
   const connectorMigration = migrationSource.search(/name: ["']connectors["']/)
@@ -242,7 +238,9 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
     'migration order must be server → agent-runtime → connectors',
   )
   assert.doesNotMatch(migrationSource, /\bgenerate\b/, 'startup must never generate migrations')
+}
 
+const assertRepositoryPolicy = (root) => {
   assert.equal(
     NodeFS.existsSync(NodePath.join(root, 'apps/web/wrangler.jsonc')),
     false,
@@ -265,19 +263,25 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
     NodeFS.existsSync(NodePath.join(root, 'docs/19-infrastructure.md')),
     'infrastructure documentation is missing',
   )
+}
 
-  const outputBlock = stackSource.slice(stackSource.lastIndexOf('return {'))
-  assert.doesNotMatch(
-    outputBlock,
-    /DATABASE_URL|SECRET|TOKEN|PASSWORD/,
-    'stack outputs must contain only public URLs',
-  )
-
-  return {
-    targets: targetKeys.length,
-    serverEnvironmentVariables: 7,
-    result: 'ok',
-  }
+export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
+  validateTargets(readTargetDocument(root))
+  assertPackagePolicy(decodePackageDocument(source(root, 'package.json')))
+  const stackSource = source(root, 'alchemy.run.ts')
+  const databaseSource = source(root, 'infra/database.ts')
+  const infrastructureSources = [
+    stackSource,
+    databaseSource,
+    source(root, 'infra/env.ts'),
+    source(root, 'infra/targets.ts'),
+  ].join('\n')
+  assertStackPolicy(stackSource, infrastructureSources)
+  assertDatabasePolicy(databaseSource)
+  assertEnvironmentWiring(root, stackSource)
+  assertMigrationPolicy(source(root, 'scripts/migrate.mjs'))
+  assertRepositoryPolicy(root)
+  return { targets: targetKeys.length, serverEnvironmentVariables: 7, result: 'ok' }
 }
 
 const invokedUrl =
