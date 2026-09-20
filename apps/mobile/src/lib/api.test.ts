@@ -22,7 +22,9 @@ it('direct runtime routes authenticate both API and chat; gateway routes stay be
   })
 
   expect(api.agentUrl('a/b')).toBe('https://example.com/agents/vivid/a%2Fb')
-  await expect(api.request('/api/tasks/one', 'DELETE')).resolves.toBeUndefined()
+  await expect(api.fetchBytes('/api/tasks/one', { method: 'DELETE' })).resolves.toBeInstanceOf(
+    Response,
+  )
   expect(createApi({ url: 'https://example.com', token: '' }).agentUrl('one')).toBe(
     'https://example.com/api/vivid/one',
   )
@@ -38,9 +40,9 @@ it('multipart uploads leave the boundary header to fetch', async () => {
     return Response.json({ document: { name: 'notes.txt' } })
   })
 
-  await expect(api.request('/api/library', 'POST', form)).resolves.toStrictEqual({
-    document: { name: 'notes.txt' },
-  })
+  await expect(
+    api.fetchBytes('/api/library', { method: 'POST', body: form }),
+  ).resolves.toBeInstanceOf(Response)
 })
 
 it('backend errors reach the screen instead of appearing as empty success', async () => {
@@ -48,5 +50,15 @@ it('backend errors reach the screen instead of appearing as empty success', asyn
     Response.json({ error: 'Folder not found' }, { status: 404 }),
   )
 
-  await expect(api.request('/api/library?folderId=missing')).rejects.toThrow(/Folder not found/)
+  await expect(api.fetchBytes('/api/library?folderId=missing')).rejects.toThrow(/Folder not found/)
+})
+
+it('decodes plain authorization responses at their HTTP boundary', async () => {
+  const api = createApi({ url: 'https://example.com', token: '' }, async () =>
+    Response.json({ authUrl: 'https://accounts.example.com/sign-in' }),
+  )
+
+  await expect(api.fetchConnectionAuthorization('/api/connectors/gmail/auth')).resolves.toEqual({
+    authUrl: 'https://accounts.example.com/sign-in',
+  })
 })

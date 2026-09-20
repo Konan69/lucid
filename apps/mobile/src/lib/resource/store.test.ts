@@ -1,13 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
-import { Schema } from 'effect'
+import { Effect, Schema } from 'effect'
+import type { RpcProgram } from '../api'
+import { NotFound } from '@vivid/contracts'
 import {
   createResourceStore,
   createResourceStoreCache,
-  type JsonValue,
   type ResourceApi,
   type ResourceEnvironment,
   ResourceState,
 } from './store'
+import type { JsonValue } from './store'
 
 const Payload = Schema.Struct({ value: Schema.String })
 
@@ -49,12 +51,19 @@ describe('resource store', () => {
   it('reuses one store per API authority and path', () => {
     const lifecycle = testEnvironment()
     const cache = createResourceStoreCache(lifecycle.environment)
-    const firstApi: ResourceApi = { request: () => Promise.resolve({ value: 'first' }) }
-    const secondApi: ResourceApi = { request: () => Promise.resolve({ value: 'second' }) }
+    const firstApi: ResourceApi = { load: () => Promise.resolve({ value: 'first' }) }
+    const secondApi: ResourceApi = { load: () => Promise.resolve({ value: 'second' }) }
 
-    expect(cache.get(firstApi, '/resource')).toBe(cache.get(firstApi, '/resource'))
-    expect(cache.get(firstApi, '/resource')).not.toBe(cache.get(firstApi, '/other'))
-    expect(cache.get(firstApi, '/resource')).not.toBe(cache.get(secondApi, '/resource'))
+    const program: RpcProgram<JsonValue> = Effect.succeed({ value: 'first' })
+    expect(cache.get(firstApi, '/resource', program)).toBe(
+      cache.get(firstApi, '/resource', program),
+    )
+    expect(cache.get(firstApi, '/resource', program)).not.toBe(
+      cache.get(firstApi, '/other', program),
+    )
+    expect(cache.get(firstApi, '/resource', program)).not.toBe(
+      cache.get(secondApi, '/resource', program),
+    )
   })
 
   it('owns polling while subscribed and ignores an obsolete request generation', async () => {
@@ -63,7 +72,7 @@ describe('resource store', () => {
     const pending = [first, second]
     let requestIndex = 0
     const api: ResourceApi = {
-      request: () => {
+      load: () => {
         const request = pending[requestIndex]
         requestIndex += 1
         if (request === undefined) return Promise.reject(new Error('Unexpected request'))
@@ -71,7 +80,8 @@ describe('resource store', () => {
       },
     }
     const lifecycle = testEnvironment()
-    const store = createResourceStore(api, '/resource', Payload, lifecycle.environment)
+    const program: RpcProgram<JsonValue> = Effect.succeed({ value: 'current' })
+    const store = createResourceStore(api, program, Payload, lifecycle.environment)
     const listener = vi.fn()
 
     const unsubscribeFirst = store.subscribe(listener)
@@ -98,5 +108,20 @@ describe('resource store', () => {
     lifecycle.activate()
     expect(requestIndex).toBe(3)
     unsubscribeSecond()
+  })
+
+  it('publishes a tagged RPC failure message', async () => {
+    const api: ResourceApi = {
+      load: () => Promise.reject(NotFound.make({ message: 'Thread not found' })),
+    }
+    const lifecycle = testEnvironment()
+    const program: RpcProgram<JsonValue> = Effect.succeed({ value: 'unused' })
+    const store = createResourceStore(api, program, Payload, lifecycle.environment)
+    const unsubscribe = store.subscribe(() => {})
+
+    await vi.waitFor(() =>
+      expect(store.getSnapshot()).toEqual(ResourceState.Failed({ message: 'Thread not found' })),
+    )
+    unsubscribe()
   })
 })

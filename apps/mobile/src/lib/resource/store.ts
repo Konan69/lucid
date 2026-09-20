@@ -1,4 +1,5 @@
 import { Data, Result, Schema } from 'effect'
+import type { RpcProgram } from '../api'
 
 const POLL_INTERVAL_MS = 15_000
 
@@ -29,9 +30,9 @@ export type JsonValue =
   | ReadonlyArray<JsonValue>
   | { readonly [key: string]: JsonValue }
 
-/** Minimal JSON API authority needed by the resource store. */
+/** Minimal typed RPC authority needed by the resource store. */
 export interface ResourceApi {
-  readonly request: (path: string) => Promise<JsonValue>
+  readonly load: (program: RpcProgram<JsonValue>) => Promise<JsonValue>
 }
 
 /** Lifecycle authority injected by React Native or a deterministic test. */
@@ -50,7 +51,11 @@ export interface ResourceStore<Value> {
 
 /** Shares one polling lifecycle for every mounted consumer of an API path. */
 export interface ResourceStoreCache {
-  readonly get: (api: ResourceApi, path: string) => ResourceStore<JsonValue>
+  readonly get: (
+    api: ResourceApi,
+    key: string,
+    program: RpcProgram<JsonValue>,
+  ) => ResourceStore<JsonValue>
 }
 
 const FailureMessage = Schema.Struct({ message: Schema.String })
@@ -66,16 +71,18 @@ export function failureMessage(cause: unknown): string {
 export function createResourceStoreCache(environment: ResourceEnvironment): ResourceStoreCache {
   const stores = new WeakMap<ResourceApi, Map<string, ResourceStore<JsonValue>>>()
   return {
-    get: (api, path) => {
+    get: (api, key, program) => {
       let paths = stores.get(api)
       if (paths === undefined) {
         paths = new Map()
         stores.set(api, paths)
       }
-      const existing = paths.get(path)
-      if (existing !== undefined) return existing
-      const store = createResourceStore(api, path, Schema.Json, environment)
-      paths.set(path, store)
+      const existing = paths.get(key)
+      if (existing !== undefined) {
+        return existing
+      }
+      const store = createResourceStore(api, program, Schema.Json, environment)
+      paths.set(key, store)
       return store
     },
   }
@@ -87,7 +94,7 @@ export function createResourceStoreCache(environment: ResourceEnvironment): Reso
  */
 export function createResourceStore<Value>(
   api: ResourceApi,
-  path: string,
+  program: RpcProgram<JsonValue>,
   schema: Schema.ConstraintDecoder<Value>,
   environment: ResourceEnvironment,
 ): ResourceStore<Value> {
@@ -107,7 +114,7 @@ export function createResourceStore<Value>(
     if (inFlight) return Promise.resolve()
     inFlight = true
     const current = ++generation
-    const decoded = api.request(path).then((value) => Schema.decodeUnknownPromise(schema)(value))
+    const decoded = api.load(program).then((value) => Schema.decodeUnknownPromise(schema)(value))
     return decoded
       .then(
         (value) => {

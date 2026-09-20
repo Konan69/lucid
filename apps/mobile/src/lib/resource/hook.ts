@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { AppState } from 'react-native'
 import { Result, Schema } from 'effect'
-import type { Api } from '../api'
+import type { Api, RpcProgram } from '../api'
 import {
   createResourceStoreCache,
   failureMessage,
@@ -33,13 +33,13 @@ function resourceApiFor(api: Api): ResourceApi {
   const existing = resourceApis.get(api)
   if (existing !== undefined) return existing
   const resourceApi: ResourceApi = {
-    request: (resourcePath) => api.request<JsonValue>(resourcePath),
+    load: (program) => api.run(program),
   }
   resourceApis.set(api, resourceApi)
   return resourceApi
 }
 
-export interface ResourceValue<Value> {
+export interface ResourceValue<Value extends JsonValue> {
   readonly data?: Value
   readonly error: string
   readonly loading: boolean
@@ -47,7 +47,7 @@ export interface ResourceValue<Value> {
 }
 
 /** Maps the tagged store state to the stable legacy hook shape used by mobile screens. */
-function resourceValue<Value>(
+function resourceValue<Value extends JsonValue>(
   state: ResourceState<JsonValue>,
   schema: Schema.ConstraintDecoder<Value>,
   refresh: () => Promise<void>,
@@ -65,12 +65,13 @@ function resourceValue<Value>(
 }
 
 /** Subscribes React to a lifecycle-owned, schema-decoding resource store. */
-export function useResource<Value>(
+export function useResource<Value extends JsonValue>(
   api: Api,
-  path: string,
+  key: string,
+  program: RpcProgram<Value>,
   schema: Schema.ConstraintDecoder<Value>,
 ): ResourceValue<Value> {
-  const store = resourceStoreCache.get(resourceApiFor(api), path)
+  const store = resourceStoreCache.get(resourceApiFor(api), key, program)
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
   return resourceValue(state, schema, store.refresh)
 }
