@@ -366,6 +366,91 @@ export function ThreadSwipeable(props: {
   )
 }
 
+type SwipeActionButtonContentProps = {
+  readonly accessibilityLabel: string
+  readonly backgroundColor: string
+  readonly circleSize: number
+  readonly compact: boolean
+  readonly icon: ComponentProps<typeof SymbolView>['name']
+  readonly iconSize: number
+  readonly label: string
+  readonly menu?: ThreadSwipeAction['menu']
+  readonly onPress: () => void
+  readonly circleStyle: ReturnType<typeof useAnimatedStyle>
+  readonly iconStyle: ReturnType<typeof useAnimatedStyle>
+  readonly labelStyle: ReturnType<typeof useAnimatedStyle>
+}
+
+/** Renders the swipe action's press target while its parent owns motion calculations. */
+function SwipeActionButtonContent(props: SwipeActionButtonContentProps) {
+  const { colors: c } = useTheme()
+  return (
+    <Pressable
+      accessibilityLabel={props.accessibilityLabel}
+      accessibilityRole="button"
+      onPress={props.menu === undefined ? props.onPress : undefined}
+      style={({ pressed }) => ({
+        alignItems: 'center',
+        height: '100%',
+        justifyContent: 'center',
+        opacity: pressed ? 0.72 : 1,
+        width: '100%',
+      })}
+    >
+      <View style={{ height: props.circleSize, width: props.circleSize }}>
+        <Animated.View
+          style={[
+            {
+              backgroundColor: props.backgroundColor,
+              borderRadius: 999,
+              height: props.circleSize,
+              left: 0,
+              position: 'absolute',
+              top: 0,
+            },
+            props.circleStyle,
+          ]}
+        />
+        <Animated.View
+          style={[
+            {
+              alignItems: 'center',
+              height: props.circleSize,
+              justifyContent: 'center',
+              left: 0,
+              position: 'absolute',
+              top: 0,
+              width: props.circleSize,
+            },
+            props.iconStyle,
+          ]}
+        >
+          <SymbolView
+            name={props.icon}
+            size={props.iconSize}
+            tintColor={c['ink-on-color']}
+            type="monochrome"
+          />
+        </Animated.View>
+      </View>
+      <Animated.View
+        style={[
+          {
+            height: 14,
+            justifyContent: 'center',
+            paddingTop: props.compact ? 0 : 2,
+          },
+          props.labelStyle,
+        ]}
+      >
+        <Text size="micro" tone="ink-3" numberOfLines={1}>
+          {props.label}
+        </Text>
+      </Animated.View>
+    </Pressable>
+  )
+}
+
 function SwipeActionButton(props: {
   readonly accessibilityLabel: string
   readonly actionsWidth: number
@@ -380,7 +465,6 @@ function SwipeActionButton(props: {
   readonly stretchesOnFullSwipe: boolean
   readonly translation: SharedValue<number>
 }) {
-  const { colors: c } = useTheme()
   const circleSize = props.compact ? COMPACT_ACTION_CIRCLE_SIZE : ACTION_CIRCLE_SIZE
   const iconSize = props.compact ? COMPACT_ACTION_ICON_SIZE : ACTION_ICON_SIZE
   const actionStyle = useAnimatedStyle(() => {
@@ -448,69 +532,20 @@ function SwipeActionButton(props: {
   })
 
   const button = (
-    <Pressable
+    <SwipeActionButtonContent
       accessibilityLabel={props.accessibilityLabel}
-      accessibilityRole="button"
-      onPress={props.menu === undefined ? props.onPress : undefined}
-      style={({ pressed }) => ({
-        alignItems: 'center',
-        height: '100%',
-        justifyContent: 'center',
-        opacity: pressed ? 0.72 : 1,
-        width: '100%',
-      })}
-    >
-      <View style={{ height: circleSize, width: circleSize }}>
-        <Animated.View
-          style={[
-            {
-              backgroundColor: props.backgroundColor,
-              borderRadius: 999,
-              height: circleSize,
-              left: 0,
-              position: 'absolute',
-              top: 0,
-            },
-            circleStyle,
-          ]}
-        />
-        <Animated.View
-          style={[
-            {
-              alignItems: 'center',
-              height: circleSize,
-              justifyContent: 'center',
-              left: 0,
-              position: 'absolute',
-              top: 0,
-              width: circleSize,
-            },
-            iconStyle,
-          ]}
-        >
-          <SymbolView
-            name={props.icon}
-            size={iconSize}
-            tintColor={c['ink-on-color']}
-            type="monochrome"
-          />
-        </Animated.View>
-      </View>
-      <Animated.View
-        style={[
-          {
-            height: 14,
-            justifyContent: 'center',
-            paddingTop: props.compact ? 0 : 2,
-          },
-          labelStyle,
-        ]}
-      >
-        <Text size="micro" tone="ink-3" numberOfLines={1}>
-          {props.label}
-        </Text>
-      </Animated.View>
-    </Pressable>
+      backgroundColor={props.backgroundColor}
+      circleSize={circleSize}
+      compact={props.compact}
+      icon={props.icon}
+      iconSize={iconSize}
+      label={props.label}
+      menu={props.menu}
+      onPress={props.onPress}
+      circleStyle={circleStyle}
+      iconStyle={iconStyle}
+      labelStyle={labelStyle}
+    />
   )
 
   return (

@@ -91,6 +91,128 @@ export function ChatHeader({
   )
 }
 
+/** Renders composer destinations while the parent retains sheet and navigation state. */
+function ComposerToolsSheet({
+  onClose,
+  onNavigate,
+}: {
+  readonly onClose: () => void
+  readonly onNavigate: (name: 'Library' | 'Routines') => void
+}) {
+  const { colors: c } = useTheme()
+  return (
+    <Sheet title="Attachments and tools" onClose={onClose}>
+      {(
+        [
+          { name: 'Library', label: 'Library', detail: 'Find or add a file', icon: Library },
+          { name: 'Routines', label: 'Routines', detail: 'Work that repeats', icon: Repeat2 },
+        ] as const
+      ).map(({ name, label, detail, icon: Icon }) => (
+        <MotionPressable
+          key={name}
+          accessibilityRole="button"
+          onPress={() => onNavigate(name)}
+          style={({ pressed }) => ({
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 12,
+            minHeight: 60,
+            paddingHorizontal: 10,
+            borderRadius: m['radius-row'],
+            backgroundColor: pressed ? c['wash-hover'] : 'transparent',
+          })}
+        >
+          <Icon size={18} strokeWidth={1.6} color={c['ink-3']} />
+          <View>
+            <Label size="label">{label}</Label>
+            <Label size="caption" tone="ink-3" style={{ fontWeight: '400' }}>
+              {detail}
+            </Label>
+          </View>
+        </MotionPressable>
+      ))}
+    </Sheet>
+  )
+}
+
+/** Renders composer actions without owning draft, editor, or sheet state. */
+function ComposerToolbar({
+  working,
+  disabled,
+  value,
+  onStop,
+  onSend,
+  onOpenTools,
+}: {
+  readonly working?: boolean
+  readonly disabled?: boolean
+  readonly value: string
+  readonly onStop?: () => void
+  readonly onSend: () => void
+  readonly onOpenTools: () => void
+}) {
+  const { colors: c } = useTheme()
+  return (
+    <Animated.View
+      entering={toolbarIn}
+      exiting={toolbarOut}
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+    >
+      <ControlPill
+        icon={Paperclip}
+        accessibilityLabel="Attachments and tools"
+        onPress={onOpenTools}
+      />
+      <View style={{ flex: 1 }}>
+        {working && (
+          <Animated.View
+            entering={statusIn}
+            exiting={statusOut}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+          >
+            <Face size={16} mood="thinking" />
+            <Label size="caption" tone="ink-3">
+              Working…
+            </Label>
+          </Animated.View>
+        )}
+      </View>
+      <MotionPressable
+        accessibilityRole="button"
+        accessibilityLabel={working ? 'Stop response' : 'Send message'}
+        accessibilityState={{ disabled: !working && (!!disabled || !value.trim()) }}
+        disabled={!working && (disabled || !value.trim())}
+        onPress={working ? onStop : onSend}
+        style={({ pressed }) => ({
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: working ? c['status-danger'] : c.accent,
+          opacity: pressed ? 0.7 : !working && (disabled || !value.trim()) ? 0.4 : 1,
+        })}
+      >
+        {working ? (
+          <Square
+            pointerEvents="none"
+            size={15}
+            color={c['ink-on-accent']}
+            fill={c['ink-on-accent']}
+          />
+        ) : (
+          <ArrowUp
+            pointerEvents="none"
+            size={20}
+            strokeWidth={1.6}
+            color={c['ink-on-accent']}
+          />
+        )}
+      </MotionPressable>
+    </Animated.View>
+  )
+}
+
 // Vivid web Composer geometry and controls around T3's actual native editor.
 export function ChatComposer({
   value,
@@ -159,102 +281,26 @@ export function ChatComposer({
           style={{ height, marginHorizontal: 8 }}
           textStyle={{ fontSize: m['type-body'], lineHeight: 23 }}
         />
-        <Animated.View
-          entering={toolbarIn}
-          exiting={toolbarOut}
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
-        >
-          <ControlPill
-            icon={Paperclip}
-            accessibilityLabel="Attachments and tools"
-            onPress={() => {
-              Keyboard.dismiss()
-              setTools(true)
-            }}
-          />
-          <View style={{ flex: 1 }}>
-            {working && (
-              <Animated.View
-                entering={statusIn}
-                exiting={statusOut}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
-              >
-                <Face size={16} mood="thinking" />
-                <Label size="caption" tone="ink-3">
-                  Working…
-                </Label>
-              </Animated.View>
-            )}
-          </View>
-          <MotionPressable
-            accessibilityRole="button"
-            accessibilityLabel={working ? 'Stop response' : 'Send message'}
-            accessibilityState={{ disabled: !working && (!!disabled || !value.trim()) }}
-            disabled={!working && (disabled || !value.trim())}
-            onPress={working ? onStop : onSend}
-            style={({ pressed }) => ({
-              width: 44,
-              height: 44,
-              borderRadius: 22,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: working ? c['status-danger'] : c.accent,
-              opacity: pressed ? 0.7 : !working && (disabled || !value.trim()) ? 0.4 : 1,
-            })}
-          >
-            {working ? (
-              <Square
-                pointerEvents="none"
-                size={15}
-                color={c['ink-on-accent']}
-                fill={c['ink-on-accent']}
-              />
-            ) : (
-              <ArrowUp
-                pointerEvents="none"
-                size={20}
-                strokeWidth={1.6}
-                color={c['ink-on-accent']}
-              />
-            )}
-          </MotionPressable>
-        </Animated.View>
+        <ComposerToolbar
+          working={working}
+          disabled={disabled}
+          value={value}
+          onStop={onStop}
+          onSend={onSend}
+          onOpenTools={() => {
+            Keyboard.dismiss()
+            setTools(true)
+          }}
+        />
       </Animated.View>
       {tools && (
-        <Sheet title="Attachments and tools" onClose={() => setTools(false)}>
-          {(
-            [
-              { name: 'Library', label: 'Library', detail: 'Find or add a file', icon: Library },
-              { name: 'Routines', label: 'Routines', detail: 'Work that repeats', icon: Repeat2 },
-            ] as const
-          ).map(({ name, label, detail, icon: Icon }) => (
-            <MotionPressable
-              key={name}
-              accessibilityRole="button"
-              onPress={() => {
-                setTools(false)
-                navigation.navigate(name)
-              }}
-              style={({ pressed }) => ({
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 12,
-                minHeight: 60,
-                paddingHorizontal: 10,
-                borderRadius: m['radius-row'],
-                backgroundColor: pressed ? c['wash-hover'] : 'transparent',
-              })}
-            >
-              <Icon size={18} strokeWidth={1.6} color={c['ink-3']} />
-              <View>
-                <Label size="label">{label}</Label>
-                <Label size="caption" tone="ink-3" style={{ fontWeight: '400' }}>
-                  {detail}
-                </Label>
-              </View>
-            </MotionPressable>
-          ))}
-        </Sheet>
+        <ComposerToolsSheet
+          onClose={() => setTools(false)}
+          onNavigate={(name) => {
+            setTools(false)
+            navigation.navigate(name)
+          }}
+        />
       )}
     </View>
   )
