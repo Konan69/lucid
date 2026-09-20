@@ -235,9 +235,7 @@ function TaskDetailSheet({
             <ControlPill
               label="Drop task"
               disabled={busy}
-              onPress={() =>
-                void act(`/api/tasks/${selected.id}`, 'PATCH', { status: 'dropped' })
-              }
+              onPress={() => void act(`/api/tasks/${selected.id}`, 'PATCH', { status: 'dropped' })}
             />
           </>
         )}
@@ -463,17 +461,11 @@ function TodayView(props: TodayViewProps) {
         title="Today"
         onBack={props.onBack}
         trailing={
-          <ControlPill
-            icon={Plus}
-            accessibilityLabel="Track a task"
-            onPress={props.onNewTask}
-          />
+          <ControlPill icon={Plus} accessibilityLabel="Track a task" onPress={props.onNewTask} />
         }
       />
       <ScrollView
-        refreshControl={
-          <RefreshControl refreshing={props.loading} onRefresh={props.onRefresh} />
-        }
+        refreshControl={<RefreshControl refreshing={props.loading} onRefresh={props.onRefresh} />}
         contentContainerStyle={styles.page}
       >
         <Feedback error={props.error} retry={props.onRefresh} />

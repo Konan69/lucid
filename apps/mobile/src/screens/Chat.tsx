@@ -1,11 +1,4 @@
-import {
-  useEffect,
-  useEffectEvent,
-  useMemo,
-  useRef,
-  useState,
-  type RefObject,
-} from 'react'
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type RefObject } from 'react'
 import { AppState, FlatList, KeyboardAvoidingView, Linking, Platform, View } from 'react-native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { Monitor } from 'lucide-react-native'
@@ -79,9 +72,7 @@ function ChatMessageList({
       }}
       onScroll={(event) => {
         const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent
-        onNearBottomChange(
-          contentSize.height - layoutMeasurement.height - contentOffset.y < 100,
-        )
+        onNearBottomChange(contentSize.height - layoutMeasurement.height - contentOffset.y < 100)
       }}
       scrollEventThrottle={100}
       onContentSizeChange={onContentSizeChange}
@@ -121,7 +112,11 @@ function ChatMessageList({
               </Label>
             </View>
           )}
-          <Feedback error={error || connectionError || undefined} retry={onRetry} retryLabel="Reconnect" />
+          <Feedback
+            error={error || connectionError || undefined}
+            retry={onRetry}
+            retryLabel="Reconnect"
+          />
         </View>
       }
     />
@@ -239,7 +234,9 @@ function ThreadChat({ route, navigation }: NativeStackScreenProps<Routes, 'Chat'
     return () => subscription.remove()
   }, [])
   const messages = agent.messages.filter((message) => message.display !== 'hidden')
-  const connectionError = connectionErrorMessage(agent.error === undefined ? '' : agent.error.message)
+  const connectionError = connectionErrorMessage(
+    agent.error === undefined ? '' : agent.error.message,
+  )
   async function send(continuation?: string) {
     const text = (continuation ?? draft).trim()
     if (!text || sending || working) return

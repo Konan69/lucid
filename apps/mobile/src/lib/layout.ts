@@ -119,8 +119,7 @@ function deriveInspectorWorkspacePaneLayout(
     auxiliaryPaneVisible &&
     fileInspector.width !== null &&
     input.layout.listPaneWidth !== null &&
-    viewportWidth - input.layout.listPaneWidth - fileInspector.width <
-      FILE_INSPECTOR_MIN_MAIN_WIDTH
+    viewportWidth - input.layout.listPaneWidth - fileInspector.width < FILE_INSPECTOR_MIN_MAIN_WIDTH
   const primarySidebarVisible =
     preferredPrimarySidebarVisible && !primarySidebarSuppressedByAuxiliary
   const primarySidebarWidth = primarySidebarVisible ? (input.layout.listPaneWidth ?? 0) : 0

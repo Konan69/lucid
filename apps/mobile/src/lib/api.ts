@@ -8,7 +8,13 @@ export interface ApiJsonObject {
 }
 
 /** A JSON value accepted by the outbound API adapter. */
-export type ApiJsonValue = null | boolean | number | string | readonly ApiJsonValue[] | ApiJsonObject
+export type ApiJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly ApiJsonValue[]
+  | ApiJsonObject
 
 /** A multipart payload or JSON value accepted by the outbound API adapter. */
 export type ApiRequestBody = FormData | ApiJsonValue

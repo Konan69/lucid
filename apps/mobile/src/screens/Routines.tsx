@@ -21,12 +21,7 @@ import {
 import { templates } from '../../../web/src/data/routines'
 
 type RequestBody = Record<string, string | number | boolean | null> | FormData
-type RoutineAct = (
-  id: string,
-  method: string,
-  body?: RequestBody,
-  suffix?: string,
-) => Promise<void>
+type RoutineAct = (id: string, method: string, body?: RequestBody, suffix?: string) => Promise<void>
 
 /** Renders routine collection states while the screen owns resource orchestration. */
 function RoutineList({
@@ -83,7 +78,9 @@ function RoutineList({
             <ControlPill label="View routine" onPress={() => onSelect(routine.id)} />
             <ControlPill
               icon={routine.enabled ? Pause : Play}
-              accessibilityLabel={routine.enabled ? `Pause ${routine.name}` : `Resume ${routine.name}`}
+              accessibilityLabel={
+                routine.enabled ? `Pause ${routine.name}` : `Resume ${routine.name}`
+              }
               disabled={busy}
               onPress={() => void onAct(routine.id, 'PATCH', { enabled: !routine.enabled })}
             />

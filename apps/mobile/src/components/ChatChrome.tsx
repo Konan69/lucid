@@ -201,12 +201,7 @@ function ComposerToolbar({
             fill={c['ink-on-accent']}
           />
         ) : (
-          <ArrowUp
-            pointerEvents="none"
-            size={20}
-            strokeWidth={1.6}
-            color={c['ink-on-accent']}
-          />
+          <ArrowUp pointerEvents="none" size={20} strokeWidth={1.6} color={c['ink-on-accent']} />
         )}
       </MotionPressable>
     </Animated.View>

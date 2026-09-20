@@ -28,10 +28,6 @@ export function ThemeProvider({
     () => ({ colors: nativeTokens[mode], dark: mode === 'dark' }),
     [mode],
   )
-  return (
-    <ThemeContext.Provider value={contextValue}>
-      {children}
-    </ThemeContext.Provider>
-  )
+  return <ThemeContext.Provider value={contextValue}>{children}</ThemeContext.Provider>
 }
 export const useTheme = () => useContext(ThemeContext)

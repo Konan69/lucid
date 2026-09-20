@@ -24,10 +24,12 @@ import {
   styles,
 } from '../components/ui'
 
-type Selection = { readonly kind: 'file'; readonly item: Document } | {
-  readonly kind: 'folder'
-  readonly item: Folder
-}
+type Selection =
+  | { readonly kind: 'file'; readonly item: Document }
+  | {
+      readonly kind: 'folder'
+      readonly item: Folder
+    }
 type SearchResult = {
   readonly chunkId: string
   readonly documentId: string
@@ -184,10 +186,7 @@ function FolderCards({
       </View>
       <View style={styles.wrap}>
         <ControlPill label="Open folder" onPress={() => onOpen(folder)} />
-        <ControlPill
-          label="Manage"
-          onPress={() => onSelect({ kind: 'folder', item: folder })}
-        />
+        <ControlPill label="Manage" onPress={() => onSelect({ kind: 'folder', item: folder })} />
       </View>
     </Card>
   ))
@@ -479,9 +478,7 @@ function LibraryEditor({
   readonly onClose: () => void
   readonly onSaved: (values: Record<string, string>) => Promise<void>
 }) {
-  return (
-    <EditSheet title={edit.title} fields={edit.fields} onClose={onClose} onSave={onSaved} />
-  )
+  return <EditSheet title={edit.title} fields={edit.fields} onClose={onClose} onSave={onSaved} />
 }
 
 type LibraryViewProps = {
