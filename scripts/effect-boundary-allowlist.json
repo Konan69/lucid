@@ -11,8 +11,14 @@
   },
   {
     "file": "packages/agent-runtime/src/library-ingest.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": ["extractPages", "ingestLibraryDocument"]
+    "classification": "legacy-store-adapter",
+    "symbols": [
+      "extractDocumentPages",
+      "extractPages",
+      "indexDocument",
+      "ingestLibraryDocument",
+      "loadDocument"
+    ]
   },
   {
     "file": "packages/agent-runtime/src/library-store.ts",
