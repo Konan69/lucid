@@ -26,7 +26,7 @@ Versions below record the evaluation, not a recommendation to install without re
 | XState plus `@xstate/effect` | rat-stack pins XState `6.0.0-alpha.58`, a vendored bridge `0.1.0-alpha.2`, and Effect `4.0.0-rc.115`.                                          | Established XState ecosystem, but this specific Effect integration is alpha and needs compatibility validation. |
 | Existing Vivid approach      | Effect programs, schemas, guarded persistence, and Flue conversation execution. Neither machine library was present in the evaluated checkout. | Appropriate for simple behavior; transition rules can become scattered as lifecycles grow.                      |
 
-The local VCOS checkout at `/home/kixey/work/VCOS` uses `@typeonce/effect-machine@0.3.0`
+The local VCOS checkout at `~/work/VCOS` uses `@typeonce/effect-machine@0.3.0`
 with Effect rc.112 for lifecycle transitions, active-run coordination, Connection catalog state,
 and review workflows. Treat it as a design reference, not current API guidance. Adapt any borrowed
 design to Vivid's names and ownership boundaries.

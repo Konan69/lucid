@@ -36,17 +36,6 @@ Thumbs.db
 /artifacts/
 /refs/
 /docs/prds/
-/docs/02-references.md
-/docs/04-computer.md
-/docs/05-open-questions.md
-/docs/06-communication.md
-/docs/09-platform-architecture.md
-/docs/10-product-decisions.md
-/docs/11-runtime-platform-research.md
-/docs/13-routines-and-templates.md
-/docs/16-grok-bot-auth-and-design-evidence.md
-/docs/17-backend-stack-reference.md
-/docs/18-grok-bot-machine-and-product-surface.md
 
 
 # Runtime state (source for every workspace package is tracked)
