@@ -1,3 +1,5 @@
+/// <reference lib="es2023.array" />
+
 import { Option, Schema } from 'effect'
 import {
   useEffect,
