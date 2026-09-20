@@ -64,7 +64,7 @@ Keep code simple by making the model honest. If a function needs many optional i
 
 ## Boundaries and persistence
 
-Shared wire contracts live in `packages/contracts`; typed client methods live in `packages/client-runtime` when that package is present in the collaboration checkout. Design transport-neutral APIs for web, mobile, and future desktop clients. Do not put browser-only assumptions into contracts or make app components issue ad hoc untyped requests.
+Shared wire contracts live in `packages/contracts`; typed client methods live in `packages/client-runtime`. Design transport-neutral APIs for web, mobile, and future desktop clients. Do not put browser-only assumptions into contracts or make app components issue ad hoc untyped requests.
 
 A TypeScript annotation does not make a network boundary safe. `response.json()` and generic `request<T>()` casts are unknown input, not proof. Validate route params, search, headers, and bodies at every server boundary; validate response payloads at the consumer with the same Effect schema from `packages/contracts`.
 
@@ -126,9 +126,9 @@ Typecheck scripts resolve `tsc` from the pinned native TypeScript preview. Keep 
 
 Infrastructure is local-first and nothing is deployed yet. Alchemy is the only source of truth for intended AWS resources and deploy targets; they belong in `alchemy.run.ts`, not hand-written provider files. The infrastructure lane owns that file unless a task explicitly assigns it here.
 
-Local PostgreSQL is `postgres://vivid:vivid@127.0.0.1:55433/vivid` through `compose.dev.yaml`. Worktrees live under `~/agency/vivid-lanes/<name>`, never `/tmp`.
+Local PostgreSQL is `postgres://vivid:vivid@127.0.0.1:55433/vivid` provisioned by the Alchemy local stack (`pnpm infra:dev`, Docker `postgres:18-alpine`); there is no compose file. Worktrees live under `~/agency/vivid-lanes/<name>`, never `/tmp`.
 
-This repository may contain web and mobile apps, the application server, authentication, People and Companies, Projects, Threads, Messages, Library data, ordinary HTTP APIs, persistence, tests, shared contracts, and the narrow Flue conversation transport. Do not add the production scheduler, connector/tool-call implementations, computer-control transport, credential handling, proprietary execution internals, or research sources. The application server may submit work through an explicit boundary and consume status/results; it must not absorb those systems. Never un-ignore `refs/`, `docs/prds/`, `packages/client-runtime/`, or another path excluded by root `.gitignore`.
+This repository may contain web and mobile apps, the application server, authentication, People and Companies, Projects, Threads, Messages, Library data, ordinary HTTP APIs, persistence, tests, shared contracts, and the narrow Flue conversation transport. Do not add the production scheduler, connector/tool-call implementations, computer-control transport, credential handling, proprietary execution internals, or research sources. The application server may submit work through an explicit boundary and consume status/results; it must not absorb those systems. Never un-ignore `refs/`, `docs/prds/`, or another path excluded by root `.gitignore`.
 
 ## Product language
 
