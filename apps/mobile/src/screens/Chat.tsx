@@ -205,9 +205,38 @@ function connectionErrorMessage(message: string) {
     : message.replace(/^direct\([^)]*\) failed: /, '')
 }
 
+/**
+ * Publishes this Thread's activity to the sidebar and refreshes history when the app returns to
+ * the foreground. Both are subscriptions to systems outside React, which is why they are Effects.
+ */
+function useThreadLifecycle({
+  id,
+  working,
+  failed,
+  onForeground,
+}: {
+  id: string
+  working: boolean
+  failed: boolean
+  onForeground: () => void
+}) {
+  const { report } = useThreadActivity()
+  useEffect(() => {
+    report(id, working ? 'working' : failed ? 'failed' : undefined)
+    return () => report(id, undefined)
+  }, [id, working, failed, report])
+  // App-state subscriptions stay stable while the Effect Event reads the current Flue client.
+  const refresh = useEffectEvent(onForeground)
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refresh()
+    })
+    return () => subscription.remove()
+  }, [])
+}
+
 function ThreadChat({ route, navigation }: NativeStackScreenProps<Routes, 'Chat'>) {
   const { api } = useWorkspace()
-  const { report } = useThreadActivity()
   const { id, title } = route.params
   const client = useConversationClient(api, id)
   const agent = useFlueAgent({ client })
@@ -221,18 +250,12 @@ function ThreadChat({ route, navigation }: NativeStackScreenProps<Routes, 'Chat'
   const nearBottom = useRef(true)
   const [width, setWidth] = useState(390)
   const working = agent.status === 'submitted' || agent.status === 'streaming'
-  useEffect(() => {
-    report(id, working ? 'working' : agent.error ? 'failed' : undefined)
-    return () => report(id, undefined)
-  }, [id, working, agent.error, report])
-  // App-state subscriptions stay stable while the Effect Event reads the current Flue client.
-  const refresh = useEffectEvent(() => agent.refresh())
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') refresh()
-    })
-    return () => subscription.remove()
-  }, [])
+  useThreadLifecycle({
+    id,
+    working,
+    failed: agent.error !== undefined,
+    onForeground: () => agent.refresh(),
+  })
   const messages = agent.messages.filter((message) => message.display !== 'hidden')
   const connectionError = connectionErrorMessage(
     agent.error === undefined ? '' : agent.error.message,
