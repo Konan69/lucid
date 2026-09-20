@@ -40,6 +40,13 @@ void test('critical prerelease versions are exact', () => {
   assert.equal(versions['better-auth'], '1.7.5')
   assert.equal(versions['@typescript/native'], 'npm:typescript@7.0.2')
   assert.equal(versions['@shadcn/lint'], '0.1.1')
+  assert.equal(versions['@flue/runtime'], '2.1.0')
+  assert.equal(versions.expo, '57.0.24')
+  assert.equal(versions['react-native'], '0.86.3')
+  assert.equal(versions.react, '19.2.3')
+  assert.equal(versions['lucide-react'], '1.47.0')
+  assert.equal(versions['@vitejs/plugin-react'], '6.1.1')
+  assert.equal(versions['@earendil-works/pi-ai'], '0.83.0')
   assert.equal(versions['oxlint-tailwindcss'], '1.12.0')
   const manifest = decodePackageManagerManifest(
     NodeFS.readFileSync(NodePath.join(repositoryRoot, 'package.json'), 'utf8'),

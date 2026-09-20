@@ -28,26 +28,57 @@ pmOnFail: error
 # catalog: so Effect/Drizzle/Flue/native TypeScript cannot drift by package.
 catalog:
   '@alchemy.run/better-auth': 2.0.0-beta.79
+  '@earendil-works/pi-ai': 0.83.0
   '@effect/platform-node': 4.0.0-rc.116
   '@effect/sql-pg': 4.0.0-rc.116
   '@effect/vitest': 4.0.0-rc.116
-  '@flue/cli': 2.0.3
-  '@flue/postgres': 2.0.3
-  '@flue/react': 2.0.3
-  '@flue/runtime': 2.0.3
-  '@flue/sdk': 2.0.3
-  '@flue/vite': 2.0.3
-  '@types/node': ^24.0.0
-  vitest: 5.0.1
+  '@flue/cli': 2.1.0
+  '@flue/postgres': 2.1.0
+  '@flue/react': 2.1.0
+  '@flue/runtime': 2.1.0
+  '@flue/sdk': 2.1.0
+  '@flue/vite': 2.1.0
+  '@react-native/metro-config': 0.86.3
+  '@react-navigation/native': 7.4.1
+  '@react-navigation/native-stack': 7.19.2
+  '@tailwindcss/vite': 4.3.3
+  '@types/node': 24.13.6
+  '@types/pg': 8.23.1
+  '@types/react': 19.2.18
+  '@types/react-dom': 19.2.3
   '@typescript/native': 'npm:typescript@7.0.2'
+  '@vitejs/plugin-react': 6.1.1
   alchemy: 2.0.0-beta.79
   better-auth: 1.7.5
   drizzle-kit: 1.0.0-rc.5-ab785fc
   drizzle-orm: 1.0.0-rc.5-ab785fc
   effect: 4.0.0-rc.116
-  pg: ^8.23.0
+  expo: 57.0.24
+  expo-crypto: 57.0.3
+  expo-dev-client: 57.0.19
+  expo-document-picker: 57.0.2
+  expo-file-system: 57.0.7
+  expo-haptics: 57.0.3
+  expo-secure-store: 57.0.4
+  expo-sharing: 57.0.21
+  expo-system-ui: 57.0.4
+  hono: 4.12.32
+  lucide-react: 1.47.0
+  lucide-react-native: 1.47.0
+  pg: 8.23.0
+  react: 19.2.3
+  react-dom: 19.2.3
+  react-native: 0.86.3
+  react-native-gesture-handler: 2.32.0
+  react-native-reanimated: 4.5.1
+  react-native-web: 0.21.2
+  react-native-worklets: 0.10.1
+  tailwindcss: 4.3.3
+  tsx: 4.23.13
   typescript: 6.0.3
+  valibot: 1.5.0
   vite: 8.3.0
+  vitest: 5.0.1
 
 # Root-only convergence keeps transitive peers on the same RCs as the direct
 # stack. Catalog references keep the override and direct declaration identical.
@@ -71,7 +102,7 @@ allowBuilds:
 
 patchedDependencies:
   '@react-native-menu/menu@2.0.0': patches/@react-native-menu__menu@2.0.0.patch
-  react-native-gesture-handler@2.31.2: patches/react-native-gesture-handler@2.31.2.patch
+  react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
 minimumReleaseAgeExclude:
   - '@cloudflare/workers-types@5.20260919.1'
   - '@effect/platform-node-shared@4.0.0-rc.116'

@@ -23,7 +23,7 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "@types/pg": "^8.20.0",
+    "@types/pg": "catalog:",
     "drizzle-kit": "catalog:",
     "@typescript/native": "catalog:",
     "typescript": "catalog:",

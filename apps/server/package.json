@@ -26,11 +26,11 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "@types/pg": "^8.23.1",
+    "@types/pg": "catalog:",
     "drizzle-kit": "catalog:",
     "@typescript/native": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
-    "tsx": "^4.20.0"
+    "tsx": "catalog:"
   }
 }

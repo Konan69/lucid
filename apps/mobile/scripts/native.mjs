@@ -24,7 +24,7 @@ if (!NodeFS.existsSync(NodePath.join(root, platform))) {
   try {
     run('npm', [
       'pack',
-      'expo-template-bare-minimum@56.0.35',
+      'expo-template-bare-minimum@57.0.26',
       '--ignore-scripts',
       '--prefer-offline',
       '--pack-destination',
@@ -37,7 +37,7 @@ if (!NodeFS.existsSync(NodePath.join(root, platform))) {
       '--platform',
       platform,
       '--template',
-      NodePath.join(directory, 'expo-template-bare-minimum-56.0.35.tgz'),
+      NodePath.join(directory, 'expo-template-bare-minimum-57.0.26.tgz'),
       '--no-install',
     ])
   } finally {
