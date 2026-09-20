@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import * as NodeCrypto from 'node:crypto'
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import { db, schemaReady } from './runtime-db.ts'
 import { libraryChunks, libraryDocuments, libraryFolders } from './runtime-schema.ts'
@@ -52,7 +52,10 @@ const documentSelection = {
   status: libraryDocuments.status,
   error: libraryDocuments.error,
   preview: sql<string>`substring(${libraryDocuments.extractedText} from 1 for 320)`,
-  chunkCount: sql<number>`(select count(*) from ${libraryChunks} where ${libraryChunks.documentId} = ${libraryDocuments.id})`,
+  chunkCount:
+    sql<number>`(select count(*) from ${libraryChunks} where ${libraryChunks.documentId} = ${libraryDocuments.id})`.mapWith(
+      Number,
+    ),
   createdAt: libraryDocuments.createdAt,
   updatedAt: libraryDocuments.updatedAt,
   folderId: libraryDocuments.folderId,
@@ -71,30 +74,7 @@ const folderSelection = {
   itemCount: sql<number>`(
     (select count(*) from ${libraryFolders} child where child.parent_id = ${libraryFolders.id}) +
     (select count(*) from ${libraryDocuments} document where document.folder_id = ${libraryFolders.id})
-  )`,
-}
-
-function decodeDocument<T extends { size: unknown; chunkCount: unknown }>(row: T): LibraryDocument {
-  return decodeLibraryDocument({
-    ...row,
-    size: Number(row.size),
-    chunkCount: Number(row.chunkCount),
-  })
-}
-
-function decodeStoredDocument<
-  T extends { size: unknown; chunkCount: unknown; bytes: Uint8Array; extractedText: string },
->(row: T): StoredLibraryDocument {
-  return decodeStoredLibraryDocument({
-    ...row,
-    bytes: new Uint8Array(row.bytes),
-    size: Number(row.size),
-    chunkCount: Number(row.chunkCount),
-  })
-}
-
-function decodeFolder<T extends { itemCount: unknown }>(row: T): LibraryFolder {
-  return decodeLibraryFolder({ ...row, itemCount: Number(row.itemCount) })
+  )`.mapWith(Number),
 }
 
 export async function listLibraryDocuments(folderId?: string | null): Promise<LibraryDocument[]> {
@@ -111,7 +91,7 @@ export async function listLibraryDocuments(folderId?: string | null): Promise<Li
       .from(libraryDocuments)
       .where(condition)
       .orderBy(desc(libraryDocuments.createdAt))
-  ).map(decodeDocument)
+  ).map((row) => decodeLibraryDocument(row))
 }
 
 export async function listLibraryFolders(parentId: string | null): Promise<LibraryFolder[]> {
@@ -124,7 +104,7 @@ export async function listLibraryFolders(parentId: string | null): Promise<Libra
       .from(libraryFolders)
       .where(condition)
       .orderBy(asc(sql`lower(${libraryFolders.name})`))
-  ).map(decodeFolder)
+  ).map((row) => decodeLibraryFolder(row))
 }
 
 export async function listAllLibraryFolders(): Promise<LibraryFolder[]> {
@@ -134,7 +114,7 @@ export async function listAllLibraryFolders(): Promise<LibraryFolder[]> {
       .select(folderSelection)
       .from(libraryFolders)
       .orderBy(asc(sql`lower(${libraryFolders.name})`))
-  ).map(decodeFolder)
+  ).map((row) => decodeLibraryFolder(row))
 }
 
 export async function getLibraryFolder(id: string): Promise<LibraryFolder | null> {
@@ -143,7 +123,7 @@ export async function getLibraryFolder(id: string): Promise<LibraryFolder | null
     .select(folderSelection)
     .from(libraryFolders)
     .where(eq(libraryFolders.id, id))
-  return rows[0] ? decodeFolder(rows[0]) : null
+  return rows[0] ? decodeLibraryFolder(rows[0]) : null
 }
 
 export async function updateLibraryFolder(
@@ -177,10 +157,23 @@ export async function createLibraryFolder(
   parentId: string | null,
 ): Promise<LibraryFolder> {
   await schemaReady
-  const id = randomUUID()
   const now = Date.now()
-  await db.insert(libraryFolders).values({ id, name, parentId, createdAt: now, updatedAt: now })
-  return (await getLibraryFolder(id))!
+  const folder: LibraryFolder = {
+    id: NodeCrypto.randomUUID(),
+    name,
+    parentId,
+    createdAt: now,
+    updatedAt: now,
+    itemCount: 0,
+  }
+  await db.insert(libraryFolders).values({
+    id: folder.id,
+    name: folder.name,
+    parentId: folder.parentId,
+    createdAt: folder.createdAt,
+    updatedAt: folder.updatedAt,
+  })
+  return folder
 }
 
 export async function deleteLibraryFolder(
@@ -209,7 +202,7 @@ export async function getLibraryDocument(id: string): Promise<LibraryDocument | 
     .select(documentSelection)
     .from(libraryDocuments)
     .where(eq(libraryDocuments.id, id))
-  return rows[0] ? decodeDocument(rows[0]) : null
+  return rows[0] ? decodeLibraryDocument(rows[0]) : null
 }
 
 export async function getLibraryDocumentByDigest(sha256: string): Promise<LibraryDocument | null> {
@@ -218,7 +211,7 @@ export async function getLibraryDocumentByDigest(sha256: string): Promise<Librar
     .select(documentSelection)
     .from(libraryDocuments)
     .where(eq(libraryDocuments.sha256, sha256))
-  return rows[0] ? decodeDocument(rows[0]) : null
+  return rows[0] ? decodeLibraryDocument(rows[0]) : null
 }
 
 export async function getStoredLibraryDocument(id: string): Promise<StoredLibraryDocument | null> {
@@ -227,7 +220,7 @@ export async function getStoredLibraryDocument(id: string): Promise<StoredLibrar
     .select(storedDocumentSelection)
     .from(libraryDocuments)
     .where(eq(libraryDocuments.id, id))
-  return rows[0] ? decodeStoredDocument(rows[0]) : null
+  return rows[0] ? decodeStoredLibraryDocument(rows[0]) : null
 }
 
 export async function getStoredLibraryDocumentByName(
@@ -240,7 +233,7 @@ export async function getStoredLibraryDocumentByName(
     .where(and(eq(libraryDocuments.name, name), eq(libraryDocuments.status, 'ready')))
     .orderBy(desc(libraryDocuments.updatedAt))
     .limit(1)
-  return rows[0] ? decodeStoredDocument(rows[0]) : null
+  return rows[0] ? decodeStoredLibraryDocument(rows[0]) : null
 }
 
 export async function updateLibraryDocument(
@@ -269,20 +262,33 @@ export async function createLibraryDocument(input: {
 }): Promise<LibraryDocument> {
   await schemaReady
   const now = Date.now()
-  const id = randomUUID()
-  await db.insert(libraryDocuments).values({
-    id,
+  const document: LibraryDocument = {
+    id: NodeCrypto.randomUUID(),
     name: input.name,
     mimeType: input.mimeType,
     size: input.bytes.byteLength,
     sha256: input.sha256,
     status: 'processing',
-    bytes: Buffer.from(input.bytes),
+    error: null,
+    preview: '',
+    chunkCount: 0,
     createdAt: now,
     updatedAt: now,
     folderId: input.folderId,
+  }
+  await db.insert(libraryDocuments).values({
+    id: document.id,
+    name: document.name,
+    mimeType: document.mimeType,
+    size: document.size,
+    sha256: document.sha256,
+    status: document.status,
+    bytes: Buffer.from(input.bytes),
+    createdAt: document.createdAt,
+    updatedAt: document.updatedAt,
+    folderId: document.folderId,
   })
-  return (await getLibraryDocument(id))!
+  return document
 }
 
 export async function completeLibraryDocument(
@@ -294,9 +300,13 @@ export async function completeLibraryDocument(
   await db.transaction(async (tx) => {
     await tx.delete(libraryChunks).where(eq(libraryChunks.documentId, id))
     for (const [ordinal, chunk] of chunks.entries()) {
-      await tx
-        .insert(libraryChunks)
-        .values({ id: randomUUID(), documentId: id, ordinal, page: chunk.page, text: chunk.text })
+      await tx.insert(libraryChunks).values({
+        id: NodeCrypto.randomUUID(),
+        documentId: id,
+        ordinal,
+        page: chunk.page,
+        text: chunk.text,
+      })
     }
     await tx
       .update(libraryDocuments)
@@ -349,6 +359,13 @@ export async function searchLibrary(
   `)
   return result.rows.map((row) => {
     const parsed = decodeLibrarySearchResult({ ...row, score: Number(row.score) })
-    return { ...parsed, score: Number(parsed.score.toFixed(4)) }
+    return {
+      chunkId: parsed.chunkId,
+      documentId: parsed.documentId,
+      filename: parsed.filename,
+      page: parsed.page,
+      text: parsed.text,
+      score: Number(parsed.score.toFixed(4)),
+    }
   })
 }
