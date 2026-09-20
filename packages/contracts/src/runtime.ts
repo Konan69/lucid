@@ -174,6 +174,7 @@ export interface Task extends Schema.Schema.Type<typeof Task> {}
 
 /** Follow-up values accepted while creating or rescheduling one. */
 export const FollowUpInput = Schema.Struct({
+  id: Schema.optionalKey(FollowUpId),
   at: TimestampInput,
   note: Schema.optionalKey(Schema.String),
   repeatEveryMs: Schema.optionalKey(Schema.NullOr(Schema.Number)),
@@ -183,6 +184,8 @@ export interface FollowUpInput extends Schema.Schema.Type<typeof FollowUpInput> 
 
 /** Input accepted when creating a Task. */
 export const CreateTaskRequest = Schema.Struct({
+  id: Schema.optionalKey(TaskId),
+  threadId: Schema.optionalKey(ThreadId),
   title: Schema.String,
   detail: Schema.optionalKey(Schema.String),
   assignee: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -454,6 +457,20 @@ export const ConnectionRequestMessage = Schema.Struct({
 export interface ConnectionRequestMessage extends Schema.Schema.Type<
   typeof ConnectionRequestMessage
 > {}
+
+/** One server-owned request for Flue to accept a Run without owning product state. */
+export const RuntimeRunRequest = Schema.Struct({
+  threadId: ThreadId,
+  idempotencyKey: Schema.String,
+  type: Schema.Literals(['follow-up', 'schedule'] as const),
+  body: Schema.String,
+  attributes: Schema.Record(Schema.String, Schema.String),
+})
+export interface RuntimeRunRequest extends Schema.Schema.Type<typeof RuntimeRunRequest> {}
+
+/** Flue's durable receipt for one accepted Run. */
+export const RuntimeRunResponse = Schema.Struct({ submissionId: Schema.String })
+export interface RuntimeRunResponse extends Schema.Schema.Type<typeof RuntimeRunResponse> {}
 
 /** Existing runtime error envelope retained on the HTTP wire. */
 export const RuntimeErrorResponse = Schema.Struct({ error: Schema.String })

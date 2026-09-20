@@ -11,14 +11,41 @@ import { bootstrapConnectorSchema } from './migration.ts'
 import { credentials } from './schema.ts'
 
 types.setTypeParser(20, (value) => Number(value))
-// This module composes Connector persistence before its legacy Promise API is imported.
-// oxlint-disable-next-line vivid/no-runpromise-in-library
-const databaseUrl = Redacted.value(Effect.runSync(Config.Redacted('DATABASE_URL')))
-const pool = new Pool({ connectionString: databaseUrl })
-const db = drizzle({ client: pool })
-// The Promise adapter is owned here because every legacy store operation awaits the same bootstrap.
-// oxlint-disable-next-line vivid/no-runpromise-in-library
-const ready = Effect.runPromise(bootstrapConnectorSchema(pool))
+
+interface ConnectorDatabase {
+  readonly db: ReturnType<typeof drizzle>
+  /** Resolves once the credential table exists; every operation awaits it first. */
+  readonly ready: Promise<void>
+}
+
+let configured: ConnectorDatabase | undefined
+
+/**
+ * Opens the credential database. Nothing happens at import: a module that reads the environment
+ * and opens a pool while it loads cannot be imported by a test, or by a server that gets its
+ * configuration from a Layer. The application server calls this once with the URL from its own
+ * `ServerConfig`; a caller that never configures it gets `DATABASE_URL` on first use.
+ *
+ * This Promise store is owed work (docs/00-structure.md): it moves into the server's
+ * `connections/` domain on Effect Drizzle, and Vivid's tools reach it over RPC.
+ */
+export function configureConnectorStore(databaseUrl: string): void {
+  const pool = new Pool({ connectionString: databaseUrl })
+  configured = {
+    db: drizzle({ client: pool }),
+    // oxlint-disable-next-line vivid/no-runpromise-in-library
+    ready: Effect.runPromise(bootstrapConnectorSchema(pool)),
+  }
+}
+
+const connectorDatabase = (): ConnectorDatabase => {
+  if (configured === undefined) {
+    // oxlint-disable-next-line vivid/no-runpromise-in-library
+    configureConnectorStore(Redacted.value(Effect.runSync(Config.Redacted('DATABASE_URL'))))
+  }
+  if (configured === undefined) throw new Error('Connector store could not be configured')
+  return configured
+}
 
 const CredentialSchema = Schema.Struct({
   id: Schema.String,
@@ -46,6 +73,7 @@ const credentialSelection = {
 }
 
 export async function listCredentials(): Promise<ConnectorCredential[]> {
+  const { db, ready } = connectorDatabase()
   await ready
   return (
     await db.select(credentialSelection).from(credentials).orderBy(desc(credentials.createdAt))
@@ -55,6 +83,7 @@ export async function listCredentials(): Promise<ConnectorCredential[]> {
 export async function getCredentialsForConnector(
   connectorId: ConnectorId,
 ): Promise<ConnectorCredential[]> {
+  const { db, ready } = connectorDatabase()
   await ready
   return (
     await db
@@ -66,6 +95,7 @@ export async function getCredentialsForConnector(
 }
 
 export async function getCredential(id: string): Promise<ConnectorCredential | null> {
+  const { db, ready } = connectorDatabase()
   await ready
   const rows = await db.select(credentialSelection).from(credentials).where(eq(credentials.id, id))
   return rows[0] ? decodeCredential(rows[0]) : null
@@ -74,6 +104,7 @@ export async function getCredential(id: string): Promise<ConnectorCredential | n
 export async function saveCredential(
   credential: Omit<ConnectorCredential, 'id' | 'createdAt'>,
 ): Promise<ConnectorCredential> {
+  const { db, ready } = connectorDatabase()
   await ready
   const id = NodeCrypto.randomUUID()
   const createdAt = Date.now()
@@ -85,6 +116,7 @@ export async function updateCredential(
   id: string,
   patch: Partial<Pick<ConnectorCredential, 'accessToken' | 'refreshToken' | 'expiresAt'>>,
 ): Promise<ConnectorCredential | null> {
+  const { db } = connectorDatabase()
   const current = await getCredential(id)
   if (!current) return null
   const next = { ...current, ...patch }
@@ -100,6 +132,7 @@ export async function updateCredential(
 }
 
 export async function deleteCredential(id: string): Promise<boolean> {
+  const { db, ready } = connectorDatabase()
   await ready
   return (
     (await db.delete(credentials).where(eq(credentials.id, id)).returning({ id: credentials.id }))
@@ -108,6 +141,7 @@ export async function deleteCredential(id: string): Promise<boolean> {
 }
 
 export async function deleteCredentialsForConnector(connectorId: ConnectorId): Promise<number> {
+  const { db, ready } = connectorDatabase()
   await ready
   return (
     await db

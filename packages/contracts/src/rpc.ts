@@ -1,6 +1,7 @@
 import * as Schema from 'effect/Schema'
 import * as Rpc from 'effect/unstable/rpc/Rpc'
 import * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
+import * as RpcMiddleware from 'effect/unstable/rpc/RpcMiddleware'
 import {
   Conflict,
   DatabaseConstraintViolation,
@@ -52,6 +53,7 @@ import {
   ThreadListResponse,
   ThreadResponse,
 } from './runtime.js'
+import { AuthContext } from './api.js'
 
 /**
  * Every product call a Vivid client makes to the application server, declared once.
@@ -94,6 +96,12 @@ export const RpcFailure = Schema.Union([
   DatabaseFailure,
 ])
 export type RpcFailure = typeof RpcFailure.Type
+
+/** Authenticates every RPC and provides the same request-local context as `VividApi`. */
+export class RpcAuthMiddleware extends RpcMiddleware.Service<
+  RpcAuthMiddleware,
+  { provides: AuthContext; requires: never }
+>()('vivid/RpcAuthMiddleware', { error: RpcFailure }) {}
 
 const call = { error: RpcFailure } as const
 
@@ -266,4 +274,4 @@ export const VividRpc = RpcGroup.make(
   DeleteLibraryFolder,
   ListConnections,
   DeleteConnection,
-)
+).middleware(RpcAuthMiddleware)

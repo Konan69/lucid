@@ -15,21 +15,21 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --type-aware src",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:generate": "echo 'Flue owns runtime schema migrations'",
+    "db:migrate": "echo 'Flue owns runtime schema migrations'"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "catalog:",
+    "@effect/platform-node": "catalog:",
     "@flue/postgres": "catalog:",
     "@flue/runtime": "catalog:",
     "@vivid/connectors": "workspace:*",
     "@vivid/contracts": "workspace:*",
+    "@vivid/client-runtime": "workspace:*",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",
-    "croner": "^10.0.1",
     "hono": "catalog:",
     "pg": "catalog:",
-    "unpdf": "^1.8.1",
     "valibot": "catalog:"
   },
   "devDependencies": {
@@ -37,7 +37,6 @@
     "@flue/cli": "catalog:",
     "@flue/vite": "catalog:",
     "@types/node": "catalog:",
-    "drizzle-kit": "catalog:",
     "@types/pg": "catalog:",
     "@typescript/native": "catalog:",
     "typescript": "catalog:",

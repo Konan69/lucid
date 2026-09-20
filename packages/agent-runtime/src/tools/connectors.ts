@@ -1,7 +1,9 @@
 import { defineTool, type ToolDefinition } from '@flue/runtime'
 import type { BoundConnectorTool, ConnectorToolParameters } from '@vivid/connectors'
-import { gmailTools, calendarTools, driveTools, getConnectorStatus } from '@vivid/connectors'
+import { gmailTools, calendarTools, driveTools } from '@vivid/connectors'
+import { VividRpcClient } from '@vivid/client-runtime'
 import { Effect, Schema } from 'effect'
+import { runServerRpc } from '../client.ts'
 import * as v from 'valibot'
 
 const decodeConnectorToolInput = Schema.decodeUnknownEffect(Schema.Json)
@@ -15,11 +17,16 @@ export const suggestConnectorTool = defineTool({
     reason: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(400)),
   }),
   async run({ data }) {
+    const response = await runServerRpc(Effect.gen(function* () {
+      const client = yield* VividRpcClient
+      return yield* client.ListConnections()
+    }))
+    const connection = response.connectors.find((item) => item.id === data.connector)
     return {
       output: {
         kind: 'connector-request',
         ...data,
-        status: await getConnectorStatus(data.connector),
+        status: connection?.status ?? 'disconnected',
       },
     }
   },

@@ -1,94 +1,58 @@
 import * as NodeCrypto from 'node:crypto'
 import { defineTool } from '@flue/runtime'
+import * as Effect from 'effect/Effect'
 import * as v from 'valibot'
-import {
-  createFollowUp,
-  createNotification,
-  createTask,
-  getTask,
-  getTaskView,
-  listTaskViews,
-  updateTask,
-  type FollowUp,
-  type TaskOrigin,
-  type TaskView,
-} from '../task-store.ts'
+import { VividRpcClient } from '@vivid/client-runtime'
+import { FollowUpId, TaskId, ThreadId, type FollowUp, type Task } from '@vivid/contracts'
+import { runServerRpc } from '../client.ts'
 
 const REPEAT_MS = { none: null, daily: 86_400_000, weekly: 7 * 86_400_000 } as const
+const HAS_OFFSET = /(?:Z|[+-]\d{2}:?\d{2})$/iu
+const isoDateTime = v.pipe(v.string(), v.check((value) => HAS_OFFSET.test(value) && Number.isFinite(Date.parse(value)), 'Expected an ISO 8601 date-time with a timezone offset'))
+const parseWhen = (value: string | null | undefined) => value === undefined || value === null ? null : Date.parse(value)
 
-// Require an explicit offset or Z: a bare "2026-09-04T09:00" would be read in the server's zone.
-const HAS_OFFSET = /(?:Z|[+-]\d{2}:?\d{2})$/i
-const isoDateTime = v.pipe(
-  v.string(),
-  v.check(
-    (value) => HAS_OFFSET.test(value) && Number.isFinite(Date.parse(value)),
-    'Expected an ISO 8601 date-time with a timezone offset, like 2026-09-04T09:00:00+01:00',
-  ),
-)
-
-function parseWhen(value?: string | null): number | null {
-  if (value === undefined || value === null) return null
-  return Date.parse(value)
-}
-
-function originFor(conversationId: string): TaskOrigin {
-  if (conversationId.startsWith('routine-'))
-    return { kind: 'routine', routineId: conversationId.slice('routine-'.length) }
-  return { kind: 'conversation', conversationId }
-}
-
-function operationId(conversationId: string, toolCallId: string, purpose: string) {
-  const hex = NodeCrypto.createHash('sha256')
-    .update(`${conversationId}:${toolCallId}:${purpose}`)
-    .digest('hex')
-    .slice(0, 32)
+/** Stable ids make Flue durable-step retries idempotent at the server insert boundary. */
+const operationId = (threadId: string, toolCallId: string, purpose: string) => {
+  const hex = NodeCrypto.createHash('sha256').update(`${threadId}:${toolCallId}:${purpose}`).digest('hex').slice(0, 32)
   const variant = ((Number.parseInt(hex.slice(16, 17), 16) & 0x3) | 0x8).toString(16)
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20)}`
 }
 
-function describeFollowUp(followUp: FollowUp) {
-  return {
-    id: followUp.id,
-    at: new Date(followUp.at).toISOString(),
-    note: followUp.note,
-    repeatEveryMs: followUp.repeatEveryMs,
-    status: followUp.status,
-  }
-}
+const describeFollowUp = (followUp: FollowUp) => ({
+  id: followUp.id,
+  at: new Date(followUp.at).toISOString(),
+  note: followUp.note,
+  repeatEveryMs: followUp.repeatEveryMs,
+  status: followUp.status,
+})
+const describeTask = (task: Task) => ({
+  id: task.id,
+  title: task.title,
+  detail: task.detail,
+  status: task.status,
+  priority: task.priority,
+  assignee: task.assignee ?? 'you',
+  dueAt: task.dueAt === null ? null : new Date(task.dueAt).toISOString(),
+  nextFollowUpAt: task.nextFollowUpAt === null ? null : new Date(task.nextFollowUpAt).toISOString(),
+  followUps: task.followUps.filter((followUp) => followUp.status === 'scheduled').map(describeFollowUp),
+})
 
-function describeTask(task: TaskView) {
-  return {
-    id: task.id,
-    title: task.title,
-    detail: task.detail,
-    status: task.status,
-    priority: task.priority,
-    assignee: task.assignee ?? 'you',
-    dueAt: task.dueAt ? new Date(task.dueAt).toISOString() : null,
-    nextFollowUpAt: task.nextFollowUpAt ? new Date(task.nextFollowUpAt).toISOString() : null,
-    followUps: task.followUps
-      .filter((followUp) => followUp.status === 'scheduled')
-      .map(describeFollowUp),
-  }
-}
+const withClient = <A, E>(use: (client: VividRpcClient['Service']) => Effect.Effect<A, E>) =>
+  runServerRpc(Effect.gen(function* () { return yield* use(yield* VividRpcClient) }))
 
 const cache = new Map<string, ReturnType<typeof buildTaskTools>>()
-
-/** Task tools bound to the conversation that is using them, so every task remembers where it came from. */
-export function taskToolsFor(conversationId: string) {
-  let tools = cache.get(conversationId)
-  if (!tools) {
-    tools = buildTaskTools(conversationId)
-    cache.set(conversationId, tools)
-  }
+export function taskToolsFor(threadId: string) {
+  const cached = cache.get(threadId)
+  if (cached !== undefined) return cached
+  const tools = buildTaskTools(threadId)
+  cache.set(threadId, tools)
   return tools
 }
 
-function buildCreateTaskTool(conversationId: string) {
-  return defineTool({
+function buildTaskTools(threadId: string) {
+  const createTask = defineTool({
     name: 'create_task',
-    description:
-      "Track a piece of work as a task Vivid will follow up on. Use it when the user asks for a reminder, a chase, or to keep track of something, or after they accept your offer to track work that depends on another person, has a deadline, or should be checked later. Never file work you can finish right now. Set assignee to the person the work waits on, or omit it when the work is the user's own. Dates are ISO 8601 with a timezone offset. Returns the stored task; tell the user plainly what is now being tracked and when you will follow up.",
+    description: 'Track work as a Task and optionally schedule a follow-up. Dates require a timezone offset.',
     input: v.object({
       title: v.pipe(v.string(), v.minLength(2), v.maxLength(200)),
       detail: v.optional(v.pipe(v.string(), v.maxLength(2000))),
@@ -101,144 +65,69 @@ function buildCreateTaskTool(conversationId: string) {
     }),
     durable: true,
     async run({ data, step, toolCallId }) {
-      const task = await step.do('create-task', () =>
-        createTask({
-          id: operationId(conversationId, toolCallId, 'task'),
-          title: data.title.trim(),
-          detail: data.detail === undefined ? undefined : data.detail.trim(),
-          assignee: data.assignee === undefined ? null : data.assignee.trim() || null,
-          dueAt: parseWhen(data.dueAt),
-          priority: data.priority,
-          origin: originFor(conversationId),
-          createdBy: 'vivid',
+      const response = await step.do('create-task', () => withClient((client) => client.CreateTask({
+        id: TaskId.make(operationId(threadId, toolCallId, 'task')),
+        threadId: ThreadId.make(threadId),
+        title: data.title.trim(),
+        detail: data.detail?.trim(),
+        assignee: data.assignee?.trim() || null,
+        dueAt: parseWhen(data.dueAt),
+        priority: data.priority,
+        ...(data.followUpAt === undefined ? {} : {
+          followUp: {
+            id: FollowUpId.make(operationId(threadId, toolCallId, 'follow-up')),
+            at: Date.parse(data.followUpAt),
+            note: data.followUpNote?.trim(),
+            repeatEveryMs: REPEAT_MS[data.repeat ?? 'none'],
+          },
         }),
-      )
-      const followUpAt = parseWhen(data.followUpAt)
-      const followUp = followUpAt
-        ? await step.do('schedule-follow-up', () =>
-            createFollowUp({
-              id: operationId(conversationId, toolCallId, 'follow-up'),
-              taskId: task.id,
-              at: followUpAt,
-              note: data.followUpNote === undefined ? undefined : data.followUpNote.trim(),
-              repeatEveryMs: REPEAT_MS[data.repeat ?? 'none'],
-              createdBy: 'vivid',
-            }),
-          )
-        : null
-      await step.do('create-notification', () =>
-        createNotification({
-          id: operationId(conversationId, toolCallId, 'notification'),
-          kind: 'tracked',
-          title: `Now tracking: ${task.title}`,
-          body: [
-            task.assignee ? `Waiting on ${task.assignee}.` : null,
-            task.dueAt ? `Due ${new Date(task.dueAt).toLocaleString()}.` : null,
-            followUp ? `Follow-up ${new Date(followUp.at).toLocaleString()}.` : null,
-          ]
-            .filter(Boolean)
-            .join(' '),
-          taskId: task.id,
-          conversationId,
-        }),
-      )
-      return {
-        output: {
-          task: describeTask(await getTaskView(task)),
-          followUp: followUp ? describeFollowUp(followUp) : null,
-        },
-      }
+      })))
+      return { output: { task: describeTask(response.task) } }
     },
   })
-}
 
-function buildTaskTools(conversationId: string) {
-  const createTaskTool = buildCreateTaskTool(conversationId)
-  const updateTaskTool = defineTool({
+  const updateTask = defineTool({
     name: 'update_task',
-    description:
-      'Change a tracked task: mark it done or dropped, reopen it, change who it waits on, its due date, priority, title, or detail. Marking a task done or dropped cancels its scheduled follow-ups. Use list_tasks first if you do not have the task id.',
+    description: 'Change a tracked Task. Use list_tasks first when the id is unknown.',
     input: v.object({
-      id: v.pipe(v.string(), v.uuid()),
-      status: v.optional(v.picklist(['open', 'done', 'dropped'])),
-      title: v.optional(v.pipe(v.string(), v.minLength(2), v.maxLength(200))),
-      detail: v.optional(v.pipe(v.string(), v.maxLength(2000))),
-      assignee: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(80)))),
-      dueAt: v.optional(v.nullable(isoDateTime)),
+      id: v.pipe(v.string(), v.uuid()), status: v.optional(v.picklist(['open', 'done', 'dropped'])),
+      title: v.optional(v.pipe(v.string(), v.minLength(2), v.maxLength(200))), detail: v.optional(v.pipe(v.string(), v.maxLength(2000))),
+      assignee: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(80)))), dueAt: v.optional(v.nullable(isoDateTime)),
       priority: v.optional(v.picklist(['normal', 'urgent'])),
     }),
     durable: true,
     async run({ data, step }) {
-      const task = await step.do('update-task', () =>
-        updateTask(data.id, {
-          status: data.status,
-          title: data.title === undefined ? undefined : data.title.trim(),
-          detail: data.detail === undefined ? undefined : data.detail.trim(),
-          assignee:
-            data.assignee === undefined
-              ? undefined
-              : data.assignee === null
-                ? null
-                : data.assignee.trim() || null,
-          dueAt: data.dueAt === undefined ? undefined : parseWhen(data.dueAt),
-          priority: data.priority,
-        }),
-      )
-      if (!task) throw new Error(`No task with id ${data.id}`)
-      return { output: { task: describeTask(await getTaskView(task)) } }
+      const response = await step.do('update-task', () => withClient((client) => client.PatchTask({
+        id: TaskId.make(data.id),
+        patch: { status: data.status, title: data.title?.trim(), detail: data.detail?.trim(), assignee: data.assignee === undefined ? undefined : data.assignee?.trim() || null, dueAt: data.dueAt === undefined ? undefined : parseWhen(data.dueAt), priority: data.priority },
+      })))
+      return { output: { task: describeTask(response.task) } }
     },
   })
 
-  const listTasksTool = defineTool({
+  const listTasks = defineTool({
     name: 'list_tasks',
-    description:
-      'List tracked tasks with their scheduled follow-ups. Defaults to open tasks. Use it to answer what is outstanding, what is waiting on whom, or to find a task id before updating it.',
-    input: v.object({
-      status: v.optional(v.picklist(['open', 'done', 'dropped'])),
-      limit: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(50))),
-    }),
+    description: 'List tracked Tasks and scheduled follow-ups.',
+    input: v.object({ status: v.optional(v.picklist(['open', 'done', 'dropped'])), limit: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(50))) }),
     async run({ data }) {
-      const tasks = (await listTaskViews(data.status ?? 'open'))
-        .slice(0, data.limit ?? 20)
-        .map(describeTask)
-      return { output: { now: new Date().toISOString(), tasks } }
+      const response = await withClient((client) => client.ListTasks({ status: data.status ?? 'open' }))
+      return { output: { now: new Date().toISOString(), tasks: response.tasks.slice(0, data.limit ?? 20).map(describeTask) } }
     },
   })
 
-  const scheduleFollowUpTool = defineTool({
+  const scheduleFollowUp = defineTool({
     name: 'schedule_follow_up',
-    description:
-      'Schedule a moment when Vivid wakes up on its own to follow up on a tracked task: remind the user, draft a nudge for the person it waits on, or check whether it is done. Use an ISO 8601 date-time with a timezone offset. Repeat daily or weekly when the user wants ongoing chasing.',
-    input: v.object({
-      taskId: v.pipe(v.string(), v.uuid()),
-      at: isoDateTime,
-      note: v.optional(v.pipe(v.string(), v.maxLength(500))),
-      repeat: v.optional(v.picklist(['none', 'daily', 'weekly'])),
-    }),
+    description: 'Schedule a follow-up for a tracked Task. Dates require a timezone offset.',
+    input: v.object({ taskId: v.pipe(v.string(), v.uuid()), at: isoDateTime, note: v.optional(v.pipe(v.string(), v.maxLength(500))), repeat: v.optional(v.picklist(['none', 'daily', 'weekly'])) }),
     durable: true,
     async run({ data, step, toolCallId }) {
-      const task = await getTask(data.taskId)
-      if (!task) throw new Error(`No task with id ${data.taskId}`)
-      if (task.status !== 'open')
-        throw new Error(
-          `Task "${task.title}" is ${task.status}; reopen it before scheduling a follow-up`,
-        )
-      const at = parseWhen(data.at) ?? Date.now()
-      const followUp = await step.do('schedule-follow-up', () =>
-        createFollowUp({
-          id: operationId(conversationId, toolCallId, 'follow-up'),
-          taskId: task.id,
-          at,
-          note: data.note === undefined ? undefined : data.note.trim(),
-          repeatEveryMs: REPEAT_MS[data.repeat ?? 'none'],
-          createdBy: 'vivid',
-        }),
-      )
-      return {
-        output: { task: { id: task.id, title: task.title }, followUp: describeFollowUp(followUp) },
-      }
+      const response = await step.do('schedule-follow-up', () => withClient((client) => client.AddFollowUp({
+        taskId: TaskId.make(data.taskId),
+        followUp: { id: FollowUpId.make(operationId(threadId, toolCallId, 'follow-up')), at: Date.parse(data.at), note: data.note?.trim(), repeatEveryMs: REPEAT_MS[data.repeat ?? 'none'] },
+      })))
+      return { output: { task: { id: response.task.id, title: response.task.title }, followUp: describeFollowUp(response.followUp) } }
     },
   })
 
-  return [createTaskTool, updateTaskTool, listTasksTool, scheduleFollowUpTool] as const
+  return [createTask, updateTask, listTasks, scheduleFollowUp] as const
 }

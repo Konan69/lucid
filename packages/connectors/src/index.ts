@@ -21,6 +21,7 @@ export {
   getCredential,
   deleteCredential,
   deleteCredentialsForConnector,
+  configureConnectorStore,
 } from './store.ts'
 export { GmailConnector } from './google/gmail.ts'
 export { CalendarConnector } from './google/calendar.ts'

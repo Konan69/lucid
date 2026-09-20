@@ -1,4 +1,5 @@
 import * as Context from 'effect/Context'
+import * as Data from 'effect/Data'
 import * as HttpApi from 'effect/unstable/httpapi/HttpApi'
 import * as HttpApiEndpoint from 'effect/unstable/httpapi/HttpApiEndpoint'
 import * as HttpApiGroup from 'effect/unstable/httpapi/HttpApiGroup'
@@ -25,6 +26,7 @@ import {
   Project,
   ProjectListResponse,
   Settings,
+  SessionId,
   Unauthenticated,
 } from './index.js'
 
@@ -35,13 +37,17 @@ import {
  * this module. Pattern after `ai-docs/src/51_http-server` in the pinned Effect source.
  */
 
-export interface AuthState {
-  readonly person: Person
-  readonly activeCompany?: Company
-  readonly membership?: Membership
-  readonly sessionId: string
-}
+export type AuthState = Data.TaggedEnum<{
+  Person: {
+    readonly person: Person
+    readonly activeCompany?: Company
+    readonly membership?: Membership
+    readonly sessionId: SessionId
+  }
+  Runtime: {}
+}>
 
+export const AuthState = Data.taggedEnum<AuthState>()
 export class AuthContext extends Context.Service<AuthContext, AuthState>()('vivid/AuthContext') {}
 
 export const apiErrors = [

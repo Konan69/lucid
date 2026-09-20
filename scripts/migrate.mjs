@@ -44,9 +44,9 @@ const migrations = [
     args: ['exec', 'drizzle-kit', 'migrate', '--config', 'drizzle.config.ts'],
   },
   {
-    name: 'agent-runtime',
-    cwd: 'packages/agent-runtime',
-    args: ['exec', 'drizzle-kit', 'migrate', '--config', 'drizzle.config.ts'],
+    name: 'server-product',
+    cwd: 'apps/server',
+    args: ['exec', 'drizzle-kit', 'migrate', '--config', 'product-drizzle.config.ts'],
   },
   {
     name: 'connectors',

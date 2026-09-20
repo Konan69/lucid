@@ -1,6 +1,9 @@
 import { defineTool } from '@flue/runtime'
+import * as Effect from 'effect/Effect'
 import * as v from 'valibot'
-import { searchLibrary } from '../library-store.ts'
+import { VividRpcClient } from '@vivid/client-runtime'
+import { LibraryFolderId } from '@vivid/contracts'
+import { runServerRpc } from '../client.ts'
 
 export const searchLibraryTool = defineTool({
   name: 'search_library',
@@ -12,16 +15,14 @@ export const searchLibraryTool = defineTool({
     folderId: v.optional(v.pipe(v.string(), v.uuid())),
   }),
   async run({ data }) {
-    const results = (await searchLibrary(data.query, data.limit ?? 6, data.folderId)).map(
-      (result) => ({
-        documentId: result.documentId,
-        filename: result.filename,
-        page: result.page,
-        text: result.text,
-        score: result.score,
-        citation: result.page ? `[${result.filename}, p.${result.page}]` : `[${result.filename}]`,
-      }),
-    )
+    const response = await runServerRpc(Effect.gen(function* () {
+      const client = yield* VividRpcClient
+      return yield* client.SearchLibrary({ query: data.query, limit: data.limit ?? 6, ...(data.folderId === undefined ? {} : { folderId: LibraryFolderId.make(data.folderId) }) })
+    }))
+    const results = response.results.map((result) => ({
+      ...result,
+      citation: result.page === null ? `[${result.filename}]` : `[${result.filename}, p.${result.page}]`,
+    }))
     return { output: { query: data.query, results } }
   },
 })

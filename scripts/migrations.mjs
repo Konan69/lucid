@@ -12,7 +12,7 @@ const repositoryRoot = NodePath.resolve(
 const initialSnapshotId = '00000000-0000-0000-0000-000000000000'
 export const migrationOwners = Object.freeze([
   'apps/server',
-  'packages/agent-runtime',
+  'apps/server#product',
   'packages/connectors',
 ])
 
@@ -20,6 +20,8 @@ const MigrationManifest = Schema.Struct({
   scripts: Schema.Struct({
     'db:generate': Schema.String,
     'db:migrate': Schema.String,
+    'db:generate:product': Schema.optionalKey(Schema.String),
+    'db:migrate:product': Schema.optionalKey(Schema.String),
   }),
 })
 const MigrationSnapshot = Schema.Struct({
@@ -32,30 +34,34 @@ const decodeManifestText = Schema.decodeUnknownSync(Schema.fromJsonString(Migrat
 const decodeSnapshotText = Schema.decodeUnknownSync(Schema.fromJsonString(MigrationSnapshot))
 
 const ownerPaths = (root, owner) => {
-  const ownerRoot = NodePath.join(root, owner)
+  const product = owner === 'apps/server#product'
+  const ownerRoot = NodePath.join(root, product ? 'apps/server' : owner)
   return {
-    config: NodePath.join(ownerRoot, 'drizzle.config.ts'),
+    config: NodePath.join(ownerRoot, product ? 'product-drizzle.config.ts' : 'drizzle.config.ts'),
     manifest: NodePath.join(ownerRoot, 'package.json'),
-    migrations: NodePath.join(ownerRoot, 'drizzle'),
+    migrations: NodePath.join(ownerRoot, product ? 'product-drizzle' : 'drizzle'),
+    out: product ? './product-drizzle' : './drizzle',
+    generateScript: product ? 'db:generate:product' : 'db:generate',
+    migrateScript: product ? 'db:migrate:product' : 'db:migrate',
   }
 }
 
-const configErrors = (owner, config) => [
+const configErrors = (owner, config, paths) => [
   ...(/schema\s*:\s*["'][^"']+["']/u.test(config)
     ? []
-    : [`${owner}/drizzle.config.ts: schema must be a literal owned path`]),
-  ...(/out\s*:\s*["']\.\/drizzle["']/u.test(config)
+    : [`${owner}: schema must be a literal owned path`]),
+  ...(config.includes(`out: '${paths.out}'`) || config.includes(`out: "${paths.out}"`)
     ? []
-    : [`${owner}/drizzle.config.ts: out must be "./drizzle"`]),
+    : [`${owner}: out must be "${paths.out}"`]),
 ]
 
-const manifestErrors = (owner, manifest) => [
-  ...(manifest.scripts['db:generate'] === 'drizzle-kit generate'
+const manifestErrors = (owner, manifest, paths) => [
+  ...(manifest.scripts[paths.generateScript]?.startsWith('drizzle-kit generate') === true
     ? []
-    : [`${owner}/package.json: db:generate must run drizzle-kit generate`]),
-  ...(manifest.scripts['db:migrate'] === 'drizzle-kit migrate'
+    : [`${owner}/package.json: ${paths.generateScript} must run drizzle-kit generate`]),
+  ...(manifest.scripts[paths.migrateScript]?.startsWith('drizzle-kit migrate') === true
     ? []
-    : [`${owner}/package.json: db:migrate must run drizzle-kit migrate`]),
+    : [`${owner}/package.json: ${paths.migrateScript} must run drizzle-kit migrate`]),
 ]
 
 const migrationDirectories = (path) =>
@@ -85,30 +91,30 @@ function migrationErrors({ owner, migrationsPath, directory, previousId, ids }) 
   const errors = []
   if (!/^\d{14}_[a-z0-9_-]+$/u.test(directory)) {
     errors.push(
-      `${owner}/drizzle/${directory}: migration directory must start with a 14-digit timestamp`,
+      `${owner}/${directory}: migration directory must start with a 14-digit timestamp`,
     )
   }
   const migration = readMigration(NodePath.join(migrationsPath, directory, 'migration.sql'))
   const snapshot = readSnapshot(NodePath.join(migrationsPath, directory, 'snapshot.json'))
   if (Option.isNone(migration)) {
-    errors.push(`${owner}/drizzle/${directory}: migration.sql is missing`)
+    errors.push(`${owner}/${directory}: migration.sql is missing`)
   } else if (migration.value.trim().length === 0) {
-    errors.push(`${owner}/drizzle/${directory}: migration.sql is empty`)
+    errors.push(`${owner}/${directory}: migration.sql is empty`)
   }
   if (Option.isNone(snapshot)) {
-    errors.push(`${owner}/drizzle/${directory}: snapshot.json is missing or invalid JSON`)
+    errors.push(`${owner}/${directory}: snapshot.json is missing or invalid JSON`)
     return { errors, nextPreviousId: previousId }
   }
   if (snapshot.value.id.length === 0) {
-    errors.push(`${owner}/drizzle/${directory}: snapshot id is required`)
+    errors.push(`${owner}/${directory}: snapshot id is required`)
   } else if (ids.has(snapshot.value.id)) {
-    errors.push(`${owner}/drizzle/${directory}: snapshot id ${snapshot.value.id} is duplicated`)
+    errors.push(`${owner}/${directory}: snapshot id ${snapshot.value.id} is duplicated`)
   } else {
     ids.add(snapshot.value.id)
   }
   if (!snapshot.value.prevIds.includes(previousId)) {
     errors.push(
-      `${owner}/drizzle/${directory}: prevIds must link to the previous snapshot ${previousId}`,
+      `${owner}/${directory}: prevIds must link to the previous snapshot ${previousId}`,
     )
   }
   return { errors, nextPreviousId: snapshot.value.id }
@@ -120,9 +126,12 @@ export function validateMigrationOwner(root, owner) {
   const config = NodeFS.readFileSync(paths.config, 'utf8')
   const manifest = decodeManifestText(NodeFS.readFileSync(paths.manifest, 'utf8'))
   const directories = migrationDirectories(paths.migrations)
-  const errors = [...configErrors(owner, config), ...manifestErrors(owner, manifest)]
+  const errors = [
+    ...configErrors(owner, config, paths),
+    ...manifestErrors(owner, manifest, paths),
+  ]
   if (directories.length === 0) {
-    errors.push(`${owner}/drizzle: at least one generated migration is required`)
+    errors.push(`${owner}: at least one generated migration is required`)
   }
   const ids = new Set()
   let previousId = initialSnapshotId

@@ -51,6 +51,8 @@ export const GoogleOAuthConfiguration = Data.taggedEnum<GoogleOAuthConfiguration
 export interface ServerConfigService {
   readonly DATABASE_URL: Redacted.Redacted
   readonly AUTH_SECRET: Redacted.Redacted
+  readonly RUNTIME_URL: URL
+  readonly RUNTIME_TOKEN: Redacted.Redacted
   readonly PORT: number
   readonly PUBLIC_URL: URL
   readonly GOOGLE_OAUTH: GoogleOAuthConfiguration
@@ -156,6 +158,8 @@ const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
   return {
     DATABASE_URL: yield* loadDatabaseUrl(),
     AUTH_SECRET: loadedAuthSecret,
+    RUNTIME_URL: yield* required('VIVID_RUNTIME_URL', Schema.URLFromString),
+    RUNTIME_TOKEN: yield* required('VIVID_RUNTIME_TOKEN', secret),
     PORT: port,
     PUBLIC_URL: publicUrl,
     GOOGLE_OAUTH: yield* loadGoogleOAuth(),
