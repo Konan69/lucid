@@ -1,0 +1,57 @@
+import { ConnectionRequestMessage } from '@vivid/contracts'
+import type { Connection } from '@vivid/contracts'
+import { Option, Schema } from 'effect'
+
+export const connectorNames = {
+  gmail: 'Gmail',
+  calendar: 'Google Calendar',
+  drive: 'Google Drive',
+} as const
+
+export type ConnectorId = ConnectionRequestMessage['connector']
+export type ConnectorStatus = Connection
+export type ConnectorRequest = ConnectionRequestMessage
+
+const decodeConnectorRequest = Schema.decodeUnknownOption(ConnectionRequestMessage)
+const decodeString = Schema.decodeUnknownOption(Schema.String)
+
+// The wire decoder establishes the connector vocabulary before the UI applies its stricter
+// display-length invariant.
+export function normalizeConnectorRequest(value: ConnectorRequest): ConnectorRequest | null {
+  const reason = value.reason.trim()
+  if (reason.length === 0 || reason.length > 400) return null
+  return ConnectionRequestMessage.make({
+    kind: 'connector-request',
+    connector: value.connector,
+    reason,
+  })
+}
+
+// This compatibility boundary supports persisted messages read outside the live Conversation
+// adapter; live Flue output is decoded with the shared contract before normalization.
+function parsePersistedConnectorOutput(
+  output: Parameters<typeof decodeConnectorRequest>[0],
+): ConnectorRequest | null {
+  const decoded = decodeConnectorRequest(output)
+  return Option.isSome(decoded) ? normalizeConnectorRequest(decoded.value) : null
+}
+
+/** Parses persisted connector output without exposing the boundary parser as a second API. */
+export const readConnectorRequest = parsePersistedConnectorOutput
+
+/** Builds the continuation sentence shown after the requested Connection is ready. */
+export function connectorContinuation(id: ConnectorId) {
+  return `I've connected ${connectorNames[id]}. Please continue with my request.`
+}
+
+function parseAuthorizationAddress(value: Parameters<typeof decodeString>[0]): string {
+  const decoded = decodeString(value)
+  if (Option.isNone(decoded)) throw new Error('The connection returned an invalid sign-in address.')
+  const url = new URL(decoded.value)
+  if (url.protocol !== 'https:' || url.username || url.password)
+    throw new Error('The connection returned an invalid sign-in address.')
+  return url.href
+}
+
+/** Parses and restricts a provider authorization handoff to safe HTTPS addresses. */
+export const authorizationAddress = parseAuthorizationAddress
