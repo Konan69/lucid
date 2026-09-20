@@ -2,4 +2,5 @@ export { libraryChunks, libraryDocuments, libraryFolders } from '../library/tabl
 export { occurrences, routines } from '../routines/tables.ts'
 export { followUps, notifications, tasks } from '../tasks/tables.ts'
 export { threads } from '../threads/tables.ts'
+export { credentials } from '../connections/tables.ts'
 export { schemaMigrations } from './schema.ts'

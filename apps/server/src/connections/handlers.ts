@@ -15,4 +15,14 @@ export const connectionHandlers = {
     const deleted = yield* store.remove(id).pipe(Effect.mapError(invalidRequest))
     return ConnectionDeletionResponse.make({ success: true, deleted })
   }),
+  ExecuteConnectionTool: Effect.fn('Rpc.ExecuteConnectionTool')(function* ({
+    connector,
+    tool,
+    input,
+  }) {
+    const store = yield* ConnectionStore
+    return {
+      output: yield* store.execute(connector, tool, input).pipe(Effect.mapError(invalidRequest)),
+    }
+  }),
 }

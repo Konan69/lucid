@@ -7,6 +7,7 @@ import {
   verificationTable,
 } from '../auth/tables.ts'
 import { companyTable, invitationTable, membershipTable } from '../companies/tables.ts'
+import { credentials } from '../connections/tables.ts'
 import { libraryChunks, libraryDocuments, libraryFolders } from '../library/tables.ts'
 import { projectTable } from '../projects/tables.ts'
 import { occurrences, routines } from '../routines/tables.ts'
@@ -23,6 +24,7 @@ export const schemaMigrations = pgTable('vivid_schema_migrations', {
 export {
   accountTable,
   companyTable,
+  credentials,
   deviceCodeTable,
   followUps,
   invitationTable,
@@ -69,4 +71,5 @@ export const drizzleSchema = {
   libraryFolders,
   libraryDocuments,
   libraryChunks,
+  credentials,
 } as const

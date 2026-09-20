@@ -1,5 +1,6 @@
 import { bigint, index, pgTable, text } from 'drizzle-orm/pg-core'
 
+/** Preserves the connector package's persisted names so existing grants survive the move. */
 export const credentials = pgTable(
   'vivid_credentials',
   {

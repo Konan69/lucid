@@ -45,7 +45,7 @@ const handlerDependencies = Layer.mergeAll(
   schedulerServices,
   workStores,
   companyStoreLayer.pipe(Layer.provide(testDatabaseLayer)),
-  connectionStoreLayer.pipe(Layer.provide(configLayer)),
+  connectionStoreLayer.pipe(Layer.provide(testDatabaseLayer), Layer.provide(configLayer)),
   libraryStoreLayer.pipe(Layer.provide(testDatabaseLayer)),
   projectStoreLayer.pipe(Layer.provide(testDatabaseLayer)),
   settingsStoreLayer.pipe(Layer.provide(testDatabaseLayer)),
