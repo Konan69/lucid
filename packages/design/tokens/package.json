@@ -1,0 +1,16 @@
+{
+  "name": "@vivid/tokens",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    "./tokens.css": "./src/tokens.css",
+    "./native": "./src/native.ts"
+  },
+  "scripts": {
+    "generate:native": "node generate-native.mjs",
+    "build": "node generate-native.mjs --check",
+    "typecheck": "node generate-native.mjs --check",
+    "lint": "oxlint --type-aware generate-native.mjs src/native.ts"
+  }
+}

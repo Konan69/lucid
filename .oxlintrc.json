@@ -171,7 +171,11 @@
       }
     },
     {
-      "files": ["apps/{server,web}/src/**/*.{ts,tsx}", "packages/*/src/**/*.{ts,tsx}"],
+      "files": [
+        "apps/{server,web}/src/**/*.{ts,tsx}",
+        "packages/*/src/**/*.{ts,tsx}",
+        "packages/*/*/src/**/*.{ts,tsx}"
+      ],
       "rules": {
         "typescript/no-explicit-any": "warn"
       }
@@ -282,7 +286,7 @@
       }
     },
     {
-      "files": ["apps/web/src/ui/ToolMarks.tsx"],
+      "files": ["apps/web/src/ui/Marks.tsx"],
       "rules": {
         "shadcn/no-raw-colors": "off"
       }

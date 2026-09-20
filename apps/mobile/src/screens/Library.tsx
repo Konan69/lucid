@@ -7,7 +7,7 @@ import { File } from 'expo-file-system'
 import { LibraryFolderListResponse, LibraryListResponse } from '@vivid/contracts'
 import { openDocument } from '../lib/documents'
 import { useOpenThread, useWorkspace, type Routes } from '../workspace'
-import { useResource } from '../lib/resource'
+import { useResource } from '../lib/resource/hook'
 import { useTheme } from '../theme'
 import { type Document, type Folder } from '../lib/models'
 import {

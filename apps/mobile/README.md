@@ -116,7 +116,7 @@ pnpm --filter @vivid/mobile typecheck
 pnpm --filter @vivid/mobile test
 pnpm --filter @vivid/mobile exec expo install --check
 pnpm --filter @vivid/mobile build
-pnpm --filter @vivid/design-tokens typecheck
+pnpm --filter @vivid/tokens typecheck
 ```
 
 `build` exports Android/iOS Hermes bundles and the web preview; it is not an APK
@@ -125,5 +125,5 @@ requires macOS/Xcode. A successful JavaScript export does not validate native
 keyboard, picker, sharing, SecureStore or OS lifecycle behavior.
 
 After editing the shared CSS colors or metrics, run
-`pnpm --filter @vivid/design-tokens generate:native`. Its build/typecheck rejects
+`pnpm --filter @vivid/tokens generate:native`. Its build/typecheck rejects
 stale generated native tokens. See [DESIGN-SOURCES.md](./DESIGN-SOURCES.md) for the source mapping.

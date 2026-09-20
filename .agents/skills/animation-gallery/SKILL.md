@@ -17,7 +17,7 @@ A small catalogue of motion Vivid will actually use. It is an implementation ref
 
 ## Vivid baseline
 
-Use existing `packages/design-tokens/src/tokens.css`; do not fork it:
+Use existing `packages/design/tokens/src/tokens.css`; do not fork it:
 
 ```css
 --dur-fast: 120ms;

@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect'
-import { authorizationAddress, type ConnectorId } from './connectorRequests'
+import { authorizationAddress, type ConnectorId } from './requests'
 import { ClientRequestFailed, emptyResponse, request } from './request'
 
 export type ConnectorState = 'disconnected' | 'connecting' | 'connected' | 'error'

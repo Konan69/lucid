@@ -33,6 +33,10 @@ export const versions = Object.freeze({
   'drizzle-kit': '1.0.0-rc.5-ab785fc',
   'drizzle-orm': '1.0.0-rc.5-ab785fc',
   effect: '4.0.0-rc.116',
+  electron: '44.4.3',
+  'electron-builder': '26.15.3',
+  'electron-builder-squirrel-windows': '26.15.3',
+  esbuild: '0.28.2',
   expo: '57.0.24',
   'expo-crypto': '57.0.3',
   'expo-dev-client': '57.0.19',
@@ -45,6 +49,7 @@ export const versions = Object.freeze({
   hono: '4.12.32',
   'lucide-react': '1.47.0',
   'lucide-react-native': '1.47.0',
+  konsistent: '1.0.0-beta.9',
   oxlint: '1.83.0',
   'oxlint-tailwindcss': '1.12.0',
   pg: '8.23.0',
@@ -75,9 +80,22 @@ const requiredByManifest = Object.freeze({
   'package.json': [
     '@effect/vitest',
     '@shadcn/lint',
+    'konsistent',
     '@types/node',
     'oxlint',
     'oxlint-tailwindcss',
+    'vitest',
+  ],
+  'apps/desktop/package.json': [
+    '@effect/vitest',
+    '@types/node',
+    '@typescript/native',
+    'effect',
+    'electron',
+    'electron-builder',
+    'electron-builder-squirrel-windows',
+    'esbuild',
+    'typescript',
     'vitest',
   ],
   'apps/mobile/package.json': [
@@ -150,7 +168,7 @@ const requiredByManifest = Object.freeze({
     'valibot',
     'vite',
   ],
-  'packages/computer/package.json': ['@effect/platform-node', '@types/node', 'effect'],
+  'packages/computer/state/package.json': ['@effect/platform-node', '@types/node', 'effect'],
   'packages/connectors/package.json': [
     '@types/node',
     '@types/pg',
@@ -230,20 +248,36 @@ function resolveWorkspaceVersion(name, value, catalog) {
   return value === 'catalog:' ? catalog[name] : value
 }
 
-/** Return every workspace package manifest that is present in this collaboration checkout. */
+/** True when `relativePath` names a readable file under `root`. */
+const isReadable = (root, relativePath) => {
+  try {
+    NodeFS.readFileSync(NodePath.join(root, relativePath))
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Names of the directories directly under `root/relative`. */
+const directoriesIn = (root, relative) =>
+  NodeFS.readdirSync(NodePath.join(root, relative), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name !== 'node_modules')
+    .map((entry) => `${relative}/${entry.name}`)
+
+/**
+ * Return every workspace package manifest. A package sits directly under `apps/` or `packages/`,
+ * or one level deeper inside a group directory such as `packages/design/tokens`; a directory with
+ * its own manifest is a package, so its children are not searched.
+ */
 export function workspaceManifestPaths(root) {
   return ['apps', 'packages'].flatMap((parent) =>
-    NodeFS.readdirSync(NodePath.join(root, parent), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => `${parent}/${entry.name}/package.json`)
-      .filter((relativePath) => {
-        try {
-          NodeFS.readFileSync(NodePath.join(root, relativePath))
-          return true
-        } catch {
-          return false
-        }
-      }),
+    directoriesIn(root, parent).flatMap((directory) =>
+      isReadable(root, `${directory}/package.json`)
+        ? [`${directory}/package.json`]
+        : directoriesIn(root, directory)
+            .map((child) => `${child}/package.json`)
+            .filter((manifest) => isReadable(root, manifest)),
+    ),
   )
 }
 

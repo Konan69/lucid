@@ -4,7 +4,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { Plus, Pause, Play, Repeat2 } from 'lucide-react-native'
 import { RoutineListResponse } from '@vivid/contracts'
 import { useOpenThread, useWorkspace, type Routes } from '../workspace'
-import { useResource } from '../lib/resource'
+import { useResource } from '../lib/resource/hook'
 import { type Routine, when } from '../lib/models'
 import {
   Card,

@@ -1,0 +1,64 @@
+{
+  "version": "v1",
+  "conventions": [
+    {
+      "name": "one-word-source-files",
+      "paths": [
+        "apps/*/src/**/{name:matches([-_]|[a-z][A-Z])}.ts",
+        "apps/*/src/**/{name:matches([-_]|[a-z][A-Z])}.tsx",
+        "packages/*/src/**/{name:matches([-_]|[a-z][A-Z])}.ts",
+        "packages/*/src/**/{name:matches([-_]|[a-z][A-Z])}.tsx",
+        "packages/*/*/src/**/{name:matches([-_]|[a-z][A-Z])}.ts",
+        "packages/*/*/src/**/{name:matches([-_]|[a-z][A-Z])}.tsx",
+        "!packages/agent-runtime/src/**",
+        "!packages/connectors/src/skills/*"
+      ],
+      "mustNot": {
+        "haveType": "file"
+      }
+    },
+    {
+      "name": "one-word-package-directories",
+      "paths": [
+        "packages/{name:matches([-_]|[a-z][A-Z])}",
+        "packages/*/{name:matches([-_]|[a-z][A-Z])}",
+        "!packages/*/node_modules",
+        "!packages/*/*/node_modules",
+        "!packages/agent-runtime",
+        "!packages/client-runtime"
+      ],
+      "mustNot": {
+        "haveType": "directory"
+      }
+    },
+    {
+      "name": "no-dumping-grounds",
+      "paths": [
+        "apps/*/src/**/{name:matches(^(utils|helpers|common|shared|misc)$)}.ts",
+        "packages/*/src/**/{name:matches(^(utils|helpers|common|shared|misc)$)}.ts",
+        "packages/*/*/src/**/{name:matches(^(utils|helpers|common|shared|misc)$)}.ts"
+      ],
+      "mustNot": {
+        "haveType": "file"
+      }
+    },
+    {
+      "name": "server-handlers-hold-no-sql",
+      "paths": "apps/server/src/*/handlers.ts",
+      "mustNot": {
+        "importValuesFrom": ["drizzle-orm", "drizzle-orm/*"]
+      }
+    },
+    {
+      "name": "server-stores-hold-no-transport",
+      "paths": "apps/server/src/*/store.ts",
+      "mustNot": {
+        "importValuesFrom": [
+          "effect/unstable/rpc/*",
+          "effect/unstable/httpapi/*",
+          "effect/unstable/http/*"
+        ]
+      }
+    }
+  ]
+}

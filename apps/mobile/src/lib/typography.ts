@@ -1,4 +1,4 @@
-import { nativeMetrics as m } from '@vivid/design-tokens/native'
+import { nativeMetrics as m } from '@vivid/tokens/native'
 
 // Vivid web's semantic type scale, with native line-height values.
 export const MOBILE_TYPOGRAPHY = {

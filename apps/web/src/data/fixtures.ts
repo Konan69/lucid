@@ -1,4 +1,4 @@
-import type { ConversationStatus } from '../ui/StatusLabel'
+import type { ConversationStatus } from '../ui/Status'
 export type Conversation = {
   id: string
   title: string

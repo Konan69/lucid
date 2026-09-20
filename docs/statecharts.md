@@ -26,7 +26,7 @@ Versions below record the evaluation, not a recommendation to install without re
 | XState plus `@xstate/effect` | rat-stack pins XState `6.0.0-alpha.58`, a vendored bridge `0.1.0-alpha.2`, and Effect `4.0.0-rc.115`.                                          | Established XState ecosystem, but this specific Effect integration is alpha and needs compatibility validation. |
 | Existing Vivid approach      | Effect programs, schemas, guarded persistence, and Flue conversation execution. Neither machine library was present in the evaluated checkout. | Appropriate for simple behavior; transition rules can become scattered as lifecycles grow.                      |
 
-The local VCOS checkout at `/home/kixey/work/VCOS` uses `@typeonce/effect-machine@0.3.0`
+The local VCOS checkout at `~/work/VCOS` uses `@typeonce/effect-machine@0.3.0`
 with Effect rc.112 for lifecycle transitions, active-run coordination, Connection catalog state,
 and review workflows. Treat it as a design reference, not current API guidance. Adapt any borrowed
 design to Vivid's names and ownership boundaries.
@@ -49,9 +49,9 @@ independent of state-machine choice.
 
 Local evidence:
 
-- [Web Connection request card](../apps/web/src/ui/ConnectorRequestCard.tsx) and
-  [mobile Connection request card](../apps/mobile/src/components/ConnectorRequestCard.tsx).
-- [Mobile resource store](../apps/mobile/src/lib/resource-store.ts): subscription lifetime,
+- [Web Connection request card](../apps/web/src/ui/connector/Card.tsx) and
+  [mobile Connection request card](../apps/mobile/src/components/connector/Card.tsx).
+- [Mobile resource store](../apps/mobile/src/lib/resource/store.ts): subscription lifetime,
   foreground refresh, and stale-response handling already have an owned implementation.
 - [Follow-up scheduler](../packages/agent-runtime/src/follow-up-scheduler.ts) and
   [task store](../packages/agent-runtime/src/task-store.ts).

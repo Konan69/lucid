@@ -17,7 +17,7 @@
     "**/drizzle/**/snapshot.json",
     "apps/mobile/android/**",
     "apps/mobile/ios/**",
-    "packages/design-tokens/src/native.ts",
+    "packages/design/tokens/src/native.ts",
     ".agents/**",
     "tools/oxlint/anti-slop/**",
     "package-lock.json",

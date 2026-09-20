@@ -1,12 +1,13 @@
 packages:
+  - 'apps/desktop'
   - 'apps/mobile'
   - 'apps/server'
   - 'apps/web'
   - 'packages/contracts'
   - 'packages/client-runtime'
-  - 'packages/computer'
+  - 'packages/computer/state'
   - 'packages/connectors'
-  - 'packages/design-tokens'
+  - 'packages/design/tokens'
   - 'packages/agent-runtime'
 
 # pnpm 12 reads project settings here. Keep registry credentials only in an
@@ -54,6 +55,10 @@ catalog:
   drizzle-kit: 1.0.0-rc.5-ab785fc
   drizzle-orm: 1.0.0-rc.5-ab785fc
   effect: 4.0.0-rc.116
+  electron: 44.4.3
+  electron-builder: 26.15.3
+  electron-builder-squirrel-windows: 26.15.3
+  esbuild: 0.28.2
   expo: 57.0.24
   expo-crypto: 57.0.3
   expo-dev-client: 57.0.19
@@ -64,6 +69,7 @@ catalog:
   expo-sharing: 57.0.21
   expo-system-ui: 57.0.4
   hono: 4.12.32
+  konsistent: 1.0.0-beta.9
   lucide-react: 1.47.0
   lucide-react-native: 1.47.0
   pg: 8.23.0
@@ -93,6 +99,8 @@ overrides:
 # Only dependencies whose working artifact requires an install script may run
 # one. Optional accelerators and donation messages stay blocked.
 allowBuilds:
+  electron: true
+  electron-winstaller: true
   esbuild: true
   sharp: true
   workerd: true

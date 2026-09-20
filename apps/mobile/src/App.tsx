@@ -40,8 +40,8 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated'
-import { WORKSPACE_PANE_TIMING } from './t3/workspace-pane-animation'
-import { nativeMetrics as m } from '@vivid/design-tokens/native'
+import { WORKSPACE_PANE_TIMING } from './t3/pane'
+import { nativeMetrics as m } from '@vivid/tokens/native'
 
 const SavedPreferencesSchema = Schema.Struct({
   url: Schema.String,

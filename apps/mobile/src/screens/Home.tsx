@@ -19,9 +19,9 @@ import {
   CircleDashed,
 } from 'lucide-react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { nativeMetrics as m } from '@vivid/design-tokens/native'
+import { nativeMetrics as m } from '@vivid/tokens/native'
 import { NotificationListResponse, ThreadListResponse } from '@vivid/contracts'
-import { laneConversations } from '../../../web/src/data/conversationLanes'
+import { laneConversations } from '../../../web/src/data/lanes'
 import { countProjects, projects } from '../../../web/src/data/projects'
 import {
   useOpenThread,
@@ -32,7 +32,7 @@ import {
   type Routes,
   type ThreadActivity,
 } from '../workspace'
-import { useResource } from '../lib/resource'
+import { useResource } from '../lib/resource/hook'
 import { type Notification, type Thread } from '../lib/models'
 import { useTheme } from '../theme'
 import {
@@ -45,13 +45,9 @@ import {
   Sheet,
   confirmDelete,
 } from '../components/ui'
-import { MotionPressable } from '../components/MotionPressable'
-import {
-  ThreadSwipeable,
-  SwipeableScrollGateProvider,
-  useSwipeableScrollGate,
-} from '../t3/thread-swipe-actions'
-import { ControlPillMenu } from '../t3/ControlPillMenu'
+import { MotionPressable } from '../components/motion/Pressable'
+import { ThreadSwipeable, SwipeableScrollGateProvider, useSwipeableScrollGate } from '../t3/swipe'
+import { ControlPillMenu } from '../t3/Menu'
 
 const projectByConversation = new Map(
   projects.flatMap((p) => p.conversations.map((title) => [title, p.name] as const)),

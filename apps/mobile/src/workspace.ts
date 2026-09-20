@@ -4,7 +4,7 @@ import { useNavigation, type NavigationProp } from '@react-navigation/native'
 import type { Api, Connection } from './lib/api'
 import type { ThemePreference } from './theme'
 import { deriveLayout } from './lib/layout'
-import { resolveThreadSelectionNavigationAction } from './lib/adaptive-navigation'
+import { resolveThreadSelectionNavigationAction } from './lib/navigation'
 export type Routes = {
   Home: undefined
   Chat: { id: string; title: string; draft?: string; sendOnOpen?: boolean }

@@ -128,7 +128,7 @@ Infrastructure is local-first and nothing is deployed yet. Alchemy is the only s
 
 Local PostgreSQL is `postgres://vivid:vivid@127.0.0.1:55433/vivid` provisioned by the Alchemy local stack (`pnpm infra:dev`, Docker `postgres:18-alpine`); there is no compose file. Worktrees live under `~/agency/vivid-lanes/<name>`, never `/tmp`.
 
-This repository may contain web and mobile apps, the application server, authentication, People and Companies, Projects, Threads, Messages, Library data, ordinary HTTP APIs, persistence, tests, shared contracts, and the narrow Flue conversation transport. Do not add the production scheduler, connector/tool-call implementations, computer-control transport, credential handling, proprietary execution internals, or research sources. The application server may submit work through an explicit boundary and consume status/results; it must not absorb those systems. Never un-ignore `refs/`, `docs/prds/`, or another path excluded by root `.gitignore`.
+This repository holds the whole product: the web, mobile and desktop apps, the application server and every piece of product logic, authentication, the Flue runtime, connectors, the Computer, shared contracts, tests and the design documents under `docs/`. Backend logic lives in `apps/server`, organized by domain; a package exists only for code that more than one app imports. What stays out, and stays ignored by root `.gitignore`: client requirement documents (`docs/prds/`), third-party reference checkouts (`refs/`), generated decks and dumps (`artifacts/`), `CONTEXT.md`, and every secret. Committed files never name a client, an investor or a funding conversation, and never contain an absolute path on someone's machine.
 
 ## Product language
 
@@ -159,7 +159,7 @@ Issues live in this repository's GitHub Issues (`Konan69/vivid`). Use the reposi
 
 ### Domain docs
 
-The tracked product references are under `docs/`; `docs/01-principle.md`, `docs/03-surface.md`, and the numbered feature/design documents define current language and behavior. This checkout has no tracked `CONTEXT.md` or ADR directory; create either only through an explicit domain-modeling task.
+The product references are under `docs/`, numbered in reading order: `docs/01-principle.md` and `docs/03-surface.md` define the product, `docs/04-computer.md` the Computer, `docs/09-platform-architecture.md` and `docs/17-backend-stack-reference.md` the platform, and the rest a feature each. This checkout has no tracked `CONTEXT.md` or ADR directory; create either only through an explicit domain-modeling task.
 
 ### Coding standards
 

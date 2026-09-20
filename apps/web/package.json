@@ -15,7 +15,7 @@
     "@flue/react": "catalog:",
     "@flue/sdk": "catalog:",
     "@vivid/contracts": "workspace:*",
-    "@vivid/design-tokens": "workspace:*",
+    "@vivid/tokens": "workspace:*",
     "lucide-react": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",

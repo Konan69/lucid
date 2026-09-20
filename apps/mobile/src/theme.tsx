@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react'
 import { Appearance, Platform, useColorScheme } from 'react-native'
-import { nativeTokens } from '@vivid/design-tokens/native'
+import { nativeTokens } from '@vivid/tokens/native'
 import * as SystemUI from 'expo-system-ui'
 export type ThemePreference = 'system' | 'light' | 'dark'
 type Colors = { [K in keyof typeof nativeTokens.dark]: string }
