@@ -123,6 +123,21 @@ export const returned = <Row>(rows: ReadonlyArray<Row>, subject: string) => {
 }
 
 /**
+ * Builds the decoder for one kind of stored record. Rows are unknown input at this boundary: a
+ * column may hold a value an older version wrote, so every read is decoded once here and a row
+ * that does not fit is a database fault, never a value handed on half-typed.
+ */
+export const decodeStored = <A>(schema: Schema.ConstraintDecoder<A>, subject: string) => {
+  const decode = Schema.decodeUnknownEffect(schema)
+  return (value: unknown) =>
+    decode(value).pipe(
+      Effect.mapError(
+        () => new DatabaseFailure({ message: `Database returned an invalid ${subject}` }),
+      ),
+    )
+}
+
+/**
  * A record assembled from database columns on its way into a wire schema. Columns are only ever
  * these scalars, so a decoder that takes this cannot be handed an arbitrary object.
  */
