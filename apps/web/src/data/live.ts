@@ -1,11 +1,19 @@
 import { useAtomValue } from '@effect/atom-react'
-import { Workspace, type LibraryShelf, type MeResponse, type Task, type ThreadDetail, type ThreadId } from '@vivid/contracts'
+import {
+  Workspace,
+  type LibraryShelf,
+  type MeResponse,
+  type Task,
+  type ThreadDetail,
+  type ThreadId,
+} from '@vivid/contracts'
 import { LiveState, liveStateOf, type LiveQuery, type LiveResult } from '@vivid/state'
 import { Effect, Option, Result } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import * as Atom from 'effect/unstable/reactivity/Atom'
 import { VividRpcClient } from '@vivid/client-runtime'
-import { engine, run } from './runtime'
+import { change, run } from './app'
+import { engine } from './runtime'
 
 /**
  * Every screen's data, live, as Effect Atoms.
@@ -100,11 +108,7 @@ export function useLiveValue<Value>(query: LiveQuery<Value>): Option.Option<Valu
   return LiveState.$is('Ready')(state) ? Option.some(state.value) : Option.none()
 }
 
-/**
- * Makes a change: shows it at once in every live query it touches, sends it, and takes the
- * expectation back if the server refuses. On success the server's next result confirms it.
- */
-export const change = engine.change
+export { change }
 
 const seen = new Map<ThreadId, number>()
 

@@ -1,6 +1,6 @@
 import { VividRpcClient } from '@vivid/client-runtime'
 import type { RpcFailure } from '@vivid/contracts/rpc'
-import { Cause, Data, Effect, Layer, Option, Result, Schedule, Stream } from 'effect'
+import { Cause, Data, Effect, Exit, Layer, Option, Result, Schedule, Stream } from 'effect'
 import type * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import * as Atom from 'effect/unstable/reactivity/Atom'
@@ -71,6 +71,12 @@ export const liveStateOf = <Value>(result: LiveResult<Value>): LiveState<Value> 
       }),
   })
 
+/** One change this client made and is waiting to hear about: how it alters a query's result. */
+interface Expected<Value> {
+  readonly id: number
+  readonly change: (current: Value) => Value
+}
+
 /** Says how an expected change ended: the server accepted it, or refused it. */
 export type Settle = (accepted: boolean) => void
 
@@ -78,8 +84,13 @@ export type Settle = (accepted: boolean) => void
  * One live query: an Effect Atom over a `Watch…` subscription.
  *
  * `atom` is what components read. It is the server's latest result with this client's pending
- * changes applied on top (`Atom.optimistic`), so a write shows at once, is confirmed by the next
- * result, and is rolled back if the server refuses it.
+ * changes applied on top, so a write shows at once, is confirmed by the next result, and is
+ * rolled back if the server refuses it.
+ *
+ * The installed `Atom.optimistic` is not used for this. It is built for a request that answers
+ * once: it accepts a new source value only when that value is no longer `waiting`, and every value
+ * of a stream that is still open is `waiting`. Over a `Watch…` stream it showed the first result
+ * and then nothing the server sent afterwards, which is the opposite of live.
  */
 export interface LiveQuery<Value> {
   readonly atom: Atom.Atom<LiveResult<Value>>
@@ -116,6 +127,61 @@ const resilient = <Value, R>(
     ),
   )
 
+/** Names each expected change, so the one that settles is the one that is taken down. */
+let expectationCount = 0
+
+/**
+ * A live query over `source`: the server's latest result with this client's pending changes
+ * applied on top, and the way to add one.
+ */
+function expecting<Value>(
+  registry: AtomRegistry.AtomRegistry,
+  source: Atom.Atom<LiveResult<Value>>,
+): LiveQuery<Value> {
+  // What this client has changed and not yet seen the server say. Kept alive on its own: a
+  // screen that unmounts for a moment must not lose the fact that a write is in flight.
+  const pending = Atom.keepAlive(Atom.make<ReadonlyArray<Expected<Value>>>([]))
+  const drop = (id: number) =>
+    registry.set(
+      pending,
+      registry.get(pending).filter((expected) => expected.id !== id),
+    )
+  // The changes are functions of the current value, so a new result from the server is never
+  // hidden behind an old guess: the guess is re-made from what the server just said.
+  const view = Atom.make((get): LiveResult<Value> => {
+    const result = get(source)
+    const expected = get(pending)
+    if (expected.length === 0 || !AsyncResult.isSuccess(result)) return result
+    return AsyncResult.success(
+      expected.reduce((value, next) => next.change(value), result.value),
+      { waiting: result.waiting, timestamp: result.timestamp },
+    )
+  })
+  return {
+    atom: view,
+    expect: (change) => {
+      expectationCount += 1
+      const id = expectationCount
+      const before = registry.get(source)
+      registry.set(pending, [...registry.get(pending), { id, change }])
+      return (accepted) => {
+        // Refused: the guess was wrong, take it back. Accepted and the server has already sent a
+        // result since the guess was made: that result includes the change, so the guess is done.
+        // Accepted and nothing new has arrived yet: keep the guess up until the next result does,
+        // or the screen would flick back to the old value in between.
+        if (!accepted || registry.get(source) !== before) {
+          drop(id)
+          return
+        }
+        const stop = registry.subscribe(source, () => {
+          drop(id)
+          stop()
+        })
+      }
+    },
+  }
+}
+
 /**
  * The live data layer for one client: one Atom registry, one runtime atom that owns the socket,
  * and a query atom for every `Watch…` call. Web, mobile and desktop build this once from the
@@ -146,7 +212,6 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
         ),
       ),
     )
-    const view = Atom.optimistic(source)
     reopeners.add(() => {
       // Only a query something is reading, and only one that ended: an atom nobody has mounted
       // would be started just by being asked how it is.
@@ -154,27 +219,7 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
         registry.refresh(source)
       }
     })
-    return {
-      atom: view,
-      expect: (change) => {
-        const current = registry.get(view)
-        if (!AsyncResult.isSuccess(current)) return () => undefined
-        const expected: LiveResult<Value> = AsyncResult.success(change(current.value))
-        // A transition is itself an atom: waiting while the write is in flight, then success
-        // (the source is refreshed and takes over) or failure (the view rolls back).
-        const transition = Atom.make<AsyncResult.AsyncResult<LiveResult<Value>, unknown>>(
-          AsyncResult.success(expected, { waiting: true }),
-        )
-        registry.set(view, transition)
-        return (accepted) =>
-          registry.set(
-            transition,
-            accepted
-              ? AsyncResult.success(expected)
-              : AsyncResult.fail('The server refused this change'),
-          )
-      },
-    }
+    return expecting(registry, source)
   }
 
   const family = <Argument, Value>(
@@ -219,13 +264,15 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
     })
   }
 
-  /** Runs one program with the client the atoms use, on the same socket. */
+  /**
+   * One program, given the client the atoms use, so it rides the same socket. The failure is in
+   * the value (`Result`), not in the error channel: every caller draws a refusal, none lets one
+   * escape. This describes the work; the app that owns the runtime runs it.
+   */
   const run = <Value, Failure>(program: Effect.Effect<Value, Failure, VividRpcClient>) =>
-    Effect.runPromise(
-      Effect.result(
-        Effect.flatMap(AtomRegistry.getResult(registry, runtime), (context) =>
-          Effect.provideContext(program, context),
-        ),
+    Effect.result(
+      Effect.flatMap(AtomRegistry.getResult(registry, runtime), (context) =>
+        Effect.provideContext(program, context),
       ),
     )
 
@@ -234,29 +281,30 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
    * expectation how it ended. On success the server's next result confirms it; on refusal the
    * expected change is taken back.
    *
-   * Every expectation is settled however the call ends, including when it dies of something that
-   * is not a refusal at all: an expectation left waiting would hold its guess on screen forever
-   * and hide every later result from the server.
+   * The expectations are applied as soon as this starts running, before anything is sent. Every
+   * one is settled however the call ends, including when it is interrupted or dies of something
+   * that is not a refusal at all: an expectation left waiting would hold its guess on screen
+   * forever and hide every later result from the server.
    */
   const change = <Value>(
     program: (client: Client) => Effect.Effect<Value, ProductFailure>,
     ...expectations: ReadonlyArray<() => Settle>
-  ) => {
-    const settles = expectations.map((expectation) => expectation())
-    let accepted = false
-    return run(
-      Effect.gen(function* () {
-        return yield* program(yield* VividRpcClient)
-      }),
-    )
-      .then((result) => {
-        accepted = Result.isSuccess(result)
-        return result
-      })
-      .finally(() => {
-        for (const settle of settles) settle(accepted)
-      })
-  }
+  ) =>
+    Effect.suspend(() => {
+      const settles = expectations.map((expectation) => expectation())
+      return run(
+        Effect.gen(function* () {
+          return yield* program(yield* VividRpcClient)
+        }),
+      ).pipe(
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            const accepted = Exit.isSuccess(exit) && Result.isSuccess(exit.value)
+            for (const settle of settles) settle(accepted)
+          }),
+        ),
+      )
+    })
 
   /**
    * Asks every ended query again. A query ends when the server says it is not this Person's to

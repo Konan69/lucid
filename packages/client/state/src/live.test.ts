@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from '@effect/vitest'
 import { VividRpcClient } from '@vivid/client-runtime'
 import { Forbidden, RuntimeUnavailable, ThreadId } from '@vivid/contracts'
-import { Clock, Deferred, Effect, Layer, Queue, Ref, Result, Stream } from 'effect'
+import { Clock, Deferred, Effect, Fiber, Layer, Queue, Ref, Result, Stream } from 'effect'
 import * as Atom from 'effect/unstable/reactivity/Atom'
 import * as TestClock from 'effect/testing/TestClock'
 import { LiveState, liveStateOf, makeLive, type ProductFailure } from './live.js'
@@ -51,6 +51,29 @@ describe('live state', () => {
     }),
   )
 
+  it.effect('shows every result the server sends, not only the first', () =>
+    Effect.gen(function* () {
+      const values = yield* Queue.unbounded<number>()
+      const received = yield* Queue.unbounded<number>()
+      const plans = yield* Queue.unbounded<Effect.Effect<void, ProductFailure>>()
+      const live = makeLive(yield* testClientLayer(plans))
+      const query = live.query(() =>
+        Stream.fromQueue(values).pipe(Stream.tap((value) => Queue.offer(received, value))),
+      )
+      const unsubscribe = live.registry.subscribe(query.atom, () => {})
+      live.registry.get(query.atom)
+      // A stream that stays open marks each of its results as still waiting for more. A view that
+      // only took settled results showed the first one for ever.
+      for (const value of [1, 2, 3]) {
+        yield* Queue.offer(values, value)
+        expect(yield* Queue.take(received)).toBe(value)
+        yield* TestClock.adjust(0)
+        expect(liveStateOf(live.registry.get(query.atom))).toEqual(LiveState.Ready({ value }))
+      }
+      unsubscribe()
+    }),
+  )
+
   it.effect('ends on a final failure without reopening the stream', () =>
     Effect.gen(function* () {
       const plans = yield* Queue.unbounded<Effect.Effect<void, ProductFailure>>()
@@ -91,9 +114,7 @@ describe('live state', () => {
                 ? Stream.fail(RuntimeUnavailable.make({ message: 'Offline' })).pipe(
                     Stream.ensuring(Deferred.succeed(failed, undefined)),
                   )
-                : Stream.succeed(73).pipe(
-                    Stream.ensuring(Deferred.succeed(recovered, undefined)),
-                  ),
+                : Stream.succeed(73).pipe(Stream.ensuring(Deferred.succeed(recovered, undefined))),
             ),
           ),
         ),
@@ -116,55 +137,64 @@ describe('live state', () => {
     }),
   )
 
-  it.effect('shows an expected change and rolls it back, but retains it after a later server event', () =>
-    Effect.gen(function* () {
-      const test = yield* queuedQuery()
-      const unsubscribe = test.live.registry.subscribe(test.query.atom, () => {})
-      test.live.registry.get(test.query.atom)
-      yield* Queue.offer(test.values, 10)
-      expect(yield* Queue.take(test.received)).toBe(10)
-      yield* TestClock.adjust(0)
-      yield* Queue.offer(test.plans, Effect.fail(Forbidden.make({ message: 'Refused' })))
-      yield* Queue.offer(test.plans, Effect.succeed(undefined))
+  it.effect(
+    'shows an expected change at once, takes it back on refusal, and yields to the server',
+    () =>
+      Effect.gen(function* () {
+        const test = yield* queuedQuery()
+        const unsubscribe = test.live.registry.subscribe(test.query.atom, () => {})
+        test.live.registry.get(test.query.atom)
+        yield* Queue.offer(test.values, 10)
+        expect(yield* Queue.take(test.received)).toBe(10)
+        yield* TestClock.adjust(0)
+        // Each call waits on its own gate, so the moment between sending and hearing back can be
+        // looked at: that is when the expected value must already be on screen.
+        const refusal = yield* Deferred.make<void, ProductFailure>()
+        const acceptance = yield* Deferred.make<void, ProductFailure>()
+        yield* Queue.offer(test.plans, Deferred.await(refusal))
+        yield* Queue.offer(test.plans, Deferred.await(acceptance))
+        const shown = () => liveStateOf(test.live.registry.get(test.query.atom))
 
-      const refused = test.live.change(
-        (client) => client.MarkThreadRead({ id: ThreadId.make('thread-test') }),
-        () => test.query.expect(() => 20),
-      )
-      expect(liveStateOf(test.live.registry.get(test.query.atom))).toEqual(
-        LiveState.Ready({ value: 20 }),
-      )
-      yield* Effect.promise(() => refused)
-      expect(liveStateOf(test.live.registry.get(test.query.atom))).toEqual(
-        LiveState.Ready({ value: 10 }),
-      )
+        const refused = yield* Effect.forkChild(
+          test.live.change(
+            (client) => client.MarkThreadRead({ id: ThreadId.make('thread-test') }),
+            () => test.query.expect(() => 20),
+          ),
+        )
+        yield* TestClock.adjust(0)
+        expect(shown()).toEqual(LiveState.Ready({ value: 20 }))
+        yield* Deferred.fail(refusal, Forbidden.make({ message: 'Refused' }))
+        expect(Result.isFailure(yield* Fiber.join(refused))).toBe(true)
+        expect(shown()).toEqual(LiveState.Ready({ value: 10 }))
 
-      const accepted = test.live.change(
-        (client) => client.MarkThreadRead({ id: ThreadId.make('thread-test') }),
-        () => test.query.expect(() => 20),
-      )
-      expect(liveStateOf(test.live.registry.get(test.query.atom))).toEqual(
-        LiveState.Ready({ value: 20 }),
-      )
-      yield* Effect.promise(() => accepted)
-      yield* Queue.offer(test.values, 30)
-      expect(yield* Queue.take(test.received)).toBe(30)
-      yield* TestClock.adjust(0)
-      expect(liveStateOf(test.live.registry.get(test.query.atom))).toEqual(
-        LiveState.Ready({ value: 20 }),
-      )
-      unsubscribe()
-    }),
+        const accepted = yield* Effect.forkChild(
+          test.live.change(
+            (client) => client.MarkThreadRead({ id: ThreadId.make('thread-test') }),
+            () => test.query.expect(() => 20),
+          ),
+        )
+        yield* TestClock.adjust(0)
+        expect(shown()).toEqual(LiveState.Ready({ value: 20 }))
+        yield* Deferred.succeed(acceptance, undefined)
+        expect(Result.isSuccess(yield* Fiber.join(accepted))).toBe(true)
+        // An accepted change reopens the subscription. Let the old one finish closing first, or it
+        // is still first in line at the queue and swallows the next value.
+        yield* TestClock.adjust(0)
+        // What the server says next is the truth, whatever was expected.
+        yield* Queue.offer(test.values, 30)
+        expect(yield* Queue.take(test.received)).toBe(30)
+        yield* TestClock.adjust(0)
+        expect(shown()).toEqual(LiveState.Ready({ value: 30 }))
+        unsubscribe()
+      }),
   )
 
   it.effect('returns Result values from run for both success and failure', () =>
     Effect.gen(function* () {
       const plans = yield* Queue.unbounded<Effect.Effect<void, ProductFailure>>()
       const live = makeLive(yield* testClientLayer(plans))
-      const success = yield* Effect.promise(() => live.run(Effect.succeed('done')))
-      const failure = yield* Effect.promise(() =>
-        live.run(Effect.fail(Forbidden.make({ message: 'Denied' }))),
-      )
+      const success = yield* live.run(Effect.succeed('done'))
+      const failure = yield* live.run(Effect.fail(Forbidden.make({ message: 'Denied' })))
 
       expect(Result.isSuccess(success)).toBe(true)
       if (Result.isSuccess(success)) expect(success.success).toBe('done')
@@ -184,7 +214,9 @@ describe('live state', () => {
       const live = makeLive(yield* testClientLayer(plans))
       const answer = live.ask(argumentsAtom, (_client, argument) =>
         Ref.update(asked, (values) => [...values, argument]).pipe(
-          Effect.flatMap(() => argument === 'next' ? Deferred.await(pending) : Effect.succeed('FIRST')),
+          Effect.flatMap(() =>
+            argument === 'next' ? Deferred.await(pending) : Effect.succeed('FIRST'),
+          ),
         ),
       )
       const unsubscribe = live.registry.subscribe(answer, () => {})

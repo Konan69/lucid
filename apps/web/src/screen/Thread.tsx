@@ -170,10 +170,7 @@ function Conversation({
           <NotSent words={unsent.value} onAgain={() => send(unsent.value)} />
         )}
         {Option.isSome(ended) && (
-          <Outcome
-            run={ended.value}
-            onAgain={Option.map(lastSaid, (words) => () => send(words))}
-          />
+          <Outcome run={ended.value} onAgain={Option.map(lastSaid, (words) => () => send(words))} />
         )}
       </Messages>
 

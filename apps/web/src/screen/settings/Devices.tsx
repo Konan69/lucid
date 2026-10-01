@@ -1,7 +1,7 @@
 import { Result } from 'effect'
 import { useState } from 'react'
 import { approveDevice } from '../../data/account'
-import { run } from '../../data/runtime'
+import { run } from '../../data/app'
 import { Button } from '../../ui/Button'
 import { Row, Section } from './Parts'
 

@@ -34,6 +34,3 @@ export const engine = makeLive(
     Layer.provide(Socket.layerWebSocketConstructorGlobal),
   ),
 )
-
-/** Runs one program at the web application's single Effect runtime boundary. */
-export const run = engine.run

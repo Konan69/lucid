@@ -1,7 +1,7 @@
 import { Result } from 'effect'
 import { useState, type FormEvent } from 'react'
 import { createAccount, reload, signIn } from '../data/account'
-import { run } from '../data/runtime'
+import { run } from '../data/app'
 import { Button } from '../ui/Button'
 import { Face } from '../ui/Face'
 
