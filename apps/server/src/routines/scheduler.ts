@@ -1,155 +1,162 @@
-import { Cron } from 'croner'
-import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Schedule from 'effect/Schedule'
-import * as Schema from 'effect/Schema'
-import { Thread as ThreadSchema, Occurrence, type Routine, type RoutineId } from '@vivid/contracts'
-import { RuntimeUnavailable } from '@vivid/contracts/rpc'
+import {
+  Occurrence,
+  RunState,
+  ThreadId,
+  type NotFound,
+  type RoutineId,
+  type RuntimeUnavailable,
+} from '@vivid/contracts'
+import type { Actor } from '../auth/access.ts'
 import type { DatabaseInfrastructureError } from '../database/client.ts'
-import { Runtime } from '../runtime/client.ts'
+import { Changes, Topic } from '../live/changes.ts'
+import { Conversation, DeliveryMessage, StoredRunOrigin } from '../threads/conversation.ts'
 import { ThreadStore } from '../threads/store.ts'
-import { RoutineStore } from './store.ts'
+import type { RoutineRecord } from './records.ts'
+import { RoutineStore, type RoutineMissing } from './store.ts'
+import type { InvalidRoutineSchedule } from './timing.ts'
 
-const ROUTINE_TICK_MS = 20_000
-
-export class InvalidRoutineSchedule extends Schema.TaggedError<InvalidRoutineSchedule>()(
-  'InvalidRoutineSchedule',
-  { message: Schema.String },
-  { title: 'Invalid Routine schedule' },
-) {}
+export type RoutineDeliveryError =
+  | DatabaseInfrastructureError
+  | RoutineMissing
+  | NotFound
+  | RuntimeUnavailable
 
 export interface RoutineSchedulerService {
-  readonly validate: (cron: string, timezone: string) => Effect.Effect<void, InvalidRoutineSchedule>
-  readonly schedule: (
-    routine: Routine,
-  ) => Effect.Effect<void, InvalidRoutineSchedule | DatabaseInfrastructureError>
-  readonly run: (
-    id: RoutineId,
-  ) => Effect.Effect<Option.Option<Occurrence>, DatabaseInfrastructureError | RuntimeUnavailable>
-  readonly runDue: () => Effect.Effect<
-    void,
-    InvalidRoutineSchedule | DatabaseInfrastructureError | RuntimeUnavailable
-  >
+  readonly run: (actor: Actor, id: RoutineId) => Effect.Effect<Occurrence, RoutineDeliveryError>
+  readonly webhook: (
+    record: RoutineRecord,
+    payload: string,
+  ) => Effect.Effect<Occurrence, RoutineDeliveryError>
+  readonly runDue: () => Effect.Effect<void, RoutineDeliveryError | InvalidRoutineSchedule>
 }
 
 export class RoutineScheduler extends Context.Service<RoutineScheduler, RoutineSchedulerService>()(
   'vivid/RoutineScheduler',
 ) {}
 
+/** Background writes name their durable owner, without manufacturing a session or Actor. */
+const publish = (changes: Changes['Service']) =>
+  Effect.fn('RoutineScheduler.publish')(function* (record: RoutineRecord) {
+    const topics = [Topic.person(record.personId)]
+    if (record.companyId !== null) topics.push(Topic.company(record.companyId))
+    yield* changes.publish(topics)
+  })
+
+/** The prompt keeps its Library scope; webhook text is appended as the outside payload. */
+const bodyOf = (record: RoutineRecord, payload: Option.Option<string>) => {
+  const routine = record.routine
+  const prompt =
+    routine.libraryFolderId === null
+      ? routine.prompt
+      : `${routine.prompt}\n\nSearch Library folder "${routine.libraryFolderId}" and cite every source used.`
+  return Option.match(payload, {
+    onNone: () => prompt,
+    onSome: (text) => `${prompt}\n\nPayload:\n${text}`,
+  })
+}
+
+/** All three triggers establish the private Thread, persist the Occurrence, then deliver once. */
+const makeSubmit = (services: {
+  readonly routines: RoutineStore['Service']
+  readonly threads: ThreadStore['Service']
+  readonly conversation: Conversation['Service']
+  readonly changes: Changes['Service']
+}) =>
+  Effect.fn('RoutineScheduler.submit')(function* (
+    record: RoutineRecord,
+    payload: Option.Option<string>,
+  ) {
+    const routine = record.routine
+    const threadId = ThreadId.make(`routine-${routine.id}`)
+    yield* services.threads.ensure({
+      id: threadId,
+      title: routine.name,
+      personId: record.personId,
+      companyId: record.companyId,
+    })
+    const occurrence = yield* services.routines.startOccurrence(record, threadId)
+    yield* publish(services.changes)(record)
+    const run = yield* services.conversation.deliver({
+      threadId,
+      personId: record.personId,
+      message: DeliveryMessage.cases.Signal.make({
+        type: 'schedule',
+        body: bodyOf(record, payload),
+        attributes: { routine: routine.id, name: routine.name },
+      }),
+      origin: StoredRunOrigin.cases.Routine.make({ routineName: routine.name }),
+      idempotencyKey: occurrence.id,
+    })
+    yield* services.routines.attachSubmission(occurrence.id, run.id)
+    yield* publish(services.changes)(record)
+    const outcome = RunState.match(run.state, {
+      Working: (): Pick<Occurrence, 'status' | 'finishedAt'> => ({
+        status: 'running' as const,
+        finishedAt: null,
+      }),
+      Completed: ({ finishedAt }): Pick<Occurrence, 'status' | 'finishedAt'> => ({
+        status: 'succeeded' as const,
+        finishedAt,
+      }),
+      Failed: ({ finishedAt }) => ({ status: 'failed' as const, finishedAt }),
+      Stopped: ({ finishedAt }) => ({ status: 'failed' as const, finishedAt }),
+      Unknown: ({ finishedAt }) => ({ status: 'failed' as const, finishedAt }),
+    })
+    return Occurrence.make({
+      id: occurrence.id,
+      routineId: occurrence.routineId,
+      threadId: occurrence.threadId,
+      submissionId: run.id,
+      status: outcome.status,
+      startedAt: occurrence.startedAt,
+      finishedAt: outcome.finishedAt,
+      output: occurrence.output,
+      error: occurrence.error,
+    })
+  })
+
+/** Captures delivery authorities once; manual calls still supply their current Actor per request. */
 export const routineSchedulerServiceLayer = Layer.effect(
   RoutineScheduler,
   Effect.gen(function* () {
     const routines = yield* RoutineStore
     const threads = yield* ThreadStore
-    const runtime = yield* Runtime
+    const conversation = yield* Conversation
+    const changes = yield* Changes
+    const submit = makeSubmit({ routines, threads, conversation, changes })
 
-    const probe = Effect.fn('RoutineScheduler.probe')(function* (cron: string, timezone: string) {
-      return yield* Effect.try({
-        try: () => {
-          new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format()
-          return new Cron(cron, { paused: true, timezone })
-        },
-        catch: () =>
-          new InvalidRoutineSchedule({ message: 'Routine schedule or timezone is invalid' }),
-      })
+    /** Loading through the owner predicate makes another Person's id indistinguishable from absence. */
+    const run = Effect.fn('RoutineScheduler.run')(function* (actor: Actor, id: RoutineId) {
+      return yield* submit(yield* routines.get(actor, id), Option.none())
     })
 
-    const validate = Effect.fn('RoutineScheduler.validate')(function* (
-      cron: string,
-      timezone: string,
+    /** A webhook's authority is its key alone and never a browser session. */
+    const webhook = Effect.fn('RoutineScheduler.webhook')(function* (
+      record: RoutineRecord,
+      payload: string,
     ) {
-      const value = yield* probe(cron, timezone)
-      value.stop()
+      return yield* submit(record, Option.some(payload))
     })
 
-    const schedule = Effect.fn('RoutineScheduler.schedule')(function* (routine: Routine) {
-      if (!routine.enabled) {
-        yield* routines.setSchedule(routine.id, null, routine.lastMissedAt)
-        return
-      }
-      const now = yield* Clock.currentTimeMillis
-      const value = yield* probe(routine.cron, routine.timezone)
-      const next = value.nextRun(new Date(now))
-      value.stop()
-      yield* routines.setSchedule(
-        routine.id,
-        next === null ? null : next.getTime(),
-        routine.lastMissedAt,
-      )
-    })
-
-    const submit = Effect.fn('RoutineScheduler.submit')(function* (routine: Routine) {
-      const occurrence = yield* routines.startOccurrence(routine.id)
-      yield* threads.put(
-        ThreadSchema.make({
-          id: occurrence.conversationId,
-          title: routine.name,
-          preview: `Routine: ${routine.prompt}`.slice(0, 500),
-          updatedAt: occurrence.startedAt,
-          archived: false,
-        }),
-      )
-      const body =
-        routine.libraryFolderId === null
-          ? routine.prompt
-          : `${routine.prompt}\n\nSearch Library folder "${routine.libraryFolderId}" and cite every source used.`
-      // The Library folder is present only for a Routine scoped to one; the two shapes are built
-      // whole so no key is added to an object after the fact.
-      const base = {
-        routineId: routine.id,
-        routineName: routine.name,
-        scheduledAt: new Date(occurrence.startedAt).toISOString(),
-      }
-      const attributes =
-        routine.libraryFolderId === null
-          ? base
-          : Object.assign({}, base, { libraryFolderId: routine.libraryFolderId })
-      const receipt = yield* runtime.start({
-        threadId: occurrence.conversationId,
-        idempotencyKey: occurrence.id,
-        type: 'schedule',
-        body,
-        attributes,
-      })
-      yield* routines.attachSubmission(occurrence.id, receipt.submissionId)
-      return Occurrence.make({
-        id: occurrence.id,
-        routineId: occurrence.routineId,
-        conversationId: occurrence.conversationId,
-        submissionId: receipt.submissionId,
-        status: occurrence.status,
-        startedAt: occurrence.startedAt,
-        finishedAt: occurrence.finishedAt,
-        output: occurrence.output,
-        error: occurrence.error,
-      })
-    })
-
-    const run = Effect.fn('RoutineScheduler.run')(function* (id: RoutineId) {
-      const routine = yield* routines.get(id)
-      if (Option.isNone(routine)) return Option.none()
-      return Option.some(yield* submit(routine.value))
-    })
-
-    /** Advances one claimed Routine and submits its occurrence before the next claim. */
-    const runDueRoutine = Effect.fn('RoutineScheduler.runDueRoutine')(function* (routine: Routine) {
-      yield* schedule(routine)
-      yield* submit(routine)
-    })
-
+    /** Claims are advanced first; a failed delivery is reported without starving other claimed work. */
     const runDue = Effect.fn('RoutineScheduler.runDue')(function* () {
       const due = yield* routines.claimDue()
-      yield* Effect.forEach(due, runDueRoutine, { discard: true, concurrency: 1 })
+      yield* Effect.forEach(due, publish(changes), { discard: true })
+      const outcomes = yield* Effect.forEach(due, (record) =>
+        Effect.exit(submit(record, Option.none())),
+      )
+      for (const outcome of outcomes) yield* outcome
     })
-
-    return RoutineScheduler.of({ validate, schedule, run, runDue })
+    return RoutineScheduler.of({ run, webhook, runDue })
   }),
 )
 
-/** Owns the scoped Routine polling fiber; no Cron callback or detached timer survives shutdown. */
+/** The scoped worker owns no detached timers, and retries only the next due pass after failure. */
 export const routineSchedulerLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const scheduler = yield* RoutineScheduler
@@ -157,6 +164,6 @@ export const routineSchedulerLayer = Layer.effectDiscard(
       Effect.tapError((error) => Effect.logError('Routine scheduler pass failed', error)),
       Effect.ignore,
     )
-    yield* pass.pipe(Effect.repeat(Schedule.spaced(`${ROUTINE_TICK_MS} millis`)), Effect.forkScoped)
+    yield* pass.pipe(Effect.repeat(Schedule.spaced('20 seconds')), Effect.forkScoped)
   }),
 )

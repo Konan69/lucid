@@ -1,173 +1,170 @@
-import { and, desc, eq, sql } from 'drizzle-orm'
-import { createSelectSchema } from 'drizzle-orm/effect-schema'
+import { and, asc, desc, eq, isNotNull, lte } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
-import * as Option from 'effect/Option'
+import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
 import {
-  DatabaseFailure,
-  Occurrence as OccurrenceSchema,
-  type Occurrence,
-  type OccurrenceId,
-  Routine as RoutineSchema,
-  type Routine,
-  type RoutineId,
   CreateRoutineRequest,
+  DatabaseFailure,
+  Occurrence,
+  OccurrenceId,
   PatchRoutineRequest,
+  RoutineId,
+  RoutineTrigger,
+  RoutineWebhook,
+  Routine,
+  type RunId,
+  type ThreadId,
 } from '@vivid/contracts'
-import { Database, type DatabaseInfrastructureError, returned } from '../database/client.ts'
+import { companyColumnOf, ownedHere, type Actor } from '../auth/access.ts'
+import { ServerConfig } from '../config.ts'
+import { Database, returned, type DatabaseInfrastructureError } from '../database/client.ts'
+import { runs } from '../threads/tables.ts'
+import { hashKey, issueKey, matchesKey } from './keys.ts'
+import { decodeOccurrence, decodeRoutine, triggerColumns, type RoutineRecord } from './records.ts'
 import { occurrences, routines } from './tables.ts'
+import { nextExpectedAt, type InvalidRoutineSchedule } from './timing.ts'
 
-const RoutineRow = createSelectSchema(routines)
-const OccurrenceRow = createSelectSchema(occurrences)
-type RoutineRecord = Omit<Routine, 'nextRunAt' | 'runs'>
-type CreateRoutineInput = typeof CreateRoutineRequest.Type
-type PatchRoutineInput = typeof PatchRoutineRequest.Type
-/** A raw `RETURNING` result: the claim statement is SQL text, so its rows are decoded here. */
-const RawRows = Schema.Struct({ rows: Schema.Array(RoutineRow) })
+export class RoutineMissing extends Schema.TaggedError<RoutineMissing>()(
+  'RoutineMissing',
+  {
+    id: RoutineId,
+  },
+  { title: 'Routine not found' },
+) {}
 
-const invalidRow = (subject: string) =>
-  new DatabaseFailure({ message: `Database returned an invalid ${subject}` })
+export class RoutineWebhookRequired extends Schema.TaggedError<RoutineWebhookRequired>()(
+  'RoutineWebhookRequired',
+  { id: RoutineId },
+  { title: 'Webhook Routine required' },
+) {}
 
-const invalidRoutineClaim = () => invalidRow('Routine claim')
-
-const routineRowDecoder = Schema.decodeUnknownEffect(RoutineRow)
-const routineSchemaDecoder = Schema.decodeUnknownEffect(RoutineSchema)
-
-const decodeRoutine = Effect.fn('RoutineStore.decodeRoutine')(function* (
-  value: typeof routines.$inferSelect,
-) {
-  const row = yield* routineRowDecoder(value).pipe(Effect.mapError(() => invalidRow('Routine')))
-  const decoded = yield* routineSchemaDecoder({
-    ...row,
-    nextRunAt: row.nextExpectedAt,
-    runs: [],
-  }).pipe(Effect.mapError(() => invalidRow('Routine')))
-  const { nextRunAt: _nextRunAt, runs: _runs, ...record } = decoded
-  return record
-})
-
-const occurrenceRowDecoder = Schema.decodeUnknownEffect(OccurrenceRow)
-const occurrenceSchemaDecoder = Schema.decodeUnknownEffect(OccurrenceSchema)
-
-const decodeOccurrence = Effect.fn('RoutineStore.decodeOccurrence')(function* (
-  value: typeof occurrences.$inferSelect,
-) {
-  const row = yield* occurrenceRowDecoder(value).pipe(
-    Effect.mapError(() => invalidRow('Routine occurrence')),
-  )
-  return yield* occurrenceSchemaDecoder(row).pipe(
-    Effect.mapError(() => invalidRow('Routine occurrence')),
-  )
-})
+type StoreError = DatabaseInfrastructureError | RoutineMissing
+type ChangeError = StoreError | InvalidRoutineSchedule
+type CreateInput = typeof CreateRoutineRequest.Type
+type PatchInput = typeof PatchRoutineRequest.Type
+type DatabaseService = Database['Service']
 
 export interface RoutineStoreService {
-  readonly list: () => Effect.Effect<ReadonlyArray<Routine>, DatabaseInfrastructureError>
-  readonly get: (
-    id: RoutineId,
-  ) => Effect.Effect<Option.Option<Routine>, DatabaseInfrastructureError>
-  readonly create: (
-    request: CreateRoutineInput,
-  ) => Effect.Effect<Routine, DatabaseInfrastructureError>
+  readonly list: (
+    actor: Actor,
+  ) => Effect.Effect<ReadonlyArray<Routine>, DatabaseInfrastructureError>
+  readonly get: (actor: Actor, id: RoutineId) => Effect.Effect<RoutineRecord, StoreError>
+  readonly create: (actor: Actor, input: CreateInput) => Effect.Effect<Routine, ChangeError>
   readonly patch: (
+    actor: Actor,
     id: RoutineId,
-    patch: PatchRoutineInput,
-  ) => Effect.Effect<Option.Option<Routine>, DatabaseInfrastructureError>
-  readonly remove: (id: RoutineId) => Effect.Effect<boolean, DatabaseInfrastructureError>
-  readonly setSchedule: (
+    input: PatchInput,
+  ) => Effect.Effect<Routine, ChangeError>
+  readonly remove: (actor: Actor, id: RoutineId) => Effect.Effect<void, StoreError>
+  readonly issueWebhook: (
+    actor: Actor,
     id: RoutineId,
-    nextExpectedAt: number | null,
-    lastMissedAt: number | null,
-  ) => Effect.Effect<void, DatabaseInfrastructureError>
-  readonly claimDue: () => Effect.Effect<ReadonlyArray<Routine>, DatabaseInfrastructureError>
+  ) => Effect.Effect<RoutineWebhook, StoreError | RoutineWebhookRequired>
+  readonly authorizeWebhook: (
+    id: RoutineId,
+    key: Redacted.Redacted,
+  ) => Effect.Effect<RoutineRecord, StoreError>
+  readonly claimDue: () => Effect.Effect<
+    ReadonlyArray<RoutineRecord>,
+    DatabaseInfrastructureError | InvalidRoutineSchedule
+  >
   readonly startOccurrence: (
-    routineId: RoutineId,
+    record: RoutineRecord,
+    threadId: ThreadId,
   ) => Effect.Effect<Occurrence, DatabaseInfrastructureError>
   readonly attachSubmission: (
     id: OccurrenceId,
-    submissionId: string,
-  ) => Effect.Effect<boolean, DatabaseInfrastructureError>
+    runId: RunId,
+  ) => Effect.Effect<void, DatabaseInfrastructureError>
 }
 
 export class RoutineStore extends Context.Service<RoutineStore, RoutineStoreService>()(
   'vivid/RoutineStore',
 ) {}
 
-const rawRowsDecoder = Schema.decodeUnknownEffect(RawRows)
-type DatabaseService = Database['Service']
-
-/** Loads the recent Occurrences needed to render one Routine. */
-const makeListRuns = (database: DatabaseService) =>
-  Effect.fn('RoutineStore.listOccurrences')(function* (routineId: RoutineId) {
+/** The owner-scoped Routine load is also the authorization check before running or issuing keys. */
+const makeGet = (database: DatabaseService) =>
+  Effect.fn('RoutineStore.get')(function* (actor: Actor, id: RoutineId) {
     const rows = yield* database.run(
       database
         .select()
+        .from(routines)
+        .where(and(eq(routines.id, id), ownedHere(routines, actor))),
+    )
+    const row = rows[0]
+    if (row === undefined) return yield* Effect.fail(new RoutineMissing({ id }))
+    return yield* decodeRoutine(row)
+  })
+
+/** Recent history uses durable Runs; legacy settlement columns never decide its lifecycle. */
+const makeView = (database: DatabaseService) =>
+  Effect.fn('RoutineStore.view')(function* (record: RoutineRecord) {
+    const rows = yield* database.run(
+      database
+        .select({
+          occurrence: occurrences,
+          state: runs.state,
+          finishedAt: runs.finishedAt,
+        })
         .from(occurrences)
-        .where(eq(occurrences.routineId, routineId))
+        .leftJoin(runs, eq(runs.id, occurrences.submissionId))
+        .where(eq(occurrences.routineId, record.routine.id))
         .orderBy(desc(occurrences.startedAt))
         .limit(12),
     )
-    return yield* Effect.forEach(rows, decodeOccurrence)
+    const history = yield* Effect.forEach(rows, decodeOccurrence)
+    return Routine.make({
+      id: record.routine.id,
+      name: record.routine.name,
+      prompt: record.routine.prompt,
+      trigger: record.routine.trigger,
+      libraryFolderId: record.routine.libraryFolderId,
+      enabled: record.routine.enabled,
+      nextExpectedAt: record.routine.nextExpectedAt,
+      lastMissedAt: record.routine.lastMissedAt,
+      createdAt: record.routine.createdAt,
+      updatedAt: record.routine.updatedAt,
+      nextRunAt: record.routine.nextRunAt,
+      runs: history,
+    })
   })
 
-/** Projects a stored Routine record with its recent Occurrences and computed next run. */
-const makeView = (listRuns: ReturnType<typeof makeListRuns>) =>
-  Effect.fn('RoutineStore.view')(function* (record: RoutineRecord) {
-    const runs = yield* listRuns(record.id)
-    return {
-      ...record,
-      nextRunAt: record.enabled ? record.nextExpectedAt : null,
-      runs,
-    } satisfies Routine
-  })
-
-/** Loads a Routine record without performing the Occurrence join used by the wire view. */
-const makeGetRecord = (database: DatabaseService) =>
-  Effect.fn('RoutineStore.getRecord')(function* (id: RoutineId) {
-    const rows = yield* database.run(
-      database.select().from(routines).where(eq(routines.id, id)).limit(1),
-    )
-    const row = rows[0]
-    return row === undefined ? Option.none() : Option.some(yield* decodeRoutine(row))
-  })
-
-/** Reads one Routine and returns Option.none when the durable record is absent. */
-const makeGet = (getRecord: ReturnType<typeof makeGetRecord>, view: ReturnType<typeof makeView>) =>
-  Effect.fn('RoutineStore.get')(function* (id: RoutineId) {
-    const record = yield* getRecord(id)
-    if (Option.isNone(record)) return Option.none()
-    return Option.some(yield* view(record.value))
-  })
-
-/** Lists stored Routines in update order and renders each one with its recent Occurrences. */
+/** An owner sees their own commitments in this workspace, regardless of their Company role. */
 const makeList = (database: DatabaseService, view: ReturnType<typeof makeView>) =>
-  Effect.fn('RoutineStore.list')(function* () {
+  Effect.fn('RoutineStore.list')(function* (actor: Actor) {
     const rows = yield* database.run(
-      database.select().from(routines).orderBy(desc(routines.updatedAt)),
+      database
+        .select()
+        .from(routines)
+        .where(ownedHere(routines, actor))
+        .orderBy(desc(routines.updatedAt)),
     )
     const records = yield* Effect.forEach(rows, decodeRoutine)
-    return yield* Effect.forEach(records, view, { concurrency: 1 })
+    return yield* Effect.forEach(records, view)
   })
 
-/** Inserts a Routine and returns its fully rendered wire view. */
+/** Computes the schedule before writing, so invalid cron cannot leave a partially created Routine. */
 const makeCreate = (database: DatabaseService, view: ReturnType<typeof makeView>) =>
-  Effect.fn('RoutineStore.create')(function* (request: CreateRoutineInput) {
+  Effect.fn('RoutineStore.create')(function* (actor: Actor, input: CreateInput) {
     const now = yield* Clock.currentTimeMillis
-    const libraryFolderId = request.libraryFolderId === undefined ? null : request.libraryFolderId
+    const next = yield* nextExpectedAt(input.trigger, true, now)
     const rows = yield* database.run(
       database
         .insert(routines)
         .values({
           id: crypto.randomUUID(),
-          name: request.name,
-          prompt: request.prompt,
-          cron: request.cron,
-          timezone: request.timezone,
-          libraryFolderId,
+          personId: actor.person.id,
+          companyId: companyColumnOf(actor.workspace),
+          name: input.name,
+          prompt: input.prompt,
+          ...triggerColumns(input.trigger),
+          webhookKeyHash: null,
+          libraryFolderId: input.libraryFolderId === undefined ? null : input.libraryFolderId,
           enabled: true,
-          nextExpectedAt: null,
+          nextExpectedAt: next,
           lastMissedAt: null,
           createdAt: now,
           updatedAt: now,
@@ -177,96 +174,155 @@ const makeCreate = (database: DatabaseService, view: ReturnType<typeof makeView>
     return yield* view(yield* decodeRoutine(yield* returned(rows, 'Routine')))
   })
 
-/** Updates an existing Routine while retaining omitted patch fields. */
-const makePatch = (
+/** Row locking preserves concurrent partial updates and key rotation while a trigger is changed. */
+const makePatch = (database: DatabaseService, view: ReturnType<typeof makeView>) =>
+  Effect.fn('RoutineStore.patch')(function* (actor: Actor, id: RoutineId, input: PatchInput) {
+    const now = yield* Clock.currentTimeMillis
+    const updated = yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        const rows = yield* tx
+          .select()
+          .from(routines)
+          .where(and(eq(routines.id, id), ownedHere(routines, actor)))
+          .for('update')
+        const row = rows[0]
+        if (row === undefined) return yield* Effect.fail(new RoutineMissing({ id }))
+        const current = yield* decodeRoutine(row)
+        const trigger = input.trigger === undefined ? current.routine.trigger : input.trigger
+        const enabled = input.enabled === undefined ? current.routine.enabled : input.enabled
+        const next =
+          input.trigger === undefined && input.enabled === undefined
+            ? current.routine.nextExpectedAt
+            : yield* nextExpectedAt(trigger, enabled, now)
+        const result = yield* tx
+          .update(routines)
+          .set({
+            name: input.name === undefined ? current.routine.name : input.name,
+            prompt: input.prompt === undefined ? current.routine.prompt : input.prompt,
+            ...triggerColumns(trigger),
+            webhookKeyHash: RoutineTrigger.guards.Schedule(trigger) ? null : current.webhookKeyHash,
+            libraryFolderId:
+              input.libraryFolderId === undefined
+                ? current.routine.libraryFolderId
+                : input.libraryFolderId,
+            enabled,
+            nextExpectedAt: next,
+            updatedAt: now,
+          })
+          .where(and(eq(routines.id, id), ownedHere(routines, actor)))
+          .returning()
+        return yield* decodeRoutine(yield* returned(result, 'Routine'))
+      }),
+    )
+    return yield* view(updated)
+  })
+
+/** Deleting by both identity and ownership conceals other People's Routines as absent. */
+const makeRemove = (database: DatabaseService) =>
+  Effect.fn('RoutineStore.remove')(function* (actor: Actor, id: RoutineId) {
+    const rows = yield* database.run(
+      database
+        .delete(routines)
+        .where(and(eq(routines.id, id), ownedHere(routines, actor)))
+        .returning({ id: routines.id }),
+    )
+    if (rows.length === 0) return yield* Effect.fail(new RoutineMissing({ id }))
+    return yield* Effect.void
+  })
+
+/** A key rotation is conditional on the current trigger, so racing a schedule change grants nothing. */
+const makeIssueWebhook = (
   database: DatabaseService,
-  getRecord: ReturnType<typeof makeGetRecord>,
-  view: ReturnType<typeof makeView>,
+  publicUrl: URL,
+  get: ReturnType<typeof makeGet>,
 ) =>
-  Effect.fn('RoutineStore.patch')(function* (id: RoutineId, changes: PatchRoutineInput) {
-    const current = yield* getRecord(id)
-    if (Option.isNone(current)) return Option.none()
+  Effect.fn('RoutineStore.issueWebhook')(function* (actor: Actor, id: RoutineId) {
+    const record = yield* get(actor, id)
+    if (!RoutineTrigger.guards.Webhook(record.routine.trigger)) {
+      return yield* Effect.fail(new RoutineWebhookRequired({ id }))
+    }
+    const key = yield* Effect.sync(issueKey)
     const now = yield* Clock.currentTimeMillis
     const rows = yield* database.run(
       database
         .update(routines)
-        .set({
-          name: changes.name ?? current.value.name,
-          prompt: changes.prompt ?? current.value.prompt,
-          cron: changes.cron ?? current.value.cron,
-          timezone: changes.timezone ?? current.value.timezone,
-          libraryFolderId:
-            changes.libraryFolderId === undefined
-              ? current.value.libraryFolderId
-              : changes.libraryFolderId,
-          enabled: changes.enabled ?? current.value.enabled,
-          updatedAt: now,
-        })
-        .where(eq(routines.id, id))
-        .returning(),
+        .set({ webhookKeyHash: hashKey(key), updatedAt: now })
+        .where(
+          and(eq(routines.id, id), ownedHere(routines, actor), eq(routines.trigger, 'webhook')),
+        )
+        .returning({ id: routines.id }),
     )
+    if (rows.length === 0) return yield* Effect.fail(new RoutineWebhookRequired({ id }))
+    return RoutineWebhook.make({
+      address: new URL(`/api/hooks/routines/${encodeURIComponent(id)}`, publicUrl).href,
+      key,
+    })
+  })
+
+/** The key grants only this Routine; disabled, absent and incorrect credentials share one failure. */
+const makeAuthorizeWebhook = (database: DatabaseService) =>
+  Effect.fn('RoutineStore.authorizeWebhook')(function* (id: RoutineId, key: Redacted.Redacted) {
+    const rows = yield* database.run(database.select().from(routines).where(eq(routines.id, id)))
     const row = rows[0]
-    return row === undefined ? Option.none() : Option.some(yield* view(yield* decodeRoutine(row)))
+    // A denial digest also does the fixed-size comparison when no credential exists.
+    const hash =
+      row === undefined || row.webhookKeyHash === null ? '0'.repeat(64) : row.webhookKeyHash
+    const valid = matchesKey(key, hash)
+    if (
+      row === undefined ||
+      !valid ||
+      !row.enabled ||
+      row.trigger !== 'webhook' ||
+      row.webhookKeyHash === null
+    ) {
+      return yield* Effect.fail(new RoutineMissing({ id }))
+    }
+    return yield* decodeRoutine(row)
   })
 
-/** Deletes one Routine and reports whether a durable row was removed. */
-const makeRemove = (database: DatabaseService) =>
-  Effect.fn('RoutineStore.remove')(function* (id: RoutineId) {
-    const rows = yield* database.run(
-      database.delete(routines).where(eq(routines.id, id)).returning({ id: routines.id }),
-    )
-    return rows.length > 0
-  })
-
-/** Persists scheduler timestamps after a Routine is claimed or rescheduled. */
-const makeSetSchedule = (database: DatabaseService) =>
-  Effect.fn('RoutineStore.setSchedule')(function* (
-    id: RoutineId,
-    nextExpectedAt: number | null,
-    lastMissedAt: number | null,
-  ) {
-    yield* database.run(
-      database.update(routines).set({ nextExpectedAt, lastMissedAt }).where(eq(routines.id, id)),
-    )
-  })
-
-/** Claims due Routines under row locks before the scheduler creates Occurrences. */
-const makeClaimDue = (database: DatabaseService, view: ReturnType<typeof makeView>) =>
+/** Advances each due timestamp under SKIP LOCKED before releasing the claim to another worker. */
+const makeClaimDue = (database: DatabaseService) =>
   Effect.fn('RoutineStore.claimDue')(function* () {
     const now = yield* Clock.currentTimeMillis
     return yield* database.transaction((tx) =>
       Effect.gen(function* () {
-        const result = yield* tx.execute(sql`
-          WITH due AS (
-            SELECT id FROM vivid_routines
-            WHERE enabled = true AND next_expected_at IS NOT NULL AND next_expected_at <= ${now}
-            ORDER BY next_expected_at ASC FOR UPDATE SKIP LOCKED
+        const rows = yield* tx
+          .select()
+          .from(routines)
+          .where(
+            and(
+              eq(routines.trigger, 'schedule'),
+              eq(routines.enabled, true),
+              isNotNull(routines.nextExpectedAt),
+              lte(routines.nextExpectedAt, now),
+            ),
           )
-          UPDATE vivid_routines target SET next_expected_at = NULL
-          FROM due WHERE target.id = due.id
-          RETURNING target.id, target.name, target.prompt, target.cron, target.timezone,
-            target.library_folder_id AS "libraryFolderId", target.enabled,
-            target.next_expected_at::float8 AS "nextExpectedAt", target.last_missed_at::float8 AS "lastMissedAt",
-            target.created_at::float8 AS "createdAt", target.updated_at::float8 AS "updatedAt"
-        `)
-        const claimed = yield* rawRowsDecoder(result).pipe(Effect.mapError(invalidRoutineClaim))
-        const records = yield* Effect.forEach(claimed.rows, decodeRoutine)
-        return yield* Effect.forEach(records, view, { concurrency: 1 })
+          .orderBy(asc(routines.nextExpectedAt))
+          .for('update', { skipLocked: true })
+        const records = yield* Effect.forEach(rows, decodeRoutine)
+        for (const record of records) {
+          const next = yield* nextExpectedAt(record.routine.trigger, true, now)
+          yield* tx
+            .update(routines)
+            .set({ nextExpectedAt: next })
+            .where(eq(routines.id, record.routine.id))
+        }
+        return records
       }),
     )
   })
 
-/** Starts one Occurrence with the durable conversation identity derived from its Routine. */
+/** The Thread must already exist; the Occurrence's id is the delivery's idempotency key. */
 const makeStartOccurrence = (database: DatabaseService) =>
-  Effect.fn('RoutineStore.startOccurrence')(function* (routineId: RoutineId) {
+  Effect.fn('RoutineStore.startOccurrence')(function* (record: RoutineRecord, threadId: ThreadId) {
     const startedAt = yield* Clock.currentTimeMillis
     const rows = yield* database.run(
       database
         .insert(occurrences)
         .values({
           id: crypto.randomUUID(),
-          routineId,
-          conversationId: `routine-${routineId}`,
+          routineId: record.routine.id,
+          conversationId: threadId,
           submissionId: null,
           status: 'running',
           startedAt,
@@ -276,37 +332,49 @@ const makeStartOccurrence = (database: DatabaseService) =>
         })
         .returning(),
     )
-    return yield* decodeOccurrence(yield* returned(rows, 'Routine'))
+    return yield* decodeOccurrence({
+      occurrence: yield* returned(rows, 'Routine occurrence'),
+      state: null,
+      finishedAt: null,
+    })
   })
 
-/** Attaches a runtime submission only while the Occurrence is still running. */
+/** Persists the returned Run id; future reads join that Run rather than settling a second lifecycle. */
 const makeAttachSubmission = (database: DatabaseService) =>
-  Effect.fn('RoutineStore.attachSubmission')(function* (id: OccurrenceId, submissionId: string) {
+  Effect.fn('RoutineStore.attachSubmission')(function* (id: OccurrenceId, runId: RunId) {
     const rows = yield* database.run(
       database
         .update(occurrences)
-        .set({ submissionId })
-        .where(and(eq(occurrences.id, id), eq(occurrences.status, 'running')))
+        .set({ submissionId: runId })
+        .where(eq(occurrences.id, id))
         .returning({ id: occurrences.id }),
     )
-    return rows.length > 0
+    if (rows.length === 0)
+      return yield* Effect.fail(
+        new DatabaseFailure({
+          message: 'Routine occurrence disappeared before delivery was attached',
+        }),
+      )
+    return yield* Effect.void
   })
 
+/** Persistence and key authority are acquired once; callers pass their Actor explicitly. */
 export const routineStoreLayer = Layer.effect(
   RoutineStore,
   Effect.gen(function* () {
     const database = yield* Database
-    const listRuns = makeListRuns(database)
-    const view = makeView(listRuns)
-    const getRecord = makeGetRecord(database)
+    const config = yield* ServerConfig
+    const get = makeGet(database)
+    const view = makeView(database)
     return RoutineStore.of({
       list: makeList(database, view),
-      get: makeGet(getRecord, view),
+      get,
       create: makeCreate(database, view),
-      patch: makePatch(database, getRecord, view),
+      patch: makePatch(database, view),
       remove: makeRemove(database),
-      setSchedule: makeSetSchedule(database),
-      claimDue: makeClaimDue(database, view),
+      issueWebhook: makeIssueWebhook(database, config.PUBLIC_URL, get),
+      authorizeWebhook: makeAuthorizeWebhook(database),
+      claimDue: makeClaimDue(database),
       startOccurrence: makeStartOccurrence(database),
       attachSubmission: makeAttachSubmission(database),
     })
