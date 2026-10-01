@@ -557,6 +557,9 @@ importers:
       '@effect/sql-pg':
         specifier: 4.0.0-rc.116
         version: 4.0.0-rc.116(effect@4.0.0-rc.116)
+      '@helix-db/helix-db':
+        specifier: 3.0.4
+        version: 3.0.4
       '@vivid/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -2330,6 +2333,10 @@ packages:
     peerDependenciesMeta:
       '@modelcontextprotocol/sdk':
         optional: true
+
+  '@helix-db/helix-db@3.0.4':
+    resolution: {integrity: sha512-8ehQ6aYMQe5KwTaaJeOTustPu4cvw9fKiQuH/ZMnrzNIJbxlN97wSU7+MhIvJ3aQdIaDD2P2BTDpDYxHSsmLNw==}
+    engines: {node: '>=20.0.0'}
 
   '@hono/node-server@1.19.9':
     resolution: {integrity: sha512-vHL6w3ecZsky+8P5MD+eFfaGTyCeOHUIFYMGpQGbrBTSmNNoxv0if69rEZ5giu36weC5saFuznL411gRX7bJDw==}
@@ -10044,6 +10051,8 @@ snapshots:
       - bufferutil
       - supports-color
       - utf-8-validate
+
+  '@helix-db/helix-db@3.0.4': {}
 
   '@hono/node-server@1.19.9(hono@4.11.4)':
     dependencies:
