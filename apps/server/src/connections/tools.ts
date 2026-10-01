@@ -1,4 +1,4 @@
-import { Array as Arr, Effect, Option, Order } from 'effect'
+import { Array as Arr, Effect, Option, Order, Schema } from 'effect'
 import {
   ActionTarget,
   ConnectionRequestMessage,
@@ -17,10 +17,18 @@ import { type Actor } from '../auth/access.ts'
 import { workspaceIn } from '../auth/session.ts'
 import { ActionOutcome, Gate, GateDecision, type GateExposure } from '../approvals/gate.ts'
 import { requireThread } from '../threads/access.ts'
-import { Executor, ExecutorCallOutcome, ExecutorResumeOutcome } from './executor.ts'
-import { callFailure } from './errors.ts'
+import {
+  Executor,
+  ExecutorCallOutcome,
+  ExecutorResourceMissing,
+  resourceReason,
+  ExecutorResumeOutcome,
+} from './executor.ts'
+import { executorFailure } from './errors.ts'
 import { ConnectionStore } from './store.ts'
 import type { ConnectionRecord } from './records.ts'
+
+const isResourceMissing = Schema.is(ExecutorResourceMissing)
 
 /** Distinct query words prevent repeated tokens from inflating relevance. */
 const words = (value: string) => new Set(value.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])
@@ -46,9 +54,10 @@ const rank = <A extends { readonly name: string; readonly description: string }>
 /** The account label and provider effect accompany every discoverable tool. */
 const projectTools = Effect.fn('Connections.projectTools')(function* (
   store: typeof ConnectionStore.Service,
+  actor: Actor,
   row: ConnectionRecord,
 ) {
-  const tools = yield* store.tools(row)
+  const tools = yield* store.tools(actor, row)
   return tools.flatMap((tool) =>
     row.companyId !== null && tool.effect !== 'read'
       ? []
@@ -65,7 +74,7 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
   const records = yield* store.records(actor)
   const groups = yield* Effect.forEach(
     records.filter((row) => row.status === 'ready'),
-    (row) => projectTools(store, row),
+    (row) => projectTools(store, actor, row),
     { concurrency: 4 },
   )
   const services = yield* store
@@ -109,11 +118,22 @@ export const runConnection = Effect.fn('Connections.run')(function* (
   const executor = yield* Executor
   const outcome = yield* executor
     .call({ references: row.references, tool: target.tool, input: target.input })
-    .pipe(Effect.catch((error) => Effect.succeed(callFailure(error))))
+    .pipe(
+      Effect.mapError((error) => (isResourceMissing(error) ? error : executorFailure(error))),
+      Effect.catchTag(
+        'ExecutorResourceMissing',
+        Effect.fn('Connections.missing')(function* ({ resource }) {
+          const reason = resourceReason(resource)
+          yield* (yield* ConnectionStore).failed(actor, row, reason)
+          return ExecutorCallOutcome.cases.Rejected.make({ message: reason })
+        }),
+      ),
+    )
   return yield* ExecutorCallOutcome.match<
     Effect.Effect<
       ToolOutcome,
       | import('@vivid/contracts').NotFound
+      | ReturnType<typeof executorFailure>
       | import('@vivid/contracts').Conflict
       | import('../database/client.ts').DatabaseInfrastructureError,
       ConnectionStore
@@ -124,8 +144,8 @@ export const runConnection = Effect.fn('Connections.run')(function* (
     OutcomeUnknown: () => Effect.succeed(ToolOutcome.cases.OutcomeUnknown.make({})),
     NotReady: () => markNotReady(actor, row),
     ApprovalRequired: ({ requestId }) =>
-      executor.resume({ requestId, accept: true }).pipe(
-        Effect.catch(() => Effect.succeed(ExecutorResumeOutcome.cases.OutcomeUnknown.make({}))),
+      executor.resume({ references: row.references, requestId, accept: true }).pipe(
+        Effect.mapError(executorFailure),
         Effect.map((resumed) =>
           ExecutorResumeOutcome.match<ToolOutcome>(resumed, {
             Completed: ({ value }) => ToolOutcome.cases.Completed.make({ output: value }),
@@ -172,10 +192,9 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
       service: row.service,
       serviceName: row.serviceName,
     })
-  const tools = yield* store.tools(row).pipe(
+  const tools = yield* store.tools(actor, row).pipe(
     Effect.map(Option.some),
     Effect.catchTags({
-      ServiceUnavailable: () => Effect.succeed(Option.none()),
       InvalidRequest: () => Effect.succeed(Option.none()),
       Conflict: () => Effect.succeed(Option.none()),
     }),
@@ -236,7 +255,7 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     const row = yield* store.get(actor, input.target.connectionId)
     if (row.status !== 'ready')
       return ActionOutcome.cases.Failed.make({ reason: 'This Connection needs authorization.' })
-    const tool = (yield* store.tools(row)).find((entry) => entry.name === input.target.tool)
+    const tool = (yield* store.tools(actor, row)).find((entry) => entry.name === input.target.tool)
     if (tool === undefined || (row.companyId !== null && tool.effect !== 'read'))
       return ActionOutcome.cases.Failed.make({
         reason: 'This tool is no longer available on this Connection.',

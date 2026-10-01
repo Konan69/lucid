@@ -1,5 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm'
-import { Cache, Clock, Context, Effect, Exit, Layer, Redacted } from 'effect'
+import { Clock, Context, Effect, Layer, Redacted, Schema } from 'effect'
 import {
   AuditEvent,
   BeginConnectionRequest,
@@ -14,11 +14,13 @@ import {
 import { requireAdmin, type Actor } from '../auth/access.ts'
 import { Audit } from '../audit/record.ts'
 import { ServerConfig } from '../config.ts'
-import { Database, decodeStored, returned } from '../database/client.ts'
+import { Database, returned } from '../database/client.ts'
 import {
   Executor,
   ExecutorOwnerId,
   ExecutorReferences,
+  ExecutorResourceMissing,
+  resourceReason,
   ExecutorStatus,
   ExecutorStep,
   type ExecutorService,
@@ -34,6 +36,8 @@ import {
   type ConnectionRecord,
 } from './records.ts'
 import { connections } from './tables.ts'
+
+const isResourceMissing = Schema.is(ExecutorResourceMissing)
 
 /** Shared management is an admin capability; owning the row does not bypass it. */
 const mayManage = Effect.fn('Connections.mayManage')(function* (
@@ -104,6 +108,7 @@ const begin = Effect.fn('Connections.begin')(function* (
   // Preserve pending references when the host cannot start sign-in; the account remains removable.
   const step = yield* executor
     .begin({
+      connectionId: id,
       service: request.service,
       label: request.label,
       owner,
@@ -153,12 +158,34 @@ const begin = Effect.fn('Connections.begin')(function* (
   const connection = yield* publicConnection(actor, row)
   return ExecutorStep.match<ConnectionStep>(step, {
     Done: () => ConnectionStep.cases.Done.make({ connection }),
-    EnterKey: () => ConnectionStep.cases.EnterKey.make({ connection }),
+    EnterKey: ({ fields }) => ConnectionStep.cases.EnterKey.make({ connection, fields }),
     OpenSignIn: ({ address }) => ConnectionStep.cases.OpenSignIn.make({ connection, address }),
   })
 })
 
-/** Caches are acquired once per application Layer; transient failures have zero TTL. */
+/** Permanently missing resources fail the persisted Connection and disappear from discovery. */
+const loadTools = Effect.fn('Connections.tools')(function* (actor: Actor, row: ConnectionRecord) {
+  const executor = yield* Executor
+  return yield* executor.tools(row.references).pipe(
+    Effect.mapError((error) => (isResourceMissing(error) ? error : executorFailure(error))),
+    Effect.catchTag(
+      'ExecutorResourceMissing',
+      Effect.fn('Connections.failDiscovery')(function* ({ resource }) {
+        const saved = yield* saveState(
+          row,
+          ConnectionState.cases.Failed.make({
+            reason: resourceReason(resource),
+          }),
+          row.references,
+        )
+        yield* recordChanged(actor, saved)
+        return []
+      }),
+    ),
+  )
+})
+
+/** Capture authority once; the adapter owns discovery and catalog cache lifetimes. */
 const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const executor: ExecutorService = yield* Executor
   const database = yield* Database
@@ -172,31 +199,13 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
       Executor | Database | Audit | ServerConfig | import('../live/changes.ts').Changes
     >,
   ) => effect.pipe(Effect.provide(dependencies))
-  const catalog = yield* Effect.cachedWithTTL(
-    executor.catalog().pipe(Effect.mapError(executorFailure)),
-    (exit) => (Exit.isSuccess(exit) ? '10 minutes' : 0),
-  )
-  const decodeReferences = decodeStored(ExecutorReferences, 'Executor references')
-  const toolCache = yield* Cache.makeWith(
-    Effect.fn('Connections.loadTools')(function* (id: ConnectionId) {
-      const rows = yield* database.run(
-        database
-          .select({ references: connections.references })
-          .from(connections)
-          .where(eq(connections.id, id))
-          .limit(1),
-      )
-      const row = yield* returned(rows, 'Connection')
-      const references = yield* decodeReferences(row.references)
-      return yield* executor.tools(references).pipe(Effect.mapError(executorFailure))
-    }),
-    { capacity: 1000, timeToLive: (exit) => (Exit.isSuccess(exit) ? '5 minutes' : 0) },
-  )
   const catalogServices = Effect.fn('Connections.catalog')(function* () {
-    return (yield* catalog).map((entry) => Service.make({ ...entry, mark: null }))
+    return (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).map((entry) =>
+      Service.make({ ...entry, mark: null }),
+    )
   })
   const get = (actor: Actor, id: ConnectionId) => provide(getRecord(actor, id, false))
-  const management = makeManagement({ executor, database, provide, get, toolCache })
+  const management = makeManagement({ executor, database, provide, get })
   return {
     get,
     catalog: catalogServices,
@@ -210,7 +219,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
       return { services, connections: items }
     }),
     records: (actor: Actor) => provide(listRecords(actor)),
-    tools: (row: ConnectionRecord) => Cache.get(toolCache, row.id),
+    tools: (actor: Actor, row: ConnectionRecord) => provide(loadTools(actor, row)),
     /** Validate shared management before the first external operation. */
     begin: Effect.fn('Connections.begin')(function* (
       actor: Actor,
@@ -224,7 +233,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
   }
 })
 
-/** Management shares the Layer's authority and invalidates cached tools after every state change. */
+/** Management shares the Layer's authority and publishes every persisted state change. */
 const makeManagement = (input: {
   readonly executor: ExecutorService
   readonly database: typeof Database.Service
@@ -243,13 +252,8 @@ const makeManagement = (input: {
     | import('@vivid/contracts').NotFound
     | import('../database/client.ts').DatabaseInfrastructureError
   >
-  readonly toolCache: Cache.Cache<
-    ConnectionId,
-    readonly (typeof import('./executor.ts').ExecutorTool.Type)[],
-    import('../database/client.ts').DatabaseInfrastructureError | ReturnType<typeof executorFailure>
-  >
 }) => {
-  const { executor, database, provide, get, toolCache } = input
+  const { executor, database, provide, get } = input
   return {
     /** Only a managing Person submits keys; the store retains identifiers alone. */
     complete: Effect.fn('Connections.complete')(function* (
@@ -261,7 +265,6 @@ const makeManagement = (input: {
       const references = yield* executor
         .complete({ references: row.references, fields: request.fields })
         .pipe(Effect.mapError(executorFailure))
-      yield* Cache.invalidate(toolCache, row.id)
       return yield* provide(finish(actor, row, references))
     }),
     /** Bind sign-in completion to its initiating Person across workspace switches. */
@@ -295,7 +298,6 @@ const makeManagement = (input: {
             ),
           ),
       )
-      yield* Cache.invalidate(toolCache, row.id)
       yield* provide(recordChanged(actor, row))
       yield* provide(
         Effect.flatMap(Audit, (audit) =>
@@ -309,12 +311,22 @@ const makeManagement = (input: {
         ),
       )
     }),
-    /** Persist authorization loss and invalidate discovery before publishing the change. */
+    /** A deleted provider resource fails permanently instead of asking for credentials again. */
+    failed: Effect.fn('Connections.failed')(function* (
+      actor: Actor,
+      row: ConnectionRecord,
+      reason: string,
+    ) {
+      const saved = yield* provide(
+        saveState(row, ConnectionState.cases.Failed.make({ reason }), row.references),
+      )
+      yield* provide(recordChanged(actor, saved))
+    }),
+    /** Persist authorization loss before publishing the change. */
     notReady: Effect.fn('Connections.notReady')(function* (actor: Actor, row: ConnectionRecord) {
       const saved = yield* provide(
         saveState(row, ConnectionState.cases.NeedsAuthorization.make({}), row.references),
       )
-      yield* Cache.invalidate(toolCache, row.id)
       yield* provide(recordChanged(actor, saved))
     }),
   }

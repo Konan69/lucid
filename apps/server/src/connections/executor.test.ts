@@ -1,11 +1,12 @@
 import * as NodeProcess from 'node:process'
 import { describe, expect, it } from '@effect/vitest'
-import { ServiceId, ServiceUnavailable } from '@vivid/contracts'
+import { ConnectionId, ServiceId, ServiceUnavailable } from '@vivid/contracts'
 import * as ConfigProvider from 'effect/ConfigProvider'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Result from 'effect/Result'
 import * as Redacted from 'effect/Redacted'
+import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import {
   Executor,
   ExecutorAppId,
@@ -22,6 +23,7 @@ const url = NodeProcess.env['VIVID_TEST_EXECUTOR_URL']
 const key = NodeProcess.env['VIVID_TEST_EXECUTOR_KEY']
 const publicService = ServiceId.make('curated/deepwiki-com-mcp')
 const liveLayer = executorLayer.pipe(
+  Layer.provide(FetchHttpClient.layer),
   Layer.provide(
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({
@@ -43,6 +45,7 @@ describe('Executor installation', () => {
     },
   ]) {
     const missingLayer = executorLayer.pipe(
+      Layer.provide(FetchHttpClient.layer),
       Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(configuration.values))),
     )
     it.effect(`fails every operation with ServiceUnavailable: ${configuration.name}`, () =>
@@ -57,6 +60,7 @@ describe('Executor installation', () => {
         const operations = [
           executor.catalog(),
           executor.begin({
+            connectionId: ConnectionId.make(crypto.randomUUID()),
             service: publicService,
             owner: references.owner,
             subject: 'unconfigured-person',
@@ -73,6 +77,7 @@ describe('Executor installation', () => {
           executor.tools(references),
           executor.call({ references, tool: 'unconfigured', input: {} }),
           executor.resume({
+            references,
             requestId: ExecutorRequestId.make('unconfigured-request'),
             accept: true,
           }),
@@ -105,6 +110,7 @@ describe.skipIf(url === undefined || key === undefined)('Executor live HTTP', ()
         const executor = yield* Executor
         yield* Effect.acquireUseRelease(
           executor.begin({
+            connectionId: ConnectionId.make(crypto.randomUUID()),
             service: publicService,
             owner: ExecutorOwnerId.make('vivid-executor-test'),
             subject: 'vivid-executor-test-person',
