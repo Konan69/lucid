@@ -13,9 +13,19 @@ import {
 } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
 import type { DatabaseInfrastructureError } from '../database/client.ts'
+import { Notifier } from '../notifications/notifier.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { Conversation, DeliveryMessage, StoredRunOrigin } from '../threads/conversation.ts'
 import { ThreadStore } from '../threads/store.ts'
+import {
+  identifyAttempt,
+  OccurrenceClaim,
+  OccurrenceOpening,
+  RoutineInvocation,
+  RoutineThreadUnavailable,
+  THREAD_OPENING_FAILURE,
+  type RoutineAttempt,
+} from './attempts.ts'
 import type { RoutineRecord } from './records.ts'
 import { RoutineStore, type RoutineMissing } from './store.ts'
 import type { InvalidRoutineSchedule } from './timing.ts'
@@ -23,6 +33,7 @@ import type { InvalidRoutineSchedule } from './timing.ts'
 export type RoutineDeliveryError =
   | DatabaseInfrastructureError
   | RoutineMissing
+  | RoutineThreadUnavailable
   | NotFound
   | RuntimeUnavailable
 
@@ -31,6 +42,7 @@ export interface RoutineSchedulerService {
   readonly webhook: (
     record: RoutineRecord,
     payload: string,
+    invocation: RoutineInvocation,
   ) => Effect.Effect<Occurrence, RoutineDeliveryError>
   readonly runDue: () => Effect.Effect<void, RoutineDeliveryError | InvalidRoutineSchedule>
 }
@@ -60,26 +72,110 @@ const bodyOf = (record: RoutineRecord, payload: Option.Option<string>) => {
   })
 }
 
-/** All three triggers establish the private Thread, persist the Occurrence, then deliver once. */
-const makeSubmit = (services: {
+interface SubmissionServices {
   readonly routines: RoutineStore['Service']
   readonly threads: ThreadStore['Service']
   readonly conversation: Conversation['Service']
   readonly changes: Changes['Service']
-}) =>
-  Effect.fn('RoutineScheduler.submit')(function* (
-    record: RoutineRecord,
-    payload: Option.Option<string>,
-  ) {
-    const routine = record.routine
-    const threadId = ThreadId.make(`routine-${routine.id}`)
-    yield* services.threads.ensure({
-      id: threadId,
-      title: routine.name,
+  readonly notifier: Notifier['Service']
+}
+
+/** A recorded opening failure stays a failure on retry; an admitted receipt retains its Run. */
+const replay = Effect.fn('RoutineScheduler.replay')(function* (occurrence: Occurrence) {
+  if (occurrence.submissionId === null && occurrence.error !== null) {
+    return yield* Effect.fail(
+      new RoutineThreadUnavailable({
+        routineId: occurrence.routineId,
+        threadId: occurrence.threadId,
+      }),
+    )
+  }
+  return occurrence.submissionId === null ? Option.none<Occurrence>() : Option.some(occurrence)
+})
+
+/** A failed opening records its own immutable outcome and alerts only the receipt's owning Person. */
+const openingFailed = Effect.fn('RoutineScheduler.openingFailed')(function* (
+  services: SubmissionServices,
+  record: RoutineRecord,
+  attempt: RoutineAttempt,
+) {
+  const claim = yield* services.routines.claimOccurrence(
+    record,
+    attempt,
+    OccurrenceOpening.cases.Failed.make({ reason: THREAD_OPENING_FAILURE }),
+  )
+  if (OccurrenceClaim.guards.Created(claim)) {
+    yield* publish(services.changes)(record)
+    // The conflicting Thread may belong to someone else; this notice must never link to it.
+    yield* services.notifier.notify({
+      personId: record.personId,
+      companyId: record.companyId,
+      kind: 'needs-you',
+      title: record.routine.name,
+      body: THREAD_OPENING_FAILURE,
+      taskId: null,
+      threadId: null,
+    })
+  }
+  return yield* Effect.fail(
+    new RoutineThreadUnavailable({
+      routineId: record.routine.id,
+      threadId: claim.occurrence.threadId,
+    }),
+  )
+})
+
+/** Ensuring a Thread is a product operation: database failures become a recorded opening failure. */
+const openThread = Effect.fn('RoutineScheduler.openThread')(function* (
+  services: SubmissionServices,
+  record: RoutineRecord,
+  attempt: RoutineAttempt,
+) {
+  return yield* services.threads
+    .ensure({
+      id: ThreadId.make(`routine-${record.routine.id}`),
+      title: record.routine.name,
       personId: record.personId,
       companyId: record.companyId,
     })
-    const occurrence = yield* services.routines.startOccurrence(record, threadId)
+    .pipe(
+      Effect.catchTag(
+        ['DatabaseConstraintViolation', 'DatabaseFailure', 'DatabaseUnavailable'],
+        () => openingFailed(services, record, attempt),
+      ),
+    )
+})
+
+/** A unique receipt persists the attempt; Conversation deduplicates admissions by the original key. */
+const makeSubmit = (services: SubmissionServices) =>
+  Effect.fn('RoutineScheduler.submit')(function* (
+    record: RoutineRecord,
+    payload: Option.Option<string>,
+    invocation: RoutineInvocation,
+  ) {
+    const routine = record.routine
+    const attempt = identifyAttempt(routine.id, invocation)
+    if (RoutineInvocation.guards.Keyed(invocation)) {
+      const existing = yield* services.routines.findOccurrence(record, attempt.id)
+      if (Option.isSome(existing)) {
+        const outcome = yield* replay(existing.value)
+        if (Option.isSome(outcome)) return outcome.value
+      }
+    }
+    const thread = yield* openThread(services, record, attempt)
+    const claim = yield* services.routines.claimOccurrence(
+      record,
+      attempt,
+      OccurrenceOpening.cases.Ready.make({}),
+    )
+    if (OccurrenceClaim.guards.Existing(claim)) {
+      const outcome = yield* replay(claim.occurrence)
+      if (Option.isSome(outcome)) return outcome.value
+    }
+    // A receipt without a Run may have lost admission or attachment. Conversation owns idempotent
+    // delivery, so repeating the original key safely recovers it, even across server instances.
+    const occurrence = claim.occurrence
+    const threadId = thread.id
     yield* publish(services.changes)(record)
     const run = yield* services.conversation.deliver({
       threadId,
@@ -90,7 +186,7 @@ const makeSubmit = (services: {
         attributes: { routine: routine.id, name: routine.name },
       }),
       origin: StoredRunOrigin.cases.Routine.make({ routineName: routine.name }),
-      idempotencyKey: occurrence.id,
+      idempotencyKey: attempt.deliveryKey,
     })
     yield* services.routines.attachSubmission(occurrence.id, run.id)
     yield* publish(services.changes)(record)
@@ -128,19 +224,25 @@ export const routineSchedulerServiceLayer = Layer.effect(
     const threads = yield* ThreadStore
     const conversation = yield* Conversation
     const changes = yield* Changes
-    const submit = makeSubmit({ routines, threads, conversation, changes })
+    const notifier = yield* Notifier
+    const submit = makeSubmit({ routines, threads, conversation, changes, notifier })
 
     /** Loading through the owner predicate makes another Person's id indistinguishable from absence. */
     const run = Effect.fn('RoutineScheduler.run')(function* (actor: Actor, id: RoutineId) {
-      return yield* submit(yield* routines.get(actor, id), Option.none())
+      return yield* submit(
+        yield* routines.get(actor, id),
+        Option.none(),
+        RoutineInvocation.cases.Fresh.make({}),
+      )
     })
 
     /** A webhook's authority is its key alone and never a browser session. */
     const webhook = Effect.fn('RoutineScheduler.webhook')(function* (
       record: RoutineRecord,
       payload: string,
+      invocation: RoutineInvocation,
     ) {
-      return yield* submit(record, Option.some(payload))
+      return yield* submit(record, Option.some(payload), invocation)
     })
 
     /** Claims are advanced first; a failed delivery is reported without starving other claimed work. */
@@ -148,7 +250,7 @@ export const routineSchedulerServiceLayer = Layer.effect(
       const due = yield* routines.claimDue()
       yield* Effect.forEach(due, publish(changes), { discard: true })
       const outcomes = yield* Effect.forEach(due, (record) =>
-        Effect.exit(submit(record, Option.none())),
+        Effect.exit(submit(record, Option.none(), RoutineInvocation.cases.Fresh.make({}))),
       )
       for (const outcome of outcomes) yield* outcome
     })

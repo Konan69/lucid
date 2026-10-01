@@ -1,6 +1,7 @@
 import * as Effect from 'effect/Effect'
 import {
   NotFound,
+  Conflict,
   InvalidRequest,
   OccurrenceResponse,
   RoutineListResponse,
@@ -13,6 +14,7 @@ import {
 import { requireActor, type Actor } from '../auth/access.ts'
 import { changed } from '../live/changes.ts'
 import { live } from '../live/query.ts'
+import { THREAD_OPENING_FAILURE } from './attempts.ts'
 import { RoutineScheduler } from './scheduler.ts'
 import { RoutineStore, type RoutineMissing } from './store.ts'
 import type { InvalidRoutineSchedule } from './timing.ts'
@@ -74,7 +76,11 @@ export const routineHandlers = {
   /** Manual work uses the same delivery ordering as scheduled and webhook work. */
   RunRoutine: Effect.fn('Rpc.RunRoutine')(function* ({ id }: typeof RoutineParams.Type) {
     const actor = yield* requireActor()
-    const run = yield* concealMissing((yield* RoutineScheduler).run(actor, id))
+    const run = yield* concealMissing((yield* RoutineScheduler).run(actor, id)).pipe(
+      Effect.catchTag('RoutineThreadUnavailable', () =>
+        Effect.fail(new Conflict({ message: THREAD_OPENING_FAILURE })),
+      ),
+    )
     yield* changed(actor)
     return OccurrenceResponse.make({ run })
   }),

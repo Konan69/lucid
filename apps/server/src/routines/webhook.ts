@@ -6,6 +6,7 @@ import * as Stream from 'effect/Stream'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
+import { RoutineDeliveryKey, RoutineInvocation, THREAD_OPENING_FAILURE } from './attempts.ts'
 import { RoutineId } from '@vivid/contracts'
 import { RoutineScheduler } from './scheduler.ts'
 import { RoutineStore } from './store.ts'
@@ -22,6 +23,7 @@ const authority = Schema.Struct({
 
 /** Header and path values are decoded once before authority is looked up. */
 const decodeAuthority = Schema.decodeUnknownEffect(authority)
+const decodeDeliveryKey = Schema.decodeUnknownEffect(RoutineDeliveryKey)
 
 /** Returns the same public denial for every absent or unusable webhook authority. */
 const notFound = () =>
@@ -68,9 +70,14 @@ const accept = Effect.fn('Http.Routine.webhook')(function* () {
     decoded.value.id,
     Redacted.make(decoded.value.authorization.slice(7)),
   )
+  const suppliedKey = request.headers['idempotency-key']
+  let invocation: RoutineInvocation = RoutineInvocation.cases.Fresh.make({})
+  if (suppliedKey !== undefined) {
+    invocation = RoutineInvocation.cases.Keyed.make({ key: yield* decodeDeliveryKey(suppliedKey) })
+  }
   const payload = yield* readPayload(request)
   const scheduler = yield* RoutineScheduler
-  const occurrence = yield* scheduler.webhook(record, payload)
+  const occurrence = yield* scheduler.webhook(record, payload, invocation)
   return HttpServerResponse.jsonUnsafe({ occurrenceId: occurrence.id }, { status: 202 })
 })
 
@@ -79,6 +86,16 @@ export const routineWebhookRoutes = HttpRouter.add(
   'POST',
   '/api/hooks/routines/:id',
   accept().pipe(
+    Effect.catchTag('RoutineThreadUnavailable', () =>
+      Effect.succeed(
+        HttpServerResponse.jsonUnsafe({ error: THREAD_OPENING_FAILURE }, { status: 409 }),
+      ),
+    ),
+    Effect.catchTag('SchemaError', () =>
+      Effect.succeed(
+        HttpServerResponse.jsonUnsafe({ error: 'Invalid Idempotency-Key' }, { status: 400 }),
+      ),
+    ),
     Effect.catchTag('RoutineMissing', () => Effect.succeed(notFound())),
     Effect.catchTag('NotFound', () => Effect.succeed(notFound())),
     Effect.catchTag('RoutinePayloadTooLarge', () =>

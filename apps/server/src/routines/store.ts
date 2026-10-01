@@ -1,4 +1,6 @@
-import { and, asc, desc, eq, isNotNull, lte } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, lte, sql } from 'drizzle-orm'
+import * as Arr from 'effect/Array'
+import * as Option from 'effect/Option'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
@@ -16,11 +18,12 @@ import {
   RoutineWebhook,
   Routine,
   type RunId,
-  type ThreadId,
 } from '@vivid/contracts'
 import { companyColumnOf, ownedHere, type Actor } from '../auth/access.ts'
 import { ServerConfig } from '../config.ts'
 import { Database, returned, type DatabaseInfrastructureError } from '../database/client.ts'
+import { membershipTable } from '../companies/tables.ts'
+import { OccurrenceClaim, OccurrenceOpening, type RoutineAttempt } from './attempts.ts'
 import { runs } from '../threads/tables.ts'
 import { hashKey, issueKey, matchesKey } from './keys.ts'
 import { decodeOccurrence, decodeRoutine, triggerColumns, type RoutineRecord } from './records.ts'
@@ -71,10 +74,15 @@ export interface RoutineStoreService {
     ReadonlyArray<RoutineRecord>,
     DatabaseInfrastructureError | InvalidRoutineSchedule
   >
-  readonly startOccurrence: (
+  readonly findOccurrence: (
     record: RoutineRecord,
-    threadId: ThreadId,
-  ) => Effect.Effect<Occurrence, DatabaseInfrastructureError>
+    id: OccurrenceId,
+  ) => Effect.Effect<Option.Option<Occurrence>, DatabaseInfrastructureError>
+  readonly claimOccurrence: (
+    record: RoutineRecord,
+    attempt: RoutineAttempt,
+    opening: OccurrenceOpening,
+  ) => Effect.Effect<OccurrenceClaim, StoreError>
   readonly attachSubmission: (
     id: OccurrenceId,
     runId: RunId,
@@ -99,40 +107,61 @@ const makeGet = (database: DatabaseService) =>
     return yield* decodeRoutine(row)
   })
 
-/** Recent history uses durable Runs; legacy settlement columns never decide its lifecycle. */
+/** Ownership is already authorized in each record; the history query contains only those ids. */
 const makeView = (database: DatabaseService) =>
-  Effect.fn('RoutineStore.view')(function* (record: RoutineRecord) {
+  Effect.fn('RoutineStore.view')(function* (records: ReadonlyArray<RoutineRecord>) {
+    if (records.length === 0) return []
+    const ids = records.map((record) => record.routine.id)
+    const recent = database
+      .select({
+        id: occurrences.id,
+        position:
+          sql<number>`row_number() OVER (PARTITION BY ${occurrences.routineId} ORDER BY ${occurrences.startedAt} DESC, ${occurrences.id} DESC)`.as(
+            'position',
+          ),
+      })
+      .from(occurrences)
+      .where(inArray(occurrences.routineId, ids))
+      .as('recent')
     const rows = yield* database.run(
       database
-        .select({
-          occurrence: occurrences,
-          state: runs.state,
-          finishedAt: runs.finishedAt,
-        })
+        .select({ occurrence: occurrences, state: runs.state, finishedAt: runs.finishedAt })
         .from(occurrences)
+        .innerJoin(recent, and(eq(recent.id, occurrences.id), lte(recent.position, 12)))
         .leftJoin(runs, eq(runs.id, occurrences.submissionId))
-        .where(eq(occurrences.routineId, record.routine.id))
-        .orderBy(desc(occurrences.startedAt))
-        .limit(12),
+        .orderBy(desc(occurrences.startedAt), desc(occurrences.id)),
     )
-    const history = yield* Effect.forEach(rows, decodeOccurrence)
-    return Routine.make({
-      id: record.routine.id,
-      name: record.routine.name,
-      prompt: record.routine.prompt,
-      trigger: record.routine.trigger,
-      libraryFolderId: record.routine.libraryFolderId,
-      enabled: record.routine.enabled,
-      nextExpectedAt: record.routine.nextExpectedAt,
-      lastMissedAt: record.routine.lastMissedAt,
-      createdAt: record.routine.createdAt,
-      updatedAt: record.routine.updatedAt,
-      nextRunAt: record.routine.nextRunAt,
-      runs: history,
-    })
+    const history = Arr.groupBy(
+      yield* Effect.forEach(rows, decodeOccurrence),
+      (occurrence) => occurrence.routineId,
+    )
+    // A Routine that has never run legitimately has no entry in the history groups.
+    return records.map((record) =>
+      routineView(
+        record,
+        Option.getOrElse(Option.fromUndefinedOr(history[record.routine.id]), () => []),
+      ),
+    )
   })
 
-/** An owner sees their own commitments in this workspace, regardless of their Company role. */
+/** Projects the wire view without copying server-only ownership or credential fields. */
+const routineView = (record: RoutineRecord, history: ReadonlyArray<Occurrence>) =>
+  Routine.make({
+    id: record.routine.id,
+    name: record.routine.name,
+    prompt: record.routine.prompt,
+    trigger: record.routine.trigger,
+    libraryFolderId: record.routine.libraryFolderId,
+    enabled: record.routine.enabled,
+    nextExpectedAt: record.routine.nextExpectedAt,
+    lastMissedAt: record.routine.lastMissedAt,
+    createdAt: record.routine.createdAt,
+    updatedAt: record.routine.updatedAt,
+    nextRunAt: record.routine.nextRunAt,
+    runs: history,
+  })
+
+/** Loads all owned Routines and their bounded recent history with one batch rather than N queries. */
 const makeList = (database: DatabaseService, view: ReturnType<typeof makeView>) =>
   Effect.fn('RoutineStore.list')(function* (actor: Actor) {
     const rows = yield* database.run(
@@ -142,12 +171,11 @@ const makeList = (database: DatabaseService, view: ReturnType<typeof makeView>) 
         .where(ownedHere(routines, actor))
         .orderBy(desc(routines.updatedAt)),
     )
-    const records = yield* Effect.forEach(rows, decodeRoutine)
-    return yield* Effect.forEach(records, view)
+    return yield* view(yield* Effect.forEach(rows, decodeRoutine))
   })
 
 /** Computes the schedule before writing, so invalid cron cannot leave a partially created Routine. */
-const makeCreate = (database: DatabaseService, view: ReturnType<typeof makeView>) =>
+const makeCreate = (database: DatabaseService) =>
   Effect.fn('RoutineStore.create')(function* (actor: Actor, input: CreateInput) {
     const now = yield* Clock.currentTimeMillis
     const next = yield* nextExpectedAt(input.trigger, true, now)
@@ -171,7 +199,7 @@ const makeCreate = (database: DatabaseService, view: ReturnType<typeof makeView>
         })
         .returning(),
     )
-    return yield* view(yield* decodeRoutine(yield* returned(rows, 'Routine')))
+    return routineView(yield* decodeRoutine(yield* returned(rows, 'Routine')), [])
   })
 
 /** Row locking preserves concurrent partial updates and key rotation while a trigger is changed. */
@@ -214,7 +242,7 @@ const makePatch = (database: DatabaseService, view: ReturnType<typeof makeView>)
         return yield* decodeRoutine(yield* returned(result, 'Routine'))
       }),
     )
-    return yield* view(updated)
+    return yield* returned(yield* view([updated]), 'Routine')
   })
 
 /** Deleting by both identity and ownership conceals other People's Routines as absent. */
@@ -259,6 +287,29 @@ const makeIssueWebhook = (
     })
   })
 
+/** The Membership row is locked only for database work, so removal cannot overtake receipt insertion. */
+const requireMember = Effect.fn('RoutineStore.requireMember')(function* (
+  database: Pick<DatabaseService, 'select'>,
+  record: RoutineRecord,
+) {
+  if (record.companyId !== null) {
+    const members = yield* database
+      .select({ id: membershipTable.id })
+      .from(membershipTable)
+      .where(
+        and(
+          eq(membershipTable.companyId, record.companyId),
+          eq(membershipTable.userId, record.personId),
+        ),
+      )
+      .limit(1)
+      .for('key share')
+    if (members.length === 0)
+      return yield* Effect.fail(new RoutineMissing({ id: record.routine.id }))
+  }
+  return yield* Effect.void
+})
+
 /** The key grants only this Routine; disabled, absent and incorrect credentials share one failure. */
 const makeAuthorizeWebhook = (database: DatabaseService) =>
   Effect.fn('RoutineStore.authorizeWebhook')(function* (id: RoutineId, key: Redacted.Redacted) {
@@ -277,7 +328,9 @@ const makeAuthorizeWebhook = (database: DatabaseService) =>
     ) {
       return yield* Effect.fail(new RoutineMissing({ id }))
     }
-    return yield* decodeRoutine(row)
+    const record = yield* decodeRoutine(row)
+    yield* database.run(requireMember(database, record))
+    return record
   })
 
 /** Advances each due timestamp under SKIP LOCKED before releasing the claim to another worker. */
@@ -312,32 +365,84 @@ const makeClaimDue = (database: DatabaseService) =>
     )
   })
 
-/** The Thread must already exist; the Occurrence's id is the delivery's idempotency key. */
-const makeStartOccurrence = (database: DatabaseService) =>
-  Effect.fn('RoutineStore.startOccurrence')(function* (record: RoutineRecord, threadId: ThreadId) {
-    const startedAt = yield* Clock.currentTimeMillis
+/** An authorized Routine receipt remains readable even when its Thread and Run have been deleted. */
+const makeFindOccurrence = (database: DatabaseService) =>
+  Effect.fn('RoutineStore.findOccurrence')(function* (record: RoutineRecord, id: OccurrenceId) {
     const rows = yield* database.run(
       database
-        .insert(occurrences)
-        .values({
-          id: crypto.randomUUID(),
-          routineId: record.routine.id,
-          conversationId: threadId,
-          submissionId: null,
-          status: 'running',
-          startedAt,
-          finishedAt: null,
-          output: null,
-          error: null,
-        })
-        .returning(),
+        .select({ occurrence: occurrences, state: runs.state, finishedAt: runs.finishedAt })
+        .from(occurrences)
+        .leftJoin(runs, eq(runs.id, occurrences.submissionId))
+        .where(and(eq(occurrences.id, id), eq(occurrences.routineId, record.routine.id)))
+        .limit(1),
     )
-    return yield* decodeOccurrence({
-      occurrence: yield* returned(rows, 'Routine occurrence'),
-      state: null,
-      finishedAt: null,
-    })
+    const row = rows[0]
+    return row === undefined ? Option.none() : Option.some(yield* decodeOccurrence(row))
   })
+
+/** The unique receipt insertion arbitrates concurrent keyed requests, including failed openings. */
+const makeClaimOccurrence = (
+  database: DatabaseService,
+  find: ReturnType<typeof makeFindOccurrence>,
+) =>
+  Effect.fn('RoutineStore.claimOccurrence')(function* (
+    record: RoutineRecord,
+    attempt: RoutineAttempt,
+    opening: OccurrenceOpening,
+  ) {
+    const startedAt = yield* Clock.currentTimeMillis
+    const snapshot = OccurrenceOpening.match(opening, {
+      Ready: (): OccurrenceSnapshot => ({
+        status: 'not-admitted',
+        finishedAt: null,
+        output: null,
+        error: null,
+      }),
+      Failed: ({ reason }): OccurrenceSnapshot => ({
+        status: 'failed',
+        finishedAt: startedAt,
+        output: null,
+        error: reason,
+      }),
+    })
+    // status, finished_at, output and error are immutable insertion snapshots. Only submission_id
+    // is attached later; wire lifecycle and finish time always come from the joined Run.
+    const rows = yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        yield* requireMember(tx, record)
+        return yield* tx
+          .insert(occurrences)
+          .values({
+            id: attempt.id,
+            routineId: record.routine.id,
+            conversationId: `routine-${record.routine.id}`,
+            submissionId: null,
+            startedAt,
+            ...snapshot,
+          })
+          .onConflictDoNothing({ target: occurrences.id })
+          .returning()
+      }),
+    )
+    const row = rows[0]
+    if (row !== undefined)
+      return OccurrenceClaim.cases.Created.make({
+        occurrence: yield* decodeOccurrence({ occurrence: row, state: null, finishedAt: null }),
+      })
+    const existing = yield* find(record, attempt.id)
+    if (Option.isNone(existing))
+      return yield* Effect.fail(
+        new DatabaseFailure({ message: 'Routine receipt conflict has no matching Occurrence' }),
+      )
+    return OccurrenceClaim.cases.Existing.make({ occurrence: existing.value })
+  })
+
+interface OccurrenceSnapshot {
+  readonly status: 'not-admitted' | 'failed'
+  readonly finishedAt: number | null
+  readonly output: null
+  readonly error: string | null
+}
 
 /** Persists the returned Run id; future reads join that Run rather than settling a second lifecycle. */
 const makeAttachSubmission = (database: DatabaseService) =>
@@ -366,16 +471,18 @@ export const routineStoreLayer = Layer.effect(
     const config = yield* ServerConfig
     const get = makeGet(database)
     const view = makeView(database)
+    const findOccurrence = makeFindOccurrence(database)
     return RoutineStore.of({
       list: makeList(database, view),
       get,
-      create: makeCreate(database, view),
+      create: makeCreate(database),
       patch: makePatch(database, view),
       remove: makeRemove(database),
       issueWebhook: makeIssueWebhook(database, config.PUBLIC_URL, get),
       authorizeWebhook: makeAuthorizeWebhook(database),
       claimDue: makeClaimDue(database),
-      startOccurrence: makeStartOccurrence(database),
+      findOccurrence,
+      claimOccurrence: makeClaimOccurrence(database, findOccurrence),
       attachSubmission: makeAttachSubmission(database),
     })
   }),

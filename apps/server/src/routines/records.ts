@@ -88,7 +88,18 @@ export const decodeOccurrence = Effect.fn('RoutineStore.decodeOccurrence')(funct
 }) {
   const row = joined.occurrence
   if (row.submissionId !== null && joined.state === null) {
-    return yield* Effect.fail(new DatabaseFailure({ message: 'Routine occurrence has no Run' }))
+    // Deleting a Thread cascades its Runs, while the Routine retains its immutable receipt history.
+    return yield* decodeOccurrenceView({
+      id: row.id,
+      routineId: row.routineId,
+      threadId: row.conversationId,
+      submissionId: row.submissionId,
+      status: 'failed',
+      startedAt: row.startedAt,
+      finishedAt: row.startedAt,
+      output: row.output,
+      error: 'Its thread was deleted',
+    })
   }
   let status: Occurrence['status'] = 'failed'
   if (joined.state === 'working') status = 'running'
@@ -100,7 +111,7 @@ export const decodeOccurrence = Effect.fn('RoutineStore.decodeOccurrence')(funct
     submissionId: row.submissionId,
     status,
     startedAt: row.startedAt,
-    finishedAt: joined.finishedAt,
+    finishedAt: joined.state === null ? row.finishedAt : joined.finishedAt,
     output: row.output,
     error: row.error,
   })
