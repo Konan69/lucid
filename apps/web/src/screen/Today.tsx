@@ -1,4 +1,13 @@
-import * as Result from 'effect/Result'
+import {
+  Assignee,
+  Author,
+  FollowUpId,
+  TaskId,
+  Workspace,
+  type MeResponse,
+  type PersonSummary,
+} from '@vivid/contracts'
+import { Data, Option, Result } from 'effect'
 import {
   AlertTriangle,
   BellRing,
@@ -7,110 +16,133 @@ import {
   Circle,
   CircleCheck,
   Clock3,
-  LoaderCircle,
   MessageSquareText,
   Plus,
   Repeat2,
   RotateCcw,
   Trash2,
-  UserRound,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useState, useSyncExternalStore, type FormEvent } from 'react'
+import { useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
+import { change, live, LiveState, useLive } from '../data/live'
+import type { ProductFailure } from '../data/runtime'
 import * as tasksData from '../data/tasks'
-import { run } from '../data/runtime'
+import { Avatar } from '../ui/Avatar'
+import { Button, IconButton } from '../ui/Button'
 import { cn } from '../ui/cn'
 import { Face } from '../ui/Face'
+import { Field, Input, Select, Textarea } from '../ui/Field'
+import { Live } from '../ui/Live'
+import { Notice } from '../ui/Notice'
+import { Skeleton } from '../ui/Skeleton'
 
-export type TaskStatus = tasksData.TaskStatus
-export type TaskPriority = tasksData.TaskPriority
-export type FollowUp = tasksData.FollowUp
-export type Task = tasksData.Task
-export type Notification = tasksData.Notification
+type Task = tasksData.Task
+type FollowUp = tasksData.FollowUp
+type Notification = tasksData.Notification
+type Bucket = tasksData.Bucket
 
 const DAY_MS = 86_400_000
-const CURRENT_TIME_REFRESH_MS = 15_000
-const currentTimeListeners = new Set<() => void>()
-let currentTime = Date.now()
-let currentTimeTimer: number | null = null
+const HOUR_MS = 3_600_000
 
 /**
- * Keeps render-time date comparisons on one stable snapshot while the Today screen is mounted.
- * The shared timer matches the screen's idle refresh cadence and is released with the last row.
+ * Every Task the Person can see, in every state. Today reads this one query so that completing,
+ * reopening and editing are changes in place: an expectation never has to move a Task between two
+ * results.
  */
-/** Each follow-up action's client program, keyed by the action so a new action must be wired. */
-const FOLLOW_UP_ACTION = {
-  run: tasksData.runFollowUp,
-  cancel: tasksData.cancelFollowUp,
-  delete: tasksData.removeFollowUp,
-} satisfies Record<'run' | 'cancel' | 'delete', (id: string) => tasksData.Program<void>>
+const allTasks = live.tasks.get('all')
 
-function subscribeCurrentTime(listener: () => void) {
-  currentTimeListeners.add(listener)
-  if (currentTimeTimer === null) {
-    const update = () => {
-      currentTime = Date.now()
-      for (const currentListener of currentTimeListeners) currentListener()
-    }
-    update()
-    currentTimeTimer = window.setInterval(update, CURRENT_TIME_REFRESH_MS)
+// ── The clock ────────────────────────────────────────────────────────────────
+
+const CLOCK_TICK_MS = 30_000
+const clockListeners = new Set<() => void>()
+let clockNow = Date.now()
+let clockTimer: ReturnType<typeof setInterval> | null = null
+
+/**
+ * The wall clock as an external store. "Overdue" and "Tomorrow" depend on the time as well as on
+ * the data, and render must stay pure, so every row reads one shared snapshot that moves twice a
+ * minute while Today is on screen. This is a clock, not a refetch: nothing is asked of the server.
+ */
+function subscribeClock(listener: () => void) {
+  clockListeners.add(listener)
+  if (clockTimer === null) {
+    clockNow = Date.now()
+    clockTimer = setInterval(() => {
+      clockNow = Date.now()
+      for (const each of clockListeners) each()
+    }, CLOCK_TICK_MS)
   }
   return () => {
-    currentTimeListeners.delete(listener)
-    if (currentTimeListeners.size === 0 && currentTimeTimer !== null) {
-      window.clearInterval(currentTimeTimer)
-      currentTimeTimer = null
+    clockListeners.delete(listener)
+    if (clockListeners.size === 0 && clockTimer !== null) {
+      clearInterval(clockTimer)
+      clockTimer = null
     }
   }
 }
 
-function getCurrentTime() {
-  return currentTime
+const readClock = () => clockNow
+
+// ── What the screen holds itself ─────────────────────────────────────────────
+
+/** A follow-up as the form holds it: no time chosen yet means there is no follow-up to send. */
+interface FollowUpDraft {
+  readonly at: number | null
+  readonly note: string
+  readonly repeatEveryMs: number | null
 }
 
-function useCurrentTime() {
-  return useSyncExternalStore(subscribeCurrentTime, getCurrentTime, getCurrentTime)
+const NO_FOLLOW_UP: FollowUpDraft = { at: null, note: '', repeatEveryMs: null }
+
+/** Everything the "New task" form holds, kept so a refused save can put it all back. */
+interface NewTaskDraft {
+  readonly fields: tasksData.TaskFields
+  readonly followUp: FollowUpDraft
 }
 
-const REPEAT_OPTIONS = [
-  { label: 'Once', value: '' },
-  { label: 'Every day', value: String(DAY_MS) },
-  { label: 'Every week', value: String(7 * DAY_MS) },
-] as const
+/**
+ * What Today is showing: the list, the form for a new Task, or one Task. Which one is local to
+ * this screen; the Tasks themselves are never copied into state.
+ */
+type View = Data.TaggedEnum<{
+  Overview: {}
+  Creating: { readonly draft: NewTaskDraft }
+  Detail: { readonly id: TaskId }
+}>
+const View = Data.taggedEnum<View>()
 
-const NOTIFICATION_TONE = {
-  tracked: 'bg-accent',
-  overdue: 'bg-danger',
-  'follow-up': 'bg-working',
-  'follow-up-failed': 'bg-danger',
-} satisfies Record<Notification['kind'], string>
-
-function startOfDay(value: number) {
-  const date = new Date(value)
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+/** Who is looking, and where: what every change on this screen is attributed to and scoped by. */
+interface Session {
+  readonly me: PersonSummary
+  readonly workspace: Workspace
 }
 
-/** "Today 14:30", "Tomorrow 09:00", "Fri 5 Sep, 09:00". Dates matter here, so we never say "2h ago". */
-export function formatWhen(value: number, withTime = true) {
-  const days = Math.round((startOfDay(value) - startOfDay(Date.now())) / DAY_MS)
-  const time = withTime
-    ? new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(value)
-    : ''
-  const day =
-    days === 0
-      ? 'Today'
-      : days === 1
-        ? 'Tomorrow'
-        : days === -1
-          ? 'Yesterday'
-          : new Intl.DateTimeFormat(undefined, {
-              weekday: 'short',
-              day: 'numeric',
-              month: 'short',
-            }).format(value)
-  return withTime ? `${day} ${time}`.trim() : day
-}
+/** `Person.image` may be left out on the wire; a summary always says whether there is a picture. */
+const sessionOf = (me: MeResponse): Session => ({
+  me: {
+    id: me.person.id,
+    name: me.person.name,
+    image: me.person.image === undefined ? null : me.person.image,
+  },
+  workspace: me.workspace,
+})
 
+/** What a change came to: nothing to say, or the server's sentence about why it refused. */
+const refusal = <Value,>(result: Result.Result<Value, ProductFailure>): Option.Option<string> =>
+  Result.isFailure(result) ? Option.some(result.failure.message) : Option.none()
+
+/** The follow-up to send, when the form has a time for one. */
+const followUpOf = (draft: FollowUpDraft): Option.Option<tasksData.NewFollowUp> =>
+  draft.at === null
+    ? Option.none()
+    : Option.some({
+        id: FollowUpId.make(crypto.randomUUID()),
+        at: draft.at,
+        note: draft.note.trim(),
+        repeatEveryMs: draft.repeatEveryMs,
+      })
+
+/** `datetime-local` speaks local wall time with no zone, so the parts are written out by hand. */
 function toLocalInput(value: number | null) {
   if (value === null) return ''
   const date = new Date(value)
@@ -118,683 +150,649 @@ function toLocalInput(value: number | null) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
+/** A cleared or half-typed `datetime-local` field is no time at all. */
 function fromLocalInput(value: string): number | null {
-  if (!value) return null
+  if (value === '') return null
   const parsed = new Date(value).getTime()
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function describeRepeat(repeatEveryMs: number | null) {
-  if (!repeatEveryMs) return null
-  if (repeatEveryMs === DAY_MS) return 'every day'
-  if (repeatEveryMs === 7 * DAY_MS) return 'every week'
-  return `every ${Math.round(repeatEveryMs / 3_600_000)}h`
-}
+// ── Changes ──────────────────────────────────────────────────────────────────
 
-type Group = { key: string; label: string; note?: string; tasks: Task[] }
-
-function groupTasks(tasks: Task[], now: number): Group[] {
-  const endOfToday = startOfDay(now) + DAY_MS
-  const open = tasks.filter((task) => task.status === 'open')
-  const taken = new Set<string>()
-  const pick = (
-    key: string,
-    label: string,
-    note: string | null,
-    test: (task: Task) => boolean,
-  ): Group => {
-    const picked = open.filter((task) => !taken.has(task.id) && test(task))
-    for (const task of picked) taken.add(task.id)
-    const group = { key, label, tasks: picked }
-    if (note === null) return group
-    return { ...group, note }
-  }
-  return [
-    pick(
-      'overdue',
-      'Overdue',
-      'Vivid has already started chasing these.',
-      (task) => task.dueAt !== null && task.dueAt < now,
+/**
+ * Each follow-up action: the call, what the Task will look like once it is accepted, and, if the
+ * server refuses, its sentence about why.
+ */
+const FOLLOW_UP_ACTION = {
+  run: async (task: Task, followUp: FollowUp) =>
+    refusal(
+      await change(
+        (client) => client.RunFollowUp({ id: followUp.id }),
+        () => allTasks.expect(tasksData.followUpSet(task.id, followUp.id, 'running')),
+      ),
     ),
-    pick('today', 'Due today', null, (task) => task.dueAt !== null && task.dueAt < endOfToday),
-    pick(
-      'waiting',
-      'Waiting on others',
-      'Vivid drafts the nudge; you send it.',
-      (task) => task.assignee !== null,
+  cancel: async (task: Task, followUp: FollowUp) =>
+    refusal(
+      await change(
+        (client) => client.PatchFollowUp({ id: followUp.id, patch: { status: 'cancelled' } }),
+        () => allTasks.expect(tasksData.followUpSet(task.id, followUp.id, 'cancelled')),
+      ),
     ),
-    pick('upcoming', 'Vivid follows up', null, (task) => task.nextFollowUpAt !== null),
-    pick('later', 'Later', null, () => true),
-  ].filter((group) => group.tasks.length > 0)
+  delete: async (task: Task, followUp: FollowUp) =>
+    refusal(
+      await change(
+        (client) => client.DeleteFollowUp({ id: followUp.id }),
+        () => allTasks.expect(tasksData.followUpRemoved(task.id, followUp.id)),
+      ),
+    ),
 }
+type FollowUpAction = keyof typeof FOLLOW_UP_ACTION
 
-/** Owns Today hooks in their original order while exposing typed state to screen actions. */
-function useTodayState() {
-  const [tasks, setTasks] = useState<Task[]>([])
-  const [notifications, setNotifications] = useState<Notification[]>([])
-  const [ready, setReady] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [creating, setCreating] = useState(false)
-  const [doneOpen, setDoneOpen] = useState(false)
+/**
+ * Every change Today makes. Each one shows its result at once through an expectation on the live
+ * query, sends the call, and reports back only if the server refused: the expectation has then
+ * already been taken back, and `onRefused` says why in the server's words.
+ */
+function todayActions(context: {
+  readonly session: Session
+  readonly onView: (view: View) => void
+  readonly onRefused: (message: Option.Option<string>) => void
+}) {
+  const { session, onView, onRefused } = context
 
-  const load = useCallback(async () => {
-    const result = await run(tasksData.load())
-    setReady(true)
-    if (Result.isFailure(result)) {
-      setError(result.failure.message)
-      return
-    }
-    setTasks(result.success.tasks)
-    setNotifications(result.success.notifications)
-    setError(null)
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-
-    // Initial hydration is an external request. Polling and user-triggered refreshes continue to
-    // use `load`, while this mount request ignores responses after the screen is removed.
-    void run(tasksData.load()).then((result) => {
-      if (cancelled) return
-      setReady(true)
-      if (Result.isFailure(result)) {
-        setError(result.failure.message)
-        return
-      }
-      setTasks(result.success.tasks)
-      setNotifications(result.success.notifications)
-      setError(null)
-    })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-  useEffect(() => {
-    const running = tasks.some((task) =>
-      task.followUps.some((followUp) => followUp.status === 'running'),
-    )
-    const timer = window.setInterval(
-      () => {
-        void load()
-      },
-      running ? 1500 : 15_000,
-    )
-    return () => window.clearInterval(timer)
-  }, [load, tasks])
-
-  return {
-    creating,
-    doneOpen,
-    error,
-    load,
-    notifications,
-    ready,
-    selectedId,
-    setCreating,
-    setDoneOpen,
-    setError,
-    setSelectedId,
-    tasks,
-  }
-}
-
-type TodayState = ReturnType<typeof useTodayState>
-
-/** Owns task and notification mutations outside the screen's render decisions. */
-function createTodayActions(
-  state: TodayState,
-  onOpenConversation: (conversationId: string, fallbackTitle: string) => void,
-) {
-  const { load, setError, setSelectedId, tasks } = state
-
-  async function toggleDone(task: Task) {
+  async function toggle(task: Task) {
     const status = task.status === 'open' ? 'done' : 'open'
-    const result = await run(tasksData.setStatus(task.id, status))
-    if (Result.isFailure(result)) {
-      setError(result.failure.message)
-      return
-    }
-    await load()
+    const result = await change(
+      (client) => client.PatchTask({ id: task.id, patch: { status } }),
+      () => allTasks.expect(tasksData.statusSet(task.id, status, Date.now())),
+    )
+    onRefused(refusal(result))
   }
 
-  async function markAllRead() {
-    const result = await run(tasksData.markAllNotificationsRead())
-    if (Result.isFailure(result)) {
-      setError(result.failure.message)
-      return
+  /** Shows the new Task in the list at once; a refused save reopens the form as it was left. */
+  async function create(draft: NewTaskDraft) {
+    const assignee = tasksData.assigneeInput(draft.fields.assignee)
+    if (Option.isNone(assignee)) return
+    const id = TaskId.make(crypto.randomUUID())
+    const fields = tasksData.settledFields(draft.fields)
+    const first = followUpOf(draft.followUp)
+    const task = tasksData.draftTask(
+      id,
+      { fields, followUp: first },
+      { me: session.me, now: Date.now() },
+    )
+    const request = {
+      id,
+      title: fields.title,
+      detail: fields.detail,
+      assignee: assignee.value,
+      dueAt: fields.dueAt,
+      priority: fields.priority,
     }
-    await load()
+    onView(View.Overview())
+    const result = await change(
+      (client) =>
+        client.CreateTask(
+          Option.match(first, {
+            onNone: () => request,
+            onSome: (followUp) => ({ ...request, followUp }),
+          }),
+        ),
+      () => allTasks.expect(tasksData.added(task)),
+    )
+    onRefused(refusal(result))
+    if (Result.isFailure(result)) onView(View.Creating({ draft }))
   }
 
-  async function openNotification(notification: Notification) {
-    if (notification.readAt === null) {
-      void run(tasksData.markNotificationRead(notification.id)).then((result) => {
-        if (Result.isFailure(result)) {
-          return
-        }
-        void load()
-      })
-    }
-    if (notification.taskId && tasks.some((task) => task.id === notification.taskId))
-      setSelectedId(notification.taskId)
-    else if (notification.conversationId)
-      onOpenConversation(notification.conversationId, notification.title)
+  async function save(task: Task, fields: tasksData.TaskFields) {
+    const assignee = tasksData.assigneeInput(fields.assignee)
+    if (Option.isNone(assignee)) return
+    const settled = tasksData.settledFields(fields)
+    const result = await change(
+      (client) =>
+        client.PatchTask({
+          id: task.id,
+          patch: {
+            title: settled.title,
+            detail: settled.detail,
+            assignee: assignee.value,
+            dueAt: settled.dueAt,
+            priority: settled.priority,
+          },
+        }),
+      () => allTasks.expect(tasksData.edited(task.id, settled, Date.now())),
+    )
+    onRefused(refusal(result))
   }
 
-  return { markAllRead, openNotification, toggleDone }
+  /** Leaves the Task's page at once; if the server refuses, the Task is back in the list. */
+  async function remove(task: Task) {
+    if (!window.confirm(`Delete “${task.title}”? Its follow-ups go with it.`)) return
+    onView(View.Overview())
+    const result = await change(
+      (client) => client.DeleteTask({ id: task.id }),
+      () => allTasks.expect(tasksData.removed(task.id)),
+    )
+    onRefused(refusal(result))
+  }
+
+  /** There is nothing to predict here: the server decides what the chase is and the Task says so. */
+  async function nudge(task: Task) {
+    onRefused(refusal(await change((client) => client.NudgeTask({ id: task.id, nudge: {} }))))
+  }
+
+  async function addFollowUp(task: Task, followUp: tasksData.NewFollowUp) {
+    const expected = tasksData.scheduledFollowUp(task.id, followUp, {
+      me: session.me,
+      now: Date.now(),
+    })
+    const result = await change(
+      (client) => client.AddFollowUp({ taskId: task.id, followUp }),
+      () => allTasks.expect(tasksData.followUpAdded(expected)),
+    )
+    onRefused(refusal(result))
+    return Result.isSuccess(result)
+  }
+
+  async function actOnFollowUp(task: Task, followUp: FollowUp, action: FollowUpAction) {
+    onRefused(await FOLLOW_UP_ACTION[action](task, followUp))
+  }
+
+  return { actOnFollowUp, addFollowUp, create, nudge, remove, save, toggle }
 }
 
+type TodayActions = ReturnType<typeof todayActions>
+
+// ── The screen ───────────────────────────────────────────────────────────────
+
+/**
+ * Today: what the Person owes, what was handed to them, and what they are waiting on.
+ *
+ * Tasks and notifications are live queries; this component holds only which view is open and the
+ * last thing the server refused. `onOpenConversation` opens a Thread by id, with the Task's title
+ * for the shell to show until the Thread itself has loaded.
+ */
 export function Today({
   onOpenConversation,
 }: {
   onOpenConversation: (conversationId: string, fallbackTitle: string) => void
 }) {
-  const state = useTodayState()
-  const {
-    creating,
-    doneOpen,
-    error,
-    load,
-    notifications,
-    ready,
-    selectedId,
-    setCreating,
-    setDoneOpen,
-    setSelectedId,
-    tasks,
-  } = state
-  const now = useCurrentTime()
-  const selected = tasks.find((task) => task.id === selectedId) ?? null
-  const unread = notifications.filter((notification) => notification.readAt === null)
-  const groups = groupTasks(tasks, now)
-  const settled = tasks.filter((task) => task.status !== 'open').slice(0, 12)
-  const inDetail = selected !== null || creating
-  const actions = createTodayActions(state, onOpenConversation)
-  const back = () => {
-    setSelectedId(null)
-    setCreating(false)
-  }
+  const [view, setView] = useState<View>(View.Overview())
+  const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
+  const now = useSyncExternalStore(subscribeClock, readClock, readClock)
+  const me = useLive(live.me)
+  const list = useLive(allTasks)
 
-  const today = new Intl.DateTimeFormat(undefined, {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-  }).format(now)
+  // A Task that is open here can be deleted somewhere else. Its page then has nothing to show, so
+  // the view falls back to the list instead of holding on to an id that no longer exists.
+  const selected = View.$is('Detail')(view)
+    ? LiveState.$match(list, {
+        Loading: () => Option.none<Task>(),
+        Failed: () => Option.none<Task>(),
+        Ready: ({ value }) => Option.fromUndefinedOr(value.tasks.find((t) => t.id === view.id)),
+      })
+    : Option.none<Task>()
+  const shown = View.$is('Detail')(view) && Option.isNone(selected) ? View.Overview() : view
+  const goTo = (next: View) => {
+    setRefused(Option.none())
+    setView(next)
+  }
 
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge">
       <TodayHeader
-        inDetail={inDetail}
+        view={shown}
         selected={selected}
-        creating={creating}
-        onBack={back}
-        onCreate={() => setCreating(true)}
+        onBack={() => goTo(View.Overview())}
+        onCreate={() => goTo(newTask())}
       />
-
-      <TodayContent
-        error={error}
-        selected={selected}
-        creating={creating}
-        today={today}
-        unread={unread}
-        ready={ready}
-        groups={groups}
-        settled={settled}
-        tasks={tasks}
-        doneOpen={doneOpen}
-        onOpenConversation={onOpenConversation}
-        onBack={back}
-        onCreate={() => setCreating(true)}
-        onSelectTask={setSelectedId}
-        onDoneOpenChange={setDoneOpen}
-        onToggleTask={actions.toggleDone}
-        onMarkAllRead={actions.markAllRead}
-        onOpenNotification={actions.openNotification}
-        onChanged={async (id) => {
-          await load()
-          setCreating(false)
-          setSelectedId(id)
-        }}
-        onDeleted={async () => {
-          back()
-          await load()
-        }}
-      />
+      <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
+        <div className="mx-auto flex w-full max-w-230 flex-col gap-3 px-5 pt-1 pb-10 sm:px-8">
+          {Option.isSome(refused) && <Notice>{refused.value}</Notice>}
+          <Live state={me} loading={<Skeleton of="row" count={5} />}>
+            {(person) => (
+              <Live state={list} loading={<Skeleton of="row" count={5} />}>
+                {(value) => (
+                  <TodayBody
+                    session={sessionOf(person)}
+                    tasks={value.tasks}
+                    view={shown}
+                    now={now}
+                    onView={setView}
+                    onRefused={setRefused}
+                    onOpenThread={onOpenConversation}
+                  />
+                )}
+              </Live>
+            )}
+          </Live>
+        </div>
+      </div>
     </section>
   )
 }
 
-/** Renders detail navigation and the unchanged Today title controls. */
+const newTask = () =>
+  View.Creating({ draft: { fields: tasksData.emptyFields(), followUp: NO_FOLLOW_UP } })
+
+/** The top bar: where the Person is, the way back from a Task, and the way to a new one. */
 function TodayHeader({
-  inDetail,
+  view,
   selected,
-  creating,
   onBack,
   onCreate,
 }: {
-  inDetail: boolean
-  selected: Task | null
-  creating: boolean
+  view: View
+  selected: Option.Option<Task>
   onBack: () => void
   onCreate: () => void
 }) {
+  const overview = View.$is('Overview')(view)
+  const title = View.$match(view, {
+    Overview: () => 'Today',
+    Creating: () => 'New task',
+    Detail: () => Option.match(selected, { onNone: () => 'Today', onSome: (task) => task.title }),
+  })
   return (
     <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
-      {inDetail && (
-        <button
-          onClick={onBack}
-          aria-label="Back to today"
-          className="mr-1 inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-        >
+      {!overview && (
+        <IconButton label="Back to Today" onClick={onBack}>
           <ChevronRight className="size-4 rotate-180" />
-        </button>
+        </IconButton>
       )}
-      <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">
-        {selected ? selected.title : creating ? 'New task' : 'Today'}
-      </h1>
-      {!inDetail && (
-        <button
-          aria-label="New task"
-          onClick={onCreate}
-          className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-        >
+      <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">{title}</h1>
+      {overview && (
+        <IconButton label="New task" onClick={onCreate}>
           <Plus className="size-4" />
-        </button>
+        </IconButton>
       )}
     </header>
   )
 }
 
-/** Selects the task editor or overview inside the unchanged scrolling container. */
-function TodayContent({
-  error,
-  selected,
-  creating,
-  today,
-  unread,
-  ready,
-  groups,
-  settled,
+/** Chooses the list, the new-Task form or one Task's page, once both live queries have answered. */
+function TodayBody({
+  session,
   tasks,
-  doneOpen,
-  onOpenConversation,
-  onBack,
-  onCreate,
-  onSelectTask,
-  onDoneOpenChange,
-  onToggleTask,
-  onMarkAllRead,
-  onOpenNotification,
-  onChanged,
-  onDeleted,
+  view,
+  now,
+  onView,
+  onRefused,
+  onOpenThread,
 }: {
-  error: string | null
-  selected: Task | null
-  creating: boolean
-  today: string
-  unread: Notification[]
-  ready: boolean
-  groups: Group[]
-  settled: Task[]
-  tasks: Task[]
-  doneOpen: boolean
-  onOpenConversation: (conversationId: string, fallbackTitle: string) => void
-  onBack: () => void
-  onCreate: () => void
-  onSelectTask: (id: string) => void
-  onDoneOpenChange: (open: boolean | ((current: boolean) => boolean)) => void
-  onToggleTask: (task: Task) => Promise<void>
-  onMarkAllRead: () => Promise<void>
-  onOpenNotification: (notification: Notification) => Promise<void>
-  onChanged: (id: string) => Promise<void>
-  onDeleted: () => Promise<void>
+  session: Session
+  tasks: ReadonlyArray<Task>
+  view: View
+  now: number
+  onView: (view: View) => void
+  onRefused: (message: Option.Option<string>) => void
+  onOpenThread: (threadId: string, title: string) => void
 }) {
+  const actions = todayActions({ session, onView, onRefused })
+  return View.$match(view, {
+    Overview: () => (
+      <TodayOverview
+        session={session}
+        tasks={tasks}
+        now={now}
+        onCreate={() => onView(newTask())}
+        onSelect={(task) => onView(View.Detail({ id: task.id }))}
+        onToggle={(task) => void actions.toggle(task)}
+        onOpenThread={onOpenThread}
+      />
+    ),
+    Creating: ({ draft }) => (
+      <NewTask
+        draft={draft}
+        session={session}
+        onCancel={() => onView(View.Overview())}
+        onCreate={(next) => void actions.create(next)}
+      />
+    ),
+    Detail: ({ id }) => {
+      const task = tasks.find((candidate) => candidate.id === id)
+      if (task === undefined) return null
+      return (
+        <TaskDetail
+          key={task.id}
+          task={task}
+          session={session}
+          now={now}
+          actions={actions}
+          onBack={() => onView(View.Overview())}
+          onOpenThread={onOpenThread}
+        />
+      )
+    },
+  })
+}
+
+// ── The list ─────────────────────────────────────────────────────────────────
+
+const GROUP = {
+  Yours: { title: 'Yours', note: 'What you owe.' },
+  Assigned: { title: 'Assigned to you', note: 'What someone else asked of you.' },
+  Waiting: { title: 'Waiting on others', note: 'Vivid drafts the nudge; you send it.' },
+} satisfies Record<Bucket, { title: string; note: string }>
+
+/** The date, what is new, the open Tasks in their three groups, and what is already settled. */
+function TodayOverview({
+  session,
+  tasks,
+  now,
+  onCreate,
+  onSelect,
+  onToggle,
+  onOpenThread,
+}: {
+  session: Session
+  tasks: ReadonlyArray<Task>
+  now: number
+  onCreate: () => void
+  onSelect: (task: Task) => void
+  onToggle: (task: Task) => void
+  onOpenThread: (threadId: string, title: string) => void
+}) {
+  const groups = tasksData.groupOpen(tasks, session.me.id)
+  const today = new Intl.DateTimeFormat(undefined, {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(now)
+  const row = (task: Task) => (
+    <li key={task.id}>
+      <TaskRow
+        task={task}
+        me={session.me}
+        now={now}
+        onOpen={() => onSelect(task)}
+        onToggle={() => onToggle(task)}
+      />
+    </li>
+  )
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
-      <div className="mx-auto w-full max-w-230 px-5 pt-1 pb-10 sm:px-8">
-        {error && (
-          <div
-            className="mb-3 rounded-control bg-danger-soft px-3 py-2 text-label text-danger"
-            role="alert"
+    <div>
+      <p className="px-0.5 text-meta font-meta text-ink-4">{today}</p>
+      <TodayNotifications
+        now={now}
+        onOpen={(notification) => {
+          const task = tasks.find((candidate) => candidate.id === notification.taskId)
+          if (task !== undefined) onSelect(task)
+          else if (notification.threadId !== null)
+            onOpenThread(notification.threadId, notification.title)
+        }}
+      />
+      {groups.length === 0 ? (
+        <NoOpenTasks onCreate={onCreate} />
+      ) : (
+        <>
+          {groups.map((group) => (
+            <Section
+              key={group.bucket}
+              title={GROUP[group.bucket].title}
+              note={GROUP[group.bucket].note}
+            >
+              <ul className="flex flex-col gap-px">{group.tasks.map(row)}</ul>
+            </Section>
+          ))}
+          <button
+            type="button"
+            onClick={onCreate}
+            className="mt-2 flex w-full cursor-pointer items-center gap-2.5 rounded-row p-2.5 text-left text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"
           >
-            {error}
-          </div>
-        )}
-        {selected || creating ? (
-          <TaskDetail
-            task={selected}
-            onOpenConversation={onOpenConversation}
-            onCancel={onBack}
-            onChanged={onChanged}
-            onDeleted={onDeleted}
-          />
-        ) : (
-          <TodayOverview
-            today={today}
-            unread={unread}
-            ready={ready}
-            groups={groups}
-            settled={settled}
-            tasks={tasks}
-            doneOpen={doneOpen}
-            onCreate={onCreate}
-            onSelectTask={onSelectTask}
-            onDoneOpenChange={onDoneOpenChange}
-            onToggleTask={onToggleTask}
-            onMarkAllRead={onMarkAllRead}
-            onOpenNotification={onOpenNotification}
-          />
-        )}
-      </div>
+            <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-surface-2">
+              <Plus className="size-4" />
+            </span>
+            <span className="text-title">New task</span>
+          </button>
+        </>
+      )}
+      <SettledTasks tasks={tasksData.settledOf(tasks)} row={row} />
     </div>
   )
 }
 
-/** Composes the date, notifications, open tasks, and settled tasks without adding DOM. */
-function TodayOverview({
-  today,
-  unread,
-  ready,
-  groups,
-  settled,
+/** What Today says when nothing is open: one sentence about how Tasks get here, and the way in. */
+function NoOpenTasks({ onCreate }: { onCreate: () => void }) {
+  return (
+    <div className="mt-7 flex flex-col items-center rounded-card bg-surface-2 px-6 py-10 text-center smooth-shadow-ring-xs">
+      <Face size={32} mood="happy" />
+      <p className="mt-3 text-title font-title text-ink">Nothing is open.</p>
+      <p className="mt-1 mb-4 max-w-sm text-label text-ink-3">
+        Ask Vivid to remind you, chase someone or check on something later, and it lands here.
+      </p>
+      <Button icon={<Plus className="size-3.5" />} onClick={onCreate}>
+        New task
+      </Button>
+    </div>
+  )
+}
+
+/** Done and dropped Tasks behind a disclosure, newest first, twelve at most. */
+function SettledTasks({
   tasks,
-  doneOpen,
-  onCreate,
-  onSelectTask,
-  onDoneOpenChange,
-  onToggleTask,
-  onMarkAllRead,
-  onOpenNotification,
+  row,
 }: {
-  today: string
-  unread: Notification[]
-  ready: boolean
-  groups: Group[]
-  settled: Task[]
-  tasks: Task[]
-  doneOpen: boolean
-  onCreate: () => void
-  onSelectTask: (id: string) => void
-  onDoneOpenChange: (open: boolean | ((current: boolean) => boolean)) => void
-  onToggleTask: (task: Task) => Promise<void>
-  onMarkAllRead: () => Promise<void>
-  onOpenNotification: (notification: Notification) => Promise<void>
+  tasks: ReadonlyArray<Task>
+  row: (task: Task) => ReactNode
 }) {
-  return (
-    <>
-      <p className="px-0.5 text-meta font-meta text-ink-4">{today}</p>
-      <TodayNotifications
-        notifications={unread}
-        onMarkAllRead={onMarkAllRead}
-        onOpen={onOpenNotification}
-      />
-      <OpenTaskSections
-        ready={ready}
-        groups={groups}
-        unreadCount={unread.length}
-        onCreate={onCreate}
-        onSelect={onSelectTask}
-        onToggle={onToggleTask}
-      />
-      <DoneTasks
-        settled={settled}
-        total={tasks.filter((task) => task.status !== 'open').length}
-        open={doneOpen}
-        onOpenChange={onDoneOpenChange}
-        onSelect={onSelectTask}
-        onToggle={onToggleTask}
-      />
-    </>
-  )
-}
-
-/** Renders unread notification rows only when the person has something new to review. */
-function TodayNotifications({
-  notifications,
-  onMarkAllRead,
-  onOpen,
-}: {
-  notifications: Notification[]
-  onMarkAllRead: () => Promise<void>
-  onOpen: (notification: Notification) => Promise<void>
-}) {
-  if (notifications.length === 0) return null
-  return (
-    <Section
-      title="Needs you"
-      note={`${notifications.length} new`}
-      action={
-        <button
-          onClick={() => void onMarkAllRead()}
-          className="text-meta font-title text-ink-3 hover:text-ink"
-        >
-          Mark all read
-        </button>
-      }
-    >
-      <ul className="flex flex-col gap-1">
-        {notifications.map((notification) => (
-          <li key={notification.id}>
-            <button
-              onClick={() => void onOpen(notification)}
-              className="group/row flex w-full items-start gap-3 rounded-row bg-surface-2 px-3 py-2.5 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) hover:bg-wash-hover hover:smooth-shadow-ring-sm"
-            >
-              <i
-                className={cn(
-                  'mt-1.75 size-2 shrink-0 rounded-full',
-                  NOTIFICATION_TONE[notification.kind],
-                )}
-                aria-hidden
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-label font-title text-ink">
-                  {notification.title}
-                </span>
-                {notification.body && (
-                  <span className="mt-0.5 block text-label text-ink-3">{notification.body}</span>
-                )}
-              </span>
-              <time className="shrink-0 pt-0.5 text-meta font-meta text-ink-4 tabular-nums">
-                {formatWhen(notification.createdAt)}
-              </time>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </Section>
-  )
-}
-
-/** Selects loading, empty, or grouped open-task content and preserves the add-task affordance. */
-function OpenTaskSections({
-  ready,
-  groups,
-  unreadCount,
-  onCreate,
-  onSelect,
-  onToggle,
-}: {
-  ready: boolean
-  groups: Group[]
-  unreadCount: number
-  onCreate: () => void
-  onSelect: (id: string) => void
-  onToggle: (task: Task) => Promise<void>
-}) {
-  return (
-    <>
-      {!ready ? (
-        <div className="flex items-center gap-2 px-2.5 py-8 text-label text-ink-4">
-          <LoaderCircle className="size-4 animate-spin" />
-          Loading…
-        </div>
-      ) : groups.length === 0 && unreadCount === 0 ? (
-        <div className="mt-7 rounded-card bg-surface-2 px-6 py-10 text-center smooth-shadow-ring-xs">
-          <Face size={32} mood="happy" className="mx-auto" />
-          <p className="mt-3 text-title font-title text-ink">Nothing needs you.</p>
-          <p className="mx-auto mt-1 max-w-sm text-label text-ink-3">
-            Ask Vivid to remind you, chase someone, or check on something later, and it lands here.
-            Or add a task yourself.
-          </p>
-          <button
-            onClick={onCreate}
-            className="mt-4 inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-3 px-3 text-label font-title text-ink smooth-shadow-ring-xs hover:bg-wash-hover"
-          >
-            <Plus className="size-3.5" />
-            New task
-          </button>
-        </div>
-      ) : (
-        groups.map((group) => (
-          <Section key={group.key} title={group.label} note={group.note}>
-            <TaskList
-              tasks={group.tasks}
-              className="flex flex-col gap-px"
-              onSelect={onSelect}
-              onToggle={onToggle}
-            />
-          </Section>
-        ))
-      )}
-      {ready && groups.length > 0 && (
-        <button
-          onClick={onCreate}
-          className="mt-2 flex w-full items-center gap-2.5 rounded-row p-2.5 text-left text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"
-        >
-          <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-surface-2">
-            <Plus className="size-4" />
-          </span>
-          <span className="text-title">New task</span>
-        </button>
-      )}
-    </>
-  )
-}
-
-/** Renders settled tasks behind the existing disclosure without changing list structure. */
-function DoneTasks({
-  settled,
-  total,
-  open,
-  onOpenChange,
-  onSelect,
-  onToggle,
-}: {
-  settled: Task[]
-  total: number
-  open: boolean
-  onOpenChange: (open: boolean | ((current: boolean) => boolean)) => void
-  onSelect: (id: string) => void
-  onToggle: (task: Task) => Promise<void>
-}) {
-  if (settled.length === 0) return null
+  const [open, setOpen] = useState(false)
+  if (tasks.length === 0) return null
   return (
     <div className="mt-6">
       <button
-        onClick={() => onOpenChange((current) => !current)}
-        className="flex h-(--caption-h) items-center gap-1.5 px-0.5 text-meta font-title text-ink-4 hover:text-ink-2"
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className="flex h-(--caption-h) cursor-pointer items-center gap-1.5 rounded-xs px-0.5 text-meta font-title text-ink-4 transition-colors duration-(--dur-fast) hover:text-ink-2"
       >
         <Check className="size-3.5" />
-        Done <span className="font-meta">{total}</span>
+        Done <span className="font-meta">{tasks.length}</span>
       </button>
-      {open && (
-        <TaskList
-          tasks={settled}
-          className="mt-1 flex flex-col gap-px"
-          onSelect={onSelect}
-          onToggle={onToggle}
-        />
-      )}
+      {open && <ul className="mt-1 flex flex-col gap-px">{tasks.slice(0, 12).map(row)}</ul>}
     </div>
   )
 }
 
-/** Renders task rows with their stable task identifiers as list keys. */
-function TaskList({
-  tasks,
-  className,
-  onSelect,
-  onToggle,
+const NOTIFICATION_TONE = {
+  tracked: 'bg-accent',
+  overdue: 'bg-danger',
+  'follow-up': 'bg-working',
+  'follow-up-failed': 'bg-danger',
+  finished: 'bg-success',
+  'needs-you': 'bg-attention',
+  shared: 'bg-accent',
+  assigned: 'bg-approve',
+  invited: 'bg-accent',
+} satisfies Record<Notification['kind'], string>
+
+/**
+ * What happened since the Person last looked. It draws nothing while loading and nothing when
+ * everything has been read: an empty "new" section would only be noise above the Tasks.
+ */
+function TodayNotifications({
+  now,
+  onOpen,
 }: {
-  tasks: Task[]
-  className: string
-  onSelect: (id: string) => void
-  onToggle: (task: Task) => Promise<void>
+  now: number
+  onOpen: (notification: Notification) => void
 }) {
+  const state = useLive(live.notifications)
+  const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
+
+  /** Opening one, or all of them, marks them read at once; the server's count follows. */
+  async function read(ids: Option.Option<ReadonlyArray<Notification['id']>>) {
+    const result = await change(
+      (client) =>
+        client.ReadNotifications(
+          Option.match(ids, { onNone: () => ({}), onSome: (list) => ({ ids: list }) }),
+        ),
+      () => live.notifications.expect(tasksData.notificationsRead(ids, Date.now())),
+    )
+    setRefused(refusal(result))
+  }
+
   return (
-    <ul className={className}>
-      {tasks.map((task) => (
-        <li key={task.id}>
-          <TaskRow
-            task={task}
-            onOpen={() => onSelect(task.id)}
-            onToggle={() => void onToggle(task)}
-          />
-        </li>
-      ))}
-    </ul>
+    <Live state={state} loading={null}>
+      {({ notifications }) => {
+        const unread = notifications.filter((notification) => notification.readAt === null)
+        if (unread.length === 0 && Option.isNone(refused)) return null
+        return (
+          <Section
+            title="New"
+            note={`${unread.length} unread`}
+            action={
+              <Button variant="quiet" size="sm" onClick={() => void read(Option.none())}>
+                Mark all read
+              </Button>
+            }
+          >
+            {Option.isSome(refused) && <Notice>{refused.value}</Notice>}
+            <ul className="flex flex-col gap-1">
+              {unread.map((notification) => (
+                <li key={notification.id}>
+                  <NotificationRow
+                    notification={notification}
+                    now={now}
+                    onOpen={() => {
+                      void read(Option.some([notification.id]))
+                      onOpen(notification)
+                    }}
+                  />
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )
+      }}
+    </Live>
   )
 }
 
-/** Builds visible row metadata without making the visual component own date-state branching. */
-function taskRowMeta(task: Task, settled: boolean, overdue: boolean): string[] {
-  const meta: string[] = []
-  if (task.assignee) meta.push(`Waiting on ${task.assignee}`)
-  if (task.dueAt !== null && !settled) {
-    meta.push(
-      overdue ? `Was due ${formatWhen(task.dueAt, false)}` : `Due ${formatWhen(task.dueAt, false)}`,
-    )
-  }
-  if (task.status === 'done' && task.completedAt)
-    meta.push(`Done ${formatWhen(task.completedAt, false)}`)
-  else if (task.status === 'dropped') meta.push('Dropped')
-  return meta
+/** One unread notification: what it is about, and when. Pressing it opens its Task or Thread. */
+function NotificationRow({
+  notification,
+  now,
+  onOpen,
+}: {
+  notification: Notification
+  now: number
+  onOpen: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex w-full cursor-pointer items-start gap-3 rounded-row bg-surface-2 px-3 py-2.5 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) hover:bg-wash-hover hover:smooth-shadow-ring-sm"
+    >
+      <i
+        className={cn('mt-1.75 size-2 shrink-0 rounded-full', NOTIFICATION_TONE[notification.kind])}
+        aria-hidden
+      />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-label font-title text-ink">{notification.title}</span>
+        {notification.body !== '' && (
+          <span className="mt-0.5 block text-label text-ink-3">{notification.body}</span>
+        )}
+      </span>
+      <time className="shrink-0 pt-0.5 text-meta font-meta text-ink-4 tabular-nums">
+        {tasksData.formatWhen(notification.createdAt, now, true)}
+      </time>
+    </button>
+  )
 }
 
-/** Renders the mutually exclusive done, dropped, and open task marks. */
-function TaskStatusIcon({ status }: { status: TaskStatus }) {
+// ── One row ──────────────────────────────────────────────────────────────────
+
+/** Whoever owes a Task: a Person by face and name, somebody outside Vivid by name alone. */
+function OwnerMark({ owner }: { owner: tasksData.TaskOwner }) {
+  return tasksData.TaskOwner.match(owner, {
+    Person: ({ person }) => (
+      <span className="inline-flex min-w-0 items-center gap-1">
+        <Avatar name={person.name} image={person.image} size={14} />
+        <span className="truncate">{person.name}</span>
+      </span>
+    ),
+    Outsider: ({ name }) => <span className="truncate">{name}</span>,
+  })
+}
+
+/** Who a row is about, when that is not simply the Person looking at it. */
+function rowPeople(task: Task, me: PersonSummary): ReadonlyArray<{ key: string; node: ReactNode }> {
+  const bucket = tasksData.bucketOf(task, me.id)
+  const people: Array<{ key: string; node: ReactNode }> = []
+  if (bucket === 'Waiting') {
+    people.push({
+      key: 'owner',
+      node: (
+        <span className="inline-flex min-w-0 items-center gap-1">
+          Waiting on <OwnerMark owner={tasksData.ownerOf(task)} />
+        </span>
+      ),
+    })
+  }
+  // A Task Vivid made always says so, and for whom; one a Person handed over says who it is from.
+  if (Author.guards.Vivid(task.createdBy))
+    people.push({ key: 'author', node: tasksData.authorName(task.createdBy) })
+  else if (bucket === 'Assigned')
+    people.push({ key: 'author', node: `From ${tasksData.authorName(task.createdBy)}` })
+  return people
+}
+
+/** The dated facts under a row's title: when it is due, when it was settled, when Vivid acts next. */
+function rowDates(task: Task, now: number): ReadonlyArray<{ key: string; node: ReactNode }> {
+  const dates: Array<{ key: string; node: ReactNode }> = []
+  if (task.status === 'open' && task.dueAt !== null) {
+    const day = tasksData.formatWhen(task.dueAt, now, false)
+    dates.push({
+      key: 'due',
+      node: tasksData.isOverdue(task, now) ? `Was due ${day}` : `Due ${day}`,
+    })
+  }
+  if (task.status === 'done' && task.completedAt !== null)
+    dates.push({ key: 'done', node: `Done ${tasksData.formatWhen(task.completedAt, now, false)}` })
+  if (task.status === 'dropped') dates.push({ key: 'dropped', node: 'Dropped' })
+  if (task.status === 'open' && task.nextFollowUpAt !== null) {
+    const running = task.followUps.some((followUp) => followUp.status === 'running')
+    dates.push({
+      key: 'next',
+      node: (
+        <span className="inline-flex items-center gap-1">
+          <Face size={12} />
+          {running
+            ? 'Vivid is on it'
+            : `Vivid follows up ${tasksData.formatWhen(task.nextFollowUpAt, now, true)}`}
+        </span>
+      ),
+    })
+  }
+  return dates
+}
+
+/** The mark a row leads with: done, dropped or still open. */
+function TaskStatusIcon({ status }: { status: Task['status'] }) {
   if (status === 'done') return <CircleCheck className="size-4.5 text-success" />
   if (status === 'dropped') return <X className="size-4" />
   return <Circle className="size-4.5" strokeWidth={1.6} />
 }
 
-/** Renders scheduled follow-up context only for an open task with a next run. */
-function TaskFollowUpSummary({
-  task,
-  running,
-  hasMeta,
-}: {
-  task: Task
-  running: boolean
-  hasMeta: boolean
-}) {
-  if (task.status !== 'open' || task.nextFollowUpAt === null) return null
-  return (
-    <span
-      className={cn('inline-flex shrink-0 items-center gap-1 text-ink-4', hasMeta && 'sep-dot')}
-    >
-      {running ? <LoaderCircle className="size-3 animate-spin text-working" /> : <Face size={12} />}
-      {running ? 'Vivid is on it' : `Vivid follows up ${formatWhen(task.nextFollowUpAt)}`}
-    </span>
-  )
-}
-
+/** One Task in a list. The mark settles or reopens it; the rest of the row opens it. */
 function TaskRow({
   task,
+  me,
+  now,
   onOpen,
   onToggle,
 }: {
   task: Task
+  me: PersonSummary
+  now: number
   onOpen: () => void
   onToggle: () => void
 }) {
-  const now = useCurrentTime()
-  const overdue = task.status === 'open' && task.dueAt !== null && task.dueAt < now
-  const running = task.followUps.some((followUp) => followUp.status === 'running')
   const settled = task.status !== 'open'
-  const meta = taskRowMeta(task, settled, overdue)
+  const overdue = tasksData.isOverdue(task, now)
+  const meta = [...rowPeople(task, me), ...rowDates(task, now)]
   return (
     <div
       className={cn(
@@ -802,14 +800,14 @@ function TaskRow({
         settled && 'opacity-70 hover:opacity-100',
       )}
     >
-      <button
-        onClick={onToggle}
-        aria-label={settled ? 'Reopen' : 'Mark done'}
-        className="inline-flex size-8 shrink-0 items-center justify-center rounded-control text-ink-3 hover:text-success"
-      >
+      <IconButton label={settled ? 'Reopen' : 'Mark done'} onClick={onToggle}>
         <TaskStatusIcon status={task.status} />
-      </button>
-      <button onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+      </IconButton>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xs text-left"
+      >
         <span className="min-w-0 flex-1">
           <span
             className={cn(
@@ -819,17 +817,25 @@ function TaskRow({
           >
             {task.title}
           </span>
-          <span
-            className={cn(
-              'mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-meta font-meta',
-              overdue ? 'text-danger' : 'text-ink-4',
-            )}
-          >
-            {meta.length > 0 && <span className="truncate">{meta.join(' · ')}</span>}
-            <TaskFollowUpSummary task={task} running={running} hasMeta={meta.length > 0} />
-          </span>
+          {meta.length > 0 && (
+            <span
+              className={cn(
+                'mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-meta font-meta',
+                overdue ? 'text-danger' : 'text-ink-4',
+              )}
+            >
+              {meta.map((item, index) => (
+                <span
+                  key={item.key}
+                  className={cn('inline-flex min-w-0 items-center', index > 0 && 'sep-dot')}
+                >
+                  {item.node}
+                </span>
+              ))}
+            </span>
+          )}
         </span>
-        {task.priority === 'urgent' && task.status === 'open' && (
+        {task.priority === 'urgent' && !settled && (
           <span className="shrink-0 rounded-full bg-approve-soft px-2 py-0.5 text-meta font-title text-approve">
             Urgent
           </span>
@@ -840,276 +846,142 @@ function TaskRow({
   )
 }
 
-const QUICK_TIMES: Array<{ label: string; at: () => number }> = [
-  { label: 'Tomorrow 9:00', at: () => startOfDay(Date.now()) + DAY_MS + 9 * 3_600_000 },
-  { label: 'In 3 days', at: () => startOfDay(Date.now()) + 3 * DAY_MS + 9 * 3_600_000 },
-  {
-    label: 'Next Monday',
-    at: () => {
-      const day = new Date(startOfDay(Date.now()))
-      const delta = (8 - day.getDay()) % 7 || 7
-      return day.getTime() + delta * DAY_MS + 9 * 3_600_000
-    },
-  },
-]
+// ── One Task ─────────────────────────────────────────────────────────────────
 
-/** Owns task-editor hooks and the shared request execution lifecycle. */
-function useTaskEditorState(task: Task | null) {
-  const [title, setTitle] = useState(task === null ? '' : task.title)
-  const [detail, setDetail] = useState(task === null ? '' : task.detail)
-  const [assignee, setAssignee] = useState(task === null ? '' : (task.assignee ?? ''))
-  const [dueAt, setDueAt] = useState(toLocalInput(task === null ? null : task.dueAt))
-  const [priority, setPriority] = useState<TaskPriority>(task === null ? 'normal' : task.priority)
-  const [followUpAt, setFollowUpAt] = useState('')
-  const [followUpNote, setFollowUpNote] = useState('')
-  const [repeat, setRepeat] = useState<string>('')
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function execute<Value>(program: tasksData.Program<Value>) {
-    setPending(true)
-    setError(null)
-    const result = await run(program)
-    setPending(false)
-    if (Result.isFailure(result)) {
-      setError(result.failure.message)
-      return null
-    }
-    return result.success
-  }
-
-  return {
-    assignee,
-    detail,
-    dueAt,
-    error,
-    execute,
-    followUpAt,
-    followUpNote,
-    pending,
-    priority,
-    repeat,
-    setAssignee,
-    setDetail,
-    setDueAt,
-    setError,
-    setFollowUpAt,
-    setFollowUpNote,
-    setPriority,
-    setRepeat,
-    setTitle,
-    title,
-  }
-}
-
-type TaskEditorState = ReturnType<typeof useTaskEditorState>
-
-/** Compares persisted task fields with their editor values without mixing rendering decisions. */
-function taskEditorDirty(task: Task | null, editor: TaskEditorState): boolean {
-  if (task === null) return true
-  return (
-    editor.title !== task.title ||
-    editor.detail !== task.detail ||
-    (editor.assignee.trim() || null) !== task.assignee ||
-    fromLocalInput(editor.dueAt) !== task.dueAt ||
-    editor.priority !== task.priority
-  )
-}
-
-/** Owns task saves, status changes, deletion, nudges, and follow-up mutations. */
-function createTaskEditorActions({
-  task,
-  editor,
-  onChanged,
-  onDeleted,
-}: {
-  task: Task | null
-  editor: TaskEditorState
-  onChanged: (id: string) => Promise<void>
-  onDeleted: () => Promise<void>
-}) {
-  async function save(event: FormEvent) {
-    event.preventDefault()
-    const input = {
-      title: editor.title.trim(),
-      detail: editor.detail.trim(),
-      assignee: editor.assignee.trim() || null,
-      dueAt: fromLocalInput(editor.dueAt),
-      priority: editor.priority,
-    } satisfies tasksData.TaskInput
-    const firstFollowUpAt = fromLocalInput(editor.followUpAt)
-    const firstFollowUp =
-      firstFollowUpAt === null
-        ? null
-        : ({
-            at: firstFollowUpAt,
-            note: editor.followUpNote.trim(),
-            repeatEveryMs: editor.repeat ? Number(editor.repeat) : null,
-          } satisfies tasksData.FollowUpInput)
-    const saved =
-      task === null
-        ? await editor.execute(tasksData.create(input, firstFollowUp))
-        : await editor.execute(tasksData.update(task.id, input))
-    if (saved !== null) await onChanged(saved.id)
-  }
-
-  async function setStatus(status: TaskStatus) {
-    if (!task) return
-    if ((await editor.execute(tasksData.setStatus(task.id, status))) !== null)
-      await onChanged(task.id)
-  }
-
-  async function chaseNow() {
-    if (!task) return
-    if ((await editor.execute(tasksData.nudge(task.id))) !== null) await onChanged(task.id)
-  }
-
-  async function remove() {
-    if (!task || !window.confirm(`Delete “${task.title}”? Its follow-ups go with it.`)) return
-    if ((await editor.execute(tasksData.remove(task.id))) !== null) await onDeleted()
-  }
-
-  async function addFollowUp(event: FormEvent) {
-    event.preventDefault()
-    if (!task) return
-    const at = fromLocalInput(editor.followUpAt)
-    if (at === null) {
-      editor.setError('Pick a time for the follow-up')
-      return
-    }
-    const added = await editor.execute(
-      tasksData.addFollowUp(task.id, {
-        at,
-        note: editor.followUpNote.trim(),
-        repeatEveryMs: editor.repeat ? Number(editor.repeat) : null,
-      }),
-    )
-    if (added !== null) {
-      editor.setFollowUpAt('')
-      editor.setFollowUpNote('')
-      editor.setRepeat('')
-      await onChanged(task.id)
-    }
-  }
-
-  async function followUpAction(followUp: FollowUp, action: 'run' | 'cancel' | 'delete') {
-    if (!task) return
-    const result = await editor.execute(FOLLOW_UP_ACTION[action](followUp.id))
-    if (result !== null) await onChanged(task.id)
-  }
-
-  return { addFollowUp, chaseNow, followUpAction, remove, save, setStatus }
-}
-
+/** One Task's page: what can be done to it, its fields, its follow-ups and where it came from. */
 function TaskDetail({
   task,
-  onChanged,
-  onDeleted,
-  onCancel,
-  onOpenConversation,
+  session,
+  now,
+  actions,
+  onBack,
+  onOpenThread,
 }: {
-  task: Task | null
-  onChanged: (id: string) => Promise<void>
-  onDeleted: () => Promise<void>
-  onCancel: () => void
-  onOpenConversation: (conversationId: string, fallbackTitle: string) => void
+  task: Task
+  session: Session
+  now: number
+  actions: TodayActions
+  onBack: () => void
+  onOpenThread: (threadId: string, title: string) => void
 }) {
-  const now = useCurrentTime()
-  const editor = useTaskEditorState(task)
-  const actions = createTaskEditorActions({ task, editor, onChanged, onDeleted })
-  const chasing = task !== null && task.followUps.some((followUp) => followUp.status === 'running')
-  const dirty = taskEditorDirty(task, editor)
+  const [fields, setFields] = useState(() => tasksData.fieldsOf(task))
+  const savable =
+    tasksData.fieldsDiffer(task, fields) &&
+    fields.title.trim() !== '' &&
+    Option.isSome(tasksData.assigneeInput(fields.assignee))
+
+  function save(event: FormEvent) {
+    event.preventDefault()
+    // The form shows what was sent, so it stops reading as edited the moment it is saved; if the
+    // server refuses, the Task goes back and the form still holds the Person's words.
+    setFields(tasksData.settledFields(fields))
+    void actions.save(task, fields)
+  }
 
   return (
     <div className="pt-2">
-      <TaskDetailControls
+      <TaskControls
         task={task}
-        pending={editor.pending}
-        chasing={chasing}
-        onStatusChange={(status) => void actions.setStatus(status)}
-        onChase={() => void actions.chaseNow()}
-        onRemove={() => void actions.remove()}
-        onOpenConversation={onOpenConversation}
+        me={session.me}
+        actions={actions}
+        onOpenThread={() => onOpenThread(task.threadId, task.title)}
       />
-      <TaskOverdueNotice task={task} now={now} />
-
-      <TaskEditorForm
-        task={task}
-        editor={editor}
-        dirty={dirty}
-        onSubmit={(event) => void actions.save(event)}
-        onCancel={onCancel}
-      />
-
+      {tasksData.isOverdue(task, now) && task.dueAt !== null && (
+        <div className="mb-4 flex items-start gap-2 rounded-control bg-danger-soft px-3 py-2.5 text-label text-danger">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <p>
+            Past due since {tasksData.formatWhen(task.dueAt, now, true)}. Chase it, move the date or
+            close it.
+          </p>
+        </div>
+      )}
+      <form onSubmit={save} className="space-y-4">
+        <TaskFieldset
+          fields={fields}
+          workspace={session.workspace}
+          focusTitle={false}
+          onChange={setFields}
+        />
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <Button type="button" variant="ghost" onClick={onBack}>
+            Back
+          </Button>
+          <Button type="submit" variant="primary" disabled={!savable}>
+            Save changes
+          </Button>
+        </div>
+      </form>
       <TaskFollowUps
         task={task}
-        editor={editor}
-        onAdd={(event) => void actions.addFollowUp(event)}
-        onAction={(followUp, action) => void actions.followUpAction(followUp, action)}
-        onOpenConversation={onOpenConversation}
+        now={now}
+        actions={actions}
+        onOpenThread={() => onOpenThread(task.threadId, task.title)}
       />
-      <TaskOrigin task={task} onOpenConversation={onOpenConversation} />
+      <TaskOrigin task={task} now={now} onOpenThread={onOpenThread} />
     </div>
   )
 }
 
-/** Renders existing-task controls without making the editor own their status branches. */
-function TaskDetailControls({
+/** What the chase button says: who Vivid will chase, or that it will remind the Person themselves. */
+const chaseLabel = (task: Task, me: PersonSummary): string =>
+  tasksData.TaskOwner.match(tasksData.ownerOf(task), {
+    Person: ({ person }) => (person.id === me.id ? 'Remind me now' : `Chase ${person.name} now`),
+    Outsider: ({ name }) => `Chase ${name} now`,
+  })
+
+/** Settle or reopen, chase, open the Thread it reports into, delete. */
+function TaskControls({
   task,
-  pending,
-  chasing,
-  onStatusChange,
-  onChase,
-  onRemove,
-  onOpenConversation,
+  me,
+  actions,
+  onOpenThread,
 }: {
-  task: Task | null
-  pending: boolean
-  chasing: boolean
-  onStatusChange: (status: TaskStatus) => void
-  onChase: () => void
-  onRemove: () => void
-  onOpenConversation: (conversationId: string, fallbackTitle: string) => void
+  task: Task
+  me: PersonSummary
+  actions: TodayActions
+  onOpenThread: () => void
 }) {
-  if (task === null) return null
-  const hasFiredFollowUp = task.followUps.some((followUp) => followUp.status === 'fired')
+  // Asking for a chase has no result to predict, so the button itself says it was pressed until
+  // the server's next result shows the follow-up it started.
+  const [asking, setAsking] = useState(false)
+  const open = task.status === 'open'
+  const chasing = task.followUps.some((followUp) => followUp.status === 'running')
+
+  async function chase() {
+    setAsking(true)
+    await actions.nudge(task)
+    setAsking(false)
+  }
+
   return (
     <div className="mb-5 flex flex-wrap items-center gap-2 border-b border-line-1 pb-4">
-      {task.status === 'open' ? (
-        <button
-          disabled={pending}
-          onClick={() => onStatusChange('done')}
-          className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs disabled:opacity-50"
+      <Button
+        icon={open ? <Check className="size-3.5" /> : <RotateCcw className="size-3.5" />}
+        onClick={() => void actions.toggle(task)}
+      >
+        {open ? 'Mark done' : 'Reopen'}
+      </Button>
+      {open && (
+        <Button
+          variant="primary"
+          disabled={asking || chasing}
+          icon={<BellRing className="size-3.5" />}
+          onClick={() => void chase()}
         >
-          <Check className="size-3.5" />
-          Mark done
-        </button>
-      ) : (
-        <button
-          disabled={pending}
-          onClick={() => onStatusChange('open')}
-          className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs disabled:opacity-50"
-        >
-          <RotateCcw className="size-3.5" />
-          Reopen
-        </button>
+          {asking || chasing ? 'Vivid is on it' : chaseLabel(task, me)}
+        </Button>
       )}
-      {task.status === 'open' && (
-        <TaskChaseButton task={task} pending={pending} chasing={chasing} onChase={onChase} />
-      )}
-      {task.status === 'open' && hasFiredFollowUp && (
-        <button
-          onClick={() => onOpenConversation(task.conversationId, task.title)}
-          className="inline-flex h-8 items-center gap-1.5 rounded-control px-3 text-label text-ink-2 hover:bg-wash-hover hover:text-ink"
-        >
-          <MessageSquareText className="size-3.5" />
-          Open conversation
-        </button>
-      )}
+      <Button
+        variant="ghost"
+        icon={<MessageSquareText className="size-3.5" />}
+        onClick={onOpenThread}
+      >
+        Open Thread
+      </Button>
       <button
-        disabled={pending}
-        onClick={onRemove}
-        className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-control px-3 text-label text-danger hover:bg-danger-soft disabled:opacity-50"
+        type="button"
+        onClick={() => void actions.remove(task)}
+        className="ml-auto inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-control px-3 text-label text-danger transition-colors duration-(--dur-fast) hover:bg-danger-soft"
       >
         <Trash2 className="size-3.5" />
         Delete
@@ -1118,208 +990,306 @@ function TaskDetailControls({
   )
 }
 
-/** Renders the current nudge state and person-specific action label. */
-function TaskChaseButton({
+/** Who made the Task and when, and the Thread or Routine it came out of. */
+function TaskOrigin({
   task,
-  pending,
-  chasing,
-  onChase,
+  now,
+  onOpenThread,
 }: {
   task: Task
-  pending: boolean
-  chasing: boolean
-  onChase: () => void
+  now: number
+  onOpenThread: (threadId: string, title: string) => void
 }) {
+  const origin = task.origin
   return (
-    <button
-      disabled={pending || chasing}
-      onClick={onChase}
-      className="inline-flex h-8 items-center gap-1.5 rounded-control bg-accent px-3 text-label font-title text-ink-on-accent disabled:opacity-50"
-    >
-      {chasing ? (
-        <LoaderCircle className="size-3.5 animate-spin" />
-      ) : (
-        <BellRing className="size-3.5" />
+    <p className="mt-5 text-meta font-meta text-ink-4">
+      Added by {tasksData.authorName(task.createdBy)},{' '}
+      {tasksData.formatWhen(task.createdAt, now, true)}
+      {origin.kind === 'thread' && (
+        <>
+          {' · '}
+          <button
+            type="button"
+            onClick={() => onOpenThread(origin.threadId, task.title)}
+            className="cursor-pointer rounded-xs text-ink-3 underline underline-offset-2 transition-colors duration-(--dur-fast) hover:text-ink"
+          >
+            from a Thread
+          </button>
+        </>
       )}
-      {chasing ? 'Vivid is on it…' : task.assignee ? `Chase ${task.assignee} now` : 'Remind me now'}
-    </button>
+      {origin.kind === 'routine' && ' · from a Routine'}
+    </p>
   )
 }
 
-/** Shows the overdue warning only for open tasks whose due time has passed. */
-function TaskOverdueNotice({ task, now }: { task: Task | null; now: number }) {
-  if (task === null || task.status !== 'open' || task.dueAt === null || task.dueAt >= now)
-    return null
-  return (
-    <div className="mb-4 flex items-start gap-2 rounded-control bg-danger-soft px-3 py-2.5 text-label text-danger">
-      <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-      <p>
-        Past due since {formatWhen(task.dueAt)}. Vivid chased it once automatically; chase again,
-        move the date, or close it.
-      </p>
-    </div>
-  )
-}
+// ── The fields ───────────────────────────────────────────────────────────────
 
-/** Renders task fields, optional first follow-up, error, and submit controls in one form. */
-function TaskEditorForm({
-  task,
-  editor,
-  dirty,
-  onSubmit,
-  onCancel,
+const PRIORITY = { normal: 'Normal', urgent: 'Urgent' } satisfies Record<Task['priority'], string>
+
+/** The fields a Person edits, the same for a new Task and one that exists. */
+function TaskFieldset({
+  fields,
+  workspace,
+  focusTitle,
+  onChange,
 }: {
-  task: Task | null
-  editor: TaskEditorState
-  dirty: boolean
-  onSubmit: (event: FormEvent) => void
-  onCancel: () => void
+  fields: tasksData.TaskFields
+  workspace: Workspace
+  focusTitle: boolean
+  onChange: (fields: tasksData.TaskFields) => void
 }) {
-  return (
-    <form onSubmit={onSubmit} className="space-y-4">
-      <TaskCoreFields editor={editor} creating={task === null} />
-      <NewTaskFollowUp task={task} editor={editor} />
-      {editor.error && (
-        <p className="text-label text-danger" role="alert">
-          {editor.error}
-        </p>
-      )}
-      <div className="flex items-center justify-end gap-2 pt-1">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="h-9 rounded-control px-3 text-label text-ink-3 hover:bg-wash-hover"
-        >
-          {task ? 'Back' : 'Cancel'}
-        </button>
-        <button
-          disabled={editor.pending || !dirty || !editor.title.trim()}
-          className="inline-flex h-9 items-center gap-2 rounded-control bg-accent px-4 text-label font-title text-ink-on-accent disabled:opacity-50"
-        >
-          {editor.pending && <LoaderCircle className="size-3.5 animate-spin" />}
-          {task ? 'Save changes' : 'Add task'}
-        </button>
-      </div>
-    </form>
-  )
-}
-
-/** Renders the persisted task fields without owning submit or follow-up behavior. */
-function TaskCoreFields({ editor, creating }: { editor: TaskEditorState; creating: boolean }) {
-  const fieldClass =
-    'h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs outline-none focus:smooth-shadow-ring-sm'
-  const labelClass = 'mb-1.5 block text-label font-title text-ink-2'
   return (
     <>
-      <label className="block">
-        <span className={labelClass}>What</span>
-        <input
-          autoFocus={creating}
+      <Field label="What">
+        <Input
+          autoFocus={focusTitle}
           required
           maxLength={200}
-          value={editor.title}
-          onChange={(event) => editor.setTitle(event.currentTarget.value)}
+          value={fields.title}
+          onChange={(event) => onChange({ ...fields, title: event.currentTarget.value })}
           placeholder="Get the signed contract back from Dami"
-          className={fieldClass}
         />
-      </label>
-      <label className="block">
-        <span className={labelClass}>
-          Detail <span className="font-meta text-ink-4">optional</span>
-        </span>
-        <textarea
+      </Field>
+      <Field label="Detail" hint="optional">
+        <Textarea
           maxLength={2000}
           rows={3}
-          value={editor.detail}
-          onChange={(event) => editor.setDetail(event.currentTarget.value)}
+          value={fields.detail}
+          onChange={(event) => onChange({ ...fields, detail: event.currentTarget.value })}
           placeholder="Anything Vivid should know when it follows up."
-          className="w-full resize-y rounded-control bg-surface-2 px-3 py-2.5 text-label text-ink smooth-shadow-ring-xs outline-none focus:smooth-shadow-ring-sm"
         />
-      </label>
-      <div className="grid gap-3 sm:grid-cols-3">
-        <label className="block">
-          <span className={labelClass}>Waiting on</span>
-          <span className="relative block">
-            <UserRound className="pointer-events-none absolute top-3 left-3 size-4 text-ink-4" />
-            <input
-              maxLength={80}
-              value={editor.assignee}
-              onChange={(event) => editor.setAssignee(event.currentTarget.value)}
-              placeholder="You"
-              className={cn(fieldClass, 'pl-9')}
-            />
-          </span>
-        </label>
-        <label className="block">
-          <span className={labelClass}>Due</span>
-          <input
+      </Field>
+      <div className="grid items-start gap-3 sm:grid-cols-3">
+        <AssigneePicker
+          workspace={workspace}
+          value={fields.assignee}
+          onChange={(assignee) => onChange({ ...fields, assignee })}
+        />
+        <Field label="Due">
+          <Input
             type="datetime-local"
-            value={editor.dueAt}
-            onChange={(event) => editor.setDueAt(event.currentTarget.value)}
-            className={fieldClass}
+            value={toLocalInput(fields.dueAt)}
+            onChange={(event) =>
+              onChange({ ...fields, dueAt: fromLocalInput(event.currentTarget.value) })
+            }
           />
-        </label>
-        <label className="block">
-          <span className={labelClass}>Priority</span>
-          <select
-            value={editor.priority}
+        </Field>
+        <Field label="Priority">
+          <Select
+            value={fields.priority}
             onChange={(event) => {
-              const value = event.currentTarget.value
-              if (value === 'normal' || value === 'urgent') editor.setPriority(value)
+              const priority = event.currentTarget.value
+              if (priority === 'normal' || priority === 'urgent') onChange({ ...fields, priority })
             }}
-            className={fieldClass}
           >
-            <option value="normal">Normal</option>
-            <option value="urgent">Urgent</option>
-          </select>
-        </label>
+            {(['normal', 'urgent'] as const).map((priority) => (
+              <option key={priority} value={priority}>
+                {PRIORITY[priority]}
+              </option>
+            ))}
+          </Select>
+        </Field>
       </div>
     </>
   )
 }
 
-/** Renders first-follow-up fields only while creating a task. */
-function NewTaskFollowUp({ task, editor }: { task: Task | null; editor: TaskEditorState }) {
-  if (task !== null) return null
+/**
+ * Who owes the Task. In a Company the choice is nobody, a Member, or someone outside Vivid; in a
+ * personal space there are no Members to offer, and the People query is never asked for.
+ */
+function AssigneePicker({
+  workspace,
+  value,
+  onChange,
+}: {
+  workspace: Workspace
+  value: Assignee
+  onChange: (assignee: Assignee) => void
+}) {
+  return Workspace.match(workspace, {
+    Personal: () => (
+      <AssigneeChoice members={[]} refused={Option.none()} value={value} onChange={onChange} />
+    ),
+    Company: () => <CompanyAssignee value={value} onChange={onChange} />,
+  })
+}
+
+/** The picker with the Company's Members in it, as soon as the People query has answered. */
+function CompanyAssignee({
+  value,
+  onChange,
+}: {
+  value: Assignee
+  onChange: (assignee: Assignee) => void
+}) {
+  const people = useLive(live.people)
+  const { members, refused } = LiveState.$match(people, {
+    Loading: () => ({ members: [], refused: Option.none<string>() }),
+    Failed: ({ failure }) => ({ members: [], refused: Option.some(failure.message) }),
+    Ready: ({ value: answer }) => ({
+      members: answer.members.map((member) => member.person),
+      refused: Option.none<string>(),
+    }),
+  })
+  return <AssigneeChoice members={members} refused={refused} value={value} onChange={onChange} />
+}
+
+const NOBODY = 'nobody'
+const OUTSIDER = 'outsider'
+
+/** The select value that stands for one assignee, so the chosen option can be found again. */
+const choiceOf = (assignee: Assignee): string =>
+  Assignee.match(assignee, {
+    Nobody: () => NOBODY,
+    Member: ({ person }) => `member:${person.id}`,
+    Outsider: () => OUTSIDER,
+  })
+
+/** The select, and a name field beside it once "someone outside Vivid" is chosen. */
+function AssigneeChoice({
+  members,
+  refused,
+  value,
+  onChange,
+}: {
+  members: ReadonlyArray<PersonSummary>
+  refused: Option.Option<string>
+  value: Assignee
+  onChange: (assignee: Assignee) => void
+}) {
+  // The Member a Task is already assigned to stays choosable while the People query is loading,
+  // and after they have left the Company: the Task still says who they are.
+  const current = Assignee.guards.Member(value) ? [value.person] : []
+  const offered = [
+    ...current.filter((person) => members.every((member) => member.id !== person.id)),
+    ...members,
+  ]
+  const choices = [
+    { key: NOBODY, label: 'Nobody', assignee: Assignee.cases.Nobody.make({}) },
+    ...offered.map((person) => {
+      const assignee = Assignee.cases.Member.make({ person })
+      return { key: choiceOf(assignee), label: person.name, assignee }
+    }),
+    {
+      key: OUTSIDER,
+      label: 'Someone outside Vivid',
+      // Choosing "outside" again keeps the name already typed.
+      assignee: Assignee.guards.Outsider(value)
+        ? value
+        : Assignee.cases.Outsider.make({ name: '' }),
+    },
+  ]
   return (
-    <div className="rounded-card bg-surface-2 p-4 smooth-shadow-ring-xs">
-      <div className="flex items-center gap-2 text-label font-title text-ink-2">
-        <Face size={16} />
-        First follow-up <span className="font-meta text-ink-4">optional</span>
-      </div>
-      <FollowUpFields
-        at={editor.followUpAt}
-        note={editor.followUpNote}
-        repeat={editor.repeat}
-        onAt={editor.setFollowUpAt}
-        onNote={editor.setFollowUpNote}
-        onRepeat={editor.setRepeat}
-        quickTimes={QUICK_TIMES}
-      />
+    <div className="flex flex-col gap-2">
+      <Field label="Assigned to">
+        <Select
+          value={choiceOf(value)}
+          onChange={(event) => {
+            const chosen = choices.find((choice) => choice.key === event.currentTarget.value)
+            if (chosen !== undefined) onChange(chosen.assignee)
+          }}
+        >
+          {choices.map((choice) => (
+            <option key={choice.key} value={choice.key}>
+              {choice.label}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      {Assignee.guards.Outsider(value) && (
+        <Input
+          required
+          maxLength={120}
+          aria-label="Their name"
+          placeholder="Their name"
+          value={value.name}
+          onChange={(event) =>
+            onChange(Assignee.cases.Outsider.make({ name: event.currentTarget.value }))
+          }
+        />
+      )}
+      {Option.isSome(refused) && <Notice>{refused.value}</Notice>}
     </div>
   )
 }
 
-/** Renders existing follow-ups and the add-follow-up form for open tasks. */
+// ── A new Task ───────────────────────────────────────────────────────────────
+
+/** The form for a new Task, with an optional first follow-up. It starts from the draft it is given. */
+function NewTask({
+  draft,
+  session,
+  onCancel,
+  onCreate,
+}: {
+  draft: NewTaskDraft
+  session: Session
+  onCancel: () => void
+  onCreate: (draft: NewTaskDraft) => void
+}) {
+  const [fields, setFields] = useState(draft.fields)
+  const [followUp, setFollowUp] = useState(draft.followUp)
+  const savable =
+    fields.title.trim() !== '' && Option.isSome(tasksData.assigneeInput(fields.assignee))
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault()
+        onCreate({ fields, followUp })
+      }}
+      className="space-y-4 pt-2"
+    >
+      <TaskFieldset fields={fields} workspace={session.workspace} focusTitle onChange={setFields} />
+      <div className="rounded-card bg-surface-2 p-4 smooth-shadow-ring-xs">
+        <div className="flex items-center gap-2 text-label font-title text-ink-2">
+          <Face size={16} />
+          First follow-up <span className="font-meta text-ink-4">optional</span>
+        </div>
+        <FollowUpFields draft={followUp} onChange={setFollowUp} />
+      </div>
+      <div className="flex items-center justify-end gap-2 pt-1">
+        <Button type="button" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" variant="primary" disabled={!savable}>
+          Add task
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+// ── Follow-ups ───────────────────────────────────────────────────────────────
+
+/** When Vivid acts on this Task: what is scheduled or has run, and a form to schedule one more. */
 function TaskFollowUps({
   task,
-  editor,
-  onAdd,
-  onAction,
-  onOpenConversation,
+  now,
+  actions,
+  onOpenThread,
 }: {
-  task: Task | null
-  editor: TaskEditorState
-  onAdd: (event: FormEvent) => void
-  onAction: (followUp: FollowUp, action: 'run' | 'cancel' | 'delete') => void
-  onOpenConversation: (conversationId: string, fallbackTitle: string) => void
+  task: Task
+  now: number
+  actions: TodayActions
+  onOpenThread: () => void
 }) {
-  if (task === null) return null
+  const [draft, setDraft] = useState(NO_FOLLOW_UP)
+
+  /** The row appears and the form clears at once; a refused follow-up puts the form back. */
+  async function add(event: FormEvent) {
+    event.preventDefault()
+    const followUp = followUpOf(draft)
+    if (Option.isNone(followUp)) return
+    setDraft(NO_FOLLOW_UP)
+    if (!(await actions.addFollowUp(task, followUp.value))) setDraft(draft)
+  }
+
   return (
     <div className="mt-7 border-t border-line-1 pt-4">
       <div className="flex items-baseline gap-2.5">
         <h2 className="text-label font-title text-ink-2">Follow-ups</h2>
-        <p className="text-meta font-meta text-ink-4">When Vivid wakes up and acts on this.</p>
+        <p className="text-meta font-meta text-ink-4">When Vivid acts on this.</p>
       </div>
       {task.followUps.length === 0 ? (
         <p className="mt-2 text-label text-ink-4">None yet.</p>
@@ -1329,36 +1299,32 @@ function TaskFollowUps({
             <li key={followUp.id}>
               <FollowUpRow
                 followUp={followUp}
-                onAction={(action) => onAction(followUp, action)}
-                onOpen={() => onOpenConversation(task.conversationId, task.title)}
+                now={now}
+                onAction={(action) => void actions.actOnFollowUp(task, followUp, action)}
+                onOpen={onOpenThread}
               />
             </li>
           ))}
         </ul>
       )}
       {task.status === 'open' && (
-        <form onSubmit={onAdd} className="mt-3 rounded-card bg-surface-2 p-4 smooth-shadow-ring-xs">
+        <form
+          onSubmit={(event) => void add(event)}
+          className="mt-3 rounded-card bg-surface-2 p-4 smooth-shadow-ring-xs"
+        >
           <div className="flex items-center gap-2 text-label font-title text-ink-2">
             <Plus className="size-3.5" />
             Add a follow-up
           </div>
-          <FollowUpFields
-            at={editor.followUpAt}
-            note={editor.followUpNote}
-            repeat={editor.repeat}
-            onAt={editor.setFollowUpAt}
-            onNote={editor.setFollowUpNote}
-            onRepeat={editor.setRepeat}
-            quickTimes={QUICK_TIMES}
-          />
+          <FollowUpFields draft={draft} onChange={setDraft} />
           <div className="mt-3 flex justify-end">
-            <button
-              disabled={editor.pending || !editor.followUpAt}
-              className="inline-flex h-8 items-center gap-1.5 rounded-control bg-surface-3 px-3 text-label font-title text-ink smooth-shadow-ring-xs hover:bg-wash-hover disabled:opacity-50"
+            <Button
+              type="submit"
+              disabled={draft.at === null}
+              icon={<Clock3 className="size-3.5" />}
             >
-              <Clock3 className="size-3.5" />
               Schedule
-            </button>
+            </Button>
           </div>
         </form>
       )}
@@ -1366,134 +1332,107 @@ function TaskFollowUps({
   )
 }
 
-/** Renders source attribution for non-manual tasks without inventing missing origin data. */
-function TaskOrigin({
-  task,
-  onOpenConversation,
-}: {
-  task: Task | null
-  onOpenConversation: (conversationId: string, fallbackTitle: string) => void
-}) {
-  if (task === null || task.origin.kind === 'manual') return null
-  return (
-    <p className="mt-5 text-meta font-meta text-ink-4">
-      {task.createdBy === 'vivid' ? 'Vivid started tracking this' : 'Added'}{' '}
-      {formatWhen(task.createdAt)}
-      {task.origin.kind === 'conversation' && (
-        <>
-          {' '}
-          ·{' '}
-          <button
-            onClick={() =>
-              onOpenConversation(
-                task.origin.kind === 'conversation'
-                  ? task.origin.conversationId
-                  : task.conversationId,
-                task.title,
-              )
-            }
-            className="text-ink-3 underline underline-offset-2 hover:text-ink"
-          >
-            from a conversation
-          </button>
-        </>
-      )}
-      {task.origin.kind === 'routine' && ' · from a routine'}
-    </p>
-  )
-}
+/** Shortcuts for the times people actually pick. Each is computed when it is pressed. */
+const QUICK_TIMES: ReadonlyArray<{ label: string; at: (now: number) => number }> = [
+  { label: 'Tomorrow 9:00', at: (now) => tasksData.startOfDay(now) + DAY_MS + 9 * HOUR_MS },
+  { label: 'In 3 days', at: (now) => tasksData.startOfDay(now) + 3 * DAY_MS + 9 * HOUR_MS },
+  {
+    label: 'Next Monday',
+    at: (now) => {
+      const day = new Date(tasksData.startOfDay(now))
+      const delta = (8 - day.getDay()) % 7 || 7
+      return day.getTime() + delta * DAY_MS + 9 * HOUR_MS
+    },
+  },
+]
 
+const REPEAT_OPTIONS: ReadonlyArray<{ label: string; every: number | null }> = [
+  { label: 'Once', every: null },
+  { label: 'Every day', every: DAY_MS },
+  { label: 'Every week', every: 7 * DAY_MS },
+]
+
+/** When, what to say, and how often: the three things a follow-up is made of. */
 function FollowUpFields({
-  at,
-  note,
-  repeat,
-  onAt,
-  onNote,
-  onRepeat,
-  quickTimes,
+  draft,
+  onChange,
 }: {
-  at: string
-  note: string
-  repeat: string
-  onAt: (value: string) => void
-  onNote: (value: string) => void
-  onRepeat: (value: string) => void
-  quickTimes: Array<{ label: string; at: () => number }>
+  draft: FollowUpDraft
+  onChange: (draft: FollowUpDraft) => void
 }) {
-  const fieldClass =
-    'h-9 w-full rounded-control bg-surface-3 px-3 text-label text-ink smooth-shadow-ring-xs outline-none focus:smooth-shadow-ring-sm'
   return (
     <div className="mt-3 space-y-2.5">
       <div className="flex flex-wrap gap-1.5">
-        {quickTimes.map((quick) => (
-          <button
+        {QUICK_TIMES.map((quick) => (
+          <Button
             key={quick.label}
             type="button"
-            onClick={() => onAt(toLocalInput(quick.at()))}
-            className="h-7 rounded-full bg-surface-3 px-2.5 text-meta font-title text-ink-2 smooth-shadow-ring-xs hover:bg-wash-hover hover:text-ink"
+            size="sm"
+            onClick={() => onChange({ ...draft, at: quick.at(Date.now()) })}
           >
             {quick.label}
-          </button>
+          </Button>
         ))}
       </div>
       <div className="grid gap-2 sm:grid-cols-followup">
-        <input
+        <Input
           type="datetime-local"
           aria-label="When"
-          value={at}
-          onChange={(event) => onAt(event.currentTarget.value)}
-          className={fieldClass}
+          value={toLocalInput(draft.at)}
+          onChange={(event) =>
+            onChange({ ...draft, at: fromLocalInput(event.currentTarget.value) })
+          }
         />
-        <input
+        <Input
           maxLength={500}
-          value={note}
-          onChange={(event) => onNote(event.currentTarget.value)}
+          aria-label="What to check or say"
+          value={draft.note}
+          onChange={(event) => onChange({ ...draft, note: event.currentTarget.value })}
           placeholder="What to check or say"
-          className={fieldClass}
         />
-        <select
+        <Select
           aria-label="Repeat"
-          value={repeat}
-          onChange={(event) => onRepeat(event.currentTarget.value)}
-          className={cn(fieldClass, 'w-auto')}
+          value={String(draft.repeatEveryMs)}
+          onChange={(event) => {
+            const chosen = REPEAT_OPTIONS.find(
+              (option) => String(option.every) === event.currentTarget.value,
+            )
+            if (chosen !== undefined) onChange({ ...draft, repeatEveryMs: chosen.every })
+          }}
         >
           {REPEAT_OPTIONS.map((option) => (
-            <option key={option.label} value={option.value}>
+            <option key={option.label} value={String(option.every)}>
               {option.label}
             </option>
           ))}
-        </select>
+        </Select>
       </div>
     </div>
   )
 }
 
-const FOLLOW_UP_TONE = {
-  scheduled: 'bg-accent',
-  running: 'animate-status-pulse bg-working',
-  fired: 'bg-success',
-  failed: 'bg-danger',
-  cancelled: 'bg-ink-4',
-} satisfies Record<FollowUp['status'], string>
+const FOLLOW_UP = {
+  scheduled: { label: 'Scheduled', tone: 'bg-accent' },
+  running: { label: 'Vivid is on it', tone: 'animate-status-pulse bg-working' },
+  fired: { label: 'Followed up', tone: 'bg-success' },
+  failed: { label: 'Failed', tone: 'bg-danger' },
+  cancelled: { label: 'Cancelled', tone: 'bg-ink-4' },
+} satisfies Record<FollowUp['status'], { label: string; tone: string }>
 
-const FOLLOW_UP_LABEL = {
-  scheduled: 'Scheduled',
-  running: 'Vivid is on it',
-  fired: 'Followed up',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-} satisfies Record<FollowUp['status'], string>
-
+/** One follow-up: where it stands, when, who scheduled it, and what Vivid said when it ran. */
 function FollowUpRow({
   followUp,
+  now,
   onAction,
   onOpen,
 }: {
   followUp: FollowUp
-  onAction: (action: 'run' | 'cancel' | 'delete') => void
+  now: number
+  onAction: (action: FollowUpAction) => void
   onOpen: () => void
 }) {
-  const repeat = describeRepeat(followUp.repeatEveryMs)
+  const repeat = tasksData.describeRepeat(followUp.repeatEveryMs)
+  const when = followUp.firedAt === null ? followUp.at : followUp.firedAt
   return (
     <div
       className={cn(
@@ -1501,87 +1440,79 @@ function FollowUpRow({
         followUp.status === 'cancelled' && 'opacity-60',
       )}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <i
-          className={cn('size-2 shrink-0 rounded-full', FOLLOW_UP_TONE[followUp.status])}
+          className={cn('size-2 shrink-0 rounded-full', FOLLOW_UP[followUp.status].tone)}
           aria-hidden
         />
-        <span className="text-label text-ink">{FOLLOW_UP_LABEL[followUp.status]}</span>
+        <span className="text-label text-ink">{FOLLOW_UP[followUp.status].label}</span>
         <time className="text-meta font-meta text-ink-4 tabular-nums">
-          {formatWhen(followUp.firedAt ?? followUp.at)}
+          {tasksData.formatWhen(when, now, true)}
         </time>
-        {repeat && (
+        {Option.isSome(repeat) && (
           <span className="inline-flex items-center gap-1 text-meta font-meta text-ink-4">
             <Repeat2 className="size-3" />
-            {repeat}
+            {repeat.value}
           </span>
         )}
-        {followUp.createdBy === 'vivid' && (
-          <span className="text-meta font-meta text-ink-4">· by Vivid</span>
-        )}
+        <span className="sep-dot text-meta font-meta text-ink-4">
+          {tasksData.authorName(followUp.createdBy)}
+        </span>
         <FollowUpActions status={followUp.status} onAction={onAction} onOpen={onOpen} />
       </div>
-      {followUp.note && <p className="mt-1 text-meta text-ink-3">{followUp.note}</p>}
-      {followUp.output && (
+      {followUp.note !== '' && <p className="mt-1 text-meta text-ink-3">{followUp.note}</p>}
+      {followUp.output !== null && (
         <p className="mt-1.5 line-clamp-3 text-label whitespace-pre-wrap text-ink-2">
           {followUp.output}
         </p>
       )}
-      {followUp.error && <p className="mt-1 text-meta text-danger">{followUp.error}</p>}
+      {followUp.error !== null && <p className="mt-1 text-meta text-danger">{followUp.error}</p>}
     </div>
   )
 }
 
-/** Renders the legal action set for each follow-up lifecycle state. */
+/** What can be done to a follow-up in each state. A running one can only be waited for. */
 function FollowUpActions({
   status,
   onAction,
   onOpen,
 }: {
   status: FollowUp['status']
-  onAction: (action: 'run' | 'cancel' | 'delete') => void
+  onAction: (action: FollowUpAction) => void
   onOpen: () => void
 }) {
   return (
     <span className="ml-auto flex items-center gap-1">
       {status === 'scheduled' && (
         <>
-          <button
-            onClick={() => onAction('run')}
-            className="h-7 rounded-control px-2 text-meta font-title text-ink-2 hover:bg-wash-hover hover:text-ink"
-          >
+          <Button variant="ghost" size="sm" onClick={() => onAction('run')}>
             Run now
-          </button>
-          <button
-            onClick={() => onAction('cancel')}
-            className="h-7 rounded-control px-2 text-meta font-title text-ink-3 hover:bg-wash-hover hover:text-ink"
-          >
+          </Button>
+          <Button variant="quiet" size="sm" onClick={() => onAction('cancel')}>
             Cancel
-          </button>
+          </Button>
         </>
       )}
       {(status === 'fired' || status === 'failed') && (
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<MessageSquareText className="size-3" />}
           onClick={onOpen}
-          className="inline-flex h-7 items-center gap-1 rounded-control px-2 text-meta font-title text-ink-2 hover:bg-wash-hover hover:text-ink"
         >
-          <MessageSquareText className="size-3" />
-          Open
-        </button>
+          Open Thread
+        </Button>
       )}
       {(status === 'cancelled' || status === 'failed') && (
-        <button
-          onClick={() => onAction('delete')}
-          aria-label="Remove follow-up"
-          className="inline-flex size-7 items-center justify-center rounded-control text-ink-4 hover:bg-danger-soft hover:text-danger"
-        >
-          <Trash2 className="size-3" />
-        </button>
+        <IconButton label="Remove follow-up" onClick={() => onAction('delete')}>
+          <Trash2 className="size-3.5" />
+        </IconButton>
       )}
     </span>
   )
 }
 
+/** A titled group in the list, with a quieter note beside the title and room for one action. */
 function Section({
   title,
   note,
@@ -1589,16 +1520,16 @@ function Section({
   children,
 }: {
   title: string
-  note?: string
-  action?: React.ReactNode
-  children: React.ReactNode
+  note: string
+  action?: ReactNode
+  children: ReactNode
 }) {
   return (
     <div className="mt-7">
-      <div className="mb-1 flex items-baseline gap-2.5 border-t border-line-1 px-0.5 pt-4">
+      <div className="mb-1 flex items-center gap-2.5 border-t border-line-1 px-0.5 pt-4">
         <h2 className="text-label font-title text-ink-2">{title}</h2>
-        {note && <p className="truncate text-meta font-meta text-ink-4">{note}</p>}
-        {action && <span className="ml-auto">{action}</span>}
+        <p className="truncate text-meta font-meta text-ink-4">{note}</p>
+        {action !== undefined && <span className="ml-auto">{action}</span>}
       </div>
       {children}
     </div>
