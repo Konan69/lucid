@@ -15,6 +15,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@effect/atom-react": "catalog:",
     "@flue/react": "catalog:",
     "@flue/sdk": "catalog:",
     "@vivid/client-runtime": "workspace:*",
