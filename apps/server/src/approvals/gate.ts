@@ -1,5 +1,5 @@
 import * as Context from 'effect/Context'
-import type * as Effect from 'effect/Effect'
+import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import {
   Approval,
@@ -27,6 +27,15 @@ export const GateDecision = Schema.TaggedUnion({
 })
 export type GateDecision = typeof GateDecision.Type
 
+/**
+ * Whether the action would bring something of the acting Person's own into a Thread other people
+ * can read. `PersonalInShared` is a personal Connection used in a shared Thread: Vivid asks first
+ * even for a read, because the answer lands where others see it (docs/22, "Shared work asks
+ * first"). Everything else is `Ordinary`.
+ */
+export const GateExposure = Schema.Literals(['Ordinary', 'PersonalInShared'] as const)
+export type GateExposure = typeof GateExposure.Type
+
 export interface GateService {
   /**
    * Decides whether Vivid may take `action` now, acting for `actor`.
@@ -40,6 +49,7 @@ export interface GateService {
   readonly check: (
     actor: Actor,
     action: ProposedAction,
+    exposure: GateExposure,
   ) => Effect.Effect<GateDecision, NotFound | DatabaseInfrastructureError>
 }
 
@@ -75,3 +85,71 @@ export interface ActionRunnerService {
 export class ActionRunner extends Context.Service<ActionRunner, ActionRunnerService>()(
   'vivid/ActionRunner',
 ) {}
+
+import * as Layer from 'effect/Layer'
+import * as Result from 'effect/Result'
+import { ActionTarget, AuditEvent } from '@vivid/contracts'
+import { Audit } from '../audit/record.ts'
+import { RuleStore } from '../rules/store.ts'
+import { RuleJudge } from '../rules/judge.ts'
+import { ApprovalStore } from './store.ts'
+import { serviceOf } from './action.ts'
+
+/** Server policy owns precedence; the judge only supplies applicability and cannot authorize an action. */
+export const gateLayer = Layer.effect(
+  Gate,
+  Effect.gen(function* () {
+    const rules = yield* RuleStore
+    const judge = yield* RuleJudge
+    const approvals = yield* ApprovalStore
+    const audit = yield* Audit
+    return Gate.of({
+      /** Ordinary reads pass; contained Computer work defaults to allowed, while uncertainty asks. */
+      check: Effect.fn('Gate.check')(function* (actor, action, exposure) {
+        if (action.effect === 'read' && exposure === 'Ordinary')
+          return GateDecision.cases.Allowed.make({})
+        const binding = yield* rules.list(actor)
+        const judged = yield* Effect.result(judge.judge(action, binding))
+        if (Result.isFailure(judged))
+          return GateDecision.cases.ApprovalRequired.make({
+            approval: yield* approvals.raise(actor, action),
+          })
+        const applicable = judged.success
+        const never = applicable.find((rule) => rule.decision === 'Never')
+        if (never !== undefined) {
+          yield* audit.record(
+            actor,
+            AuditEvent.cases.ActionBlocked.make({
+              summary: action.summary,
+              service: serviceOf(action),
+              rule: never.action,
+            }),
+          )
+          return GateDecision.cases.Blocked.make({ rule: never.action })
+        }
+        const asks = applicable.some((rule) => rule.decision === 'Ask')
+        const connection = ActionTarget.guards.Connection(action.target)
+        if (
+          asks ||
+          action.effect === 'destructive' ||
+          exposure === 'PersonalInShared' ||
+          (connection && applicable.length === 0)
+        ) {
+          return GateDecision.cases.ApprovalRequired.make({
+            approval: yield* approvals.raise(actor, action),
+          })
+        }
+        if (connection)
+          yield* audit.record(
+            actor,
+            AuditEvent.cases.ActionAllowed.make({
+              summary: action.summary,
+              service: serviceOf(action),
+              effect: action.effect,
+            }),
+          )
+        return GateDecision.cases.Allowed.make({})
+      }),
+    })
+  }),
+)
