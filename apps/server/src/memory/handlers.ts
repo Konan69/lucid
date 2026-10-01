@@ -33,13 +33,13 @@ export const memoryFailure = Effect.fn('Memory.publicFailure')(
         'DatabaseFailure',
         (error) => Effect.fail(error),
       ),
-      Match.tag('ServiceUnavailable', (error) =>
+      Match.tag('ServiceUnavailable', (error) => Effect.fail(error)),
+      Match.tag('MemoryRateLimited', (error) =>
         Effect.gen(function* () {
-          if ('retryAfter' in error)
-            yield* Effect.logWarning('Memory rate limited', {
-              tag: error._tag,
-              retryAfter: error.retryAfter,
-            })
+          yield* Effect.logWarning('Memory rate limited', {
+            tag: error._tag,
+            retryAfter: error.retryAfter,
+          })
           return yield* Effect.fail(
             ServiceUnavailable.make({ service: 'memory', message: error.message }),
           )

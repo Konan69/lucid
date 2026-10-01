@@ -8,13 +8,9 @@ import { describe, expect } from 'vitest'
 import {
   Embeddings,
   EmbeddingDimensionMismatch,
-  MemoryUnavailable,
+  MemoryRateLimited,
   embeddingsLayer,
 } from './embeddings.js'
-
-const enabled =
-  process.env['VIVID_TEST_HELIX_URL'] !== undefined &&
-  process.env['OPENROUTER_API_KEY'] !== undefined
 
 /** A real ephemeral HTTP server exercises transport/status decoding while keeping the provider's availability under test control. */
 const localProvider = (response: HttpServerResponse.HttpServerResponse) =>
@@ -34,7 +30,7 @@ const localProvider = (response: HttpServerResponse.HttpServerResponse) =>
   ).pipe(Layer.provide(NodeHttpServer.layerTest))
 
 /** No fixture vector reaches Helix: these tests check provider protocol failures through the actual HTTP adapter. */
-describe.skipIf(!enabled)('Embedding HTTP failures', () => {
+describe('Embedding HTTP failures', () => {
   it.effect(
     'retains Retry-After on a memory unavailable response',
     () =>
@@ -42,8 +38,8 @@ describe.skipIf(!enabled)('Embedding HTTP failures', () => {
         const embeddings = yield* Embeddings
         const result = yield* embeddings.embed(['a rate-limited request']).pipe(Effect.result)
         if (Result.isSuccess(result)) expect.fail('Expected a rate limit')
-        expect(result.failure).toBeInstanceOf(MemoryUnavailable)
-        if (result.failure instanceof MemoryUnavailable) {
+        expect(result.failure).toBeInstanceOf(MemoryRateLimited)
+        if (result.failure instanceof MemoryRateLimited) {
           expect(result.failure.service).toBe('memory')
           expect(result.failure.retryAfter).toBe('7')
           const publicFailure = yield* memoryFailure(result.failure).pipe(Effect.flip)
@@ -52,6 +48,12 @@ describe.skipIf(!enabled)('Embedding HTTP failures', () => {
         }
       }).pipe(
         Effect.provide(embeddingsLayer),
+        Effect.provide(
+          ConfigProvider.layerAdd(
+            ConfigProvider.fromUnknown({ OPENROUTER_API_KEY: 'local-protocol-test' }),
+            { asPrimary: true },
+          ),
+        ),
         Effect.provide(
           localProvider(HttpServerResponse.empty({ status: 429, headers: { 'retry-after': '7' } })),
         ),
@@ -75,6 +77,12 @@ describe.skipIf(!enabled)('Embedding HTTP failures', () => {
         }
       }).pipe(
         Effect.provide(embeddingsLayer),
+        Effect.provide(
+          ConfigProvider.layerAdd(
+            ConfigProvider.fromUnknown({ OPENROUTER_API_KEY: 'local-protocol-test' }),
+            { asPrimary: true },
+          ),
+        ),
         Effect.provide(
           localProvider(
             HttpServerResponse.jsonUnsafe({ data: [{ index: 0, embedding: [0.1, 0.2, 0.3] }] }),

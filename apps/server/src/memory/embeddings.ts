@@ -35,14 +35,14 @@ export const embeddingModel = Config.String('VIVID_EMBEDDING_MODEL').pipe(
 )
 
 /** A rate limit is unavailable memory; retain the provider's seconds or HTTP-date without inventing a delay. */
-export class MemoryUnavailable extends Schema.TaggedError<MemoryUnavailable>()(
-  'ServiceUnavailable',
+export class MemoryRateLimited extends Schema.TaggedError<MemoryRateLimited>()(
+  'MemoryRateLimited',
   {
     service: Schema.Literal('memory'),
     message: ServiceUnavailable.fields.message,
     retryAfter: Schema.NullOr(Schema.String),
   },
-  { title: 'ServiceUnavailable' },
+  { title: 'Memory rate limited' },
 ) {}
 
 export class ProviderRejected extends Schema.TaggedError<ProviderRejected>()(
@@ -79,7 +79,7 @@ export class EmbeddingBatchMismatch extends Schema.TaggedError<EmbeddingBatchMis
 
 export type ProviderFailure =
   | ServiceUnavailable
-  | MemoryUnavailable
+  | MemoryRateLimited
   | ProviderRejected
   | ProviderMalformed
 export type EmbeddingFailure = ProviderFailure | EmbeddingDimensionMismatch | EmbeddingBatchMismatch
@@ -105,7 +105,7 @@ export const providerResponse = Effect.fn('Memory.providerResponse')(function* (
   )
   if (response.status === 429) {
     return yield* Effect.fail(
-      MemoryUnavailable.make({
+      MemoryRateLimited.make({
         service: 'memory',
         message: 'OpenRouter rate limited memory',
         retryAfter: Option.getOrNull(Headers.get(response.headers, 'retry-after')),
