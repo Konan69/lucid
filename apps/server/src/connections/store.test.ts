@@ -1,5 +1,5 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { Effect, Redacted, Ref, Layer } from 'effect'
+import { Deferred, Effect, Redacted, Ref, Layer } from 'effect'
 import {
   AuditEvent,
   ConnectionStep,
@@ -97,7 +97,6 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         })
         const executor = yield* Executor
         const probe = yield* ConnectionProbe
-        const catalogs = yield* Ref.get(probe.catalogs)
         const unavailable = Executor.of({
           ...executor,
           catalog: Effect.fn('Executor.Test.unavailable')(function* () {
@@ -112,11 +111,13 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           const listed = yield* offlineStore.list(ownerActor)
           expect(Object.keys(listed)).toEqual(['connections'])
           expect(listed.connections.map((row) => row.id)).toContain(step.connection.id)
-          expect(yield* Ref.get(probe.catalogs)).toBe(catalogs)
+          const afterBackground = yield* Ref.get(probe.catalogs)
+          yield* offlineStore.list(ownerActor)
+          expect(yield* Ref.get(probe.catalogs)).toBe(afterBackground)
           expect(yield* offlineStore.find('Records')).toEqual(
             ServiceCatalog.cases.Unavailable.make({}),
           )
-          expect(yield* Ref.get(probe.catalogs)).toBe(catalogs + 1)
+          expect(yield* Ref.get(probe.catalogs)).toBe(afterBackground + 1)
         }).pipe(
           Effect.provide(connectionStoreLayer, { local: true }),
           Effect.provideService(Executor, unavailable),
@@ -168,6 +169,14 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           const before = yield* Ref.get(probe.begins)
           const setupRequired = Executor.of({
             ...executor,
+            catalog: Effect.fn('Executor.Test.setupCatalog')(function* () {
+              return (yield* executor.catalog()).map((entry) =>
+                ExecutorServiceEntry.make({
+                  ...entry,
+                  authorization: ServiceAuthorization.cases.SetupRequired.make({}),
+                }),
+              )
+            }),
             authorization: Effect.fn('Executor.Test.setupRequired')(() =>
               Effect.succeed(ServiceAuthorization.cases.SetupRequired.make({})),
             ),
@@ -197,10 +206,10 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           )
         }),
     )
-    it.effect('bounds inspection to 24 candidates and leads with known connectable services', () =>
+    it.effect('searches optimistic catalog hints without waiting for inspection', () =>
       Effect.gen(function* () {
         const executor = yield* Executor
-        const inspections = yield* Ref.make(0)
+        const gate = yield* Deferred.make<void>()
         const entries = Array.from({ length: 30 }, (_, index) =>
           ExecutorServiceEntry.make({
             id: ServiceId.make(`service-${index}`),
@@ -216,7 +225,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           ...executor,
           catalog: Effect.fn('Executor.Test.largeCatalog')(() => Effect.succeed(entries)),
           authorization: Effect.fn('Executor.Test.inspect')(function* () {
-            yield* Ref.update(inspections, (count) => count + 1)
+            yield* Deferred.await(gate)
             return ServiceAuthorization.cases.SetupRequired.make({})
           }),
         })
@@ -226,13 +235,13 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           Effect.provide(connectionStoreLayer, { local: true }),
           Effect.provideService(Executor, inspection),
         )
-        expect(yield* Ref.get(inspections)).toBe(24)
+        expect(yield* Deferred.isDone(gate)).toBe(false)
         expect(ServiceCatalog.guards.Ready(found)).toBe(true)
         if (ServiceCatalog.guards.Ready(found)) {
           expect(found.total).toBe(30)
           expect(found.services).toHaveLength(24)
-          expect(found.services.slice(0, 6).map((service) => service.id)).toEqual(
-            entries.slice(24).map((service) => service.id),
+          expect(found.services.map((service) => service.id)).toEqual(
+            entries.slice(0, 24).map((service) => service.id),
           )
         }
       }),

@@ -29,6 +29,10 @@ import {
   connectionSetupMessage,
 } from './executor.ts'
 import { executorFailure } from './errors.ts'
+import { connectionStoreLayer, ConnectionStore } from './store.ts'
+import { connectionTestLayer } from './testing.ts'
+import { testDatabaseConfigured } from '../database/testdb.ts'
+import { ServiceCatalog } from '@vivid/contracts'
 
 const service = ServiceId.make('test/service')
 const references = ExecutorReferences.cases.Public.make({
@@ -85,6 +89,8 @@ const WireError = Schema.TaggedUnion({
   DeploymentNotFound: {},
   AccountNotFound: {},
   NewInputRefusal: { message: Schema.String },
+  OAuthSetupFailed: { reason: Schema.String },
+  OAuthClientUnavailable: {},
 })
 const Begin = Schema.Struct({ owner: Schema.String, name: Schema.String })
 const Resume = Schema.Struct({ owner: Schema.String, requestId: Schema.String })
@@ -816,40 +822,160 @@ for (const mode of ['automatic', 'saved', 'client-required']) {
   }
 }
 
-/** Expiry can observe newly configured operator setup; transient failures never establish setup absence. */
-it.effect(
-  'refreshes setup availability after ten minutes and does not cache inspection failures',
-  () =>
-    Effect.gen(function* () {
-      const remote = yield* setupFixture(false, 'client-required')
-      yield* Effect.gen(function* () {
-        const executor = yield* Executor
-        const input = { service, returnAddress: beginInput.returnAddress }
-        expect((yield* executor.authorization(input))._tag).toBe('SetupRequired')
-        yield* TestClock.adjust('10 minutes')
-        yield* Ref.update(remote.responses, (values) =>
-          new Map(values).set('POST /v1/account-connections/oauth/setup', reply(503, null)),
-        )
-        expect(
-          executorFailure(yield* executor.authorization(input).pipe(Effect.flip)),
-        ).toBeInstanceOf(ServiceUnavailable)
-        yield* Ref.update(remote.responses, (values) =>
-          new Map(values).set(
-            'POST /v1/account-connections/oauth/setup',
-            reply(200, { mode: 'automatic' }),
-          ),
-        )
-        expect((yield* executor.authorization(input))._tag).toBe('SignIn')
-        const requests = yield* Ref.get(remote.requests)
-        expect(
-          requests.filter((request) => request.path === 'POST /dashboard/api/catalog/import'),
-        ).toHaveLength(2)
-        expect(
-          requests.filter((request) => request.path === 'POST /v1/account-connections/oauth/setup'),
-        ).toHaveLength(3)
-      }).pipe(Effect.provide(remote.layer))
-    }).pipe(Effect.scoped),
+/** Negative inspection results protect the provider from repeated request retries, while expiry
+ * permits newly repaired setup to replace the retained fact on the next background pass.
+ */
+it.effect('retains failed inspection for ten minutes and retries on refresh', () =>
+  Effect.gen(function* () {
+    const remote = yield* setupFixture(false, 'client-required')
+    yield* Ref.update(remote.responses, (values) =>
+      new Map(values).set('POST /v1/account-connections/oauth/setup', reply(503, null)),
+    )
+    yield* Effect.gen(function* () {
+      const executor = yield* Executor
+      const input = { service, returnAddress: beginInput.returnAddress }
+      expect((yield* executor.authorization(input))._tag).toBe('SetupRequired')
+      expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+      yield* Ref.update(remote.responses, (values) =>
+        new Map(values).set(
+          'POST /v1/account-connections/oauth/setup',
+          reply(200, { mode: 'automatic' }),
+        ),
+      )
+      expect((yield* executor.authorization(input))._tag).toBe('SetupRequired')
+      yield* TestClock.adjust('10 minutes')
+      expect((yield* executor.authorization(input))._tag).toBe('SignIn')
+      expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+      expect(
+        (yield* Ref.get(remote.requests)).filter(
+          (request) => request.path === 'POST /v1/account-connections/oauth/setup',
+        ),
+      ).toHaveLength(2)
+    }).pipe(Effect.provide(remote.layer))
+  }).pipe(Effect.scoped),
 )
+
+/** Sign-in can discover missing client setup after an optimistic inspection. That authority failure
+ * must retain the pending references for cleanup and correct later catalog reads immediately.
+ */
+it.effect('records client-required from sign-in start and preserves the product failure', () =>
+  Effect.gen(function* () {
+    const remote = yield* setupFixture(false, 'automatic')
+    yield* Ref.update(remote.responses, (values) =>
+      new Map(values).set(
+        'POST /v1/account-connections/oauth/start',
+        reply(422, WireError.cases.OAuthClientUnavailable.make({})),
+      ),
+    )
+    yield* Effect.gen(function* () {
+      const executor = yield* Executor
+      const failure = yield* executor.begin(beginInput).pipe(Effect.flip)
+      expect(failure._tag).toBe('ExecutorSignInRequired')
+      expect(executorFailure(failure)).toEqual(
+        new InvalidRequest({ message: connectionSetupMessage }),
+      )
+      expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+    }).pipe(Effect.provide(remote.layer))
+  }).pipe(Effect.scoped),
+)
+
+/** A real HTTP response gate remains closed while virtual time expires the whole service lookup. */
+it.effect('times out inspection at five seconds and leaves the catalog readable', () =>
+  Effect.gen(function* () {
+    const remote = yield* setupFixture(false, 'automatic')
+    const gate = yield* Deferred.make<void>()
+    yield* Ref.set(remote.setupGate, Option.some(gate))
+    yield* Effect.gen(function* () {
+      const executor = yield* Executor
+      const completed = yield* Deferred.make<void>()
+      const inspection = yield* executor
+        .authorization({ service, returnAddress: beginInput.returnAddress })
+        .pipe(
+          Effect.tap(() => Deferred.succeed(completed, undefined)),
+          Effect.forkChild,
+        )
+      yield* Queue.take(remote.setupRequests)
+      yield* TestClock.adjust('4 seconds')
+      expect(yield* Deferred.isDone(completed)).toBe(false)
+      expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+      yield* TestClock.adjust('1 second')
+      expect((yield* Fiber.join(inspection))._tag).toBe('SetupRequired')
+      expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+      yield* Deferred.succeed(gate, undefined)
+    }).pipe(Effect.provide(remote.layer), Effect.ensuring(Deferred.succeed(gate, undefined)))
+  }).pipe(Effect.scoped),
+)
+
+/** Search crosses the production store and HTTP adapter; only the remote protocol is controlled.
+ * The database is the isolated test Layer, and searching needs no fixture writes.
+ */
+describe.skipIf(!testDatabaseConfigured)('Catalog search during setup inspection', () => {
+  it.effect('answers cold search while background setup is still blocked', () =>
+    Effect.gen(function* () {
+      const remote = yield* setupFixture(false, 'automatic')
+      const gate = yield* Deferred.make<void>()
+      yield* Ref.set(remote.setupGate, Option.some(gate))
+      const storeLayer = Layer.fresh(connectionStoreLayer).pipe(
+        Layer.provideMerge(remote.layer),
+        Layer.provide(connectionTestLayer),
+      )
+      yield* Effect.gen(function* () {
+        const store = yield* ConnectionStore
+        const result = yield* store.find('test/service')
+        expect(ServiceCatalog.guards.Ready(result)).toBe(true)
+        if (ServiceCatalog.guards.Ready(result)) {
+          expect(result.total).toBe(1)
+          expect(result.services.map((entry) => entry.authorization)).toEqual([
+            ServiceAuthorization.cases.SignIn.make({}),
+          ])
+        }
+        yield* Queue.take(remote.setupRequests)
+        expect((yield* store.find(''))._tag).toBe('Ready')
+        expect(yield* Deferred.isDone(gate)).toBe(false)
+      }).pipe(Effect.provide(storeLayer), Effect.ensuring(Deferred.succeed(gate, undefined)))
+    }).pipe(Effect.scoped),
+  )
+  for (const status of [422, 401, 503]) {
+    it.effect(`keeps search succeeding when one service's inspection returns HTTP ${status}`, () =>
+      Effect.gen(function* () {
+        const remote = yield* setupFixture(false, 'automatic')
+        yield* Ref.update(remote.responses, (values) =>
+          new Map(values)
+            .set(
+              'POST /v1/account-connections/oauth/setup',
+              reply(status, WireError.cases.OAuthSetupFailed.make({ reason: 'discovery_invalid' })),
+            )
+            .set(
+              'GET /dashboard/api/catalog',
+              reply(200, [
+                { ...catalogService(service), auth: { kind: 'oauth' } },
+                catalogService('test/public'),
+              ]),
+            ),
+        )
+        const storeLayer = Layer.fresh(connectionStoreLayer).pipe(
+          Layer.provideMerge(remote.layer),
+          Layer.provide(connectionTestLayer),
+        )
+        yield* Effect.gen(function* () {
+          const store = yield* ConnectionStore
+          const executor = yield* Executor
+          // Join the identical cached operation the background worker owns, not its request gate.
+          yield* executor.authorization({ service, returnAddress: 'http://127.0.0.1:8787/' })
+          const result = yield* store.find('test')
+          expect(ServiceCatalog.guards.Ready(result)).toBe(true)
+          if (ServiceCatalog.guards.Ready(result)) {
+            expect(result.total).toBe(2)
+            expect(result.services.map((entry) => [entry.id, entry.authorization])).toEqual([
+              ['test/public', ServiceAuthorization.cases.None.make({})],
+              [service, ServiceAuthorization.cases.SetupRequired.make({})],
+            ])
+          }
+        }).pipe(Effect.provide(storeLayer))
+      }).pipe(Effect.scoped),
+    )
+  }
+})
 
 /** A gate on actual HTTP setup responses proves four in-flight lookups globally, with one import. */
 it.effect('bounds simultaneous setup lookups and deduplicates public definition registration', () =>
