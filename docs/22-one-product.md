@@ -6,32 +6,39 @@ one wins until it is revised.
 
 ## The decision
 
-There is one Vivid per Company. A Person who signs up alone gets a Company of one, so the first
-screen is still the Thread and nothing is configured. Inviting a second Person changes nothing about
-how the first one works; it adds shared Threads, shared knowledge and shared Connections beside what
-was already private. There is no personal mode and no team mode, and no roster.
+There is one Vivid. A Person who signs up gets their own space and nothing else: the first screen
+is still the Thread and nothing is configured. A **Company** exists only because someone created it
+on purpose, by name; it is never made on a Person's behalf. Creating one, or accepting an
+invitation to one, adds a second workspace beside the personal one. Inside it the same Vivid works
+the same way, with shared Threads, shared knowledge and shared Connections beside what stays
+private. There is no personal product and no team product, and no roster.
+
+A session is always working in exactly one **workspace**: `Personal`, or `Company` with the role the
+Person holds there. Switching is one call and every open screen follows it.
 
 Vivid follows the nine Team Bot rules, applied to itself:
 
-| Rule                     | In Vivid                                                                                                                                              |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Set up once              | A Company owner or admin adds shared Connections, rules, skills and Library files once; they reach every Person's Threads.                            |
+| Rule                      | In Vivid                                                                                                                                             |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Set up once               | A Company owner or admin adds shared Connections, rules, skills and Library files once; they reach every Person's Threads.                           |
 | Conversations are private | A Thread is seen only by its audience. Nobody, including an owner, reads a Thread they are not in.                                                   |
-| Acts as the asker        | A personal Connection is used only for the Person who owns it. A shared Connection is read-only for everyone.                                         |
-| Two memories             | Notes with each Person are private. Company memory is shared and is written only when someone says the whole Company should know, and Vivid says so. |
-| Shared work asks first   | In a shared Thread, Vivid asks a Person before using that Person's own Connection.                                                                    |
-| Routines are personal    | A Routine belongs to the Person who set it up, runs as them and reports in their Thread.                                                              |
-| Secrets stay secret      | Credential values never enter model context, a Thread, or a log.                                                                                      |
-| Usage follows the asker  | A Run is attributed to the Person who started it.                                                                                                     |
-| Admins control reach     | Admins invite and remove people, set Company rules and shared Connections, and read the audit record. They do not read private Threads.               |
+| Acts as the asker         | A personal Connection is used only for the Person who owns it. A shared Connection is read-only for everyone.                                        |
+| Two memories              | Notes with each Person are private. Company memory is shared and is written only when someone says the whole Company should know, and Vivid says so. |
+| Shared work asks first    | In a shared Thread, Vivid asks a Person before using that Person's own Connection.                                                                   |
+| Routines are personal     | A Routine belongs to the Person who set it up, runs as them and reports in their Thread.                                                             |
+| Secrets stay secret       | Credential values never enter model context, a Thread, or a log.                                                                                     |
+| Usage follows the asker   | A Run is attributed to the Person who started it.                                                                                                    |
+| Admins control reach      | Admins invite and remove people, set Company rules and shared Connections, and read the audit record. They do not read private Threads.              |
 
 ## Domain model
 
 Only what changes. Existing terms keep the meanings in `CLAUDE.md`.
 
 ```text
-Company ── Membership(role: owner | admin | member) ── Person
-   │
+Person ── Workspace: Personal | Company(company, role)
+Company ── Membership(role: owner | admin | member) ── Person      (created explicitly, never implied)
+
+A workspace holds:
    ├── Thread            audience: Private | People(participants) | Company
    │     ├── Run         one admitted delivery; startedBy: Person | Routine | FollowUp
    │     ├── InputRequest   a question a Run could not answer alone
@@ -39,22 +46,27 @@ Company ── Membership(role: owner | admin | member) ── Person
    ├── Project           a work container; a Thread may be filed in one
    ├── Task              belongs to a Thread; assignee: Member | Outsider(name) | Nobody
    ├── Routine           owned by a Person; trigger: Schedule | Webhook
-   ├── Library           folders and items; scope: Personal(person) | Company
+   ├── Library           folders and items; shelf: Mine | Company
    ├── Connection        ownership: Personal(person) | Shared(company); backed by Executor
    ├── Rule              scope: Personal(person) | Company; decision: Allow | Ask | Never
    ├── Skill             a saved procedure; scope: Personal(person) | Company
    ├── Memory            scope: Person | Company | Thread; held in HelixDB
+   ├── Computer          one per Person, theirs in every workspace
    └── AuditEntry        who asked, what was touched, what changed
 ```
 
-Every product row carries `company_id`. A row that belongs to one Person also carries that Person's
-id as an owner column, never as part of a storage key or a Company identity. Scope and audience are
-tagged variants, not nullable columns that mean different things when set.
+Every product row carries `person_id`, the Person who owns it, and `company_id`, which is null for
+a record in that Person's personal space and names the Company otherwise. Those two columns are the
+only place the workspace is a nullable column; in code it is the `Workspace` union, and scope and
+audience are tagged variants. A Person's own rules, skills, Connections, Library shelf and Computer
+have no Company and follow them into every workspace; in a personal space a Thread is always
+private, because there is nobody to share it with.
 
 ### Who may see what
 
-One service, `Access`, answers every question about reach. Handlers and tools ask it; no store
-re-derives the rule.
+One module, `apps/server/src/auth/access.ts`, turns a call into an **Actor** (the Person it acts
+for, their workspace, and whether a Person or Vivid is calling) and supplies the conditions every
+query is scoped with. Thread reach is decided in `threads/access.ts`. No handler re-derives either.
 
 - **Thread:** the creator, the listed participants, or every Member when the audience is Company.
 - **Task:** anyone who can see its Thread, plus its creator and its assignee.
@@ -146,23 +158,33 @@ partitioned by Company.
 
 ## Realtime
 
-Two streams, each owned by the system that owns the data.
+Every read is a live query. Nothing on a screen is fetched and then left to go stale, and no
+client polls.
 
 - **The conversation** is Flue's durable stream, proxied by the server. Every participant in a
   shared Thread observes the same stream and sees the same tokens.
-- **Everything else** is one streaming call, `Watch`, on the existing RPC endpoint. It carries
-  change events for the Thread list, attention states, Tasks, notifications, Approvals and presence.
-  The server publishes an event when it writes; clients refresh the affected resource. Presence
-  (who has a Thread open, who is typing) is held in memory with a short expiry.
-
-Polling stays only as the fallback when the stream is down.
+- **Everything else** is declared twice in `VividRpc` from the same payload and result: `ListThings`
+  answers once, and `WatchThings` is a stream that sends the current result and then sends it again
+  whenever it changes. Clients hold their `Watch` subscriptions over one WebSocket (`/api/live`);
+  the runtime's tools use the plain form over HTTP (`/api/rpc`).
+- **How a result changes.** A write names whose data moved (a Person, a Company, a Thread) on a
+  PostgreSQL `LISTEN`/`NOTIFY` channel. Every live query watching that owner runs again, and a
+  result equal to the last one is not sent. Writers in other processes (the schedulers, a second
+  server) are heard the same way. The Actor is itself live: switching workspace or being removed
+  from a Company re-scopes every open query without a reconnect.
+- **Writes are optimistic.** A client applies its own change at once and the next result confirms
+  or corrects it.
+- **Presence** (who has a Thread open, who is typing) is held in memory with a short expiry.
 
 ## What a Person sees
 
 The surface rule in [Principle](01-principle.md) holds: a Thread list, a Thread, a settings gear.
 
-- **First run.** Sign up, then the Thread. The Company is created silently and named after the
-  Person. Suggestions on the empty screen come from that Person's own Tasks, Routines and Library.
+- **First run.** Sign up, then the Thread, in the Person's own space. Nothing else is asked.
+  Suggestions on the empty screen come from that Person's own Tasks, Routines and Library.
+- **Workspaces.** The switcher at the top of the sidebar lists the personal space and every Company
+  the Person belongs to, and ends with **Create a company**: a name, and that is all. An invitation
+  link shows who invited them and to what before they accept.
 - **Sidebar.** Vivid, then Today, Routines, Library and Projects, then Threads grouped by attention:
   **Needs you**, **Working**, then by day. A shared Thread shows the faces of the people in it. A
   search palette (⌘K) finds Threads, Messages, Library items, Tasks and Routines.
@@ -174,30 +196,38 @@ The surface rule in [Principle](01-principle.md) holds: a Thread list, a Thread,
   chasing and what needs a decision.
 - **Library.** Two shelves: **Mine** and the Company's.
 - **Settings.** General; **People** (invite, roles, remove); **Connections** (mine and shared);
-  **Rules** (mine and the Company's); **What Vivid knows**; notifications. Company sections appear
-  only for a Company of more than one, or for its owner.
-- **Mobile** uses the same contracts and the same Thread.
+  **Rules** (mine and the Company's); **What Vivid knows**; notifications. People, shared
+  Connections and Company rules appear only in a Company workspace.
+- **The Computer.** A panel beside the Thread shows the Person's own machine: its screen, what Vivid
+  is doing on it, and a control to take the keyboard and pointer back.
+- **Mobile** uses the same contracts and the same Thread, and pairs with a server by a code shown
+  on a signed-in device, so a phone reaches a Vivid running on the Person's own machine.
+- **Desktop** is the same web surface in a packaged app that remembers which server it talks to.
 
 ## Build order
 
 Each step leaves a product that runs.
 
-1. **Accounts and ownership.** Sign-up and sign-in on web; the Company of one; `company_id` and
-   owners on every product table; `Access`; Thread audience and participants; invitations and roles.
+1. **Accounts and ownership.** Sign-up and sign-in on web; the personal space; explicit Company
+   creation and workspace switching; owners on every product table; the Actor and its access
+   conditions; Thread audience and participants; invitations and roles.
 2. **The gateway and Runs.** `/api/vivid/*` behind the session; attributed delivery; Run records;
    settlement observed from Flue; attention states.
-3. **Realtime.** `Watch`, publish on write, presence, client refresh.
+3. **Realtime.** Live queries for every read, the change bus, presence, optimistic writes.
 4. **The trust loop.** Input requests, Approvals, rules, the audit record, and their cards.
 5. **Connections on Executor.** The adapter, ownership, `find_tools` and `use_tool`, the connect card.
 6. **Memory on HelixDB.** The store, the background pass, the brief, recall, the settings view.
 7. **Scoped work.** Tasks with Member assignees, personal Routines with a webhook trigger, the two
    Library shelves, Projects from real data, skills.
-8. **The surface.** Every screen on real data, the search palette, notifications, the empty states.
+8. **The Computer.** A machine per Person behind a provider boundary, with commands and a browser
+   that pass through the trust loop.
+9. **The surface.** Every screen on real data on web, mobile and desktop: the search palette,
+   notifications, the empty states, device pairing and the packaged desktop build.
 
 ## Not in this build
 
-- **The Computer.** A machine needs a provider account that this repository does not hold. The panel
-  shows its honest state rather than a fixture. [Computer](04-computer.md) is unchanged.
+- **A hosted machine provider.** The Computer runs on a local container provider behind the
+  `Machine` boundary; a hosted provider needs an account this repository does not hold.
 - **Voice.** The call work in `apps/web/src/call` stays as it is.
 - **Chat channels** (Slack, mail-in). The Thread model above is what they will deliver into.
 - **Ambient participation.** Vivid answers when addressed; it does not join rooms unasked.

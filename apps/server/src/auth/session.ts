@@ -84,22 +84,34 @@ export const authenticate = Effect.fn('Auth.authenticate')(function* (headers: H
   const person = yield* loadPerson(session.user.id)
   if (Option.isNone(person))
     return yield* Effect.fail(new Unauthenticated({ message: 'Person no longer exists' }))
+  const sessionId = SessionId.make(session.session.id)
+  return AuthState.Person({
+    person: person.value,
+    sessionId,
+    workspace: yield* sessionWorkspace(person.value.id, sessionId),
+  })
+})
+
+/**
+ * Where a session is working right now. Read fresh each time it is asked: switching workspace and
+ * being removed from a Company both take effect on open live queries without a reconnect.
+ */
+export const sessionWorkspace = Effect.fn('Auth.sessionWorkspace')(function* (
+  personId: PersonId,
+  sessionId: SessionId,
+) {
   const database = yield* Database
   const sessions = yield* database.run(
     database
       .select({ activeCompanyId: sessionTable.activeCompanyId })
       .from(sessionTable)
-      .where(eq(sessionTable.id, session.session.id))
+      .where(eq(sessionTable.id, sessionId))
       .limit(1),
   )
   const active = Option.flatMap(Option.fromUndefinedOr(sessions[0]), (row) =>
     Option.fromNullOr(row.activeCompanyId),
   )
-  return AuthState.Person({
-    person: person.value,
-    sessionId: SessionId.make(session.session.id),
-    workspace: yield* workspaceIn(person.value.id, active),
-  })
+  return yield* workspaceIn(personId, active)
 })
 
 /**
