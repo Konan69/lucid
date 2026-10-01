@@ -7,12 +7,10 @@ import * as Option from 'effect/Option'
 import * as Ref from 'effect/Ref'
 import * as Schema from 'effect/Schema'
 import * as Semaphore from 'effect/Semaphore'
-import {
-  ServerAddress,
-  ServerSettings,
-  SettingsSaveFailed,
-  defaultServerAddress,
-} from '../shared/settings.ts'
+import { ServerAddress, ServerSettings, SettingsSaveFailed } from '../shared/settings.ts'
+
+/** Keep the initial origin out of shared bridge modules that a web renderer can import. */
+const defaultServerAddress = ServerAddress.make('http://127.0.0.1:8787')
 
 const StoredSettings = Schema.Struct({ version: Schema.Literal(1), serverAddress: ServerAddress })
 const StoredJson = Schema.fromJsonString(StoredSettings)

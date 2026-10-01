@@ -18,9 +18,6 @@ export const ServerAddress = Schema.String.check(
 ).pipe(Schema.brand('DesktopServerAddress'))
 export type ServerAddress = typeof ServerAddress.Type
 
-/** The default belongs to main-process settings, never to the web build. */
-export const defaultServerAddress = ServerAddress.make('http://127.0.0.1:8787')
-
 /** First launch remains distinguishable from a Person explicitly selecting the default. */
 export const ServerSettings = Schema.TaggedUnion({
   Unconfigured: { serverAddress: ServerAddress },
