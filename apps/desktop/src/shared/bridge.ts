@@ -1,5 +1,6 @@
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
+import { ServerAddress, ServerSettings } from './settings.ts'
 
 /** The one renderer global exposed by the sandboxed preload. */
 export const BRIDGE_NAMESPACE = 'vividDesktop'
@@ -40,6 +41,8 @@ export interface ColorSchemeState extends Schema.Schema.Type<typeof ColorSchemeS
 export const BridgeRequest = Schema.TaggedUnion({
   GetAppInfo: {},
   GetColorSchemeState: {},
+  GetServerSettings: {},
+  SetServerAddress: { serverAddress: ServerAddress },
 })
 export type BridgeRequest = typeof BridgeRequest.Type
 
@@ -47,6 +50,8 @@ export type BridgeRequest = typeof BridgeRequest.Type
 export const BridgeResponse = Schema.TaggedUnion({
   AppInfo: { value: AppInfo },
   ColorSchemeState: { value: ColorSchemeState },
+  ServerSettings: { value: ServerSettings },
+  SettingsSaveFailed: {},
 })
 export type BridgeResponse = typeof BridgeResponse.Type
 
@@ -106,5 +111,7 @@ export const encodeBridgeEvent = (event: BridgeEvent) => encodeEvent(event)
 export interface VividDesktopBridge {
   readonly getAppInfo: () => Promise<AppInfo>
   readonly getColorSchemeState: () => Promise<ColorSchemeState>
+  readonly getServerSettings: () => Promise<ServerSettings>
+  readonly setServerAddress: (serverAddress: string) => Promise<ServerSettings>
   readonly onColorSchemeChanged: (listener: (state: ColorSchemeState) => void) => () => void
 }

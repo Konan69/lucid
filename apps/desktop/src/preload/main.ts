@@ -16,6 +16,9 @@ import {
   decodeBridgeResponse,
   encodeBridgeRequest,
 } from '../shared/bridge.ts'
+import { ServerAddress, SettingsSaveFailed } from '../shared/settings.ts'
+
+const decodeServerAddress = Schema.decodeUnknownEffect(ServerAddress)
 
 /** The Electron transport rejected a request before a typed response arrived. */
 class BridgeTransportFailed extends Schema.TaggedError<BridgeTransportFailed>()(
@@ -55,6 +58,22 @@ const getColorSchemeState = Effect.fn('DesktopPreload.getColorSchemeState')(func
   return yield* new UnexpectedBridgeResponse({ operation: 'getColorSchemeState' })
 })
 
+/** First-launch state lets the existing renderer own address selection without filesystem access. */
+const getServerSettings = Effect.fn('DesktopPreload.getServerSettings')(function* () {
+  const response = yield* invoke(BridgeRequest.cases.GetServerSettings.make({}))
+  if (BridgeResponse.guards.ServerSettings(response)) return response.value
+  return yield* new UnexpectedBridgeResponse({ operation: 'getServerSettings' })
+})
+
+/** Validate before IPC; main persists the selection before a subsequent renderer reload. */
+const setServerAddress = Effect.fn('DesktopPreload.setServerAddress')(function* (address: string) {
+  const serverAddress = yield* decodeServerAddress(address)
+  const response = yield* invoke(BridgeRequest.cases.SetServerAddress.make({ serverAddress }))
+  if (BridgeResponse.guards.ServerSettings(response)) return response.value
+  if (BridgeResponse.guards.SettingsSaveFailed(response)) return yield* new SettingsSaveFailed({})
+  return yield* new UnexpectedBridgeResponse({ operation: 'setServerAddress' })
+})
+
 /** Decode pushed messages before dispatching them to renderer listeners. */
 function subscribeToColorScheme(listener: (state: ColorSchemeState) => void): () => void {
   const receive = (_event: IpcRendererEvent, payload: typeof Schema.Unknown.Type): void => {
@@ -79,6 +98,8 @@ function subscribeToColorScheme(listener: (state: ColorSchemeState) => void): ()
 const bridge: VividDesktopBridge = {
   getAppInfo: (): Promise<AppInfo> => Effect.runPromise(getAppInfo()),
   getColorSchemeState: (): Promise<ColorSchemeState> => Effect.runPromise(getColorSchemeState()),
+  getServerSettings: () => Effect.runPromise(getServerSettings()),
+  setServerAddress: (address) => Effect.runPromise(setServerAddress(address)),
   onColorSchemeChanged: subscribeToColorScheme,
 }
 

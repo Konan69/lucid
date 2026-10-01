@@ -1,5 +1,4 @@
 import * as NodePath from 'node:path'
-import * as NodeURL from 'node:url'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
@@ -11,10 +10,10 @@ import type { ColorSchemeController } from './theme.ts'
 
 const SIDEBAR_WIDTH = 268
 
-/** The renderer is either one validated development origin or one packaged file. */
+/** Both modes load a same-origin URL; packaged mode serves its own local assets there. */
 export const RendererSource = Schema.TaggedUnion({
   Development: { url: Schema.URL },
-  Packaged: { file: Schema.String },
+  Packaged: { url: Schema.URL },
 })
 export type RendererSource = typeof RendererSource.Type
 
@@ -75,7 +74,10 @@ function isRendererDocument(url: string, source: RendererSource): boolean {
     onSome: (parsed) =>
       RendererSource.match(source, {
         Development: ({ url: developmentUrl }) => parsed.origin === developmentUrl.origin,
-        Packaged: ({ file }) => parsed.href === NodeURL.pathToFileURL(file).href,
+        Packaged: ({ url: serverUrl }) =>
+          parsed.origin === serverUrl.origin &&
+          parsed.pathname !== '/api' &&
+          !parsed.pathname.startsWith('/api/'),
       }),
   })
 }
@@ -98,7 +100,7 @@ export function openExternalUrl(url: string) {
 /** Block popups and off-origin navigation while handing allowed destinations to the OS. */
 function guardNavigation(
   window: BrowserWindow,
-  source: RendererSource,
+  source: () => RendererSource,
   onExternalUrl: (url: string) => void,
 ): void {
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -106,7 +108,7 @@ function guardNavigation(
     return { action: 'deny' }
   })
   window.webContents.on('will-navigate', (event, url) => {
-    if (isRendererDocument(url, source)) return
+    if (isRendererDocument(url, source())) return
     event.preventDefault()
     onExternalUrl(url)
   })
@@ -147,7 +149,7 @@ function persistGeometry(
 export interface MainWindowDependencies {
   readonly platform: DesktopPlatform
   readonly colorScheme: ColorSchemeController
-  readonly renderer: RendererSource
+  readonly renderer: () => RendererSource
   readonly placement: WindowPlacementValue
   readonly onExternalUrl: (url: string) => void
   readonly onPlacementChanged: (placement: WindowPlacementValue) => void
@@ -202,13 +204,13 @@ export const loadRenderer = Effect.fn('DesktopWindow.loadRenderer')(function* (
 ) {
   const label = RendererSource.match(source, {
     Development: ({ url }) => url.href,
-    Packaged: ({ file }) => file,
+    Packaged: ({ url }) => url.href,
   })
   yield* Effect.tryPromise({
     try: () =>
       RendererSource.match(source, {
         Development: ({ url }) => window.loadURL(url.href),
-        Packaged: ({ file }) => window.loadFile(file),
+        Packaged: ({ url }) => window.loadURL(url.href),
       }),
     catch: () => new RendererLoadFailed({ source: label }),
   })

@@ -14,11 +14,15 @@ import {
   encodeBridgeEvent,
   encodeBridgeResponse,
 } from '../shared/bridge.ts'
+import type { DesktopSettings } from './settings.ts'
+import type { ServerSettings } from '../shared/settings.ts'
 
 /** Main-process capabilities exposed through the closed bridge request union. */
 export interface BridgeHandlers {
   readonly getAppInfo: () => AppInfo
   readonly getColorSchemeState: () => ColorSchemeState
+  readonly settings: DesktopSettings['Service']
+  readonly onServerSettingsChanged: (value: ServerSettings) => void
 }
 
 /** Electron owns Promise execution; main.ts supplies the one Effect runtime boundary. */
@@ -34,10 +38,25 @@ const handleBridgeRequest = Effect.fn('DesktopBridge.handleRequest')(function* (
   handlers: BridgeHandlers,
 ) {
   const request = yield* decodeBridgeRequest(payload)
-  const response = BridgeRequest.match<BridgeResponse>(request, {
-    GetAppInfo: () => BridgeResponse.cases.AppInfo.make({ value: handlers.getAppInfo() }),
+  const response = yield* BridgeRequest.match<Effect.Effect<BridgeResponse>>(request, {
+    GetAppInfo: () =>
+      Effect.succeed(BridgeResponse.cases.AppInfo.make({ value: handlers.getAppInfo() })),
     GetColorSchemeState: () =>
-      BridgeResponse.cases.ColorSchemeState.make({ value: handlers.getColorSchemeState() }),
+      Effect.succeed(
+        BridgeResponse.cases.ColorSchemeState.make({ value: handlers.getColorSchemeState() }),
+      ),
+    GetServerSettings: () =>
+      handlers.settings.get.pipe(
+        Effect.map((value) => BridgeResponse.cases.ServerSettings.make({ value })),
+      ),
+    SetServerAddress: ({ serverAddress }) =>
+      handlers.settings.set(serverAddress).pipe(
+        Effect.tap((value) => Effect.sync(() => handlers.onServerSettingsChanged(value))),
+        Effect.map((value) => BridgeResponse.cases.ServerSettings.make({ value })),
+        Effect.catchTag('SettingsSaveFailed', () =>
+          Effect.succeed(BridgeResponse.cases.SettingsSaveFailed.make({})),
+        ),
+      ),
   })
   return yield* encodeBridgeResponse(response)
 })

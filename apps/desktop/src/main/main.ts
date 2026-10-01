@@ -25,8 +25,12 @@ import { ColorSchemeController } from './theme.ts'
 import { loadThemeSurfaces } from './tokens.ts'
 import { RendererSource, createMainWindow, loadRenderer, openExternalUrl } from './window.ts'
 import { AppInfo, type DesktopPlatform } from '../shared/bridge.ts'
+import { DesktopSettings, settingsLayer } from './settings.ts'
+import { registerPackagedRenderer } from './renderer.ts'
 
 const PLACEMENT_FILE = 'window-placement.json'
+// The workspace package name is scoped; native application identity and userData must use Vivid.
+app.setName('Vivid')
 const knownPlatform = Schema.decodeUnknownOption(
   Schema.Literals(['darwin', 'win32', 'linux'] as const),
 )
@@ -95,13 +99,8 @@ function themeTokensPath(): string {
     : NodePath.resolve(__dirname, '../../../../packages/design/tokens/src/tokens.css')
 }
 
-/** Build the renderer source without exposing a service origin to renderer JavaScript. */
-const rendererSource = Effect.fn('DesktopMain.rendererSource')(function* () {
-  if (app.isPackaged) {
-    return RendererSource.cases.Packaged.make({
-      file: NodePath.join(NodeProcess.resourcesPath, 'web', 'dist', 'index.html'),
-    })
-  }
+/** Development retains its configured Vite origin; packaged builds use persisted server settings. */
+const developmentRenderer = Effect.fn('DesktopMain.developmentRenderer')(function* () {
   return RendererSource.cases.Development.make({ url: yield* loadDevelopmentRendererUrl() })
 })
 
@@ -138,7 +137,23 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
   installApplicationMenu(platform)
 
   const surfaces = yield* loadThemeSurfaces(themeTokensPath())
-  const renderer = yield* rendererSource()
+  const settings = yield* DesktopSettings
+  let serverSettings = yield* settings.get
+  const development = app.isPackaged
+    ? Option.none<RendererSource>()
+    : Option.some(yield* developmentRenderer())
+  /** The navigation guard and asset handler follow the same durable server selection. */
+  const renderer = (): RendererSource =>
+    Option.getOrElse(development, () =>
+      RendererSource.cases.Packaged.make({ url: new URL(serverSettings.serverAddress) }),
+    )
+  if (app.isPackaged) {
+    registerPackagedRenderer(
+      NodePath.join(NodeProcess.resourcesPath, 'web', 'dist'),
+      () => serverSettings.serverAddress,
+      (program) => Effect.runPromise(program),
+    )
+  }
   const information = yield* appInfo()
   const placementPath = NodePath.join(app.getPath('userData'), PLACEMENT_FILE)
   const storedPlacement = Option.getOrElse(
@@ -156,6 +171,17 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
     {
       getAppInfo: () => information,
       getColorSchemeState: () => colorScheme.getState(),
+      settings,
+      onServerSettingsChanged: (value) => {
+        serverSettings = value
+        // Let the invoke response reach preload before replacing the renderer's document.
+        if (app.isPackaged)
+          setImmediate(() =>
+            Option.map(mainWindow, (window) =>
+              runNonFatal(loadRenderer(window, renderer()), 'desktop: renderer failed to load'),
+            ),
+          )
+      },
     },
     { run: (program) => Effect.runPromise(program) },
   )
@@ -185,7 +211,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
     window.on('closed', () => {
       mainWindow = Option.none()
     })
-    runNonFatal(loadRenderer(window, renderer), 'desktop: renderer failed to load')
+    runNonFatal(loadRenderer(window, renderer()), 'desktop: renderer failed to load')
   }
 
   createWindowAction = Option.some(createWindow)
@@ -225,7 +251,11 @@ if (!hasSingleInstanceLock) {
     try: () => app.whenReady(),
     catch: () => new DesktopRuntimeInvalid({ field: 'readiness' }),
   }).pipe(
-    Effect.flatMap(() => boot()),
+    Effect.flatMap(() =>
+      boot().pipe(
+        Effect.provide(settingsLayer(NodePath.join(app.getPath('userData'), 'settings.json'))),
+      ),
+    ),
     Effect.matchEffect({
       onFailure: () =>
         Effect.sync(() => {
