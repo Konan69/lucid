@@ -99,7 +99,7 @@ const providerLayer = Layer.effect(
         return yield* Effect.fail(new MachineOperationFailed({ operation: 'startup' }))
       const state = ComputerState.cases.Running.make({
         since: 100,
-        screenAddress: 'http://127.0.0.1:62001/vnc.html',
+        screenAddress: computerScreenAddress,
       })
       yield* Ref.update(evidence.states, (states) => new Map(states).set(key, state))
       return state
@@ -133,7 +133,7 @@ const providerLayer = Layer.effect(
       if (!ComputerState.guards.Running(state))
         return yield* Effect.fail(new MachineNotRunning({ key }))
       return {
-        address: state.screenAddress,
+        address: 'ws://127.0.0.1:62001/websockify',
         authorization: Redacted.make('test-only-screen-authority'),
       }
     })

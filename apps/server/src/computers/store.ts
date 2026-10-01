@@ -32,12 +32,16 @@ import { Database, decodeStored, type DatabaseInfrastructureError } from '../dat
 import { type Actor } from '../auth/access.ts'
 import { Gate, GateDecision, ActionOutcome } from '../approvals/gate.ts'
 import { Changes, Topic } from '../live/changes.ts'
-import { Machine, MachineKey, type MachineFailure, type MachineScreen } from './machine.ts'
+import {
+  Machine,
+  MachineKey,
+  computerScreenAddress,
+  type MachineFailure,
+  type MachineScreen,
+} from './machine.ts'
 import { computers } from './tables.ts'
 
-/** The viewer is routed through session authentication; provider addresses never enter RPC data. */
-export const computerScreenAddress =
-  '/api/computer/screen/vnc.html?autoconnect=1&resize=scale&path=api/computer/screen/websockify'
+export { computerScreenAddress } from './machine.ts'
 
 const columns = { id: ComputerId, machine: MachineKey, since: Schema.Number, held: Schema.Boolean }
 const Stored = Schema.Union([

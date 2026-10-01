@@ -8,7 +8,7 @@ import * as NodeHttpClient from '@effect/platform-node/NodeHttpClient'
 import * as NodeServices from '@effect/platform-node/NodeServices'
 import { describe, expect, it } from '@effect/vitest'
 import { eq, inArray } from 'drizzle-orm'
-import { Effect, Layer, Option } from 'effect'
+import { Effect, Layer, Option, Stream } from 'effect'
 import { ComputerState, Person } from '@vivid/contracts'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
@@ -20,7 +20,7 @@ import { authEffect, localAuthRuntimeLayer } from '../auth/provider.ts'
 import { personTable } from '../auth/tables.ts'
 import { Database, decodeStored } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer, testConfigLayer } from '../database/testdb.ts'
-import { silentChangesLayer } from '../live/changes.ts'
+import { Changes, Topic, changesLayer } from '../live/changes.ts'
 import { dockerCommand, dockerMachineLayer } from './docker.ts'
 import { Machine } from './machine.ts'
 import {
@@ -29,7 +29,6 @@ import {
   computerMachineKey,
   computerScreenAddress,
 } from './store.ts'
-import { computers } from './tables.ts'
 import { computerScreenRoutes } from './screen.ts'
 
 const image = 'vivid-computer:test'
@@ -41,7 +40,7 @@ const context = NodePath.resolve(
 const dependencies = Layer.mergeAll(
   testDatabaseLayer,
   testConfigLayer,
-  silentChangesLayer,
+  changesLayer.pipe(Layer.provide(testDatabaseLayer)),
   dockerMachineLayer(image),
   NodeServices.layer,
   NodeHttpClient.layerUndici,
@@ -121,29 +120,58 @@ const machineFixture = Effect.fn('Computer.screen.test.machine')(function* (pers
       Effect.catch(() => Effect.sync(() => expect.fail('Screen test Docker cleanup failed.'))),
     ),
   )
-  const machine = yield* Machine
-  const running = yield* machine.ensure(key)
-  const database = yield* Database
-  yield* database.run(
-    database.insert(computers).values({
-      id: NodeCrypto.randomUUID(),
-      personId: person.id,
-      machine: key,
-      status: 'running',
-      since: running.since,
-      reason: null,
-      held: false,
-      createdAt: running.since,
-    }),
+  const changes = yield* Changes
+  const store = yield* ComputerStore
+  const moved = yield* changes.subscribe([Topic.person(person.id)])
+  expect((yield* store.start(person.id)).state._tag).toBe('Starting')
+  const ready = yield* Stream.concat(Stream.make(undefined), moved).pipe(
+    Stream.mapEffect(() => store.get(person.id)),
+    Stream.filter((computer) => ComputerState.isAnyOf(['Running', 'Failed'])(computer.state)),
+    Stream.runHead,
   )
+  if (Option.isNone(ready)) expect.fail('Computer startup must publish its terminal receipt.')
+  expect(ready.value.state._tag).toBe('Running')
+  if (ComputerState.guards.Running(ready.value.state))
+    expect(ready.value.state.screenAddress).toBe('/api/computer/screen/websockify')
   return key
+})
+
+/** WebSocket frames may be text or binary; protocol assertions use their exact UTF-8 bytes. */
+const frameBytes = (frames: ReadonlyArray<Uint8Array | string>) =>
+  frames.flatMap((frame) =>
+    Array.from(frame instanceof Uint8Array ? frame : new TextEncoder().encode(frame)),
+  )
+
+/** Complete RFB's None-security handshake through the cookie proxy; the client never receives or supplies a credential. */
+const desktop = Effect.fn('Computer.screen.test.desktop')(function* (
+  address: string,
+  cookie: string,
+  origin: string,
+) {
+  const client = yield* connection(address, cookie, origin)
+  const greeting = yield* client.reader.pull
+  const bytes = frameBytes(greeting)
+  expect(new TextDecoder().decode(new Uint8Array(bytes))).toBe('RFB 003.008\n')
+  yield* client.writer.write(new TextEncoder().encode('RFB 003.008\n'))
+  const security = yield* client.reader.pull
+  expect(frameBytes(security)).toEqual([1, 1])
+  yield* client.writer.write(new Uint8Array([1]))
+  const accepted = yield* client.reader.pull
+  expect(frameBytes(accepted)).toEqual([0, 0, 0, 0])
+  yield* client.writer.write(new Uint8Array([1]))
+  const initialized = yield* client.reader.pull
+  const header = frameBytes(initialized)
+  expect(header.length).toBeGreaterThanOrEqual(24)
+  const view = new DataView(new Uint8Array(header).buffer)
+  expect(view.getUint16(0)).toBeGreaterThan(0)
+  expect(view.getUint16(2)).toBeGreaterThan(0)
 })
 
 describe.skipIf(process.env.VIVID_TEST_DOCKER !== '1' || !testDatabaseConfigured)(
   'Authenticated Computer screen',
   () => {
     it.live(
-      'proxies noVNC assets and both WebSocket directions only for the owning Person',
+      'serves only an authenticated RFB upgrade for the owning Person, without a browser credential',
       () =>
         Effect.gen(function* () {
           const database = yield* Database
@@ -170,15 +198,12 @@ describe.skipIf(process.env.VIVID_TEST_DOCKER !== '1' || !testDatabaseConfigured
           })
           expect(yield* built.exitCode).toBe(0)
           const key = yield* machineFixture(first.person)
-          const running = yield* (yield* Machine).ensure(key)
-          expect((yield* HttpClient.get(running.screenAddress)).status).toBe(403)
-          const direct = new URL('/websockify', running.screenAddress)
-          direct.protocol = 'ws:'
-          const unauthenticated = yield* connection(
-            direct.href,
-            '',
-            new URL(running.screenAddress).origin,
-          ).pipe(Effect.scoped, Effect.result)
+          const endpoint = yield* (yield* Machine).screen(key)
+          const direct = new URL(endpoint.address)
+          const unauthenticated = yield* connection(direct.href, '', 'http://vivid.local').pipe(
+            Effect.scoped,
+            Effect.result,
+          )
           expect(unauthenticated._tag).toBe('Failure')
           const origin = HttpServer.formatAddress((yield* HttpServer.HttpServer).address)
           const address = `${origin}${computerScreenAddress}`
@@ -186,34 +211,35 @@ describe.skipIf(process.env.VIVID_TEST_DOCKER !== '1' || !testDatabaseConfigured
           expect(
             (yield* HttpClient.get(address, { headers: { cookie: second.cookie } })).status,
           ).toBe(404)
-          const document = yield* HttpClient.get(address, { headers: { cookie: first.cookie } })
-          expect(document.status).toBe(200)
-          expect(yield* document.text).toContain('noVNC')
-          expect(document.headers['cache-control']).toBe('no-store')
-          const asset = yield* HttpClient.get(`${origin}/api/computer/screen/core/rfb.js`, {
-            headers: { cookie: first.cookie },
-          })
-          expect(asset.status).toBe(200)
-          expect(yield* asset.text).toContain('RFB')
-          const url = new URL(`${origin}/api/computer/screen/websockify`)
+          for (const path of [
+            computerScreenAddress,
+            '/api/computer/screen/vnc.html',
+            '/api/computer/screen/core/rfb.js',
+          ]) {
+            const response = yield* HttpClient.get(`${origin}${path}`, {
+              headers: { cookie: first.cookie },
+            })
+            expect(response.status).toBe(404)
+            expect(response.headers['cache-control']).toBe('no-store')
+          }
+          expect(
+            (yield* HttpClient.post(address, { headers: { cookie: first.cookie } })).status,
+          ).toBe(404)
+          const url = new URL(address)
           url.protocol = 'ws:'
-          yield* Effect.scoped(
-            Effect.gen(function* () {
-              const client = yield* connection(url.href, first.cookie, origin)
-              const greeting = yield* client.reader.pull
-              const bytes = greeting.flatMap((frame) =>
-                Array.from(frame instanceof Uint8Array ? frame : new TextEncoder().encode(frame)),
-              )
-              expect(new TextDecoder().decode(new Uint8Array(bytes))).toBe('RFB 003.008\n')
-              yield* client.writer.write(new TextEncoder().encode('RFB 003.008\n'))
-              const security = yield* client.reader.pull
-              expect(
-                security.flatMap((frame) =>
-                  Array.from(frame instanceof Uint8Array ? frame : new TextEncoder().encode(frame)),
-                ),
-              ).toEqual([1, 1])
-            }),
+          yield* desktop(url.href, first.cookie, origin).pipe(Effect.scoped)
+          const anonymous = yield* connection(url.href, '', origin).pipe(
+            Effect.scoped,
+            Effect.result,
           )
+          expect(anonymous._tag).toBe('Failure')
+          const assetUpgrade = new URL(`${origin}/api/computer/screen/vnc.html`)
+          assetUpgrade.protocol = 'ws:'
+          const assetRefused = yield* connection(assetUpgrade.href, first.cookie, origin).pipe(
+            Effect.scoped,
+            Effect.result,
+          )
+          expect(assetRefused._tag).toBe('Failure')
           const refused = yield* connection(url.href, second.cookie, origin).pipe(
             Effect.scoped,
             Effect.result,

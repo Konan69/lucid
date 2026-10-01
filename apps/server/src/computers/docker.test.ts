@@ -316,12 +316,15 @@ describe.skipIf(process.env.VIVID_TEST_DOCKER !== '1')('local Computer', () => {
         const before = performance.now()
         const running = yield* machine.ensure(key)
         console.info(`Computer cold start milliseconds: ${Math.round(performance.now() - before)}`)
-        expect(running.screenAddress).toContain('/vnc.html')
-        const screenPort = Number(new NodeURL.URL(running.screenAddress).port)
+        expect(running.screenAddress).toBe('/api/computer/screen/websockify')
+        const initialScreen = yield* machine.screen(key)
+        const direct = new NodeURL.URL(initialScreen.address)
+        const screenPort = Number(direct.port)
         expect(screenPort).toBeGreaterThanOrEqual(61000)
         expect(screenPort).toBeLessThanOrEqual(65000)
-        const screen = yield* HttpClient.get(running.screenAddress)
-        expect(screen.status).toBe(403)
+        direct.protocol = 'http:'
+        const screen = yield* HttpClient.get(direct.href)
+        expect(screen.status).toBe(405)
         const network = yield* dockerCommand([
           'network',
           'inspect',
@@ -330,7 +333,6 @@ describe.skipIf(process.env.VIVID_TEST_DOCKER !== '1')('local Computer', () => {
           `vivid-computer-network-${key}`,
         ])
         expect(network.output.trim()).toBe('false')
-        const initialScreen = yield* machine.screen(key)
         const same = yield* machine.ensure(key)
         expect(same).toEqual(running)
         expect(ComputerState.guards.Running(yield* machine.status(key))).toBe(true)

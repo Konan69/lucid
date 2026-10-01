@@ -6,6 +6,9 @@ import {
 } from '@vivid/contracts'
 import { Context, Effect, Layer, Schema, type Redacted } from 'effect'
 
+/** App-owned RFB transport path; neither provider locations nor credentials belong in Running state. */
+export const computerScreenAddress = '/api/computer/screen/websockify'
+
 /** Opaque provider identity; the caller derives it without exposing a Person's identity. */
 export const MachineKey = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,62}$/)).pipe(
   Schema.brand('MachineKey'),

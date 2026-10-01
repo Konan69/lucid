@@ -20,6 +20,7 @@ import * as NodeCrypto from 'node:crypto'
 import { browserArguments, decodeBrowserOutput } from './browser.js'
 import {
   Machine,
+  computerScreenAddress,
   MachineInputInvalid,
   MachineExecutionUnknown,
   MachineNotRunning,
@@ -219,30 +220,27 @@ const timestamp = Effect.fn('Machine.docker.timestamp')(function* (value: string
   return since
 })
 
-/** Only healthy desktops have an embeddable screen; the loopback URL stays inside the server boundary. */
-const runningFacts = Effect.fn('Machine.docker.screen')(function* (
+/** Published endpoints remain private provider authority; wire Running state contains only the app's WebSocket path. */
+const screenEndpoint = Effect.fn('Machine.docker.screen')(function* (
   inspection: typeof Inspection.Type,
 ) {
-  const since = yield* timestamp(inspection.State.StartedAt)
   const ports = inspection.NetworkSettings.Ports['6080/tcp']
   if (ports === undefined || ports === null)
     return yield* Effect.fail(new MachineResponseInvalid({ operation: 'screen' }))
   const port = ports[0]
   if (port === undefined || port.HostIp !== '127.0.0.1')
     return yield* Effect.fail(new MachineResponseInvalid({ operation: 'screen' }))
-  return ComputerState.cases.Running.make({
-    since,
-    screenAddress: `http://127.0.0.1:${port.HostPort}/vnc.html?autoconnect=true&resize=scale`,
-  })
+  return `ws://127.0.0.1:${port.HostPort}/websockify`
 })
 
-/** Docker status is observed independently of app-owned Computer records. */
-const status = Effect.fn('Machine.docker.status')(function* (key: MachineKey) {
-  const inspected = yield* inspect(key)
-  if (Option.isNone(inspected)) return ComputerState.cases.Absent.make({})
-  const { State: state } = inspected.value
+/** A single inspected container supplies lifecycle state; authority hydration shares this observation. */
+const inspectedStatus = Effect.fn('Machine.docker.inspectedStatus')(function* (
+  key: MachineKey,
+  inspection: typeof Inspection.Type,
+) {
+  const state = inspection.State
   if (state.Status === 'created')
-    return ComputerState.cases.Starting.make({ since: yield* timestamp(inspected.value.Created) })
+    return ComputerState.cases.Starting.make({ since: yield* timestamp(inspection.Created) })
   if (state.Status !== 'running') {
     const since = yield* timestamp(state.FinishedAt)
     if (state.Error !== '' || state.ExitCode !== 0) {
@@ -256,7 +254,15 @@ const status = Effect.fn('Machine.docker.status')(function* (key: MachineKey) {
   const since = yield* timestamp(state.StartedAt)
   const ready = yield* dockerCommand(['exec', containerName(key), 'test', '-f', '/tmp/vivid/ready'])
   if (ready.exitCode !== 0) return ComputerState.cases.Starting.make({ since })
-  return yield* runningFacts(inspected.value)
+  yield* screenEndpoint(inspection)
+  return ComputerState.cases.Running.make({ since, screenAddress: computerScreenAddress })
+})
+
+/** Docker status is observed independently of app-owned Computer records, without exposing host addresses. */
+const status = Effect.fn('Machine.docker.status')(function* (key: MachineKey) {
+  const inspected = yield* inspect(key)
+  if (Option.isNone(inspected)) return ComputerState.cases.Absent.make({})
+  return yield* inspectedStatus(key, inspected.value)
 })
 
 /** The Computer has no capabilities; a disposable root helper only installs its namespace firewall. */
@@ -399,14 +405,20 @@ const authority = Effect.fn('Machine.docker.authority')(function* () {
   const browser = yield* Semaphore.make(1)
   /** Rehydrate tmpfs provider state after a server restart; private authority is never encoded on the wire. */
   const lookup = Effect.fn('Machine.docker.lookup')(function* (key: MachineKey) {
-    const facts = yield* status(key)
+    const inspected = yield* inspect(key)
+    if (Option.isNone(inspected)) return yield* Effect.fail(new MachineNotRunning({ key }))
+    const facts = yield* inspectedStatus(key, inspected.value)
     if (!ComputerState.guards.Running(facts))
       return yield* Effect.fail(new MachineNotRunning({ key }))
     const raw = yield* checked(['exec', containerName(key), 'cat', '/tmp/vivid/authorization'])
     const authorization = yield* Schema.decodeUnknownEffect(
       Schema.String.check(Schema.isPattern(/^Bearer [a-f0-9]{64}$/)),
     )(raw).pipe(Effect.mapError(() => new MachineResponseInvalid({ operation: 'screen' })))
-    return { facts, authorization: Redacted.make(authorization) }
+    return {
+      facts,
+      address: yield* screenEndpoint(inspected.value),
+      authorization: Redacted.make(authorization),
+    }
   })
   const running = yield* Cache.makeWith(lookup, {
     capacity: 256,
@@ -514,7 +526,7 @@ const actionOperations = ({ running, browser }: DockerAuthority) => {
   /** Only authenticated server-side proxy code consumes this authority; screenAddress remains credential-free. */
   const screen = Effect.fn('Machine.docker.endpoint')(function* (key: MachineKey) {
     const cached = yield* Cache.get(running, key)
-    return { address: cached.facts.screenAddress, authorization: cached.authorization }
+    return { address: cached.address, authorization: cached.authorization }
   })
   return { exec, browse, screen }
 }

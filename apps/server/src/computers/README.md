@@ -1,17 +1,19 @@
 # Computer local provider
 
-`Machine` owns Docker lifecycle, commands, browser steps and private screen authority. `computerStoreLayer` owns the Person's Computer and approvals; `computerHandlers` expose Vivid's calls. `computerScreenRoutes` authenticates HTTP assets and WebSocket upgrades with the session cookie and proxies only that Person's machine.
+`Machine` owns Docker lifecycle, commands, browser steps and private screen authority. `computerStoreLayer` owns the Person's Computer and approvals; `computerHandlers` expose Vivid's calls. `computerScreenRoutes` accepts only the exact `/api/computer/screen/websockify` WebSocket upgrade, authenticates its session cookie and browser Origin, and proxies only that Person's running machine. Every plain HTTP request beneath `/api/computer/screen/` returns 404, including HTML and JavaScript assets. `Running.screenAddress` is that WebSocket path alone; provider hosts, ports and credentials never enter Running state.
 
 Configure the server:
 
 ```dotenv
 VIVID_COMPUTER_PROVIDER=docker
-VIVID_COMPUTER_IMAGE=vivid-computer:local
+VIVID_COMPUTER_IMAGE=vivid-computer:test
 ```
 
-Build with `docker build --tag vivid-computer:local infra/computer`. Docker must be available to the server. No provider configured means `Unavailable`.
+Build with `docker build --tag vivid-computer:test infra/computer`. Docker must be available to the server. No provider configured means `Unavailable`.
 
-Each Computer has its own bridge network with inter-container communication disabled, a durable home volume, and a loopback-only noVNC port. A random 256-bit credential rotates on every container start. It travels on stdin to a mode-0600 tmpfs file, stays redacted in provider memory, and is supplied only by the server proxy's Authorization header. Both direct HTTP access and direct WebSocket upgrades require it. Credentials never enter screen URLs or client responses. A server restart can recover provider authority from the container's tmpfs state. The Docker daemon and installation administrator remain trusted.
+Each Computer has its own bridge network with inter-container communication disabled, a durable home volume, and a loopback-only RFB WebSocket port. A random 256-bit credential rotates on every container start. It travels on stdin to a mode-0600 tmpfs file, stays redacted in provider memory, and is supplied only by the server proxy's Authorization header. Direct WebSocket upgrades without it are refused. The container has no HTTP static server or noVNC assets. Credentials never enter screen URLs or client responses. A server restart can recover provider authority from the container's tmpfs state. The Docker daemon and installation administrator remain trusted.
+
+The proxy presents the credential during its server-side WebSocket upgrade to websockify, before upgrading the browser connection. Websockify then connects to x11vnc on container loopback `127.0.0.1:5900`. That RFB endpoint is not published and offers only RFB None security: the browser completes the protocol handshake without a password or challenge. The app uses its own bundled noVNC client; no HTML or JavaScript from the Computer is proxied or executed on the app origin. The stream carries only RFB protocol data. Authentication protects the published WebSocket endpoint, not the Person's shell from its own desktop.
 
 Shell source and browser step JSON travel on stdin, absent from host process argv and Docker exec metadata. A process spawn failure is definite; a transport failure or client deadline after spawn produces `MachineExecutionUnknown` and must not be retried automatically. In-container timeouts bound execution without stopping the desktop. Running facts are cached for actions, invalidated on failure or lifecycle change; plain `GetComputer` still reconciles with Docker.
 

@@ -2,7 +2,7 @@ FROM node:22-bookworm-slim
 
 # Debian owns the desktop/browser updates; Playwright supplies only the CDP client, not another browser.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends chromium xvfb openbox x11vnc novnc websockify \
+    && apt-get install -y --no-install-recommends chromium xvfb openbox x11vnc websockify \
        xterm iptables ca-certificates bash coreutils \
     && rm -rf /var/lib/apt/lists/* \
     && userdel node \

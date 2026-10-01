@@ -19,7 +19,7 @@ openbox --sm-disable &
 window_pid=$!
 x11vnc -display :99 -localhost -rfbport 5900 -forever -shared -nopw &
 vnc_pid=$!
-PYTHONPATH=/opt/vivid websockify --web=/usr/share/novnc --web-auth \
+PYTHONPATH=/opt/vivid websockify \
   --auth-plugin screen.ScreenAuth --auth-source /tmp/vivid/authorization 6080 127.0.0.1:5900 &
 screen_pid=$!
 # Container seccomp, namespaces, dropped capabilities and read-only root are the local isolation.
