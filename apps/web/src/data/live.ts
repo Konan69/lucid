@@ -1,7 +1,7 @@
 import { useAtomValue } from '@effect/atom-react'
-import type { LibraryShelf, Task, ThreadDetail, ThreadId } from '@vivid/contracts'
+import { Workspace, type LibraryShelf, type MeResponse, type Task, type ThreadDetail, type ThreadId } from '@vivid/contracts'
 import { LiveState, liveStateOf, type LiveQuery, type LiveResult } from '@vivid/state'
-import { Effect, Option } from 'effect'
+import { Effect, Option, Result } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import * as Atom from 'effect/unstable/reactivity/Atom'
 import { VividRpcClient } from '@vivid/client-runtime'
@@ -59,6 +59,26 @@ export const serviceSearch = Atom.make('')
  */
 export const services = engine.ask(serviceSearch, (client, query) => client.FindServices({ query }))
 
+/** The workspace a `WatchMe` result puts the Person in, as one comparable word. */
+const whereabouts = (result: LiveResult<MeResponse>) =>
+  AsyncResult.isSuccess(result)
+    ? Workspace.match(result.value.workspace, {
+        Personal: () => `personal:${result.value.person.id}`,
+        Company: ({ company }) => `company:${company.id}`,
+      })
+    : 'nowhere'
+
+let lastWhereabouts = 'nowhere'
+
+// A query that ended because it was not the Person's to see ("people", in their own space) was
+// answered for where they were. When they move, it is asked again; nothing else would ask it.
+engine.registry.subscribe(live.me.atom, (result) => {
+  const now = whereabouts(result)
+  if (now === lastWhereabouts) return
+  lastWhereabouts = now
+  engine.reopen()
+})
+
 /** Reads a live query. The component re-renders when, and only when, the result changes. */
 export function useLive<Value>(query: LiveQuery<Value>): LiveState<Value> {
   return liveStateOf(useAtomValue(query.atom))
@@ -85,13 +105,20 @@ const markSeen = (id: ThreadId, result: LiveResult<ThreadDetail>) => {
   const last = seen.get(id)
   if (last !== undefined && last >= moved) return
   seen.set(id, moved)
+  // Remembered at once so a burst of results reports once, and forgotten again if the report did
+  // not get through, so the next result tries again instead of leaving read work marked unread.
+  const forget = () => {
+    if (seen.get(id) === moved) seen.delete(id)
+  }
   void run(
     Effect.gen(function* () {
       const client = yield* VividRpcClient
       yield* client.MarkThreadRead({ id })
       yield* client.ReportPresence({ threadId: id, typing: false })
     }),
-  )
+  ).then((reported) => {
+    if (Result.isFailure(reported)) forget()
+  }, forget)
 }
 
 const seenQueries = new Map<ThreadId, LiveQuery<ThreadDetail>>()

@@ -38,6 +38,7 @@ import { Live } from '../ui/Live'
 import { Notice } from '../ui/Notice'
 import { Segmented } from '../ui/Segmented'
 import { Skeleton } from '../ui/Skeleton'
+import { BAR } from './bar'
 
 /** The shell imports this name for the item it asks Vivid about. */
 export type LibraryDocument = LibraryItem
@@ -387,7 +388,7 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
 function LibraryPane({ children }: { children: ReactNode }) {
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0">
-      <header className="flex h-(--topbar-h) shrink-0 items-center px-4">
+      <header className={BAR}>
         <h1 className="text-title font-title text-ink">Library</h1>
       </header>
       <div className="mx-auto w-full max-w-230 px-5 pt-2 sm:px-8">{children}</div>
@@ -471,7 +472,7 @@ function LibraryHeader({
     Item: ({ item }) => item.name,
   })
   return (
-    <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
+    <header className={BAR}>
       {(!browsingShelf || Option.isSome(folder)) && (
         <IconButton label="Back" onClick={browsing.back}>
           <ChevronRight className="size-4 rotate-180" />

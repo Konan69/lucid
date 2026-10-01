@@ -1,13 +1,20 @@
 import type { KeyboardEvent, ReactNode } from 'react'
 import { cn } from './cn'
+import { holdFocus, Layer } from './Layer'
 
+/* Where a menu hangs, and the corner it grows from: the one nearest what opened it, so it reads
+   as coming out of its trigger and not as arriving from the middle of nowhere. */
 const SIDE = {
-  below: 'top-full mt-1 left-0',
-  'below-end': 'top-full mt-1 right-0',
-  above: 'bottom-full mb-1 left-0',
+  below: 'top-full mt-1 left-0 origin-top-left',
+  'below-end': 'top-full mt-1 right-0 origin-top-right',
+  above: 'bottom-full mb-1 left-0 origin-bottom-left',
 } satisfies Record<string, string>
 
-const PLATE = 'z-50 min-w-56 animate-rise-in rounded-panel p-1 smooth-shadow-ring-lg glass'
+/* A menu is opened many times a day, so it arrives fast (120 ms) and from nearly full size: a
+   scale from 0.97 with opacity, never from nothing. It is a transition from a starting style, so
+   there is no keyframe to restart if it is opened twice quickly. */
+const PLATE =
+  'z-50 max-h-96 min-w-56 overflow-y-auto rounded-panel p-1 outline-none smooth-shadow-ring-lg transition-pop duration-(--dur-fast) ease-out glass starting:scale-97 starting:opacity-0'
 
 /**
  * Moves through a menu's choices with the arrow keys and leaves it with Escape. The choices are
@@ -67,7 +74,9 @@ export function Menu({
     <>
       <Backdrop onClose={onClose} />
       <div
+        ref={holdFocus}
         role="menu"
+        tabIndex={-1}
         onKeyDown={(event) => steer(event, onClose)}
         className={cn('absolute', PLATE, SIDE[side], className)}
       >
@@ -77,15 +86,16 @@ export function Menu({
   )
 }
 
+/* The corner a context menu grows from: the one under the pointer. */
+const CORNER = {
+  top: { left: 'origin-top-left', right: 'origin-top-right' },
+  bottom: { left: 'origin-bottom-left', right: 'origin-bottom-right' },
+} as const
+
 /** Where a pointer asked for a menu, in viewport pixels. */
 export interface MenuPoint {
   readonly x: number
   readonly y: number
-}
-
-/** Takes the keyboard when a context menu opens, so the arrow keys and Escape work at once. */
-const takeFocus = (menu: HTMLDivElement | null) => {
-  if (menu !== null) menu.focus()
 }
 
 /**
@@ -93,6 +103,8 @@ const takeFocus = (menu: HTMLDivElement | null) => {
  *
  * It hangs from whichever corner keeps it on screen: asked for in the lower half it opens upward,
  * in the right half leftward. Nothing is measured, so it is in the right place on its first paint.
+ * It is drawn over the page, not inside the list that asked, so nothing that list does to its own
+ * edges can cut it.
  */
 export function ContextMenu({
   at,
@@ -112,24 +124,25 @@ export function ContextMenu({
     '--menu-y': `${upward ? window.innerHeight - at.y : at.y}px`,
   } as React.CSSProperties
   return (
-    <>
+    <Layer>
       <Backdrop onClose={onClose} />
       <div
-        ref={takeFocus}
+        ref={holdFocus}
         role="menu"
         tabIndex={-1}
         onKeyDown={(event) => steer(event, onClose)}
         style={menuStyle}
         className={cn(
-          'fixed outline-none',
+          'fixed',
           leftward ? 'right-(--menu-x)' : 'left-(--menu-x)',
           upward ? 'bottom-(--menu-y)' : 'top-(--menu-y)',
+          CORNER[upward ? 'bottom' : 'top'][leftward ? 'right' : 'left'],
           PLATE,
         )}
       >
         {children}
       </div>
-    </>
+    </Layer>
   )
 }
 

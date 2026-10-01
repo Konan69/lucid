@@ -43,15 +43,22 @@ const PLACES = new Map<string, Route>([
   ['projects', Route.Projects()],
 ])
 
+/**
+ * One part of a path, as it was before it was escaped. A part that was never validly escaped
+ * (`/t/%`) has no reading, where the browser's own decoder would throw and take the page with it.
+ */
+const unescaped = Option.liftThrowable(decodeURIComponent)
+
 /** Reads a path. Anything unrecognised is the first screen rather than an error page. */
 export function parseRoute(pathname: string, search: string): Route {
   const [first, second] = pathname.split('/').filter((part) => part.length > 0)
   if (first === undefined) return Route.New()
-  if (first === 't' && second !== undefined) {
-    return Route.Thread({ id: ThreadId.make(decodeURIComponent(second)) })
+  const named = second === undefined ? Option.none<string>() : unescaped(second)
+  if (first === 't' && Option.isSome(named)) {
+    return Route.Thread({ id: ThreadId.make(named.value) })
   }
-  if (first === 'invite' && second !== undefined) {
-    return Route.Invite({ id: InvitationId.make(decodeURIComponent(second)) })
+  if (first === 'invite' && Option.isSome(named)) {
+    return Route.Invite({ id: InvitationId.make(named.value) })
   }
   if (first === 'device') {
     return Route.Device({

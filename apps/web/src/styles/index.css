@@ -53,11 +53,14 @@
     scrollbar-width: thin;
     scrollbar-color: var(--line-3) transparent;
   }
+  /* Less motion, not none: things still change, they stop travelling and stop repeating. A pulse
+     cut to 0.01 ms would still loop forever, so repetition is ended as well. */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
     *::after {
       animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
     }
   }
@@ -88,8 +91,10 @@
    border or `ring-line` beside it, and never raise a card's tier on hover: hover is a fill. */
 
 /* ── Glass: for what floats over live content ─────────────── */
+/* 92%: enough of the page comes through to say "this floats", not enough to read through it. At
+   78% the rows under an open menu were legible between its own rows. */
 @utility glass {
-  background: color-mix(in srgb, var(--surface-3) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-3) 92%, transparent);
   -webkit-backdrop-filter: blur(20px) saturate(1.6);
   backdrop-filter: blur(20px) saturate(1.6);
   @supports not (backdrop-filter: blur(1px)) {

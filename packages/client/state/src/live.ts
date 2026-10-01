@@ -48,18 +48,25 @@ const productFailure = (cause: Cause.Cause<ProductFailure | Cause.NoSuchElementE
     (error): error is ProductFailure => !Cause.isNoSuchElementError(error),
   )
 
-/** What a screen draws for an atom's current value. A failure with a last result keeps showing it. */
+/**
+ * What a screen draws for an atom's current value.
+ *
+ * A product failure that reaches an atom is always a final one (anything else is retried before it
+ * gets here), and a final one wins over whatever was on screen: when a session is revoked or a
+ * Person is removed from a Company, what they could see a moment ago must stop being shown. Only a
+ * failure with no product reason (an interruption, a defect) keeps the last result up.
+ */
 export const liveStateOf = <Value>(result: LiveResult<Value>): LiveState<Value> =>
   AsyncResult.match(result, {
     onInitial: () => LiveState.Loading(),
     onSuccess: (success) => LiveState.Ready({ value: success.value }),
     onFailure: (failure) =>
-      Option.match(failure.previousSuccess, {
-        onSome: (previous) => LiveState.Ready({ value: previous.value }),
+      Option.match(productFailure(failure.cause), {
+        onSome: (reason) => LiveState.Failed({ failure: reason }),
         onNone: () =>
-          Option.match(productFailure(failure.cause), {
+          Option.match(failure.previousSuccess, {
+            onSome: (previous) => LiveState.Ready({ value: previous.value }),
             onNone: () => LiveState.Loading(),
-            onSome: (reason) => LiveState.Failed({ failure: reason }),
           }),
       }),
   })
@@ -124,6 +131,9 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
   // The client, and so the socket, lives for as long as the page does.
   registry.mount(runtime)
 
+  // One per query: asks it again if it had ended. See `reopen`.
+  const reopeners = new Set<() => void>()
+
   const query = <Value>(
     watch: (client: Client) => Stream.Stream<Value, ProductFailure>,
   ): LiveQuery<Value> => {
@@ -137,6 +147,13 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
       ),
     )
     const view = Atom.optimistic(source)
+    reopeners.add(() => {
+      // Only a query something is reading, and only one that ended: an atom nobody has mounted
+      // would be started just by being asked how it is.
+      if (registry.getNodes().has(source) && AsyncResult.isFailure(registry.get(source))) {
+        registry.refresh(source)
+      }
+    })
     return {
       atom: view,
       expect: (change) => {
@@ -216,20 +233,39 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
    * Makes a change: shows it at once in every live query it touches, sends it, and tells each
    * expectation how it ended. On success the server's next result confirms it; on refusal the
    * expected change is taken back.
+   *
+   * Every expectation is settled however the call ends, including when it dies of something that
+   * is not a refusal at all: an expectation left waiting would hold its guess on screen forever
+   * and hide every later result from the server.
    */
-  const change = async <Value>(
+  const change = <Value>(
     program: (client: Client) => Effect.Effect<Value, ProductFailure>,
     ...expectations: ReadonlyArray<() => Settle>
   ) => {
     const settles = expectations.map((expectation) => expectation())
-    const result = await run(
+    let accepted = false
+    return run(
       Effect.gen(function* () {
         return yield* program(yield* VividRpcClient)
       }),
     )
-    for (const settle of settles) settle(Result.isSuccess(result))
-    return result
+      .then((result) => {
+        accepted = Result.isSuccess(result)
+        return result
+      })
+      .finally(() => {
+        for (const settle of settles) settle(accepted)
+      })
   }
 
-  return { registry, query, family, ask, run, change }
+  /**
+   * Asks every ended query again. A query ends when the server says it is not this Person's to
+   * see, and that answer is about where they were: after they switch workspace or sign in again
+   * the same question can have a different answer, and nothing else would ever ask it.
+   */
+  const reopen = () => {
+    for (const reopener of reopeners) reopener()
+  }
+
+  return { registry, query, family, ask, run, change, reopen }
 }

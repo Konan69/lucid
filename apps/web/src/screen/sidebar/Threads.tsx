@@ -189,7 +189,7 @@ interface RowProps {
 
 /** Fades what a row shows at rest while its action is under the pointer or has the keyboard. */
 const AT_REST =
-  'transition-opacity duration-(--dur-fast) group-hover/thread:opacity-0 group-has-[[data-row-action]:focus-visible]/thread:opacity-0'
+  'transition-opacity duration-(--dur-fast) group-focus-within/thread:opacity-0 group-hover/thread:opacity-0'
 
 /**
  * One Thread in the list. The row is a button that opens the Thread; what else can be done to it
@@ -225,7 +225,7 @@ function CardFace({ thread, active, onDo }: RowProps) {
       onDoubleClick={() => onDo(Doing.Renaming({ id: thread.id }))}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'relative block h-(--card-row-h) w-full cursor-pointer rounded-card px-2.5 py-2 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) outline-none select-none',
+        'relative block h-(--card-row-h) w-full cursor-pointer rounded-card px-2.5 py-2 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) select-none focus-visible:-outline-offset-2',
         active ? 'bg-surface-3' : 'bg-surface-2 hover:bg-wash-hover',
       )}
     >
@@ -298,7 +298,7 @@ function DoneAction({ thread }: { thread: Thread }) {
       aria-label={`${label}: ${thread.title}`}
       title={label}
       onClick={() => patchThread(thread.id, { archived: !thread.archived })}
-      className="pointer-events-none absolute top-1.5 right-1.5 inline-flex size-6 cursor-pointer items-center justify-center rounded-control text-ink-3 opacity-0 transition-opacity duration-(--dur-fast) group-hover/thread:pointer-events-auto group-hover/thread:opacity-100 hover:text-ink focus-visible:pointer-events-auto focus-visible:opacity-100"
+      className="pointer-events-none absolute top-1.5 right-1.5 z-10 inline-flex size-6 cursor-pointer items-center justify-center rounded-control text-ink-3 opacity-0 transition-opacity duration-(--dur-fast) group-focus-within/thread:pointer-events-auto group-focus-within/thread:opacity-100 group-hover/thread:pointer-events-auto group-hover/thread:opacity-100 hover:bg-wash-hover hover:text-ink active:scale-96"
     >
       {thread.archived ? <Undo2 className="size-3.5" /> : <Check className="size-3.5" />}
     </button>
@@ -408,7 +408,10 @@ function DeleteThread({ thread, onClose }: { thread: Thread; onClose: () => void
           variant="control"
           onClick={() => {
             onClose()
-            if (Route.$is('Thread')(router.route())) router.replace(Route.New())
+            // Only the Thread on screen has to be left; deleting another one from the list must
+            // not take the Person away from what they are reading.
+            const here = router.route()
+            if (Route.$is('Thread')(here) && here.id === thread.id) router.replace(Route.New())
             void change(
               (client) => client.DeleteThread({ id: thread.id }),
               () =>

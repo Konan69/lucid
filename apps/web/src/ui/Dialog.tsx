@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { cn } from './cn'
+import { holdFocus, keepFocusInside, Layer } from './Layer'
 
 const WIDTH = { sm: 'max-w-sm', md: 'max-w-md', lg: 'max-w-xl' } satisfies Record<string, string>
 
@@ -23,32 +24,37 @@ export function Dialog({
   children: ReactNode
 }) {
   return (
-    <div
-      role="presentation"
-      className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center bg-scrim p-4 backdrop-blur-scrim"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
-      }}
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') onClose()
-      }}
-    >
+    <Layer>
       <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        className={cn(
-          'w-full animate-rise-in rounded-panel bg-surface-1 p-5 smooth-shadow-ring-lg',
-          WIDTH[width],
-        )}
+        role="presentation"
+        className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center bg-scrim p-4 backdrop-blur-scrim"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) onClose()
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') onClose()
+          keepFocusInside(event)
+        }}
       >
-        <h2 className="text-dialog font-title text-ink">{title}</h2>
-        {description !== undefined && (
-          <p className="mt-1 text-label font-meta text-ink-3">{description}</p>
-        )}
-        <div className="mt-4">{children}</div>
+        <div
+          ref={holdFocus}
+          role="dialog"
+          aria-modal="true"
+          aria-label={title}
+          tabIndex={-1}
+          className={cn(
+            'w-full animate-rise-in rounded-panel bg-surface-1 p-5 smooth-shadow-ring-lg outline-none',
+            WIDTH[width],
+          )}
+        >
+          <h2 className="text-dialog font-title text-ink">{title}</h2>
+          {description !== undefined && (
+            <p className="mt-1 text-label font-meta text-ink-3">{description}</p>
+          )}
+          <div className="mt-4">{children}</div>
+        </div>
       </div>
-    </div>
+    </Layer>
   )
 }
 

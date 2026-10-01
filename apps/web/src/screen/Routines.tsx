@@ -27,6 +27,7 @@ import { Live } from '../ui/Live'
 import { Notice } from '../ui/Notice'
 import { Segmented } from '../ui/Segmented'
 import { Skeleton } from '../ui/Skeleton'
+import { BAR } from './bar'
 
 type Routine = routinesData.Routine
 type Occurrence = routinesData.Occurrence
@@ -103,7 +104,7 @@ export function Routines({
 
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0">
-      <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
+      <header className={BAR}>
         {!View.$is('Overview')(shown) && (
           <IconButton label="Back to Routines" onClick={() => goTo(View.Overview())}>
             <ChevronRight className="size-4 rotate-180" />
@@ -189,18 +190,17 @@ function RoutinesOverview({
 }) {
   return (
     <div>
-      <p className="px-0.5 text-meta font-meta text-ink-3">
-        What Vivid repeats, so you don&apos;t have to.
-      </p>
+      <p className="px-0.5 text-label text-ink-3">What Vivid repeats, so you don&apos;t have to.</p>
       <div className="mt-4">
         <Live state={state} loading={<Skeleton of="row" count={3} />}>
           {({ routines }) =>
             routines.length === 0 ? (
-              <div className="flex flex-col items-center rounded-card bg-surface-2 px-6 py-10 text-center smooth-shadow-ring-xs">
+              <div className="flex flex-col items-center px-6 py-16 text-center">
                 <Clock3 className="size-5 text-ink-4" />
-                <p className="mt-2 mb-4 max-w-sm text-label text-ink-3">
-                  No Routines yet. Write an instruction once and Vivid follows it on a schedule, or
-                  each time something calls it.
+                <p className="mt-3 text-title font-title text-ink">No routines yet</p>
+                <p className="mt-1 mb-5 max-w-sm text-label text-pretty text-ink-3">
+                  Write an instruction once and Vivid follows it on a schedule, or each time
+                  something calls it.
                 </p>
                 <Button icon={<Plus className="size-3.5" />} onClick={onCreate}>
                   New routine

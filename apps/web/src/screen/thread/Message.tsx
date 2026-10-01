@@ -57,11 +57,22 @@ function timeOf(message: FlueConversationMessage) {
   )
 }
 
-const textOf = (message: FlueConversationMessage) =>
+/** A message's words, without what Vivid did or asked beside them. */
+export const textOf = (message: FlueConversationMessage) =>
   message.parts
     .filter((part) => part.type === 'text')
     .map((part) => part.text)
     .join('\n\n')
+
+/**
+ * A Vivid message with nothing a Person can read in it: no words, no step, no card. The runtime
+ * writes one when a model call ends without producing anything. The Run's own state says what
+ * happened and is drawn in its place, so the empty shell (a face and a time beside nothing) is not.
+ */
+export const isBlank = (message: FlueConversationMessage) =>
+  message.role === 'assistant' &&
+  textOf(message).trim().length === 0 &&
+  !message.parts.some((part) => part.type === 'dynamic-tool')
 
 /**
  * One message in a Thread, drawn by who it is from. A Person's words are a bubble (theirs on the
@@ -85,7 +96,7 @@ export function Message({
 }
 
 /** A Person's words. In a shared Thread everyone else's carry their name and face. */
-function Said({
+export function Said({
   text,
   mine,
   from,

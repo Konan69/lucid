@@ -60,9 +60,12 @@ export function Sidebar({
   return (
     <aside
       inert={!open}
+      // Narrow: a drawer over the page that slides by its own width. Wide: a column beside the
+      // page that gives up its width. One element, so its contents and their state are the same
+      // sidebar either way.
       className={cn(
-        'hidden h-full shrink-0 flex-col overflow-hidden bg-surface-1 transition-width duration-(--dur-base) ease-out md:flex',
-        open ? 'w-(--sidebar-w) hairline-r' : 'w-0',
+        'fixed inset-y-0 left-0 z-40 flex h-full w-(--sidebar-w) shrink-0 flex-col overflow-hidden bg-surface-1 transition-pop duration-(--dur-base) ease-out md:static md:z-auto md:translate-x-0 md:transition-width',
+        open ? 'translate-x-0 hairline-r' : '-translate-x-full md:w-0',
       )}
     >
       {/* The inner column keeps its full width while the aside narrows, so nothing reflows. */}
@@ -186,9 +189,9 @@ function WorkspaceSwitcher({
   const inCompany = Workspace.guards.Company(me.workspace)
   const activeCompany = Workspace.guards.Company(me.workspace) ? me.workspace.company.id : null
 
-  function enter(to: 'personal' | CompanyMembership) {
+  async function enter(to: 'personal' | CompanyMembership) {
     setOpen(false)
-    void change((client) =>
+    const switched = await change((client) =>
       client.SwitchWorkspace({
         to:
           to === 'personal'
@@ -196,9 +199,10 @@ function WorkspaceSwitcher({
             : SwitchWorkspaceRequest.cases.Company.make({ companyId: to.company.id }),
       }),
     )
-    // The list of Threads is about to be a different list; the address should not point into the
-    // one the Person just left.
-    router.go(Route.New())
+    // Only once the server has moved the Person: a Thread started a moment too early would be
+    // made in the space they were leaving. A refused switch leaves them exactly where they were.
+    // The list of Threads is then a different list, so the address must not point into the old one.
+    if (Result.isSuccess(switched)) router.go(Route.New())
   }
 
   return (
@@ -216,7 +220,7 @@ function WorkspaceSwitcher({
           icon={<Avatar name={me.person.name} image={me.person.image ?? null} size={16} />}
           hint={inCompany ? undefined : <Check className="size-3.5 text-ink-2" />}
           selected={!inCompany}
-          onSelect={() => enter('personal')}
+          onSelect={() => void enter('personal')}
         >
           {me.person.name}
         </MenuItem>
@@ -231,7 +235,7 @@ function WorkspaceSwitcher({
               ) : undefined
             }
             selected={membership.company.id === activeCompany}
-            onSelect={() => enter(membership)}
+            onSelect={() => void enter(membership)}
           >
             {membership.company.name}
           </MenuItem>
@@ -254,10 +258,15 @@ function WorkspaceSwitcher({
 function CreateCompany({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState('')
   const [refusal, setRefusal] = useState<string | null>(null)
+  // One Company per press: a second Enter while the first is on its way must not make a second.
+  const [creating, setCreating] = useState(false)
 
   async function create() {
+    if (creating) return
+    setCreating(true)
     const result = await change((client) => client.CreateCompany({ name: name.trim() }))
     if (Result.isFailure(result)) {
+      setCreating(false)
       setRefusal('The company could not be created. Try again.')
       return
     }
@@ -293,8 +302,8 @@ function CreateCompany({ onClose }: { onClose: () => void }) {
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" disabled={name.trim().length === 0}>
-            Create company
+          <Button type="submit" variant="primary" disabled={creating || name.trim().length === 0}>
+            {creating ? 'Creating…' : 'Create company'}
           </Button>
         </DialogActions>
       </form>

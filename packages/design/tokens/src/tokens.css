@@ -288,6 +288,8 @@ html[data-theme='light'] body {
   --transition-property-surface: background-color, box-shadow;
   --transition-property-press: background-color, box-shadow, transform;
   --transition-property-width: width;
+  /* What floats in: a menu or a drawer. Opacity and the two transform longhands, nothing laid out. */
+  --transition-property-pop: opacity, scale, translate;
 
   /* One-off measures that recur: caps tracking, scrim blur, message bubble and rail label widths. */
   --tracking-caps: 0.06em;

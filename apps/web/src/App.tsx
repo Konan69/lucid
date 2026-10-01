@@ -79,7 +79,7 @@ function Shell({ me }: { me: MeResponse }) {
   if (Option.isSome(settings)) theme.set(settings.value.theme)
 
   return (
-    <div className="relative flex size-full">
+    <div className="group/shell relative flex size-full" data-rail={sidebarOpen ? 'open' : 'shut'}>
       <Sidebar
         me={me}
         route={route}
@@ -89,12 +89,20 @@ function Shell({ me }: { me: MeResponse }) {
         onNotifications={() => setOverlay('notifications')}
         unread={Option.match(notices, { onNone: () => 0, onSome: (value) => value.unreadCount })}
       />
-      {!sidebarOpen && (
+      {sidebarOpen ? (
+        // Under the drawer on a narrow window: the rest of the page, dimmed, closes it.
+        <button
+          aria-label="Close sidebar"
+          tabIndex={-1}
+          onClick={sidebar.hide}
+          className="fixed inset-0 z-30 animate-fade-in cursor-default bg-scrim md:hidden"
+        />
+      ) : (
         <button
           aria-label="Show sidebar"
           title="Show sidebar (⌘B)"
           onClick={sidebar.show}
-          className="absolute top-2 left-2 z-30 hidden size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink md:inline-flex"
+          className="absolute top-2 left-2 z-30 inline-flex size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"
         >
           <PanelLeft className="size-4" />
         </button>

@@ -43,7 +43,7 @@ export function Composer({
   return (
     <div className="shrink-0 px-4 pt-2 pb-3 sm:px-6 sm:pb-5">
       <div className="mx-auto w-full max-w-(--thread-max-w)">
-        <div className="relative rounded-composer bg-surface-3 smooth-shadow-ring-md">
+        <div className="relative rounded-composer bg-surface-3 smooth-shadow-ring-sm">
           {above !== undefined && above !== null && (
             <div className="absolute inset-x-0 bottom-full z-40 mb-3 flex justify-center sm:justify-end">
               {above}
@@ -51,6 +51,7 @@ export function Composer({
           )}
           <textarea
             rows={1}
+            aria-label={placeholder}
             placeholder={placeholder}
             value={message}
             onChange={(event) => {
@@ -62,7 +63,8 @@ export function Composer({
               setMessage(next)
             }}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
+              // While an input method is composing, Enter picks a candidate; it does not send.
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault()
                 submit()
               }

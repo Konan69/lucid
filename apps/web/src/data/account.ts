@@ -106,5 +106,15 @@ export const denyDevice = (userCode: string) => post('device/deny', { userCode }
  * new Person, and nothing from the previous session can still be on screen.
  */
 export const reload = (path: string) => {
-  location.assign(path)
+  // The path can come from a link someone else wrote (a return address after signing in), and
+  // `//elsewhere.example/x` is a path that names another site. Only a place in this app is gone
+  // to; anything else is the first screen.
+  const place = Option.liftThrowable((value: string) => new URL(value, location.origin))(path)
+  const here = Option.filter(place, (target) => target.origin === location.origin)
+  location.assign(
+    Option.match(here, {
+      onNone: () => '/',
+      onSome: (target) => `${target.pathname}${target.search}`,
+    }),
+  )
 }

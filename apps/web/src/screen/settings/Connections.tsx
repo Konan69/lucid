@@ -12,7 +12,7 @@ import {
   type Service,
 } from '@vivid/contracts'
 import { liveStateOf } from '@vivid/state'
-import { Redacted, Result } from 'effect'
+import { Option, Redacted, Result } from 'effect'
 import { Link2, Search } from 'lucide-react'
 import { useState } from 'react'
 import { change, live, LiveState, services, serviceSearch, useLive } from '../../data/live'
@@ -25,7 +25,37 @@ const HOW = (service: Service) =>
     SignIn: () => 'Sign in',
     Key: () => 'Key',
     None: () => 'No sign-in needed',
+    SetupRequired: () => 'Not set up on this Vivid',
   })
+
+/**
+ * A provider's sign-in address, when it is one a browser should be sent to. The address comes
+ * from the Connection layer and ends up in a tab, so anything that is not a web page (a script
+ * address, another app's scheme, something that does not parse) is treated as no address at all.
+ */
+const signInPage = (address: string) =>
+  Option.filter(
+    Option.liftThrowable((value: string) => new URL(value))(address),
+    (page) => page.protocol === 'https:' || page.protocol === 'http:',
+  )
+
+/**
+ * Sends the tab that was opened for a sign-in to the provider's page. The tab was opened by the
+ * click itself, before the server was asked anything, because a browser only lets a page open a
+ * tab while it is still handling the click. Without a tab or a real address there is nothing to
+ * show, and the caller says so.
+ */
+function showSignIn(tab: Window | null, address: string) {
+  const page = signInPage(address)
+  if (tab === null || Option.isNone(page)) {
+    if (tab !== null) tab.close()
+    return false
+  }
+  // The provider's page must not be able to reach back into this one.
+  tab.opener = null
+  tab.location.replace(page.value.href)
+  return true
+}
 
 const STANDING = (connection: Connection) =>
   ConnectionState.match(connection.state, {
@@ -58,6 +88,8 @@ export function Connections({ me }: { me: MeResponse }) {
   const shared = connections.filter((item) => ConnectionOwnership.guards.Shared(item.ownership))
 
   async function connect(service: Service, asShared: boolean) {
+    const signingIn = ServiceAuthorization.guards.SignIn(service.authorization)
+    const tab = signingIn ? window.open('about:blank', '_blank') : null
     const result = await change((client) =>
       client.BeginConnection({
         service: service.id,
@@ -66,17 +98,27 @@ export function Connections({ me }: { me: MeResponse }) {
       }),
     )
     if (Result.isFailure(result)) {
+      if (tab !== null) tab.close()
       setRefusal(`${service.name} could not be connected just now.`)
       return
     }
     setRefusal(null)
     ConnectionStep.match(result.success, {
-      // A provider's sign-in page opens in its own tab; this page hears that it finished through
-      // the live list and needs nothing from that tab.
-      OpenSignIn: ({ address }) => void window.open(address, '_blank', 'noopener,noreferrer'),
-      EnterKey: ({ connection, fields }) =>
-        setKeying({ id: connection.id, name: connection.serviceName, fields }),
-      Done: () => undefined,
+      // A provider's sign-in page is shown in its own tab; this page hears that it finished
+      // through the live list and needs nothing from that tab.
+      OpenSignIn: ({ address }) => {
+        if (showSignIn(tab, address)) return
+        setRefusal(
+          `${service.name}’s sign-in page could not be opened. Allow pop-ups for this page, then connect again.`,
+        )
+      },
+      EnterKey: ({ connection, fields }) => {
+        if (tab !== null) tab.close()
+        setKeying({ id: connection.id, name: connection.serviceName, fields })
+      },
+      Done: () => {
+        if (tab !== null) tab.close()
+      },
     })
   }
 
@@ -154,6 +196,10 @@ function Catalog({
         <input
           value={query}
           onChange={(event) => setQuery(event.currentTarget.value)}
+          // The catalog search takes at most this many characters; the field stops there too, so
+          // a longer name is never a request the server refuses.
+          maxLength={80}
+          aria-label="Search for a service"
           placeholder="Search for a service"
           className="min-w-0 flex-1 bg-transparent text-label text-ink outline-none placeholder:text-ink-3"
         />
@@ -199,20 +245,17 @@ function ServiceRow({
   onConnect: (service: Service) => void
   onShare?: (service: Service) => void
 }) {
+  // A catalog entry's description is written by whoever published it, often for another product
+  // by name, so the row says only what Vivid knows to be true: the service and how it is entered.
+  const offered = !ServiceAuthorization.guards.SetupRequired(service.authorization)
   return (
-    <Row
-      label={
-        <>
-          {service.name}
-          <span className="ml-2 text-meta font-meta text-ink-3">{HOW(service)}</span>
-        </>
-      }
-      detail={<span className="line-clamp-1">{service.description}</span>}
-    >
-      <Button size="sm" onClick={() => onConnect(service)}>
-        Connect
-      </Button>
-      {onShare !== undefined && (
+    <Row label={service.name} detail={HOW(service)}>
+      {offered && (
+        <Button size="sm" onClick={() => onConnect(service)}>
+          Connect
+        </Button>
+      )}
+      {offered && onShare !== undefined && (
         <Button size="sm" variant="ghost" onClick={() => onShare(service)}>
           For the company
         </Button>

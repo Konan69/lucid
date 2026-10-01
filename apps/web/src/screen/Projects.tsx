@@ -11,6 +11,7 @@ import { Field, Select } from '../ui/Field'
 import { Live } from '../ui/Live'
 import { Notice } from '../ui/Notice'
 import { Skeleton } from '../ui/Skeleton'
+import { BAR } from './bar'
 
 type Project = projectsData.Project
 
@@ -63,7 +64,7 @@ export function Projects({ onOpenThread }: { onOpenThread?: (id: ThreadId) => vo
 function Pane({ header, children }: { header: ReactNode; children: ReactNode }) {
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0">
-      <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">{header}</header>
+      <header className={BAR}>{header}</header>
       <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
         <div className="mx-auto w-full max-w-230 px-5 pt-1 pb-10 sm:px-8">{children}</div>
       </div>
