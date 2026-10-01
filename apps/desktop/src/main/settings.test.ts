@@ -4,105 +4,126 @@ import * as NodePath from 'node:path'
 import { describe, expect, it } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
-import {
-  DesktopSettings,
-  SettingsInvalid,
-  SettingsReadFailed,
-  readServerSettings,
-  settingsLayer,
-} from './settings.ts'
+import { DesktopSettings, readServerSettings, settingsLayer } from './settings.ts'
 import { ServerAddress, ServerSettings, SettingsSaveFailed } from '../shared/settings.ts'
 
 const decodeAddress = Schema.decodeUnknownEffect(ServerAddress)
-
-/** Every test owns a disposable directory; cleanup is registered before the first settings write. */
+/** Register disposal before any write; these fixtures never use an application data directory. */
 const directory = Effect.acquireRelease(
   Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-desktop-'))),
   (path) => Effect.sync(() => NodeFS.rmSync(path, { recursive: true, force: true })),
 )
 
 describe('desktop server settings', () => {
-  it.effect('persists an explicit selection and restores it on the next launch', () =>
+  it.effect('first launch has no server; choose and forget survive the next launch', () =>
     Effect.gen(function* () {
       const root = yield* directory
       const path = NodePath.join(root, 'settings.json')
       yield* Effect.gen(function* () {
         const settings = yield* DesktopSettings
-        expect(ServerSettings.guards.Unconfigured(yield* settings.get)).toBe(true)
+        expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
         const selected = yield* settings.set(yield* decodeAddress('https://vivid.example:8443'))
-        expect(yield* settings.get).toEqual(selected)
         expect(yield* readServerSettings(path)).toEqual(selected)
-        expect(ServerSettings.guards.Configured(selected)).toBe(true)
+        expect(NodeFS.readdirSync(root)).toEqual(['settings.json'])
+        expect(yield* settings.forget).toEqual(ServerSettings.cases.NoServer.make({}))
+        expect(yield* readServerSettings(path)).toEqual(ServerSettings.cases.NoServer.make({}))
       }).pipe(Effect.provide(settingsLayer(path)))
     }),
   )
 
-  it.effect('rejects corrupt, unsupported, and credential-bearing persisted settings', () =>
+  it.effect('preserves corrupt settings without overwriting earlier damaged copies', () =>
     Effect.gen(function* () {
       const root = yield* directory
       const path = NodePath.join(root, 'settings.json')
       for (const text of [
         '{',
-        '{"version":2,"serverAddress":"https://vivid.example"}',
+        '{"version":9}',
         '{"version":1,"serverAddress":"https://person:secret@vivid.example"}',
       ]) {
         NodeFS.writeFileSync(path, text)
-        expect(yield* Effect.flip(readServerSettings(path))).toBeInstanceOf(SettingsInvalid)
+        expect(yield* readServerSettings(path)).toEqual(ServerSettings.cases.NoServer.make({}))
+        expect(NodeFS.existsSync(path)).toBe(false)
       }
+      const backups = NodeFS.readdirSync(root).filter((name) => name.endsWith('.damaged'))
+      expect(backups).toHaveLength(3)
+      expect(NodeFS.readFileSync(`${path}.damaged`, 'utf8')).toBe('{')
     }),
   )
 
-  it.effect('does not treat an unreadable path as first launch', () =>
+  it.effect('an unreadable path shows the chooser and preserves that path', () =>
     Effect.gen(function* () {
       const root = yield* directory
-      expect(yield* Effect.flip(readServerSettings(root))).toBeInstanceOf(SettingsReadFailed)
+      const path = NodePath.join(root, 'settings.json')
+      NodeFS.mkdirSync(path)
+      expect(yield* readServerSettings(path)).toEqual(ServerSettings.cases.NoServer.make({}))
+      expect(NodeFS.statSync(`${path}.damaged`).isDirectory()).toBe(true)
     }),
   )
 
-  it.effect('retains the current selection when atomic replacement fails', () =>
+  it.effect('restores an existing explicit version-one selection', () =>
+    Effect.gen(function* () {
+      const root = yield* directory
+      const path = NodePath.join(root, 'settings.json')
+      NodeFS.writeFileSync(path, '{"version":1,"serverAddress":"https://vivid.example/"}')
+      expect(yield* readServerSettings(path)).toEqual(
+        ServerSettings.cases.Server.make({ origin: ServerAddress.make('https://vivid.example') }),
+      )
+    }),
+  )
+
+  it.effect('failed replacement retains warm authority and cleans its temporary file', () =>
     Effect.gen(function* () {
       const root = yield* directory
       const path = NodePath.join(root, 'settings.json')
       yield* Effect.gen(function* () {
         const settings = yield* DesktopSettings
-        const before = yield* settings.get
-        NodeFS.mkdirSync(`${path}.tmp`)
-        expect(
-          yield* Effect.flip(settings.set(yield* decodeAddress('https://vivid.example'))),
-        ).toBeInstanceOf(SettingsSaveFailed)
+        const before = yield* settings.set(yield* decodeAddress('https://vivid.example'))
+        NodeFS.unlinkSync(path)
+        NodeFS.mkdirSync(path)
+        expect(yield* Effect.flip(settings.forget)).toBeInstanceOf(SettingsSaveFailed)
         expect(yield* settings.get).toEqual(before)
-        expect(NodeFS.existsSync(path)).toBe(false)
+        expect(NodeFS.readdirSync(root)).toEqual(['settings.json'])
       }).pipe(Effect.provide(settingsLayer(path)))
     }),
   )
 
-  it.effect('accepts LAN, loopback, IPv6, and private-network origins', () =>
+  it.effect('accepts TLS remotely and HTTP only for loopback or private IP addresses', () =>
     Effect.gen(function* () {
       for (const address of [
-        'http://192.168.1.8:8787',
+        'https://vivid.example',
+        'http://localhost:8787',
         'http://127.0.0.1:8787/',
+        'http://10.0.0.8',
+        'http://172.16.0.1',
+        'http://172.31.255.254',
+        'http://192.168.1.8:8787',
         'http://[::1]:8787',
-        'https://computer.tail.example',
+        'http://[fd12::1]',
+        'http://[fe80::1]',
       ]) {
         expect(yield* decodeAddress(address)).toBe(address)
       }
-    }),
-  )
-
-  it.effect('rejects routes, secrets, ambiguous whitespace, and unsupported schemes', () =>
-    Effect.gen(function* () {
       for (const address of [
+        'http://vivid.example',
+        'http://8.8.8.8',
+        'http://172.32.0.1',
+        'http://172.15.0.1',
+        'http://[2001:4860::1]',
         'file:///etc/passwd',
-        'vivid://thread/123',
         'https://vivid.example/api',
         'https://vivid.example?token=secret',
         'https://vivid.example/#secret',
-        'http://person:secret@vivid.example',
+        'http://person:secret@127.0.0.1',
         ' https://vivid.example',
-        'http://vivid.example:99999',
+        'http://127.0.0.1:99999',
       ]) {
         expect(yield* Effect.flip(decodeAddress(address))).toBeInstanceOf(Schema.SchemaError)
       }
+      expect(
+        ServerSettings.guards.NoServer(
+          yield* readServerSettings(NodePath.join(yield* directory, 'absent')),
+        ),
+      ).toBe(true)
     }),
   )
 })
