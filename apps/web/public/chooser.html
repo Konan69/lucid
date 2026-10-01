@@ -1,0 +1,320 @@
+<!doctype html>
+<!--
+  The first screen of the desktop app: where is your Vivid?
+
+  The desktop shell loads this file from its own bundle when no server has been chosen, before
+  any network authority exists. It is deliberately one static file with nothing to fetch: it is
+  shown when there is, by definition, nowhere to fetch from. It talks only to `window.vivid`, the
+  bridge the shell's preload exposes; the shell itself checks the address and saves it.
+
+  The colours and measures are copied from `packages/design/tokens/src/tokens.css` (the page has
+  no build step to import them). Change them there first, then here.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
+    />
+    <title>Vivid</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --surface-0: #161616;
+        --surface-3: #2c2c2c;
+        --ink: rgb(252 252 252);
+        --ink-2: rgb(252 252 252 / 0.62);
+        --ink-3: rgb(252 252 252 / 0.42);
+        --line: rgb(252 252 252 / 0.16);
+        --accent: #7c6cff;
+        --accent-hover: #8b7dff;
+        --danger: #ff7a70;
+        --ease-out: cubic-bezier(0.2, 0, 0, 1);
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          color-scheme: light;
+          --surface-0: #ffffff;
+          --surface-3: #ffffff;
+          --ink: rgb(20 20 20);
+          --ink-2: rgb(20 20 20 / 0.68);
+          --ink-3: rgb(20 20 20 / 0.54);
+          --line: rgb(20 20 20 / 0.14);
+          --accent: #5b4bff;
+          --accent-hover: #4d3df0;
+          --danger: #c4281c;
+        }
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: var(--surface-0);
+        color: var(--ink);
+        font:
+          14px/1.45 Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+        /* The window is dragged by its empty space; everything a Person can use opts out below. */
+        -webkit-app-region: drag;
+        user-select: none;
+      }
+      main {
+        width: 100%;
+        max-width: 360px;
+        -webkit-app-region: no-drag;
+        animation: arrive 320ms var(--ease-out) both;
+      }
+      @keyframes arrive {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+      }
+      /* Vivid's face, the same mark the app wears: a disc and two eyes. */
+      .face {
+        position: relative;
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        background:
+          radial-gradient(circle at 32% 28%, rgb(255 255 255 / 0.28), transparent 55%), var(--accent);
+      }
+      .face::before,
+      .face::after {
+        content: '';
+        position: absolute;
+        top: 17px;
+        width: 5px;
+        height: 10px;
+        border-radius: 3px;
+        background: #1b1640;
+      }
+      .face::before {
+        left: 14px;
+      }
+      .face::after {
+        right: 14px;
+      }
+      h1 {
+        margin-top: 20px;
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        text-wrap: balance;
+      }
+      .lede {
+        margin-top: 6px;
+        color: var(--ink-3);
+        text-wrap: pretty;
+      }
+      label {
+        display: block;
+        margin-top: 24px;
+        font-size: 13px;
+        color: var(--ink-2);
+      }
+      input {
+        display: block;
+        width: 100%;
+        height: 40px;
+        margin-top: 6px;
+        padding: 0 12px;
+        border: 0;
+        border-radius: 11px;
+        background: var(--surface-3);
+        color: var(--ink);
+        font: inherit;
+        /* A hairline, not a border: it takes no room and cannot shift the text when it changes. */
+        box-shadow: 0 0 0 1px var(--line);
+        outline: none;
+        user-select: text;
+        transition: box-shadow 120ms var(--ease-out);
+      }
+      input::placeholder {
+        color: var(--ink-3);
+      }
+      input:focus-visible {
+        box-shadow: 0 0 0 2px var(--accent);
+      }
+      button {
+        display: block;
+        width: 100%;
+        height: 40px;
+        margin-top: 12px;
+        border: 0;
+        border-radius: 11px;
+        background: var(--accent);
+        color: #ffffff;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        transition:
+          background-color 120ms var(--ease-out),
+          transform 120ms var(--ease-out),
+          opacity 120ms var(--ease-out);
+      }
+      @media (hover: hover) {
+        button:not(:disabled):hover {
+          background: var(--accent-hover);
+        }
+      }
+      button:not(:disabled):active {
+        transform: scale(0.97);
+      }
+      button:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      /* The line under the field: nothing at rest, what is happening while it happens, and what
+         went wrong, in words that say what to do next. It keeps its height so nothing jumps. */
+      .said {
+        min-height: 40px;
+        margin-top: 12px;
+        font-size: 13px;
+        color: var(--ink-3);
+        text-wrap: pretty;
+      }
+      .said[data-kind='refused'] {
+        color: var(--danger);
+      }
+      footer {
+        position: fixed;
+        inset: auto 0 16px;
+        text-align: center;
+        font-size: 12px;
+        color: var(--ink-3);
+        font-variant-numeric: tabular-nums;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        main {
+          animation: none;
+        }
+        button,
+        input {
+          transition: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="face" aria-hidden="true"></div>
+      <h1>Where is your Vivid?</h1>
+      <p class="lede">
+        Enter the address of the Vivid you use. You only do this once on this computer.
+      </p>
+      <form id="door" novalidate>
+        <label for="address">Address</label>
+        <input
+          id="address"
+          name="address"
+          type="text"
+          inputmode="url"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          placeholder="https://vivid.example.com"
+          aria-describedby="said"
+          autofocus
+        />
+        <button id="go" type="submit">Connect</button>
+      </form>
+      <p id="said" class="said" role="status" aria-live="polite"></p>
+    </main>
+    <footer id="version"></footer>
+    <script>
+      // The only outside thing this page knows is the bridge. Without it (the file opened in an
+      // ordinary browser) there is nothing it can do, and it says so instead of failing silently.
+      const bridge = window.vivid
+      const door = document.getElementById('door')
+      const address = document.getElementById('address')
+      const go = document.getElementById('go')
+      const said = document.getElementById('said')
+
+      const say = (kind, words) => {
+        said.dataset.kind = kind
+        said.textContent = words
+      }
+
+      // What a Person types becomes an origin: a bare host means https, and a path is dropped,
+      // because the shell stores where Vivid lives, not a page inside it.
+      const originOf = (typed) => {
+        const text = typed.trim()
+        if (text.length === 0) return null
+        const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`
+        return URL.canParse(withScheme) ? new URL(withScheme).origin : null
+      }
+
+      const REFUSED = {
+        Unreachable: 'Nothing answered at that address. Check it, and that this computer is online.',
+        NotVivid: 'Something answered there, but it is not Vivid. Check the address.',
+      }
+
+      const choose = async () => {
+        const origin = originOf(address.value)
+        if (origin === null) {
+          say('refused', 'That is not an address. It looks like https://vivid.example.com.')
+          address.focus()
+          return
+        }
+        go.disabled = true
+        say('working', 'Looking for Vivid there…')
+        // The shell refuses an address it will not trust (plain http to somewhere that is not this
+        // computer or its own network) by rejecting the call; that is a different thing to say.
+        const choice = await bridge.server.choose(origin).catch(() => ({ _tag: 'Refused' }))
+        if (choice._tag === 'Chosen') {
+          // The shell replaces this page with Vivid itself; nothing more to do here.
+          say('working', 'Found it. Opening Vivid…')
+          return
+        }
+        go.disabled = false
+        say(
+          'refused',
+          choice._tag === 'Refused'
+            ? 'Use an https address. Plain http only works for a Vivid on this computer or your own network.'
+            : REFUSED[choice._tag],
+        )
+        address.focus()
+        address.select()
+      }
+
+      if (bridge === undefined) {
+        go.disabled = true
+        address.disabled = true
+        say('refused', 'This page is part of the Vivid desktop app and only works inside it.')
+      } else {
+        door.addEventListener('submit', (event) => {
+          event.preventDefault()
+          void choose()
+        })
+        // Typing again clears the last refusal: it was about what used to be in the field.
+        address.addEventListener('input', () => say('rest', ''))
+        bridge.getAppVersion().then(
+          (version) => {
+            document.getElementById('version').textContent = `Vivid ${version}`
+          },
+          () => undefined,
+        )
+      }
+    </script>
+  </body>
+</html>
