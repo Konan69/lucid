@@ -1,13 +1,26 @@
 import { Workspace, type MeResponse } from '@vivid/contracts'
 import { Option } from 'effect'
-import { MonitorSmartphone, SlidersHorizontal, Users, X } from 'lucide-react'
+import {
+  Brain,
+  Link2,
+  MonitorSmartphone,
+  ScrollText,
+  ShieldCheck,
+  SlidersHorizontal,
+  Users,
+  X,
+} from 'lucide-react'
 import type { ReactNode } from 'react'
 import { router, type SettingsSection } from '../data/route'
 import { IconButton } from '../ui/Button'
 import { cn } from '../ui/cn'
+import { Connections } from './settings/Connections'
 import { Devices } from './settings/Devices'
 import { General } from './settings/General'
+import { Memory } from './settings/Memory'
 import { People } from './settings/People'
+import { Record } from './settings/Record'
+import { Rules } from './settings/Rules'
 
 interface Entry {
   readonly id: SettingsSection
@@ -17,10 +30,14 @@ interface Entry {
 
 const YOURS: ReadonlyArray<Entry> = [
   { id: 'general', label: 'General', icon: <SlidersHorizontal className="size-4" /> },
+  { id: 'memory', label: 'What Vivid knows', icon: <Brain className="size-4" /> },
   { id: 'devices', label: 'Devices', icon: <MonitorSmartphone className="size-4" /> },
 ]
 const SHARED: ReadonlyArray<Entry> = [
   { id: 'people', label: 'People', icon: <Users className="size-4" /> },
+  { id: 'connections', label: 'Connections', icon: <Link2 className="size-4" /> },
+  { id: 'rules', label: 'Rules', icon: <ShieldCheck className="size-4" /> },
+  { id: 'record', label: 'Record', icon: <ScrollText className="size-4" /> },
 ]
 
 const TITLE = {
@@ -84,6 +101,10 @@ export function Settings({
             {section === 'general' && <General me={me} />}
             {section === 'devices' && <Devices initialCode={deviceCode} />}
             {section === 'people' && <People me={me} />}
+            {section === 'connections' && <Connections me={me} />}
+            {section === 'rules' && <Rules me={me} />}
+            {section === 'memory' && <Memory />}
+            {section === 'record' && <Record />}
           </div>
         </div>
       </div>
