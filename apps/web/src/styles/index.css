@@ -116,6 +116,14 @@
     transparent
   );
 }
+/* For a row that scrolls sideways: only the far edge fades, since the near edge is where reading
+   starts. Pair it with end padding so the last item can be scrolled out from under the fade. */
+@utility scroll-fade-end {
+  mask-image: linear-gradient(to right, black calc(100% - 40px), transparent);
+}
+@utility scroll-fade-none {
+  mask-image: none;
+}
 
 /* ── Grain: a whisper of texture so large flat chrome isn't dead ── */
 @utility grain {

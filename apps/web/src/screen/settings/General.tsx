@@ -9,7 +9,7 @@ import { theme } from '../../data/theme'
 import { Avatar } from '../../ui/Avatar'
 import { Button } from '../../ui/Button'
 import { Segmented } from '../../ui/Segmented'
-import { Awaiting, Row, Section } from './Parts'
+import { Awaiting, Refusal, Row, Section } from './Parts'
 
 const THEMES = [
   { value: 'system', label: 'System', name: 'Follow the system' },
@@ -73,13 +73,18 @@ export function General({ me }: { me: MeResponse }) {
 }
 
 function Preferences({ settings }: { settings: Settings }) {
+  const [unsaved, setUnsaved] = useState(false)
   /**
    * Saves the one setting that was changed and shows it at once. Only that field is sent: sending
    * all three from what this screen happens to hold would write back a stale value over a change
    * made on another device a moment ago.
+   *
+   * When the save does not land the control goes back to what the server has, and this says so.
+   * It used to go back in silence, which read as a click that did nothing.
    */
-  const save = (edit: PatchSettingsRequest) =>
-    void change(
+  async function save(edit: PatchSettingsRequest) {
+    setUnsaved(false)
+    const saved = await change(
       (client) => client.PatchSettings(edit),
       () =>
         live.settings.expect(
@@ -92,46 +97,55 @@ function Preferences({ settings }: { settings: Settings }) {
             }),
         ),
     )
+    if (Result.isFailure(saved)) setUnsaved(true)
+  }
   // The platform's list leaves out UTC, and a zone saved elsewhere may be one this browser does
   // not list; the Person's own zone is always an option, or the select would show a different one.
   const zones = ZONES.includes(settings.timezone) ? ZONES : [settings.timezone, ...ZONES]
   return (
-    <Section title="Preferences">
-      <Row label="Appearance" detail="How Vivid looks on this device and your others.">
-        <Segmented
-          label="Appearance"
-          value={settings.theme}
-          options={THEMES}
-          onChange={(next) => {
-            theme.set(next)
-            save(new PatchSettingsRequest({ theme: next }))
-          }}
-        />
-      </Row>
-      <Row label="Time zone" detail="Routines and reminders like “tomorrow at 9” use this.">
-        <select
-          value={settings.timezone}
-          aria-label="Time zone"
-          onChange={(event) =>
-            save(new PatchSettingsRequest({ timezone: event.currentTarget.value }))
-          }
-          className="h-8 max-w-56 cursor-pointer rounded-control bg-surface-3 px-2 text-label text-ink ring-line outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {zones.map((zone) => (
-            <option key={zone} value={zone}>
-              {zone.replaceAll('_', ' ')}
-            </option>
-          ))}
-        </select>
-      </Row>
-      <Row label="Notifications" detail="Tell me when something finishes or needs me.">
-        <Segmented
-          label="Notifications"
-          value={settings.notify ? 'on' : 'off'}
-          options={SWITCH}
-          onChange={(next) => save(new PatchSettingsRequest({ notify: next === 'on' }))}
-        />
-      </Row>
-    </Section>
+    <>
+      <Refusal
+        message={
+          unsaved ? 'That change was not saved: Vivid could not be reached. Try again.' : null
+        }
+      />
+      <Section title="Preferences">
+        <Row label="Appearance" detail="How Vivid looks on this device and your others.">
+          <Segmented
+            label="Appearance"
+            value={settings.theme}
+            options={THEMES}
+            onChange={(next) => {
+              theme.set(next)
+              void save(new PatchSettingsRequest({ theme: next }))
+            }}
+          />
+        </Row>
+        <Row label="Time zone" detail="Routines and reminders like “tomorrow at 9” use this.">
+          <select
+            value={settings.timezone}
+            aria-label="Time zone"
+            onChange={(event) =>
+              void save(new PatchSettingsRequest({ timezone: event.currentTarget.value }))
+            }
+            className="h-8 max-w-56 cursor-pointer rounded-control bg-surface-3 px-2 text-label text-ink ring-line outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {zones.map((zone) => (
+              <option key={zone} value={zone}>
+                {zone.replaceAll('_', ' ')}
+              </option>
+            ))}
+          </select>
+        </Row>
+        <Row label="Notifications" detail="Tell me when something finishes or needs me.">
+          <Segmented
+            label="Notifications"
+            value={settings.notify ? 'on' : 'off'}
+            options={SWITCH}
+            onChange={(next) => void save(new PatchSettingsRequest({ notify: next === 'on' }))}
+          />
+        </Row>
+      </Section>
+    </>
   )
 }

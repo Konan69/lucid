@@ -73,7 +73,8 @@ export function Settings({
   return (
     <div
       role="presentation"
-      className="fixed inset-0 z-40 flex animate-fade-in items-center justify-center bg-scrim p-4 backdrop-blur-scrim"
+      // Narrow: Settings is the whole screen, the way a phone shows it. Wide: a panel over the page.
+      className="fixed inset-0 z-40 flex animate-fade-in items-center justify-center bg-scrim backdrop-blur-scrim sm:p-4"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) close()
       }}
@@ -90,9 +91,11 @@ export function Settings({
         tabIndex={-1}
         // Wide: sections down the left, the chosen one beside them. Narrow: there is no room for
         // a column, so the sections become one scrolling strip above the content.
-        className="flex size-full max-h-160 max-w-4xl animate-rise-in flex-col overflow-hidden rounded-panel bg-surface-1 smooth-shadow-ring-lg outline-none sm:flex-row"
+        className="flex size-full max-w-4xl animate-rise-in flex-col overflow-hidden bg-surface-1 outline-none sm:max-h-160 sm:flex-row sm:rounded-panel sm:smooth-shadow-ring-lg"
       >
-        <nav className="flex shrink-0 scrollbar-hidden gap-0.5 overflow-x-auto bg-surface-1 p-2 hairline-b sm:w-52 sm:flex-col sm:overflow-x-visible sm:hairline-r">
+        {/* The strip fades at its far edge and ends in spare room, so a section cut off there
+            reads as "there is more this way" and the last one can still be scrolled clear. */}
+        <nav className="flex shrink-0 scrollbar-hidden gap-0.5 overflow-x-auto bg-surface-1 scroll-fade-end p-2 pr-10 hairline-b sm:w-52 sm:flex-col sm:overflow-x-visible sm:scroll-fade-none sm:pr-2 sm:hairline-r">
           <Group label="You" entries={YOURS} current={section} />
           <Group label={place} entries={SHARED} current={section} />
         </nav>
@@ -118,6 +121,15 @@ export function Settings({
   )
 }
 
+/**
+ * Brings the open section's tab into view. On a narrow screen the sections are one scrolling
+ * strip, and a section opened from a link (or the last one in the row) would otherwise be chosen
+ * and out of sight. Wide, every section is already visible and this moves nothing.
+ */
+const reveal = (tab: HTMLButtonElement | null) => {
+  if (tab !== null) tab.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+}
+
 function Group({
   label,
   entries,
@@ -137,6 +149,7 @@ function Group({
           key={entry.id}
           onClick={() => router.openSettings(Option.some(entry.id))}
           aria-current={entry.id === current ? 'page' : undefined}
+          ref={entry.id === current ? reveal : undefined}
           className={cn(
             'flex h-8 shrink-0 cursor-pointer items-center gap-2.5 rounded-row px-2.5 text-left text-label whitespace-nowrap transition-colors duration-(--dur-fast) sm:w-full',
             entry.id === current

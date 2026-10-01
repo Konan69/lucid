@@ -1,7 +1,7 @@
 import { ComputerState, type Computer as ComputerRecord } from '@vivid/contracts'
 import RFB from '@novnc/novnc'
 import { Hand, MonitorPlay, Power, X } from 'lucide-react'
-import { useCallback } from 'react'
+import { useCallback, useReducer } from 'react'
 import { change, live, LiveState, useLive } from '../data/live'
 import { Button, IconButton } from '../ui/Button'
 import { Face } from '../ui/Face'
@@ -92,19 +92,12 @@ function Screen({ computer }: { computer: ComputerRecord }) {
   const state = computer.state
   if (ComputerState.guards.Running(state)) {
     return (
-      <div className="relative min-h-0 flex-1 desktop-wallpaper">
-        <Display
-          // Taking over or handing back changes who may type, so the screen reconnects with it.
-          key={computer.heldByPerson ? 'held' : 'watching'}
-          address={state.screenAddress}
-          control={computer.heldByPerson}
-        />
-        <p className="pointer-events-none absolute inset-x-0 bottom-0 bg-scrim px-3 py-1.5 text-center text-meta text-ink-on-color">
-          {computer.heldByPerson
-            ? 'You have the keyboard. Vivid will wait until you hand it back.'
-            : 'Watching. Take over to use it yourself.'}
-        </p>
-      </div>
+      <Display
+        // Taking over or handing back changes who may type, so the screen reconnects with it.
+        key={computer.heldByPerson ? 'held' : 'watching'}
+        address={state.screenAddress}
+        control={computer.heldByPerson}
+      />
     )
   }
   if (ComputerState.guards.Failed(state)) {
@@ -128,15 +121,90 @@ function Screen({ computer }: { computer: ComputerRecord }) {
 }
 
 /**
- * The machine's screen, drawn by the noVNC client bundled with this app. Nothing the machine
- * serves is ever loaded as a page here: the only thing that crosses is the remote-framebuffer
- * socket, which the server proxies for this Person's own Computer and nobody else's.
+ * Whether the machine's screen is on the glass. A running Computer and a screen this window can
+ * see are two facts: the socket between them can fail to open, or drop, while the machine carries
+ * on. `attempt` counts the connections made, so asking again is a new connection, not a retry of
+ * a dead one.
+ */
+interface Sight {
+  readonly seen: 'reaching' | 'showing' | 'lost'
+  readonly attempt: number
+}
+
+/** What happened to the connection: it opened, it closed, or the Person asked for it again. */
+type Heard = 'opened' | 'closed' | 'asked'
+
+/**
+ * A screen that was showing and dropped (the server restarted, the network blinked) is reached
+ * for again at once. One that never arrived says so and waits to be asked, or a machine that
+ * cannot be reached would be dialled forever.
+ */
+const sightAfter = (now: Sight, heard: Heard): Sight => {
+  if (heard === 'opened') return { seen: 'showing', attempt: now.attempt }
+  if (heard === 'asked' || now.seen === 'showing') {
+    return { seen: 'reaching', attempt: now.attempt + 1 }
+  }
+  return { seen: 'lost', attempt: now.attempt }
+}
+
+/** What the strip under the screen says while there is a screen, or one on its way. */
+const CAPTION = {
+  reaching: () => 'Connecting to the screen…',
+  showing: (control: boolean) =>
+    control
+      ? 'You have the keyboard. Vivid will wait until you hand it back.'
+      : 'Watching. Take over to use it yourself.',
+} as const
+
+/**
+ * The machine's screen and the truth about whether it is showing. It used to say "Watching" from
+ * the moment the machine ran, whether or not a single frame had arrived, so a socket that never
+ * opened was an empty dark panel captioned as a live screen.
+ */
+function Display({ address, control }: { address: string; control: boolean }) {
+  const [sight, hear] = useReducer(sightAfter, { seen: 'reaching', attempt: 0 })
+  if (sight.seen === 'lost') {
+    return (
+      <Note
+        title="Can’t see the screen"
+        detail="The computer is still running. Its screen did not reach this window."
+        action={<Button onClick={() => hear('asked')}>Look again</Button>}
+      />
+    )
+  }
+  return (
+    <div
+      className="relative min-h-0 flex-1 desktop-wallpaper"
+      aria-busy={sight.seen === 'reaching'}
+    >
+      {/* Each attempt is its own element, so its socket is opened and closed with it. */}
+      <Glass key={sight.attempt} address={address} control={control} onHeard={hear} />
+      <p className="pointer-events-none absolute inset-x-0 bottom-0 bg-scrim px-3 py-1.5 text-center text-meta text-ink-on-color">
+        {CAPTION[sight.seen](control)}
+      </p>
+    </div>
+  )
+}
+
+/**
+ * One connection to the screen, drawn by the noVNC client bundled with this app. Nothing the
+ * machine serves is ever loaded as a page here: the only thing that crosses is the
+ * remote-framebuffer socket, which the server proxies for this Person's own Computer and nobody
+ * else's.
  *
  * The connection lives exactly as long as the element does: React calls the ref's cleanup when it
  * unmounts, which closes the socket. While the Person is only watching, the canvas sends no keys
  * or pointer events, so looking at the screen can never fight with what Vivid is doing on it.
  */
-function Display({ address, control }: { address: string; control: boolean }) {
+function Glass({
+  address,
+  control,
+  onHeard,
+}: {
+  address: string
+  control: boolean
+  onHeard: (heard: Heard) => void
+}) {
   const connect = useCallback(
     (element: HTMLDivElement | null) => {
       if (element === null) return undefined
@@ -145,9 +213,18 @@ function Display({ address, control }: { address: string; control: boolean }) {
       screen.scaleViewport = true
       screen.viewOnly = !control
       screen.background = 'transparent'
-      return () => screen.disconnect()
+      const opened = () => onHeard('opened')
+      const closed = () => onHeard('closed')
+      screen.addEventListener('connect', opened)
+      screen.addEventListener('disconnect', closed)
+      return () => {
+        // Closing it here is this window's own doing, not a screen that was lost.
+        screen.removeEventListener('connect', opened)
+        screen.removeEventListener('disconnect', closed)
+        screen.disconnect()
+      }
     },
-    [address, control],
+    [address, control, onHeard],
   )
   return <div ref={connect} className="size-full" />
 }

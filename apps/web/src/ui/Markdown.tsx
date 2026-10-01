@@ -60,15 +60,24 @@ const MARKDOWN_COMPONENTS: Components = {
   ul: ({ children }) => <ul className="my-2 list-disc space-y-1">{children}</ul>,
 }
 
+/**
+ * A line that opens with a typed bullet character. Models often write lists with "•" instead of
+ * Markdown's "-", and Markdown reads those as ordinary paragraphs: the list loses its indent and
+ * marker, and a blank line the model left between two items shows as a hole in the list.
+ */
+const TYPED_BULLET = /^([ \t]*)[•●▪◦‣][ \t]+/gm
+
 export function Markdown({ content }: { content: string }) {
-  const linkedContent = content.replace(
-    /\[([^\]\n]+?\.(?:pdf|md|markdown|txt))(?:,\s*p\.(\d+))?\](?!\()/gi,
-    (_match, filename: string, page?: string) => {
-      const label = page ? `${filename}, p.${page}` : filename
-      const fragment = page ? `#page=${page}` : ''
-      return `[${label}](</api/library/source?name=${encodeURIComponent(filename)}${fragment}>)`
-    },
-  )
+  const linkedContent = content
+    .replace(TYPED_BULLET, '$1- ')
+    .replace(
+      /\[([^\]\n]+?\.(?:pdf|md|markdown|txt))(?:,\s*p\.(\d+))?\](?!\()/gi,
+      (_match, filename: string, page?: string) => {
+        const label = page ? `${filename}, p.${page}` : filename
+        const fragment = page ? `#page=${page}` : ''
+        return `[${label}](</api/library/source?name=${encodeURIComponent(filename)}${fragment}>)`
+      },
+    )
   return (
     <div className="min-w-0 text-body text-ink">
       <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
