@@ -1,7 +1,18 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, it } from '@effect/vitest'
 import { eq, inArray } from 'drizzle-orm'
-import { Context, Deferred, Effect, Layer, Option, PubSub, Ref, Redacted, Stream } from 'effect'
+import {
+  Clock,
+  Context,
+  Deferred,
+  Effect,
+  Layer,
+  Option,
+  PubSub,
+  Ref,
+  Redacted,
+  Stream,
+} from 'effect'
 import {
   ActionTarget,
   CommandOutcome,
@@ -21,7 +32,7 @@ import {
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { Gate, GateDecision, ActionOutcome } from '../approvals/gate.ts'
-import { personTable } from '../auth/tables.ts'
+import { personTable, sessionTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes, Topic, silentChangesLayer } from '../live/changes.ts'
@@ -204,6 +215,22 @@ const fixture = Effect.fn('Computer.test.fixture')(function* () {
   return { first, second }
 })
 
+/** Live queries revalidate persisted sessions; the fixture's Person cleanup cascades this row even if watching fails. */
+const watchAuth = Effect.fn('Computer.test.watchAuth')(function* (person: Person) {
+  const database = yield* Database
+  const sessionId = SessionId.make(NodeCrypto.randomUUID())
+  const now = yield* Clock.currentTimeMillis
+  yield* database.run(
+    database.insert(sessionTable).values({
+      id: sessionId,
+      userId: person.id,
+      token: NodeCrypto.randomUUID(),
+      expiresAt: new Date(now + 60_000),
+    }),
+  )
+  return AuthState.Person({ person, sessionId, workspace: Workspace.cases.Personal.make({}) })
+})
+
 /** Transport identity is explicit, so a caller cannot inject another Person through a tool payload. */
 const asPerson = (person: Person) =>
   Effect.provideService(
@@ -249,9 +276,10 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         const evidence = yield* ProviderEvidence
         yield* start(first)
         const own = yield* computerHandlers.GetComputer().pipe(asPerson(first))
+        const authenticated = yield* watchAuth(first)
         const watched = yield* computerHandlers
           .WatchComputer()
-          .pipe(Stream.runHead, asPerson(first))
+          .pipe(Stream.runHead, Effect.provideService(AuthContext, authenticated))
         expect(Option.isSome(watched)).toBe(true)
         if (Option.isSome(watched)) expect(watched.value.computer.id).toBe(own.computer.id)
         const company = Company.make({
