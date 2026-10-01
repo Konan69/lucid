@@ -25,6 +25,8 @@ import {
   RunState,
   ThreadId,
   Workspace,
+  RuleScope,
+  type Rule,
   RuntimeUnavailable,
 } from '@vivid/contracts'
 import { type Actor, summaryOf } from '../auth/access.ts'
@@ -43,7 +45,13 @@ import { threads } from '../threads/tables.ts'
 import { ActionOutcome, ActionRunner, gateLayer } from './gate.ts'
 import { approvalStoreLayer } from './store.ts'
 
-const Judgment = Schema.TaggedUnion({ All: {}, None: {}, Failed: {} })
+const Judgment = Schema.TaggedUnion({
+  All: {},
+  None: {},
+  Failed: {},
+  Hostile: {},
+  PersonalFailure: {},
+})
 type Judgment = typeof Judgment.Type
 
 interface ObservationService {
@@ -53,6 +61,8 @@ interface ObservationService {
   readonly topics: Ref.Ref<ReadonlyArray<Topic>>
   readonly judgment: Ref.Ref<Judgment>
   readonly outcome: Ref.Ref<ActionOutcome>
+  readonly judgeCalls: Ref.Ref<ReadonlyArray<ReadonlyArray<Rule>>>
+  readonly runnerDefect: Ref.Ref<boolean>
   readonly deliveryFailure: Ref.Ref<Option.Option<RuntimeUnavailable>>
 }
 export class Observation extends Context.Service<Observation, ObservationService>()(
@@ -67,6 +77,8 @@ const ports = Layer.effectContext(
       deliveries: yield* Ref.make<ReadonlyArray<Delivery>>([]),
       notices: yield* Ref.make<ReadonlyArray<Notice>>([]),
       topics: yield* Ref.make<ReadonlyArray<Topic>>([]),
+      judgeCalls: yield* Ref.make<ReadonlyArray<ReadonlyArray<Rule>>>([]),
+      runnerDefect: yield* Ref.make(false),
       judgment: yield* Ref.make<Judgment>(Judgment.cases.All.make({})),
       outcome: yield* Ref.make<ActionOutcome>(
         ActionOutcome.cases.Succeeded.make({ result: 'Done' }),
@@ -76,7 +88,19 @@ const ports = Layer.effectContext(
     const judge = RuleJudge.of({
       /** Tests control only the applicability port; the gate's policy remains production code. */
       judge: Effect.fn('TrustTest.judge')(function* (_action, rules) {
+        yield* Ref.update(state.judgeCalls, (calls) => calls.concat([rules]))
+        if (rules.length === 0) return []
         const judgment = yield* Ref.get(state.judgment)
+        if (
+          Judgment.guards.PersonalFailure(judgment) &&
+          rules.some((rule) => RuleScope.guards.Personal(rule.scope))
+        )
+          return yield* Effect.fail(new RulesNotJudged({}))
+        if (
+          Judgment.guards.Hostile(judgment) &&
+          rules.some((rule) => RuleScope.guards.Personal(rule.scope))
+        )
+          return rules.filter((rule) => RuleScope.guards.Personal(rule.scope))
         if (Judgment.guards.Failed(judgment)) return yield* Effect.fail(new RulesNotJudged({}))
         return Judgment.guards.None(judgment) ? [] : rules
       }),
@@ -85,6 +109,7 @@ const ports = Layer.effectContext(
       /** Every execution is observable, so races are checked against the actual claim boundary. */
       run: Effect.fn('TrustTest.run')(function* ({ action }) {
         yield* Ref.update(state.actions, (actions) => actions.concat([action]))
+        if (yield* Ref.get(state.runnerDefect)) return yield* Effect.die('Injected runner defect')
         return yield* Ref.get(state.outcome)
       }),
     })

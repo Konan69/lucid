@@ -85,7 +85,7 @@ export interface RuleStoreService {
 }
 export class RuleStore extends Context.Service<RuleStore, RuleStoreService>()('vivid/RuleStore') {}
 
-/** One transaction owns a policy change and its audit record, including Always allow decisions. */
+/** Policy and audit are separate committed writes. Audit.record owns its connection; no atomicity is claimed. */
 const insert = Effect.fn('Rules.insert')(function* (
   actor: Actor,
   action: string,
@@ -93,31 +93,27 @@ const insert = Effect.fn('Rules.insert')(function* (
   companyId: CompanyId | null,
 ) {
   const database = yield* Database
-  const audit = yield* Audit
-  const row = yield* database.transaction((tx) =>
-    Effect.gen(function* () {
-      const rows = yield* tx
-        .insert(rules)
-        .values({
-          id: NodeCrypto.randomUUID(),
-          personId: actor.person.id,
-          companyId,
-          action,
-          decision,
-          createdAt: yield* Clock.currentTimeMillis,
-        })
-        .returning()
-      yield* audit.record(actor, AuditEvent.cases.RuleAdded.make({ action, decision }))
-      return yield* returned(rows, 'Rule')
-    }),
+  const rows = yield* database.run(
+    database
+      .insert(rules)
+      .values({
+        id: NodeCrypto.randomUUID(),
+        personId: actor.person.id,
+        companyId,
+        action,
+        decision,
+        createdAt: yield* Clock.currentTimeMillis,
+      })
+      .returning(),
   )
+  const row = yield* returned(rows, 'Rule')
+  yield* (yield* Audit).record(actor, AuditEvent.cases.RuleAdded.make({ action, decision }))
   return yield* returned(yield* view([row]), 'Rule')
 })
 
-/** Personal deletion checks ownership; Company deletion additionally checks the current admin role. */
+/** Removal commits before the separate audit write; current role and ownership remain mandatory. */
 const remove = Effect.fn('Rules.remove')(function* (actor: Actor, id: RuleId) {
   const database = yield* Database
-  const audit = yield* Audit
   const rows = yield* database.run(
     database
       .select()
@@ -129,16 +125,16 @@ const remove = Effect.fn('Rules.remove')(function* (actor: Actor, id: RuleId) {
   if (value === undefined) return yield* Effect.fail(new NotFound({ message: 'Rule not found' }))
   const row = yield* decodeRow(value)
   if (row.companyId !== null) yield* requireAdmin(actor.workspace)
-  return yield* database.transaction((tx) =>
-    Effect.gen(function* () {
-      const removed = yield* tx
-        .delete(rules)
-        .where(and(eq(rules.id, id), bindingRules(actor)))
-        .returning()
-      if (removed.length === 0)
-        return yield* Effect.fail(new NotFound({ message: 'Rule not found' }))
-      return yield* audit.record(actor, AuditEvent.cases.RuleRemoved.make({ action: row.action }))
-    }),
+  const removed = yield* database.run(
+    database
+      .delete(rules)
+      .where(and(eq(rules.id, id), bindingRules(actor)))
+      .returning(),
+  )
+  if (removed.length === 0) return yield* Effect.fail(new NotFound({ message: 'Rule not found' }))
+  return yield* (yield* Audit).record(
+    actor,
+    AuditEvent.cases.RuleRemoved.make({ action: row.action }),
   )
 })
 

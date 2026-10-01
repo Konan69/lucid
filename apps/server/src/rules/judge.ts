@@ -7,9 +7,9 @@ import * as Schema from 'effect/Schema'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
-import { RuleId, type Rule, type ProposedAction } from '@vivid/contracts'
+import { Rule, RuleId, RuleScope, type ProposedAction } from '@vivid/contracts'
 
-/** A failed judge can only lead to asking; no provider detail or private payload leaves this seam. */
+/** A failed judge cannot authorize an action; provider detail and private payloads stay behind this seam. */
 export class RulesNotJudged extends Schema.TaggedError<RulesNotJudged>()(
   'RulesNotJudged',
   {},
@@ -84,13 +84,17 @@ export const ruleJudgeLayer = Layer.effect(
     const client = yield* HttpClient.HttpClient
     const configuration = yield* Effect.result(
       Effect.gen(function* () {
-        const model = yield* Config.String('VIVID_RULES_MODEL').pipe(
+        const model = yield* Config.NonEmptyString('VIVID_RULES_MODEL').pipe(
           Config.withDefault('z-ai/glm-5.3-flash'),
         )
-        const key = yield* Config.Redacted('OPENROUTER_API_KEY')
+        const key = yield* Config.schema(
+          Schema.Redacted(Schema.NonEmptyString),
+          'OPENROUTER_API_KEY',
+        )
         return { model, key }
       }),
     )
+    if (Result.isFailure(configuration)) yield* Effect.logWarning('RulesNotJudged')
     return RuleJudge.of({
       /** The reference-mining design (docs/21) uses applicability alone; precedence stays in the gate. */
       judge: Effect.fn('RuleJudge.judge')(
@@ -115,8 +119,40 @@ export const ruleJudgeLayer = Layer.effect(
           effect.pipe(
             Effect.timeout('30 seconds'),
             Effect.mapError(() => new RulesNotJudged({})),
+            Effect.tapError(() => Effect.logWarning('RulesNotJudged')),
           ),
       ),
     })
   }),
 )
+
+export const BindingJudgment = Schema.TaggedUnion({
+  Judged: { rules: Schema.Array(Rule) },
+  Uncertain: { rules: Schema.Array(Rule) },
+})
+
+/** Independent contexts preserve known prohibitions even when the other completion fails. */
+export const judgeBinding = Effect.fn('Rules.judgeBinding')(function* (
+  judge: RuleJudgeService,
+  action: ProposedAction,
+  rules: ReadonlyArray<Rule>,
+) {
+  const company = yield* Effect.result(
+    judge.judge(
+      action,
+      rules.filter((rule) => RuleScope.guards.Company(rule.scope)),
+    ),
+  )
+  const personal = yield* Effect.result(
+    judge.judge(
+      action,
+      rules.filter((rule) => RuleScope.guards.Personal(rule.scope)),
+    ),
+  )
+  const applicable = [company, personal].flatMap((result) =>
+    Result.isSuccess(result) ? result.success : [],
+  )
+  return Result.isFailure(company) || Result.isFailure(personal)
+    ? BindingJudgment.cases.Uncertain.make({ rules: applicable })
+    : BindingJudgment.cases.Judged.make({ rules: applicable })
+})
