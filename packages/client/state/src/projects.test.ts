@@ -9,15 +9,7 @@ import {
 } from '@vivid/contracts'
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
-import {
-  confirmed,
-  countThreads,
-  findProject,
-  hiddenThreads,
-  projectsIn,
-  threadsIn,
-  trailTo,
-} from './projects'
+import * as projects from './projects.js'
 
 const NOW = Date.UTC(2026, 9, 1, 12)
 const ada = PersonId.make('ada')
@@ -58,25 +50,25 @@ describe('arranging Projects', () => {
   const all = [move, audit, floor, desks]
 
   it('puts only top-level Projects on the shelf, by name whatever its case', () => {
-    expect(projectsIn(all, null).map((each) => each.id)).toEqual(['audit', 'move'])
-    expect(projectsIn(all, move.id).map((each) => each.id)).toEqual(['floor'])
+    expect(projects.projectsIn(all, null).map((each) => each.id)).toEqual(['audit', 'move'])
+    expect(projects.projectsIn(all, move.id).map((each) => each.id)).toEqual(['floor'])
   })
 
   it('walks the Projects above one, outermost first', () => {
-    expect(trailTo(all, desks).map((each) => each.id)).toEqual(['move', 'floor'])
-    expect(trailTo(all, move)).toEqual([])
+    expect(projects.trailTo(all, desks).map((each) => each.id)).toEqual(['move', 'floor'])
+    expect(projects.trailTo(all, move)).toEqual([])
   })
 
   it('ends the trail at a parent the Person cannot see, and at a loop', () => {
     const orphan = project('orphan', 'gone', {})
-    expect(trailTo([orphan], orphan)).toEqual([])
+    expect(projects.trailTo([orphan], orphan)).toEqual([])
     const first = project('first', 'second', {})
     const second = project('second', 'first', {})
-    expect(trailTo([first, second], first).map((each) => each.id)).toEqual(['second'])
+    expect(projects.trailTo([first, second], first).map((each) => each.id)).toEqual(['second'])
   })
 
   it('finds no Project once it is no longer in the list', () => {
-    expect(Option.isNone(findProject(all, ProjectId.make('gone')))).toBe(true)
+    expect(Option.isNone(projects.findProject(all, ProjectId.make('gone')))).toBe(true)
   })
 })
 
@@ -92,17 +84,20 @@ describe("a Project's Threads", () => {
   }
 
   it('lists the open Threads filed in the Project, most recently moved first', () => {
-    expect(threadsIn(list, ProjectId.make('move')).map((each) => each.id)).toEqual(['new', 'old'])
+    expect(projects.threadsIn(list, ProjectId.make('move')).map((each) => each.id)).toEqual([
+      'new',
+      'old',
+    ])
   })
 
   it('counts the Threads filed there that the Person is not in, never below zero', () => {
-    const filed = threadsIn(list, ProjectId.make('move'))
-    expect(hiddenThreads(project('move', null, { threadCount: 5 }), filed)).toBe(3)
-    expect(hiddenThreads(project('move', null, { threadCount: 1 }), filed)).toBe(0)
+    const filed = projects.threadsIn(list, ProjectId.make('move'))
+    expect(projects.hiddenThreads(project('move', null, { threadCount: 5 }), filed)).toBe(3)
+    expect(projects.hiddenThreads(project('move', null, { threadCount: 1 }), filed)).toBe(0)
   })
 
   it('counts in words', () => {
-    expect([countThreads(0), countThreads(1), countThreads(2)]).toEqual([
+    expect([projects.countThreads(0), projects.countThreads(1), projects.countThreads(2)]).toEqual([
       '0 Threads',
       '1 Thread',
       '2 Threads',
@@ -114,8 +109,8 @@ describe('confirmed', () => {
   it('adds a Project the server just returned once, however the two answers are ordered', () => {
     const list = new ProjectListResponse({ projects: [project('a', null, {})] })
     const created = project('b', null, {})
-    const once = confirmed(created)(list)
+    const once = projects.confirmed(created)(list)
     expect(once.projects.map((each) => each.id)).toEqual(['b', 'a'])
-    expect(confirmed(created)(once)).toBe(once)
+    expect(projects.confirmed(created)(once)).toBe(once)
   })
 })

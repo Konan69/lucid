@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { change, live, LiveState, useLive, useLiveValue } from '../data/live'
-import * as routinesData from '../data/routines'
+import { routines as routinesData } from '@vivid/state'
 import type { ProductFailure } from '../data/runtime'
 import { Button, IconButton } from '../ui/Button'
 import { cn } from '../ui/cn'
