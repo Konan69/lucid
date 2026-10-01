@@ -16,6 +16,12 @@ class RoutinePayloadTooLarge extends Schema.TaggedError<RoutinePayloadTooLarge>(
   {},
   { title: 'Routine payload too large' },
 ) {}
+/** Invalid delivery identity is a client refusal, with no supplied header echoed back. */
+class RoutineDeliveryKeyInvalid extends Schema.TaggedError<RoutineDeliveryKeyInvalid>()(
+  'RoutineDeliveryKeyInvalid',
+  {},
+  { title: 'Invalid Idempotency-Key' },
+) {}
 const authority = Schema.Struct({
   id: RoutineId,
   authorization: Schema.String.check(Schema.isPattern(/^Bearer [A-Za-z0-9_-]{43}$/iu)),
@@ -73,7 +79,11 @@ const accept = Effect.fn('Http.Routine.webhook')(function* () {
   const suppliedKey = request.headers['idempotency-key']
   let invocation: RoutineInvocation = RoutineInvocation.cases.Fresh.make({})
   if (suppliedKey !== undefined) {
-    invocation = RoutineInvocation.cases.Keyed.make({ key: yield* decodeDeliveryKey(suppliedKey) })
+    invocation = RoutineInvocation.cases.Keyed.make({
+      key: yield* decodeDeliveryKey(suppliedKey).pipe(
+        Effect.mapError(() => new RoutineDeliveryKeyInvalid({})),
+      ),
+    })
   }
   const payload = yield* readPayload(request)
   const scheduler = yield* RoutineScheduler
@@ -91,7 +101,7 @@ export const routineWebhookRoutes = HttpRouter.add(
         HttpServerResponse.jsonUnsafe({ error: THREAD_OPENING_FAILURE }, { status: 409 }),
       ),
     ),
-    Effect.catchTag('SchemaError', () =>
+    Effect.catchTag('RoutineDeliveryKeyInvalid', () =>
       Effect.succeed(
         HttpServerResponse.jsonUnsafe({ error: 'Invalid Idempotency-Key' }, { status: 400 }),
       ),

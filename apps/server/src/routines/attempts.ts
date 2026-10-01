@@ -3,7 +3,10 @@ import * as Schema from 'effect/Schema'
 import { Occurrence, OccurrenceId, RoutineId, ThreadId } from '@vivid/contracts'
 
 /** A supplied delivery key names one attempt; absence deliberately means new work on every call. */
-export const RoutineDeliveryKey = Schema.String.pipe(Schema.brand('RoutineDeliveryKey'))
+export const RoutineDeliveryKey = Schema.String.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(200),
+).pipe(Schema.brand('RoutineDeliveryKey'))
 export type RoutineDeliveryKey = typeof RoutineDeliveryKey.Type
 export const RoutineInvocation = Schema.TaggedUnion({
   Fresh: {},
@@ -11,7 +14,7 @@ export const RoutineInvocation = Schema.TaggedUnion({
 })
 export type RoutineInvocation = typeof RoutineInvocation.Type
 
-/** These are insertion snapshots, never a second mutable lifecycle beside the Run. */
+/** Opening snapshots describe admission only; an attached Run owns the execution lifecycle. */
 export const OccurrenceOpening = Schema.TaggedUnion({
   Ready: {},
   Failed: { reason: Schema.String },
@@ -53,3 +56,24 @@ export const identifyAttempt = (routineId: RoutineId, invocation: RoutineInvocat
         deliveryKey: key,
       }),
   })
+
+/** Scheduled identity survives process loss; every replay uses the receipt id as its delivery key. */
+export const scheduledAttempt = (routineId: RoutineId, dueAt: number): RoutineAttempt => {
+  const id = OccurrenceId.make(
+    `scheduled-${NodeCrypto.createHash('sha256')
+      .update(JSON.stringify([routineId, dueAt]))
+      .digest('hex')}`,
+  )
+  return RoutineAttempt.make({ id, deliveryKey: id })
+}
+
+/** Opening failures are terminal; failed admissions remain eligible for idempotent replay. */
+export const OccurrenceFailure = Schema.TaggedUnion({
+  Opening: {},
+  Delivery: { reason: Schema.String },
+})
+export type OccurrenceFailure = typeof OccurrenceFailure.Type
+
+/** Persisted scheduled receipts retain their original key even if the schedule is edited later. */
+export const replayAttempt = (id: OccurrenceId): RoutineAttempt =>
+  RoutineAttempt.make({ id, deliveryKey: id })

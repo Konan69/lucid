@@ -163,13 +163,10 @@ const makeEnsure = (database: DatabaseService) =>
     )
     const stored = yield* decodeThread(yield* returned(rows, 'Thread'))
     // The id is predictable (`routine-<id>`, `task-<id>`), so a row already being there proves
-    // nothing about whose it is. A Thread that is not this Person's private Thread in this
-    // workspace is never handed back: that would deliver one Person's Routine into a Thread
+    // nothing about whose it is. Only this Person's Thread in this workspace is handed back;
+    // sharing changes audience, not ownership. Never deliver a Routine into a Thread
     // someone else created to receive it.
-    const theirs =
-      stored.personId === input.personId &&
-      stored.companyId === input.companyId &&
-      stored.audience === 'private'
+    const theirs = stored.personId === input.personId && stored.companyId === input.companyId
     return theirs
       ? stored
       : yield* Effect.fail(

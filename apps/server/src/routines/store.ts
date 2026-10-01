@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, lte, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, isNull, like, lte, sql } from 'drizzle-orm'
 import * as Arr from 'effect/Array'
 import * as Option from 'effect/Option'
 import * as Clock from 'effect/Clock'
@@ -23,7 +23,15 @@ import { companyColumnOf, ownedHere, type Actor } from '../auth/access.ts'
 import { ServerConfig } from '../config.ts'
 import { Database, returned, type DatabaseInfrastructureError } from '../database/client.ts'
 import { membershipTable } from '../companies/tables.ts'
-import { OccurrenceClaim, OccurrenceOpening, type RoutineAttempt } from './attempts.ts'
+import {
+  OccurrenceClaim,
+  OccurrenceOpening,
+  OccurrenceFailure,
+  scheduledAttempt,
+  replayAttempt,
+  THREAD_OPENING_FAILURE,
+  type RoutineAttempt,
+} from './attempts.ts'
 import { runs } from '../threads/tables.ts'
 import { hashKey, issueKey, matchesKey } from './keys.ts'
 import { decodeOccurrence, decodeRoutine, triggerColumns, type RoutineRecord } from './records.ts'
@@ -71,7 +79,7 @@ export interface RoutineStoreService {
     key: Redacted.Redacted,
   ) => Effect.Effect<RoutineRecord, StoreError>
   readonly claimDue: () => Effect.Effect<
-    ReadonlyArray<RoutineRecord>,
+    ReadonlyArray<ScheduledReceipt>,
     DatabaseInfrastructureError | InvalidRoutineSchedule
   >
   readonly findOccurrence: (
@@ -83,10 +91,20 @@ export interface RoutineStoreService {
     attempt: RoutineAttempt,
     opening: OccurrenceOpening,
   ) => Effect.Effect<OccurrenceClaim, StoreError>
+  readonly failOccurrence: (
+    id: OccurrenceId,
+    failure: OccurrenceFailure,
+  ) => Effect.Effect<boolean, DatabaseInfrastructureError>
   readonly attachSubmission: (
     id: OccurrenceId,
     runId: RunId,
   ) => Effect.Effect<void, DatabaseInfrastructureError>
+}
+
+/** A tick and its durable receipt leave the claim transaction together. */
+interface ScheduledReceipt {
+  readonly record: RoutineRecord
+  readonly attempt: RoutineAttempt
 }
 
 export class RoutineStore extends Context.Service<RoutineStore, RoutineStoreService>()(
@@ -333,12 +351,32 @@ const makeAuthorizeWebhook = (database: DatabaseService) =>
     return record
   })
 
-/** Advances each due timestamp under SKIP LOCKED before releasing the claim to another worker. */
+/** Claims each tick with its receipt atomically and replays every unsubmitted scheduled receipt.
+ * Concurrent passes may replay the same receipt after commit; Conversation's original key makes
+ * admission idempotent. No in-memory claim or lease is needed to recover a process crash.
+ */
 const makeClaimDue = (database: DatabaseService) =>
   Effect.fn('RoutineStore.claimDue')(function* () {
     const now = yield* Clock.currentTimeMillis
     return yield* database.transaction((tx) =>
       Effect.gen(function* () {
+        const pending = yield* tx
+          .select({ routine: routines, occurrence: occurrences })
+          .from(occurrences)
+          .innerJoin(routines, eq(routines.id, occurrences.routineId))
+          .where(
+            and(
+              like(occurrences.id, 'scheduled-%'),
+              eq(occurrences.status, 'not-admitted'),
+              isNull(occurrences.submissionId),
+            ),
+          )
+          .for('update', { skipLocked: true, of: occurrences })
+        const receipts: ScheduledReceipt[] = []
+        for (const row of pending) {
+          const record = yield* decodeRoutine(row.routine)
+          receipts.push({ record, attempt: replayAttempt(OccurrenceId.make(row.occurrence.id)) })
+        }
         const rows = yield* tx
           .select()
           .from(routines)
@@ -352,15 +390,33 @@ const makeClaimDue = (database: DatabaseService) =>
           )
           .orderBy(asc(routines.nextExpectedAt))
           .for('update', { skipLocked: true })
-        const records = yield* Effect.forEach(rows, decodeRoutine)
-        for (const record of records) {
+        for (const row of rows) {
+          const record = yield* decodeRoutine(row)
+          if (row.nextExpectedAt === null)
+            return yield* new DatabaseFailure({ message: 'Due Routine has no tick timestamp' })
+          const attempt = scheduledAttempt(record.routine.id, row.nextExpectedAt)
           const next = yield* nextExpectedAt(record.routine.trigger, true, now)
+          yield* tx
+            .insert(occurrences)
+            .values({
+              id: attempt.id,
+              routineId: record.routine.id,
+              conversationId: `routine-${record.routine.id}`,
+              submissionId: null,
+              status: 'not-admitted',
+              startedAt: now,
+              finishedAt: null,
+              output: null,
+              error: null,
+            })
+            .onConflictDoNothing({ target: occurrences.id })
           yield* tx
             .update(routines)
             .set({ nextExpectedAt: next })
             .where(eq(routines.id, record.routine.id))
+          receipts.push({ record, attempt })
         }
-        return records
+        return receipts
       }),
     )
   })
@@ -405,8 +461,7 @@ const makeClaimOccurrence = (
         error: reason,
       }),
     })
-    // status, finished_at, output and error are immutable insertion snapshots. Only submission_id
-    // is attached later; wire lifecycle and finish time always come from the joined Run.
+    // Receipt snapshots describe admission failures until submission_id joins the authoritative Run.
     const rows = yield* database.transaction((tx) =>
       Effect.gen(function* () {
         yield* requireMember(tx, record)
@@ -444,13 +499,40 @@ interface OccurrenceSnapshot {
   readonly error: string | null
 }
 
+/** Failure reasons stay durable; only opening failures stop replay, and admission errors keep the key. */
+const makeFailOccurrence = (database: DatabaseService) =>
+  Effect.fn('RoutineStore.failOccurrence')(function* (
+    id: OccurrenceId,
+    failure: OccurrenceFailure,
+  ) {
+    const now = yield* Clock.currentTimeMillis
+    const snapshot = OccurrenceFailure.match(failure, {
+      Opening: () => ({ status: 'failed', error: THREAD_OPENING_FAILURE, finishedAt: now }),
+      Delivery: ({ reason }) => ({ status: 'not-admitted', error: reason, finishedAt: now }),
+    })
+    const rows = yield* database.run(
+      database
+        .update(occurrences)
+        .set(snapshot)
+        .where(
+          and(
+            eq(occurrences.id, id),
+            isNull(occurrences.submissionId),
+            eq(occurrences.status, 'not-admitted'),
+          ),
+        )
+        .returning({ id: occurrences.id }),
+    )
+    return rows.length > 0
+  })
+
 /** Persists the returned Run id; future reads join that Run rather than settling a second lifecycle. */
 const makeAttachSubmission = (database: DatabaseService) =>
   Effect.fn('RoutineStore.attachSubmission')(function* (id: OccurrenceId, runId: RunId) {
     const rows = yield* database.run(
       database
         .update(occurrences)
-        .set({ submissionId: runId })
+        .set({ submissionId: runId, error: null, finishedAt: null })
         .where(eq(occurrences.id, id))
         .returning({ id: occurrences.id }),
     )
@@ -484,6 +566,7 @@ export const routineStoreLayer = Layer.effect(
       findOccurrence,
       claimOccurrence: makeClaimOccurrence(database, findOccurrence),
       attachSubmission: makeAttachSubmission(database),
+      failOccurrence: makeFailOccurrence(database),
     })
   }),
 )

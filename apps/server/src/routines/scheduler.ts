@@ -21,6 +21,7 @@ import {
   identifyAttempt,
   OccurrenceClaim,
   OccurrenceOpening,
+  OccurrenceFailure,
   RoutineInvocation,
   RoutineThreadUnavailable,
   THREAD_OPENING_FAILURE,
@@ -82,7 +83,7 @@ interface SubmissionServices {
 
 /** A recorded opening failure stays a failure on retry; an admitted receipt retains its Run. */
 const replay = Effect.fn('RoutineScheduler.replay')(function* (occurrence: Occurrence) {
-  if (occurrence.submissionId === null && occurrence.error !== null) {
+  if (occurrence.submissionId === null && occurrence.error === THREAD_OPENING_FAILURE) {
     return yield* Effect.fail(
       new RoutineThreadUnavailable({
         routineId: occurrence.routineId,
@@ -104,7 +105,11 @@ const openingFailed = Effect.fn('RoutineScheduler.openingFailed')(function* (
     attempt,
     OccurrenceOpening.cases.Failed.make({ reason: THREAD_OPENING_FAILURE }),
   )
-  if (OccurrenceClaim.guards.Created(claim)) {
+  const recorded = yield* services.routines.failOccurrence(
+    attempt.id,
+    OccurrenceFailure.cases.Opening.make({}),
+  )
+  if (OccurrenceClaim.guards.Created(claim) || recorded) {
     yield* publish(services.changes)(record)
     // The conflicting Thread may belong to someone else; this notice must never link to it.
     yield* services.notifier.notify({
@@ -151,16 +156,13 @@ const makeSubmit = (services: SubmissionServices) =>
   Effect.fn('RoutineScheduler.submit')(function* (
     record: RoutineRecord,
     payload: Option.Option<string>,
-    invocation: RoutineInvocation,
+    attempt: RoutineAttempt,
   ) {
     const routine = record.routine
-    const attempt = identifyAttempt(routine.id, invocation)
-    if (RoutineInvocation.guards.Keyed(invocation)) {
-      const existing = yield* services.routines.findOccurrence(record, attempt.id)
-      if (Option.isSome(existing)) {
-        const outcome = yield* replay(existing.value)
-        if (Option.isSome(outcome)) return outcome.value
-      }
+    const existing = yield* services.routines.findOccurrence(record, attempt.id)
+    if (Option.isSome(existing)) {
+      const outcome = yield* replay(existing.value)
+      if (Option.isSome(outcome)) return outcome.value
     }
     const thread = yield* openThread(services, record, attempt)
     const claim = yield* services.routines.claimOccurrence(
@@ -177,17 +179,28 @@ const makeSubmit = (services: SubmissionServices) =>
     const occurrence = claim.occurrence
     const threadId = thread.id
     yield* publish(services.changes)(record)
-    const run = yield* services.conversation.deliver({
-      threadId,
-      personId: record.personId,
-      message: DeliveryMessage.cases.Signal.make({
-        type: 'schedule',
-        body: bodyOf(record, payload),
-        attributes: { routine: routine.id, name: routine.name },
-      }),
-      origin: StoredRunOrigin.cases.Routine.make({ routineName: routine.name }),
-      idempotencyKey: attempt.deliveryKey,
-    })
+    const run = yield* services.conversation
+      .deliver({
+        threadId,
+        personId: record.personId,
+        message: DeliveryMessage.cases.Signal.make({
+          type: 'schedule',
+          body: bodyOf(record, payload),
+          attributes: { routine: routine.id, name: routine.name },
+        }),
+        origin: StoredRunOrigin.cases.Routine.make({ routineName: routine.name }),
+        idempotencyKey: attempt.deliveryKey,
+      })
+      .pipe(
+        Effect.tapError((error) =>
+          services.routines.failOccurrence(
+            occurrence.id,
+            OccurrenceFailure.cases.Delivery.make({
+              reason: `Delivery was not admitted (${error._tag})`,
+            }),
+          ),
+        ),
+      )
     yield* services.routines.attachSubmission(occurrence.id, run.id)
     yield* publish(services.changes)(record)
     const outcome = RunState.match(run.state, {
@@ -212,7 +225,7 @@ const makeSubmit = (services: SubmissionServices) =>
       startedAt: occurrence.startedAt,
       finishedAt: outcome.finishedAt,
       output: occurrence.output,
-      error: occurrence.error,
+      error: null,
     })
   })
 
@@ -232,7 +245,7 @@ export const routineSchedulerServiceLayer = Layer.effect(
       return yield* submit(
         yield* routines.get(actor, id),
         Option.none(),
-        RoutineInvocation.cases.Fresh.make({}),
+        identifyAttempt(id, RoutineInvocation.cases.Fresh.make({})),
       )
     })
 
@@ -242,15 +255,19 @@ export const routineSchedulerServiceLayer = Layer.effect(
       payload: string,
       invocation: RoutineInvocation,
     ) {
-      return yield* submit(record, Option.some(payload), invocation)
+      return yield* submit(
+        record,
+        Option.some(payload),
+        identifyAttempt(record.routine.id, invocation),
+      )
     })
 
-    /** Claims are advanced first; a failed delivery is reported without starving other claimed work. */
+    /** Every claimed tick already has a receipt; failed admissions remain replayable on later passes. */
     const runDue = Effect.fn('RoutineScheduler.runDue')(function* () {
       const due = yield* routines.claimDue()
-      yield* Effect.forEach(due, publish(changes), { discard: true })
-      const outcomes = yield* Effect.forEach(due, (record) =>
-        Effect.exit(submit(record, Option.none(), RoutineInvocation.cases.Fresh.make({}))),
+      yield* Effect.forEach(due, ({ record }) => publish(changes)(record), { discard: true })
+      const outcomes = yield* Effect.forEach(due, ({ record, attempt }) =>
+        Effect.exit(submit(record, Option.none(), attempt)),
       )
       for (const outcome of outcomes) yield* outcome
     })

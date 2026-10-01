@@ -527,6 +527,152 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
       }),
     )
 
+    it.effect('retains a tick receipt when the claiming worker dies before delivery', () =>
+      Effect.gen(function* () {
+        const { owner } = yield* fixture()
+        const store = yield* RoutineStore
+        yield* TestClock.setTime(0)
+        const routine = yield* store.create(owner, {
+          name: 'Recover tick',
+          prompt: 'Do work',
+          trigger: schedule,
+        })
+        yield* TestClock.setTime(60_000)
+        const claimed = yield* store.claimDue()
+        const tick = yield* returned(
+          claimed.filter(({ record }) => record.routine.id === routine.id),
+          'claimed tick',
+        )
+        expect((yield* store.list(owner))[0]).toMatchObject({
+          nextRunAt: 120_000,
+          runs: [{ id: tick.attempt.id, submissionId: null }],
+        })
+        // A new pass sees the committed receipt despite the schedule already having advanced.
+        yield* (yield* RoutineScheduler).runDue()
+        yield* (yield* RoutineScheduler).runDue()
+        expect((yield* store.list(owner))[0]).toMatchObject({
+          runs: [{ id: tick.attempt.id, status: 'running' }],
+        })
+        expect(yield* Ref.get(yield* Deliveries)).toMatchObject([
+          { idempotencyKey: tick.attempt.deliveryKey },
+        ])
+      }),
+    )
+
+    it.effect('records failed scheduled admission and replays the same tick on the next pass', () =>
+      Effect.gen(function* () {
+        const { owner } = yield* fixture()
+        const store = yield* RoutineStore
+        yield* TestClock.setTime(0)
+        const routine = yield* store.create(owner, {
+          name: 'Retry tick',
+          prompt: 'Do work',
+          trigger: schedule,
+        })
+        yield* TestClock.setTime(60_000)
+        yield* Ref.set(
+          yield* DeliveryFailure,
+          Option.some(new RuntimeUnavailable({ message: 'Unavailable' })),
+        )
+        expect(yield* (yield* RoutineScheduler).runDue().pipe(Effect.flip)).toBeInstanceOf(
+          RuntimeUnavailable,
+        )
+        const view = yield* returned(yield* store.list(owner), 'Routine')
+        const failed = yield* returned(view.runs, 'failed tick')
+        expect(failed).toMatchObject({
+          submissionId: null,
+          error: 'Delivery was not admitted (RuntimeUnavailable)',
+          finishedAt: 60_000,
+        })
+        yield* (yield* RoutineScheduler).runDue()
+        expect((yield* store.list(owner))[0]).toMatchObject({
+          runs: [{ id: failed.id, status: 'running', error: null, finishedAt: null }],
+        })
+        expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
+        expect((yield* store.get(owner, routine.id)).routine.nextRunAt).toBe(120_000)
+      }),
+    )
+
+    it.effect(
+      'records a Fresh admission failure instead of leaving an unexplained failed receipt',
+      () =>
+        Effect.gen(function* () {
+          const { owner } = yield* fixture()
+          const store = yield* RoutineStore
+          const routine = yield* store.create(owner, {
+            name: 'Fresh failure',
+            prompt: 'Do work',
+            trigger: webhook,
+          })
+          yield* Ref.set(
+            yield* DeliveryFailure,
+            Option.some(new RuntimeUnavailable({ message: 'Unavailable' })),
+          )
+          expect(
+            yield* (yield* RoutineScheduler).run(owner, routine.id).pipe(Effect.flip),
+          ).toBeInstanceOf(RuntimeUnavailable)
+          expect((yield* store.list(owner))[0]).toMatchObject({
+            runs: [{ submissionId: null, error: 'Delivery was not admitted (RuntimeUnavailable)' }],
+          })
+        }),
+    )
+
+    it.effect(
+      'continues scheduled and webhook delivery after the owner shares the Routine Thread',
+      () =>
+        Effect.gen(function* () {
+          const { owner } = yield* fixture()
+          const store = yield* RoutineStore
+          const scheduler = yield* RoutineScheduler
+          yield* TestClock.setTime(0)
+          const routine = yield* store.create(owner, {
+            name: 'Shared Routine',
+            prompt: 'Do work',
+            trigger: schedule,
+          })
+          const first = yield* scheduler.run(owner, routine.id)
+          // The share API refuses reserved Threads; legacy shared rows must still be deliverable.
+          const database = yield* Database
+          yield* database.run(
+            database
+              .update(threads)
+              .set({ audience: 'company' })
+              .where(eq(threads.id, first.threadId)),
+          )
+          yield* TestClock.setTime(60_000)
+          yield* scheduler.runDue()
+          yield* store.patch(owner, routine.id, { trigger: webhook })
+          const issued = yield* store.issueWebhook(owner, routine.id)
+          expect(
+            (yield* post({ web: yield* client(), id: routine.id, key: issued.key, body: 'Update' }))
+              .status,
+          ).toBe(202)
+          expect(yield* Ref.get(yield* Deliveries)).toHaveLength(3)
+          const view = yield* returned(yield* store.list(owner), 'Routine')
+          expect(view.runs.every((occurrence) => occurrence.threadId === first.threadId)).toBe(true)
+        }),
+    )
+
+    it.effect('refuses empty and oversized webhook delivery keys before creating a receipt', () =>
+      Effect.gen(function* () {
+        const { owner } = yield* fixture()
+        const store = yield* RoutineStore
+        const routine = yield* store.create(owner, {
+          name: 'Bound keys',
+          prompt: 'Do work',
+          trigger: webhook,
+        })
+        const issued = yield* store.issueWebhook(owner, routine.id)
+        const input = { web: yield* client(), id: routine.id, key: issued.key, body: 'Update' }
+        expect((yield* postKeyed(input, '')).status).toBe(400)
+        expect((yield* postKeyed(input, 'x'.repeat(201))).status).toBe(400)
+        const view = yield* returned(yield* store.list(owner), 'Routine')
+        expect(view.runs).toEqual([])
+        expect((yield* postKeyed(input, 'x'.repeat(200))).status).toBe(202)
+        expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
+      }),
+    )
+
     it.effect('uses every durable Run outcome instead of legacy Occurrence status', () =>
       Effect.gen(function* () {
         const { owner } = yield* fixture()
