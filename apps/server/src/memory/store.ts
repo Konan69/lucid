@@ -307,11 +307,14 @@ export const memoryStoreLayer = Layer.effect(
       /** Corrections share the write permit with remembers to prevent stale reconciliation against replaced records. */
       correct: (input) => writes.withPermit(correcting(dependencies, input)),
       /** Read existence before tombstoning so missing or superseded IDs remain a precise domain failure. */
-      forget: Effect.fn('MemoryStore.forget')(function* (input) {
-        yield* requireRecord(helix, input)
-        const now = yield* Clock.currentTimeMillis
-        yield* helix.forget({ ...input, now })
-      }),
+      forget: Effect.fn('MemoryStore.forget')(
+        function* (input: RecordIdentity) {
+          yield* requireRecord(helix, input)
+          const now = yield* Clock.currentTimeMillis
+          yield* helix.forget({ ...input, now })
+        },
+        (effect) => writes.withPermit(effect),
+      ),
       /** Recall stays independent of the write permit so warm reads remain responsive. */
       recall: (input) => recalling(dependencies, input),
       /** Expose current records without internal embeddings, alias metadata, or lifecycle history. */

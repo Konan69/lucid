@@ -311,6 +311,9 @@ const encodeBrief = Schema.encodeEffect(Schema.fromJsonString(MemoryBrief))
 const decodeRows = HttpClientResponse.schemaBodyJson(Rows)
 const decodeSearch = HttpClientResponse.schemaBodyJson(SearchRows)
 const decodeBrief = HttpClientResponse.schemaBodyJson(BriefRow)
+const decodeCreation = HttpClientResponse.schemaBodyJson(
+  Schema.Struct({ receipt: Schema.Array(Schema.Struct({ id: MemoryId })) }),
+)
 
 interface HelixSession {
   readonly client: HttpClient.HttpClient
@@ -490,13 +493,19 @@ function writers(session: HelixSession) {
             .setProperty('validTo', input.record.memory.createdAt),
         )
         .varAs('briefs', staleBriefs(input.partition))
-        .returning(['created'])
+        .varAs(
+          'receipt',
+          g()
+            .n(NodeRef.var('created'))
+            .project([Projection.property('memoryId', 'id')]),
+        )
+        .returning(['receipt'])
         .toQueryRequest(insertionParams, values)
       const response = yield* requestHelix(client, url, query)
-      const created = yield* HttpClientResponse.schemaBodyJson(
-        Schema.Struct({ created: Schema.Array(Schema.Json) }),
-      )(response).pipe(Effect.mapError(() => HelixMalformed.make({})))
-      if (created.created.length === 0) yield* Effect.fail(HelixConflict.make({}))
+      const created = yield* decodeCreation(response).pipe(
+        Effect.mapError(() => HelixMalformed.make({})),
+      )
+      if (created.receipt.length === 0) yield* Effect.fail(HelixConflict.make({}))
     }),
     /** Soft deletion removes records from every live predicate and invalidates previously derived briefs. */
     forget: Effect.fn('HelixMemory.forget')(function* (
