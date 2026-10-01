@@ -7,15 +7,18 @@ schema-derived `VividRpcClient`.
 
 ## Layout
 
-- `src/agents/` — Flue `'use agent'` modules and the Vivid model instructions.
-- `src/app.ts` — Hono transport routes for health, Flue agent transport, and the one server-only
-  `/internal/runs` endpoint.
-- `src/client.ts` — Effect Layer configuring the server URL, runtime token, and `VividRpcClient`
-  over Node HTTP.
+- `src/agents/` — Flue `'use agent'` modules and Vivid's instructions.
+- `src/app.ts` — Hono transport: health, and the Flue routes behind the runtime token. It loads the
+  acting Person's context before Flue renders a response.
+- `src/client.ts` — who Vivid is acting for (`Acting`, `actingFor`) and the product client that
+  makes every call as that Person (`asActing`).
+- `src/context.ts` — what Vivid is told at the start of a response: the Person's memory brief, the
+  skills it can use, their time zone.
 - `src/db.ts` — Flue's PostgreSQL conversation and runtime storage adapter.
 - `src/providers/` — model-provider registration and adapter setup.
-- `src/tools/` — model tools. They receive Flue-decoded inputs and call product behavior over
-  `VividRpcClient`; they do not own server stores, schedulers, credentials, or product routes.
+- `src/tools/` — model tools. Each is a thin, typed call to `VividRpc` through `asActing`; they do
+  not own server stores, schedulers, credentials, or product routes, and they never decide whether
+  an action is allowed.
 
 ## Commands
 
@@ -30,10 +33,12 @@ schema-derived `VividRpcClient`.
 
 ## Runtime contract
 
-- The application server starts work with `POST /internal/runs` and the shared runtime token.
-- The runtime validates that request, dispatches one signal into the Flue conversation identified by
-  the Thread id, and returns Flue's submission receipt.
-- Both `/agents/vivid/*` and `/internal/runs` require the runtime token. The token and server URL
-  come from Effect Config; secrets never enter model context.
-- Product RPC traffic uses the generated `/api/rpc` contract through `VividRpcClient`.
-- The default model is `openrouter/z-ai/glm-5.3-flash`; `VIVID_MODEL` may select another adapter.
+- The application server is the only caller. It holds the runtime token and forwards a Person's
+  message, or delivers a signal, to `/agents/vivid/:threadId` after checking who they are and that
+  they may see the Thread. Nothing else reaches Flue.
+- Every delivery says who it is for: a signal carries `person` and `from` attributes; a plain user
+  turn happens only in a private Thread, whose creator is recorded as the conversation's initial
+  data. `actingFor` reads exactly that, and every tool call carries the Thread and the Person to
+  the server, which checks them again.
+- Product calls use the generated `/api/rpc` contract through `VividRpcClient`.
+- The default model is `openrouter/z-ai/glm-5.3-flash`; `VIVID_MODEL` may select another.
