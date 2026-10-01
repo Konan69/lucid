@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import {
   createAssistantMessageEventStream,
+  EventStream,
   type AssistantMessage,
   type AssistantMessageEvent,
   type Model,
@@ -8,7 +9,7 @@ import {
   type SimpleStreamOptions,
 } from '@earendil-works/pi-ai'
 import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter'
-import { ConfigProvider, Effect, Exit, Fiber, Queue, Stream } from 'effect'
+import { Cause, ConfigProvider, Effect, Exit, Fiber, Queue, Stream } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { modelStream } from './policy.ts'
 
@@ -25,6 +26,19 @@ const model = (id: string): Model<'openai-completions'> => ({
   contextWindow: 8192,
   maxTokens: 1024,
 })
+/** A rejected pull exercises the SDK exception seam without replacing class prototype methods. */
+class RejectedStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
+  constructor(private readonly defect: Error) {
+    super(
+      () => false,
+      () => message('primary', [], 'error'),
+    )
+  }
+  override [Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
+    return { next: () => Promise.reject(this.defect) }
+  }
+}
+
 const primary = model('primary')
 const fallback = model('fallback')
 
@@ -156,9 +170,10 @@ describe('bounded model policy', () => {
         Effect.forkScoped,
       )
       yield* Queue.take(evidence.calls)
-      yield* TestClock.adjust('1 second')
       const signal = evidence.signals[0]
       if (signal === undefined) expect.fail('A provider signal is required')
+      expect(signal.aborted).toBe(false)
+      yield* TestClock.adjust('1 second')
       expect(signal.aborted).toBe(true)
       yield* TestClock.adjust('250 millis')
       yield* Queue.take(evidence.calls)
@@ -218,5 +233,81 @@ describe('bounded model policy', () => {
         expect(Exit.isFailure(ended)).toBe(true)
         expect(evidence.sources).toHaveLength(1)
       }).pipe(Effect.provide(configuration({ VIVID_MODEL_FALLBACKS: 'openrouter/fallback' }))),
+  )
+  it.effect('reasoning-only failures remain buffered through retry and fallback', () =>
+    Effect.gen(function* () {
+      const thinking = message(
+        'primary',
+        [{ type: 'thinking', thinking: 'Private reasoning' }],
+        'stop',
+      )
+      const empty: AssistantMessageEvent[] = [
+        { type: 'start', partial: thinking },
+        { type: 'thinking_delta', contentIndex: 0, delta: 'Private reasoning', partial: thinking },
+        { type: 'done', reason: 'stop', message: thinking },
+      ]
+      const evidence = yield* fixture([empty, empty, empty, answer('fallback', 'Answer')])
+      const run = yield* modelStream(evidence.provider, primary, { messages: [] }, {}).pipe(
+        Stream.runCollect,
+        Effect.forkScoped,
+      )
+      yield* Queue.take(evidence.calls)
+      yield* TestClock.adjust('250 millis')
+      yield* Queue.take(evidence.calls)
+      yield* TestClock.adjust('500 millis')
+      yield* Queue.take(evidence.calls)
+      yield* Queue.take(evidence.calls)
+      const events = yield* Fiber.join(run)
+      expect(events.map((event) => event.type)).toEqual(['start', 'done'])
+      expect(JSON.stringify(events)).not.toContain('Private reasoning')
+    }).pipe(Effect.provide(configuration({ VIVID_MODEL_FALLBACKS: 'openrouter/fallback' }))),
+  )
+
+  it.effect('unknown catalog entries fail configuration before any provider request', () =>
+    Effect.gen(function* () {
+      const evidence = yield* fixture([])
+      const exit = yield* modelStream(evidence.provider, primary, { messages: [] }, {}).pipe(
+        Stream.runCollect,
+        Effect.exit,
+      )
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain('ModelConfigurationInvalid')
+      expect(evidence.signals).toHaveLength(0)
+    }).pipe(Effect.provide(configuration({ VIVID_MODEL_FALLBACKS: 'openrouter/typo' }))),
+  )
+
+  it.effect('unexpected iterator rejection stays a defect without retry or fallback', () =>
+    Effect.gen(function* () {
+      const evidence = yield* fixture([])
+      const defect = new TypeError('SDK invariant failed')
+      let attempts = 0
+      const provider = {
+        ...evidence.provider,
+        streamSimple: () => {
+          attempts += 1
+          return new RejectedStream(defect)
+        },
+      }
+      const exit = yield* modelStream(provider, primary, { messages: [] }, {}).pipe(
+        Stream.runCollect,
+        Effect.exit,
+      )
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) expect(Cause.hasDies(exit.cause)).toBe(true)
+      expect(attempts).toBe(1)
+    }).pipe(Effect.provide(configuration({ VIVID_MODEL_FALLBACKS: 'openrouter/fallback' }))),
+  )
+  it.effect('authentication refusals require the operator without retrying the same model', () =>
+    Effect.gen(function* () {
+      const denied = { ...message('primary', [], 'error'), errorMessage: '401 Unauthorized' }
+      const evidence = yield* fixture([[{ type: 'error', reason: 'error', error: denied }]])
+      const exit = yield* modelStream(evidence.provider, primary, { messages: [] }, {}).pipe(
+        Stream.runCollect,
+        Effect.exit,
+      )
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain('ModelUnavailable')
+      expect(evidence.signals).toHaveLength(1)
+    }).pipe(Effect.provide(configuration({}))),
   )
 })

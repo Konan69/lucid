@@ -13,6 +13,7 @@ import {
   TimedOut,
   TurnStopped,
   ModelUnavailable,
+  readModelEvent,
   ModelConfigurationInvalid,
   providerFailure,
   retryable,
@@ -26,7 +27,10 @@ const ModelList = Schema.String.check(Schema.isPattern(/^\s*[^,\s]+\s*(,\s*[^,\s
 const PositiveMillis = Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThan(0))
 
 /** One first-token budget encloses the complete ordered model selection, including retry delays. */
-const configuration = Effect.fn('Models.configuration')(function* (primary: CompletionModel) {
+export const modelConfiguration = Effect.fn('Models.configuration')(function* (
+  primary: CompletionModel,
+  provider: Provider<'openai-completions'>,
+) {
   const list = yield* Config.schema(ModelList, 'VIVID_MODEL_FALLBACKS').pipe(
     Config.withDefault(`openrouter/${primary.id}`),
   )
@@ -43,20 +47,22 @@ const configuration = Effect.fn('Models.configuration')(function* (primary: Comp
       ...list.split(',').map((name) => name.trim().replace(/^openrouter\//u, '')),
     ]),
   ]
-  return { names, firstTokenMillis, attemptMillis }
+  const models = yield* Effect.forEach(names, (id) => {
+    const model = provider.getModels().find((candidate) => candidate.id === id)
+    return model === undefined
+      ? Effect.fail(new ModelConfigurationInvalid())
+      : Effect.succeed(model)
+  })
+  return { models, firstTokenMillis, attemptMillis }
 })
 
-/** Text, reasoning, or a real tool call makes an assistant Message visible; pre-content starts stay buffered. */
+/** Only an answer or tool call escapes buffering; reasoning alone cannot forfeit invisible retries. */
 const meaningful = (event: AssistantMessageEvent): boolean => {
-  if (event.type === 'text_delta' || event.type === 'thinking_delta')
-    return event.delta.trim().length > 0
+  if (event.type === 'text_delta') return event.delta.trim().length > 0
   if (event.type === 'toolcall_end') return event.toolCall.name.length > 0
   if (event.type === 'done')
     return event.message.content.some(
-      (part) =>
-        part.type === 'toolCall' ||
-        (part.type === 'text' && part.text.trim().length > 0) ||
-        (part.type === 'thinking' && part.thinking.trim().length > 0),
+      (part) => part.type === 'toolCall' || (part.type === 'text' && part.text.trim().length > 0),
     )
   return false
 }
@@ -76,12 +82,7 @@ const checked = Effect.fn('Models.checked')(function* (
       ),
     )
   }
-  if (
-    event.type === 'done' &&
-    !event.message.content.some(
-      (part) => part.type === 'toolCall' || (part.type === 'text' && part.text.trim().length > 0),
-    )
-  )
+  if (event.type === 'done' && !meaningful(event))
     return yield* Effect.fail(new NoAnswer({ model: name }))
   return event
 })
@@ -93,10 +94,7 @@ const prepare = Effect.fn('Models.prepare')(function* (
 ) {
   const buffered: AssistantMessageEvent[] = []
   while (true) {
-    const next = yield* Effect.tryPromise({
-      try: () => iterator.next(),
-      catch: () => new ModelUnavailable({ model: name, transient: true }),
-    })
+    const next = yield* readModelEvent(iterator, name)
     if (next.done) return yield* Effect.fail(new NoAnswer({ model: name }))
     const event = yield* checked(next.value, name)
     buffered.push(event)
@@ -139,9 +137,10 @@ const attempt = (input: Attempt) =>
         }),
       )
       yield* Ref.set(input.visible, true)
-      const tail = Stream.fromAsyncIterable(
-        { [Symbol.asyncIterator]: () => iterator },
-        () => new ModelUnavailable({ model: name, transient: false }),
+      const tail = Stream.unfold(iterator, (current) =>
+        readModelEvent(current, name).pipe(
+          Effect.map((next) => (next.done ? undefined : ([next.value, current] as const))),
+        ),
       ).pipe(Stream.mapEffect((event) => checked(event, name)))
       return Stream.concat(Stream.fromIterable(buffered), tail)
     }),
@@ -159,30 +158,26 @@ export const modelStream = (
 ) =>
   Stream.unwrap(
     Effect.gen(function* () {
-      const config = yield* configuration(primary).pipe(
+      const config = yield* modelConfiguration(primary, provider).pipe(
         Effect.mapError(() => new ModelConfigurationInvalid()),
       )
       const visible = yield* Ref.make(false)
       const first = yield* Clock.currentTimeMillis
       /** Exhaust one model before selecting the next; visible work is never replayed. */
       const choose = (index: number): Stream.Stream<AssistantMessageEvent, ModelFailure> => {
-        const id = config.names[index]
-        if (id === undefined)
+        const model = config.models[index]
+        if (model === undefined)
           return Stream.fail(
             new ModelUnavailable({ model: ModelName.make(primary.id), transient: false }),
           )
-        const model = provider.getModels().find((candidate) => candidate.id === id)
-        const call =
-          model === undefined
-            ? Stream.fail(new ModelUnavailable({ model: ModelName.make(id), transient: false }))
-            : attempt({
-                provider,
-                model,
-                context,
-                options,
-                attemptMillis: config.attemptMillis,
-                visible,
-              })
+        const call = attempt({
+          provider,
+          model,
+          context,
+          options,
+          attemptMillis: config.attemptMillis,
+          visible,
+        })
         const schedule = Schedule.exponential('250 millis').pipe(
           Schedule.setInputType<ModelFailure>(),
           Schedule.upTo({ times: 2 }),
@@ -196,7 +191,10 @@ export const modelStream = (
             Stream.unwrap(
               Effect.gen(function* () {
                 if (yield* Ref.get(visible)) return Stream.fail(failure)
-                if (Predicate.isTagged(failure, 'TurnStopped') || index + 1 === config.names.length)
+                if (
+                  Predicate.isTagged(failure, 'TurnStopped') ||
+                  index + 1 === config.models.length
+                )
                   return Stream.fail(failure)
                 return choose(index + 1)
               }),

@@ -1,4 +1,6 @@
-import { Predicate, Schema } from 'effect'
+import type { AssistantMessageEvent } from '@earendil-works/pi-ai'
+import { RunFailure } from '@vivid/contracts'
+import { Effect, Option, Schema } from 'effect'
 
 /** A model name is provider-qualified at configuration and local to its provider at the SDK seam. */
 export const ModelName = Schema.String.check(Schema.isNonEmpty()).pipe(Schema.brand('ModelName'))
@@ -12,7 +14,7 @@ export class RateLimited extends Schema.TaggedError<RateLimited>()(
   },
   { title: 'Model rate limited' },
 ) {
-  /** Flue serializes Error.message; this stable marker survives its operation envelope. */
+  /** Local diagnostics stay caller-safe; wire classification uses the terminal event's typed tag. */
   override get message() {
     return 'RateLimited: provider returned 429'
   }
@@ -37,7 +39,7 @@ export class NoAnswer extends Schema.TaggedError<NoAnswer>()(
   { model: ModelName },
   { title: 'Model returned no answer' },
 ) {
-  /** Stable failure text is classified once at the server ingress. */
+  /** Local diagnostics describe empty output without including the provider payload. */
   override get message() {
     return 'NoAnswer: no text and no tool call'
   }
@@ -48,7 +50,7 @@ export class TimedOut extends Schema.TaggedError<TimedOut>()(
   { model: ModelName },
   { title: 'Model first token timed out' },
 ) {
-  /** The deadline marker survives Flue's Error serialization. */
+  /** Local deadline diagnostics never expose request details. */
   override get message() {
     return 'TimedOut: first token deadline exceeded'
   }
@@ -67,7 +69,12 @@ export class ModelConfigurationInvalid extends Schema.TaggedError<ModelConfigura
   'ModelConfigurationInvalid',
   {},
   { title: 'Invalid model configuration' },
-) {}
+) {
+  /** Configuration needs operator intervention and never includes the supplied private value. */
+  override get message() {
+    return 'ModelUnavailable: invalid model configuration'
+  }
+}
 
 /** Refusals outside availability, rate limits, timeouts, and emptiness remain unclassified at the server. */
 export class ProviderRejected extends Schema.TaggedError<ProviderRejected>()(
@@ -81,14 +88,18 @@ export class ProviderRejected extends Schema.TaggedError<ProviderRejected>()(
   }
 }
 
-export type ModelFailure =
-  | RateLimited
-  | ModelUnavailable
-  | NoAnswer
-  | TimedOut
-  | TurnStopped
-  | ModelConfigurationInvalid
-  | ProviderRejected
+/** One failure vocabulary drives runtime typing, retry guards, and exhaustive wire classification. */
+const Failures = Schema.Union([
+  RateLimited,
+  ModelUnavailable,
+  NoAnswer,
+  TimedOut,
+  TurnStopped,
+  ModelConfigurationInvalid,
+  ProviderRejected,
+]).pipe(Schema.toTaggedUnion('_tag'))
+const isFailure = Schema.is(Failures)
+export type ModelFailure = typeof Failures.Type
 
 /** SDK-decoded status evidence chooses retryability without copying sensitive provider diagnostics. */
 export const providerFailure = (model: ModelName, message: string): ModelFailure => {
@@ -97,7 +108,7 @@ export const providerFailure = (model: ModelName, message: string): ModelFailure
   if (/\b5\d\d\b|connection|network/iu.test(message))
     return new ModelUnavailable({ model, transient: true })
   if (
-    /\b402\b|no (?:credit|endpoints)|insufficient (?:credit|fund)|model.?not.?found|model .* (?:not found|does not exist)|payment required/iu.test(
+    /\b40[123]\b|unauthorized|forbidden|authentication|invalid api.?key|no (?:credit|endpoints)|insufficient (?:credit|fund)|model.?not.?found|model .* (?:not found|does not exist)|payment required/iu.test(
       message,
     )
   )
@@ -106,11 +117,52 @@ export const providerFailure = (model: ModelName, message: string): ModelFailure
 }
 
 /** Deterministic refusals skip retries; an attempt timeout may try the next attempt within the shared deadline. */
+const isRetryable = Failures.isAnyOf(['RateLimited', 'NoAnswer', 'TimedOut'])
 export const retryable = (failure: ModelFailure): boolean => {
-  if (Predicate.isTagged(failure, 'ModelUnavailable')) return failure.transient
-  return (
-    Predicate.isTagged(failure, 'RateLimited') ||
-    Predicate.isTagged(failure, 'NoAnswer') ||
-    Predicate.isTagged(failure, 'TimedOut')
-  )
+  if (Failures.guards.ModelUnavailable(failure)) return failure.transient
+  return isRetryable(failure)
 }
+
+/** Only recognized SDK/network failures may enter the retry channel; arbitrary rejections are defects. */
+const Rejection = Schema.Struct({
+  name: Schema.String,
+  message: Schema.String,
+  status: Schema.optionalKey(Schema.Number),
+})
+const decodeRejection = Schema.decodeUnknownOption(Rejection)
+
+/** An iterator rejection is an unsafe SDK ingress, distinct from its normal terminal error events. */
+export const readModelEvent = (iterator: AsyncIterator<AssistantMessageEvent>, model: ModelName) =>
+  Effect.tryPromise({ try: () => iterator.next(), catch: (error) => error }).pipe(
+    Effect.catch((error): Effect.Effect<never, ModelFailure> => {
+      if (isFailure(error)) return Effect.fail(error)
+      const evidence = decodeRejection(error)
+      if (Option.isNone(evidence)) return Effect.die(error)
+      const value = evidence.value
+      if (value.name === 'AbortError') return Effect.fail(new TurnStopped({ model }))
+      if (value.status !== undefined)
+        return Effect.fail(providerFailure(model, String(value.status)))
+      if (
+        /^(?:APIError|APIConnectionError|APIConnectionTimeoutError|FetchError)$/u.test(value.name)
+      )
+        return Effect.fail(providerFailure(model, value.message))
+      return Effect.die(error)
+    }),
+  )
+
+const FailureReason = Schema.fromJsonString(Schema.Struct({ _tag: RunFailure }))
+const encodeReason = Schema.encodeSync(FailureReason)
+
+/** pi-ai errorMessage is the provider-owned diagnostic field consumed by Flue's error-event path. */
+export const failureDiagnostic = (failure: ModelFailure): string =>
+  encodeReason({
+    _tag: Failures.match(failure, {
+      RateLimited: (): RunFailure => 'RateLimited',
+      ModelUnavailable: (): RunFailure => 'ModelUnavailable',
+      NoAnswer: (): RunFailure => 'NoAnswer',
+      TimedOut: (): RunFailure => 'TimedOut',
+      TurnStopped: (): RunFailure => 'Unexplained',
+      ModelConfigurationInvalid: (): RunFailure => 'ModelUnavailable',
+      ProviderRejected: (): RunFailure => 'Unexplained',
+    }),
+  })

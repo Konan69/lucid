@@ -1,8 +1,8 @@
 import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter'
 import { setProvider } from '@flue/runtime'
-import { modelStream } from './policy.ts'
-import { Stream } from 'effect'
-import { ModelName, ModelUnavailable } from './failure.ts'
+import { modelConfiguration, modelStream } from './policy.ts'
+import { Effect, Stream } from 'effect'
+import { ModelConfigurationInvalid, ModelName, ModelUnavailable } from './failure.ts'
 import { ModelStream } from './stream.ts'
 
 const builtIn = openrouterProvider()
@@ -32,6 +32,15 @@ const provider = {
   ],
 }
 
+// Provider registration is Flue's synchronous bootstrap boundary. Fail invalid operator settings
+// before accepting work; per-request validation still respects injected ConfigProvider test Layers.
+// oxlint-disable-next-line vivid/no-runpromise-in-library
+Effect.runSync(
+  modelConfiguration(glm53Flash, provider).pipe(
+    Effect.mapError(() => new ModelConfigurationInvalid()),
+  ),
+)
+
 // Flue's public registration seam keeps model policy outside its history and lifecycle internals.
 setProvider({
   ...provider,
@@ -42,6 +51,6 @@ setProvider({
       resolved === undefined
         ? Stream.fail(new ModelUnavailable({ model: ModelName.make(model.id), transient: false }))
         : modelStream(provider, resolved, context, options === undefined ? {} : options)
-    return new ModelStream(events)
+    return new ModelStream(events, model)
   },
 })

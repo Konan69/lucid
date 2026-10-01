@@ -13,6 +13,15 @@ const Evidence = Schema.Union([
 export const decodeFailureEvidence = Schema.decodeUnknownOption(Evidence)
 const isText = Schema.is(Schema.String)
 
+/** The provider's schema-encoded SDK diagnostic is read exactly, before legacy prose classification. */
+const decodeReason = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ _tag: RunFailure })),
+)
+const reasonOf = (text: string): RunFailure => {
+  const reason = decodeReason(text)
+  return Option.isSome(reason) ? reason.value._tag : classifyText(text)
+}
+
 /**
  * The one server ingress for provider failure classification. SDK error envelopes and Vivid's
  * tagged provider errors converge here; unrecognized evidence is the only Unexplained case.
@@ -20,13 +29,12 @@ const isText = Schema.is(Schema.String)
 export const classifyFailure = (decoded: Option.Option<typeof Evidence.Type>): RunFailure => {
   if (Option.isNone(decoded)) return 'Unexplained'
   const evidence = decoded.value
-  if (isText(evidence)) return classifyText(evidence)
+  if (isText(evidence)) return reasonOf(evidence)
   if (evidence._tag !== undefined) return evidence._tag
-  const parts: string[] = []
-  if (evidence.message !== undefined) parts.push(evidence.message)
   if (evidence.meta !== undefined && evidence.meta.reason !== undefined)
-    parts.push(evidence.meta.reason)
-  return classifyText(parts.join('\n'))
+    return reasonOf(evidence.meta.reason)
+  if (evidence.message !== undefined) return reasonOf(evidence.message)
+  return 'Unexplained'
 }
 
 /** Provider status and known failure phrases outrank generic SDK operation names. */
@@ -36,7 +44,7 @@ const classifyText = (text: string): RunFailure => {
     return 'TimedOut'
   if (/noanswer|empty (?:answer|completion)|no text and no tool/iu.test(text)) return 'NoAnswer'
   if (
-    /\b5\d\d\b|modelunavailable|model.?not.?found|no (?:credit|endpoints)|insufficient (?:credit|fund)|payment required|\b402\b|model .* (?:not found|does not exist)|connection (?:refused|error)/iu.test(
+    /\b5\d\d\b|modelunavailable|modelconfigurationinvalid|unauthorized|forbidden|authentication|invalid api.?key|\b40[123]\b|model.?not.?found|no (?:credit|endpoints)|insufficient (?:credit|fund)|payment required|\b402\b|model .* (?:not found|does not exist)|connection (?:refused|error)/iu.test(
       text,
     )
   )
