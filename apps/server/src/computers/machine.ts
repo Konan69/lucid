@@ -4,13 +4,19 @@ import {
   type CommandResult,
   ComputerState,
 } from '@vivid/contracts'
-import { Context, Effect, Layer, Schema } from 'effect'
+import { Context, Effect, Layer, Schema, type Redacted } from 'effect'
 
 /** Opaque provider identity; the caller derives it without exposing a Person's identity. */
 export const MachineKey = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,62}$/)).pipe(
   Schema.brand('MachineKey'),
 )
 export type MachineKey = typeof MachineKey.Type
+
+/** Private screen authority: the credential never enters a wire schema, URL, log, or client. */
+export interface MachineScreen {
+  readonly address: string
+  readonly authorization: Redacted.Redacted
+}
 
 /** Docker's healthy machine facts are also the transport's Running state. */
 export type RunningMachine = typeof ComputerState.cases.Running.Type
@@ -86,6 +92,7 @@ export type MachineFailure =
 export interface MachineOperations {
   readonly ensure: (key: MachineKey) => Effect.Effect<RunningMachine, MachineFailure>
   readonly stop: (key: MachineKey) => Effect.Effect<void, MachineFailure>
+  readonly screen: (key: MachineKey) => Effect.Effect<MachineScreen, MachineFailure>
   readonly status: (key: MachineKey) => Effect.Effect<ComputerState, MachineFailure>
   readonly exec: (input: {
     readonly key: MachineKey
@@ -111,6 +118,7 @@ export const unavailableMachineLayer = Layer.effect(
       status: Effect.fn('Machine.unavailable.status')(() =>
         Effect.succeed(ComputerState.cases.Unavailable.make({})),
       ),
+      screen: Effect.fn('Machine.unavailable.screen')(() => Effect.fail(new MachineUnavailable())),
       exec: Effect.fn('Machine.unavailable.exec')(() => Effect.fail(new MachineUnavailable())),
       browse: Effect.fn('Machine.unavailable.browse')(() => Effect.fail(new MachineUnavailable())),
     }),

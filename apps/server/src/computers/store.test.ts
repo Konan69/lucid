@@ -1,7 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, it } from '@effect/vitest'
 import { eq, inArray } from 'drizzle-orm'
-import { Context, Deferred, Effect, Layer, Option, PubSub, Ref, Stream } from 'effect'
+import { Context, Deferred, Effect, Layer, Option, PubSub, Ref, Redacted, Stream } from 'effect'
 import {
   ActionTarget,
   CommandOutcome,
@@ -28,6 +28,7 @@ import { Changes, Topic, silentChangesLayer } from '../live/changes.ts'
 import {
   Machine,
   MachineExecutionUnknown,
+  MachineNotRunning,
   MachineOperationFailed,
   unavailableMachineLayer,
   type MachineKey,
@@ -116,7 +117,16 @@ const providerLayer = Layer.effect(
         truncated: false,
       }
     })
-    return Machine.of({ status, ensure, stop, exec, browse })
+    const screen = Effect.fn('Computer.test.screen')(function* (key: MachineKey) {
+      const state = yield* status(key)
+      if (!ComputerState.guards.Running(state))
+        return yield* Effect.fail(new MachineNotRunning({ key }))
+      return {
+        address: state.screenAddress,
+        authorization: Redacted.make('test-only-screen-authority'),
+      }
+    })
+    return Machine.of({ status, ensure, stop, exec, browse, screen })
   }),
 ).pipe(Layer.provide(evidenceLayer))
 

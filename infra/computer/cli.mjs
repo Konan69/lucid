@@ -3,6 +3,7 @@ import * as NodeFSP from 'node:fs/promises'
 import * as NodeNet from 'node:net'
 import { Effect, Schema } from 'effect'
 import { chromium } from 'playwright-core'
+import { bootstrap } from './network.mjs'
 
 /** A readiness failure carries no profile contents or third-party connection payload. */
 class DesktopNotReady extends Schema.TaggedError()(
@@ -56,6 +57,10 @@ const screenReady = Effect.fn('Computer.screen.ready')(function* () {
 /** The provider awaits actual browser and screen readiness before publishing Running facts. */
 await Effect.runPromise(
   Effect.gen(function* () {
+    if (process.argv[2] === 'network') {
+      yield* bootstrap()
+      return
+    }
     yield* browserReady()
     yield* screenReady()
     yield* Effect.tryPromise({

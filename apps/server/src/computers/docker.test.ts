@@ -2,14 +2,19 @@ import * as NodeHttpClient from '@effect/platform-node/NodeHttpClient'
 import * as NodeServices from '@effect/platform-node/NodeServices'
 import { describe, expect, it } from '@effect/vitest'
 import { BrowserAction, ComputerState } from '@vivid/contracts'
-import { Effect, Result, Schema } from 'effect'
+import { Deferred, Effect, Fiber, Redacted, Result, Schema } from 'effect'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
+import {
+  ChildProcessSpawner,
+  make as instrumentSpawner,
+  type ChildProcessHandle,
+} from 'effect/unstable/process/ChildProcessSpawner'
 import * as ChildProcess from 'effect/unstable/process/ChildProcess'
 import * as NodeBuffer from 'node:buffer'
 import * as NodeCrypto from 'node:crypto'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
-import { dockerCommand, dockerMachineLayer } from './docker.js'
+import { commandInvocation, dockerCommand, dockerExecution, dockerMachineLayer } from './docker.js'
 import { Machine, MachineKey } from './machine.js'
 
 const image = 'vivid-computer:test'
@@ -21,6 +26,72 @@ const context = NodePath.resolve(
 const decodeImage = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ Size: Schema.Number })),
 )
+
+/** Real process adapters distinguish an absent executable from a lost spawned Docker client, without replacing Docker. */
+const exerciseReceipts = Effect.fn('Computer.test.receipts')(function* (key: MachineKey) {
+  const spawner = yield* ChildProcessSpawner
+  const missing = instrumentSpawner(
+    Effect.fn('Computer.test.missingDocker')((command) =>
+      spawner.spawn(ChildProcess.setEnv(command, { PATH: '/vivid-test-missing-executable' })),
+    ),
+  )
+  const rejected = yield* Effect.flip(
+    dockerExecution(key, ['version'], '').pipe(Effect.provideService(ChildProcessSpawner, missing)),
+  )
+  expect(rejected._tag).toBe('MachineOperationFailed')
+  const spawned = yield* Deferred.make<ChildProcessHandle>()
+  const instrumented = instrumentSpawner(
+    Effect.fn('Computer.test.spawnReceipt')(function* (command) {
+      const handle = yield* spawner.spawn(command)
+      yield* Deferred.succeed(spawned, handle)
+      return handle
+    }),
+  )
+  // Only the captured client is signalled; the in-container process remains independently bounded.
+  const invocation = commandInvocation({ key, command: "node -e 'for (;;) {}'", timeoutSeconds: 1 })
+  const pending = yield* dockerExecution(key, invocation.args, invocation.input).pipe(
+    Effect.provideService(ChildProcessSpawner, instrumented),
+    Effect.result,
+    Effect.forkChild,
+  )
+  const handle = yield* Deferred.await(spawned)
+  yield* handle.kill({ killSignal: 'SIGKILL' })
+  const lost = yield* Fiber.join(pending)
+  expect(lost._tag).toBe('Failure')
+  if (Result.isFailure(lost)) expect(lost.failure._tag).toBe('MachineExecutionUnknown')
+})
+
+/** Docker's own event receipts expose the exec argv; warm steps must create exactly one exec and contain no payload. */
+const exerciseArguments = Effect.fn('Computer.test.arguments')(function* (
+  machine: typeof Machine.Service,
+  key: MachineKey,
+) {
+  const since = new Date().toISOString()
+  expect(
+    (yield* machine.exec({ key, command: 'echo command-private-proof', timeoutSeconds: 10 }))
+      .output,
+  ).toBe('command-private-proof\n')
+  yield* machine.browse({ key, action: BrowserAction.cases.Read.make({}) })
+  const events = yield* dockerCommand([
+    'events',
+    '--since',
+    since,
+    '--until',
+    new Date().toISOString(),
+    '--filter',
+    `container=vivid-computer-${key}`,
+    '--filter',
+    'event=exec_create',
+    '--format',
+    '{{.Action}}',
+  ])
+  expect(events.exitCode).toBe(0)
+  expect(events.output).not.toContain('command-private-proof')
+  expect(events.output).not.toContain('"step"')
+  expect(events.output.trim().split('\n')).toHaveLength(2)
+  expect(events.output).toContain('/bin/bash --noprofile --norc -s')
+  expect(events.output).toContain('node /opt/vivid/browser.mjs')
+})
 
 /** Real browser actions, including a controlled CDP document, prove reference reuse without a website fixture seam. */
 const exerciseBrowser = Effect.fn('Computer.test.browser')(function* (
@@ -46,9 +117,48 @@ const exerciseBrowser = Effect.fn('Computer.test.browser')(function* (
       'node -e \'const net=require("node:net");const s=net.connect(80,"10.0.0.1");s.on("connect",()=>process.exit(1));s.on("error",()=>process.exit(0));\'',
   })
   expect(blocked.exitCode).toBe(0)
+  for (const shortcut of ['Control+W', 'Alt+F4']) {
+    expect(
+      (yield* Effect.flip(
+        machine.browse({ key, action: BrowserAction.cases.Press.make({ key: shortcut }) }),
+      ))._tag,
+    ).toBe('MachineInputInvalid')
+  }
   yield* exerciseReferences(machine, key)
+  const seeded = yield* machine.exec({
+    key,
+    timeoutSeconds: 10,
+    command:
+      'mkdir -p ~/.vivid/screens; for i in {1..55}; do touch -t 200001010000 ~/.vivid/screens/old-$i.png; done',
+  })
+  expect(seeded.exitCode).toBe(0)
   const screenshot = yield* machine.browse({ key, action: BrowserAction.cases.Screenshot.make({}) })
   expect(screenshot.outline).toContain('/home/vivid/.vivid/screens/')
+  expect(
+    (yield* machine.exec({
+      key,
+      timeoutSeconds: 10,
+      command: "find ~/.vivid/screens -name '*.png' | wc -l",
+    })).output.trim(),
+  ).toBe('50')
+  yield* exerciseEmptyPage(machine, key)
+})
+
+/** Closing every page through the real CDP seam proves subsequent driver steps recreate a usable page. */
+const exerciseEmptyPage = Effect.fn('Computer.test.empty')(function* (
+  machine: typeof Machine.Service,
+  key: MachineKey,
+) {
+  const source =
+    'const {chromium}=require("/opt/vivid/node_modules/playwright-core");chromium.connectOverCDP("http://127.0.0.1:9222").then(async browser=>{for(const page of browser.contexts()[0].pages()) await page.close(); await browser.close();});'
+  const closed = yield* machine.exec({ key, command: `node -e '${source}'`, timeoutSeconds: 10 })
+  expect(closed.exitCode).toBe(0)
+  const restored = yield* machine.browse({ key, action: BrowserAction.cases.Read.make({}) })
+  expect(restored.address).toBe('about:blank')
+  yield* machine.browse({
+    key,
+    action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
+  })
 })
 
 /** The fixture changes the browser document through CDP only; driver actions still use the real AX and input APIs. */
@@ -68,11 +178,29 @@ const exerciseReferences = Effect.fn('Computer.test.references')(function* (
   const target = field[1]
   const again = yield* machine.browse({ key, action: BrowserAction.cases.Read.make({}) })
   expect(again.outline).toContain(`[${target}] textbox "Message"`)
+  const since = new Date().toISOString()
   const typed = yield* machine.browse({
     key,
     action: BrowserAction.cases.Type.make({ target, text: 'Typed proof' }),
   })
   expect(typed.outline).toContain('Typed proof')
+  const events = yield* dockerCommand([
+    'events',
+    '--since',
+    since,
+    '--until',
+    new Date().toISOString(),
+    '--filter',
+    `container=vivid-computer-${key}`,
+    '--filter',
+    'event=exec_create',
+    '--format',
+    '{{.Action}}',
+  ])
+  expect(events.exitCode).toBe(0)
+  expect(events.output).not.toContain('Typed proof')
+  expect(events.output).not.toContain(target)
+  expect(events.output.trim().split('\n')).toHaveLength(1)
   yield* machine.browse({ key, action: BrowserAction.cases.Press.make({ key: 'Tab' }) })
   const detail = typed.outline.match(/\[([^\]]+)\] DisclosureTriangle "Show detail"/)
   if (detail === null || detail[1] === undefined)
@@ -82,36 +210,6 @@ const exerciseReferences = Effect.fn('Computer.test.references')(function* (
     action: BrowserAction.cases.Click.make({ target: detail[1] }),
   })
   expect(clicked.outline).toContain('Expanded detail')
-})
-
-/** An optional installed browser client proves noVNC renders a connected desktop, with cleanup owned by the test. */
-const exerciseScreen = Effect.fn('Computer.test.screen')(function* (
-  executable: string,
-  address: string,
-  key: MachineKey,
-) {
-  const session = `vivid-computer-view-${key}`
-  /** Commands stay in the named test unit, and the isolated client session cannot disturb another browser. */
-  const invoke = Effect.fn('Computer.test.client')(function* (args: ReadonlyArray<string>) {
-    const child = yield* ChildProcess.make(executable, ['--session', session, ...args], {
-      stdout: 'inherit',
-      stderr: 'inherit',
-    })
-    expect(yield* child.exitCode).toBe(0)
-  }, Effect.scoped)
-  yield* Effect.addFinalizer(() =>
-    Effect.gen(function* () {
-      const closed = yield* Effect.result(invoke(['close']))
-      expect(Result.isSuccess(closed)).toBe(true)
-    }),
-  )
-  yield* invoke(['open', address])
-  yield* invoke(['wait', '#noVNC_container canvas'])
-  yield* invoke([
-    'screenshot',
-    NodePath.resolve(context, '../../artifacts/night/computer/screen.png'),
-  ])
-  yield* invoke(['snapshot', '-i'])
 })
 
 /** A persistent cookie proves browser identity, as well as ordinary files, survives a disposable container. */
@@ -182,6 +280,7 @@ describe.skipIf(process.env.VIVID_TEST_DOCKER !== '1')('local Computer', () => {
           Effect.gen(function* () {
             yield* dockerCommand(['container', 'rm', '--force', `vivid-computer-guard-${key}`])
             yield* dockerCommand(['container', 'rm', '--force', `vivid-computer-${key}`])
+            yield* dockerCommand(['network', 'rm', `vivid-computer-network-${key}`])
             const volumes = yield* dockerCommand([
               'volume',
               'ls',
@@ -222,19 +321,32 @@ describe.skipIf(process.env.VIVID_TEST_DOCKER !== '1')('local Computer', () => {
         expect(screenPort).toBeGreaterThanOrEqual(61000)
         expect(screenPort).toBeLessThanOrEqual(65000)
         const screen = yield* HttpClient.get(running.screenAddress)
-        expect(screen.status).toBe(200)
-        expect(yield* screen.text).toContain('noVNC')
-        const viewer = process.env.VIVID_TEST_BROWSER_EXECUTABLE
-        if (viewer !== undefined) yield* exerciseScreen(viewer, running.screenAddress, key)
+        expect(screen.status).toBe(403)
+        const network = yield* dockerCommand([
+          'network',
+          'inspect',
+          '--format',
+          '{{ index .Options "com.docker.network.bridge.enable_icc" }}',
+          `vivid-computer-network-${key}`,
+        ])
+        expect(network.output.trim()).toBe('false')
+        const initialScreen = yield* machine.screen(key)
         const same = yield* machine.ensure(key)
         expect(same).toEqual(running)
         expect(ComputerState.guards.Running(yield* machine.status(key))).toBe(true)
+        yield* exerciseReceipts(key)
+        yield* exerciseArguments(machine, key)
         yield* exerciseCommands(machine, key)
         yield* exerciseBrowser(machine, key)
         yield* saveBrowserIdentity(machine, key)
         yield* machine.stop(key)
         expect(ComputerState.guards.Stopped(yield* machine.status(key))).toBe(true)
         yield* machine.ensure(key)
+        const restartedScreen = yield* machine.screen(key)
+        expect(
+          Redacted.value(initialScreen.authorization) !==
+            Redacted.value(restartedScreen.authorization),
+        ).toBe(true)
         const retained = yield* machine.exec({ key, command: 'cat proof.txt', timeoutSeconds: 10 })
         expect(retained.output).toBe('retained')
         yield* expectBrowserIdentity(machine, key)
@@ -247,12 +359,23 @@ describe.skipIf(process.env.VIVID_TEST_DOCKER !== '1')('local Computer', () => {
           (yield* machine.exec({ key, command: 'cat proof.txt', timeoutSeconds: 10 })).output,
         ).toBe('retained')
         yield* expectBrowserIdentity(machine, key)
+        const prior = yield* machine.browse({
+          key,
+          action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
+        })
         const timed = yield* machine.exec({
           key,
           command: "node -e 'for (;;) {}'",
           timeoutSeconds: 1,
         })
         expect(timed.exitCode).toBe(124)
+        expect(ComputerState.guards.Running(yield* machine.status(key))).toBe(true)
+        expect(
+          (yield* machine.exec({ key, command: 'echo still-running', timeoutSeconds: 10 })).output,
+        ).toBe('still-running\n')
+        expect(
+          (yield* machine.browse({ key, action: BrowserAction.cases.Read.make({}) })).title,
+        ).toBe(prior.title)
         yield* machine.stop(key)
       }).pipe(
         Effect.provide(dockerMachineLayer(image)),

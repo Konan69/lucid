@@ -1,5 +1,5 @@
 import * as NodeSocket from '@effect/platform-node/NodeSocket'
-import { Effect, Option } from 'effect'
+import { Effect, Option, Redacted } from 'effect'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
@@ -15,12 +15,20 @@ const notFound = () =>
 /** An upgraded connection stays inside the route fiber and closes both transports when either leg ends. */
 const relay = Effect.fn('Computer.screen.relay')(function* (
   request: HttpServerRequest.HttpServerRequest,
-  address: string,
+  endpoint: { readonly address: string; readonly authorization: Redacted.Redacted },
 ) {
-  const upstream = yield* Socket.makeWebSocket(address, {
-    protocols: ['binary'],
-    openTimeout: '10 seconds',
-  })
+  const upstream = yield* Socket.fromWebSocket(
+    Effect.acquireRelease(
+      Effect.sync(
+        () =>
+          new NodeSocket.NodeWS.WebSocket(endpoint.address, ['binary'], {
+            headers: { authorization: Redacted.value(endpoint.authorization) },
+          }),
+      ),
+      (socket) => Effect.sync(() => socket.close(1000)),
+    ),
+    { openTimeout: '10 seconds' },
+  )
   // Dial first: a dead provider must not leave the browser with a successful but unusable upgrade.
   const source = yield* upstream.reader
   const outgoing = yield* upstream.writer
@@ -71,18 +79,23 @@ const screen = Effect.fn('Computer.screen')(function* () {
   const store = yield* ComputerStore
   const endpoint = yield* store.screen(auth.value.person.id).pipe(Effect.option)
   if (Option.isNone(endpoint) || Option.isNone(endpoint.value)) return notFound()
-  const address = upstreamAddress(request, endpoint.value.value)
+  const address = upstreamAddress(request, endpoint.value.value.address)
   if (Option.isNone(address)) return notFound()
   if (request.headers.upgrade === 'websocket') {
     const url = new URL(address.value)
     if (url.pathname !== '/websockify') return notFound()
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-    return yield* relay(request, url.href).pipe(
+    return yield* relay(request, {
+      address: url.href,
+      authorization: endpoint.value.value.authorization,
+    }).pipe(
       Effect.scoped,
       Effect.catch(() => Effect.succeed(notFound())),
     )
   }
-  const response = yield* HttpClient.get(address.value).pipe(Effect.option)
+  const response = yield* HttpClient.get(address.value, {
+    headers: { authorization: Redacted.value(endpoint.value.value.authorization) },
+  }).pipe(Effect.option)
   if (Option.isNone(response)) return notFound()
   return HttpServerResponse.stream(response.value.stream, {
     status: response.value.status,

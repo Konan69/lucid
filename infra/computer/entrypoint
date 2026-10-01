@@ -19,12 +19,15 @@ openbox --sm-disable &
 window_pid=$!
 x11vnc -display :99 -localhost -rfbport 5900 -forever -shared -nopw &
 vnc_pid=$!
-websockify --web=/usr/share/novnc 6080 127.0.0.1:5900 &
+PYTHONPATH=/opt/vivid websockify --web=/usr/share/novnc --web-auth \
+  --auth-plugin screen.ScreenAuth --auth-source /tmp/vivid/authorization 6080 127.0.0.1:5900 &
 screen_pid=$!
 # Container seccomp, namespaces, dropped capabilities and read-only root are the local isolation.
 # Chromium's setuid sandbox cannot escalate under no-new-privileges; no host CDP port is published.
+# Chromium BackgroundModeManager's keep-alive switch preserves CDP when the Person closes the last window.
+# The driver can then create a page; explicit CDP Browser.close still flushes the profile and exits.
 chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run \
-  --no-default-browser-check --disable-background-networking --disable-quic \
+  --no-default-browser-check --disable-background-networking --disable-quic --keep-alive-for-test \
   --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 \
   --user-data-dir="$HOME/.config/chromium" --window-size=1280,800 about:blank 2>/tmp/vivid/browser.log &
 browser_pid=$!

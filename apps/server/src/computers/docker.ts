@@ -1,9 +1,22 @@
 import * as NodeServices from '@effect/platform-node/NodeServices'
 import { CommandResult, ComputerState } from '@vivid/contracts'
-import { Config, Effect, Exit, Layer, Option, Schema, Semaphore, Stream } from 'effect'
+import {
+  Cache,
+  Config,
+  Duration,
+  Effect,
+  Exit,
+  Redacted,
+  Layer,
+  Option,
+  Schema,
+  Semaphore,
+  Stream,
+} from 'effect'
 import * as ChildProcess from 'effect/unstable/process/ChildProcess'
 import { ChildProcessSpawner } from 'effect/unstable/process/ChildProcessSpawner'
 import * as NodeBuffer from 'node:buffer'
+import * as NodeCrypto from 'node:crypto'
 import { browserArguments, decodeBrowserOutput } from './browser.js'
 import {
   Machine,
@@ -67,38 +80,90 @@ const collectOutput = (
     }),
   )
 
-/** Docker is invoked as argv under a scoped Effect process; expected failures never leak arguments. */
+/** Output accounting is shared by infrastructure and private stdin executions; receipts never retain unbounded output. */
+const receipt = Effect.fn('Machine.docker.receipt')(function* (
+  handle: import('effect/unstable/process/ChildProcessSpawner').ChildProcessHandle,
+) {
+  const collected = yield* collectOutput(handle.all)
+  const exitCode = yield* handle.exitCode
+  // Binary output can expand when invalid UTF-8 becomes replacement characters. Budget the
+  // actual returned UTF-8 too, rather than claiming a 64 KiB receipt that encodes to 192 KiB.
+  const normalized = NodeBuffer.Buffer.from(
+    new TextDecoder().decode(collected.bytes, {
+      stream: collected.total > outputBudget,
+    }),
+  )
+  const truncated = collected.total > outputBudget || normalized.length > outputBudget
+  const length = truncated
+    ? outputBudget - NodeBuffer.Buffer.byteLength(clippedMarker)
+    : normalized.length
+  // Streaming decoding drops an incomplete final code point at the clipping boundary.
+  const text = new TextDecoder().decode(normalized.subarray(0, length), { stream: truncated })
+  return CommandResult.make({
+    exitCode,
+    output: truncated ? text + clippedMarker : text,
+    truncated,
+  })
+})
+
+/** Docker infrastructure uses argv only; no private execution payload is accepted by this entry point. */
 export const dockerCommand = Effect.fn('Machine.docker.command')(
   function* (args: ReadonlyArray<string>) {
     const handle = yield* ChildProcess.make('docker', args, {
       stdin: 'ignore',
       forceKillAfter: '2 seconds',
     })
-    const collected = yield* collectOutput(handle.all)
-    const exitCode = yield* handle.exitCode
-    // Binary output can expand when invalid UTF-8 becomes replacement characters. Budget the
-    // actual returned UTF-8 too, rather than claiming a 64 KiB receipt that encodes to 192 KiB.
-    const normalized = NodeBuffer.Buffer.from(
-      new TextDecoder().decode(collected.bytes, {
-        stream: collected.total > outputBudget,
-      }),
-    )
-    const truncated = collected.total > outputBudget || normalized.length > outputBudget
-    const length = truncated
-      ? outputBudget - NodeBuffer.Buffer.byteLength(clippedMarker)
-      : normalized.length
-    // Streaming decoding drops an incomplete final code point at the clipping boundary.
-    const text = new TextDecoder().decode(normalized.subarray(0, length), { stream: truncated })
-    return CommandResult.make({
-      exitCode,
-      output: truncated ? text + clippedMarker : text,
-      truncated,
-    })
+    return yield* receipt(handle)
   },
   Effect.scoped,
   Effect.timeout('330 seconds'),
   Effect.mapError(() => new MachineOperationFailed({ operation: 'docker' })),
 )
+
+/** A spawn failure is definite; only transport/deadline failures after spawn lose the execution receipt. */
+export const dockerExecution = Effect.fn('Machine.docker.execution')(function* (
+  key: MachineKey,
+  args: ReadonlyArray<string>,
+  input: string,
+) {
+  const handle = yield* ChildProcess.make('docker', args, {
+    stdin: 'pipe',
+    forceKillAfter: '2 seconds',
+  }).pipe(Effect.mapError(() => new MachineOperationFailed({ operation: 'exec' })))
+  const result = yield* Effect.all(
+    {
+      receipt: receipt(handle),
+      input: Stream.run(Stream.make(new TextEncoder().encode(input)), handle.stdin),
+    },
+    { concurrency: 'unbounded' },
+  ).pipe(
+    Effect.timeout('330 seconds'),
+    Effect.mapError(() => new MachineExecutionUnknown({ key })),
+  )
+  return result.receipt
+}, Effect.scoped)
+
+/** Shell source stays on stdin, absent from both host process arguments and dockerd exec metadata. */
+export const commandInvocation = (input: Parameters<typeof Machine.Service.exec>[0]) => ({
+  args: [
+    'exec',
+    '-i',
+    '--user',
+    '1000:1000',
+    '--workdir',
+    '/home/vivid',
+    containerName(input.key),
+    'timeout',
+    '--signal=TERM',
+    '--kill-after=2s',
+    `${input.timeoutSeconds}s`,
+    '/bin/bash',
+    '--noprofile',
+    '--norc',
+    '-s',
+  ],
+  input: `${input.command}\n`,
+})
 
 /** Infrastructure commands require a full successful receipt before changing lifecycle state. */
 const checked = Effect.fn('Machine.docker.checked')(function* (args: ReadonlyArray<string>) {
@@ -113,8 +178,9 @@ const checked = Effect.fn('Machine.docker.checked')(function* (args: ReadonlyArr
 /** Names contain only a branded opaque key and cannot become CLI options or mount syntax. */
 const containerName = (key: MachineKey) => `vivid-computer-${key}`
 const volumeName = (key: MachineKey) => `vivid-computer-home-${key}`
+const networkName = (key: MachineKey) => `vivid-computer-network-${key}`
 
-/** Stop the exact Computer after a lost executor or startup; killing a Docker client alone is insufficient. */
+/** Stop the exact Computer only for explicit stop or failed startup; execution deadlines never destroy the desktop. */
 const stopContainer = Effect.fn('Machine.docker.shutdown')(function* (key: MachineKey) {
   yield* checked(['container', 'stop', '--time', '15', containerName(key)])
   const stopped = yield* inspect(key)
@@ -195,7 +261,7 @@ const status = Effect.fn('Machine.docker.status')(function* (key: MachineKey) {
 
 /** The Computer has no capabilities; a disposable root helper only installs its namespace firewall. */
 const start = Effect.fn('Machine.docker.start')(
-  function* (key: MachineKey, image: string) {
+  function* (key: MachineKey, image: string, authorization: Redacted.Redacted) {
     yield* checked(['container', 'start', containerName(key)])
     yield* checked([
       'run',
@@ -219,13 +285,23 @@ const start = Effect.fn('Machine.docker.start')(
       '/opt/vivid/egress',
       image,
     ])
-    yield* checked([
-      'exec',
-      containerName(key),
-      '/bin/sh',
-      '-c',
-      'printf ready > /tmp/vivid/network',
-    ])
+    const bootstrap = yield* dockerExecution(
+      key,
+      [
+        'exec',
+        '-i',
+        containerName(key),
+        'timeout',
+        '--kill-after=2s',
+        '60s',
+        'node',
+        '/opt/vivid/cli.mjs',
+        'network',
+      ],
+      Redacted.value(authorization),
+    )
+    if (bootstrap.exitCode !== 0)
+      yield* Effect.fail(new MachineOperationFailed({ operation: 'bootstrap' }))
     yield* checked([
       'exec',
       containerName(key),
@@ -246,6 +322,24 @@ const start = Effect.fn('Machine.docker.start')(
  * Chromium's sandbox is disabled because no-new-privileges forbids its setuid helper; Docker is the boundary.
  */
 const create = Effect.fn('Machine.docker.create')(function* (key: MachineKey, image: string) {
+  const networks = yield* checked([
+    'network',
+    'ls',
+    '--filter',
+    `name=^${networkName(key)}$`,
+    '--format',
+    '{{.Name}}',
+  ])
+  if (networks.trim() === '')
+    yield* checked([
+      'network',
+      'create',
+      '--label',
+      'vivid.computer=true',
+      '--opt',
+      'com.docker.network.bridge.enable_icc=false',
+      networkName(key),
+    ])
   yield* checked(['volume', 'create', '--label', 'vivid.computer=true', volumeName(key)])
   yield* checked([
     'container',
@@ -266,7 +360,7 @@ const create = Effect.fn('Machine.docker.create')(function* (key: MachineKey, im
     '--security-opt',
     'no-new-privileges',
     '--network',
-    'bridge',
+    networkName(key),
     '--dns',
     '1.1.1.1',
     '--dns',
@@ -298,120 +392,150 @@ const create = Effect.fn('Machine.docker.create')(function* (key: MachineKey, im
   ])
 })
 
-/** Configured Docker authority is captured once; lifecycle changes serialize to make ensure idempotent. */
+/** Warm facts are bounded and successful only; tmpfs authority is rehydrated once after a server restart. */
+const authority = Effect.fn('Machine.docker.authority')(function* () {
+  const spawner = yield* ChildProcessSpawner
+  const lifecycle = yield* Semaphore.make(1)
+  const browser = yield* Semaphore.make(1)
+  /** Rehydrate tmpfs provider state after a server restart; private authority is never encoded on the wire. */
+  const lookup = Effect.fn('Machine.docker.lookup')(function* (key: MachineKey) {
+    const facts = yield* status(key)
+    if (!ComputerState.guards.Running(facts))
+      return yield* Effect.fail(new MachineNotRunning({ key }))
+    const raw = yield* checked(['exec', containerName(key), 'cat', '/tmp/vivid/authorization'])
+    const authorization = yield* Schema.decodeUnknownEffect(
+      Schema.String.check(Schema.isPattern(/^Bearer [a-f0-9]{64}$/)),
+    )(raw).pipe(Effect.mapError(() => new MachineResponseInvalid({ operation: 'screen' })))
+    return { facts, authorization: Redacted.make(authorization) }
+  })
+  const running = yield* Cache.makeWith(lookup, {
+    capacity: 256,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+  })
+  return { running, lifecycle, browser, spawner }
+})
+type DockerAuthority = Effect.Success<ReturnType<typeof authority>>
+
+/** Lifecycle serialization protects credential rotation, profile flushing, and cache invalidation. */
+const lifecycleOperations = ({ running, lifecycle }: DockerAuthority, image: string) => {
+  /** Plain Get still observes Docker; stopped/lost/restarted machines invalidate warm private facts. */
+  const observe = Effect.fn('Machine.docker.observe')(
+    function* (key: MachineKey) {
+      const fresh = yield* status(key)
+      const cached = yield* Cache.getSuccess(running, key)
+      if (
+        !ComputerState.guards.Running(fresh) ||
+        (Option.isSome(cached) && cached.value.facts.since !== fresh.since)
+      ) {
+        yield* Cache.invalidate(running, key)
+      }
+      return fresh
+    },
+    (effect, key) => Effect.onError(effect, () => Cache.invalidate(running, key)),
+  )
+  /** Stop invalidates first, then allows Chromium to flush the durable profile. */
+  const stop = Effect.fn('Machine.docker.stop')(
+    function* (key: MachineKey) {
+      yield* Cache.invalidate(running, key)
+      const current = yield* inspect(key)
+      if (Option.isSome(current) && current.value.State.Status === 'running')
+        yield* stopContainer(key)
+    },
+    (effect) => lifecycle.withPermit(effect),
+  )
+  /** The screen credential rotates on each container start and reaches bootstrap exclusively through stdin. */
+  const ensure = Effect.fn('Machine.docker.ensure')(
+    function* (key: MachineKey) {
+      const current = yield* inspect(key)
+      if (Option.isNone(current)) yield* create(key, image)
+      const state = yield* observe(key)
+      if (ComputerState.guards.Running(state)) return (yield* Cache.get(running, key)).facts
+      if (Option.isSome(current) && current.value.State.Status === 'running')
+        yield* stopContainer(key)
+      const authorization = Redacted.make(`Bearer ${NodeCrypto.randomBytes(32).toString('hex')}`)
+      yield* start(key, image, authorization)
+      const facts = (yield* Cache.get(running, key)).facts
+      return facts
+    },
+    (effect) => lifecycle.withPermit(effect),
+  )
+  return { ensure, stop, observe }
+}
+
+/** Action transport owns stdin and receipts independently of lifecycle and keyboard takeover policy. */
+const actionOperations = ({ running, browser }: DockerAuthority) => {
+  /** Commands retain a bounded receipt; even timeout exit codes leave the Person's live desktop alone. */
+  const exec = Effect.fn('Machine.docker.exec')(function* (
+    input: Parameters<typeof Machine.Service.exec>[0],
+  ) {
+    if (
+      !Number.isInteger(input.timeoutSeconds) ||
+      input.timeoutSeconds < 1 ||
+      input.timeoutSeconds > 300 ||
+      input.command.length === 0 ||
+      input.command.length > 8000
+    )
+      return yield* Effect.fail(new MachineInputInvalid())
+    yield* Cache.get(running, input.key)
+    const invocation = commandInvocation(input)
+    const result = yield* dockerExecution(input.key, invocation.args, invocation.input).pipe(
+      Effect.onError(() => Cache.invalidate(running, input.key)),
+    )
+    if (result.exitCode !== 0) yield* Cache.invalidate(running, input.key)
+    return result
+  })
+  /** Browser connections serialize, while private typed text is transported exclusively on stdin. */
+  const browse = Effect.fn('Machine.docker.browse')(
+    function* (input: Parameters<typeof Machine.Service.browse>[0]) {
+      const step = yield* browserArguments(input.action)
+      yield* Cache.get(running, input.key)
+      const result = yield* dockerExecution(
+        input.key,
+        [
+          'exec',
+          '-i',
+          '--user',
+          '1000:1000',
+          '--workdir',
+          '/home/vivid',
+          containerName(input.key),
+          'timeout',
+          '--kill-after=2s',
+          '45s',
+          ...step.args,
+        ],
+        step.input,
+      )
+      return yield* decodeBrowserOutput(result)
+    },
+    (effect, input) => Effect.onError(effect, () => Cache.invalidate(running, input.key)),
+    (effect) => browser.withPermit(effect),
+  )
+  /** Only authenticated server-side proxy code consumes this authority; screenAddress remains credential-free. */
+  const screen = Effect.fn('Machine.docker.endpoint')(function* (key: MachineKey) {
+    const cached = yield* Cache.get(running, key)
+    return { address: cached.facts.screenAddress, authorization: cached.authorization }
+  })
+  return { exec, browse, screen }
+}
+
+/** One local provider boundary captures process authority; requests do not reacquire a platform Layer. */
 export const dockerMachineLayer = (image: string) =>
   Layer.effect(
     Machine,
     Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner
-      const lifecycle = yield* Semaphore.make(1)
-      const browser = yield* Semaphore.make(1)
-
-      /** Stop is idempotent and waits for Chromium to flush the durable profile before returning. */
-      const stop = Effect.fn('Machine.docker.stop')(
-        function* (key: MachineKey) {
-          const current = yield* inspect(key)
-          if (Option.isSome(current) && current.value.State.Status === 'running') {
-            yield* stopContainer(key)
-          }
-        },
-        (effect) => lifecycle.withPermit(effect),
-        (effect) => Effect.provideService(effect, ChildProcessSpawner, spawner),
-      )
-
-      /** A failed startup is stopped; the persistent home remains available to a later explicit ensure. */
-      const ensure = Effect.fn('Machine.docker.ensure')(
-        function* (key: MachineKey) {
-          const current = yield* inspect(key)
-          if (Option.isNone(current)) yield* create(key, image)
-          const state = yield* status(key)
-          if (ComputerState.guards.Running(state)) return state
-          if (Option.isSome(current) && current.value.State.Status === 'running') {
-            yield* stopContainer(key)
-          }
-          yield* start(key, image)
-          const ready = yield* inspect(key)
-          if (Option.isNone(ready)) return yield* Effect.fail(new MachineNotRunning({ key }))
-          return yield* runningFacts(ready.value)
-        },
-        (effect) => lifecycle.withPermit(effect),
-        (effect) => Effect.provideService(effect, ChildProcessSpawner, spawner),
-      )
-
-      /** User commands are shell source only inside the unprivileged Computer, with an in-container deadline. */
-      const exec = Effect.fn('Machine.docker.exec')(
-        function* (input: Parameters<typeof Machine.Service.exec>[0]) {
-          if (
-            !Number.isInteger(input.timeoutSeconds) ||
-            input.timeoutSeconds < 1 ||
-            input.timeoutSeconds > 300 ||
-            input.command.length === 0 ||
-            input.command.length > 8000
-          )
-            return yield* Effect.fail(new MachineInputInvalid())
-          const current = yield* status(input.key)
-          if (!ComputerState.guards.Running(current))
-            return yield* Effect.fail(new MachineNotRunning({ key: input.key }))
-          const result = yield* dockerCommand([
-            'exec',
-            '--user',
-            '1000:1000',
-            '--workdir',
-            '/home/vivid',
-            containerName(input.key),
-            'timeout',
-            '--signal=TERM',
-            '--kill-after=2s',
-            `${input.timeoutSeconds}s`,
-            '/bin/bash',
-            '--noprofile',
-            '--norc',
-            '-c',
-            input.command,
-          ]).pipe(
-            Effect.onExit((exit) =>
-              Exit.isFailure(exit) ? stopContainer(input.key) : Effect.void,
-            ),
-            Effect.mapError(() => new MachineExecutionUnknown({ key: input.key })),
-          )
-          if (result.exitCode === 124 || result.exitCode === 137) yield* stopContainer(input.key)
-          return result
-        },
-        (effect) => Effect.provideService(effect, ChildProcessSpawner, spawner),
-      )
-
-      /** Browser actions serialize across driver connections so references never race an unrelated step. */
-      const browse = Effect.fn('Machine.docker.browse')(
-        function* (input: Parameters<typeof Machine.Service.browse>[0]) {
-          const args = yield* browserArguments(input.action)
-          const current = yield* status(input.key)
-          if (!ComputerState.guards.Running(current))
-            return yield* Effect.fail(new MachineNotRunning({ key: input.key }))
-          const result = yield* dockerCommand([
-            'exec',
-            '--user',
-            '1000:1000',
-            '--workdir',
-            '/home/vivid',
-            containerName(input.key),
-            'timeout',
-            '--kill-after=2s',
-            '45s',
-            ...args,
-          ])
-          return yield* decodeBrowserOutput(result)
-        },
-        (effect) => browser.withPermit(effect),
-        (effect) => Effect.provideService(effect, ChildProcessSpawner, spawner),
-      )
+      const state = yield* authority()
+      const lifecycle = lifecycleOperations(state, image)
+      const actions = actionOperations(state)
+      const provide = <A, E>(effect: Effect.Effect<A, E, ChildProcessSpawner>) =>
+        Effect.provideService(effect, ChildProcessSpawner, state.spawner)
       return Machine.of({
-        ensure,
-        stop,
-        status: Effect.fn('Machine.status')(status, (effect) =>
-          Effect.provideService(effect, ChildProcessSpawner, spawner),
-        ),
-        exec,
-        browse,
+        ensure: Effect.fn('Machine.ensure')(lifecycle.ensure, provide),
+        stop: Effect.fn('Machine.stop')(lifecycle.stop, provide),
+        status: Effect.fn('Machine.status')(lifecycle.observe, provide),
+        screen: Effect.fn('Machine.screen')(actions.screen, provide),
+        exec: Effect.fn('Machine.exec')(actions.exec, provide),
+        browse: Effect.fn('Machine.browse')(actions.browse, provide),
       })
     }),
   ).pipe(Layer.provide(NodeServices.layer))

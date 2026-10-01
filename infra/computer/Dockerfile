@@ -15,7 +15,7 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 # Keep package-manager policy consistent even in the independent Computer image.
 RUN corepack enable && corepack prepare pnpm@12.4.2 --activate \
     && pnpm add --save-exact playwright-core@1.62.1 effect@4.0.0-rc.116
-COPY browser.mjs cli.mjs shutdown.mjs entrypoint egress /opt/vivid/
+COPY network.mjs screen.py browser.mjs cli.mjs shutdown.mjs entrypoint egress /opt/vivid/
 RUN chmod 0555 /opt/vivid/entrypoint /opt/vivid/egress
 
 ENV HOME=/home/vivid LANG=C.UTF-8 DISPLAY=:99

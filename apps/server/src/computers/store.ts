@@ -32,7 +32,7 @@ import { Database, decodeStored, type DatabaseInfrastructureError } from '../dat
 import { type Actor } from '../auth/access.ts'
 import { Gate, GateDecision, ActionOutcome } from '../approvals/gate.ts'
 import { Changes, Topic } from '../live/changes.ts'
-import { Machine, MachineKey, type MachineFailure } from './machine.ts'
+import { Machine, MachineKey, type MachineFailure, type MachineScreen } from './machine.ts'
 import { computers } from './tables.ts'
 
 /** The viewer is routed through session authentication; provider addresses never enter RPC data. */
@@ -259,7 +259,7 @@ export interface ComputerStoreService {
   readonly stop: (person: PersonId) => Effect.Effect<Computer, StoreError>
   readonly hold: (person: PersonId, held: boolean) => Effect.Effect<Computer, StoreError>
   readonly access: (person: PersonId) => Effect.Effect<ComputerAccess, StoreError>
-  readonly screen: (person: PersonId) => Effect.Effect<Option.Option<string>, StoreError>
+  readonly screen: (person: PersonId) => Effect.Effect<Option.Option<MachineScreen>, StoreError>
   readonly exec: (
     person: PersonId,
     input: { readonly command: string; readonly timeoutSeconds: number },
@@ -415,24 +415,28 @@ export const computerStoreLayer = Layer.effect(
     const state = yield* lifecycle()
     /** Resolve provider identity only after a current lifecycle and keyboard-ownership check. */
     const access = Effect.fn('ComputerStore.access')(function* (person: PersonId) {
-      const computer = yield* state.get(person)
+      const row = yield* state.rows.load(person)
+      const computer = Option.isSome(row) ? wire(row.value) : yield* state.get(person)
       const result = accessTo(computer, computerMachineKey(person))
       if (ComputerAccess.guards.Unavailable(result)) return result
-      const row = yield* state.rows.load(person)
       if (Option.isNone(row))
         return ComputerAccess.cases.Unavailable.make({ reason: 'The Computer is absent.' })
+      const actual = yield* state.machine.screen(row.value.machine).pipe(Effect.result)
+      if (Result.isFailure(actual))
+        return ComputerAccess.cases.Unavailable.make({
+          reason: machineFailureReason(actual.failure),
+        })
       return ComputerAccess.cases.Ready.make({ key: row.value.machine })
     })
-    /** A session may see only its own running endpoint; this server-only value never enters a wire response. */
+    /** The session's Person owns the endpoint; a fresh screen check returns 404 for a lost machine without warming action status checks. */
     const screen = Effect.fn('ComputerStore.screen')(function* (person: PersonId) {
-      const computer = yield* state.get(person)
-      if (!ComputerState.guards.Running(computer.state)) return Option.none<string>()
       const row = yield* state.rows.load(person)
-      if (Option.isNone(row)) return Option.none<string>()
+      if (Option.isNone(row) || !Stored.guards.running(row.value))
+        return Option.none<MachineScreen>()
       const actual = yield* state.machine.status(row.value.machine).pipe(Effect.option)
       if (Option.isNone(actual) || !ComputerState.guards.Running(actual.value))
-        return Option.none<string>()
-      return Option.some(actual.value.screenAddress)
+        return Option.none<MachineScreen>()
+      return yield* state.machine.screen(row.value.machine).pipe(Effect.option)
     })
     /** Recheck after the Gate, under the same lock as hold and stop; an approval never bypasses a takeover. */
     const exec = Effect.fn('ComputerStore.exec')(function* (

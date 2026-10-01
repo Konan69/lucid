@@ -25,8 +25,8 @@ async function connect() {
   const context = browser.contexts()[0]
   if (context === undefined) throw new Error('Browser context is absent.')
   const pages = context.pages()
-  const page = pages[pages.length - 1]
-  if (page === undefined) throw new Error('Browser page is absent.')
+  const latest = pages[pages.length - 1]
+  const page = latest === undefined ? await context.newPage() : latest
   await page.bringToFront()
   const session = await context.newCDPSession(page)
   const { targetInfo } = await session.send('Target.getTargetInfo')
@@ -141,6 +141,7 @@ async function step(connection, action) {
       await NodeFSP.mkdir(directory, { recursive: true })
       const path = `${directory}/${NodeCrypto.randomUUID()}.png`
       await connection.page.screenshot({ path, type: 'png' })
+      await retainScreens(directory)
       return {
         address: connection.page.url(),
         title: await connection.page.title(),
@@ -149,6 +150,18 @@ async function step(connection, action) {
       }
     },
   })
+}
+
+/** Bound durable screenshot storage by retaining the newest 50 PNG files, including the current receipt. */
+async function retainScreens(directory) {
+  const names = (await NodeFSP.readdir(directory)).filter((name) => name.endsWith('.png'))
+  const files = []
+  for (const name of names) {
+    const path = `${directory}/${name}`
+    files.push({ path, modified: (await NodeFSP.stat(path)).mtimeMs })
+  }
+  files.sort((left, right) => right.modified - left.modified || left.path.localeCompare(right.path))
+  for (const { path } of files.slice(50)) await NodeFSP.unlink(path)
 }
 
 /** Every ordinary action returns post-action accessibility facts through one result projection. */
@@ -164,7 +177,9 @@ async function snapshot(connection) {
 
 /** CDP is a third-party Promise adapter; failures emit a fixed diagnostic without leaking page or input data. */
 async function main() {
-  const action = decodeStep(process.argv[2])
+  const chunks = []
+  for await (const chunk of process.stdin) chunks.push(chunk)
+  const action = decodeStep(Buffer.concat(chunks).toString('utf8'))
   const connection = await connect()
   await step(connection, action).then(
     (result) => process.stdout.write(`${JSON.stringify(result)}\n`),

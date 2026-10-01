@@ -100,7 +100,7 @@ const connection = Effect.fn('Computer.screen.test.connection')(function* (
       Effect.sync(
         () => new NodeSocket.NodeWS.WebSocket(address, ['binary'], { headers: { cookie, origin } }),
       ),
-      (client) => Effect.sync(() => client.close()),
+      (client) => Effect.sync(() => client.close(1000)),
     ),
   )
   return { reader: yield* socket.reader, writer: yield* socket.writer }
@@ -113,6 +113,8 @@ const machineFixture = Effect.fn('Computer.screen.test.machine')(function* (pers
     Effect.gen(function* () {
       const removed = yield* dockerCommand(['container', 'rm', '--force', `vivid-computer-${key}`])
       expect(removed.exitCode).toBe(0)
+      const network = yield* dockerCommand(['network', 'rm', `vivid-computer-network-${key}`])
+      expect(network.exitCode).toBe(0)
       const volume = yield* dockerCommand(['volume', 'rm', `vivid-computer-home-${key}`])
       expect(volume.exitCode).toBe(0)
     }).pipe(
@@ -168,6 +170,16 @@ describe.skipIf(process.env.VIVID_TEST_DOCKER !== '1' || !testDatabaseConfigured
           })
           expect(yield* built.exitCode).toBe(0)
           const key = yield* machineFixture(first.person)
+          const running = yield* (yield* Machine).ensure(key)
+          expect((yield* HttpClient.get(running.screenAddress)).status).toBe(403)
+          const direct = new URL('/websockify', running.screenAddress)
+          direct.protocol = 'ws:'
+          const unauthenticated = yield* connection(
+            direct.href,
+            '',
+            new URL(running.screenAddress).origin,
+          ).pipe(Effect.scoped, Effect.result)
+          expect(unauthenticated._tag).toBe('Failure')
           const origin = HttpServer.formatAddress((yield* HttpServer.HttpServer).address)
           const address = `${origin}${computerScreenAddress}`
           expect((yield* HttpClient.get(address)).status).toBe(404)
