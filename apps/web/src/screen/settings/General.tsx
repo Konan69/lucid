@@ -1,5 +1,7 @@
-import { Settings, type MeResponse, type Theme } from '@vivid/contracts'
+import { PatchSettingsRequest, Settings, type MeResponse, type Theme } from '@vivid/contracts'
+import { Result } from 'effect'
 import { LogOut } from 'lucide-react'
+import { useState } from 'react'
 import { reload, signOut } from '../../data/account'
 import { change, live, LiveState, useLive } from '../../data/live'
 import { run } from '../../data/runtime'
@@ -21,7 +23,7 @@ const SWITCH = [
 ] as const
 
 /** Every zone the platform knows, so the list is never out of date with the runtime that uses it. */
-const ZONES = Intl.supportedValuesOf('timeZone')
+const ZONES = ['UTC', ...Intl.supportedValuesOf('timeZone')]
 
 /**
  * The Person's own settings: how Vivid looks, the time zone it reads "tomorrow at 9" in, whether
@@ -29,6 +31,15 @@ const ZONES = Intl.supportedValuesOf('timeZone')
  */
 export function General({ me }: { me: MeResponse }) {
   const settings = useLive(live.settings)
+  const [stuck, setStuck] = useState(false)
+
+  /** Signs out, and says so when it did not happen: a reload would land them still signed in. */
+  async function leave() {
+    const left = await run(signOut())
+    if (Result.isSuccess(left)) reload('/')
+    else setStuck(true)
+  }
+
   return (
     <>
       <Section title="You">
@@ -41,11 +52,16 @@ export function General({ me }: { me: MeResponse }) {
           <Button
             variant="ghost"
             icon={<LogOut className="size-3.5" />}
-            onClick={() => void run(signOut()).then(() => reload('/'))}
+            onClick={() => void leave()}
           >
             Sign out
           </Button>
         </div>
+        {stuck && (
+          <p role="alert" className="px-4 pb-3 text-label text-danger">
+            You are still signed in: Vivid could not be reached to sign you out. Try again.
+          </p>
+        )}
       </Section>
       {LiveState.$is('Ready')(settings) ? (
         <Preferences settings={settings.value} />
@@ -57,19 +73,28 @@ export function General({ me }: { me: MeResponse }) {
 }
 
 function Preferences({ settings }: { settings: Settings }) {
-  /** Saves one changed setting and shows it at once. */
-  const save = (next: Settings) =>
+  /**
+   * Saves the one setting that was changed and shows it at once. Only that field is sent: sending
+   * all three from what this screen happens to hold would write back a stale value over a change
+   * made on another device a moment ago.
+   */
+  const save = (edit: PatchSettingsRequest) =>
     void change(
-      (client) =>
-        client.PatchSettings({ theme: next.theme, timezone: next.timezone, notify: next.notify }),
-      () => live.settings.expect(() => next),
+      (client) => client.PatchSettings(edit),
+      () =>
+        live.settings.expect(
+          (current) =>
+            new Settings({
+              personId: current.personId,
+              theme: edit.theme === undefined ? current.theme : edit.theme,
+              timezone: edit.timezone === undefined ? current.timezone : edit.timezone,
+              notify: edit.notify === undefined ? current.notify : edit.notify,
+            }),
+        ),
     )
-  const withChange = (next: {
-    readonly theme: Theme
-    readonly timezone: string
-    readonly notify: boolean
-  }) => new Settings({ personId: settings.personId, ...next })
-  const current = { theme: settings.theme, timezone: settings.timezone, notify: settings.notify }
+  // The platform's list leaves out UTC, and a zone saved elsewhere may be one this browser does
+  // not list; the Person's own zone is always an option, or the select would show a different one.
+  const zones = ZONES.includes(settings.timezone) ? ZONES : [settings.timezone, ...ZONES]
   return (
     <Section title="Preferences">
       <Row label="Appearance" detail="How Vivid looks on this device and your others.">
@@ -79,19 +104,20 @@ function Preferences({ settings }: { settings: Settings }) {
           options={THEMES}
           onChange={(next) => {
             theme.set(next)
-            save(withChange({ ...current, theme: next }))
+            save(new PatchSettingsRequest({ theme: next }))
           }}
         />
       </Row>
       <Row label="Time zone" detail="Routines and reminders like “tomorrow at 9” use this.">
         <select
           value={settings.timezone}
+          aria-label="Time zone"
           onChange={(event) =>
-            save(withChange({ ...current, timezone: event.currentTarget.value }))
+            save(new PatchSettingsRequest({ timezone: event.currentTarget.value }))
           }
           className="h-8 max-w-56 cursor-pointer rounded-control bg-surface-3 px-2 text-label text-ink ring-line outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          {ZONES.map((zone) => (
+          {zones.map((zone) => (
             <option key={zone} value={zone}>
               {zone.replaceAll('_', ' ')}
             </option>
@@ -103,7 +129,7 @@ function Preferences({ settings }: { settings: Settings }) {
           label="Notifications"
           value={settings.notify ? 'on' : 'off'}
           options={SWITCH}
-          onChange={(next) => save(withChange({ ...current, notify: next === 'on' }))}
+          onChange={(next) => save(new PatchSettingsRequest({ notify: next === 'on' }))}
         />
       </Row>
     </Section>

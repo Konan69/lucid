@@ -59,6 +59,16 @@ export const serviceSearch = Atom.make('')
  */
 export const services = engine.ask(serviceSearch, (client, query) => client.FindServices({ query }))
 
+/** What the Person has typed into "find anything". */
+export const findQuery = Atom.make('')
+
+/**
+ * What "find anything" found. Asked on the server, so the answer is exactly what this Person may
+ * see; asked again only once the typing rests, with the previous answer kept up meanwhile, and a
+ * newer question always replaces an older one that is still on its way.
+ */
+export const findings = engine.ask(findQuery, (client, query) => client.Search({ query }))
+
 /** The workspace a `WatchMe` result puts the Person in, as one comparable word. */
 const whereabouts = (result: LiveResult<MeResponse>) =>
   AsyncResult.isSuccess(result)

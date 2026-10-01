@@ -21,6 +21,7 @@ import { Memory } from './settings/Memory'
 import { People } from './settings/People'
 import { Record } from './settings/Record'
 import { Rules } from './settings/Rules'
+import { holdFocus, keepFocusInside } from '../ui/Layer'
 
 interface Entry {
   readonly id: SettingsSection
@@ -78,15 +79,20 @@ export function Settings({
       }}
       onKeyDown={(event) => {
         if (event.key === 'Escape') close()
+        keepFocusInside(event)
       }}
     >
       <div
+        ref={holdFocus}
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="flex size-full max-h-160 max-w-4xl animate-rise-in overflow-hidden rounded-panel bg-surface-1 smooth-shadow-ring-lg"
+        tabIndex={-1}
+        // Wide: sections down the left, the chosen one beside them. Narrow: there is no room for
+        // a column, so the sections become one scrolling strip above the content.
+        className="flex size-full max-h-160 max-w-4xl animate-rise-in flex-col overflow-hidden rounded-panel bg-surface-1 smooth-shadow-ring-lg outline-none sm:flex-row"
       >
-        <nav className="flex w-52 shrink-0 flex-col gap-0.5 bg-surface-1 p-2 hairline-r">
+        <nav className="flex shrink-0 scrollbar-hidden gap-0.5 overflow-x-auto bg-surface-1 p-2 hairline-b sm:w-52 sm:flex-col sm:overflow-x-visible sm:hairline-r">
           <Group label="You" entries={YOURS} current={section} />
           <Group label={place} entries={SHARED} current={section} />
         </nav>
@@ -123,14 +129,16 @@ function Group({
 }) {
   return (
     <>
-      <p className="truncate px-2.5 pt-3 pb-1 text-meta font-meta text-ink-3">{label}</p>
+      <p className="hidden truncate px-2.5 pt-3 pb-1 text-meta font-meta text-ink-3 sm:block">
+        {label}
+      </p>
       {entries.map((entry) => (
         <button
           key={entry.id}
           onClick={() => router.openSettings(Option.some(entry.id))}
           aria-current={entry.id === current ? 'page' : undefined}
           className={cn(
-            'flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-row px-2.5 text-left text-label transition-colors duration-(--dur-fast)',
+            'flex h-8 shrink-0 cursor-pointer items-center gap-2.5 rounded-row px-2.5 text-left text-label whitespace-nowrap transition-colors duration-(--dur-fast) sm:w-full',
             entry.id === current
               ? 'bg-wash-selected text-ink'
               : 'text-ink-2 hover:bg-wash-hover hover:text-ink',

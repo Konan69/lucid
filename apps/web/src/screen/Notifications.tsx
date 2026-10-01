@@ -5,6 +5,7 @@ import { change, live, useLiveValue } from '../data/live'
 import { Route, router } from '../data/route'
 import { Button } from '../ui/Button'
 import { cn } from '../ui/cn'
+import { holdFocus } from '../ui/Layer'
 
 const when = new Intl.DateTimeFormat(undefined, {
   month: 'short',
@@ -47,8 +48,14 @@ export function Notifications({ onClose }: { onClose: () => void }) {
         className="fixed inset-0 z-40 cursor-default"
       />
       <section
+        ref={holdFocus}
         aria-label="Notifications"
-        className="fixed top-12 left-3 z-50 flex max-h-128 w-88 animate-rise-in flex-col overflow-hidden rounded-panel smooth-shadow-ring-lg glass"
+        tabIndex={-1}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') onClose()
+        }}
+        // It opens from the bell, so it grows from the corner nearest the bell, quickly.
+        className="fixed inset-x-3 top-12 z-50 flex max-h-128 origin-top-left flex-col overflow-hidden rounded-panel smooth-shadow-ring-lg glass transition-pop duration-(--dur-fast) ease-out outline-none sm:right-auto sm:w-88 starting:scale-97 starting:opacity-0"
       >
         <header className="flex h-11 shrink-0 items-center gap-2 px-3 hairline-b">
           <h2 className="flex-1 text-label font-title text-ink">Notifications</h2>

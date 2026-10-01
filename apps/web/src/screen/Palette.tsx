@@ -1,10 +1,13 @@
 import { SearchResult, type SearchResponse } from '@vivid/contracts'
-import { Option, Result } from 'effect'
+import { LiveState, liveStateOf } from '@vivid/state'
+import { Option } from 'effect'
 import { FileText, ListTodo, MessageSquare, Repeat2, Search } from 'lucide-react'
+import { useAtom, useAtomValue } from '@effect/atom-react'
 import { useState, type ReactNode } from 'react'
-import { change } from '../data/live'
+import { findings, findQuery } from '../data/live'
 import { Route, router } from '../data/route'
 import { cn } from '../ui/cn'
+import { holdFocus, keepFocusInside } from '../ui/Layer'
 
 type Found = SearchResponse['results'][number]
 
@@ -42,62 +45,59 @@ const describe = (result: Found) =>
     }),
   })
 
+/** Why the list is empty: nothing asked yet, still asking, could not ask, or truly nothing. */
+const nothingSaid = (query: string, answer: LiveState<SearchResponse>) =>
+  LiveState.$match(answer, {
+    Loading: () => 'Searching…',
+    Failed: () => 'Search could not be reached. Try again in a moment.',
+    Ready: () => (query.trim().length === 0 ? 'Start typing to search.' : 'Nothing matches that.'),
+  })
+
 /**
  * Find anything (⌘K): Threads, Tasks, Library items and Routines the Person can see, searched on
  * the server so the answer respects exactly what they are allowed to see. Typing searches; the
- * arrow keys and Enter choose; an answer that arrives for an older query is ignored.
+ * arrow keys and Enter choose. The last answer stays up while the next is on its way.
  */
 export function Palette({ onClose }: { onClose: () => void }) {
-  const [query, setQuery] = useState('')
-  const [found, setFound] = useState<{
-    readonly for: string
-    readonly results: ReadonlyArray<Found>
-  }>({
-    for: '',
-    results: [],
-  })
+  const [query, setQuery] = useAtom(findQuery)
+  const answer = liveStateOf(useAtomValue(findings))
   const [index, setIndex] = useState(0)
-  const results = found.for === query ? found.results : []
+  const results = LiveState.$is('Ready')(answer) ? answer.value.results : []
 
-  async function search(text: string) {
-    setQuery(text)
-    setIndex(0)
-    const answer = await change((client) => client.Search({ query: text }))
-    if (Result.isSuccess(answer)) setFound({ for: text, results: answer.success.results })
+  /** Closes, and forgets what was typed: the next search starts from an empty field. */
+  function close() {
+    setQuery('')
+    onClose()
   }
 
   function choose(position: number) {
     const picked = Option.fromUndefinedOr(results[position])
     if (Option.isNone(picked)) return
-    onClose()
+    close()
     describe(picked.value).go()
   }
 
   return (
+    // No arrival animation, on purpose: this opens from the keyboard many times a day, and
+    // anything between the keystroke and the field being ready reads as lag.
     <div
       role="presentation"
-      className="fixed inset-0 z-50 flex animate-fade-in items-start justify-center bg-scrim px-4 pt-24 backdrop-blur-scrim"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-scrim px-4 pt-24 backdrop-blur-scrim"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
+        if (event.target === event.currentTarget) close()
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') close()
+        keepFocusInside(event)
       }}
     >
       <div
+        ref={holdFocus}
         role="dialog"
         aria-modal="true"
         aria-label="Search"
-        className="w-full max-w-xl animate-rise-in overflow-hidden rounded-panel bg-surface-1 smooth-shadow-ring-lg"
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') onClose()
-          if (event.key === 'ArrowDown') {
-            event.preventDefault()
-            setIndex((current) => Math.min(current + 1, Math.max(results.length - 1, 0)))
-          }
-          if (event.key === 'ArrowUp') {
-            event.preventDefault()
-            setIndex((current) => Math.max(current - 1, 0))
-          }
-          if (event.key === 'Enter') choose(index)
-        }}
+        tabIndex={-1}
+        className="w-full max-w-xl overflow-hidden rounded-panel bg-surface-1 smooth-shadow-ring-lg outline-none"
       >
         <label className="flex h-12 items-center gap-2.5 px-4 hairline-b">
           <Search className="size-4 text-ink-3" />
@@ -106,16 +106,33 @@ export function Palette({ onClose }: { onClose: () => void }) {
             // oxlint-disable-next-line jsx-a11y/no-autofocus
             autoFocus
             value={query}
-            onChange={(event) => void search(event.currentTarget.value)}
-            onFocus={() => void search(query)}
+            maxLength={200}
+            aria-label="Search threads, tasks, the library and routines"
+            onChange={(event) => {
+              setQuery(event.currentTarget.value)
+              setIndex(0)
+            }}
+            // The arrows and Enter belong to the field: a result that has the keyboard through
+            // Tab is activated by its own Enter, not by whichever one the arrows last marked.
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowDown') {
+                event.preventDefault()
+                setIndex((current) => Math.min(current + 1, Math.max(results.length - 1, 0)))
+              }
+              if (event.key === 'ArrowUp') {
+                event.preventDefault()
+                setIndex((current) => Math.max(current - 1, 0))
+              }
+              if (event.key === 'Enter') choose(index)
+            }}
             placeholder="Search threads, tasks, the library and routines"
-            className="min-w-0 flex-1 bg-transparent text-body text-ink outline-none placeholder:text-ink-4"
+            className="min-w-0 flex-1 bg-transparent text-body text-ink outline-none placeholder:text-ink-3"
           />
         </label>
         <ul className="max-h-96 overflow-y-auto p-1">
           {results.length === 0 && (
-            <li className="px-3 py-6 text-center text-label text-ink-3">
-              {query.trim().length === 0 ? 'Start typing to search.' : 'Nothing matches that.'}
+            <li className="px-3 py-6 text-center text-label text-ink-3" aria-live="polite">
+              {nothingSaid(query, answer)}
             </li>
           )}
           {results.map((result, position) => (

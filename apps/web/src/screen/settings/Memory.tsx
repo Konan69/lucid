@@ -1,4 +1,5 @@
 import { MemoryScope, type Memory as MemoryRecord } from '@vivid/contracts'
+import { Result } from 'effect'
 import { useState } from 'react'
 import { change, live, LiveState, useLive } from '../../data/live'
 import { Button } from '../../ui/Button'
@@ -55,8 +56,18 @@ export function Memory() {
 function MemoryRow({ memory }: { memory: MemoryRecord }) {
   const [draft, setDraft] = useState<string | null>(null)
   const forget = () => void change((client) => client.ForgetMemory({ id: memory.id }))
-  const correct = (content: string) =>
-    void change((client) => client.CorrectMemory({ id: memory.id, content }))
+  const [refused, setRefused] = useState(false)
+
+  /** Saves a correction. The words stay in the field until it is saved; a refusal keeps them. */
+  async function correct(content: string) {
+    if (content.length === 0 || content === memory.content) {
+      setDraft(null)
+      return
+    }
+    const saved = await change((client) => client.CorrectMemory({ id: memory.id, content }))
+    setRefused(Result.isFailure(saved))
+    if (Result.isSuccess(saved)) setDraft(null)
+  }
 
   if (draft !== null) {
     return (
@@ -64,8 +75,7 @@ function MemoryRow({ memory }: { memory: MemoryRecord }) {
         className="flex items-center gap-2 px-4 py-2.5"
         onSubmit={(event) => {
           event.preventDefault()
-          if (draft.trim().length > 0 && draft.trim() !== memory.content) correct(draft.trim())
-          setDraft(null)
+          void correct(draft.trim())
         }}
       >
         <input
@@ -74,11 +84,13 @@ function MemoryRow({ memory }: { memory: MemoryRecord }) {
           autoFocus
           value={draft}
           maxLength={1000}
+          aria-label="What Vivid should know instead"
+          aria-invalid={refused}
           onChange={(event) => setDraft(event.currentTarget.value)}
           className="h-8 min-w-0 flex-1 rounded-control bg-well px-3 text-label text-ink ring-line outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
         <Button type="submit" size="sm" variant="primary">
-          Save
+          {refused ? 'Try again' : 'Save'}
         </Button>
         <Button type="button" size="sm" variant="ghost" onClick={() => setDraft(null)}>
           Cancel

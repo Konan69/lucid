@@ -39,9 +39,11 @@ export function Rules({ me }: { me: MeResponse }) {
   const company = Workspace.guards.Company(me.workspace) ? me.workspace : null
   const admin = company !== null && company.role !== 'member'
 
+  /** Saves a rule and says whether it was kept, so the form only clears what was really saved. */
   async function add(action: string, decision: RuleDecision, scope: RuleScope) {
     const result = await change((client) => client.CreateRule({ action, decision, scope }))
     setRefusal(Result.isFailure(result) ? 'That rule could not be saved.' : null)
+    return Result.isSuccess(result)
   }
   const remove = (rule: Rule) => void change((client) => client.DeleteRule({ id: rule.id }))
 
@@ -60,9 +62,7 @@ export function Rules({ me }: { me: MeResponse }) {
         ))}
         <NewRule
           placeholder="e.g. Send email to people outside my company"
-          onAdd={(action, decision) =>
-            void add(action, decision, RuleScope.cases.Personal.make({}))
-          }
+          onAdd={(action, decision) => add(action, decision, RuleScope.cases.Personal.make({}))}
         />
       </Section>
       {company !== null && (
@@ -78,7 +78,7 @@ export function Rules({ me }: { me: MeResponse }) {
             <NewRule
               placeholder="e.g. Delete anything in a shared drive"
               onAdd={(action, decision) =>
-                void add(action, decision, RuleScope.cases.Company.make({}))
+                add(action, decision, RuleScope.cases.Company.make({}))
               }
             />
           )}
@@ -111,7 +111,8 @@ function NewRule({
   onAdd,
 }: {
   placeholder: string
-  onAdd: (action: string, decision: RuleDecision) => void
+  /** Resolves to whether the rule was saved. */
+  onAdd: (action: string, decision: RuleDecision) => Promise<boolean>
 }) {
   const [action, setAction] = useState('')
   const [decision, setDecision] = useState<RuleDecision>('Ask')
@@ -121,8 +122,10 @@ function NewRule({
       onSubmit={(event) => {
         event.preventDefault()
         if (action.trim().length === 0) return
-        onAdd(action.trim(), decision)
-        setAction('')
+        // Cleared only once it is saved: a refused rule is still in the field to send again.
+        void onAdd(action.trim(), decision).then((saved) => {
+          if (saved) setAction('')
+        })
       }}
     >
       <input

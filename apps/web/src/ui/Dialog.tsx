@@ -43,7 +43,9 @@ export function Dialog({
           aria-label={title}
           tabIndex={-1}
           className={cn(
-            'w-full animate-rise-in rounded-panel bg-surface-1 p-5 smooth-shadow-ring-lg outline-none',
+            // Never taller than the window: a long form scrolls inside the panel, so its actions
+            // cannot end up below the fold where the page itself does not scroll.
+            'max-h-full w-full animate-rise-in overflow-y-auto rounded-panel bg-surface-1 p-5 smooth-shadow-ring-lg outline-none',
             WIDTH[width],
           )}
         >
