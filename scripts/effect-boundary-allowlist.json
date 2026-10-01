@@ -5,11 +5,6 @@
     "symbols": ["query", "transaction"]
   },
   {
-    "file": "packages/agent/runtime/src/tools/connectors.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": ["run"]
-  },
-  {
     "file": "packages/agent/runtime/src/tools/library.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["run"]
@@ -27,26 +22,46 @@
   {
     "file": "packages/agent/runtime/src/app.ts",
     "classification": "legacy-runtime-boundary",
-    "symbols": ["runResult", "requireRuntimeToken", "get:/health", "post:/internal/runs"]
-  },
-  {
-    "file": "packages/agent/runtime/src/app.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": ["acceptRun"]
-  },
-  {
-    "file": "apps/server/src/connections/google/oauth.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["exchangeGoogleCode", "refreshGoogleToken", "revokeGoogleToken", "try"]
-  },
-  {
-    "file": "apps/server/src/connections/google/request.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["requestGoogle", "requestGoogleJson", "requestGoogleText", "try"]
+    "symbols": ["runResult", "requireRuntimeToken", "get:/health", "prepareContext"]
   },
   {
     "file": "packages/client/state/src/resource.ts",
     "classification": "third-party-adapter",
     "symbols": ["<module>", "refresh"]
+  },
+  {
+    "file": "apps/server/src/runtime/client.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["makeRuntime"]
+  },
+  {
+    "file": "packages/agent/runtime/src/tools/ask.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": ["run"]
+  },
+  {
+    "file": "packages/agent/runtime/src/tools/computer.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": ["run"]
+  },
+  {
+    "file": "packages/agent/runtime/src/tools/connections.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": ["run"]
+  },
+  {
+    "file": "packages/agent/runtime/src/tools/memory.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": ["run"]
+  },
+  {
+    "file": "packages/agent/runtime/src/tools/routines.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": ["run"]
+  },
+  {
+    "file": "packages/agent/runtime/src/tools/skills.ts",
+    "classification": "legacy-runtime-boundary",
+    "symbols": ["run"]
   }
 ]

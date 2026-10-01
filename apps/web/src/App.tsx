@@ -145,7 +145,7 @@ function Place({
         }
       />
     ),
-    Projects: () => <Projects />,
+    Projects: () => <Projects onOpenThread={(id) => router.go(Route.Thread({ id }))} />,
     Invite: ({ id }) => <Invite id={id} />,
     // A device waiting to be signed in is approved in Settings, with its code already filled in.
     Device: () => <First me={me} />,
