@@ -1,5 +1,4 @@
 import { defineTool } from '@flue/runtime'
-import { VividRpcClient } from '@vivid/client-runtime'
 import {
   CreateTaskRequest,
   FollowUpId,
@@ -11,13 +10,12 @@ import {
   type Task,
   type ThreadId,
 } from '@vivid/contracts'
-import { RpcFailure } from '@vivid/contracts/rpc'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import * as v from 'valibot'
 import { asActing, NobodyToActFor, type Acting } from '../client.ts'
-import { assigneeName, resolveAssignee } from './assignees.ts'
+import { assigneeName, resolveFor } from './assignees.ts'
 import { operationId } from './identity.ts'
 import { id, text } from './inputs.ts'
 import { settle } from './result.ts'
@@ -84,20 +82,6 @@ const requireActing = Effect.fn('Tools.requireActing')(function* (acting: Option
       ),
     onSome: Effect.succeed,
   })
-})
-
-/** A failed Company directory lookup never invents a Member identity; transport failures still propagate. */
-const resolveFor = Effect.fn('Tools.resolveAssignee')(function* (
-  client: VividRpcClient['Service'],
-  name: Option.Option<string>,
-) {
-  if (Option.isNone(name) || ['me', 'you'].includes(name.value.trim().toLowerCase()))
-    return resolveAssignee(name, [])
-  const people = yield* client.ListPeople().pipe(
-    Effect.map((response) => response.members),
-    Effect.catchIf(Schema.is(RpcFailure), () => Effect.succeed([])),
-  )
-  return resolveAssignee(name, people)
 })
 
 /** Stable follow-up ids survive a Flue durable-step replay without scheduling duplicates. */
@@ -201,7 +185,10 @@ function createTool(acting: Option.Option<Acting>) {
               acting,
               Effect.fn('Tools.createTask')(function* (client) {
                 const who = yield* requireActing(acting)
-                const assignee = yield* resolveFor(client, Option.fromNullishOr(data.assignee))
+                const assignee = yield* resolveFor(
+                  Option.fromNullishOr(data.assignee),
+                  client.ListPeople(),
+                )
                 const response = yield* client.CreateTask(
                   createRequest(who, toolCallId, data, assignee),
                 )
@@ -234,7 +221,9 @@ function updateTool(acting: Option.Option<Acting>) {
                 const assignee =
                   data.assignee === undefined
                     ? Option.none<AssigneeInput>()
-                    : Option.some(yield* resolveFor(client, Option.fromNullishOr(data.assignee)))
+                    : Option.some(
+                        yield* resolveFor(Option.fromNullishOr(data.assignee), client.ListPeople()),
+                      )
                 const response = yield* client.PatchTask({
                   id: TaskId.make(data.id),
                   patch: patchRequest(data, assignee),

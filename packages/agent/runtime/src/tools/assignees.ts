@@ -1,5 +1,8 @@
 import * as Option from 'effect/Option'
-import { Assignee, AssigneeInput, type Member } from '@vivid/contracts'
+import * as Effect from 'effect/Effect'
+import type { RpcClientError } from 'effect/unstable/rpc/RpcClientError'
+import { Assignee, AssigneeInput, type Member, type PeopleResponse } from '@vivid/contracts'
+import type { RpcFailure } from '@vivid/contracts/rpc'
 
 /** Only one exact case-insensitive Member name grants a Member identity; ambiguous names stay outside. */
 export function resolveAssignee(
@@ -16,6 +19,20 @@ export function resolveAssignee(
     return AssigneeInput.cases.Member.make({ personId: member.person.id })
   return AssigneeInput.cases.Outsider.make({ name: name.value.trim() })
 }
+
+/** Personal spaces have no directory; other failures must stop the Task rather than misidentify a Member. */
+export const resolveFor = Effect.fn('Tools.resolveAssignee')(function* (
+  name: Option.Option<string>,
+  directory: Effect.Effect<PeopleResponse, RpcFailure | RpcClientError>,
+) {
+  if (Option.isNone(name) || ['me', 'you'].includes(name.value.trim().toLowerCase()))
+    return resolveAssignee(name, [])
+  const people = yield* directory.pipe(
+    Effect.map((response) => response.members),
+    Effect.catchTag('Forbidden', () => Effect.succeed([])),
+  )
+  return resolveAssignee(name, people)
+})
 
 /** Nobody is the creator's own work, while named assignees are returned as names rather than ids. */
 export function assigneeName(assignee: Assignee): string {
