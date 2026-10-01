@@ -1,5 +1,6 @@
 import { boolean, index, jsonb, pgTable, primaryKey, text } from 'drizzle-orm/pg-core'
-import { companyColumn, epoch, personColumn } from '../database/owner.ts'
+import type { RunId } from '@vivid/contracts'
+import { companyColumn, epoch, personColumn, threadColumn } from '../database/owner.ts'
 import { projectTable } from '../projects/tables.ts'
 
 /**
@@ -14,7 +15,7 @@ import { projectTable } from '../projects/tables.ts'
 export const threads = pgTable(
   'vivid_conversations',
   {
-    id: text('id').primaryKey(),
+    id: threadColumn('id').primaryKey(),
     title: text('title').notNull(),
     preview: text('preview').notNull().default(''),
     updatedAt: epoch('updated_at').notNull(),
@@ -35,7 +36,7 @@ export const threads = pgTable(
 export const threadParticipants = pgTable(
   'vivid_thread_participants',
   {
-    threadId: text('thread_id')
+    threadId: threadColumn('thread_id')
       .notNull()
       .references(() => threads.id, { onDelete: 'cascade' }),
     personId: personColumn().notNull(),
@@ -51,7 +52,7 @@ export const threadParticipants = pgTable(
 export const threadReads = pgTable(
   'vivid_thread_reads',
   {
-    threadId: text('thread_id')
+    threadId: threadColumn('thread_id')
       .notNull()
       .references(() => threads.id, { onDelete: 'cascade' }),
     personId: personColumn().notNull(),
@@ -71,8 +72,8 @@ export const threadReads = pgTable(
 export const runs = pgTable(
   'vivid_runs',
   {
-    id: text('id').primaryKey(),
-    threadId: text('thread_id')
+    id: text('id').$type<RunId>().primaryKey(),
+    threadId: threadColumn('thread_id')
       .notNull()
       .references(() => threads.id, { onDelete: 'cascade' }),
     personId: personColumn().notNull(),

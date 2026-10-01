@@ -1,4 +1,5 @@
 import { bigint, text } from 'drizzle-orm/pg-core'
+import type { CompanyId, PersonId, ThreadId } from '@vivid/contracts'
 import { personTable } from '../auth/tables.ts'
 import { companyTable } from '../companies/tables.ts'
 
@@ -13,10 +14,21 @@ import { companyTable } from '../companies/tables.ts'
  * owner's SQL from the columns its tables declare.
  */
 export const personColumn = (name = 'person_id') =>
-  text(name).references(() => personTable.id, { onDelete: 'cascade' })
+  text(name)
+    .$type<PersonId>()
+    .references(() => personTable.id, { onDelete: 'cascade' })
 
 export const companyColumn = () =>
-  text('company_id').references(() => companyTable.id, { onDelete: 'cascade' })
+  text('company_id')
+    .$type<CompanyId>()
+    .references(() => companyTable.id, { onDelete: 'cascade' })
+
+/**
+ * A text column holding a Thread id. Identifiers are branded strings with no further shape, so a
+ * column that only this server writes is typed as the brand once, here, instead of every read
+ * asserting it.
+ */
+export const threadColumn = (name: string) => text(name).$type<ThreadId>()
 
 /** Milliseconds since the Unix epoch, the unit every product timestamp crosses the wire in. */
 export const epoch = (name: string) => bigint(name, { mode: 'number' })

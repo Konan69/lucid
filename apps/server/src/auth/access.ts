@@ -4,11 +4,11 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import {
   Forbidden,
+  Person,
   PersonSummary,
   Workspace,
   type Company,
   type CompanyId,
-  type Person,
   type PersonId,
   type Role,
   type ThreadId,
@@ -160,3 +160,18 @@ export const loadSummaries = Effect.fn('Access.loadSummaries')(function* (
 })
 
 const decodeSummary = decodeStored(PersonSummary, 'Person')
+
+const decodePerson = decodeStored(Person, 'Person')
+
+/** One Person by id: the identity a call, a Run or a record is attributed to. */
+export const findPerson = Effect.fn('Access.findPerson')(function* (id: string) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database.select().from(personTable).where(eq(personTable.id, id)).limit(1),
+  )
+  const row = rows[0]
+  if (row === undefined) return Option.none<Person>()
+  return Option.some(
+    yield* decodePerson({ id: row.id, name: row.name, email: row.email, image: row.image }),
+  )
+})

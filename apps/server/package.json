@@ -18,6 +18,7 @@
     "@alchemy.run/better-auth": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
+    "@flue/sdk": "catalog:",
     "@helix-db/helix-db": "3.0.4",
     "@vivid/contracts": "workspace:*",
     "alchemy": "catalog:",

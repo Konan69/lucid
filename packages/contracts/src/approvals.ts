@@ -105,6 +105,4 @@ export const ApprovalRequestMessage = Schema.Struct({
   approvalId: ApprovalId,
   summary: Schema.String,
 }).annotate({ identifier: 'ApprovalRequestMessage', title: 'Approval request message' })
-export interface ApprovalRequestMessage extends Schema.Schema.Type<
-  typeof ApprovalRequestMessage
-> {}
+export interface ApprovalRequestMessage extends Schema.Schema.Type<typeof ApprovalRequestMessage> {}

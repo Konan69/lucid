@@ -5,7 +5,6 @@ import {
   Company,
   Forbidden,
   NotFound,
-  Person,
   PersonId,
   Role,
   SessionId,
@@ -17,27 +16,14 @@ import { AuthState } from '@vivid/contracts/auth'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database, decodeStored } from '../database/client.ts'
 import { canSee, findThread } from '../threads/access.ts'
+import { findPerson } from './access.ts'
 import { authEffect, localAuthRuntimeLayer } from './provider.ts'
-import { personTable, sessionTable } from './tables.ts'
+import { sessionTable } from './tables.ts'
 
-const decodePerson = decodeStored(Person, 'Person')
 const decodeCompany = decodeStored(Company, 'Company')
 const decodeRole = decodeStored(Role, 'Membership role')
 const decodePersonId = decodeStored(PersonId, 'Person id')
 const decodeThreadId = decodeStored(ThreadId, 'Thread id')
-
-/** Loads one Person by id, as the identity every call is attributed to. */
-const loadPerson = Effect.fn('Auth.loadPerson')(function* (id: string) {
-  const database = yield* Database
-  const rows = yield* database.run(
-    database.select().from(personTable).where(eq(personTable.id, id)).limit(1),
-  )
-  const row = rows[0]
-  if (row === undefined) return Option.none<Person>()
-  return Option.some(
-    yield* decodePerson({ id: row.id, name: row.name, email: row.email, image: row.image }),
-  )
-})
 
 /**
  * The workspace a Person is in when their session names a Company.
@@ -81,7 +67,7 @@ export const authenticate = Effect.fn('Auth.authenticate')(function* (headers: H
   )
   if (session === null)
     return yield* Effect.fail(new Unauthenticated({ message: 'Authentication required' }))
-  const person = yield* loadPerson(session.user.id)
+  const person = yield* findPerson(session.user.id)
   if (Option.isNone(person))
     return yield* Effect.fail(new Unauthenticated({ message: 'Person no longer exists' }))
   const sessionId = SessionId.make(session.session.id)
@@ -132,7 +118,7 @@ export const authenticateVivid = Effect.fn('Auth.authenticateVivid')(function* (
   const thread = yield* findThread(threadId)
   if (Option.isNone(thread))
     return yield* Effect.fail(new NotFound({ message: 'Thread not found' }))
-  const person = yield* loadPerson(personId)
+  const person = yield* findPerson(personId)
   if (Option.isNone(person))
     return yield* Effect.fail(new Forbidden({ message: 'Vivid has nobody to act for here' }))
   if (!(yield* canSee(thread.value, person.value.id))) {

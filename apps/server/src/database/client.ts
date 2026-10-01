@@ -106,7 +106,8 @@ export const databaseLayer = Layer.unwrap(
           mapDriverErrors(raw.transaction((tx) => operation(tx)))
         return database
       }),
-    ).pipe(Layer.provide(postgresLayer))
+      // The PostgreSQL client is handed on as well: the change bus listens on it (`live/changes.ts`).
+    ).pipe(Layer.provideMerge(postgresLayer))
   }),
 )
 
@@ -129,7 +130,7 @@ export const returned = <Row>(rows: ReadonlyArray<Row>, subject: string) => {
  */
 export const decodeStored = <A>(schema: Schema.ConstraintDecoder<A>, subject: string) => {
   const decode = Schema.decodeUnknownEffect(schema)
-  return (value: unknown) =>
+  return <Row>(value: Row) =>
     decode(value).pipe(
       Effect.mapError(
         () => new DatabaseFailure({ message: `Database returned an invalid ${subject}` }),

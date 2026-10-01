@@ -1,0 +1,248 @@
+import type { DeliveredMessage } from '@flue/sdk'
+import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
+import * as Option from 'effect/Option'
+import {
+  NotFound,
+  type Person,
+  type PersonId,
+  type PersonSummary,
+  type RunId,
+  type ThreadId,
+} from '@vivid/contracts'
+import { findPerson, summaryOf } from '../auth/access.ts'
+import { Database } from '../database/client.ts'
+import { Changes, Topic } from '../live/changes.ts'
+import { Learning } from '../memory/learn.ts'
+import { Notifier } from '../notifications/notifier.ts'
+import { Runtime, Settlement } from '../runtime/client.ts'
+import { canSee, findThread, type StoredThread } from './access.ts'
+import {
+  Conversation,
+  DeliveryMessage,
+  type Admitted,
+  type ConversationService,
+  type Delivery,
+} from './conversation.ts'
+import { Presence } from './presence.ts'
+import { RunStore, type RunEnding, type WorkingRun } from './runs.ts'
+import { ThreadStore } from './store.ts'
+
+/**
+ * A delivery as Flue takes it.
+ *
+ * In a private Thread a Person's words go in as an ordinary user turn: there is one Person, and
+ * Vivid acts for the Thread's creator. In a shared Thread they go in as a signal that names the
+ * speaker, which Flue shows the model as a user turn wrapped in `<message person=… from=…>` and
+ * keeps in its own history, so the model and every client know who said what. Everything the
+ * server itself delivers is a signal and always names the Person it is delivered for.
+ */
+const flueMessage = (
+  thread: StoredThread,
+  speaker: PersonSummary,
+  message: DeliveryMessage,
+): DeliveredMessage => {
+  const attribution = { person: speaker.id, from: speaker.name }
+  return DeliveryMessage.match(message, {
+    Said: ({ body }): DeliveredMessage =>
+      thread.audience === 'private'
+        ? { kind: 'user', body }
+        : { kind: 'signal', type: 'message', tagName: 'message', body, attributes: attribution },
+    Signal: ({ type, body, attributes }): DeliveredMessage => ({
+      kind: 'signal',
+      type,
+      body,
+      attributes: { ...attributes, ...attribution },
+    }),
+  })
+}
+
+/** What the delivery says, for the Thread's preview. Only a Person's own words are shown there. */
+const previewOf = (message: DeliveryMessage) =>
+  DeliveryMessage.match(message, {
+    Said: ({ body }) => Option.some(body),
+    Signal: () => Option.none<string>(),
+  })
+
+const ENDING = {
+  Completed: 'completed',
+  Failed: 'failed',
+  Stopped: 'stopped',
+  Unknown: 'unknown',
+} satisfies Record<Settlement['_tag'], RunEnding>
+
+/** Everyone whose screen shows this Thread: its creator, the People in it, or the Company. */
+const audienceTopics = Effect.fn('Conversation.audienceTopics')(function* (
+  threads: ThreadStore['Service'],
+  thread: StoredThread,
+) {
+  const here = [Topic.thread(thread.id), Topic.person(thread.personId)]
+  if (thread.audience === 'company' && thread.companyId !== null) {
+    return [...here, Topic.company(thread.companyId)]
+  }
+  const people = thread.audience === 'people' ? yield* threads.participants(thread.id) : []
+  return [...here, ...people.map(Topic.person)]
+})
+
+/** A Run being watched to its end, with the Person's words that started it when there were any. */
+interface Followed {
+  readonly id: RunId
+  readonly threadId: ThreadId
+  readonly person: Person
+  readonly said: Option.Option<string>
+}
+
+/**
+ * Builds the observer of one Run: it waits for the Run to end and writes down how. It runs for as
+ * long as the Run does, outside the request that started it, and acts only if it is the one that
+ * moves the Run out of `working`, so a settlement observed twice is handled once.
+ */
+const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
+  const database = yield* Database
+  const runtime = yield* Runtime
+  const threads = yield* ThreadStore
+  const runs = yield* RunStore
+  const changes = yield* Changes
+  const notifier = yield* Notifier
+  const presence = yield* Presence
+  const learning = yield* Learning
+
+  /** Tells the Person Vivid worked for that it is done, unless they are watching it happen. */
+  const announce = Effect.fn('Conversation.announce')(function* (
+    thread: StoredThread,
+    personId: PersonId,
+    settlement: Settlement,
+  ) {
+    if (Settlement.guards.Stopped(settlement)) return
+    if (yield* presence.watching(thread.id, personId)) return
+    yield* notifier.notify({
+      personId,
+      companyId: thread.companyId,
+      kind: 'finished',
+      title: thread.title,
+      body: Settlement.guards.Completed(settlement)
+        ? settlement.reply.slice(0, 240)
+        : 'Vivid could not finish this.',
+      taskId: null,
+      threadId: thread.id,
+    })
+  })
+
+  return Effect.fn('Conversation.observe')(function* (run: Followed) {
+    const settlement = yield* runtime.settled(run.threadId, run.id)
+    if (!(yield* runs.end(run.id, ENDING[settlement._tag]))) return
+    const thread = yield* findThread(run.threadId).pipe(Effect.provideService(Database, database))
+    if (Option.isNone(thread)) return
+    const reply = Settlement.guards.Completed(settlement)
+      ? Option.some(settlement.reply)
+      : Option.none<string>()
+    yield* threads.touch(
+      run.threadId,
+      Option.filter(reply, (text) => text.trim().length > 0),
+    )
+    yield* changes.publish(yield* audienceTopics(threads, thread.value))
+    yield* announce(thread.value, run.person.id, settlement)
+    if (Option.isSome(reply) && Option.isSome(run.said)) {
+      yield* learning.afterRun({
+        thread: thread.value,
+        person: run.person,
+        said: run.said.value,
+        replied: reply.value,
+      })
+    }
+  })
+})
+
+const threadMissing = () => Effect.fail(new NotFound({ message: 'Thread not found' }))
+
+const makeConversation = Effect.fn('Conversation.make')(function* () {
+  const database = yield* Database
+  const runtime = yield* Runtime
+  const threads = yield* ThreadStore
+  const runs = yield* RunStore
+  const changes = yield* Changes
+  const scope = yield* Effect.scope
+  const observe = yield* makeObserve()
+  const withDatabase = Effect.provideService(Database, database)
+
+  /** Observes a Run in the background for the life of the server, logging what it cannot do. */
+  const follow = (run: Followed) =>
+    observe(run).pipe(
+      Effect.catch((error) => Effect.logError('A Run could not be settled', error._tag)),
+      Effect.forkIn(scope),
+    )
+
+  /** The Person a delivery is for, who must exist; otherwise the delivery has nobody behind it. */
+  const personOf = Effect.fn('Conversation.personOf')(function* (personId: PersonId) {
+    const person = yield* findPerson(personId).pipe(withDatabase)
+    return Option.isNone(person) ? yield* threadMissing() : person.value
+  })
+
+  const admit: ConversationService['admit'] = Effect.fn('Conversation.admit')(function* (
+    delivery: Delivery,
+  ) {
+    const found = yield* findThread(delivery.threadId).pipe(withDatabase)
+    if (Option.isNone(found)) return yield* threadMissing()
+    const thread = found.value
+    if (!(yield* canSee(thread, delivery.personId).pipe(withDatabase)))
+      return yield* threadMissing()
+    const speaker = yield* personOf(delivery.personId)
+    const creator = yield* personOf(thread.personId)
+    const admission = yield* runtime.admit({
+      threadId: thread.id,
+      message: flueMessage(thread, summaryOf(speaker), delivery.message),
+      origin: { creator: creator.id, creatorName: creator.name },
+      idempotencyKey: delivery.idempotencyKey,
+    })
+    yield* runs.start({
+      id: admission.runId,
+      threadId: thread.id,
+      personId: speaker.id,
+      origin: delivery.origin,
+    })
+    const said = previewOf(delivery.message)
+    yield* threads.touch(thread.id, said)
+    // What a Person just sent is not unread for them. They were just shown to be able to see the
+    // Thread, so the only failures left here are the database's own.
+    yield* threads
+      .markRead(speaker.id, thread.id)
+      .pipe(Effect.catchTag(['NotFound', 'Forbidden', 'InvalidRequest', 'Conflict'], threadMissing))
+    yield* changes.publish(yield* audienceTopics(threads, thread))
+    if (!admission.repeated) {
+      yield* follow({ id: admission.runId, threadId: thread.id, person: speaker, said })
+    }
+    return {
+      runId: admission.runId,
+      offset: admission.offset,
+      incarnation: admission.incarnation,
+    } satisfies Admitted
+  })
+
+  const deliver: ConversationService['deliver'] = Effect.fn('Conversation.deliver')(function* (
+    delivery: Delivery,
+  ) {
+    const admitted = yield* admit(delivery)
+    const recorded = yield* runs.list(delivery.threadId)
+    const run = recorded.find((candidate) => candidate.id === admitted.runId)
+    return run === undefined ? yield* threadMissing() : run
+  })
+
+  // A server that restarts while Runs are in progress picks each one back up: Flue still knows
+  // how they ended, or says it does not, and either way the row stops claiming it is working.
+  const unfinished = yield* runs.working()
+  yield* Effect.forEach(unfinished, (run) => resume(run), { discard: true })
+
+  function resume(run: WorkingRun) {
+    return personOf(run.personId).pipe(
+      Effect.flatMap((person) =>
+        follow({ id: run.id, threadId: run.threadId, person, said: Option.none() }),
+      ),
+      Effect.catch(() => Effect.logWarning('A working Run has nobody behind it any more')),
+    )
+  }
+
+  return Conversation.of({ deliver, admit })
+})
+
+/** Needs a `Scope`: the Runs it observes live as long as the server does. */
+export const conversationLayer = Layer.effect(Conversation, makeConversation())

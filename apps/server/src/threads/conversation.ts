@@ -6,6 +6,7 @@ import {
   type NotFound,
   type PersonId,
   type Run,
+  type RunId,
   type RuntimeUnavailable,
   type ThreadId,
 } from '@vivid/contracts'
@@ -50,6 +51,15 @@ export interface Delivery {
   readonly idempotencyKey: string
 }
 
+/** Flue's receipt for a delivery, which the gateway hands back to the client that sent it. */
+export interface Admitted {
+  readonly runId: RunId
+  /** Where this delivery's events begin in the Thread's stream. */
+  readonly offset: string
+  /** The conversation's incarnation in the runtime. */
+  readonly incarnation: string
+}
+
 export interface ConversationService {
   /**
    * Hands one message to Vivid in a Thread and records the Run it starts. This is the only way
@@ -59,9 +69,13 @@ export interface ConversationService {
   readonly deliver: (
     delivery: Delivery,
   ) => Effect.Effect<Run, RuntimeUnavailable | NotFound | DatabaseInfrastructureError>
+  /** `deliver`, returning the runtime's receipt instead of the Run. Used by the gateway only. */
+  readonly admit: (
+    delivery: Delivery,
+  ) => Effect.Effect<Admitted, RuntimeUnavailable | NotFound | DatabaseInfrastructureError>
 }
 
-/** The server's one authority over the conversation runtime. Implemented in `threads/runs.ts`. */
+/** How work starts. Implemented in `threads/delivery.ts` by `conversationLayer`. */
 export class Conversation extends Context.Service<Conversation, ConversationService>()(
   'vivid/Conversation',
 ) {}
