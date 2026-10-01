@@ -25,6 +25,12 @@ export function Copy({ name, read }: { name: string; read: () => string }) {
       aria-label={`${LABEL[state]}: ${name}`}
       icon={state === 'copied' ? <Check className="size-3.5" /> : <CopyIcon className="size-3.5" />}
       onClick={() => {
+        // Over plain http from another machine the browser has no clipboard at all, and reaching
+        // for it throws before there is a promise to refuse.
+        if (!('clipboard' in navigator)) {
+          setState('refused')
+          return
+        }
         void navigator.clipboard.writeText(read()).then(
           () => setState('copied'),
           () => setState('refused'),

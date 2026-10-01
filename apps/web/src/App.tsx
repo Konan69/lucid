@@ -1,4 +1,4 @@
-import { ThreadId, type MeResponse } from '@vivid/contracts'
+import { ThreadId, Workspace, type MeResponse } from '@vivid/contracts'
 import { Option } from 'effect'
 import { PanelLeft } from 'lucide-react'
 import { Suspense, useState, useSyncExternalStore } from 'react'
@@ -109,7 +109,16 @@ function Shell({ me }: { me: MeResponse }) {
       )}
       <main className="flex min-w-0 flex-1">
         <Suspense fallback={<Splash />}>
-          <Place route={route} me={me} panel={panel} onTogglePanel={() => setPanel((on) => !on)} />
+          <Place
+            // A screen holds things that belong to the workspace it was opened in: the folder it
+            // is in, the item it has open, a half-written Routine. Changing workspace starts each
+            // screen again, so nothing of one Company is left on screen under another's name.
+            key={scopeOf(me)}
+            route={route}
+            me={me}
+            panel={panel}
+            onTogglePanel={() => setPanel((on) => !on)}
+          />
         </Suspense>
         {panel && Route.$is('Thread')(route) && <Computer onClose={() => setPanel(false)} />}
       </main>
@@ -125,6 +134,13 @@ function Shell({ me }: { me: MeResponse }) {
     </div>
   )
 }
+
+/** Which workspace the Person is in, as a key: their own space, or one Company. */
+const scopeOf = (me: MeResponse) =>
+  Workspace.match(me.workspace, {
+    Personal: () => 'personal',
+    Company: ({ company }) => company.id,
+  })
 
 const openThread = (id: string) => router.go(Route.Thread({ id: ThreadId.make(id) }))
 

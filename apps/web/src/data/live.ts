@@ -140,20 +140,48 @@ const markSeen = (id: ThreadId, result: LiveResult<ThreadDetail>) => {
     Effect.gen(function* () {
       const client = yield* VividRpcClient
       yield* client.MarkThreadRead({ id })
-      yield* client.ReportPresence({ threadId: id, typing: false })
     }),
   ).then((reported) => {
     if (Result.isFailure(reported)) forget()
   }, forget)
 }
 
+/** Whether this window is the one being looked at. A tab in the background is not watching. */
+const looking = Atom.make((get) => {
+  const hear = () => get.setSelf(document.visibilityState === 'visible')
+  document.addEventListener('visibilitychange', hear)
+  get.addFinalizer(() => document.removeEventListener('visibilitychange', hear))
+  return document.visibilityState === 'visible'
+})
+
+/** Whether this Person has something typed in a Thread's composer. The composer sets it. */
+export const typingIn = Atom.family((_id: ThreadId) => Atom.make(false))
+
+/**
+ * "I am here" for one Thread, said for as long as its screen is open and this window is in front.
+ *
+ * The server keeps a Person present for fifteen seconds after they last said so, and decides from
+ * that who is shown at the top of a shared Thread and who needs a notification instead. It used
+ * to be said only when the Thread moved, so someone reading a quiet Thread, or writing a long
+ * message, dropped out of it after fifteen seconds. A window in the background says nothing, so
+ * its Person is told about what they are not looking at.
+ */
+export const presentIn = Atom.family((id: ThreadId) =>
+  engine.beat(
+    Atom.make((get) => ({ typing: get(typingIn(id)), looking: get(looking) })),
+    (client, now) =>
+      now.looking ? client.ReportPresence({ threadId: id, typing: now.typing }) : Effect.void,
+    '5 seconds',
+  ),
+)
+
 const seenQueries = new Map<ThreadId, LiveQuery<ThreadDetail>>()
 
 /**
- * A Thread's live detail, for the screen that shows it. Looking at a Thread is what marks it read
- * and what makes a Person present in it, so both happen here, in the atom, each time the Thread
- * moves while someone has it open. They are events on the data, not something a component has to
- * remember to do after it renders; when nobody is reading the atom, nothing is reported.
+ * A Thread's live detail, for the screen that shows it. Looking at a Thread is what marks it read,
+ * so that happens here, in the atom, each time the Thread moves while someone has it open. It is
+ * an event on the data, not something a component has to remember to do after it renders; when
+ * nobody is reading the atom, nothing is reported. Being present is `presentIn`.
  */
 export function seenThread(id: ThreadId): LiveQuery<ThreadDetail> {
   const existing = seenQueries.get(id)

@@ -1,3 +1,4 @@
+import * as Atom from 'effect/unstable/reactivity/Atom'
 import { useSyncExternalStore } from 'react'
 import { AppState, type View } from 'react-native'
 
@@ -50,3 +51,13 @@ const readFrontedAt = () => frontedAt
  * not go on calling yesterday "Today" when it is picked up again.
  */
 export const useNow = (): number => useSyncExternalStore(subscribe, readFrontedAt, readFrontedAt)
+
+/**
+ * Whether the app is in front, as an atom, for data that should only be said while the Person is
+ * actually looking: being present in a Thread. An app in the background is not watching it.
+ */
+export const inFront = Atom.make((get) => {
+  const heard = AppState.addEventListener('change', (state) => get.setSelf(state === 'active'))
+  get.addFinalizer(() => heard.remove())
+  return AppState.currentState === 'active'
+})

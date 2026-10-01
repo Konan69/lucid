@@ -1,7 +1,6 @@
 import { InvitationId, ThreadId, type Notification } from '@vivid/contracts'
-import { Option } from 'effect'
 import { Bell } from 'lucide-react'
-import { change, live, useLiveValue } from '../data/live'
+import { change, live, LiveState, useLive } from '../data/live'
 import { Route, router } from '../data/route'
 import { Button } from '../ui/Button'
 import { cn } from '../ui/cn'
@@ -18,13 +17,23 @@ const when = new Intl.DateTimeFormat(undefined, {
 const INVITATION = /\s*invitation:(\S+)$/u
 
 /**
+ * What the empty panel says. "Nothing new" is an answer, so it is only said once the server has
+ * answered: before that it is still looking, and when it cannot be reached it says that instead.
+ */
+const QUIET = {
+  Loading: 'Looking…',
+  Failed: 'Vivid can’t reach your notifications right now.',
+  Ready: 'Nothing new. Vivid will tell you here.',
+} satisfies Record<LiveState<unknown>['_tag'], string>
+
+/**
  * What happened while the Person was elsewhere: something finished, something needs them, someone
  * shared a Thread or invited them. It floats over the app; choosing a notice goes to what it is
  * about and marks it read on the way.
  */
 export function Notifications({ onClose }: { onClose: () => void }) {
-  const state = useLiveValue(live.notifications)
-  const notices = Option.match(state, { onNone: () => [], onSome: (value) => value.notifications })
+  const state = useLive(live.notifications)
+  const notices = LiveState.$is('Ready')(state) ? state.value.notifications : []
   const unread = notices.some((notice) => notice.readAt === null)
 
   function open(notice: Notification) {
@@ -72,7 +81,9 @@ export function Notifications({ onClose }: { onClose: () => void }) {
         {notices.length === 0 ? (
           <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
             <Bell className="size-5 text-ink-4" />
-            <p className="text-label text-ink-3">Nothing new. Vivid will tell you here.</p>
+            <p className="text-label text-ink-3" aria-live="polite">
+              {QUIET[state._tag]}
+            </p>
           </div>
         ) : (
           <ul className="min-h-0 flex-1 overflow-y-auto p-1">

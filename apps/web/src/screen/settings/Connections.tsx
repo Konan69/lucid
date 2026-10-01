@@ -64,6 +64,18 @@ const STANDING = (connection: Connection) =>
     Failed: ({ reason }) => `Not working: ${reason}`,
   })
 
+const added = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
+
+/**
+ * Which account a row is, when the service's name alone does not say: what the Person called it,
+ * when they called it anything, and always the day it was added, so two accounts on one service
+ * can be told apart before one of them is removed.
+ */
+const WHICH = (connection: Connection) => {
+  const day = `added ${added.format(connection.createdAt)}`
+  return connection.label === connection.serviceName ? day : `${connection.label} · ${day}`
+}
+
 /** A key being collected for a Connection that began: which one, and what it asks for. */
 interface Keying {
   readonly id: ConnectionId
@@ -287,7 +299,9 @@ function ConnectionRow({
       </span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-label text-ink">{connection.serviceName}</div>
-        <div className="truncate text-label text-ink-3">{STANDING(connection)}</div>
+        <div className="truncate text-label text-ink-3">
+          {STANDING(connection)} · {WHICH(connection)}
+        </div>
       </div>
       {onRemove !== undefined && (
         <Button size="sm" variant="ghost" onClick={onRemove}>

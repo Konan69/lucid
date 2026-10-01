@@ -1,6 +1,17 @@
 import { VividRpcClient } from '@vivid/client-runtime'
 import type { RpcFailure } from '@vivid/contracts/rpc'
-import { Cause, Data, Effect, Exit, Layer, Option, Result, Schedule, Stream } from 'effect'
+import {
+  Cause,
+  Data,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Result,
+  Schedule,
+  Stream,
+  type Duration,
+} from 'effect'
 import type * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import * as Atom from 'effect/unstable/reactivity/Atom'
@@ -265,6 +276,29 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
   }
 
   /**
+   * Something said to the server again and again for as long as a screen is open: "I am here".
+   *
+   * The atom says it when something first reads it, says it again every `every`, and says it at
+   * once whenever `argument` changes, so what the server hears follows what is true now. It stops
+   * the moment nothing reads it (no idle time: a Person who left a Thread is not kept present in
+   * it). A call that fails is skipped; the next beat is the retry.
+   */
+  const beat = <Argument>(
+    argument: Atom.Atom<Argument>,
+    call: (client: Client, argument: Argument) => Effect.Effect<unknown, ProductFailure>,
+    every: Duration.Input,
+  ): Atom.Atom<LiveResult<void>> =>
+    Atom.setIdleTTL(
+      runtime.atom((get) => {
+        const said = get(argument)
+        return Effect.gen(function* () {
+          yield* call(yield* VividRpcClient, said)
+        }).pipe(Effect.ignore, Effect.repeat(Schedule.spaced(every)), Effect.asVoid)
+      }),
+      0,
+    )
+
+  /**
    * One program, given the client the atoms use, so it rides the same socket. The failure is in
    * the value (`Result`), not in the error channel: every caller draws a refusal, none lets one
    * escape. This describes the work; the app that owns the runtime runs it.
@@ -315,5 +349,5 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
     for (const reopener of reopeners) reopener()
   }
 
-  return { registry, query, family, ask, run, change, reopen }
+  return { registry, query, family, ask, beat, run, change, reopen }
 }

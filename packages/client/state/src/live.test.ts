@@ -248,4 +248,39 @@ describe('live state', () => {
     })()
     return program.pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())))
   })
+
+  it.effect(
+    'beats on mount, every interval and at once when what it says changes, then stops',
+    () => {
+      const program = Effect.fn('LiveTest.beat')(function* () {
+        // The atom runtime waits on real timers, so the test holds those, as the search test does.
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+        const plans = yield* Queue.unbounded<Effect.Effect<void, ProductFailure>>()
+        const said = yield* Queue.unbounded<boolean>()
+        const typing = Atom.make(false)
+        const live = makeLive(yield* testClientLayer(plans))
+        const here = live.beat(typing, (_client, value) => Queue.offer(said, value), '5 seconds')
+        // Mounted the way a screen mounts it: read at once, kept while the screen is open.
+        const unmount = live.registry.mount(here)
+
+        expect(yield* Queue.take(said)).toBe(false)
+        yield* TestClock.adjust(0)
+        vi.advanceTimersByTime(4999)
+        yield* TestClock.adjust(0)
+        expect(yield* Queue.size(said)).toBe(0)
+        vi.advanceTimersByTime(1)
+        expect(yield* Queue.take(said)).toBe(false)
+
+        live.registry.set(typing, true)
+        expect(yield* Queue.take(said)).toBe(true)
+
+        unmount()
+        yield* TestClock.adjust(0)
+        vi.advanceTimersByTime(30_000)
+        yield* TestClock.adjust(0)
+        expect(yield* Queue.size(said)).toBe(0)
+      })()
+      return program.pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())))
+    },
+  )
 })

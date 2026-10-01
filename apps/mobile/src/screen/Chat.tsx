@@ -1,3 +1,4 @@
+import { useAtomMount, useAtomSet } from '@effect/atom-react'
 import { useFlueAgent } from '@flue/react'
 import type { FlueConversationMessage } from '@flue/sdk'
 import {
@@ -96,6 +97,9 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
   // catches the conversation up. The subscription lives exactly as long as this view does.
   const wake = useMemo(() => onForeground(() => agent.refresh()), [agent])
   const [draft, setDraft] = useState('')
+  // Being on this screen is what makes the Person present in the Thread.
+  useAtomMount(data.presentIn(id))
+  const setTyping = useAtomSet(data.typingIn(id))
   const [sharing, setSharing] = useState(false)
   const [undelivered, setUndelivered] = useState<Option.Option<string>>(Option.none())
   const thread = Option.map(detail, (value) => value.thread)
@@ -134,10 +138,9 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
   }
 
   function type(next: string) {
-    // Only the edges are reported: starting to type and clearing the field.
-    if ((next.length === 0) !== (draft.length === 0)) {
-      void data.change((sdk) => sdk.ReportPresence({ threadId: id, typing: next.length > 0 }))
-    }
+    // Whether there is something typed is part of what the Thread's presence says; see
+    // `presentIn`. The atom ignores a value it already holds, so every keystroke is fine.
+    setTyping(next.length > 0)
     setDraft(next)
   }
 

@@ -1,3 +1,4 @@
+import { useAtomMount, useAtomSet } from '@effect/atom-react'
 import { useFlueAgent, type FlueConversationMessage } from '@flue/react'
 import { createFlueClient } from '@flue/sdk'
 import {
@@ -12,7 +13,7 @@ import { titleFromMessage } from '@vivid/state'
 import { Option } from 'effect'
 import { Lock, MonitorSmartphone, Share2, Users } from 'lucide-react'
 import { useMemo, useState, useSyncExternalStore } from 'react'
-import { change, LiveState, seenThread, useLive } from '../data/live'
+import { change, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
 import { Route, router } from '../data/route'
 import { FirstWords, firstWords } from '../data/threads'
 import { Faces } from '../ui/Avatar'
@@ -102,6 +103,9 @@ function Conversation({
   const [sharing, setSharing] = useState(false)
   // Words that were sent from here and refused. They are kept, never dropped, until sent again.
   const [unsent, setUnsent] = useState<Option.Option<string>>(Option.none())
+  // Being on this screen is what makes the Person present in the Thread; see `presentIn`.
+  useAtomMount(presentIn(id))
+  const setTyping = useAtomSet(typingIn(id))
   const thread = Option.map(detail, (value) => value.thread)
   const shared = Option.exists(thread, (value) => !ThreadAudience.guards.Private(value.audience))
   const runs = Option.match(detail, { onNone: () => [], onSome: (value) => value.runs })
@@ -180,7 +184,7 @@ function Conversation({
         working={working}
         onSend={send}
         onStop={() => void change((sdk) => sdk.StopThread({ id }))}
-        onTyping={(typing) => void change((sdk) => sdk.ReportPresence({ threadId: id, typing }))}
+        onTyping={setTyping}
       />
 
       {sharing && Option.isSome(thread) && Workspace.guards.Company(me.workspace) && (

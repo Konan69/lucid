@@ -213,15 +213,21 @@ function Glass({
       screen.scaleViewport = true
       screen.viewOnly = !control
       screen.background = 'transparent'
+      // Whether the socket is still this element's to close: asking a client that has already
+      // closed to close again is an error in its log, once for every panel that is shut.
+      let open = true
       const opened = () => onHeard('opened')
-      const closed = () => onHeard('closed')
+      const closed = () => {
+        open = false
+        onHeard('closed')
+      }
       screen.addEventListener('connect', opened)
       screen.addEventListener('disconnect', closed)
       return () => {
         // Closing it here is this window's own doing, not a screen that was lost.
         screen.removeEventListener('connect', opened)
         screen.removeEventListener('disconnect', closed)
-        screen.disconnect()
+        if (open) screen.disconnect()
       }
     },
     [address, control, onHeard],
