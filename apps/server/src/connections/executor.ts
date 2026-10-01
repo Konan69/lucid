@@ -6,6 +6,7 @@ import {
   ServiceUnavailable,
 } from '@vivid/contracts'
 import * as Config from 'effect/Config'
+import * as Arr from 'effect/Array'
 import * as Cache from 'effect/Cache'
 import * as Exit from 'effect/Exit'
 import * as Context from 'effect/Context'
@@ -13,6 +14,7 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Match from 'effect/Match'
 import * as Option from 'effect/Option'
+import * as Order from 'effect/Order'
 import * as Record from 'effect/Record'
 import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
@@ -21,6 +23,7 @@ import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import type * as HttpBody from 'effect/unstable/http/HttpBody'
 
 import { toolMessage } from './message.ts'
+import { retainCatalog } from './catalog.ts'
 
 export const ExecutorAppId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorAppId'))
 export const ExecutorAccountId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorAccountId'))
@@ -318,6 +321,7 @@ const WireCatalogEntry = Schema.Struct({
   description: Schema.String,
   connectUrl: Schema.optionalKey(Schema.String),
   auth: Schema.optionalKey(Schema.Struct({ kind: Schema.String })),
+  popularity: Schema.optionalKey(Schema.NullOr(Schema.Number)),
 })
 const WireCatalog = Schema.Array(Schema.Unknown)
 const decodeCatalogEntry = Schema.decodeUnknownEffect(WireCatalogEntry)
@@ -891,11 +895,26 @@ function makeCatalog(http: ExecutorHttp) {
             ExecutorResponseInvalid.make({ service: 'connections', tool: null }),
           ),
         )
-        return catalogEntry(value)
+        return catalogEntry(value).map((service) => ({
+          service,
+          popularity: Option.fromNullishOr(value.popularity),
+        }))
       }),
     )
-    return decoded.flat()
+    return Arr.sort(decoded.flat(), comparePopularity).map((entry) => entry.service)
   })
+}
+
+/** The live catalog carries numbers on curated entries, one explicit null, and omitted keys
+ * elsewhere. Numeric popularity sorts first, descending; ties and absent values retain wire order.
+ */
+function comparePopularity(
+  left: { readonly popularity: Option.Option<number> },
+  right: { readonly popularity: Option.Option<number> },
+) {
+  if (Option.isNone(left.popularity)) return Option.isSome(right.popularity) ? 1 : 0
+  if (Option.isNone(right.popularity)) return -1
+  return Order.Number(right.popularity.value, left.popularity.value)
 }
 
 /** A failed copy response is not proof of refusal. Recover its exact opaque identity; if the
@@ -1075,7 +1094,7 @@ function makeCompensation(http: ExecutorHttp) {
 /** Profile creation uses the caller's Connection id as its idempotency key. Post-copy failures
  * either preserve a pending authorization or remove the copy before reporting the failure.
  */
-function makeBegin(http: ExecutorHttp, catalog: ReturnType<typeof makeCatalog>) {
+function makeBegin(http: ExecutorHttp, catalog: ExecutorService['catalog']) {
   const reconcile = makeReconcile(http)
   const authorize = makeAuthorize(http)
   const copy = makeCopy(http)
@@ -1336,7 +1355,7 @@ function makeResume(http: ExecutorHttp) {
   )
 }
 
-/** Acquire the caller-provided HTTP transport once; cache snapshots without caching failures. */
+/** Acquire transport once and start the scoped catalog writer; tool discovery remains keyed. */
 const makeConfigured = Effect.fn('Executor.configure')(function* (
   url: string,
   key: Redacted.Redacted,
@@ -1350,10 +1369,13 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
     ),
   )
   const http = makeHttp(client)
-  const catalogSnapshot = yield* Effect.cachedWithTTL(makeCatalog(http)(), (exit) =>
-    Exit.isSuccess(exit) ? '10 minutes' : 0,
+  const catalog = yield* retainCatalog(
+    makeCatalog(http)().pipe(
+      Effect.mapError(() =>
+        ServiceUnavailable.make({ service: 'connections', message: 'The catalog is unavailable.' }),
+      ),
+    ),
   )
-  const catalog = Effect.fn('Executor.catalog')(() => catalogSnapshot)
   const snapshots = yield* Cache.makeWith(makeDiscovery(http), {
     capacity: 1000,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? '5 minutes' : 0),

@@ -2,7 +2,7 @@ import * as NodeHttp from 'node:http'
 import { NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
 import { describe, expect, it } from '@effect/vitest'
 import { ConnectionId, ServiceId, ServiceUnavailable } from '@vivid/contracts'
-import { ConfigProvider, Effect, Layer, Ref, Schema } from 'effect'
+import { ConfigProvider, Effect, Layer, Queue, Ref, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
@@ -48,6 +48,17 @@ const defaultCatalog = [
   },
   { kind: 'future-kind' },
 ]
+/** Minimal remote entries leave popularity absent unless that particular wire entry supplies it. */
+function catalogService(name: string) {
+  return {
+    id: name,
+    kind: 'mcp',
+    name,
+    description: name,
+    connectUrl: 'https://example.test',
+    auth: { kind: 'none' },
+  }
+}
 const page = {
   items: [{ name: 'read', description: 'Read records', inputSchema: {}, readOnly: true }],
   deployment: 'deployment',
@@ -78,6 +89,7 @@ const decodeResume = Schema.decodeUnknownEffect(Resume)
  */
 const fixture = Effect.fn('ExecutorHttpTest.fixture')(function* () {
   const responses = yield* Ref.make(new Map<string, Fault>())
+  const catalogRequests = yield* Queue.unbounded<void>()
   const requests = yield* Ref.make<
     readonly { path: string; search: string; body: typeof Schema.Json.Type }[]
   >([])
@@ -98,6 +110,7 @@ const fixture = Effect.fn('ExecutorHttpTest.fixture')(function* () {
         : yield* request.json.pipe(Effect.flatMap(Json))
     const path = `${request.method} ${url.pathname}`
     yield* Ref.update(requests, (items) => [...items, { path, search: url.search, body }])
+    if (path === 'GET /dashboard/api/catalog') yield* Queue.offer(catalogRequests, undefined)
     if (path === 'POST /v1/apps/copies') {
       const input = yield* decodeBegin(body)
       yield* Ref.update(copies, (items) => [...items, input])
@@ -131,7 +144,7 @@ const fixture = Effect.fn('ExecutorHttpTest.fixture')(function* () {
       ),
     ),
   )
-  return { responses, requests, copies, copied, imported, paginated, layer }
+  return { responses, requests, catalogRequests, copies, copied, imported, paginated, layer }
 })
 
 /** Destroying the real socket after reading the request models acceptance with a lost response. */
@@ -316,6 +329,47 @@ describe('Executor HTTP failures', () => {
   }
 })
 
+/** Layer acquisition starts catalog I/O without a reader. The real decoder accepts the observed
+ * numeric/null/omitted shape, skips unknown kinds and preserves stable popularity ties.
+ */
+it.effect('loads the catalog eagerly and preserves popularity and wire order', () =>
+  Effect.gen(function* () {
+    const remote = yield* fixture()
+    yield* Ref.update(remote.responses, (values) =>
+      new Map(values).set(
+        'GET /dashboard/api/catalog',
+        reply(200, [
+          catalogService('Wire first'),
+          { ...catalogService('Low'), popularity: 3 },
+          { kind: 'future-kind', popularity: 100 },
+          { ...catalogService('High'), popularity: 20 },
+          { ...catalogService('High tie'), popularity: 20 },
+          { ...catalogService('Null'), popularity: null },
+          catalogService('Wire last'),
+        ]),
+      ),
+    )
+    yield* Effect.gen(function* () {
+      const executor = yield* Executor
+      yield* Queue.take(remote.catalogRequests)
+      const entries = yield* executor.catalog()
+      expect(entries.map((entry) => entry.name)).toEqual([
+        'High',
+        'High tie',
+        'Low',
+        'Wire first',
+        'Null',
+        'Wire last',
+      ])
+      expect(
+        (yield* Ref.get(remote.requests)).filter(
+          (request) => request.path === 'GET /dashboard/api/catalog',
+        ),
+      ).toEqual([expect.objectContaining({ search: '?limit=2000' })])
+    }).pipe(Effect.provide(remote.layer))
+  }).pipe(Effect.scoped),
+)
+
 /** The same production cache serves tools/call and catalog/begin, including structurally equal
  * references decoded anew from persistence; a controllable clock proves both expiration budgets.
  */
@@ -325,6 +379,7 @@ it.effect('shares discovery and catalog snapshots and expires them without cachi
     yield* Effect.gen(function* () {
       const executor = yield* Executor
       const entries = yield* executor.catalog()
+      yield* Queue.take(remote.catalogRequests)
       expect(entries.map((entry) => entry.id)).toEqual([service])
       yield* executor.catalog()
       yield* executor.tools(references)
@@ -350,6 +405,7 @@ it.effect('shares discovery and catalog snapshots and expires them without cachi
         requests.filter((request) => request.path === 'GET /dashboard/api/catalog'),
       ).toHaveLength(1)
       yield* TestClock.adjust('5 minutes')
+      yield* Queue.take(remote.catalogRequests)
       yield* executor.catalog()
       expect(
         (yield* Ref.get(remote.requests)).filter(
@@ -579,26 +635,33 @@ it.effect('requests maximum pages and caches every discovered page for subsequen
   }).pipe(Effect.scoped),
 )
 
-/** A failed cache fill must recover immediately when the installation returns, without a clock wait. */
-it.effect('does not cache catalog or discovery failures', () =>
-  Effect.gen(function* () {
-    const remote = yield* fixture()
-    yield* Ref.update(remote.responses, (values) =>
-      new Map(values)
-        .set('GET /dashboard/api/catalog', reply(503, null))
-        .set('GET /v1/tools', reply(503, null)),
-    )
-    yield* Effect.gen(function* () {
-      const executor = yield* Executor
-      expect((yield* executor.catalog().pipe(Effect.flip))._tag).toBe('ExecutorExecutionUncertain')
-      expect((yield* executor.tools(references).pipe(Effect.flip))._tag).toBe(
-        'ExecutorExecutionUncertain',
+/** Catalog reads share cold failure until the scheduled retry; keyed discovery retries immediately. */
+it.effect(
+  'retries cold catalog failures in the background without caching discovery failures',
+  () =>
+    Effect.gen(function* () {
+      const remote = yield* fixture()
+      yield* Ref.update(remote.responses, (values) =>
+        new Map(values)
+          .set('GET /dashboard/api/catalog', reply(503, null))
+          .set('GET /v1/tools', reply(503, null)),
       )
-      yield* Ref.update(remote.responses, () => new Map())
-      expect(yield* executor.catalog()).toHaveLength(1)
-      expect(yield* executor.tools(references)).toHaveLength(1)
-    }).pipe(Effect.provide(remote.layer))
-  }).pipe(Effect.scoped),
+      yield* Effect.gen(function* () {
+        const executor = yield* Executor
+        expect((yield* executor.catalog().pipe(Effect.flip))._tag).toBe('ServiceUnavailable')
+        yield* Queue.take(remote.catalogRequests)
+        expect((yield* executor.tools(references).pipe(Effect.flip))._tag).toBe(
+          'ExecutorExecutionUncertain',
+        )
+        yield* Ref.update(remote.responses, () => new Map())
+        expect((yield* executor.catalog().pipe(Effect.flip))._tag).toBe('ServiceUnavailable')
+        yield* TestClock.adjust('30 seconds')
+        yield* Queue.take(remote.catalogRequests)
+        // A cold reader waits for this retry's real HTTP response to finish decoding.
+        expect(yield* executor.catalog()).toHaveLength(1)
+        expect(yield* executor.tools(references)).toHaveLength(1)
+      }).pipe(Effect.provide(remote.layer))
+    }).pipe(Effect.scoped),
 )
 
 /** Compensation failure keeps a located reference rather than abandoning the copied app. */
