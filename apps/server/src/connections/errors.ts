@@ -1,11 +1,12 @@
 import { Match } from 'effect'
 import { Conflict, InvalidRequest, ServiceUnavailable } from '@vivid/contracts'
-import { resourceReason, type ExecutorFailure } from './executor.ts'
+import { connectionSetupMessage, resourceReason, type ExecutorFailure } from './executor.ts'
 
 /** Provider internals never cross RPC; unavailable authority remains distinct from bad user input. */
 export const executorFailure = Match.type<ExecutorFailure>().pipe(
   Match.tagsExhaustive({
     ServiceUnavailable: (error) => error,
+    ExecutorSetupRequired: () => new InvalidRequest({ message: connectionSetupMessage }),
     ExecutorRejected: ({ message }) => new InvalidRequest({ message }),
     ExecutorConflict: () =>
       new Conflict({ message: 'The Connection changed; reload before continuing.' }),

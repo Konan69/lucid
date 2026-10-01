@@ -1,6 +1,6 @@
-import { ServiceUnavailable } from '@vivid/contracts'
+import { ServiceAuthorization, ServiceUnavailable } from '@vivid/contracts'
 import { Deferred, Effect, Option, Ref, Schedule } from 'effect'
-import type { ExecutorServiceEntry } from './executor.ts'
+import type { ExecutorService, ExecutorServiceEntry } from './executor.ts'
 
 /** One scoped writer owns all downloads. Readers retain the last good catalog, while cold
  * readers share the current attempt's latch, including its typed failure. Schedules use the
@@ -30,7 +30,15 @@ export const retainCatalog = Effect.fn('Executor.catalogSnapshot')(function* (
     yield* Deferred.complete(
       attempt,
       load.pipe(
-        Effect.tap((entries) => Ref.set(snapshot, Option.some(entries))),
+        Effect.tap((entries) =>
+          Ref.set(snapshot, Option.some(entries)).pipe(
+            Effect.andThen(
+              Effect.logInfo('Connection catalog loaded').pipe(
+                Effect.annotateLogs({ services: entries.length }),
+              ),
+            ),
+          ),
+        ),
         Effect.tapError(() => Effect.logWarning('Connection catalog refresh failed')),
       ),
     )
@@ -47,4 +55,29 @@ export const retainCatalog = Effect.fn('Executor.catalogSnapshot')(function* (
     if (Option.isSome(current)) return current.value
     return yield* Deferred.await(yield* Ref.get(attempts))
   })
+})
+
+/** Refresh availability outside every request. Per-service recovery and timeout live in Executor;
+ * this writer publishes no collective latch, so inspections cannot hold a downloaded catalog.
+ * Installation/catalog outages retry independently without terminating the scoped worker.
+ */
+export const inspectCatalog = Effect.fn('Connections.inspectCatalog')(function* (
+  executor: Pick<ExecutorService, 'catalog' | 'authorization'>,
+  returnAddress: string,
+) {
+  const refresh = Effect.fn('Connections.refreshAvailability')(function* () {
+    const entries = yield* executor.catalog()
+    yield* Effect.forEach(
+      entries.filter((entry) => !ServiceAuthorization.guards.None(entry.authorization)),
+      (entry) => executor.authorization({ service: entry.id, returnAddress }),
+      { concurrency: 4, discard: true },
+    )
+  })
+  yield* Effect.forkScoped(
+    refresh().pipe(
+      Effect.tapError(() => Effect.logWarning('Connection availability refresh failed')),
+      Effect.retry(Schedule.spaced('30 seconds')),
+      Effect.repeat(Schedule.spaced('10 minutes')),
+    ),
+  )
 })

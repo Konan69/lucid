@@ -12,6 +12,8 @@ import * as Exit from 'effect/Exit'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Ref from 'effect/Ref'
+import * as HashMap from 'effect/HashMap'
 import * as Match from 'effect/Match'
 import * as Option from 'effect/Option'
 import * as Order from 'effect/Order'
@@ -135,6 +137,12 @@ export class ExecutorRejected extends Schema.TaggedError<ExecutorRejected>()(
   { ...errorContext, message: Schema.String },
   { title: 'Connection request rejected' },
 ) {}
+/** Missing installation OAuth setup is distinct from a refused sign-in or invalid input. */
+export class ExecutorSetupRequired extends Schema.TaggedError<ExecutorSetupRequired>()(
+  'ExecutorSetupRequired',
+  errorContext,
+  { title: 'Connection setup required' },
+) {}
 /** Active resources or changed revisions must be resolved before management writes are retried. */
 export class ExecutorConflict extends Schema.TaggedError<ExecutorConflict>()(
   'ExecutorConflict',
@@ -183,6 +191,7 @@ export type ExecutorFailure =
   | ExecutorAccessDenied
   | ExecutorNotReady
   | ExecutorRejected
+  | ExecutorSetupRequired
   | ExecutorConflict
   | ExecutorExecutionUncertain
   | ExecutorSignInRequired
@@ -398,6 +407,7 @@ const FailureMode = Schema.TaggedUnion({
   Conflict: {},
   Uncertain: {},
   Rejected: { message: Schema.String },
+  SetupRequired: {},
 })
 const notReady = FailureMode.cases.NotReady.make({})
 const conflict = FailureMode.cases.Conflict.make({})
@@ -460,9 +470,7 @@ const failureModes = {
   AuthMethodInvalid: FailureMode.cases.Rejected.make({
     message: 'The service authorization method changed; start authorization again.',
   }),
-  OAuthClientUnavailable: FailureMode.cases.Rejected.make({
-    message: connectionSetupMessage,
-  }),
+  OAuthClientUnavailable: FailureMode.cases.SetupRequired.make({}),
   OAuthSetupFailed: FailureMode.cases.Rejected.make({
     message: 'The service could not prepare sign-in. Review its OAuth configuration.',
   }),
@@ -496,6 +504,7 @@ function translateFailure(tag: typeof knownFailureTag.Type, tool: string | null)
   const context = { service: 'connections' as const, tool }
   return FailureMode.match(failureModes[tag], {
     NotReady: (): ExecutorFailure => ExecutorNotReady.make(context),
+    SetupRequired: (): ExecutorFailure => ExecutorSetupRequired.make(context),
     Missing: ({ resource }): ExecutorFailure =>
       ExecutorResourceMissing.make({ ...context, resource }),
     AccessDenied: (): ExecutorFailure => ExecutorAccessDenied.make(context),
@@ -737,7 +746,10 @@ function makeTools(discover: ReturnType<typeof makeDiscovery>) {
 }
 
 /** Native targeted requests atomically select the saved account into the exact profile. */
-function makeAuthorize(http: ExecutorHttp) {
+function makeAuthorize(
+  http: ExecutorHttp,
+  recordSetupRequired: (service: ServiceId) => Effect.Effect<void>,
+) {
   return Effect.fn('Executor.authorize')(function* (
     input: typeof BeginInput.Type,
     app: typeof WireApp.Type,
@@ -809,9 +821,21 @@ function makeAuthorize(http: ExecutorHttp) {
             null,
           )
           .pipe(
-            Effect.catchTag('ExecutorRejected', ({ message }) =>
-              Effect.fail(ExecutorSignInRequired.make({ references: pending, message })),
-            ),
+            Effect.catchTags({
+              ExecutorSetupRequired: () =>
+                recordSetupRequired(input.service).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      ExecutorSignInRequired.make({
+                        references: pending,
+                        message: connectionSetupMessage,
+                      }),
+                    ),
+                  ),
+                ),
+              ExecutorRejected: ({ message }) =>
+                Effect.fail(ExecutorSignInRequired.make({ references: pending, message })),
+            }),
           )
         return WireSignIn.match(result, {
           redirect: ({ authorizationUrl }) =>
@@ -1053,8 +1077,9 @@ function makeCatalogDefinition(http: ExecutorHttp, catalog: ExecutorService['cat
   })
 }
 
-/** Bound all callers to four concurrent inspections and cache successful availability for ten
- * minutes. Public no-account services need no import or setup lookup. Failures have zero TTL.
+/** Inspection is shared across callers and bounded at the complete service operation (including
+ * definition import/delete). Failures become negative availability for ten minutes, rather than
+ * failing catalog readers. The retained facts are a snapshot, never a request-triggered lookup.
  */
 const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
   http: ExecutorHttp,
@@ -1062,9 +1087,33 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
 ) {
   const inspect = makeInspectSetup(http)
   const permits = yield* Semaphore.make(4)
+  const facts = yield* Ref.make(HashMap.empty<ServiceId, ServiceAuthorization>())
+  const failures = yield* Ref.make(HashMap.empty<ServiceId, string>())
   const definitions = yield* Cache.makeWith(makeCatalogDefinition(http, catalog), {
     capacity: 1000,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? '10 minutes' : 0),
+  })
+  /** Publish each completed inspection separately so a slow service never delays its peers.
+   * Log only the service identity and typed failure tag, once on entering failed availability.
+   */
+  const record = Effect.fn('Executor.recordAvailability')(function* (
+    service: ServiceId,
+    authorization: ServiceAuthorization,
+    failure: Option.Option<string>,
+  ) {
+    yield* Ref.update(facts, (current) => HashMap.set(current, service, authorization))
+    const previous = yield* Ref.modify(failures, (current) => [
+      HashMap.get(current, service),
+      Option.match(failure, {
+        onNone: () => HashMap.remove(current, service),
+        onSome: (tag) => HashMap.set(current, service, tag),
+      }),
+    ])
+    if (Option.isSome(failure) && Option.isNone(previous)) {
+      yield* Effect.logWarning('Connection setup inspection failed').pipe(
+        Effect.annotateLogs({ serviceId: service, failure: failure.value }),
+      )
+    }
   })
   const inspections = yield* Cache.makeWith(
     Effect.fn('Executor.inspectAuthorization')(function* (input: {
@@ -1081,21 +1130,49 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
           }),
         )
       if (ServiceAuthorization.guards.None(entry.authorization)) return entry.authorization
-      return yield* permits.withPermits(1)(
+      const authorization = yield* permits.withPermits(1)(
         Effect.gen(function* () {
           return yield* inspect(yield* Cache.get(definitions, input.service), input.returnAddress)
-        }),
+        }).pipe(
+          Effect.timeout('5 seconds'),
+          Effect.tap((value) => record(input.service, value, Option.none())),
+          Effect.catch(
+            Effect.fn('Executor.unavailableSetup')(function* (error) {
+              const unavailable = ServiceAuthorization.cases.SetupRequired.make({})
+              yield* record(input.service, unavailable, Option.some(error._tag))
+              return unavailable
+            }),
+          ),
+        ),
       )
+      return authorization
     }),
     {
       capacity: 1000,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? '10 minutes' : 0),
     },
   )
-  return Effect.fn('Executor.authorization')(
-    (input: { readonly service: ServiceId; readonly returnAddress: string }) =>
-      Cache.get(inspections, input),
-  )
+  return {
+    authorization: Effect.fn('Executor.authorization')(
+      (input: { readonly service: ServiceId; readonly returnAddress: string }) =>
+        Cache.get(inspections, input),
+    ),
+    catalog: Effect.fn('Executor.availableCatalog')(function* () {
+      const entries = yield* catalog()
+      const current = yield* Ref.get(facts)
+      return entries.map((entry) =>
+        HashMap.get(current, entry.id).pipe(
+          Option.match({
+            onNone: () => entry,
+            onSome: (authorization) => ExecutorServiceEntry.make({ ...entry, authorization }),
+          }),
+        ),
+      )
+    }),
+    recordSetupRequired: Effect.fn('Executor.recordSetupRequired')((service: ServiceId) =>
+      record(service, ServiceAuthorization.cases.SetupRequired.make({}), Option.none()),
+    ),
+  }
 })
 
 /** A failed copy response is not proof of refusal. Recover its exact opaque identity; if the
@@ -1274,10 +1351,10 @@ function makeCompensation(http: ExecutorHttp) {
 function makeBegin(
   http: ExecutorHttp,
   catalog: ExecutorService['catalog'],
-  authorization: ExecutorService['authorization'],
+  availability: Effect.Success<ReturnType<typeof makeAuthorization>>,
 ) {
   const reconcile = makeReconcile(http)
-  const authorize = makeAuthorize(http)
+  const authorize = makeAuthorize(http, availability.recordSetupRequired)
   const copy = makeCopy(http)
   const compensate = makeCompensation(http)
   const configure = Effect.fn('Executor.configureCopy')(function* (
@@ -1318,7 +1395,7 @@ function makeBegin(
           message: 'Choose a supported service from the current catalog.',
         }),
       )
-    const selected = yield* authorization({
+    const selected = yield* availability.authorization({
       service: input.service,
       returnAddress: input.returnAddress,
     })
@@ -1591,7 +1668,7 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
     capacity: 1000,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? '5 minutes' : 0),
   })
-  const authorization = yield* makeAuthorization(http, catalog)
+  const availability = yield* makeAuthorization(http, catalog)
   const discover = Effect.fn('Executor.discoverCached')((references: ExecutorReferences) =>
     Cache.get(snapshots, references),
   )
@@ -1600,9 +1677,9 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
   const remove = makeRemove(http)
   const call = makeCall(http, discover)
   return Executor.of({
-    catalog,
-    authorization,
-    begin: makeBegin(http, catalog, authorization),
+    catalog: availability.catalog,
+    authorization: availability.authorization,
+    begin: makeBegin(http, catalog, availability),
     complete: Effect.fn('Executor.completeCached')(function* (input: typeof CompleteInput.Type) {
       const references = yield* complete(input)
       yield* Cache.invalidate(snapshots, input.references)

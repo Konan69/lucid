@@ -42,6 +42,7 @@ import {
 } from './records.ts'
 import { connections } from './tables.ts'
 import { rankServices } from './ranking.ts'
+import { inspectCatalog } from './catalog.ts'
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
 
@@ -226,6 +227,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const executor: ExecutorService = yield* Executor
   const database = yield* Database
   const returnAddress = (yield* ServerConfig).PUBLIC_URL.href
+  yield* inspectCatalog(executor, returnAddress)
   const dependencies = yield* Effect.context<
     Executor | Database | Audit | ServerConfig | import('../live/changes.ts').Changes
   >()
@@ -248,22 +250,13 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
       .pipe(Effect.mapError(executorFailure))
     return authorizedService(service, authorization)
   })
-  /** Inspect at most 24 matching candidates. Known public services fill remaining slots, so
-   * uninspected sign-in hints never reach a client or displace connectable matches with setup.
+  /** Search uses only completed availability facts in the adapter's snapshot. A cold sign-in
+   * hint remains optimistic; the scoped inspector corrects it without delaying this request.
    */
   const find = Effect.fn('Connections.findServices')(function* (query: string) {
     const services = yield* catalogServices()
-    const inspected = yield* Effect.forEach(rankServices(services, query), inspectService, {
-      concurrency: 4,
-    })
-    const byId = new Map(inspected.map((service) => [service.id, service]))
-    const known = services.flatMap((service) => {
-      const resolved = byId.get(service.id)
-      if (resolved !== undefined) return [resolved]
-      return ServiceAuthorization.guards.None(service.authorization) ? [service] : []
-    })
     return ServiceCatalog.cases.Ready.make({
-      services: rankServices(known, query),
+      services: rankServices(services, query),
       total: services.length,
     })
   })
@@ -274,6 +267,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     const entry = (yield* catalogServices()).find((candidate) => candidate.id === id)
     if (entry === undefined)
       return yield* Effect.fail(new InvalidRequest({ message: 'Unknown service.' }))
+    if (ServiceAuthorization.guards.SetupRequired(entry.authorization)) return entry
     return yield* inspectService(entry)
   })
   const get = (actor: Actor, id: ConnectionId) => provide(getRecord(actor, id, false))
@@ -305,7 +299,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     ) {
       // Refuse non-admin sharing before catalog lookup or provider mutation.
       if (request.shared) yield* requireAdmin(actor.workspace)
-      return yield* provide(begin(actor, request, [yield* service(request.service)]))
+      return yield* provide(begin(actor, request, yield* catalogServices()))
     }),
     ...management,
   }
