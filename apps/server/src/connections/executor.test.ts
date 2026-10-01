@@ -59,6 +59,10 @@ describe('Executor installation', () => {
         })
         const operations = [
           executor.catalog(),
+          executor.authorization({
+            service: publicService,
+            returnAddress: 'https://vivid.example.test/',
+          }),
           executor.begin({
             connectionId: ConnectionId.make(crypto.randomUUID()),
             service: publicService,

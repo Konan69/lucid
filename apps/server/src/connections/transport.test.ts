@@ -1,8 +1,14 @@
 import * as NodeHttp from 'node:http'
 import { NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
 import { describe, expect, it } from '@effect/vitest'
-import { ConnectionId, ServiceId, ServiceUnavailable } from '@vivid/contracts'
-import { ConfigProvider, Effect, Layer, Queue, Ref, Schema } from 'effect'
+import {
+  ConnectionId,
+  InvalidRequest,
+  ServiceAuthorization,
+  ServiceId,
+  ServiceUnavailable,
+} from '@vivid/contracts'
+import { ConfigProvider, Deferred, Effect, Fiber, Layer, Option, Queue, Ref, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
@@ -20,6 +26,7 @@ import {
   ExecutorCopyRetained,
   ExecutorStep,
   executorLayer,
+  connectionSetupMessage,
 } from './executor.ts'
 import { executorFailure } from './errors.ts'
 
@@ -90,6 +97,8 @@ const decodeResume = Schema.decodeUnknownEffect(Resume)
 const fixture = Effect.fn('ExecutorHttpTest.fixture')(function* () {
   const responses = yield* Ref.make(new Map<string, Fault>())
   const catalogRequests = yield* Queue.unbounded<void>()
+  const setupRequests = yield* Queue.unbounded<void>()
+  const setupGate = yield* Ref.make<Option.Option<Deferred.Deferred<void>>>(Option.none())
   const requests = yield* Ref.make<
     readonly { path: string; search: string; body: typeof Schema.Json.Type }[]
   >([])
@@ -111,6 +120,11 @@ const fixture = Effect.fn('ExecutorHttpTest.fixture')(function* () {
     const path = `${request.method} ${url.pathname}`
     yield* Ref.update(requests, (items) => [...items, { path, search: url.search, body }])
     if (path === 'GET /dashboard/api/catalog') yield* Queue.offer(catalogRequests, undefined)
+    if (path === 'POST /v1/account-connections/oauth/setup') {
+      yield* Queue.offer(setupRequests, undefined)
+      const gate = yield* Ref.get(setupGate)
+      if (Option.isSome(gate)) yield* Deferred.await(gate.value)
+    }
     if (path === 'POST /v1/apps/copies') {
       const input = yield* decodeBegin(body)
       yield* Ref.update(copies, (items) => [...items, input])
@@ -144,7 +158,18 @@ const fixture = Effect.fn('ExecutorHttpTest.fixture')(function* () {
       ),
     ),
   )
-  return { responses, requests, catalogRequests, copies, copied, imported, paginated, layer }
+  return {
+    responses,
+    requests,
+    catalogRequests,
+    setupRequests,
+    setupGate,
+    copies,
+    copied,
+    imported,
+    paginated,
+    layer,
+  }
 })
 
 /** Destroying the real socket after reading the request models acceptance with a lost response. */
@@ -537,6 +562,7 @@ it.effect('passes declared key fields through and compensates a failed authoriza
       requirements: {
         accounts: {
           primary: {
+            provider: 'provider',
             definition: {
               auth: {
                 key: {
@@ -565,6 +591,7 @@ it.effect('passes declared key fields through and compensates a failed authoriza
           ]),
         )
         .set('POST /v1/apps/copies', reply(200, keyApp))
+        .set('POST /dashboard/api/catalog/import', reply(200, { ...keyApp, id: 'template' }))
         .set(
           'POST /v1/account-connections',
           reply(200, { id: 'authorization', state: { status: 'pending' } }),
@@ -683,5 +710,177 @@ it.effect('preserves references when compensation fails and reuses them on retry
       expect(ExecutorStep.guards.Done(yield* executor.begin(beginInput))).toBe(true)
     }).pipe(Effect.provide(remote.layer))
     expect(yield* Ref.get(remote.copies)).toHaveLength(1)
+  }).pipe(Effect.scoped),
+)
+
+/** The catalog says which paths exist; setup decides which sign-in path this installation can start. */
+function setupDefinition(mixed: boolean) {
+  const auth = { signIn: { type: 'oauth2' } }
+  if (!mixed) return { provider: 'provider', definition: { auth } }
+  return {
+    provider: 'provider',
+    definition: {
+      auth: {
+        ...auth,
+        key: {
+          type: 'secrets',
+          fields: { properties: { pat: { title: 'Personal access token' } } },
+        },
+      },
+    },
+  }
+}
+
+/** Public registration and account initiation are distinct observable protocol operations. */
+const setupFixture = Effect.fn('ExecutorHttpTest.setupFixture')(function* (
+  mixed: boolean,
+  mode: string,
+) {
+  const remote = yield* fixture()
+  const requirement = setupDefinition(mixed)
+  const accounts = { primary: requirement }
+  yield* Ref.update(remote.responses, (values) =>
+    new Map(values)
+      .set(
+        'GET /dashboard/api/catalog',
+        reply(200, [{ ...catalogService(service), auth: { kind: mixed ? 'mixed' : 'oauth' } }]),
+      )
+      .set(
+        'POST /dashboard/api/catalog/import',
+        reply(200, { id: 'template', requirements: { accounts } }),
+      )
+      .set('POST /v1/apps/copies', reply(200, { id: 'copy', requirements: { accounts } }))
+      .set('POST /v1/account-connections/oauth/setup', reply(200, { mode }))
+      .set(
+        'POST /v1/account-connections/oauth/start',
+        reply(200, { status: 'redirect', authorizationUrl: 'https://service.test/sign-in' }),
+      )
+      .set(
+        'POST /v1/account-connections',
+        reply(200, { id: 'authorization', state: { status: 'pending' } }),
+      ),
+  )
+  return remote
+})
+
+for (const mode of ['automatic', 'saved', 'client-required']) {
+  for (const mixed of [false, true]) {
+    it.effect(`resolves ${mixed ? 'mixed' : 'sign-in only'} setup ${mode} and caches it`, () =>
+      Effect.gen(function* () {
+        const remote = yield* setupFixture(mixed, mode)
+        yield* Effect.gen(function* () {
+          const executor = yield* Executor
+          const input = { service, returnAddress: beginInput.returnAddress }
+          const authorization = yield* executor.authorization(input)
+          const expected = mode !== 'client-required' ? 'SignIn' : mixed ? 'Key' : 'SetupRequired'
+          expect(authorization._tag).toBe(expected)
+          expect(yield* executor.authorization({ ...input })).toEqual(authorization)
+          expect(yield* Ref.get(remote.imported)).toBe(false)
+          if (ServiceAuthorization.guards.Key(authorization))
+            expect(authorization.fields).toEqual([{ name: 'pat', label: 'Personal access token' }])
+          if (expected === 'SetupRequired') {
+            const failure = yield* executor.begin(beginInput).pipe(Effect.flip)
+            expect(failure._tag).toBe('ExecutorRejected')
+            expect(failure).toHaveProperty('message', connectionSetupMessage)
+            expect(executorFailure(failure)).toEqual(
+              new InvalidRequest({ message: connectionSetupMessage }),
+            )
+            expect(yield* Ref.get(remote.copies)).toEqual([])
+            expect(
+              (yield* Ref.get(remote.requests)).some(
+                (request) => request.path === 'POST /v1/account-connections',
+              ),
+            ).toBe(false)
+          } else if (ServiceAuthorization.guards.Key(authorization)) {
+            const step = yield* executor.begin(beginInput)
+            expect(ExecutorStep.guards.EnterKey(step)).toBe(true)
+            expect(step).toHaveProperty('fields', authorization.fields)
+            expect(
+              (yield* Ref.get(remote.requests)).some(
+                (request) => request.path === 'POST /v1/account-connections/oauth/start',
+              ),
+            ).toBe(false)
+          } else {
+            const step = yield* executor.begin(beginInput)
+            expect(ExecutorStep.guards.OpenSignIn(step)).toBe(true)
+            expect(step).toHaveProperty('address', 'https://service.test/sign-in')
+          }
+          expect(
+            (yield* Ref.get(remote.requests)).filter(
+              (request) => request.path === 'POST /v1/account-connections/oauth/setup',
+            ),
+          ).toHaveLength(1)
+        }).pipe(Effect.provide(remote.layer))
+      }).pipe(Effect.scoped),
+    )
+  }
+}
+
+/** Expiry can observe newly configured operator setup; transient failures never establish setup absence. */
+it.effect(
+  'refreshes setup availability after ten minutes and does not cache inspection failures',
+  () =>
+    Effect.gen(function* () {
+      const remote = yield* setupFixture(false, 'client-required')
+      yield* Effect.gen(function* () {
+        const executor = yield* Executor
+        const input = { service, returnAddress: beginInput.returnAddress }
+        expect((yield* executor.authorization(input))._tag).toBe('SetupRequired')
+        yield* TestClock.adjust('10 minutes')
+        yield* Ref.update(remote.responses, (values) =>
+          new Map(values).set('POST /v1/account-connections/oauth/setup', reply(503, null)),
+        )
+        expect(
+          executorFailure(yield* executor.authorization(input).pipe(Effect.flip)),
+        ).toBeInstanceOf(ServiceUnavailable)
+        yield* Ref.update(remote.responses, (values) =>
+          new Map(values).set(
+            'POST /v1/account-connections/oauth/setup',
+            reply(200, { mode: 'automatic' }),
+          ),
+        )
+        expect((yield* executor.authorization(input))._tag).toBe('SignIn')
+        const requests = yield* Ref.get(remote.requests)
+        expect(
+          requests.filter((request) => request.path === 'POST /dashboard/api/catalog/import'),
+        ).toHaveLength(2)
+        expect(
+          requests.filter((request) => request.path === 'POST /v1/account-connections/oauth/setup'),
+        ).toHaveLength(3)
+      }).pipe(Effect.provide(remote.layer))
+    }).pipe(Effect.scoped),
+)
+
+/** A gate on actual HTTP setup responses proves four in-flight lookups globally, with one import. */
+it.effect('bounds simultaneous setup lookups and deduplicates public definition registration', () =>
+  Effect.gen(function* () {
+    const remote = yield* setupFixture(true, 'client-required')
+    const gate = yield* Deferred.make<void>()
+    yield* Ref.set(remote.setupGate, Option.some(gate))
+    yield* Effect.gen(function* () {
+      const executor = yield* Executor
+      const fibers = yield* Effect.forEach(
+        Array.from({ length: 5 }, (_, index) => index),
+        (index) =>
+          executor
+            .authorization({ service, returnAddress: `https://vivid.test/return/${index}` })
+            .pipe(Effect.forkChild),
+      )
+      yield* Effect.forEach([1, 2, 3, 4], () => Queue.take(remote.setupRequests))
+      expect(
+        (yield* Ref.get(remote.requests)).filter(
+          (request) => request.path === 'POST /v1/account-connections/oauth/setup',
+        ),
+      ).toHaveLength(4)
+      yield* Deferred.succeed(gate, undefined)
+      yield* Queue.take(remote.setupRequests)
+      const resolved = yield* Effect.forEach(fibers, (fiber) => Fiber.join(fiber))
+      expect(resolved.every(ServiceAuthorization.guards.Key)).toBe(true)
+      expect(
+        (yield* Ref.get(remote.requests)).filter(
+          (request) => request.path === 'POST /dashboard/api/catalog/import',
+        ),
+      ).toHaveLength(1)
+    }).pipe(Effect.provide(remote.layer))
   }).pipe(Effect.scoped),
 )

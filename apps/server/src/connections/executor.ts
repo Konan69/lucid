@@ -18,6 +18,7 @@ import * as Order from 'effect/Order'
 import * as Record from 'effect/Record'
 import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
+import * as Semaphore from 'effect/Semaphore'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import type * as HttpBody from 'effect/unstable/http/HttpBody'
@@ -29,6 +30,8 @@ export const ExecutorAppId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorAp
 export const ExecutorAccountId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorAccountId'))
 export const ExecutorDeploymentId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorDeploymentId'))
 export const ExecutorProfileId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorProfileId'))
+const ExecutorProviderId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorProviderId'))
+export const connectionSetupMessage = 'This service is not set up on this Vivid yet.'
 export const ExecutorOwnerId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorOwnerId'))
 export const ExecutorAuthorizationId = Schema.NonEmptyString.pipe(
   Schema.brand('ExecutorAuthorizationId'),
@@ -218,6 +221,11 @@ const SignInInput = Schema.Struct({
  * See the SDK profile contract and the ownership evidence in findings-executor section 4.
  */
 export interface ExecutorService {
+  /** Inspect public service setup without issuing an account grant or starting sign-in. */
+  readonly authorization: (input: {
+    readonly service: ServiceId
+    readonly returnAddress: string
+  }) => Effect.Effect<ServiceAuthorization, ExecutorFailure>
   readonly catalog: () => Effect.Effect<
     readonly (typeof ExecutorServiceEntry.Type)[],
     ExecutorFailure
@@ -263,6 +271,21 @@ const Requirement = Schema.Struct({
 const WireApp = Schema.Struct({
   id: ExecutorAppId,
   requirements: Schema.Struct({ accounts: Schema.Record(Schema.String, Requirement) }),
+})
+const WireCatalogApp = Schema.Struct({
+  id: ExecutorAppId,
+  requirements: Schema.Struct({
+    accounts: Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        provider: ExecutorProviderId,
+        definition: Requirement.fields.definition,
+      }),
+    ),
+  }),
+})
+const WireSetup = Schema.Struct({
+  mode: Schema.Literals(['automatic', 'saved', 'client-required']),
 })
 const WireAccount = Schema.Struct({ id: ExecutorAccountId })
 const WireProfile = Schema.Struct({
@@ -438,7 +461,7 @@ const failureModes = {
     message: 'The service authorization method changed; start authorization again.',
   }),
   OAuthClientUnavailable: FailureMode.cases.Rejected.make({
-    message: 'Configure an OAuth client on the trusted host before starting sign-in.',
+    message: connectionSetupMessage,
   }),
   OAuthSetupFailed: FailureMode.cases.Rejected.make({
     message: 'The service could not prepare sign-in. Review its OAuth configuration.',
@@ -539,8 +562,8 @@ function responseReader(client: HttpClient.HttpClient) {
 
 /** Only MCP entries with declared auth are honest before import. Unknown auth and unsupported
  * GraphQL/CLI/OpenAPI imports are excluded rather than advertised as unauthenticated services.
- * Key field names are unknown until import; Begin returns the actual declared fields.
- * For mixed MCP entries OAuth is the single chosen method; key alternatives remain host-owned.
+ * These are method hints; cached setup inspection selects a usable method before a service is
+ * offered or a Connection begins. Mixed imports retain both methods during inspection.
  */
 function catalogEntry(entry: typeof WireCatalogEntry.Type) {
   if (entry.kind !== 'mcp' || entry.connectUrl === undefined || entry.auth === undefined) return []
@@ -633,6 +656,9 @@ function makeHttp(client: HttpClient.HttpClient) {
     readResume,
     readSignIn,
     readRemoval,
+    readCatalogApp: read(WireCatalogApp),
+    readCatalogApps: read(Schema.Array(WireCatalogApp)),
+    readSetup: read(WireSetup),
   }
 }
 type ExecutorHttp = ReturnType<typeof makeHttp>
@@ -734,6 +760,7 @@ function makeAuthorize(http: ExecutorHttp) {
       SignIn: () => methods.filter(([, method]) => AuthorizationMethod.guards.oauth2(method)),
       Key: () => methods.filter(([, method]) => AuthorizationMethod.guards.secrets(method)),
       None: () => [],
+      SetupRequired: () => [],
     })
     const chosen = matching[0]
     if (matching.length !== 1 || chosen === undefined)
@@ -760,10 +787,7 @@ function makeAuthorize(http: ExecutorHttp) {
           method: methodName,
           label: input.label,
         })
-        const labels = Object.entries(fields.properties).map(([name, field]) => ({
-          name,
-          label: field.title === undefined ? name : field.title,
-        }))
+        const labels = keyFields(fields)
         return Effect.succeed(
           ExecutorStep.cases.EnterKey.make({ references: pending, fields: labels }),
         )
@@ -917,6 +941,163 @@ function comparePopularity(
   return Order.Number(right.popularity.value, left.popularity.value)
 }
 
+/** Key names and labels come from the imported declaration, never a guessed catalog form. */
+function keyFields(fields: typeof AuthorizationMethod.cases.secrets.fields.fields.Type) {
+  return Object.entries(fields.properties).map(([name, field]) => ({
+    name,
+    label: field.title === undefined ? name : field.title,
+  }))
+}
+
+/** Register only a public provider definition. The deterministic name recovers a lost import
+ * response; this temporary app never contains an account, profile or credential.
+ */
+function makeCatalogTemplate(http: ExecutorHttp) {
+  return Effect.fn('Executor.catalogTemplate')(function* (entry: typeof ExecutorServiceEntry.Type) {
+    const name = `Vivid catalog ${entry.id}`
+    const inventory = Effect.succeed(
+      HttpClientRequest.get(`/v1/apps?owner=local&name=${query(name)}`),
+    )
+    const previous = (yield* http.readCatalogApps(inventory, null))[0]
+    if (previous !== undefined) return previous
+    return yield* http
+      .readCatalogApp(
+        post('/dashboard/api/catalog/import', {
+          entry: entry.id,
+          name,
+          mcpAuth: 'auto',
+        }),
+        null,
+      )
+      .pipe(
+        Effect.catch(
+          Effect.fn('Executor.recoverCatalogTemplate')(function* (error) {
+            const imported = (yield* http.readCatalogApps(inventory, null))[0]
+            if (imported !== undefined) return imported
+            return yield* Effect.fail(error)
+          }),
+        ),
+      )
+  })
+}
+
+/** Only client-required establishes absent operator setup. A declared key remains usable when
+ * sign-in is unavailable; automatic/saved sign-in retains priority for mixed services.
+ */
+function makeInspectSetup(http: ExecutorHttp) {
+  return Effect.fn('Executor.inspectSetup')(function* (
+    requirement: (typeof WireCatalogApp.Type)['requirements']['accounts'][string],
+    returnAddress: string,
+  ) {
+    const methods = Object.entries(requirement.definition.auth)
+    const signIn = methods.find(([, method]) => AuthorizationMethod.guards.oauth2(method))
+    const key = methods.find(([, method]) => AuthorizationMethod.guards.secrets(method))
+    if (signIn !== undefined) {
+      const setup = yield* http.readSetup(
+        post('/v1/account-connections/oauth/setup', {
+          owner: 'local',
+          provider: requirement.provider,
+          method: signIn[0],
+          redirectUri: returnAddress,
+        }),
+        null,
+      )
+      if (setup.mode !== 'client-required') return ServiceAuthorization.cases.SignIn.make({})
+    }
+    if (key !== undefined && AuthorizationMethod.guards.secrets(key[1]))
+      return ServiceAuthorization.cases.Key.make({ fields: keyFields(key[1].fields) })
+    if (signIn === undefined)
+      return yield* Effect.fail(
+        ExecutorRejected.make({
+          service: 'connections',
+          tool: null,
+          message: 'This service does not declare a supported sign-in or key method.',
+        }),
+      )
+    return ServiceAuthorization.cases.SetupRequired.make({})
+  })
+}
+
+/** Metadata registration is deduplicated per service. Removing the temporary app keeps the
+ * shared provider definition registered (SDK apps.remove), so subsequent inspection is read-only.
+ * A failed delete remains a typed failure; the same name lets a retry recover the public app.
+ */
+function makeCatalogDefinition(http: ExecutorHttp, catalog: ExecutorService['catalog']) {
+  const template = makeCatalogTemplate(http)
+  return Effect.fn('Executor.catalogDefinition')(function* (service: ServiceId) {
+    const entry = (yield* catalog()).find((candidate) => candidate.id === service)
+    if (entry === undefined)
+      return yield* Effect.fail(
+        ExecutorRejected.make({
+          service: 'connections',
+          tool: null,
+          message: 'Choose a service from the current catalog.',
+        }),
+      )
+    const app = yield* template(entry)
+    const requirements = Object.values(app.requirements.accounts)
+    const requirement = requirements[0]
+    yield* http.readRemoval(
+      Effect.succeed(HttpClientRequest.make('DELETE')(`/v1/apps/${query(app.id)}?owner=local`)),
+      null,
+    )
+    if (requirements.length !== 1 || requirement === undefined)
+      return yield* Effect.fail(
+        ExecutorRejected.make({
+          service: 'connections',
+          tool: null,
+          message: 'This service does not declare one supported account.',
+        }),
+      )
+    return requirement
+  })
+}
+
+/** Bound all callers to four concurrent inspections and cache successful availability for ten
+ * minutes. Public no-account services need no import or setup lookup. Failures have zero TTL.
+ */
+const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
+  http: ExecutorHttp,
+  catalog: ExecutorService['catalog'],
+) {
+  const inspect = makeInspectSetup(http)
+  const permits = yield* Semaphore.make(4)
+  const definitions = yield* Cache.makeWith(makeCatalogDefinition(http, catalog), {
+    capacity: 1000,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? '10 minutes' : 0),
+  })
+  const inspections = yield* Cache.makeWith(
+    Effect.fn('Executor.inspectAuthorization')(function* (input: {
+      readonly service: ServiceId
+      readonly returnAddress: string
+    }) {
+      const entry = (yield* catalog()).find((candidate) => candidate.id === input.service)
+      if (entry === undefined)
+        return yield* Effect.fail(
+          ExecutorRejected.make({
+            service: 'connections',
+            tool: null,
+            message: 'Choose a service from the current catalog.',
+          }),
+        )
+      if (ServiceAuthorization.guards.None(entry.authorization)) return entry.authorization
+      return yield* permits.withPermits(1)(
+        Effect.gen(function* () {
+          return yield* inspect(yield* Cache.get(definitions, input.service), input.returnAddress)
+        }),
+      )
+    }),
+    {
+      capacity: 1000,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? '10 minutes' : 0),
+    },
+  )
+  return Effect.fn('Executor.authorization')(
+    (input: { readonly service: ServiceId; readonly returnAddress: string }) =>
+      Cache.get(inspections, input),
+  )
+})
+
 /** A failed copy response is not proof of refusal. Recover its exact opaque identity; if the
  * inventory is also unavailable, retain the owner/name predicate for a later convergent retry.
  */
@@ -1015,11 +1196,7 @@ function makeCopy(http: ExecutorHttp) {
             post('/dashboard/api/catalog/import', {
               entry: entry.id,
               name: templateName,
-              mcpAuth: ServiceAuthorization.match(entry.authorization, {
-                SignIn: () => 'oauth',
-                Key: () => 'apiKey',
-                None: () => 'none',
-              }),
+              mcpAuth: yield* importAuthorization(entry.authorization),
             }),
             null,
           )
@@ -1094,7 +1271,11 @@ function makeCompensation(http: ExecutorHttp) {
 /** Profile creation uses the caller's Connection id as its idempotency key. Post-copy failures
  * either preserve a pending authorization or remove the copy before reporting the failure.
  */
-function makeBegin(http: ExecutorHttp, catalog: ExecutorService['catalog']) {
+function makeBegin(
+  http: ExecutorHttp,
+  catalog: ExecutorService['catalog'],
+  authorization: ExecutorService['authorization'],
+) {
   const reconcile = makeReconcile(http)
   const authorize = makeAuthorize(http)
   const copy = makeCopy(http)
@@ -1137,10 +1318,40 @@ function makeBegin(http: ExecutorHttp, catalog: ExecutorService['catalog']) {
           message: 'Choose a supported service from the current catalog.',
         }),
       )
-    const app = yield* copy(input, entry)
-    return yield* configure(input, app, entry).pipe(
+    const selected = yield* authorization({
+      service: input.service,
+      returnAddress: input.returnAddress,
+    })
+    if (ServiceAuthorization.guards.SetupRequired(selected))
+      return yield* Effect.fail(
+        ExecutorRejected.make({
+          service: 'connections',
+          tool: null,
+          message: connectionSetupMessage,
+        }),
+      )
+    const resolved = ExecutorServiceEntry.make({ ...entry, authorization: selected })
+    const app = yield* copy(input, resolved)
+    return yield* configure(input, app, resolved).pipe(
       Effect.catch((error) => compensate(input, app, error)),
     )
+  })
+}
+
+/** Unavailable choices fail before import rather than becoming an invented import method. */
+function importAuthorization(authorization: ServiceAuthorization) {
+  return ServiceAuthorization.match<Effect.Effect<string, ExecutorRejected>>(authorization, {
+    SignIn: () => Effect.succeed('auto'),
+    Key: () => Effect.succeed('apiKey'),
+    None: () => Effect.succeed('none'),
+    SetupRequired: () =>
+      Effect.fail(
+        ExecutorRejected.make({
+          service: 'connections',
+          tool: null,
+          message: connectionSetupMessage,
+        }),
+      ),
   })
 }
 
@@ -1380,6 +1591,7 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
     capacity: 1000,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? '5 minutes' : 0),
   })
+  const authorization = yield* makeAuthorization(http, catalog)
   const discover = Effect.fn('Executor.discoverCached')((references: ExecutorReferences) =>
     Cache.get(snapshots, references),
   )
@@ -1389,7 +1601,8 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
   const call = makeCall(http, discover)
   return Executor.of({
     catalog,
-    begin: makeBegin(http, catalog),
+    authorization,
+    begin: makeBegin(http, catalog, authorization),
     complete: Effect.fn('Executor.completeCached')(function* (input: typeof CompleteInput.Type) {
       const references = yield* complete(input)
       yield* Cache.invalidate(snapshots, input.references)
@@ -1449,6 +1662,7 @@ export const executorLayer = Layer.effect(
       )
       return Executor.of({
         catalog: Effect.fn('Executor.catalog')(() => unavailable),
+        authorization: Effect.fn('Executor.authorization')(() => unavailable),
         begin: Effect.fn('Executor.begin')(() => unavailable),
         complete: Effect.fn('Executor.complete')(() => unavailable),
         completeSignIn: Effect.fn('Executor.completeSignIn')(() => unavailable),
