@@ -1,5 +1,15 @@
 [
   {
+    "file": "apps/server/src/runtime/settlement.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["observeRun"]
+  },
+  {
+    "file": "packages/agent/runtime/src/providers/policy.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["prepare"]
+  },
+  {
     "file": "packages/agent/runtime/src/db.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["query", "transaction"]
