@@ -18,7 +18,7 @@ import { workspaceIn } from '../auth/session.ts'
 import { ActionOutcome, Gate, GateDecision, type GateExposure } from '../approvals/gate.ts'
 import { requireThread } from '../threads/access.ts'
 import { Executor, ExecutorCallOutcome, ExecutorResumeOutcome } from './executor.ts'
-import { executorFailure } from './errors.ts'
+import { callFailure } from './errors.ts'
 import { ConnectionStore } from './store.ts'
 import type { ConnectionRecord } from './records.ts'
 
@@ -109,13 +109,7 @@ export const runConnection = Effect.fn('Connections.run')(function* (
   const executor = yield* Executor
   const outcome = yield* executor
     .call({ references: row.references, tool: target.tool, input: target.input })
-    .pipe(
-      Effect.catch((error) =>
-        Effect.succeed(
-          ExecutorCallOutcome.cases.Rejected.make({ message: executorFailure(error).message }),
-        ),
-      ),
-    )
+    .pipe(Effect.catch((error) => Effect.succeed(callFailure(error))))
   return yield* ExecutorCallOutcome.match<
     Effect.Effect<
       ToolOutcome,
