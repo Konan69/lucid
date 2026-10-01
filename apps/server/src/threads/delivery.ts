@@ -12,11 +12,11 @@ import {
 } from '@vivid/contracts'
 import { findPerson, summaryOf } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
-import { Changes, Topic } from '../live/changes.ts'
+import { Changes } from '../live/changes.ts'
 import { Learning } from '../memory/learn.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Runtime, Settlement } from '../runtime/client.ts'
-import { canSee, findThread, type StoredThread } from './access.ts'
+import { audienceTopics, canSee, findThread, type StoredThread } from './access.ts'
 import {
   Conversation,
   DeliveryMessage,
@@ -71,19 +71,6 @@ const ENDING = {
   Unknown: 'unknown',
 } satisfies Record<Settlement['_tag'], RunEnding>
 
-/** Everyone whose screen shows this Thread: its creator, the People in it, or the Company. */
-const audienceTopics = Effect.fn('Conversation.audienceTopics')(function* (
-  threads: ThreadStore['Service'],
-  thread: StoredThread,
-) {
-  const here = [Topic.thread(thread.id), Topic.person(thread.personId)]
-  if (thread.audience === 'company' && thread.companyId !== null) {
-    return [...here, Topic.company(thread.companyId)]
-  }
-  const people = thread.audience === 'people' ? yield* threads.participants(thread.id) : []
-  return [...here, ...people.map(Topic.person)]
-})
-
 /** A Run being watched to its end, with the Person's words that started it when there were any. */
 interface Followed {
   readonly id: RunId
@@ -115,6 +102,10 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
   ) {
     if (Settlement.guards.Stopped(settlement)) return
     if (yield* presence.watching(thread.id, personId)) return
+    // A Run can outlast its Person's place in the Thread. The notice quotes the title and the
+    // reply, so it is only written for someone who may still read them.
+    const reach = canSee(thread, personId).pipe(Effect.provideService(Database, database))
+    if (!(yield* reach)) return
     yield* notifier.notify({
       personId,
       companyId: thread.companyId,
@@ -140,7 +131,9 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
       run.threadId,
       Option.filter(reply, (text) => text.trim().length > 0),
     )
-    yield* changes.publish(yield* audienceTopics(threads, thread.value))
+    yield* changes.publish(
+      audienceTopics(thread.value, yield* threads.participants(thread.value.id)),
+    )
     yield* announce(thread.value, run.person.id, settlement)
     if (Option.isSome(reply) && Option.isSome(run.said)) {
       yield* learning.afterRun({
@@ -165,12 +158,22 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
   const observe = yield* makeObserve()
   const withDatabase = Effect.provideService(Database, database)
 
+  // Runs with an observer in this process. A delivery Flue recognises as a repeat does not mean
+  // someone is watching it: the first attempt may have failed between admission and observation.
+  // Whether to observe is decided by this set, never by what the runtime says about repeats.
+  const observed = new Set<RunId>()
+
   /** Observes a Run in the background for the life of the server, logging what it cannot do. */
-  const follow = (run: Followed) =>
-    observe(run).pipe(
+  const follow = (run: Followed) => {
+    if (observed.has(run.id)) return Effect.void
+    observed.add(run.id)
+    return observe(run).pipe(
       Effect.catch((error) => Effect.logError('A Run could not be settled', error._tag)),
+      Effect.ensuring(Effect.sync(() => observed.delete(run.id))),
       Effect.forkIn(scope),
+      Effect.asVoid,
     )
+  }
 
   /** The Person a delivery is for, who must exist; otherwise the delivery has nobody behind it. */
   const personOf = Effect.fn('Conversation.personOf')(function* (personId: PersonId) {
@@ -207,10 +210,8 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
     yield* threads
       .markRead(speaker.id, thread.id)
       .pipe(Effect.catchTag(['NotFound', 'Forbidden', 'InvalidRequest', 'Conflict'], threadMissing))
-    yield* changes.publish(yield* audienceTopics(threads, thread))
-    if (!admission.repeated) {
-      yield* follow({ id: admission.runId, threadId: thread.id, person: speaker, said })
-    }
+    yield* changes.publish(audienceTopics(thread, yield* threads.participants(thread.id)))
+    yield* follow({ id: admission.runId, threadId: thread.id, person: speaker, said })
     return {
       runId: admission.runId,
       offset: admission.offset,

@@ -41,10 +41,14 @@ export const watch = <A, E, R>(
  *
  * Two things can change under an open subscription, and both are handled here so no handler has
  * to think about them. The data can change, which `watch` covers. And the Actor can change: the
- * Person switches workspace, or is removed from the Company they were looking at. The Actor is
- * therefore itself a live query on the Person's own topic; when it changes, the inner query is
- * dropped and started again for the new Actor. A removed Member's open screen falls back to their
- * personal space on the next change instead of streaming a Company they have left.
+ * Person switches workspace, is removed from the Company they were looking at, or signs out
+ * somewhere else.
+ *
+ * The Actor is therefore never remembered. It is resolved from the session again before every
+ * single load, so a result is always computed for who the Person is now: a removed Member's next
+ * reload is a personal-space result, and a revoked session's next reload fails and ends the
+ * stream. The Actor is also a live query of its own on the Person's topic, which is what
+ * re-subscribes the inner query to the right Company's changes when the workspace moves.
  *
  * `also` adds topics beyond the Actor's own, for a query about one Thread.
  */
@@ -66,8 +70,9 @@ export const live = <A, E, R>(
           threadId: Option.none(),
         })),
       )
+      const current = Effect.flatMap(actor, load)
       return watch([Topic.person(auth.person.id)], actor).pipe(
-        Stream.switchMap((current) => watch([...topicsOf(current), ...also], load(current))),
+        Stream.switchMap((seen) => watch([...topicsOf(seen), ...also], current)),
         Stream.changes,
       )
     }),

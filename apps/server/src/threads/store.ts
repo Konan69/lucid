@@ -6,6 +6,7 @@ import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import {
   Conflict,
+  DatabaseConstraintViolation,
   Forbidden,
   InvalidRequest,
   NotFound,
@@ -160,7 +161,20 @@ const makeEnsure = (database: DatabaseService) =>
     const rows = yield* database.run(
       database.select().from(threads).where(eq(threads.id, input.id)).limit(1),
     )
-    return yield* decodeThread(yield* returned(rows, 'Thread'))
+    const stored = yield* decodeThread(yield* returned(rows, 'Thread'))
+    // The id is predictable (`routine-<id>`, `task-<id>`), so a row already being there proves
+    // nothing about whose it is. A Thread that is not this Person's private Thread in this
+    // workspace is never handed back: that would deliver one Person's Routine into a Thread
+    // someone else created to receive it.
+    const theirs =
+      stored.personId === input.personId &&
+      stored.companyId === input.companyId &&
+      stored.audience === 'private'
+    return theirs
+      ? stored
+      : yield* Effect.fail(
+          new DatabaseConstraintViolation({ message: 'That Thread belongs to someone else' }),
+        )
   })
 
 /** A Project may hold a Thread only when both are in the same workspace. */
@@ -202,17 +216,23 @@ const makeMarkRead = (database: DatabaseService) =>
 
 const idTaken = () => Effect.fail(new Conflict({ message: 'That Thread id is taken' }))
 
+/** Ids the server mints for the Threads it opens itself. A client may not claim one. */
+const RESERVED = /^(?:routine|task)-/u
+
 const makeCreate = (database: DatabaseService) =>
   Effect.fn('ThreadStore.create')(function* (actor: Actor, request: CreateThreadRequest) {
     const companyId = companyColumnOf(actor.workspace)
     const personId = actor.person.id
+    if (RESERVED.test(request.id)) {
+      return yield* Effect.fail(new InvalidRequest({ message: 'That Thread id is reserved' }))
+    }
     if (request.projectId !== null) {
       yield* requireProject(database, request.projectId, { companyId, personId })
     }
     const now = yield* Clock.currentTimeMillis
     // The id is the client's so it can draw the Thread before the server answers. A retry of the
-    // same create is therefore expected and returns the Thread; an id that belongs to somebody
-    // else is reported as a conflict without saying whose it is.
+    // same create is therefore expected and returns the Thread. Anything else under that id, even
+    // a Thread this Person can see, is a conflict: creating is not a way to open someone else's.
     const inserted = yield* database.run(
       database
         .insert(threads)
@@ -231,6 +251,7 @@ const makeCreate = (database: DatabaseService) =>
       Effect.provideService(Database, database),
       Effect.catchTag('NotFound', idTaken),
     )
+    if (stored.personId !== personId || stored.companyId !== companyId) return yield* idTaken()
     if (inserted.length > 0) yield* makeMarkRead(database)(personId, request.id)
     return yield* makeView(database)(stored, personId)
   })
@@ -247,13 +268,15 @@ const makePatch = (database: DatabaseService) =>
     if (change.projectId !== undefined && change.projectId !== null) {
       yield* requireProject(database, change.projectId, thread)
     }
+    // Only the fields the caller named are written, so two People changing different things at
+    // the same moment (one renames, one archives) both keep their change.
     const rows = yield* database.run(
       database
         .update(threads)
         .set({
-          title: change.title === undefined ? thread.title : change.title,
-          archived: change.archived === undefined ? thread.archived : change.archived,
-          projectId: change.projectId === undefined ? thread.projectId : change.projectId,
+          title: change.title === undefined ? sql`${threads.title}` : change.title,
+          archived: change.archived === undefined ? sql`${threads.archived}` : change.archived,
+          projectId: change.projectId === undefined ? sql`${threads.projectId}` : change.projectId,
         })
         .where(eq(threads.id, id))
         .returning(),
@@ -328,16 +351,25 @@ const makeShare = (database: DatabaseService) =>
     }
     const sharing = sharingOf(audience, personId)
     const people = yield* requireMembers(database, thread.companyId, sharing.people)
-    const before = yield* makeParticipants(database)(id)
     const now = yield* Clock.currentTimeMillis
     const rows = people.map((person) => ({ threadId: id, personId: person, addedAt: now }))
-    yield* database.transaction((tx) =>
+    // The Thread's row is locked for the whole replacement. Without it two shares racing could
+    // each clear the list and then each add their own People, leaving the union of both: reach
+    // nobody asked for.
+    const present = yield* database.transaction((tx) =>
       Effect.gen(function* () {
+        yield* tx.select({ id: threads.id }).from(threads).where(eq(threads.id, id)).for('update')
+        const listed = yield* tx
+          .select({ personId: threadParticipants.personId })
+          .from(threadParticipants)
+          .where(eq(threadParticipants.threadId, id))
         yield* tx.delete(threadParticipants).where(eq(threadParticipants.threadId, id))
         if (rows.length > 0) yield* tx.insert(threadParticipants).values(rows)
         yield* tx.update(threads).set({ audience: sharing.stored }).where(eq(threads.id, id))
+        return listed
       }),
     )
+    const before = present.map((row) => row.personId)
     const after = yield* requireThread(id, personId).pipe(provide)
     return {
       thread: yield* makeView(database)(after, personId),

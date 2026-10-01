@@ -1,4 +1,5 @@
 import { and, eq } from 'drizzle-orm'
+import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import {
@@ -89,15 +90,19 @@ export const sessionWorkspace = Effect.fn('Auth.sessionWorkspace')(function* (
   const database = yield* Database
   const sessions = yield* database.run(
     database
-      .select({ activeCompanyId: sessionTable.activeCompanyId })
+      .select({ activeCompanyId: sessionTable.activeCompanyId, expiresAt: sessionTable.expiresAt })
       .from(sessionTable)
-      .where(eq(sessionTable.id, sessionId))
+      .where(and(eq(sessionTable.id, sessionId), eq(sessionTable.userId, personId)))
       .limit(1),
   )
-  const active = Option.flatMap(Option.fromUndefinedOr(sessions[0]), (row) =>
-    Option.fromNullOr(row.activeCompanyId),
-  )
-  return yield* workspaceIn(personId, active)
+  const row = sessions[0]
+  const now = yield* Clock.currentTimeMillis
+  // A session that was signed out or has run out is no session at all. This is asked again every
+  // time an open live query reloads, so signing out elsewhere ends what an old tab can still see.
+  if (row === undefined || row.expiresAt.getTime() <= now) {
+    return yield* Effect.fail(new Unauthenticated({ message: 'Authentication required' }))
+  }
+  return yield* workspaceIn(personId, Option.fromNullOr(row.activeCompanyId))
 })
 
 /**

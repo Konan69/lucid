@@ -2,14 +2,17 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
+import * as Stream from 'effect/Stream'
 import * as Headers from 'effect/unstable/http/Headers'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
-import { ThreadId } from '@vivid/contracts'
+import { ThreadId, type PersonId } from '@vivid/contracts'
 import { authenticate } from '../auth/session.ts'
 import { Runtime } from '../runtime/client.ts'
-import { requireThread } from './access.ts'
+import { Database } from '../database/client.ts'
+import { Changes, Topic } from '../live/changes.ts'
+import { canSee, findThread, requireThread, type StoredThread } from './access.ts'
 import { Conversation, DeliveryMessage, StoredRunOrigin } from './conversation.ts'
 
 /**
@@ -83,8 +86,16 @@ const originOf = (headers: Headers.Headers) => {
     Headers.get(headers, 'host'),
   )
   const scheme = Option.getOrElse(Headers.get(headers, 'x-forwarded-proto'), () => 'http')
-  return Option.map(host, (name) => `${scheme}://${name}`)
+  // The client follows this address with its credentials, so it is only ever built from a plain
+  // host name and one of the two schemes a browser would use to reach us.
+  return Option.filter(
+    Option.map(host, (name) => `${scheme}://${name}`),
+    () => SCHEMES.has(scheme) && Option.exists(host, (name) => HOST.test(name)),
+  )
 }
+
+const SCHEMES = new Set(['http', 'https'])
+const HOST = /^[a-z0-9.-]+(?::\d{1,5})?$|^\[[0-9a-f:]+\](?::\d{1,5})?$/iu
 
 const send = Effect.fn('Gateway.send')(function* () {
   const { request, person, thread } = yield* admitted()
@@ -116,19 +127,50 @@ const send = Effect.fn('Gateway.send')(function* () {
 /** Headers that describe one hop's connection and must not be copied onto the next. */
 const HOP_HEADERS = ['connection', 'keep-alive', 'transfer-encoding', 'content-length']
 
+/**
+ * Completes when the Person can no longer see the Thread. A live read is a connection that stays
+ * open for as long as the Thread is on screen; being allowed to open it is not being allowed to
+ * keep it. Every time the Thread, the Person or their Company changes, access is asked again, and
+ * the first "no" (or a Thread that is gone) ends the stream.
+ */
+const accessLost = Effect.fn('Gateway.accessLost')(function* (
+  thread: StoredThread,
+  personId: PersonId,
+) {
+  const changes = yield* Changes
+  const topics = [Topic.thread(thread.id), Topic.person(personId)]
+  const moved = yield* changes.subscribe(
+    thread.companyId === null ? topics : [...topics, Topic.company(thread.companyId)],
+  )
+  const stillSees = findThread(thread.id).pipe(
+    Effect.flatMap((found) =>
+      Option.isNone(found) ? Effect.succeed(false) : canSee(found.value, personId),
+    ),
+    Effect.catch(() => Effect.succeed(false)),
+  )
+  yield* moved.pipe(
+    Stream.mapEffect(() => stillSees),
+    Stream.filter((sees) => !sees),
+    Stream.take(1),
+    Stream.runDrain,
+  )
+})
+
 const read = (suffix: (params: { readonly attachmentId: string }) => string) =>
   Effect.fn('Gateway.read')(function* () {
-    const { request, thread } = yield* admitted()
+    const { request, person, thread } = yield* admitted()
     const params = yield* HttpRouter.params
     const attachmentId = params.attachmentId
     const runtime = yield* Runtime
+    const services = yield* Effect.context<Changes | Database>()
     const response = yield* runtime.read({
       threadId: thread.id,
       suffix: attachmentId === undefined ? '' : suffix({ attachmentId }),
       search: new URL(request.url, 'http://gateway').search,
       accept: Option.getOrElse(Headers.get(request.headers, 'accept'), () => '*/*'),
     })
-    return HttpServerResponse.stream(response.stream, {
+    const until = accessLost(thread, person.id).pipe(Effect.scoped, Effect.provideContext(services))
+    return HttpServerResponse.stream(Stream.interruptWhen(response.stream, until), {
       status: response.status,
       headers: HOP_HEADERS.reduce(Headers.remove, response.headers),
     })

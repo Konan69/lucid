@@ -15,7 +15,7 @@ import { changed, Changes, Topic } from '../live/changes.ts'
 import { live } from '../live/query.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Runtime } from '../runtime/client.ts'
-import { requireThread, type StoredThread } from './access.ts'
+import { audienceTopics, requireThread, type StoredThread } from './access.ts'
 import { Presence } from './presence.ts'
 import { RunStore } from './runs.ts'
 import { ThreadStore } from './store.ts'
@@ -69,6 +69,15 @@ const announceShare = Effect.fn('Threads.announceShare')(function* (
   )
 })
 
+/** Tells everyone who can see a Thread, and anyone who just stopped being able to, that it moved. */
+const announce = Effect.fn('Threads.announce')(function* (
+  thread: StoredThread,
+  also: ReadonlyArray<PersonId>,
+) {
+  const people = yield* (yield* ThreadStore).participants(thread.id)
+  yield* (yield* Changes).publish([...audienceTopics(thread, people), ...also.map(Topic.person)])
+})
+
 export const threadHandlers = {
   ListThreads: Effect.fn('Rpc.ListThreads')(function* () {
     return yield* listThreads(yield* requireActor())
@@ -97,8 +106,9 @@ export const threadHandlers = {
     readonly patch: Parameters<ThreadStore['Service']['patch']>[2]
   }) {
     const actor = yield* requireActor()
-    const thread = yield* (yield* ThreadStore).patch(actor.person.id, id, patch)
-    yield* changed(actor, Topic.thread(id))
+    const store = yield* ThreadStore
+    const thread = yield* store.patch(actor.person.id, id, patch)
+    yield* announce(yield* requireThread(id, actor.person.id), [])
     return { thread }
   }),
   ShareThread: Effect.fn('Rpc.ShareThread')(function* ({
@@ -120,21 +130,16 @@ export const threadHandlers = {
       }),
     )
     yield* announceShare(stored, summaryOf(auth.person).name, shared.added)
-    // People who gained or lost the Thread hear about it on their own topic; the Company topic
-    // covers a Thread that just became, or stopped being, everyone's.
-    yield* changed(
-      auth,
-      Topic.thread(id),
-      ...[...shared.added, ...shared.removed].map(Topic.person),
-    )
+    // People who lost the Thread are no longer in its audience, so they are named here.
+    yield* announce(stored, shared.removed)
     return { thread: shared.thread }
   }),
   DeleteThread: Effect.fn('Rpc.DeleteThread')(function* ({ id }: { readonly id: ThreadId }) {
     const auth = yield* requirePerson()
     const store = yield* ThreadStore
     const people = yield* store.participants(id)
-    yield* store.remove(auth.person.id, id)
-    yield* changed(auth, Topic.thread(id), ...people.map(Topic.person))
+    const removed = yield* store.remove(auth.person.id, id)
+    yield* (yield* Changes).publish(audienceTopics(removed, people))
   }),
   MarkThreadRead: Effect.fn('Rpc.MarkThreadRead')(function* ({ id }: { readonly id: ThreadId }) {
     const auth = yield* requirePerson()

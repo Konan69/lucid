@@ -12,6 +12,7 @@ import {
 } from '@vivid/contracts'
 import { membershipTable } from '../companies/tables.ts'
 import { Database, decodeStored } from '../database/client.ts'
+import { Topic } from '../live/changes.ts'
 import { threadParticipants, threads } from './tables.ts'
 
 /** How a Thread's audience is written in its row. */
@@ -99,3 +100,21 @@ export const requireThread = Effect.fn('Threads.require')(function* (
   }
   return thread.value
 })
+
+/**
+ * Everyone whose screen shows this Thread: its creator, the People it is shared with, or the whole
+ * Company. A write to a Thread is announced on these and not on the writer's own workspace, which
+ * may be a different one (a Company Thread opened from a link while in a personal space).
+ */
+export const audienceTopics = (
+  thread: StoredThread,
+  participants: ReadonlyArray<PersonId>,
+): ReadonlyArray<Topic> => {
+  const here = [Topic.thread(thread.id), Topic.person(thread.personId)]
+  if (thread.companyId !== null && thread.audience !== 'private') {
+    // The Company topic covers a Thread that is, or just stopped being, everyone's or some
+    // People's: lists across the Company re-run and each Person's result says what they may see.
+    return [...here, Topic.company(thread.companyId), ...participants.map(Topic.person)]
+  }
+  return [...here, ...participants.map(Topic.person)]
+}

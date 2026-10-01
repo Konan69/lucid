@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
@@ -72,16 +72,20 @@ const makeSettingsStore = Effect.fn('SettingsStore.make')(function* () {
     personId: PersonId,
     request: PatchSettingsRequest,
   ) {
-    const current = yield* get(personId)
+    yield* get(personId)
     const timezone =
-      request.timezone === undefined ? current.timezone : yield* requireTimezone(request.timezone)
+      request.timezone === undefined
+        ? sql`${settingsTable.timezone}`
+        : yield* requireTimezone(request.timezone)
     const now = yield* Clock.currentTimeMillis
+    // Only the fields the caller named are written, so two devices changing different settings at
+    // the same moment both keep their change.
     const rows = yield* database.run(
       database
         .update(settingsTable)
         .set({
-          theme: request.theme === undefined ? current.theme : request.theme,
-          notify: request.notify === undefined ? current.notify : request.notify,
+          theme: request.theme === undefined ? sql`${settingsTable.theme}` : request.theme,
+          notify: request.notify === undefined ? sql`${settingsTable.notify}` : request.notify,
           timezone,
           updatedAt: new Date(now),
         })

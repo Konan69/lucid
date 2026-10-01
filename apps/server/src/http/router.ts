@@ -12,6 +12,19 @@ import { rpcServerLayer } from '../rpc/server.ts'
 import { gatewayRoutes } from '../threads/gateway.ts'
 import { bytesRoutes } from './bytes.ts'
 
+/**
+ * Better Auth's organization plugin publishes its own routes for creating Companies, inviting and
+ * removing Members and listing invitations. They would be a second way to do each of those things,
+ * one that skips Vivid's rules, its audit record and the notices that move open screens. The plugin
+ * stays, because it is what keeps the session's active Company; its routes are answered as if they
+ * did not exist. Companies and People are managed through `VividRpc` and nowhere else.
+ */
+const closedRoute = HttpRouter.add(
+  '*',
+  '/api/auth/organization/*',
+  HttpServerResponse.jsonUnsafe({ message: 'Not found' }, { status: 404 }),
+)
+
 const authRoute = HttpRouter.add(
   '*',
   '/api/auth/*',
@@ -36,6 +49,7 @@ const healthRoute = HttpRouter.add(
  */
 export const routerLayer = Layer.mergeAll(
   rpcServerLayer,
+  closedRoute,
   authRoute,
   gatewayRoutes,
   bytesRoutes,

@@ -4,6 +4,7 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as PubSub from 'effect/PubSub'
+import * as Schedule from 'effect/Schedule'
 import * as Schema from 'effect/Schema'
 import type * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
@@ -65,25 +66,41 @@ const decodeTopics = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Arr
 
 /** Whether a notification names any topic a subscriber asked for. */
 const touches = (wanted: ReadonlySet<string>) => (moved: ReadonlyArray<string>) =>
-  moved.some((topic) => wanted.has(topic))
+  moved.some((topic) => topic === EVERYTHING || wanted.has(topic))
+
+/** The topic that touches every subscriber. Only the listener publishes it, when it reconnects. */
+const EVERYTHING = '*'
 
 const notificationNotSent = () => Effect.logWarning('A change notification could not be sent')
 
 const makeChanges = Effect.fn('Changes.make')(function* () {
   const sql = yield* PgClient
   const hub = yield* PubSub.unbounded<ReadonlyArray<string>>()
-  const notifications = yield* sql.listen(CHANNEL)
 
-  // One fiber per process moves notifications into the hub for as long as the layer lives. A
-  // payload that is not a list of topics was not written by this code and is dropped.
   const forward = (payload: string) =>
     decodeTopics(payload).pipe(
       Effect.flatMap((topics) => PubSub.publish(hub, topics)),
       Effect.catch(() => Effect.logWarning('Ignored a malformed change notification')),
     )
-  yield* Stream.fromQueue(notifications).pipe(
-    Stream.runForEach((notification) => forward(notification.payload)),
-    Effect.catch(() => Effect.logError('The change listener lost its database connection')),
+
+  /**
+   * One listening connection, held for as long as it lasts. Each time it is (re)established every
+   * subscriber is told to reload (`EVERYTHING`): whatever was written while nothing was listening
+   * was never announced, and a reload is the only way to be sure a screen is not showing the past.
+   */
+  const listen = Effect.gen(function* () {
+    const notifications = yield* sql.listen(CHANNEL)
+    yield* PubSub.publish(hub, [EVERYTHING])
+    yield* Stream.runForEach(Stream.fromQueue(notifications), (notification) =>
+      forward(notification.payload),
+    )
+  }).pipe(Effect.scoped)
+
+  // The listener is supervised for the life of the server: a dropped connection is logged and
+  // re-opened, never left dead with every live query quietly going stale.
+  yield* listen.pipe(
+    Effect.catch(() => Effect.logWarning('The change listener lost its connection; reconnecting')),
+    Effect.repeat(Schedule.spaced('2 seconds')),
     Effect.forkScoped,
   )
 

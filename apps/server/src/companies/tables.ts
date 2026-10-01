@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import { index, jsonb, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
 import { personTable } from '../auth/tables.ts'
 
@@ -56,5 +57,10 @@ export const invitationTable = pgTable(
   (table) => [
     index('invitation_company_idx').on(table.companyId),
     index('invitation_email_idx').on(table.email),
+    // One open offer per address in a Company. Inviting again replaces the earlier offer; this is
+    // what makes that true when two admins invite the same address at the same moment.
+    uniqueIndex('invitation_pending_idx')
+      .on(table.companyId, table.email)
+      .where(sql`${table.status} = 'pending'`),
   ],
 )
