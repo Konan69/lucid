@@ -1,184 +1,170 @@
-import { VividRpcClient } from '@vivid/client-runtime'
-import { CreateRoutineRequest, RoutineId } from '@vivid/contracts'
-import type { Routine } from '@vivid/contracts'
-import { Effect } from 'effect'
-import type { Program as RuntimeProgram } from './runtime'
+import {
+  RoutineTrigger,
+  type Occurrence,
+  type Routine,
+  type RoutineId,
+  type RoutineListResponse,
+} from '@vivid/contracts'
+import { Option } from 'effect'
 
-/* Routines: what Vivid repeats for you. Some you wrote; some started as
-   templates from the gallery — published by Vivid or by other teams, sold,
-   with a cut of every sale going to the author. */
+/**
+ * Routines, as pure functions over what the server sends.
+ *
+ * The screen reads `live.routines`; this module decides how a Routine is described, what the
+ * editor holds while a Person is changing one, and what the list will look like once a change has
+ * been accepted. Nothing here talks to the server.
+ */
 
-export type Program<Value> = RuntimeProgram<Value>
-export type ScheduledRoutine = Routine
-export type RoutineInput = Pick<
-  typeof CreateRoutineRequest.Type,
-  'name' | 'prompt' | 'cron' | 'timezone'
->
+export type RoutineList = typeof RoutineListResponse.Type
+export type { Occurrence, Routine }
 
-/** Reads all Routines and their recent Runs. */
-export const load = Effect.fn('Routines.load')(function* () {
-  const client = yield* VividRpcClient
-  const response = yield* client.ListRoutines()
-  return [...response.routines]
-})
+/** The two ways a Routine starts, in the order the editor offers them. */
+export const TRIGGER_KINDS = ['Schedule', 'Webhook'] as const
+export type TriggerKind = (typeof TRIGGER_KINDS)[number]
 
-/** Creates one Routine. */
-export const create = Effect.fn('Routines.create')(function* (input: RoutineInput) {
-  const client = yield* VividRpcClient
-  const response = yield* client.CreateRoutine(input)
-  return response.routine
-})
+/** The schedules a Person can pick by name. Anything else is written as a cron expression. */
+export const SCHEDULE_PRESETS = [
+  { cron: '0 * * * *', label: 'Every hour' },
+  { cron: '0 9 * * *', label: 'Every day at 9:00 AM' },
+  { cron: '0 9 * * 1-5', label: 'Weekdays at 9:00 AM' },
+  { cron: '0 9 * * 1', label: 'Mondays at 9:00 AM' },
+] as const
 
-/** Updates one Routine's editable fields. */
-export const update = Effect.fn('Routines.update')(function* (id: string, input: RoutineInput) {
-  const client = yield* VividRpcClient
-  const response = yield* client.PatchRoutine({ id: RoutineId.make(id), patch: input })
-  return response.routine
-})
+const DEFAULT_CRON = '0 9 * * 1-5'
 
-/** Pauses or resumes one Routine. */
-export const setEnabled = Effect.fn('Routines.setEnabled')(function* (
-  id: string,
-  enabled: boolean,
-) {
-  const client = yield* VividRpcClient
-  const response = yield* client.PatchRoutine({ id: RoutineId.make(id), patch: { enabled } })
-  return response.routine
-})
-
-/** Starts one Routine immediately. */
-export const runNow = Effect.fn('Routines.runNow')(function* (id: string) {
-  const client = yield* VividRpcClient
-  yield* client.RunRoutine({ id: RoutineId.make(id) })
-})
-
-/** Deletes one Routine and its Run history. */
-export const remove = Effect.fn('Routines.remove')(function* (id: string) {
-  const client = yield* VividRpcClient
-  yield* client.DeleteRoutine({ id: RoutineId.make(id) })
-})
-
-export type RoutineTemplate = {
-  id: string
-  name: string
-  summary: string
-  trigger: string
-  actions: string[]
-  /** Who published it. "vivid" = Vivid original. */
-  publisher: string
-  brandColor: 'accent' | 'working' | 'approve' | 'success'
-  price: string
-  /** Sales to date — social proof, Drive-style plainness. */
-  installs: string
-  rating: string
-  /** Cut the author keeps on each sale. */
-  authorCut?: string
+/** A cron expression in words when it is one of the presets, and as itself when it is not. */
+export const describeCron = (cron: string): string => {
+  const preset = SCHEDULE_PRESETS.find((candidate) => candidate.cron === cron)
+  return preset === undefined ? `Cron ${cron}` : preset.label
 }
 
-export const templates: RoutineTemplate[] = [
-  {
-    id: 'tpl-weekly-numbers',
-    name: 'Weekly numbers',
-    summary:
-      'One metric, every week, three lines. Signups, revenue, tickets — point it at anything you count.',
-    trigger: 'Weekly, your pick of day and time',
-    actions: [
-      'Pull the metric',
-      'Compare to the prior period',
-      'Post a summary — escalate only past your threshold',
-    ],
-    publisher: 'Vivid',
-    brandColor: 'accent',
-    price: 'Free',
-    installs: '41k',
-    rating: '4.9',
-  },
-  {
-    id: 'tpl-contract-watch',
-    name: 'Contract renewal watch',
-    summary:
-      'Never miss a renewal. Vivid reads your contracts and starts the renegotiation conversation 60 days out.',
-    trigger: 'Daily scan, alerts 60 days before renewal',
-    actions: [
-      'Read contract dates from your files',
-      'Alert 60, 30, and 7 days out',
-      'Draft the renewal email for your approval',
-    ],
-    publisher: 'Vivid',
-    brandColor: 'accent',
-    price: '£3/mo',
-    installs: '12k',
-    rating: '4.8',
-  },
-  {
-    id: 'tpl-tender-triage',
-    name: 'Tender triage',
-    summary:
-      'For ops teams that bid on contracts. Vivid reads each tender, scores fit, and drafts the compliance checklist.',
-    trigger: 'When a new tender lands in the shared folder',
-    actions: [
-      'Read the tender end to end',
-      'Score fit against your capability matrix',
-      'Draft the compliance checklist and own the gaps',
-    ],
-    publisher: 'Whitehall Works',
-    brandColor: 'working',
-    price: '£9/mo',
-    installs: '1.8k',
-    rating: '4.7',
-    authorCut: '70%',
-  },
-  {
-    id: 'tpl-brand-guard',
-    name: 'Brand guard',
-    summary:
-      'For marketing teams. Every deck or page that mentions the brand gets checked against the guidelines before it ships.',
-    trigger: 'When a file is added to the brand review folder',
-    actions: [
-      'Check logos, colors, and tone against the guidelines',
-      'Leave inline notes on what to fix',
-      'Mark it ready when it passes',
-    ],
-    publisher: 'Studio Norr',
-    brandColor: 'approve',
-    price: '£5/mo',
-    installs: '3.4k',
-    rating: '4.6',
-    authorCut: '70%',
-  },
-  {
-    id: 'tpl-intake',
-    name: 'Client intake to file',
-    summary:
-      'For legal and admin. New client form comes in, Vivid files it, runs conflicts, and opens the matter folder.',
-    trigger: 'When an intake form is submitted',
-    actions: [
-      'File the intake form',
-      'Run the conflicts check',
-      'Open the matter folder and brief the team',
-    ],
-    publisher: 'Kestrel Legal Ops',
-    brandColor: 'success',
-    price: '£12/mo',
-    installs: '940',
-    rating: '4.9',
-    authorCut: '70%',
-  },
-  {
-    id: 'tpl-close-week',
-    name: 'Close the week',
-    summary:
-      "Friday afternoon, Vivid closes your week: chases what's stuck, archives what's done, and writes the Monday brief.",
-    trigger: 'Every Friday at 4pm',
-    actions: [
-      'Chase every conversation waiting over 3 days',
-      'Archive settled work',
-      'Write the Monday brief from what moved',
-    ],
-    publisher: 'Vivid',
-    brandColor: 'accent',
-    price: 'Free',
-    installs: '28k',
-    rating: '4.8',
-  },
-]
+/** When a Routine runs, in one phrase. */
+export const describeTrigger = (trigger: RoutineTrigger): string =>
+  RoutineTrigger.match(trigger, {
+    Schedule: ({ cron, timezone }) => `${describeCron(cron)} · ${timezone}`,
+    Webhook: () => 'When something calls it',
+  })
+
+/** The Occurrence that started last. The server sends them newest first. */
+export const latestOccurrence = (routine: Routine): Option.Option<Occurrence> =>
+  Option.fromUndefinedOr(routine.runs[0])
+
+/**
+ * What the editor holds for one Routine.
+ *
+ * The trigger is kept as its kind plus the schedule's own fields, so switching to "when something
+ * calls it" and back does not lose the schedule the Person had written. The time zone is absent
+ * until the Person writes one: until then the form shows their own zone, which can still be
+ * arriving from Settings when the form opens.
+ */
+export interface RoutineFields {
+  readonly name: string
+  readonly prompt: string
+  readonly kind: TriggerKind
+  readonly cron: string
+  readonly timezone: Option.Option<string>
+}
+
+/** The editor's starting values for a new Routine. */
+export const emptyFields = (): RoutineFields => ({
+  name: '',
+  prompt: '',
+  kind: 'Schedule',
+  cron: DEFAULT_CRON,
+  timezone: Option.none(),
+})
+
+/** The editor's starting values for a Routine that already exists. */
+export const fieldsOf = (routine: Routine): RoutineFields =>
+  RoutineTrigger.match(routine.trigger, {
+    Schedule: ({ cron, timezone }): RoutineFields => ({
+      name: routine.name,
+      prompt: routine.prompt,
+      kind: 'Schedule',
+      cron,
+      timezone: Option.some(timezone),
+    }),
+    Webhook: (): RoutineFields => ({
+      name: routine.name,
+      prompt: routine.prompt,
+      kind: 'Webhook',
+      cron: DEFAULT_CRON,
+      timezone: Option.none(),
+    }),
+  })
+
+/** The trigger the editor describes. `zone` is the Person's own, used until they write another. */
+export const triggerOf = (fields: RoutineFields, zone: string): RoutineTrigger =>
+  fields.kind === 'Webhook'
+    ? RoutineTrigger.cases.Webhook.make({})
+    : RoutineTrigger.cases.Schedule.make({
+        cron: fields.cron.trim(),
+        timezone: Option.getOrElse(fields.timezone, () => zone).trim(),
+      })
+
+/** Whether two triggers start a Routine the same way. */
+const sameTrigger = (left: RoutineTrigger, right: RoutineTrigger): boolean =>
+  RoutineTrigger.match(left, {
+    Webhook: () => RoutineTrigger.guards.Webhook(right),
+    Schedule: ({ cron, timezone }) =>
+      RoutineTrigger.guards.Schedule(right) && right.cron === cron && right.timezone === timezone,
+  })
+
+/** Whether the editor holds something the Routine does not. */
+export const fieldsDiffer = (routine: Routine, fields: RoutineFields, zone: string): boolean =>
+  fields.name.trim() !== routine.name ||
+  fields.prompt.trim() !== routine.prompt ||
+  !sameTrigger(routine.trigger, triggerOf(fields, zone))
+
+/** Whether the editor holds enough to save: a name, an instruction and a complete trigger. */
+export const fieldsComplete = (fields: RoutineFields, zone: string): boolean =>
+  fields.name.trim() !== '' &&
+  fields.prompt.trim() !== '' &&
+  RoutineTrigger.match(triggerOf(fields, zone), {
+    Webhook: () => true,
+    Schedule: ({ cron, timezone }) => cron !== '' && timezone !== '',
+  })
+
+// ── Expectations: the result the server is expected to send next ───────────
+
+/**
+ * A copy of a Routine with some fields replaced. A Routine is a plain decoded record, so copying
+ * its own fields is a complete copy; the fields are named by the caller, never guessed.
+ */
+const revised = (routine: Routine, changes: Partial<Routine>): Routine =>
+  Object.assign({}, routine, changes)
+
+/** Applies one change to the Routine with this id and leaves every other Routine as it is. */
+const onRoutine =
+  (id: RoutineId, edit: (routine: Routine) => Routine) =>
+  (current: RoutineList): RoutineList => ({
+    routines: current.routines.map((routine) => (routine.id === id ? edit(routine) : routine)),
+  })
+
+/** A Routine paused or resumed. When it next runs is the server's to say, so that is left alone. */
+export const enabledSet = (id: RoutineId, enabled: boolean) =>
+  onRoutine(id, (routine) => revised(routine, { enabled }))
+
+/** A Routine after its editor was saved. */
+export const edited = (
+  id: RoutineId,
+  changes: { readonly name: string; readonly prompt: string; readonly trigger: RoutineTrigger },
+) => onRoutine(id, (routine) => revised(routine, changes))
+
+/** A deleted Routine, gone with its history. */
+export const removed =
+  (id: RoutineId) =>
+  (current: RoutineList): RoutineList => ({
+    routines: current.routines.filter((routine) => routine.id !== id),
+  })
+
+/**
+ * A Routine the server has just returned from a call, in the list even if the live query's next
+ * result has not arrived yet. It adds nothing when that result got there first.
+ */
+export const confirmed =
+  (routine: Routine) =>
+  (current: RoutineList): RoutineList =>
+    current.routines.some((candidate) => candidate.id === routine.id)
+      ? current
+      : { routines: [routine, ...current.routines] }
