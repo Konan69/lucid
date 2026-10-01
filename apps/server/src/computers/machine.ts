@@ -36,6 +36,13 @@ export class MachineOperationFailed extends Schema.TaggedError<MachineOperationF
   { title: 'MachineOperationFailed' },
 ) {}
 
+/** A lost command receipt is uncertain: the provider must not authorize an automatic retry. */
+export class MachineExecutionUnknown extends Schema.TaggedError<MachineExecutionUnknown>()(
+  'MachineExecutionUnknown',
+  { key: MachineKey },
+  { title: 'MachineExecutionUnknown' },
+) {}
+
 /** A malformed provider response must not become invented machine facts. */
 export class MachineResponseInvalid extends Schema.TaggedError<MachineResponseInvalid>()(
   'MachineResponseInvalid',
@@ -69,6 +76,7 @@ export type MachineFailure =
   | MachineUnavailable
   | MachineNotRunning
   | MachineOperationFailed
+  | MachineExecutionUnknown
   | MachineResponseInvalid
   | MachineInputInvalid
   | BrowserAddressRefused

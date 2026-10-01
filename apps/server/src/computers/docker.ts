@@ -8,6 +8,7 @@ import { browserArguments, decodeBrowserOutput } from './browser.js'
 import {
   Machine,
   MachineInputInvalid,
+  MachineExecutionUnknown,
   MachineNotRunning,
   MachineOperationFailed,
   MachineResponseInvalid,
@@ -371,6 +372,7 @@ export const dockerMachineLayer = (image: string) =>
             Effect.onExit((exit) =>
               Exit.isFailure(exit) ? stopContainer(input.key) : Effect.void,
             ),
+            Effect.mapError(() => new MachineExecutionUnknown({ key: input.key })),
           )
           if (result.exitCode === 124 || result.exitCode === 137) yield* stopContainer(input.key)
           return result
