@@ -19,11 +19,12 @@ import { libraryFolders } from './tables.ts'
 const folderReads = (database: LibraryDatabase, decodeFolder: DecodeFolder) => {
   /** Lists both readable shelves, preserving each row's derived shelf. */
   const listFolders = Effect.fn('LibraryStore.listFolders')(function* (actor: Actor) {
+    const scope = yield* readableScope(database, libraryFolders, actor)
     const rows = yield* database.run(
       database
         .select()
         .from(libraryFolders)
-        .where(readableScope(libraryFolders, actor))
+        .where(scope)
         .orderBy(asc(sql`lower(${libraryFolders.name})`)),
     )
     return yield* Effect.forEach(rows, decodeFolder, { concurrency: 1 })
@@ -32,7 +33,9 @@ const folderReads = (database: LibraryDatabase, decodeFolder: DecodeFolder) => {
   const listChildFolders: LibraryStoreService['listChildFolders'] = Effect.fn(
     'LibraryStore.listChildFolders',
   )(function* (actor, query) {
-    const scope = yield* shelfScope(libraryFolders, actor, query.shelf)
+    const selected = yield* shelfScope(libraryFolders, actor, query.shelf)
+    const readable = yield* readableScope(database, libraryFolders, actor)
+    const scope = and(selected, readable)
     const parent =
       query.folderId === undefined
         ? isNull(libraryFolders.parentId)
@@ -51,11 +54,12 @@ const folderReads = (database: LibraryDatabase, decodeFolder: DecodeFolder) => {
     actor: Actor,
     id: LibraryFolderId,
   ) {
+    const scope = yield* readableScope(database, libraryFolders, actor)
     const rows = yield* database.run(
       database
         .select()
         .from(libraryFolders)
-        .where(and(eq(libraryFolders.id, id), readableScope(libraryFolders, actor)))
+        .where(and(eq(libraryFolders.id, id), scope))
         .limit(1),
     )
     return Option.fromUndefinedOr(rows[0])
@@ -106,6 +110,7 @@ export const folderOperations = (database: LibraryDatabase, decodeFolder: Decode
   /** Renames and moves are restricted to the contributor or an active Company admin. */
   const patchFolder: LibraryStoreService['patchFolder'] = Effect.fn('LibraryStore.patchFolder')(
     function* (actor, id, patch) {
+      const scope = yield* readableScope(database, libraryFolders, actor)
       const current = yield* reads.getRow(actor, id)
       if (Option.isNone(current)) return Option.none<LibraryFolder>()
       yield* requireEditor(actor, current.value)
@@ -122,7 +127,7 @@ export const folderOperations = (database: LibraryDatabase, decodeFolder: Decode
             parentId,
             updatedAt: now,
           })
-          .where(and(eq(libraryFolders.id, id), readableScope(libraryFolders, actor)))
+          .where(and(eq(libraryFolders.id, id), scope))
           .returning(),
       )
       const row = rows[0]
@@ -135,6 +140,7 @@ export const folderOperations = (database: LibraryDatabase, decodeFolder: Decode
   /** A readable parent does not authorize deleting another contributor's descendants. */
   const removeFolder: LibraryStoreService['removeFolder'] = Effect.fn('LibraryStore.removeFolder')(
     function* (actor, id) {
+      const scope = yield* readableScope(database, libraryFolders, actor)
       const row = yield* reads.getRow(actor, id)
       if (Option.isNone(row))
         return yield* Effect.fail(new NotFound({ message: 'Library folder not found' }))
@@ -142,9 +148,7 @@ export const folderOperations = (database: LibraryDatabase, decodeFolder: Decode
       if (yield* hasChildren(actor, id))
         return yield* Effect.fail(new Conflict({ message: 'Library folder is not empty' }))
       yield* database.run(
-        database
-          .delete(libraryFolders)
-          .where(and(eq(libraryFolders.id, id), readableScope(libraryFolders, actor))),
+        database.delete(libraryFolders).where(and(eq(libraryFolders.id, id), scope)),
       )
       return undefined
     },

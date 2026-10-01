@@ -30,11 +30,12 @@ export const requireAcyclic = (database: LibraryDatabase) =>
     id: LibraryFolderId,
     parentId: LibraryFolderId | null,
   ) {
+    const scope = yield* readableScope(database, libraryFolders, actor)
     const rows = yield* database.run(
       database
         .select({ id: libraryFolders.id, parentId: libraryFolders.parentId })
         .from(libraryFolders)
-        .where(readableScope(libraryFolders, actor)),
+        .where(scope),
     )
     const parents = new Map(rows.map((row) => [row.id, row.parentId]))
     const visited = new Set<string>([id])
@@ -54,18 +55,20 @@ export const requireAcyclic = (database: LibraryDatabase) =>
 /** Deletion never cascades through files or folders, even when the caller manages the parent. */
 export const folderHasChildren = (database: LibraryDatabase) =>
   Effect.fn('Library.folderHasChildren')(function* (actor: Actor, id: LibraryFolderId) {
+    const scope = yield* readableScope(database, libraryFolders, actor)
+    const documentScope = yield* readableScope(database, libraryDocuments, actor)
     const children = yield* database.run(
       database
         .select({ id: libraryFolders.id })
         .from(libraryFolders)
-        .where(and(eq(libraryFolders.parentId, id), readableScope(libraryFolders, actor)))
+        .where(and(eq(libraryFolders.parentId, id), scope))
         .limit(1),
     )
     const documents = yield* database.run(
       database
         .select({ id: libraryDocuments.id })
         .from(libraryDocuments)
-        .where(and(eq(libraryDocuments.folderId, id), readableScope(libraryDocuments, actor)))
+        .where(and(eq(libraryDocuments.folderId, id), documentScope))
         .limit(1),
     )
     return children.length + documents.length > 0
@@ -75,7 +78,10 @@ export const folderHasChildren = (database: LibraryDatabase) =>
  * The document folder column has no foreign key. Serialize hierarchy checks with folder deletes
  * so an upload/move cannot leave a dangling destination, and concurrent moves cannot form a cycle.
  * Drizzle rc.5 uses PgClient.withTransaction: all queries on this captured client reuse that
- * transaction's connection, including decoder queries (effect-postgres/session.js).
+ * transaction's connection, including decoder queries. Installed drizzle-orm's
+ * effect-postgres/session.js constructs tx with the original session and uses client.withTransaction;
+ * prepareQuery calls that same client. Effect's unstable/sql/SqlClient.ts injects its transaction
+ * connection into the callback context and getConnection/borrower use it instead of the pool.
  */
 export const hierarchyWrite = <A, E, R>(
   database: LibraryDatabase,

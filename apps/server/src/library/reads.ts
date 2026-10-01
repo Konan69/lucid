@@ -23,7 +23,9 @@ export const itemReads = (
   /** Selected-shelf filtering happens before rows leave PostgreSQL. */
   const listItems: LibraryStoreService['listItems'] = Effect.fn('LibraryStore.listItems')(
     function* (actor, query) {
-      const scope = yield* shelfScope(libraryDocuments, actor, query.shelf)
+      const selected = yield* shelfScope(libraryDocuments, actor, query.shelf)
+      const readable = yield* readableScope(database, libraryDocuments, actor)
+      const scope = and(selected, readable)
       const folder =
         query.folderId === undefined ? undefined : eq(libraryDocuments.folderId, query.folderId)
       const rows = yield* database.run(
@@ -39,11 +41,12 @@ export const itemReads = (
 
   /** Every id lookup is scoped before returning either metadata or bytes. */
   const getRow = Effect.fn('LibraryStore.getRow')(function* (actor: Actor, id: LibraryItemId) {
+    const scope = yield* readableScope(database, libraryDocuments, actor)
     const rows = yield* database.run(
       database
         .select()
         .from(libraryDocuments)
-        .where(and(eq(libraryDocuments.id, id), readableScope(libraryDocuments, actor)))
+        .where(and(eq(libraryDocuments.id, id), scope))
         .limit(1),
     )
     return Option.fromNullishOr(rows[0])
@@ -95,17 +98,12 @@ export const itemReads = (
     actor: Actor,
     name: string,
   ) {
+    const scope = yield* readableScope(database, libraryDocuments, actor)
     const rows = yield* database.run(
       database
         .select()
         .from(libraryDocuments)
-        .where(
-          and(
-            eq(libraryDocuments.name, name),
-            eq(libraryDocuments.status, 'ready'),
-            readableScope(libraryDocuments, actor),
-          ),
-        )
+        .where(and(eq(libraryDocuments.name, name), eq(libraryDocuments.status, 'ready'), scope))
         .orderBy(desc(libraryDocuments.updatedAt))
         .limit(1),
     )
@@ -118,7 +116,9 @@ export const itemReads = (
   const getItemByDigest: LibraryStoreService['getItemByDigest'] = Effect.fn(
     'LibraryStore.getItemByDigest',
   )(function* (actor, shelf, sha256) {
-    const scope = yield* shelfScope(libraryDocuments, actor, shelf)
+    const selected = yield* shelfScope(libraryDocuments, actor, shelf)
+    const readable = yield* readableScope(database, libraryDocuments, actor)
+    const scope = and(selected, readable)
     const rows = yield* database.run(
       database
         .select()

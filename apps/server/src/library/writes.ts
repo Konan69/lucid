@@ -19,6 +19,7 @@ import type { PgEffectTransaction } from 'drizzle-orm/pg-core/effect/session'
 type LibraryTransaction = PgEffectTransaction<EffectPgQueryEffectHKT, EffectPgQueryResultHKT>
 interface CompletedItemInput {
   readonly transaction: LibraryTransaction
+  readonly database: LibraryDatabase
   readonly actor: Actor
   readonly id: LibraryItemId
   readonly extractedText: string
@@ -30,11 +31,12 @@ interface CompletedItemInput {
 const writeCompletedItem = Effect.fn('Library.writeCompletedItem')(function* (
   input: CompletedItemInput,
 ) {
-  const { transaction, actor, id, extractedText, chunks, now } = input
+  const { transaction, database, actor, id, extractedText, chunks, now } = input
+  const scope = yield* readableScope(database, libraryDocuments, actor)
   const rows = yield* transaction
     .select()
     .from(libraryDocuments)
-    .where(and(eq(libraryDocuments.id, id), readableScope(libraryDocuments, actor)))
+    .where(and(eq(libraryDocuments.id, id), scope))
     .for('update')
   const row = rows[0]
   if (row === undefined)
@@ -56,18 +58,19 @@ const writeCompletedItem = Effect.fn('Library.writeCompletedItem')(function* (
   yield* transaction
     .update(libraryDocuments)
     .set({ status: 'ready', extractedText, error: null, updatedAt: now })
-    .where(and(eq(libraryDocuments.id, id), readableScope(libraryDocuments, actor)))
+    .where(and(eq(libraryDocuments.id, id), scope))
   return undefined
 })
 
 /** Mutation authority is checked only after the row has passed its SQL visibility predicate. */
 const editorRow = (database: LibraryDatabase) =>
   Effect.fn('Library.editorRow')(function* (actor: Actor, id: LibraryItemId) {
+    const scope = yield* readableScope(database, libraryDocuments, actor)
     const rows = yield* database.run(
       database
         .select()
         .from(libraryDocuments)
-        .where(and(eq(libraryDocuments.id, id), readableScope(libraryDocuments, actor)))
+        .where(and(eq(libraryDocuments.id, id), scope))
         .limit(1),
     )
     const row = rows[0]
@@ -137,6 +140,7 @@ const patchItemOperation = (
   const destination = requireFolderShelf(getFolder)
   return Effect.fn('LibraryStore.patchItem')(
     function* (actor, id, patch) {
+      const scope = yield* readableScope(database, libraryDocuments, actor)
       const current = yield* editable(actor, id)
       if (Option.isNone(current)) return Option.none<LibraryItem>()
       const currentItem = yield* decodeItem(current.value)
@@ -151,7 +155,7 @@ const patchItemOperation = (
             folderId,
             updatedAt: now,
           })
-          .where(and(eq(libraryDocuments.id, id), readableScope(libraryDocuments, actor)))
+          .where(and(eq(libraryDocuments.id, id), scope))
           .returning(),
       )
       const row = rows[0]
@@ -171,13 +175,14 @@ const indexOperations = (
     function* (actor, id, extractedText, chunks) {
       const now = yield* Clock.currentTimeMillis
       yield* database.transaction((transaction) =>
-        writeCompletedItem({ transaction, actor, id, extractedText, chunks, now }),
+        writeCompletedItem({ transaction, database, actor, id, extractedText, chunks, now }),
       )
     },
   )
   /** Extraction failure is stored explicitly; a database outage remains a failed operation. */
   const failItem: LibraryStoreService['failItem'] = Effect.fn('LibraryStore.failItem')(
     function* (actor, id, message) {
+      const scope = yield* readableScope(database, libraryDocuments, actor)
       const row = yield* editable(actor, id)
       if (Option.isNone(row))
         return yield* Effect.fail(new NotFound({ message: 'Library item not found' }))
@@ -186,7 +191,7 @@ const indexOperations = (
         database
           .update(libraryDocuments)
           .set({ status: 'failed', error: message.slice(0, 1000), updatedAt: now })
-          .where(and(eq(libraryDocuments.id, id), readableScope(libraryDocuments, actor))),
+          .where(and(eq(libraryDocuments.id, id), scope)),
       )
       return undefined
     },
@@ -194,11 +199,12 @@ const indexOperations = (
   /** An admin may delete Company files, while every Mine remains private to its owner. */
   const removeItem: LibraryStoreService['removeItem'] = Effect.fn('LibraryStore.removeItem')(
     function* (actor, id) {
+      const scope = yield* readableScope(database, libraryDocuments, actor)
       if (Option.isNone(yield* editable(actor, id))) return false
       const rows = yield* database.run(
         database
           .delete(libraryDocuments)
-          .where(and(eq(libraryDocuments.id, id), readableScope(libraryDocuments, actor)))
+          .where(and(eq(libraryDocuments.id, id), scope))
           .returning({ id: libraryDocuments.id }),
       )
       return rows.length > 0
