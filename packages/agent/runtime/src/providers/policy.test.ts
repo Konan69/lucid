@@ -4,6 +4,8 @@ import {
   type AssistantMessage,
   type AssistantMessageEvent,
   type Model,
+  type Context,
+  type SimpleStreamOptions,
 } from '@earendil-works/pi-ai'
 import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter'
 import { ConfigProvider, Effect, Exit, Fiber, Queue, Stream } from 'effect'
@@ -64,12 +66,15 @@ const fixture = Effect.fn('Models.test.fixture')(function* (
   plans: ReadonlyArray<ReadonlyArray<AssistantMessageEvent>>,
 ) {
   const calls = yield* Queue.unbounded<string>()
+  const signals: AbortSignal[] = []
   const sources: ReturnType<typeof createAssistantMessageEventStream>[] = []
   let index = 0
   const provider = {
     ...openrouterProvider(),
     getModels: () => [primary, fallback],
-    streamSimple: (selected: Model<'openai-completions'>) => {
+    streamSimple: (selected: Model<'openai-completions'>, _context: Context, options: SimpleStreamOptions = {}) => {
+      if (options.signal === undefined) expect.fail('Every attempt needs an abort signal')
+      signals.push(options.signal)
       Queue.offerUnsafe(calls, selected.id)
       const source = createAssistantMessageEventStream()
       sources.push(source)
@@ -80,7 +85,7 @@ const fixture = Effect.fn('Models.test.fixture')(function* (
       return source
     },
   }
-  return { provider, calls, sources }
+  return { provider, calls, sources, signals }
 })
 
 const configuration = (values: Record<string, string>) =>
@@ -134,6 +139,28 @@ describe('bounded model policy', () => {
       expect(Exit.isFailure(ended)).toBe(true)
       if (Exit.isFailure(ended)) expect(String(ended.cause)).toContain('NoAnswer')
     }).pipe(Effect.provide(configuration({}))),
+  )
+
+  it.effect('an attempt deadline aborts its provider before retrying', () =>
+    Effect.gen(function* () {
+      const evidence = yield* fixture([
+        [{ type: 'start', partial: message('primary', [], 'pending') }],
+        answer('primary', 'Hello'),
+      ])
+      const run = yield* modelStream(evidence.provider, primary, { messages: [] }, {}).pipe(
+        Stream.runCollect,
+        Effect.forkScoped,
+      )
+      yield* Queue.take(evidence.calls)
+      yield* TestClock.adjust('1 second')
+      const signal = evidence.signals[0]
+      if (signal === undefined) expect.fail('A provider signal is required')
+      expect(signal.aborted).toBe(true)
+      yield* TestClock.adjust('250 millis')
+      yield* Queue.take(evidence.calls)
+      const events = yield* Fiber.join(run)
+      expect(events.map((event) => event.type)).toEqual(['start', 'done'])
+    }).pipe(Effect.provide(configuration({ VIVID_MODEL_ATTEMPT_TIMEOUT_MS: '1000' }))),
   )
 
   it.effect('one overall deadline fails a provider that never produces content', () =>
