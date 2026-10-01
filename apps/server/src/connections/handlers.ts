@@ -1,35 +1,56 @@
-import * as Effect from 'effect/Effect'
-import { ConnectionDeletionResponse, ConnectionListResponse, Forbidden } from '@vivid/contracts'
-import { AuthContext, AuthState } from '@vivid/contracts/api'
-import { invalidRequest } from '../rpc/failures.ts'
+import { Effect } from 'effect'
+import type {
+  BeginConnectionRequest,
+  CompleteConnectionRequest,
+  ConnectionId,
+  FindToolsRequest,
+  OfferConnectionRequest,
+  UseToolRequest,
+} from '@vivid/contracts'
+import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
+import { live } from '../live/query.ts'
 import { ConnectionStore } from './store.ts'
+import { findTools, offerConnection, useTool } from './tools.ts'
+export { connectionRunner, runConnection } from './tools.ts'
 
+/** Both inventory calls share one loader, including degraded catalog behavior. */
+const load = Effect.fn('Connections.load')(function* (actor: Actor) {
+  return yield* (yield* ConnectionStore).list(actor)
+})
+
+/** Authentication belongs at transport ingress; account rules stay in the owned domain. */
 export const connectionHandlers = {
   ListConnections: Effect.fn('Rpc.ListConnections')(function* () {
-    const store = yield* ConnectionStore
-    return ConnectionListResponse.make({
-      connectors: yield* store.list().pipe(Effect.mapError(invalidRequest)),
-    })
+    return yield* load(yield* requireActor())
   }),
-  DeleteConnection: Effect.fn('Rpc.DeleteConnection')(function* ({ id }) {
-    const store = yield* ConnectionStore
-    const deleted = yield* store.remove(id).pipe(Effect.mapError(invalidRequest))
-    return ConnectionDeletionResponse.make({ success: true, deleted })
+  WatchConnections: () => live(load),
+  BeginConnection: Effect.fn('Rpc.BeginConnection')(function* (request: BeginConnectionRequest) {
+    yield* requirePerson()
+    return yield* (yield* ConnectionStore).begin(yield* requireActor(), request)
   }),
-  ExecuteConnectionTool: Effect.fn('Rpc.ExecuteConnectionTool')(function* ({
-    connector,
-    tool,
-    input,
+  CompleteConnection: Effect.fn('Rpc.CompleteConnection')(function* (
+    request: CompleteConnectionRequest,
+  ) {
+    yield* requirePerson()
+    return { connection: yield* (yield* ConnectionStore).complete(yield* requireActor(), request) }
+  }),
+  RemoveConnection: Effect.fn('Rpc.RemoveConnection')(function* ({
+    id,
+  }: {
+    readonly id: ConnectionId
   }) {
-    // Only Vivid's runtime acts through a Connection. A Person's session manages Connections but
-    // never drives a provider action directly, so a browser cannot send mail by calling this RPC.
-    const auth = yield* AuthContext
-    if (!AuthState.$is('Runtime')(auth)) {
-      return yield* new Forbidden({ message: 'Connection actions run only for Vivid' })
-    }
-    const store = yield* ConnectionStore
-    return {
-      output: yield* store.execute(connector, tool, input).pipe(Effect.mapError(invalidRequest)),
-    }
+    yield* requirePerson()
+    yield* (yield* ConnectionStore).remove(yield* requireActor(), id)
+  }),
+  FindTools: Effect.fn('Rpc.FindTools')(function* (request: FindToolsRequest) {
+    return yield* findTools(yield* requireActor(), request)
+  }),
+  UseTool: Effect.fn('Rpc.UseTool')(function* (request: UseToolRequest) {
+    yield* requireVivid()
+    return yield* useTool(yield* requireActor(), request)
+  }),
+  OfferConnection: Effect.fn('Rpc.OfferConnection')(function* (request: OfferConnectionRequest) {
+    yield* requireVivid()
+    return yield* offerConnection(yield* requireActor(), request)
   }),
 }
