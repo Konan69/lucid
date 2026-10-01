@@ -1,11 +1,11 @@
 import * as NodePath from 'node:path'
+import * as NodeURL from 'node:url'
 import * as NodeProcess from 'node:process'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
-import { app, protocol, screen, type BrowserWindow } from 'electron'
+import { app, protocol, screen, session, type BrowserWindow } from 'electron'
 import { registerBridge } from './bridge.ts'
-import { loadDevelopmentRendererUrl } from './config.ts'
 import {
   parseVividUrl,
   VIVID_PROTOCOL,
@@ -26,7 +26,10 @@ import { loadThemeSurfaces } from './tokens.ts'
 import { RendererSource, createMainWindow, loadRenderer, openExternalUrl } from './window.ts'
 import { AppInfo, type DesktopPlatform } from '../shared/bridge.ts'
 import { DesktopSettings, settingsLayer } from './settings.ts'
-import { registerPackagedRenderer } from './renderer.ts'
+import { registerAppProxy } from './proxy.ts'
+import { secureSession } from './session.ts'
+import { isTrustedDocument } from './security.ts'
+import { ServerSettings } from '../shared/settings.ts'
 
 const PLACEMENT_FILE = 'window-placement.json'
 // The workspace package name is scoped; native application identity and userData must use Vivid.
@@ -99,11 +102,6 @@ function themeTokensPath(): string {
     : NodePath.resolve(__dirname, '../../../../packages/design/tokens/src/tokens.css')
 }
 
-/** Development retains its configured Vite origin; packaged builds use persisted server settings. */
-const developmentRenderer = Effect.fn('DesktopMain.developmentRenderer')(function* () {
-  return RendererSource.cases.Development.make({ url: yield* loadDevelopmentRendererUrl() })
-})
-
 /** Validate runtime-owned strings before publishing them through the bridge. */
 const appInfo = Effect.fn('DesktopMain.appInfo')(function* () {
   const appVersion = yield* decodeNonEmptyString(app.getVersion()).pipe(
@@ -139,21 +137,25 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
   const surfaces = yield* loadThemeSurfaces(themeTokensPath())
   const settings = yield* DesktopSettings
   let serverSettings = yield* settings.get
-  const development = app.isPackaged
-    ? Option.none<RendererSource>()
-    : Option.some(yield* developmentRenderer())
-  /** The navigation guard and asset handler follow the same durable server selection. */
+  const root = app.isPackaged
+    ? NodePath.join(NodeProcess.resourcesPath, 'web', 'dist')
+    : NodePath.resolve(__dirname, '../renderer')
+  const chooserPath = NodePath.join(root, 'chooser.html')
+  const chooserUrl = NodeURL.pathToFileURL(chooserPath).href
+  const desktopSession = session.fromPartition('persist:vivid')
+  /** Protocol, navigation, permissions, and IPC follow the same durable selection. */
   const renderer = (): RendererSource =>
-    Option.getOrElse(development, () =>
-      RendererSource.cases.Packaged.make({ url: new URL(serverSettings.serverAddress) }),
-    )
-  if (app.isPackaged) {
-    registerPackagedRenderer(
-      NodePath.join(NodeProcess.resourcesPath, 'web', 'dist'),
-      () => serverSettings.serverAddress,
-      (program) => Effect.runPromise(program),
-    )
-  }
+    ServerSettings.match<RendererSource>(serverSettings, {
+      NoServer: () => RendererSource.cases.Chooser.make({ path: chooserPath }),
+      Server: ({ origin }) => RendererSource.cases.Server.make({ origin }),
+    })
+  secureSession(desktopSession, () => serverSettings)
+  registerAppProxy({
+    root,
+    session: desktopSession,
+    server: () => serverSettings,
+    run: (program) => Effect.runPromise(program),
+  })
   const information = yield* appInfo()
   const placementPath = NodePath.join(app.getPath('userData'), PLACEMENT_FILE)
   const storedPlacement = Option.getOrElse(
@@ -167,30 +169,36 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
   )
   const colorScheme = new ColorSchemeController(surfaces)
 
-  registerBridge(
-    {
-      getAppInfo: () => information,
-      getColorSchemeState: () => colorScheme.getState(),
+  registerBridge({
+    handlers: {
+      getAppVersion: () => information.appVersion,
       settings,
-      onServerSettingsChanged: (value) => {
+      openExternal: openExternalUrl,
+      onServerChanged: (value) => {
         serverSettings = value
-        // Let the invoke response reach preload before replacing the renderer's document.
-        if (app.isPackaged)
-          setImmediate(() =>
-            Option.map(mainWindow, (window) =>
-              runNonFatal(loadRenderer(window, renderer()), 'desktop: renderer failed to load'),
-            ),
-          )
+        // Complete invoke before replacing the document that owns its pending Promise.
+        setImmediate(() =>
+          Option.map(mainWindow, (window) =>
+            runNonFatal(loadRenderer(window, renderer()), 'desktop: renderer failed to load'),
+          ),
+        )
       },
     },
-    { run: (program) => Effect.runPromise(program) },
-  )
+    runtime: { run: (program) => Effect.runPromise(program) },
+    isTrustedSender: (id, url) =>
+      Option.exists(
+        mainWindow,
+        (window) =>
+          window.webContents.id === id && isTrustedDocument(url, serverSettings, chooserUrl),
+      ),
+  })
 
   const createWindow = (): void => {
     const window = createMainWindow({
       platform,
       colorScheme,
       renderer,
+      session: desktopSession,
       placement,
       onExternalUrl: (url) =>
         runNonFatal(openExternalUrl(url), 'desktop: failed to open external URL'),

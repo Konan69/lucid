@@ -1,55 +1,50 @@
 import { describe, expect, it } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
-import {
-  AppInfo,
-  BridgeRequest,
-  BridgeResponse,
-  InvalidBridgeMessage,
-  decodeBridgeRequest,
-  decodeBridgeResponse,
-  encodeBridgeRequest,
-  encodeBridgeResponse,
-} from './bridge.ts'
+import { InvalidBridgeMessage, decodeBridgeRequest, decodeBridgeResponse } from './bridge.ts'
 
-describe('desktop bridge protocol', () => {
-  it.effect('round-trips each tagged request through its wire encoding', () =>
+describe('desktop bridge ingress', () => {
+  it.effect('rejects undeclared capabilities and unsafe arguments before dispatch', () =>
     Effect.gen(function* () {
-      const requests = [
-        BridgeRequest.cases.GetAppInfo.make({}),
-        BridgeRequest.cases.GetColorSchemeState.make({}),
-      ]
-      for (const request of requests) {
-        const encoded = yield* encodeBridgeRequest(request)
-        expect(yield* decodeBridgeRequest(encoded)).toEqual(request)
+      const payloads = [
+        ['ReadFile', 'path', '/secret'],
+        ['ChooseServer', 'origin', 'http://remote.example'],
+        ['ChooseServer', 'origin', 'https://vivid.example/api'],
+        ['ChooseServer', 'origin', 123],
+        ['OpenExternal', 'url', 'file:///secret'],
+        ['OpenExternal', 'url', 'mailto:person@example.test'],
+        ['OpenExternal', 'url', 'javascript:alert(1)'],
+        ['OpenExternal', 'url', 'https://person:secret@example.test'],
+        ['OpenExternal', 'url', null],
+      ] as const
+      for (const [tag, field, value] of payloads) {
+        const payload = Object.fromEntries([
+          ['_tag', tag],
+          [field, value],
+        ])
+        expect(yield* Effect.flip(decodeBridgeRequest(payload))).toBeInstanceOf(
+          InvalidBridgeMessage,
+        )
       }
     }),
   )
 
-  it.effect('round-trips a schema-owned response without widening its payload', () =>
+  it.effect('refuses corrupted server state at the preload response boundary', () =>
     Effect.gen(function* () {
-      const response = BridgeResponse.cases.AppInfo.make({
-        value: AppInfo.make({
-          appVersion: '1.0.0',
-          electronVersion: '44.4.3',
-          platform: 'linux',
-        }),
-      })
-      const encoded = yield* encodeBridgeResponse(response)
-      const decoded = yield* decodeBridgeResponse(encoded)
-
-      expect(BridgeResponse.guards.AppInfo(decoded)).toBe(true)
-      expect(decoded).toEqual(response)
-    }),
-  )
-
-  it.effect('rejects an undeclared request before dispatch', () =>
-    Effect.gen(function* () {
-      const undeclaredRequest = Object.fromEntries([
-        ['_tag', 'ReadFile'],
-        ['path', '/tmp/a'],
-      ])
-      const error = yield* Effect.flip(decodeBridgeRequest(undeclaredRequest))
-      expect(error).toBeInstanceOf(InvalidBridgeMessage)
+      for (const entries of [
+        [['_tag', 'Server']],
+        [
+          ['_tag', 'Server'],
+          ['origin', 'http://remote.example'],
+        ],
+      ]) {
+        const payload = Object.fromEntries([
+          ['_tag', 'Server'],
+          ['value', Object.fromEntries(entries)],
+        ])
+        expect(yield* Effect.flip(decodeBridgeResponse(payload))).toBeInstanceOf(
+          InvalidBridgeMessage,
+        )
+      }
     }),
   )
 })

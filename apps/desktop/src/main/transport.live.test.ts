@@ -34,7 +34,9 @@ const decodeProof = Schema.decodeUnknownEffect(Schema.fromJsonString(Proof))
 const fixture = Effect.acquireRelease(
   Effect.callback<NodeHttp.Server, DesktopProofFailed>((resume) => {
     const server = NodeHttp.createServer((request, response) => {
-      if (request.url === '/api/proof/cookie') {
+      if (request.url === '/health') {
+        response.end('{"ok":true,"service":"vivid"}')
+      } else if (request.url === '/api/proof/cookie') {
         response.setHeader('set-cookie', 'vivid-proof=present; Path=/; HttpOnly; SameSite=Lax')
         response.end('set')
       } else if (request.url === '/api/proof/session') {

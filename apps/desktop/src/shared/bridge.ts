@@ -1,9 +1,9 @@
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
-import { ServerAddress, ServerSettings } from './settings.ts'
+import { ServerAddress, ServerSettings, ServerChoice } from './settings.ts'
 
 /** The one renderer global exposed by the sandboxed preload. */
-export const BRIDGE_NAMESPACE = 'vividDesktop'
+export const BRIDGE_NAMESPACE = 'vivid'
 /** Main and preload use one invoke channel so the tagged request union is the channel allowlist. */
 export const BRIDGE_INVOKE_CHANNEL = 'vivid:desktop:invoke'
 /** Main and preload use one event channel so every event is decoded by the same closed union. */
@@ -37,21 +37,41 @@ export const ColorSchemeState = Schema.Struct({
 })
 export interface ColorSchemeState extends Schema.Schema.Type<typeof ColorSchemeState> {}
 
-/** Every renderer-to-main request is a closed, schema-decoded variant. */
+/** Only browser-safe destinations may be handed to the operating system. */
+export const ExternalUrl = Schema.String.check(
+  Schema.makeFilter(
+    (value) => {
+      if (!URL.canParse(value)) return false
+      const url = new URL(value)
+      return (
+        (url.protocol === 'http:' || url.protocol === 'https:') &&
+        url.username === '' &&
+        url.password === ''
+      )
+    },
+    { message: 'Expected an HTTP(S) external URL' },
+  ),
+)
+
+/** Every renderer-to-main capability and argument is schema-decoded in main. */
 export const BridgeRequest = Schema.TaggedUnion({
-  GetAppInfo: {},
-  GetColorSchemeState: {},
-  GetServerSettings: {},
-  SetServerAddress: { serverAddress: ServerAddress },
+  GetAppVersion: {},
+  GetServer: {},
+  ChooseServer: { origin: ServerAddress },
+  ForgetServer: {},
+  OpenExternal: { url: ExternalUrl },
 })
 export type BridgeRequest = typeof BridgeRequest.Type
 
-/** Every invoke result names the request it answers, preventing response-shape confusion. */
+/** Results name the operation they answer; persistence failure is never reported as Chosen. */
 export const BridgeResponse = Schema.TaggedUnion({
-  AppInfo: { value: AppInfo },
-  ColorSchemeState: { value: ColorSchemeState },
-  ServerSettings: { value: ServerSettings },
+  AppVersion: { value: NonEmptyString },
+  Server: { value: ServerSettings },
+  ServerChoice: { value: ServerChoice },
+  Forgotten: {},
+  ExternalOpened: {},
   SettingsSaveFailed: {},
+  ExternalOpenFailed: {},
 })
 export type BridgeResponse = typeof BridgeResponse.Type
 
@@ -107,11 +127,15 @@ export const encodeBridgeResponse = (response: BridgeResponse) =>
 /** Encode a trusted event before sending it to the isolated renderer. */
 export const encodeBridgeEvent = (event: BridgeEvent) => encodeEvent(event)
 
-/** The only API made visible to renderer JavaScript. */
+/** The local chooser and web shell import this type without Electron or filesystem authority. */
 export interface VividDesktopBridge {
-  readonly getAppInfo: () => Promise<AppInfo>
-  readonly getColorSchemeState: () => Promise<ColorSchemeState>
-  readonly getServerSettings: () => Promise<ServerSettings>
-  readonly setServerAddress: (serverAddress: string) => Promise<ServerSettings>
-  readonly onColorSchemeChanged: (listener: (state: ColorSchemeState) => void) => () => void
+  readonly server: {
+    readonly get: () => Promise<ServerSettings>
+    readonly choose: (origin: string) => Promise<ServerChoice>
+    readonly forget: () => Promise<void>
+  }
+  readonly getAppVersion: () => Promise<string>
+  readonly openExternal: (url: string) => Promise<void>
 }
+
+export { ServerSettings, ServerChoice } from './settings.ts'

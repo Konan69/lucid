@@ -1,19 +1,22 @@
 import * as NodePath from 'node:path'
+import * as NodeURL from 'node:url'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
-import { BrowserWindow, shell, type BrowserWindowConstructorOptions } from 'electron'
-import type { DesktopPlatform } from '../shared/bridge.ts'
+import { BrowserWindow, shell, type BrowserWindowConstructorOptions, type Session } from 'electron'
+import { ExternalUrl, type DesktopPlatform } from '../shared/bridge.ts'
+import { isAppRequest, isTrustedDocument } from './security.ts'
+import { ServerAddress, ServerSettings } from '../shared/settings.ts'
 import { sendColorSchemeChanged } from './bridge.ts'
 import { WindowPlacement, type WindowPlacement as WindowPlacementValue } from './placement.ts'
 import type { ColorSchemeController } from './theme.ts'
 
 const SIDEBAR_WIDTH = 268
 
-/** Both modes load a same-origin URL; packaged mode serves its own local assets there. */
+/** An unconfigured shell loads only its local chooser; a chosen server supplies one origin. */
 export const RendererSource = Schema.TaggedUnion({
-  Development: { url: Schema.URL },
-  Packaged: { url: Schema.URL },
+  Chooser: { path: Schema.String },
+  Server: { origin: ServerAddress },
 })
 export type RendererSource = typeof RendererSource.Type
 
@@ -31,7 +34,7 @@ export class ExternalUrlOpenFailed extends Schema.TaggedError<ExternalUrlOpenFai
   { title: 'External URL could not be opened' },
 ) {}
 
-const decodeUrl = Schema.decodeUnknownOption(Schema.URLFromString)
+const decodeExternal = Schema.decodeUnknownOption(ExternalUrl)
 
 /** Platform chrome is selected from an injected host value so cross-platform branches stay pure. */
 function chromeOptions(
@@ -67,44 +70,44 @@ const placementOptions = (
     Positioned: ({ width, height, x, y }) => ({ width, height, x, y }),
   })
 
-/** Decide whether a navigation remains inside the exact renderer document or development origin. */
+/** Compare chooser documents exactly and selected server navigation by its single origin. */
 function isRendererDocument(url: string, source: RendererSource): boolean {
-  return Option.match(decodeUrl(url), {
-    onNone: () => false,
-    onSome: (parsed) =>
-      RendererSource.match(source, {
-        Development: ({ url: developmentUrl }) => parsed.origin === developmentUrl.origin,
-        Packaged: ({ url: serverUrl }) =>
-          parsed.origin === serverUrl.origin &&
-          parsed.pathname !== '/api' &&
-          !parsed.pathname.startsWith('/api/'),
+  return RendererSource.match(source, {
+    Chooser: ({ path }) =>
+      isTrustedDocument(
+        url,
+        ServerSettings.cases.NoServer.make({}),
+        NodeURL.pathToFileURL(path).href,
+      ),
+    Server: ({ origin }) =>
+      /^https?:/.test(url) && isAppRequest(url, ServerSettings.cases.Server.make({ origin })),
+  })
+}
+
+/** Only explicit HTTP(S) browser destinations may leave the desktop shell. */
+export function openExternalUrl(url: string) {
+  return Option.match(decodeExternal(url), {
+    onNone: () => Effect.void,
+    onSome: (destination) =>
+      Effect.tryPromise({
+        try: () => shell.openExternal(destination),
+        catch: () => new ExternalUrlOpenFailed({ url: destination }),
       }),
   })
 }
 
-/** Only explicit browser, mail, and telephone schemes may leave the desktop shell. */
-export function openExternalUrl(url: string) {
-  return Option.match(decodeUrl(url), {
-    onNone: () => Effect.void,
-    onSome: (parsed) => {
-      const allowed = ['http:', 'https:', 'mailto:', 'tel:'].includes(parsed.protocol)
-      if (!allowed) return Effect.void
-      return Effect.tryPromise({
-        try: () => shell.openExternal(parsed.href),
-        catch: () => new ExternalUrlOpenFailed({ url: parsed.href }),
-      })
-    },
-  })
-}
-
-/** Block popups and off-origin navigation while handing allowed destinations to the OS. */
+/**
+ * Adapt the reference desktop's main-window navigation guard (window/DesktopWindow.ts): new
+ * windows never gain preload authority, foreign browser links leave the shell, and redirects
+ * cannot change the trusted application origin.
+ */
 function guardNavigation(
   window: BrowserWindow,
   source: () => RendererSource,
   onExternalUrl: (url: string) => void,
 ): void {
   window.webContents.setWindowOpenHandler(({ url }) => {
-    onExternalUrl(url)
+    if (!isRendererDocument(url, source())) onExternalUrl(url)
     return { action: 'deny' }
   })
   window.webContents.on('will-navigate', (event, url) => {
@@ -112,6 +115,10 @@ function guardNavigation(
     event.preventDefault()
     onExternalUrl(url)
   })
+  window.webContents.on('will-redirect', (event, url) => {
+    if (!isRendererDocument(url, source())) event.preventDefault()
+  })
+  window.webContents.on('will-attach-webview', (event) => event.preventDefault())
 }
 
 /** Coalesce resize and move bursts while always persisting the final close geometry. */
@@ -150,6 +157,7 @@ export interface MainWindowDependencies {
   readonly platform: DesktopPlatform
   readonly colorScheme: ColorSchemeController
   readonly renderer: () => RendererSource
+  readonly session: Session
   readonly placement: WindowPlacementValue
   readonly onExternalUrl: (url: string) => void
   readonly onPlacementChanged: (placement: WindowPlacementValue) => void
@@ -174,6 +182,9 @@ export function createMainWindow(dependencies: MainWindowDependencies): BrowserW
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webSecurity: true,
+      webviewTag: false,
+      session: dependencies.session,
     },
   })
 
@@ -203,14 +214,14 @@ export const loadRenderer = Effect.fn('DesktopWindow.loadRenderer')(function* (
   source: RendererSource,
 ) {
   const label = RendererSource.match(source, {
-    Development: ({ url }) => url.href,
-    Packaged: ({ url }) => url.href,
+    Chooser: ({ path }) => path,
+    Server: ({ origin }) => origin,
   })
   yield* Effect.tryPromise({
     try: () =>
       RendererSource.match(source, {
-        Development: ({ url }) => window.loadURL(url.href),
-        Packaged: ({ url }) => window.loadURL(url.href),
+        Chooser: ({ path }) => window.loadFile(path),
+        Server: ({ origin }) => window.loadURL(origin),
       }),
     catch: () => new RendererLoadFailed({ source: label }),
   })
