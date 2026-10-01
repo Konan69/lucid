@@ -36,7 +36,11 @@ const vivid = (text: string) => ({ speaker: 'Vivid' as const, text })
 const phoneFrames: ReadonlyArray<{ id: string; title: string; screen: PhoneScreen }> = [
   { id: 'phone-asleep', title: '1 · Before the demo', screen: PhoneScreen.Asleep() },
   { id: 'phone-waiting', title: '2 · Waiting for Vivid', screen: PhoneScreen.Waiting() },
-  { id: 'phone-incoming', title: '3 · Vivid calls the teammate', screen: PhoneScreen.Incoming({ call: phoneCall(teammate) }) },
+  {
+    id: 'phone-incoming',
+    title: '3 · Vivid calls the teammate',
+    screen: PhoneScreen.Incoming({ call: phoneCall(teammate) }),
+  },
   {
     id: 'phone-talking',
     title: '4 · On the call',
@@ -66,7 +70,12 @@ const laptopFrames: ReadonlyArray<{
   voice: VoiceControls
   ended: string
 }> = [
-  { id: 'laptop-connecting', title: 'A · Connecting', voice: still({ phase: VoicePhase.cases.Connecting.make({}) }), ended: '' },
+  {
+    id: 'laptop-connecting',
+    title: 'A · Connecting',
+    voice: still({ phase: VoicePhase.cases.Connecting.make({}) }),
+    ended: '',
+  },
   {
     id: 'laptop-listening',
     title: 'B · You talk',
@@ -266,7 +275,8 @@ export function Canvas() {
         drag === null ? 'cursor-grab' : 'cursor-grabbing',
       )}
       onPointerDown={(event) => {
-        if (event.target instanceof Element && event.target.closest('[data-chrome]') !== null) return
+        if (event.target instanceof Element && event.target.closest('[data-chrome]') !== null)
+          return
         event.currentTarget.setPointerCapture(event.pointerId)
         setDrag({ x: event.clientX - view.x, y: event.clientY - view.y })
       }}

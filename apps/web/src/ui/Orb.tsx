@@ -65,7 +65,9 @@ const intensity = (
   }
   // Resting breathes slowly; measured loudness (the Person talking) adds a softer ripple on top.
   return (
-    0.62 + 0.12 * Math.sin(t * 1.05 - d * 2.4) + 0.3 * amplitude * (0.5 + 0.5 * Math.sin(d * 4.2 - t * 3))
+    0.62 +
+    0.12 * Math.sin(t * 1.05 - d * 2.4) +
+    0.3 * amplitude * (0.5 + 0.5 * Math.sin(d * 4.2 - t * 3))
   )
 }
 
@@ -78,8 +80,7 @@ export type Loudness =
 const ATTACK = 0.22
 const RELEASE = 0.08
 
-const isMood = (value: string | undefined): value is OrbMood =>
-  MOODS.some((mood) => mood === value)
+const isMood = (value: string | undefined): value is OrbMood => MOODS.some((mood) => mood === value)
 
 /**
  * Starts painting `canvas` and returns the cleanup that stops it. `live` decides between a frame
@@ -123,11 +124,18 @@ const paint = (canvas: HTMLCanvasElement, size: number, live: boolean, loudness:
           (sum, mood) => sum + weights[mood] * intensity(mood, { d, nx, ny }, t, amplitude),
           0,
         )
-        const radius = maxRadius * Math.exp(-d * d * 1.7) * Math.min(1, Math.max(0, blended)) * scale
+        const radius =
+          maxRadius * Math.exp(-d * d * 1.7) * Math.min(1, Math.max(0, blended)) * scale
         // Anything under half a device pixel renders as haze, not a dot.
         if (radius * ratio < 0.5) continue
         context.beginPath()
-        context.arc(center + (ix - half) * spacing * scale, center + (iy - half) * spacing * scale, radius, 0, TAU)
+        context.arc(
+          center + (ix - half) * spacing * scale,
+          center + (iy - half) * spacing * scale,
+          radius,
+          0,
+          TAU,
+        )
         context.fill()
       }
     }
@@ -155,7 +163,8 @@ const paint = (canvas: HTMLCanvasElement, size: number, live: boolean, loudness:
     velocity += (-STIFFNESS * (scale - SCALE[mood]) - DAMPING * velocity) * dt
     scale += velocity * dt
     const goal = target(t, mood)
-    amplitude += (goal - amplitude) * (1 - Math.pow(1 - (goal > amplitude ? ATTACK : RELEASE), dt * 60))
+    amplitude +=
+      (goal - amplitude) * (1 - Math.pow(1 - (goal > amplitude ? ATTACK : RELEASE), dt * 60))
     draw(t, scale, amplitude)
     frame = requestAnimationFrame(tick)
   }
@@ -181,7 +190,8 @@ export function Orb({
   // Stable per size and liveness, so a mood change re-renders without restarting the loop; a
   // change to either restarts it through the returned cleanup.
   const attach = useCallback(
-    (canvas: HTMLCanvasElement | null) => (canvas === null ? undefined : paint(canvas, size, live, loudness)),
+    (canvas: HTMLCanvasElement | null) =>
+      canvas === null ? undefined : paint(canvas, size, live, loudness),
     [size, live, loudness],
   )
   return (

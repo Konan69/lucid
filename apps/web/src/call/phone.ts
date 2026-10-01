@@ -97,15 +97,15 @@ export class PhoneLine {
       .getUserMedia({ audio: true })
       .catch((refusal: unknown): string => (refusal instanceof Error ? refusal.name : 'unknown'))
     // Without a microphone there is no call to answer, so say so rather than waiting in silence.
-    if (typeof microphone === 'string') return this.#show(PhoneScreen.Blocked({ reason: microphone }))
+    if (typeof microphone === 'string')
+      return this.#show(PhoneScreen.Blocked({ reason: microphone }))
     for (const track of microphone.getTracks()) track.stop()
     const audio = new AudioContext()
     await audio.resume()
     this.#ringtone = new Ringtone(audio)
     // Keeping the screen awake is a nicety, and browsers refuse it in plenty of ordinary
     // situations; a refusal must never stop the phone from being reachable.
-    if ('wakeLock' in navigator)
-      await navigator.wakeLock.request('screen').catch(() => undefined)
+    if ('wakeLock' in navigator) await navigator.wakeLock.request('screen').catch(() => undefined)
     this.#show(PhoneScreen.Waiting())
     void this.#listen()
   }

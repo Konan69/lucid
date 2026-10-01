@@ -17,7 +17,6 @@ import {
   Search,
   Settings as SettingsIcon,
   SquarePen,
-  Sun,
   Trash2,
   Users,
 } from 'lucide-react'
@@ -118,12 +117,6 @@ export function Sidebar({
             label="New thread"
             active={Route.$is('New')(route)}
             onClick={() => router.go(Route.New())}
-          />
-          <ToolRow
-            icon={<Sun className="size-4" strokeWidth={1.6} />}
-            label="Today"
-            active={Route.$is('Today')(route)}
-            onClick={() => router.go(Route.Today())}
           />
           <ToolRow
             icon={<Repeat2 className="size-4" strokeWidth={1.6} />}

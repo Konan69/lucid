@@ -31,11 +31,7 @@ function WorkCard({ work }: { work: Work }) {
   switch (work.kind) {
     case 'message':
       return (
-        <Card
-          mark={<MessageSquare className="size-5" />}
-          title={work.from}
-          detail={work.text}
-        />
+        <Card mark={<MessageSquare className="size-5" />} title={work.from} detail={work.text} />
       )
     case 'email':
       return (

@@ -185,15 +185,16 @@ The surface rule in [Principle](01-principle.md) holds: a Thread list, a Thread,
 - **Workspaces.** The switcher at the top of the sidebar lists the personal space and every Company
   the Person belongs to, and ends with **Create a company**: a name, and that is all. An invitation
   link shows who invited them and to what before they accept.
-- **Sidebar.** Vivid, then Today, Routines, Library and Projects, then Threads grouped by attention:
+- **Sidebar.** Vivid, then Routines, Library and Projects, then Threads grouped by attention:
   **Needs you**, **Working**, then by day. A shared Thread shows the faces of the people in it. A
   search palette (⌘K) finds Threads, Messages, Library items, Tasks and Routines.
 - **Thread.** The header carries the title and **Share**: add people by name, or share with the whole
   Company. In a shared Thread each Message shows who sent it, and Vivid shows who it is answering.
   Cards in the Thread: a question to answer, an action to approve, a service to connect, a draft to
   send, a Routine created, a Task created, a result to open.
-- **Today.** Tasks that are the Person's, assigned to them, or waiting on them, with what Vivid is
-  chasing and what needs a decision.
+- **Tasks.** There is no separate page of Tasks. What Vivid is tracking shows where it was agreed,
+  as a card in its Thread, and anything that needs the Person reaches them as a notification and
+  as a Thread under **Needs you**.
 - **Library.** Two shelves: **Mine** and the Company's.
 - **Settings.** General; **People** (invite, roles, remove); **Connections** (mine and shared);
   **Rules** (mine and the Company's); **What Vivid knows**; notifications. People, shared

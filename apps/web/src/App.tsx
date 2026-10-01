@@ -18,7 +18,6 @@ import { Routines } from './screen/Routines'
 import { Settings } from './screen/Settings'
 import { Sidebar } from './screen/Sidebar'
 import { Thread } from './screen/Thread'
-import { Today } from './screen/Today'
 import { Welcome } from './screen/Welcome'
 import { Face } from './ui/Face'
 
@@ -136,7 +135,6 @@ function Place({
   return Route.$match(route, {
     New: () => <First me={me} />,
     Thread: ({ id }) => <Thread id={id} me={me} panelOpen={panel} onTogglePanel={onTogglePanel} />,
-    Today: () => <Today onOpenConversation={openThread} />,
     Routines: () => <Routines onOpenConversation={(thread) => openThread(thread.id)} />,
     Library: () => (
       <Library

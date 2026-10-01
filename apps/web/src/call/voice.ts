@@ -31,7 +31,10 @@ interface DailyInput {
 }
 
 /** The assistant a call runs with: an inline, per-call definition rather than a saved one. */
-export type Assistant = Exclude<Parameters<InstanceType<typeof Vapi>['start']>[0], string | undefined>
+export type Assistant = Exclude<
+  Parameters<InstanceType<typeof Vapi>['start']>[0],
+  string | undefined
+>
 
 /** Who is talking, before, during and after the call. */
 export const VoicePhase = Schema.TaggedUnion({
@@ -226,9 +229,9 @@ export class VoiceCall implements VoiceControls {
    */
   #plainMicrophone() {
     const daily = (this.#vapi as unknown as { readonly call?: DailyInput }).call
-    void daily?.updateInputSettings({ audio: { processor: { type: 'none' } } })?.catch(
-      () => undefined,
-    )
+    void daily
+      ?.updateInputSettings({ audio: { processor: { type: 'none' } } })
+      ?.catch(() => undefined)
   }
 
   /**

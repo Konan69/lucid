@@ -35,7 +35,6 @@ export function Notifications({ onClose }: { onClose: () => void }) {
       return
     }
     if (notice.threadId !== null) router.go(Route.Thread({ id: ThreadId.make(notice.threadId) }))
-    else if (notice.taskId !== null) router.go(Route.Today())
   }
 
   return (

@@ -92,7 +92,10 @@ export function VoiceCard({
       <div className="flex h-16 items-center gap-3 rounded-full bg-surface-2 px-3">
         <Face size={40} mood={VoicePhase.guards.Speaking(phase) ? 'happy' : 'neutral'} />
         {status !== undefined ? (
-          <p className="min-w-0 flex-1 truncate text-label font-title text-ink-2" aria-live="polite">
+          <p
+            className="min-w-0 flex-1 truncate text-label font-title text-ink-2"
+            aria-live="polite"
+          >
             {status}
           </p>
         ) : (

@@ -1,6 +1,14 @@
 import { Schema } from 'effect'
 import { placeRing } from './relay'
-import { beats, laptopAssistant, phoneCall, ringDelayMs, teammate, workForTurn, type Work } from './script'
+import {
+  beats,
+  laptopAssistant,
+  phoneCall,
+  ringDelayMs,
+  teammate,
+  workForTurn,
+  type Work,
+} from './script'
 import { VoiceCall } from './voice'
 
 /** The call Vivid places to the teammate once the talk is over. */

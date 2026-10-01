@@ -23,7 +23,8 @@ const describe = (result: Found) =>
       title: task.title,
       detail: 'Task',
       icon: <ListTodo className="size-4" />,
-      go: () => router.go(Route.Today()),
+      // A Task lives in the Thread it reports to; that is where it is read and changed.
+      go: () => router.go(Route.Thread({ id: task.threadId })),
     }),
     LibraryItem: ({ item }) => ({
       key: `item:${item.id}`,

@@ -8,14 +8,13 @@ import { Data, Option, Schema } from 'effect'
  *
  * - `New`: the first screen, a Thread that does not exist yet.
  * - `Thread`: one Thread.
- * - `Today`, `Routines`, `Library`, `Projects`: the four places beside Threads.
+ * - `Routines`, `Library`, `Projects`: the three places beside Threads.
  * - `Invite`: an invitation to a Company, shown before it is accepted.
  * - `Device`: approving a phone or desktop app that is asking to sign in as this Person.
  */
 export type Route = Data.TaggedEnum<{
   New: {}
   Thread: { readonly id: ThreadId }
-  Today: {}
   Routines: {}
   Library: {}
   Projects: {}
@@ -39,7 +38,6 @@ export type SettingsSection = typeof SettingsSection.Type
 const decodeSection = Schema.decodeUnknownOption(SettingsSection)
 
 const PLACES = new Map<string, Route>([
-  ['today', Route.Today()],
   ['routines', Route.Routines()],
   ['library', Route.Library()],
   ['projects', Route.Projects()],
@@ -68,7 +66,6 @@ export const pathOf = (route: Route): string =>
   Route.$match(route, {
     New: () => '/',
     Thread: ({ id }) => `/t/${encodeURIComponent(id)}`,
-    Today: () => '/today',
     Routines: () => '/routines',
     Library: () => '/library',
     Projects: () => '/projects',
