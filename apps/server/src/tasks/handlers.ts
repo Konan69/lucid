@@ -1,93 +1,120 @@
 import * as Effect from 'effect/Effect'
-import * as Option from 'effect/Option'
 import {
   FollowUpResponse,
-  NotFound,
-  RoutineId,
   TaskListResponse,
   TaskResponse,
+  type CreateTaskRequest,
+  type FollowUpId,
+  type FollowUpInput,
+  type NudgeTaskRequest,
+  type PatchFollowUpRequest,
+  type PatchTaskRequest,
+  type TaskId,
+  type TaskListQuery,
 } from '@vivid/contracts'
-import { AuthContext, AuthState } from '@vivid/contracts/api'
+import { requireActor, type Actor } from '../auth/access.ts'
+import { changed, Topic } from '../live/changes.ts'
+import { live } from '../live/query.ts'
 import { FollowUps } from './followups.ts'
 import { TaskStore } from './store.ts'
 
-const withTask = Effect.fn('TaskHandlers.withTask')(function* (store: TaskStore['Service'], id) {
-  const task = yield* store.get(id)
-  if (Option.isNone(task)) return yield* Effect.fail(new NotFound({ message: 'Task not found' }))
-  return task.value
+/** List and Watch use one loader and therefore one workspace access policy. */
+const loadTasks = Effect.fn('Tasks.load')(function* (
+  actor: Actor,
+  query: typeof TaskListQuery.Type,
+) {
+  return TaskListResponse.make({ tasks: yield* (yield* TaskStore).list(actor, query) })
 })
 
 export const taskHandlers = {
-  ListTasks: Effect.fn('Rpc.ListTasks')(function* ({ status }) {
-    const store = yield* TaskStore
-    return TaskListResponse.make({ tasks: yield* store.list(status) })
+  ListTasks: Effect.fn('Rpc.ListTasks')(function* (query: typeof TaskListQuery.Type) {
+    return yield* loadTasks(yield* requireActor(), query)
   }),
-  CreateTask: Effect.fn('Rpc.CreateTask')(function* (request) {
-    const store = yield* TaskStore
-    const auth = yield* AuthContext
-    const runtime = AuthState.$is('Runtime')(auth)
-    const origin =
-      runtime && request.threadId !== undefined
-        ? request.threadId.startsWith('routine-')
-          ? {
-              kind: 'routine' as const,
-              routineId: RoutineId.make(request.threadId.slice('routine-'.length)),
-            }
-          : { kind: 'conversation' as const, conversationId: request.threadId }
-        : { kind: 'manual' as const }
-    return TaskResponse.make({
-      task: yield* store.create({ request, origin, createdBy: runtime ? 'vivid' : 'you' }),
-    })
+  /** The subscription follows workspace switches and membership removal. */
+  WatchTasks: (query: typeof TaskListQuery.Type) => live((actor) => loadTasks(actor, query)),
+  /** Attribution is taken from the Actor, never from mutation input. */
+  CreateTask: Effect.fn('Rpc.CreateTask')(function* (request: CreateTaskRequest) {
+    const actor = yield* requireActor()
+    const task = yield* (yield* TaskStore).create(actor, request)
+    yield* changed(actor, Topic.thread(task.threadId))
+    return TaskResponse.make({ task })
   }),
-  PatchTask: Effect.fn('Rpc.PatchTask')(function* ({ id, patch }) {
-    const store = yield* TaskStore
-    const task = yield* store.patch(id, patch)
-    if (Option.isNone(task)) return yield* Effect.fail(new NotFound({ message: 'Task not found' }))
-    return TaskResponse.make({ task: task.value })
+  /** Publish the reporting Thread as well as the caller's workspace after editing. */
+  PatchTask: Effect.fn('Rpc.PatchTask')(function* ({
+    id,
+    patch,
+  }: {
+    id: TaskId
+    patch: PatchTaskRequest
+  }) {
+    const actor = yield* requireActor()
+    const task = yield* (yield* TaskStore).patch(actor, id, patch)
+    yield* changed(actor, Topic.thread(task.threadId))
+    return TaskResponse.make({ task })
   }),
-  DeleteTask: Effect.fn('Rpc.DeleteTask')(function* ({ id }) {
+  /** The store enforces creator-or-assignee deletion. */
+  DeleteTask: Effect.fn('Rpc.DeleteTask')(function* ({ id }: { id: TaskId }) {
+    const actor = yield* requireActor()
     const store = yield* TaskStore
-    if (!(yield* store.remove(id))) yield* Effect.fail(new NotFound({ message: 'Task not found' }))
-    return yield* Effect.void
+    const task = yield* store.get(actor, id)
+    yield* store.remove(actor, id)
+    yield* changed(actor, Topic.thread(task.threadId))
   }),
-  NudgeTask: Effect.fn('Rpc.NudgeTask')(function* ({ id, nudge }) {
-    const store = yield* TaskStore
-    yield* withTask(store, id)
-    const followUps = yield* FollowUps
-    yield* followUps.nudge(id, nudge.note ?? '')
-    return TaskResponse.make({ task: yield* withTask(store, id) })
+  /** An immediate nudge uses the same Conversation delivery path as scheduled work. */
+  NudgeTask: Effect.fn('Rpc.NudgeTask')(function* ({
+    id,
+    nudge,
+  }: {
+    id: TaskId
+    nudge: typeof NudgeTaskRequest.Type
+  }) {
+    const actor = yield* requireActor()
+    yield* (yield* FollowUps).nudge(actor, id, nudge)
+    yield* changed(actor)
+    return TaskResponse.make({ task: yield* (yield* TaskStore).get(actor, id) })
   }),
-  AddFollowUp: Effect.fn('Rpc.AddFollowUp')(function* ({ taskId, followUp }) {
+  /** Follow-up creation inherits its Task's visibility and reports the updated projection. */
+  AddFollowUp: Effect.fn('Rpc.AddFollowUp')(function* ({
+    taskId,
+    followUp,
+  }: {
+    taskId: TaskId
+    followUp: FollowUpInput
+  }) {
+    const actor = yield* requireActor()
     const store = yield* TaskStore
-    const task = yield* withTask(store, taskId)
-    const created = yield* store.addFollowUp(taskId, followUp, 'you')
-    return FollowUpResponse.make({ followUp: created, task: yield* withTask(store, task.id) })
+    const created = yield* store.addFollowUp(actor, taskId, followUp)
+    yield* changed(actor)
+    return FollowUpResponse.make({ followUp: created, task: yield* store.get(actor, taskId) })
   }),
-  PatchFollowUp: Effect.fn('Rpc.PatchFollowUp')(function* ({ id, patch }) {
+  /** A payload id cannot edit a follow-up on an invisible Task. */
+  PatchFollowUp: Effect.fn('Rpc.PatchFollowUp')(function* ({
+    id,
+    patch,
+  }: {
+    id: FollowUpId
+    patch: typeof PatchFollowUpRequest.Type
+  }) {
+    const actor = yield* requireActor()
     const store = yield* TaskStore
-    const followUp = yield* store.patchFollowUp(id, patch)
-    if (Option.isNone(followUp))
-      return yield* Effect.fail(new NotFound({ message: 'Follow-up not found' }))
+    const followUp = yield* store.patchFollowUp(actor, id, patch)
+    yield* changed(actor)
+    return FollowUpResponse.make({ followUp, task: yield* store.get(actor, followUp.taskId) })
+  }),
+  /** Removal is scoped at the store boundary and then wakes live queries. */
+  DeleteFollowUp: Effect.fn('Rpc.DeleteFollowUp')(function* ({ id }: { id: FollowUpId }) {
+    const actor = yield* requireActor()
+    yield* (yield* TaskStore).removeFollowUp(actor, id)
+    yield* changed(actor)
+  }),
+  /** The store claims and delivers as the Task's owner, even for a different visible Member. */
+  RunFollowUp: Effect.fn('Rpc.RunFollowUp')(function* ({ id }: { id: FollowUpId }) {
+    const actor = yield* requireActor()
+    const followUp = yield* (yield* FollowUps).run(actor, id)
+    yield* changed(actor)
     return FollowUpResponse.make({
-      followUp: followUp.value,
-      task: yield* withTask(store, followUp.value.taskId),
-    })
-  }),
-  DeleteFollowUp: Effect.fn('Rpc.DeleteFollowUp')(function* ({ id }) {
-    const store = yield* TaskStore
-    if (!(yield* store.removeFollowUp(id)))
-      yield* Effect.fail(new NotFound({ message: 'Follow-up not found' }))
-    return yield* Effect.void
-  }),
-  RunFollowUp: Effect.fn('Rpc.RunFollowUp')(function* ({ id }) {
-    const service = yield* FollowUps
-    const followUp = yield* service.run(id)
-    if (Option.isNone(followUp))
-      return yield* Effect.fail(new NotFound({ message: 'Follow-up not found' }))
-    const store = yield* TaskStore
-    return FollowUpResponse.make({
-      followUp: followUp.value,
-      task: yield* withTask(store, followUp.value.taskId),
+      followUp,
+      task: yield* (yield* TaskStore).get(actor, followUp.taskId),
     })
   }),
 }
