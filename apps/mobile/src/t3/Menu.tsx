@@ -3,25 +3,21 @@ import { Platform, StyleSheet, View } from 'react-native'
 import {
   cloneElement,
   isValidElement,
-  useEffectEvent,
-  useRef,
+  useState,
   type ComponentProps,
   type ReactElement,
 } from 'react'
 import { useTheme } from '../theme'
 
-function showAndroidMenu(menu: { readonly current: MenuComponentRef | null }) {
-  const currentMenu = menu.current
-  if (currentMenu !== null) currentMenu.show()
-}
-
 // T3's long-press suppression: releasing a menu gesture must not open the row.
 export function ControlPillMenu(props: ComponentProps<typeof MenuView>) {
   const { dark } = useTheme()
-  const menu = useRef<MenuComponentRef>(null)
-  const openMenu = useEffectEvent(() => {
-    if (Platform.OS === 'android') showAndroidMenu(menu)
-  })
+  // The native menu is kept as state, not a ref: the long press that opens it is wired onto the
+  // child below while rendering, and a handler built during render may not close over a ref.
+  const [menu, setMenu] = useState<MenuComponentRef | null>(null)
+  const openMenu = () => {
+    if (Platform.OS === 'android' && menu !== null) menu.show()
+  }
   let children = props.children
   if (props.shouldOpenOnLongPress && isValidElement(children)) {
     // SAFETY: isValidElement confirms that children is a React element before its props are read.
@@ -47,7 +43,7 @@ export function ControlPillMenu(props: ComponentProps<typeof MenuView>) {
         <View pointerEvents="none" style={StyleSheet.absoluteFill}>
           <MenuView
             {...props}
-            ref={menu}
+            ref={setMenu}
             themeVariant={dark ? 'dark' : 'light'}
             style={{ flex: 1 }}
           >

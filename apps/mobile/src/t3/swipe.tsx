@@ -2,24 +2,8 @@ import { SymbolView } from './Symbol'
 import { ControlPillMenu } from './Menu'
 import type { MenuAction } from '@react-native-menu/menu'
 import * as Haptics from 'expo-haptics'
-import {
-  createContext,
-  use,
-  useCallback,
-  useEffectEvent,
-  useEffect,
-  useRef,
-  useState,
-  type ComponentProps,
-  type ReactNode,
-} from 'react'
-import type {
-  ColorValue,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
-  StyleProp,
-  ViewStyle,
-} from 'react-native'
+import { useCallback, useRef, useState, type ComponentProps, type ReactNode } from 'react'
+import type { ColorValue, StyleProp, ViewStyle } from 'react-native'
 import { Pressable, View } from 'react-native'
 import ReanimatedSwipeable, {
   type SwipeableMethods,
@@ -42,16 +26,6 @@ const ACTION_CIRCLE_SIZE = 36
 const ACTION_ICON_SIZE = 15
 const COMPACT_ACTION_CIRCLE_SIZE = 28
 const COMPACT_ACTION_ICON_SIZE = 13
-
-function closeSwipeable(ref: { readonly current: SwipeableMethods | null }) {
-  const current = ref.current
-  if (current !== null) current.close()
-}
-
-function resetSwipeable(ref: { readonly current: SwipeableMethods | null }) {
-  const current = ref.current
-  if (current !== null) current.reset()
-}
 
 export const THREAD_SWIPE_ACTIONS_WIDTH = ACTION_ITEM_WIDTH * 2
 export const THREAD_SWIPE_SPRING = {
@@ -125,109 +99,6 @@ function resolveSecondaryAction(input: {
   }
 }
 
-/**
- * Delivers the scroll gate to swipeables via context so that flipping it does
- * NOT re-render whole rows: putting the flag in list extraData/renderItem deps
- * re-rendered every visible row (hooks, subscriptions and all) exactly at
- * scroll start — peak frame pressure. As a context value only the
- * ThreadSwipeable consumers re-render.
- */
-const SwipeableScrollGateContext = createContext(true)
-
-export function SwipeableScrollGateProvider(props: {
-  readonly enabled: boolean
-  readonly children: ReactNode
-}) {
-  return (
-    <SwipeableScrollGateContext.Provider value={props.enabled}>
-      {props.children}
-    </SwipeableScrollGateContext.Provider>
-  )
-}
-
-/**
- * T3's scroll gate disables swipes while the list is dragging or decelerating.
- * T3's Gesture Handler patch also rejects vertically dominant initial pans.
- */
-export function useSwipeableScrollGate(
-  options: {
-    readonly onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void
-    readonly onScrollBeginDrag?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void
-  } = {},
-) {
-  const [gateActive, setGateActive] = useState(false)
-  const gateActiveRef = useRef(false)
-  const draggingRef = useRef(false)
-  const dragStartYRef = useRef(0)
-  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const externalOnScroll = options.onScroll
-  const externalOnScrollBeginDrag = options.onScrollBeginDrag
-
-  const update = useCallback((next: boolean) => {
-    if (gateActiveRef.current !== next) {
-      gateActiveRef.current = next
-      setGateActive(next)
-    }
-  }, [])
-  const clearSettle = useCallback(() => {
-    if (settleTimerRef.current !== null) {
-      clearTimeout(settleTimerRef.current)
-      settleTimerRef.current = null
-    }
-  }, [])
-  useEffect(() => clearSettle, [clearSettle])
-
-  const onScrollBeginDrag = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      draggingRef.current = true
-      dragStartYRef.current = event.nativeEvent.contentOffset.y
-      clearSettle()
-      if (externalOnScrollBeginDrag !== undefined) externalOnScrollBeginDrag(event)
-    },
-    [clearSettle, externalOnScrollBeginDrag],
-  )
-  const onScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      // Only vertical movement during a user drag arms the gate — a purely
-      // horizontal row swipe never moves contentOffset.y, and inset-driven
-      // offset changes at mount happen outside a drag.
-      if (
-        draggingRef.current &&
-        !gateActiveRef.current &&
-        Math.abs(event.nativeEvent.contentOffset.y - dragStartYRef.current) > 4
-      ) {
-        update(true)
-      }
-      if (externalOnScroll !== undefined) externalOnScroll(event)
-    },
-    [externalOnScroll, update],
-  )
-  const onScrollEndDrag = useCallback(() => {
-    draggingRef.current = false
-    clearSettle()
-    // If momentum follows, onMomentumScrollBegin cancels this and the gate
-    // stays armed until the deceleration finishes.
-    settleTimerRef.current = setTimeout(() => update(false), 160)
-  }, [clearSettle, update])
-  const onMomentumScrollBegin = useCallback(() => {
-    clearSettle()
-  }, [clearSettle])
-  const onMomentumScrollEnd = useCallback(() => {
-    update(false)
-  }, [update])
-
-  return {
-    swipeEnabled: !gateActive,
-    scrollGateHandlers: {
-      onScroll,
-      onScrollBeginDrag,
-      onScrollEndDrag,
-      onMomentumScrollBegin,
-      onMomentumScrollEnd,
-    },
-  }
-}
-
 export function ThreadSwipeable(props: {
   readonly backgroundColor: ColorValue
   readonly children: (close: () => void) => ReactNode
@@ -255,12 +126,6 @@ export function ThreadSwipeable(props: {
    * unadvertised Delete.
    */
   readonly secondaryAction?: ThreadSwipeAction | null
-  /**
-   * Identity of the content being wrapped. When a recycled list reuses this
-   * component for a different item, the swipeable snaps back to closed so an
-   * open/mid-drag state can't leak onto another row.
-   */
-  readonly resetKey?: string
   readonly simultaneousWithExternalGesture?: ComponentProps<
     typeof ReanimatedSwipeable
   >['simultaneousWithExternalGesture']
@@ -274,16 +139,14 @@ export function ThreadSwipeable(props: {
   const fullSwipeThreshold = Math.max(actionsWidth + 44, props.fullSwipeWidth * 0.58)
   const fullSwipeAction =
     props.fullSwipeAction ?? (props.secondaryAction === undefined ? 'delete' : 'primary')
-  const close = useEffectEvent(() => closeSwipeable(swipeableRef))
-  const gateEnabled = use(SwipeableScrollGateContext)
-  const resetKey = props.resetKey
-  useEffect(() => {
-    if (resetKey === undefined) {
-      return
-    }
-    fullSwipeArmedRef.current = false
-    resetSwipeable(swipeableRef)
-  }, [resetKey])
+  // Rows are keyed by their Thread and never recycled, so a swipeable belongs to one Thread for
+  // its whole life and has nothing to reset.
+  // Handed to the row's children while rendering, so it must not close over a ref. The handle
+  // is read from the swipeable at the moment the row asks to close.
+  const [handle, setHandle] = useState<SwipeableMethods | null>(null)
+  const close = () => {
+    if (handle !== null) handle.close()
+  }
   const handleFullSwipeArmedChange = useCallback((armed: boolean) => {
     if (armed && !fullSwipeArmedRef.current) {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
@@ -293,12 +156,15 @@ export function ThreadSwipeable(props: {
 
   return (
     <ReanimatedSwipeable
-      ref={swipeableRef}
+      ref={(methods) => {
+        swipeableRef.current = methods
+        setHandle(methods)
+      }}
       animationOptions={THREAD_SWIPE_SPRING}
       childrenContainerStyle={{ backgroundColor: props.backgroundColor }}
       containerStyle={[{ backgroundColor: props.backgroundColor }, props.containerStyle]}
       dragOffsetFromRightEdge={8}
-      enabled={props.enabled !== false && gateEnabled}
+      enabled={props.enabled !== false}
       enableTrackpadTwoFingerGesture={props.enableTrackpadSwipe ?? true}
       failOffsetY={[-10, 10]}
       friction={1}

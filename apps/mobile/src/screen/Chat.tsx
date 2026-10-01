@@ -1,607 +1,301 @@
-import { useEffect, useEffectEvent, useMemo, useRef, useState, type RefObject } from 'react'
-import { AppState, FlatList, KeyboardAvoidingView, Linking, Platform, View } from 'react-native'
-import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import { Monitor } from 'lucide-react-native'
-import { createFlueClient, type FlueConversationMessage } from '@flue/sdk'
 import { useFlueAgent } from '@flue/react'
-import { fetch as expoFetch } from 'expo/fetch'
-import Markdown from 'react-native-markdown-display'
-import { useThreadActivity, useWorkspace, type Routes } from '../workspace'
-import { ConnectorRequestCard } from '../ui/connector/Card'
-import { readConnectorRequest, connectorContinuation, type ConnectorRequest } from '@vivid/state'
-import { TrackedCard } from '../ui/Tracked'
-import { ChatComposer, ChatHeader, useChatKeyboard } from '../ui/chat/Chrome'
-import { openDocument, linkCitations } from '../data/documents'
-import { Card, ControlPill, Empty, Face, Feedback, Label, Sheet, styles } from '../ui/ui'
-import { nativeMetrics as m } from '@vivid/tokens/native'
-import { useTheme } from '../theme'
-import { deriveCenteredContentHorizontalPadding } from '../data/layout'
-import { ThreadId, type ThreadResponse } from '@vivid/contracts'
-import type { RpcOperation } from '../data/api'
+import type { FlueConversationMessage } from '@flue/sdk'
+import {
+  ThreadAudience,
+  Workspace,
+  type MeResponse,
+  type Thread,
+  type ThreadDetail,
+  type ThreadId,
+} from '@vivid/contracts'
+import { titleFromMessage } from '@vivid/state'
+import { Option, Result } from 'effect'
+import { randomUUID } from 'expo-crypto'
+import { useMemo, useState } from 'react'
+import { FlatList, View } from 'react-native'
+import type { NativeStackScreenProps } from '@react-navigation/native-stack'
+import { Share2, Users } from 'lucide-react-native'
+import { onForeground } from '../data/foreground'
+import { LiveState, useLive, useLiveData } from '../data/live'
+import { isShown, isStreaming, type Around } from '../data/message'
+import { conversation, say, UNTITLED } from '../data/threads'
+import { Composer } from '../ui/Composer'
+import { Header, Screen } from '../ui/Header'
+import { AboveKeyboard } from '../ui/Keyboard'
+import { Button, Empty, Face, GUTTER, IconButton, Label, Notice, Skeleton, styles } from '../ui/ui'
+import { useGo, useMe, type Routes } from '../workspace'
+import { Message } from './chat/Message'
+import { Share } from './chat/Share'
 
-/** The heading above each entry of the activity log, by who contributed the Message. */
-const ROLE_HEADING = {
-  user: 'You asked',
-  assistant: 'Vivid responded',
-  system: 'Conversation update',
-} satisfies Record<FlueConversationMessage['role'], string>
-
-/** Builds the sidebar Thread update after Flue accepts a new Message. */
-function updateThread(id: string, title: string, preview: string): RpcOperation<ThreadResponse> {
-  return (client) =>
-    client.PutThread({
-      id: ThreadId.make(id),
-      thread: { title, preview, updatedAt: Date.now(), archived: false },
-    })
-}
-
-export function Chat(props: NativeStackScreenProps<Routes, 'Chat'>) {
-  return <ThreadChat key={props.route.params.id} {...props} />
-}
-
-/** Renders the conversation feed while the screen owns Flue and draft state. */
-function ChatMessageList({
-  list,
-  messages,
-  width,
-  historyReady,
-  working,
-  sending,
-  error,
-  connectionError,
-  onContinue,
-  onRetry,
-  onNearBottomChange,
-  onContentSizeChange,
-}: {
-  readonly list: RefObject<FlatList<FlueConversationMessage> | null>
-  readonly messages: readonly FlueConversationMessage[]
-  readonly width: number
-  readonly historyReady: boolean
-  readonly working: boolean
-  readonly sending: boolean
-  readonly error: string
-  readonly connectionError: string | null
-  readonly onContinue: (text: string) => Promise<void>
-  readonly onRetry: () => void
-  readonly onNearBottomChange: (nearBottom: boolean) => void
-  readonly onContentSizeChange: () => void
-}) {
+/**
+ * One Thread: the conversation with Vivid, and everything live around it.
+ *
+ * Two sources feed this screen. The words come from Flue's stream through the server's gateway,
+ * token by token. Everything else (who is in the Thread, who Vivid acted for, what is waiting on
+ * someone, who is looking right now) comes from the Thread's live query, and reading that query
+ * is also what marks the Thread read. Neither is fetched and neither is refreshed by hand.
+ */
+export function Chat({ route }: NativeStackScreenProps<Routes, 'Chat'>) {
+  const data = useLiveData()
+  const { id } = route.params
+  const detail = useLive(data.seenThread(id))
+  if (LiveState.$is('Failed')(detail)) return <Gone />
   return (
-    <FlatList
-      ref={list}
-      data={messages}
-      keyExtractor={(message) => message.id}
-      keyboardShouldPersistTaps="handled"
-      keyboardDismissMode="interactive"
-      contentContainerStyle={{
-        gap: 24,
-        paddingVertical: 24,
-        paddingHorizontal: deriveCenteredContentHorizontalPadding({
-          viewportWidth: width,
-          maxContentWidth: 760,
-          minimumPadding: 20,
-        }),
-        flexGrow: 1,
-      }}
-      onScroll={(event) => {
-        const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent
-        onNearBottomChange(contentSize.height - layoutMeasurement.height - contentOffset.y < 100)
-      }}
-      scrollEventThrottle={100}
-      onContentSizeChange={onContentSizeChange}
-      ListEmptyComponent={
-        historyReady ? (
-          <View
-            style={{
-              flex: 1,
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 18,
-              paddingVertical: 60,
-            }}
-          >
-            <Face size={50} />
-            <Label style={{ fontSize: 28, lineHeight: 36, letterSpacing: -0.8 }}>
-              Hi, I'm Vivid.
-            </Label>
-            <Label tone="ink-2" style={{ fontWeight: '400' }}>
-              What should I take off your plate?
-            </Label>
-          </View>
-        ) : (
-          <Feedback loading />
-        )
-      }
-      renderItem={({ item }) => (
-        <Message message={item} working={working || sending} onContinue={onContinue} />
-      )}
-      ListFooterComponent={
-        <View style={{ gap: 12 }}>
-          {working && (
-            <View style={styles.row}>
-              <Face size={24} />
-              <Label size="footnote" tone="ink-3">
-                Working on it…
-              </Label>
-            </View>
-          )}
-          <Feedback
-            error={error || connectionError || undefined}
-            retry={onRetry}
-            retryLabel="Reconnect"
-          />
-        </View>
-      }
+    <Conversation
+      key={id}
+      id={id}
+      detail={LiveState.$is('Ready')(detail) ? Option.some(detail.value) : Option.none()}
     />
   )
 }
 
-/** Shows either the work log or the current computer-preview state. */
-function ActivitySheet({
-  panel,
-  messages,
-  onClose,
-  onOpenScreen,
-}: {
-  readonly panel: 'log' | 'screen'
-  readonly messages: readonly FlueConversationMessage[]
-  readonly onClose: () => void
-  readonly onOpenScreen: () => void
-}) {
+/** A Thread that is not there, or not this Person's to see. The two look the same on purpose. */
+function Gone() {
+  const go = useGo()
   return (
-    <Sheet title={panel === 'log' ? 'What Vivid did' : 'Vivid’s screen'} onClose={onClose}>
-      {panel === 'log' && (
-        <ControlPill icon={Monitor} label="Vivid’s screen" onPress={onOpenScreen} />
-      )}
-      {panel === 'screen' ? (
-        <Empty
-          title="A window into the work"
-          detail="Computer activity is a preview in this version. Live computer control is not connected yet."
-        />
-      ) : (
-        messages.map((message) => (
-          <Card key={message.id}>
-            <Label size="label">{ROLE_HEADING[message.role]}</Label>
-            <Label tone="ink-3" size="label">
-              {message.parts
-                .filter((part) => part.type === 'text')
-                .map((part) => part.text)
-                .join('\n')
-                .slice(0, 600)}
-            </Label>
-            {message.parts
-              .filter((part) => part.type === 'dynamic-tool')
-              .map((part) => (
-                <View key={part.toolCallId} style={{ gap: 4 }}>
-                  <Label size="label">
-                    {part.toolName.replaceAll('_', ' ')} · {part.state}
-                  </Label>
-                  {part.state === 'output-available' && (
-                    <Label selectable size="micro" tone="ink-3">
-                      {JSON.stringify(part.output, null, 2)}
-                    </Label>
-                  )}
-                </View>
-              ))}
-          </Card>
-        ))
-      )}
-    </Sheet>
+    <Screen>
+      <Header title="Thread" onBack={go.goBack} />
+      <Empty
+        title="This thread is not here"
+        detail="It may have been deleted, or it is in a space you are not working in right now."
+      >
+        <Button label="Back to threads" onPress={go.goBack} />
+      </Empty>
+    </Screen>
   )
 }
 
-/** Keeps Flue client construction tied to the active conversation and API connection. */
-function useConversationClient(api: ReturnType<typeof useWorkspace>['api'], id: string) {
-  return useMemo(
-    () =>
-      createFlueClient({
-        url: api.agentUrl(id),
-        headers: api.headers,
-        // SAFETY: expo/fetch exposes the Fetch API signature expected by Flue.
-        fetch: expoFetch.bind(globalThis),
+/** What the header says under the title: who is writing, who is here, or who it is shared with. */
+function standingOf(thread: Thread, detail: ThreadDetail, me: MeResponse): Option.Option<string> {
+  const others = detail.present.filter((seen) => seen.person.id !== me.person.id)
+  const typing = others.filter((seen) => seen.typing)
+  if (typing.length > 0) {
+    return Option.some(`${typing.map((seen) => seen.person.name).join(', ')} typing…`)
+  }
+  if (others.length > 0) {
+    return Option.some(`${others.map((seen) => seen.person.name).join(', ')} here now`)
+  }
+  return ThreadAudience.match(thread.audience, {
+    Private: () => Option.none(),
+    People: ({ participants }) => Option.some(`Shared with ${participants.length + 1} people`),
+    Company: () =>
+      Workspace.match(me.workspace, {
+        Personal: () => Option.none(),
+        Company: ({ company }) => Option.some(`Everyone in ${company.name}`),
       }),
-    [api, id],
+  })
+}
+
+function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<ThreadDetail> }) {
+  const me = useMe()
+  const data = useLiveData()
+  const go = useGo()
+  const client = useMemo(() => conversation(data.session, id), [data.session, id])
+  const agent = useFlueAgent({ client })
+  // A phone suspends the app when it is not in front, and the stream with it; coming back
+  // catches the conversation up. The subscription lives exactly as long as this view does.
+  const wake = useMemo(() => onForeground(() => agent.refresh()), [agent])
+  const [draft, setDraft] = useState('')
+  const [sharing, setSharing] = useState(false)
+  const [undelivered, setUndelivered] = useState<Option.Option<string>>(Option.none())
+  const thread = Option.map(detail, (value) => value.thread)
+  const shared = Option.exists(thread, (value) => !ThreadAudience.guards.Private(value.audience))
+  const working =
+    agent.status === 'submitted' ||
+    agent.status === 'streaming' ||
+    Option.exists(thread, (value) => value.attention === 'Working')
+  const around: Around = {
+    me: me.person.id,
+    shared,
+    runs: Option.match(detail, { onNone: () => [], onSome: (value) => value.runs }),
+  }
+
+  function send(text: string) {
+    setUndelivered(Option.none())
+    // A Thread started without a name takes its first message as one.
+    if (Option.exists(thread, (value) => value.title === UNTITLED)) {
+      void data.change((sdk) => sdk.PatchThread({ id, patch: { title: titleFromMessage(text) } }))
+    }
+    if (!shared) {
+      // The hook shows the message at once and keeps it, marked, if it did not arrive.
+      void agent.sendMessage(text).then(
+        () => undefined,
+        () => undefined,
+      )
+      return
+    }
+    // In a shared Thread the server turns the message into an attributed one, so it is sent
+    // plainly and drawn when it comes back.
+    void say(data, { id, body: text, key: randomUUID() }).then((result) => {
+      if (Result.isSuccess(result)) return
+      setUndelivered(Option.some(result.failure.message))
+      setDraft((current) => (current.length === 0 ? text : current))
+    })
+  }
+
+  function type(next: string) {
+    // Only the edges are reported: starting to type and clearing the field.
+    if ((next.length === 0) !== (draft.length === 0)) {
+      void data.change((sdk) => sdk.ReportPresence({ threadId: id, typing: next.length > 0 }))
+    }
+    setDraft(next)
+  }
+
+  return (
+    <AboveKeyboard>
+      <Header
+        title={Option.match(thread, { onNone: () => '', onSome: (value) => value.title })}
+        subtitle={Option.getOrUndefined(
+          Option.flatMap(detail, (value) => standingOf(value.thread, value, me)),
+        )}
+        onBack={go.goBack}
+        trailing={
+          Option.isSome(thread) && Workspace.guards.Company(me.workspace) ? (
+            <IconButton
+              icon={shared ? Users : Share2}
+              label="Choose who can see this thread"
+              // Only its creator may change who a Thread is shared with.
+              disabled={thread.value.createdBy.id !== me.person.id}
+              onPress={() => setSharing(true)}
+            />
+          ) : undefined
+        }
+      />
+      <View ref={wake} style={{ flex: 1 }}>
+        <Messages
+          messages={agent.messages.filter(isShown)}
+          ready={agent.historyReady}
+          working={working}
+          failure={Option.orElse(undelivered, () =>
+            Option.map(Option.fromUndefinedOr(agent.error), (error) => error.message),
+          )}
+          around={around}
+          detail={detail}
+          onRetry={() => agent.refresh()}
+          onContinue={send}
+        />
+      </View>
+      <Composer
+        value={draft}
+        placeholder={shared ? 'Message everyone and Vivid' : 'Message Vivid'}
+        working={working}
+        disabled={false}
+        onChange={type}
+        onSend={() => {
+          const text = draft.trim()
+          type('')
+          send(text)
+        }}
+        onStop={() => void data.change((sdk) => sdk.StopThread({ id }))}
+      />
+      {sharing && Option.isSome(thread) && Workspace.guards.Company(me.workspace) && (
+        <Share
+          thread={thread.value}
+          company={me.workspace.company.name}
+          me={me.person.id}
+          onClose={() => setSharing(false)}
+        />
+      )}
+    </AboveKeyboard>
   )
 }
 
-/** Converts Flue connection failures into the stable mobile recovery copy. */
-function connectionErrorMessage(message: string) {
-  if (!message) return null
-  return message.includes('Connection error')
-    ? 'Vivid couldn’t connect. Check the server connection and try again.'
-    : message.replace(/^direct\([^)]*\) failed: /, '')
+interface MessagesProps {
+  readonly messages: ReadonlyArray<FlueConversationMessage>
+  readonly ready: boolean
+  readonly working: boolean
+  readonly failure: Option.Option<string>
+  readonly around: Around
+  readonly detail: Option.Option<ThreadDetail>
+  readonly onRetry: () => void
+  readonly onContinue: (text: string) => void
 }
 
 /**
- * Publishes this Thread's activity to the sidebar and refreshes history when the app returns to
- * the foreground. Both are subscriptions to systems outside React, which is why they are Effects.
+ * The conversation. The list is inverted, newest at the bottom: the platform then keeps the view
+ * on the newest words by itself as they stream in, and holds the Person's place when they have
+ * scrolled up to read. No scroll position is managed here and nothing runs per token.
  */
-function useThreadLifecycle({
-  id,
-  working,
-  failed,
-  onForeground,
-}: {
-  id: string
-  working: boolean
-  failed: boolean
-  onForeground: () => void
-}) {
-  const { report } = useThreadActivity()
-  useEffect(() => {
-    report(id, working ? 'working' : failed ? 'failed' : undefined)
-    return () => report(id, undefined)
-  }, [id, working, failed, report])
-  // App-state subscriptions stay stable while the Effect Event reads the current Flue client.
-  const refresh = useEffectEvent(onForeground)
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') refresh()
-    })
-    return () => subscription.remove()
-  }, [])
-}
-
-function ThreadChat({ route, navigation }: NativeStackScreenProps<Routes, 'Chat'>) {
-  const { api } = useWorkspace()
-  const { id, title } = route.params
-  const client = useConversationClient(api, id)
-  const agent = useFlueAgent({ client })
-  const [draft, setDraft] = useState(route.params.draft ?? '')
-  const keyboardVisible = useChatKeyboard()
-  const autoSent = useRef(false)
-  const [error, setError] = useState('')
-  const [sending, setSending] = useState(false)
-  const [panel, setPanel] = useState<'log' | 'screen'>()
-  const list = useRef<FlatList>(null)
-  const nearBottom = useRef(true)
-  const [width, setWidth] = useState(390)
-  const working = agent.status === 'submitted' || agent.status === 'streaming'
-  useThreadLifecycle({
-    id,
-    working,
-    failed: agent.error !== undefined,
-    onForeground: () => agent.refresh(),
-  })
-  const messages = agent.messages.filter((message) => message.display !== 'hidden')
-  const connectionError = connectionErrorMessage(
-    agent.error === undefined ? '' : agent.error.message,
-  )
-  async function send(continuation?: string) {
-    const text = (continuation ?? draft).trim()
-    if (!text || sending || working) return
-    setSending(true)
-    setError('')
-    nearBottom.current = true
-    try {
-      await agent.sendMessage(text)
-      if (!continuation) setDraft('')
-      const nextTitle = title === 'New conversation' ? text.slice(0, 80) : title
-      navigation.setParams({ title: nextTitle, draft: undefined, sendOnOpen: undefined })
-      // The accepted message must not be resent if only the sidebar index update fails.
-      try {
-        await api.run(api.rpc(updateThread(id, nextTitle, text.slice(0, 500))))
-      } catch {
-        setError('Your message was sent. The conversation list could not update yet.')
+function Messages(props: MessagesProps) {
+  const { messages, ready, working } = props
+  if (messages.length === 0 && !working) return <Blank ready={ready} />
+  const streaming = messages.some((message) => message.role === 'assistant' && isStreaming(message))
+  return (
+    <FlatList
+      inverted
+      // Newest first is what an inverted list draws at the bottom.
+      data={messages.toReversed()}
+      keyExtractor={(message) => message.id}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="interactive"
+      contentContainerStyle={[
+        styles.column,
+        { paddingHorizontal: GUTTER - 4, paddingVertical: 16, gap: 22 },
+      ]}
+      // The first thing in an inverted list is the last thing on screen.
+      ListHeaderComponent={
+        <Tail working={working && !streaming} failure={props.failure} onRetry={props.onRetry} />
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setSending(false)
-    }
-  }
-  // A welcome-screen submission opens a real conversation and sends exactly once.
-  useEffect(() => {
-    if (route.params.sendOnOpen && agent.historyReady && !autoSent.current) {
-      autoSent.current = true
-      void send()
-    }
-  })
-  return (
-    <KeyboardAvoidingView
-      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
-      style={{ flex: 1 }}
-      behavior="padding"
-      enabled={Platform.OS !== 'android' || keyboardVisible}
-      keyboardVerticalOffset={0}
-    >
-      <ChatHeader
-        title={title}
-        working={working}
-        onOpenLog={() => setPanel('log')}
-        onOpenScreen={() => setPanel('screen')}
-      />
-      <ChatMessageList
-        list={list}
-        messages={messages}
-        width={width}
-        historyReady={agent.historyReady}
-        working={working}
-        sending={sending}
-        error={error}
-        connectionError={connectionError}
-        onContinue={send}
-        onRetry={() => agent.refresh()}
-        onNearBottomChange={(nextNearBottom) => {
-          nearBottom.current = nextNearBottom
-        }}
-        onContentSizeChange={() => {
-          if (nearBottom.current) {
-            const currentList = list.current
-            if (currentList !== null) currentList.scrollToEnd({ animated: false })
-          }
-        }}
-      />
-      <ChatComposer
-        value={draft}
-        onChange={setDraft}
-        onSend={() => void send()}
-        disabled={sending || !agent.historyReady}
-        working={working}
-        keyboardVisible={keyboardVisible}
-        onStop={() => {
-          void client.abort().catch((e) => setError(e.message))
-        }}
-      />
-      {panel && (
-        <ActivitySheet
-          panel={panel}
-          messages={messages}
-          onClose={() => setPanel(undefined)}
-          onOpenScreen={() => setPanel('screen')}
-        />
-      )}
-    </KeyboardAvoidingView>
-  )
-}
-
-type DynamicToolPart = Extract<
-  FlueConversationMessage['parts'][number],
-  { readonly type: 'dynamic-tool' }
->
-type ConnectorRequestEntry = { readonly id: string; readonly request: ConnectorRequest }
-type ThemeColors = ReturnType<typeof useTheme>['colors']
-
-/** Renders settlement-aware system updates separately from person and Vivid messages. */
-function SystemMessage({ text, failed }: { readonly text: string; readonly failed: boolean }) {
-  return (
-    <Card>
-      <Label size="label" tone="ink-3">
-        {failed ? 'Vivid could not complete that response. ' : ''}
-        {text}
-      </Label>
-    </Card>
-  )
-}
-
-/** Renders user text or Vivid Markdown while preserving authenticated citation handling. */
-function MessageText({
-  user,
-  text,
-  colors: c,
-  api,
-  onLinkError,
-}: {
-  readonly user: boolean
-  readonly text: string
-  readonly colors: ThemeColors
-  readonly api: ReturnType<typeof useWorkspace>['api']
-  readonly onLinkError: (message: string) => void
-}) {
-  if (user) return <Label selectable>{text}</Label>
-  return (
-    <Markdown
-      onLinkPress={(url) => {
-        if (url.startsWith('https://vivid-library.invalid/source?')) {
-          const name = new URL(url).searchParams.get('name')
-          if (name)
-            void openDocument(
-              api,
-              `/api/library/source?name=${encodeURIComponent(name)}`,
-              name,
-            ).catch((error) => onLinkError(error.message))
-        } else if (/^https?:\/\//i.test(url))
-          void Linking.openURL(url).catch(() => onLinkError('Could not open this link.'))
-        return false
-      }}
-      style={{
-        body: { color: c.ink, fontSize: m['type-body'], lineHeight: 23 },
-        paragraph: { marginTop: 0, marginBottom: 12 },
-        code_inline: { backgroundColor: c['surface-2'], color: c.ink },
-        fence: {
-          backgroundColor: c['surface-well'],
-          color: c.ink,
-          borderColor: c['line-2'],
-        },
-        link: { color: c['accent-ink'] },
-        blockquote: {
-          backgroundColor: c['surface-2'],
-          borderColor: c['line-3'],
-        },
-        table: { borderColor: c['line-2'] },
-        tr: { borderColor: c['line-2'] },
-      }}
-    >
-      {linkCitations(text)}
-    </Markdown>
-  )
-}
-
-/** Renders typed tool results below the message that produced them. */
-function MessageTools({
-  tracked,
-  connectorRequests,
-  working,
-  onContinue,
-}: {
-  readonly tracked: readonly DynamicToolPart[]
-  readonly connectorRequests: readonly ConnectorRequestEntry[]
-  readonly working: boolean
-  readonly onContinue: (text: string) => Promise<void>
-}) {
-  return (
-    <>
-      {tracked.map((tool) => (
-        <TrackedCard
-          key={tool.toolCallId}
-          kind={tool.toolName}
-          output={tool.state === 'output-available' ? tool.output : undefined}
-        />
-      ))}
-      {connectorRequests.map(({ id, request }) => (
-        <ConnectorRequestCard
-          key={id}
-          request={request}
-          disabled={working}
-          onContinue={() => onContinue(connectorContinuation(request.connector))}
-        />
-      ))}
-    </>
-  )
-}
-
-/** Preserves message geometry while delegating content and tool rendering. */
-function ConversationMessage({
-  user,
-  text,
-  colors: c,
-  api,
-  linkError,
-  onLinkError,
-  tracked,
-  connectorRequests,
-  working,
-  onContinue,
-  time,
-}: {
-  readonly user: boolean
-  readonly text: string
-  readonly colors: ThemeColors
-  readonly api: ReturnType<typeof useWorkspace>['api']
-  readonly linkError: string
-  readonly onLinkError: (message: string) => void
-  readonly tracked: readonly DynamicToolPart[]
-  readonly connectorRequests: readonly ConnectorRequestEntry[]
-  readonly working: boolean
-  readonly onContinue: (text: string) => Promise<void>
-  readonly time: string
-}) {
-  return (
-    <View
-      style={{
-        flexDirection: 'row',
-        gap: 12,
-        alignItems: 'flex-start',
-        justifyContent: user ? 'flex-end' : 'flex-start',
-      }}
-    >
-      {!user && (
-        <View style={{ marginTop: 4 }}>
-          <Face size={24} />
-        </View>
-      )}
-      <View
-        style={{
-          flexShrink: 1,
-          flexGrow: user ? 0 : 1,
-          minWidth: 0,
-          maxWidth: user ? '78%' : undefined,
-          padding: user ? 14 : 0,
-          borderRadius: m['radius-panel'] * m['phone-radius-factor'],
-          borderBottomRightRadius:
-            (user ? m['radius-sm'] : m['radius-panel']) * m['phone-radius-factor'],
-          backgroundColor: user ? c['surface-2'] : undefined,
-        }}
-      >
-        <MessageText user={user} text={text} colors={c} api={api} onLinkError={onLinkError} />
-        {!!linkError && (
-          <Label size="label" tone="status-danger">
-            {linkError}
-          </Label>
-        )}
-        <MessageTools
-          tracked={tracked}
-          connectorRequests={connectorRequests}
+      renderItem={({ item }) => (
+        <Message
+          message={item}
+          around={props.around}
+          detail={props.detail}
           working={working}
-          onContinue={onContinue}
+          onContinue={props.onContinue}
         />
-        {!!time && (
-          <Label
-            size="micro"
-            tone="ink-4"
-            style={{ marginTop: 4, textAlign: user ? 'right' : 'left' }}
-          >
-            {time}
-          </Label>
-        )}
+      )}
+    />
+  )
+}
+
+/** A Thread with nothing in it: its outline while it opens, then Vivid waiting to be asked. */
+function Blank({ ready }: { ready: boolean }) {
+  if (!ready) {
+    return (
+      <View style={[styles.column, { paddingHorizontal: GUTTER, paddingTop: 28 }]}>
+        <Skeleton rows={4} />
       </View>
+    )
+  }
+  return (
+    <View style={{ flex: 1, justifyContent: 'center' }}>
+      <Empty title="Vivid is ready" detail="What should I take off your plate?" mood="happy" />
     </View>
   )
 }
 
-function Message({
-  message,
+/** What sits under the newest message: that Vivid is thinking, or that something did not arrive. */
+function Tail({
   working,
-  onContinue,
+  failure,
+  onRetry,
 }: {
-  message: FlueConversationMessage
   working: boolean
-  onContinue: (text: string) => Promise<void>
+  failure: Option.Option<string>
+  onRetry: () => void
 }) {
-  const { colors: c } = useTheme()
-  const { api } = useWorkspace()
-  const [linkError, setLinkError] = useState('')
-  const text = message.parts
-    .filter((p) => p.type === 'text')
-    .map((p) => p.text)
-    .join('\n\n')
-  const tools = message.parts.filter((p) => p.type === 'dynamic-tool')
-  const user = message.role === 'user'
-  const settlement = message.settlement
-  const metadata = message.metadata
-  const tracked = tools.filter(
-    (tool) =>
-      tool.state === 'output-available' &&
-      (tool.toolName === 'create_task' || tool.toolName === 'schedule_follow_up'),
-  )
-  const connectorRequests = tools.flatMap((tool) => {
-    if (tool.toolName !== 'suggest_connector' || tool.state !== 'output-available') return []
-    const request = readConnectorRequest(tool.output)
-    return request ? [{ id: tool.toolCallId, request }] : []
-  })
-  if (!text && !tracked.length && !connectorRequests.length) return null
-  if (message.role === 'system') {
-    return (
-      <SystemMessage
-        text={text}
-        failed={settlement !== undefined && settlement.outcome === 'failed'}
-      />
-    )
-  }
-  const rawTimestamp =
-    metadata === undefined ? undefined : (metadata.finishedAt ?? metadata.startedAt)
-  const timestamp = rawTimestamp == null ? undefined : Number(rawTimestamp)
-  const time =
-    timestamp === undefined || !Number.isFinite(timestamp)
-      ? ''
-      : new Date(timestamp).toLocaleTimeString(undefined, {
-          hour: 'numeric',
-          minute: '2-digit',
-        })
   return (
-    <ConversationMessage
-      user={user}
-      text={text}
-      colors={c}
-      api={api}
-      linkError={linkError}
-      onLinkError={setLinkError}
-      tracked={tracked}
-      connectorRequests={connectorRequests}
-      working={working}
-      onContinue={onContinue}
-      time={time}
-    />
+    <View style={{ gap: 12 }}>
+      {working && (
+        <View
+          accessibilityLiveRegion="polite"
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
+        >
+          <Face size={24} mood="thinking" />
+          <Label tone="ink-3">Thinking…</Label>
+        </View>
+      )}
+      {Option.isSome(failure) && (
+        <View style={{ gap: 8 }}>
+          <Notice message={failure.value} />
+          <Button
+            label="Try again"
+            onPress={onRetry}
+            containerStyle={{ alignSelf: 'flex-start' }}
+          />
+        </View>
+      )}
+    </View>
   )
 }

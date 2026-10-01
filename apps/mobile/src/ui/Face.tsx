@@ -1,20 +1,21 @@
-import { useEffect, useId } from 'react'
+import { useId } from 'react'
 import Svg, { Circle, Defs, RadialGradient, Rect, Stop } from 'react-native-svg'
-import Animated, {
-  Easing,
-  ReduceMotion,
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-} from 'react-native-reanimated'
+import Animated, { cubicBezier } from 'react-native-reanimated'
 import { nativeMetrics as m } from '@vivid/tokens/native'
 import { faceGeometry, type FaceMood } from '@vivid/marks'
 import { useTheme } from '../theme'
 
+/** The web face's own curve, so the tilt settles the same way on both surfaces. */
+const TILT_CURVE = cubicBezier(0.2, 0, 0, 1)
+
 /**
- * Vivid's face, drawn as real SVG so Reanimated can carry the tilt between moods on the UI thread.
- * The proportions and the tilt angles come from `@vivid/marks`, the same source the web face
- * reads, so the two surfaces show one face rather than two similar ones.
+ * Vivid's face, drawn as real SVG. The proportions and the tilt angles come from `@vivid/marks`,
+ * the same source the web face reads, so the two surfaces show one face rather than two similar
+ * ones.
+ *
+ * The tilt between moods is a transition on the style, not an animation started from an effect:
+ * a mood is a state, the face is drawn in it, and Reanimated carries the change on the UI thread.
+ * It runs once per change of mood and never loops.
  */
 export function Face({ size = 28, mood = 'neutral' }: { size?: number; mood?: FaceMood }) {
   const { colors: c } = useTheme()
@@ -24,20 +25,17 @@ export function Face({ size = 28, mood = 'neutral' }: { size?: number; mood?: Fa
   const { eyeWidth, eyeHeight, eyeGap } = geometry
   const left = (size - eyeWidth * 2 - eyeGap) / 2
   const top = size * geometry.eyeTopFraction
-  const rotation = useSharedValue(geometry.tiltDegrees)
-  useEffect(() => {
-    // Reanimated exposes `set` specifically so compiler-enabled React can update shared values.
-    rotation.set(
-      withTiming(geometry.tiltDegrees, {
-        duration: m['dur-base'],
-        easing: Easing.bezier(0.2, 0, 0, 1),
-        reduceMotion: ReduceMotion.System,
-      }),
-    )
-  }, [geometry.tiltDegrees, rotation])
-  const motion = useAnimatedStyle(() => ({ transform: [{ rotate: `${rotation.get()}deg` }] }))
   return (
-    <Animated.View style={[{ width: size, height: size }, motion]}>
+    <Animated.View
+      style={{
+        width: size,
+        height: size,
+        transform: [{ rotate: `${geometry.tiltDegrees}deg` }],
+        transitionProperty: 'transform',
+        transitionDuration: m['dur-base'],
+        transitionTimingFunction: TILT_CURVE,
+      }}
+    >
       <Svg width={size} height={size} accessibilityRole="image" accessibilityLabel="Vivid">
         <Defs>
           <RadialGradient id={id} cx="32%" cy="28%" r="55%">

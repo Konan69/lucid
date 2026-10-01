@@ -1,767 +1,449 @@
-import { useState } from 'react'
-import { Platform, RefreshControl, ScrollView, View } from 'react-native'
+import {
+  Workspace,
+  type LibraryFolder,
+  type LibraryFolderId,
+  type LibraryItem,
+  type LibraryShelf,
+} from '@vivid/contracts'
+import type { LiveQuery } from '@vivid/state'
+import { Data, Option, Result } from 'effect'
+import { useState, type ReactNode } from 'react'
+import { ScrollView } from 'react-native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { FileText, Folder as FolderIcon, FolderPlus, Upload } from 'lucide-react-native'
-import * as DocumentPicker from 'expo-document-picker'
-import { File } from 'expo-file-system'
-import {
-  LibraryFolderId,
-  LibraryFolderListResponse,
-  LibraryItemId,
-  LibraryListResponse,
-  type LibraryFolder,
-  type LibraryItem,
-  LibrarySearchResult,
-} from '@vivid/contracts'
-import { openDocument } from '../data/documents'
-import type { RpcOperation } from '../data/api'
-import { useOpenThread, useWorkspace, type Routes } from '../workspace'
-import { useResource } from '../data/resource/hook'
+import * as library from '../../../web/src/data/library'
+import { addDocument, openDocument } from '../data/documents'
+import { commit, warn } from '../data/haptics'
+import { refusalOf, useLive, useLiveData } from '../data/live'
+import { Start, startThread } from '../data/threads'
 import { useTheme } from '../theme'
+import { Header, Screen } from '../ui/Header'
+import { Live } from '../ui/Live'
+import { Row, Section } from '../ui/List'
+import { NameSheet, Sheet } from '../ui/Sheet'
 import {
-  Card,
-  ControlPill,
-  EditSheet,
+  Button,
+  confirmDestructive,
   Empty,
-  Feedback,
-  Field,
-  Header,
+  IconButton,
   Label,
-  Sheet,
-  confirmDelete,
+  Notice,
+  Segmented,
+  Skeleton,
   styles,
 } from '../ui/ui'
+import { useGo, useMe, type Routes } from '../workspace'
 
-type Selection =
-  | { readonly kind: 'file'; readonly item: LibraryItem }
-  | {
-      readonly kind: 'folder'
-      readonly item: LibraryFolder
-    }
-type SearchResult = typeof LibrarySearchResult.Type
-type EditState = {
-  readonly title: string
-  readonly fields: { readonly key: string; readonly label: string; readonly value?: string }[]
-  readonly save: (values: Record<string, string>) => Promise<void>
-}
-type LibraryAction = (work: () => Promise<void>) => Promise<void>
-type LibraryApi = ReturnType<typeof useWorkspace>['api']
-type LibraryMutation =
-  | void
-  | { readonly document: LibraryItem }
-  | { readonly folder: LibraryFolder }
-type LibraryEndpoint = (
-  value: Selection,
-  operation: LibraryOperationInput,
-) => RpcOperation<LibraryMutation>
-type LibraryOperationInput =
-  | { readonly kind: 'delete' }
-  | { readonly kind: 'rename'; readonly name: string }
-  | { readonly kind: 'move'; readonly folderId: string | null }
-
-/** Owns the shared busy/error lifecycle around Library mutations. */
-function useLibraryAction(
-  refreshCurrent: () => Promise<void>,
-  refreshFolders: () => Promise<void>,
-) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const action: LibraryAction = async (work) => {
-    if (busy) return
-    setBusy(true)
-    setError('')
-    try {
-      await work()
-      await refreshCurrent()
-      await refreshFolders()
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setBusy(false)
-    }
-  }
-  return { action, busy, error }
+/** One level of one shelf: which shelf, which folder on it (or its top), and the query read. */
+interface Level {
+  readonly shelf: LibraryShelf
+  readonly folderId: LibraryFolderId | null
+  readonly query: LiveQuery<library.LibraryList>
 }
 
-/** Adapts the native document picker result into the existing multipart API request. */
 /**
- * The status half of a document row. A failed document shows the reason the server recorded; the
- * generic sentence covers only a failure that arrived without one.
+ * What is open over a level. One thing at a time, so a file's sheet and the form for a new
+ * folder can never be up together.
  */
-function statusNote(document: LibraryItem): string {
-  if (document.status === 'failed') return document.error ?? 'Could not read this file'
-  return document.status === 'ready' ? 'Ready to read' : 'Getting it ready…'
-}
+type Over = Data.TaggedEnum<{
+  Nothing: {}
+  NewFolder: {}
+  Item: { readonly item: LibraryItem }
+}>
+const Over = Data.taggedEnum<Over>()
 
-async function uploadLibraryDocument(input: {
-  readonly api: LibraryApi
-  readonly folderId: string | null
-  readonly onUploaded: () => void
-}) {
-  const result = await DocumentPicker.getDocumentAsync({
-    type: ['application/pdf', 'text/plain', 'text/markdown'],
-    copyToCacheDirectory: true,
-  })
-  if (result.canceled) return
-  const asset = result.assets[0]
-  if (asset.size && asset.size > 10 * 1024 * 1024)
-    throw new Error('Choose a file smaller than 10 MB.')
-  const form = new FormData()
-  form.append(
-    'file',
-    Platform.OS === 'web' && asset.file ? asset.file : new File(asset.uri),
-    asset.name,
+/**
+ * The Library: what Vivid has been given to read. A personal space has one shelf. In a Company
+ * there are two, the Person's own and the Company's, and the choice between them is the only
+ * thing this screen holds; what is on a shelf is a live query.
+ */
+export function Library() {
+  const me = useMe()
+  const data = useLiveData()
+  const go = useGo()
+  const shelves = library.shelvesOf(me.workspace)
+  const [chosen, setChosen] = useState<LibraryShelf>('Mine')
+  // Leaving a Company takes its shelf with it; the Person is then looking at their own.
+  const shelf = shelves.some((choice) => choice.shelf === chosen) ? chosen : 'Mine'
+  const level: Level = { shelf, folderId: null, query: data.live.library.get(shelf) }
+  return (
+    <LevelScreen
+      title="Library"
+      subtitle={Workspace.match(me.workspace, {
+        Personal: () => 'What Vivid can read in your threads.',
+        Company: () => 'What Vivid can read, yours and the company’s.',
+      })}
+      level={level}
+      onBack={go.goBack}
+      above={
+        shelves.length > 1 ? (
+          <Segmented
+            label="Shelf"
+            value={shelf}
+            options={shelves.map((choice) => ({ value: choice.shelf, label: choice.name }))}
+            onChange={setChosen}
+          />
+        ) : null
+      }
+      below={null}
+    />
   )
-  if (input.folderId !== null) form.append('folderId', input.folderId)
-  await input.api.fetchBytes('/api/library', { method: 'POST', body: form })
-  input.onUploaded()
 }
 
-/** Derives the visible Library title from the current folder path. */
-function libraryTitle(path: readonly LibraryFolder[]) {
-  const currentFolder = path.at(-1)
-  return currentFolder === undefined ? 'Library' : currentFolder.name
+/** One folder, a level down. Renaming and deleting it live at the foot of its own page. */
+export function Folder({ route }: NativeStackScreenProps<Routes, 'Folder'>) {
+  const data = useLiveData()
+  const go = useGo()
+  const { shelf, id, name } = route.params
+  const level: Level = { shelf, folderId: id, query: data.live.folder.get({ shelf, folderId: id }) }
+  return (
+    <LevelScreen
+      title={name}
+      level={level}
+      onBack={go.goBack}
+      above={null}
+      below={<FolderActions id={id} name={name} />}
+    />
+  )
 }
 
-/** Builds the typed Library mutation selected by the existing screen action. */
-function libraryEndpoint(
-  value: Selection,
-  operation: LibraryOperationInput,
-): RpcOperation<LibraryMutation> {
-  return (client) => {
-    if (value.kind === 'file') {
-      if (operation.kind === 'delete')
-        return client.DeleteLibraryItem({ id: LibraryItemId.make(value.item.id) })
-      if (operation.kind === 'rename')
-        return client.PatchLibraryItem({
-          id: LibraryItemId.make(value.item.id),
-          patch: { name: operation.name },
-        })
-      return client.PatchLibraryItem({
-        id: LibraryItemId.make(value.item.id),
-        patch: {
-          folderId: operation.folderId === null ? null : LibraryFolderId.make(operation.folderId),
-        },
-      })
+/**
+ * Adding a file to a level. The picker and the upload are one action; while it runs the button
+ * says so, and what came of it (a refusal, or that the shelf already held the same file) is said
+ * under the bar. A file that was taken needs no announcement: it appears in the list.
+ */
+function useAdd(level: Level) {
+  const data = useLiveData()
+  const [busy, setBusy] = useState(false)
+  const [said, setSaid] = useState<Option.Option<string>>(Option.none())
+  async function add() {
+    setBusy(true)
+    setSaid(Option.none())
+    const result = await data.run(
+      addDocument(data.session, { shelf: level.shelf, folderId: level.folderId }),
+    )
+    setBusy(false)
+    if (Result.isFailure(result)) {
+      setSaid(Option.some(result.failure.message))
+      return
     }
-    if (operation.kind === 'delete')
-      return client.DeleteLibraryFolder({ id: LibraryFolderId.make(value.item.id) })
-    if (operation.kind === 'rename')
-      return client.PatchLibraryFolder({
-        id: LibraryFolderId.make(value.item.id),
-        patch: { name: operation.name },
-      })
-    return client.PatchLibraryFolder({
-      id: LibraryFolderId.make(value.item.id),
-      patch: {
-        parentId: operation.folderId === null ? null : LibraryFolderId.make(operation.folderId),
-      },
-    })
+    if (Option.exists(result.success, (uploaded) => uploaded.duplicate)) {
+      setSaid(Option.some('That file is already on this shelf.'))
+    } else if (Option.isSome(result.success)) commit()
   }
+  return { busy, said, add }
 }
 
-/** Searches the current Library scope without serializing an absent folder identifier. */
-function searchLibrary(api: LibraryApi, query: string, folderId: string | null) {
-  if (folderId === null) {
-    return api.run(api.rpc((client) => client.SearchLibrary({ query, limit: 8 })))
-  }
-  return api.run(
-    api.rpc((client) =>
-      client.SearchLibrary({ query, folderId: LibraryFolderId.make(folderId), limit: 8 }),
-    ),
+/** A level of the Library as a screen: its bar, what it holds, and what can be added to it. */
+function LevelScreen({
+  title,
+  subtitle,
+  level,
+  onBack,
+  above,
+  below,
+}: {
+  title: string
+  subtitle?: string
+  level: Level
+  onBack: () => void
+  above: ReactNode
+  below: ReactNode
+}) {
+  const state = useLive(level.query)
+  const [over, setOver] = useState<Over>(Over.Nothing())
+  const adding = useAdd(level)
+  const close = () => setOver(Over.Nothing())
+  return (
+    <Screen>
+      <Header
+        title={title}
+        subtitle={subtitle}
+        onBack={onBack}
+        trailing={
+          <>
+            <IconButton
+              icon={FolderPlus}
+              label="New folder"
+              onPress={() => setOver(Over.NewFolder())}
+            />
+            <IconButton
+              icon={Upload}
+              label="Add a file"
+              disabled={adding.busy}
+              onPress={() => void adding.add()}
+            />
+          </>
+        }
+      />
+      <ScrollView contentContainerStyle={[styles.page, styles.column]}>
+        {above}
+        {adding.busy && (
+          <Label size="label" tone="ink-3">
+            Adding your file…
+          </Label>
+        )}
+        {Option.isSome(adding.said) && <Notice message={adding.said.value} />}
+        <Live state={state} loading={<Skeleton rows={4} />}>
+          {(value) => (
+            <Contents
+              level={level}
+              list={library.inFolder(value, level.folderId)}
+              onItem={(item) => setOver(Over.Item({ item }))}
+              onAdd={() => void adding.add()}
+            />
+          )}
+        </Live>
+        {below}
+      </ScrollView>
+      {Over.$is('NewFolder')(over) && <NewFolder level={level} onClose={close} />}
+      {Over.$is('Item')(over) && <ItemSheet level={level} item={over.item} onClose={close} />}
+    </Screen>
   )
 }
 
-/** Renders Library passage matches without owning search state. */
-function SearchResults({
-  results,
-  busy,
-  api,
-  action,
+/** What Vivid has to say about a file: that it is reading it, that it could not, or its size. */
+function noteOf(item: LibraryItem): string {
+  if (item.status === 'processing') return 'Vivid is reading this file.'
+  if (item.status === 'ready') return library.formatBytes(item.size)
+  return item.error === null ? 'Vivid could not read this file.' : item.error
+}
+
+/** The folders and files at one level. */
+function Contents({
+  level,
+  list,
+  onItem,
+  onAdd,
 }: {
-  readonly results: readonly SearchResult[]
-  readonly busy: boolean
-  readonly api: LibraryApi
-  readonly action: LibraryAction
+  level: Level
+  list: library.LibraryList
+  onItem: (item: LibraryItem) => void
+  onAdd: () => void
 }) {
-  if (results.length === 0) {
-    return <Label tone="ink-3">No passages found. Try a different phrase.</Label>
+  const go = useGo()
+  const { colors: c } = useTheme()
+  if (list.folders.length === 0 && list.documents.length === 0) {
+    return (
+      <Empty
+        title="Nothing here yet"
+        detail={
+          level.shelf === 'Company'
+            ? 'Add a file and Vivid can read it in every member’s threads.'
+            : 'Add a file and Vivid can read it in your threads.'
+        }
+      >
+        <Button icon={Upload} label="Add a file" onPress={onAdd} />
+      </Empty>
+    )
   }
   return (
     <>
-      {results.map((result) => (
-        <Card key={result.chunkId}>
-          <Label size="label">
-            {result.filename}
-            {result.page ? ` · page ${result.page}` : ''}
-          </Label>
-          <Label size="label" tone="ink-2">
-            {result.text}
-          </Label>
-          <ControlPill
-            label="Open source"
-            disabled={busy}
-            onPress={() =>
-              void action(() =>
-                openDocument(api, `/api/library/${result.documentId}/content`, result.filename),
-              )
-            }
-          />
-        </Card>
-      ))}
+      {list.folders.length > 0 && (
+        <Section title="Folders">
+          {list.folders.map((folder: LibraryFolder) => (
+            <Row
+              key={folder.id}
+              leading={<FolderIcon size={20} strokeWidth={1.6} color={c['ink-2']} />}
+              title={folder.name}
+              detail={folder.itemCount === 1 ? '1 file' : `${folder.itemCount} files`}
+              onPress={() =>
+                go.push('Folder', { shelf: level.shelf, id: folder.id, name: folder.name })
+              }
+            />
+          ))}
+        </Section>
+      )}
+      {list.documents.length > 0 && (
+        <Section title="Files">
+          {list.documents.map((item) => (
+            <Row
+              key={item.id}
+              leading={<FileText size={20} strokeWidth={1.6} color={c['ink-2']} />}
+              title={item.name}
+              detail={noteOf(item)}
+              onPress={() => onItem(item)}
+            />
+          ))}
+        </Section>
+      )}
     </>
   )
 }
 
-/** Renders child folders while the parent retains path and selection state. */
-function FolderCards({
-  folders,
-  colors: c,
-  onOpen,
-  onSelect,
-}: {
-  readonly folders: readonly LibraryFolder[]
-  readonly colors: ReturnType<typeof useTheme>['colors']
-  readonly onOpen: (folder: LibraryFolder) => void
-  readonly onSelect: (selection: Selection) => void
-}) {
-  return folders.map((folder) => (
-    <Card key={folder.id}>
-      <View style={styles.row}>
-        <FolderIcon size={22} color={c['ink-2']} />
-        <Label style={{ flex: 1 }}>{folder.name}</Label>
-        <Label size="micro" tone="ink-3">
-          {folder.itemCount} items
-        </Label>
-      </View>
-      <View style={styles.wrap}>
-        <ControlPill label="Open folder" onPress={() => onOpen(folder)} />
-        <ControlPill label="Manage" onPress={() => onSelect({ kind: 'folder', item: folder })} />
-      </View>
-    </Card>
-  ))
-}
-
-/** Renders document status cards without owning document selection. */
-function DocumentCards({
-  documents,
-  colors: c,
-  onSelect,
-}: {
-  readonly documents: readonly LibraryItem[]
-  readonly colors: ReturnType<typeof useTheme>['colors']
-  readonly onSelect: (selection: Selection) => void
-}) {
-  return documents.map((document) => (
-    <Card key={document.id}>
-      <View style={styles.row}>
-        <FileText size={22} color={c['ink-2']} />
-        <Label style={{ flex: 1 }}>{document.name}</Label>
-      </View>
-      <Label size="label" tone={document.status === 'failed' ? 'status-danger' : 'ink-3'}>
-        {Math.max(1, Math.round(document.size / 1024))} KB · {statusNote(document)}
-      </Label>
-      <ControlPill
-        label="View document"
-        onPress={() => onSelect({ kind: 'file', item: document })}
-      />
-    </Card>
-  ))
-}
-
-/** Renders Library contents while the screen owns resources and mutations. */
-function LibraryContent({
-  loading,
-  resourceError,
-  error,
-  busy,
-  onRefresh,
-  folderId,
-  onEdit,
-  query,
-  onQueryChange,
-  onResults,
-  results,
-  onClearSearch,
-  folders,
-  documents,
-  hasData,
-  colors,
-  api,
-  action,
-  onOpenFolder,
-  onSelect,
-}: {
-  readonly loading: boolean
-  readonly resourceError: string
-  readonly error: string
-  readonly busy: boolean
-  readonly onRefresh: () => Promise<void>
-  readonly folderId: string | null
-  readonly onEdit: (edit: EditState) => void
-  readonly query: string
-  readonly onQueryChange: (query: string) => void
-  readonly onResults: (results: readonly SearchResult[]) => void
-  readonly results: readonly SearchResult[] | null
-  readonly onClearSearch: () => void
-  readonly folders: readonly LibraryFolder[]
-  readonly documents: readonly LibraryItem[]
-  readonly hasData: boolean
-  readonly colors: ReturnType<typeof useTheme>['colors']
-  readonly api: LibraryApi
-  readonly action: LibraryAction
-  readonly onOpenFolder: (folder: LibraryFolder) => void
-  readonly onSelect: (selection: Selection) => void
-}) {
+function NewFolder({ level, onClose }: { level: Level; onClose: () => void }) {
+  const data = useLiveData()
   return (
-    <ScrollView
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={onRefresh} />}
-      contentContainerStyle={styles.page}
-    >
-      <Feedback error={error || resourceError} retry={onRefresh} />
-      {busy && (
-        <Label size="label" tone="ink-3">
-          One moment…
-        </Label>
-      )}
-      <View style={styles.wrap}>
-        <ControlPill
-          icon={FolderPlus}
-          label="New folder"
-          onPress={() => {
-            onEdit({
-              title: 'A place for related things',
-              fields: [{ key: 'name', label: 'Folder name' }],
-              save: async (values) => {
-                await api.run(
-                  api.rpc((client) =>
-                    client.CreateLibraryFolder({
-                      name: values.name,
-                      parentId: folderId === null ? null : LibraryFolderId.make(folderId),
-                    }),
-                  ),
-                )
-              },
-            })
-          }}
-        />
-      </View>
-      <Field
-        accessibilityLabel="Search the Library"
-        placeholder="Find something in your files…"
-        value={query}
-        onChangeText={onQueryChange}
-      />
-      <View style={styles.wrap}>
-        <ControlPill
-          label="Search files"
-          disabled={busy || query.trim().length < 2}
-          onPress={() => {
-            void action(async () => {
-              const body = await searchLibrary(api, query.trim(), folderId)
-              onResults(body.results)
-            })
-          }}
-        />
-        {results !== null && <ControlPill label="Clear search" onPress={onClearSearch} />}
-      </View>
-      {results !== null && (
-        <SearchResults results={results} busy={busy} api={api} action={action} />
-      )}
-      <Label size="label" tone="ink-3">
-        PDF, Markdown, and text · up to 10 MB
-      </Label>
-      {!loading && !resourceError && hasData && documents.length === 0 && folders.length === 0 && (
-        <Empty
-          title="Put a little context here."
-          detail="Notes, briefs, the document you always have to explain. Vivid can read them when you ask."
-        />
-      )}
-      <FolderCards folders={folders} colors={colors} onOpen={onOpenFolder} onSelect={onSelect} />
-      <DocumentCards documents={documents} colors={colors} onSelect={onSelect} />
-    </ScrollView>
+    <NameSheet
+      title="New folder"
+      label="Name"
+      initial=""
+      placeholder="Contracts"
+      action="Create folder"
+      maxLength={120}
+      onClose={onClose}
+      onSave={async (name) =>
+        refusalOf(
+          await data.change((client) =>
+            client.CreateLibraryFolder({ name, shelf: level.shelf, parentId: level.folderId }),
+          ),
+        )
+      }
+    />
   )
 }
 
-/** Renders actions for one selected Library item without owning selection state. */
-function SelectionSheet({
-  selected,
-  busy,
-  error,
-  api,
-  createThread,
-  open,
-  action,
-  endpoint,
-  onClose,
-  onRename,
-  onMove,
-  onDeleted,
-}: {
-  readonly selected: Selection
-  readonly busy: boolean
-  readonly error: string
-  readonly api: LibraryApi
-  readonly createThread: ReturnType<typeof useWorkspace>['createThread']
-  readonly open: ReturnType<typeof useOpenThread>
-  readonly action: LibraryAction
-  readonly endpoint: LibraryEndpoint
-  readonly onClose: () => void
-  readonly onRename: (selection: Selection) => void
-  readonly onMove: (selection: Selection) => void
-  readonly onDeleted: () => void
-}) {
+/** Renaming and deleting the folder whose page this is. Deleting it leaves the page. */
+function FolderActions({ id, name }: { id: LibraryFolderId; name: string }) {
+  const data = useLiveData()
+  const go = useGo()
+  const [renaming, setRenaming] = useState(false)
+  const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
+
+  const remove = () =>
+    confirmDestructive({
+      title: `Delete “${name}”?`,
+      detail: 'The folder is removed. This cannot be undone.',
+      action: 'Delete folder',
+      onConfirm: () => {
+        warn()
+        void data
+          .change((client) => client.DeleteLibraryFolder({ id }))
+          .then((result) => {
+            if (Result.isFailure(result)) setRefused(Option.some(result.failure.message))
+            else go.goBack()
+          })
+      },
+    })
+
   return (
-    <Sheet title={selected.item.name} onClose={onClose}>
-      <Feedback error={error} />
-      {selected.kind === 'file' && (
-        <>
-          <Label tone="ink-2">{selected.item.preview || 'Your document is in the Library.'}</Label>
-          <ControlPill
-            primary
-            label="Ask Vivid about this"
-            disabled={busy || selected.item.status !== 'ready'}
-            onPress={() =>
-              void action(async () => {
-                const thread = await createThread(
-                  `Search the Library and answer a question about “${selected.item.name}”: `,
-                )
-                onClose()
-                open(thread.id, thread.title, thread.draft)
-              })
-            }
-          />
-          <ControlPill
-            label="Open original"
-            disabled={busy}
-            onPress={() =>
-              void action(async () => {
-                await openDocument(
-                  api,
-                  `/api/library/${selected.item.id}/content`,
-                  selected.item.name,
-                )
-              })
-            }
-          />
-        </>
+    <>
+      {Option.isSome(refused) && <Notice message={refused.value} />}
+      <Section title="This folder">
+        <Row title="Rename folder" onPress={() => setRenaming(true)} />
+        <Row title="Delete folder" danger onPress={remove} />
+      </Section>
+      {renaming && (
+        <NameSheet
+          title="Rename folder"
+          label="Name"
+          initial={name}
+          placeholder="Contracts"
+          action="Save"
+          maxLength={120}
+          onClose={() => setRenaming(false)}
+          onSave={async (next) => {
+            const result = await data.change((client) =>
+              client.PatchLibraryFolder({ id, patch: { name: next } }),
+            )
+            // The page was opened under the old name, which travelled with the route.
+            if (Result.isSuccess(result)) go.setParams({ name: next })
+            return refusalOf(result)
+          }}
+        />
       )}
-      <ControlPill label="Rename" onPress={() => onRename(selected)} />
-      <ControlPill label="Move" onPress={() => onMove(selected)} />
-      <ControlPill
-        danger
-        label={`Delete ${selected.kind === 'file' ? 'document' : 'folder'}`}
-        disabled={busy}
-        onPress={() =>
-          confirmDelete(
-            selected.item.name,
-            () =>
-              void action(async () => {
-                await api.run(api.rpc(endpoint(selected, { kind: 'delete' })))
-                onDeleted()
-              }),
+    </>
+  )
+}
+
+/**
+ * One file: what Vivid read of it, asking about it, opening the original, renaming and deleting.
+ * Asking starts a Thread with a sentence about the file and goes there once Vivid has it.
+ */
+function ItemSheet({
+  level,
+  item,
+  onClose,
+}: {
+  level: Level
+  item: LibraryItem
+  onClose: () => void
+}) {
+  const data = useLiveData()
+  const go = useGo()
+  const [renaming, setRenaming] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
+
+  async function ask() {
+    setBusy(true)
+    const outcome = await startThread(data, {
+      message: `Read “${item.name}” in the Library and tell me what matters in it.`,
+      projectId: null,
+      resume: Option.none(),
+    })
+    setBusy(false)
+    if (Start.$is('Started')(outcome)) {
+      onClose()
+      go.navigate('Chat', { id: outcome.id })
+      return
+    }
+    setRefused(Option.some(outcome.message))
+  }
+
+  async function open() {
+    setBusy(true)
+    const result = await data.run(openDocument(data.session, `/${item.id}/content`, item.name))
+    setBusy(false)
+    setRefused(refusalOf(result))
+  }
+
+  const remove = () =>
+    confirmDestructive({
+      title: `Delete “${item.name}”?`,
+      detail: 'Vivid will no longer be able to read it. This cannot be undone.',
+      action: 'Delete file',
+      onConfirm: () => {
+        warn()
+        onClose()
+        void data.change(
+          (client) => client.DeleteLibraryItem({ id: item.id }),
+          () => level.query.expect(library.itemRemoved(item.id)),
+        )
+      },
+    })
+
+  if (renaming) {
+    return (
+      <NameSheet
+        title="Rename file"
+        label="Name"
+        initial={item.name}
+        placeholder="brief.pdf"
+        action="Save"
+        maxLength={200}
+        onClose={onClose}
+        onSave={async (name) =>
+          refusalOf(
+            await data.change(
+              (client) => client.PatchLibraryItem({ id: item.id, patch: { name } }),
+              () => level.query.expect(library.itemRenamed(item.id, name)),
+            ),
           )
         }
       />
-    </Sheet>
-  )
-}
+    )
+  }
 
-/** Renders move targets while the screen owns destination and refresh state. */
-function MoveSheet({
-  move,
-  folders,
-  busy,
-  error,
-  api,
-  action,
-  endpoint,
-  onMoved,
-  onClose,
-}: {
-  readonly move: Selection
-  readonly folders: readonly LibraryFolder[]
-  readonly busy: boolean
-  readonly error: string
-  readonly api: LibraryApi
-  readonly action: LibraryAction
-  readonly endpoint: LibraryEndpoint
-  readonly onMoved: () => void
-  readonly onClose: () => void
-}) {
   return (
-    <Sheet title={`Move ${move.item.name}`} onClose={onClose}>
-      <Feedback error={error} />
-      {[{ id: '', name: 'Library' }, ...folders.filter((folder) => folder.id !== move.item.id)].map(
-        (folder) => (
-          <ControlPill
-            key={folder.id}
-            label={folder.name}
-            disabled={busy}
-            onPress={() =>
-              void action(async () => {
-                await api.run(
-                  api.rpc(
-                    endpoint(move, {
-                      kind: 'move',
-                      folderId: folder.id === '' ? null : folder.id,
-                    }),
-                  ),
-                )
-                onMoved()
-              })
-            }
-          />
-        ),
+    <Sheet title={item.name} detail={noteOf(item)} onClose={onClose}>
+      {item.preview.length > 0 && (
+        <Label numberOfLines={8} size="label" tone="ink-2">
+          {item.preview}
+        </Label>
       )}
-    </Sheet>
-  )
-}
-
-/** Renders the active Library edit form without owning refresh state. */
-function LibraryEditor({
-  edit,
-  onClose,
-  onSaved,
-}: {
-  readonly edit: EditState
-  readonly onClose: () => void
-  readonly onSaved: (values: Record<string, string>) => Promise<void>
-}) {
-  return <EditSheet title={edit.title} fields={edit.fields} onClose={onClose} onSave={onSaved} />
-}
-
-type LibraryViewProps = {
-  readonly title: string
-  readonly onBack: () => void
-  readonly busy: boolean
-  readonly onUpload: () => void
-  readonly loading: boolean
-  readonly resourceError: string
-  readonly error: string
-  readonly onRefresh: () => Promise<void>
-  readonly folderId: string | null
-  readonly onEdit: (edit: EditState) => void
-  readonly query: string
-  readonly onQueryChange: (query: string) => void
-  readonly onResults: (results: readonly SearchResult[]) => void
-  readonly results: readonly SearchResult[] | null
-  readonly onClearSearch: () => void
-  readonly folders: readonly LibraryFolder[]
-  readonly allFolders: readonly LibraryFolder[]
-  readonly documents: readonly LibraryItem[]
-  readonly hasData: boolean
-  readonly colors: ReturnType<typeof useTheme>['colors']
-  readonly api: LibraryApi
-  readonly action: LibraryAction
-  readonly onOpenFolder: (folder: LibraryFolder) => void
-  readonly onSelect: (selection: Selection) => void
-  readonly selected: Selection | null
-  readonly createThread: ReturnType<typeof useWorkspace>['createThread']
-  readonly open: ReturnType<typeof useOpenThread>
-  readonly endpoint: LibraryEndpoint
-  readonly onCloseSelected: () => void
-  readonly onRename: (selection: Selection) => void
-  readonly onMove: (selection: Selection) => void
-  readonly onDeleted: () => void
-  readonly move: Selection | null
-  readonly moveError: string
-  readonly onMoved: () => void
-  readonly onCloseMove: () => void
-  readonly edit: EditState | null
-  readonly onCloseEdit: () => void
-  readonly onSaved: (values: Record<string, string>) => Promise<void>
-}
-
-/** Composes the Library surface from render-only sections and screen-owned callbacks. */
-function LibraryView(props: LibraryViewProps) {
-  return (
-    <View style={{ flex: 1 }}>
-      <Header
-        title={props.title}
-        onBack={props.onBack}
-        trailing={
-          <ControlPill
-            icon={Upload}
-            accessibilityLabel="Upload a document"
-            disabled={props.busy}
-            onPress={props.onUpload}
-          />
-        }
+      {Option.isSome(refused) && <Notice message={refused.value} />}
+      <Button
+        kind="primary"
+        label={busy ? 'One moment…' : 'Ask Vivid about this'}
+        disabled={busy || item.status !== 'ready'}
+        onPress={() => void ask()}
       />
-      <LibraryContent
-        loading={props.loading}
-        resourceError={props.resourceError}
-        error={props.error}
-        busy={props.busy}
-        onRefresh={props.onRefresh}
-        folderId={props.folderId}
-        onEdit={props.onEdit}
-        query={props.query}
-        onQueryChange={props.onQueryChange}
-        onResults={props.onResults}
-        results={props.results}
-        onClearSearch={props.onClearSearch}
-        folders={props.folders}
-        documents={props.documents}
-        hasData={props.hasData}
-        colors={props.colors}
-        api={props.api}
-        action={props.action}
-        onOpenFolder={props.onOpenFolder}
-        onSelect={props.onSelect}
-      />
-      {props.selected !== null && (
-        <SelectionSheet
-          selected={props.selected}
-          busy={props.busy}
-          error={props.error}
-          api={props.api}
-          createThread={props.createThread}
-          open={props.open}
-          action={props.action}
-          endpoint={props.endpoint}
-          onClose={props.onCloseSelected}
-          onRename={props.onRename}
-          onMove={props.onMove}
-          onDeleted={props.onDeleted}
-        />
-      )}
-      {props.move !== null && (
-        <MoveSheet
-          move={props.move}
-          folders={props.allFolders}
-          busy={props.busy}
-          error={props.moveError}
-          api={props.api}
-          action={props.action}
-          endpoint={props.endpoint}
-          onMoved={props.onMoved}
-          onClose={props.onCloseMove}
-        />
-      )}
-      {props.edit !== null && (
-        <LibraryEditor edit={props.edit} onClose={props.onCloseEdit} onSaved={props.onSaved} />
-      )}
-    </View>
-  )
-}
-
-export function Library({ navigation }: NativeStackScreenProps<Routes, 'Library'>) {
-  const { api, createThread } = useWorkspace()
-  const { colors: c } = useTheme()
-  const open = useOpenThread()
-  const [path, setPath] = useState<LibraryFolder[]>([])
-  const currentFolder = path.at(-1)
-  const folderId = currentFolder === undefined ? undefined : currentFolder.id
-  const resource = useResource(
-    api,
-    folderId === undefined ? 'library' : `library:${folderId}`,
-    api.rpc((client) =>
-      folderId === undefined
-        ? client.ListLibrary({})
-        : client.ListLibrary({ folderId: LibraryFolderId.make(folderId) }),
-    ),
-    LibraryListResponse,
-  )
-  const allFolders = useResource(
-    api,
-    'library-folders',
-    api.rpc((client) => client.ListLibraryFolders()),
-    LibraryFolderListResponse,
-  )
-  const [selected, setSelected] = useState<Selection>()
-  const [edit, setEdit] = useState<EditState>()
-  const [move, setMove] = useState<Selection>()
-  const { action, busy, error } = useLibraryAction(resource.refresh, allFolders.refresh)
-  const [query, setQuery] = useState('')
-  const data = resource.data
-  const folderData = allFolders.data
-  const [results, setResults] = useState<readonly SearchResult[]>()
-  const upload = () =>
-    uploadLibraryDocument({
-      api,
-      folderId: folderId ?? null,
-      onUploaded: () => setResults(undefined),
-    })
-  const folders = data === undefined ? [] : data.folders
-  const documents = data === undefined ? [] : data.documents
-  const allFolderItems = folderData === undefined ? [] : folderData.folders
-  return (
-    <LibraryView
-      title={libraryTitle(path)}
-      onBack={() => {
-        setResults(undefined)
-        if (path.length) setPath((currentPath) => currentPath.slice(0, -1))
-        else navigation.goBack()
-      }}
-      busy={busy}
-      onUpload={() => void action(upload)}
-      loading={resource.loading}
-      resourceError={resource.error}
-      error={error}
-      onRefresh={resource.refresh}
-      folderId={folderId ?? null}
-      onEdit={setEdit}
-      query={query}
-      onQueryChange={setQuery}
-      onResults={setResults}
-      results={results ?? null}
-      onClearSearch={() => {
-        setResults(undefined)
-        setQuery('')
-      }}
-      folders={folders}
-      documents={documents}
-      hasData={data !== undefined}
-      colors={c}
-      api={api}
-      action={action}
-      onOpenFolder={(folder) => {
-        setResults(undefined)
-        setPath((currentPath) => [...currentPath, folder])
-      }}
-      onSelect={setSelected}
-      selected={selected ?? null}
-      createThread={createThread}
-      open={open}
-      endpoint={libraryEndpoint}
-      onCloseSelected={() => setSelected(undefined)}
-      onRename={(value) => {
-        setSelected(undefined)
-        setEdit({
-          title: 'Rename',
-          fields: [{ key: 'name', label: 'Name', value: value.item.name }],
-          save: async (values) => {
-            await api.run(api.rpc(libraryEndpoint(value, { kind: 'rename', name: values.name })))
-          },
-        })
-      }}
-      onMove={(value) => {
-        setMove(value)
-        setSelected(undefined)
-      }}
-      onDeleted={() => {
-        setSelected(undefined)
-        setResults(undefined)
-      }}
-      move={move ?? null}
-      moveError={error || allFolders.error}
-      onMoved={() => {
-        setMove(undefined)
-        setResults(undefined)
-      }}
-      onCloseMove={() => setMove(undefined)}
-      edit={edit ?? null}
-      onCloseEdit={() => setEdit(undefined)}
-      onSaved={async (values) => {
-        if (edit === undefined) return
-        await edit.save(values)
-        setResults(undefined)
-        await resource.refresh()
-        await allFolders.refresh()
-      }}
-      allFolders={allFolderItems}
-    />
+      <Button label="Open the original" disabled={busy} onPress={() => void open()} />
+      <Section title="This file">
+        <Row title="Rename file" onPress={() => setRenaming(true)} />
+        <Row title="Delete file" danger onPress={remove} />
+      </Section>
+    </Sheet>
   )
 }

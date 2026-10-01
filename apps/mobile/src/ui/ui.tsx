@@ -1,45 +1,80 @@
-import { Face } from './Face'
-export { Face } from './Face'
-import { useRef, useState, useLayoutEffect, type ReactNode } from 'react'
-import { useNavigation } from '@react-navigation/native'
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
-import { DateField } from './field/Date'
+import type { ReactNode } from 'react'
 import {
-  ActivityIndicator,
   Alert,
-  Modal,
   Platform,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
+  type StyleProp,
   type TextInputProps,
   type TextProps,
   type ViewStyle,
 } from 'react-native'
-import { ChevronLeft, X, type LucideIcon } from 'lucide-react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { useTheme } from '../theme'
+import type { LucideIcon } from 'lucide-react-native'
+import { nativeMetrics as m } from '@vivid/tokens/native'
+import type { FaceMood } from '@vivid/marks'
 import { MOBILE_TYPOGRAPHY } from '../data/typography'
-import { nativeMetrics } from '@vivid/tokens/native'
-import { MotionPressable } from './motion/Pressable'
+import { tick } from '../data/haptics'
+import { useTheme } from '../theme'
+import { Face } from './Face'
+import { Press } from './motion/Pressable'
 
+export { Face } from './Face'
+export { Press } from './motion/Pressable'
+
+/**
+ * The app's small set of drawn parts. Every screen is built from these and from nothing else, so
+ * a control looks and answers the same wherever it appears: a 44-point target, a fill that
+ * darkens under a finger, a hairline where structure needs one and never a cast shadow.
+ */
+
+/** The web's radii, scaled for a screen held in a hand. Rounded once so edges land on pixels. */
+const scaled = (name: 'radius-row' | 'radius-control' | 'radius-card' | 'radius-panel') =>
+  Math.round(m[name] * m['phone-radius-factor'])
+
+export const radius = {
+  row: scaled('radius-row'),
+  control: scaled('radius-control'),
+  card: scaled('radius-card'),
+  panel: scaled('radius-panel'),
+} as const
+
+/** One device pixel: the weight of every structural line in the app. */
+export const HAIRLINE = StyleSheet.hairlineWidth
+
+/** The margin every screen keeps between its content and the edge of the glass. */
+export const GUTTER = 20
+
+/** The least a finger needs. A control that draws smaller than this still answers this large. */
+export const TARGET = 44
+
+type Tone =
+  | 'ink'
+  | 'ink-2'
+  | 'ink-3'
+  | 'ink-4'
+  | 'ink-on-accent'
+  | 'accent-ink'
+  | 'status-danger'
+  | 'status-success'
+  | 'status-working'
+  | 'status-attention'
+  | 'status-approve'
+
+/** Text in one step of the type scale and one tone of ink. Nothing else in the app sets type. */
 export function Label({
   tone = 'ink',
   size = 'body',
   style,
   ...props
-}: TextProps & {
-  tone?: 'ink' | 'ink-2' | 'ink-3' | 'ink-4' | 'accent-ink' | 'status-danger' | 'status-success'
-  size?: keyof typeof MOBILE_TYPOGRAPHY
-}) {
+}: TextProps & { tone?: Tone; size?: keyof typeof MOBILE_TYPOGRAPHY }) {
   const { colors } = useTheme()
   return (
     <Text
       {...props}
       style={[
-        { color: colors[tone], fontWeight: nativeMetrics['weight-meta'] },
+        { color: colors[tone], fontWeight: m['weight-meta'] },
         MOBILE_TYPOGRAPHY[size],
         style,
       ]}
@@ -47,163 +82,132 @@ export function Label({
   )
 }
 
-// Adapted from T3 Code's ControlPill: native press-in de-duplication and 44pt geometry.
-export function ControlPill({
-  icon: Icon,
+/**
+ * What a button is for decides how it is drawn.
+ *
+ * - `primary`: the one thing this surface is asking for.
+ * - `plain`: an ordinary action, on a quiet filled shape.
+ * - `ghost`: a way out or a lesser action, with no shape until it is pressed.
+ * - `danger`: something that removes or refuses.
+ */
+export type ButtonKind = 'primary' | 'plain' | 'ghost' | 'danger'
+
+const BUTTON_PAINT = {
+  primary: { fill: 'accent', ink: 'ink-on-accent', line: false },
+  plain: { fill: 'surface-2', ink: 'ink', line: true },
+  ghost: { fill: 'transparent', ink: 'ink-2', line: false },
+  danger: { fill: 'status-danger-soft', ink: 'status-danger', line: false },
+} as const satisfies Record<ButtonKind, { fill: string; ink: Tone; line: boolean }>
+
+/** How present a control is: faint when it cannot be used, slightly dimmed while it is held. */
+const presence = (disabled: boolean, pressed: boolean): number => {
+  if (disabled) return 0.4
+  return pressed ? 0.82 : 1
+}
+
+/** A labelled action. The label never wraps: a button that breaks onto two lines reads as broken. */
+export function Button({
   label,
-  accessibilityLabel,
+  icon: Icon,
+  kind = 'plain',
+  disabled = false,
   onPress,
-  disabled,
-  primary,
-  danger,
-  activateOnPressIn,
+  containerStyle,
 }: {
+  label: string
   icon?: LucideIcon
-  label?: string
-  accessibilityLabel?: string
-  onPress?: () => void
+  kind?: ButtonKind
   disabled?: boolean
-  primary?: boolean
-  danger?: boolean
-  activateOnPressIn?: boolean
+  onPress: () => void
+  containerStyle?: StyleProp<ViewStyle>
 }) {
   const { colors: c } = useTheme()
-  const activatedOnPressIn = useRef(false)
-  const color = primary ? c['ink-on-accent'] : danger ? c['status-danger'] : c.ink
+  const paint = BUTTON_PAINT[kind]
+  const fill = paint.fill === 'transparent' ? 'transparent' : c[paint.fill]
   return (
-    <MotionPressable
+    <Press
       accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? label}
-      accessibilityState={{ disabled: !!disabled }}
+      accessibilityState={{ disabled }}
       disabled={disabled}
-      onPressIn={
-        activateOnPressIn
-          ? () => {
-              activatedOnPressIn.current = true
-              if (onPress !== undefined) onPress()
-            }
-          : undefined
-      }
-      onPressOut={
-        activateOnPressIn
-          ? () => {
-              setTimeout(() => {
-                activatedOnPressIn.current = false
-              }, 0)
-            }
-          : undefined
-      }
-      onPress={() => {
-        if (!activateOnPressIn || !activatedOnPressIn.current) {
-          if (onPress !== undefined) onPress()
-        }
-      }}
+      onPress={onPress}
+      containerStyle={containerStyle}
       style={({ pressed }) => ({
-        minHeight: 44,
-        minWidth: 44,
-        borderRadius: nativeMetrics['radius-control'] * nativeMetrics['phone-radius-factor'],
-        paddingHorizontal: label ? 16 : 10,
-        gap: 7,
+        minHeight: TARGET,
+        paddingHorizontal: 16,
+        gap: 8,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: primary
-          ? c.accent
-          : danger
-            ? c['status-danger-soft']
-            : label
-              ? c['surface-3']
-              : 'transparent',
-        borderWidth: label && !primary && !danger ? 0.5 : 0,
+        borderRadius: radius.control,
+        backgroundColor: pressed && kind === 'ghost' ? c['wash-pressed'] : fill,
+        borderWidth: paint.line ? HAIRLINE : 0,
         borderColor: c['line-3'],
-        opacity: disabled ? 0.4 : pressed ? 0.7 : 1,
+        opacity: presence(disabled, pressed),
       })}
     >
-      {Icon && <Icon pointerEvents="none" size={18} strokeWidth={1.6} color={color} />}
-      {label && (
-        <Label size="label" style={{ color }}>
-          {label}
-        </Label>
+      {Icon !== undefined && (
+        <Icon pointerEvents="none" size={17} strokeWidth={1.8} color={c[paint.ink]} />
       )}
-    </MotionPressable>
+      <Label size="footnote" tone={paint.ink} numberOfLines={1}>
+        {label}
+      </Label>
+    </Press>
   )
 }
 
-// Adapted from T3's AndroidScreenHeader, retaining safe-area and embedded behavior.
-export function Header({
-  title,
-  subtitle,
-  onBack,
-  trailing,
-  embedded,
-  nativeHeader = true,
+/**
+ * An action drawn as its icon alone. The glyph is small; the target around it is the full 44
+ * points, and the name a screen reader says is required because the picture says nothing to it.
+ */
+export function IconButton({
+  icon: Icon,
+  label,
+  tone = 'ink-2',
+  disabled = false,
+  onPress,
 }: {
-  title: string
-  subtitle?: string
-  onBack?: () => void
-  trailing?: ReactNode
-  embedded?: boolean
-  nativeHeader?: boolean
+  icon: LucideIcon
+  label: string
+  tone?: Tone
+  disabled?: boolean
+  onPress: () => void
 }) {
-  const insets = useSafeAreaInsets()
   const { colors: c } = useTheme()
-  const navigation = useNavigation<NativeStackNavigationProp<Record<string, undefined>>>()
-  const useNative = Platform.OS === 'ios' && !embedded && nativeHeader
-  useLayoutEffect(() => {
-    if (!useNative) return
-    navigation.setOptions({
-      headerShown: true,
-      headerShadowVisible: false,
-      headerBackButtonDisplayMode: 'minimal',
-      headerStyle: { backgroundColor: c['surface-0'] },
-      headerTintColor: c.ink,
-      title,
-      headerTitleStyle: { fontSize: 17, fontWeight: '500' },
-      headerRight: () => trailing,
-      headerLeft: onBack
-        ? () => <ControlPill icon={ChevronLeft} accessibilityLabel="Back" onPress={onBack} />
-        : undefined,
-    })
-  }, [useNative, navigation, title, trailing, onBack, c])
-  if (useNative) return null
   return (
-    <View
-      style={{
-        backgroundColor: c['surface-0'],
-        paddingTop: embedded ? 8 : Math.max(insets.top, 12),
-        paddingHorizontal: 16,
-        paddingBottom: 10,
-      }}
+    <Press
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        width: TARGET,
+        height: TARGET,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: radius.control,
+        backgroundColor: pressed ? c['wash-pressed'] : 'transparent',
+        opacity: disabled ? 0.35 : 1,
+      })}
     >
-      <View style={[styles.row, { minHeight: 48 }]}>
-        {title === 'Vivid' && <Face size={28} />}
-        {onBack && <ControlPill icon={ChevronLeft} accessibilityLabel="Back" onPress={onBack} />}
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Label numberOfLines={1} size="headline">
-            {title}
-          </Label>
-          {subtitle && (
-            <Label size="label" tone="ink-3">
-              {subtitle}
-            </Label>
-          )}
-        </View>
-        {trailing}
-      </View>
-    </View>
+      <Icon pointerEvents="none" size={21} strokeWidth={1.7} color={c[tone]} />
+    </Press>
   )
 }
 
-export function Card({ children, style }: { children: ReactNode; style?: ViewStyle }) {
+/** A quiet filled shape that groups what belongs together. Depth is its fill, not a shadow. */
+export function Card({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
   const { colors: c } = useTheme()
   return (
     <View
       style={[
         {
           padding: 16,
-          borderRadius: 18,
-          backgroundColor: c['surface-2'],
           gap: 10,
+          borderRadius: radius.card,
+          backgroundColor: c['surface-2'],
+          borderWidth: HAIRLINE,
+          borderColor: c['line-2'],
         },
         style,
       ]}
@@ -212,219 +216,278 @@ export function Card({ children, style }: { children: ReactNode; style?: ViewSty
     </View>
   )
 }
+
+/** Somewhere to type. Its text is the reading size, which is also what keeps it legible. */
 export function Field({ style, ...props }: TextInputProps) {
   const { colors: c } = useTheme()
   return (
     <TextInput
       {...props}
-      placeholderTextColor={c['ink-3']}
+      placeholderTextColor={c['ink-4']}
+      selectionColor={c.accent}
       style={[
         {
           minHeight: 48,
-          borderRadius: 14,
-          backgroundColor: c['surface-2'],
           paddingHorizontal: 14,
           paddingVertical: 12,
+          borderRadius: radius.control,
+          backgroundColor: c['surface-2'],
+          borderWidth: HAIRLINE,
+          borderColor: c['line-2'],
           color: c.ink,
-          fontSize: 16,
         },
+        MOBILE_TYPOGRAPHY.reading,
         style,
       ]}
     />
   )
 }
-export function Empty({
-  title,
-  detail,
-  children,
-}: {
-  title: string
-  detail: string
-  children?: ReactNode
-}) {
+
+/** A field under the word that says what it is for. */
+export function Labelled({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <View
-      style={{
-        alignItems: 'center',
-        paddingVertical: 48,
-        paddingHorizontal: 24,
-        gap: 12,
-      }}
-    >
-      <Face size={52} />
-      <Label size="title" style={{ textAlign: 'center' }}>
-        {title}
-      </Label>
-      <Label tone="ink-3" style={{ textAlign: 'center', maxWidth: 320 }}>
-        {detail}
+    <View style={{ gap: 8 }}>
+      <Label size="label" tone="ink-2">
+        {label}
       </Label>
       {children}
     </View>
   )
 }
-export function Feedback({
-  error,
-  loading,
-  retry,
-  retryLabel = 'Try again',
-}: {
-  error?: string
-  loading?: boolean
-  retry?: () => void
-  retryLabel?: string
-}) {
+
+/** Something the server or the device refused, said where the Person was looking. */
+export function Notice({ message }: { message: string }) {
   const { colors: c } = useTheme()
-  if (loading)
-    return (
-      <ActivityIndicator accessibilityLabel="Loading" color={c.accent} style={{ padding: 24 }} />
-    )
-  if (!error) return null
   return (
-    <Card>
-      <Label tone="status-danger">{error}</Label>
-      {retry && <ControlPill label={retryLabel} onPress={retry} />}
-    </Card>
+    <View
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
+      style={{
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        borderRadius: radius.control,
+        backgroundColor: c['status-danger-soft'],
+      }}
+    >
+      <Label size="label" tone="status-danger">
+        {message}
+      </Label>
+    </View>
   )
 }
-export function Sheet({
+
+/** A screen or list with nothing in it yet: Vivid, one line of what goes here, and the way in. */
+export function Empty({
   title,
-  onClose,
+  detail,
+  mood = 'neutral',
   children,
 }: {
   title: string
-  onClose: () => void
-  children: ReactNode
+  detail: string
+  mood?: FaceMood
+  children?: ReactNode
+}) {
+  return (
+    <View style={{ alignItems: 'center', paddingVertical: 44, paddingHorizontal: 24, gap: 10 }}>
+      <Face size={44} mood={mood} />
+      <Label size="headline" style={{ marginTop: 6, textAlign: 'center' }}>
+        {title}
+      </Label>
+      <Label size="label" tone="ink-3" style={{ textAlign: 'center', maxWidth: 300 }}>
+        {detail}
+      </Label>
+      {children !== undefined && <View style={{ marginTop: 10 }}>{children}</View>}
+    </View>
+  )
+}
+
+/**
+ * A choice between a few named things, all visible at once. The chosen one is raised; the rest
+ * darken under a finger. Each segment is a radio to assistive technology.
+ */
+export function Segmented<Value extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: Value
+  options: ReadonlyArray<{ readonly value: Value; readonly label: string }>
+  onChange: (value: Value) => void
 }) {
   const { colors: c } = useTheme()
-  const insets = useSafeAreaInsets()
+  const fill = (selected: boolean, pressed: boolean) => {
+    if (selected) return c['surface-3']
+    return pressed ? c['wash-pressed'] : 'transparent'
+  }
   return (
-    <Modal
-      animationType="slide"
-      presentationStyle="pageSheet"
-      allowSwipeDismissal={Platform.OS === 'ios'}
-      onRequestClose={onClose}
+    <View
+      accessibilityRole="radiogroup"
+      accessibilityLabel={label}
+      style={{
+        flexDirection: 'row',
+        alignSelf: 'flex-start',
+        padding: 3,
+        // Concentric with the segments inside it: their radius plus the track's padding.
+        borderRadius: radius.row + 3,
+        backgroundColor: c['surface-2'],
+        borderWidth: HAIRLINE,
+        borderColor: c['line-2'],
+      }}
     >
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: c['surface-0'],
-          paddingBottom: insets.bottom,
-        }}
-      >
-        <Header
-          nativeHeader={false}
-          title={title}
-          trailing={<ControlPill icon={X} accessibilityLabel="Close" onPress={onClose} />}
-        />
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          automaticallyAdjustKeyboardInsets
-          contentContainerStyle={{ padding: 20, gap: 16 }}
-        >
-          {children}
-        </ScrollView>
-      </View>
-    </Modal>
+      {options.map((option) => {
+        const selected = option.value === value
+        return (
+          <Press
+            key={option.value}
+            accessibilityRole="radio"
+            accessibilityState={{ selected }}
+            // The segment is 38 points tall inside its track; the slop makes the target 44.
+            hitSlop={{ top: 3, bottom: 3 }}
+            onPress={() => {
+              if (selected) return
+              tick()
+              onChange(option.value)
+            }}
+            style={({ pressed }) => ({
+              minHeight: 38,
+              paddingHorizontal: 14,
+              justifyContent: 'center',
+              borderRadius: radius.row,
+              borderWidth: HAIRLINE,
+              borderColor: selected ? c['line-3'] : 'transparent',
+              backgroundColor: fill(selected, pressed),
+            })}
+          >
+            <Label size="label" tone={selected ? 'ink' : 'ink-3'} numberOfLines={1}>
+              {option.label}
+            </Label>
+          </Press>
+        )
+      })}
+    </View>
   )
 }
-export function EditSheet({
-  title,
-  fields,
-  onClose,
-  onSave,
+
+/**
+ * A choice between more named things than fit on one line. They wrap, so a long label or a
+ * larger text size makes another row instead of a clipped one.
+ */
+export function Chips<Value extends string>({
+  label,
+  value,
+  options,
+  onChange,
 }: {
-  title: string
-  fields: {
-    key: string
-    label: string
-    value?: string
-    multiline?: boolean
-    secure?: boolean
-    date?: boolean
-    options?: { label: string; value: string }[]
-    allowCustom?: boolean
-  }[]
-  onClose: () => void
-  onSave: (values: Record<string, string>) => Promise<void>
+  label: string
+  value: Value
+  options: ReadonlyArray<{ readonly value: Value; readonly label: string }>
+  onChange: (value: Value) => void
 }) {
-  const [values, setValues] = useState<Record<string, string>>(
-    Object.fromEntries(fields.map((f) => [f.key, f.value ?? ''])),
-  )
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  const { colors: c } = useTheme()
+  const fill = (selected: boolean, pressed: boolean) => {
+    if (selected) return c['accent-soft']
+    return pressed ? c['wash-pressed'] : c['surface-2']
+  }
   return (
-    <Sheet title={title} onClose={onClose}>
-      {fields.map((f) => (
-        <View key={f.key} style={{ gap: 8 }}>
-          <Label size="label" tone="ink-2">
-            {f.label}
-          </Label>
-          {f.options && (
-            <View style={styles.wrap}>
-              {f.options.map((option) => (
-                <ControlPill
-                  key={option.value}
-                  label={option.label}
-                  primary={values[f.key] === option.value}
-                  onPress={() => setValues((v) => ({ ...v, [f.key]: option.value }))}
-                />
-              ))}
-              {f.allowCustom && (
-                <ControlPill
-                  label="Custom schedule"
-                  onPress={() => setValues((v) => ({ ...v, [f.key]: '' }))}
-                />
-              )}
-            </View>
-          )}
-          {f.date ? (
-            <DateField
-              label={f.label}
-              value={values[f.key]}
-              onChange={(value) => setValues((v) => ({ ...v, [f.key]: value }))}
-            />
-          ) : (
-            (!f.options ||
-              (f.allowCustom && !f.options.some((o) => o.value === values[f.key]))) && (
-              <Field
-                accessibilityLabel={f.label}
-                value={values[f.key]}
-                multiline={f.multiline}
-                secureTextEntry={f.secure}
-                autoCapitalize={f.secure ? 'none' : 'sentences'}
-                onChangeText={(value) => setValues((v) => ({ ...v, [f.key]: value }))}
-              />
-            )
-          )}
+    <View accessibilityRole="radiogroup" accessibilityLabel={label} style={styles.wrap}>
+      {options.map((option) => {
+        const selected = option.value === value
+        return (
+          <Press
+            key={option.value}
+            accessibilityRole="radio"
+            accessibilityState={{ selected }}
+            onPress={() => {
+              if (selected) return
+              tick()
+              onChange(option.value)
+            }}
+            style={({ pressed }) => ({
+              minHeight: TARGET,
+              paddingHorizontal: 14,
+              justifyContent: 'center',
+              borderRadius: radius.control,
+              borderWidth: selected ? 1 : HAIRLINE,
+              borderColor: selected ? c.accent : c['line-2'],
+              backgroundColor: fill(selected, pressed),
+            })}
+          >
+            <Label size="label" tone={selected ? 'accent-ink' : 'ink-2'}>
+              {option.label}
+            </Label>
+          </Press>
+        )
+      })}
+    </View>
+  )
+}
+
+/** The widths a skeleton's bars take, so a loading list looks like a list and not a barcode. */
+const BAR_WIDTHS = ['72%', '54%', '64%', '46%', '58%'] as const
+
+/**
+ * The outline of a list while its first result is on its way: still bars, not the empty-state
+ * sentence, because nothing has been answered yet. It does not shimmer; a loading list should
+ * not cost a frame, and a live query answers in the time a shimmer takes to start.
+ */
+export function Skeleton({ rows = 3 }: { rows?: number }) {
+  const { colors: c } = useTheme()
+  return (
+    <View accessibilityLabel="Loading" accessibilityRole="progressbar" style={{ gap: 18 }}>
+      {Array.from({ length: rows }, (_, row) => (
+        <View key={row} style={{ gap: 8 }}>
+          <View
+            style={{
+              height: 13,
+              width: BAR_WIDTHS[row % BAR_WIDTHS.length],
+              borderRadius: 7,
+              backgroundColor: c['wash-pressed'],
+            }}
+          />
+          <View
+            style={{ height: 10, width: '34%', borderRadius: 5, backgroundColor: c['wash-hover'] }}
+          />
         </View>
       ))}
-      <Feedback error={error} />
-      <ControlPill
-        primary
-        label={busy ? 'Saving…' : 'Save'}
-        disabled={busy}
-        onPress={() => {
-          setBusy(true)
-          void onSave(values)
-            .then(onClose)
-            .catch((e) => setError(e.message))
-            .finally(() => setBusy(false))
-        }}
-      />
-    </Sheet>
+    </View>
   )
 }
-export function confirmDelete(title: string, action: () => void) {
-  if (Platform.OS === 'web') {
-    if (window.confirm(`Delete “${title}”?`)) action()
-  } else
-    Alert.alert(`Delete “${title}”?`, 'This cannot be undone.', [
-      { text: 'Keep', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: action },
-    ])
+
+/** A small round mark of state. It is never the only sign: a word always stands beside it. */
+export function Dot({ tone, size = 7 }: { tone: Tone | 'line-4' | 'accent'; size?: number }) {
+  const { colors: c } = useTheme()
+  return (
+    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: c[tone] }} />
+  )
 }
+
+/**
+ * Asks before something that cannot be taken back. It is the system's own alert, which is what
+ * a phone uses for exactly this; the browser preview has no such thing and uses its confirm.
+ */
+export function confirmDestructive(ask: {
+  readonly title: string
+  readonly detail: string
+  readonly action: string
+  readonly onConfirm: () => void
+}) {
+  if (Platform.OS === 'web') {
+    if (window.confirm(`${ask.title}\n\n${ask.detail}`)) ask.onConfirm()
+    return
+  }
+  Alert.alert(ask.title, ask.detail, [
+    { text: 'Keep', style: 'cancel' },
+    { text: ask.action, style: 'destructive', onPress: ask.onConfirm },
+  ])
+}
+
 export const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  page: { padding: 20, gap: 16, paddingBottom: 40 },
+  page: { paddingHorizontal: GUTTER, paddingTop: 8, paddingBottom: 40, gap: 20 },
+  /** Keeps a column at a reading width on a tablet instead of stretching it across the glass. */
+  column: { width: '100%', maxWidth: m['thread-max-w'], alignSelf: 'center' },
 })
