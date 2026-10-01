@@ -1,5 +1,6 @@
 import { useAtomValue } from '@effect/atom-react'
 import {
+  ServiceCatalog,
   Workspace,
   type LibraryShelf,
   type MeResponse,
@@ -8,7 +9,7 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { LiveState, liveStateOf, type LiveQuery, type LiveResult } from '@vivid/state'
-import { Effect, Option, Result } from 'effect'
+import { Effect, Option, Result, Schedule } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import * as Atom from 'effect/unstable/reactivity/Atom'
 import { VividRpcClient } from '@vivid/client-runtime'
@@ -65,7 +66,18 @@ export const serviceSearch = Atom.make('')
  * owns, so it is searched on the server and never held here; see `ServiceCatalog` for why it can
  * be `Unavailable` while every Connection still lists.
  */
-export const services = engine.ask(serviceSearch, (client, query) => client.FindServices({ query }))
+export const services = engine.ask(serviceSearch, (client, query) =>
+  // The catalog is read in the background by the server and is out of reach for a few seconds
+  // after it starts. That is not an answer to show for good, so it is asked again for a short
+  // while; only if it is still out of reach after that does the screen say so.
+  client.FindServices({ query }).pipe(
+    Effect.repeat({
+      until: ServiceCatalog.guards.Ready,
+      schedule: Schedule.spaced('2 seconds'),
+      times: 6,
+    }),
+  ),
+)
 
 /** What the Person has typed into "find anything". */
 export const findQuery = Atom.make('')

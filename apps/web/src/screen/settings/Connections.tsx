@@ -1,4 +1,4 @@
-import { useAtom, useAtomValue } from '@effect/atom-react'
+import { useAtom, useAtomRefresh, useAtomValue } from '@effect/atom-react'
 import {
   ConnectionOwnership,
   ConnectionState,
@@ -176,6 +176,7 @@ function Catalog({
 }) {
   const [query, setQuery] = useAtom(serviceSearch)
   const found = liveStateOf(useAtomValue(services))
+  const again = useAtomRefresh(services)
   const searching = query.trim().length > 0
   const detail = LiveState.$match(found, {
     Loading: () => 'Looking through the catalog.',
@@ -204,7 +205,7 @@ function Catalog({
           className="min-w-0 flex-1 bg-transparent text-label text-ink outline-none placeholder:text-ink-3"
         />
       </label>
-      <Found found={found} onConnect={onConnect} onShare={onShare} />
+      <Found found={found} onAgain={again} onConnect={onConnect} onShare={onShare} />
     </Section>
   )
 }
@@ -212,10 +213,12 @@ function Catalog({
 /** What the search has to show: the matches, that there are none, or why there is no answer. */
 function Found({
   found,
+  onAgain,
   onConnect,
   onShare,
 }: {
   found: LiveState<ServiceCatalog>
+  onAgain: () => void
   onConnect: (service: Service) => void
   onShare?: (service: Service) => void
 }) {
@@ -225,7 +228,13 @@ function Found({
     return (
       <Empty>
         Vivid cannot reach its catalog of services at the moment. What you have already connected
-        still works, and this list comes back by itself.
+        still works.{' '}
+        <button
+          onClick={onAgain}
+          className="cursor-pointer rounded-xs text-ink-2 underline underline-offset-4 hover:text-ink"
+        >
+          Look again
+        </button>
       </Empty>
     )
   }

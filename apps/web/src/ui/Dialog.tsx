@@ -45,7 +45,7 @@ export function Dialog({
           className={cn(
             // Never taller than the window: a long form scrolls inside the panel, so its actions
             // cannot end up below the fold where the page itself does not scroll.
-            'max-h-full w-full animate-rise-in overflow-y-auto rounded-panel bg-surface-1 p-5 smooth-shadow-ring-lg outline-none',
+            'max-h-full w-full animate-rise-in overflow-y-auto rounded-panel bg-surface-3 p-5 smooth-shadow-ring-lg outline-none',
             WIDTH[width],
           )}
         >

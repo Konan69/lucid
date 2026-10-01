@@ -1,12 +1,15 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { cn } from './cn'
 
-type Variant = 'primary' | 'control' | 'ghost' | 'quiet'
+type Variant = 'primary' | 'control' | 'danger' | 'ghost' | 'quiet'
 type Size = 'sm' | 'md'
 
 const VARIANT = {
   primary: 'bg-accent text-ink-on-accent hover:bg-accent-hover smooth-shadow-xs',
   control: 'bg-surface-3 text-ink smooth-shadow-ring-xs hover:bg-wash-hover',
+  // The one thing in a dialog that cannot be taken back. It is said in the danger ink on the
+  // same quiet surface, not on a red fill: the warning is the dialog, this is the answer to it.
+  danger: 'bg-surface-3 text-danger smooth-shadow-ring-xs hover:bg-danger-soft',
   ghost: 'text-ink-2 hover:bg-wash-hover hover:text-ink',
   quiet: 'text-ink-3 hover:text-ink',
 } satisfies Record<Variant, string>

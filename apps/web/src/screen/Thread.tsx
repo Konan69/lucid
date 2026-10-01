@@ -46,7 +46,9 @@ export function Thread({
   const detail = useLive(seenThread(id))
   const first = useSyncExternalStore(firstWords.subscribe, () => firstWords.of(id))
   const landed = useSyncExternalStore(firstWords.subscribe, () => firstWords.landed(id))
-  if (LiveState.$is('Failed')(detail)) return <Gone />
+  // A Thread whose first words are still on their way may not exist on the server yet. It is not
+  // gone, it is arriving, and what the Person just wrote is already on screen.
+  if (LiveState.$is('Failed')(detail) && FirstWords.$is('Settled')(first)) return <Gone />
   return (
     <Conversation
       // The conversation is observed afresh once a new Thread's first words have landed: the

@@ -405,7 +405,7 @@ function DeleteThread({ thread, onClose }: { thread: Thread; onClose: () => void
           Keep it
         </Button>
         <Button
-          variant="control"
+          variant="danger"
           onClick={() => {
             onClose()
             // Only the Thread on screen has to be left; deleting another one from the list must

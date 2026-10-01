@@ -34,7 +34,7 @@ export function First({ me }: { me: MeResponse }) {
           }).map((suggestion) => (
             <li key={suggestion.text}>
               <button
-                onClick={() => void startThread(suggestion.text)}
+                onClick={() => startThread(suggestion.text)}
                 className="flex size-full cursor-pointer flex-col gap-1 rounded-card bg-surface-3 p-4 text-left smooth-shadow-ring-xs transition-press duration-(--dur-fast) hover:bg-wash-hover active:scale-98"
               >
                 <span className="text-label text-ink">{suggestion.text}</span>
@@ -46,7 +46,7 @@ export function First({ me }: { me: MeResponse }) {
       </div>
       <Composer
         working={false}
-        onSend={(text) => void startThread(text)}
+        onSend={(text) => startThread(text)}
         onStop={() => undefined}
       />
     </section>

@@ -3,6 +3,7 @@ import { ThreadId, type ProjectId } from '@vivid/contracts'
 import { titleFromMessage } from '@vivid/state'
 import { Data, Result } from 'effect'
 import { change, live } from './live'
+import { engine } from './runtime'
 import { Route, router } from './route'
 
 /**
@@ -18,23 +19,45 @@ import { Route, router } from './route'
  */
 export type FirstWords = Data.TaggedEnum<{
   Settled: {}
-  Sending: { readonly words: string }
-  Unsent: { readonly words: string }
+  Sending: { readonly words: string; readonly projectId: ProjectId | null }
+  Unsent: { readonly words: string; readonly projectId: ProjectId | null }
 }>
 export const FirstWords = Data.taggedEnum<FirstWords>()
 
 const SETTLED = FirstWords.Settled()
 const held = new Map<ThreadId, FirstWords>()
+// Threads this page has made, so sending again after a failed send does not make one twice.
+const made = new Set<ThreadId>()
 const landed = new Set<ThreadId>()
 const watchers = new Set<() => void>()
 const tell = () => {
   for (const watcher of watchers) watcher()
 }
 
-/** Sends a Thread's first words and records where they stand. */
-async function deliver(id: ThreadId, words: string) {
-  held.set(id, FirstWords.Sending({ words }))
+const stand = (id: ThreadId, standing: FirstWords) => {
+  held.set(id, standing)
   tell()
+}
+
+/**
+ * Makes the Thread if this page has not yet, then sends its first words, recording where they
+ * stand at each step. The Thread must exist before the gateway will take a message for it.
+ */
+async function deliver(id: ThreadId, words: string, projectId: ProjectId | null) {
+  stand(id, FirstWords.Sending({ words, projectId }))
+  if (!made.has(id)) {
+    const created = await change((client) =>
+      client.CreateThread({ id, title: titleFromMessage(words), projectId }),
+    )
+    if (Result.isFailure(created)) {
+      stand(id, FirstWords.Unsent({ words, projectId }))
+      return
+    }
+    made.add(id)
+    // The screen asked for this Thread before it existed and was told there was no such Thread.
+    // Now there is, so the question is asked again.
+    engine.reopen()
+  }
   const sent = await createFlueClient({ url: `/api/vivid/${encodeURIComponent(id)}` })
     .send({ message: { kind: 'user', body: words } })
     .then(
@@ -44,10 +67,10 @@ async function deliver(id: ThreadId, words: string) {
   if (sent) {
     held.delete(id)
     landed.add(id)
+    tell()
   } else {
-    held.set(id, FirstWords.Unsent({ words }))
+    stand(id, FirstWords.Unsent({ words, projectId }))
   }
-  tell()
 }
 
 export const firstWords = {
@@ -68,7 +91,7 @@ export const firstWords = {
   again: (id: ThreadId) => {
     const standing = held.get(id)
     if (standing !== undefined && FirstWords.$is('Unsent')(standing)) {
-      void deliver(id, standing.words)
+      void deliver(id, standing.words, standing.projectId)
     }
   },
 }
@@ -77,20 +100,16 @@ export const firstWords = {
  * Starts a Thread with its first message: the path from the first screen, a suggestion, a
  * Project's "new thread" and a Library item's "ask about this".
  *
- * The Thread's id is made here so it can be on screen before the server has answered. The order
- * matters: the Thread must exist before the gateway will accept a message for it, so the message
- * is sent only after the create is confirmed, and the Person is already looking at the Thread by
- * then, reading their own words from `firstWords`.
+ * Nothing here waits. The Thread's id is made on this side, the Person is taken to the Thread at
+ * once and reads their own words there from `firstWords`, and the Thread is created and the words
+ * sent behind that. Pressing Enter and seeing nothing for the length of a round trip reads as the
+ * app not having heard.
  */
-export async function startThread(message: string, projectId: ProjectId | null = null) {
+export function startThread(message: string, projectId: ProjectId | null = null) {
   const id = ThreadId.make(crypto.randomUUID())
-  const created = await change((client) =>
-    client.CreateThread({ id, title: titleFromMessage(message), projectId }),
-  )
-  if (Result.isFailure(created)) return created
+  stand(id, FirstWords.Sending({ words: message, projectId }))
   router.go(Route.Thread({ id }))
-  await deliver(id, message)
-  return created
+  void deliver(id, message, projectId)
 }
 
 /** Opens an empty Thread, for when the Person wants the page before the words. */

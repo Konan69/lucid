@@ -147,7 +147,7 @@ function Place({
     Library: () => (
       <Library
         onAsk={(document) =>
-          void startThread(`Read “${document.name}” in the Library and tell me what matters in it.`)
+          startThread(`Read “${document.name}” in the Library and tell me what matters in it.`)
         }
       />
     ),

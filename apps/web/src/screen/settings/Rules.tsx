@@ -77,9 +77,7 @@ export function Rules({ me }: { me: MeResponse }) {
           {admin && (
             <NewRule
               placeholder="e.g. Delete anything in a shared drive"
-              onAdd={(action, decision) =>
-                add(action, decision, RuleScope.cases.Company.make({}))
-              }
+              onAdd={(action, decision) => add(action, decision, RuleScope.cases.Company.make({}))}
             />
           )}
         </Section>

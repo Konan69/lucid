@@ -41,10 +41,12 @@ export function Row({
   children?: ReactNode
 }) {
   return (
-    <div className="flex min-h-14 items-center gap-4 px-4 py-2.5">
+    // On a narrow window the control goes under what it controls: beside it, the explanation is
+    // squeezed into a column a few words wide.
+    <div className="flex min-h-14 flex-col gap-2 px-4 py-2.5 sm:flex-row sm:items-center sm:gap-4">
       <div className="min-w-0 flex-1">
         <div className="truncate text-label text-ink">{label}</div>
-        {detail !== undefined && <div className="text-label text-ink-3">{detail}</div>}
+        {detail !== undefined && <div className="text-label text-pretty text-ink-3">{detail}</div>}
       </div>
       {children !== undefined && <div className="flex shrink-0 items-center gap-2">{children}</div>}
     </div>
