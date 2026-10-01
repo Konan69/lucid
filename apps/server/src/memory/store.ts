@@ -86,6 +86,13 @@ export class InvalidMemoryLimit extends Schema.TaggedError<InvalidMemoryLimit>()
 ) {}
 export type MemoryFailure = EmbeddingFailure | HelixFailure | MemoryNotFound | InvalidMemoryLimit
 
+/** Corrections preserve scope but attribute the replacement to its actual correcting exchange. */
+export interface CorrectionInput extends RecordIdentity {
+  readonly content: string
+  readonly learnedFrom: PersonSummary
+  readonly learnedIn: ThreadId | null
+}
+
 export interface RecallInput extends ReadScope {
   readonly query: string
   readonly limit: number
@@ -104,14 +111,14 @@ export interface MemoryStoreService {
   ) => Effect.Effect<ReadonlyArray<ScoredMemory>, MemoryFailure>
   readonly link: (input: MemoryLink) => Effect.Effect<void, MemoryFailure>
   readonly remember: (input: RememberInput) => Effect.Effect<RememberResult, MemoryFailure>
-  readonly correct: (
-    input: RecordIdentity & { readonly content: string },
-  ) => Effect.Effect<Memory, MemoryFailure>
+  readonly correct: (input: CorrectionInput) => Effect.Effect<Memory, MemoryFailure>
   readonly forget: (input: RecordIdentity) => Effect.Effect<void, MemoryFailure>
   readonly recall: (input: RecallInput) => Effect.Effect<ReadonlyArray<Memory>, MemoryFailure>
   readonly list: (input: ReadScope) => Effect.Effect<ReadonlyArray<Memory>, MemoryFailure>
   readonly brief: {
-    readonly get: (input: BriefIdentity) => Effect.Effect<Option.Option<MemoryBrief>, MemoryFailure>
+    readonly get: (
+      input: BriefIdentity & ReadScope,
+    ) => Effect.Effect<Option.Option<MemoryBrief>, MemoryFailure>
     readonly put: (
       input: BriefIdentity & { readonly text: string },
     ) => Effect.Effect<MemoryBrief, MemoryFailure>
@@ -264,7 +271,7 @@ const correcting = Effect.fn('MemoryStore.correct')(function* (
     readonly helix: HelixMemory['Service']
     readonly embeddings: Embeddings['Service']
   },
-  input: RecordIdentity & { readonly content: string },
+  input: CorrectionInput,
 ) {
   const previous = yield* requireRecord(dependencies.helix, input)
   const embedding = yield* embedOne(dependencies.embeddings, input.content)
@@ -273,6 +280,8 @@ const correcting = Effect.fn('MemoryStore.correct')(function* (
     ...previous.memory,
     id: MemoryId.make(NodeCrypto.randomUUID()),
     content: input.content,
+    learnedFrom: input.learnedFrom,
+    learnedIn: input.learnedIn,
     createdAt: now,
     updatedAt: now,
   })
@@ -377,7 +386,7 @@ export const memoryStoreLayer = Layer.effect(
         return (yield* recalling(dependencies, input)).map((hit) => hit.memory)
       }),
       recallRanked: (input) => recalling(dependencies, input),
-      /** Expose current records without internal embeddings, alias metadata, or lifecycle history. */
+      /** Return at most 200 current records, newest first, without internal vectors or lifecycle history. */
       list: Effect.fn('MemoryStore.list')(function* (input) {
         return (yield* helix.list(input)).map((record) => record.memory)
       }),
@@ -452,17 +461,22 @@ function workspacePartition(actor: Actor) {
   })
 }
 
+/** A stored Thread must belong to the Actor's explicit workspace before its memory can be read or edited. */
+function inMemoryWorkspace(actor: Actor, thread: StoredThread) {
+  return Workspace.match(actor.workspace, {
+    Personal: () => thread.companyId === null && thread.personId === actor.person.id,
+    Company: ({ company }) => thread.companyId === company.id,
+  })
+}
+
 /** A Vivid call must still be in a visible Thread in the workspace its Actor names. */
 const actingThread = Effect.fn('MemoryAccess.actingThread')(function* (actor: Actor) {
   if (actor.by === 'person') return Option.none<StoredThread>()
   if (Option.isNone(actor.threadId))
     return yield* Effect.fail(NotFound.make({ message: 'Thread not found' }))
   const thread = yield* requireThread(actor.threadId.value, actor.person.id)
-  const belongs = Workspace.match(actor.workspace, {
-    Personal: () => thread.companyId === null && thread.personId === actor.person.id,
-    Company: ({ company }) => thread.companyId === company.id,
-  })
-  if (!belongs) return yield* Effect.fail(NotFound.make({ message: 'Thread not found' }))
+  if (!inMemoryWorkspace(actor, thread))
+    return yield* Effect.fail(NotFound.make({ message: 'Thread not found' }))
   return Option.some(thread)
 })
 
@@ -478,11 +492,8 @@ const visibleThreadScopes = Effect.fn('MemoryAccess.visibleThreads')(function* (
     if (!key.startsWith('thread:')) continue
     const thread = yield* findThread(ThreadId.make(key.slice('thread:'.length)))
     if (Option.isNone(thread) || thread.value.audience === 'private') continue
-    const sameWorkspace = Workspace.match(actor.workspace, {
-      Personal: () => thread.value.companyId === null && thread.value.personId === actor.person.id,
-      Company: ({ company }) => thread.value.companyId === company.id,
-    })
-    if (sameWorkspace && (yield* canSee(thread.value, actor.person.id))) visible.push(key)
+    if (inMemoryWorkspace(actor, thread.value) && (yield* canSee(thread.value, actor.person.id)))
+      visible.push(key)
   }
   return visible
 })
@@ -566,8 +577,8 @@ function mayEdit(actor: Actor, memory: Memory) {
   })
 }
 
-/** Lookup only authorized partitions and scopes, hiding both absent and unauthorized identities behind NotFound. */
-const writable = Effect.fn('MemoryAccess.writable')(function* (
+/** Locate a related statement only inside the current read rule; extension links do not grant editing its target. */
+const readableRecord = Effect.fn('MemoryAccess.readableRecord')(function* (
   dependencies: { readonly helix: HelixMemory['Service']; readonly store: MemoryStore['Service'] },
   actor: Actor,
   id: MemoryId,
@@ -581,8 +592,60 @@ const writable = Effect.fn('MemoryAccess.writable')(function* (
       Company: () => MemoryScopeKey.make('company'),
       Thread: ({ threadId }) => MemoryScopeKey.make(`thread:${threadId}`),
     })
-    if (read.scopes.includes(key) && mayEdit(actor, memory.value))
-      return { partition: read.partition, memory: memory.value }
+    if (read.scopes.includes(key)) return { partition: read.partition, memory: memory.value }
+  }
+  return yield* Effect.fail(NotFound.make({ message: 'Memory not found' }))
+})
+
+/** Ownership is independent of recall scope; a creator may edit formerly shared Thread knowledge after making its audience private. */
+const mayWriteRecord = Effect.fn('MemoryAccess.mayWriteRecord')(function* (
+  actor: Actor,
+  input: {
+    readonly partition: MemoryPartition
+    readonly memory: Memory
+    readonly room: Option.Option<StoredThread>
+  },
+) {
+  const shared = Option.isSome(input.room) && input.room.value.audience !== 'private'
+  return yield* MemoryScope.match(input.memory.scope, {
+    Person: () =>
+      Effect.succeed(!shared && input.partition === personalScope(actor.person.id).partition),
+    Company: () =>
+      Effect.succeed(
+        Workspace.guards.Company(actor.workspace) &&
+          input.partition === workspacePartition(actor) &&
+          mayEdit(actor, input.memory),
+      ),
+    Thread: ({ threadId }) =>
+      Effect.gen(function* () {
+        if (input.partition !== workspacePartition(actor)) return false
+        if (shared && Option.isSome(input.room) && threadId !== input.room.value.id) return false
+        const thread = yield* findThread(threadId)
+        return (
+          Option.isSome(thread) &&
+          inMemoryWorkspace(actor, thread.value) &&
+          (yield* canSee(thread.value, actor.person.id))
+        )
+      }),
+  })
+})
+
+/** Explicit edits probe only the Person and active workspace partitions and hide all unauthorized ids behind NotFound. */
+const writable = Effect.fn('MemoryAccess.writable')(function* (
+  dependencies: { readonly helix: HelixMemory['Service']; readonly store: MemoryStore['Service'] },
+  actor: Actor,
+  id: MemoryId,
+) {
+  const room = yield* actingThread(actor)
+  const partitions =
+    Option.isSome(room) && room.value.audience !== 'private'
+      ? [workspacePartition(actor)]
+      : Arr.dedupe([personalScope(actor.person.id).partition, workspacePartition(actor)])
+  for (const partition of partitions) {
+    const memory = yield* dependencies.store.get({ partition, id })
+    if (Option.isNone(memory)) continue
+    const permitted = yield* mayWriteRecord(actor, { partition, memory: memory.value, room })
+    if (permitted) return { partition, memory: memory.value }
   }
   return yield* Effect.fail(NotFound.make({ message: 'Memory not found' }))
 })
@@ -597,12 +660,16 @@ interface AccessDependencies {
 function accessReads(dependencies: AccessDependencies) {
   const { store, helix, database } = dependencies
   return {
-    /** Merge newest first only after every partition has been queried with its explicit permitted scopes. */
+    /** Merge authorized partitions and return the 200 newest records across them. */
     list: Effect.fn('MemoryAccess.list')(
       function* (actor: Actor) {
         const scopes = yield* readScopes(helix, actor)
         const pages = yield* Effect.forEach(scopes, (scope) => store.list(scope))
-        return Arr.sortWith(pages.flat(), (memory) => memory.createdAt, Order.flip(Order.Number))
+        return Arr.sortWith(
+          pages.flat(),
+          (memory) => memory.createdAt,
+          Order.flip(Order.Number),
+        ).slice(0, 200)
       },
       (effect) => Effect.provideService(effect, Database, database),
     ),
@@ -659,7 +726,7 @@ function accessWrites(dependencies: AccessDependencies) {
       },
       (effect) => Effect.provideService(effect, Database, database),
     ),
-    /** A correction has exactly the same ownership gate as forgetting and retains the original attribution. */
+    /** A correction shares the forgetting gate and records the correcting Person and current Thread. */
     correct: Effect.fn('MemoryAccess.correct')(
       function* (actor: Actor, input: CorrectMemoryRequest) {
         const target = yield* writable(dependencies, actor, input.id)
@@ -667,6 +734,8 @@ function accessWrites(dependencies: AccessDependencies) {
           partition: target.partition,
           id: input.id,
           content: input.content,
+          learnedFrom: summaryOf(actor.person),
+          learnedIn: Option.getOrNull(actor.threadId),
         })
       },
       (effect) => Effect.provideService(effect, Database, database),
@@ -683,7 +752,48 @@ function accessWrites(dependencies: AccessDependencies) {
   }
 }
 
-/** Model relationships cannot move private facts into a Company or another Thread; related ids must share the intended destination. */
+/** Matching both partition and rendered scope prevents a duplicate or update from inheriting a wider destination. */
+function sameDestination(
+  destination: WriteLocation,
+  target: { readonly partition: MemoryPartition; readonly memory: Memory },
+) {
+  if (destination.partition !== target.partition) return false
+  return MemoryScope.match(location(destination.scope).scope, {
+    Person: () => MemoryScope.guards.Person(target.memory.scope),
+    Company: () => MemoryScope.guards.Company(target.memory.scope),
+    Thread: ({ threadId }) =>
+      MemoryScope.guards.Thread(target.memory.scope) && target.memory.scope.threadId === threadId,
+  })
+}
+
+/** An extension reads its target but only writes the new statement; even links cannot cross a partition. */
+const extendCandidate = Effect.fn('MemoryAccess.extend')(function* (
+  dependencies: AccessDependencies,
+  input: {
+    readonly actor: Actor
+    readonly destination: WriteLocation
+    readonly candidate: MemoryCandidate
+    readonly id: MemoryId
+  },
+) {
+  const target = yield* readableRecord(dependencies, input.actor, input.id)
+  const saved = yield* rememberAt(
+    dependencies.store,
+    input.actor,
+    input.destination,
+    input.candidate,
+  )
+  if (target.partition === input.destination.partition && saved.memory.id !== target.memory.id)
+    yield* dependencies.store.link({
+      partition: target.partition,
+      from: saved.memory.id,
+      to: target.memory.id,
+      kind: 'EXTENDS',
+    })
+  return Option.some(saved.memory)
+})
+
+/** Candidate identity reconciliation obeys the same destination as Remember; updates alone require permission to edit the existing statement. */
 const learnCandidate = Effect.fn('MemoryAccess.learn')(function* (
   dependencies: AccessDependencies,
   actor: Actor,
@@ -698,41 +808,39 @@ const learnCandidate = Effect.fn('MemoryAccess.learn')(function* (
   const { store } = dependencies
   if (MemoryRelation.guards.new(candidate.relation))
     return Option.some((yield* rememberAt(store, actor, destination, candidate)).memory)
+  if (MemoryRelation.guards.extends(candidate.relation))
+    return yield* extendCandidate(dependencies, {
+      actor,
+      destination,
+      candidate,
+      id: candidate.relation.id,
+    })
+  if (MemoryRelation.guards.duplicate(candidate.relation)) {
+    const target = yield* readableRecord(dependencies, actor, candidate.relation.id)
+    if (!sameDestination(destination, target))
+      return Option.some((yield* rememberAt(store, actor, destination, candidate)).memory)
+    return Option.some(
+      yield* store.reinforce({
+        partition: target.partition,
+        id: target.memory.id,
+        aliases: candidate.aliases,
+      }),
+    )
+  }
   const target = yield* writable(dependencies, actor, candidate.relation.id)
-  const intended = location(destination.scope).scope
-  const sameScope = MemoryScope.match(intended, {
-    Person: () => MemoryScope.guards.Person(target.memory.scope),
-    Company: () => MemoryScope.guards.Company(target.memory.scope),
-    Thread: ({ threadId }) =>
-      MemoryScope.guards.Thread(target.memory.scope) && target.memory.scope.threadId === threadId,
-  })
-  if (target.partition !== destination.partition || !sameScope)
+  if (!sameDestination(destination, target))
     return yield* Effect.fail(
       InvalidRequest.make({ message: 'Memory relation crosses its write scope' }),
     )
-  return yield* MemoryRelation.match(candidate.relation, {
-    new: () => Effect.succeed(Option.none<Memory>()),
-    duplicate: ({ id }) =>
-      store
-        .reinforce({ partition: target.partition, id, aliases: candidate.aliases })
-        .pipe(Effect.map(Option.some)),
-    updates: ({ id }) =>
-      store
-        .correct({ partition: target.partition, id, content: candidate.content })
-        .pipe(Effect.map(Option.some)),
-    extends: () =>
-      Effect.gen(function* () {
-        const saved = yield* rememberAt(store, actor, destination, candidate)
-        if (saved.memory.id !== target.memory.id)
-          yield* store.link({
-            partition: target.partition,
-            from: saved.memory.id,
-            to: target.memory.id,
-            kind: 'EXTENDS',
-          })
-        return Option.some(saved.memory)
-      }),
-  })
+  return Option.some(
+    yield* store.correct({
+      partition: target.partition,
+      id: target.memory.id,
+      content: candidate.content,
+      learnedFrom: summaryOf(actor.person),
+      learnedIn: Option.getOrNull(actor.threadId),
+    }),
+  )
 })
 
 /** Brief cache keys include the exact authorized current memories; changing audience, membership, or a statement cannot reuse a wider page. */
@@ -744,8 +852,13 @@ const makeAccess = Effect.fn('MemoryAccess.make')(function* () {
   const dependencies = { store, helix, database }
   const reads = accessReads(dependencies)
   const pages = yield* Cache.makeWith(
-    (input: { readonly memories: ReadonlyArray<Memory>; readonly person: PersonSummary }) =>
-      extraction.summarize(input),
+    Effect.fn('MemoryAccess.summarize')(function* (input: {
+      readonly memories: ReadonlyArray<Memory>
+      readonly person: PersonSummary
+    }) {
+      const text = yield* extraction.summarize(input)
+      return MemoryBrief.make({ text, updatedAt: yield* Clock.currentTimeMillis })
+    }),
     {
       capacity: 128,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? '10 minutes' : 0),
@@ -759,11 +872,7 @@ const makeAccess = Effect.fn('MemoryAccess.make')(function* () {
     brief: Effect.fn('MemoryAccess.brief')(function* (actor: Actor) {
       const memories = yield* reads.list(actor)
       if (memories.length === 0) return MemoryBrief.make({ text: '', updatedAt: null })
-      const text = yield* Cache.get(pages, { memories, person: summaryOf(actor.person) })
-      return MemoryBrief.make({
-        text,
-        updatedAt: Math.max(...memories.map((memory) => memory.updatedAt)),
-      })
+      return yield* Cache.get(pages, { memories, person: summaryOf(actor.person) })
     }),
     /** Candidate writes are evaluated individually so one rejected relation need not erase other useful notes. */
     learn: (actor, candidate) =>

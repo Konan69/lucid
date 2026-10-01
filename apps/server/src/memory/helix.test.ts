@@ -1,3 +1,4 @@
+import { defineParams, g, param, writeBatch } from '@helix-db/helix-db'
 import * as NodeCrypto from 'node:crypto'
 import { it } from '@effect/vitest'
 import {
@@ -8,8 +9,9 @@ import {
   PersonId,
   PersonSummary,
 } from '@vivid/contracts'
-import { ConfigProvider, Effect, Layer, Option, Result } from 'effect'
-import { FetchHttpClient } from 'effect/unstable/http'
+import { ConfigProvider, Effect, Layer, Option, Result, Schema } from 'effect'
+import { HttpClient, HttpClientRequest } from 'effect/unstable/http'
+import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect } from 'vitest'
 import { Embeddings, embeddingsLayer } from './embeddings.js'
 import {
@@ -28,7 +30,7 @@ const configuration = ConfigProvider.layerAdd(
   { asPrimary: true },
 )
 const adapters = Layer.merge(helixMemoryLayer, embeddingsLayer).pipe(
-  Layer.provide(FetchHttpClient.layer),
+  Layer.provideMerge(NodeHttpClient.layerUndici),
   Layer.provide(configuration),
 )
 
@@ -58,6 +60,208 @@ function record(input: {
     scope: input.scope,
   })
 }
+
+/** Related Company and Thread facts keep both incoming and outgoing context after a correction. */
+const preservesLinks = Effect.fn('MemoryTest.links')(function* (input: {
+  readonly helix: HelixMemory['Service']
+  readonly partition: MemoryPartition
+  readonly records: ReadonlyArray<MemoryRecord>
+  readonly embedding: ReadonlyArray<number>
+}) {
+  const [seed, shared, hidden] = input.records
+  if (seed === undefined || shared === undefined || hidden === undefined)
+    expect.fail('Three graph records required')
+  const replacement = MemoryRecord.make({
+    ...shared,
+    memory: Memory.make({
+      ...shared.memory,
+      id: MemoryId.make(NodeCrypto.randomUUID()),
+      createdAt: 350,
+      updatedAt: 350,
+    }),
+  })
+  yield* Effect.addFinalizer(() =>
+    input.helix
+      .forget({ partition: input.partition, id: replacement.memory.id, now: 500 })
+      .pipe(
+        Effect.match({ onFailure: (error) => expect.fail(error._tag), onSuccess: () => undefined }),
+      ),
+  )
+  yield* input.helix.supersede({
+    partition: input.partition,
+    oldId: shared.memory.id,
+    record: replacement,
+    embedding: input.embedding,
+  })
+  const scopes = input.records.map((value) => value.scope)
+  const fromReplacement = yield* input.helix.expand({
+    partition: input.partition,
+    scopes,
+    ids: [replacement.memory.id],
+    limit: 5,
+  })
+  expect(fromReplacement).toHaveLength(2)
+  expect(fromReplacement.map((value) => value.memory.id)).toEqual(
+    expect.arrayContaining([seed.memory.id, hidden.memory.id]),
+  )
+  for (const neighbor of [seed, hidden]) {
+    const context = yield* input.helix.expand({
+      partition: input.partition,
+      scopes,
+      ids: [neighbor.memory.id],
+      limit: 5,
+    })
+    expect(context.map((value) => value.memory.id)).toEqual([replacement.memory.id])
+  }
+})
+
+/** A change to one unreadable scope preserves both stored pages; each reader lazily rejects only changes it can read, including tombstones. */
+const scopedBriefs = Effect.fn('MemoryTest.briefs')(function* (input: {
+  readonly helix: HelixMemory['Service']
+  readonly partition: MemoryPartition
+  readonly seed: MemoryRecord
+  readonly embedding: ReadonlyArray<number>
+}) {
+  const { helix, partition, seed } = input
+  const reader = PersonId.make('A')
+  const other = PersonId.make('B')
+  const privateScope = seed.scope
+  const companyScope = MemoryScopeKey.make('company')
+  const firstPage = MemoryBrief.make({ text: 'Dami prefers morning meetings.', updatedAt: 360 })
+  const otherPage = MemoryBrief.make({ text: 'B prefers written updates.', updatedAt: 360 })
+  yield* helix.briefPut({ partition, personId: reader, brief: firstPage })
+  yield* helix.briefPut({ partition, personId: other, brief: otherPage })
+  const changed = record({
+    content: seed.memory.content,
+    scope: MemoryScopeKey.make('person:C'),
+    createdAt: 370,
+  })
+  const sharedChange = record({ content: seed.memory.content, scope: companyScope, createdAt: 380 })
+  yield* Effect.addFinalizer(() =>
+    Effect.forEach([changed, sharedChange], (value) =>
+      helix.forget({ partition, id: value.memory.id, now: 600 }),
+    ).pipe(
+      Effect.match({ onFailure: (error) => expect.fail(error._tag), onSuccess: () => undefined }),
+    ),
+  )
+  yield* helix.insert({ partition, record: changed, embedding: input.embedding })
+  const identity = { partition, personId: reader, scopes: [privateScope, companyScope] }
+  expect(yield* helix.briefGet(identity)).toEqual(Option.some(firstPage))
+  expect(
+    yield* helix.briefGet({
+      partition,
+      personId: other,
+      scopes: [MemoryScopeKey.make('person:B')],
+    }),
+  ).toEqual(Option.some(otherPage))
+  yield* helix.insert({ partition, record: sharedChange, embedding: input.embedding })
+  expect(yield* helix.briefGet(identity)).toEqual(Option.none())
+  expect(yield* helix.briefGet({ partition, personId: other, scopes: [companyScope] })).toEqual(
+    Option.none(),
+  )
+  expect(
+    yield* helix.briefGet({
+      partition,
+      personId: other,
+      scopes: [MemoryScopeKey.make('person:B')],
+    }),
+  ).toEqual(Option.some(otherPage))
+  const rebuilt = MemoryBrief.make({ text: firstPage.text, updatedAt: 390 })
+  yield* helix.briefPut({ partition, personId: reader, brief: rebuilt })
+  expect(yield* helix.briefGet(identity)).toEqual(Option.some(rebuilt))
+  yield* helix.forget({ partition, id: seed.memory.id, now: 400 })
+  expect(yield* helix.briefGet(identity)).toEqual(Option.none())
+  expect(
+    yield* helix.briefGet({
+      partition,
+      personId: other,
+      scopes: [MemoryScopeKey.make('person:B')],
+    }),
+  ).toEqual(Option.some(otherPage))
+  // Changing the reader set exposes the stored page again, proving invalidation did not delete it.
+  expect(yield* helix.briefGet({ ...identity, scopes: [companyScope] })).toEqual(
+    Option.some(rebuilt),
+  )
+})
+
+/** Prepare the list fixture in one transaction: 201 individual writes would test backfill contention instead of the read bound. All vectors came from the configured embedding provider. */
+const insertListFixture = Effect.fn('MemoryTest.insertList')(function* (input: {
+  readonly partition: MemoryPartition
+  readonly records: ReadonlyArray<MemoryRecord>
+  readonly embedding: ReadonlyArray<number>
+}) {
+  if (url === undefined) expect.fail('Helix test URL required')
+  const client = yield* HttpClient.HttpClient
+  const p = defineParams({ embedding: param.array(param.f32()) })
+  const encodeRecord = Schema.encodeEffect(Schema.fromJsonString(MemoryRecord))
+  const rows = yield* Effect.forEach(
+    input.records,
+    Effect.fn('MemoryTest.encodeList')(function* (value) {
+      return { value, payload: yield* encodeRecord(value) }
+    }),
+  )
+  const query = rows
+    .reduce(
+      (batch, { value, payload }, index) =>
+        batch.varAs(
+          `created${index}`,
+          g().addN('Memory', {
+            tenant_id: input.partition,
+            memoryId: value.memory.id,
+            scope: value.scope,
+            content: value.memory.content,
+            searchText: [value.memory.content, ...value.aliases].join(' '),
+            payload,
+            embedding: p.embedding,
+            isLatest: true,
+            validTo: null,
+            deletedAt: null,
+            createdAt: value.memory.createdAt,
+            updatedAt: value.memory.updatedAt,
+            accessCount: 1,
+          }),
+        ),
+      writeBatch(),
+    )
+    .returning([])
+    .toQueryRequest(p, { embedding: [...input.embedding] })
+  const response = yield* client.execute(
+    HttpClientRequest.bodyText(
+      HttpClientRequest.post(`${url}/v2/query`).pipe(
+        HttpClientRequest.setHeader('x-helix-await-durable', 'true'),
+      ),
+      query.toJsonString(),
+      'application/json',
+    ),
+  )
+  expect(response.status).toBe(200)
+})
+
+/** The hard list bound returns the most recent 200 after filtering, even when older history accumulates. */
+const boundedList = Effect.fn('MemoryTest.list')(function* (input: {
+  readonly helix: HelixMemory['Service']
+  readonly embedding: ReadonlyArray<number>
+}) {
+  const { helix, embedding } = input
+  const partition = MemoryPartition.make(`c-limit-${NodeCrypto.randomUUID()}`)
+  const scope = MemoryScopeKey.make('company')
+  const records = Array.from({ length: 201 }, (_, index) =>
+    record({ content: 'The Company launch workstream is in progress.', scope, createdAt: index }),
+  )
+  yield* Effect.addFinalizer(() =>
+    Effect.forEach(records, (value) =>
+      helix.forget({ partition, id: value.memory.id, now: 500 }),
+    ).pipe(
+      Effect.match({ onFailure: (error) => expect.fail(error._tag), onSuccess: () => undefined }),
+    ),
+  )
+  yield* insertListFixture({ partition, records, embedding })
+  const listed = yield* helix.list({ partition, scopes: [scope] })
+  expect(listed).toHaveLength(200)
+  expect(listed.map((value) => value.memory.createdAt)).toEqual(
+    Array.from({ length: 200 }, (_, index) => 200 - index),
+  )
+})
 
 /** These tests exercise graph membership, aliases, lifecycle and embedding-space protection through real Helix requests. */
 describe.skipIf(!enabled)('Helix memory graph', () => {
@@ -154,23 +358,15 @@ describe.skipIf(!enabled)('Helix memory graph', () => {
           shared.memory.id,
           seed.memory.id,
         ])
-        const personId = PersonId.make('A')
-        yield* helix.briefPut({
+        yield* preservesLinks({
+          helix,
           partition,
-          personId,
-          brief: MemoryBrief.make({ text: 'Dami prefers morning meetings.', updatedAt: 300 }),
+          records: [seed, shared, hidden],
+          embedding: sharedVector,
         })
-        yield* helix.forget({ partition, id: seed.memory.id, now: 400 })
-        expect(yield* helix.briefGet({ partition, personId })).toEqual(Option.none())
-        expect(
-          yield* helix.expand({
-            partition,
-            scopes: [privateScope, companyScope],
-            ids: [shared.memory.id],
-            limit: 5,
-          }),
-        ).toHaveLength(0)
-      }).pipe(Effect.provide(adapters)),
+        yield* scopedBriefs({ helix, partition, seed, embedding: seedVector })
+        yield* boundedList({ helix, embedding: sharedVector })
+      }).pipe(Effect.scoped, Effect.provide(adapters)),
     { timeout: 120000 },
   )
 
@@ -182,7 +378,7 @@ describe.skipIf(!enabled)('Helix memory graph', () => {
           yield* HelixMemory
         }).pipe(
           Effect.provide(helixMemoryLayer),
-          Effect.provide(FetchHttpClient.layer),
+          Effect.provide(NodeHttpClient.layerUndici),
           Effect.provide(
             ConfigProvider.layerAdd(
               ConfigProvider.fromUnknown({

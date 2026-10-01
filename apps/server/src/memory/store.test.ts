@@ -1,8 +1,8 @@
 import * as NodeCrypto from 'node:crypto'
 import { it } from '@effect/vitest'
-import { PersonId, PersonSummary } from '@vivid/contracts'
+import { PersonId, PersonSummary, ThreadId } from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer, Option } from 'effect'
-import { FetchHttpClient } from 'effect/unstable/http'
+import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect } from 'vitest'
 import { embeddingsLayer } from './embeddings.js'
 import { helixMemoryLayer, MemoryPartition, MemoryScopeKey } from './helix.js'
@@ -21,7 +21,7 @@ const configuration = ConfigProvider.layerAdd(
   { asPrimary: true },
 )
 const adapters = Layer.merge(helixMemoryLayer, embeddingsLayer).pipe(
-  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(NodeHttpClient.layerUndici),
   Layer.provide(configuration),
 )
 const store = memoryStoreLayer.pipe(Layer.provide(adapters))
@@ -113,7 +113,11 @@ describe.skipIf(!enabled)('MemoryStore on isolated Helix', () => {
           partition,
           id: first.memory.id,
           content: 'Dami now prefers evening meetings instead of morning meetings.',
+          learnedFrom: PersonSummary.make({ id: PersonId.make('B'), name: 'Ada', image: null }),
+          learnedIn: ThreadId.make('correction-thread'),
         })
+        expect(corrected.learnedFrom.name).toBe('Ada')
+        expect(corrected.learnedIn).toBe('correction-thread')
         const current = yield* memory.recall({
           partition,
           scopes: [scope],
@@ -137,9 +141,13 @@ describe.skipIf(!enabled)('MemoryStore on isolated Helix', () => {
           personId,
           text: 'Dami likes concise answers.',
         })
-        expect(yield* memory.brief.get({ partition, personId })).toEqual(Option.some(brief))
-        expect(yield* memory.brief.get({ partition: other, personId })).toEqual(Option.none())
-      }).pipe(Effect.provide(store)),
+        expect(yield* memory.brief.get({ partition, personId, scopes: [scope] })).toEqual(
+          Option.some(brief),
+        )
+        expect(yield* memory.brief.get({ partition: other, personId, scopes: [scope] })).toEqual(
+          Option.none(),
+        )
+      }).pipe(Effect.scoped, Effect.provide(store)),
     { timeout: 120000 },
   )
 })

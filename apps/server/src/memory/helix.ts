@@ -19,7 +19,7 @@ import {
 import { Memory, MemoryBrief, MemoryId, PersonId, ServiceUnavailable } from '@vivid/contracts'
 import { Config, Context, Effect, Layer, Option, Schema } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
-import { embeddingDimensions, embeddingModel, MemoryUnavailable } from './embeddings.js'
+import { embeddingDimensions, embeddingModel, MemoryRateLimited } from './embeddings.js'
 
 /** Partition and readable scope keys are separate authorities; no query derives additional scopes. */
 export const MemoryPartition = Schema.String.check(Schema.isPattern(/^[pc]-.+$/)).pipe(
@@ -75,7 +75,7 @@ export class MemoryIndexMismatch extends Schema.TaggedError<MemoryIndexMismatch>
 export type HelixFailure =
   | MemoryIndexMismatch
   | ServiceUnavailable
-  | MemoryUnavailable
+  | MemoryRateLimited
   | HelixRejected
   | HelixConflict
   | HelixMalformed
@@ -139,7 +139,7 @@ export interface HelixMemoryService {
     input: RecordIdentity & { readonly now: number },
   ) => Effect.Effect<void, HelixFailure>
   readonly briefGet: (
-    input: BriefIdentity,
+    input: BriefIdentity & ReadScope,
   ) => Effect.Effect<Option.Option<MemoryBrief>, HelixFailure>
   readonly briefPut: (
     input: BriefIdentity & { readonly brief: MemoryBrief },
@@ -206,7 +206,7 @@ const requestHelix = Effect.fn('HelixMemory.request')(function* (
   if (response.status === 409) return yield* Effect.fail(HelixConflict.make({}))
   if (response.status === 429)
     return yield* Effect.fail(
-      MemoryUnavailable.make({
+      MemoryRateLimited.make({
         service: 'memory',
         message: 'HelixDB rate limited memory',
         retryAfter: Option.getOrNull(Headers.get(response.headers, 'retry-after')),
@@ -230,6 +230,7 @@ function bootstrap(dimensions: number) {
     IndexSpec.nodeEquality('Memory', 'scope'),
     IndexSpec.nodeEquality('Memory', 'isLatest'),
     IndexSpec.nodeRangeDesc('Memory', 'createdAt'),
+    IndexSpec.nodeRangeDesc('Memory', 'updatedAt'),
     IndexSpec.nodeVector(
       'Memory',
       'embedding',
@@ -311,6 +312,7 @@ function briefNode(input: BriefIdentity) {
 }
 const BriefRow = Schema.Struct({
   briefs: Schema.Array(Schema.Struct({ brief: Schema.fromJsonString(MemoryBrief) })),
+  changes: Schema.NullOr(Schema.Array(Schema.Struct({ updatedAt: Schema.Number }))),
 })
 const encodeBrief = Schema.encodeEffect(Schema.fromJsonString(MemoryBrief))
 const decodeRows = HttpClientResponse.schemaBodyJson(Rows)
@@ -362,11 +364,14 @@ function readers(session: HelixSession) {
         ))[0],
       )
     }),
-    /** Order current readable records newest first without consulting or widening access policy. */
+    /** Return at most the 200 newest current readable records; the bound applies after scope filtering. */
     list: Effect.fn('HelixMemory.list')(function* (input: ReadScope) {
       return yield* records(
         readBatch()
-          .varAs('records', visible(input).orderBy('createdAt', Order.Desc).project(projection))
+          .varAs(
+            'records',
+            visible(input).orderBy('createdAt', Order.Desc).limit(200).project(projection),
+          )
           .returning(['records'])
           .toQueryRequest(),
       )
@@ -429,29 +434,50 @@ function readers(session: HelixSession) {
           .toQueryRequest(),
       )
     }),
-    /** The Person page is addressed by both partition and Person, never by a global Person identity. */
-    briefGet: Effect.fn('HelixMemory.briefGet')(function* (input: BriefIdentity) {
-      const response = yield* requestHelix(
-        client,
-        url,
-        readBatch()
-          .varAs('briefs', briefNode(input).project([Projection.property('payload', 'brief')]))
-          .returning(['briefs'])
-          .toQueryRequest(),
-      )
-      const decoded = yield* decodeBrief(response).pipe(
-        Effect.mapError(() => HelixMalformed.make({})),
-      )
-      return Option.map(Option.fromUndefinedOr(decoded.briefs[0]), (row) => row.brief)
-    }),
   }
+}
+
+/** Rebuild lazily only when an explicitly readable scope changed after the page, including superseded or deleted records. No other Person page is deleted. */
+function readingBrief(session: HelixSession) {
+  const { client, url } = session
+  return Effect.fn('HelixMemory.briefGet')(function* (input: BriefIdentity & ReadScope) {
+    const response = yield* requestHelix(
+      client,
+      url,
+      readBatch()
+        .varAs('briefs', briefNode(input).project([Projection.property('payload', 'brief')]))
+        .varAs(
+          'changes',
+          g()
+            .nWithLabelWhere('Memory', SourcePredicate.eq('tenant_id', input.partition))
+            .where(Predicate.isIn('scope', [...input.scopes]))
+            .orderBy('updatedAt', Order.Desc)
+            .limit(1)
+            .project([Projection.property('updatedAt', 'updatedAt')]),
+        )
+        .returning(['briefs', 'changes'])
+        .toQueryRequest(),
+    )
+    const decoded = yield* decodeBrief(response).pipe(
+      Effect.mapError(() => HelixMalformed.make({})),
+    )
+    const row = decoded.briefs[0]
+    if (row === undefined) return Option.none<MemoryBrief>()
+    const latest = decoded.changes === null ? undefined : decoded.changes[0]
+    if (
+      latest !== undefined &&
+      (row.brief.updatedAt === null || latest.updatedAt > row.brief.updatedAt)
+    )
+      return Option.none<MemoryBrief>()
+    return Option.some(row.brief)
+  })
 }
 
 /** Writes use one batch for each lifecycle transition so a replacement cannot expose two latest records. */
 function writers(session: HelixSession) {
-  const { client, url, write } = session
+  const { write } = session
   return {
-    /** Creation writes searchable fields and encoded attribution together, then invalidates derived pages. */
+    /** Creation writes searchable fields and attribution together; scoped timestamps invalidate readable pages lazily. */
     insert: Effect.fn('HelixMemory.insert')(function* (input: {
       readonly partition: MemoryPartition
       readonly record: MemoryRecord
@@ -461,7 +487,6 @@ function writers(session: HelixSession) {
       yield* write(
         writeBatch()
           .varAs('created', newRecord())
-          .varAs('briefs', staleBriefs(input.partition))
           .returning([])
           .toQueryRequest(insertionParams, values),
       )
@@ -491,53 +516,18 @@ function writers(session: HelixSession) {
           .toQueryRequest(),
       )
     }),
-    /** Creation, UPDATES edge, and old-version invalidation commit in one write request. */
-    supersede: Effect.fn('HelixMemory.supersede')(function* (input: {
-      readonly partition: MemoryPartition
-      readonly oldId: MemoryId
-      readonly record: MemoryRecord
-      readonly embedding: ReadonlyArray<number>
-    }) {
-      const values = yield* insertionValues(input)
-      const query = writeBatch()
-        .varAs('old', identified({ partition: input.partition, id: input.oldId }))
-        .varAsIf('created', BatchCondition.varNotEmpty('old'), newRecord())
-        .varAs(
-          'link',
-          g()
-            .n(NodeRef.var('created'))
-            .addE('UPDATES', NodeRef.var('old'), { tenant_id: input.partition }),
-        )
-        .varAs(
-          'invalidated',
-          g()
-            .n(NodeRef.var('old'))
-            .setProperty('isLatest', false)
-            .setProperty('validTo', input.record.memory.createdAt),
-        )
-        .varAs('briefs', staleBriefs(input.partition))
-        .varAs(
-          'receipt',
-          g()
-            .n(NodeRef.var('created'))
-            .project([Projection.property('memoryId', 'id')]),
-        )
-        .returning(['receipt'])
-        .toQueryRequest(insertionParams, values)
-      const response = yield* requestHelix(client, url, query)
-      const created = yield* decodeCreation(response).pipe(
-        Effect.mapError(() => HelixMalformed.make({})),
-      )
-      if (created.receipt.length === 0) yield* Effect.fail(HelixConflict.make({}))
-    }),
     /** Soft deletion removes records from every live predicate and invalidates previously derived briefs. */
     forget: Effect.fn('HelixMemory.forget')(function* (
       input: RecordIdentity & { readonly now: number },
     ) {
       yield* write(
         writeBatch()
-          .varAs('forgotten', identified(input).setProperty('deletedAt', input.now))
-          .varAs('briefs', staleBriefs(input.partition))
+          .varAs(
+            'forgotten',
+            identified(input)
+              .setProperty('deletedAt', input.now)
+              .setProperty('updatedAt', input.now),
+          )
           .returning([])
           .toQueryRequest(),
       )
@@ -574,9 +564,82 @@ function writers(session: HelixSession) {
   }
 }
 
-/** A materialized brief must never retain superseded or forgotten facts; the orchestrator rebuilds it. */
-function staleBriefs(partition: MemoryPartition) {
-  return g().nWithLabelWhere('MemoryBrief', SourcePredicate.eq('tenant_id', partition)).drop()
+/** Creation, UPDATES edge, and old-version invalidation commit in one write request. */
+function superseding(session: HelixSession) {
+  const { client, url } = session
+  return Effect.fn('HelixMemory.supersede')(function* (input: {
+    readonly partition: MemoryPartition
+    readonly oldId: MemoryId
+    readonly record: MemoryRecord
+    readonly embedding: ReadonlyArray<number>
+  }) {
+    const values = yield* insertionValues(input)
+    const batch = writeBatch()
+      .varAs('old', identified({ partition: input.partition, id: input.oldId }))
+      .varAsIf('created', BatchCondition.varNotEmpty('old'), newRecord())
+      .varAs(
+        'link',
+        g()
+          .n(NodeRef.var('created'))
+          .addE('UPDATES', NodeRef.var('old'), { tenant_id: input.partition }),
+      )
+    // Helix addE rejects an empty target variable; each directed label is guarded independently.
+    const linked = MemoryLinkKind.literals.reduce(
+      (linkedBatch, kind) =>
+        linkedBatch
+          .varAs(
+            `${kind}out`,
+            g()
+              .n(NodeRef.var('old'))
+              .out(kind)
+              .where(Predicate.and([Predicate.eq('tenant_id', input.partition), current()])),
+          )
+          .varAs(
+            `${kind}in`,
+            g()
+              .n(NodeRef.var('old'))
+              .in(kind)
+              .where(Predicate.and([Predicate.eq('tenant_id', input.partition), current()])),
+          )
+          .varAsIf(
+            `${kind}forward`,
+            BatchCondition.varNotEmpty(`${kind}out`),
+            g()
+              .n(NodeRef.var('created'))
+              .addE(kind, NodeRef.var(`${kind}out`), { tenant_id: input.partition }),
+          )
+          .varAsIf(
+            `${kind}reverse`,
+            BatchCondition.varNotEmpty(`${kind}in`),
+            g()
+              .n(NodeRef.var(`${kind}in`))
+              .addE(kind, NodeRef.var('created'), { tenant_id: input.partition }),
+          ),
+      batch,
+    )
+    const query = linked
+      .varAs(
+        'invalidated',
+        g()
+          .n(NodeRef.var('old'))
+          .setProperty('isLatest', false)
+          .setProperty('validTo', input.record.memory.createdAt)
+          .setProperty('updatedAt', input.record.memory.updatedAt),
+      )
+      .varAs(
+        'receipt',
+        g()
+          .n(NodeRef.var('created'))
+          .project([Projection.property('memoryId', 'id')]),
+      )
+      .returning(['receipt'])
+      .toQueryRequest(insertionParams, values)
+    const response = yield* requestHelix(client, url, query)
+    const created = yield* decodeCreation(response).pipe(
+      Effect.mapError(() => HelixMalformed.make({})),
+    )
+    if (created.receipt.length === 0) yield* Effect.fail(HelixConflict.make({}))
+  })
 }
 
 /** Links are written only between latest records of one partition; recall independently filters both endpoints. */
@@ -674,6 +737,17 @@ export const helixMemoryLayer = Layer.effect(
         ServiceUnavailable.make({ service: 'memory', message: 'VIVID_EMBEDDING_MODEL is invalid' }),
       ),
     )
+    yield* requestHelix(
+      client,
+      url,
+      writeBatch()
+        .varAs(
+          'index',
+          g().createIndexIfNotExists(IndexSpec.nodeUniqueEquality('MemoryIndex', 'indexId')),
+        )
+        .returning([])
+        .toQueryRequest(),
+    )
     yield* checkIndex({ client, url }, { model, dimensions })
     yield* requestHelix(client, url, bootstrap(dimensions))
     yield* requestHelix(client, url, declareIndex(model, dimensions))
@@ -694,6 +768,8 @@ export const helixMemoryLayer = Layer.effect(
       ...readers({ client, url, records, write }),
       ...writers({ client, url, records, write }),
       link: linking({ client, url, records, write }),
+      briefGet: readingBrief({ client, url, records, write }),
+      supersede: superseding({ client, url, records, write }),
     })
   }),
 )

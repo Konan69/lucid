@@ -405,6 +405,8 @@ const sharedKnowledge = Effect.fn('MemoryTest.shared')(function* (
     }),
   )
   expect(corrected.memory.id).not.toBe(saved.memory.id)
+  expect(corrected.memory.learnedFrom.id).toBe(fixture.member.id)
+  expect(corrected.memory.learnedIn).toBeNull()
   yield* callAs(member, memoryHandlers.ForgetMemory({ id: corrected.memory.id }))
   const accessService = yield* MemoryAccess
   const privateRoomNote = yield* accessService.remember(
