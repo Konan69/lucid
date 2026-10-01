@@ -1,6 +1,7 @@
 import { index, pgTable, text } from 'drizzle-orm/pg-core'
 import { personTable } from '../auth/tables.ts'
-import { companyColumn, epoch, personColumn } from '../database/owner.ts'
+import { companyColumn, epoch, personColumn, threadColumn } from '../database/owner.ts'
+import { threads } from '../threads/tables.ts'
 
 /**
  * `person_id` is the Person a Task belongs to: who made it, or on whose behalf Vivid made it
@@ -26,7 +27,11 @@ export const tasks = pgTable(
     originKind: text('origin_kind').notNull(),
     originId: text('origin_id'),
     createdBy: text('created_by').notNull(),
-    conversationId: text('conversation_id').notNull(),
+    // A Task reports to a Thread and is found through it, so it goes when the Thread goes:
+    // otherwise its follow-ups would keep firing at a Thread nobody can open.
+    conversationId: threadColumn('conversation_id')
+      .notNull()
+      .references(() => threads.id, { onDelete: 'cascade' }),
     overdueNotifiedAt: epoch('overdue_notified_at'),
     completedAt: epoch('completed_at'),
     createdAt: epoch('created_at').notNull(),

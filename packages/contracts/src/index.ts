@@ -1,6 +1,5 @@
 export * from './approvals.js'
 export * from './audit.js'
-export * from './calls.js'
 export * from './companies.js'
 export * from './computers.js'
 export * from './connections.js'

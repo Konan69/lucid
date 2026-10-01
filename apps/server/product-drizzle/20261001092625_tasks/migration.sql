@@ -1,0 +1,1 @@
+ALTER TABLE "vivid_tasks" ADD CONSTRAINT "vivid_tasks_conversation_id_vivid_conversations_id_fkey" FOREIGN KEY ("conversation_id") REFERENCES "vivid_conversations"("id") ON DELETE CASCADE;

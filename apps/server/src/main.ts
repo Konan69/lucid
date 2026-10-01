@@ -16,7 +16,6 @@ import { actionRunnerLayer } from './approvals/runner.ts'
 import { approvalStoreLayer } from './approvals/store.ts'
 import { approvalSweeperLayer } from './approvals/sweeper.ts'
 import { auditLayer } from './audit/record.ts'
-import { ringerLayer } from './calls/ring.ts'
 import { companyStoreLayer } from './companies/store.ts'
 import { machineLayer } from './computers/docker.ts'
 import { computerStoreLayer } from './computers/store.ts'
@@ -101,7 +100,6 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     libraryStoreLayer,
     executorLayer,
     machineLayer,
-    ringerLayer,
   ).pipe(Layer.provideMerge(data))
   const reach = Layer.mergeAll(presenceLayer, notifierLayer, auditLayer).pipe(
     Layer.provideMerge(foundation),

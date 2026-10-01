@@ -76,10 +76,20 @@ export const pathOf = (route: Route): string =>
 const listeners = new Set<() => void>()
 let current = parseRoute(location.pathname, location.search)
 let settings = decodeSection(new URLSearchParams(location.search).get('settings'))
+if (Route.$is('Device')(current)) settings = Option.some('devices')
+
+/**
+ * The Settings section the address asks for. A device's approval link (`/device?user_code=…`) is
+ * a request to open Devices with its code filled in, wherever the Person happens to land.
+ */
+const sectionAt = (route: Route, search: string) =>
+  Route.$is('Device')(route)
+    ? Option.some<SettingsSection>('devices')
+    : decodeSection(new URLSearchParams(search).get('settings'))
 
 const read = () => {
   current = parseRoute(location.pathname, location.search)
-  settings = decodeSection(new URLSearchParams(location.search).get('settings'))
+  settings = sectionAt(current, location.search)
   for (const listener of listeners) listener()
 }
 

@@ -18,8 +18,6 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react(), tailwindcss()],
-    // Two entries: the app, and the lean page the phone loads over the tunnel.
-    build: { rollupOptions: { input: { app: 'index.html', phone: 'phone.html' } } },
     preview: { port: 4178, host: '127.0.0.1', proxy, allowedHosts: ['.trycloudflare.com'] },
     server: { port: 5178, proxy },
   }

@@ -173,7 +173,7 @@ const makeEnsure = (database: DatabaseService) =>
     return theirs
       ? stored
       : yield* Effect.fail(
-          new DatabaseConstraintViolation({ message: 'That Thread belongs to someone else' }),
+          new DatabaseConstraintViolation({ message: 'Database constraint was violated' }),
         )
   })
 
@@ -347,6 +347,15 @@ const makeShare = (database: DatabaseService) =>
     if (thread.companyId === null) {
       return yield* Effect.fail(
         new InvalidRequest({ message: 'A Thread in your own space has nobody to be shared with' }),
+      )
+    }
+    // A Routine's or a Task's own Thread is where Vivid reports to one Person. Sharing it would
+    // put that Person's Routine in front of other people and stop the server from opening it.
+    if (RESERVED.test(thread.id)) {
+      return yield* Effect.fail(
+        new InvalidRequest({
+          message: 'This thread belongs to a routine or a task and stays private',
+        }),
       )
     }
     const sharing = sharingOf(audience, personId)

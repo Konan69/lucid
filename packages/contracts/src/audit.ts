@@ -7,11 +7,15 @@ import { AuditEntryId, PersonSummary, ThreadId } from './identity.js'
  * credential.
  */
 export const AuditEvent = Schema.TaggedUnion({
-  ActionAllowed: { summary: Schema.String, service: Schema.String, effect: Schema.String },
-  ActionApproved: { summary: Schema.String, service: Schema.String },
-  ActionDenied: { summary: Schema.String, service: Schema.String },
-  ActionBlocked: { summary: Schema.String, service: Schema.String, rule: Schema.String },
-  ActionOutcomeUnknown: { summary: Schema.String, service: Schema.String },
+  // An action is recorded by where it happened and what kind of thing it was: the account, the
+  // tool, the effect. Vivid's own sentence about it is deliberately absent: it paraphrases the
+  // Thread it came from, and an admin reading this record does not read Members' Threads.
+  ActionAllowed: { service: Schema.String, tool: Schema.String, effect: Schema.String },
+  ActionApproved: { service: Schema.String, tool: Schema.String },
+  ActionDenied: { service: Schema.String, tool: Schema.String },
+  ActionFailed: { service: Schema.String, tool: Schema.String },
+  ActionBlocked: { service: Schema.String, tool: Schema.String, rule: Schema.String },
+  ActionOutcomeUnknown: { service: Schema.String, tool: Schema.String },
   ConnectionAdded: { service: Schema.String, shared: Schema.Boolean },
   ConnectionRemoved: { service: Schema.String, shared: Schema.Boolean },
   MemberInvited: { email: Schema.String, role: Schema.String },

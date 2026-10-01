@@ -13,12 +13,14 @@ const when = new Intl.DateTimeFormat(undefined, {
 /** One line of the record as a sentence. It says what happened, never what the content was. */
 const sentence = (event: AuditEvent) =>
   AuditEvent.match(event, {
-    ActionAllowed: ({ summary, service }) => `${summary} (${service}), allowed by a rule`,
-    ActionApproved: ({ summary, service }) => `${summary} (${service}), after being allowed`,
-    ActionDenied: ({ summary, service }) => `Not allowed: ${summary} (${service})`,
-    ActionBlocked: ({ summary, rule }) => `Blocked by the rule “${rule}”: ${summary}`,
-    ActionOutcomeUnknown: ({ summary, service }) =>
-      `May or may not have happened: ${summary} (${service})`,
+    ActionAllowed: ({ service, tool }) => `Used ${tool} on ${service}, allowed by a rule`,
+    ActionApproved: ({ service, tool }) => `Used ${tool} on ${service}, after being allowed`,
+    ActionDenied: ({ service, tool }) => `Was not allowed to use ${tool} on ${service}`,
+    ActionFailed: ({ service, tool }) => `Tried ${tool} on ${service}; it did not work`,
+    ActionBlocked: ({ service, tool, rule }) =>
+      `Blocked from ${tool} on ${service} by the rule “${rule}”`,
+    ActionOutcomeUnknown: ({ service, tool }) =>
+      `Used ${tool} on ${service}; it may or may not have happened`,
     ConnectionAdded: ({ service, shared }) =>
       shared ? `Connected ${service} for the company` : `Connected ${service}`,
     ConnectionRemoved: ({ service, shared }) =>
