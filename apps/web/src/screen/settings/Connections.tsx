@@ -60,7 +60,7 @@ function showSignIn(tab: Window | null, address: string) {
 const STANDING = (connection: Connection) =>
   ConnectionState.match(connection.state, {
     Ready: () => 'Connected',
-    NeedsAuthorization: () => 'Needs you to sign in again',
+    NeedsAuthorization: () => 'Not connected yet',
     Failed: ({ reason }) => `Not working: ${reason}`,
   })
 
@@ -99,6 +99,30 @@ export function Connections({ me }: { me: MeResponse }) {
   const mine = connections.filter((item) => ConnectionOwnership.guards.Personal(item.ownership))
   const shared = connections.filter((item) => ConnectionOwnership.guards.Shared(item.ownership))
 
+  /**
+   * Does what a Connection says comes next: shows the provider's sign-in page in the tab that was
+   * opened for it, asks for the key, or nothing when it is already done.
+   */
+  function follow(step: ConnectionStep, tab: Window | null, name: string) {
+    ConnectionStep.match(step, {
+      // A provider's sign-in page is shown in its own tab; this page hears that it finished
+      // through the live list and needs nothing from that tab.
+      OpenSignIn: ({ address }) => {
+        if (showSignIn(tab, address)) return
+        setRefusal(
+          `${name}’s sign-in page could not be opened. Allow pop-ups for this page, then connect again.`,
+        )
+      },
+      EnterKey: ({ connection, fields }) => {
+        if (tab !== null) tab.close()
+        setKeying({ id: connection.id, name: connection.serviceName, fields })
+      },
+      Done: () => {
+        if (tab !== null) tab.close()
+      },
+    })
+  }
+
   async function connect(service: Service, asShared: boolean) {
     const signingIn = ServiceAuthorization.guards.SignIn(service.authorization)
     const tab = signingIn ? window.open('about:blank', '_blank') : null
@@ -115,23 +139,28 @@ export function Connections({ me }: { me: MeResponse }) {
       return
     }
     setRefusal(null)
-    ConnectionStep.match(result.success, {
-      // A provider's sign-in page is shown in its own tab; this page hears that it finished
-      // through the live list and needs nothing from that tab.
-      OpenSignIn: ({ address }) => {
-        if (showSignIn(tab, address)) return
-        setRefusal(
-          `${service.name}’s sign-in page could not be opened. Allow pop-ups for this page, then connect again.`,
-        )
-      },
-      EnterKey: ({ connection, fields }) => {
-        if (tab !== null) tab.close()
-        setKeying({ id: connection.id, name: connection.serviceName, fields })
-      },
-      Done: () => {
-        if (tab !== null) tab.close()
-      },
-    })
+    follow(result.success, tab, service.name)
+  }
+
+  /**
+   * Picks a Connection up where it stopped: the sign-in tab was closed, the key was never
+   * entered, or the sign-in lapsed. It is the same Connection afterwards, not a second one.
+   *
+   * A Connection does not say whether it wants a sign-in page or a key until it is asked, so the
+   * tab is opened once the answer is a sign-in page. A browser allows that for a few seconds
+   * after the click; when it has stopped allowing it, the sentence that says so is the fallback.
+   */
+  async function resume(connection: Connection) {
+    const result = await change((client) => client.ResumeConnection({ id: connection.id }))
+    if (Result.isFailure(result)) {
+      setRefusal(`${connection.serviceName} could not be reconnected just now.`)
+      return
+    }
+    setRefusal(null)
+    const tab = ConnectionStep.guards.OpenSignIn(result.success)
+      ? window.open('about:blank', '_blank')
+      : null
+    follow(result.success, tab, connection.serviceName)
   }
 
   const remove = (connection: Connection) =>
@@ -146,6 +175,7 @@ export function Connections({ me }: { me: MeResponse }) {
           <ConnectionRow
             key={connection.id}
             connection={connection}
+            onResume={() => void resume(connection)}
             onRemove={() => remove(connection)}
           />
         ))}
@@ -160,6 +190,7 @@ export function Connections({ me }: { me: MeResponse }) {
             <ConnectionRow
               key={connection.id}
               connection={connection}
+              onResume={admin ? () => void resume(connection) : undefined}
               onRemove={admin ? () => remove(connection) : undefined}
             />
           ))}
@@ -287,11 +318,15 @@ function ServiceRow({
 
 function ConnectionRow({
   connection,
+  onResume,
   onRemove,
 }: {
   connection: Connection
+  /** Present for whoever may finish this Connection; it is offered only while it is unfinished. */
+  onResume?: () => void
   onRemove?: () => void
 }) {
+  const unfinished = ConnectionState.guards.NeedsAuthorization(connection.state)
   return (
     <div className="flex min-h-14 items-center gap-3 px-4 py-2.5">
       <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-surface-2 text-ink-3 ring-line">
@@ -303,6 +338,11 @@ function ConnectionRow({
           {STANDING(connection)} · {WHICH(connection)}
         </div>
       </div>
+      {unfinished && onResume !== undefined && (
+        <Button size="sm" onClick={onResume}>
+          Reconnect
+        </Button>
+      )}
       {onRemove !== undefined && (
         <Button size="sm" variant="ghost" onClick={onRemove}>
           Remove
