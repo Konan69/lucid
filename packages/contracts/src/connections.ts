@@ -45,6 +45,12 @@ export const ServiceAuthorization = Schema.TaggedUnion({
   SignIn: {},
   Key: { fields: Schema.Array(Schema.Struct({ name: Schema.String, label: Schema.String })) },
   None: {},
+  /**
+   * The service signs people in through an application that whoever runs this Vivid has not
+   * registered with it yet. Nobody here can connect it until they do, so it is listed, to be
+   * found by name, and it is not offered.
+   */
+  SetupRequired: {},
 })
 export type ServiceAuthorization = typeof ServiceAuthorization.Type
 

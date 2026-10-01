@@ -96,13 +96,28 @@ export const RunOrigin = Schema.TaggedUnion({
 export type RunOrigin = typeof RunOrigin.Type
 
 /**
+ * Why a Run failed, in the terms a Person would act on. Waiting helps with `RateLimited`; trying
+ * again helps with `TimedOut` and `NoAnswer` (the model returned nothing at all); `ModelUnavailable`
+ * needs whoever runs this Vivid. `Unexplained` is the honest remainder: the runtime reported a
+ * failure Vivid has no name for, and it is never used to hide one of the others.
+ */
+export const RunFailure = Schema.Literals([
+  'RateLimited',
+  'ModelUnavailable',
+  'NoAnswer',
+  'TimedOut',
+  'Unexplained',
+])
+export type RunFailure = typeof RunFailure.Type
+
+/**
  * Where a Run stands. `Unknown` is an honest state: the runtime stopped reporting and the outcome
  * cannot be told, so nothing is retried on its account.
  */
 export const RunState = Schema.TaggedUnion({
   Working: {},
   Completed: { finishedAt: Schema.Number },
-  Failed: { finishedAt: Schema.Number },
+  Failed: { finishedAt: Schema.Number, reason: RunFailure },
   Stopped: { finishedAt: Schema.Number },
   Unknown: { finishedAt: Schema.Number },
 })
