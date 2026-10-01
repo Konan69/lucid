@@ -14,7 +14,7 @@ import {
   type TaskId,
   type TaskListResponse,
 } from '@vivid/contracts'
-import { Option, Schema } from 'effect'
+import { Array as Arr, Option, Order, Schema } from 'effect'
 
 /**
  * Today's Tasks, as pure functions over what the server sends.
@@ -100,12 +100,18 @@ export const isOverdue = (task: Task, now: number): boolean =>
  * Tasks without a due time last, newest first. `Infinity` stands in for "no due time" only inside
  * this comparison.
  */
-const byUrgency = (left: Task, right: Task): number => {
-  const leftDue = left.dueAt === null ? Number.POSITIVE_INFINITY : left.dueAt
-  const rightDue = right.dueAt === null ? Number.POSITIVE_INFINITY : right.dueAt
-  if (leftDue !== rightDue) return leftDue - rightDue
-  return right.createdAt - left.createdAt
-}
+const byUrgency: Order.Order<Task> = Order.combine(
+  Order.mapInput(Order.Number, (task: Task) =>
+    task.dueAt === null ? Number.POSITIVE_INFINITY : task.dueAt,
+  ),
+  Order.mapInput(Order.flip(Order.Number), (task: Task) => task.createdAt),
+)
+
+/** Most recently changed first. */
+const byLastChange: Order.Order<Task> = Order.mapInput(
+  Order.flip(Order.Number),
+  (task: Task) => task.updatedAt,
+)
 
 export interface TaskGroup {
   readonly bucket: Bucket
@@ -116,14 +122,20 @@ export interface TaskGroup {
 export const groupOpen = (tasks: ReadonlyArray<Task>, me: PersonId): ReadonlyArray<TaskGroup> => {
   const open = tasks.filter((task) => task.status === 'open')
   return BUCKETS.flatMap((bucket) => {
-    const inside = open.filter((task) => bucketOf(task, me) === bucket).toSorted(byUrgency)
+    const inside = Arr.sort(
+      open.filter((task) => bucketOf(task, me) === bucket),
+      byUrgency,
+    )
     return inside.length === 0 ? [] : [{ bucket, tasks: inside }]
   })
 }
 
 /** Done and dropped Tasks, most recently settled first. */
 export const settledOf = (tasks: ReadonlyArray<Task>): ReadonlyArray<Task> =>
-  tasks.filter((task) => task.status !== 'open').toSorted((a, b) => b.updatedAt - a.updatedAt)
+  Arr.sort(
+    tasks.filter((task) => task.status !== 'open'),
+    byLastChange,
+  )
 
 /** Midnight at the start of the local day `value` falls in. */
 export const startOfDay = (value: number): number => {
