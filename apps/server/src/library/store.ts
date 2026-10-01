@@ -15,15 +15,38 @@ import {
   LibrarySearchResult as LibrarySearchResultSchema,
   PatchLibraryFolderRequest,
   PatchLibraryItemRequest,
+  LibraryListQuery,
+  LibraryListResponse,
+  LibraryUploadMetadata,
+  LibraryUploadResponse,
+  NotFound,
+  Conflict,
+  InvalidRequest,
 } from '@vivid/contracts'
 import { createInsertSchema, createSelectSchema } from 'drizzle-orm/effect-schema'
 import { Database, type DatabaseInfrastructureError, returned } from '../database/client.ts'
-import { InvalidLibraryFolder, folderOperations } from './folders.ts'
+import { folderOperations } from './folders.ts'
+import {
+  LibraryFolderMismatch,
+  shelfOf,
+  type LibraryShelfUnavailable,
+  type LibraryMutationDenied,
+  type LibraryFolderCycle,
+} from './access.ts'
+import type { Actor } from '../auth/access.ts'
 import { itemOperations } from './items.ts'
 import { searchOperation } from './search.ts'
 import { libraryChunks, libraryDocuments, libraryFolders } from './tables.ts'
 
-export { InvalidLibraryFolder } from './folders.ts'
+export type LibraryFailure =
+  | DatabaseInfrastructureError
+  | LibraryShelfUnavailable
+  | LibraryMutationDenied
+  | LibraryFolderMismatch
+  | LibraryFolderCycle
+  | NotFound
+  | Conflict
+  | InvalidRequest
 
 export const LibraryDocumentRow = createSelectSchema(libraryDocuments)
 export const LibraryDocumentInsert = createInsertSchema(libraryDocuments)
@@ -32,10 +55,6 @@ export const LibraryChunkInsert = createInsertSchema(libraryChunks)
 type LibrarySearchResult = typeof LibrarySearchResultSchema.Type
 export type PatchLibraryFolderInput = typeof PatchLibraryFolderRequest.Type
 export type PatchLibraryItemInput = typeof PatchLibraryItemRequest.Type
-
-const RawCountRows = Schema.Struct({
-  rows: Schema.Array(Schema.Struct({ count: Schema.Union([Schema.Number, Schema.String]) })),
-})
 
 export interface StoredLibraryItem extends LibraryItem {
   readonly bytes: Uint8Array
@@ -57,72 +76,90 @@ export type DecodeFolder = (
   row: LibraryFolderRow,
 ) => Effect.Effect<LibraryFolder, DatabaseInfrastructureError>
 
+/** Store operations always carry the Actor; ownership cannot be omitted by a new caller. */
 export interface LibraryStoreService {
+  readonly list: (
+    actor: Actor,
+    query: typeof LibraryListQuery.Type,
+  ) => Effect.Effect<typeof LibraryListResponse.Type, LibraryFailure>
   readonly listItems: (
-    folderId: Option.Option<LibraryFolderId>,
-  ) => Effect.Effect<ReadonlyArray<LibraryItem>, DatabaseInfrastructureError>
-  readonly listFolders: () => Effect.Effect<
-    ReadonlyArray<LibraryFolder>,
-    DatabaseInfrastructureError
-  >
+    actor: Actor,
+    query: typeof LibraryListQuery.Type,
+  ) => Effect.Effect<ReadonlyArray<LibraryItem>, LibraryFailure>
+  readonly listFolders: (
+    actor: Actor,
+  ) => Effect.Effect<ReadonlyArray<LibraryFolder>, LibraryFailure>
   readonly listChildFolders: (
-    parentId: LibraryFolderId | null,
-  ) => Effect.Effect<ReadonlyArray<LibraryFolder>, DatabaseInfrastructureError>
+    actor: Actor,
+    query: typeof LibraryListQuery.Type,
+  ) => Effect.Effect<ReadonlyArray<LibraryFolder>, LibraryFailure>
   readonly getFolder: (
+    actor: Actor,
     id: LibraryFolderId,
-  ) => Effect.Effect<Option.Option<LibraryFolder>, DatabaseInfrastructureError>
+  ) => Effect.Effect<Option.Option<LibraryFolder>, LibraryFailure>
   readonly createFolder: (
-    name: string,
-    parentId: LibraryFolderId | null,
-  ) => Effect.Effect<LibraryFolder, DatabaseInfrastructureError>
+    actor: Actor,
+    input: {
+      readonly name: string
+      readonly shelf: LibraryItem['shelf']
+      readonly parentId: LibraryFolderId | null
+    },
+  ) => Effect.Effect<LibraryFolder, LibraryFailure>
   readonly patchFolder: (
+    actor: Actor,
     id: LibraryFolderId,
     patch: PatchLibraryFolderInput,
-  ) => Effect.Effect<
-    Option.Option<LibraryFolder>,
-    DatabaseInfrastructureError | InvalidLibraryFolder
-  >
-  readonly removeFolder: (
-    id: LibraryFolderId,
-  ) => Effect.Effect<'deleted' | 'not-found' | 'not-empty', DatabaseInfrastructureError>
+  ) => Effect.Effect<Option.Option<LibraryFolder>, LibraryFailure>
+  readonly removeFolder: (actor: Actor, id: LibraryFolderId) => Effect.Effect<void, LibraryFailure>
   readonly getItem: (
+    actor: Actor,
     id: LibraryItemId,
-  ) => Effect.Effect<Option.Option<LibraryItem>, DatabaseInfrastructureError>
+  ) => Effect.Effect<Option.Option<LibraryItem>, LibraryFailure>
   readonly getStoredItem: (
+    actor: Actor,
     id: LibraryItemId,
-  ) => Effect.Effect<Option.Option<StoredLibraryItem>, DatabaseInfrastructureError>
+  ) => Effect.Effect<Option.Option<StoredLibraryItem>, LibraryFailure>
   readonly getStoredItemByName: (
+    actor: Actor,
     name: string,
-  ) => Effect.Effect<Option.Option<StoredLibraryItem>, DatabaseInfrastructureError>
+  ) => Effect.Effect<Option.Option<StoredLibraryItem>, LibraryFailure>
   readonly getItemByDigest: (
+    actor: Actor,
+    shelf: LibraryItem['shelf'],
     sha256: string,
-  ) => Effect.Effect<Option.Option<LibraryItem>, DatabaseInfrastructureError>
-  readonly createItem: (input: {
-    readonly name: string
-    readonly mimeType: string
-    readonly bytes: Uint8Array
-    readonly sha256: string
-    readonly folderId: LibraryFolderId | null
-  }) => Effect.Effect<LibraryItem, DatabaseInfrastructureError>
+  ) => Effect.Effect<Option.Option<LibraryItem>, LibraryFailure>
+  readonly createItem: (
+    actor: Actor,
+    input: typeof LibraryUploadMetadata.Type & {
+      readonly bytes: Uint8Array
+      readonly sha256: string
+    },
+  ) => Effect.Effect<typeof LibraryUploadResponse.Type, LibraryFailure>
   readonly patchItem: (
+    actor: Actor,
     id: LibraryItemId,
     patch: PatchLibraryItemInput,
-  ) => Effect.Effect<Option.Option<LibraryItem>, DatabaseInfrastructureError>
+  ) => Effect.Effect<Option.Option<LibraryItem>, LibraryFailure>
   readonly completeItem: (
+    actor: Actor,
     id: LibraryItemId,
     extractedText: string,
     chunks: ReadonlyArray<IndexedChunk>,
-  ) => Effect.Effect<void, DatabaseInfrastructureError>
+  ) => Effect.Effect<void, LibraryFailure>
   readonly failItem: (
+    actor: Actor,
     id: LibraryItemId,
     message: string,
-  ) => Effect.Effect<void, DatabaseInfrastructureError>
-  readonly removeItem: (id: LibraryItemId) => Effect.Effect<boolean, DatabaseInfrastructureError>
+  ) => Effect.Effect<void, LibraryFailure>
+  readonly removeItem: (actor: Actor, id: LibraryItemId) => Effect.Effect<boolean, LibraryFailure>
   readonly search: (
-    query: string,
-    limit: number,
-    folderId: Option.Option<LibraryFolderId>,
-  ) => Effect.Effect<ReadonlyArray<LibrarySearchResult>, DatabaseInfrastructureError>
+    actor: Actor,
+    input: {
+      readonly query: string
+      readonly limit: number
+      readonly folderId: Option.Option<LibraryFolderId>
+    },
+  ) => Effect.Effect<ReadonlyArray<LibrarySearchResult>, LibraryFailure>
 }
 
 export class LibraryStore extends Context.Service<LibraryStore, LibraryStoreService>()(
@@ -131,7 +168,6 @@ export class LibraryStore extends Context.Service<LibraryStore, LibraryStoreServ
 
 const libraryItemSchemaDecoder = Schema.decodeUnknownEffect(LibraryItemSchema)
 const folderRowResultDecoder = Schema.decodeUnknownResult(FolderRow)
-const rawCountRowsDecoder = Schema.decodeUnknownEffect(RawCountRows)
 const libraryFolderSchemaDecoder = Schema.decodeUnknownEffect(LibraryFolderSchema)
 
 /** Decodes a document row and derives its chunk count for the metadata contract. */
@@ -157,6 +193,7 @@ const makeDecodeItem = (database: LibraryDatabase): DecodeItem =>
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       folderId: row.folderId,
+      shelf: shelfOf(row),
     }).pipe(
       Effect.mapError(
         () => new DatabaseFailure({ message: 'Database returned an invalid Library item' }),
@@ -173,21 +210,21 @@ const makeDecodeFolder = (database: LibraryDatabase): DecodeFolder =>
       ),
     )
     const counts = yield* database.run(
-      database.execute(sql`
-        SELECT
-          (SELECT count(*) FROM vivid_library_folders child WHERE child.parent_id = ${row.id}) +
-          (SELECT count(*) FROM vivid_library_documents document WHERE document.folder_id = ${row.id}) AS count
-      `),
+      database
+        .select({
+          count: sql<number>`
+        (SELECT count(*) FROM vivid_library_folders child WHERE child.parent_id = ${row.id}) +
+        (SELECT count(*) FROM vivid_library_documents document WHERE document.folder_id = ${row.id})
+      `.mapWith(Number),
+        })
+        .from(libraryFolders)
+        .where(eq(libraryFolders.id, row.id)),
     )
-    const decodedCounts = yield* rawCountRowsDecoder(counts).pipe(
-      Effect.mapError(
-        () => new DatabaseFailure({ message: 'Database returned an invalid Library folder count' }),
-      ),
-    )
-    const countRow = yield* returned(decodedCounts.rows, 'Library folder count')
+    const countRow = yield* returned(counts, 'Library folder count')
     return yield* libraryFolderSchemaDecoder({
       ...row,
-      itemCount: Number(countRow.count),
+      itemCount: countRow.count,
+      shelf: shelfOf(row),
     }).pipe(
       Effect.mapError(
         () => new DatabaseFailure({ message: 'Database returned an invalid Library folder' }),
@@ -195,6 +232,7 @@ const makeDecodeFolder = (database: LibraryDatabase): DecodeFolder =>
     )
   })
 
+/** Acquires the database once; exported operations close over one shelf authority boundary. */
 export const libraryStoreLayer = Layer.effect(
   LibraryStore,
   Effect.gen(function* () {
@@ -202,10 +240,29 @@ export const libraryStoreLayer = Layer.effect(
     const decodeItem = makeDecodeItem(database)
     const decodeFolder = makeDecodeFolder(database)
     const folders = folderOperations(database, decodeFolder)
-    const items = itemOperations(database, decodeItem)
+    const items = itemOperations(database, decodeItem, folders.getFolder)
     const search = searchOperation(database)
 
+    /** List and Watch share this loader, including selected folder visibility and shelf validation. */
+    const list: LibraryStoreService['list'] = Effect.fn('LibraryStore.list')(
+      function* (actor, query) {
+        if (query.folderId !== undefined) {
+          const folder = yield* folders.getFolder(actor, query.folderId)
+          if (Option.isNone(folder))
+            return yield* Effect.fail(new NotFound({ message: 'Library folder not found' }))
+          if (folder.value.shelf !== query.shelf)
+            return yield* Effect.fail(
+              new LibraryFolderMismatch({ folderId: query.folderId, shelf: query.shelf }),
+            )
+        }
+        return LibraryListResponse.make({
+          documents: yield* items.listItems(actor, query),
+          folders: yield* folders.listChildFolders(actor, query),
+        })
+      },
+    )
     return LibraryStore.of({
+      list,
       ...folders,
       ...items,
       search,

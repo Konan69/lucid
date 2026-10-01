@@ -3,7 +3,9 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import { extractText } from 'unpdf'
-import type { LibraryItemId } from '@vivid/contracts'
+import { NotFound, type LibraryItemId } from '@vivid/contracts'
+import type { Actor } from '../auth/access.ts'
+import { Changes, topicsOf } from '../live/changes.ts'
 import { LibraryStore, type IndexedChunk, type StoredLibraryItem } from './store.ts'
 
 const MAX_CHUNK_CHARACTERS = 1_400
@@ -11,9 +13,11 @@ const CHUNK_OVERLAP_CHARACTERS = 180
 export const MAX_LIBRARY_FILE_BYTES = 10 * 1024 * 1024
 export const LIBRARY_FILE_TYPES = ['application/pdf', 'text/markdown', 'text/plain'] as const
 
+/** The exact bytes identify a duplicate within a shelf, independent of its display name. */
 export const digestBytes = (bytes: Uint8Array) =>
   NodeCrypto.createHash('sha256').update(bytes).digest('hex')
 
+/** Normalize whitespace once so previews and indexed chunks use the same extracted text. */
 const normalizeText = (text: string) =>
   text
     .replace(/\r\n?/gu, '\n')
@@ -67,14 +71,16 @@ const extractPages = Effect.fn('LibraryIngest.extractPages')(function* (
 
 /** Extracts and indexes one uploaded item, recording expected failures on its durable row. */
 export const ingestLibraryItem = Effect.fn('LibraryIngest.ingestItem')(function* (
+  actor: Actor,
   id: LibraryItemId,
 ) {
   const library = yield* LibraryStore
-  const storedDocument = yield* library.getStoredItem(id)
+  const storedDocument = yield* library.getStoredItem(actor, id)
   if (Option.isNone(storedDocument)) {
-    return yield* Effect.fail(new LibraryIngestFailure({ message: 'Library item not found' }))
+    return yield* Effect.fail(new NotFound({ message: 'Library item not found' }))
   }
   const document = storedDocument.value
+  /** Empty extraction is a durable failed item; storage failures remain visible to the caller. */
   const index = Effect.fn('LibraryIngest.indexItem')(function* () {
     const pages = yield* extractPages(document)
     const extractedText = pages
@@ -92,8 +98,14 @@ export const ingestLibraryItem = Effect.fn('LibraryIngest.ingestItem')(function*
         new LibraryIngestFailure({ message: 'No searchable text was found in this document' }),
       )
     }
-    yield* library.completeItem(id, extractedText, chunks)
+    yield* library.completeItem(actor, id, extractedText, chunks)
     return undefined
   })
-  return yield* index().pipe(Effect.catch((failure) => library.failItem(id, failure.message)))
+  yield* index().pipe(
+    Effect.catchTag('LibraryIngestFailure', (failure) =>
+      library.failItem(actor, id, failure.message),
+    ),
+  )
+  yield* (yield* Changes).publish(topicsOf(actor))
+  return undefined
 })
