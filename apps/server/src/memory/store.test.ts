@@ -33,8 +33,8 @@ describe.skipIf(!enabled)('MemoryStore on isolated Helix', () => {
     () =>
       Effect.gen(function* () {
         const memory = yield* MemoryStore
-        const partition = MemoryPartition.make(`company:test-${NodeCrypto.randomUUID()}`)
-        const other = MemoryPartition.make(`company:test-${NodeCrypto.randomUUID()}`)
+        const partition = MemoryPartition.make(`c-test-${NodeCrypto.randomUUID()}`)
+        const other = MemoryPartition.make(`c-test-${NodeCrypto.randomUUID()}`)
         const personId = PersonId.make('A')
         const scope = MemoryScopeKey.make('person:A')
         const input = RememberInput.make({

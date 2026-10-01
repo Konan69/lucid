@@ -1,5 +1,7 @@
 import { NodeHttpServer } from '@effect/platform-node'
 import { it } from '@effect/vitest'
+import { ServiceUnavailable } from '@vivid/contracts'
+import { memoryFailure } from './handlers.js'
 import { ConfigProvider, Effect, Layer, Result } from 'effect'
 import { HttpClient, HttpClientRequest, HttpServer, HttpServerResponse } from 'effect/unstable/http'
 import { describe, expect } from 'vitest'
@@ -44,6 +46,9 @@ describe.skipIf(!enabled)('Embedding HTTP failures', () => {
         if (result.failure instanceof MemoryUnavailable) {
           expect(result.failure.service).toBe('memory')
           expect(result.failure.retryAfter).toBe('7')
+          const publicFailure = yield* memoryFailure(result.failure).pipe(Effect.flip)
+          expect(publicFailure).toBeInstanceOf(ServiceUnavailable)
+          expect(Object.hasOwn(publicFailure, 'retryAfter')).toBe(false)
         }
       }).pipe(
         Effect.provide(embeddingsLayer),

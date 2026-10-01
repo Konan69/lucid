@@ -22,7 +22,7 @@ import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effe
 import { embeddingDimensions, embeddingModel, MemoryUnavailable } from './embeddings.js'
 
 /** Partition and readable scope keys are separate authorities; no query derives additional scopes. */
-export const MemoryPartition = Schema.String.check(Schema.isPattern(/^(company|person):.+$/)).pipe(
+export const MemoryPartition = Schema.String.check(Schema.isPattern(/^[pc]-.+$/)).pipe(
   Schema.brand('MemoryPartition'),
 )
 export type MemoryPartition = typeof MemoryPartition.Type
@@ -40,6 +40,8 @@ const persistedRecord = Schema.fromJsonString(MemoryRecord)
 const encodeRecord = Schema.encodeEffect(persistedRecord)
 const Row = Schema.Struct({ record: persistedRecord })
 const Rows = Schema.Struct({ records: Schema.Array(Row) })
+const ScopeRows = Schema.Struct({ scopes: Schema.Array(Schema.Struct({ scope: MemoryScopeKey })) })
+const decodeScopes = HttpClientResponse.schemaBodyJson(ScopeRows)
 const SearchRows = Schema.Struct({
   vector: Schema.Array(Schema.Struct({ record: persistedRecord, distance: Schema.Number })),
   keyword: Schema.Array(Row),
@@ -108,6 +110,9 @@ export interface MemoryLink {
 }
 
 export interface HelixMemoryService {
+  readonly scopes: (
+    partition: MemoryPartition,
+  ) => Effect.Effect<ReadonlyArray<MemoryScopeKey>, HelixFailure>
   readonly link: (input: MemoryLink) => Effect.Effect<void, HelixFailure>
   readonly get: (input: RecordIdentity) => Effect.Effect<Option.Option<MemoryRecord>, HelixFailure>
   readonly list: (input: ReadScope) => Effect.Effect<ReadonlyArray<MemoryRecord>, HelixFailure>
@@ -328,6 +333,24 @@ interface HelixSession {
 function readers(session: HelixSession) {
   const { client, url, records } = session
   return {
+    /** Enumerate only scope metadata; the policy authorizes Threads before reading their content. */
+    scopes: Effect.fn('HelixMemory.scopes')(function* (partition: MemoryPartition) {
+      const query = readBatch()
+        .varAs(
+          'scopes',
+          g()
+            .nWithLabelWhere('Memory', SourcePredicate.eq('tenant_id', partition))
+            .where(current())
+            .project([Projection.property('scope', 'scope')]),
+        )
+        .returning(['scopes'])
+        .toQueryRequest()
+      const response = yield* requestHelix(client, url, query)
+      const rows = yield* decodeScopes(response).pipe(
+        Effect.mapError(() => HelixMalformed.make({})),
+      )
+      return [...new Set(rows.scopes.map((row) => row.scope))]
+    }),
     /** Exact latest lookup stays partition-qualified; absence is a value, never a fabricated record. */
     get: Effect.fn('HelixMemory.get')(function* (input: RecordIdentity) {
       return Option.fromUndefinedOr(

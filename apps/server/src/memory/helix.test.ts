@@ -67,7 +67,7 @@ describe.skipIf(!enabled)('Helix memory graph', () => {
       Effect.gen(function* () {
         const helix = yield* HelixMemory
         const embeddings = yield* Embeddings
-        const partition = MemoryPartition.make(`company:test-${NodeCrypto.randomUUID()}`)
+        const partition = MemoryPartition.make(`c-test-${NodeCrypto.randomUUID()}`)
         const privateScope = MemoryScopeKey.make('person:A')
         const companyScope = MemoryScopeKey.make('company')
         const hiddenScope = MemoryScopeKey.make('person:B')

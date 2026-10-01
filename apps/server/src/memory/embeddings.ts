@@ -207,7 +207,14 @@ export const embeddingsLayer = Layer.effect(
       embed: Effect.fn('Embeddings.embed')(function* (texts) {
         const first = Arr.head(texts)
         if (texts.length === 1 && Option.isSome(first)) return yield* Cache.get(cache, first.value)
-        return yield* embedBatch(texts)
+        const vectors = yield* embedBatch(texts)
+        // A validated batch warms the same single-text cache used by subsequent remembers and recalls.
+        yield* Effect.forEach(
+          Arr.zip(texts, vectors),
+          ([text, vector]) => Cache.set(cache, text, [vector]),
+          { discard: true },
+        )
+        return vectors
       }),
     })
   }),
