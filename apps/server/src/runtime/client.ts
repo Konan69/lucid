@@ -1,4 +1,5 @@
-import { createFlueClient, FlueExecutionError, type DeliveredMessage } from '@flue/sdk'
+import { createFlueClient, type DeliveredMessage } from '@flue/sdk'
+import * as Config from 'effect/Config'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
@@ -7,10 +8,11 @@ import * as Schema from 'effect/Schema'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import type * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
-import { RunFailure, RunId, type ThreadId, type ThreadOrigin } from '@vivid/contracts'
+import { RunId, type ThreadId, type ThreadOrigin } from '@vivid/contracts'
 import { RuntimeUnavailable } from '@vivid/contracts/rpc'
 import { ServerConfig } from '../config.ts'
-import { classifyFailure, decodeFailureEvidence } from './failure.ts'
+import { observeRun, type Settlement } from './settlement.ts'
+export { Settlement } from './settlement.ts'
 
 /** Flue's receipt for one accepted message. `offset` is where its events begin in the stream. */
 export const Admission = Schema.Struct({
@@ -22,19 +24,6 @@ export const Admission = Schema.Struct({
   repeated: Schema.Boolean,
 })
 export interface Admission extends Schema.Schema.Type<typeof Admission> {}
-
-/**
- * How a Run ended, as far as Flue can say. `Unknown` is what remains when the runtime cannot be
- * reached or never reports an ending: the work may or may not have happened, and nothing is
- * retried on its account.
- */
-export const Settlement = Schema.TaggedUnion({
-  Completed: { reply: Schema.String },
-  Failed: { reason: RunFailure },
-  Stopped: {},
-  Unknown: {},
-})
-export type Settlement = typeof Settlement.Type
 
 /** One read of a Thread's conversation, forwarded as the client sent it. */
 export interface ConversationRead {
@@ -77,20 +66,14 @@ export class Runtime extends Context.Service<Runtime, RuntimeService>()('vivid/R
 
 const unavailable = (message: string) => () => new RuntimeUnavailable({ message })
 
-/** How Flue's own verdict on a submission maps to an ending. Only its verdicts can be named. */
-const endingOf = (error: FlueExecutionError): Settlement => {
-  if (error.failure === 'aborted') return Settlement.cases.Stopped.make({})
-  if (error.failure === 'failed')
-    return Settlement.cases.Failed.make({
-      reason: classifyFailure(decodeFailureEvidence(error.error)),
-    })
-  return Settlement.cases.Unknown.make({})
-}
-
 const makeRuntime = Effect.fn('Runtime.make')(function* () {
   const config = yield* ServerConfig
   const http = yield* HttpClient.HttpClient
   const token = Redacted.value(config.RUNTIME_TOKEN)
+  const firstTokenMillis = yield* Config.schema(
+    Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThan(0)),
+    'VIVID_RUN_FIRST_TOKEN_TIMEOUT_MS',
+  ).pipe(Config.withDefault(90_000))
   const conversationUrl = (threadId: ThreadId) =>
     new URL(`/agents/vivid/${encodeURIComponent(threadId)}`, config.RUNTIME_URL)
   const flue = (threadId: ThreadId) =>
@@ -117,14 +100,7 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
 
   const settled: RuntimeService['settled'] = Effect.fn('Runtime.settled')(
     function* (threadId, runId) {
-      return yield* Effect.tryPromise({
-        try: (signal) => flue(threadId).read(runId, { signal }),
-        catch: (error) =>
-          error instanceof FlueExecutionError ? endingOf(error) : Settlement.cases.Unknown.make({}),
-      }).pipe(
-        Effect.map((reply) => Settlement.cases.Completed.make({ reply: reply.text })),
-        Effect.catch((settlement) => Effect.succeed(settlement)),
-      )
+      return yield* observeRun(flue(threadId), runId, firstTokenMillis)
     },
   )
 

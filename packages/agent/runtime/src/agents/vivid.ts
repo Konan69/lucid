@@ -111,6 +111,7 @@ export function Vivid({ id }: { id: string }) {
 
 Vivid.agentName = 'vivid'
 Vivid.durability = {
-  maxAttempts: 3,
+  // Model retries belong to the provider adapter; replaying a whole Run could repeat completed tools.
+  maxAttempts: 1,
   timeoutMs: 60 * 60 * 1000,
 }
