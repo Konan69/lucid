@@ -2,6 +2,7 @@ import { describe, expect, layer } from '@effect/vitest'
 import { Effect, Ref } from 'effect'
 import {
   ConnectionId,
+  ConnectionStep,
   Forbidden,
   ServiceUnavailable,
   Person,
@@ -12,6 +13,7 @@ import {
   ServiceCatalog,
   ServiceAuthorization,
   InvalidRequest,
+  NotFound,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -100,6 +102,105 @@ describe.skipIf(!testDatabaseConfigured)('Connection transport authentication', 
           .UseTool(toolRequest(ConnectionId.make('absent'), 'read'))
           .pipe(Effect.provideService(AuthContext, personAuth), Effect.flip)
         expect(failure).toBeInstanceOf(Forbidden)
+      }),
+    )
+  })
+})
+
+/** Handler requests exercise authentication, scoped SQL and provider identity through the test Layers. */
+describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
+  layer(connectionTestLayer)((it) => {
+    for (const expected of ['OpenSignIn', 'EnterKey', 'Done'] as const) {
+      it.effect(`resumes ${expected} on the same row and provider target`, () =>
+        Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
+          const probe = yield* ConnectionProbe
+          yield* Ref.set(probe.step, expected)
+          const auth = AuthState.Person({
+            person: ownerActor.person,
+            workspace: ownerActor.workspace,
+            sessionId: SessionId.make('resume-session'),
+          })
+          const begun = yield* connectionHandlers
+            .BeginConnection({ service: serviceId, label: 'Resume', shared: false })
+            .pipe(Effect.provideService(AuthContext, auth))
+          const store = yield* ConnectionStore
+          const before = yield* store.get(ownerActor, begun.connection.id)
+          const begins = yield* Ref.get(probe.begins)
+          const resumed = yield* connectionHandlers
+            .ResumeConnection({ id: begun.connection.id })
+            .pipe(Effect.provideService(AuthContext, auth))
+          expect(resumed._tag).toBe(expected)
+          expect(resumed.connection.id).toBe(begun.connection.id)
+          expect((yield* store.list(ownerActor)).connections).toHaveLength(1)
+          expect(yield* Ref.get(probe.begins)).toBe(begins)
+          const after = yield* store.get(ownerActor, begun.connection.id)
+          expect(after.references.app).toBe(before.references.app)
+          expect(after.references.profile).toBe(before.references.profile)
+          if (ConnectionStep.guards.OpenSignIn(resumed) && ConnectionStep.guards.OpenSignIn(begun))
+            expect(resumed.address).not.toBe(begun.address)
+          if (ConnectionStep.guards.EnterKey(resumed))
+            expect(resumed.fields).toEqual([{ name: 'key', label: 'Key' }])
+          yield* Ref.set(probe.step, 'Done')
+        }),
+      )
+    }
+    it.effect('refuses strangers and non-admin shared management exactly as removal does', () =>
+      Effect.gen(function* () {
+        const { ownerActor, memberActor } = yield* fixture()
+        const store = yield* ConnectionStore
+        const probe = yield* ConnectionProbe
+        yield* Ref.set(probe.step, 'OpenSignIn')
+        const personal = yield* store.begin(ownerActor, {
+          service: serviceId,
+          label: 'Private',
+          shared: false,
+        })
+        const shared = yield* store.begin(ownerActor, {
+          service: serviceId,
+          label: 'Shared',
+          shared: true,
+        })
+        const auth = AuthState.Person({
+          person: memberActor.person,
+          workspace: memberActor.workspace,
+          sessionId: SessionId.make('member-session'),
+        })
+        const refusal = yield* connectionHandlers
+          .ResumeConnection({ id: personal.connection.id })
+          .pipe(Effect.provideService(AuthContext, auth), Effect.flip)
+        expect(refusal).toBeInstanceOf(NotFound)
+        expect(
+          yield* connectionHandlers
+            .ResumeConnection({ id: shared.connection.id })
+            .pipe(Effect.provideService(AuthContext, auth), Effect.flip),
+        ).toBeInstanceOf(Forbidden)
+        yield* Ref.set(probe.step, 'Done')
+      }),
+    )
+    it.effect('returns Done when authorization completed while the dialog was closed', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const probe = yield* ConnectionProbe
+        yield* Ref.set(probe.step, 'OpenSignIn')
+        const store = yield* ConnectionStore
+        const begun = yield* store.begin(ownerActor, {
+          service: serviceId,
+          label: 'Completed',
+          shared: false,
+        })
+        yield* Ref.set(probe.step, 'Done')
+        const auth = AuthState.Person({
+          person: ownerActor.person,
+          workspace: ownerActor.workspace,
+          sessionId: SessionId.make('completed-session'),
+        })
+        const resumed = yield* connectionHandlers
+          .ResumeConnection({ id: begun.connection.id })
+          .pipe(Effect.provideService(AuthContext, auth))
+        expect(ConnectionStep.guards.Done(resumed)).toBe(true)
+        expect(resumed.connection.id).toBe(begun.connection.id)
+        expect(resumed.connection.state._tag).toBe('Ready')
       }),
     )
   })

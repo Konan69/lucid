@@ -132,6 +132,36 @@ const makeExecutor = (probe: ConnectionProbeService) => {
         references: ExecutorReferences.cases.Public.make(identity),
       })
     }),
+    reauthorize: Effect.fn('Executor.Test.reauthorize')(function* (input) {
+      const identity = {
+        service: input.references.service,
+        owner: input.references.owner,
+        app: input.references.app,
+        profile: input.references.profile,
+      }
+      const step = yield* Ref.get(probe.step)
+      if (step === 'OpenSignIn')
+        return ExecutorStep.cases.OpenSignIn.make({
+          references: ExecutorReferences.cases.SigningIn.make({
+            ...identity,
+            authorization: ExecutorAuthorizationId.make(crypto.randomUUID()),
+          }),
+          address: `https://example.test/sign-in/${crypto.randomUUID()}`,
+        })
+      if (step === 'EnterKey')
+        return ExecutorStep.cases.EnterKey.make({
+          references: ExecutorReferences.cases.EnteringKey.make({
+            ...identity,
+            authorization: ExecutorAuthorizationId.make(crypto.randomUUID()),
+            method: 'key',
+            label: input.label,
+          }),
+          fields: [{ name: 'key', label: 'Key' }],
+        })
+      return ExecutorStep.cases.Done.make({
+        references: ExecutorReferences.cases.Public.make(identity),
+      })
+    }),
     complete: Effect.fn('Executor.Test.complete')(({ references }) =>
       Effect.succeed(authorized(references)),
     ),

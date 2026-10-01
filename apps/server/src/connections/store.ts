@@ -200,6 +200,48 @@ const begin = Effect.fn('Connections.begin')(function* (
   })
 })
 
+/** Resume changes only authorization state on the existing row; ownership and creation remain stable. */
+const resume = Effect.fn('Connections.resume')(function* (actor: Actor, row: ConnectionRecord) {
+  const config = yield* ServerConfig
+  const executor = yield* Executor
+  const step = yield* executor
+    .reauthorize({
+      connectionId: row.id,
+      service: row.service,
+      label: row.label,
+      owner: row.references.owner,
+      subject: row.personId,
+      references: row.references,
+      returnAddress: new URL(
+        `/api/connections/return/${encodeURIComponent(row.id)}`,
+        config.PUBLIC_URL,
+      ).href,
+    })
+    .pipe(Effect.mapError(executorFailure))
+  const saved = yield* saveState(
+    row,
+    ExecutorStep.guards.Done(step)
+      ? ConnectionState.cases.Ready.make({})
+      : ConnectionState.cases.NeedsAuthorization.make({}),
+    step.references,
+  )
+  yield* recordChanged(actor, saved)
+  if (ExecutorStep.guards.Done(step))
+    yield* (yield* Audit).record(
+      actor,
+      AuditEvent.cases.ConnectionAdded.make({
+        service: row.serviceName,
+        shared: row.companyId !== null,
+      }),
+    )
+  const connection = yield* publicConnection(actor, saved)
+  return ExecutorStep.match<ConnectionStep>(step, {
+    Done: () => ConnectionStep.cases.Done.make({ connection }),
+    EnterKey: ({ fields }) => ConnectionStep.cases.EnterKey.make({ connection, fields }),
+    OpenSignIn: ({ address }) => ConnectionStep.cases.OpenSignIn.make({ connection, address }),
+  })
+})
+
 /** Permanently missing resources fail the persisted Connection and disappear from discovery. */
 const loadTools = Effect.fn('Connections.tools')(function* (actor: Actor, row: ConnectionRecord) {
   const executor = yield* Executor
@@ -327,6 +369,20 @@ const makeManagement = (input: {
 }) => {
   const { executor, database, provide, get } = input
   return {
+    /** Resume has exactly removal's scoped lookup and admin check, before provider access. */
+    resume: Effect.fn('Connections.resumeExisting')(function* (actor: Actor, id: ConnectionId) {
+      const row = yield* get(actor, id)
+      yield* mayManage(actor, row)
+      if (row.status === 'ready')
+        return ConnectionStep.cases.Done.make({
+          connection: yield* provide(publicConnection(actor, row)),
+        })
+      if (row.status === 'failed')
+        return yield* Effect.fail(
+          new InvalidRequest({ message: 'Remove this failed Connection and connect again.' }),
+        )
+      return yield* provide(resume(actor, row))
+    }),
     /** Only a managing Person submits keys; the store retains identifiers alone. */
     complete: Effect.fn('Connections.complete')(function* (
       actor: Actor,

@@ -35,6 +35,15 @@ export const connectionHandlers = {
     yield* requirePerson()
     return yield* (yield* ConnectionStore).begin(yield* requireActor(), request)
   }),
+  /** Reopening authorization uses the same management authority as removal. */
+  ResumeConnection: Effect.fn('Rpc.ResumeConnection')(function* ({
+    id,
+  }: {
+    readonly id: ConnectionId
+  }) {
+    yield* requirePerson()
+    return yield* (yield* ConnectionStore).resume(yield* requireActor(), id)
+  }),
   /** Key entry stays on the Person-only boundary and never enters Thread context. */
   CompleteConnection: Effect.fn('Rpc.CompleteConnection')(function* (
     request: CompleteConnectionRequest,

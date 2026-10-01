@@ -242,6 +242,10 @@ export interface ExecutorService {
   readonly begin: (
     input: typeof BeginInput.Type,
   ) => Effect.Effect<typeof ExecutorStep.Type, ExecutorFailure>
+  /** Renew authorization without allocating another app, profile, or account. */
+  readonly reauthorize: (
+    input: typeof BeginInput.Type & { readonly references: ExecutorReferences },
+  ) => Effect.Effect<typeof ExecutorStep.Type, ExecutorFailure>
   readonly complete: (
     input: typeof CompleteInput.Type,
   ) => Effect.Effect<ExecutorReferences, ExecutorFailure>
@@ -784,13 +788,25 @@ function makeAuthorize(
         }),
       )
     const [methodName, method] = chosen
-    const connection = yield* http.readConnection(
-      post('/v1/account-connections', {
-        owner: input.owner,
-        target: { app: app.id, profile: references.profile, requirement },
-      }),
-      null,
-    )
+    // Pending requests are reusable; reconnects bind the existing account so completion cannot duplicate it.
+    const connection = ExecutorReferences.isAnyOf(['EnteringKey', 'SigningIn'])(references)
+      ? { id: references.authorization }
+      : yield* http.readConnection(
+          post(
+            '/v1/account-connections',
+            ExecutorReferences.guards.Authorized(references)
+              ? {
+                  owner: input.owner,
+                  target: { app: app.id, profile: references.profile, requirement },
+                  account: references.account,
+                }
+              : {
+                  owner: input.owner,
+                  target: { app: app.id, profile: references.profile, requirement },
+                },
+          ),
+          null,
+        )
     return yield* AuthorizationMethod.match(method, {
       secrets: ({ fields }) => {
         const pending = ExecutorReferences.cases.EnteringKey.make({
@@ -1415,6 +1431,67 @@ function makeBegin(
   })
 }
 
+/** Read the saved target first. Closed pending requests are cancelled before replacement;
+ * completed requests resolve to their existing account and reconnect through that same identity.
+ */
+function makeReauthorize(
+  http: ExecutorHttp,
+  availability: Effect.Success<ReturnType<typeof makeAuthorization>>,
+) {
+  const authorize = makeAuthorize(http, availability.recordSetupRequired)
+  const status = makeStatus(http)
+  const cancel = makeResolveRemovalAccount(http)
+  return Effect.fn('Executor.reauthorize')(function* (
+    input: typeof BeginInput.Type & { readonly references: ExecutorReferences },
+  ) {
+    let references = input.references
+    if (ExecutorReferences.isAnyOf(['EnteringKey', 'SigningIn'])(references)) {
+      const pending = yield* http.readConnection(
+        Effect.succeed(
+          HttpClientRequest.get(
+            `/v1/account-connections/${query(references.authorization)}?owner=${query(references.owner)}`,
+          ),
+        ),
+        null,
+      )
+      if (WireConnection.fields.state.guards.completed(pending.state)) {
+        references = ExecutorReferences.cases.Authorized.make({
+          ...referenceIdentity(references),
+          account: pending.state.account.id,
+        })
+      } else if (!WireConnection.fields.state.guards.pending(pending.state)) {
+        yield* cancel(references)
+        references = ExecutorReferences.cases.Public.make(referenceIdentity(references))
+      }
+    }
+    if (!ExecutorReferences.isAnyOf(['EnteringKey', 'SigningIn'])(references)) {
+      const current = yield* status(references)
+      if (
+        ExecutorStatus.guards.Ready(current) &&
+        ExecutorReferences.isAnyOf(['Public', 'Authorized'])(current.references)
+      )
+        return ExecutorStep.cases.Done.make({ references: current.references })
+      if (ExecutorStatus.guards.Failed(current))
+        return yield* Effect.fail(
+          ExecutorRejected.make({ service: 'connections', tool: null, message: current.reason }),
+        )
+    }
+    const selected = yield* availability.authorization({
+      service: input.service,
+      returnAddress: input.returnAddress,
+    })
+    if (ServiceAuthorization.guards.SetupRequired(selected))
+      return yield* Effect.fail(ExecutorSetupRequired.make({ service: 'connections', tool: null }))
+    const app = yield* http.readApp(
+      Effect.succeed(
+        HttpClientRequest.get(`/v1/apps/${query(references.app)}?owner=${query(references.owner)}`),
+      ),
+      null,
+    )
+    return yield* authorize(input, app, references, selected)
+  })
+}
+
 /** Unavailable choices fail before import rather than becoming an invented import method. */
 function importAuthorization(authorization: ServiceAuthorization) {
   return ServiceAuthorization.match<Effect.Effect<string, ExecutorRejected>>(authorization, {
@@ -1680,6 +1757,7 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
     catalog: availability.catalog,
     authorization: availability.authorization,
     begin: makeBegin(http, catalog, availability),
+    reauthorize: makeReauthorize(http, availability),
     complete: Effect.fn('Executor.completeCached')(function* (input: typeof CompleteInput.Type) {
       const references = yield* complete(input)
       yield* Cache.invalidate(snapshots, input.references)
@@ -1741,6 +1819,7 @@ export const executorLayer = Layer.effect(
         catalog: Effect.fn('Executor.catalog')(() => unavailable),
         authorization: Effect.fn('Executor.authorization')(() => unavailable),
         begin: Effect.fn('Executor.begin')(() => unavailable),
+        reauthorize: Effect.fn('Executor.reauthorize')(() => unavailable),
         complete: Effect.fn('Executor.complete')(() => unavailable),
         completeSignIn: Effect.fn('Executor.completeSignIn')(() => unavailable),
         status: Effect.fn('Executor.status')(() => unavailable),
