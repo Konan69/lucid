@@ -200,6 +200,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
   return {
     get,
     catalog: catalogServices,
+    /** Read persistence even when the catalog host is offline. */
     list: Effect.fn('Connections.list')(function* (actor: Actor) {
       const rows = yield* provide(listRecords(actor))
       const services = yield* catalogServices().pipe(
@@ -210,6 +211,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     }),
     records: (actor: Actor) => provide(listRecords(actor)),
     tools: (row: ConnectionRecord) => Cache.get(toolCache, row.id),
+    /** Validate shared management before the first external operation. */
     begin: Effect.fn('Connections.begin')(function* (
       actor: Actor,
       request: BeginConnectionRequest,
@@ -249,6 +251,7 @@ const makeManagement = (input: {
 }) => {
   const { executor, database, provide, get, toolCache } = input
   return {
+    /** Only a managing Person submits keys; the store retains identifiers alone. */
     complete: Effect.fn('Connections.complete')(function* (
       actor: Actor,
       request: CompleteConnectionRequest,
@@ -261,6 +264,7 @@ const makeManagement = (input: {
       yield* Cache.invalidate(toolCache, row.id)
       return yield* provide(finish(actor, row, references))
     }),
+    /** Bind sign-in completion to its initiating Person across workspace switches. */
     callback: Effect.fn('Connections.callback')(function* (
       actor: Actor,
       id: ConnectionId,
@@ -273,6 +277,7 @@ const makeManagement = (input: {
       const connection = yield* provide(finish(actor, row, references))
       return ConnectionState.guards.Ready(connection.state)
     }),
+    /** Remove provider authority before deleting the scoped product record. */
     remove: Effect.fn('Connections.remove')(function* (actor: Actor, id: ConnectionId) {
       const row = yield* get(actor, id)
       yield* mayManage(actor, row)
@@ -304,6 +309,7 @@ const makeManagement = (input: {
         ),
       )
     }),
+    /** Persist authorization loss and invalidate discovery before publishing the change. */
     notReady: Effect.fn('Connections.notReady')(function* (actor: Actor, row: ConnectionRecord) {
       const saved = yield* provide(
         saveState(row, ConnectionState.cases.NeedsAuthorization.make({}), row.references),
