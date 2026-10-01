@@ -1,5 +1,6 @@
 import { RoutineTrigger, type RoutineId, type RoutineWebhook, type Thread } from '@vivid/contracts'
 import type { RuntimeConversation } from '@vivid/state'
+import type { LiveStateOf } from '@vivid/state'
 import { Data, Option, Redacted, Result } from 'effect'
 import {
   AlertTriangle,
@@ -42,7 +43,7 @@ type View = Data.TaggedEnum<{
 const View = Data.taggedEnum<View>()
 
 /** The live query of Routines, in whichever of its three states it is. */
-type RoutinesState = ReturnType<typeof live.routines.getSnapshot>
+type RoutinesState = LiveStateOf<typeof live.routines>
 
 /** What a change came to: nothing to say, or the server's sentence about why it refused. */
 const refusal = <Value,>(result: Result.Result<Value, ProductFailure>): Option.Option<string> =>
@@ -443,8 +444,9 @@ function NewRoutine({
     onRefused(refusal(result))
     if (Result.isFailure(result)) return
     // The call's answer can arrive before the live query's next result. Showing the Routine the
-    // server just returned keeps its page from opening on a list that does not have it yet.
-    live.routines.expect(routinesData.confirmed(result.success.routine))
+    // server just returned, as a change that is already accepted, keeps its page from opening on
+    // a list that does not have it yet.
+    live.routines.expect(routinesData.confirmed(result.success.routine))(true)
     onCreated(result.success.routine)
   }
 

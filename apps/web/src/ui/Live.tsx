@@ -16,7 +16,7 @@ export function Live<Value>({
   loading,
   children,
 }: {
-  state: LiveState<Value, { readonly message: string }>
+  state: LiveState<Value>
   loading: ReactNode
   children: (value: Value) => ReactNode
 }) {
