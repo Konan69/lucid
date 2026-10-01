@@ -1,244 +1,339 @@
-import * as NodeCrypto from 'node:crypto'
 import { defineTool } from '@flue/runtime'
-import * as Effect from 'effect/Effect'
-import * as v from 'valibot'
 import { VividRpcClient } from '@vivid/client-runtime'
-import { FollowUpId, TaskId, ThreadId, type FollowUp, type Task } from '@vivid/contracts'
-import { runServerRpc } from '../client.ts'
+import {
+  CreateTaskRequest,
+  FollowUpId,
+  FollowUpInput,
+  PatchTaskRequest,
+  TaskId,
+  type AssigneeInput,
+  type FollowUp,
+  type Task,
+  type ThreadId,
+} from '@vivid/contracts'
+import { RpcFailure } from '@vivid/contracts/rpc'
+import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
+import * as Schema from 'effect/Schema'
+import * as v from 'valibot'
+import { asActing, NobodyToActFor, type Acting } from '../client.ts'
+import { assigneeName, resolveAssignee } from './assignees.ts'
+import { operationId } from './identity.ts'
+import { id, text } from './inputs.ts'
+import { settle } from './result.ts'
 
 const REPEAT_MS = { none: null, daily: 86_400_000, weekly: 7 * 86_400_000 } as const
 const HAS_OFFSET = /(?:Z|[+-]\d{2}:?\d{2})$/iu
-const isoDateTime = v.pipe(
+const when = v.pipe(
   v.string(),
   v.check(
     (value) => HAS_OFFSET.test(value) && Number.isFinite(Date.parse(value)),
-    'Expected an ISO 8601 date-time with a timezone offset',
+    'Use an ISO date-time with a timezone offset.',
   ),
+  v.description('ISO date-time including Z or a timezone offset.'),
 )
-const parseWhen = (value: string | null) => (value === null ? null : Date.parse(value))
-const trimNullable = (value: string | null) => (value === null ? null : value.trim() || null)
-
-/** Stable ids make Flue durable-step retries idempotent at the server insert boundary. */
-const operationId = (threadId: string, toolCallId: string, purpose: string) => {
-  const hex = NodeCrypto.createHash('sha256')
-    .update(`${threadId}:${toolCallId}:${purpose}`)
-    .digest('hex')
-    .slice(0, 32)
-  const variant = ((Number.parseInt(hex.slice(16, 17), 16) & 0x3) | 0x8).toString(16)
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20)}`
-}
-
-const describeFollowUp = (followUp: FollowUp) => ({
-  id: followUp.id,
-  at: new Date(followUp.at).toISOString(),
-  note: followUp.note,
-  repeatEveryMs: followUp.repeatEveryMs,
-  status: followUp.status,
+const repeat = v.optional(
+  v.pipe(
+    v.picklist(['none', 'daily', 'weekly']),
+    v.description('How often to repeat the follow-up.'),
+  ),
+  'none',
+)
+const priority = v.pipe(
+  v.picklist(['normal', 'urgent']),
+  v.description('Whether this work is urgent.'),
+)
+const status = v.pipe(
+  v.picklist(['open', 'done', 'dropped']),
+  v.description('The Task’s current state.'),
+)
+const createInput = v.object({
+  title: v.pipe(
+    text('The outcome to track, rather than the chase.', 200),
+    v.trim(),
+    v.minLength(2),
+  ),
+  detail: v.optional(v.pipe(v.string(), v.maxLength(2000), v.description('Details of the work.'))),
+  assignee: v.optional(
+    text('The name of who owes the work; me or you means the person asking.', 120),
+  ),
+  dueAt: v.optional(when),
+  priority: v.optional(priority, 'normal'),
+  followUpAt: v.optional(when),
+  followUpNote: v.optional(
+    v.pipe(v.string(), v.maxLength(500), v.description('What to check or chase.')),
+  ),
+  repeat,
 })
-const describeTask = (task: Task) => ({
-  id: task.id,
-  title: task.title,
-  detail: task.detail,
-  status: task.status,
-  priority: task.priority,
-  assignee: task.assignee ?? 'you',
-  dueAt: task.dueAt === null ? null : new Date(task.dueAt).toISOString(),
-  nextFollowUpAt: task.nextFollowUpAt === null ? null : new Date(task.nextFollowUpAt).toISOString(),
-  followUps: task.followUps
-    .filter((followUp) => followUp.status === 'scheduled')
-    .map(describeFollowUp),
+const updateInput = v.object({
+  id,
+  status: v.optional(status),
+  title: v.optional(v.pipe(text('The new outcome to track.', 200), v.trim(), v.minLength(2))),
+  detail: v.optional(v.pipe(v.string(), v.maxLength(2000), v.description('Replacement details.'))),
+  assignee: v.optional(v.nullable(text('The assignee name; null clears the assignee.', 120))),
+  dueAt: v.optional(v.nullable(when)),
+  priority: v.optional(priority),
 })
 
-/** Builds one server RPC program while keeping the client acquisition in the runtime adapter. */
-const withClient = <A, E>(use: (client: VividRpcClient['Service']) => Effect.Effect<A, E>) =>
-  runServerRpc(
-    Effect.gen(function* () {
-      return yield* use(yield* VividRpcClient)
-    }),
+/** Operation ids require a real Thread; missing attribution never supplies a fake identity. */
+const requireActing = Effect.fn('Tools.requireActing')(function* (acting: Option.Option<Acting>) {
+  return yield* Option.match(acting, {
+    onNone: () =>
+      Effect.fail(
+        new NobodyToActFor({ message: 'There is no person behind this message to act for.' }),
+      ),
+    onSome: Effect.succeed,
+  })
+})
+
+/** A failed Company directory lookup never invents a Member identity; transport failures still propagate. */
+const resolveFor = Effect.fn('Tools.resolveAssignee')(function* (
+  client: VividRpcClient['Service'],
+  name: Option.Option<string>,
+) {
+  if (Option.isNone(name) || ['me', 'you'].includes(name.value.trim().toLowerCase()))
+    return resolveAssignee(name, [])
+  const people = yield* client.ListPeople().pipe(
+    Effect.map((response) => response.members),
+    Effect.catchIf(Schema.is(RpcFailure), () => Effect.succeed([])),
   )
+  return resolveAssignee(name, people)
+})
 
-const cache = new Map<string, ReturnType<typeof buildTaskTools>>()
-export function taskToolsFor(threadId: string) {
-  const cached = cache.get(threadId)
-  if (cached !== undefined) return cached
-  const tools = buildTaskTools(threadId)
-  cache.set(threadId, tools)
-  return tools
+/** Stable follow-up ids survive a Flue durable-step replay without scheduling duplicates. */
+function followUpInput(
+  threadId: ThreadId,
+  toolCallId: string,
+  data: { at: string; note?: string; repeat: keyof typeof REPEAT_MS },
+) {
+  const input: Schema.Struct.Mutable<FollowUpInput> = {
+    id: FollowUpId.make(operationId(threadId, toolCallId, 'follow-up')),
+    at: Date.parse(data.at),
+    repeatEveryMs: REPEAT_MS[data.repeat],
+  }
+  if (data.note !== undefined) input.note = data.note.trim()
+  return FollowUpInput.make(input)
 }
 
-/** Creates the tool that records a Task and its optional first follow-up. */
-function buildCreateTaskTool(threadId: string) {
+/** Explicit optional assignments keep absence distinct from a field that is cleared. */
+function createRequest(
+  who: Acting,
+  toolCallId: string,
+  data: v.InferOutput<typeof createInput>,
+  assignee: AssigneeInput,
+) {
+  const input: Schema.Struct.Mutable<CreateTaskRequest> = {
+    id: TaskId.make(operationId(who.threadId, toolCallId, 'task')),
+    threadId: who.threadId,
+    title: data.title.trim(),
+    assignee,
+    dueAt: data.dueAt === undefined ? null : Date.parse(data.dueAt),
+    priority: data.priority,
+  }
+  if (data.detail !== undefined) input.detail = data.detail.trim()
+  if (data.followUpAt !== undefined)
+    input.followUp = followUpInput(who.threadId, toolCallId, {
+      at: data.followUpAt,
+      note: data.followUpNote,
+      repeat: data.repeat,
+    })
+  return CreateTaskRequest.make(input)
+}
+
+/** Patch omission preserves saved values; explicit null dates and Nobody assignments clear them. */
+function patchRequest(
+  data: v.InferOutput<typeof updateInput>,
+  assignee: Option.Option<AssigneeInput>,
+) {
+  const patch: Schema.Struct.Mutable<PatchTaskRequest> = {}
+  if (data.title !== undefined) patch.title = data.title.trim()
+  if (data.detail !== undefined) patch.detail = data.detail.trim()
+  if (data.status !== undefined) patch.status = data.status
+  if (data.priority !== undefined) patch.priority = data.priority
+  if (data.dueAt !== undefined) patch.dueAt = data.dueAt === null ? null : Date.parse(data.dueAt)
+  if (Option.isSome(assignee)) patch.assignee = assignee.value
+  return PatchTaskRequest.make(patch)
+}
+
+/** The model receives scheduled follow-ups and ISO dates, matching the existing task behavior. */
+function describeFollowUp(followUp: FollowUp) {
+  return {
+    id: followUp.id,
+    at: new Date(followUp.at).toISOString(),
+    note: followUp.note,
+    repeatEveryMs: followUp.repeatEveryMs,
+    status: followUp.status,
+  }
+}
+
+/** Member identity is rendered as a name while task ids remain available for later updates. */
+function describeTask(task: Task) {
+  return {
+    id: task.id,
+    title: task.title,
+    detail: task.detail,
+    status: task.status,
+    priority: task.priority,
+    assignee: assigneeName(task.assignee),
+    dueAt: task.dueAt === null ? null : new Date(task.dueAt).toISOString(),
+    nextFollowUpAt:
+      task.nextFollowUpAt === null ? null : new Date(task.nextFollowUpAt).toISOString(),
+    followUps: task.followUps
+      .filter((followUp) => followUp.status === 'scheduled')
+      .map(describeFollowUp),
+  }
+}
+
+/** The durable step records a bounded result and ids stay tied to this Thread and tool call. */
+function createTool(acting: Option.Option<Acting>) {
   return defineTool({
     name: 'create_task',
     description:
       'Track work as a Task and optionally schedule a follow-up. Dates require a timezone offset.',
-    input: v.object({
-      title: v.pipe(v.string(), v.minLength(2), v.maxLength(200)),
-      detail: v.optional(v.pipe(v.string(), v.maxLength(2000))),
-      assignee: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(80))),
-      dueAt: v.optional(isoDateTime),
-      priority: v.optional(v.picklist(['normal', 'urgent'])),
-      followUpAt: v.optional(isoDateTime),
-      followUpNote: v.optional(v.pipe(v.string(), v.maxLength(500))),
-      repeat: v.optional(v.picklist(['none', 'daily', 'weekly'])),
-    }),
+    input: createInput,
     durable: true,
-    async run({ data, step, toolCallId }) {
-      const response = await step.do('create-task', () => {
-        const detail = data.detail === undefined ? undefined : data.detail.trim()
-        const assignee = data.assignee === undefined ? null : data.assignee.trim() || null
-        const dueAt = data.dueAt === undefined ? null : parseWhen(data.dueAt)
-        const followUpAt = data.followUpAt
-        if (followUpAt === undefined) {
-          return Effect.runPromise(
-            withClient((client) =>
-              client.CreateTask({
-                id: TaskId.make(operationId(threadId, toolCallId, 'task')),
-                threadId: ThreadId.make(threadId),
-                title: data.title.trim(),
-                detail,
-                assignee,
-                dueAt,
-                priority: data.priority,
+    /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
+    async run({ data, step, toolCallId, signal }) {
+      return await step.do('create-task', () =>
+        Effect.runPromise(
+          settle(
+            asActing(
+              acting,
+              Effect.fn('Tools.createTask')(function* (client) {
+                const who = yield* requireActing(acting)
+                const assignee = yield* resolveFor(client, Option.fromNullishOr(data.assignee))
+                const response = yield* client.CreateTask(
+                  createRequest(who, toolCallId, data, assignee),
+                )
+                return { output: { task: describeTask(response.task) } }
               }),
             ),
-          )
-        }
-        const note = data.followUpNote === undefined ? undefined : data.followUpNote.trim()
-        return Effect.runPromise(
-          withClient((client) =>
-            client.CreateTask({
-              id: TaskId.make(operationId(threadId, toolCallId, 'task')),
-              threadId: ThreadId.make(threadId),
-              title: data.title.trim(),
-              detail,
-              assignee,
-              dueAt,
-              priority: data.priority,
-              followUp: {
-                id: FollowUpId.make(operationId(threadId, toolCallId, 'follow-up')),
-                at: Date.parse(followUpAt),
-                note,
-                repeatEveryMs: data.repeat === undefined ? null : REPEAT_MS[data.repeat],
-              },
-            }),
           ),
-        )
-      })
-      return { output: { task: describeTask(response.task) } }
+          { signal },
+        ),
+      )
     },
   })
 }
 
-/** Creates the tool that applies one explicit Task patch variant. */
-function buildUpdateTaskTool() {
+/** Updates are idempotent patches and Member resolution is made under the acting Person's access. */
+function updateTool(acting: Option.Option<Acting>) {
   return defineTool({
     name: 'update_task',
     description: 'Change a tracked Task. Use list_tasks first when the id is unknown.',
-    input: v.object({
-      id: v.pipe(v.string(), v.uuid()),
-      status: v.optional(v.picklist(['open', 'done', 'dropped'])),
-      title: v.optional(v.pipe(v.string(), v.minLength(2), v.maxLength(200))),
-      detail: v.optional(v.pipe(v.string(), v.maxLength(2000))),
-      assignee: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(80)))),
-      dueAt: v.optional(v.nullable(isoDateTime)),
-      priority: v.optional(v.picklist(['normal', 'urgent'])),
-    }),
+    input: updateInput,
     durable: true,
-    async run({ data, step }) {
-      const response = await step.do('update-task', () => {
-        const title = data.title === undefined ? undefined : data.title.trim()
-        const detail = data.detail === undefined ? undefined : data.detail.trim()
-        const assignee = data.assignee === undefined ? undefined : trimNullable(data.assignee)
-        const dueAt = data.dueAt === undefined ? undefined : parseWhen(data.dueAt)
-        return Effect.runPromise(
-          withClient((client) =>
-            client.PatchTask({
-              id: TaskId.make(data.id),
-              patch: {
-                status: data.status,
-                title,
-                detail,
-                assignee,
-                dueAt,
-                priority: data.priority,
-              },
-            }),
+    /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
+    async run({ data, step, signal }) {
+      return await step.do('update-task', () =>
+        Effect.runPromise(
+          settle(
+            asActing(
+              acting,
+              Effect.fn('Tools.updateTask')(function* (client) {
+                const assignee =
+                  data.assignee === undefined
+                    ? Option.none<AssigneeInput>()
+                    : Option.some(yield* resolveFor(client, Option.fromNullishOr(data.assignee)))
+                const response = yield* client.PatchTask({
+                  id: TaskId.make(data.id),
+                  patch: patchRequest(data, assignee),
+                })
+                return { output: { task: describeTask(response.task) } }
+              }),
+            ),
           ),
-        )
-      })
-      return { output: { task: describeTask(response.task) } }
+          { signal },
+        ),
+      )
     },
   })
 }
 
-/** Creates the read-only tool that lists Tasks and their scheduled follow-ups. */
-function buildListTasksTool() {
+/** Read-only lists retain the open-task default and never return more than 25 tasks. */
+function listTool(acting: Option.Option<Acting>) {
   return defineTool({
     name: 'list_tasks',
     description: 'List tracked Tasks and scheduled follow-ups.',
     input: v.object({
-      status: v.optional(v.picklist(['open', 'done', 'dropped'])),
-      limit: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(50))),
+      status: v.optional(status, 'open'),
+      limit: v.optional(
+        v.pipe(
+          v.number(),
+          v.integer(),
+          v.minValue(1),
+          v.maxValue(25),
+          v.description('Maximum tasks to return.'),
+        ),
+        20,
+      ),
     }),
-    async run({ data }) {
-      const response = await Effect.runPromise(
-        withClient((client) => client.ListTasks({ status: data.status ?? 'open' })),
+    /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
+    run({ data, signal }) {
+      return Effect.runPromise(
+        settle(
+          asActing(acting, (client) =>
+            client.ListTasks({ status: data.status }).pipe(
+              Effect.map((response) => ({
+                output: {
+                  now: new Date().toISOString(),
+                  tasks: response.tasks.slice(0, data.limit).map(describeTask),
+                  truncated: response.tasks.length > data.limit,
+                },
+              })),
+            ),
+          ),
+        ),
+        { signal },
       )
-      return {
-        output: {
-          now: new Date().toISOString(),
-          tasks: response.tasks.slice(0, data.limit ?? 20).map(describeTask),
-        },
-      }
     },
   })
 }
 
-/** Creates the tool that schedules a follow-up on an existing Task. */
-function buildScheduleFollowUpTool(threadId: string) {
+/** Follow-ups keep the original idempotency key and the Person's explicit offset date. */
+function followUpTool(acting: Option.Option<Acting>) {
   return defineTool({
     name: 'schedule_follow_up',
     description: 'Schedule a follow-up for a tracked Task. Dates require a timezone offset.',
     input: v.object({
-      taskId: v.pipe(v.string(), v.uuid()),
-      at: isoDateTime,
-      note: v.optional(v.pipe(v.string(), v.maxLength(500))),
-      repeat: v.optional(v.picklist(['none', 'daily', 'weekly'])),
+      taskId: id,
+      at: when,
+      note: v.optional(
+        v.pipe(v.string(), v.maxLength(500), v.description('What to check or chase.')),
+      ),
+      repeat,
     }),
     durable: true,
-    async run({ data, step, toolCallId }) {
-      const response = await step.do('schedule-follow-up', () => {
-        const note = data.note === undefined ? undefined : data.note.trim()
-        return Effect.runPromise(
-          withClient((client) =>
-            client.AddFollowUp({
-              taskId: TaskId.make(data.taskId),
-              followUp: {
-                id: FollowUpId.make(operationId(threadId, toolCallId, 'follow-up')),
-                at: Date.parse(data.at),
-                note,
-                repeatEveryMs: data.repeat === undefined ? null : REPEAT_MS[data.repeat],
-              },
-            }),
+    /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
+    async run({ data, step, toolCallId, signal }) {
+      return await step.do('schedule-follow-up', () =>
+        Effect.runPromise(
+          settle(
+            asActing(
+              acting,
+              Effect.fn('Tools.scheduleFollowUp')(function* (client) {
+                const who = yield* requireActing(acting)
+                const response = yield* client.AddFollowUp({
+                  taskId: TaskId.make(data.taskId),
+                  followUp: followUpInput(who.threadId, toolCallId, data),
+                })
+                return {
+                  output: {
+                    task: { id: response.task.id, title: response.task.title },
+                    followUp: describeFollowUp(response.followUp),
+                  },
+                }
+              }),
+            ),
           ),
-        )
-      })
-      return {
-        output: {
-          task: { id: response.task.id, title: response.task.title },
-          followUp: describeFollowUp(response.followUp),
-        },
-      }
+          { signal },
+        ),
+      )
     },
   })
 }
 
-/** Builds the per-Thread tool set so durable operation ids cannot cross conversations. */
-function buildTaskTools(threadId: string) {
-  const createTask = buildCreateTaskTool(threadId)
-  const updateTask = buildUpdateTaskTool()
-  const listTasks = buildListTasksTool()
-  const scheduleFollowUp = buildScheduleFollowUpTool(threadId)
-  return [createTask, updateTask, listTasks, scheduleFollowUp] as const
+/** Tools close over exactly this render's acting Person and are never cached across people. */
+export function taskTools(acting: Option.Option<Acting>) {
+  return [createTool(acting), updateTool(acting), listTool(acting), followUpTool(acting)] as const
 }

@@ -1,0 +1,92 @@
+import type { RpcFailure } from '@vivid/contracts/rpc'
+import * as Config from 'effect/Config'
+import * as Effect from 'effect/Effect'
+import * as Predicate from 'effect/Predicate'
+import type * as Schema from 'effect/Schema'
+import type * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
+import type { NobodyToActFor } from '../client.ts'
+
+export interface ToolResult {
+  readonly output: Schema.Json
+  readonly terminate?: boolean
+}
+
+export type ToolFailure =
+  | RpcFailure
+  | NobodyToActFor
+  | RpcClientError.RpcClientError
+  | Config.ConfigError
+
+interface BoundedOutput {
+  readonly value: Schema.Json
+  readonly truncated: boolean
+}
+
+/** Each nested list and text is bounded; its containing object records any lost content. */
+function bounded(value: Schema.Json): BoundedOutput {
+  if (Predicate.isString(value))
+    return { value: value.slice(0, 4000), truncated: value.length > 4000 }
+  if (isList(value)) {
+    const items = value.slice(0, 25).map(bounded)
+    return {
+      value: items.map((item) => item.value),
+      truncated: value.length > 25 || items.some((item) => item.truncated),
+    }
+  }
+  if (!isObject(value)) return { value, truncated: false }
+  const entries = Object.entries(value).map(([key, entry]) => [key, bounded(entry)] as const)
+  const truncated = entries.some(([, entry]) => entry.truncated)
+  const result: Record<string, Schema.Json> = Object.fromEntries(
+    entries.map(([key, entry]) => [key, entry.value]),
+  )
+  if (truncated) result.truncated = true
+  return { value: result, truncated }
+}
+
+/** The JSON union includes readonly arrays; this guard retains their typed elements. */
+function isList(value: Schema.Json): value is Schema.JsonArray {
+  return Array.isArray(value)
+}
+
+/** A typed JSON record guard retains the value contract rather than widening entries to unknown. */
+function isObject(value: Schema.Json): value is Schema.JsonObject {
+  return Predicate.isObject(value) && !isList(value)
+}
+
+/** Scalar and list roots need a containing object to make truncation explicit to the model. */
+export function boundOutput(value: Schema.Json): Schema.Json {
+  const result = bounded(value)
+  if (!result.truncated || (Predicate.isObject(result.value) && !isList(result.value))) {
+    return result.value
+  }
+  return { value: result.value, truncated: true }
+}
+
+/** Product failures are safe sentences; driver payloads and supplied credentials never escape. */
+function failure(message: string) {
+  return Effect.succeed({ output: { ok: false, message }, terminate: false })
+}
+
+/** Only declared product failures are recovered; transport, configuration and defects propagate. */
+export const settle = Effect.fn('Tools.settle')(function* (
+  program: Effect.Effect<ToolResult, ToolFailure>,
+) {
+  const result = yield* program.pipe(
+    Effect.catchTags({
+      NobodyToActFor: () => failure('There is no person behind this message to act for.'),
+      NotFound: () => failure('It does not exist or the person cannot see it.'),
+      Forbidden: () => failure('The person is not allowed to do that here.'),
+      Unauthenticated: () => failure('The person needs to sign in before Vivid can do that.'),
+      Conflict: () =>
+        failure('The request conflicts with the current state; check it before trying again.'),
+      InvalidRequest: () => failure('The request is invalid; check the supplied details.'),
+      ServiceUnavailable: () => failure('That part of Vivid is not available right now.'),
+      RuntimeUnavailable: () => failure('Vivid cannot start that work right now.'),
+      DatabaseUnavailable: () => failure('Vivid cannot reach its saved records right now.'),
+      DatabaseConstraintViolation: () =>
+        failure('The request conflicts with Vivid’s saved records.'),
+      DatabaseFailure: () => failure('Vivid could not read or save that record right now.'),
+    }),
+  )
+  return { output: boundOutput(result.output), terminate: result.terminate === true }
+})

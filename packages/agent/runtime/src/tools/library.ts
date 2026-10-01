@@ -1,49 +1,63 @@
 import { defineTool } from '@flue/runtime'
+import { LibraryFolderId, LibrarySearchRequest } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
+import type * as Option from 'effect/Option'
+import type * as Schema from 'effect/Schema'
 import * as v from 'valibot'
-import { VividRpcClient } from '@vivid/client-runtime'
-import { LibraryFolderId } from '@vivid/contracts'
-import { runServerRpc } from '../client.ts'
+import { asActing, type Acting } from '../client.ts'
+import { id, text } from './inputs.ts'
+import { settle } from './result.ts'
 
-export const searchLibraryTool = defineTool({
-  name: 'search_library',
-  description:
-    "Search the user's uploaded Library documents for relevant passages. Use this before answering questions that may depend on those documents. When trusted routine instructions supply a folder id, pass it unchanged to scope retrieval to that folder and its descendants. Returns read-only excerpts with filename and page citations; cite the supplied sources in the answer.",
-  input: v.object({
-    query: v.pipe(v.string(), v.minLength(2), v.maxLength(500)),
-    limit: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(10))),
-    folderId: v.optional(v.pipe(v.string(), v.uuid())),
-  }),
-  async run({ data }) {
-    const request =
-      data.folderId === undefined
-        ? { query: data.query, limit: data.limit ?? 6 }
-        : {
-            query: data.query,
-            limit: data.limit ?? 6,
-            folderId: LibraryFolderId.make(data.folderId),
-          }
-    const response = await Effect.runPromise(
-      runServerRpc(
-        Effect.gen(function* () {
-          const client = yield* VividRpcClient
-          return yield* client.SearchLibrary(request)
-        }),
-      ),
-    )
-    const results = response.results.map((result) => {
-      const citation =
-        result.page === null ? `[${result.filename}]` : `[${result.filename}, p.${result.page}]`
-      return {
-        chunkId: result.chunkId,
-        documentId: result.documentId,
-        filename: result.filename,
-        page: result.page,
-        text: result.text,
-        score: result.score,
-        citation,
-      }
-    })
-    return { output: { query: data.query, results } }
-  },
-})
+/** Search remains read-only, server-scoped, and preserves supplied source citations. */
+export function libraryTools(acting: Option.Option<Acting>) {
+  return [
+    defineTool({
+      name: 'search_library',
+      description:
+        'Search the person’s Library before answering questions that depend on uploaded documents and cite the returned passages. Pass a supplied folder id unchanged to search that folder and its descendants.',
+      input: v.object({
+        query: v.pipe(text('The question or passage to search for.', 500), v.minLength(2)),
+        limit: v.optional(
+          v.pipe(
+            v.number(),
+            v.integer(),
+            v.minValue(1),
+            v.maxValue(10),
+            v.description('Maximum passages to return.'),
+          ),
+          6,
+        ),
+        folderId: v.optional(id),
+      }),
+      /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
+      run({ data, signal }) {
+        const request: Schema.Struct.Mutable<typeof LibrarySearchRequest.Type> = {
+          query: data.query,
+          limit: data.limit,
+        }
+        if (data.folderId !== undefined) request.folderId = LibraryFolderId.make(data.folderId)
+        return Effect.runPromise(
+          settle(
+            asActing(acting, (client) =>
+              client.SearchLibrary(LibrarySearchRequest.make(request)).pipe(
+                Effect.map((response) => ({
+                  output: {
+                    query: data.query,
+                    results: response.results.map((result) => ({
+                      ...result,
+                      citation:
+                        result.page === null
+                          ? `[${result.filename}]`
+                          : `[${result.filename}, p.${result.page}]`,
+                    })),
+                  },
+                })),
+              ),
+            ),
+          ),
+          { signal },
+        )
+      },
+    }),
+  ] as const
+}
