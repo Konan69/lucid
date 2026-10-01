@@ -102,9 +102,7 @@ export const observeRun = Effect.fn('Runtime.observeRun')(function* (
   })
   const result = yield* Effect.raceFirst(outcome, deadline())
   // A cancellation receipt can win the race; deadline ownership still means TimedOut, not Stopped.
-  return (yield* Ref.get(expired))
-    ? Settlement.cases.Failed.make({ reason: 'TimedOut' })
-    : result
+  return (yield* Ref.get(expired)) ? Settlement.cases.Failed.make({ reason: 'TimedOut' }) : result
 }, Effect.scoped)
 
 /** A failed cancellation does not erase the deadline outcome or imply another attempt is safe. */

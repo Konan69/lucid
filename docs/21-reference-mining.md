@@ -10,14 +10,14 @@ before they land (see "Borrowed code takes Vivid's names" in `CLAUDE.md`).
 
 ## What was read
 
-| Source                           | Volume                                                              | Where it is kept (ignored)                  |
-| -------------------------------- | ------------------------------------------------------------------- | ------------------------------------------- |
-| Saved posts                      | 245 posts, each with quoted post, links and article text            | `artifacts/references/raw/recent-*`         |
-| Full conversations               | 204 threads: parent chain, author's whole thread, replies with links | `artifacts/references/raw/threads/`         |
-| Grok Bot 0.39 shipped strings    | 2,473 user-facing strings across five catalogues                    | `artifacts/references/raw/grokbot-0.39-*`   |
-| Grok Bot documentation           | 15 pages, including Team Bots and Teams and enterprises             | `artifacts/references/raw/web/grokbot-*`    |
-| Product and architecture posts   | Muse security, Team Bots, Dots, Manus 2.0, ChatGPT Work, Instinct   | `artifacts/references/raw/web/`             |
-| Source checkouts                 | 10 repositories cloned at depth 1                                   | `refs/`                                     |
+| Source                         | Volume                                                               | Where it is kept (ignored)                |
+| ------------------------------ | -------------------------------------------------------------------- | ----------------------------------------- |
+| Saved posts                    | 245 posts, each with quoted post, links and article text             | `artifacts/references/raw/recent-*`       |
+| Full conversations             | 204 threads: parent chain, author's whole thread, replies with links | `artifacts/references/raw/threads/`       |
+| Grok Bot 0.39 shipped strings  | 2,473 user-facing strings across five catalogues                     | `artifacts/references/raw/grokbot-0.39-*` |
+| Grok Bot documentation         | 15 pages, including Team Bots and Teams and enterprises              | `artifacts/references/raw/web/grokbot-*`  |
+| Product and architecture posts | Muse security, Team Bots, Dots, Manus 2.0, ChatGPT Work, Instinct    | `artifacts/references/raw/web/`           |
+| Source checkouts               | 10 repositories cloned at depth 1                                    | `refs/`                                   |
 
 ## The category in one paragraph
 
@@ -40,23 +40,23 @@ fourteen sibling pages, [docs/06](06-communication.md), [docs/16](16-grok-bot-au
 
 Everything Grok Bot 0.39 shows a person, grouped by what it lets them do:
 
-| Area             | What ships                                                                                                                                                                                                                                                             |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Conversation     | Attach (six files, 25 MB each), dictate, voice call with transcript, reply to a message, reactions, find in chat, queue while working, "Stop now", drafts kept per conversation, sent-while-offline with resend                                                        |
-| Results          | File, image, link and tool-result cards with previews for PDF, spreadsheet, document, video and diagram; "Download all"; a details pane with Files, Links and Routines                                                                                                  |
-| Drafts           | An editable email or Slack draft card: recipients, subject, body, then **Send** or **Discard**; "The send was interrupted — check your mailbox to see whether it went out"                                                                                              |
-| Approvals        | **Allow once**, **Always allow**, **Deny**, for commands, connected-service tools, cookie imports and card payments; "Your answer didn't reach the server, so nothing was authorized"                                                                                   |
-| Auto-review      | Natural-language rules, "When Grok Bot wants to … it should Ask first / Allow automatically / Never allow"; Ask first wins a conflict; team rules are locked and personal rules can only be stricter                                                                    |
-| Secrets          | A masked secret request: "Stored securely, never shown to your Bot"; fill-into-page without revealing the value                                                                                                                                                         |
-| Connections      | A marketplace of plugins; a plugin bundles connectors and skills; OAuth in the browser; per-tool enable and disable; several accounts per service, each with a label ("work", "personal"); "Disabled by team admin"                                                     |
-| Routines         | On a schedule, on a webhook, or on an event (Slack message or reaction, GitHub PR and CI events, Linear, PagerDuty, Sentry, Teams); test run; run history (20 kept); pause and resume; five-minute minimum; "I paused all your routines while you were away"            |
-| Skills           | "Save the process we just used as a skill"; `/` references a skill; a private skill library; publish a skill to the team; teach a task by recording the screen                                                                                                          |
-| Attention        | Three states: **Needs attention** (question, approval, handoff), **Unread activity**, **Working**; notify when it finishes or needs input; notification sound; errors listed above the composer                                                                         |
-| Navigation       | Search palette across messages, files, links and routines; pin, hide, sections, mark unread; back and forward through visit history                                                                                                                                     |
-| Computer         | One persistent machine per account, a screen per conversation; watch, take over for a password or CAPTCHA, hand back; update, reset, recover; import browser cookies; route traffic through the person's own desktop                                                    |
-| Local computer   | Separate from the cloud machine; **Ask every time**, **Always allow**, **Never allow**; a team ceiling                                                                                                                                                                  |
-| Sharing          | A shared room joined by link and approved by the host; "You can send messages. Only the owner can manage approvals and other controls"; typing and working indicators; share as a template (public or team only)                                                        |
-| Settings         | Account and several saved accounts, appearance, language, time zone, notifications, microphone, usage and billing, updates                                                                                                                                              |
+| Area           | What ships                                                                                                                                                                                                                                                   |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Conversation   | Attach (six files, 25 MB each), dictate, voice call with transcript, reply to a message, reactions, find in chat, queue while working, "Stop now", drafts kept per conversation, sent-while-offline with resend                                              |
+| Results        | File, image, link and tool-result cards with previews for PDF, spreadsheet, document, video and diagram; "Download all"; a details pane with Files, Links and Routines                                                                                       |
+| Drafts         | An editable email or Slack draft card: recipients, subject, body, then **Send** or **Discard**; "The send was interrupted — check your mailbox to see whether it went out"                                                                                   |
+| Approvals      | **Allow once**, **Always allow**, **Deny**, for commands, connected-service tools, cookie imports and card payments; "Your answer didn't reach the server, so nothing was authorized"                                                                        |
+| Auto-review    | Natural-language rules, "When Grok Bot wants to … it should Ask first / Allow automatically / Never allow"; Ask first wins a conflict; team rules are locked and personal rules can only be stricter                                                         |
+| Secrets        | A masked secret request: "Stored securely, never shown to your Bot"; fill-into-page without revealing the value                                                                                                                                              |
+| Connections    | A marketplace of plugins; a plugin bundles connectors and skills; OAuth in the browser; per-tool enable and disable; several accounts per service, each with a label ("work", "personal"); "Disabled by team admin"                                          |
+| Routines       | On a schedule, on a webhook, or on an event (Slack message or reaction, GitHub PR and CI events, Linear, PagerDuty, Sentry, Teams); test run; run history (20 kept); pause and resume; five-minute minimum; "I paused all your routines while you were away" |
+| Skills         | "Save the process we just used as a skill"; `/` references a skill; a private skill library; publish a skill to the team; teach a task by recording the screen                                                                                               |
+| Attention      | Three states: **Needs attention** (question, approval, handoff), **Unread activity**, **Working**; notify when it finishes or needs input; notification sound; errors listed above the composer                                                              |
+| Navigation     | Search palette across messages, files, links and routines; pin, hide, sections, mark unread; back and forward through visit history                                                                                                                          |
+| Computer       | One persistent machine per account, a screen per conversation; watch, take over for a password or CAPTCHA, hand back; update, reset, recover; import browser cookies; route traffic through the person's own desktop                                         |
+| Local computer | Separate from the cloud machine; **Ask every time**, **Always allow**, **Never allow**; a team ceiling                                                                                                                                                       |
+| Sharing        | A shared room joined by link and approved by the host; "You can send messages. Only the owner can manage approvals and other controls"; typing and working indicators; share as a template (public or team only)                                             |
+| Settings       | Account and several saved accounts, appearance, language, time zone, notifications, microphone, usage and billing, updates                                                                                                                                   |
 
 **Team Bots** (28 September 2026, <https://docs.x.ai/grok-bot/team-bots>) is the reference for one
 product serving a person and a team. Its rules, verbatim in substance:

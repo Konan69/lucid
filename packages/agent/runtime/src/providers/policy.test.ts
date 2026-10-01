@@ -72,7 +72,11 @@ const fixture = Effect.fn('Models.test.fixture')(function* (
   const provider = {
     ...openrouterProvider(),
     getModels: () => [primary, fallback],
-    streamSimple: (selected: Model<'openai-completions'>, _context: Context, options: SimpleStreamOptions = {}) => {
+    streamSimple: (
+      selected: Model<'openai-completions'>,
+      _context: Context,
+      options: SimpleStreamOptions = {},
+    ) => {
       if (options.signal === undefined) expect.fail('Every attempt needs an abort signal')
       signals.push(options.signal)
       Queue.offerUnsafe(calls, selected.id)

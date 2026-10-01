@@ -1,8 +1,6 @@
 {
   "id": "553ac9cc-e6a1-4d86-8e59-c2edba9435f8",
-  "prevIds": [
-    "784ed2a7-7de6-4f5d-83a7-846074f5c7ca"
-  ],
+  "prevIds": ["784ed2a7-7de6-4f5d-83a7-846074f5c7ca"],
   "version": "8",
   "dialect": "postgres",
   "ddl": [
@@ -3442,14 +3440,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "thread_id"
-      ],
+      "columns": ["thread_id"],
       "schemaTo": "public",
       "tableTo": "vivid_conversations",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_approvals_thread_id_vivid_conversations_id_fkey",
@@ -3459,14 +3453,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "person_id"
-      ],
+      "columns": ["person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_approvals_person_id_user_id_fkey",
@@ -3476,14 +3466,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "company_id"
-      ],
+      "columns": ["company_id"],
       "schemaTo": "public",
       "tableTo": "company",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_approvals_company_id_company_id_fkey",
@@ -3493,14 +3479,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "decided_by"
-      ],
+      "columns": ["decided_by"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
       "name": "vivid_approvals_decided_by_user_id_fkey",
@@ -3510,14 +3492,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "person_id"
-      ],
+      "columns": ["person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_audit_entries_person_id_user_id_fkey",
@@ -3527,14 +3505,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "company_id"
-      ],
+      "columns": ["company_id"],
       "schemaTo": "public",
       "tableTo": "company",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_audit_entries_company_id_company_id_fkey",
@@ -3544,14 +3518,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "person_id"
-      ],
+      "columns": ["person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_computers_person_id_user_id_fkey",
@@ -3561,14 +3531,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "person_id"
-      ],
+      "columns": ["person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_connections_person_id_user_id_fkey",
@@ -3578,14 +3544,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "company_id"
-      ],
+      "columns": ["company_id"],
       "schemaTo": "public",
       "tableTo": "company",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_connections_company_id_company_id_fkey",
@@ -3595,14 +3557,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "task_id"
-      ],
+      "columns": ["task_id"],
       "schemaTo": "public",
       "tableTo": "vivid_tasks",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_follow_ups_task_id_vivid_tasks_id_fkey",
@@ -3612,14 +3570,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "thread_id"
-      ],
+      "columns": ["thread_id"],
       "schemaTo": "public",
       "tableTo": "vivid_conversations",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_input_requests_thread_id_vivid_conversations_id_fkey",
@@ -3629,14 +3583,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "person_id"
-      ],
+      "columns": ["person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_input_requests_person_id_user_id_fkey",
@@ -3646,14 +3596,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "answered_by"
-      ],
+      "columns": ["answered_by"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
       "name": "vivid_input_requests_answered_by_user_id_fkey",
@@ -3663,14 +3609,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "document_id"
-      ],
+      "columns": ["document_id"],
       "schemaTo": "public",
       "tableTo": "vivid_library_documents",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_library_chunks_lTJBbfSt8ZfB_fkey",
@@ -3680,14 +3622,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "person_id"
-      ],
+      "columns": ["person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_library_documents_person_id_user_id_fkey",
@@ -3697,14 +3635,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "company_id"
-      ],
+      "columns": ["company_id"],
       "schemaTo": "public",
       "tableTo": "company",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_library_documents_company_id_company_id_fkey",
@@ -3714,14 +3648,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "parent_id"
-      ],
+      "columns": ["parent_id"],
       "schemaTo": "public",
       "tableTo": "vivid_library_folders",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_library_folders_parent_id_vivid_library_folders_id_fkey",
@@ -3731,14 +3661,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "person_id"
-      ],
+      "columns": ["person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_library_folders_person_id_user_id_fkey",
@@ -3748,14 +3674,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "company_id"
-      ],
+      "columns": ["company_id"],
       "schemaTo": "public",
       "tableTo": "company",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_library_folders_company_id_company_id_fkey",
@@ -3765,14 +3687,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "person_id"
-      ],
+      "columns": ["person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_notifications_person_id_user_id_fkey",
@@ -3782,14 +3700,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "company_id"
-      ],
+      "columns": ["company_id"],
       "schemaTo": "public",
       "tableTo": "company",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_notifications_company_id_company_id_fkey",
@@ -3799,14 +3713,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "routine_id"
-      ],
+      "columns": ["routine_id"],
       "schemaTo": "public",
       "tableTo": "vivid_routines",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_routine_runs_routine_id_vivid_routines_id_fkey",
@@ -3816,14 +3726,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "person_id"
-      ],
+      "columns": ["person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_routines_person_id_user_id_fkey",
@@ -3833,14 +3739,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "company_id"
-      ],
+      "columns": ["company_id"],
       "schemaTo": "public",
       "tableTo": "company",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_routines_company_id_company_id_fkey",
@@ -3850,14 +3752,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "person_id"
-      ],
+      "columns": ["person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_rules_person_id_user_id_fkey",
@@ -3867,14 +3765,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "company_id"
-      ],
+      "columns": ["company_id"],
       "schemaTo": "public",
       "tableTo": "company",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_rules_company_id_company_id_fkey",
@@ -3884,14 +3778,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "thread_id"
-      ],
+      "columns": ["thread_id"],
       "schemaTo": "public",
       "tableTo": "vivid_conversations",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_runs_thread_id_vivid_conversations_id_fkey",
@@ -3901,14 +3791,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "person_id"
-      ],
+      "columns": ["person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_runs_person_id_user_id_fkey",
@@ -3918,14 +3804,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "person_id"
-      ],
+      "columns": ["person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_skills_person_id_user_id_fkey",
@@ -3935,14 +3817,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "company_id"
-      ],
+      "columns": ["company_id"],
       "schemaTo": "public",
       "tableTo": "company",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_skills_company_id_company_id_fkey",
@@ -3952,14 +3830,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "assignee_person_id"
-      ],
+      "columns": ["assignee_person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
       "name": "vivid_tasks_assignee_person_id_user_id_fkey",
@@ -3969,14 +3843,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "person_id"
-      ],
+      "columns": ["person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_tasks_person_id_user_id_fkey",
@@ -3986,14 +3856,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "company_id"
-      ],
+      "columns": ["company_id"],
       "schemaTo": "public",
       "tableTo": "company",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_tasks_company_id_company_id_fkey",
@@ -4003,14 +3869,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "thread_id"
-      ],
+      "columns": ["thread_id"],
       "schemaTo": "public",
       "tableTo": "vivid_conversations",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_thread_participants_thread_id_vivid_conversations_id_fkey",
@@ -4020,14 +3882,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "person_id"
-      ],
+      "columns": ["person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_thread_participants_person_id_user_id_fkey",
@@ -4037,14 +3895,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "thread_id"
-      ],
+      "columns": ["thread_id"],
       "schemaTo": "public",
       "tableTo": "vivid_conversations",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_thread_reads_thread_id_vivid_conversations_id_fkey",
@@ -4054,14 +3908,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "person_id"
-      ],
+      "columns": ["person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_thread_reads_person_id_user_id_fkey",
@@ -4071,14 +3921,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "person_id"
-      ],
+      "columns": ["person_id"],
       "schemaTo": "public",
       "tableTo": "user",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_conversations_person_id_user_id_fkey",
@@ -4088,14 +3934,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "company_id"
-      ],
+      "columns": ["company_id"],
       "schemaTo": "public",
       "tableTo": "company",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "name": "vivid_conversations_company_id_company_id_fkey",
@@ -4105,14 +3947,10 @@
     },
     {
       "nameExplicit": false,
-      "columns": [
-        "project_id"
-      ],
+      "columns": ["project_id"],
       "schemaTo": "public",
       "tableTo": "project",
-      "columnsTo": [
-        "id"
-      ],
+      "columnsTo": ["id"],
       "onUpdate": "NO ACTION",
       "onDelete": "SET NULL",
       "name": "vivid_conversations_project_id_project_id_fkey",
@@ -4121,10 +3959,7 @@
       "table": "vivid_conversations"
     },
     {
-      "columns": [
-        "thread_id",
-        "person_id"
-      ],
+      "columns": ["thread_id", "person_id"],
       "nameExplicit": false,
       "name": "vivid_thread_participants_pkey",
       "entityType": "pks",
@@ -4132,10 +3967,7 @@
       "table": "vivid_thread_participants"
     },
     {
-      "columns": [
-        "thread_id",
-        "person_id"
-      ],
+      "columns": ["thread_id", "person_id"],
       "nameExplicit": false,
       "name": "vivid_thread_reads_pkey",
       "entityType": "pks",
@@ -4143,9 +3975,7 @@
       "table": "vivid_thread_reads"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_approvals_pkey",
       "schema": "public",
@@ -4153,9 +3983,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_audit_entries_pkey",
       "schema": "public",
@@ -4163,9 +3991,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_computers_pkey",
       "schema": "public",
@@ -4173,9 +3999,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_connections_pkey",
       "schema": "public",
@@ -4183,9 +4007,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_credentials_pkey",
       "schema": "public",
@@ -4193,9 +4015,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_follow_ups_pkey",
       "schema": "public",
@@ -4203,9 +4023,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_input_requests_pkey",
       "schema": "public",
@@ -4213,9 +4031,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_library_chunks_pkey",
       "schema": "public",
@@ -4223,9 +4039,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_library_documents_pkey",
       "schema": "public",
@@ -4233,9 +4047,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_library_folders_pkey",
       "schema": "public",
@@ -4243,9 +4055,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_notifications_pkey",
       "schema": "public",
@@ -4253,9 +4063,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_routine_runs_pkey",
       "schema": "public",
@@ -4263,9 +4071,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_routines_pkey",
       "schema": "public",
@@ -4273,9 +4079,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_rules_pkey",
       "schema": "public",
@@ -4283,9 +4087,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_runs_pkey",
       "schema": "public",
@@ -4293,9 +4095,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "version"
-      ],
+      "columns": ["version"],
       "nameExplicit": false,
       "name": "vivid_schema_migrations_pkey",
       "schema": "public",
@@ -4303,9 +4103,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_skills_pkey",
       "schema": "public",
@@ -4313,9 +4111,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_tasks_pkey",
       "schema": "public",
@@ -4323,9 +4119,7 @@
       "entityType": "pks"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "vivid_conversations_pkey",
       "schema": "public",
