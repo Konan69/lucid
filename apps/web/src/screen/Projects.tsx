@@ -1,314 +1,488 @@
-import {
-  ChevronLeft,
-  ChevronRight,
-  FolderKanban,
-  Layers,
-  MessagesSquare,
-  Plus,
-  Search,
-  Users,
-} from 'lucide-react'
-import { useState } from 'react'
-import { findProject, pathTo, projects, type Project } from '../data/projects'
-import { Avatar } from '../ui/Avatar'
+import type { ProjectId, Thread, ThreadId } from '@vivid/contracts'
+import { Option, Result } from 'effect'
+import { ChevronRight, FolderKanban, Layers, MessagesSquare, Plus } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
+import { change, live, LiveState, useLive } from '../data/live'
+import * as projectsData from '../data/projects'
+import { Button, IconButton } from '../ui/Button'
 import { cn } from '../ui/cn'
+import { Dialog, DialogActions, DialogField } from '../ui/Dialog'
+import { Field, Select } from '../ui/Field'
+import { Live } from '../ui/Live'
+import { Notice } from '../ui/Notice'
+import { Skeleton } from '../ui/Skeleton'
 
-/* Projects: real work containers, not tags (docs/12). Two views:
-   the shelf of projects, and a project's own page — its conversations, its
-   child projects, its people. Child projects inherit members,
-   permissions, context, and service access; the page says so. */
-export function Projects() {
-  const [openId, setOpenId] = useState<string | null>(null)
-  const open = openId ? findProject(openId) : null
+type Project = projectsData.Project
 
-  return open ? (
-    <ProjectPage
-      project={open}
-      trail={pathTo(open.id)}
-      onBack={() => setOpenId(null)}
-      onOpen={setOpenId}
-    />
-  ) : (
-    <ProjectShelf onOpen={setOpenId} />
-  )
+/** How a Thread is opened, when the shell has said how. Without it Threads are listed as text. */
+type Opener = Option.Option<(id: ThreadId) => void>
+
+/** A new Project being named, and the Project it will sit inside, if any. */
+interface NewProject {
+  readonly parentId: ProjectId | null
 }
 
-/* ── Shelf: every top-level project, one card each ─────────── */
+/**
+ * Projects: where work is filed. The shelf shows the top-level Projects; a Project's page shows
+ * the Threads filed in it and the Projects inside it.
+ *
+ * Everything drawn comes from `live.projects` and `live.threads`. `onOpenThread` opens one of a
+ * Project's Threads; until the shell passes it, those Threads are listed but are not links.
+ */
+export function Projects({ onOpenThread }: { onOpenThread?: (id: ThreadId) => void }) {
+  const [openId, setOpenId] = useState<Option.Option<ProjectId>>(Option.none())
+  const [creating, setCreating] = useState<Option.Option<NewProject>>(Option.none())
+  const state = useLive(live.projects)
 
-function ProjectShelf({ onOpen }: { onOpen: (id: string) => void }) {
+  return LiveState.$match(state, {
+    Loading: () => (
+      <Pane header={<Title>Projects</Title>}>
+        <Skeleton of="card" count={4} />
+      </Pane>
+    ),
+    Failed: ({ failure }) => (
+      <Pane header={<Title>Projects</Title>}>
+        <Notice>{failure.message}</Notice>
+      </Pane>
+    ),
+    Ready: ({ value }) => (
+      <ProjectsReady
+        projects={value.projects}
+        // A Project open here can be removed somewhere else; its page then falls back to the shelf.
+        open={Option.flatMap(openId, (id) => projectsData.findProject(value.projects, id))}
+        creating={creating}
+        onOpen={setOpenId}
+        onCreating={setCreating}
+        opener={Option.fromUndefinedOr(onOpenThread)}
+      />
+    ),
+  })
+}
+
+/** The screen's frame: a top bar, and a scrolling body at the width every list screen uses. */
+function Pane({ header, children }: { header: ReactNode; children: ReactNode }) {
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge">
-      <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
-        <h1 className="min-w-0 flex-1 text-title font-title text-ink">Projects</h1>
-        <button
-          aria-label="Search projects"
-          className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-        >
-          <Search className="size-4" />
-        </button>
-      </header>
-
+      <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">{header}</header>
       <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
-        <div className="mx-auto w-full max-w-230 px-5 pt-1 pb-10 sm:px-8">
-          <p className="px-0.5 text-meta font-meta text-ink-4">
-            Work that spans teams. Vivid keeps each project&apos;s conversations, people, and
-            context together.
-          </p>
-
-          <ul className="mt-4 grid gap-2.5 sm:grid-cols-2">
-            {projects.map((p) => (
-              <ProjectCard key={p.id} project={p} onOpen={onOpen} />
-            ))}
-            <li>
-              <button className="flex size-full min-h-32 flex-col items-start rounded-card p-4 text-left ring-line transition-surface duration-(--dur-fast) hover:bg-surface-2 hover:smooth-shadow-ring-xs">
-                <span className="inline-flex size-8 items-center justify-center rounded-control bg-surface-2 text-ink-3">
-                  <Plus className="size-4" />
-                </span>
-                <span className="mt-2.5 text-title text-ink-3">New project</span>
-                <span className="mt-0.5 text-meta font-meta text-ink-4">
-                  Name it, add people, start a conversation
-                </span>
-              </button>
-            </li>
-          </ul>
-        </div>
+        <div className="mx-auto w-full max-w-230 px-5 pt-1 pb-10 sm:px-8">{children}</div>
       </div>
     </section>
   )
 }
 
-function ProjectCard({ project: p, onOpen }: { project: Project; onOpen: (id: string) => void }) {
+function Title({ children }: { children: ReactNode }) {
+  return <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">{children}</h1>
+}
+
+/** The shelf or one Project's page, and the dialog that names a new Project over either. */
+function ProjectsReady({
+  projects,
+  open,
+  creating,
+  onOpen,
+  onCreating,
+  opener,
+}: {
+  projects: ReadonlyArray<Project>
+  open: Option.Option<Project>
+  creating: Option.Option<NewProject>
+  onOpen: (id: Option.Option<ProjectId>) => void
+  onCreating: (creating: Option.Option<NewProject>) => void
+  opener: Opener
+}) {
+  /**
+   * A Project gets its id from the server, so this waits for it. The answer can arrive before the
+   * live query's next result; showing the Project the server just returned, as a change already
+   * accepted, lets its page open at once.
+   */
+  async function create(name: string, parentProjectId: ProjectId | null) {
+    const result = await change((client) => client.CreateProject({ name, parentProjectId }))
+    if (Result.isFailure(result)) return Option.some(result.failure.message)
+    live.projects.expect(projectsData.confirmed(result.success))(true)
+    onCreating(Option.none())
+    onOpen(Option.some(result.success.id))
+    return Option.none<string>()
+  }
+
+  const openProject = (project: Project) => onOpen(Option.some(project.id))
+  return (
+    <>
+      {Option.isSome(open) ? (
+        <ProjectPage
+          project={open.value}
+          projects={projects}
+          onOpen={openProject}
+          onBack={() => onOpen(Option.fromNullOr(open.value.parentProjectId))}
+          onCreate={() => onCreating(Option.some({ parentId: open.value.id }))}
+          opener={opener}
+        />
+      ) : (
+        <ProjectShelf
+          projects={projects}
+          onOpen={openProject}
+          onCreate={() => onCreating(Option.some({ parentId: null }))}
+        />
+      )}
+      {Option.isSome(creating) && (
+        <NewProjectDialog
+          projects={projects}
+          parentId={creating.value.parentId}
+          onCreate={create}
+          onClose={() => onCreating(Option.none())}
+        />
+      )}
+    </>
+  )
+}
+
+// ── The shelf ────────────────────────────────────────────────────────────────
+
+/** Every top-level Project as a card, or one sentence and the way to make the first. */
+function ProjectShelf({
+  projects,
+  onOpen,
+  onCreate,
+}: {
+  projects: ReadonlyArray<Project>
+  onOpen: (project: Project) => void
+  onCreate: () => void
+}) {
+  const top = projectsData.projectsIn(projects, null)
+  return (
+    <Pane
+      header={
+        <>
+          <Title>Projects</Title>
+          <IconButton label="New project" onClick={onCreate}>
+            <Plus className="size-4" />
+          </IconButton>
+        </>
+      }
+    >
+      {top.length === 0 ? (
+        <div className="mt-3 flex flex-col items-center rounded-card bg-surface-2 px-6 py-10 text-center smooth-shadow-ring-xs">
+          <FolderKanban className="size-5 text-ink-4" />
+          <p className="mt-2 mb-4 max-w-sm text-label text-ink-3">
+            No Projects yet. A Project keeps the Threads about one piece of work together.
+          </p>
+          <Button icon={<Plus className="size-3.5" />} onClick={onCreate}>
+            New project
+          </Button>
+        </div>
+      ) : (
+        <>
+          <p className="px-0.5 text-meta font-meta text-ink-4">
+            Each Project keeps the Threads about one piece of work together.
+          </p>
+          <ul className="mt-4 grid gap-2.5 sm:grid-cols-2">
+            {top.map((project) => (
+              <li key={project.id}>
+                <ProjectCard
+                  project={project}
+                  inside={projectsData.projectsIn(projects, project.id).length}
+                  onOpen={() => onOpen(project)}
+                />
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </Pane>
+  )
+}
+
+/** One Project: its name, how many Threads are filed in it, and when one of them last moved. */
+function ProjectCard({
+  project,
+  inside,
+  onOpen,
+}: {
+  project: Project
+  /** How many Projects sit directly inside this one. */
+  inside: number
+  onOpen: () => void
+}) {
   return (
     <button
-      onClick={() => onOpen(p.id)}
-      className="group/card flex h-full flex-col overflow-hidden rounded-card bg-surface-2 text-left smooth-shadow-ring-sm transition-press duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-wash-hover hover:smooth-shadow-ring-md"
+      type="button"
+      onClick={onOpen}
+      className="group/card flex size-full cursor-pointer flex-col rounded-card bg-surface-2 p-4 text-left smooth-shadow-ring-sm transition-press duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-wash-hover hover:smooth-shadow-ring-md"
     >
-      {/* Cover: art + the project's mark. Children announce themselves here. */}
-      <span className="relative flex h-24 items-end overflow-hidden bg-surface-2">
-        <img src={p.cover} alt="" className="absolute inset-0 size-full object-cover" />
-        <span
-          aria-hidden
-          className="absolute inset-0 bg-linear-to-t from-surface-2/70 to-transparent"
-        />
-        {p.children && p.children.length > 0 && (
-          <span className="relative z-10 m-2 inline-flex items-center gap-1.5 rounded-full bg-surface-1/85 px-2.5 py-1 text-meta font-title text-ink smooth-shadow-ring-xs backdrop-blur-sm">
-            <Layers className="size-3 text-accent-ink" />
-            {p.children.length} {p.children.length === 1 ? 'sub-project' : 'sub-projects'}
-          </span>
-        )}
-      </span>
-
-      <span className="flex flex-1 flex-col p-4">
-        <span className="text-meta font-meta text-ink-4 tabular-nums">{p.lastActive}</span>
-        <span className="mt-1 block truncate text-title text-ink">{p.name}</span>
-        <span className="mt-0.5 line-clamp-2 text-label text-ink-3">{p.brief}</span>
-        <span className="mt-auto flex items-center gap-2.5 pt-3">
-          <span className="inline-flex items-center gap-1 text-meta font-meta text-ink-4">
-            <MessagesSquare className="size-3.5" />
-            {p.conversations.length}
-          </span>
-          {p.teams.length > 0 && (
-            <span className="inline-flex min-w-0 items-center gap-1 text-meta font-meta text-ink-4">
-              <Users className="size-3.5" />
-              <span className="truncate">{p.teams.join(', ')}</span>
-            </span>
-          )}
-          <span className="ml-auto flex -space-x-1.5">
-            {p.members.slice(0, 3).map((m) => (
-              <Avatar key={m.name} name={m.name} size={18} />
-            ))}
-            {p.members.length > 3 && (
-              <span className="inline-flex size-4.5 items-center justify-center rounded-full bg-surface-3 text-meta font-meta text-ink-3 ring-2 ring-surface-0">
-                +{p.members.length - 3}
-              </span>
-            )}
-          </span>
+      <span className="flex items-center gap-2.5">
+        <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink">
+          <FolderKanban className="size-4" strokeWidth={1.7} />
         </span>
-        {p.children && p.children.length > 0 && (
-          <span className="mt-2.5 flex flex-wrap items-center gap-1 border-t border-line-1 pt-2.5">
-            {p.children.map((c) => (
-              <span
-                key={c.id}
-                className="inline-flex items-center gap-1 rounded-full bg-surface-3 px-2 py-0.5 text-meta font-meta text-ink-3 smooth-shadow-ring-xs"
-              >
-                <ChevronRight className="size-2.5 text-ink-4" />
-                {c.name}
-              </span>
-            ))}
+        <span className="min-w-0 flex-1 truncate text-title text-ink">{project.name}</span>
+        <ChevronRight className="size-3.5 shrink-0 text-ink-4 transition-transform duration-(--dur-fast) group-hover/card:translate-x-0.5" />
+      </span>
+      <span className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-meta font-meta text-ink-4">
+        <span className="inline-flex items-center gap-1">
+          <MessagesSquare className="size-3.5" />
+          {projectsData.countThreads(project.threadCount)}
+        </span>
+        {inside > 0 && (
+          <span className="inline-flex items-center gap-1">
+            <Layers className="size-3.5" />
+            {inside} inside
           </span>
         )}
+        <time className="ml-auto tabular-nums">
+          Moved {projectsData.formatMoved(project.updatedAt)}
+        </time>
       </span>
     </button>
   )
 }
 
-/* ── Page: one project — conversations, children, people ─────────── */
+// ── One Project ──────────────────────────────────────────────────────────────
 
+/** One Project's page: the way back up, the Threads filed in it, and the Projects inside it. */
 function ProjectPage({
-  project: p,
-  trail,
-  onBack,
+  project,
+  projects,
   onOpen,
+  onBack,
+  onCreate,
+  opener,
 }: {
   project: Project
-  trail: Project[]
+  projects: ReadonlyArray<Project>
+  onOpen: (project: Project) => void
   onBack: () => void
-  onOpen: (id: string) => void
+  onCreate: () => void
+  opener: Opener
 }) {
+  const inside = projectsData.projectsIn(projects, project.id)
   return (
-    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge">
-      <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
-        <button
-          onClick={onBack}
-          aria-label="Back to projects"
-          className="mr-1 inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-        >
-          <ChevronLeft className="size-4" />
-        </button>
-        <nav className="flex min-w-0 flex-1 items-center gap-1 text-title">
-          {trail.map((t) => (
-            <span key={t.id} className="flex min-w-0 items-center gap-1">
-              <button onClick={() => onOpen(t.id)} className="truncate text-ink-3 hover:text-ink">
-                {t.name}
-              </button>
-              <ChevronRight className="size-3.5 shrink-0 text-ink-4" />
-            </span>
-          ))}
-          <span className="truncate font-title text-ink">{p.name}</span>
-        </nav>
-      </header>
-
-      <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
-        <div className="mx-auto w-full max-w-180 px-5 pt-2 pb-10 sm:px-8">
-          <div className="flex items-center gap-3">
-            <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink">
-              <FolderKanban className="size-5" strokeWidth={1.7} />
-            </span>
-            <div className="min-w-0">
-              <h1 className="truncate text-page font-title text-ink">{p.name}</h1>
-              <p className="truncate text-label text-ink-3">{p.brief}</p>
-            </div>
-          </div>
-
-          <ProjectConversations project={p} />
-
-          {p.children && p.children.length > 0 && (
-            <Section
-              title="Sub-projects"
-              note={`They share ${p.name}'s people, permissions, and context`}
-            >
-              <ul className="grid gap-2 sm:grid-cols-2">
-                {p.children.map((c) => (
-                  <li key={c.id}>
-                    <button
-                      onClick={() => onOpen(c.id)}
-                      className="group/sub w-full rounded-card bg-surface-2 p-3.5 text-left smooth-shadow-ring-sm transition-press duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-wash-hover hover:smooth-shadow-ring-md"
-                    >
-                      <span className="flex items-center gap-2">
-                        <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-xs bg-accent-soft text-accent-ink">
-                          <FolderKanban className="size-3.5" strokeWidth={1.7} />
-                        </span>
-                        <span className="min-w-0 flex-1 truncate text-title text-ink">
-                          {c.name}
-                        </span>
-                        <ChevronRight className="size-3.5 shrink-0 text-ink-4 transition-transform duration-(--dur-fast) group-hover/sub:translate-x-0.5" />
-                      </span>
-                      <span className="mt-1 block truncate text-meta font-meta text-ink-4">
-                        {c.brief}
-                      </span>
-                      <span className="mt-2 flex items-center gap-2.5">
-                        <span className="inline-flex items-center gap-1 text-meta font-meta text-ink-4">
-                          <MessagesSquare className="size-3.5" />
-                          {c.conversations.length}
-                        </span>
-                        <span className="ml-auto flex -space-x-1.5">
-                          {c.members.slice(0, 3).map((m) => (
-                            <Avatar key={m.name} name={m.name} size={16} />
-                          ))}
-                        </span>
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </Section>
-          )}
-
-          <Section
-            title="People"
-            note={p.teams.length ? `Teams: ${p.teams.join(', ')}` : 'Individual members only'}
-          >
-            <div className="flex flex-wrap gap-2">
-              {p.members.map((m) => (
-                <span
-                  key={m.name}
-                  className="flex items-center gap-2 rounded-full bg-surface-2 py-1 pr-3 pl-1 smooth-shadow-ring-xs"
+    <Pane
+      header={
+        <>
+          <IconButton label="Back" onClick={onBack}>
+            <ChevronRight className="size-4 rotate-180" />
+          </IconButton>
+          <nav className="flex min-w-0 flex-1 items-center gap-1 text-title">
+            {projectsData.trailTo(projects, project).map((above) => (
+              <span key={above.id} className="flex min-w-0 items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => onOpen(above)}
+                  className="cursor-pointer truncate rounded-xs text-ink-3 transition-colors duration-(--dur-fast) hover:text-ink"
                 >
-                  <Avatar name={m.name} size={22} />
-                  <span className="text-label text-ink-2">{m.name}</span>
-                </span>
-              ))}
-            </div>
-          </Section>
-        </div>
-      </div>
-    </section>
+                  {above.name}
+                </button>
+                <ChevronRight className="size-3.5 shrink-0 text-ink-4" />
+              </span>
+            ))}
+            <h1 className="truncate font-title text-ink">{project.name}</h1>
+          </nav>
+        </>
+      }
+    >
+      <ProjectThreads project={project} opener={opener} />
+      <Section
+        title="Projects inside"
+        note={inside.length === 0 ? 'None yet.' : `${inside.length} in ${project.name}`}
+        action={
+          <Button variant="quiet" size="sm" icon={<Plus className="size-3.5" />} onClick={onCreate}>
+            New project
+          </Button>
+        }
+      >
+        <ul className="grid gap-2.5 sm:grid-cols-2">
+          {inside.map((child) => (
+            <li key={child.id}>
+              <ProjectCard
+                project={child}
+                inside={projectsData.projectsIn(projects, child.id).length}
+                onOpen={() => onOpen(child)}
+              />
+            </li>
+          ))}
+        </ul>
+      </Section>
+    </Pane>
   )
 }
 
-/** Renders the project conversation list separately so the page only composes its sections. */
-function ProjectConversations({ project: p }: { project: Project }) {
+/** What a Thread needs from the Person, said only when it needs something. */
+const ATTENTION = {
+  NeedsYou: { label: 'Needs you', tone: 'text-attention', dot: 'bg-attention' },
+  Working: { label: 'Working', tone: 'text-working', dot: 'animate-status-pulse bg-working' },
+  Unread: { label: 'New', tone: 'text-accent-ink', dot: 'bg-accent' },
+  Quiet: { label: '', tone: 'text-ink-4', dot: 'bg-line-4' },
+} satisfies Record<Thread['attention'], { label: string; tone: string; dot: string }>
+
+/**
+ * The Threads filed in a Project that the Person can open, from the live list of their Threads. A
+ * Project also counts Threads the Person is not in; those are counted here and never listed.
+ */
+function ProjectThreads({ project, opener }: { project: Project; opener: Opener }) {
+  const threads = useLive(live.threads)
   return (
-    <Section title="Conversations" note={`${p.conversations.length} in this project`}>
-      <ul className="flex flex-col gap-px">
-        {p.conversations.map((t, i) => (
-          <li key={t}>
-            <button
-              className={cn(
-                'group/row flex w-full items-center gap-2.5 rounded-row px-2.5 py-2 text-left transition-colors duration-(--dur-fast) outline-none select-none hover:bg-wash-hover',
-                i === 0 && 'bg-surface-2',
+    <Section title="Threads" note={projectsData.countThreads(project.threadCount)} action={null}>
+      <Live state={threads} loading={<Skeleton of="row" count={3} />}>
+        {(list) => {
+          const filed = projectsData.threadsIn(list, project.id)
+          const hidden = projectsData.hiddenThreads(project, filed)
+          return (
+            <>
+              {filed.length === 0 && hidden === 0 && (
+                <p className="px-0.5 text-label text-ink-4">No Threads are filed here yet.</p>
               )}
-            >
-              <i
-                className={cn(
-                  'size-1.5 shrink-0 rounded-full',
-                  i === 0 ? 'bg-working' : 'bg-line-2',
-                )}
-              />
-              <span className="min-w-0 flex-1 truncate text-label text-ink">{t}</span>
-              <span className="text-meta font-meta text-ink-4 tabular-nums">
-                {i === 0 ? p.lastActive : ''}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
+              <ul className="flex flex-col gap-px">
+                {filed.map((thread) => (
+                  <li key={thread.id}>
+                    <ThreadRow thread={thread} opener={opener} />
+                  </li>
+                ))}
+              </ul>
+              {hidden > 0 && (
+                <p className="mt-1 px-0.5 text-meta font-meta text-ink-4">
+                  {projectsData.countThreads(hidden)} here {hidden === 1 ? 'is' : 'are'} not shared
+                  with you.
+                </p>
+              )}
+            </>
+          )
+        }}
+      </Live>
     </Section>
   )
 }
 
+/** One Thread in a Project. It is a link when the shell says how to open a Thread, text if not. */
+function ThreadRow({ thread, opener }: { thread: Thread; opener: Opener }) {
+  const attention = ATTENTION[thread.attention]
+  const row = (
+    <>
+      <i className={cn('size-1.5 shrink-0 rounded-full', attention.dot)} aria-hidden />
+      <span className="min-w-0 flex-1 truncate text-label text-ink">{thread.title}</span>
+      {attention.label !== '' && (
+        <span className={cn('text-meta font-title', attention.tone)}>{attention.label}</span>
+      )}
+      <time className="text-meta font-meta text-ink-4 tabular-nums">
+        {projectsData.formatMoved(thread.updatedAt)}
+      </time>
+    </>
+  )
+  if (Option.isNone(opener)) {
+    return <div className="flex items-center gap-2.5 px-2.5 py-2">{row}</div>
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => opener.value(thread.id)}
+      className="flex w-full cursor-pointer items-center gap-2.5 rounded-row px-2.5 py-2 text-left transition-colors duration-(--dur-fast) hover:bg-wash-hover"
+    >
+      {row}
+    </button>
+  )
+}
+
+/** A titled part of a Project's page, with a quieter note and room for one action. */
 function Section({
   title,
   note,
+  action,
   children,
 }: {
   title: string
-  note?: string
-  children: React.ReactNode
+  note: string
+  action: ReactNode
+  children: ReactNode
 }) {
   return (
-    <div className="mt-7">
-      <div className="mb-1 flex items-baseline gap-2.5 border-t border-line-1 px-0.5 pt-4">
+    <div className="mt-6 first:mt-2">
+      <div className="mb-2 flex items-center gap-2.5 border-t border-line-1 px-0.5 pt-4">
         <h2 className="text-label font-title text-ink-2">{title}</h2>
-        {note && <p className="truncate text-meta font-meta text-ink-4">{note}</p>}
-        <button
-          aria-label={`New in ${title}`}
-          className="ml-auto inline-flex size-6 items-center justify-center rounded-xs text-ink-4 hover:text-ink"
-        >
-          <Plus className="size-3.5" />
-        </button>
+        <p className="min-w-0 flex-1 truncate text-meta font-meta text-ink-4">{note}</p>
+        {action}
       </div>
       {children}
     </div>
+  )
+}
+
+// ── A new Project ────────────────────────────────────────────────────────────
+
+/** The select value for "not inside another Project"; no Project id is the empty string. */
+const TOP = ''
+
+/**
+ * Names a new Project and says what it sits inside, if anything. It waits for the server, and a
+ * refusal is shown beside the field in the server's words with what was typed still there.
+ */
+function NewProjectDialog({
+  projects,
+  parentId,
+  onCreate,
+  onClose,
+}: {
+  projects: ReadonlyArray<Project>
+  parentId: ProjectId | null
+  onCreate: (name: string, parentProjectId: ProjectId | null) => Promise<Option.Option<string>>
+  onClose: () => void
+}) {
+  const [name, setName] = useState('')
+  const [inside, setInside] = useState(parentId)
+  const [pending, setPending] = useState(false)
+  const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
+
+  async function submit() {
+    setPending(true)
+    setRefused(Option.none())
+    const message = await onCreate(name.trim(), inside)
+    // On success the dialog has been closed by `onCreate` and there is nothing left to update.
+    if (Option.isNone(message)) return
+    setRefused(message)
+    setPending(false)
+  }
+
+  return (
+    <Dialog title="New project" onClose={onClose}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault()
+          void submit()
+        }}
+        className="flex flex-col gap-3"
+      >
+        <DialogField
+          label="Name"
+          value={name}
+          onChange={setName}
+          placeholder="Office move"
+          maxLength={80}
+        />
+        {projects.length > 0 && (
+          <Field label="Inside" hint="optional">
+            <Select
+              value={inside === null ? TOP : inside}
+              onChange={(event) => {
+                const chosen = projects.find((each) => each.id === event.currentTarget.value)
+                setInside(chosen === undefined ? null : chosen.id)
+              }}
+            >
+              <option value={TOP}>No other Project</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+        {Option.isSome(refused) && <Notice>{refused.value}</Notice>}
+        <DialogActions>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" disabled={pending || name.trim() === ''}>
+            Create project
+          </Button>
+        </DialogActions>
+      </form>
+    </Dialog>
   )
 }
