@@ -87,13 +87,30 @@ export class ActionRunner extends Context.Service<ActionRunner, ActionRunnerServ
 ) {}
 
 import * as Layer from 'effect/Layer'
-import * as Result from 'effect/Result'
 import { ActionTarget, AuditEvent } from '@vivid/contracts'
 import { Audit } from '../audit/record.ts'
 import { RuleStore } from '../rules/store.ts'
-import { RuleJudge } from '../rules/judge.ts'
+import { BindingJudgment, RuleJudge, judgeBinding } from '../rules/judge.ts'
 import { ApprovalStore } from './store.ts'
-import { serviceOf } from './action.ts'
+import { auditAction } from './action.ts'
+
+/** Record commands and consequential Connection allowance, while keeping browser steps out of the record. */
+const allow = Effect.fn('Gate.allow')(function* (
+  audit: Audit['Service'],
+  actor: Actor,
+  action: ProposedAction,
+) {
+  if (
+    ActionTarget.guards.Command(action.target) ||
+    (ActionTarget.guards.Connection(action.target) && action.effect !== 'read')
+  ) {
+    yield* audit.record(
+      actor,
+      AuditEvent.cases.ActionAllowed.make({ ...auditAction(action), effect: action.effect }),
+    )
+  }
+  return GateDecision.cases.Allowed.make({})
+})
 
 /** Server policy owns precedence; the judge only supplies applicability and cannot authorize an action. */
 export const gateLayer = Layer.effect(
@@ -107,21 +124,16 @@ export const gateLayer = Layer.effect(
       /** Ordinary reads pass; contained Computer work defaults to allowed, while uncertainty asks. */
       check: Effect.fn('Gate.check')(function* (actor, action, exposure) {
         if (action.effect === 'read' && exposure === 'Ordinary')
-          return GateDecision.cases.Allowed.make({})
+          return yield* allow(audit, actor, action)
         const binding = yield* rules.list(actor)
-        const judged = yield* Effect.result(judge.judge(action, binding))
-        if (Result.isFailure(judged))
-          return GateDecision.cases.ApprovalRequired.make({
-            approval: yield* approvals.raise(actor, action),
-          })
-        const applicable = judged.success
+        const judged = yield* judgeBinding(judge, action, binding)
+        const applicable = judged.rules
         const never = applicable.find((rule) => rule.decision === 'Never')
         if (never !== undefined) {
           yield* audit.record(
             actor,
             AuditEvent.cases.ActionBlocked.make({
-              summary: action.summary,
-              service: serviceOf(action),
+              ...auditAction(action),
               rule: never.action,
             }),
           )
@@ -131,6 +143,7 @@ export const gateLayer = Layer.effect(
         const connection = ActionTarget.guards.Connection(action.target)
         if (
           asks ||
+          BindingJudgment.guards.Uncertain(judged) ||
           action.effect === 'destructive' ||
           exposure === 'PersonalInShared' ||
           (connection && applicable.length === 0)
@@ -139,16 +152,7 @@ export const gateLayer = Layer.effect(
             approval: yield* approvals.raise(actor, action),
           })
         }
-        if (connection)
-          yield* audit.record(
-            actor,
-            AuditEvent.cases.ActionAllowed.make({
-              summary: action.summary,
-              service: serviceOf(action),
-              effect: action.effect,
-            }),
-          )
-        return GateDecision.cases.Allowed.make({})
+        return yield* allow(audit, actor, action)
       }),
     })
   }),

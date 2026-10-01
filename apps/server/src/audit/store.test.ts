@@ -19,7 +19,7 @@ describe.skipIf(!testDatabaseConfigured)('Audit attribution and realtime', () =>
         yield* audit.record(
           test.companyVivid,
           AuditEvent.cases.ActionBlocked.make({
-            summary: 'Remove a work record',
+            tool: 'command',
             service: 'Computer',
             rule: 'Never remove records',
           }),

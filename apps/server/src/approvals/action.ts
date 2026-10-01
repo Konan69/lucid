@@ -25,10 +25,10 @@ export const actionDigest = (
   personId: PersonId,
 ) => NodeCrypto.createHash('sha256').update(canonical({ action, threadId, personId })).digest('hex')
 
-/** Audit labels reveal the account touched, while Computer steps use the single product term. */
-export const serviceOf = (action: ProposedAction) =>
+/** Audit metadata names the capability, never the summary or private target input. */
+export const auditAction = (action: ProposedAction) =>
   ActionTarget.match(action.target, {
-    Connection: ({ account }) => account,
-    Command: () => 'Computer',
-    Browser: () => 'Computer',
+    Connection: ({ account, tool }) => ({ service: account, tool }),
+    Command: () => ({ service: 'Computer', tool: 'command' }),
+    Browser: () => ({ service: 'Computer', tool: 'browser' }),
   })

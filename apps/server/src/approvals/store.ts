@@ -1,5 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, asc, eq, gt, lte, sql } from 'drizzle-orm'
+import * as Array from 'effect/Array'
+import * as Result from 'effect/Result'
+import { and, asc, eq, gt, lt, lte, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
@@ -17,6 +19,8 @@ import {
   Conflict,
   DatabaseFailure,
   NotFound,
+  InvalidRequest,
+  ActionTarget,
   PersonId,
   ProposedAction,
   RunId,
@@ -25,7 +29,7 @@ import {
   type PersonSummary,
 } from '@vivid/contracts'
 import { companyColumnOf, loadSummaries, ownedHere, type Actor } from '../auth/access.ts'
-import { Audit } from '../audit/record.ts'
+import { Audit, AuditAttribution, recordAudit } from '../audit/record.ts'
 import {
   Database,
   decodeStored,
@@ -38,7 +42,7 @@ import { RuleStore } from '../rules/store.ts'
 import { requireThread } from '../threads/access.ts'
 import { Conversation, DeliveryMessage, StoredRunOrigin } from '../threads/conversation.ts'
 import { ActionOutcome, ActionRunner } from './gate.ts'
-import { actionDigest, serviceOf } from './action.ts'
+import { actionDigest, auditAction } from './action.ts'
 import { approvals } from './tables.ts'
 
 const fields = createSelectSchema(approvals, {
@@ -149,10 +153,9 @@ const stateOf = (
   })
 
 /** Decodes once at row ingress and batches identity lookup to avoid one query per Approval. */
-const view = Effect.fn('Approvals.view')(function* (
-  values: ReadonlyArray<typeof approvals.$inferSelect>,
+const viewDecoded = Effect.fn('Approvals.viewDecoded')(function* (
+  rows: ReadonlyArray<typeof Row.Type>,
 ) {
-  const rows = yield* Effect.forEach(values, decodeRow)
   const people = yield* loadSummaries(
     rows.flatMap((row) => [row.personId, ...Option.toArray(Option.fromNullishOr(row.decidedBy))]),
   )
@@ -173,6 +176,13 @@ const view = Effect.fn('Approvals.view')(function* (
   )
 })
 
+/** Public reads decode storage once, then share the same state projection with background settlement. */
+const view = Effect.fn('Approvals.view')(function* (
+  values: ReadonlyArray<typeof approvals.$inferSelect>,
+) {
+  return yield* viewDecoded(yield* Effect.forEach(values, decodeRow))
+})
+
 export interface ApprovalStoreService {
   readonly inThread: (
     threadId: ThreadId,
@@ -187,7 +197,7 @@ export interface ApprovalStoreService {
   readonly decide: (
     actor: Actor,
     request: DecideApprovalRequest,
-  ) => Effect.Effect<Approval, NotFound | Conflict | DatabaseInfrastructureError>
+  ) => Effect.Effect<Approval, NotFound | Conflict | InvalidRequest | DatabaseInfrastructureError>
   readonly withdraw: (
     actor: Actor,
     id: ApprovalId,
@@ -210,10 +220,23 @@ const claim = Effect.fn('Approvals.claim')(function* (
   if (value === undefined)
     return yield* Effect.fail(new NotFound({ message: 'Approval not found' }))
   const row = yield* decodeRow(value)
-  yield* requireThread(row.threadId, actor.person.id)
+  const thread = yield* requireThread(row.threadId, actor.person.id)
   if (row.digest !== request.digest)
     return yield* Effect.fail(new Conflict({ message: 'Approval digest differs' }))
   const now = yield* Clock.currentTimeMillis
+  if (Row.guards.expired(row) || (Row.guards.pending(row) && row.expiresAt <= now))
+    return yield* Effect.fail(new Conflict({ message: 'This request ran out' }))
+  // Shared accounts only read, and ordinary reads never raise Approvals. A Connection Approval in
+  // a shared Thread therefore uses personal authority. Re-check current reach if sharing changed.
+  if (
+    ApprovalDecision.guards.AlwaysAllow(request.decision) &&
+    (row.action.effect === 'destructive' ||
+      (ActionTarget.guards.Connection(row.action.target) && thread.audience !== 'private'))
+  ) {
+    return yield* Effect.fail(
+      new InvalidRequest({ message: 'This kind of action is always asked about' }),
+    )
+  }
   const rows = yield* database.run(
     database
       .update(approvals)
@@ -243,16 +266,19 @@ const Settled = Schema.Union([
   ApprovalState.cases.Succeeded,
   ApprovalState.cases.Failed,
   ApprovalState.cases.OutcomeUnknown,
+  ApprovalState.cases.Expired,
 ]).pipe(Schema.toTaggedUnion('_tag'))
 const isSettled = Schema.is(Settled)
 
 /** Settled signals carry the result as truth; a delivery outage cannot undo an already executed action. */
-const deliver = Effect.fn('Approvals.deliver')(function* (actor: Actor, approval: Approval) {
+const deliver = Effect.fn('Approvals.deliver')(function* (personId: PersonId, approval: Approval) {
   if (!isSettled(approval.state))
     return yield* Effect.fail(
       new DatabaseFailure({ message: 'Unsettled Approval cannot be delivered' }),
     )
   const body = Settled.match(approval.state, {
+    Expired: () =>
+      `Expired: ${approval.action.summary}. This request ran out. The action was not run.`,
     Denied: () => `Denied: ${approval.action.summary}. The action was not run.`,
     Succeeded: ({ result }) =>
       `Approved: ${approval.action.summary}. Result: ${result.slice(0, 4000)}`,
@@ -264,11 +290,14 @@ const deliver = Effect.fn('Approvals.deliver')(function* (actor: Actor, approval
   return yield* (yield* Conversation)
     .deliver({
       threadId: approval.threadId,
-      personId: actor.person.id,
+      personId,
       message: DeliveryMessage.cases.Signal.make({
         type: 'approval',
         body,
-        attributes: { approval: approval.id, outcome: approval.state._tag },
+        attributes: {
+          approval: approval.id,
+          outcome: ApprovalState.guards.Expired(approval.state) ? 'expired' : approval.state._tag,
+        },
       }),
       origin: StoredRunOrigin.cases.Decision.make({}),
       idempotencyKey: `approval-${approval.id}`,
@@ -317,15 +346,16 @@ const decide = Effect.fn('Approvals.decide')(function* (
   const row = yield* claim(actor, request)
   yield* changed(actor, Topic.thread(row.threadId))
   const audit = yield* Audit
-  const event = { summary: row.action.summary, service: serviceOf(row.action) }
+  const event = auditAction(row.action)
+  const decisionActor: Actor = { ...actor, threadId: Option.some(row.threadId) }
   if (ApprovalDecision.guards.Deny(request.decision)) {
-    yield* audit.record(actor, AuditEvent.cases.ActionDenied.make(event))
+    yield* audit.record(decisionActor, AuditEvent.cases.ActionDenied.make(event))
     const approval = yield* returned(yield* view([row]), 'Approval')
-    yield* deliver(actor, approval)
+    yield* deliver(actor.person.id, approval)
     return approval
   }
   if (ApprovalDecision.guards.AlwaysAllow(request.decision)) {
-    yield* (yield* RuleStore).allow(actor, row.action.summary)
+    yield* (yield* RuleStore).allow(decisionActor, row.action.summary)
   }
   const outcome = yield* (yield* ActionRunner).run({
     person: actor.person,
@@ -335,13 +365,15 @@ const decide = Effect.fn('Approvals.decide')(function* (
   const settled = yield* finish(actor, row.id, outcome)
   yield* changed(actor, Topic.thread(row.threadId))
   yield* audit.record(
-    actor,
-    ActionOutcome.guards.Unknown(outcome)
-      ? AuditEvent.cases.ActionOutcomeUnknown.make(event)
-      : AuditEvent.cases.ActionApproved.make(event),
+    decisionActor,
+    ActionOutcome.match(outcome, {
+      Succeeded: (): AuditEvent => AuditEvent.cases.ActionApproved.make(event),
+      Failed: (): AuditEvent => AuditEvent.cases.ActionFailed.make(event),
+      Unknown: (): AuditEvent => AuditEvent.cases.ActionOutcomeUnknown.make(event),
+    }),
   )
   const approval = yield* returned(yield* view([settled]), 'Approval')
-  yield* deliver(actor, approval)
+  yield* deliver(actor.person.id, approval)
   return approval
 }, Effect.uninterruptible)
 
@@ -410,26 +442,65 @@ const raise = Effect.fn('Approvals.raise')(function* (actor: Actor, action: Prop
   return approval
 })
 
-/** Expiry claims and returns every affected owner atomically; the clock also governs decision claims. */
+/** Conditional sweeps settle expired questions and abandoned executions; nothing is ever re-run. */
 const expire = Effect.fn('Approvals.expire')(function* () {
   const database = yield* Database
   const now = yield* Clock.currentTimeMillis
-  const rows = yield* database.run(
+  const expired = yield* database.run(
     database
       .update(approvals)
       .set({ status: 'expired', finishedAt: now })
       .where(and(eq(approvals.status, 'pending'), lte(approvals.expiresAt, now)))
       .returning(),
   )
-  const records = yield* Effect.forEach(rows, decodeRow)
+  const abandoned = yield* database.run(
+    database
+      .update(approvals)
+      .set({ status: 'unknown', finishedAt: now, outcome: null })
+      .where(and(eq(approvals.status, 'executing'), lt(approvals.decidedAt, now - 10 * 60 * 1000)))
+      .returning(),
+  )
+  const rows = yield* Effect.forEach(expired.concat(abandoned), decodeRow)
   yield* (yield* Changes).publish(
-    records.flatMap((row) =>
+    rows.flatMap((row) =>
       [Topic.person(row.personId), Topic.thread(row.threadId)].concat(
         Option.toArray(Option.map(Option.fromNullishOr(row.companyId), Topic.company)),
       ),
     ),
   )
+  const records = yield* viewDecoded(rows)
+  // Projection preserves row order, so each outcome retains the exact persisted workspace.
+  yield* Effect.forEach(
+    Array.zip(records, rows),
+    ([approval, row]) => settleRecovered(approval, row.companyId),
+    { discard: true },
+  )
 })
+
+/** Audit outages do not withhold the signal; stored attribution survives membership and workspace changes. */
+const settleRecovered = Effect.fn('Approvals.settleRecovered')(
+  function* (approval: Approval, companyId: CompanyId | null) {
+    if (ApprovalState.guards.OutcomeUnknown(approval.state)) {
+      const audit = yield* Effect.result(
+        recordAudit(
+          AuditAttribution.make({
+            personId: approval.state.decidedBy.id,
+            companyId,
+            by: 'person',
+            threadId: approval.threadId,
+          }),
+          AuditEvent.cases.ActionOutcomeUnknown.make(auditAction(approval.action)),
+        ),
+      )
+      yield* deliver(approval.state.decidedBy.id, approval)
+      if (Result.isFailure(audit)) yield* Effect.fail(audit.failure)
+    } else {
+      yield* deliver(approval.askedOf.id, approval)
+    }
+  },
+  (effect) =>
+    effect.pipe(Effect.catch(() => Effect.logError('Approval recovery notification failed'))),
+)
 
 /** Acquires collaborators once; row decoding remains the sole vocabulary for every read surface. */
 export const approvalStoreLayer = Layer.effect(
