@@ -85,7 +85,10 @@ export const taskHandlers = {
     const store = yield* TaskStore
     const created = yield* store.addFollowUp(actor, taskId, followUp)
     yield* changed(actor)
-    return FollowUpResponse.make({ followUp: created, task: yield* store.get(actor, taskId) })
+    return FollowUpResponse.make({
+      followUp: created,
+      task: yield* store.get(actor, created.taskId),
+    })
   }),
   /** A payload id cannot edit a follow-up on an invisible Task. */
   PatchFollowUp: Effect.fn('Rpc.PatchFollowUp')(function* ({

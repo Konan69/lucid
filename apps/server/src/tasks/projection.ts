@@ -7,6 +7,8 @@ import {
   CompanyId,
   DatabaseFailure,
   FollowUp,
+  FollowUpId,
+  FollowUpStatus,
   PersonId,
   RoutineId,
   RunId,
@@ -66,7 +68,22 @@ export const DeliveryRecord = Schema.TaggedUnion({
   Unchanged: { followUp: FollowUp },
 })
 
-const decodeFollowUpRow = decodeStored(createSelectSchema(followUps), 'follow-up')
+const FollowUpRow = createSelectSchema(followUps).mapFields((fields) => ({
+  ...fields,
+  id: FollowUpId,
+  taskId: TaskId,
+  status: FollowUpStatus,
+}))
+const decodeFollowUpRow = decodeStored(FollowUpRow, 'follow-up')
+
+/** Decode each row and its attributed Person once before a batch collects summary ids. */
+export const decodeStoredFollowUp = Effect.fn('Tasks.decodeStoredFollowUp')(function* (
+  value: typeof followUps.$inferSelect,
+) {
+  const row = yield* decodeFollowUpRow(value)
+  return { row, author: yield* decodeFollowUpAuthor(row.createdBy) }
+})
+export type StoredFollowUp = Effect.Success<ReturnType<typeof decodeStoredFollowUp>>
 const decodeFollowUpView = decodeStored(FollowUp, 'follow-up')
 const decodeOrigin = decodeStored(TaskOrigin, 'Task origin')
 const decodeTaskView = decodeStored(Task, 'Task')
@@ -86,27 +103,35 @@ const author = (by: string, person: PersonSummary) => {
   return Effect.fail(new DatabaseFailure({ message: 'Task has an invalid author' }))
 }
 
-/** Decode the persisted author once, then resolve their current public summary. */
-export const projectFollowUp = Effect.fn('Tasks.projectFollowUp')(function* (
-  value: typeof followUps.$inferSelect,
+/** Shared batch summaries supply every attribution without one query per follow-up. */
+export const projectStoredFollowUp = Effect.fn('Tasks.projectStoredFollowUp')(function* (
+  stored: StoredFollowUp,
+  people: ReadonlyMap<PersonId, PersonSummary>,
 ) {
-  const row = yield* decodeFollowUpRow(value)
-  const stored = yield* decodeFollowUpAuthor(row.createdBy)
-  const people = yield* loadSummaries([stored.personId])
-  const person = yield* summary(people, stored.personId)
-  const createdBy = FollowUpAuthor.match(stored, {
+  const person = yield* summary(people, stored.author.personId)
+  const createdBy = FollowUpAuthor.match(stored.author, {
     Person: (): Author => Author.cases.Person.make({ person }),
     Vivid: (): Author => Author.cases.Vivid.make({ onBehalfOf: person }),
   })
-  return yield* decodeFollowUpView({ ...row, createdBy })
+  return yield* decodeFollowUpView({ ...stored.row, createdBy })
+})
+
+/** Single-row mutation projections use the same decoder and projection as a batched list. */
+export const projectFollowUp = Effect.fn('Tasks.projectFollowUp')(function* (
+  value: typeof followUps.$inferSelect,
+) {
+  const stored = yield* decodeStoredFollowUp(value)
+  return yield* projectStoredFollowUp(stored, yield* loadSummaries([stored.author.personId]))
 })
 
 /** Exactly one assignment column may be populated; incompatible stored columns are a database fault. */
-const projectAssignee = Effect.fn('Tasks.projectAssignee')(function* (row: StoredTask) {
+const projectAssignee = Effect.fn('Tasks.projectAssignee')(function* (
+  row: StoredTask,
+  people: ReadonlyMap<PersonId, PersonSummary>,
+) {
   if (row.assigneePersonId !== null) {
     if (row.assignee !== null)
       return yield* Effect.fail(new DatabaseFailure({ message: 'Task has two assignees' }))
-    const people = yield* loadSummaries([row.assigneePersonId])
     return Assignee.cases.Member.make({ person: yield* summary(people, row.assigneePersonId) })
   }
   if (row.assignee !== null) return Assignee.cases.Outsider.make({ name: row.assignee })
@@ -127,10 +152,10 @@ const projectOrigin = (row: StoredTask) => {
 export const projectTask = Effect.fn('Tasks.projectTask')(function* (
   row: StoredTask,
   taskFollowUps: ReadonlyArray<FollowUp>,
+  people: ReadonlyMap<PersonId, PersonSummary>,
 ) {
-  const people = yield* loadSummaries([row.personId])
   const createdBy = yield* author(row.createdBy, yield* summary(people, row.personId))
-  const assignee = yield* projectAssignee(row)
+  const assignee = yield* projectAssignee(row, people)
   const origin = yield* projectOrigin(row)
   const scheduled = taskFollowUps.flatMap((item) => (item.status === 'scheduled' ? [item.at] : []))
   return yield* decodeTaskView({

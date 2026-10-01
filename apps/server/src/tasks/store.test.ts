@@ -1,7 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { eq, inArray } from 'drizzle-orm'
 import { describe, expect, layer } from '@effect/vitest'
-import { Clock, Context, Effect, Layer, Option, Ref, Stream } from 'effect'
+import { Clock, Context, Deferred, Effect, Fiber, Layer, Option, Ref, Stream } from 'effect'
 import {
   Assignee,
   AssigneeInput,
@@ -442,7 +442,205 @@ describe.skipIf(!testDatabaseConfigured)('workspace Tasks and notifications', ()
         }),
     )
 
-    it.effect('claims due follow-ups once and delivers nudges as the stored creator', () =>
+    it.effect(
+      'replays caller-chosen Task and follow-up ids without duplicate notices or rows',
+      () =>
+        Effect.gen(function* () {
+          const { personal, other } = yield* fixture()
+          const store = yield* TaskStore
+          const id = TaskId.make(NodeCrypto.randomUUID())
+          const request = {
+            id,
+            title: 'Replay-safe work',
+            followUp: { id: FollowUpId.make(NodeCrypto.randomUUID()), at: 10 },
+          }
+          const created = yield* Effect.all(
+            [store.create(personal, request), store.create(personal, request)],
+            { concurrency: 2 },
+          )
+          const first = yield* returned(created, 'created Task')
+          expect(created).toEqual([first, first])
+          expect(yield* store.create(personal, request)).toEqual(first)
+          expect(
+            (yield* (yield* NotificationStore).list(personal)).notifications.filter(
+              (notice) => notice.taskId === id && notice.kind === 'tracked',
+            ),
+          ).toHaveLength(1)
+          expect((yield* Effect.flip(store.create(other, request)))._tag).toBe('Conflict')
+          const followUpId = FollowUpId.make(NodeCrypto.randomUUID())
+          const scheduled = yield* Effect.all(
+            [
+              store.addFollowUp(personal, id, { id: followUpId, at: 20, note: 'One schedule' }),
+              store.addFollowUp(personal, id, { id: followUpId, at: 20, note: 'One schedule' }),
+            ],
+            { concurrency: 2 },
+          )
+          const followUp = yield* returned(scheduled, 'created follow-up')
+          expect(scheduled).toEqual([followUp, followUp])
+          expect(
+            yield* store.addFollowUp(personal, id, {
+              id: followUpId,
+              at: 20,
+              note: 'One schedule',
+            }),
+          ).toEqual(followUp)
+          expect(
+            (yield* store.get(personal, id)).followUps.filter((item) => item.id === followUpId),
+          ).toHaveLength(1)
+          const differentTask = yield* store.create(personal, { title: 'Another visible Task' })
+          expect(
+            yield* store.addFollowUp(personal, differentTask.id, { id: followUpId, at: 30 }),
+          ).toEqual(followUp)
+          const otherTask = yield* store.create(other, { title: 'Other workspace' })
+          expect(
+            (yield* Effect.flip(store.addFollowUp(other, otherTask.id, { id: followUpId, at: 30 })))
+              ._tag,
+          ).toBe('Conflict')
+        }),
+    )
+
+    it.effect(
+      'fires a repeated follow-up and atomically schedules its next occurrence with the same author',
+      () =>
+        Effect.gen(function* () {
+          const { database, owner, teammate } = yield* fixture()
+          const store = yield* TaskStore
+          const service = yield* FollowUps
+          const task = yield* store.create(owner, {
+            title: 'Repeated work',
+            assignee: AssigneeInput.cases.Member.make({ personId: teammate.person.id }),
+          })
+          yield* database.run(
+            database
+              .update(threads)
+              .set({ audience: 'company' })
+              .where(eq(threads.id, task.threadId)),
+          )
+          const followUp = yield* store.addFollowUp(teammate, task.id, {
+            at: 100,
+            repeatEveryMs: 500,
+            note: 'Keep checking',
+          })
+          const fired = yield* service.run(teammate, followUp.id)
+          expect(fired.status).toBe('fired')
+          expect(fired.firedAt).not.toBeNull()
+          expect(fired.submissionId).not.toBeNull()
+          expect(yield* service.run(teammate, followUp.id)).toEqual(fired)
+          const view = yield* store.get(owner, task.id)
+          expect(view.followUps).toHaveLength(2)
+          const next = yield* returned(
+            view.followUps.filter((item) => item.status === 'scheduled'),
+            'next follow-up',
+          )
+          expect(next).toMatchObject({
+            at: 600,
+            repeatEveryMs: 500,
+            note: 'Keep checking',
+            createdBy: followUp.createdBy,
+            submissionId: null,
+            firedAt: null,
+          })
+        }),
+    )
+
+    it.effect(
+      'delivers scheduled work as its creator even when another Member wrote the follow-up',
+      () =>
+        Effect.gen(function* () {
+          const { owner, teammate } = yield* fixture()
+          const store = yield* TaskStore
+          const task = yield* store.create(owner, {
+            title: 'Scheduled attribution',
+            assignee: AssigneeInput.cases.Member.make({ personId: teammate.person.id }),
+          })
+          const followUp = yield* store.addFollowUp(teammate, task.id, { at: 0 })
+          const receipts = yield* Receipts
+          yield* Ref.set(receipts, [])
+          yield* (yield* FollowUps).runDue()
+          const delivery = yield* returned(yield* Ref.get(receipts), 'scheduled delivery')
+          expect(delivery.personId).toBe(owner.person.id)
+          expect((yield* store.getFollowUp(owner, followUp.id)).status).toBe('fired')
+        }),
+    )
+
+    it.effect('cancels a claimed follow-up when its Task closes before scheduler delivery', () =>
+      Effect.gen(function* () {
+        const { owner } = yield* fixture()
+        const store = yield* TaskStore
+        const task = yield* store.create(owner, {
+          title: 'Close while claimed',
+          followUp: { at: 0 },
+        })
+        const receipts = yield* Receipts
+        yield* Ref.set(receipts, [])
+        const claimed = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const waiting = yield* Ref.make(true)
+        const changes = yield* Changes
+        const gated = Changes.of({
+          publish: Effect.fn('Tasks.test.pauseClaim')(function* (topics) {
+            if (
+              topics.includes(Topic.thread(task.threadId)) &&
+              (yield* Ref.getAndSet(waiting, false))
+            ) {
+              yield* Deferred.succeed(claimed, undefined)
+              yield* Deferred.await(release)
+            }
+            yield* changes.publish(topics)
+          }),
+          subscribe: (topics) => changes.subscribe(topics),
+        })
+        const worker = yield* Effect.gen(function* () {
+          yield* (yield* FollowUps).runDue()
+        }).pipe(
+          Effect.provide(Layer.fresh(followUpsLayer)),
+          Effect.provide(Layer.fresh(taskStoreLayer)),
+          Effect.provideService(Changes, gated),
+          Effect.forkChild,
+        )
+        yield* Deferred.await(claimed)
+        yield* store.patch(owner, task.id, { status: 'done' })
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(worker)
+        expect(yield* Ref.get(receipts)).toHaveLength(0)
+        const view = yield* store.get(owner, task.id)
+        expect(yield* returned(view.followUps, 'cancelled follow-up')).toMatchObject({
+          status: 'cancelled',
+          submissionId: null,
+        })
+      }),
+    )
+
+    it.effect(
+      'batches Task projections without losing Member authors, assignments or empty schedules',
+      () =>
+        Effect.gen(function* () {
+          const { owner, teammate } = yield* fixture()
+          const store = yield* TaskStore
+          const assigned = yield* store.create(owner, {
+            title: 'With a Member',
+            assignee: AssigneeInput.cases.Member.make({ personId: teammate.person.id }),
+          })
+          const empty = yield* store.create(owner, { title: 'No schedule' })
+          const followUp = yield* store.addFollowUp(teammate, assigned.id, { at: 50 })
+          const listed = yield* store.list(owner, {})
+          const withSchedule = yield* returned(
+            listed.filter((task) => task.id === assigned.id),
+            'assigned Task',
+          )
+          expect(withSchedule.assignee).toMatchObject({ person: { id: teammate.person.id } })
+          expect(withSchedule.followUps).toEqual([followUp])
+          expect(withSchedule.nextFollowUpAt).toBe(50)
+          const without = yield* returned(
+            listed.filter((task) => task.id === empty.id),
+            'unscheduled Task',
+          )
+          expect(without.followUps).toHaveLength(0)
+          expect(without.nextFollowUpAt).toBeNull()
+        }),
+    )
+
+    it.effect('claims due follow-ups once and delivers manual work as the clicking Person', () =>
       Effect.gen(function* () {
         const { owner, teammate } = yield* fixture()
         const store = yield* TaskStore
@@ -451,6 +649,13 @@ describe.skipIf(!testDatabaseConfigured)('workspace Tasks and notifications', ()
           title: 'Chase delivery',
           assignee: AssigneeInput.cases.Member.make({ personId: teammate.person.id }),
         })
+        const database = yield* Database
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'company' })
+            .where(eq(threads.id, task.threadId)),
+        )
         const followUp = yield* store.addFollowUp(owner, task.id, { at: 0 })
         const batches = yield* Effect.all([store.claimDueFollowUps(), store.claimDueFollowUps()], {
           concurrency: 2,
@@ -467,9 +672,13 @@ describe.skipIf(!testDatabaseConfigured)('workspace Tasks and notifications', ()
         yield* service.nudge(teammate, task.id, { note: 'Check now' })
         const delivered = yield* Ref.get(receipts)
         expect(delivered).toHaveLength(2)
-        expect(delivered.map((item) => item.personId)).toEqual([owner.person.id, owner.person.id])
+        expect(delivered.map((item) => item.personId)).toEqual([
+          teammate.person.id,
+          teammate.person.id,
+        ])
         expect(delivered.map((item) => item.threadId)).toEqual([task.threadId, task.threadId])
         expect(result.submissionId).not.toBeNull()
+        expect(result.status).toBe('fired')
         const notices = yield* (yield* NotificationStore).list(owner)
         expect(
           notices.notifications.filter(

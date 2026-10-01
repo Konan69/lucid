@@ -9,6 +9,7 @@ import {
   type FollowUpId,
   type NudgeTaskRequest,
   type TaskId,
+  type PersonId,
 } from '@vivid/contracts'
 import { type Actor } from '../auth/access.ts'
 import { Notifier } from '../notifications/notifier.ts'
@@ -28,19 +29,28 @@ const instruction = (task: StoredTask, followUp: FollowUp) => {
   return lines.join('\n')
 }
 
-/** Delivery belongs to the stored creator even when a different Member clicks Run or Nudge. */
+/** Manual work acts for the clicking Person; unattended work acts for the Task creator. */
 const makeFollowUps = (
   tasks: TaskStore['Service'],
   conversation: Conversation['Service'],
   notifier: Notifier['Service'],
 ) => {
   /** Run creation has exactly one authority; the claim timestamp makes retries use the same key. */
-  const submit = Effect.fn('FollowUps.submit')(function* (claim: {
-    readonly task: StoredTask
-    readonly followUp: FollowUp
-  }) {
+  const submit = Effect.fn('FollowUps.submit')(function* (
+    claimed: {
+      readonly task: StoredTask
+      readonly followUp: FollowUp
+    },
+    personId: PersonId,
+  ) {
+    const claim = yield* tasks.prepareDelivery(claimed)
     const { task, followUp } = claim
-    if (followUp.status !== 'running' || followUp.submissionId !== null) return followUp
+    if (
+      followUp.firedAt !== claimed.followUp.firedAt ||
+      followUp.status !== 'running' ||
+      followUp.submissionId !== null
+    )
+      return followUp
     if (followUp.firedAt === null)
       return yield* Effect.fail(
         new InvalidRequest({ message: 'A running follow-up needs a claim timestamp' }),
@@ -48,7 +58,7 @@ const makeFollowUps = (
     const receipt = yield* conversation
       .deliver({
         threadId: task.conversationId,
-        personId: task.personId,
+        personId,
         message: DeliveryMessage.cases.Signal.make({
           type: 'follow-up',
           body: instruction(task, followUp),
@@ -97,12 +107,13 @@ const makeFollowUps = (
       )
     return receipt
   })
-  /** Explicit retry reopens a settled follow-up before the atomic scheduled-to-running claim. */
+  /** A completed delivery is replay-safe; only a failed or cancelled follow-up is explicitly retried. */
   const run = Effect.fn('FollowUps.run')(function* (actor: Actor, id: FollowUpId) {
     const current = yield* tasks.getFollowUp(actor, id)
+    if (current.status === 'fired') return current
     if (current.status !== 'scheduled' && current.status !== 'running')
       yield* tasks.patchFollowUp(actor, id, { status: 'scheduled' })
-    return yield* submit(yield* tasks.claimFollowUp(actor, id))
+    return yield* submit(yield* tasks.claimFollowUp(actor, id), actor.person.id)
   })
   /** A nudge is an immediate follow-up using Clock and the same scoped claim/delivery path. */
   const nudge = Effect.fn('FollowUps.nudge')(function* (
@@ -132,7 +143,10 @@ const makeFollowUps = (
       { discard: true },
     )
     const due = yield* tasks.claimDueFollowUps()
-    yield* Effect.forEach(due, submit, { discard: true, concurrency: 1 })
+    yield* Effect.forEach(due, (claim) => submit(claim, claim.task.personId), {
+      discard: true,
+      concurrency: 1,
+    })
   })
   return { run, nudge, runDue }
 }

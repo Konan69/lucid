@@ -1,11 +1,14 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
+import * as Array from 'effect/Array'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
+import * as Record from 'effect/Record'
 import {
   AssigneeInput,
+  Conflict,
   FollowUpId,
   InvalidRequest,
   NotFound,
@@ -18,7 +21,7 @@ import {
   type PatchTaskRequest,
   type TaskListQuery,
 } from '@vivid/contracts'
-import { companyColumnOf, type Actor } from '../auth/access.ts'
+import { companyColumnOf, loadSummaries, type Actor } from '../auth/access.ts'
 import { Database, returned } from '../database/client.ts'
 import { Changes } from '../live/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
@@ -29,6 +32,8 @@ import { visible, visibleIds, publishTask } from './access.ts'
 import { assignment, timestamp, scheduleInput } from './input.ts'
 import {
   decodeTaskRow,
+  decodeStoredFollowUp,
+  projectStoredFollowUp,
   projectFollowUp,
   projectTask,
   originOf,
@@ -40,22 +45,50 @@ import {
 } from './projection.ts'
 import { followUps, tasks } from './tables.ts'
 
-/** Scoped reads and wire projection are shared by every Task entry point, including search. */
-const makeReads = (database: Database['Service']) => {
-  /** Only a decoded, already authorized Task may load its dependent follow-ups. */
-  const view = Effect.fn('TaskStore.view')(function* (row: StoredTask) {
+/** Batch dependent rows and identities once, independent of the number of Tasks returned. */
+const makeViews = (database: Database['Service']) => {
+  /** One IN read for follow-ups and one summary read keep list cost independent of Task count. */
+  const views = Effect.fn('TaskStore.views')(function* (rows: ReadonlyArray<StoredTask>) {
+    if (rows.length === 0) return []
     const records = yield* database.run(
       database
         .select()
         .from(followUps)
-        .where(eq(followUps.taskId, row.id))
+        .where(
+          inArray(
+            followUps.taskId,
+            rows.map((row) => row.id),
+          ),
+        )
         .orderBy(desc(followUps.at), asc(followUps.id)),
     )
-    const views = yield* Effect.forEach(records, (record) => projectFollowUp(record)).pipe(
-      Effect.provideService(Database, database),
+    const stored = yield* Effect.forEach(records, decodeStoredFollowUp)
+    const ids = rows.flatMap((row) =>
+      row.assigneePersonId === null ? [row.personId] : [row.personId, row.assigneePersonId],
     )
-    return yield* projectTask(row, views).pipe(Effect.provideService(Database, database))
+    const people = yield* loadSummaries([
+      ...ids,
+      ...stored.map((item) => item.author.personId),
+    ]).pipe(Effect.provideService(Database, database))
+    const followUpViews = yield* Effect.forEach(stored, (item) =>
+      projectStoredFollowUp(item, people),
+    )
+    const grouped = Array.groupBy(followUpViews, (item) => item.taskId)
+    return yield* Effect.forEach(rows, (row) => {
+      const items = Option.getOrElse(Record.get(grouped, row.id), () => [])
+      return projectTask(row, items, people)
+    })
   })
+  /** A single-record projection shares the exact batched path used by search, List and Watch. */
+  const view = Effect.fn('TaskStore.view')(function* (row: StoredTask) {
+    return yield* returned(yield* views([row]), 'Task')
+  })
+  return { view, views }
+}
+
+/** Scoped reads and wire projection are shared by every Task entry point, including search. */
+const makeReads = (database: Database['Service']) => {
+  const { view, views } = makeViews(database)
   /** Another workspace's id and an absent id produce the same failure. */
   const record = Effect.fn('TaskStore.record')(function* (actor: Actor, id: TaskId) {
     const rows = yield* database.run(
@@ -95,9 +128,22 @@ const makeReads = (database: Database['Service']) => {
         ),
     )
     const records = yield* Effect.forEach(rows, (row) => decodeTaskRow(row.task))
-    return yield* Effect.forEach(records, view, { concurrency: 1 })
+    return yield* views(records)
   })
-  return { view, record, get, list }
+  /** Caller-chosen ids replay visible records; an occupied inaccessible id reveals no record content. */
+  const replay = Effect.fn('TaskStore.replay')(function* (actor: Actor, id: TaskId) {
+    const existing = yield* database.run(
+      database.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, id)).limit(1),
+    )
+    if (existing.length === 0) return Option.none<StoredTask>()
+    const task = yield* record(actor, id).pipe(
+      Effect.catchTag('NotFound', () =>
+        Effect.fail(new Conflict({ message: 'Task id is already in use' })),
+      ),
+    )
+    return Option.some(task)
+  })
+  return { view, record, get, list, replay }
 }
 
 /** Task notices always return to its creator, with assignment notices sent to the new Member too. */
@@ -147,10 +193,15 @@ const makeCreate = (
   database: Database['Service'],
   notifier: Notifier['Service'],
   threadStore: ThreadStore['Service'],
+  replay: ReturnType<typeof makeReads>['replay'],
 ) => {
   /** Ownership, attribution and assignment are validated before the Task becomes visible. */
   return Effect.fn('TaskStore.create')(function* (actor: Actor, request: CreateTaskRequest) {
     const id = request.id === undefined ? TaskId.make(crypto.randomUUID()) : request.id
+    if (request.id !== undefined) {
+      const existing = yield* replay(actor, id)
+      if (Option.isSome(existing)) return existing.value
+    }
     const assigned = yield* assignment(
       actor,
       request.assignee === undefined ? AssigneeInput.cases.Nobody.make({}) : request.assignee,
@@ -191,7 +242,9 @@ const makeCreate = (
             overdueNotifiedAt: null,
             completedAt: null,
           })
+          .onConflictDoNothing({ target: tasks.id })
           .returning()
+        if (inserted.length === 0) return inserted
         if (Option.isSome(scheduled))
           yield* tx.insert(followUps).values({
             id: scheduled.value.id,
@@ -210,6 +263,12 @@ const makeCreate = (
         return inserted
       }),
     )
+    if (rows.length === 0) {
+      const existing = yield* replay(actor, id)
+      if (Option.isNone(existing))
+        return yield* Effect.fail(new Conflict({ message: 'Task id is already in use' }))
+      return existing.value
+    }
     const row = yield* decodeTaskRow(yield* returned(rows, 'Task'))
     yield* notifier.notify({
       personId: row.personId,
@@ -232,7 +291,7 @@ const makeMutations = (
   notifier: Notifier['Service'],
   threadStore: ThreadStore['Service'],
 ) => {
-  const create = makeCreate(database, notifier, threadStore)
+  const create = makeCreate(database, notifier, threadStore, reads.replay)
   /** Anybody who sees a Task can patch it, but assignment still requires a workspace Member. */
   const patch = Effect.fn('TaskStore.patch')(function* (
     actor: Actor,
@@ -330,7 +389,20 @@ const makeFollowUpReads = (database: Database['Service']) => {
     const row = yield* record(actor, id)
     return yield* projectFollowUp(row.followUp).pipe(Effect.provideService(Database, database))
   })
-  return { record, getFollowUp }
+  /** A replay returns the existing visible follow-up even after the Task has closed. */
+  const replay = Effect.fn('TaskStore.replayFollowUp')(function* (actor: Actor, id: FollowUpId) {
+    const existing = yield* database.run(
+      database.select({ id: followUps.id }).from(followUps).where(eq(followUps.id, id)).limit(1),
+    )
+    if (existing.length === 0) return Option.none<FollowUp>()
+    const followUp = yield* getFollowUp(actor, id).pipe(
+      Effect.catchTag('NotFound', () =>
+        Effect.fail(new Conflict({ message: 'Follow-up id is already in use' })),
+      ),
+    )
+    return Option.some(followUp)
+  })
+  return { record, getFollowUp, replay }
 }
 
 /** Schedule edits own the reset decision; read and mutation use the same Task visibility rule. */
@@ -390,13 +462,17 @@ const makeScheduling = (
   reads: ReturnType<typeof makeReads>,
   changes: Changes['Service'],
 ) => {
-  const { record, getFollowUp } = makeFollowUpReads(database)
+  const { record, getFollowUp, replay } = makeFollowUpReads(database)
   /** Only a visible open Task may acquire a follow-up. */
   const addFollowUp = Effect.fn('TaskStore.addFollowUp')(function* (
     actor: Actor,
     taskId: TaskId,
     input: FollowUpInput,
   ) {
+    if (input.id !== undefined) {
+      const existing = yield* replay(actor, input.id)
+      if (Option.isSome(existing)) return existing.value
+    }
     const task = yield* reads.record(actor, taskId)
     if (task.status !== 'open')
       return yield* Effect.fail(new InvalidRequest({ message: 'Follow-ups need an open Task' }))
@@ -416,8 +492,15 @@ const makeScheduling = (
           output: null,
           error: null,
         })
+        .onConflictDoNothing({ target: followUps.id })
         .returning(),
     )
+    if (rows.length === 0) {
+      const existing = yield* replay(actor, normalized.id)
+      if (Option.isNone(existing))
+        return yield* Effect.fail(new Conflict({ message: 'Follow-up id is already in use' }))
+      return existing.value
+    }
     return yield* projectFollowUp(yield* returned(rows, 'follow-up')).pipe(
       Effect.provideService(Database, database),
     )
@@ -443,30 +526,55 @@ const makeScheduling = (
     actor: Actor,
     id: FollowUpId,
   ) {
-    const current = yield* record(actor, id)
-    if (current.task.status !== 'open')
-      return yield* Effect.fail(new InvalidRequest({ message: 'Follow-ups need an open Task' }))
     const now = yield* Clock.currentTimeMillis
-    const rows = yield* database.run(
-      database
-        .update(followUps)
-        .set({ status: 'running', firedAt: now, error: null })
-        .where(
-          and(
-            eq(followUps.id, id),
-            eq(followUps.status, 'scheduled'),
-            inArray(followUps.taskId, visibleIds(database, actor)),
-          ),
-        )
-        .returning(),
+    const row = yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        const records = yield* tx
+          .select({ task: tasks, followUp: followUps })
+          .from(tasks)
+          .innerJoin(followUps, eq(followUps.taskId, tasks.id))
+          .where(and(eq(followUps.id, id), inArray(tasks.id, visibleIds(database, actor))))
+          .for('update', { of: [tasks, followUps] })
+        const current = records[0]
+        if (current === undefined)
+          return yield* Effect.fail(new NotFound({ message: 'Follow-up not found' }))
+        if (current.task.status !== 'open') {
+          const cancelled = yield* tx
+            .update(followUps)
+            .set({ status: 'cancelled' })
+            .where(
+              and(
+                eq(followUps.id, id),
+                inArray(followUps.status, ['scheduled', 'running']),
+                isNull(followUps.submissionId),
+              ),
+            )
+            .returning()
+          const followUp = cancelled[0]
+          return {
+            task: current.task,
+            followUp: followUp === undefined ? current.followUp : followUp,
+          }
+        }
+        const claimed = yield* tx
+          .update(followUps)
+          .set({ status: 'running', firedAt: now, error: null })
+          .where(and(eq(followUps.id, id), eq(followUps.status, 'scheduled')))
+          .returning()
+        const followUp = claimed[0]
+        return {
+          task: current.task,
+          followUp: followUp === undefined ? current.followUp : followUp,
+        }
+      }),
     )
-    const claimed = rows[0]
-    if (claimed === undefined)
-      return { task: current.task, followUp: yield* getFollowUp(actor, id) }
-    yield* publishTask(changes, current.task)
+    const task = yield* decodeTaskRow(row.task)
+    yield* publishTask(changes, task)
     return {
-      task: current.task,
-      followUp: yield* projectFollowUp(claimed).pipe(Effect.provideService(Database, database)),
+      task,
+      followUp: yield* projectFollowUp(row.followUp).pipe(
+        Effect.provideService(Database, database),
+      ),
     }
   })
   return { getFollowUp, addFollowUp, patchFollowUp, removeFollowUp, claimFollowUp }
@@ -474,7 +582,7 @@ const makeScheduling = (
 
 interface DeliveryColumns {
   readonly submissionId: string | null
-  readonly status: 'running' | 'failed'
+  readonly status: 'fired' | 'failed'
   readonly error: string | null
 }
 
@@ -503,66 +611,18 @@ const makeClaimOverdue = (database: Database['Service'], changes: Changes['Servi
   })
 }
 
-/** The scheduler has global authority only over due rows selected and locked by PostgreSQL. */
-const makeBackground = (database: Database['Service'], changes: Changes['Service']) => {
-  /** SKIP LOCKED makes concurrent schedulers claim disjoint scheduled rows. */
-  const claimDueFollowUps = Effect.fn('TaskStore.claimDueFollowUps')(function* () {
-    const now = yield* Clock.currentTimeMillis
-    const claimRow = (row: {
-      readonly task: typeof tasks.$inferSelect
-      readonly followUp: typeof followUps.$inferSelect
-    }) => ({
-      task: row.task,
-      followUp: { ...row.followUp, status: 'running', firedAt: now, error: null },
-    })
-    const claimId = (row: { readonly followUp: typeof followUps.$inferSelect }) => row.followUp.id
-    const rows = yield* database.transaction((tx) =>
-      Effect.gen(function* () {
-        const due = yield* tx
-          .select({ followUp: followUps, task: tasks })
-          .from(followUps)
-          .innerJoin(tasks, eq(followUps.taskId, tasks.id))
-          .where(
-            and(
-              eq(tasks.status, 'open'),
-              eq(followUps.status, 'scheduled'),
-              lte(followUps.at, now),
-            ),
-          )
-          .orderBy(followUps.at)
-          .for('update', { skipLocked: true, of: followUps })
-        if (due.length === 0) return []
-        yield* tx
-          .update(followUps)
-          .set({ status: 'running', firedAt: now, error: null })
-          .where(inArray(followUps.id, due.map(claimId)))
-        return due.map(claimRow)
-      }),
-    )
-    const claimed = yield* Effect.forEach(
-      rows,
-      Effect.fn('Tasks.projectClaim')(function* (row) {
-        const task = yield* decodeTaskRow(row.task)
-        yield* publishTask(changes, task)
-        return {
-          task,
-          followUp: yield* projectFollowUp(row.followUp).pipe(
-            Effect.provideService(Database, database),
-          ),
-        }
-      }),
-    )
-    return claimed
-  })
+/** Receipt and recurrence state commit together; conditional writes suppress duplicate deliveries. */
+const makeFinishDelivery = (database: Database['Service'], changes: Changes['Service']) => {
   /** A receipt or delivery failure belongs to the exact claim, so stale workers cannot overwrite newer schedules. */
-  const finishDelivery = Effect.fn('TaskStore.finishDelivery')(function* (
+  return Effect.fn('TaskStore.finishDelivery')(function* (
     claim: { readonly task: StoredTask; readonly followUp: FollowUp },
     result: DeliveryOutcome,
   ) {
+    const now = yield* Clock.currentTimeMillis
     const values = DeliveryOutcome.match(result, {
       Delivered: ({ runId }): DeliveryColumns => ({
         submissionId: runId,
-        status: 'running',
+        status: 'fired',
         error: null,
       }),
       Failed: ({ message }): DeliveryColumns => ({
@@ -571,19 +631,57 @@ const makeBackground = (database: Database['Service'], changes: Changes['Service
         error: message,
       }),
     })
-    const rows = yield* database.run(
-      database
-        .update(followUps)
-        .set(values)
-        .where(
-          and(
-            eq(followUps.id, claim.followUp.id),
-            eq(followUps.status, 'running'),
-            isNull(followUps.submissionId),
-            sql`${followUps.firedAt} IS NOT DISTINCT FROM ${claim.followUp.firedAt}`,
-          ),
-        )
-        .returning(),
+    const rows = yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        const currentTasks = yield* tx
+          .select({ status: tasks.status })
+          .from(tasks)
+          .where(eq(tasks.id, claim.task.id))
+          .for('update')
+        const task = currentTasks[0]
+        if (task === undefined)
+          return yield* Effect.fail(new NotFound({ message: 'Task not found' }))
+        const updated = yield* tx
+          .update(followUps)
+          .set({
+            ...values,
+            firedAt: DeliveryOutcome.guards.Delivered(result) ? now : claim.followUp.firedAt,
+          })
+          .where(
+            and(
+              eq(followUps.id, claim.followUp.id),
+              eq(followUps.status, 'running'),
+              isNull(followUps.submissionId),
+              sql`${followUps.firedAt} IS NOT DISTINCT FROM ${claim.followUp.firedAt}`,
+            ),
+          )
+          .returning()
+        const row = updated[0]
+        if (
+          row !== undefined &&
+          DeliveryOutcome.guards.Delivered(result) &&
+          row.repeatEveryMs !== null &&
+          task.status === 'open'
+        ) {
+          const next = yield* scheduleInput({
+            at: row.at + row.repeatEveryMs,
+            note: row.note,
+            repeatEveryMs: row.repeatEveryMs,
+          })
+          yield* tx.insert(followUps).values({
+            ...next,
+            taskId: row.taskId,
+            createdBy: row.createdBy,
+            createdAt: now,
+            status: 'scheduled',
+            submissionId: null,
+            firedAt: null,
+            output: null,
+            error: null,
+          })
+        }
+        return updated
+      }),
     )
     if (rows.length === 0) {
       const current = yield* database.run(
@@ -607,8 +705,106 @@ const makeBackground = (database: Database['Service'], changes: Changes['Service
       ),
     })
   })
+}
+
+/** A claim is refreshed immediately before external delivery, with a closed Task cancelling it. */
+const makePrepareDelivery = (database: Database['Service'], changes: Changes['Service']) => {
+  /** Closure after claiming cancels the pending delivery; the recheck also rejects stale or deleted claims. */
+  return Effect.fn('TaskStore.prepareDelivery')(function* (claim: {
+    readonly task: StoredTask
+    readonly followUp: FollowUp
+  }) {
+    const row = yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        const records = yield* tx
+          .select({ task: tasks, followUp: followUps })
+          .from(tasks)
+          .innerJoin(followUps, eq(followUps.taskId, tasks.id))
+          .where(and(eq(tasks.id, claim.task.id), eq(followUps.id, claim.followUp.id)))
+          .for('update', { of: [tasks, followUps] })
+        const current = records[0]
+        if (current === undefined)
+          return yield* Effect.fail(new NotFound({ message: 'Follow-up not found' }))
+        if (
+          current.task.status === 'open' ||
+          current.followUp.status !== 'running' ||
+          current.followUp.submissionId !== null
+        )
+          return current
+        const cancelled = yield* tx
+          .update(followUps)
+          .set({ status: 'cancelled' })
+          .where(eq(followUps.id, claim.followUp.id))
+          .returning()
+        return { task: current.task, followUp: yield* returned(cancelled, 'cancelled follow-up') }
+      }),
+    )
+    const task = yield* decodeTaskRow(row.task)
+    if (row.followUp.status === 'cancelled') yield* publishTask(changes, task)
+    return {
+      task,
+      followUp: yield* projectFollowUp(row.followUp).pipe(
+        Effect.provideService(Database, database),
+      ),
+    }
+  })
+}
+
+/** The scheduler has global authority only over due rows selected and locked by PostgreSQL. */
+const makeBackground = (database: Database['Service'], changes: Changes['Service']) => {
+  /** SKIP LOCKED makes concurrent schedulers claim disjoint scheduled rows. */
+  const claimDueFollowUps = Effect.fn('TaskStore.claimDueFollowUps')(function* () {
+    const now = yield* Clock.currentTimeMillis
+    const claimRow = (row: {
+      readonly task: typeof tasks.$inferSelect
+      readonly followUp: typeof followUps.$inferSelect
+    }) => ({
+      task: row.task,
+      followUp: { ...row.followUp, status: 'running', firedAt: now, error: null },
+    })
+    const claimId = (row: { readonly followUp: typeof followUps.$inferSelect }) => row.followUp.id
+    const rows = yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        const due = yield* tx
+          .select({ followUp: followUps, task: tasks })
+          .from(tasks)
+          .innerJoin(followUps, eq(followUps.taskId, tasks.id))
+          .where(
+            and(
+              eq(tasks.status, 'open'),
+              eq(followUps.status, 'scheduled'),
+              lte(followUps.at, now),
+            ),
+          )
+          .orderBy(followUps.at)
+          .for('update', { skipLocked: true, of: [tasks, followUps] })
+        if (due.length === 0) return []
+        yield* tx
+          .update(followUps)
+          .set({ status: 'running', firedAt: now, error: null })
+          .where(inArray(followUps.id, due.map(claimId)))
+        return due.map(claimRow)
+      }),
+    )
+    const claimed = yield* Effect.forEach(
+      rows,
+      Effect.fn('Tasks.projectClaim')(function* (row) {
+        const task = yield* decodeTaskRow(row.task)
+        yield* publishTask(changes, task)
+        return {
+          task,
+          followUp: yield* projectFollowUp(row.followUp).pipe(
+            Effect.provideService(Database, database),
+          ),
+        }
+      }),
+    )
+    return claimed
+  })
+  const finishDelivery = makeFinishDelivery(database, changes)
+  const prepareDelivery = makePrepareDelivery(database, changes)
   const claimOverdue = makeClaimOverdue(database, changes)
-  return { claimDueFollowUps, finishDelivery, claimOverdue }
+  return { claimDueFollowUps, finishDelivery, prepareDelivery, claimOverdue }
 }
 
 /** One persistence authority shares access policy and projection across RPC, search and scheduling. */
