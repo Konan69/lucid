@@ -1,8 +1,16 @@
-import * as Result from 'effect/Result'
+import {
+  Workspace,
+  type LibraryFolder,
+  type LibraryFolderId,
+  type LibraryItem,
+  type LibraryShelf,
+} from '@vivid/contracts'
+import { Data, Option, Result } from 'effect'
 import {
   Check,
   ChevronRight,
   CircleAlert,
+  CircleDashed,
   ExternalLink,
   FileInput,
   FileText,
@@ -10,9 +18,7 @@ import {
   FolderInput,
   FolderPlus,
   LayoutGrid,
-  LoaderCircle,
   MessageSquareText,
-  MoreHorizontal,
   Pencil,
   Rows3,
   Search,
@@ -20,975 +26,818 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type DragEvent,
-  type FormEvent,
-  type RefObject,
-} from 'react'
+import { useRef, useState, type DragEvent, type FormEvent, type ReactNode } from 'react'
 import * as libraryData from '../data/library'
-import { run as runClient } from '../data/runtime'
+import { change, live, LiveState, useLive } from '../data/live'
+import { engine, run } from '../data/runtime'
+import { Button, IconButton } from '../ui/Button'
 import { cn } from '../ui/cn'
+import { Dialog, DialogActions, DialogField } from '../ui/Dialog'
+import { Field, Select } from '../ui/Field'
+import { Live } from '../ui/Live'
+import { Notice } from '../ui/Notice'
+import { Segmented } from '../ui/Segmented'
+import { Skeleton } from '../ui/Skeleton'
 
-export type LibraryDocument = libraryData.LibraryDocument
-export type LibraryFolder = libraryData.LibraryFolder
+/** The shell imports this name for the item it asks Vivid about. */
+export type LibraryDocument = LibraryItem
 type SearchResult = libraryData.SearchResult
-type DialogState = libraryData.DialogState
-type Tile = {
-  id: string
-  kind: 'folder' | 'file'
-  name: string
-  meta: string
-  document?: LibraryDocument
-  folder?: LibraryFolder
-}
+type LibraryList = libraryData.LibraryList
+
+// ── One folder, live ─────────────────────────────────────────────────────────
+
 /**
- * One file on its way into the Library. Only a failed upload has an error, so the failure text
- * lives on that variant instead of being an optional field every reader has to second-guess.
+ * What is inside one folder, live.
+ *
+ * `live.library` answers for a shelf: every item on it, and the folders at its top. The folders
+ * inside a folder come only from asking about that folder, so a folder in view is its own query,
+ * one per shelf and folder, shared and kept warm exactly like the shelf's. It is declared here
+ * because the Library is the only screen that walks into folders.
  */
-type UploadState = { id: string; name: string; progress: number } & (
-  | { status: 'uploading' }
-  | { status: 'indexing' }
-  | { status: 'failed'; error: string }
+const folderLibrary = engine.family(
+  (query: { readonly shelf: LibraryShelf; readonly folderId: LibraryFolderId }) =>
+    `${query.shelf}:${query.folderId}`,
+  (client, query) => client.WatchLibrary(query),
 )
 
+// ── What the screen holds itself ─────────────────────────────────────────────
+
 /**
- * How a Library item's status reads everywhere it appears. One table, keyed by the status
- * vocabulary, so a new status fails to compile here instead of falling into an unlabelled `else`.
+ * What the Library is showing: a level of a shelf, the answers to a search, or one item. An item
+ * is held as it was when opened, and redrawn from the live shelf whenever the shelf has it.
  */
-const DOCUMENT_STATUS = {
-  ready: { label: 'Ready', tone: 'text-success', Icon: Check, spin: false },
-  failed: { label: 'Failed', tone: 'text-danger', Icon: CircleAlert, spin: false },
-  processing: { label: 'Indexing', tone: 'text-working', Icon: LoaderCircle, spin: true },
-} satisfies Record<
-  LibraryDocument['status'],
-  { label: string; tone: string; Icon: typeof Check; spin: boolean }
->
+type View = Data.TaggedEnum<{
+  Browse: {}
+  Results: { readonly results: ReadonlyArray<SearchResult> }
+  Item: { readonly item: LibraryItem }
+}>
+const View = Data.taggedEnum<View>()
 
-/** The line under a document tile: its size once usable, otherwise where it is in the pipeline. */
-const TILE_META = {
-  ready: (document) => `${formatBytes(document.size)} · ${document.chunkCount} passages`,
-  failed: () => 'Failed',
-  processing: () => 'Indexing…',
-} satisfies Record<LibraryDocument['status'], (document: LibraryDocument) => string>
+/** The question a dialog is asking. A move carries the folders it can go to, read when it opens. */
+type Ask = Data.TaggedEnum<{
+  NewFolder: {}
+  RenameFolder: { readonly folder: LibraryFolder }
+  MoveFolder: {
+    readonly folder: LibraryFolder
+    readonly destinations: ReadonlyArray<LibraryFolder>
+  }
+  RenameItem: { readonly item: LibraryItem }
+  MoveItem: { readonly item: LibraryItem; readonly destinations: ReadonlyArray<LibraryFolder> }
+}>
+const Ask = Data.taggedEnum<Ask>()
 
-/** What an upload row says on the right: progress while sending, then the stage or the failure. */
-const uploadNote = (upload: UploadState): string => {
-  if (upload.status === 'failed') return upload.error
-  return upload.status === 'uploading' ? `${upload.progress}%` : 'Indexing'
+/** Where one file is on its way into the Library. Only a failure has something to say. */
+type UploadStatus = Data.TaggedEnum<{
+  Sending: { readonly percent: number }
+  Reading: {}
+  Duplicate: {}
+  Failed: { readonly message: string }
+}>
+const UploadStatus = Data.taggedEnum<UploadStatus>()
+
+interface UploadRow {
+  readonly id: string
+  readonly name: string
+  readonly status: UploadStatus
 }
 
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
+/** What a change came to: nothing to say, or the server's sentence about why it refused. */
+const refusal = <Value, Failure extends { readonly message: string }>(
+  result: Result.Result<Value, Failure>,
+): Option.Option<string> =>
+  Result.isFailure(result) ? Option.some(result.failure.message) : Option.none()
 
-function retainSelectedDocument(
-  current: LibraryDocument | null,
-  documents: readonly LibraryDocument[],
-): LibraryDocument | null {
-  return current ? (documents.find((document) => document.id === current.id) ?? current) : null
-}
-
-function buildTiles(documents: LibraryDocument[], folders: LibraryFolder[]): Tile[] {
-  return [
-    ...folders.map((folder): Tile => ({
-      id: folder.id,
-      kind: 'folder',
-      name: folder.name,
-      meta: `${folder.itemCount} ${folder.itemCount === 1 ? 'item' : 'items'}`,
-      folder,
-    })),
-    ...documents.map((document): Tile => ({
-      id: document.id,
-      kind: 'file',
-      name: document.name,
-      meta: TILE_META[document.status](document),
-      document,
-    })),
-  ]
-}
-
-/** Owns Library hooks in their original order while exposing typed state to screen actions. */
-function useLibraryState() {
+/**
+ * Everything the Library keeps between renders, and what follows from it. The shelf's contents are
+ * not in here: they are read from the live query for the shelf, or the folder, that is in view.
+ */
+function useBrowser(workspace: Workspace) {
+  const [chosen, setChosen] = useState<LibraryShelf>('Mine')
+  const [path, setPath] = useState<ReadonlyArray<LibraryFolder>>([])
+  const [view, setView] = useState<View>(View.Browse())
   const [grid, setGrid] = useState(true)
-  const [folderStack, setFolderStack] = useState<LibraryFolder[]>([])
-  const [folders, setFolders] = useState<LibraryFolder[]>([])
-  const [allFolders, setAllFolders] = useState<LibraryFolder[]>([])
-  const [documents, setDocuments] = useState<LibraryDocument[]>([])
-  const [selected, setSelected] = useState<LibraryDocument | null>(null)
-  const [showSearch, setShowSearch] = useState(false)
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<SearchResult[] | null>(null)
-  const [uploads, setUploads] = useState<UploadState[]>([])
+  const [query, setQuery] = useState<Option.Option<string>>(Option.none())
+  const [uploads, setUploads] = useState<ReadonlyArray<UploadRow>>([])
   const [dragging, setDragging] = useState(false)
-  const [dialog, setDialog] = useState<DialogState | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const [ask, setAsk] = useState<Option.Option<Ask>>(Option.none())
+  const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
   const dragDepth = useRef(0)
-  const currentFolder = folderStack.slice(-1)[0] ?? null
-  const currentFolderId = currentFolder ? currentFolder.id : null
 
-  const load = useCallback(async () => {
-    const result = await runClient(libraryData.load(currentFolderId))
-    if (Result.isFailure(result)) {
-      setError(result.failure.message)
-      return
-    }
-    setDocuments(result.success.documents)
-    setFolders(result.success.folders)
-    setAllFolders(result.success.allFolders)
-    setSelected((current) => retainSelectedDocument(current, result.success.documents))
-    setError(null)
-  }, [currentFolderId])
-
-  useEffect(() => {
-    let cancelled = false
-    // Folder navigation hydrates from the Library runtime. Responses from a folder the person has
-    // already left are ignored so they cannot replace the current folder's contents.
-    void runClient(libraryData.load(currentFolderId)).then((result) => {
-      if (cancelled) return
-      if (Result.isFailure(result)) {
-        setError(result.failure.message)
-        return
-      }
-      setDocuments(result.success.documents)
-      setFolders(result.success.folders)
-      setAllFolders(result.success.allFolders)
-      setSelected((current) => retainSelectedDocument(current, result.success.documents))
-      setError(null)
-    })
-
-    return () => {
-      cancelled = true
-    }
-  }, [currentFolderId])
-  useEffect(() => {
-    if (
-      !documents.some((document) => document.status === 'processing') &&
-      !uploads.some((upload) => upload.status === 'indexing')
-    )
-      return undefined
-    const timer = window.setInterval(() => {
-      void load()
-    }, 900)
-    return () => window.clearInterval(timer)
-  }, [documents, load, uploads])
+  const shelves = libraryData.shelvesOf(workspace)
+  // A personal space has one shelf, whatever was chosen in a Company before switching out of it;
+  // the folders walked into belong to a shelf and are left behind with it.
+  const shelf: LibraryShelf = Workspace.guards.Company(workspace) ? chosen : 'Mine'
+  const trail = path.filter((folder) => folder.shelf === shelf)
+  const folder = Option.fromUndefinedOr(trail.at(-1))
+  const folderId = Option.match(folder, { onNone: () => null, onSome: (inside) => inside.id })
+  const store = Option.match(folder, {
+    onNone: () => live.library.get(shelf),
+    onSome: (inside) => folderLibrary.get({ shelf, folderId: inside.id }),
+  })
+  const contents = useLive(store)
 
   return {
-    allFolders,
-    currentFolder,
-    currentFolderId,
-    dialog,
-    documents,
+    ask,
+    contents,
     dragDepth,
     dragging,
-    error,
-    folderStack,
-    folders,
+    folder,
+    folderId,
     grid,
-    inputRef,
-    load,
     query,
-    results,
-    selected,
-    setDialog,
+    refused,
+    setAsk,
+    setChosen,
     setDragging,
-    setError,
-    setFolderStack,
     setGrid,
+    setPath,
     setQuery,
-    setResults,
-    setSelected,
-    setShowSearch,
+    setRefused,
     setUploads,
-    showSearch,
+    setView,
+    shelf,
+    shelves,
+    store,
     uploads,
+    view,
   }
 }
 
-type LibraryState = ReturnType<typeof useLibraryState>
+type Browser = ReturnType<typeof useBrowser>
 
-/** Owns upload and drag lifecycle handlers while reusing the screen's stable state setters. */
-function createLibraryUploadActions(state: LibraryState) {
-  const { currentFolderId, dragDepth, inputRef, load, setDragging, setError, setUploads } = state
+// ── Changes ──────────────────────────────────────────────────────────────────
 
-  async function uploadOne(file: File, upload: UploadState) {
-    const result = await runClient(
-      libraryData.upload(file, currentFolderId, (progress) =>
-        setUploads((current) =>
-          current.map((item) => (item.id === upload.id ? { ...item, progress } : item)),
-        ),
+/** Sending files, by the picker or by dropping them on the screen. */
+function uploadActions(browser: Browser) {
+  const { dragDepth, folderId, setDragging, setUploads, shelf } = browser
+
+  const setStatus = (id: string, status: UploadStatus) =>
+    setUploads((rows) => rows.map((row) => (row.id === id ? { ...row, status } : row)))
+
+  /**
+   * Sends one file. A file that got in simply leaves the upload list: the shelf is live, so the
+   * item appears there by itself. Only what did not get in, or was already there, stays to be read.
+   */
+  async function send(file: File, id: string) {
+    const result = await run(
+      libraryData.upload(file, { shelf, folderId }, (percent) =>
+        // Once every byte has left, the server is reading the file until it answers.
+        setStatus(id, percent >= 100 ? UploadStatus.Reading() : UploadStatus.Sending({ percent })),
       ),
     )
     if (Result.isFailure(result)) {
-      setUploads((current) =>
-        current.map((item) =>
-          item.id === upload.id
-            ? { ...item, status: 'failed', error: result.failure.message }
-            : item,
-        ),
-      )
+      setStatus(id, UploadStatus.Failed({ message: result.failure.message }))
       return
     }
-    setUploads((current) =>
-      current.map((item) =>
-        item.id === upload.id ? { ...item, progress: 100, status: 'indexing' } : item,
-      ),
-    )
+    if (result.success.duplicate) {
+      setStatus(id, UploadStatus.Duplicate())
+      return
+    }
+    setUploads((rows) => rows.filter((row) => row.id !== id))
   }
 
-  async function uploadFiles(files: File[]) {
-    const states: UploadState[] = files.map((file) => ({
-      id: `${file.name}-${file.size}-${file.lastModified}`,
-      name: file.name,
-      progress: 0,
-      status: 'uploading',
-    }))
-    setUploads((current) => [...states, ...current].slice(0, 8))
-    setError(null)
-    const uploadsByFile = files.map((file, index) => {
-      const upload = states[index]
-      if (!upload) throw new Error('Upload state did not match the selected file')
-      return { file, upload }
-    })
-    await Promise.all(uploadsByFile.map(({ file, upload }) => uploadOne(file, upload)))
-    if (inputRef.current) inputRef.current.value = ''
-    await load()
-    window.setTimeout(
-      () => setUploads((current) => current.filter((item) => item.status === 'failed')),
-      1800,
-    )
+  function sendAll(files: ReadonlyArray<File>) {
+    const sending = files.map((file) => ({ file, id: crypto.randomUUID() }))
+    setUploads((rows) => [
+      ...sending.map(({ file, id }) => ({
+        id,
+        name: file.name,
+        status: UploadStatus.Sending({ percent: 0 }),
+      })),
+      ...rows,
+    ])
+    for (const { file, id } of sending) void send(file, id)
   }
 
-  function handleDragEnter(event: DragEvent) {
+  // A drag crosses many child elements, each firing enter and leave; the depth says when the
+  // pointer has really left the screen.
+  function dragEnter(event: DragEvent) {
     event.preventDefault()
     dragDepth.current += 1
     setDragging(true)
   }
 
-  function handleDragLeave(event: DragEvent) {
+  function dragLeave(event: DragEvent) {
     event.preventDefault()
     dragDepth.current -= 1
     if (dragDepth.current <= 0) setDragging(false)
   }
 
-  function handleDrop(event: DragEvent) {
+  function drop(event: DragEvent) {
     event.preventDefault()
     dragDepth.current = 0
     setDragging(false)
     const files = [...event.dataTransfer.files]
-    if (files.length) void uploadFiles(files)
+    if (files.length > 0) sendAll(files)
   }
 
-  return { handleDragEnter, handleDragLeave, handleDrop, uploadFiles }
+  const dismiss = (id: string) => setUploads((rows) => rows.filter((row) => row.id !== id))
+
+  return { dismiss, dragEnter, dragLeave, drop, sendAll }
 }
 
-/** Owns Library search, deletion, navigation, and dialog-result mutations. */
-function createLibraryItemActions(state: LibraryState) {
-  const {
-    currentFolder,
-    currentFolderId,
-    load,
-    query,
-    results,
-    selected,
-    setDialog,
-    setError,
-    setFolderStack,
-    setResults,
-    setSelected,
-  } = state
+/** Moving around the Library, searching it, and deleting from it. */
+function browseActions(browser: Browser) {
+  const { folderId, query, setAsk, setPath, setRefused, setView, shelf, store, view } = browser
 
   async function search(event: FormEvent) {
     event.preventDefault()
-    const normalized = query.trim()
-    if (normalized.length < 2) return
-    const result = await runClient(libraryData.search(normalized, currentFolderId))
-    if (Result.isFailure(result)) {
-      setError(result.failure.message)
-      return
-    }
-    setResults(result.success)
-    setError(null)
+    const text = Option.getOrElse(query, () => '').trim()
+    if (text.length < 2) return
+    const result = await run(libraryData.search(text, folderId))
+    setRefused(refusal(result))
+    if (Result.isSuccess(result)) setView(View.Results({ results: result.success }))
   }
 
-  async function removeDocument(document: LibraryDocument) {
-    if (!window.confirm(`Delete “${document.name}” from the Library?`)) return
-    const result = await runClient(libraryData.removeDocument(document.id))
-    if (Result.isFailure(result)) {
-      setError(result.failure.message)
-      return
-    }
-    setSelected(null)
-    await load()
+  async function openResult(found: SearchResult) {
+    const result = await run(libraryData.readItem(found.documentId))
+    setRefused(refusal(result))
+    if (Result.isSuccess(result)) setView(View.Item({ item: result.success }))
   }
 
-  async function removeCurrentFolder() {
-    if (!currentFolder || !window.confirm(`Delete the empty folder “${currentFolder.name}”?`))
-      return
-    const result = await runClient(libraryData.removeFolder(currentFolder.id))
-    if (Result.isFailure(result)) {
-      setError(result.failure.message)
-      return
-    }
-    setFolderStack((current) => current.slice(0, -1))
+  /** The item leaves the shelf at once. If the server refuses, it is back, with the reason above it. */
+  async function removeItem(item: LibraryItem) {
+    if (!window.confirm(`Delete “${item.name}” from the Library?`)) return
+    setView(View.Browse())
+    const result = await change(
+      (client) => client.DeleteLibraryItem({ id: item.id }),
+      () => store.expect(libraryData.itemRemoved(item.id)),
+    )
+    setRefused(refusal(result))
   }
 
-  async function openSearchResult(result: SearchResult) {
-    const opened = await runClient(libraryData.readDocument(result.documentId))
-    if (Result.isFailure(opened)) {
-      setError(opened.failure.message)
-      return
-    }
-    setSelected(opened.success)
-    setResults(null)
+  /** A folder is left only once the server has deleted it: one that is not empty stays open. */
+  async function removeFolder(folder: LibraryFolder) {
+    if (!window.confirm(`Delete the folder “${folder.name}”?`)) return
+    const result = await change((client) => client.DeleteLibraryFolder({ id: folder.id }))
+    setRefused(refusal(result))
+    if (Result.isSuccess(result)) setPath((trail) => trail.filter((each) => each.id !== folder.id))
   }
 
-  function open(tile: Tile) {
-    if (tile.document) {
-      setSelected(tile.document)
-      return
-    }
-    const folder = tile.folder
-    if (folder) setFolderStack((current) => [...current, folder])
+  /** Reads where a thing can go, then asks. The folders of a shelf are read when they are needed. */
+  async function askMove(open: (destinations: ReadonlyArray<LibraryFolder>) => Ask) {
+    const result = await run(libraryData.shelfFolders(shelf))
+    setRefused(refusal(result))
+    if (Result.isSuccess(result)) setAsk(Option.some(open(result.success)))
   }
 
   function back() {
-    if (selected) setSelected(null)
-    else if (results) setResults(null)
-    else setFolderStack((current) => current.slice(0, -1))
+    setRefused(Option.none())
+    if (View.$is('Browse')(view)) setPath((trail) => trail.slice(0, -1))
+    else setView(View.Browse())
   }
 
-  async function applyDialogResult(result: libraryData.DialogResult, dialog: DialogState) {
-    const savedFolder = result.folder
-    if (savedFolder && dialog.kind === 'rename-folder')
-      setFolderStack((current) =>
-        current.map((folder) => (folder.id === savedFolder.id ? savedFolder : folder)),
-      )
-    if (result.document)
-      setSelected(result.document.folderId === currentFolderId ? result.document : null)
-    if (dialog.kind === 'move-folder') setFolderStack([])
-    setDialog(null)
-    await load()
-  }
-
-  return {
-    applyDialogResult,
-    back,
-    open,
-    openSearchResult,
-    removeCurrentFolder,
-    removeDocument,
-    search,
-  }
+  return { askMove, back, openResult, removeFolder, removeItem, search }
 }
 
-export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void }) {
-  const state = useLibraryState()
-  const {
-    allFolders,
-    currentFolder,
-    currentFolderId,
-    dialog,
-    documents,
-    dragging,
-    error,
-    folders,
-    grid,
-    inputRef,
-    query,
-    results,
-    selected,
-    setDialog,
-    setGrid,
-    setQuery,
-    setResults,
-    setShowSearch,
-    showSearch,
-    uploads,
-  } = state
+/**
+ * What each dialog does when it is submitted. Every one waits for the server and answers with its
+ * refusal, which the dialog shows beside the field; on success it closes the dialog. Renaming and
+ * moving an item also change the shelf at once, so the list behind the dialog is already right.
+ */
+function dialogActions(browser: Browser) {
+  const { folderId, setAsk, setPath, setView, shelf, store } = browser
+  const close = () => setAsk(Option.none())
 
-  const tiles = buildTiles(documents, folders)
-  const uploadActions = createLibraryUploadActions(state)
-  const itemActions = createLibraryItemActions(state)
+  async function newFolder(name: string) {
+    const result = await change((client) =>
+      client.CreateLibraryFolder({ name, shelf, parentId: folderId }),
+    )
+    if (Result.isSuccess(result)) close()
+    return refusal(result)
+  }
+
+  async function renameFolder(folder: LibraryFolder, name: string) {
+    const result = await change((client) =>
+      client.PatchLibraryFolder({ id: folder.id, patch: { name } }),
+    )
+    if (Result.isSuccess(result)) {
+      // The folder in view is not part of its own contents, so its new name is taken from the
+      // server's answer.
+      const renamed = result.success.folder
+      setPath((trail) => trail.map((each) => (each.id === renamed.id ? renamed : each)))
+      close()
+    }
+    return refusal(result)
+  }
+
+  async function moveFolder(folder: LibraryFolder, parentId: LibraryFolderId | null) {
+    const result = await change((client) =>
+      client.PatchLibraryFolder({ id: folder.id, patch: { parentId } }),
+    )
+    if (Result.isSuccess(result)) {
+      // The trail that led here is no longer the way to this folder; start again from the top.
+      setPath([])
+      close()
+    }
+    return refusal(result)
+  }
+
+  async function renameItem(item: LibraryItem, name: string) {
+    const result = await change(
+      (client) => client.PatchLibraryItem({ id: item.id, patch: { name } }),
+      () => store.expect(libraryData.itemRenamed(item.id, name)),
+    )
+    if (Result.isSuccess(result)) {
+      setView(View.Item({ item: result.success.document }))
+      close()
+    }
+    return refusal(result)
+  }
+
+  async function moveItem(item: LibraryItem, destination: LibraryFolderId | null) {
+    const result = await change(
+      (client) => client.PatchLibraryItem({ id: item.id, patch: { folderId: destination } }),
+      () => store.expect(libraryData.itemMoved(item.id, destination)),
+    )
+    if (Result.isSuccess(result)) {
+      setView(View.Item({ item: result.success.document }))
+      close()
+    }
+    return refusal(result)
+  }
+
+  return { close, moveFolder, moveItem, newFolder, renameFolder, renameItem }
+}
+
+// ── The screen ───────────────────────────────────────────────────────────────
+
+/**
+ * The Library: what Vivid can read. In a Company there are two shelves, the Person's own and the
+ * Company's; in a personal space there is one. `onAsk` starts a Thread about one item.
+ */
+export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void }) {
+  const me = useLive(live.me)
+  return LiveState.$match(me, {
+    Loading: () => (
+      <LibraryPane>
+        <Skeleton of="card" count={4} />
+      </LibraryPane>
+    ),
+    Failed: ({ failure }) => (
+      <LibraryPane>
+        <Notice>{failure.message}</Notice>
+      </LibraryPane>
+    ),
+    Ready: ({ value }) => <LibraryBrowser workspace={value.workspace} onAsk={onAsk} />,
+  })
+}
+
+/** The screen's frame before it knows where the Person is working: a title and a body. */
+function LibraryPane({ children }: { children: ReactNode }) {
+  return (
+    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge">
+      <header className="flex h-(--topbar-h) shrink-0 items-center px-4">
+        <h1 className="text-title font-title text-ink">Library</h1>
+      </header>
+      <div className="mx-auto w-full max-w-230 px-5 pt-2 sm:px-8">{children}</div>
+    </section>
+  )
+}
+
+/** The Library once the workspace is known. The whole screen takes dropped files. */
+function LibraryBrowser({
+  workspace,
+  onAsk,
+}: {
+  workspace: Workspace
+  onAsk: (document: LibraryDocument) => void
+}) {
+  const browser = useBrowser(workspace)
+  const uploading = uploadActions(browser)
+  const browsing = browseActions(browser)
+  const dialogs = dialogActions(browser)
+  const shelfName = browser.shelves.find((choice) => choice.shelf === browser.shelf)
+  const place = Option.match(browser.folder, {
+    onNone: () => (shelfName === undefined ? 'the Library' : shelfName.name),
+    onSome: (folder) => folder.name,
+  })
 
   return (
     <section
-      onDragEnter={uploadActions.handleDragEnter}
+      onDragEnter={uploading.dragEnter}
       onDragOver={(event) => event.preventDefault()}
-      onDragLeave={uploadActions.handleDragLeave}
-      onDrop={uploadActions.handleDrop}
+      onDragLeave={uploading.dragLeave}
+      onDrop={uploading.drop}
       className="relative flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge"
     >
-      <LibraryHeader
-        grid={grid}
-        currentFolder={currentFolder}
-        selected={selected}
-        results={results}
-        inputRef={inputRef}
-        onBack={itemActions.back}
-        onGridChange={setGrid}
-        onDialogChange={setDialog}
-        onSearchToggle={() => {
-          setShowSearch((value) => !value)
-          setResults(null)
-        }}
-        onDeleteFolder={() => void itemActions.removeCurrentFolder()}
-        onUpload={(files) => void uploadActions.uploadFiles(files)}
-      />
-
-      <LibraryContent
-        error={error}
-        uploads={uploads}
-        selected={selected}
-        showSearch={showSearch}
-        query={query}
-        currentFolder={currentFolder}
-        results={results}
-        grid={grid}
-        tiles={tiles}
-        onAsk={onAsk}
-        onDelete={itemActions.removeDocument}
-        onDialogChange={setDialog}
-        onQueryChange={setQuery}
-        onSearch={(event) => void itemActions.search(event)}
-        onOpenResult={(result) => void itemActions.openSearchResult(result)}
-        onOpenTile={itemActions.open}
-      />
-      <LibraryDropOverlay dragging={dragging} currentFolder={currentFolder} />
-      {dialog && (
-        <LibraryDialog
-          state={dialog}
-          folders={allFolders}
-          currentFolderId={currentFolderId}
-          onClose={() => setDialog(null)}
-          onSaved={(result) => itemActions.applyDialogResult(result, dialog)}
-        />
+      <LibraryHeader browser={browser} browsing={browsing} onUpload={uploading.sendAll} />
+      <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
+        <div className="mx-auto flex w-full max-w-230 flex-col gap-3 px-5 pt-2 pb-10 sm:px-8">
+          {Option.isSome(browser.refused) && <Notice>{browser.refused.value}</Notice>}
+          <Uploads rows={browser.uploads} onDismiss={uploading.dismiss} />
+          <LibraryBody
+            browser={browser}
+            browsing={browsing}
+            onUpload={uploading.sendAll}
+            onAsk={onAsk}
+          />
+        </div>
+      </div>
+      {browser.dragging && (
+        <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-card border-2 border-dashed border-accent bg-surface-0 text-center">
+          <div>
+            <Upload className="mx-auto size-7 text-accent-ink" />
+            <p className="mt-2 text-title font-title text-ink">Drop files into {place}</p>
+            <p className="mt-1 text-meta font-meta text-ink-4">
+              PDF, Markdown or text, up to 10 MB each
+            </p>
+          </div>
+        </div>
+      )}
+      {Option.isSome(browser.ask) && (
+        <AskDialog ask={browser.ask.value} place={place} dialogs={dialogs} />
       )}
     </section>
   )
 }
 
-/** Renders Library navigation and delegates toolbar controls to a focused action component. */
+/** The top bar: the way back, where the Person is, and what can be done at this level. */
 function LibraryHeader({
-  grid,
-  currentFolder,
-  selected,
-  results,
-  inputRef,
-  onBack,
-  onGridChange,
-  onDialogChange,
-  onSearchToggle,
-  onDeleteFolder,
+  browser,
+  browsing,
   onUpload,
 }: {
-  grid: boolean
-  currentFolder: LibraryFolder | null
-  selected: LibraryDocument | null
-  results: SearchResult[] | null
-  inputRef: RefObject<HTMLInputElement | null>
-  onBack: () => void
-  onGridChange: (grid: boolean) => void
-  onDialogChange: (dialog: DialogState) => void
-  onSearchToggle: () => void
-  onDeleteFolder: () => void
-  onUpload: (files: File[]) => void
+  browser: Browser
+  browsing: ReturnType<typeof browseActions>
+  onUpload: (files: ReadonlyArray<File>) => void
 }) {
+  const { folder, view } = browser
+  const browsingShelf = View.$is('Browse')(view)
+  const title = View.$match(view, {
+    Browse: () =>
+      Option.match(folder, { onNone: () => 'Library', onSome: (inside) => inside.name }),
+    Results: () => 'Search results',
+    Item: ({ item }) => item.name,
+  })
   return (
     <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
-      {(currentFolder || selected || results) && (
-        <button
-          onClick={onBack}
-          aria-label="Back"
-          className="mr-1 inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-        >
+      {(!browsingShelf || Option.isSome(folder)) && (
+        <IconButton label="Back" onClick={browsing.back}>
           <ChevronRight className="size-4 rotate-180" />
-        </button>
+        </IconButton>
       )}
-      <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">
-        {selected
-          ? selected.name
-          : results
-            ? 'Search results'
-            : currentFolder
-              ? currentFolder.name
-              : 'Library'}
-      </h1>
-      {!selected && (
-        <LibraryHeaderActions
-          grid={grid}
-          currentFolder={currentFolder}
-          inputRef={inputRef}
-          onGridChange={onGridChange}
-          onDialogChange={onDialogChange}
-          onSearchToggle={onSearchToggle}
-          onDeleteFolder={onDeleteFolder}
-        />
-      )}
-      <input
-        ref={inputRef}
-        type="file"
-        multiple
-        accept=".pdf,.md,.markdown,.txt,application/pdf,text/markdown,text/plain"
-        className="hidden"
-        onChange={(event) => {
-          const files = [...(event.currentTarget.files ?? [])]
-          if (files.length) onUpload(files)
-        }}
-      />
+      <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">{title}</h1>
+      {browsingShelf && <LevelActions browser={browser} browsing={browsing} onUpload={onUpload} />}
     </header>
   )
 }
 
-/** Keeps file input, folder mutations, search, and view controls outside the screen component. */
-function LibraryHeaderActions({
-  grid,
-  currentFolder,
-  inputRef,
-  onGridChange,
-  onDialogChange,
-  onSearchToggle,
-  onDeleteFolder,
+/** What can be done to the level in view: change its folder, add to it, search it, redraw it. */
+function LevelActions({
+  browser,
+  browsing,
+  onUpload,
 }: {
-  grid: boolean
-  currentFolder: LibraryFolder | null
-  inputRef: RefObject<HTMLInputElement | null>
-  onGridChange: (grid: boolean) => void
-  onDialogChange: (dialog: DialogState) => void
-  onSearchToggle: () => void
-  onDeleteFolder: () => void
+  browser: Browser
+  browsing: ReturnType<typeof browseActions>
+  onUpload: (files: ReadonlyArray<File>) => void
 }) {
+  const { folder, grid, query, setAsk, setGrid, setQuery } = browser
   return (
     <>
-      {currentFolder && (
-        <>
-          <button
-            aria-label="Rename folder"
-            onClick={() => onDialogChange({ kind: 'rename-folder', folder: currentFolder })}
-            className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-          >
-            <Pencil className="size-4" />
-          </button>
-          <button
-            aria-label="Move folder"
-            onClick={() => onDialogChange({ kind: 'move-folder', folder: currentFolder })}
-            className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-          >
-            <FolderInput className="size-4" />
-          </button>
-          <button
-            aria-label="Delete folder"
-            onClick={onDeleteFolder}
-            className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-danger-soft hover:text-danger"
-          >
-            <Trash2 className="size-4" />
-          </button>
-        </>
+      {Option.isSome(folder) && (
+        <FolderActions
+          onRename={() => setAsk(Option.some(Ask.RenameFolder({ folder: folder.value })))}
+          onMove={() =>
+            void browsing.askMove((destinations) =>
+              Ask.MoveFolder({ folder: folder.value, destinations }),
+            )
+          }
+          onDelete={() => void browsing.removeFolder(folder.value)}
+        />
       )}
-      <button
-        aria-label="New folder"
-        onClick={() => onDialogChange({ kind: 'new-folder' })}
-        className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-      >
+      <IconButton label="New folder" onClick={() => setAsk(Option.some(Ask.NewFolder()))}>
         <FolderPlus className="size-4" />
-      </button>
-      <button
-        aria-label="Upload files"
-        onClick={() => {
-          const input = inputRef.current
-          if (input) input.click()
-        }}
-        className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-      >
+      </IconButton>
+      <FilePicker label="Upload files" look="icon" onFiles={onUpload}>
         <Upload className="size-4" />
-      </button>
-      <button
-        aria-label="Search Library"
-        onClick={onSearchToggle}
-        className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
+      </FilePicker>
+      <IconButton
+        label="Search the Library"
+        active={Option.isSome(query)}
+        onClick={() => setQuery(Option.isSome(query) ? Option.none() : Option.some(''))}
       >
         <Search className="size-4" />
-      </button>
-      <div className="flex items-center rounded-control bg-surface-2 p-0.5">
-        <button
-          aria-label="Grid"
-          onClick={() => onGridChange(true)}
-          className={cn(
-            'inline-flex size-7 items-center justify-center rounded-sm',
-            grid ? 'bg-surface-3 text-ink smooth-shadow-ring-xs' : 'text-ink-3 hover:text-ink',
-          )}
-        >
-          <LayoutGrid className="size-4" />
-        </button>
-        <button
-          aria-label="List"
-          onClick={() => onGridChange(false)}
-          className={cn(
-            'inline-flex size-7 items-center justify-center rounded-sm',
-            !grid ? 'bg-surface-3 text-ink smooth-shadow-ring-xs' : 'text-ink-3 hover:text-ink',
-          )}
-        >
-          <Rows3 className="size-4" />
-        </button>
-      </div>
+      </IconButton>
+      <Segmented
+        label="How the Library is drawn"
+        value={grid ? 'grid' : 'list'}
+        options={[
+          { value: 'grid', name: 'Grid', label: <LayoutGrid className="size-4" /> },
+          { value: 'list', name: 'List', label: <Rows3 className="size-4" /> },
+        ]}
+        onChange={(drawn) => setGrid(drawn === 'grid')}
+      />
     </>
   )
 }
 
-/** Renders document, search, grid, and list states inside the unchanged scroll container. */
-function LibraryContent({
-  error,
-  uploads,
-  selected,
-  showSearch,
-  query,
-  currentFolder,
-  results,
-  grid,
-  tiles,
-  onAsk,
+/** Rename, move or delete the folder the Person is standing in. */
+function FolderActions({
+  onRename,
+  onMove,
   onDelete,
-  onDialogChange,
-  onQueryChange,
-  onSearch,
-  onOpenResult,
-  onOpenTile,
 }: {
-  error: string | null
-  uploads: UploadState[]
-  selected: LibraryDocument | null
-  showSearch: boolean
-  query: string
-  currentFolder: LibraryFolder | null
-  results: SearchResult[] | null
-  grid: boolean
-  tiles: Tile[]
+  onRename: () => void
+  onMove: () => void
+  onDelete: () => void
+}) {
+  return (
+    <>
+      <IconButton label="Rename folder" onClick={onRename}>
+        <Pencil className="size-4" />
+      </IconButton>
+      <IconButton label="Move folder" onClick={onMove}>
+        <FolderInput className="size-4" />
+      </IconButton>
+      <IconButton label="Delete folder" onClick={onDelete}>
+        <Trash2 className="size-4" />
+      </IconButton>
+    </>
+  )
+}
+
+/** One item's page, the answers to a search, or the level of the shelf that is in view. */
+function LibraryBody({
+  browser,
+  browsing,
+  onUpload,
+  onAsk,
+}: {
+  browser: Browser
+  browsing: ReturnType<typeof browseActions>
+  onUpload: (files: ReadonlyArray<File>) => void
   onAsk: (document: LibraryDocument) => void
-  onDelete: (document: LibraryDocument) => Promise<void>
-  onDialogChange: (dialog: DialogState) => void
-  onQueryChange: (query: string) => void
-  onSearch: (event: FormEvent) => void
-  onOpenResult: (result: SearchResult) => void
-  onOpenTile: (tile: Tile) => void
 }) {
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
-      <div className="mx-auto w-full max-w-230 px-5 pt-2 pb-10 sm:px-8">
-        {error && (
-          <div
-            className="mb-3 rounded-control bg-danger-soft px-3 py-2 text-label text-danger"
-            role="alert"
-          >
-            {error}
-          </div>
-        )}
-        {uploads.length > 0 && <UploadProgress uploads={uploads} />}
-        {selected ? (
-          <DocumentDetail
-            document={selected}
-            onAsk={() => onAsk(selected)}
-            onDelete={() => void onDelete(selected)}
-            onRename={() => onDialogChange({ kind: 'rename-file', document: selected })}
-            onMove={() => onDialogChange({ kind: 'move-file', document: selected })}
-          />
-        ) : (
-          <>
-            {showSearch && (
-              <form
-                onSubmit={onSearch}
-                className="mb-3 flex items-center gap-2 rounded-control bg-surface-2 px-3 smooth-shadow-ring-xs"
-              >
-                <Search className="size-4 text-ink-4" />
-                <input
-                  autoFocus
-                  value={query}
-                  onChange={(event) => onQueryChange(event.currentTarget.value)}
-                  placeholder={currentFolder ? `Search ${currentFolder.name}` : 'Search all files'}
-                  className="h-10 min-w-0 flex-1 bg-transparent text-label text-ink outline-none placeholder:text-ink-4"
-                />
-              </form>
-            )}
-            {results ? (
-              <SearchResults results={results} onOpen={onOpenResult} />
-            ) : grid ? (
-              <TileGrid tiles={tiles} onOpen={onOpenTile} />
-            ) : (
-              <TileList tiles={tiles} onOpen={onOpenTile} />
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/** Preserves the drag target overlay while removing its branch from the screen component. */
-function LibraryDropOverlay({
-  dragging,
-  currentFolder,
-}: {
-  dragging: boolean
-  currentFolder: LibraryFolder | null
-}) {
-  if (!dragging) return null
-  return (
-    <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-card border-2 border-dashed border-accent bg-surface-0/90 text-center">
-      <div>
-        <Upload className="mx-auto size-7 text-accent-ink" />
-        <p className="mt-2 text-title font-title text-ink">
-          Drop files into {currentFolder ? currentFolder.name : 'Library'}
-        </p>
-        <p className="mt-1 text-meta font-meta text-ink-4">
-          PDF, Markdown, or text · up to 10 MB each
-        </p>
-      </div>
-    </div>
-  )
-}
-
-function UploadProgress({ uploads }: { uploads: UploadState[] }) {
-  return (
-    <ul className="mb-3 space-y-1">
-      {uploads.map((upload) => (
-        <li
-          key={upload.id}
-          className="flex items-center gap-3 rounded-row bg-surface-2 px-3 py-2 smooth-shadow-ring-xs"
-        >
-          <FileText className="size-4 shrink-0 text-ink-3" />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-label text-ink">{upload.name}</span>
-            <span className="mt-1 block h-1 overflow-hidden rounded-full bg-line-2">
-              <UploadBar progress={upload.progress} failed={upload.status === 'failed'} />
-            </span>
-          </span>
-          <span
-            className={cn(
-              'text-meta font-meta',
-              upload.status === 'failed' ? 'text-danger' : 'text-ink-4',
-            )}
-          >
-            {uploadNote(upload)}
-          </span>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-/** Returns the existing name for rename and move variants without optional state fields. */
-function dialogOriginalName(state: DialogState): string {
-  if (state.kind === 'new-folder') return ''
-  if (state.kind === 'rename-folder' || state.kind === 'move-folder') return state.folder.name
-  return state.document.name
-}
-
-const DIALOG_TITLES = {
-  'new-folder': 'New folder',
-  'rename-folder': 'Rename folder',
-  'move-folder': 'Move folder',
-  'rename-file': 'Rename file',
-  'move-file': 'Move file',
-} satisfies Record<DialogState['kind'], string>
-
-/** Maps each closed dialog variant to the title already shown by the interface. */
-function dialogTitle(state: DialogState): string {
-  return DIALOG_TITLES[state.kind]
-}
-
-function LibraryDialog({
-  state,
-  folders,
-  currentFolderId,
-  onClose,
-  onSaved,
-}: {
-  state: DialogState
-  folders: LibraryFolder[]
-  currentFolderId: string | null
-  onClose: () => void
-  onSaved: (result: libraryData.DialogResult) => Promise<void>
-}) {
-  const moving = state.kind === 'move-file' || state.kind === 'move-folder'
-  const originalName = dialogOriginalName(state)
-  const [name, setName] = useState(originalName)
-  const [destination, setDestination] = useState<string>(moving ? '' : (currentFolderId ?? ''))
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const unavailable = state.kind === 'move-folder' ? new Set([state.folder.id]) : new Set<string>()
-
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    setPending(true)
-    setError(null)
-    const result = await runClient(
-      libraryData.saveDialog(state, name, destination, currentFolderId),
-    )
-    if (Result.isFailure(result)) {
-      setError(result.failure.message)
-      setPending(false)
-      return
-    }
-    await onSaved(result.success)
-  }
-
-  const title = dialogTitle(state)
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4 backdrop-blur-scrim"
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
-    >
-      <form
-        onSubmit={(event) => void submit(event)}
-        className="w-full max-w-sm rounded-panel bg-surface-1 p-4 smooth-shadow-ring-md"
-      >
-        <div className="flex items-center gap-2">
-          <h2 className="flex-1 text-dialog font-title text-ink">{title}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-        <LibraryDialogField
-          state={state}
-          moving={moving}
-          folders={folders}
-          unavailable={unavailable}
-          name={name}
-          destination={destination}
-          onNameChange={setName}
-          onDestinationChange={setDestination}
-        />
-        {error && <p className="mt-3 text-label text-danger">{error}</p>}
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-9 rounded-control px-3 text-label text-ink-3 hover:bg-wash-hover"
-          >
-            Cancel
-          </button>
-          <button
-            disabled={pending}
-            className="inline-flex h-9 items-center gap-2 rounded-control bg-accent px-4 text-label font-title text-ink-on-accent disabled:opacity-50"
-          >
-            {pending && <LoaderCircle className="size-3.5 animate-spin" />}
-            {moving ? 'Move' : 'Save'}
-          </button>
-        </div>
-      </form>
-    </div>
-  )
-}
-
-/** Renders the destination or name field selected by the dialog's closed variant. */
-function LibraryDialogField({
-  state,
-  moving,
-  folders,
-  unavailable,
-  name,
-  destination,
-  onNameChange,
-  onDestinationChange,
-}: {
-  state: DialogState
-  moving: boolean
-  folders: LibraryFolder[]
-  unavailable: Set<string>
-  name: string
-  destination: string
-  onNameChange: (name: string) => void
-  onDestinationChange: (destination: string) => void
-}) {
-  if (moving) {
-    return (
-      <label className="mt-4 block">
-        <span className="mb-1.5 block text-label font-title text-ink-2">Destination</span>
-        <select
-          value={destination}
-          onChange={(event) => onDestinationChange(event.currentTarget.value)}
-          className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs"
-        >
-          <option value="">Library</option>
-          {folders
-            .filter((folder) => !unavailable.has(folder.id))
-            .map((folder) => (
-              <option key={folder.id} value={folder.id}>
-                {folder.name}
-              </option>
-            ))}
-        </select>
-      </label>
-    )
-  }
-  return (
-    <label className="mt-4 block">
-      <span className="mb-1.5 block text-label font-title text-ink-2">Name</span>
-      <input
-        autoFocus
-        required
-        maxLength={state.kind === 'rename-file' ? 180 : 120}
-        value={name}
-        onChange={(event) => onNameChange(event.currentTarget.value)}
-        className="h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs outline-none focus:smooth-shadow-ring-sm"
+  const { contents, setAsk, view } = browser
+  return View.$match(view, {
+    Browse: () => (
+      <ShelfLevel
+        browser={browser}
+        onUpload={onUpload}
+        onSearch={(event) => void browsing.search(event)}
       />
+    ),
+    Results: ({ results }) => (
+      <SearchResults results={results} onOpen={(found) => void browsing.openResult(found)} />
+    ),
+    Item: ({ item }) => {
+      // The live shelf has the item's latest state (its name, whether Vivid has read it yet).
+      // An item opened from a search can be filed where this query does not look; it is then
+      // drawn as it was when opened.
+      const current = LiveState.$match(contents, {
+        Loading: () => item,
+        Failed: () => item,
+        Ready: ({ value }) => {
+          const found = value.documents.find((candidate) => candidate.id === item.id)
+          return found === undefined ? item : found
+        },
+      })
+      return (
+        <ItemDetail
+          item={current}
+          onAsk={() => onAsk(current)}
+          onDelete={() => void browsing.removeItem(current)}
+          onRename={() => setAsk(Option.some(Ask.RenameItem({ item: current })))}
+          onMove={() =>
+            void browsing.askMove((destinations) => Ask.MoveItem({ item: current, destinations }))
+          }
+        />
+      )
+    },
+  })
+}
+
+// ── A level of a shelf ───────────────────────────────────────────────────────
+
+/** The shelf switch, the search field when it is open, and the folders and items at this level. */
+function ShelfLevel({
+  browser,
+  onUpload,
+  onSearch,
+}: {
+  browser: Browser
+  onUpload: (files: ReadonlyArray<File>) => void
+  onSearch: (event: FormEvent) => void
+}) {
+  const { contents, folder, folderId, grid, query, setChosen, setPath, setQuery, setView } = browser
+  return (
+    <>
+      {browser.shelves.length > 1 && (
+        <div>
+          <Segmented
+            label="Shelf"
+            value={browser.shelf}
+            options={browser.shelves.map((choice) => ({
+              value: choice.shelf,
+              name: choice.name,
+              label: choice.name,
+            }))}
+            onChange={(shelf) => {
+              // Folders belong to a shelf, so changing shelf starts again from its top.
+              setChosen(shelf)
+              setPath([])
+            }}
+          />
+        </div>
+      )}
+      {Option.isSome(query) && (
+        <form
+          onSubmit={onSearch}
+          className="flex items-center gap-2 rounded-control bg-surface-2 px-3 smooth-shadow-ring-xs"
+        >
+          <Search className="size-4 text-ink-4" />
+          <input
+            autoFocus
+            aria-label="Search"
+            value={query.value}
+            onChange={(event) => setQuery(Option.some(event.currentTarget.value))}
+            placeholder={Option.match(folder, {
+              onNone: () => 'Search everything Vivid has read',
+              onSome: (inside) => `Search ${inside.name}`,
+            })}
+            className="h-10 min-w-0 flex-1 bg-transparent text-label text-ink outline-none placeholder:text-ink-4"
+          />
+        </form>
+      )}
+      <Live state={contents} loading={<Skeleton of="card" count={4} />}>
+        {(list) => {
+          const level = libraryData.inFolder(list, folderId)
+          if (level.folders.length === 0 && level.documents.length === 0) {
+            return <NothingHere company={browser.shelf === 'Company'} onUpload={onUpload} />
+          }
+          return (
+            <Level
+              level={level}
+              grid={grid}
+              onOpenFolder={(inside) => setPath((trail) => [...trail, inside])}
+              onOpenItem={(item) => setView(View.Item({ item }))}
+            />
+          )
+        }}
+      </Live>
+    </>
+  )
+}
+
+/** What a level says when it holds nothing: who will be able to read what is added, and the way in. */
+function NothingHere({
+  company,
+  onUpload,
+}: {
+  company: boolean
+  onUpload: (files: ReadonlyArray<File>) => void
+}) {
+  return (
+    <div className="flex flex-col items-center rounded-card bg-surface-2 px-6 py-10 text-center smooth-shadow-ring-xs">
+      <FileText className="size-5 text-ink-4" />
+      <p className="mt-2 mb-4 max-w-sm text-label text-ink-3">
+        {company
+          ? 'Nothing here yet. Add a file and Vivid can read it in every Member’s Threads.'
+          : 'Nothing here yet. Add a file and Vivid can read it in your Threads.'}
+      </p>
+      <FilePicker label="Upload files" look="button" onFiles={onUpload}>
+        <Upload className="size-3.5" />
+        Upload files
+      </FilePicker>
+    </div>
+  )
+}
+
+/** The file types Vivid can read, as the browser's picker understands them. */
+const READABLE = '.pdf,.md,.markdown,.txt,application/pdf,text/markdown,text/plain'
+
+const PICKER_LOOK = {
+  icon: 'size-8 justify-center text-ink-3 hover:text-ink has-focus-visible:text-ink',
+  button: 'h-8 gap-2 bg-surface-3 px-3 text-label font-title text-ink smooth-shadow-ring-xs',
+} satisfies Record<string, string>
+
+/**
+ * A control that opens the browser's file picker. It is a label around the real file input, so
+ * the browser opens the picker itself: no ref, no scripted click. The input is hidden from sight
+ * but not from the keyboard, and the label shows where focus is.
+ */
+function FilePicker({
+  label,
+  look,
+  onFiles,
+  children,
+}: {
+  label: string
+  look: keyof typeof PICKER_LOOK
+  onFiles: (files: ReadonlyArray<File>) => void
+  children: ReactNode
+}) {
+  return (
+    <label
+      title={label}
+      className={cn(
+        'inline-flex cursor-pointer items-center rounded-control transition-colors duration-(--dur-fast) hover:bg-wash-hover has-focus-visible:bg-wash-hover',
+        PICKER_LOOK[look],
+      )}
+    >
+      <input
+        type="file"
+        multiple
+        aria-label={label}
+        accept={READABLE}
+        className="sr-only"
+        onChange={(event) => {
+          const input = event.currentTarget
+          if (input.files !== null && input.files.length > 0) onFiles([...input.files])
+          // Clearing the field lets the same file be chosen again after a failure.
+          input.value = ''
+        }}
+      />
+      {children}
     </label>
   )
 }
 
-function TileGrid({ tiles, onOpen }: { tiles: Tile[]; onOpen: (tile: Tile) => void }) {
-  const folderTiles = tiles.filter((tile) => tile.kind === 'folder')
-  const files = tiles.filter((tile) => tile.kind === 'file')
-  return (
-    <div className="mt-3">
-      <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {folderTiles.map((tile) => (
-          <li key={tile.id}>
-            <button
-              onClick={() => onOpen(tile)}
-              className="group/row flex w-full items-center gap-2.5 rounded-card bg-surface-2 px-3 py-2.5 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) hover:bg-wash-hover hover:smooth-shadow-ring-sm"
-            >
-              <span className="inline-flex size-7 shrink-0 items-center justify-center text-ink-3">
-                <Folder className="size-5" strokeWidth={1.7} />
-              </span>
-              <span className="min-w-0 flex-1 truncate text-label text-ink">{tile.name}</span>
-              <span className="text-meta font-meta text-ink-4">{tile.meta}</span>
-            </button>
+/** How an item's state reads everywhere it appears; a new status fails to compile here. */
+const ITEM_STATUS = {
+  ready: { label: 'Ready', tone: 'text-success', mark: <Check className="size-3" /> },
+  failed: { label: 'Failed', tone: 'text-danger', mark: <CircleAlert className="size-3" /> },
+  processing: {
+    label: 'Reading',
+    tone: 'text-working',
+    mark: <CircleDashed className="size-3 animate-status-pulse" />,
+  },
+} satisfies Record<LibraryItem['status'], { label: string; tone: string; mark: ReactNode }>
+
+/** The line beside an item: its size once Vivid has read it, otherwise where it stands. */
+const itemNote = (item: LibraryItem): string =>
+  item.status === 'ready'
+    ? `${libraryData.formatBytes(item.size)} · ${item.chunkCount} passages`
+    : ITEM_STATUS[item.status].label
+
+const folderNote = (folder: LibraryFolder): string =>
+  `${folder.itemCount} ${folder.itemCount === 1 ? 'item' : 'items'}`
+
+/** The folders and items of one level, as tiles or as rows. */
+function Level({
+  level,
+  grid,
+  onOpenFolder,
+  onOpenItem,
+}: {
+  level: LibraryList
+  grid: boolean
+  onOpenFolder: (folder: LibraryFolder) => void
+  onOpenItem: (item: LibraryItem) => void
+}) {
+  if (!grid) {
+    return (
+      <ul>
+        {level.folders.map((folder) => (
+          <li key={folder.id}>
+            <LevelRow
+              mark={<Folder className="size-4.5" />}
+              accent
+              name={folder.name}
+              note={folderNote(folder)}
+              onOpen={() => onOpenFolder(folder)}
+            />
+          </li>
+        ))}
+        {level.documents.map((item) => (
+          <li key={item.id}>
+            <LevelRow
+              mark={<FileText className="size-4.5" />}
+              accent={false}
+              name={item.name}
+              note={itemNote(item)}
+              onOpen={() => onOpenItem(item)}
+            />
           </li>
         ))}
       </ul>
-      <ul className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-        {files.map((tile) => (
-          <li key={tile.id}>
-            <button
-              onClick={() => onOpen(tile)}
-              className="group/tile flex w-full flex-col overflow-hidden rounded-card bg-surface-2 p-3 text-left smooth-shadow-ring-sm transition-press duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-surface-3 hover:smooth-shadow-ring-md active:scale-98"
-            >
-              <span className="flex items-center gap-2">
-                <FileText className="size-4 shrink-0 text-ink-3" strokeWidth={1.6} />
-                <span className="min-w-0 flex-1 truncate text-label text-ink">{tile.name}</span>
-                {tile.document && tile.document.status === 'processing' ? (
-                  <LoaderCircle className="size-4 shrink-0 animate-spin text-working" />
-                ) : (
-                  <MoreHorizontal className="size-4 shrink-0 text-ink-4 opacity-0 transition-opacity group-hover/tile:opacity-100" />
-                )}
-              </span>
-              <span className="relative mt-3 block aspect-4/3 overflow-hidden rounded-control bg-surface-1 ring-line">
-                <Preview />
-              </span>
-            </button>
+    )
+  }
+  return (
+    <div className="flex flex-col gap-4">
+      {level.folders.length > 0 && (
+        <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {level.folders.map((folder) => (
+            <li key={folder.id}>
+              <button
+                type="button"
+                onClick={() => onOpenFolder(folder)}
+                className="flex w-full cursor-pointer items-center gap-2.5 rounded-card bg-surface-2 px-3 py-2.5 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) hover:bg-wash-hover hover:smooth-shadow-ring-sm"
+              >
+                <Folder className="size-5 shrink-0 text-ink-3" strokeWidth={1.7} />
+                <span className="min-w-0 flex-1 truncate text-label text-ink">{folder.name}</span>
+                <span className="text-meta font-meta text-ink-4">{folderNote(folder)}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+        {level.documents.map((item) => (
+          <li key={item.id}>
+            <ItemTile item={item} onOpen={() => onOpenItem(item)} />
           </li>
         ))}
       </ul>
@@ -996,179 +845,252 @@ function TileGrid({ tiles, onOpen }: { tiles: Tile[]; onOpen: (tile: Tile) => vo
   )
 }
 
-function TileList({ tiles, onOpen }: { tiles: Tile[]; onOpen: (tile: Tile) => void }) {
+/** One folder or item in the list view. */
+function LevelRow({
+  mark,
+  accent,
+  name,
+  note,
+  onOpen,
+}: {
+  mark: ReactNode
+  accent: boolean
+  name: string
+  note: string
+  onOpen: () => void
+}) {
   return (
-    <ul className="mt-3">
-      {tiles.map((tile) => (
-        <li key={tile.id}>
-          <button
-            onClick={() => onOpen(tile)}
-            className="group/row flex w-full items-center gap-3 rounded-row px-2.5 py-2 text-left transition-colors duration-(--dur-fast) outline-none select-none hover:bg-wash-hover"
-          >
-            <span
-              className={cn(
-                'inline-flex size-8 shrink-0 items-center justify-center rounded-control',
-                tile.kind === 'folder'
-                  ? 'bg-accent-soft text-accent-ink'
-                  : 'bg-surface-2 text-ink-3 smooth-shadow-ring-xs',
-              )}
-            >
-              {tile.kind === 'file' ? (
-                <FileText className="size-4.5" />
-              ) : (
-                <Folder className="size-4.5" />
-              )}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-title text-ink">{tile.name}</span>
-            <span className="text-meta font-meta text-ink-4">{tile.meta}</span>
-            <MoreHorizontal className="size-4 shrink-0 text-ink-4 opacity-0 transition-opacity group-hover/row:opacity-100" />
-          </button>
-        </li>
-      ))}
-    </ul>
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex w-full cursor-pointer items-center gap-3 rounded-row px-2.5 py-2 text-left transition-colors duration-(--dur-fast) hover:bg-wash-hover"
+    >
+      <span
+        className={cn(
+          'inline-flex size-8 shrink-0 items-center justify-center rounded-control',
+          accent
+            ? 'bg-accent-soft text-accent-ink'
+            : 'bg-surface-2 text-ink-3 smooth-shadow-ring-xs',
+        )}
+      >
+        {mark}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-title text-ink">{name}</span>
+      <span className="text-meta font-meta text-ink-4">{note}</span>
+    </button>
   )
 }
 
-function DocumentDetail({
-  document,
+/** One item in the grid: its name, where it stands, and a drawn page standing in for a preview. */
+function ItemTile({ item, onOpen }: { item: LibraryItem; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex w-full cursor-pointer flex-col overflow-hidden rounded-card bg-surface-2 p-3 text-left smooth-shadow-ring-sm transition-press duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-surface-3 hover:smooth-shadow-ring-md active:scale-98"
+    >
+      <span className="flex items-center gap-2">
+        <FileText className="size-4 shrink-0 text-ink-3" strokeWidth={1.6} />
+        <span className="min-w-0 flex-1 truncate text-label text-ink">{item.name}</span>
+      </span>
+      <span className="relative mt-3 block aspect-4/3 overflow-hidden rounded-control bg-surface-1 ring-line">
+        <span
+          aria-hidden
+          className="absolute inset-x-7 inset-y-3 flex flex-col gap-1.5 rounded-sm bg-surface-3 p-2.5 smooth-shadow-ring-xs"
+        >
+          <i className="h-2 w-1/2 rounded-full bg-line-3" />
+          <i className="mt-1 h-1 w-full rounded-full bg-line-1" />
+          <i className="h-1 w-11/12 rounded-full bg-line-1" />
+          <i className="h-1 w-4/5 rounded-full bg-line-1" />
+          <i className="mt-auto h-1 w-2/3 rounded-full bg-line-1" />
+        </span>
+      </span>
+      <span className="mt-2 truncate text-meta font-meta text-ink-4">{itemNote(item)}</span>
+    </button>
+  )
+}
+
+// ── One item ─────────────────────────────────────────────────────────────────
+
+/** What an item's page says under its status: what Vivid read, or why it could not. */
+const itemText = (item: LibraryItem): string => {
+  if (item.status === 'ready') return item.preview
+  if (item.status === 'processing') return 'Vivid is reading this file.'
+  return item.error === null ? 'Vivid could not read this file.' : item.error
+}
+
+/** One item: rename, move, open the original, delete, and ask Vivid about it once it is read. */
+function ItemDetail({
+  item,
   onAsk,
   onDelete,
   onRename,
   onMove,
 }: {
-  document: LibraryDocument
+  item: LibraryItem
   onAsk: () => void
   onDelete: () => void
   onRename: () => void
   onMove: () => void
 }) {
+  const status = ITEM_STATUS[item.status]
   return (
-    <div className="mt-3">
+    <div>
       <div className="flex items-center gap-3">
         <span className="inline-flex size-9 items-center justify-center rounded-control bg-surface-2 text-ink-3 smooth-shadow-ring-xs">
           <FileText className="size-4.5" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-title text-ink">{document.name}</p>
+          <p className="truncate text-title text-ink">{item.name}</p>
           <p className="text-meta font-meta text-ink-4">
-            {formatBytes(document.size)} · {document.chunkCount} passages
+            {libraryData.formatBytes(item.size)} · {item.chunkCount} passages
           </p>
         </div>
-        <button
-          onClick={onRename}
-          aria-label="Rename file"
-          className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover"
-        >
+        <IconButton label="Rename file" onClick={onRename}>
           <Pencil className="size-4" />
-        </button>
-        <button
-          onClick={onMove}
-          aria-label="Move file"
-          className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover"
-        >
+        </IconButton>
+        <IconButton label="Move file" onClick={onMove}>
           <FileInput className="size-4" />
-        </button>
+        </IconButton>
         <a
-          href={`/api/library/${encodeURIComponent(document.id)}/content`}
+          href={`/api/library/${encodeURIComponent(item.id)}/content`}
           target="_blank"
           rel="noreferrer"
-          aria-label="Open original"
-          className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover"
+          aria-label="Open the original file"
+          title="Open the original file"
+          className="inline-flex size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"
         >
           <ExternalLink className="size-4" />
         </a>
-        <button
-          onClick={onDelete}
-          aria-label="Delete file"
-          className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-danger-soft hover:text-danger"
-        >
+        <IconButton label="Delete file" onClick={onDelete}>
           <Trash2 className="size-4" />
-        </button>
+        </IconButton>
       </div>
       <div className="mt-5 rounded-card bg-surface-2 p-5 smooth-shadow-ring-xs">
-        <Status document={document} />
+        <span className={cn('inline-flex items-center gap-1 text-meta font-meta', status.tone)}>
+          {status.mark}
+          {status.label}
+        </span>
         <p className="mt-4 text-label leading-relaxed whitespace-pre-wrap text-ink-3">
-          {document.preview || document.error || 'Extracting and indexing text…'}
+          {itemText(item)}
         </p>
       </div>
-      {document.status === 'ready' && (
-        <button
-          onClick={onAsk}
-          className="mt-4 inline-flex h-9 items-center gap-2 rounded-control bg-accent px-4 text-label font-title text-ink-on-accent"
-        >
-          <MessageSquareText className="size-4" />
-          Ask Vivid about this
-        </button>
+      {item.status === 'ready' && (
+        <div className="mt-4">
+          <Button variant="primary" icon={<MessageSquareText className="size-4" />} onClick={onAsk}>
+            Ask Vivid about this
+          </Button>
+        </div>
       )}
     </div>
   )
 }
 
-function Status({ document }: { document: LibraryDocument }) {
-  const { label, tone, Icon, spin } = DOCUMENT_STATUS[document.status]
-  return (
-    <span className={cn('inline-flex items-center gap-1 text-meta font-meta', tone)}>
-      <Icon className={cn('size-3', spin && 'animate-spin')} />
-      {label}
-    </span>
-  )
-}
-
+/** The passages a search found, each opening the item it came from. */
 function SearchResults({
   results,
   onOpen,
 }: {
-  results: SearchResult[]
+  results: ReadonlyArray<SearchResult>
   onOpen: (result: SearchResult) => void
 }) {
+  if (results.length === 0) {
+    return <p className="py-12 text-center text-label text-ink-4">Nothing matches that.</p>
+  }
   return (
-    <ul className="mt-3">
-      {results.length === 0 ? (
-        <li className="py-12 text-center text-label text-ink-4">No matching files.</li>
-      ) : (
-        results.map((result) => (
-          <li key={result.chunkId}>
-            <button
-              onClick={() => onOpen(result)}
-              className="group/row flex w-full items-start gap-3 rounded-row px-2.5 py-3 text-left hover:bg-wash-hover"
-            >
-              <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-surface-2 text-ink-3 smooth-shadow-ring-xs">
-                <FileText className="size-4" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-title text-ink">{result.filename}</span>
-                <span className="mt-1 line-clamp-2 text-label text-ink-3">{result.text}</span>
-              </span>
-              {result.page && (
-                <span className="text-meta font-meta text-ink-4">Page {result.page}</span>
-              )}
-            </button>
-          </li>
-        ))
-      )}
+    <ul>
+      {results.map((result) => (
+        <li key={result.chunkId}>
+          <button
+            type="button"
+            onClick={() => onOpen(result)}
+            className="flex w-full cursor-pointer items-start gap-3 rounded-row px-2.5 py-3 text-left transition-colors duration-(--dur-fast) hover:bg-wash-hover"
+          >
+            <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-surface-2 text-ink-3 smooth-shadow-ring-xs">
+              <FileText className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-title text-ink">{result.filename}</span>
+              <span className="mt-1 line-clamp-2 text-label text-ink-3">{result.text}</span>
+            </span>
+            {result.page !== null && (
+              <span className="text-meta font-meta text-ink-4">Page {result.page}</span>
+            )}
+          </button>
+        </li>
+      ))}
     </ul>
   )
 }
 
-function Preview() {
+// ── Uploads ──────────────────────────────────────────────────────────────────
+
+/** What an upload row says on the right. */
+const uploadNote = (status: UploadStatus): string =>
+  UploadStatus.$match(status, {
+    Sending: ({ percent }) => `${percent}%`,
+    Reading: () => 'Vivid is reading it',
+    Duplicate: () => 'Already on this shelf',
+    Failed: ({ message }) => message,
+  })
+
+/** How far along an upload's bar is drawn. A file that has stopped moving shows a full bar. */
+const uploadPercent = (status: UploadStatus): number =>
+  UploadStatus.$match(status, {
+    Sending: ({ percent }) => percent,
+    Reading: () => 100,
+    Duplicate: () => 100,
+    Failed: () => 100,
+  })
+
+/** Files on their way in, and the ones that did not make it, which stay until dismissed. */
+function Uploads({
+  rows,
+  onDismiss,
+}: {
+  rows: ReadonlyArray<UploadRow>
+  onDismiss: (id: string) => void
+}) {
+  if (rows.length === 0) return null
   return (
-    <span
-      aria-hidden
-      className="absolute inset-x-7 inset-y-3 flex flex-col gap-1.5 rounded-sm bg-surface-3 p-2.5 smooth-shadow-ring-xs"
-    >
-      <i className="h-2 w-1/2 rounded-full bg-ink/15" />
-      <i className="mt-1 h-1 w-full rounded-full bg-line-1" />
-      <i className="h-1 w-11/12 rounded-full bg-line-1" />
-      <i className="h-1 w-4/5 rounded-full bg-line-1" />
-      <i className="mt-auto h-1 w-2/3 rounded-full bg-line-1" />
-    </span>
+    <ul className="space-y-1">
+      {rows.map((row) => {
+        const failed = UploadStatus.$is('Failed')(row.status)
+        const settled = failed || UploadStatus.$is('Duplicate')(row.status)
+        return (
+          <li
+            key={row.id}
+            className="flex items-center gap-3 rounded-row bg-surface-2 px-3 py-2 smooth-shadow-ring-xs"
+          >
+            <FileText className="size-4 shrink-0 text-ink-3" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-label text-ink">{row.name}</span>
+              <span className="mt-1 block h-1 overflow-hidden rounded-full bg-line-2">
+                <UploadBar percent={uploadPercent(row.status)} failed={failed} />
+              </span>
+            </span>
+            <span
+              role={failed ? 'alert' : undefined}
+              className={cn('text-meta font-meta', failed ? 'text-danger' : 'text-ink-4')}
+            >
+              {uploadNote(row.status)}
+            </span>
+            {settled && (
+              <IconButton label="Dismiss" onClick={() => onDismiss(row.id)}>
+                <X className="size-4" />
+              </IconButton>
+            )}
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
 /** The fill of one upload's progress track; failure recolours it without resetting the width. */
-function UploadBar({ progress, failed }: { progress: number; failed: boolean }) {
+function UploadBar({ percent, failed }: { percent: number; failed: boolean }) {
   // SAFETY: React forwards this validated CSS custom property; `w-(--upload-progress)` reads it.
-  const barStyle = { '--upload-progress': `${progress}%` } as React.CSSProperties
+  const barStyle = { '--upload-progress': `${percent}%` } as React.CSSProperties
   return (
     <i
       className={cn(
@@ -1177,5 +1099,201 @@ function UploadBar({ progress, failed }: { progress: number; failed: boolean }) 
       )}
       style={barStyle}
     />
+  )
+}
+
+// ── Dialogs ──────────────────────────────────────────────────────────────────
+
+/** Draws the dialog for the question being asked and hands its answer to the matching action. */
+function AskDialog({
+  ask,
+  place,
+  dialogs,
+}: {
+  ask: Ask
+  place: string
+  dialogs: ReturnType<typeof dialogActions>
+}) {
+  return Ask.$match(ask, {
+    NewFolder: () => (
+      <NameDialog
+        title="New folder"
+        description={`It will be inside ${place}.`}
+        initial=""
+        limit={120}
+        action="Create"
+        onSubmit={dialogs.newFolder}
+        onClose={dialogs.close}
+      />
+    ),
+    RenameFolder: ({ folder }) => (
+      <NameDialog
+        title="Rename folder"
+        description={folder.name}
+        initial={folder.name}
+        limit={120}
+        action="Rename"
+        onSubmit={(name) => dialogs.renameFolder(folder, name)}
+        onClose={dialogs.close}
+      />
+    ),
+    MoveFolder: ({ folder, destinations }) => (
+      <MoveDialog
+        title="Move folder"
+        description={folder.name}
+        // A folder cannot go inside itself.
+        destinations={destinations.filter((each) => each.id !== folder.id)}
+        initial={folder.parentId}
+        onSubmit={(parentId) => dialogs.moveFolder(folder, parentId)}
+        onClose={dialogs.close}
+      />
+    ),
+    RenameItem: ({ item }) => (
+      <NameDialog
+        title="Rename file"
+        description={item.name}
+        initial={item.name}
+        limit={180}
+        action="Rename"
+        onSubmit={(name) => dialogs.renameItem(item, name)}
+        onClose={dialogs.close}
+      />
+    ),
+    MoveItem: ({ item, destinations }) => (
+      <MoveDialog
+        title="Move file"
+        description={item.name}
+        destinations={destinations}
+        initial={item.folderId}
+        onSubmit={(folderId) => dialogs.moveItem(item, folderId)}
+        onClose={dialogs.close}
+      />
+    ),
+  })
+}
+
+/**
+ * What every Library dialog shares: it sends its answer, waits, and shows the server's sentence
+ * beside the field if it was refused. The Person keeps what they typed and can try again.
+ */
+function useSubmission() {
+  const [pending, setPending] = useState(false)
+  const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
+
+  async function submit(send: () => Promise<Option.Option<string>>) {
+    setPending(true)
+    setRefused(Option.none())
+    const message = await send()
+    // On success the dialog has been closed by its action and there is nothing left to update.
+    if (Option.isNone(message)) return
+    setRefused(message)
+    setPending(false)
+  }
+
+  return { pending, refused, submit }
+}
+
+/** A dialog that asks for one name. */
+function NameDialog({
+  title,
+  description,
+  initial,
+  limit,
+  action,
+  onSubmit,
+  onClose,
+}: {
+  title: string
+  description: string
+  initial: string
+  limit: number
+  action: string
+  onSubmit: (name: string) => Promise<Option.Option<string>>
+  onClose: () => void
+}) {
+  const [name, setName] = useState(initial)
+  const { pending, refused, submit } = useSubmission()
+  return (
+    <Dialog title={title} description={description} onClose={onClose}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault()
+          void submit(() => onSubmit(name.trim()))
+        }}
+        className="flex flex-col gap-3"
+      >
+        <DialogField label="Name" value={name} onChange={setName} maxLength={limit} />
+        {Option.isSome(refused) && <Notice>{refused.value}</Notice>}
+        <DialogActions>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" disabled={pending || name.trim() === ''}>
+            {action}
+          </Button>
+        </DialogActions>
+      </form>
+    </Dialog>
+  )
+}
+
+/** The select value for the top of the shelf; no folder id is the empty string. */
+const TOP = ''
+
+/** A dialog that asks where on its shelf something should go. */
+function MoveDialog({
+  title,
+  description,
+  destinations,
+  initial,
+  onSubmit,
+  onClose,
+}: {
+  title: string
+  description: string
+  destinations: ReadonlyArray<LibraryFolder>
+  initial: LibraryFolderId | null
+  onSubmit: (folderId: LibraryFolderId | null) => Promise<Option.Option<string>>
+  onClose: () => void
+}) {
+  const [destination, setDestination] = useState(initial)
+  const { pending, refused, submit } = useSubmission()
+  return (
+    <Dialog title={title} description={description} onClose={onClose}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault()
+          void submit(() => onSubmit(destination))
+        }}
+        className="flex flex-col gap-3"
+      >
+        <Field label="Move to">
+          <Select
+            autoFocus
+            value={destination === null ? TOP : destination}
+            onChange={(event) => {
+              const chosen = destinations.find((each) => each.id === event.currentTarget.value)
+              setDestination(chosen === undefined ? null : chosen.id)
+            }}
+          >
+            <option value={TOP}>The top of the shelf</option>
+            {destinations.map((folder) => (
+              <option key={folder.id} value={folder.id}>
+                {folder.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        {Option.isSome(refused) && <Notice>{refused.value}</Notice>}
+        <DialogActions>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" disabled={pending || destination === initial}>
+            Move
+          </Button>
+        </DialogActions>
+      </form>
+    </Dialog>
   )
 }
