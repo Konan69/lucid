@@ -1,98 +1,94 @@
 # @vivid/desktop
 
-Electron host for the Vivid web renderer. It owns native window chrome, OS color scheme state,
-`vivid://` activation, persisted server selection, and the schema-validated desktop bridge.
-Product UI stays in `apps/web`.
+Electron shell for the Vivid web app. It connects to a Vivid server the Person chooses; it never
+starts a server, database, or runtime. Product UI stays in the web renderer.
 
-## Run locally
-
-```sh
-# Terminal 1, from the repository root
-pnpm --filter @vivid/web dev
-
-# Terminal 2
-pnpm desktop
-```
-
-Development loads `VIVID_DESKTOP_RENDERER_URL`, defaulting to `http://127.0.0.1:5178`.
-
-## Build and distribute
-
-Supply the web renderer build first. Serialize its compiler with other lanes:
+## Build
 
 ```sh
 flock /tmp/vivid-tsc.lock pnpm --filter @vivid/web build
 pnpm --filter @vivid/desktop build
 pnpm --filter @vivid/desktop dist --dir
-./apps/desktop/release/linux-unpacked/vivid
 ```
 
-`build` bundles main and sandboxed preload as CommonJS and stages a snapshot of `apps/web/dist`
-plus shared design tokens. `dist` packages that snapshot with Electron; `--dir` produces an
-unpacked app, while ordinary `dist` produces the host platform's installer. Targets are AppImage
-for Linux, dmg for macOS, and nsis for Windows, with app id `com.vivid.app` and `vivid://` activation.
-The renderer runs without a web development server. Signing and automatic updates need a release
-feed and separate setup; this build has no updater.
+The build stages the web assets under `dist/renderer` and bundles main and sandboxed preload as
+CommonJS. Packaging copies the assets to `web/dist` under Electron's resources directory. Signing
+and updates require release configuration; no updater is installed.
 
-The app uses an independently operated Vivid application server. It does not start or package a
-server, database, or runtime. The server must expose Better Auth under `/api/auth/*`, product
-streams at `/api/live`, the conversation gateway under `/api/vivid/*`, and Library byte routes on
-one origin.
+## Choosing a server
 
-## Server selection
+First launch opens the local `chooser.html`, with no default server and no network authority.
+Enter the origin of a remote or local Vivid server. Remote servers require HTTPS; HTTP is allowed
+for localhost, loopback and private IP addresses. Credentials, paths, queries and fragments are
+rejected. Main probes `/health` for `{ "ok": true, "service": "vivid" }` with a three-second timeout,
+without cookies or redirects. Only a verified server is saved.
 
-`settings.json` in Electron's user data directory stores `{ "version": 1, "serverAddress": "…" }`.
-The default is `http://127.0.0.1:8787`. Only HTTP(S) origins are accepted; credentials, paths,
-queries, and fragments are rejected. Missing settings mean `Unconfigured`; corrupt or unreadable
-settings stop startup. Writes atomically replace the file before publishing new state.
+`settings.json` in Electron's user data directory stores version 2 and the tagged server state.
+Writes use an exclusive temporary file, fsync and atomic rename before updating memory. Damaged
+or unreadable settings show the chooser and are moved beside the original with a `.damaged`
+suffix; earlier backups are preserved. If directory permissions prevent moving the file, the
+original remains untouched and startup still shows the chooser. Existing valid version 1 explicit
+selections are read. Forgetting a server durably records `NoServer` and returns to the chooser.
 
-The renderer owner must present the first-launch chooser when `getServerSettings()` returns
-`Unconfigured`, then call `setServerAddress(address)`. A successful write navigates the packaged
-renderer to that origin. These methods use the existing bridge; this shell does not render a chooser.
+Main loads `dist/renderer/chooser.html` in development and `web/dist/chooser.html` under the
+packaged resources directory. Put the chooser source in the web build's public assets as
+`apps/web/public/chooser.html` to use the existing staging pipeline. Its UI belongs to the renderer
+owner. The shell uses the same saved origin and staged assets in development and production;
+`VIVID_DESKTOP_RENDERER_URL` is no longer used.
 
-Electron serves packaged HTML/assets at the saved server origin and forwards `/api/*` through
-Effect HttpClient with Chromium's cookie-aware transport. Relative API URLs, cookies, streaming
-responses, and direct WebSocket upgrades retain that origin. The address is never embedded in
-the web bundle. Offline API requests fail while the packaged renderer remains available.
+Import `VividDesktopBridge`, `ServerSettings` and `ServerChoice` from `@vivid/desktop/bridge`
+(`src/shared/bridge.ts`). The only exposed global is `window.vivid`:
 
-## Security boundary
+```ts
+interface VividDesktopBridge {
+  server: {
+    get(): Promise<{ _tag: 'NoServer' } | { _tag: 'Server'; origin: string }>
+    choose(
+      origin: string,
+    ): Promise<{ _tag: 'Chosen' } | { _tag: 'Unreachable'; reason: string } | { _tag: 'NotVivid' }>
+    forget(): Promise<void>
+  }
+  getAppVersion(): Promise<string>
+  openExternal(url: string): Promise<void>
+}
+```
 
-The window uses `contextIsolation: true`, `nodeIntegration: false`, and `sandbox: true`. Preload
-exposes only `window.vividDesktop`. Requests, responses, pushed events, persisted window placement,
-settings, and deep links are decoded once with Effect Schema at their ingress.
+Invalid arguments and persistence failures reject the call. The chooser should display them and
+stay open; `Chosen` means both probe and durable save succeeded, and main replaces the document.
+No IPC channel, filesystem, credential, cookie or arbitrary navigation authority is exposed.
 
-| Renderer method                  | Result                                                      |
-| -------------------------------- | ----------------------------------------------------------- |
-| `getAppInfo()`                   | Application version, Electron version, and host platform    |
-| `getColorSchemeState()`          | Native preference plus resolved light/dark scheme           |
-| `onColorSchemeChanged(listener)` | Validated native scheme updates and an unsubscribe function |
-| `getServerSettings()`            | First-launch or configured state with a validated origin    |
-| `setServerAddress(address)`      | Durable selection; packaged renderer changes origin         |
+## Signing in by code
 
-The bridge exposes no filesystem, shell, credential, cookie, arbitrary IPC, arbitrary remote
-navigation, or window-control authority. Its tagged wire contract lives in `src/shared/bridge.ts`.
-API document navigation opens outside the privileged shell; local assets reject traversal and
-escaping symlinks. `vivid://` activations use the existing `links.ts` parser and focus the single
-window. Product route interpretation belongs to the renderer.
+After choosing a server, desktop sign-in uses the server's existing device-authorization flow.
+The desktop sign-in UI requests a device code through `/api/auth/device/code`, displays the short
+code and opens the returned verification link in the system browser. Sign in to that same server
+and approve the code in **Settings → Devices** (`/device`). The desktop UI exchanges the waiting
+device code through `/api/auth/device/token`, respecting the server's interval and expiry. No
+password is passed through preload. Device sign-in UI and token handling belong to the renderer;
+this shell provides server selection and HTTP(S) external browsing.
+
+## Security
+
+The window enables context isolation, sandbox and web security, and disables Node integration
+and webviews. There is no remote module. Only the selected origin is proxied with Chromium's
+cookie-aware transport. Foreign app-session network requests and cross-origin redirects are
+blocked, including WebSocket upgrades. Same-origin redirects remain usable. Foreign navigation
+and popup destinations open in the system browser only for HTTP(S); other schemes are refused.
+Only the trusted main frame may invoke the schema-decoded bridge.
+
+Notifications and sanitized clipboard writes are allowed only for the selected app origin.
+Media, clipboard reads and every other permission are denied, including on the chooser.
 
 ## Verify
 
 ```sh
-pnpm --filter @vivid/desktop test
 flock /tmp/vivid-tsc.lock pnpm --filter @vivid/desktop typecheck
-pnpm exec oxlint --type-aware apps/desktop/src apps/desktop/scripts/build.mjs
+pnpm exec oxlint --type-aware apps/desktop/src/main apps/desktop/src/preload apps/desktop/src/shared
+pnpm --filter @vivid/desktop test
 ```
 
-The optional live transport test requires the installed `agent-browser` CLI and a separately
-launched packaged app with an isolated user data directory. Start that app as a named user unit
-with `--remote-debugging-port=9337`, then attach and explicitly select the disposable fixture origin:
-
-```sh
-agent-browser --session vivid-desktop-lane connect 9337
-agent-browser --session vivid-desktop-lane eval 'window.vividDesktop.setServerAddress("http://127.0.0.1:8797")'
-VIVID_DESKTOP_LIVE_TEST=1 pnpm --filter @vivid/desktop test
-```
-
-The test binds only its disposable fixture on 8797, owns cleanup, and checks real HTTP bodies,
-session cookies, redirects, streaming receipts, and WebSocket upgrades. It never uses a database.
-It is skipped by default. Stop only the units you started and close the named browser session.
+The optional transport proof stays skipped unless `VIVID_DESKTOP_LIVE_TEST=1`. It requires an
+already running isolated desktop app, attached to the installed browser CLI as
+`vivid-desktop-lane`, and selected fixture origin `http://127.0.0.1:8797`. The test owns a disposable
+HTTP listener on that port and checks cookies, same-origin redirects, streaming and WebSockets.
+It never uses an application database.
