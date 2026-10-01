@@ -3,6 +3,7 @@ import {
   ActionTarget,
   ConnectionRequestMessage,
   ConnectionTool,
+  ConnectionState,
   InvalidRequest,
   ProposedAction,
   ToolOutcome,
@@ -26,7 +27,7 @@ import {
 } from './executor.ts'
 import { executorFailure } from './errors.ts'
 import { ConnectionStore } from './store.ts'
-import type { ConnectionRecord } from './records.ts'
+import { stateOf, type ConnectionRecord } from './records.ts'
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
 
@@ -187,7 +188,10 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
   if (Option.isNone(found))
     return ToolOutcome.cases.Rejected.make({ message: 'This Connection is not available to you.' })
   const row = found.value
-  if (row.status !== 'ready')
+  const state = yield* stateOf(row)
+  if (ConnectionState.guards.Failed(state))
+    return ToolOutcome.cases.Rejected.make({ message: state.reason })
+  if (ConnectionState.guards.NeedsAuthorization(state))
     return ToolOutcome.cases.ConnectionNotReady.make({
       service: row.service,
       serviceName: row.serviceName,
@@ -253,7 +257,10 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     const actor: Actor = { person: input.person, workspace, by: 'vivid', threadId: Option.none() }
     const store = yield* ConnectionStore
     const row = yield* store.get(actor, input.target.connectionId)
-    if (row.status !== 'ready')
+    const state = yield* stateOf(row)
+    if (ConnectionState.guards.Failed(state))
+      return ActionOutcome.cases.Failed.make({ reason: state.reason })
+    if (ConnectionState.guards.NeedsAuthorization(state))
       return ActionOutcome.cases.Failed.make({ reason: 'This Connection needs authorization.' })
     const tool = (yield* store.tools(actor, row)).find((entry) => entry.name === input.target.tool)
     if (tool === undefined || (row.companyId !== null && tool.effect !== 'read'))

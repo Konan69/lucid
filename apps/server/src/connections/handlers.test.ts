@@ -3,6 +3,7 @@ import { Effect, Ref } from 'effect'
 import {
   ConnectionId,
   Forbidden,
+  ServiceUnavailable,
   Person,
   PersonId,
   SessionId,
@@ -13,7 +14,13 @@ import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { connectionHandlers, connectionRunner } from './handlers.ts'
 import { ConnectionStore } from './store.ts'
-import { ExecutorCallOutcome, ExecutorRequestId } from './executor.ts'
+import {
+  Executor,
+  ExecutorAccessDenied,
+  ExecutorCallOutcome,
+  ExecutorRequestId,
+  ExecutorResourceMissing,
+} from './executor.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId, toolRequest } from './testing.ts'
 
 const personAuth = AuthState.Person({
@@ -185,6 +192,83 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
           ExecutorCallOutcome.cases.Completed.make({ value: { ok: true } }),
         )
       }),
+    )
+    it.effect(
+      'persists deleted provider resources as failed and propagates installation authority failures',
+      () =>
+        Effect.gen(function* () {
+          const { ownerActor, threadId } = yield* fixture()
+          const store = yield* ConnectionStore
+          const probe = yield* ConnectionProbe
+          yield* Ref.set(probe.decision, 'Allowed')
+          const step = yield* store.begin(ownerActor, {
+            service: serviceId,
+            label: 'Deleted resource',
+            shared: false,
+          })
+          const auth = AuthState.Vivid({
+            person: ownerActor.person,
+            workspace: ownerActor.workspace,
+            threadId,
+          })
+          const executor = yield* Executor
+          const missing = Executor.of({
+            ...executor,
+            call: Effect.fn('Executor.Test.missing')(() =>
+              Effect.fail(
+                ExecutorResourceMissing.make({
+                  service: 'connections',
+                  tool: 'read',
+                  resource: 'App',
+                }),
+              ),
+            ),
+          })
+          const outcome = yield* connectionHandlers
+            .UseTool(toolRequest(step.connection.id, 'read'))
+            .pipe(
+              Effect.provideService(AuthContext, auth),
+              Effect.provideService(Executor, missing),
+            )
+          expect(outcome._tag).toBe('Rejected')
+          expect((yield* store.get(ownerActor, step.connection.id)).status).toBe('failed')
+          const repeated = yield* connectionHandlers
+            .UseTool(toolRequest(step.connection.id, 'read'))
+            .pipe(Effect.provideService(AuthContext, auth))
+          expect(repeated).toMatchObject({ message: 'The saved app no longer exists.' })
+          const approved = yield* connectionRunner({
+            person: ownerActor.person,
+            workspace: ownerActor.workspace,
+            target: ActionTarget.cases.Connection.make({
+              connectionId: step.connection.id,
+              account: 'Deleted resource',
+              tool: 'read',
+              input: {},
+            }),
+          })
+          expect(approved).toMatchObject({ reason: 'The saved app no longer exists.' })
+
+          const ready = yield* store.begin(ownerActor, {
+            service: serviceId,
+            label: 'Misconfigured installation',
+            shared: false,
+          })
+          const denied = Executor.of({
+            ...executor,
+            call: Effect.fn('Executor.Test.denied')(() =>
+              Effect.fail(ExecutorAccessDenied.make({ service: 'connections', tool: 'read' })),
+            ),
+          })
+          const failure = yield* connectionHandlers
+            .UseTool(toolRequest(ready.connection.id, 'read'))
+            .pipe(
+              Effect.provideService(AuthContext, auth),
+              Effect.provideService(Executor, denied),
+              Effect.flip,
+            )
+          expect(failure).toBeInstanceOf(ServiceUnavailable)
+          expect((yield* store.get(ownerActor, ready.connection.id)).status).toBe('ready')
+        }),
     )
     it.effect(
       'resumes provider consent only after Vivid allows it and reports uncertain execution',

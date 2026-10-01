@@ -1,7 +1,12 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { Effect, Redacted, Ref } from 'effect'
-import * as TestClock from 'effect/testing/TestClock'
-import { AuditEvent, Forbidden, NotFound, ServiceUnavailable } from '@vivid/contracts'
+import {
+  AuditEvent,
+  ConnectionStep,
+  Forbidden,
+  NotFound,
+  ServiceUnavailable,
+} from '@vivid/contracts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { Executor } from './executor.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
@@ -63,26 +68,6 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           AuditEvent.cases.ConnectionAdded.make({ service: 'Records', shared: true }),
           AuditEvent.cases.ConnectionRemoved.make({ service: 'Records', shared: true }),
         ])
-      }),
-    )
-    it.effect('reuses the catalog and account tool inventory across reloads', () =>
-      Effect.gen(function* () {
-        const { ownerActor } = yield* fixture()
-        const store = yield* ConnectionStore
-        const probe = yield* ConnectionProbe
-        const step = yield* store.begin(ownerActor, {
-          service: serviceId,
-          label: 'Cache account',
-          shared: false,
-        })
-        const before = yield* Ref.get(probe.catalogs)
-        yield* store.list(ownerActor)
-        yield* store.list(ownerActor)
-        expect(yield* Ref.get(probe.catalogs)).toBe(before)
-        const discoveryBefore = yield* Ref.get(probe.discoveries)
-        yield* store.tools(yield* store.get(ownerActor, step.connection.id))
-        yield* store.tools(yield* store.get(ownerActor, step.connection.id))
-        expect(yield* Ref.get(probe.discoveries)).toBe(discoveryBefore + 1)
       }),
     )
     it.effect('returns stored accounts while the Executor catalog is unavailable', () =>
@@ -160,6 +145,8 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           shared: false,
         })
         expect(step._tag).toBe('EnterKey')
+        if (ConnectionStep.guards.EnterKey(step))
+          expect(step.fields).toEqual([{ name: 'key', label: 'Key' }])
         const connection = yield* store.complete(ownerActor, {
           id: step.connection.id,
           fields: { key: Redacted.make('credential-never-stored') },
@@ -169,23 +156,6 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           'credential-never-stored',
         )
         yield* Ref.set(probe.step, 'Done')
-      }),
-    )
-    it.effect('expires account tool metadata after five minutes on a controllable clock', () =>
-      Effect.gen(function* () {
-        const { ownerActor } = yield* fixture()
-        const store = yield* ConnectionStore
-        const probe = yield* ConnectionProbe
-        const step = yield* store.begin(ownerActor, {
-          service: serviceId,
-          label: 'Expiring tools',
-          shared: false,
-        })
-        const before = yield* Ref.get(probe.discoveries)
-        yield* store.tools(yield* store.get(ownerActor, step.connection.id))
-        yield* TestClock.adjust('6 minutes')
-        yield* store.tools(yield* store.get(ownerActor, step.connection.id))
-        expect(yield* Ref.get(probe.discoveries)).toBe(before + 2)
       }),
     )
   })

@@ -1,0 +1,624 @@
+import * as NodeHttp from 'node:http'
+import { NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
+import { describe, expect, it } from '@effect/vitest'
+import { ConnectionId, ServiceId, ServiceUnavailable } from '@vivid/contracts'
+import { ConfigProvider, Effect, Layer, Ref, Schema } from 'effect'
+import * as TestClock from 'effect/testing/TestClock'
+import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
+import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
+import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
+import * as NetAddress from 'effect/unstable/net/NetAddress'
+import {
+  Executor,
+  ExecutorAppId,
+  ExecutorCallOutcome,
+  ExecutorResumeOutcome,
+  ExecutorOwnerId,
+  ExecutorProfileId,
+  ExecutorReferences,
+  ExecutorRequestId,
+  ExecutorCopyRetained,
+  ExecutorStep,
+  executorLayer,
+} from './executor.ts'
+import { executorFailure } from './errors.ts'
+
+const service = ServiceId.make('test/service')
+const references = ExecutorReferences.cases.Public.make({
+  service,
+  app: ExecutorAppId.make('app'),
+  profile: ExecutorProfileId.make('profile'),
+  owner: ExecutorOwnerId.make('p-owner'),
+})
+const Fault = Schema.TaggedUnion({
+  Reset: {},
+  Reply: { status: Schema.Int, body: Schema.Json },
+})
+type Fault = typeof Fault.Type
+const reply = (status: number, body: typeof Schema.Json.Type) =>
+  Fault.cases.Reply.make({ status, body })
+const defaultCatalog = [
+  {
+    id: service,
+    kind: 'mcp',
+    name: 'Test',
+    description: 'Test service',
+    connectUrl: 'https://example.test',
+    auth: { kind: 'none' },
+  },
+  { kind: 'future-kind' },
+]
+const page = {
+  items: [{ name: 'read', description: 'Read records', inputSchema: {}, readOnly: true }],
+  deployment: 'deployment',
+  profileRevision: 1,
+}
+const profile = { id: 'profile', status: 'ready', failure: null }
+const app = { id: 'copy', requirements: { accounts: {} } }
+const template = { id: 'template', requirements: { accounts: {} } }
+const Json = Schema.decodeUnknownEffect(Schema.Json)
+const WireError = Schema.TaggedUnion({
+  FixtureRouteMissing: {},
+  ToolBlocked: {},
+  ToolApprovalNotFound: {},
+  InputInvalid: {},
+  AppNotFound: {},
+  ProfileNotFound: {},
+  DeploymentNotFound: {},
+  AccountNotFound: {},
+  NewInputRefusal: { message: Schema.String },
+})
+const Begin = Schema.Struct({ owner: Schema.String, name: Schema.String })
+const Resume = Schema.Struct({ owner: Schema.String, requestId: Schema.String })
+const decodeBegin = Schema.decodeUnknownEffect(Begin)
+const decodeResume = Schema.decodeUnknownEffect(Resume)
+
+/** Scoped loopback HTTP exercises the actual client, decoders and lost-response behavior. The
+ * route table controls only the remote protocol; Executor is always its production Layer.
+ */
+const fixture = Effect.fn('ExecutorHttpTest.fixture')(function* () {
+  const responses = yield* Ref.make(new Map<string, Fault>())
+  const requests = yield* Ref.make<
+    readonly { path: string; search: string; body: typeof Schema.Json.Type }[]
+  >([])
+  const copies = yield* Ref.make<readonly (typeof Begin.Type)[]>([])
+  const copied = yield* Ref.make(false)
+  const imported = yield* Ref.make(false)
+  const paginated = yield* Ref.make(false)
+  const server = yield* NodeHttpServer.make(() => NodeHttp.createServer(), {
+    host: '127.0.0.1',
+    port: 0,
+  })
+  const handler = Effect.fn('ExecutorHttpTest.handler')(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest
+    const url = new URL(request.url, 'http://fixture.test')
+    const body =
+      request.method === 'GET' || request.method === 'DELETE'
+        ? null
+        : yield* request.json.pipe(Effect.flatMap(Json))
+    const path = `${request.method} ${url.pathname}`
+    yield* Ref.update(requests, (items) => [...items, { path, search: url.search, body }])
+    if (path === 'POST /v1/apps/copies') {
+      const input = yield* decodeBegin(body)
+      yield* Ref.update(copies, (items) => [...items, input])
+      yield* Ref.set(copied, true)
+    }
+    if (path === 'POST /dashboard/api/catalog/import') yield* Ref.set(imported, true)
+    if (path === 'POST /v1/tools/resume') {
+      const resume = yield* decodeResume(body)
+      if (resume.owner !== references.owner)
+        return HttpServerResponse.jsonUnsafe(WireError.cases.ToolApprovalNotFound.make({}), {
+          status: 404,
+        })
+    }
+    const fault = (yield* Ref.get(responses)).get(path)
+    if (fault !== undefined) return yield* serveFault(request, fault)
+    const response = yield* defaultResponse({ path, url, copied, imported, paginated })
+    return HttpServerResponse.jsonUnsafe(response)
+  })
+  yield* server.serve(handler())
+  if (!NetAddress.isInetAddress(server.address))
+    return yield* Effect.die('Expected a loopback address')
+  const url = yield* Effect.fromResult(NetAddress.toUrl(server.address))
+  const layer = executorLayer.pipe(
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromUnknown({
+          VIVID_EXECUTOR_URL: url.href.replace(/\/$/, ''),
+          VIVID_EXECUTOR_KEY: 'isolated-test-key',
+        }),
+      ),
+    ),
+  )
+  return { responses, requests, copies, copied, imported, paginated, layer }
+})
+
+/** Destroying the real socket after reading the request models acceptance with a lost response. */
+const serveFault = Effect.fn('ExecutorHttpTest.fault')(function* (
+  request: typeof HttpServerRequest.HttpServerRequest.Service,
+  fault: Fault,
+) {
+  return yield* Fault.match(fault, {
+    Reply: ({ status, body }) => Effect.succeed(HttpServerResponse.jsonUnsafe(body, { status })),
+    Reset: () =>
+      Effect.sync(() => NodeHttpServerRequest.toIncomingMessage(request).socket.destroy()).pipe(
+        Effect.andThen(Effect.interruptible(Effect.never)),
+      ),
+  })
+})
+
+/** Minimal protocol resources are stateful so begin retry and compensation have observable effects. */
+const defaultResponse = Effect.fn('ExecutorHttpTest.response')(function* (input: {
+  path: string
+  url: URL
+  copied: Ref.Ref<boolean>
+  imported: Ref.Ref<boolean>
+  paginated: Ref.Ref<boolean>
+}) {
+  switch (input.path) {
+    case 'GET /dashboard/api/catalog':
+      return defaultCatalog
+    case 'GET /v1/tools':
+      if (!(yield* Ref.get(input.paginated))) return page
+      return input.url.searchParams.has('cursor')
+        ? {
+            ...page,
+            items: [
+              { name: 'write', description: 'Write records', inputSchema: {}, readOnly: false },
+            ],
+          }
+        : { ...page, next: 'second' }
+    case 'POST /v1/tools/call':
+    case 'POST /v1/tools/resume':
+      return { status: 'completed', value: { ok: true } }
+    case 'GET /v1/apps':
+      if (input.url.searchParams.get('owner') === 'local')
+        return (yield* Ref.get(input.imported)) ? [template] : []
+      return (yield* Ref.get(input.copied)) ? [app] : []
+    case 'POST /dashboard/api/catalog/import':
+      return template
+    case 'POST /v1/apps/copies':
+      return app
+    case 'DELETE /v1/apps/template':
+      yield* Ref.set(input.imported, false)
+      return {}
+    case 'DELETE /v1/apps/copy':
+      yield* Ref.set(input.copied, false)
+      return {}
+    case 'POST /v1/apps/copy/profiles':
+    case 'POST /v1/apps/copy/profiles/profile/reconcile':
+    case 'POST /v1/apps/app/profiles/profile/reconcile':
+      return profile
+    default:
+      return WireError.cases.FixtureRouteMissing.make({})
+  }
+})
+
+/** A local transport Layer is acquired per claim; no retries, sleeps or installation dependency. */
+describe('Executor HTTP failures', () => {
+  for (const [name, path, fault] of [
+    ['call 5xx', 'POST /v1/tools/call', reply(503, WireError.cases.ToolBlocked.make({}))],
+    ['call connection reset', 'POST /v1/tools/call', Fault.cases.Reset.make({})],
+    ['resume 5xx', 'POST /v1/tools/resume', reply(500, null)],
+    ['resume connection reset', 'POST /v1/tools/resume', Fault.cases.Reset.make({})],
+  ] as const) {
+    it.effect(`${name} preserves OutcomeUnknown`, () =>
+      Effect.gen(function* () {
+        const remote = yield* fixture()
+        yield* Ref.update(remote.responses, (values) => new Map(values).set(path, fault))
+        const outcome = yield* Effect.gen(function* () {
+          const executor = yield* Executor
+          return path === 'POST /v1/tools/call'
+            ? yield* executor.call({ references, tool: 'read', input: {} })
+            : yield* executor.resume({
+                references,
+                requestId: ExecutorRequestId.make('approval'),
+                accept: true,
+              })
+        }).pipe(Effect.provide(remote.layer))
+        expect(outcome._tag).toBe('OutcomeUnknown')
+        expect(
+          (yield* Ref.get(remote.requests)).filter((request) => request.path === path),
+        ).toHaveLength(1)
+      }).pipe(Effect.scoped),
+    )
+  }
+  it.effect('401 propagates unavailable while decoded 403 ToolBlocked refuses the tool', () =>
+    Effect.gen(function* () {
+      const remote = yield* fixture()
+      yield* Effect.gen(function* () {
+        const executor = yield* Executor
+        for (const path of ['POST /v1/tools/call', 'POST /v1/tools/resume']) {
+          yield* Ref.update(remote.responses, (values) =>
+            new Map(values).set(path, reply(401, WireError.cases.ToolBlocked.make({}))),
+          )
+          const failed =
+            path === 'POST /v1/tools/call'
+              ? executor
+                  .call({ references, tool: 'read', input: {} })
+                  .pipe(Effect.mapError(executorFailure), Effect.flip)
+              : executor
+                  .resume({
+                    references,
+                    requestId: ExecutorRequestId.make('approval'),
+                    accept: true,
+                  })
+                  .pipe(Effect.mapError(executorFailure), Effect.flip)
+          expect(yield* failed).toBeInstanceOf(ServiceUnavailable)
+        }
+        yield* Ref.update(remote.responses, (values) =>
+          new Map(values).set(
+            'POST /v1/tools/call',
+            reply(403, WireError.cases.ToolBlocked.make({})),
+          ),
+        )
+        expect((yield* executor.call({ references, tool: 'read', input: {} }))._tag).toBe(
+          'Rejected',
+        )
+      }).pipe(Effect.provide(remote.layer))
+    }).pipe(Effect.scoped),
+  )
+  it.effect('unknown tagged 4xx is a refusal, and resume includes its exact owner', () =>
+    Effect.gen(function* () {
+      const remote = yield* fixture()
+      yield* Ref.update(remote.responses, (values) =>
+        new Map(values).set(
+          'POST /v1/tools/call',
+          reply(422, WireError.cases.NewInputRefusal.make({ message: 'Bearer private-value' })),
+        ),
+      )
+      yield* Effect.gen(function* () {
+        const executor = yield* Executor
+        const outcome = yield* executor.call({ references, tool: 'read', input: {} })
+        expect(outcome._tag).toBe('Rejected')
+        expect(JSON.stringify(outcome)).not.toContain('private-value')
+        yield* executor.resume({
+          references,
+          requestId: ExecutorRequestId.make('approval'),
+          accept: true,
+        })
+      }).pipe(Effect.provide(remote.layer))
+      const request = (yield* Ref.get(remote.requests)).find(
+        (item) => item.path === 'POST /v1/tools/resume',
+      )
+      expect(request).toBeDefined()
+      if (request === undefined) expect.fail('Missing resume request')
+      expect(yield* decodeResume(request.body)).toEqual({
+        owner: references.owner,
+        requestId: 'approval',
+      })
+    }).pipe(Effect.scoped),
+  )
+  for (const [missing, error] of [
+    ['App', WireError.cases.AppNotFound.make({})],
+    ['Profile', WireError.cases.ProfileNotFound.make({})],
+    ['Deployment', WireError.cases.DeploymentNotFound.make({})],
+    ['Account', WireError.cases.AccountNotFound.make({})],
+  ] as const) {
+    it.effect(`${missing} absence permanently fails status and propagates from call`, () =>
+      Effect.gen(function* () {
+        const remote = yield* fixture()
+        yield* Ref.update(remote.responses, (values) =>
+          new Map(values).set('GET /v1/tools', reply(404, error)),
+        )
+        yield* Effect.gen(function* () {
+          const executor = yield* Executor
+          expect((yield* executor.status(references))._tag).toBe('Failed')
+          const failure = yield* executor
+            .call({ references, tool: 'read', input: {} })
+            .pipe(Effect.flip)
+          expect(failure._tag).toBe('ExecutorResourceMissing')
+          expect(failure).toMatchObject({ resource: missing })
+        }).pipe(Effect.provide(remote.layer))
+      }).pipe(Effect.scoped),
+    )
+  }
+})
+
+/** The same production cache serves tools/call and catalog/begin, including structurally equal
+ * references decoded anew from persistence; a controllable clock proves both expiration budgets.
+ */
+it.effect('shares discovery and catalog snapshots and expires them without caching failures', () =>
+  Effect.gen(function* () {
+    const remote = yield* fixture()
+    yield* Effect.gen(function* () {
+      const executor = yield* Executor
+      const entries = yield* executor.catalog()
+      expect(entries.map((entry) => entry.id)).toEqual([service])
+      yield* executor.catalog()
+      yield* executor.tools(references)
+      yield* executor.call({
+        references: ExecutorReferences.cases.Public.make({ ...references }),
+        tool: 'read',
+        input: {},
+      })
+      let requests = yield* Ref.get(remote.requests)
+      expect(requests.filter((request) => request.path === 'GET /v1/tools')).toHaveLength(1)
+      expect(requests.find((request) => request.path === 'GET /v1/tools')).toMatchObject({
+        search: expect.stringContaining('limit=2000'),
+      })
+      expect(
+        requests.filter((request) => request.path === 'GET /dashboard/api/catalog'),
+      ).toHaveLength(1)
+      yield* TestClock.adjust('5 minutes')
+      yield* executor.tools(references)
+      yield* executor.catalog()
+      requests = yield* Ref.get(remote.requests)
+      expect(requests.filter((request) => request.path === 'GET /v1/tools')).toHaveLength(2)
+      expect(
+        requests.filter((request) => request.path === 'GET /dashboard/api/catalog'),
+      ).toHaveLength(1)
+      yield* TestClock.adjust('5 minutes')
+      yield* executor.catalog()
+      expect(
+        (yield* Ref.get(remote.requests)).filter(
+          (request) => request.path === 'GET /dashboard/api/catalog',
+        ),
+      ).toHaveLength(2)
+    }).pipe(Effect.provide(remote.layer))
+  }).pipe(Effect.scoped),
+)
+
+/** The stable Connection id drives both copy naming and the profile's idempotency key. */
+const beginInput = {
+  connectionId: ConnectionId.make('connection'),
+  service,
+  owner: references.owner,
+  subject: 'person',
+  label: 'Account',
+  returnAddress: 'https://vivid.example.test/return/connection',
+}
+for (const failurePath of [
+  'POST /v1/apps/copy/profiles',
+  'POST /v1/apps/copy/profiles/profile/reconcile',
+]) {
+  it.effect(`compensates a copied app when ${failurePath} fails`, () =>
+    Effect.gen(function* () {
+      const remote = yield* fixture()
+      yield* Ref.update(remote.responses, (values) =>
+        new Map(values).set(failurePath, reply(422, WireError.cases.InputInvalid.make({}))),
+      )
+      yield* Effect.gen(function* () {
+        expect((yield* (yield* Executor).begin(beginInput).pipe(Effect.flip))._tag).toBe(
+          'ExecutorRejected',
+        )
+      }).pipe(Effect.provide(remote.layer))
+      expect(yield* Ref.get(remote.copied)).toBe(false)
+    }).pipe(Effect.scoped),
+  )
+}
+it.effect('recovers a lost copy response and uses the Connection id for profile idempotency', () =>
+  Effect.gen(function* () {
+    const remote = yield* fixture()
+    yield* Ref.update(remote.responses, (values) =>
+      new Map(values).set('POST /v1/apps/copies', Fault.cases.Reset.make({})),
+    )
+    yield* Effect.gen(function* () {
+      const executor = yield* Executor
+      expect(ExecutorStep.guards.Done(yield* executor.begin(beginInput))).toBe(true)
+      expect(ExecutorStep.guards.Done(yield* executor.begin(beginInput))).toBe(true)
+    }).pipe(Effect.provide(remote.layer))
+    expect(yield* Ref.get(remote.copies)).toEqual([
+      { owner: references.owner, name: 'Vivid Connection connection' },
+    ])
+    const profiles = (yield* Ref.get(remote.requests)).filter(
+      (request) => request.path === 'POST /v1/apps/copy/profiles',
+    )
+    expect(profiles).toHaveLength(2)
+    for (const request of profiles)
+      expect(request.body).toMatchObject({ idempotencyKey: beginInput.connectionId })
+    expect(
+      (yield* Ref.get(remote.requests)).filter(
+        (request) => request.path === 'GET /dashboard/api/catalog',
+      ),
+    ).toHaveLength(1)
+  }).pipe(Effect.scoped),
+)
+it.effect('retains copied identity if cleanup fails, then converges on the same copy', () =>
+  Effect.gen(function* () {
+    const remote = yield* fixture()
+    yield* Ref.update(remote.responses, (values) =>
+      new Map(values).set('DELETE /v1/apps/template', reply(503, null)),
+    )
+    yield* Effect.gen(function* () {
+      const executor = yield* Executor
+      const failure = yield* executor.begin(beginInput).pipe(Effect.flip)
+      expect(failure).toBeInstanceOf(ExecutorCopyRetained)
+      yield* Ref.update(remote.responses, () => new Map())
+      expect(ExecutorStep.guards.Done(yield* executor.begin(beginInput))).toBe(true)
+    }).pipe(Effect.provide(remote.layer))
+    expect(yield* Ref.get(remote.copies)).toHaveLength(1)
+    expect(yield* Ref.get(remote.imported)).toBe(false)
+  }).pipe(Effect.scoped),
+)
+
+/** Semantic errors can carry nested third-party headers; both dispatch paths sanitize at ingress. */
+for (const value of [
+  { content: [{ text: '401 Authorization: Bearer private-value' }] },
+  'Harmless rejected input. '.repeat(100),
+]) {
+  it.effect(
+    `bounds and sanitizes semantic tool errors: ${JSON.stringify(value).slice(0, 20)}`,
+    () =>
+      Effect.gen(function* () {
+        const remote = yield* fixture()
+        yield* Ref.update(remote.responses, (values) =>
+          new Map(values)
+            .set('POST /v1/tools/call', reply(200, { status: 'completed', value, toolError: true }))
+            .set(
+              'POST /v1/tools/resume',
+              reply(200, { status: 'completed', value, toolError: true }),
+            ),
+        )
+        yield* Effect.gen(function* () {
+          const executor = yield* Executor
+          const called = yield* executor.call({ references, tool: 'read', input: {} })
+          const resumed = yield* executor.resume({
+            references,
+            requestId: ExecutorRequestId.make('approval'),
+            accept: true,
+          })
+          expect(called._tag).toBe('Rejected')
+          expect(resumed._tag).toBe('Failed')
+          expect(JSON.stringify(called)).not.toContain('private-value')
+          expect(JSON.stringify(resumed)).not.toContain('private-value')
+          if (ExecutorCallOutcome.guards.Rejected(called))
+            expect(called.message.length).toBeLessThanOrEqual(400)
+          if (ExecutorResumeOutcome.guards.Failed(resumed))
+            expect(resumed.reason.length).toBeLessThanOrEqual(400)
+        }).pipe(Effect.provide(remote.layer))
+      }).pipe(Effect.scoped),
+  )
+}
+
+/** Catalog auth cannot invent key fields: the imported declaration supplies names and labels. */
+it.effect('passes declared key fields through and compensates a failed authorization start', () =>
+  Effect.gen(function* () {
+    const remote = yield* fixture()
+    const keyApp = {
+      id: 'copy',
+      requirements: {
+        accounts: {
+          primary: {
+            definition: {
+              auth: {
+                key: {
+                  type: 'secrets',
+                  fields: { properties: { apiKey: { title: 'Service key' }, tenant: {} } },
+                },
+              },
+            },
+          },
+        },
+      },
+    }
+    yield* Ref.update(remote.responses, (values) =>
+      new Map(values)
+        .set(
+          'GET /dashboard/api/catalog',
+          reply(200, [
+            {
+              id: service,
+              kind: 'mcp',
+              name: 'Test',
+              description: 'Test service',
+              connectUrl: 'https://example.test',
+              auth: { kind: 'api_key' },
+            },
+          ]),
+        )
+        .set('POST /v1/apps/copies', reply(200, keyApp))
+        .set(
+          'POST /v1/account-connections',
+          reply(200, { id: 'authorization', state: { status: 'pending' } }),
+        ),
+    )
+    yield* Effect.gen(function* () {
+      const executor = yield* Executor
+      const step = yield* executor.begin(beginInput)
+      expect(ExecutorStep.guards.EnterKey(step)).toBe(true)
+      if (ExecutorStep.guards.EnterKey(step))
+        expect(step.fields).toEqual([
+          { name: 'apiKey', label: 'Service key' },
+          { name: 'tenant', label: 'tenant' },
+        ])
+      yield* Ref.update(remote.responses, (values) =>
+        new Map(values).set('POST /v1/account-connections', reply(503, null)),
+      )
+      yield* Ref.set(remote.copied, false)
+      expect((yield* executor.begin(beginInput).pipe(Effect.flip))._tag).toBe(
+        'ExecutorExecutionUncertain',
+      )
+    }).pipe(Effect.provide(remote.layer))
+    expect(yield* Ref.get(remote.copied)).toBe(false)
+  }).pipe(Effect.scoped),
+)
+
+/** The foreign owner check must see the Connection's owner, even when the request id is valid. */
+it.effect('cannot resume an approval belonging to a different owner', () =>
+  Effect.gen(function* () {
+    const remote = yield* fixture()
+    const outcome = yield* Effect.gen(function* () {
+      return yield* (yield* Executor).resume({
+        references: ExecutorReferences.cases.Public.make({
+          ...references,
+          owner: ExecutorOwnerId.make('p-other'),
+        }),
+        requestId: ExecutorRequestId.make('approval'),
+        accept: true,
+      })
+    }).pipe(Effect.provide(remote.layer))
+    expect(outcome._tag).toBe('Failed')
+  }).pipe(Effect.scoped),
+)
+
+/** Pagination pins deployment and revision, then reuses the entire snapshot for dispatch. */
+it.effect('requests maximum pages and caches every discovered page for subsequent calls', () =>
+  Effect.gen(function* () {
+    const remote = yield* fixture()
+    yield* Ref.set(remote.paginated, true)
+    yield* Effect.gen(function* () {
+      const executor = yield* Executor
+      expect((yield* executor.tools(references)).map((tool) => tool.name)).toEqual([
+        'read',
+        'write',
+      ])
+      yield* executor.call({ references, tool: 'write', input: {} })
+    }).pipe(Effect.provide(remote.layer))
+    const requests = yield* Ref.get(remote.requests)
+    const pages = requests.filter((request) => request.path === 'GET /v1/tools')
+    expect(pages).toHaveLength(2)
+    for (const request of pages) expect(request.search).toContain('limit=2000')
+    expect(pages[1]).toMatchObject({
+      search: expect.stringContaining('deployment=deployment&expectedProfileRevision=1'),
+    })
+    expect(requests.find((request) => request.path === 'POST /v1/tools/call')).toMatchObject({
+      body: { deployment: 'deployment', expectedProfileRevision: 1 },
+    })
+  }).pipe(Effect.scoped),
+)
+
+/** A failed cache fill must recover immediately when the installation returns, without a clock wait. */
+it.effect('does not cache catalog or discovery failures', () =>
+  Effect.gen(function* () {
+    const remote = yield* fixture()
+    yield* Ref.update(remote.responses, (values) =>
+      new Map(values)
+        .set('GET /dashboard/api/catalog', reply(503, null))
+        .set('GET /v1/tools', reply(503, null)),
+    )
+    yield* Effect.gen(function* () {
+      const executor = yield* Executor
+      expect((yield* executor.catalog().pipe(Effect.flip))._tag).toBe('ExecutorExecutionUncertain')
+      expect((yield* executor.tools(references).pipe(Effect.flip))._tag).toBe(
+        'ExecutorExecutionUncertain',
+      )
+      yield* Ref.update(remote.responses, () => new Map())
+      expect(yield* executor.catalog()).toHaveLength(1)
+      expect(yield* executor.tools(references)).toHaveLength(1)
+    }).pipe(Effect.provide(remote.layer))
+  }).pipe(Effect.scoped),
+)
+
+/** Compensation failure keeps a located reference rather than abandoning the copied app. */
+it.effect('preserves references when compensation fails and reuses them on retry', () =>
+  Effect.gen(function* () {
+    const remote = yield* fixture()
+    yield* Ref.update(remote.responses, (values) =>
+      new Map(values)
+        .set('POST /v1/apps/copy/profiles', reply(503, null))
+        .set('DELETE /v1/apps/copy', reply(503, null)),
+    )
+    yield* Effect.gen(function* () {
+      const executor = yield* Executor
+      const failure = yield* executor.begin(beginInput).pipe(Effect.flip)
+      expect(failure).toBeInstanceOf(ExecutorCopyRetained)
+      expect(failure).toMatchObject({ references: { app: 'copy', owner: references.owner } })
+      expect(yield* Ref.get(remote.copied)).toBe(true)
+      yield* Ref.update(remote.responses, () => new Map())
+      expect(ExecutorStep.guards.Done(yield* executor.begin(beginInput))).toBe(true)
+    }).pipe(Effect.provide(remote.layer))
+    expect(yield* Ref.get(remote.copies)).toHaveLength(1)
+  }).pipe(Effect.scoped),
+)

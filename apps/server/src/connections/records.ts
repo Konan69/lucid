@@ -72,7 +72,7 @@ export const getRecord = Effect.fn('Connections.getRecord')(function* (
 })
 
 /** Stored failure reasons are required only for failed state; invalid legacy rows fail explicitly. */
-const stateOf = (row: ConnectionRecord) => {
+export const stateOf = (row: ConnectionRecord) => {
   if (row.status === 'ready') return Effect.succeed(ConnectionState.cases.Ready.make({}))
   if (row.status === 'needs-authorization')
     return Effect.succeed(ConnectionState.cases.NeedsAuthorization.make({}))
