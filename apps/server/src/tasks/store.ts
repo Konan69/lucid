@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Array from 'effect/Array'
 import * as Context from 'effect/Context'
@@ -44,6 +44,9 @@ import {
   type StoredTask,
 } from './projection.ts'
 import { followUps, tasks } from './tables.ts'
+
+/** Ten minutes exceeds normal admission; stale claims keep their original fired-at replay identity. */
+export const FOLLOW_UP_ABANDONED_MS = 10 * 60_000
 
 /** Batch dependent rows and identities once, independent of the number of Tasks returned. */
 const makeViews = (database: Database['Service']) => {
@@ -752,16 +755,22 @@ const makePrepareDelivery = (database: Database['Service'], changes: Changes['Se
 
 /** The scheduler has global authority only over due rows selected and locked by PostgreSQL. */
 const makeBackground = (database: Database['Service'], changes: Changes['Service']) => {
-  /** SKIP LOCKED makes concurrent schedulers claim disjoint scheduled rows. */
+  /** SKIP LOCKED claims new rows; unsubmitted running rows are replayed after ten minutes.
+   * Preserve firedAt on recovery: changing it would create a new delivery rather than recover one.
+   */
   const claimDueFollowUps = Effect.fn('TaskStore.claimDueFollowUps')(function* () {
     const now = yield* Clock.currentTimeMillis
+    /** Only a new claim changes replay identity; recovered rows keep the durable original timestamp. */
     const claimRow = (row: {
       readonly task: typeof tasks.$inferSelect
       readonly followUp: typeof followUps.$inferSelect
-    }) => ({
-      task: row.task,
-      followUp: { ...row.followUp, status: 'running', firedAt: now, error: null },
-    })
+    }) => {
+      if (row.followUp.status === 'running') return row
+      return {
+        task: row.task,
+        followUp: { ...row.followUp, status: 'running', firedAt: now, error: null },
+      }
+    }
     const claimId = (row: { readonly followUp: typeof followUps.$inferSelect }) => row.followUp.id
     const rows = yield* database.transaction((tx) =>
       Effect.gen(function* () {
@@ -772,8 +781,14 @@ const makeBackground = (database: Database['Service'], changes: Changes['Service
           .where(
             and(
               eq(tasks.status, 'open'),
-              eq(followUps.status, 'scheduled'),
-              lte(followUps.at, now),
+              or(
+                and(eq(followUps.status, 'scheduled'), lte(followUps.at, now)),
+                and(
+                  eq(followUps.status, 'running'),
+                  isNull(followUps.submissionId),
+                  lt(followUps.firedAt, now - FOLLOW_UP_ABANDONED_MS),
+                ),
+              ),
             ),
           )
           .orderBy(followUps.at)
@@ -782,7 +797,7 @@ const makeBackground = (database: Database['Service'], changes: Changes['Service
         yield* tx
           .update(followUps)
           .set({ status: 'running', firedAt: now, error: null })
-          .where(inArray(followUps.id, due.map(claimId)))
+          .where(and(inArray(followUps.id, due.map(claimId)), eq(followUps.status, 'scheduled')))
         return due.map(claimRow)
       }),
     )

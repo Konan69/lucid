@@ -1,6 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { eq, inArray } from 'drizzle-orm'
 import { describe, expect, layer } from '@effect/vitest'
+import * as TestClock from 'effect/testing/TestClock'
 import { Clock, Context, Deferred, Effect, Fiber, Layer, Option, Ref, Stream } from 'effect'
 import {
   Assignee,
@@ -33,7 +34,7 @@ import { Conversation, StoredRunOrigin, type Delivery } from '../threads/convers
 import { threadStoreLayer } from '../threads/store.ts'
 import { threadParticipants, threads } from '../threads/tables.ts'
 import { FollowUps, followUpsLayer } from './followups.ts'
-import { TaskStore, taskStoreLayer } from './store.ts'
+import { TaskStore, taskStoreLayer, FOLLOW_UP_ABANDONED_MS } from './store.ts'
 import { notifications, tasks } from './tables.ts'
 
 class Receipts extends Context.Service<Receipts, Ref.Ref<ReadonlyArray<Delivery>>>()(
@@ -637,6 +638,40 @@ describe.skipIf(!testDatabaseConfigured)('workspace Tasks and notifications', ()
           )
           expect(without.followUps).toHaveLength(0)
           expect(without.nextFollowUpAt).toBeNull()
+        }),
+    )
+
+    it.effect(
+      'recovers abandoned follow-ups after ten minutes using their original delivery key',
+      () =>
+        Effect.gen(function* () {
+          const { owner } = yield* fixture()
+          const store = yield* TaskStore
+          const service = yield* FollowUps
+          yield* TestClock.setTime(1000)
+          const task = yield* store.create(owner, { title: 'Recover claimed work' })
+          const followUp = yield* store.addFollowUp(owner, task.id, { at: 1000 })
+          const claims = yield* store.claimDueFollowUps()
+          const claim = yield* returned(
+            claims.filter((item) => item.followUp.id === followUp.id),
+            'claim',
+          )
+          expect(claim.followUp.firedAt).toBe(1000)
+          const receipts = yield* Receipts
+          yield* Ref.set(receipts, [])
+          yield* TestClock.setTime(1000 + FOLLOW_UP_ABANDONED_MS)
+          yield* service.runDue()
+          expect(yield* Ref.get(receipts)).toEqual([])
+          yield* TestClock.setTime(1001 + FOLLOW_UP_ABANDONED_MS)
+          yield* service.runDue()
+          yield* service.runDue()
+          expect(yield* Ref.get(receipts)).toMatchObject([
+            { idempotencyKey: `${followUp.id}:1000`, personId: owner.person.id },
+          ])
+          expect(yield* store.getFollowUp(owner, followUp.id)).toMatchObject({
+            status: 'fired',
+            firedAt: 1001 + FOLLOW_UP_ABANDONED_MS,
+          })
         }),
     )
 
