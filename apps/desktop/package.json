@@ -14,7 +14,8 @@
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit",
     "lint": "oxlint --type-aware src",
     "test": "vitest run",
-    "package": "pnpm build && electron-builder"
+    "package": "pnpm dist",
+    "dist": "pnpm build && electron-builder"
   },
   "exports": {
     "./bridge": "./src/shared/bridge.ts"

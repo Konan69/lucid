@@ -1,13 +1,12 @@
-# Packaging config only. Producing or signing installers is outside this lane.
-
-appId: app.vivid.desktop
+appId: com.vivid.app
 productName: Vivid
 directories:
   output: release
   buildResources: build
 
 files:
-  - dist/**
+  - dist/main/**
+  - dist/preload/**
   - package.json
 
 asar: true
@@ -19,16 +18,16 @@ protocols:
 
 extraResources:
   # Shared design tokens remain the only source for native window colors.
-  - from: ../../packages/design/tokens/src/tokens.css
+  - from: dist/tokens.css
     to: design-tokens/tokens.css
-  # Production renderer: run `pnpm --filter @vivid/web build` first.
-  - from: ../../apps/web/dist
+  # Build stages one complete renderer snapshot alongside the shell bundles.
+  - from: dist/renderer
     to: web/dist
 
 linux:
+  executableName: vivid
   target:
     - AppImage
-    - deb
   category: Utility
   maintainer: Vivid
 
