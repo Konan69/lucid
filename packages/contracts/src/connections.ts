@@ -64,9 +64,7 @@ export const ConnectionListResponse = Schema.Struct({
   services: Schema.Array(Service),
   connections: Schema.Array(Connection),
 })
-export interface ConnectionListResponse extends Schema.Schema.Type<
-  typeof ConnectionListResponse
-> {}
+export interface ConnectionListResponse extends Schema.Schema.Type<typeof ConnectionListResponse> {}
 
 /** Starting a Connection. Sharing one with the Company takes an admin. */
 export const BeginConnectionRequest = Schema.Struct({
@@ -74,16 +72,18 @@ export const BeginConnectionRequest = Schema.Struct({
   label: Schema.String.check(Schema.isMaxLength(40)),
   shared: Schema.Boolean,
 })
-export interface BeginConnectionRequest extends Schema.Schema.Type<
-  typeof BeginConnectionRequest
-> {}
+export interface BeginConnectionRequest extends Schema.Schema.Type<typeof BeginConnectionRequest> {}
 
 /** What the client must do next to finish authorizing. */
 export const ConnectionStep = Schema.TaggedUnion({
   /** Open this address; the provider returns the Person to Vivid when they are done. */
   OpenSignIn: { connection: Connection, address: Schema.String },
   /** Collect these fields in a masked form and send them with `CompleteConnection`. */
-  EnterKey: { connection: Connection },
+  /** The fields this account asks for, which only the service knows once the Connection began. */
+  EnterKey: {
+    connection: Connection,
+    fields: Schema.Array(Schema.Struct({ name: Schema.String, label: Schema.String })),
+  },
   Done: { connection: Connection },
 })
 export type ConnectionStep = typeof ConnectionStep.Type
@@ -178,6 +178,4 @@ export const OfferConnectionRequest = Schema.Struct({
   service: ServiceId,
   reason: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(400)),
 })
-export interface OfferConnectionRequest extends Schema.Schema.Type<
-  typeof OfferConnectionRequest
-> {}
+export interface OfferConnectionRequest extends Schema.Schema.Type<typeof OfferConnectionRequest> {}

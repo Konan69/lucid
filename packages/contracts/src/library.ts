@@ -2,9 +2,9 @@ import { Schema } from 'effect'
 import { LibraryFolderId, LibraryItemId } from './identity.js'
 
 /**
- * Which shelf something is on. `Mine` is the Person's own, in this workspace. `Company` is the
- * shelf every Member reads and Vivid searches in every Member's Threads. A personal space has only
- * `Mine`.
+ * Which shelf something is on. `Mine` is the Person's own and follows them into every workspace.
+ * `Company` is the shelf every Member reads and Vivid searches in every Member's Threads. A
+ * personal space has only `Mine`.
  */
 export const LibraryShelf = Schema.Literals(['Mine', 'Company'] as const)
 export type LibraryShelf = typeof LibraryShelf.Type
