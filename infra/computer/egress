@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+# This runs only in a disposable NET_ADMIN setup container sharing the Computer's network namespace.
+# The Computer itself never gains firewall authority. Rules inspect the actual packet destination,
+# so DNS rebinding, redirects, shell tools and manual browser navigation share the same protection.
+iptables -P OUTPUT DROP
+iptables -F OUTPUT
+iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+# Desktop control ports are intentionally reachable within the Computer; no other loopback service is.
+iptables -A OUTPUT -o lo -p tcp -m multiport --dports 5900,6080,9222 -j ACCEPT
+for range in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 \
+  172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.88.99.0/24 192.168.0.0/16 \
+  198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4; do
+  iptables -A OUTPUT -d "$range" -j REJECT
+done
+iptables -A OUTPUT -j ACCEPT
+# Local provider deliberately uses IPv4 only: no IPv6 transition or mapped-address bypass.
+ip6tables -P OUTPUT DROP
+ip6tables -F OUTPUT
+ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
