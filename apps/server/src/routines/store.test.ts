@@ -12,6 +12,7 @@ import * as Schema from 'effect/Schema'
 import * as TestClock from 'effect/testing/TestClock'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import {
+  Conflict,
   Company,
   CompanyId,
   DatabaseFailure,
@@ -26,18 +27,25 @@ import {
   RoutineTrigger,
   RuntimeUnavailable,
   RunId,
+  SessionId,
+  ThreadId,
   Workspace,
 } from '@vivid/contracts'
-import type { Actor } from '../auth/access.ts'
+import { companyColumnOf, type Actor } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database, decodeStored, returned } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { silentChangesLayer } from '../live/changes.ts'
 import { Conversation, StoredRunOrigin, type Delivery } from '../threads/conversation.ts'
-import { threadStoreLayer } from '../threads/store.ts'
-import { runs } from '../threads/tables.ts'
-import { routines } from './tables.ts'
+import { ThreadStore, threadStoreLayer } from '../threads/store.ts'
+import { runs, threads } from '../threads/tables.ts'
+import { notifications } from '../tasks/tables.ts'
+import { notifierLayer } from '../notifications/notifier.ts'
+import { AuthContext, AuthState } from '@vivid/contracts/auth'
+import { RoutineInvocation, RoutineThreadUnavailable } from './attempts.ts'
+import { routineHandlers } from './handlers.ts'
+import { occurrences, routines } from './tables.ts'
 import { RoutineStore, RoutineMissing, RoutineWebhookRequired, routineStoreLayer } from './store.ts'
 import { RoutineScheduler, routineSchedulerServiceLayer } from './scheduler.ts'
 import { routineWebhookRoutes } from './webhook.ts'
@@ -49,6 +57,12 @@ class Deliveries extends Context.Service<Deliveries, Ref.Ref<ReadonlyArray<Deliv
   'test/RoutineDeliveries',
 ) {}
 
+/** Tests may fail the next admission before a Run exists, then retry through the same HTTP route. */
+class DeliveryFailure extends Context.Service<
+  DeliveryFailure,
+  Ref.Ref<Option.Option<RuntimeUnavailable>>
+>()('test/RoutineDeliveryFailure') {}
+
 const decodePersonSummary = decodeStored(PersonSummary, 'Test Person')
 const encodeOrigin = Schema.encodeSync(StoredRunOrigin)
 
@@ -57,6 +71,7 @@ const recordedConversationLayer = Layer.effectContext(
   Effect.gen(function* () {
     const database = yield* Database
     const delivered = yield* Ref.make<ReadonlyArray<Delivery>>([])
+    const failure = yield* Ref.make<Option.Option<RuntimeUnavailable>>(Option.none())
     const conversation = Conversation.of({
       /** Routine tests never use the gateway's receipt path; a call there must fail visibly. */
       admit: Effect.fn('Test.RoutineConversation.admit')(function* () {
@@ -66,7 +81,14 @@ const recordedConversationLayer = Layer.effectContext(
       }),
       /** A Run exists durably before delivery returns, just as the production authority promises. */
       deliver: Effect.fn('Test.RoutineConversation.deliver')(function* (delivery) {
-        const id = RunId.make(NodeCrypto.randomUUID())
+        const failed = yield* Ref.getAndSet(failure, Option.none())
+        if (Option.isSome(failed)) return yield* Effect.fail(failed.value)
+        // The test authority honours Conversation's per-Thread idempotency contract in PostgreSQL.
+        const id = RunId.make(
+          NodeCrypto.createHash('sha256')
+            .update(JSON.stringify([delivery.threadId, delivery.idempotencyKey]))
+            .digest('hex'),
+        )
         const now = yield* Clock.currentTimeMillis
         if (!StoredRunOrigin.guards.Routine(delivery.origin)) {
           return yield* Effect.fail(
@@ -80,16 +102,20 @@ const recordedConversationLayer = Layer.effectContext(
             .where(eq(personTable.id, delivery.personId)),
         )
         const person = yield* decodePersonSummary(yield* returned(people, 'Test Person'))
-        yield* database.run(
-          database.insert(runs).values({
-            id,
-            threadId: delivery.threadId,
-            personId: delivery.personId,
-            origin: encodeOrigin(delivery.origin),
-            state: 'working',
-            startedAt: now,
-            finishedAt: null,
-          }),
+        const inserted = yield* database.run(
+          database
+            .insert(runs)
+            .values({
+              id,
+              threadId: delivery.threadId,
+              personId: delivery.personId,
+              origin: encodeOrigin(delivery.origin),
+              state: 'working',
+              startedAt: now,
+              finishedAt: null,
+            })
+            .onConflictDoNothing({ target: runs.id })
+            .returning({ id: runs.id }),
         )
         const stored = Run.make({
           id,
@@ -101,11 +127,14 @@ const recordedConversationLayer = Layer.effectContext(
           state: RunState.cases.Working.make({}),
           startedAt: now,
         })
-        yield* Ref.update(delivered, (previous) => [...previous, delivery])
+        if (inserted.length > 0) yield* Ref.update(delivered, (previous) => [...previous, delivery])
         return stored
       }),
     })
-    return Context.make(Conversation, conversation).pipe(Context.add(Deliveries, delivered))
+    return Context.make(Conversation, conversation).pipe(
+      Context.add(Deliveries, delivered),
+      Context.add(DeliveryFailure, failure),
+    )
   }),
 )
 
@@ -113,7 +142,7 @@ const storesLayer = Layer.mergeAll(routineStoreLayer, threadStoreLayer).pipe(
   Layer.provideMerge(testDatabaseLayer),
   Layer.provide(testConfigLayer),
 )
-const authoritiesLayer = recordedConversationLayer.pipe(
+const authoritiesLayer = Layer.mergeAll(recordedConversationLayer, notifierLayer).pipe(
   Layer.provideMerge(storesLayer),
   Layer.provideMerge(silentChangesLayer),
 )
@@ -189,6 +218,7 @@ const fixture = Effect.fn('Test.Routines.fixture')(function* () {
   if (owner === undefined || colleague === undefined || other === undefined)
     return yield* Effect.fail(new DatabaseFailure({ message: 'Test People are missing' }))
   yield* Ref.set(yield* Deliveries, [])
+  yield* Ref.set(yield* DeliveryFailure, Option.none())
   return {
     owner,
     colleague,
@@ -216,24 +246,41 @@ const client = Effect.fn('Test.Routines.client')(function* () {
 })
 
 /** The only Promise seam is the framework's in-process Web handler, with a real Request body. */
-const post = Effect.fn('Test.Routines.post')(function* (input: {
+interface WebhookInput {
   readonly web: Effect.Success<ReturnType<typeof client>>
   readonly id: RoutineId
   readonly key: Redacted.Redacted
   readonly body: string
-}) {
+}
+
+/** In-process requests exercise the exported route without introducing a network server. */
+const sendWebhook = Effect.fn('Test.Routines.sendWebhook')(function* (
+  input: WebhookInput,
+  headers: Readonly<Record<string, string>>,
+) {
   return yield* Effect.tryPromise({
     try: () =>
       input.web.handler(
         new Request(`http://routines.test/api/hooks/routines/${input.id}`, {
           method: 'POST',
-          headers: { authorization: `Bearer ${Redacted.value(input.key)}` },
+          headers,
           body: input.body,
         }),
       ),
     catch: (cause) => new Error('Webhook HTTP adapter failed', { cause }),
   })
 })
+
+/** Unkeyed callers deliberately retain the existing fresh-occurrence behavior. */
+const post = (input: WebhookInput) =>
+  sendWebhook(input, { authorization: `Bearer ${Redacted.value(input.key)}` })
+
+/** A retry supplies the same HTTP key even if its payload changes. */
+const postKeyed = (input: WebhookInput, key: string) =>
+  sendWebhook(input, {
+    authorization: `Bearer ${Redacted.value(input.key)}`,
+    'idempotency-key': key,
+  })
 
 const decodeReceipt = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ occurrenceId: OccurrenceId })),
@@ -246,6 +293,16 @@ const receipt = Effect.fn('Test.Routines.receipt')(function* (response: Response
     catch: (cause) => new Error('Webhook response could not be read', { cause }),
   })
   return yield* decodeReceipt(text)
+})
+
+/** Installs a real conflicting private Thread to exercise ThreadStore.ensure's ownership guard. */
+const obstruct = Effect.fn('Test.Routines.obstruct')(function* (id: RoutineId, actor: Actor) {
+  yield* (yield* ThreadStore).ensure({
+    id: ThreadId.make(`routine-${id}`),
+    title: 'Another Person’s Thread',
+    personId: actor.person.id,
+    companyId: companyColumnOf(actor.workspace),
+  })
 })
 
 const schedule = RoutineTrigger.cases.Schedule.make({ cron: '* * * * *', timezone: 'UTC' })
@@ -493,8 +550,322 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             runs: [{ status: 'failed', finishedAt: 42 }],
           })
         }
+        const snapshots = yield* database.run(
+          database.select().from(occurrences).where(eq(occurrences.id, occurrence.id)),
+        )
+        expect(snapshots).toMatchObject([
+          { status: 'not-admitted', finishedAt: null, output: null, error: null },
+        ])
         return yield* Effect.void
       }),
+    )
+
+    it.effect('lists failed history after a Person deletes the Routine Thread and its Runs', () =>
+      Effect.gen(function* () {
+        const { owner } = yield* fixture()
+        const store = yield* RoutineStore
+        const routine = yield* store.create(owner, {
+          name: 'Deleted history',
+          prompt: 'Do work',
+          trigger: webhook,
+        })
+        const occurrence = yield* (yield* RoutineScheduler).run(owner, routine.id)
+        const database = yield* Database
+        yield* database.run(database.delete(threads).where(eq(threads.id, occurrence.threadId)))
+        expect((yield* store.list(owner))[0]).toMatchObject({
+          runs: [
+            {
+              id: occurrence.id,
+              status: 'failed',
+              finishedAt: occurrence.startedAt,
+              error: 'Its thread was deleted',
+            },
+          ],
+        })
+      }),
+    )
+
+    it.effect('records and notifies failed schedule opening instead of silently advancing it', () =>
+      Effect.gen(function* () {
+        const { owner, colleague } = yield* fixture()
+        const store = yield* RoutineStore
+        yield* TestClock.setTime(0)
+        const routine = yield* store.create(owner, {
+          name: 'Blocked schedule',
+          prompt: 'Do work',
+          trigger: schedule,
+        })
+        yield* obstruct(routine.id, colleague)
+        yield* TestClock.setTime(60_000)
+        expect(yield* (yield* RoutineScheduler).runDue().pipe(Effect.flip)).toBeInstanceOf(
+          RoutineThreadUnavailable,
+        )
+        expect((yield* store.list(owner))[0]).toMatchObject({
+          nextRunAt: 120_000,
+          runs: [{ status: 'failed', finishedAt: 60_000, error: 'Its thread could not be opened' }],
+        })
+        const database = yield* Database
+        const notices = yield* database.run(
+          database.select().from(notifications).where(eq(notifications.personId, owner.person.id)),
+        )
+        expect(notices).toMatchObject([
+          {
+            kind: 'needs-you',
+            title: routine.name,
+            body: 'Its thread could not be opened',
+            conversationId: null,
+          },
+        ])
+        expect(yield* Ref.get(yield* Deliveries)).toEqual([])
+      }),
+    )
+
+    it.effect('returns domain failures for blocked manual and webhook opening', () =>
+      Effect.gen(function* () {
+        const { owner, colleague } = yield* fixture()
+        const store = yield* RoutineStore
+        const routine = yield* store.create(owner, {
+          name: 'Blocked opening',
+          prompt: 'Do work',
+          trigger: webhook,
+        })
+        yield* obstruct(routine.id, colleague)
+        const signedIn = AuthState.Person({
+          person: owner.person,
+          workspace: owner.workspace,
+          sessionId: SessionId.make(NodeCrypto.randomUUID()),
+        })
+        expect(
+          yield* routineHandlers
+            .RunRoutine({ id: routine.id })
+            .pipe(Effect.provideService(AuthContext, signedIn), Effect.flip),
+        ).toBeInstanceOf(Conflict)
+        const issued = yield* store.issueWebhook(owner, routine.id)
+        const web = yield* client()
+        expect((yield* post({ web, id: routine.id, key: issued.key, body: 'Update' })).status).toBe(
+          409,
+        )
+        expect((yield* store.list(owner))[0]).toMatchObject({
+          runs: [
+            { status: 'failed', error: 'Its thread could not be opened' },
+            { status: 'failed', error: 'Its thread could not be opened' },
+          ],
+        })
+        expect(yield* Ref.get(yield* Deliveries)).toEqual([])
+      }),
+    )
+
+    it.effect('does not repeat a failed keyed receipt or its needs-you notice', () =>
+      Effect.gen(function* () {
+        const { owner, colleague } = yield* fixture()
+        const store = yield* RoutineStore
+        const routine = yield* store.create(owner, {
+          name: 'Blocked keyed webhook',
+          prompt: 'Do work',
+          trigger: webhook,
+        })
+        yield* obstruct(routine.id, colleague)
+        const issued = yield* store.issueWebhook(owner, routine.id)
+        const web = yield* client()
+        const input = { web, id: routine.id, key: issued.key, body: 'Update' }
+        const responses = yield* Effect.all(
+          [postKeyed(input, 'blocked-event'), postKeyed(input, 'blocked-event')],
+          { concurrency: 2 },
+        )
+        expect(responses.map((response) => response.status)).toEqual([409, 409])
+        const database = yield* Database
+        expect(
+          yield* database.run(
+            database.select().from(occurrences).where(eq(occurrences.routineId, routine.id)),
+          ),
+        ).toHaveLength(1)
+        expect(
+          yield* database.run(
+            database
+              .select()
+              .from(notifications)
+              .where(eq(notifications.personId, owner.person.id)),
+          ),
+        ).toHaveLength(1)
+        expect(yield* Ref.get(yield* Deliveries)).toEqual([])
+      }),
+    )
+
+    it.effect('recovers a failed keyed admission using the original receipt and delivery key', () =>
+      Effect.gen(function* () {
+        const { owner } = yield* fixture()
+        const store = yield* RoutineStore
+        const routine = yield* store.create(owner, {
+          name: 'Recovering webhook',
+          prompt: 'Do work',
+          trigger: webhook,
+        })
+        const issued = yield* store.issueWebhook(owner, routine.id)
+        const web = yield* client()
+        const input = { web, id: routine.id, key: issued.key, body: 'Update' }
+        yield* Ref.set(
+          yield* DeliveryFailure,
+          Option.some(new RuntimeUnavailable({ message: 'Test admission unavailable' })),
+        )
+        expect((yield* postKeyed(input, 'recovering-event')).status).toBe(503)
+        const database = yield* Database
+        const before = yield* database.run(
+          database.select().from(occurrences).where(eq(occurrences.routineId, routine.id)),
+        )
+        const accepted = yield* postKeyed(input, 'recovering-event')
+        expect(accepted.status).toBe(202)
+        const recovered = yield* receipt(accepted)
+        expect(before).toMatchObject([{ id: recovered.occurrenceId, submissionId: null }])
+        expect((yield* store.list(owner))[0]).toMatchObject({
+          runs: [{ id: recovered.occurrenceId, status: 'running' }],
+        })
+        expect(yield* Ref.get(yield* Deliveries)).toMatchObject([
+          { idempotencyKey: 'recovering-event' },
+        ])
+      }),
+    )
+
+    it.effect('reuses one keyed webhook receipt and delivery across concurrent retries', () =>
+      Effect.gen(function* () {
+        const { owner } = yield* fixture()
+        const store = yield* RoutineStore
+        const routine = yield* store.create(owner, {
+          name: 'Retried webhook',
+          prompt: 'Do work',
+          trigger: webhook,
+        })
+        const issued = yield* store.issueWebhook(owner, routine.id)
+        const web = yield* client()
+        const input = { web, id: routine.id, key: issued.key, body: 'Update' }
+        const responses = yield* Effect.all(
+          [postKeyed(input, 'event-123'), postKeyed(input, 'event-123')],
+          { concurrency: 2 },
+        )
+        expect(responses.map((response) => response.status)).toEqual([202, 202])
+        const receipts = yield* Effect.forEach(responses, receipt)
+        expect(new Set(receipts.map((item) => item.occurrenceId)).size).toBe(1)
+        expect(yield* Ref.get(yield* Deliveries)).toMatchObject([{ idempotencyKey: 'event-123' }])
+        expect((yield* store.list(owner))[0]).toMatchObject({
+          runs: receipts.map((item) => ({ id: item.occurrenceId })).slice(0, 1),
+        })
+        const again = yield* receipt(
+          yield* postKeyed({ ...input, body: 'Different retry payload' }, 'event-123'),
+        )
+        expect(again).toEqual(receipts[0])
+        expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
+        expect((yield* post(input)).status).toBe(202)
+        expect((yield* post(input)).status).toBe(202)
+        expect(yield* Ref.get(yield* Deliveries)).toHaveLength(3)
+        const database = yield* Database
+        yield* database.run(
+          database.delete(threads).where(eq(threads.id, ThreadId.make(`routine-${routine.id}`))),
+        )
+        expect(yield* receipt(yield* postKeyed(input, 'event-123'))).toEqual(again)
+        expect(yield* Ref.get(yield* Deliveries)).toHaveLength(3)
+      }),
+    )
+
+    it.effect(
+      'conceals a webhook after its owner leaves the Company without inserting an Occurrence',
+      () =>
+        Effect.gen(function* () {
+          const { owner } = yield* fixture()
+          const store = yield* RoutineStore
+          const routine = yield* store.create(owner, {
+            name: 'Former Member',
+            prompt: 'Do work',
+            trigger: webhook,
+          })
+          const issued = yield* store.issueWebhook(owner, routine.id)
+          const database = yield* Database
+          yield* database.run(
+            database.delete(membershipTable).where(eq(membershipTable.userId, owner.person.id)),
+          )
+          const web = yield* client()
+          const refused = yield* post({ web, id: routine.id, key: issued.key, body: 'Update' })
+          const missing = yield* post({
+            web,
+            id: RoutineId.make(NodeCrypto.randomUUID()),
+            key: issued.key,
+            body: 'Update',
+          })
+          expect([refused.status, missing.status]).toEqual([404, 404])
+          const bodies = yield* Effect.forEach([refused, missing], (response) =>
+            Effect.promise(() => response.text()),
+          )
+          expect(new Set(bodies).size).toBe(1)
+          expect(
+            yield* database.run(
+              database.select().from(occurrences).where(eq(occurrences.routineId, routine.id)),
+            ),
+          ).toEqual([])
+          expect(yield* Ref.get(yield* Deliveries)).toEqual([])
+        }),
+    )
+
+    it.effect('rechecks Membership when an already authorized webhook is ready for insertion', () =>
+      Effect.gen(function* () {
+        const { owner } = yield* fixture()
+        const store = yield* RoutineStore
+        const routine = yield* store.create(owner, {
+          name: 'Queued former Member',
+          prompt: 'Do work',
+          trigger: webhook,
+        })
+        const issued = yield* store.issueWebhook(owner, routine.id)
+        const authorized = yield* store.authorizeWebhook(routine.id, issued.key)
+        const database = yield* Database
+        yield* database.run(
+          database.delete(membershipTable).where(eq(membershipTable.userId, owner.person.id)),
+        )
+        expect(
+          yield* (yield* RoutineScheduler)
+            .webhook(authorized, 'Update', RoutineInvocation.cases.Fresh.make({}))
+            .pipe(Effect.flip),
+        ).toBeInstanceOf(RoutineMissing)
+        expect(
+          yield* database.run(
+            database.select().from(occurrences).where(eq(occurrences.routineId, routine.id)),
+          ),
+        ).toEqual([])
+        expect(yield* Ref.get(yield* Deliveries)).toEqual([])
+      }),
+    )
+
+    it.effect(
+      'batches recent history while preserving the twelve-occurrence limit per Routine',
+      () =>
+        Effect.gen(function* () {
+          const { owner } = yield* fixture()
+          const store = yield* RoutineStore
+          const database = yield* Database
+          const commitments = yield* Effect.forEach(['First', 'Second'], (name) =>
+            store.create(owner, { name, prompt: 'Do work', trigger: webhook }),
+          )
+          for (const routine of commitments) {
+            const history = Array.from({ length: 13 }, (_, startedAt) => ({
+              id: NodeCrypto.randomUUID(),
+              routineId: routine.id,
+              conversationId: `routine-${routine.id}`,
+              submissionId: null,
+              status: 'not-admitted',
+              startedAt,
+              finishedAt: null,
+              output: null,
+              error: null,
+            }))
+            yield* database.run(database.insert(occurrences).values(history))
+          }
+          const listed = yield* store.list(owner)
+          expect(listed).toHaveLength(2)
+          for (const routine of listed) {
+            expect(routine.runs).toHaveLength(12)
+            expect(routine.runs.map((run) => run.startedAt)).toEqual([
+              12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+            ])
+            expect(routine.runs.every((run) => run.routineId === routine.id)).toBe(true)
+          }
+        }),
     )
 
     it.effect('rejects contradictory persisted trigger columns and invalid schedules', () =>
