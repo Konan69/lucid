@@ -467,6 +467,17 @@ const CompleteConnection = Rpc.make('CompleteConnection', {
   payload: CompleteConnectionRequest,
   success: ConnectionResponse,
 })
+/**
+ * Picking a Connection up where it stopped: the sign-in tab was closed, the key dialog was
+ * cancelled, or the authorization lapsed. It answers with the same next step beginning one does,
+ * for the Connection that already exists, so finishing it never leaves a second account behind.
+ * Only whoever may remove the Connection may resume it.
+ */
+const ResumeConnection = Rpc.make('ResumeConnection', {
+  ...call,
+  payload: { id: ConnectionId },
+  success: ConnectionStep,
+})
 const RemoveConnection = Rpc.make('RemoveConnection', { ...call, payload: { id: ConnectionId } })
 /** Vivid looking for what it can do, limited to what the acting Person may use in this Thread. */
 const FindTools = Rpc.make('FindTools', {
@@ -627,6 +638,7 @@ export const VividRpc = RpcGroup.make(
   FindServices,
   BeginConnection,
   CompleteConnection,
+  ResumeConnection,
   RemoveConnection,
   FindTools,
   UseTool,
