@@ -130,7 +130,10 @@ export const returned = <Row>(rows: ReadonlyArray<Row>, subject: string) => {
  */
 export const decodeStored = <A>(schema: Schema.ConstraintDecoder<A>, subject: string) => {
   const decode = Schema.decodeUnknownEffect(schema)
-  return <Row>(value: Row) =>
+  // This function is the parser the rule asks for: a stored row or JSON column is unknown input
+  // by nature, and nothing downstream of here ever sees it undecoded.
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters
+  return (value: unknown) =>
     decode(value).pipe(
       Effect.mapError(
         () => new DatabaseFailure({ message: `Database returned an invalid ${subject}` }),
