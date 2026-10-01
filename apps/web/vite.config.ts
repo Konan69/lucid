@@ -1,81 +1,26 @@
-import * as NodeURL from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-const runtimeDirectory = NodeURL.fileURLToPath(
-  new URL('../../packages/agent/runtime', import.meta.url),
-)
-
+/**
+ * Development is single-origin: the browser only ever talks to this dev server, which forwards
+ * everything under `/api` to the application server. That one rule carries the product calls, the
+ * live WebSocket, Better Auth, the conversation gateway and the Computer's screen, so cookies are
+ * same-origin and no service address or token is ever compiled into the bundle.
+ *
+ * `xfwd` passes the address the browser used, so the server can hand back stream addresses that
+ * are right for whoever is asking (a phone on the local network reaches this by another name).
+ */
 export default defineConfig(({ mode }) => {
-  const runtimeEnvironment = loadEnv(mode, runtimeDirectory, '')
-  const runtimeToken = runtimeEnvironment.VIVID_RUNTIME_TOKEN
-
-  const api = {
-    '/api/rpc': { target: 'http://127.0.0.1:8787', changeOrigin: true },
-    '/api/ring': { target: 'http://127.0.0.1:8787', changeOrigin: true },
-    '/api/recordings': { target: 'http://127.0.0.1:8787', changeOrigin: true },
-  }
+  const environment = loadEnv(mode, process.cwd(), 'VIVID_')
+  const server = environment.VIVID_SERVER_URL ?? 'http://127.0.0.1:8787'
+  const proxy = { '/api': { target: server, ws: true, xfwd: true } }
 
   return {
     plugins: [react(), tailwindcss()],
-    /**
-     * The phone joins over a Cloudflare tunnel, where the dev server's hundreds of unbundled
-     * modules are painfully slow. `pnpm preview` serves the built bundle instead, with the same
-     * API proxy, so the phone gets one small download.
-     */
     // Two entries: the app, and the lean page the phone loads over the tunnel.
     build: { rollupOptions: { input: { app: 'index.html', phone: 'phone.html' } } },
-    preview: {
-      port: 4178,
-      host: '127.0.0.1',
-      proxy: api,
-      allowedHosts: ['.trycloudflare.com'],
-    },
-    server: {
-      port: 5178,
-      proxy: {
-        '/api/rpc': {
-          target: 'http://127.0.0.1:8787',
-          changeOrigin: true,
-        },
-        '/api/ring': {
-          target: 'http://127.0.0.1:8787',
-          changeOrigin: true,
-        },
-        '/api/recordings': {
-          target: 'http://127.0.0.1:8787',
-          changeOrigin: true,
-        },
-        ...Object.fromEntries(
-          [
-            '/api/library',
-            '/api/routines',
-            '/api/conversations',
-            '/api/tasks',
-            '/api/follow-ups',
-            '/api/notifications',
-          ].map((path) => [
-            path,
-            {
-              target: runtimeEnvironment.VIVID_RUNTIME_URL ?? 'http://127.0.0.1:5173',
-              changeOrigin: true,
-              headers: runtimeToken ? { authorization: `Bearer ${runtimeToken}` } : undefined,
-            },
-          ]),
-        ),
-        '/api/vivid': {
-          target: runtimeEnvironment.VIVID_RUNTIME_URL ?? 'http://127.0.0.1:5173',
-          changeOrigin: true,
-          headers: runtimeToken ? { authorization: `Bearer ${runtimeToken}` } : undefined,
-          rewrite: (path) => path.replace(/^\/api\/vivid/, '/agents/vivid'),
-        },
-        '/api/connectors': {
-          target: runtimeEnvironment.VIVID_RUNTIME_URL ?? 'http://127.0.0.1:5173',
-          changeOrigin: true,
-          headers: runtimeToken ? { authorization: `Bearer ${runtimeToken}` } : undefined,
-        },
-      },
-    },
+    preview: { port: 4178, host: '127.0.0.1', proxy, allowedHosts: ['.trycloudflare.com'] },
+    server: { port: 5178, proxy },
   }
 })
