@@ -1,6 +1,6 @@
 import { Result } from 'effect'
 import { useState, type FormEvent } from 'react'
-import { reload, signIn, signUp } from '../data/account'
+import { createAccount, reload, signIn } from '../data/account'
 import { run } from '../data/runtime'
 import { Button } from '../ui/Button'
 import { Face } from '../ui/Face'
@@ -43,7 +43,7 @@ export function Welcome({ returnTo }: { returnTo: string }) {
     setRefusal(null)
     const request =
       mode === 'create'
-        ? signUp({ name: name.trim(), email: email.trim(), password })
+        ? createAccount({ name: name.trim(), email: email.trim(), password })
         : signIn({ email: email.trim(), password })
     const result = await run(request)
     if (Result.isFailure(result)) {
@@ -67,7 +67,7 @@ export function Welcome({ returnTo }: { returnTo: string }) {
           onSubmit={(event) => {
             void submit(event)
           }}
-          className="mt-8 flex flex-col gap-3 rounded-card bg-surface-3 p-5 smooth-shadow-ring-md"
+          className="mt-8 flex flex-col gap-3 rounded-card bg-surface-3 p-5 smooth-shadow-ring-xs"
         >
           {mode === 'create' && (
             <Field
@@ -151,7 +151,7 @@ function Field({
         onChange={(event) => onChange(event.target.value)}
         className="h-9 rounded-control bg-well px-3 text-body text-ink ring-line transition-surface duration-(--dur-fast) outline-none placeholder:text-ink-4 focus-visible:ring-2 focus-visible:ring-ring"
       />
-      {hint !== undefined && <span className="text-meta font-meta text-ink-4">{hint}</span>}
+      {hint !== undefined && <span className="text-meta font-meta text-ink-3">{hint}</span>}
     </label>
   )
 }

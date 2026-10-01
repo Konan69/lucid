@@ -65,7 +65,7 @@ export function Faces({
           className="-ml-1 ring-2 ring-surface-1 first:ml-0"
         />
       ))}
-      {more > 0 && <span className="ml-1 text-meta font-meta text-ink-4">+{more}</span>}
+      {more > 0 && <span className="ml-1 text-meta font-meta text-ink-3">+{more}</span>}
     </span>
   )
 }

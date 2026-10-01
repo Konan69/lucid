@@ -32,9 +32,11 @@ import {
   ConnectionRequestMessage,
   ConnectionResponse,
   ConnectionStep,
+  FindServicesRequest,
   FindToolsRequest,
   FindToolsResponse,
   OfferConnectionRequest,
+  ServiceCatalog,
   ToolOutcome,
   UseToolRequest,
 } from './connections.js'
@@ -449,6 +451,12 @@ const WatchConnections = Rpc.make('WatchConnections', {
   ...live,
   success: ConnectionListResponse,
 })
+/** A Person looking through the catalog for a service to connect. */
+const FindServices = Rpc.make('FindServices', {
+  ...call,
+  payload: FindServicesRequest,
+  success: ServiceCatalog,
+})
 const BeginConnection = Rpc.make('BeginConnection', {
   ...call,
   payload: BeginConnectionRequest,
@@ -616,6 +624,7 @@ export const VividRpc = RpcGroup.make(
   DeleteLibraryFolder,
   ListConnections,
   WatchConnections,
+  FindServices,
   BeginConnection,
   CompleteConnection,
   RemoveConnection,

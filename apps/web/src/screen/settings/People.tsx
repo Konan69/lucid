@@ -16,7 +16,7 @@ import { Button } from '../../ui/Button'
 import { Copy } from '../../ui/Copy'
 import { Dialog, DialogActions, DialogField } from '../../ui/Dialog'
 import { Segmented } from '../../ui/Segmented'
-import { Empty, Refusal, Row, Section } from './Parts'
+import { Awaiting, Empty, Refusal, Row, Section } from './Parts'
 
 const ROLE_NAME = { owner: 'Owner', admin: 'Admin', member: 'Member' } satisfies Record<
   Role,
@@ -37,7 +37,7 @@ const manages = (role: Role) => role === 'owner' || role === 'admin'
 export function People({ me }: { me: MeResponse }) {
   const people = useLive(live.people)
   if (!Workspace.guards.Company(me.workspace)) return <NoCompany />
-  if (!LiveState.$is('Ready')(people)) return null
+  if (!LiveState.$is('Ready')(people)) return <Awaiting state={people} />
   return (
     <CompanyPeople
       me={me}
@@ -57,7 +57,7 @@ function NoCompany() {
           You are working in your own space. Create a company to share threads, a library and
           connections with the people you work with. Everything you have here stays yours.
         </p>
-        <p className="text-meta font-meta text-ink-4">
+        <p className="text-meta font-meta text-ink-3">
           Use the switcher at the top of the sidebar, then “Create a company”.
         </p>
       </div>
@@ -193,7 +193,7 @@ function MemberRow({
       <div className="min-w-0 flex-1">
         <div className="truncate text-label text-ink">
           {member.person.name}
-          {mine && <span className="text-ink-4"> · you</span>}
+          {mine && <span className="text-ink-3"> · you</span>}
         </div>
         <div className="truncate text-label text-ink-3">{member.email}</div>
       </div>

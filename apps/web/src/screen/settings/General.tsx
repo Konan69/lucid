@@ -7,7 +7,7 @@ import { theme } from '../../data/theme'
 import { Avatar } from '../../ui/Avatar'
 import { Button } from '../../ui/Button'
 import { Segmented } from '../../ui/Segmented'
-import { Row, Section } from './Parts'
+import { Awaiting, Row, Section } from './Parts'
 
 const THEMES = [
   { value: 'system', label: 'System', name: 'Follow the system' },
@@ -47,7 +47,11 @@ export function General({ me }: { me: MeResponse }) {
           </Button>
         </div>
       </Section>
-      {LiveState.$is('Ready')(settings) && <Preferences settings={settings.value} />}
+      {LiveState.$is('Ready')(settings) ? (
+        <Preferences settings={settings.value} />
+      ) : (
+        <Awaiting state={settings} />
+      )}
     </>
   )
 }

@@ -386,7 +386,7 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
 /** The screen's frame before it knows where the Person is working: a title and a body. */
 function LibraryPane({ children }: { children: ReactNode }) {
   return (
-    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge">
+    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0">
       <header className="flex h-(--topbar-h) shrink-0 items-center px-4">
         <h1 className="text-title font-title text-ink">Library</h1>
       </header>
@@ -419,7 +419,7 @@ function LibraryBrowser({
       onDragOver={(event) => event.preventDefault()}
       onDragLeave={uploading.dragLeave}
       onDrop={uploading.drop}
-      className="relative flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge"
+      className="relative flex h-full min-w-0 flex-1 flex-col bg-surface-0"
     >
       <LibraryHeader browser={browser} browsing={browsing} onUpload={uploading.sendAll} />
       <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
@@ -439,7 +439,7 @@ function LibraryBrowser({
           <div>
             <Upload className="mx-auto size-7 text-accent-ink" />
             <p className="mt-2 text-title font-title text-ink">Drop files into {place}</p>
-            <p className="mt-1 text-meta font-meta text-ink-4">
+            <p className="mt-1 text-meta font-meta text-ink-3">
               PDF, Markdown or text, up to 10 MB each
             </p>
           </div>
@@ -824,11 +824,11 @@ function Level({
               <button
                 type="button"
                 onClick={() => onOpenFolder(folder)}
-                className="flex w-full cursor-pointer items-center gap-2.5 rounded-card bg-surface-2 px-3 py-2.5 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) hover:bg-wash-hover hover:smooth-shadow-ring-sm"
+                className="flex w-full cursor-pointer items-center gap-2.5 rounded-card bg-surface-2 px-3 py-2.5 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) hover:bg-wash-hover"
               >
                 <Folder className="size-5 shrink-0 text-ink-3" strokeWidth={1.7} />
                 <span className="min-w-0 flex-1 truncate text-label text-ink">{folder.name}</span>
-                <span className="text-meta font-meta text-ink-4">{folderNote(folder)}</span>
+                <span className="text-meta font-meta text-ink-3">{folderNote(folder)}</span>
               </button>
             </li>
           ))}
@@ -876,7 +876,7 @@ function LevelRow({
         {mark}
       </span>
       <span className="min-w-0 flex-1 truncate text-title text-ink">{name}</span>
-      <span className="text-meta font-meta text-ink-4">{note}</span>
+      <span className="text-meta font-meta text-ink-3">{note}</span>
     </button>
   )
 }
@@ -887,7 +887,7 @@ function ItemTile({ item, onOpen }: { item: LibraryItem; onOpen: () => void }) {
     <button
       type="button"
       onClick={onOpen}
-      className="flex w-full cursor-pointer flex-col overflow-hidden rounded-card bg-surface-2 p-3 text-left smooth-shadow-ring-sm transition-press duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-surface-3 hover:smooth-shadow-ring-md active:scale-98"
+      className="flex w-full cursor-pointer flex-col overflow-hidden rounded-card bg-surface-2 p-3 text-left smooth-shadow-ring-xs transition-press duration-(--dur-fast) hover:bg-surface-3 active:scale-98"
     >
       <span className="flex items-center gap-2">
         <FileText className="size-4 shrink-0 text-ink-3" strokeWidth={1.6} />
@@ -905,7 +905,7 @@ function ItemTile({ item, onOpen }: { item: LibraryItem; onOpen: () => void }) {
           <i className="mt-auto h-1 w-2/3 rounded-full bg-line-1" />
         </span>
       </span>
-      <span className="mt-2 truncate text-meta font-meta text-ink-4">{itemNote(item)}</span>
+      <span className="mt-2 truncate text-meta font-meta text-ink-3">{itemNote(item)}</span>
     </button>
   )
 }
@@ -942,7 +942,7 @@ function ItemDetail({
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-title text-ink">{item.name}</p>
-          <p className="text-meta font-meta text-ink-4">
+          <p className="text-meta font-meta text-ink-3">
             {libraryData.formatBytes(item.size)} · {item.chunkCount} passages
           </p>
         </div>
@@ -995,7 +995,7 @@ function SearchResults({
   onOpen: (result: SearchResult) => void
 }) {
   if (results.length === 0) {
-    return <p className="py-12 text-center text-label text-ink-4">Nothing matches that.</p>
+    return <p className="py-12 text-center text-label text-ink-3">Nothing matches that.</p>
   }
   return (
     <ul>
@@ -1014,7 +1014,7 @@ function SearchResults({
               <span className="mt-1 line-clamp-2 text-label text-ink-3">{result.text}</span>
             </span>
             {result.page !== null && (
-              <span className="text-meta font-meta text-ink-4">Page {result.page}</span>
+              <span className="text-meta font-meta text-ink-3">Page {result.page}</span>
             )}
           </button>
         </li>
@@ -1071,7 +1071,7 @@ function Uploads({
             </span>
             <span
               role={failed ? 'alert' : undefined}
-              className={cn('text-meta font-meta', failed ? 'text-danger' : 'text-ink-4')}
+              className={cn('text-meta font-meta', failed ? 'text-danger' : 'text-ink-3')}
             >
               {uploadNote(row.status)}
             </span>

@@ -57,7 +57,7 @@ export function Thread({
 /** A Thread that is not there, or not this Person's to see. The two look the same on purpose. */
 function Gone() {
   return (
-    <section className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-surface-0 px-6 text-center content-edge">
+    <section className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-surface-0 px-6 text-center">
       <Face size={40} mood="neutral" />
       <h1 className="text-title font-title text-ink">This thread is not here</h1>
       <p className="max-w-sm text-label text-ink-3">
@@ -116,7 +116,7 @@ function Conversation({
   }
 
   return (
-    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge">
+    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0">
       <Header
         thread={thread}
         present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
@@ -190,7 +190,7 @@ function Header({
         </h1>
       </div>
       {typing.length > 0 && (
-        <span className="hidden text-meta font-meta text-ink-4 sm:inline" aria-live="polite">
+        <span className="hidden text-meta font-meta text-ink-3 sm:inline" aria-live="polite">
           {typing.map((seen) => seen.person.name).join(', ')} typing…
         </span>
       )}
@@ -246,13 +246,15 @@ function Messages({
   const empty = Array.isArray(children) && children.length === 0
   return (
     <div
-      className="flex flex-1 flex-col-reverse overflow-y-auto"
+      className="flex flex-1 flex-col-reverse overflow-y-auto px-4 sm:px-6"
       // Reversed column: the browser keeps the view pinned to the newest message by itself, with
       // no scroll effect to run on every streamed token.
     >
-      <ol className="mx-auto flex w-full max-w-(--thread-max-w) flex-col gap-5 px-4 py-5 sm:p-6">
+      {/* The gutter is on the scroller, not the column, so the messages and the composer below
+          them are exactly the same width at every window size. */}
+      <ol className="mx-auto flex w-full max-w-(--thread-max-w) flex-col gap-5 py-5 sm:py-6">
         {!ready && empty && (
-          <li className="py-12 text-center text-label text-ink-4" aria-busy>
+          <li className="py-12 text-center text-label text-ink-3" aria-busy>
             Opening…
           </li>
         )}
@@ -267,7 +269,7 @@ function Messages({
         {working && !streaming && (
           <li className="flex animate-rise-in gap-3" aria-live="polite">
             <Face size={24} mood="thinking" className="mt-1" />
-            <p className="pt-1 text-body text-ink-4">Thinking…</p>
+            <p className="pt-1 text-body text-ink-3">Thinking…</p>
           </li>
         )}
         {failure !== null && (

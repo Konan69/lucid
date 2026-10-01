@@ -1,6 +1,6 @@
 import { VividRpcClient } from '@vivid/client-runtime'
 import type { RpcFailure } from '@vivid/contracts/rpc'
-import { Cause, Data, Effect, Layer, Option, Result, Stream } from 'effect'
+import { Cause, Data, Effect, Layer, Option, Result, Schedule, Stream } from 'effect'
 import type * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import * as Atom from 'effect/unstable/reactivity/Atom'
@@ -177,6 +177,31 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
     }
   }
 
+  /**
+   * A question whose answer depends on something the Person is typing or choosing: a search.
+   *
+   * It is asked again once `argument` has rested on a new value for a moment, and the last answer
+   * stays in the atom while the next one is on its way, so a list being searched never blinks to
+   * empty between keystrokes. A dropped connection asks again; a refusal is the answer.
+   */
+  const ask = <Argument, Value>(
+    argument: Atom.Atom<Argument>,
+    call: (client: Client, argument: Argument) => Effect.Effect<Value, ProductFailure>,
+  ): Atom.Atom<LiveResult<Value>> => {
+    const rested = Atom.debounce(argument, '120 millis')
+    return runtime.atom((get) => {
+      const asked = get(rested)
+      return Effect.gen(function* () {
+        return yield* call(yield* VividRpcClient, asked)
+      }).pipe(
+        Effect.retry({
+          while: (failure) => !FINAL.has(failure._tag),
+          schedule: Schedule.spaced('1500 millis'),
+        }),
+      )
+    })
+  }
+
   /** Runs one program with the client the atoms use, on the same socket. */
   const run = <Value, Failure>(program: Effect.Effect<Value, Failure, VividRpcClient>) =>
     Effect.runPromise(
@@ -206,5 +231,5 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
     return result
   }
 
-  return { registry, query, family, run, change }
+  return { registry, query, family, ask, run, change }
 }

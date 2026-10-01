@@ -145,7 +145,7 @@ function PeoplePicker({
   return (
     <ul className="ml-9 flex max-h-56 flex-col gap-px overflow-y-auto py-1">
       {members.length === 0 && (
-        <li className="px-2 py-1.5 text-label text-ink-4">
+        <li className="px-2 py-1.5 text-label text-ink-3">
           Nobody else is in {company} yet. Invite people in Settings.
         </li>
       )}

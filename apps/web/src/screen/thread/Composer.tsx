@@ -41,9 +41,9 @@ export function Composer({
   }
 
   return (
-    <div className="shrink-0 px-3 pt-2 pb-3 sm:px-6 sm:pb-5">
+    <div className="shrink-0 px-4 pt-2 pb-3 sm:px-6 sm:pb-5">
       <div className="mx-auto w-full max-w-(--thread-max-w)">
-        <div className="relative rounded-composer bg-surface-3 shadow-composer">
+        <div className="relative rounded-composer bg-surface-3 smooth-shadow-ring-md">
           {above !== undefined && above !== null && (
             <div className="absolute inset-x-0 bottom-full z-40 mb-3 flex justify-center sm:justify-end">
               {above}

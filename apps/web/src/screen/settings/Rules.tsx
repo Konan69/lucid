@@ -10,7 +10,7 @@ import { useState } from 'react'
 import { change, live, LiveState, useLive } from '../../data/live'
 import { Button } from '../../ui/Button'
 import { Segmented } from '../../ui/Segmented'
-import { Empty, Refusal, Section } from './Parts'
+import { Awaiting, Empty, Refusal, Section } from './Parts'
 
 const DECISIONS = [
   { value: 'Allow', label: 'Allow', name: 'Allow without asking' },
@@ -33,7 +33,7 @@ const SAYS = {
 export function Rules({ me }: { me: MeResponse }) {
   const rules = useLive(live.rules)
   const [refusal, setRefusal] = useState<string | null>(null)
-  if (!LiveState.$is('Ready')(rules)) return null
+  if (!LiveState.$is('Ready')(rules)) return <Awaiting state={rules} />
   const mine = rules.value.rules.filter((rule) => RuleScope.guards.Personal(rule.scope))
   const companys = rules.value.rules.filter((rule) => RuleScope.guards.Company(rule.scope))
   const company = Workspace.guards.Company(me.workspace) ? me.workspace : null

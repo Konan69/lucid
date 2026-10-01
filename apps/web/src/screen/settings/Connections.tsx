@@ -1,21 +1,24 @@
+import { useAtom, useAtomValue } from '@effect/atom-react'
 import {
   ConnectionOwnership,
   ConnectionState,
   ConnectionStep,
   ServiceAuthorization,
+  ServiceCatalog,
   Workspace,
   type Connection,
   type ConnectionId,
   type MeResponse,
   type Service,
 } from '@vivid/contracts'
+import { liveStateOf } from '@vivid/state'
 import { Redacted, Result } from 'effect'
 import { Link2, Search } from 'lucide-react'
 import { useState } from 'react'
-import { change, live, LiveState, useLive } from '../../data/live'
+import { change, live, LiveState, services, serviceSearch, useLive } from '../../data/live'
 import { Button } from '../../ui/Button'
 import { Dialog, DialogActions } from '../../ui/Dialog'
-import { Empty, Refusal, Row, Section } from './Parts'
+import { Awaiting, Empty, Refusal, Row, Section } from './Parts'
 
 const HOW = (service: Service) =>
   ServiceAuthorization.match(service.authorization, {
@@ -46,19 +49,13 @@ interface Keying {
  */
 export function Connections({ me }: { me: MeResponse }) {
   const state = useLive(live.connections)
-  const [query, setQuery] = useState('')
   const [refusal, setRefusal] = useState<string | null>(null)
   const [keying, setKeying] = useState<Keying | null>(null)
-  if (!LiveState.$is('Ready')(state)) return null
-  const { connections, services } = state.value
+  if (!LiveState.$is('Ready')(state)) return <Awaiting state={state} />
+  const { connections } = state.value
   const admin = Workspace.guards.Company(me.workspace) && me.workspace.role !== 'member'
   const mine = connections.filter((item) => ConnectionOwnership.guards.Personal(item.ownership))
   const shared = connections.filter((item) => ConnectionOwnership.guards.Shared(item.ownership))
-  const wanted = query.trim().toLowerCase()
-  const found =
-    wanted.length === 0
-      ? []
-      : services.filter((service) => service.name.toLowerCase().includes(wanted)).slice(0, 12)
 
   async function connect(service: Service, asShared: boolean) {
     const result = await change((client) =>
@@ -90,7 +87,7 @@ export function Connections({ me }: { me: MeResponse }) {
     <>
       <Refusal message={refusal} />
       <Section title="Yours" detail="Vivid uses these only when it is acting for you.">
-        {mine.length === 0 && <Empty>Nothing connected yet. Find a service below.</Empty>}
+        {mine.length === 0 && <Empty>Nothing connected yet. Pick a service below.</Empty>}
         {mine.map((connection) => (
           <ConnectionRow
             key={connection.id}
@@ -114,33 +111,113 @@ export function Connections({ me }: { me: MeResponse }) {
           ))}
         </Section>
       )}
-      <Section title="Connect something" detail={`${services.length} services available.`}>
-        <label className="flex h-11 items-center gap-2.5 px-4">
-          <Search className="size-4 text-ink-3" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="Search for a service"
-            className="min-w-0 flex-1 bg-transparent text-label text-ink outline-none placeholder:text-ink-4"
-          />
-        </label>
-        {wanted.length > 0 && found.length === 0 && <Empty>No service by that name.</Empty>}
-        {found.map((service) => (
-          <Row key={service.id} label={service.name} detail={service.description.slice(0, 120)}>
-            <span className="text-meta font-meta text-ink-4">{HOW(service)}</span>
-            <Button size="sm" onClick={() => void connect(service, false)}>
-              Connect
-            </Button>
-            {admin && (
-              <Button size="sm" variant="ghost" onClick={() => void connect(service, true)}>
-                For the company
-              </Button>
-            )}
-          </Row>
-        ))}
-      </Section>
+      <Catalog
+        onConnect={(service) => void connect(service, false)}
+        onShare={admin ? (service) => void connect(service, true) : undefined}
+      />
       {keying !== null && <EnterKey keying={keying} onClose={() => setKeying(null)} />}
     </>
+  )
+}
+
+/**
+ * The services Vivid can be connected to. Before anything is typed it lists the ones most people
+ * want, so the common case is one click; typing searches the whole catalog by name. The last
+ * answer stays up while the next is on its way, so the list does not blink between keystrokes.
+ */
+function Catalog({
+  onConnect,
+  onShare,
+}: {
+  onConnect: (service: Service) => void
+  onShare?: (service: Service) => void
+}) {
+  const [query, setQuery] = useAtom(serviceSearch)
+  const found = liveStateOf(useAtomValue(services))
+  const searching = query.trim().length > 0
+  const detail = LiveState.$match(found, {
+    Loading: () => 'Looking through the catalog.',
+    Failed: () => 'The catalog could not be read.',
+    Ready: ({ value }) =>
+      ServiceCatalog.match(value, {
+        Ready: ({ total }) =>
+          searching
+            ? `Searching ${total.toLocaleString()} services.`
+            : `The most used of ${total.toLocaleString()} services. Search for any other.`,
+        Unavailable: () => 'The catalog is out of reach right now.',
+      }),
+  })
+  return (
+    <Section title="Connect something" detail={detail}>
+      <label className="flex h-11 items-center gap-2.5 px-4">
+        <Search className="size-4 text-ink-3" />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.currentTarget.value)}
+          placeholder="Search for a service"
+          className="min-w-0 flex-1 bg-transparent text-label text-ink outline-none placeholder:text-ink-3"
+        />
+      </label>
+      <Found found={found} onConnect={onConnect} onShare={onShare} />
+    </Section>
+  )
+}
+
+/** What the search has to show: the matches, that there are none, or why there is no answer. */
+function Found({
+  found,
+  onConnect,
+  onShare,
+}: {
+  found: LiveState<ServiceCatalog>
+  onConnect: (service: Service) => void
+  onShare?: (service: Service) => void
+}) {
+  if (LiveState.$is('Loading')(found)) return <Empty>…</Empty>
+  if (LiveState.$is('Failed')(found)) return <Empty>{found.failure.message}</Empty>
+  if (ServiceCatalog.guards.Unavailable(found.value)) {
+    return (
+      <Empty>
+        Vivid cannot reach its catalog of services at the moment. What you have already connected
+        still works, and this list comes back by itself.
+      </Empty>
+    )
+  }
+  const { services: list } = found.value
+  if (list.length === 0) return <Empty>No service by that name.</Empty>
+  return list.map((service) => (
+    <ServiceRow key={service.id} service={service} onConnect={onConnect} onShare={onShare} />
+  ))
+}
+
+function ServiceRow({
+  service,
+  onConnect,
+  onShare,
+}: {
+  service: Service
+  onConnect: (service: Service) => void
+  onShare?: (service: Service) => void
+}) {
+  return (
+    <Row
+      label={
+        <>
+          {service.name}
+          <span className="ml-2 text-meta font-meta text-ink-3">{HOW(service)}</span>
+        </>
+      }
+      detail={<span className="line-clamp-1">{service.description}</span>}
+    >
+      <Button size="sm" onClick={() => onConnect(service)}>
+        Connect
+      </Button>
+      {onShare !== undefined && (
+        <Button size="sm" variant="ghost" onClick={() => onShare(service)}>
+          For the company
+        </Button>
+      )}
+    </Row>
   )
 }
 
@@ -177,11 +254,11 @@ function EnterKey({ keying, onClose }: { keying: Keying; onClose: () => void }) 
   const [refusal, setRefusal] = useState<string | null>(null)
 
   async function submit(form: HTMLFormElement) {
-    const data = new FormData(form)
-    // A text input's form value is a string; a file entry is not something this form has.
+    // Each field is read from its own input, by the name the service gave it: an input's value is
+    // always text, where a form's entries could also be files.
     const typed = (name: string) => {
-      const value = data.get(name)
-      return typeof value === 'string' ? value : ''
+      const input = form.elements.namedItem(name)
+      return input instanceof HTMLInputElement ? input.value : ''
     }
     const fields = Object.fromEntries(
       keying.fields.map((field) => [field.name, Redacted.make(typed(field.name))]),

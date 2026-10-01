@@ -1,7 +1,7 @@
 import { AuditEvent, type AuditEntry } from '@vivid/contracts'
 import { live, LiveState, useLive } from '../../data/live'
 import { Avatar } from '../../ui/Avatar'
-import { Empty, Section } from './Parts'
+import { Awaiting, Empty, Section } from './Parts'
 
 const when = new Intl.DateTimeFormat(undefined, {
   month: 'short',
@@ -44,7 +44,7 @@ const sentence = (event: AuditEvent) =>
  */
 export function Record() {
   const audit = useLive(live.audit)
-  if (!LiveState.$is('Ready')(audit)) return null
+  if (!LiveState.$is('Ready')(audit)) return <Awaiting state={audit} />
   return (
     <Section title="What happened" detail="Newest first. This record cannot be edited.">
       {audit.value.entries.length === 0 && <Empty>Nothing recorded yet.</Empty>}
@@ -61,7 +61,7 @@ function Line({ entry }: { entry: AuditEntry }) {
       <Avatar name={entry.actor.name} image={entry.actor.image} size={22} />
       <div className="min-w-0 flex-1">
         <div className="text-label text-ink">{sentence(entry.event)}</div>
-        <div className="text-meta font-meta text-ink-4">
+        <div className="text-meta font-meta text-ink-3">
           {entry.by === 'vivid' ? `Vivid, for ${entry.actor.name}` : entry.actor.name} ·{' '}
           {when.format(entry.at)}
         </div>

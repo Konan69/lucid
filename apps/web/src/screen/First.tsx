@@ -20,7 +20,7 @@ export function First({ me }: { me: MeResponse }) {
     Company: ({ company }) => `What should I take off your plate at ${company.name}?`,
   })
   return (
-    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge">
+    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0">
       <div className="mx-auto flex w-full max-w-(--thread-max-w) flex-1 animate-rise-in flex-col items-center justify-center px-6">
         <Face size={56} mood="happy" />
         <h1 className="mt-5 text-page font-title text-ink">
@@ -35,10 +35,10 @@ export function First({ me }: { me: MeResponse }) {
             <li key={suggestion.text}>
               <button
                 onClick={() => void startThread(suggestion.text)}
-                className="flex size-full cursor-pointer flex-col gap-1 rounded-card bg-surface-3 p-4 text-left smooth-shadow-ring-xs transition-press duration-(--dur-fast) hover:bg-wash-hover hover:smooth-shadow-ring-sm active:scale-98"
+                className="flex size-full cursor-pointer flex-col gap-1 rounded-card bg-surface-3 p-4 text-left smooth-shadow-ring-xs transition-press duration-(--dur-fast) hover:bg-wash-hover active:scale-98"
               >
                 <span className="text-label text-ink">{suggestion.text}</span>
-                <span className="text-meta font-meta text-ink-4">{suggestion.reason}</span>
+                <span className="text-meta font-meta text-ink-3">{suggestion.reason}</span>
               </button>
             </li>
           ))}

@@ -62,7 +62,7 @@ export function Projects({ onOpenThread }: { onOpenThread?: (id: ThreadId) => vo
 /** The screen's frame: a top bar, and a scrolling body at the width every list screen uses. */
 function Pane({ header, children }: { header: ReactNode; children: ReactNode }) {
   return (
-    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge">
+    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0">
       <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">{header}</header>
       <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
         <div className="mx-auto w-full max-w-230 px-5 pt-1 pb-10 sm:px-8">{children}</div>
@@ -172,7 +172,7 @@ function ProjectShelf({
         </div>
       ) : (
         <>
-          <p className="px-0.5 text-meta font-meta text-ink-4">
+          <p className="px-0.5 text-meta font-meta text-ink-3">
             Each Project keeps the Threads about one piece of work together.
           </p>
           <ul className="mt-4 grid gap-2.5 sm:grid-cols-2">
@@ -207,7 +207,7 @@ function ProjectCard({
     <button
       type="button"
       onClick={onOpen}
-      className="group/card flex size-full cursor-pointer flex-col rounded-card bg-surface-2 p-4 text-left smooth-shadow-ring-sm transition-press duration-(--dur-fast) hover:-translate-y-0.5 hover:bg-wash-hover hover:smooth-shadow-ring-md"
+      className="group/card flex size-full cursor-pointer flex-col rounded-card bg-surface-2 p-4 text-left smooth-shadow-ring-xs transition-press duration-(--dur-fast) hover:bg-wash-hover"
     >
       <span className="flex items-center gap-2.5">
         <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink">
@@ -216,7 +216,7 @@ function ProjectCard({
         <span className="min-w-0 flex-1 truncate text-title text-ink">{project.name}</span>
         <ChevronRight className="size-3.5 shrink-0 text-ink-4 transition-transform duration-(--dur-fast) group-hover/card:translate-x-0.5" />
       </span>
-      <span className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-meta font-meta text-ink-4">
+      <span className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-meta font-meta text-ink-3">
         <span className="inline-flex items-center gap-1">
           <MessagesSquare className="size-3.5" />
           {projectsData.countThreads(project.threadCount)}
@@ -310,7 +310,7 @@ const ATTENTION = {
   NeedsYou: { label: 'Needs you', tone: 'text-attention', dot: 'bg-attention' },
   Working: { label: 'Working', tone: 'text-working', dot: 'animate-status-pulse bg-working' },
   Unread: { label: 'New', tone: 'text-accent-ink', dot: 'bg-accent' },
-  Quiet: { label: '', tone: 'text-ink-4', dot: 'bg-line-4' },
+  Quiet: { label: '', tone: 'text-ink-3', dot: 'bg-line-4' },
 } satisfies Record<Thread['attention'], { label: string; tone: string; dot: string }>
 
 /**
@@ -328,7 +328,7 @@ function ProjectThreads({ project, opener }: { project: Project; opener: Opener 
           return (
             <>
               {filed.length === 0 && hidden === 0 && (
-                <p className="px-0.5 text-label text-ink-4">No Threads are filed here yet.</p>
+                <p className="px-0.5 text-label text-ink-3">No Threads are filed here yet.</p>
               )}
               <ul className="flex flex-col gap-px">
                 {filed.map((thread) => (
@@ -338,7 +338,7 @@ function ProjectThreads({ project, opener }: { project: Project; opener: Opener 
                 ))}
               </ul>
               {hidden > 0 && (
-                <p className="mt-1 px-0.5 text-meta font-meta text-ink-4">
+                <p className="mt-1 px-0.5 text-meta font-meta text-ink-3">
                   {projectsData.countThreads(hidden)} here {hidden === 1 ? 'is' : 'are'} not shared
                   with you.
                 </p>
@@ -361,7 +361,7 @@ function ThreadRow({ thread, opener }: { thread: Thread; opener: Opener }) {
       {attention.label !== '' && (
         <span className={cn('text-meta font-title', attention.tone)}>{attention.label}</span>
       )}
-      <time className="text-meta font-meta text-ink-4 tabular-nums">
+      <time className="text-meta font-meta text-ink-3 tabular-nums">
         {projectsData.formatMoved(thread.updatedAt)}
       </time>
     </>
@@ -396,7 +396,7 @@ function Section({
     <div className="mt-6 first:mt-2">
       <div className="mb-2 flex items-center gap-2.5 border-t border-line-1 px-0.5 pt-4">
         <h2 className="text-label font-title text-ink-2">{title}</h2>
-        <p className="min-w-0 flex-1 truncate text-meta font-meta text-ink-4">{note}</p>
+        <p className="min-w-0 flex-1 truncate text-meta font-meta text-ink-3">{note}</p>
         {action}
       </div>
       {children}

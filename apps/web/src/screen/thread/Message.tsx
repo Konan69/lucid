@@ -159,7 +159,7 @@ function Signal({
   const line = signal.tagName === undefined ? undefined : SIGNAL_LINE.get(signal.tagName)
   if (line === undefined) return null
   return (
-    <div className="flex items-center gap-2 text-meta font-meta text-ink-4">
+    <div className="flex items-center gap-2 text-meta font-meta text-ink-3">
       <line.Icon className="size-3.5" />
       <span>
         {line.label}
@@ -206,7 +206,7 @@ function Steps({ tools, live }: { tools: ReadonlyArray<ToolPart>; live: boolean 
           {steps.map((step) => (
             <li key={step.id} className={cn(step.failed && 'text-danger')}>
               {step.label}
-              {step.detail !== undefined && <span className="text-ink-4"> · {step.detail}</span>}
+              {step.detail !== undefined && <span className="text-ink-3"> · {step.detail}</span>}
             </li>
           ))}
         </ol>
@@ -229,7 +229,7 @@ function TrackedCard({ title, assignee }: { title: string; assignee?: string }) 
         <Check className="size-4" strokeWidth={2} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block text-meta font-meta text-ink-4">Vivid is tracking this</span>
+        <span className="block text-meta font-meta text-ink-3">Vivid is tracking this</span>
         <span className="mt-0.5 block truncate text-label font-title text-ink">{title}</span>
         {assignee !== undefined && assignee.length > 0 && assignee !== 'you' && (
           <span className="mt-0.5 block text-meta font-meta text-ink-3">Waiting on {assignee}</span>
@@ -310,7 +310,7 @@ function FromVivid({
       <Face size={24} className="mt-1" mood={streaming ? 'thinking' : 'neutral'} />
       <div className="min-w-0 flex-1 text-body text-ink">
         {Option.isSome(forWhom) && (
-          <span className="mb-1 block text-meta font-meta text-ink-4">
+          <span className="mb-1 block text-meta font-meta text-ink-3">
             Answering {forWhom.value}
           </span>
         )}
@@ -318,7 +318,7 @@ function FromVivid({
         {text.length > 0 && <Markdown content={text} />}
         <ToolCards tools={tools} context={context} onContinue={onContinue} />
         {Option.isSome(time) && (
-          <span className="mt-1 block text-meta text-ink-4">{time.value}</span>
+          <span className="mt-1 block text-meta text-ink-3">{time.value}</span>
         )}
       </div>
     </div>

@@ -123,7 +123,7 @@ function Group({
 }) {
   return (
     <>
-      <p className="truncate px-2.5 pt-3 pb-1 text-meta font-meta text-ink-4">{label}</p>
+      <p className="truncate px-2.5 pt-3 pb-1 text-meta font-meta text-ink-3">{label}</p>
       {entries.map((entry) => (
         <button
           key={entry.id}

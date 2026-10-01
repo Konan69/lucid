@@ -1,4 +1,6 @@
-import { Data, Effect, Option, Schema } from 'effect'
+import { VividRpcClient } from '@vivid/client-runtime'
+import { Data, Effect, Layer, Option, Schema } from 'effect'
+import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 
 /**
  * Signing in and out. These are Better Auth's own routes (`/api/auth/*`), the one part of the
@@ -57,11 +59,35 @@ const post = Effect.fn('Account.post')(function* (path: string, body: AccountReq
   }
 })
 
-export const signUp = (input: {
+const signUp = (input: {
   readonly name: string
   readonly email: string
   readonly password: string
 }) => post('sign-up/email', input)
+
+/** The one-shot product endpoint, for the moment after signing up when the live socket is stale. */
+const oneShot = VividRpcClient.layer({ url: '/api/rpc' }).pipe(Layer.provide(FetchHttpClient.layer))
+
+/**
+ * Tells the server which time zone this browser is in, right after an account is made, so that
+ * "tomorrow at 9" means the Person's own nine o'clock from their first message.
+ *
+ * It goes over HTTP: the page's live socket was opened before there was a session and cannot
+ * speak for the new Person. If it does not get through the account still stands, the zone stays at
+ * the server's default, and Settings shows it and lets the Person change it, so a failure here is
+ * deliberately not a reason to refuse the sign-up.
+ */
+const adoptTimeZone = Effect.gen(function* () {
+  const client = yield* VividRpcClient
+  yield* client.PatchSettings({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone })
+}).pipe(Effect.provide(oneShot), Effect.ignore)
+
+/** Makes an account and gives it the time zone of the browser it was made in. */
+export const createAccount = (input: {
+  readonly name: string
+  readonly email: string
+  readonly password: string
+}) => Effect.andThen(signUp(input), adoptTimeZone)
 
 export const signIn = (input: { readonly email: string; readonly password: string }) =>
   post('sign-in/email', input)

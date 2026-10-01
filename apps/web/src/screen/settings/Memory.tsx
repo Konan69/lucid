@@ -2,7 +2,7 @@ import { MemoryScope, type Memory as MemoryRecord } from '@vivid/contracts'
 import { useState } from 'react'
 import { change, live, LiveState, useLive } from '../../data/live'
 import { Button } from '../../ui/Button'
-import { Empty, Section } from './Parts'
+import { Awaiting, Empty, Section } from './Parts'
 
 const WHERE = (memory: MemoryRecord) =>
   MemoryScope.match(memory.scope, {
@@ -28,7 +28,7 @@ export function Memory() {
       </Section>
     )
   }
-  if (!LiveState.$is('Ready')(memory)) return null
+  if (!LiveState.$is('Ready')(memory)) return <Awaiting state={memory} />
   const { brief, memories } = memory.value
   return (
     <>

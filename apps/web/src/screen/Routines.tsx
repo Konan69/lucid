@@ -102,7 +102,7 @@ export function Routines({
   })
 
   return (
-    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0 content-edge">
+    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0">
       <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-4">
         {!View.$is('Overview')(shown) && (
           <IconButton label="Back to Routines" onClick={() => goTo(View.Overview())}>
@@ -189,7 +189,7 @@ function RoutinesOverview({
 }) {
   return (
     <div>
-      <p className="px-0.5 text-meta font-meta text-ink-4">
+      <p className="px-0.5 text-meta font-meta text-ink-3">
         What Vivid repeats, so you don&apos;t have to.
       </p>
       <div className="mt-4">
@@ -275,14 +275,14 @@ function RoutineRow({ routine, onOpen }: { routine: Routine; onOpen: () => void 
         <span
           className={cn(
             'block truncate text-meta font-meta',
-            troubled ? 'text-danger' : 'text-ink-4',
+            troubled ? 'text-danger' : 'text-ink-3',
           )}
         >
           {running ? 'Running now' : routineSummary(routine)}
         </span>
       </span>
       {routine.enabled && routine.nextRunAt !== null && (
-        <span className="hidden text-right text-meta font-meta text-ink-4 sm:block">
+        <span className="hidden text-right text-meta font-meta text-ink-3 sm:block">
           Next
           <br />
           {formatTime(routine.nextRunAt)}
@@ -605,7 +605,7 @@ function RoutineControls({
         </button>
       </div>
       {RoutineTrigger.guards.Webhook(routine.trigger) && (
-        <p className="mt-2 text-meta font-meta text-ink-4">
+        <p className="mt-2 text-meta font-meta text-ink-3">
           Each time you get the address, the key is replaced and the one before it stops working.
         </p>
       )}
@@ -708,7 +708,7 @@ function RoutineHistory({
     <div className="mt-7 border-t border-line-1 pt-4">
       <h2 className="text-label font-title text-ink-2">History</h2>
       {routine.runs.length === 0 ? (
-        <p className="mt-2 text-label text-ink-4">It has not run yet.</p>
+        <p className="mt-2 text-label text-ink-3">It has not run yet.</p>
       ) : (
         <ul className="mt-2 space-y-1">
           {routine.runs.map((occurrence) => (
@@ -750,7 +750,7 @@ function OccurrenceRow({
       type="button"
       title="Open Thread"
       onClick={() => onOpenConversation(thread.value)}
-      className="group/run w-full cursor-pointer rounded-row bg-surface-2 px-3 py-2.5 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) hover:bg-wash-hover hover:smooth-shadow-ring-sm"
+      className="group/run w-full cursor-pointer rounded-row bg-surface-2 px-3 py-2.5 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) hover:bg-wash-hover"
     >
       <OccurrenceSummary
         occurrence={occurrence}
@@ -778,7 +778,7 @@ function OccurrenceSummary({
           aria-hidden
         />
         <span className="text-label text-ink">{OCCURRENCE[occurrence.status].label}</span>
-        <time className="ml-auto text-meta font-meta text-ink-4 tabular-nums">
+        <time className="ml-auto text-meta font-meta text-ink-3 tabular-nums">
           {formatTime(occurrence.startedAt)}
         </time>
         {trailing}

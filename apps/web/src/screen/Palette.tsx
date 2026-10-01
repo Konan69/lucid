@@ -114,7 +114,7 @@ export function Palette({ onClose }: { onClose: () => void }) {
         </label>
         <ul className="max-h-96 overflow-y-auto p-1">
           {results.length === 0 && (
-            <li className="px-3 py-6 text-center text-label text-ink-4">
+            <li className="px-3 py-6 text-center text-label text-ink-3">
               {query.trim().length === 0 ? 'Start typing to search.' : 'Nothing matches that.'}
             </li>
           )}
@@ -163,7 +163,7 @@ function Row({
         <span className="shrink-0 text-ink-3">{icon}</span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-label text-ink">{title}</span>
-          <span className="block truncate text-meta font-meta text-ink-4">{detail}</span>
+          <span className="block truncate text-meta font-meta text-ink-3">{detail}</span>
         </span>
       </button>
     </li>

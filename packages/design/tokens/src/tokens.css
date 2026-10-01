@@ -121,24 +121,11 @@
   --card-row-h: 78px; /* a thread that matters */
   --control-h: 32px;
 
-  /* ── Edges, cast, ring ───────────────────────────────────── */
-  /* The specular top edge every lifted plate carries in dark: the one thing
-     that says "raised" when a cast shadow has nothing to fall on. */
-  --edge: inset 0 1px 0 rgb(255 255 255 / 0.06);
-  --edge-strong: inset 0 1px 0 rgb(255 255 255 / 0.1);
-  --cast-a: 0.22;
-  --cast-b: 0.26;
-  --cast-c: 0.34;
-  --ring-color: rgb(var(--ink-base) / 0.14);
-  --ring-90: rgb(var(--ink-base) / 0.126);
-  --ring-80: rgb(var(--ink-base) / 0.112);
-  --ring-65: rgb(var(--ink-base) / 0.091);
-  --ring-50: rgb(var(--ink-base) / 0.07);
-  --ring-35: rgb(var(--ink-base) / 0.049);
-  --shadow-composer:
-    var(--edge-strong), 0 2px 6px rgb(0 0 0 / 0.2), 0 16px 40px rgb(0 0 0 / 0.3),
-    0 0 0 1px var(--ring-65);
-  --shadow-panel: -8px 0 24px rgb(0 0 0 / 0.18);
+  /* ── Edge ────────────────────────────────────────────────── */
+  /* Elevation is `shadow-plugin`'s (`smooth-shadow-ring-*`): one box-shadow whose last layer is
+     the hairline. This is that hairline. It paints on the page behind the surface, so in dark it
+     has to be light enough to clear a raised surface's own colour or the edge disappears. */
+  --smooth-ring-color: rgb(var(--ink-base) / 0.16);
 
   /* ── Motion ──────────────────────────────────────────────── */
   --dur-fast: 120ms;
@@ -154,19 +141,17 @@ html[data-theme='light'] {
   --surface-0: #ffffff; /* the page: paper white */
   --surface-1: #f6f6f6; /* sidebar, chrome: OpenSession's raised step */
   --surface-2: #f0f0ef; /* cards, bubbles, rows */
-  --surface-3: #ffffff; /* controls: white + hairline + shadow */
+  --surface-3: #ffffff; /* controls: white + hairline */
   --surface-well: #f4f5f7;
   --scrim: rgba(20, 20, 20, 0.42);
 
-  /* The cast on the content column's left edge (OpenSession's light rule):
-     dark drops it — black ink on near-black lands as a smudge — light keeps
-     it, because here it actually says "the sidebar is behind the page". */
-  --content-edge-shadow: -1px 0 8px rgb(0 0 0 / 0.05);
-
   --ink-base: 20 20 20;
-  --ink-2: rgb(var(--ink-base) / 0.62);
-  --ink-3: rgb(var(--ink-base) / 0.44);
-  --ink-4: rgb(var(--ink-base) / 0.3);
+  /* Dark ink on white loses more contrast per step of alpha than light ink on near-black, so the
+     light ramp sits higher: supporting text (ink-3) stays near 4:1, and ink-4 is for marks and
+     placeholders only, never for words that have to be read. */
+  --ink-2: rgb(var(--ink-base) / 0.68);
+  --ink-3: rgb(var(--ink-base) / 0.54);
+  --ink-4: rgb(var(--ink-base) / 0.34);
   --ink-on-accent: #ffffff;
 
   --line-1: rgb(var(--ink-base) / 0.05);
@@ -196,20 +181,8 @@ html[data-theme='light'] {
   --status-info: #0c64c1;
   --status-info-soft: rgb(12 100 193 / 0.1);
 
-  --edge: inset 0 1px 0 rgb(255 255 255 / 0.9);
-  --edge-strong: var(--edge);
-  --cast-a: 0.05;
-  --cast-b: 0.07;
-  --cast-c: 0.1;
-  --ring-color: rgb(var(--ink-base) / 0.08);
-  --ring-90: rgb(var(--ink-base) / 0.072);
-  --ring-80: rgb(var(--ink-base) / 0.064);
-  --ring-65: rgb(var(--ink-base) / 0.052);
-  --ring-50: rgb(var(--ink-base) / 0.04);
-  --ring-35: rgb(var(--ink-base) / 0.028);
-  --shadow-composer:
-    0 2px 4px rgb(0 0 0 / 0.04), 0 14px 36px rgb(0 0 0 / 0.1), 0 0 0 1px var(--ring-80);
-  --shadow-panel: -8px 0 24px rgb(0 0 0 / 0.06);
+  /* In light the page is white and so is a control, so the hairline is the whole edge. */
+  --smooth-ring-color: rgb(var(--ink-base) / 0.1);
 }
 
 html[data-theme='light'] body {
@@ -310,9 +283,6 @@ html[data-theme='light'] body {
   --radius-panel: var(--radius-panel);
   --radius-composer: var(--radius-composer);
   --radius-full: var(--radius-full);
-
-  --shadow-composer: var(--shadow-composer);
-  --shadow-panel: var(--shadow-panel);
 
   /* Named transition sets: screens name the surface behaviour, never a property list. */
   --transition-property-surface: background-color, box-shadow;

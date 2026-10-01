@@ -59,12 +59,33 @@ export const Service = Schema.Struct({
 }).annotate({ identifier: 'Service', title: 'Service' })
 export interface Service extends Schema.Schema.Type<typeof Service> {}
 
-/** The catalog and what is connected, for the Connections screen and the connect card. */
+/**
+ * What is connected, for the Connections screen and the connect card. The catalog is not part of
+ * it: it is thousands of entries that no Person owns and that do not move when a Connection does,
+ * so it is searched (`FindServices`) instead of being sent with every change to this list.
+ */
 export const ConnectionListResponse = Schema.Struct({
-  services: Schema.Array(Service),
   connections: Schema.Array(Connection),
 })
 export interface ConnectionListResponse extends Schema.Schema.Type<typeof ConnectionListResponse> {}
+
+/** Looking through the catalog by name. An empty query asks for the services most people want. */
+export const FindServicesRequest = Schema.Struct({
+  query: Schema.String.check(Schema.isMaxLength(80)),
+})
+export interface FindServicesRequest extends Schema.Schema.Type<typeof FindServicesRequest> {}
+
+/**
+ * What a catalog search found. The catalog lives with the Connection layer, which can be out of
+ * reach while everything a Person already connected still lists and works; `Unavailable` says so,
+ * so a screen never shows "no such service" for a catalog it could not read.
+ */
+export const ServiceCatalog = Schema.TaggedUnion({
+  /** The best matches, most wanted first. `total` is how many services the catalog holds. */
+  Ready: { services: Schema.Array(Service), total: Schema.Number },
+  Unavailable: {},
+})
+export type ServiceCatalog = typeof ServiceCatalog.Type
 
 /** Starting a Connection. Sharing one with the Company takes an admin. */
 export const BeginConnectionRequest = Schema.Struct({

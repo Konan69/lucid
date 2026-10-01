@@ -80,8 +80,12 @@
   box-shadow: 0 0 0 1px var(--line-2);
 }
 
-/* Elevation comes from `shadow-plugin` (`smooth-shadow-*`, `smooth-shadow-ring-*`): the ring is the
-   final shadow layer and follows `color-scheme`, so never add a border or `ring-line` beside it. */
+/* Elevation comes from `shadow-plugin`, and there are two tiers of it.
+   - In the page (cards, rows, fields, the sidebar's cards): `smooth-shadow-ring-xs`. A hairline and
+     the faintest ambient, nothing cast. A card in a list is not floating and must not look it.
+   - Over the page (the composer, menus, dialogs, the palette): `smooth-shadow-ring-md` or `-lg`.
+   The ring is the last shadow layer and reads `--smooth-ring-color` from the tokens, so never add a
+   border or `ring-line` beside it, and never raise a card's tier on hover: hover is a fill. */
 
 /* ── Glass: for what floats over live content ─────────────── */
 @utility glass {
@@ -111,11 +115,6 @@
 /* ── Grain: a whisper of texture so large flat chrome isn't dead ── */
 @utility grain {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0.035 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-
-/* ── Content edge: the pane's left edge shadow, set by the shell when the rail floats ── */
-@utility content-edge {
-  box-shadow: var(--content-edge-shadow, none);
 }
 
 /* ── Face: sized by --face-size; eye geometry is computed once in Face.tsx ── */

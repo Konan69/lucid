@@ -43,7 +43,7 @@ export function Invite({ id }: { id: InvitationId }) {
   }
 
   return (
-    <section className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-4 bg-surface-0 px-6 text-center content-edge">
+    <section className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-4 bg-surface-0 px-6 text-center">
       <Face size={48} mood="happy" />
       {preview === null ? (
         <>

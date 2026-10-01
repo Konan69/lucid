@@ -49,6 +49,16 @@ export const live = {
   suggestions: one((client) => client.WatchSuggestions()),
 }
 
+/** What the Person has typed into the catalog search. Empty asks for the most-used services. */
+export const serviceSearch = Atom.make('')
+
+/**
+ * The part of the catalog that matches the search. The catalog is thousands of services nobody
+ * owns, so it is searched on the server and never held here; see `ServiceCatalog` for why it can
+ * be `Unavailable` while every Connection still lists.
+ */
+export const services = engine.ask(serviceSearch, (client, query) => client.FindServices({ query }))
+
 /** Reads a live query. The component re-renders when, and only when, the result changes. */
 export function useLive<Value>(query: LiveQuery<Value>): LiveState<Value> {
   return liveStateOf(useAtomValue(query.atom))

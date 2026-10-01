@@ -88,7 +88,7 @@ export function Notifications({ onClose }: { onClose: () => void }) {
                     <span className="line-clamp-2 text-label text-ink-3">
                       {notice.body.replace(INVITATION, '')}
                     </span>
-                    <span className="mt-0.5 block text-meta font-meta text-ink-4">
+                    <span className="mt-0.5 block text-meta font-meta text-ink-3">
                       {when.format(notice.createdAt)}
                     </span>
                   </span>
