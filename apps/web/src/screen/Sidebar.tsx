@@ -68,6 +68,8 @@ export function Sidebar({
   onRename,
   onSelect,
   onOpenSettings,
+  onHide,
+  open,
   workingCount,
 }: {
   activeId: string | null
@@ -77,6 +79,10 @@ export function Sidebar({
   onRename: (id: string, title: string) => void
   onSelect: (id: string) => void
   onOpenSettings: () => void
+  /** Collapses the sidebar; the workspace then offers the control that brings it back. */
+  onHide: () => void
+  /** Hidden by width rather than unmounted, so collapsing and returning both animate. */
+  open: boolean
   workingCount: number
 }) {
   const demoConversations = conversations.filter((conversation) =>
@@ -89,8 +95,16 @@ export function Sidebar({
   const activeConversations = runtimeConversations.filter((conversation) => !conversation.archived)
   const archivedConversations = runtimeConversations.filter((conversation) => conversation.archived)
   return (
-    <aside className="hidden h-full w-(--sidebar-w) shrink-0 flex-col bg-surface-1 hairline-r md:flex">
-      <SidebarHeader workingCount={workingCount} onSelect={onSelect} />
+    <aside
+      inert={!open}
+      className={cn(
+        'hidden h-full shrink-0 flex-col overflow-hidden bg-surface-1 transition-[width] duration-(--dur-base) ease-(--ease-out) md:flex',
+        open ? 'w-(--sidebar-w) hairline-r' : 'w-0',
+      )}
+    >
+      {/* The inner column keeps its full width while the aside narrows, so nothing reflows. */}
+      <div className="flex h-full w-(--sidebar-w) shrink-0 flex-col">
+      <SidebarHeader workingCount={workingCount} onSelect={onSelect} onHide={onHide} />
 
       {/* Band header: a heading with controls. Full line, no fill. */}
       <div className="mt-3 flex h-(--row-h) shrink-0 items-center gap-1 pr-2 pl-4.5">
@@ -110,7 +124,7 @@ export function Sidebar({
         </button>
       </div>
 
-      <nav className="min-h-0 flex-1 overflow-y-auto scroll-fade-y px-2 pb-2">
+      <nav className="min-h-0 flex-1 scrollbar-hidden overflow-y-auto scroll-fade-y px-2 pb-2">
         <section>
           <ul className="flex flex-col gap-1 pt-1">
             {activeConversations.map((conversation) => (
@@ -171,6 +185,7 @@ export function Sidebar({
         <span className="min-w-0 flex-1 truncate text-label text-ink-2">You</span>
         <span className="text-meta font-meta text-ink-4">Personal</span>
       </button>
+      </div>
       {renameTarget && (
         <RenameDialog
           conversation={renameTarget}
@@ -189,9 +204,11 @@ export function Sidebar({
 function SidebarHeader({
   workingCount,
   onSelect,
+  onHide,
 }: {
   workingCount: number
   onSelect: (id: string) => void
+  onHide: () => void
 }) {
   return (
     <>
@@ -199,7 +216,9 @@ function SidebarHeader({
       <div className="flex h-(--topbar-h) shrink-0 items-center px-2">
         <button
           aria-label="Hide sidebar"
-          className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
+          title="Hide sidebar (⌘B)"
+          onClick={onHide}
+          className="inline-flex size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
         >
           <PanelLeft className="size-4" />
         </button>

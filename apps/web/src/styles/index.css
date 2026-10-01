@@ -94,6 +94,10 @@
 }
 
 /* ── Scroll fades ──────────────────────────────────────────── */
+/* Scrolls without a visible track, for panes whose edge fade already signals overflow. */
+@utility scrollbar-hidden {
+  scrollbar-width: none;
+}
 @utility scroll-fade-y {
   mask-image: linear-gradient(
     to bottom,

@@ -19,12 +19,15 @@ import {
 import { useFlueAgent, type FlueConversationMessage } from '@flue/react'
 import { ConnectionRequestMessage } from '@vivid/contracts'
 import { createFlueClient } from '@flue/sdk'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { conversations, messagesForConversation, type Msg } from '../data/fixtures'
 import { Button, IconButton } from '../ui/Button'
 import { Card } from '../ui/Card'
+import { CallSession } from '../call/session'
+import { Call } from './Call'
+import { Worklog } from './Worklog'
 import { cn } from '../ui/cn'
 import { Face } from '../ui/Face'
 import { ConnectorRequestCard } from '../ui/connector/Card'
@@ -74,6 +77,8 @@ export function Conversation({
     [conversationId],
   )
   const agent = useFlueAgent({ client })
+  const [call, setCall] = useState<CallSession | null>(null)
+  /** A call dialled on hover, waiting for the click; not state, since nothing renders it. */
   const endRef = useRef<HTMLLIElement>(null)
   const working = agent.status === 'submitted' || agent.status === 'streaming'
   const hasStreamingAssistant = agent.messages.some(
@@ -117,7 +122,8 @@ export function Conversation({
           {!agent.historyReady && agent.messages.length === 0 && (
             <li className="py-12 text-center text-label text-ink-4">Loading conversation…</li>
           )}
-          {agent.historyReady && agent.messages.length === 0 && (
+          {/* The empty state steps aside the moment Vivid starts working in a voice call. */}
+          {agent.historyReady && agent.messages.length === 0 && call === null && (
             <li className="py-12 text-center">
               <Face size={36} mood="happy" className="mx-auto" />
               <p className="mt-3 text-title font-title text-ink">Vivid is ready</p>
@@ -154,6 +160,11 @@ export function Conversation({
               </div>
             </li>
           )}
+          {call !== null && (
+            <li>
+              <Worklog session={call} />
+            </li>
+          )}
           <li ref={endRef} aria-hidden />
         </ol>
       </div>
@@ -167,6 +178,8 @@ export function Conversation({
           onMessageSent(message)
         }}
         onStop={() => client.abort().then(() => undefined)}
+        call={call === null ? null : <Call session={call} onClose={() => setCall(null)} />}
+        onTalk={() => setCall(new CallSession('live'))}
       />
     </section>
   )
@@ -739,11 +752,16 @@ function Composer({
   working,
   onSend,
   onStop,
+  onTalk,
+  call,
 }: {
   initialMessage?: string
   working: boolean
   onSend: (message: string) => Promise<void>
   onStop: () => Promise<void>
+  onTalk: () => void
+  /** The live voice session card, anchored above the composer so it sits over the Talk button. */
+  call: ReactNode
 }) {
   const [message, setMessage] = useState(initialMessage ?? '')
 
@@ -761,6 +779,11 @@ function Composer({
     <div className="shrink-0 px-3 pt-2 pb-3 sm:px-6 sm:pb-5">
       <div className="mx-auto w-full max-w-(--thread-max-w)">
         <div className="relative rounded-composer bg-surface-3 shadow-composer">
+          {call !== null && (
+            <div className="absolute inset-x-0 bottom-full z-40 mb-3 flex justify-center sm:justify-end">
+              {call}
+            </div>
+          )}
           <textarea
             rows={1}
             placeholder="Message Vivid"
@@ -779,7 +802,10 @@ function Composer({
               <Paperclip className="size-4" />
             </IconButton>
             <span className="flex-1" />
-            <IconButton label="Talk">
+            <IconButton
+              label="Talk to Vivid"
+              onClick={onTalk}
+            >
               <Mic className="size-4" />
             </IconButton>
             <button

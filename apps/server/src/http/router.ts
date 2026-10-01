@@ -3,6 +3,8 @@ import * as Layer from 'effect/Layer'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
 import { authEffect, localAuthRuntimeLayer } from '../auth/provider.ts'
+import { recordingRoutes } from '../calls/recordings.ts'
+import { ringRoutes } from '../calls/ring.ts'
 import { rpcServerLayer } from '../rpc/server.ts'
 import { apiLayer } from './api.ts'
 import { bytesRoutes } from './bytes.ts'
@@ -29,5 +31,7 @@ export const routerLayer = Layer.mergeAll(
   authRoute,
   bytesRoutes,
   oauthRoutes,
+  ringRoutes,
+  recordingRoutes,
   healthRoute,
 ).pipe(Layer.provide(HttpRouter.layer))

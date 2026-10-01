@@ -11,12 +11,39 @@ export default defineConfig(({ mode }) => {
   const runtimeEnvironment = loadEnv(mode, runtimeDirectory, '')
   const runtimeToken = runtimeEnvironment.VIVID_RUNTIME_TOKEN
 
+  const api = {
+    '/api/rpc': { target: 'http://127.0.0.1:8787', changeOrigin: true },
+    '/api/ring': { target: 'http://127.0.0.1:8787', changeOrigin: true },
+    '/api/recordings': { target: 'http://127.0.0.1:8787', changeOrigin: true },
+  }
+
   return {
     plugins: [react(), tailwindcss()],
+    /**
+     * The phone joins over a Cloudflare tunnel, where the dev server's hundreds of unbundled
+     * modules are painfully slow. `pnpm preview` serves the built bundle instead, with the same
+     * API proxy, so the phone gets one small download.
+     */
+    // Two entries: the app, and the lean page the phone loads over the tunnel.
+    build: { rollupOptions: { input: { app: 'index.html', phone: 'phone.html' } } },
+    preview: {
+      port: 4178,
+      host: '127.0.0.1',
+      proxy: api,
+      allowedHosts: ['.trycloudflare.com'],
+    },
     server: {
       port: 5178,
       proxy: {
         '/api/rpc': {
+          target: 'http://127.0.0.1:8787',
+          changeOrigin: true,
+        },
+        '/api/ring': {
+          target: 'http://127.0.0.1:8787',
+          changeOrigin: true,
+        },
+        '/api/recordings': {
           target: 'http://127.0.0.1:8787',
           changeOrigin: true,
         },

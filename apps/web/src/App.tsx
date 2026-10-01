@@ -1,6 +1,7 @@
 /// <reference lib="es2023.array" />
 
 import { Option, Schema } from 'effect'
+import { PanelLeft } from 'lucide-react'
 import {
   useEffect,
   useState,
@@ -8,6 +9,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from 'react'
+import { sidebar } from './data/sidebar'
 import { EmptyState } from './screen/Empty'
 import { Library, type LibraryDocument } from './screen/Library'
 import { Routines } from './screen/Routines'
@@ -349,11 +351,12 @@ export default function App() {
     setPanel,
   })
 
+  const sidebarOpen = useSyncExternalStore(sidebar.subscribe, sidebar.isOpen)
   const activeThread = runtimeThreads.find((thread) => thread.id === activeId)
   const activeTitle = activeThread === undefined ? 'Conversation' : activeThread.title
 
   return (
-    <div className="flex size-full">
+    <div className="relative flex size-full">
       <AppSidebar
         view={view}
         activeId={activeId}
@@ -367,7 +370,19 @@ export default function App() {
         onActiveId={setActiveId}
         onActiveDemoId={setActiveDemoId}
         onOpenSettings={() => setSettingsOpen(true)}
+        onHide={sidebar.toggle}
+        open={sidebarOpen}
       />
+      {!sidebarOpen && (
+        <button
+          aria-label="Show sidebar"
+          title="Show sidebar (⌘B)"
+          onClick={sidebar.show}
+          className="absolute top-2 left-2 z-30 hidden size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink md:inline-flex"
+        >
+          <PanelLeft className="size-4" />
+        </button>
+      )}
       <AppWorkspace
         view={view}
         activeId={activeId}
@@ -408,6 +423,8 @@ function AppSidebar({
   onActiveId,
   onActiveDemoId,
   onOpenSettings,
+  onHide,
+  open,
 }: {
   view: View
   activeId: string | null
@@ -421,6 +438,8 @@ function AppSidebar({
   onActiveId: Dispatch<SetStateAction<string | null>>
   onActiveDemoId: Dispatch<SetStateAction<string>>
   onOpenSettings: () => void
+  onHide: () => void
+  open: boolean
 }) {
   if (view === 'tokens') return null
   const sidebarActiveId = sidebarSelection({ view, activeDemoId, activeId })
@@ -450,6 +469,8 @@ function AppSidebar({
       onRename={onRename}
       onSelect={select}
       onOpenSettings={onOpenSettings}
+      onHide={onHide}
+      open={open}
       workingCount={0}
     />
   )

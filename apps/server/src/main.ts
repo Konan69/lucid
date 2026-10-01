@@ -13,6 +13,7 @@ import { companyStoreLayer } from './companies/store.ts'
 import { connectionStoreLayer } from './connections/store.ts'
 import { loadServerConfig, ServerConfig } from './config.ts'
 import { databaseLayer } from './database/client.ts'
+import { ringerLayer } from './calls/ring.ts'
 import { routerLayer } from './http/router.ts'
 import { libraryStoreLayer } from './library/store.ts'
 import { projectStoreLayer } from './projects/store.ts'
@@ -63,6 +64,7 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     Layer.provide(projectStoreLayer.pipe(Layer.provide(platform))),
     Layer.provide(settingsStoreLayer.pipe(Layer.provide(platform))),
     Layer.provide(workStoresReady),
+    Layer.provide(ringerLayer),
     Layer.provide(platform),
     Layer.provide(server),
   )
