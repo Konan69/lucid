@@ -14,7 +14,7 @@ import {
   type Service,
   type UseToolRequest,
 } from '@vivid/contracts'
-import { type Actor } from '../auth/access.ts'
+import { requireCompany, type Actor } from '../auth/access.ts'
 import { workspaceIn } from '../auth/session.ts'
 import { ActionOutcome, Gate, GateDecision, type GateExposure } from '../approvals/gate.ts'
 import { requireThread } from '../threads/access.ts'
@@ -240,7 +240,16 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
   })
 })
 
-/** Delayed approvals re-read Membership and inventory, preventing removed accounts from executing. */
+/** Only a missing record or revoked permission proves that this delayed action did not run. */
+const unavailableAction = () =>
+  Effect.succeed(
+    ActionOutcome.cases.Failed.make({
+      reason: 'The Connection is no longer available; check its authorization and your access.',
+    }),
+  )
+
+/** Delayed approvals re-read access. Infrastructure faults remain uncertain, including faults
+ * while recording a post-dispatch authorization loss; they never invent a permanent refusal. */
 export const connectionRunner = Effect.fn('Connections.runApproved')(
   function* (input: {
     readonly person: Person
@@ -254,6 +263,8 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
         Company: ({ company }) => Option.some(company.id),
       }),
     )
+    // An Approval in a Company cannot survive removal of its acting Person's Membership.
+    if (Workspace.guards.Company(input.workspace)) yield* requireCompany(workspace)
     const actor: Actor = { person: input.person, workspace, by: 'vivid', threadId: Option.none() }
     const store = yield* ConnectionStore
     const row = yield* store.get(actor, input.target.connectionId)
@@ -281,14 +292,17 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
   },
   (effect) =>
     effect.pipe(
-      Effect.catch(() =>
-        Effect.succeed(
-          ActionOutcome.cases.Failed.make({
-            reason:
-              'The Connection is no longer available; check its authorization and your access.',
-          }),
-        ),
-      ),
+      Effect.catchTags({
+        NotFound: unavailableAction,
+        Forbidden: unavailableAction,
+        ServiceUnavailable: () => Effect.succeed(ActionOutcome.cases.Unknown.make({})),
+        DatabaseUnavailable: () => Effect.succeed(ActionOutcome.cases.Unknown.make({})),
+        DatabaseConstraintViolation: () => Effect.succeed(ActionOutcome.cases.Unknown.make({})),
+        DatabaseFailure: () => Effect.succeed(ActionOutcome.cases.Unknown.make({})),
+        Conflict: () => Effect.succeed(ActionOutcome.cases.Unknown.make({})),
+        InvalidRequest: ({ message }) =>
+          Effect.succeed(ActionOutcome.cases.Failed.make({ reason: message })),
+      }),
     ),
 )
 
