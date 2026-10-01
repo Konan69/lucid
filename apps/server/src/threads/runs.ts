@@ -8,6 +8,7 @@ import * as Schema from 'effect/Schema'
 import {
   DatabaseFailure,
   Run,
+  RunFailure,
   RunOrigin,
   RunState,
   type PersonId,
@@ -22,7 +23,12 @@ import { runs } from './tables.ts'
 import { summaryFor } from './wire.ts'
 
 /** How a Run that is no longer working ended, as its row stores it. */
-export const RunEnding = Schema.Literals(['completed', 'failed', 'stopped', 'unknown'] as const)
+export const RunEnding = Schema.TaggedUnion({
+  Completed: {},
+  Failed: { reason: RunFailure },
+  Stopped: {},
+  Unknown: {},
+})
 export type RunEnding = typeof RunEnding.Type
 
 /** A Run that has not ended, with what is needed to pick its observation back up. */
@@ -62,7 +68,11 @@ export class RunStore extends Context.Service<RunStore, RunStoreService>()('vivi
 type DatabaseService = Database['Service']
 
 const decodeOrigin = decodeStored(StoredRunOrigin, 'Run origin')
-const decodeEnding = decodeStored(RunEnding, 'Run state')
+const decodeEnding = decodeStored(
+  Schema.Literals(['completed', 'failed', 'stopped', 'unknown']),
+  'Run state',
+)
+const decodeFailure = decodeStored(RunFailure, 'Run failure reason')
 const encodeOrigin = Schema.encodeSync(StoredRunOrigin)
 
 /** A Run's stored origin with the Person Vivid acted for put back beside it. */
@@ -76,18 +86,25 @@ const originOf = (origin: StoredRunOrigin, person: PersonSummary) =>
 
 const ENDED = {
   completed: (finishedAt: number): RunState => RunState.cases.Completed.make({ finishedAt }),
-  failed: (finishedAt: number): RunState => RunState.cases.Failed.make({ finishedAt }),
   stopped: (finishedAt: number): RunState => RunState.cases.Stopped.make({ finishedAt }),
   unknown: (finishedAt: number): RunState => RunState.cases.Unknown.make({ finishedAt }),
-} satisfies Record<RunEnding, (finishedAt: number) => RunState>
+}
 
 /** The stored state and its time as the union. A finished state without a time is a database fault. */
-const stateOf = Effect.fn('RunStore.stateOf')(function* (state: string, finishedAt: number | null) {
+const stateOf = Effect.fn('RunStore.stateOf')(function* (row: typeof runs.$inferSelect) {
+  const { state, finishedAt } = row
   if (state === 'working') return RunState.cases.Working.make({})
   if (finishedAt === null) {
     return yield* Effect.fail(new DatabaseFailure({ message: 'A finished Run has no finish time' }))
   }
-  return ENDED[yield* decodeEnding(state)](finishedAt)
+  const ending = yield* decodeEnding(state)
+  if (ending === 'failed') {
+    // The requested legacy interpretation is explicit; new failures always persist a reason.
+    const reason =
+      row.failureReason === null ? 'Unexplained' : yield* decodeFailure(row.failureReason)
+    return RunState.cases.Failed.make({ finishedAt, reason })
+  }
+  return ENDED[ending](finishedAt)
 })
 
 const toRun = Effect.fn('RunStore.toRun')(function* (
@@ -99,7 +116,7 @@ const toRun = Effect.fn('RunStore.toRun')(function* (
     id: row.id,
     threadId: row.threadId,
     origin: originOf(yield* decodeOrigin(row.origin), person),
-    state: yield* stateOf(row.state, row.finishedAt),
+    state: yield* stateOf(row),
     startedAt: row.startedAt,
   })
 })
@@ -127,15 +144,26 @@ const makeStart = (database: DatabaseService) =>
     )
   })
 
+type EndingColumns = Pick<typeof runs.$inferInsert, 'state' | 'failureReason'>
+
 const makeEnd = (database: DatabaseService) =>
   Effect.fn('RunStore.end')(function* (id: RunId, ending: RunEnding) {
     const now = yield* Clock.currentTimeMillis
+    const columns = RunEnding.match(ending, {
+      Completed: (): EndingColumns => ({
+        state: 'completed',
+        failureReason: null,
+      }),
+      Failed: ({ reason }) => ({ state: 'failed', failureReason: reason }),
+      Stopped: () => ({ state: 'stopped', failureReason: null }),
+      Unknown: () => ({ state: 'unknown', failureReason: null }),
+    })
     // One conditional update: only the caller that moves the Run out of `working` gets `true`, so
     // a settlement observed twice (a restart, a repeated delivery) acts once.
     const rows = yield* database.run(
       database
         .update(runs)
-        .set({ state: ending, finishedAt: now })
+        .set({ ...columns, finishedAt: now })
         .where(and(eq(runs.id, id), eq(runs.state, 'working')))
         .returning({ id: runs.id }),
     )

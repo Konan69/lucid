@@ -1,0 +1,1 @@
+ALTER TABLE "vivid_runs" ADD COLUMN "failure_reason" text;

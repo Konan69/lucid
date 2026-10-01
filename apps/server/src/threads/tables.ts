@@ -1,5 +1,5 @@
 import { boolean, index, jsonb, pgTable, primaryKey, text } from 'drizzle-orm/pg-core'
-import type { RunId } from '@vivid/contracts'
+import type { RunFailure, RunId } from '@vivid/contracts'
 import { companyColumn, epoch, personColumn, threadColumn } from '../database/owner.ts'
 import { projectTable } from '../projects/tables.ts'
 
@@ -81,6 +81,8 @@ export const runs = pgTable(
     state: text('state').notNull(),
     startedAt: epoch('started_at').notNull(),
     finishedAt: epoch('finished_at'),
+    /** Only failed Runs have a reason; pre-classification failures remain null in storage. */
+    failureReason: text('failure_reason').$type<RunFailure>(),
   },
   (table) => [
     index('vivid_runs_thread').on(table.threadId, table.startedAt),

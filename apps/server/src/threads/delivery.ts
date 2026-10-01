@@ -25,7 +25,7 @@ import {
   type Delivery,
 } from './conversation.ts'
 import { Presence } from './presence.ts'
-import { RunStore, type RunEnding, type WorkingRun } from './runs.ts'
+import { RunStore, RunEnding, type WorkingRun } from './runs.ts'
 import { ThreadStore } from './store.ts'
 
 /**
@@ -67,12 +67,14 @@ const previewOf = (message: DeliveryMessage) =>
     Signal: () => Option.none<string>(),
   })
 
-const ENDING = {
-  Completed: 'completed',
-  Failed: 'failed',
-  Stopped: 'stopped',
-  Unknown: 'unknown',
-} satisfies Record<Settlement['_tag'], RunEnding>
+/** The runtime's classified failure stays attached through the single conditional settlement write. */
+const endingOf = (settlement: Settlement): RunEnding =>
+  Settlement.match(settlement, {
+    Completed: (): RunEnding => RunEnding.cases.Completed.make({}),
+    Failed: ({ reason }) => RunEnding.cases.Failed.make({ reason }),
+    Stopped: () => RunEnding.cases.Stopped.make({}),
+    Unknown: () => RunEnding.cases.Unknown.make({}),
+  })
 
 /** A Run being watched to its end, with the Person's words that started it when there were any. */
 interface Followed {
@@ -124,7 +126,7 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
 
   return Effect.fn('Conversation.observe')(function* (run: Followed) {
     const settlement = yield* runtime.settled(run.threadId, run.id)
-    if (!(yield* runs.end(run.id, ENDING[settlement._tag]))) return
+    if (!(yield* runs.end(run.id, endingOf(settlement)))) return
     const thread = yield* findThread(run.threadId).pipe(Effect.provideService(Database, database))
     if (Option.isNone(thread)) return
     const reply = Settlement.guards.Completed(settlement)

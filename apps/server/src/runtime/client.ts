@@ -1,9 +1,4 @@
-import {
-  createFlueClient,
-  FlueExecutionError,
-  type DeliveredMessage,
-  type FlueExecutionFailure,
-} from '@flue/sdk'
+import { createFlueClient, FlueExecutionError, type DeliveredMessage } from '@flue/sdk'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
@@ -12,9 +7,10 @@ import * as Schema from 'effect/Schema'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import type * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
-import { RunId, type ThreadId, type ThreadOrigin } from '@vivid/contracts'
+import { RunFailure, RunId, type ThreadId, type ThreadOrigin } from '@vivid/contracts'
 import { RuntimeUnavailable } from '@vivid/contracts/rpc'
 import { ServerConfig } from '../config.ts'
+import { classifyFailure, decodeFailureEvidence } from './failure.ts'
 
 /** Flue's receipt for one accepted message. `offset` is where its events begin in the stream. */
 export const Admission = Schema.Struct({
@@ -34,7 +30,7 @@ export interface Admission extends Schema.Schema.Type<typeof Admission> {}
  */
 export const Settlement = Schema.TaggedUnion({
   Completed: { reply: Schema.String },
-  Failed: {},
+  Failed: { reason: RunFailure },
   Stopped: {},
   Unknown: {},
 })
@@ -82,9 +78,12 @@ export class Runtime extends Context.Service<Runtime, RuntimeService>()('vivid/R
 const unavailable = (message: string) => () => new RuntimeUnavailable({ message })
 
 /** How Flue's own verdict on a submission maps to an ending. Only its verdicts can be named. */
-const endingOf = (failure: FlueExecutionFailure): Settlement => {
-  if (failure === 'aborted') return Settlement.cases.Stopped.make({})
-  if (failure === 'failed') return Settlement.cases.Failed.make({})
+const endingOf = (error: FlueExecutionError): Settlement => {
+  if (error.failure === 'aborted') return Settlement.cases.Stopped.make({})
+  if (error.failure === 'failed')
+    return Settlement.cases.Failed.make({
+      reason: classifyFailure(decodeFailureEvidence(error.error)),
+    })
   return Settlement.cases.Unknown.make({})
 }
 
@@ -121,9 +120,7 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
       return yield* Effect.tryPromise({
         try: (signal) => flue(threadId).read(runId, { signal }),
         catch: (error) =>
-          error instanceof FlueExecutionError
-            ? endingOf(error.failure)
-            : Settlement.cases.Unknown.make({}),
+          error instanceof FlueExecutionError ? endingOf(error) : Settlement.cases.Unknown.make({}),
       }).pipe(
         Effect.map((reply) => Settlement.cases.Completed.make({ reply: reply.text })),
         Effect.catch((settlement) => Effect.succeed(settlement)),
