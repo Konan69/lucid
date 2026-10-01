@@ -346,7 +346,10 @@ function Detail({
 }) {
   const data = useLiveData()
   const zone = useZone()
-  const [fields, setFields] = useState(() => routines.fieldsOf(routine))
+  // Only what the Person has changed is held here; the rest follows the live Routine.
+  const [edits, setEdits] = useState(routines.noEdits)
+  const fields = routines.editing(routine, edits)
+  const setFields = (next: routines.RoutineFields) => setEdits(routines.editsIn(routine, next))
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
   const savable =
     routines.fieldsComplete(fields, zone) && routines.fieldsDiffer(routine, fields, zone)
@@ -362,6 +365,9 @@ function Detail({
       (client) => client.PatchRoutine({ id: routine.id, patch: changes }),
       () => data.live.routines.expect(routines.edited(routine.id, changes)),
     )
+    // Saved: the Routine now says what the editor said, so nothing is the Person's edit any more.
+    // Refused: what they wrote stays in the editor.
+    if (Result.isSuccess(result)) setEdits(routines.noEdits)
     setRefused(refusalOf(result))
   }
 

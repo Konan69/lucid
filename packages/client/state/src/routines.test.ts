@@ -68,6 +68,27 @@ describe('the editor', () => {
     expect(routines.fieldsDiffer(current, { ...fields, name: ' a ' }, 'UTC')).toBe(false)
   })
 
+  it('keeps following the Routine in every field the Person has not touched', () => {
+    const opened = routine('brief', {})
+    const typed = { ...routines.editing(opened, routines.noEdits), name: 'Morning brief' }
+    const edits = routines.editsIn(opened, typed)
+
+    // Someone else rewrites the instruction while the editor is open.
+    const moved = routine('brief', { prompt: 'Write the brief, shorter.' })
+    const shown = routines.editing(moved, edits)
+    expect(shown.name).toBe('Morning brief')
+    expect(shown.prompt).toBe('Write the brief, shorter.')
+    // Only the name is this Person's edit; the instruction is not written back over theirs.
+    expect(routines.editsIn(moved, shown)).toEqual({ ...routines.noEdits, name: edits.name })
+  })
+
+  it('drops an edit once the Routine itself says the same', () => {
+    const opened = routine('brief', {})
+    const typed = { ...routines.editing(opened, routines.noEdits), name: 'Morning brief' }
+    const saved = routine('brief', { name: 'Morning brief' })
+    expect(routines.editsIn(saved, typed)).toEqual(routines.noEdits)
+  })
+
   it('cannot be saved without a name, an instruction and a whole schedule', () => {
     const fields = { ...routines.emptyFields(), name: 'Brief', prompt: 'Write it.' }
     expect(routines.fieldsComplete(fields, 'UTC')).toBe(true)

@@ -5,7 +5,7 @@ import {
   type RoutineId,
   type RoutineListResponse,
 } from '@vivid/contracts'
-import { Option } from 'effect'
+import { Equal, Option } from 'effect'
 
 /**
  * Routines, as pure functions over what the server sends.
@@ -92,6 +92,58 @@ export const fieldsOf = (routine: Routine): RoutineFields =>
       timezone: Option.none(),
     }),
   })
+
+/**
+ * What a Person has changed in the editor of an existing Routine and not saved yet. Each part is
+ * absent until they touch it.
+ *
+ * The editor used to copy the Routine once, when it opened. A Routine is live: when someone else
+ * renamed it meanwhile, the copy made every untouched field look edited, and Save wrote the old
+ * values back over theirs. Holding only the Person's own changes lets everything they have not
+ * touched keep following the server.
+ */
+export interface RoutineEdits {
+  readonly name: Option.Option<string>
+  readonly prompt: Option.Option<string>
+  /** The trigger is edited as one thing: its kind and the schedule written for it. */
+  readonly trigger: Option.Option<Pick<RoutineFields, 'kind' | 'cron' | 'timezone'>>
+}
+
+/** An editor nobody has typed in. */
+export const noEdits: RoutineEdits = {
+  name: Option.none(),
+  prompt: Option.none(),
+  trigger: Option.none(),
+}
+
+/** What the editor shows: the Routine as the server has it now, with the unsaved edits on top. */
+export const editing = (routine: Routine, edits: RoutineEdits): RoutineFields => {
+  const saved = fieldsOf(routine)
+  const trigger = Option.getOrElse(edits.trigger, () => saved)
+  return {
+    name: Option.getOrElse(edits.name, () => saved.name),
+    prompt: Option.getOrElse(edits.prompt, () => saved.prompt),
+    kind: trigger.kind,
+    cron: trigger.cron,
+    timezone: trigger.timezone,
+  }
+}
+
+/** Which of the editor's values are the Person's own: the ones that differ from the Routine. */
+export const editsIn = (routine: Routine, fields: RoutineFields): RoutineEdits => {
+  const saved = fieldsOf(routine)
+  const sameTrigger =
+    fields.kind === saved.kind &&
+    fields.cron === saved.cron &&
+    Equal.equals(fields.timezone, saved.timezone)
+  return {
+    name: fields.name === saved.name ? Option.none() : Option.some(fields.name),
+    prompt: fields.prompt === saved.prompt ? Option.none() : Option.some(fields.prompt),
+    trigger: sameTrigger
+      ? Option.none()
+      : Option.some({ kind: fields.kind, cron: fields.cron, timezone: fields.timezone }),
+  }
+}
 
 /** The trigger the editor describes. `zone` is the Person's own, used until they write another. */
 export const triggerOf = (fields: RoutineFields, zone: string): RoutineTrigger =>

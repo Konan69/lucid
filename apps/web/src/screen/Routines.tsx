@@ -484,7 +484,11 @@ function RoutineDetail({
   onOpenConversation: (conversation: RuntimeConversation) => void
 }) {
   const zone = useZone()
-  const [fields, setFields] = useState(() => routinesData.fieldsOf(routine))
+  // Only what the Person has changed is held here; the rest follows the live Routine.
+  const [edits, setEdits] = useState(routinesData.noEdits)
+  const fields = routinesData.editing(routine, edits)
+  const setFields = (next: routinesData.RoutineFields) =>
+    setEdits(routinesData.editsIn(routine, next))
   const savable =
     routinesData.fieldsComplete(fields, zone) && routinesData.fieldsDiffer(routine, fields, zone)
 
@@ -500,6 +504,9 @@ function RoutineDetail({
       (client) => client.PatchRoutine({ id: routine.id, patch: changes }),
       () => live.routines.expect(routinesData.edited(routine.id, changes)),
     )
+    // Saved: the Routine now says what the editor said, so nothing is the Person's edit any more.
+    // Refused: what they wrote stays in the editor.
+    if (Result.isSuccess(result)) setEdits(routinesData.noEdits)
     onRefused(refusal(result))
   }
 
