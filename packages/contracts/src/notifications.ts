@@ -7,6 +7,16 @@ export const NotificationKind = Schema.Literals([
   'overdue',
   'follow-up',
   'follow-up-failed',
+  /** Vivid finished a Run in a Thread this Person was not looking at. */
+  'finished',
+  /** A question or an Approval is waiting for this Person. */
+  'needs-you',
+  /** Someone shared a Thread with this Person. */
+  'shared',
+  /** A Task was assigned to this Person. */
+  'assigned',
+  /** This Person was invited to a Company. */
+  'invited',
 ] as const)
 
 /** Durable notification returned by the runtime. */
@@ -16,7 +26,7 @@ export const Notification = Schema.Struct({
   title: Schema.String,
   body: Schema.String,
   taskId: Schema.NullOr(TaskId),
-  conversationId: Schema.NullOr(ThreadId),
+  threadId: Schema.NullOr(ThreadId),
   createdAt: Schema.Number,
   readAt: Schema.NullOr(Schema.Number),
 }).annotate({ identifier: 'Notification', title: 'Notification' })

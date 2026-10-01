@@ -5,7 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./api": "./src/api.ts",
+    "./auth": "./src/auth.ts",
     "./rpc": "./src/rpc.ts"
   },
   "scripts": {

@@ -1,5 +1,5 @@
 import { Schema } from 'effect'
-import { FollowUpId, RoutineId, TaskId, ThreadId } from './identity.js'
+import { FollowUpId, PersonId, PersonSummary, RoutineId, TaskId, ThreadId } from './identity.js'
 
 /** Closed Task lifecycle values encoded by the current HTTP protocol. */
 export const TaskStatus = Schema.Literals(['open', 'done', 'dropped'] as const)
@@ -13,6 +13,36 @@ export const FollowUpStatus = Schema.Literals([
   'failed',
   'cancelled',
 ] as const)
+
+/**
+ * Who put a Task or a follow-up there: a Person directly, or Vivid acting for one. In a Company a
+ * bare "you" would be ambiguous, so the Person is always named.
+ */
+export const Author = Schema.TaggedUnion({
+  Person: { person: PersonSummary },
+  Vivid: { onBehalfOf: PersonSummary },
+})
+export type Author = typeof Author.Type
+
+/**
+ * Who owes the work. A Member is someone in the Company, who sees the Task in their own Today and
+ * can be notified. An Outsider is anyone else, known only by name; Vivid drafts the nudge and a
+ * Person sends it. Nobody means it is the creator's own.
+ */
+export const Assignee = Schema.TaggedUnion({
+  Nobody: {},
+  Member: { person: PersonSummary },
+  Outsider: { name: Schema.String },
+})
+export type Assignee = typeof Assignee.Type
+
+/** How a caller names an assignee: a Member by id, or anyone else by name. */
+export const AssigneeInput = Schema.TaggedUnion({
+  Nobody: {},
+  Member: { personId: PersonId },
+  Outsider: { name: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(120)) },
+})
+export type AssigneeInput = typeof AssigneeInput.Type
 
 /** Epoch milliseconds or an ISO 8601 timestamp accepted by mutation routes. */
 export const TimestampInput = Schema.Union([Schema.Number, Schema.String])
@@ -31,7 +61,7 @@ export const FollowUp = Schema.Struct({
   firedAt: Schema.NullOr(Schema.Number),
   output: Schema.NullOr(Schema.String),
   error: Schema.NullOr(Schema.String),
-  createdBy: Schema.Literals(['you', 'vivid'] as const),
+  createdBy: Author,
   createdAt: Schema.Number,
 }).annotate({ identifier: 'FollowUp', title: 'Follow-up' })
 /** Decoded follow-up. */
@@ -41,8 +71,8 @@ export interface FollowUp extends Schema.Schema.Type<typeof FollowUp> {}
 const ManualTaskOrigin = Schema.Struct({ kind: Schema.Literal('manual') })
 /** Thread origin for a Task. */
 const ThreadTaskOrigin = Schema.Struct({
-  kind: Schema.Literal('conversation'),
-  conversationId: ThreadId,
+  kind: Schema.Literal('thread'),
+  threadId: ThreadId,
 })
 /** Routine origin for a Task. */
 const RoutineTaskOrigin = Schema.Struct({ kind: Schema.Literal('routine'), routineId: RoutineId })
@@ -58,11 +88,11 @@ export const Task = Schema.Struct({
   detail: Schema.String,
   status: TaskStatus,
   priority: TaskPriority,
-  assignee: Schema.NullOr(Schema.String),
+  assignee: Assignee,
   dueAt: Schema.NullOr(Schema.Number),
   origin: TaskOrigin,
-  createdBy: Schema.Literals(['you', 'vivid'] as const),
-  conversationId: ThreadId,
+  createdBy: Author,
+  threadId: ThreadId,
   overdueNotifiedAt: Schema.NullOr(Schema.Number),
   completedAt: Schema.NullOr(Schema.Number),
   createdAt: Schema.Number,
@@ -89,7 +119,7 @@ export const CreateTaskRequest = Schema.Struct({
   threadId: Schema.optionalKey(ThreadId),
   title: Schema.String,
   detail: Schema.optionalKey(Schema.String),
-  assignee: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  assignee: Schema.optionalKey(AssigneeInput),
   dueAt: Schema.optionalKey(Schema.NullOr(TimestampInput)),
   priority: Schema.optionalKey(TaskPriority),
   followUp: Schema.optionalKey(FollowUpInput),
@@ -101,7 +131,7 @@ export interface CreateTaskRequest extends Schema.Schema.Type<typeof CreateTaskR
 export const PatchTaskRequest = Schema.Struct({
   title: Schema.optionalKey(Schema.String),
   detail: Schema.optionalKey(Schema.String),
-  assignee: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  assignee: Schema.optionalKey(AssigneeInput),
   dueAt: Schema.optionalKey(Schema.NullOr(TimestampInput)),
   priority: Schema.optionalKey(TaskPriority),
   status: Schema.optionalKey(TaskStatus),

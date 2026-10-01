@@ -69,6 +69,19 @@ export class RuntimeUnavailable extends Schema.TaggedError<RuntimeUnavailable>()
   { title: 'Runtime unavailable' },
 ) {}
 
+/**
+ * A part of the installation the request needs is not reachable: the Connection layer, the memory
+ * store or the Computer provider. The rest of Vivid keeps working; the caller says which part.
+ */
+export class ServiceUnavailable extends Schema.TaggedError<ServiceUnavailable>()(
+  'ServiceUnavailable',
+  {
+    service: Schema.Literals(['connections', 'memory', 'computer'] as const),
+    message: Schema.String,
+  },
+  { title: 'Service unavailable' },
+) {}
+
 export const ApiError = Schema.Union([
   Unauthenticated,
   Forbidden,
