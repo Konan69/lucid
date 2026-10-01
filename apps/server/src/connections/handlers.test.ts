@@ -10,17 +10,20 @@ import {
   Workspace,
   ActionTarget,
   ServiceCatalog,
+  ServiceAuthorization,
+  InvalidRequest,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { connectionHandlers, connectionRunner } from './handlers.ts'
-import { ConnectionStore } from './store.ts'
+import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import {
   Executor,
   ExecutorAccessDenied,
   ExecutorCallOutcome,
   ExecutorRequestId,
   ExecutorResourceMissing,
+  connectionSetupMessage,
 } from './executor.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId, toolRequest } from './testing.ts'
 
@@ -36,6 +39,36 @@ const personAuth = AuthState.Person({
 
 describe.skipIf(!testDatabaseConfigured)('Connection transport authentication', () => {
   layer(connectionTestLayer)((it) => {
+    it.effect('does not offer a service whose sign-in needs operator setup', () =>
+      Effect.gen(function* () {
+        const { ownerActor, threadId } = yield* fixture()
+        const executor = yield* Executor
+        const setupRequired = Executor.of({
+          ...executor,
+          authorization: Effect.fn('Executor.Test.unoffered')(() =>
+            Effect.succeed(ServiceAuthorization.cases.SetupRequired.make({})),
+          ),
+        })
+        const auth = AuthState.Vivid({
+          person: ownerActor.person,
+          workspace: ownerActor.workspace,
+          threadId,
+        })
+        yield* Effect.gen(function* () {
+          const found = yield* connectionHandlers.FindTools({ query: 'records' })
+          expect(found.unconnected).toEqual([])
+          expect(
+            yield* connectionHandlers
+              .OfferConnection({ service: serviceId, reason: 'Read records' })
+              .pipe(Effect.flip),
+          ).toEqual(new InvalidRequest({ message: connectionSetupMessage }))
+        }).pipe(
+          Effect.provide(connectionStoreLayer, { local: true }),
+          Effect.provideService(Executor, setupRequired),
+          Effect.provideService(AuthContext, auth),
+        )
+      }),
+    )
     it.effect('lets only a signed-in Person search services', () =>
       Effect.gen(function* () {
         const found = yield* connectionHandlers

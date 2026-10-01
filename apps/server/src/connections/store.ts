@@ -11,6 +11,7 @@ import {
   InvalidRequest,
   Service,
   ServiceCatalog,
+  ServiceAuthorization,
   Workspace,
 } from '@vivid/contracts'
 import { requireAdmin, type Actor } from '../auth/access.ts'
@@ -23,6 +24,7 @@ import {
   ExecutorOwnerId,
   ExecutorReferences,
   ExecutorResourceMissing,
+  connectionSetupMessage,
   resourceReason,
   ExecutorStatus,
   ExecutorStep,
@@ -42,6 +44,17 @@ import { connections } from './tables.ts'
 import { rankServices } from './ranking.ts'
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
+
+/** Availability changes metadata only; explicit construction preserves the wire Service model. */
+function authorizedService(service: Service, authorization: ServiceAuthorization) {
+  return Service.make({
+    id: service.id,
+    name: service.name,
+    description: service.description,
+    mark: service.mark,
+    authorization,
+  })
+}
 
 /** Shared management is an admin capability; owning the row does not bypass it. */
 const mayManage = Effect.fn('Connections.mayManage')(function* (
@@ -114,6 +127,8 @@ const begin = Effect.fn('Connections.begin')(function* (
     return yield* Effect.fail(
       new InvalidRequest({ message: 'Choose a service from the current catalog.' }),
     )
+  if (ServiceAuthorization.guards.SetupRequired(service.authorization))
+    return yield* Effect.fail(new InvalidRequest({ message: connectionSetupMessage }))
   if (request.label.trim().length === 0)
     return yield* Effect.fail(new InvalidRequest({ message: 'Give this account a label.' }))
   const id = ConnectionId.make(crypto.randomUUID())
@@ -210,6 +225,7 @@ const loadTools = Effect.fn('Connections.tools')(function* (actor: Actor, row: C
 const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const executor: ExecutorService = yield* Executor
   const database = yield* Database
+  const returnAddress = (yield* ServerConfig).PUBLIC_URL.href
   const dependencies = yield* Effect.context<
     Executor | Database | Audit | ServerConfig | import('../live/changes.ts').Changes
   >()
@@ -225,20 +241,50 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
       Service.make({ ...entry, mark: null }),
     )
   })
+  /** Inspect the selected candidate without retaining any account or credential. */
+  const inspectService = Effect.fn('Connections.inspectService')(function* (service: Service) {
+    const authorization = yield* executor
+      .authorization({ service: service.id, returnAddress })
+      .pipe(Effect.mapError(executorFailure))
+    return authorizedService(service, authorization)
+  })
+  /** Inspect at most 24 matching candidates. Known public services fill remaining slots, so
+   * uninspected sign-in hints never reach a client or displace connectable matches with setup.
+   */
+  const find = Effect.fn('Connections.findServices')(function* (query: string) {
+    const services = yield* catalogServices()
+    const inspected = yield* Effect.forEach(rankServices(services, query), inspectService, {
+      concurrency: 4,
+    })
+    const byId = new Map(inspected.map((service) => [service.id, service]))
+    const known = services.flatMap((service) => {
+      const resolved = byId.get(service.id)
+      if (resolved !== undefined) return [resolved]
+      return ServiceAuthorization.guards.None(service.authorization) ? [service] : []
+    })
+    return ServiceCatalog.cases.Ready.make({
+      services: rankServices(known, query),
+      total: services.length,
+    })
+  })
+  /** Offers inspect exactly the chosen service, using the same cached availability as search. */
+  const service = Effect.fn('Connections.service')(function* (
+    id: import('@vivid/contracts').ServiceId,
+  ) {
+    const entry = (yield* catalogServices()).find((candidate) => candidate.id === id)
+    if (entry === undefined)
+      return yield* Effect.fail(new InvalidRequest({ message: 'Unknown service.' }))
+    return yield* inspectService(entry)
+  })
   const get = (actor: Actor, id: ConnectionId) => provide(getRecord(actor, id, false))
   const management = makeManagement({ executor, database, provide, get })
   return {
     get,
     catalog: catalogServices,
+    service,
     /** Catalog search is independent of ownership and preserves the adapter's retained order. */
-    find: Effect.fn('Connections.findServices')((query: string) =>
-      catalogServices().pipe(
-        Effect.map((services) =>
-          ServiceCatalog.cases.Ready.make({
-            services: rankServices(services, query),
-            total: services.length,
-          }),
-        ),
+    find: Effect.fn('Connections.search')((query: string) =>
+      find(query).pipe(
         Effect.catchTag('ServiceUnavailable', () =>
           Effect.succeed(ServiceCatalog.cases.Unavailable.make({})),
         ),
@@ -259,7 +305,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     ) {
       // Refuse non-admin sharing before catalog lookup or provider mutation.
       if (request.shared) yield* requireAdmin(actor.workspace)
-      return yield* provide(begin(actor, request, yield* catalogServices()))
+      return yield* provide(begin(actor, request, [yield* service(request.service)]))
     }),
     ...management,
   }

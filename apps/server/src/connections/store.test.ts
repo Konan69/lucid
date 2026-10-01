@@ -9,6 +9,8 @@ import {
   InvalidRequest,
   ServiceUnavailable,
   ServiceCatalog,
+  ServiceAuthorization,
+  ServiceId,
 } from '@vivid/contracts'
 import { and, eq } from 'drizzle-orm'
 import { Database } from '../database/client.ts'
@@ -16,7 +18,13 @@ import { membershipTable } from '../companies/tables.ts'
 import { auditEntries } from '../audit/tables.ts'
 import { auditLayer } from '../audit/record.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
-import { Executor, ExecutorRejected, ExecutorSignInRequired } from './executor.ts'
+import {
+  Executor,
+  ExecutorRejected,
+  ExecutorSignInRequired,
+  ExecutorServiceEntry,
+  connectionSetupMessage,
+} from './executor.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
 
@@ -148,6 +156,85 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           Effect.flip,
         )
         expect(failure).toBeInstanceOf(InvalidRequest)
+      }),
+    )
+    it.effect(
+      'lists unavailable setup and refuses begin before any account or row is created',
+      () =>
+        Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
+          const executor = yield* Executor
+          const probe = yield* ConnectionProbe
+          const before = yield* Ref.get(probe.begins)
+          const setupRequired = Executor.of({
+            ...executor,
+            authorization: Effect.fn('Executor.Test.setupRequired')(() =>
+              Effect.succeed(ServiceAuthorization.cases.SetupRequired.make({})),
+            ),
+          })
+          yield* Effect.gen(function* () {
+            const store = yield* ConnectionStore
+            const found = yield* store.find('records')
+            expect(found).toHaveProperty(
+              'services.0.authorization',
+              ServiceAuthorization.cases.SetupRequired.make({}),
+            )
+            const prior = yield* store.list(ownerActor)
+            expect(
+              yield* store
+                .begin(ownerActor, {
+                  service: serviceId,
+                  label: 'Setup unavailable',
+                  shared: false,
+                })
+                .pipe(Effect.flip),
+            ).toEqual(new InvalidRequest({ message: connectionSetupMessage }))
+            expect(yield* store.list(ownerActor)).toEqual(prior)
+            expect(yield* Ref.get(probe.begins)).toBe(before)
+          }).pipe(
+            Effect.provide(connectionStoreLayer, { local: true }),
+            Effect.provideService(Executor, setupRequired),
+          )
+        }),
+    )
+    it.effect('bounds inspection to 24 candidates and leads with known connectable services', () =>
+      Effect.gen(function* () {
+        const executor = yield* Executor
+        const inspections = yield* Ref.make(0)
+        const entries = Array.from({ length: 30 }, (_, index) =>
+          ExecutorServiceEntry.make({
+            id: ServiceId.make(`service-${index}`),
+            name: `Records ${index}`,
+            description: 'Records',
+            authorization:
+              index < 24
+                ? ServiceAuthorization.cases.SignIn.make({})
+                : ServiceAuthorization.cases.None.make({}),
+          }),
+        )
+        const inspection = Executor.of({
+          ...executor,
+          catalog: Effect.fn('Executor.Test.largeCatalog')(() => Effect.succeed(entries)),
+          authorization: Effect.fn('Executor.Test.inspect')(function* () {
+            yield* Ref.update(inspections, (count) => count + 1)
+            return ServiceAuthorization.cases.SetupRequired.make({})
+          }),
+        })
+        const found = yield* Effect.gen(function* () {
+          return yield* (yield* ConnectionStore).find('')
+        }).pipe(
+          Effect.provide(connectionStoreLayer, { local: true }),
+          Effect.provideService(Executor, inspection),
+        )
+        expect(yield* Ref.get(inspections)).toBe(24)
+        expect(ServiceCatalog.guards.Ready(found)).toBe(true)
+        if (ServiceCatalog.guards.Ready(found)) {
+          expect(found.total).toBe(30)
+          expect(found.services).toHaveLength(24)
+          expect(found.services.slice(0, 6).map((service) => service.id)).toEqual(
+            entries.slice(24).map((service) => service.id),
+          )
+        }
       }),
     )
     it.effect(

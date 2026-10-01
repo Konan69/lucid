@@ -1,16 +1,17 @@
-import type { Service } from '@vivid/contracts'
+import { ServiceAuthorization, type Service } from '@vivid/contracts'
 import { Array as Arr, Order } from 'effect'
 
 /** Names alone determine relevance. Stable sort preserves the catalog's popularity order
- * within exact, prefix and substring matches; an empty query returns its first 24 services.
+ * within name ranks and availability. An empty query gives every name the same rank, so all
+ * connectable services precede setup-required ones without changing their popularity order.
  */
 export function rankServices(services: readonly Service[], query: string): readonly Service[] {
   const normalized = query.trim().toLowerCase()
-  if (normalized.length === 0) return services.slice(0, 24)
   const matches = services.map((service) => {
     const name = service.name.toLowerCase()
-    const rank = nameRank(name, normalized)
-    return { service, rank, matches: name.includes(normalized) }
+    const rank = normalized.length === 0 ? 0 : nameRank(name, normalized)
+    const unavailable = ServiceAuthorization.guards.SetupRequired(service.authorization) ? 1 : 0
+    return { service, rank: rank * 2 + unavailable, matches: name.includes(normalized) }
   })
   return Arr.sortWith(
     matches.filter((entry) => entry.matches),

@@ -6,6 +6,7 @@ import {
   ConnectionState,
   InvalidRequest,
   ProposedAction,
+  ServiceAuthorization,
   ToolOutcome,
   Workspace,
   type FindToolsRequest,
@@ -22,6 +23,7 @@ import {
   Executor,
   ExecutorCallOutcome,
   ExecutorResourceMissing,
+  connectionSetupMessage,
   resourceReason,
   ExecutorResumeOutcome,
 } from './executor.ts'
@@ -84,6 +86,11 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
   const unconnected = services.filter(
     (service) => !records.some((row) => row.service === service.id),
   )
+  const offered = yield* Effect.forEach(
+    rank(unconnected, request.query, 3),
+    (service) => store.service(service.id),
+    { concurrency: 3 },
+  ).pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
   const limit = request.limit === undefined ? 8 : request.limit
   if (!Number.isFinite(limit) || limit < 1)
     return yield* Effect.fail(
@@ -91,7 +98,9 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     )
   return {
     tools: rank(groups.flat(), request.query, Math.min(25, Math.floor(limit))),
-    unconnected: rank(unconnected, request.query, 3),
+    unconnected: offered.filter(
+      (service) => !ServiceAuthorization.guards.SetupRequired(service.authorization),
+    ),
   }
 })
 
@@ -312,9 +321,9 @@ export const offerConnection = Effect.fn('Connections.offer')(function* (
   request: OfferConnectionRequest,
 ) {
   const store = yield* ConnectionStore
-  const service = (yield* store.catalog()).find((entry) => entry.id === request.service)
-  if (service === undefined)
-    return yield* Effect.fail(new InvalidRequest({ message: 'Unknown service.' }))
+  const service = yield* store.service(request.service)
+  if (ServiceAuthorization.guards.SetupRequired(service.authorization))
+    return yield* Effect.fail(new InvalidRequest({ message: connectionSetupMessage }))
   const ready = (yield* store.records(actor)).some(
     (row) => row.service === service.id && row.status === 'ready',
   )
