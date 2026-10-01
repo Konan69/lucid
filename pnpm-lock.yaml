@@ -630,6 +630,9 @@ importers:
       '@flue/sdk':
         specifier: 'catalog:'
         version: 2.1.0
+      '@novnc/novnc':
+        specifier: ^1.7.0
+        version: 1.7.0
       '@vapi-ai/web':
         specifier: 2.7.1
         version: 2.7.1
@@ -2696,6 +2699,9 @@ packages:
 
   '@nodable/entities@3.0.0':
     resolution: {integrity: sha512-8L9xFeTYKhm49xfIypoe2W5wV1m/3Z58kT+7kR9A8OyFxcPduI4VmxaUMQyKYrRjUoLLSXv6EKKID5Tvj9cUVw==}
+
+  '@novnc/novnc@1.7.0':
+    resolution: {integrity: sha512-ucEJOx4T2avIRCleodk7YobZj5O2Ga2AeLfQ69A/yjG9HHba2+PDgwSkN3FttrmG+70ZGx21sElNFouK13RzyA==}
 
   '@octokit/auth-token@6.0.0':
     resolution: {integrity: sha512-P4YJBPdPSpWTQ1NU4XYdvHvXJJDxM6YwpS0FZHRgP7YFkdVxsWcpWGy/NVqlAA7PcPCnMacXlRm1y2PFZRWL/w==}
@@ -10392,6 +10398,8 @@ snapshots:
   '@noble/hashes@2.4.0': {}
 
   '@nodable/entities@3.0.0': {}
+
+  '@novnc/novnc@1.7.0': {}
 
   '@octokit/auth-token@6.0.0': {}
 

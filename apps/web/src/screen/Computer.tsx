@@ -1,5 +1,7 @@
 import { ComputerState, type Computer as ComputerRecord } from '@vivid/contracts'
+import RFB from '@novnc/novnc'
 import { Hand, MonitorPlay, Power, X } from 'lucide-react'
+import { useCallback } from 'react'
 import { change, live, LiveState, useLive } from '../data/live'
 import { Button, IconButton } from '../ui/Button'
 import { Face } from '../ui/Face'
@@ -91,20 +93,17 @@ function Screen({ computer }: { computer: ComputerRecord }) {
   if (ComputerState.guards.Running(state)) {
     return (
       <div className="relative min-h-0 flex-1 desktop-wallpaper">
-        {/* The screen page is served by this origin and opens a socket back to it with the
-            session cookie, which is why it is allowed its own origin. */}
-        {/* oxlint-disable-next-line react/iframe-missing-sandbox */}
-        <iframe
-          title="Vivid’s computer screen"
-          src={state.screenAddress}
-          className="size-full border-0"
-          sandbox="allow-scripts allow-same-origin"
+        <Display
+          // Taking over or handing back changes who may type, so the screen reconnects with it.
+          key={computer.heldByPerson ? 'held' : 'watching'}
+          address={state.screenAddress}
+          control={computer.heldByPerson}
         />
-        {computer.heldByPerson && (
-          <p className="absolute inset-x-0 bottom-0 bg-scrim px-3 py-2 text-center text-meta text-ink-on-color">
-            You have the keyboard. Vivid will wait until you hand it back.
-          </p>
-        )}
+        <p className="pointer-events-none absolute inset-x-0 bottom-0 bg-scrim px-3 py-1.5 text-center text-meta text-ink-on-color">
+          {computer.heldByPerson
+            ? 'You have the keyboard. Vivid will wait until you hand it back.'
+            : 'Watching. Take over to use it yourself.'}
+        </p>
       </div>
     )
   }
@@ -126,6 +125,31 @@ function Screen({ computer }: { computer: ComputerRecord }) {
       busy={resting.busy}
     />
   )
+}
+
+/**
+ * The machine's screen, drawn by the noVNC client bundled with this app. Nothing the machine
+ * serves is ever loaded as a page here: the only thing that crosses is the remote-framebuffer
+ * socket, which the server proxies for this Person's own Computer and nobody else's.
+ *
+ * The connection lives exactly as long as the element does: React calls the ref's cleanup when it
+ * unmounts, which closes the socket. While the Person is only watching, the canvas sends no keys
+ * or pointer events, so looking at the screen can never fight with what Vivid is doing on it.
+ */
+function Display({ address, control }: { address: string; control: boolean }) {
+  const connect = useCallback(
+    (element: HTMLDivElement | null) => {
+      if (element === null) return undefined
+      const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
+      const screen = new RFB(element, `${scheme}://${location.host}${address}`)
+      screen.scaleViewport = true
+      screen.viewOnly = !control
+      screen.background = 'transparent'
+      return () => screen.disconnect()
+    },
+    [address, control],
+  )
+  return <div ref={connect} className="size-full" />
 }
 
 function Note({
