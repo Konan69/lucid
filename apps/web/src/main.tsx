@@ -1,6 +1,8 @@
+import { RegistryContext } from '@effect/atom-react'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { engine } from './data/runtime'
 import { Canvas } from './screen/Canvas'
 import './styles/index.css'
 
@@ -18,6 +20,9 @@ function Page() {
 
 createRoot(root).render(
   <StrictMode>
-    <Page />
+    {/* One Atom registry for the whole app: the one the live queries were built in. */}
+    <RegistryContext.Provider value={engine.registry}>
+      <Page />
+    </RegistryContext.Provider>
   </StrictMode>,
 )

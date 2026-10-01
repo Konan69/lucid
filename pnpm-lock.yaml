@@ -170,6 +170,9 @@ catalogs:
     '@earendil-works/pi-ai':
       specifier: 0.83.0
       version: 0.83.0
+    '@effect/atom-react':
+      specifier: 4.0.0-rc.116
+      version: 4.0.0-rc.116
     '@effect/vitest':
       specifier: 4.0.0-rc.116
       version: 4.0.0-rc.116
@@ -618,6 +621,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@effect/atom-react':
+        specifier: 'catalog:'
+        version: 4.0.0-rc.116(effect@4.0.0-rc.116)(react@19.2.3)(scheduler@0.27.0)
       '@flue/react':
         specifier: 'catalog:'
         version: 2.1.0(@flue/sdk@2.1.0)(react@19.2.3)
@@ -780,6 +786,9 @@ importers:
 
   packages/client/state:
     dependencies:
+      '@vivid/client-runtime':
+        specifier: workspace:*
+        version: link:../rpc
       '@vivid/contracts':
         specifier: workspace:*
         version: link:../../contracts
@@ -1725,6 +1734,13 @@ packages:
     resolution: {integrity: sha512-m3IZD4g3er0V8TC9+Vpgw/sjTKqcJlkcIBy/JvsgRubuuik3tAVzyugUg4rVrShIkkOT69mEd34NEqKUIsl6JQ==}
     engines: {node: '>=22.19.0'}
     hasBin: true
+
+  '@effect/atom-react@4.0.0-rc.116':
+    resolution: {integrity: sha512-Kk5tEw0U5PoAcUaELWwQ34wuCVyLFZsjyyRePSIh3hL6rjORLamPfigJ8xDqYZS3CJg8HMtbND1eVethv404Jw==}
+    peerDependencies:
+      effect: 4.0.0-rc.116
+      react: '>=19.0.0 <20.0.0'
+      scheduler: '>=0.25.0 <0.28.0'
 
   '@effect/language-service@0.87.2':
     resolution: {integrity: sha512-CfiSoaVQO8pZgaMZGw5VvMvRGybsJ2LaSDoLYaqiVGvo/YYPYVR2GzUKY0h1NtIweq/+SQ5XLrvtzPIttWQ0GQ==}
@@ -9256,6 +9272,12 @@ snapshots:
       - utf-8-validate
       - ws
       - zod
+
+  '@effect/atom-react@4.0.0-rc.116(effect@4.0.0-rc.116)(react@19.2.3)(scheduler@0.27.0)':
+    dependencies:
+      effect: 4.0.0-rc.116
+      react: 19.2.3
+      scheduler: 0.27.0
 
   '@effect/language-service@0.87.2': {}
 

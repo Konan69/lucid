@@ -1,13 +1,11 @@
 import { VividRpcClient } from '@vivid/client-runtime'
-import type { RpcFailure } from '@vivid/contracts/rpc'
-import type { LiveEnvironment } from '@vivid/state'
-import { Effect, Fiber, Layer, ManagedRuntime } from 'effect'
-import type * as Result from 'effect/Result'
+import { makeLive, type ProductFailure } from '@vivid/state'
+import type { Effect } from 'effect'
+import { Layer } from 'effect'
 import * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
 import * as Socket from 'effect/unstable/socket/Socket'
 
-/** Everything a product call can fail with: what the server said, or that it could not be reached. */
-export type ProductFailure = RpcFailure | RpcClientError.RpcClientError
+export type { ProductFailure }
 
 /** An Effect program the web runtime can run. */
 export type Program<Value> = Effect.Effect<Value, ProductFailure, VividRpcClient>
@@ -26,30 +24,16 @@ export function clientFailure(message: string, cause: unknown): RpcClientError.R
  */
 const liveAddress = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live`
 
-// One socket for the whole app. Every call and every live query rides it; the browser sends the
-// session cookie with the upgrade, so signing in or out reloads the page to open a new one.
-const runtimeLayer = VividRpcClient.layerLive({ url: liveAddress }).pipe(
-  Layer.provide(Socket.layerWebSocketConstructorGlobal),
+/**
+ * The web app's client and its Atom registry. One socket for the whole app: every call and every
+ * live query rides it. The browser sends the session cookie with the upgrade, so signing in or
+ * out reloads the page to open a new one.
+ */
+export const engine = makeLive(
+  VividRpcClient.layerLive({ url: liveAddress }).pipe(
+    Layer.provide(Socket.layerWebSocketConstructorGlobal),
+  ),
 )
-const runtime = ManagedRuntime.make(runtimeLayer)
 
 /** Runs one program at the web application's single Effect runtime boundary. */
-export function run<Value, Failure>(
-  program: Effect.Effect<Value, Failure, VividRpcClient>,
-): Promise<Result.Result<Value, Failure>> {
-  return runtime.runPromise(Effect.result(program))
-}
-
-/** Where live queries run and wait. `later` is a timer because lingering is wall-clock time. */
-export const environment: LiveEnvironment<VividRpcClient> = {
-  fork: (program) => {
-    const fiber = runtime.runFork(program)
-    return () => {
-      runtime.runFork(Fiber.interrupt(fiber))
-    }
-  },
-  later: (task, milliseconds) => {
-    const timer = setTimeout(task, milliseconds)
-    return () => clearTimeout(timer)
-  },
-}
+export const run = engine.run

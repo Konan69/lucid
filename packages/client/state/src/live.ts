@@ -1,184 +1,210 @@
-import { Data, Effect, Schedule, Stream } from 'effect'
+import { VividRpcClient } from '@vivid/client-runtime'
+import type { RpcFailure } from '@vivid/contracts/rpc'
+import { Cause, Data, Effect, Layer, Option, Result, Stream } from 'effect'
+import type * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
+import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
+import * as Atom from 'effect/unstable/reactivity/Atom'
+import * as AtomRegistry from 'effect/unstable/reactivity/AtomRegistry'
+
+/** Everything a product call can fail with: what the server said, or that it could not be reached. */
+export type ProductFailure = RpcFailure | RpcClientError.RpcClientError
+
+type Client = VividRpcClient['Service']
 
 /**
- * Where one live query is for as long as something is looking at it.
+ * What a screen draws from one live query.
  * - `Loading`: subscribed, nothing received yet.
- * - `Ready`: the latest result the server sent, with any change this client is still waiting to
- *   have confirmed already applied.
- * - `Failed`: the subscription ended and will not be retried (the Person must sign in, or may not
- *   see this). A dropped connection is not a failure: the last result stays on screen while the
- *   subscription is re-opened.
+ * - `Ready`: the latest result, with any change this client is still waiting to have confirmed
+ *   already applied. A dropped connection keeps the last result here while it reconnects.
+ * - `Failed`: the query ended and will not be retried: the Person must sign in, or may not see
+ *   this.
  */
-export type LiveState<Value, Failure> = Data.TaggedEnum<{
+export type LiveState<Value> = Data.TaggedEnum<{
   Loading: {}
   Ready: { readonly value: Value }
-  Failed: { readonly failure: Failure }
+  Failed: { readonly failure: ProductFailure }
 }>
 
-interface LiveStateDefinition extends Data.TaggedEnum.WithGenerics<2> {
-  readonly taggedEnum: LiveState<this['A'], this['B']>
+interface LiveStateDefinition extends Data.TaggedEnum.WithGenerics<1> {
+  readonly taggedEnum: LiveState<this['A']>
 }
 
 /** Constructors and exhaustive matching for `LiveState`. */
 export const LiveState = Data.taggedEnum<LiveStateDefinition>()
 
-/** What a live query needs from its platform: somewhere to run, and a way to wait. */
-export interface LiveEnvironment<Requirements> {
-  /** Starts the subscription and returns how to end it. */
-  readonly fork: (program: Effect.Effect<void, never, Requirements>) => () => void
-  /** Calls `task` once after `milliseconds` and returns how to cancel that. */
-  readonly later: (task: () => void, milliseconds: number) => () => void
-}
-
-/** The external-store contract `useSyncExternalStore` consumes, plus optimistic changes. */
-export interface LiveStore<Value, Failure> {
-  readonly getSnapshot: () => LiveState<Value, Failure>
-  readonly subscribe: (listener: () => void) => () => void
-  /**
-   * Shows a change now, before the server has confirmed it. The returned function takes it back,
-   * and is called when the write fails. When the write succeeds nothing more is needed: the next
-   * result from the server replaces everything expected.
-   */
-  readonly expect: (change: (current: Value) => Value) => () => void
-}
-
-export interface LiveOptions<Failure> {
-  /** Failures that end the subscription instead of being retried. */
-  readonly isFinal: (failure: Failure) => boolean
-  /** How long a query with nobody looking stays subscribed, so coming back is instant. */
-  readonly lingerMs: number
-}
-
 /**
- * One live query as an external store.
- *
- * The first subscriber opens the server subscription and the last one closes it, after a short
- * linger so that moving between screens does not tear down and rebuild what was just on screen.
- * While nobody is looking the last result is kept; a returning subscriber sees it immediately and
- * the fresh one when it arrives. Nothing here polls: the server sends a result when it changes.
+ * The Effect Atom value behind a live query: the latest result, or why there is none. A `Watch…`
+ * stream never ends on its own; the "no element" case is only what a stream atom's type admits.
  */
-export function createLiveStore<Value, Failure, Requirements>(
-  environment: LiveEnvironment<Requirements>,
-  stream: Stream.Stream<Value, Failure, Requirements>,
-  options: LiveOptions<Failure>,
-): LiveStore<Value, Failure> {
-  const listeners = new Set<() => void>()
-  let confirmed: LiveState<Value, Failure> = LiveState.Loading()
-  let expected: ReadonlyArray<(current: Value) => Value> = []
-  let snapshot: LiveState<Value, Failure> = confirmed
-  let stop: (() => void) | null = null
-  let cancelLinger: (() => void) | null = null
+export type LiveResult<Value> = AsyncResult.AsyncResult<
+  Value,
+  ProductFailure | Cause.NoSuchElementError
+>
 
-  /** Recomputes what is shown and tells React, only when it actually differs. */
-  const publish = () => {
-    snapshot = LiveState.$match(confirmed, {
-      Loading: () => confirmed,
-      Failed: () => confirmed,
-      Ready: ({ value }) =>
-        expected.length === 0
-          ? confirmed
-          : LiveState.Ready({
-              value: expected.reduce((current, change) => change(current), value),
-            }),
-    })
-    for (const listener of listeners) listener()
-  }
-
-  const received = (value: Value) =>
-    Effect.sync(() => {
-      confirmed = LiveState.Ready({ value })
-      // The server's result already includes, or has overruled, everything this client expected.
-      expected = []
-      publish()
-    })
-
-  const failed = (failure: Failure) =>
-    Effect.sync(() => {
-      confirmed = LiveState.Failed({ failure })
-      expected = []
-      publish()
-    })
-
-  /**
-   * The subscription. A failure that is not final (a dropped socket, an unavailable server) is
-   * retried at a steady pace while the last result stays on screen (the socket underneath has its
-   * own reconnect policy; this only re-opens the subscription); a final one is published and ends
-   * it.
-   */
-  const program = Stream.runForEach(stream, received).pipe(
-    Effect.retry({
-      while: (failure) => !options.isFinal(failure),
-      schedule: Schedule.spaced('1500 millis'),
-    }),
-    Effect.catch(failed),
+/** The product failure inside a cause, when it has one. Interruption and defects have none. */
+const productFailure = (cause: Cause.Cause<ProductFailure | Cause.NoSuchElementError>) =>
+  Option.filter(
+    Cause.findErrorOption(cause),
+    (error): error is ProductFailure => !Cause.isNoSuchElementError(error),
   )
 
-  const start = () => {
-    if (cancelLinger !== null) {
-      cancelLinger()
-      cancelLinger = null
-    }
-    if (stop === null) stop = environment.fork(program)
-  }
+/** What a screen draws for an atom's current value. A failure with a last result keeps showing it. */
+export const liveStateOf = <Value>(result: LiveResult<Value>): LiveState<Value> =>
+  AsyncResult.match(result, {
+    onInitial: () => LiveState.Loading(),
+    onSuccess: (success) => LiveState.Ready({ value: success.value }),
+    onFailure: (failure) =>
+      Option.match(failure.previousSuccess, {
+        onSome: (previous) => LiveState.Ready({ value: previous.value }),
+        onNone: () =>
+          Option.match(productFailure(failure.cause), {
+            onNone: () => LiveState.Loading(),
+            onSome: (reason) => LiveState.Failed({ failure: reason }),
+          }),
+      }),
+  })
 
-  const idle = () => {
-    cancelLinger = environment.later(() => {
-      cancelLinger = null
-      if (listeners.size > 0 || stop === null) return
-      stop()
-      stop = null
-    }, options.lingerMs)
-  }
-
-  return {
-    getSnapshot: () => snapshot,
-    subscribe: (listener) => {
-      listeners.add(listener)
-      if (listeners.size === 1) start()
-      return () => {
-        listeners.delete(listener)
-        if (listeners.size === 0) idle()
-      }
-    },
-    expect: (change) => {
-      expected = [...expected, change]
-      publish()
-      return () => {
-        expected = expected.filter((candidate) => candidate !== change)
-        publish()
-      }
-    },
-  }
-}
-
-/** Every live query of one kind, one store per argument. */
-export interface LiveFamily<Argument, Value, Failure> {
-  readonly get: (argument: Argument) => LiveStore<Value, Failure>
-}
+/** Says how an expected change ended: the server accepted it, or refused it. */
+export type Settle = (accepted: boolean) => void
 
 /**
- * A live query that takes an argument: one Thread's detail, one shelf of the Library. Each
- * distinct argument gets its own store, and every component asking for the same one shares it, so
- * the server sees one subscription per question however many places show the answer.
+ * One live query: an Effect Atom over a `Watch…` subscription.
+ *
+ * `atom` is what components read. It is the server's latest result with this client's pending
+ * changes applied on top (`Atom.optimistic`), so a write shows at once, is confirmed by the next
+ * result, and is rolled back if the server refuses it.
  */
-export function createLiveFamily<Argument, Value, Failure, Requirements>(
-  environment: LiveEnvironment<Requirements>,
-  options: LiveOptions<Failure>,
-  query: {
-    /** A string that is equal exactly when two arguments ask the same question. */
-    readonly key: (argument: Argument) => string
-    readonly stream: (argument: Argument) => Stream.Stream<Value, Failure, Requirements>
-  },
-): LiveFamily<Argument, Value, Failure> {
-  const stores = new Map<string, LiveStore<Value, Failure>>()
-  return {
-    get: (argument) => {
-      const key = query.key(argument)
-      const existing = stores.get(key)
-      if (existing !== undefined) return existing
-      const store = createLiveStore(environment, query.stream(argument), options)
-      stores.set(key, store)
-      return store
-    },
+export interface LiveQuery<Value> {
+  readonly atom: Atom.Atom<LiveResult<Value>>
+  /**
+   * Shows a change now, before the server has confirmed it. Call the returned function when the
+   * write finishes, saying whether it was accepted.
+   */
+  readonly expect: (change: (current: Value) => Value) => Settle
+}
+
+/** What `useLive` returns for a query, for code that names that type. */
+export type LiveStateOf<Query> = Query extends LiveQuery<infer Value> ? LiveState<Value> : never
+
+/** Every live query of one kind, one per argument. */
+export interface LiveFamily<Argument, Value> {
+  readonly get: (argument: Argument) => LiveQuery<Value>
+}
+
+/** Failures that mean "this is not yours to see", which asking again will not change. */
+const FINAL = new Set(['Unauthenticated', 'Forbidden', 'NotFound', 'InvalidRequest'])
+
+/**
+ * A subscription that outlives a dropped connection. A failure that is not final (the socket
+ * closed, the server restarted) re-opens the subscription after a moment, and the atom keeps its
+ * last result meanwhile; a final one ends the stream and reaches the screen.
+ */
+const resilient = <Value, R>(
+  open: () => Stream.Stream<Value, ProductFailure, R>,
+): Stream.Stream<Value, ProductFailure, R> =>
+  open().pipe(
+    Stream.catchIf(
+      (failure) => !FINAL.has(failure._tag),
+      () => Stream.unwrap(Effect.as(Effect.sleep('1500 millis'), resilient(open))),
+    ),
+  )
+
+/**
+ * The live data layer for one client: one Atom registry, one runtime atom that owns the socket,
+ * and a query atom for every `Watch…` call. Web, mobile and desktop build this once from the
+ * client Layer their platform provides and read the same atoms.
+ *
+ * Atoms subscribe when something first reads them and stay subscribed for half a minute after the
+ * last reader leaves (the registry's idle TTL), so going back to a screen shows it at once. Nothing
+ * here polls and nothing is refetched: the server sends a result when it changes.
+ */
+export function makeLive(layer: Layer.Layer<VividRpcClient>) {
+  const registry = AtomRegistry.make({ defaultIdleTTL: 30_000 })
+  const runtime = Atom.runtime(layer)
+  // The client, and so the socket, lives for as long as the page does.
+  registry.mount(runtime)
+
+  const query = <Value>(
+    watch: (client: Client) => Stream.Stream<Value, ProductFailure>,
+  ): LiveQuery<Value> => {
+    const source = runtime.atom(
+      resilient(() =>
+        Stream.unwrap(
+          Effect.gen(function* () {
+            return watch(yield* VividRpcClient)
+          }),
+        ),
+      ),
+    )
+    const view = Atom.optimistic(source)
+    return {
+      atom: view,
+      expect: (change) => {
+        const current = registry.get(view)
+        if (!AsyncResult.isSuccess(current)) return () => undefined
+        const expected: LiveResult<Value> = AsyncResult.success(change(current.value))
+        // A transition is itself an atom: waiting while the write is in flight, then success
+        // (the source is refreshed and takes over) or failure (the view rolls back).
+        const transition = Atom.make<AsyncResult.AsyncResult<LiveResult<Value>, unknown>>(
+          AsyncResult.success(expected, { waiting: true }),
+        )
+        registry.set(view, transition)
+        return (accepted) =>
+          registry.set(
+            transition,
+            accepted
+              ? AsyncResult.success(expected)
+              : AsyncResult.fail('The server refused this change'),
+          )
+      },
+    }
   }
+
+  const family = <Argument, Value>(
+    key: (argument: Argument) => string,
+    watch: (client: Client, argument: Argument) => Stream.Stream<Value, ProductFailure>,
+  ): LiveFamily<Argument, Value> => {
+    const queries = new Map<string, LiveQuery<Value>>()
+    return {
+      get: (argument) => {
+        const name = key(argument)
+        const existing = queries.get(name)
+        if (existing !== undefined) return existing
+        const made = query((client) => watch(client, argument))
+        queries.set(name, made)
+        return made
+      },
+    }
+  }
+
+  /** Runs one program with the client the atoms use, on the same socket. */
+  const run = <Value, Failure>(program: Effect.Effect<Value, Failure, VividRpcClient>) =>
+    Effect.runPromise(
+      Effect.result(
+        Effect.flatMap(AtomRegistry.getResult(registry, runtime), (context) =>
+          Effect.provideContext(program, context),
+        ),
+      ),
+    )
+
+  /**
+   * Makes a change: shows it at once in every live query it touches, sends it, and tells each
+   * expectation how it ended. On success the server's next result confirms it; on refusal the
+   * expected change is taken back.
+   */
+  const change = async <Value>(
+    program: (client: Client) => Effect.Effect<Value, ProductFailure>,
+    ...expectations: ReadonlyArray<() => Settle>
+  ) => {
+    const settles = expectations.map((expectation) => expectation())
+    const result = await run(
+      Effect.gen(function* () {
+        return yield* program(yield* VividRpcClient)
+      }),
+    )
+    for (const settle of settles) settle(Result.isSuccess(result))
+    return result
+  }
+
+  return { registry, query, family, run, change }
 }

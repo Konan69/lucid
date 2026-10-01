@@ -1,52 +1,23 @@
+import { useAtomValue } from '@effect/atom-react'
+import type { LibraryShelf, Task, ThreadDetail, ThreadId } from '@vivid/contracts'
+import { LiveState, liveStateOf, type LiveQuery, type LiveResult } from '@vivid/state'
+import { Effect, Option } from 'effect'
+import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
+import * as Atom from 'effect/unstable/reactivity/Atom'
 import { VividRpcClient } from '@vivid/client-runtime'
-import type { LibraryShelf, Task, ThreadId } from '@vivid/contracts'
-import {
-  createLiveFamily,
-  createLiveStore,
-  LiveState,
-  type LiveOptions,
-  type LiveStore,
-} from '@vivid/state'
-import { Effect, Option, Result, Stream } from 'effect'
-import { useSyncExternalStore } from 'react'
-import { environment, run, type ProductFailure } from './runtime'
+import { engine, run } from './runtime'
 
 /**
- * Every screen's data, live.
+ * Every screen's data, live, as Effect Atoms.
  *
- * Nothing in the web app fetches. A component reads a store with `useLive`; the store is one
- * `Watch…` subscription on the app's socket, shared by everyone reading it, kept warm for half a
- * minute after the last reader leaves so that going back to a screen shows it at once. The server
- * sends a new result when it changes, including when the Person switches workspace.
+ * Nothing in the web app fetches. A component reads a query with `useLive`; the query is an atom
+ * over one `Watch…` subscription on the app's socket, shared by everyone reading it and kept warm
+ * for half a minute after the last reader leaves, so going back to a screen shows it at once. The
+ * server sends a new result when it changes, including when the Person switches workspace.
  */
 
-type Client = VividRpcClient['Service']
-
-/** Failures that mean "this is not yours to see", which retrying will not change. */
-const FINAL = new Set(['Unauthenticated', 'Forbidden', 'NotFound', 'InvalidRequest'])
-const options: LiveOptions<ProductFailure> = {
-  isFinal: (failure) => FINAL.has(failure._tag),
-  lingerMs: 30_000,
-}
-
-const stream = <Value>(watch: (client: Client) => Stream.Stream<Value, ProductFailure>) =>
-  Stream.unwrap(
-    Effect.gen(function* () {
-      return watch(yield* VividRpcClient)
-    }),
-  )
-
-const one = <Value>(watch: (client: Client) => Stream.Stream<Value, ProductFailure>) =>
-  createLiveStore(environment, stream(watch), options)
-
-const family = <Argument, Value>(
-  key: (argument: Argument) => string,
-  watch: (client: Client, argument: Argument) => Stream.Stream<Value, ProductFailure>,
-) =>
-  createLiveFamily(environment, options, {
-    key,
-    stream: (argument: Argument) => stream((client) => watch(client, argument)),
-  })
+const one = engine.query
+const family = engine.family
 
 export const live = {
   me: one((client) => client.WatchMe()),
@@ -79,13 +50,13 @@ export const live = {
 }
 
 /** Reads a live query. The component re-renders when, and only when, the result changes. */
-export function useLive<Value>(store: LiveStore<Value, ProductFailure>) {
-  return useSyncExternalStore(store.subscribe, store.getSnapshot)
+export function useLive<Value>(query: LiveQuery<Value>): LiveState<Value> {
+  return liveStateOf(useAtomValue(query.atom))
 }
 
 /** The value of a live query when it has one, for lists that draw the same loading or empty. */
-export function useLiveValue<Value>(store: LiveStore<Value, ProductFailure>): Option.Option<Value> {
-  const state = useLive(store)
+export function useLiveValue<Value>(query: LiveQuery<Value>): Option.Option<Value> {
+  const state = useLive(query)
   return LiveState.$is('Ready')(state) ? Option.some(state.value) : Option.none()
 }
 
@@ -93,18 +64,48 @@ export function useLiveValue<Value>(store: LiveStore<Value, ProductFailure>): Op
  * Makes a change: shows it at once in every live query it touches, sends it, and takes the
  * expectation back if the server refuses. On success the server's next result confirms it.
  */
-export async function change<Value>(
-  program: (client: Client) => Effect.Effect<Value, ProductFailure>,
-  ...expectations: ReadonlyArray<() => () => void>
-) {
-  const takeBack = expectations.map((expectation) => expectation())
-  const result = await run(
+export const change = engine.change
+
+const seen = new Map<ThreadId, number>()
+
+/** Tells the server a Thread was looked at as it now stands, once for each time it moves. */
+const markSeen = (id: ThreadId, result: LiveResult<ThreadDetail>) => {
+  if (!AsyncResult.isSuccess(result)) return
+  const moved = result.value.thread.updatedAt
+  const last = seen.get(id)
+  if (last !== undefined && last >= moved) return
+  seen.set(id, moved)
+  void run(
     Effect.gen(function* () {
-      return yield* program(yield* VividRpcClient)
+      const client = yield* VividRpcClient
+      yield* client.MarkThreadRead({ id })
+      yield* client.ReportPresence({ threadId: id, typing: false })
     }),
   )
-  if (Result.isFailure(result)) for (const undo of takeBack) undo()
-  return result
+}
+
+const seenQueries = new Map<ThreadId, LiveQuery<ThreadDetail>>()
+
+/**
+ * A Thread's live detail, for the screen that shows it. Looking at a Thread is what marks it read
+ * and what makes a Person present in it, so both happen here, in the atom, each time the Thread
+ * moves while someone has it open. They are events on the data, not something a component has to
+ * remember to do after it renders; when nobody is reading the atom, nothing is reported.
+ */
+export function seenThread(id: ThreadId): LiveQuery<ThreadDetail> {
+  const existing = seenQueries.get(id)
+  if (existing !== undefined) return existing
+  const base = live.thread.get(id)
+  const watched: LiveQuery<ThreadDetail> = {
+    expect: base.expect,
+    atom: Atom.readable((get) => {
+      const result = get(base.atom)
+      markSeen(id, result)
+      return result
+    }),
+  }
+  seenQueries.set(id, watched)
+  return watched
 }
 
 export { LiveState }

@@ -51,6 +51,9 @@ const flueMessage = (
     Signal: ({ type, body, attributes }): DeliveredMessage => ({
       kind: 'signal',
       type,
+      // The tag is the signal's type, so the model reads `<schedule …>` and a client can tell a
+      // Routine coming due from an answer without parsing the body.
+      tagName: type,
       body,
       attributes: { ...attributes, ...attribution },
     }),
