@@ -1,7 +1,9 @@
 import { describe, expect, it } from '@effect/vitest'
+import { BridgeRequest } from '../shared/bridge.ts'
 import { ServerAddress, ServerSettings } from '../shared/settings.ts'
 import {
   isAllowedPermission,
+  isAllowedBridgeRequest,
   isAllowedRedirect,
   isAllowedResponse,
   isAppRequest,
@@ -95,6 +97,41 @@ describe('desktop origin policy', () => {
       'unknown',
     ]) {
       expect(isAllowedPermission(permission, 'https://vivid.example', server)).toBe(false)
+    }
+  })
+})
+
+describe('desktop bridge sender authority', () => {
+  it('restricts shell changes and external browsing to the precise bundled chooser', () => {
+    const requests = [
+      BridgeRequest.cases.GetServer.make({}),
+      BridgeRequest.cases.ChooseServer.make({
+        origin: ServerAddress.make('https://other.example'),
+      }),
+      BridgeRequest.cases.ForgetServer.make({}),
+      BridgeRequest.cases.OpenExternal.make({ url: 'https://other.example' }),
+    ]
+    for (const request of requests) {
+      expect(isAllowedBridgeRequest(chooser, absent, chooser, request)).toBe(true)
+      expect(isAllowedBridgeRequest(`${chooser}#server`, server, chooser, request)).toBe(true)
+      for (const url of [
+        'https://vivid.example',
+        'https://vivid.example/api/document',
+        'file:///application/other.html',
+        'file:///other/chooser.html',
+      ])
+        expect(isAllowedBridgeRequest(url, server, chooser, request)).toBe(false)
+    }
+  })
+
+  it('gives version metadata only to the chooser and chosen server documents', () => {
+    const request = BridgeRequest.cases.GetAppVersion.make({})
+    expect(isAllowedBridgeRequest(chooser, absent, chooser, request)).toBe(true)
+    expect(
+      isAllowedBridgeRequest('https://vivid.example/thread/123', server, chooser, request),
+    ).toBe(true)
+    for (const url of ['https://other.example', 'wss://vivid.example/api/live', 'malformed']) {
+      expect(isAllowedBridgeRequest(url, server, chooser, request)).toBe(false)
     }
   })
 })

@@ -6,6 +6,7 @@ import {
   BridgeEvent,
   InvalidBridgeMessage,
   type BridgeResponse,
+  type BridgeRequest,
   type ColorSchemeState,
   encodeBridgeEvent,
 } from '../shared/bridge.ts'
@@ -25,16 +26,15 @@ export interface BridgeRuntime {
 export function registerBridge(input: {
   readonly handlers: BridgeHandlers
   readonly runtime: BridgeRuntime
-  readonly isTrustedSender: (id: number, url: string) => boolean
+  readonly isTrustedSender: (id: number, url: string, request: BridgeRequest) => boolean
 }): void {
   ipcMain.handle(BRIDGE_INVOKE_CHANNEL, (event, payload) => {
     const frame = event.senderFrame
-    const trusted =
-      frame !== null &&
-      frame === event.sender.mainFrame &&
-      input.isTrustedSender(event.sender.id, frame.url)
+    const trusted = frame !== null && frame === event.sender.mainFrame
     const program = trusted
-      ? handleBridgeRequest(payload, input.handlers)
+      ? handleBridgeRequest(payload, input.handlers, (request) =>
+          input.isTrustedSender(event.sender.id, frame.url, request),
+        )
       : Effect.fail(new InvalidBridgeMessage({ direction: 'request' }))
     return input.runtime.run(program)
   })

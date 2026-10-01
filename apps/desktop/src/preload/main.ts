@@ -12,6 +12,11 @@ import {
 } from '../shared/bridge.ts'
 import { SettingsSaveFailed } from '../shared/settings.ts'
 
+/** The sandbox has browser location; this narrow view keeps DOM and Node authority out of the bridge contract. */
+declare const window: {
+  readonly location: { readonly protocol: string; readonly pathname: string }
+}
+
 /** Transport rejection carries no renderer-supplied data into logs or error messages. */
 class BridgeTransportFailed extends Schema.TaggedError<BridgeTransportFailed>()(
   'BridgeTransportFailed',
@@ -94,4 +99,10 @@ const bridge: VividDesktopBridge = {
   getAppVersion: () => Effect.runPromise(getAppVersion()),
   openExternal: (url) => Effect.runPromise(openExternal(url)),
 }
-contextBridge.exposeInMainWorld(BRIDGE_NAMESPACE, bridge)
+// Preload limits the visible API; main independently checks the actual sender frame on every call.
+const chooserDocument =
+  window.location.protocol === 'file:' && window.location.pathname.endsWith('/chooser.html')
+contextBridge.exposeInMainWorld(
+  BRIDGE_NAMESPACE,
+  chooserDocument ? bridge : { getAppVersion: bridge.getAppVersion },
+)

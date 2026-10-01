@@ -1,7 +1,11 @@
 # @vivid/desktop
 
 Electron shell for the Vivid web app. It connects to a Vivid server the Person chooses; it never
-starts a server, database, or runtime. Product UI stays in the web renderer.
+starts a server, database, or runtime. The shell serves its own bundled web build at the chosen
+origin and forwards only `/api*` and `/health` to the chosen server. Product UI stays in the web
+renderer. Until the shell loads the server's own build, release the shell and server together:
+a server-side web-client fix does not update desktop, and mismatched versions may use incompatible
+API contracts. The health probe verifies service identity, not version compatibility.
 
 ## Build
 
@@ -37,7 +41,8 @@ owner. The shell uses the same saved origin and staged assets in development and
 `VIVID_DESKTOP_RENDERER_URL` is no longer used.
 
 Import `VividDesktopBridge`, `ServerSettings` and `ServerChoice` from `@vivid/desktop/bridge`
-(`src/shared/bridge.ts`). The only exposed global is `window.vivid`:
+(`src/shared/bridge.ts`). The chooser receives `window.vivid` with this interface; selected-server
+documents receive only `getAppVersion()`:
 
 ```ts
 interface VividDesktopBridge {
@@ -65,7 +70,7 @@ code and opens the returned verification link in the system browser. Sign in to 
 and approve the code in **Settings → Devices** (`/device`). The desktop UI exchanges the waiting
 device code through `/api/auth/device/token`, respecting the server's interval and expiry. No
 password is passed through preload. Device sign-in UI and token handling belong to the renderer;
-this shell provides server selection and HTTP(S) external browsing.
+this shell provides server selection in the chooser and native external browsing for navigation.
 
 ## Security
 
@@ -74,7 +79,9 @@ and webviews. There is no remote module. Only the selected origin is proxied wit
 cookie-aware transport. Foreign app-session network requests and cross-origin redirects are
 blocked, including WebSocket upgrades. Same-origin redirects remain usable. Foreign navigation
 and popup destinations open in the system browser only for HTTP(S); other schemes are refused.
-Only the trusted main frame may invoke the schema-decoded bridge.
+Only the main frame may invoke the schema-decoded bridge. Main checks its document URL for every
+request: the bundled chooser alone can choose or forget a server, read settings, or invoke
+external browsing. Selected-server documents can only read the app version.
 
 Notifications and sanitized clipboard writes are allowed only for the selected app origin.
 Media, clipboard reads and every other permission are denied, including on the chooser.

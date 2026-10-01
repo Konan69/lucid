@@ -10,8 +10,9 @@ import * as Schema from 'effect/Schema'
 import { ServerAddress, ServerSettings, ServerChoice } from '../shared/settings.ts'
 import { DesktopSettings, settingsLayer } from './settings.ts'
 import { chooseServer } from './server.ts'
-import { BridgeRequest, BridgeResponse } from '../shared/bridge.ts'
+import { BridgeRequest, BridgeResponse, InvalidBridgeMessage } from '../shared/bridge.ts'
 import { handleBridgeRequest, type BridgeHandlers } from './requests.ts'
+import { isAllowedBridgeRequest } from './security.ts'
 import { handleAppRequest } from './proxy.ts'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 
@@ -56,6 +57,52 @@ const directory = Effect.acquireRelease(
 )
 
 describe('desktop server selection', () => {
+  it.effect('denies selected-server documents before shell settings or browsing can change', () =>
+    Effect.gen(function* () {
+      const root = yield* directory
+      yield* Effect.gen(function* () {
+        const settings = yield* DesktopSettings
+        const changes: string[] = []
+        const handlers: BridgeHandlers = {
+          settings,
+          getAppVersion: () => '1.0.0',
+          openExternal: () => Effect.sync(() => changes.push('external')),
+          onServerChanged: (state) => changes.push(state._tag),
+        }
+        const server = ServerSettings.cases.Server.make({
+          origin: ServerAddress.make('https://vivid.example'),
+        })
+        const authorize = (request: BridgeRequest) =>
+          isAllowedBridgeRequest(
+            'https://vivid.example/api/document',
+            server,
+            'file:///application/chooser.html',
+            request,
+          )
+        for (const request of [
+          BridgeRequest.cases.ChooseServer.make({
+            origin: ServerAddress.make('https://other.example'),
+          }),
+          BridgeRequest.cases.ForgetServer.make({}),
+          BridgeRequest.cases.GetServer.make({}),
+          BridgeRequest.cases.OpenExternal.make({ url: 'https://other.example' }),
+        ])
+          expect(
+            yield* handleBridgeRequest(request, handlers, authorize).pipe(Effect.flip),
+          ).toBeInstanceOf(InvalidBridgeMessage)
+        expect(
+          yield* handleBridgeRequest(
+            BridgeRequest.cases.GetAppVersion.make({}),
+            handlers,
+            authorize,
+          ),
+        ).toEqual(BridgeResponse.cases.AppVersion.make({ value: '1.0.0' }))
+        expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
+        expect(changes).toEqual([])
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+    }),
+  )
+
   it.live('verifies /health before saving and bridge forget returns to the chooser', () =>
     Effect.gen(function* () {
       const server = yield* fixture((request, response) => {
@@ -76,13 +123,21 @@ describe('desktop server selection', () => {
           onServerChanged: (state) => changes.push(state._tag),
         }
         expect(
-          yield* handleBridgeRequest(BridgeRequest.cases.ChooseServer.make({ origin }), handlers),
+          yield* handleBridgeRequest(
+            BridgeRequest.cases.ChooseServer.make({ origin }),
+            handlers,
+            () => true,
+          ),
         ).toEqual(
           BridgeResponse.cases.ServerChoice.make({ value: ServerChoice.cases.Chosen.make({}) }),
         )
         expect(yield* settings.get).toEqual(ServerSettings.cases.Server.make({ origin }))
         expect(
-          yield* handleBridgeRequest(BridgeRequest.cases.ForgetServer.make({}), handlers),
+          yield* handleBridgeRequest(
+            BridgeRequest.cases.ForgetServer.make({}),
+            handlers,
+            () => true,
+          ),
         ).toEqual(BridgeResponse.cases.Forgotten.make({}))
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
         expect(changes).toEqual(['Server', 'NoServer'])

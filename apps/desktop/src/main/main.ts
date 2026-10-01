@@ -28,7 +28,7 @@ import { AppInfo, type DesktopPlatform } from '../shared/bridge.ts'
 import { DesktopSettings, settingsLayer } from './settings.ts'
 import { registerAppProxy } from './proxy.ts'
 import { secureSession } from './session.ts'
-import { isTrustedDocument } from './security.ts'
+import { isAllowedBridgeRequest } from './security.ts'
 import { ServerSettings } from '../shared/settings.ts'
 
 const PLACEMENT_FILE = 'window-placement.json'
@@ -185,11 +185,12 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
       },
     },
     runtime: { run: (program) => Effect.runPromise(program) },
-    isTrustedSender: (id, url) =>
+    isTrustedSender: (id, url, request) =>
       Option.exists(
         mainWindow,
         (window) =>
-          window.webContents.id === id && isTrustedDocument(url, serverSettings, chooserUrl),
+          window.webContents.id === id &&
+          isAllowedBridgeRequest(url, serverSettings, chooserUrl, request),
       ),
   })
 

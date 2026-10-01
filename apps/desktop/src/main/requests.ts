@@ -3,6 +3,7 @@ import type * as Schema from 'effect/Schema'
 import {
   BridgeRequest,
   BridgeResponse,
+  InvalidBridgeMessage,
   decodeBridgeRequest,
   encodeBridgeResponse,
 } from '../shared/bridge.ts'
@@ -41,8 +42,10 @@ const forget = Effect.fn('DesktopBridge.forget')(function* (handlers: BridgeHand
 export const handleBridgeRequest = Effect.fn('DesktopBridge.handleRequest')(function* (
   payload: typeof Schema.Unknown.Type,
   handlers: BridgeHandlers,
+  authorize: (request: BridgeRequest) => boolean,
 ) {
   const request = yield* decodeBridgeRequest(payload)
+  if (!authorize(request)) return yield* new InvalidBridgeMessage({ direction: 'request' })
   const response = yield* BridgeRequest.match<Effect.Effect<BridgeResponse>>(request, {
     GetAppVersion: () =>
       Effect.succeed(BridgeResponse.cases.AppVersion.make({ value: handlers.getAppVersion() })),

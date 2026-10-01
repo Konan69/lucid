@@ -1,5 +1,6 @@
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
+import { BridgeRequest } from '../shared/bridge.ts'
 import { ServerSettings } from '../shared/settings.ts'
 
 const decodeUrl = Schema.decodeUnknownOption(Schema.URLFromString)
@@ -72,4 +73,15 @@ export function isAllowedResponse(input: {
     destination !== undefined &&
     isAllowedRedirect(input.url, destination, input.server)
   )
+}
+
+/** Only the bundled chooser can mutate shell authority; selected-origin documents get version metadata. */
+export function isAllowedBridgeRequest(
+  url: string,
+  server: ServerSettings,
+  chooser: string,
+  request: BridgeRequest,
+): boolean {
+  if (isTrustedDocument(url, ServerSettings.cases.NoServer.make({}), chooser)) return true
+  return BridgeRequest.guards.GetAppVersion(request) && isTrustedDocument(url, server, chooser)
 }
