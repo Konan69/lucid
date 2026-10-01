@@ -6,7 +6,9 @@ import {
   ConnectionState,
   Forbidden,
   NotFound,
+  InvalidRequest,
   ServiceUnavailable,
+  ServiceCatalog,
 } from '@vivid/contracts'
 import { and, eq } from 'drizzle-orm'
 import { Database } from '../database/client.ts'
@@ -14,7 +16,7 @@ import { membershipTable } from '../companies/tables.ts'
 import { auditEntries } from '../audit/tables.ts'
 import { auditLayer } from '../audit/record.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
-import { Executor, ExecutorSignInRequired } from './executor.ts'
+import { Executor, ExecutorRejected, ExecutorSignInRequired } from './executor.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
 
@@ -86,20 +88,66 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           shared: false,
         })
         const executor = yield* Executor
+        const probe = yield* ConnectionProbe
+        const catalogs = yield* Ref.get(probe.catalogs)
         const unavailable = Executor.of({
           ...executor,
-          catalog: Effect.fn('Executor.Test.unavailable')(() =>
-            Effect.fail(new ServiceUnavailable({ service: 'connections', message: 'Unavailable' })),
-          ),
+          catalog: Effect.fn('Executor.Test.unavailable')(function* () {
+            yield* Ref.update(probe.catalogs, (count) => count + 1)
+            return yield* Effect.fail(
+              new ServiceUnavailable({ service: 'connections', message: 'Unavailable' }),
+            )
+          }),
         })
-        const listed = yield* Effect.gen(function* () {
-          return yield* (yield* ConnectionStore).list(ownerActor)
+        yield* Effect.gen(function* () {
+          const offlineStore = yield* ConnectionStore
+          const listed = yield* offlineStore.list(ownerActor)
+          expect(Object.keys(listed)).toEqual(['connections'])
+          expect(listed.connections.map((row) => row.id)).toContain(step.connection.id)
+          expect(yield* Ref.get(probe.catalogs)).toBe(catalogs)
+          expect(yield* offlineStore.find('Records')).toEqual(
+            ServiceCatalog.cases.Unavailable.make({}),
+          )
+          expect(yield* Ref.get(probe.catalogs)).toBe(catalogs + 1)
         }).pipe(
           Effect.provide(connectionStoreLayer, { local: true }),
           Effect.provideService(Executor, unavailable),
         )
-        expect(listed.services).toEqual([])
-        expect(listed.connections.map((row) => row.id)).toContain(step.connection.id)
+      }),
+    )
+    it.effect('searches the full catalog and preserves failures other than unavailability', () =>
+      Effect.gen(function* () {
+        const store = yield* ConnectionStore
+        const found = yield* store.find(' records ')
+        expect(ServiceCatalog.guards.Ready(found)).toBe(true)
+        expect(found).toMatchObject({
+          total: 1,
+          services: [{ name: 'Records' }],
+        })
+        expect(yield* store.find('Absent')).toEqual(
+          ServiceCatalog.cases.Ready.make({ total: 1, services: [] }),
+        )
+        const executor = yield* Executor
+        const rejected = Executor.of({
+          ...executor,
+          catalog: Effect.fn('Executor.Test.rejectedCatalog')(() =>
+            Effect.fail(
+              ExecutorRejected.make({
+                service: 'connections',
+                tool: null,
+                message: 'Catalog refused',
+              }),
+            ),
+          ),
+        })
+        const failure = yield* Effect.gen(function* () {
+          return yield* (yield* ConnectionStore).find('Records')
+        }).pipe(
+          Effect.provide(connectionStoreLayer, { local: true }),
+          Effect.provideService(Executor, rejected),
+          Effect.flip,
+        )
+        expect(failure).toBeInstanceOf(InvalidRequest)
       }),
     )
     it.effect(

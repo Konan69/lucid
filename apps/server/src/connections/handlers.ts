@@ -3,6 +3,7 @@ import type {
   BeginConnectionRequest,
   CompleteConnectionRequest,
   ConnectionId,
+  FindServicesRequest,
   FindToolsRequest,
   OfferConnectionRequest,
   UseToolRequest,
@@ -13,7 +14,7 @@ import { ConnectionStore } from './store.ts'
 import { findTools, offerConnection, useTool } from './tools.ts'
 export { connectionRunner, runConnection } from './tools.ts'
 
-/** Both inventory calls share one loader, including degraded catalog behavior. */
+/** Both inventory calls share the persisted Connection loader. */
 const load = Effect.fn('Connections.load')(function* (actor: Actor) {
   return yield* (yield* ConnectionStore).list(actor)
 })
@@ -24,6 +25,11 @@ export const connectionHandlers = {
     return yield* load(yield* requireActor())
   }),
   WatchConnections: () => live(load),
+  /** The public catalog has no workspace scope; searching still requires a signed-in Person. */
+  FindServices: Effect.fn('Rpc.FindServices')(function* (request: FindServicesRequest) {
+    yield* requirePerson()
+    return yield* (yield* ConnectionStore).find(request.query)
+  }),
   /** Connecting an account always requires a signed-in Person. */
   BeginConnection: Effect.fn('Rpc.BeginConnection')(function* (request: BeginConnectionRequest) {
     yield* requirePerson()

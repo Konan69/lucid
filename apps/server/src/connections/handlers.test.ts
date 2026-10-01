@@ -9,6 +9,7 @@ import {
   SessionId,
   Workspace,
   ActionTarget,
+  ServiceCatalog,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -35,6 +36,31 @@ const personAuth = AuthState.Person({
 
 describe.skipIf(!testDatabaseConfigured)('Connection transport authentication', () => {
   layer(connectionTestLayer)((it) => {
+    it.effect('lets only a signed-in Person search services', () =>
+      Effect.gen(function* () {
+        const found = yield* connectionHandlers
+          .FindServices({ query: 'records' })
+          .pipe(Effect.provideService(AuthContext, personAuth))
+        expect(ServiceCatalog.guards.Ready(found)).toBe(true)
+        expect(found).toMatchObject({ total: 1, services: [{ name: 'Records' }] })
+        const { memberActor, threadId } = yield* fixture()
+        const probe = yield* ConnectionProbe
+        const before = yield* Ref.get(probe.catalogs)
+        const failure = yield* connectionHandlers.FindServices({ query: '' }).pipe(
+          Effect.provideService(
+            AuthContext,
+            AuthState.Vivid({
+              person: memberActor.person,
+              workspace: memberActor.workspace,
+              threadId,
+            }),
+          ),
+          Effect.flip,
+        )
+        expect(failure).toBeInstanceOf(Forbidden)
+        expect(yield* Ref.get(probe.catalogs)).toBe(before)
+      }),
+    )
     it.effect('reserves UseTool for Vivid before acquiring any store authority', () =>
       Effect.gen(function* () {
         const failure = yield* connectionHandlers

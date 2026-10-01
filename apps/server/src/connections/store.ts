@@ -10,6 +10,7 @@ import {
   ConnectionStep,
   InvalidRequest,
   Service,
+  ServiceCatalog,
   Workspace,
 } from '@vivid/contracts'
 import { requireAdmin, type Actor } from '../auth/access.ts'
@@ -38,6 +39,7 @@ import {
   type ConnectionRecord,
 } from './records.ts'
 import { connections } from './tables.ts'
+import { rankServices } from './ranking.ts'
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
 
@@ -228,14 +230,25 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
   return {
     get,
     catalog: catalogServices,
+    /** Catalog search is independent of ownership and preserves the adapter's retained order. */
+    find: Effect.fn('Connections.findServices')((query: string) =>
+      catalogServices().pipe(
+        Effect.map((services) =>
+          ServiceCatalog.cases.Ready.make({
+            services: rankServices(services, query),
+            total: services.length,
+          }),
+        ),
+        Effect.catchTag('ServiceUnavailable', () =>
+          Effect.succeed(ServiceCatalog.cases.Unavailable.make({})),
+        ),
+      ),
+    ),
     /** Read persistence even when the catalog host is offline. */
     list: Effect.fn('Connections.list')(function* (actor: Actor) {
       const rows = yield* provide(listRecords(actor))
-      const services = yield* catalogServices().pipe(
-        Effect.catchTag('ServiceUnavailable', () => Effect.succeed([])),
-      )
       const items = yield* Effect.forEach(rows, (row) => provide(publicConnection(actor, row)))
-      return { services, connections: items }
+      return { connections: items }
     }),
     records: (actor: Actor) => provide(listRecords(actor)),
     tools: (actor: Actor, row: ConnectionRecord) => provide(loadTools(actor, row)),
