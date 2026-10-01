@@ -6,6 +6,9 @@ import {
   RoutineListResponse,
   RoutineResponse,
   type RoutineId,
+  type CreateRoutineRequest,
+  type PatchRoutineRequest,
+  type RoutineParams,
 } from '@vivid/contracts'
 import { requireActor, type Actor } from '../auth/access.ts'
 import { changed } from '../live/changes.ts'
@@ -34,9 +37,12 @@ export const routineHandlers = {
   ListRoutines: Effect.fn('Rpc.ListRoutines')(function* () {
     return yield* loadRoutines(yield* requireActor())
   }),
+  /** Live reads reuse the loader and follow the signed-in Person’s current workspace. */
   WatchRoutines: () => live(loadRoutines),
   /** The store validates the trigger and schedules atomically with the creation. */
-  CreateRoutine: Effect.fn('Rpc.CreateRoutine')(function* (request) {
+  CreateRoutine: Effect.fn('Rpc.CreateRoutine')(function* (
+    request: typeof CreateRoutineRequest.Type,
+  ) {
     const actor = yield* requireActor()
     const routine = yield* concealMissing((yield* RoutineStore).create(actor, request)).pipe(
       Effect.catchTag('InvalidRoutineSchedule', (error) => Effect.fail(invalidSchedule(error))),
@@ -45,7 +51,13 @@ export const routineHandlers = {
     return RoutineResponse.make({ routine })
   }),
   /** Owner authorization and concurrent partial update semantics belong to persistence. */
-  PatchRoutine: Effect.fn('Rpc.PatchRoutine')(function* ({ id, patch }) {
+  PatchRoutine: Effect.fn('Rpc.PatchRoutine')(function* ({
+    id,
+    patch,
+  }: {
+    readonly id: RoutineId
+    readonly patch: typeof PatchRoutineRequest.Type
+  }) {
     const actor = yield* requireActor()
     const routine = yield* concealMissing((yield* RoutineStore).patch(actor, id, patch)).pipe(
       Effect.catchTag('InvalidRoutineSchedule', (error) => Effect.fail(invalidSchedule(error))),
@@ -54,13 +66,13 @@ export const routineHandlers = {
     return RoutineResponse.make({ routine })
   }),
   /** Successful deletion refreshes every live view of the owner's workspace. */
-  DeleteRoutine: Effect.fn('Rpc.DeleteRoutine')(function* ({ id }) {
+  DeleteRoutine: Effect.fn('Rpc.DeleteRoutine')(function* ({ id }: typeof RoutineParams.Type) {
     const actor = yield* requireActor()
     yield* concealMissing((yield* RoutineStore).remove(actor, id))
     yield* changed(actor)
   }),
   /** Manual work uses the same delivery ordering as scheduled and webhook work. */
-  RunRoutine: Effect.fn('Rpc.RunRoutine')(function* ({ id }) {
+  RunRoutine: Effect.fn('Rpc.RunRoutine')(function* ({ id }: typeof RoutineParams.Type) {
     const actor = yield* requireActor()
     const run = yield* concealMissing((yield* RoutineScheduler).run(actor, id))
     yield* changed(actor)
