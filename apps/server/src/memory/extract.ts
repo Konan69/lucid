@@ -40,18 +40,22 @@ const ChatResponse = Schema.Struct({
   ).check(Schema.isMinLength(1)),
 })
 const decodeChat = HttpClientResponse.schemaBodyJson(ChatResponse)
-const decodeCandidates = Schema.decodeUnknownEffect(Schema.fromJsonString(Candidates))
-const decodeSummary = Schema.decodeUnknownEffect(Schema.fromJsonString(Summary))
+const decodeCandidates = Schema.decodeUnknownEffect(Schema.fromJsonString(Candidates), {
+  onExcessProperty: 'error',
+})
+const decodeSummary = Schema.decodeUnknownEffect(Schema.fromJsonString(Summary), {
+  onExcessProperty: 'error',
+})
+const Completion = Schema.TaggedUnion({
+  Finished: { text: Schema.NonEmptyString },
+  BudgetReached: { text: Schema.NonEmptyString },
+})
+type Completion = typeof Completion.Type
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json)
 const encodeMemories = Schema.encodeEffect(Schema.Array(Memory))
 const encodeExchange = Schema.encodeEffect(MemoryExchange)
 const encodePerson = Schema.encodeEffect(PersonSummary)
 
-export class UnknownMemoryRelation extends Schema.TaggedError<UnknownMemoryRelation>()(
-  'UnknownMemoryRelation',
-  { id: MemoryId },
-  { title: 'UnknownMemoryRelation' },
-) {}
 export class MemorySummaryTooLong extends Schema.TaggedError<MemorySummaryTooLong>()(
   'MemorySummaryTooLong',
   { words: Schema.Number },
@@ -59,14 +63,10 @@ export class MemorySummaryTooLong extends Schema.TaggedError<MemorySummaryTooLon
 ) {}
 export class MemoryGenerationIncomplete extends Schema.TaggedError<MemoryGenerationIncomplete>()(
   'MemoryGenerationIncomplete',
-  { operation: Schema.String, reason: Schema.String },
+  { operation: Schema.String, reason: Schema.String, outputCharacters: Schema.Int },
   { title: 'Incomplete memory generation' },
 ) {}
-export type ExtractionFailure =
-  | ProviderFailure
-  | UnknownMemoryRelation
-  | MemorySummaryTooLong
-  | MemoryGenerationIncomplete
+export type ExtractionFailure = ProviderFailure | MemorySummaryTooLong | MemoryGenerationIncomplete
 export interface ExtractInput {
   readonly exchange: MemoryExchange
   readonly known: ReadonlyArray<Memory>
@@ -102,7 +102,7 @@ In at most 600 words describe who this Person is, how they prefer to work, and w
 Do not invent facts, commitments, authority, or dates. Do not treat memories as live evidence. Do not mention internal storage or models.
 Return JSON with text.`
 
-/** One request returns structured content; malformed or empty choices remain visible rather than falling back to invented memory. */
+/** Give the model the same closed schema used for constrained output and decoding; providers may constrain tokens without explaining the fields to the model. Incomplete output remains a typed failure. */
 const complete = Effect.fn('MemoryExtraction.complete')(function* (
   dependencies: {
     readonly client: HttpClient.HttpClient
@@ -116,24 +116,30 @@ const complete = Effect.fn('MemoryExtraction.complete')(function* (
     readonly schema: Schema.Json
   },
 ) {
+  const body = {
+    model: dependencies.model,
+    messages: [
+      {
+        role: 'system',
+        content: `${input.prompt}\nRequired JSON schema: ${JSON.stringify(input.schema)}`,
+      },
+      { role: 'user', content: JSON.stringify(input.content) },
+    ],
+    response_format: {
+      type: 'json_schema',
+      json_schema: { name: input.name, strict: true, schema: input.schema },
+    },
+    // OpenRouter documents that reasoning can exhaust max_tokens without returning structured content.
+    // A bounded background pass requests direct structured output.
+    // OpenRouter documents these budgets at docs/guides/best-practices/reasoning-tokens.
+    reasoning: { enabled: false },
+    temperature: 0,
+    max_tokens: 4096,
+  }
   const response = yield* providerResponse(dependencies.client, {
     key: dependencies.key,
     path: 'chat/completions',
-    body: {
-      model: dependencies.model,
-      messages: [
-        { role: 'system', content: input.prompt },
-        { role: 'user', content: JSON.stringify(input.content) },
-      ],
-      response_format: {
-        type: 'json_schema',
-        json_schema: { name: input.name, strict: true, schema: input.schema },
-      },
-      // OpenRouter documents that reasoning can exhaust max_tokens without returning structured content.
-      // This background pass needs a short deterministic JSON answer (docs/guides/best-practices/reasoning-tokens).
-      reasoning: { enabled: false },
-      max_tokens: 3000,
-    },
+    body,
   })
   const chat = yield* decodeChat(response).pipe(
     Effect.mapError(() => ProviderMalformed.make({ operation: input.name })),
@@ -141,14 +147,64 @@ const complete = Effect.fn('MemoryExtraction.complete')(function* (
   const first = chat.choices[0]
   if (first === undefined)
     return yield* Effect.fail(ProviderMalformed.make({ operation: input.name }))
-  if (first.finish_reason !== 'stop' || first.message.content.trim().length === 0)
+  if (
+    !['stop', 'length'].includes(first.finish_reason) ||
+    first.message.content.trim().length === 0
+  )
     return yield* Effect.fail(
-      MemoryGenerationIncomplete.make({ operation: input.name, reason: first.finish_reason }),
+      MemoryGenerationIncomplete.make({
+        operation: input.name,
+        reason: first.finish_reason,
+        outputCharacters: first.message.content.length,
+      }),
     )
-  return first.message.content
+  if (first.finish_reason === 'length')
+    return Completion.cases.BudgetReached.make({ text: first.message.content })
+  return Completion.cases.Finished.make({ text: first.message.content })
 })
 
-/** JSON Schema comes from the same Effect contracts used to decode the model's result, preventing prompt/parser drift. */
+/** The schema determines whether a budget-limited response is complete; a finished JSON value is usable, while truncated JSON retains its precise failure. */
+function completionDecoder<A>(
+  decode: (text: string) => Effect.Effect<A, Schema.SchemaError>,
+  operation: string,
+) {
+  return Effect.fn('MemoryExtraction.decode')(function* (completion: Completion) {
+    return yield* decode(completion.text).pipe(
+      Effect.mapError(() =>
+        Completion.match(completion, {
+          Finished: (): ProviderMalformed | MemoryGenerationIncomplete =>
+            ProviderMalformed.make({ operation }),
+          BudgetReached: ({ text }) =>
+            MemoryGenerationIncomplete.make({
+              operation,
+              reason: 'length',
+              outputCharacters: text.length,
+            }),
+        }),
+      ),
+    )
+  })
+}
+const candidateCompletion = completionDecoder(decodeCandidates, 'extract')
+const summaryCompletion = completionDecoder(decodeSummary, 'summarize')
+
+/** A hallucinated relation id rejects only its candidate; independent valid facts survive the extraction batch. */
+export function candidatesWithKnownRelations(
+  candidates: ReadonlyArray<MemoryCandidate>,
+  known: ReadonlyArray<Memory>,
+) {
+  const ids = new Set(known.map((memory) => memory.id))
+  return candidates.filter((candidate) =>
+    MemoryRelation.match(candidate.relation, {
+      new: () => true,
+      duplicate: ({ id }) => ids.has(id),
+      extends: ({ id }) => ids.has(id),
+      updates: ({ id }) => ids.has(id),
+    }),
+  )
+}
+
+/** Both generation and decoding reject extra keys. Closed objects prevent constrained providers from inventing relation fields and exhausting the output budget. */
 export const memoryExtractionLayer = Layer.effect(
   MemoryExtraction,
   Effect.gen(function* () {
@@ -167,8 +223,8 @@ export const memoryExtractionLayer = Layer.effect(
         ServiceUnavailable.make({ service: 'memory', message: 'VIVID_MEMORY_MODEL is invalid' }),
       ),
     )
-    const candidateDocument = Schema.toJsonSchemaDocument(Candidates)
-    const summaryDocument = Schema.toJsonSchemaDocument(Summary)
+    const candidateDocument = Schema.toJsonSchemaDocument(Candidates, { onExcessProperty: 'error' })
+    const summaryDocument = Schema.toJsonSchemaDocument(Summary, { onExcessProperty: 'error' })
     const candidateSchema = yield* decodeJson({
       ...candidateDocument.schema,
       $defs: candidateDocument.definitions,
@@ -192,20 +248,8 @@ export const memoryExtractionLayer = Layer.effect(
           content: { exchange, known, now: input.now },
           schema: candidateSchema,
         })
-        const decoded = yield* decodeCandidates(text).pipe(
-          Effect.mapError(() => ProviderMalformed.make({ operation: 'extract' })),
-        )
-        for (const candidate of decoded.candidates) {
-          const id = MemoryRelation.match(candidate.relation, {
-            new: () => null,
-            duplicate: (relation) => relation.id,
-            extends: (relation) => relation.id,
-            updates: (relation) => relation.id,
-          })
-          if (id !== null && !input.known.some((memory) => memory.id === id))
-            return yield* Effect.fail(UnknownMemoryRelation.make({ id }))
-        }
-        return decoded.candidates
+        const decoded = yield* candidateCompletion(text)
+        return candidatesWithKnownRelations(decoded.candidates, input.known)
       }),
       summarize: Effect.fn('MemoryExtraction.summarize')(function* (input) {
         const memories = yield* encodeMemories(input.memories).pipe(
@@ -220,9 +264,7 @@ export const memoryExtractionLayer = Layer.effect(
           content: { memories, person },
           schema: summarySchema,
         })
-        const summary = yield* decodeSummary(text).pipe(
-          Effect.mapError(() => ProviderMalformed.make({ operation: 'summarize' })),
-        )
+        const summary = yield* summaryCompletion(text)
         const words = summary.text.trim().split(/\s+/).length
         if (words > 600) return yield* Effect.fail(MemorySummaryTooLong.make({ words }))
         return summary.text

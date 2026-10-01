@@ -4,6 +4,7 @@ import { AuditEvent, MemoryScope, Person, PersonId, ThreadId } from '@vivid/cont
 import { eq } from 'drizzle-orm'
 import { ConfigProvider, Effect, Layer, Ref, Stream } from 'effect'
 import { TestConsole } from 'effect/testing'
+import { HttpClient } from 'effect/unstable/http'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect } from 'vitest'
 import { Audit } from '../audit/record.ts'
@@ -22,8 +23,38 @@ import { memoryAccessLayer, MemoryStore, memoryStoreLayer } from './store.js'
 const url = process.env['VIVID_TEST_HELIX_URL']
 const enabled =
   testDatabaseConfigured && url !== undefined && process.env['OPENROUTER_API_KEY'] !== undefined
+/** Model-backed learning keeps transport diagnostics in the test console; endpoint category and status explain outages without recording exchange text or credentials. */
+const observedClient = Layer.effect(
+  HttpClient.HttpClient,
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient
+    return HttpClient.transform(client, (effect, request) => {
+      const endpoint = request.url.endsWith('/embeddings') ? 'embeddings' : 'memory'
+      return effect.pipe(
+        Effect.tap(
+          Effect.fn('MemoryTest.status')(function* (response) {
+            if (response.status >= 400)
+              yield* Effect.logWarning('Memory test HTTP failure', {
+                endpoint,
+                status: response.status,
+              })
+          }),
+        ),
+        Effect.tapError(
+          Effect.fn('MemoryTest.transport')((error) =>
+            Effect.logWarning('Memory test transport failure', {
+              endpoint,
+              reason: error.reason._tag,
+            }),
+          ),
+        ),
+      )
+    })
+  }),
+).pipe(Layer.provide(NodeHttpClient.layerUndici))
+
 const adapters = Layer.mergeAll(helixMemoryLayer, embeddingsLayer, memoryExtractionLayer).pipe(
-  Layer.provide(NodeHttpClient.layerUndici),
+  Layer.provide(observedClient),
   Layer.provide(
     ConfigProvider.layerAdd(ConfigProvider.fromUnknown({ VIVID_HELIX_URL: url }), {
       asPrimary: true,

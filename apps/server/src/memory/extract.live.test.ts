@@ -1,7 +1,7 @@
 import { it } from '@effect/vitest'
 import { PersonId, PersonSummary } from '@vivid/contracts'
 import { Effect } from 'effect'
-import { FetchHttpClient } from 'effect/unstable/http'
+import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect } from 'vitest'
 import {
   MemoryExchange,
@@ -45,7 +45,7 @@ describe.skipIf(!enabled)('Contextual memory extraction', () => {
         expect(candidates.every((candidate) => MemoryRelation.guards.new(candidate.relation))).toBe(
           true,
         )
-      }).pipe(Effect.provide(memoryExtractionLayer), Effect.provide(FetchHttpClient.layer)),
+      }).pipe(Effect.provide(memoryExtractionLayer), Effect.provide(NodeHttpClient.layerUndici)),
     { timeout: 120000 },
   )
 })

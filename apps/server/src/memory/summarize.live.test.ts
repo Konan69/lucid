@@ -1,7 +1,7 @@
 import { it } from '@effect/vitest'
 import { Memory, MemoryId, MemoryScope, PersonId, PersonSummary } from '@vivid/contracts'
 import { Effect } from 'effect'
-import { FetchHttpClient } from 'effect/unstable/http'
+import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect } from 'vitest'
 import { MemoryExtraction, memoryExtractionLayer } from './extract.js'
 
@@ -30,7 +30,7 @@ describe.skipIf(!enabled)('Memory brief generation', () => {
         expect(text).toMatch(/Dami/)
         expect(text).toMatch(/morning|10/)
         expect(text.trim().split(/\s+/).length).toBeLessThanOrEqual(600)
-      }).pipe(Effect.provide(memoryExtractionLayer), Effect.provide(FetchHttpClient.layer)),
+      }).pipe(Effect.provide(memoryExtractionLayer), Effect.provide(NodeHttpClient.layerUndici)),
     { timeout: 120000 },
   )
 })
