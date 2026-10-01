@@ -8,7 +8,7 @@ import {
 import { RunId } from '@vivid/contracts'
 import { Effect, Fiber, Queue } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
-import { observeRun, Settlement } from './settlement.ts'
+import { observeRun, responseTimeoutMillis, Settlement } from './settlement.ts'
 
 const runId = RunId.make('run-under-test')
 
@@ -61,7 +61,11 @@ const fixture = Effect.fn('Runtime.test.fixture')(function* () {
     snapshot = { conversation: state, offset: '0', phase: 'live', error: undefined }
     for (const listener of listeners) listener()
   }
-  return { client, ready, publish, closed: () => closed, aborted: () => aborted }
+  const phase = (value: AgentConversationObservationSnapshot['phase']) => {
+    snapshot = { ...snapshot, phase: value }
+    for (const listener of listeners) listener()
+  }
+  return { client, ready, publish, phase, closed: () => closed, aborted: () => aborted }
 })
 
 /** Starts and empty parts alone are deliberately insufficient first-token evidence. */
@@ -112,15 +116,20 @@ describe('Run settlement observation', () => {
     }),
   )
 
-  it.effect('a silent runtime fails at the deadline and aborts the pending work', () =>
+  it.effect('a producing Run with no answer times out without aborting conversation work', () =>
     Effect.gen(function* () {
       const evidence = yield* fixture()
       const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
       yield* Queue.take(evidence.ready)
+      evidence.publish({
+        conversationId: 'conversation',
+        messages: [assistant([])],
+        settlements: [],
+      })
       yield* TestClock.adjust('90 seconds')
       const result = yield* Fiber.join(run)
       expect(result).toEqual(Settlement.cases.Failed.make({ reason: 'TimedOut' }))
-      expect(evidence.aborted()).toBe(true)
+      expect(evidence.aborted()).toBe(false)
       expect(evidence.closed()).toBe(true)
     }),
   )
@@ -147,5 +156,67 @@ describe('Run settlement observation', () => {
         expect(result).toEqual(Settlement.cases.Completed.make({ reply: 'Hello there' }))
         expect(evidence.aborted()).toBe(false)
       }),
+  )
+  it.effect('a queued Run outlives its first-token budget and reads its host reply', () =>
+    Effect.gen(function* () {
+      const evidence = yield* fixture()
+      const host = 'host-run'
+      const hostMessage = {
+        ...assistant([{ type: 'text', text: 'Host answer', state: 'streaming' }]),
+        submissionId: host,
+      }
+      const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
+      yield* Queue.take(evidence.ready)
+      evidence.publish({ conversationId: 'conversation', messages: [hostMessage], settlements: [] })
+      yield* TestClock.adjust('120 seconds')
+      expect(evidence.aborted()).toBe(false)
+      evidence.publish({
+        conversationId: 'conversation',
+        messages: [hostMessage],
+        settlements: [{ submissionId: runId, outcome: 'completed', answeredBySubmissionId: host }],
+      })
+      expect(yield* Fiber.join(run)).toEqual(
+        Settlement.cases.Completed.make({ reply: 'Host answer' }),
+      )
+    }),
+  )
+
+  for (const phase of ['absent', 'closed', 'error'] as const) {
+    for (const spoke of [false, true]) {
+      it.effect(`settles ${phase} as Unknown with prior content ${spoke}`, () =>
+        Effect.gen(function* () {
+          const evidence = yield* fixture()
+          const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
+          yield* Queue.take(evidence.ready)
+          if (spoke)
+            evidence.publish({
+              conversationId: 'conversation',
+              settlements: [],
+              messages: [assistant([{ type: 'text', text: 'Hello', state: 'streaming' }])],
+            })
+          evidence.phase(phase)
+          expect(yield* Fiber.join(run)).toEqual(Settlement.cases.Unknown.make({}))
+          expect(evidence.aborted()).toBe(false)
+          expect(evidence.closed()).toBe(true)
+        }),
+      )
+    }
+  }
+
+  it.effect('resumed partial output cannot pin a Run beyond the Flue durability bound', () =>
+    Effect.gen(function* () {
+      const evidence = yield* fixture()
+      evidence.publish({
+        conversationId: 'conversation',
+        settlements: [],
+        messages: [assistant([{ type: 'text', text: 'Before restart', state: 'streaming' }])],
+      })
+      const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
+      yield* Queue.take(evidence.ready)
+      evidence.phase('connecting')
+      yield* TestClock.adjust(responseTimeoutMillis)
+      expect(yield* Fiber.join(run)).toEqual(Settlement.cases.Unknown.make({}))
+      expect(evidence.aborted()).toBe(false)
+    }),
   )
 })

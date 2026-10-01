@@ -1,11 +1,12 @@
 import {
   readSubmissionReply,
   type FlueClient,
+  type AgentConversationObservationSnapshot,
   type FlueConversationMessage,
   type FlueConversationState,
 } from '@flue/sdk'
 import { RunFailure, type RunId } from '@vivid/contracts'
-import { Effect, Filter, Option, Queue, Ref, Schema, Stream } from 'effect'
+import { Deferred, Effect, Filter, Option, Queue, Ref, Schema, Stream } from 'effect'
 import { classifyFailure, decodeFailureEvidence } from './failure.ts'
 
 /** The runtime verdict includes the classified reason before any product persistence or publishing. */
@@ -17,12 +18,10 @@ export const Settlement = Schema.TaggedUnion({
 })
 export type Settlement = typeof Settlement.Type
 
-/** A SDK-decoded assistant response is meaningful only when it contains words, reasoning, or tools. */
+/** A SDK-decoded assistant response is meaningful only when it contains words or tools. */
 const meaningful = (message: FlueConversationMessage): boolean =>
   message.parts.some((part) =>
-    part.type === 'text' || part.type === 'reasoning'
-      ? part.text.trim().length > 0
-      : part.type === 'dynamic-tool',
+    part.type === 'text' ? part.text.trim().length > 0 : part.type === 'dynamic-tool',
   )
 
 /** Settlement linkage preserves joined submissions; an empty final text is legal after real tool work. */
@@ -36,15 +35,11 @@ const resultOf = (state: FlueConversationState, runId: RunId): Option.Option<Set
         reason: classifyFailure(decodeFailureEvidence(settled.error)),
       }),
     )
-  const host = settled.answeredBySubmissionId === undefined ? runId : settled.answeredBySubmissionId
+  const host = hostOf(state, runId)
   const answer = state.messages.filter(
     (message) => message.role === 'assistant' && message.submissionId === host,
   )
-  const hasAnswer = answer.some((message) =>
-    message.parts.some((part) =>
-      part.type === 'text' ? part.text.trim().length > 0 : part.type === 'dynamic-tool',
-    ),
-  )
+  const hasAnswer = answer.some(meaningful)
   if (!hasAnswer) return Option.some(Settlement.cases.Failed.make({ reason: 'NoAnswer' }))
   return Option.some(
     Settlement.cases.Completed.make({ reply: readSubmissionReply(state, runId).text }),
@@ -52,25 +47,54 @@ const resultOf = (state: FlueConversationState, runId: RunId): Option.Option<Set
 }
 
 /**
- * One public Flue observation owns history catch-up and live delivery. The deadline stops waiting
- * after actual content, not a placeholder start; cleanup closes the observation on every ending.
+ * Vivid.durability.timeoutMs is one hour (runtime src/agents/vivid.ts), matching Flue 2.1's
+ * DURABILITY_DEFAULT_TIMEOUT_MS in conversation-stream-store. Observation has the same finite
+ * bound even when a restarted server sees stale content and the SDK reconnects forever.
+ */
+export const responseTimeoutMillis = 60 * 60 * 1000
+
+/** Joined submissions read the same host identity as readSubmissionReply, never a guessed owner. */
+const hostOf = (state: FlueConversationState, runId: RunId): string => {
+  const settled = state.settlements.find((candidate) => candidate.submissionId === runId)
+  if (settled === undefined || settled.answeredBySubmissionId === undefined) return runId
+  return settled.answeredBySubmissionId
+}
+
+/**
+ * SDK 2.1 scheduleRetry publishes connecting while recovery is possible, error only on permanent
+ * 400 or exhausted auth retries. A saved terminal settlement outranks a subsequent transport loss.
+ */
+const resultOfSnapshot = (snapshot: AgentConversationObservationSnapshot, runId: RunId) => {
+  if (snapshot.conversation !== undefined) {
+    const result = resultOf(snapshot.conversation, runId)
+    if (Option.isSome(result)) return result
+  }
+  if (snapshot.phase === 'absent' || snapshot.phase === 'closed' || snapshot.phase === 'error')
+    return Option.some(Settlement.cases.Unknown.make({}))
+  return Option.none()
+}
+
+/**
+ * Flue exposes host linkage only at settlement and abort cancels *all* queued and active work
+ * (guide/durability). Never use conversation-wide abort for a Run deadline. The provider owns
+ * scoped attempt cancellation. A queued/joined Run gets no first-token timer until its own
+ * assistant response starts; host linkage, when published, counts the host's answer as content.
  */
 export const observeRun = Effect.fn('Runtime.observeRun')(function* (
   client: FlueClient,
   runId: RunId,
   firstTokenMillis: number,
 ) {
-  const states = yield* Queue.unbounded<FlueConversationState>()
+  const states = yield* Queue.unbounded<AgentConversationObservationSnapshot>()
+  const started = yield* Deferred.make<void>()
   const seen = yield* Ref.make(false)
-  const expired = yield* Ref.make(false)
   const observation = yield* Effect.acquireRelease(
     Effect.sync(() => client.observe({ live: 'sse' })),
     (source) => Effect.sync(() => source.close()),
   )
-  /** The SDK callback hands its already materialized state across the synchronous queue boundary. */
+  /** Preserve phase even without a conversation so absence and permanent observation loss settle. */
   const changed = () => {
-    const current = observation.getSnapshot().conversation
-    if (current !== undefined) Queue.offerUnsafe(states, current)
+    Queue.offerUnsafe(states, observation.getSnapshot())
   }
   yield* Effect.acquireRelease(
     Effect.sync(() => observation.subscribe(changed)),
@@ -78,36 +102,32 @@ export const observeRun = Effect.fn('Runtime.observeRun')(function* (
   )
   changed()
   const outcome = Stream.fromQueue(states).pipe(
-    Stream.tap((state) => {
-      const spoke = state.messages.some(
-        (message) =>
-          message.submissionId === runId && message.role === 'assistant' && meaningful(message),
-      )
-      return spoke ? Ref.set(seen, true) : Effect.void
-    }),
-    Stream.filterMap(Filter.fromPredicateOption((state) => resultOf(state, runId))),
+    Stream.tap(
+      Effect.fn('Runtime.content')(function* (snapshot) {
+        const state = snapshot.conversation
+        if (state === undefined) return
+        const host = hostOf(state, runId)
+        const answers = state.messages.filter(
+          (message) => message.submissionId === host && message.role === 'assistant',
+        )
+        if (answers.some(meaningful)) yield* Ref.set(seen, true)
+        if (answers.length > 0) yield* Deferred.succeed(started, undefined)
+      }),
+    ),
+    Stream.filterMap(Filter.fromPredicateOption((snapshot) => resultOfSnapshot(snapshot, runId))),
     Stream.runHead,
     Effect.map(Option.getOrElse(() => Settlement.cases.Unknown.make({}))),
   )
   const deadline = Effect.fn('Runtime.firstTokenDeadline')(function* () {
+    yield* Deferred.await(started)
     yield* Effect.sleep(firstTokenMillis)
     if (yield* Ref.get(seen)) return yield* Effect.never
-    yield* Ref.set(expired, true)
-    // Aborting Flue is best effort and bounded; the authoritative Run still becomes TimedOut.
-    yield* Effect.tryPromise({
-      try: (signal) => client.abort({ signal }),
-      catch: () => new AbortUnavailable(),
-    }).pipe(Effect.timeoutOption('1 second'), Effect.ignore)
     return Settlement.cases.Failed.make({ reason: 'TimedOut' })
   })
-  const result = yield* Effect.raceFirst(outcome, deadline())
-  // A cancellation receipt can win the race; deadline ownership still means TimedOut, not Stopped.
-  return (yield* Ref.get(expired)) ? Settlement.cases.Failed.make({ reason: 'TimedOut' }) : result
+  return yield* Effect.raceFirst(outcome, deadline()).pipe(
+    Effect.timeoutOrElse({
+      duration: responseTimeoutMillis,
+      orElse: () => Effect.succeed(Settlement.cases.Unknown.make({})),
+    }),
+  )
 }, Effect.scoped)
-
-/** A failed cancellation does not erase the deadline outcome or imply another attempt is safe. */
-class AbortUnavailable extends Schema.TaggedError<AbortUnavailable>()(
-  'AbortUnavailable',
-  {},
-  { title: 'Runtime cancellation unavailable' },
-) {}
