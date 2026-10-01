@@ -1,21 +1,14 @@
 import { useInstruction, useResponseFinish, useResponseStart } from '@flue/runtime'
-import { SkillSummary, type PersonId, type ThreadId } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
-import * as Schema from 'effect/Schema'
 import { asActing, type Acting } from './client.ts'
 import { boundOutput } from './tools/result.ts'
+import { contextSnapshots, VividContext } from './tools/snapshots.ts'
 
-const VividContext = Schema.Struct({
-  brief: Schema.String,
-  skills: Schema.Array(SkillSummary),
-  timezone: Schema.String,
-})
-export interface VividContext extends Schema.Schema.Type<typeof VividContext> {}
+export type { VividContext } from './tools/snapshots.ts'
 
 const emptyContext = VividContext.make({ brief: '', skills: [], timezone: '' })
-const prepared = new Map<ThreadId, Map<PersonId, VividContext>>()
-const frozen = new Map<ThreadId, Map<PersonId, VividContext>>()
+const snapshots = contextSnapshots()
 
 /** Memory is optional context; declared RPC and transport failures must not prevent a response. */
 const loadBrief = Effect.fn('Context.loadBrief')(
@@ -56,21 +49,13 @@ export const loadContext = Effect.fn('Context.load')(function* (acting: Option.O
       { concurrency: 3 },
     ),
   )
-  if (Option.isSome(acting)) {
-    const who = acting.value
-    const people = new Map(prepared.get(who.threadId))
-    people.set(who.personId, context)
-    prepared.set(who.threadId, people)
-  }
+  if (Option.isSome(acting)) snapshots.prepare(acting.value, context)
   return context
 })
 
 /** A frozen response never follows background memory edits or reads another Person's context. */
 function contextFor(who: Acting) {
-  const response = frozen.get(who.threadId)
-  const contexts = response === undefined ? prepared.get(who.threadId) : response
-  if (contexts === undefined) return emptyContext
-  return Option.getOrElse(Option.fromUndefinedOr(contexts.get(who.personId)), () => emptyContext)
+  return Option.getOrElse(snapshots.read(who), () => emptyContext)
 }
 
 /** Facts are explicitly context, not new instructions; timestamps are omitted to keep it stable. */
@@ -98,16 +83,10 @@ function contextInstruction(context: VividContext) {
 export function useVividContext(acting: Option.Option<Acting>) {
   const context = Option.match(acting, { onNone: () => emptyContext, onSome: contextFor })
   useResponseStart(() => {
-    if (Option.isSome(acting)) {
-      const who = acting.value
-      frozen.set(who.threadId, new Map(prepared.get(who.threadId)))
-    }
+    if (Option.isSome(acting)) snapshots.freeze(acting.value)
   })
   useResponseFinish(() => {
-    if (Option.isSome(acting)) {
-      frozen.delete(acting.value.threadId)
-      prepared.delete(acting.value.threadId)
-    }
+    if (Option.isSome(acting)) snapshots.finish(acting.value)
   })
   useInstruction(contextInstruction(context))
   return context
