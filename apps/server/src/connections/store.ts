@@ -1,5 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm'
-import { Clock, Context, Effect, Layer, Redacted, Schema } from 'effect'
+import { Clock, Context, Effect, Layer, Redacted, Schema, Option } from 'effect'
 import {
   AuditEvent,
   BeginConnectionRequest,
@@ -10,8 +10,10 @@ import {
   ConnectionStep,
   InvalidRequest,
   Service,
+  Workspace,
 } from '@vivid/contracts'
 import { requireAdmin, type Actor } from '../auth/access.ts'
+import { workspaceIn } from '../auth/session.ts'
 import { Audit } from '../audit/record.ts'
 import { ServerConfig } from '../config.ts'
 import { Database, returned } from '../database/client.ts'
@@ -47,6 +49,15 @@ const mayManage = Effect.fn('Connections.mayManage')(function* (
   if (row.companyId !== null) yield* requireAdmin(actor.workspace)
 })
 
+/** Session workspace is a preference. Callback management and audit attribution use the row's
+ * actual Company and fresh Membership; personal Connections always attribute to personal space.
+ */
+const rowActor = Effect.fn('Connections.rowActor')(function* (actor: Actor, row: ConnectionRecord) {
+  const workspace = yield* workspaceIn(actor.person.id, Option.fromNullOr(row.companyId))
+  if (row.companyId !== null) yield* requireAdmin(workspace)
+  return { ...actor, workspace }
+})
+
 /** Persist authorization state before auditing readiness; provider calls remain outside transactions. */
 const finish = Effect.fn('Connections.finish')(function* (
   actor: Actor,
@@ -75,8 +86,10 @@ const finish = Effect.fn('Connections.finish')(function* (
   const saved = yield* saveState(row, next.state, next.references)
   yield* recordChanged(actor, saved)
   if (row.status !== 'ready' && saved.status === 'ready') {
+    const attribution =
+      row.companyId === null ? { ...actor, workspace: Workspace.cases.Personal.make({}) } : actor
     yield* (yield* Audit).record(
-      actor,
+      attribution,
       AuditEvent.cases.ConnectionAdded.make({
         service: row.serviceName,
         shared: row.companyId !== null,
@@ -105,7 +118,7 @@ const begin = Effect.fn('Connections.begin')(function* (
   const config = yield* ServerConfig
   const owner = ExecutorOwnerId.make(companyId === null ? `p-${actor.person.id}` : `c-${companyId}`)
   const executor = yield* Executor
-  // Preserve pending references when the host cannot start sign-in; the account remains removable.
+  // Revoke an unusable pending grant before reporting failure; never insert a dead product row.
   const step = yield* executor
     .begin({
       connectionId: id,
@@ -117,13 +130,17 @@ const begin = Effect.fn('Connections.begin')(function* (
         .href,
     })
     .pipe(
-      Effect.catchTag('ExecutorSignInRequired', ({ references, message }) =>
-        Effect.succeed({ references, message }),
+      Effect.catchTag(
+        'ExecutorSignInRequired',
+        Effect.fn('Connections.cancelSignIn')(function* (error) {
+          yield* executor.remove(error.references)
+          return yield* Effect.fail(error)
+        }),
       ),
       Effect.mapError(executorFailure),
     )
   const now = yield* Clock.currentTimeMillis
-  const status = '_tag' in step && ExecutorStep.guards.Done(step) ? 'ready' : 'needs-authorization'
+  const status = ExecutorStep.guards.Done(step) ? 'ready' : 'needs-authorization'
   const database = yield* Database
   const rows = yield* database.run(
     database
@@ -151,10 +168,12 @@ const begin = Effect.fn('Connections.begin')(function* (
   yield* recordChanged(actor, row)
   if (status === 'ready')
     yield* (yield* Audit).record(
-      actor,
+      {
+        ...actor,
+        workspace: companyId === null ? Workspace.cases.Personal.make({}) : actor.workspace,
+      },
       AuditEvent.cases.ConnectionAdded.make({ service: service.name, shared: request.shared }),
     )
-  if (!('_tag' in step)) return yield* Effect.fail(new InvalidRequest({ message: step.message }))
   const connection = yield* publicConnection(actor, row)
   return ExecutorStep.match<ConnectionStep>(step, {
     Done: () => ConnectionStep.cases.Done.make({ connection }),
@@ -274,11 +293,12 @@ const makeManagement = (input: {
       callbackAddress: Redacted.Redacted,
     ) {
       const row = yield* provide(getRecord(actor, id, true))
+      const managing = yield* provide(rowActor(actor, row))
       const references = yield* executor
         .completeSignIn({ references: row.references, callbackAddress })
         .pipe(Effect.mapError(executorFailure))
-      const connection = yield* provide(finish(actor, row, references))
-      return ConnectionState.guards.Ready(connection.state)
+      const connection = yield* provide(finish(managing, row, references))
+      return connection.state
     }),
     /** Remove provider authority before deleting the scoped product record. */
     remove: Effect.fn('Connections.remove')(function* (actor: Actor, id: ConnectionId) {
