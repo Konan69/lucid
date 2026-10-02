@@ -75,9 +75,11 @@ const KNOWING = [
 export function Vivid({ id }: { id: string }) {
   const model = process.env.VIVID_MODEL ?? 'openrouter/z-ai/glm-5.3-flash'
   const delivery = useDelivery()
-  // Flue 2.1 rerenders at a joined delivery's turn boundary. The latest Person supplies
-  // subsequent tools' authority; calls already running retain the prior render's authority.
-  // Public dispatch/HTTP APIs cannot request a separate response for a second Person.
+  // Flue 2.1 joins a delivery into a response already in progress and rerenders at its turn
+  // boundary, so the tools that follow act for the joined delivery's Person. That is only safe
+  // because one response is for one Person: the server refuses a different Person's delivery
+  // while a Run is working in the Thread (`apps/server/src/threads`), so whoever joins is the
+  // Person already being answered. Flue itself has no queue-only dispatch to rely on.
   const acting = actingFor(id, delivery, threadOriginOf(useInitialData()))
   const runTool = toolRunner(scopeLayer(id, delivery, threadOriginOf(useInitialData())))
   const context = useVividContext(acting)

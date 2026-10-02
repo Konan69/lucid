@@ -17,10 +17,11 @@ import { runtimeHeaders } from '@vivid/contracts/auth'
  *
  * Vivid has no identity of its own. Every product call a tool makes is made as the Person whose
  * latest delivered message is in front of the model, and the server checks that Person's access
- * again on every call. Flue 2.1 joins busy deliveries at turn boundaries and rerenders tools for
- * the joined message: a second Person changes subsequent tool authority within the response.
- * Earlier tool calls retain their captured authority. There is no public queue-only delivery
- * option. A tool never chooses its acting Person.
+ * again on every call. Flue 2.1 joins a busy Thread's next delivery at a turn boundary and
+ * rerenders the tools for it. The server keeps one response for one Person by refusing another
+ * Person's delivery while a Run is working, so the delivery that joins is from the Person already
+ * being answered and the acting Person does not change inside a response. A tool never chooses
+ * its acting Person.
  */
 export interface Acting {
   readonly threadId: ThreadId
