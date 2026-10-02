@@ -12,6 +12,8 @@ import { approvals } from './tables.ts'
 import { approvalSweeperLayer } from './sweeper.ts'
 import { commandAction, fixture, Observation, trustTestLayer } from './testing.ts'
 
+const isDatabaseFailure = Schema.is(DatabaseFailure)
+
 const deny = ApprovalDecision.cases.Deny.make({})
 
 /** PostgreSQL owns debts and leases; abrupt defects represent a lost process without undoing SQL. */
@@ -35,8 +37,8 @@ describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
           digest: approval.digest,
           decision: deny,
         })
-        expect(logged).toHaveLength(Schema.is(DatabaseFailure)(failure) ? 1 : 0)
-        if (Schema.is(DatabaseFailure)(failure)) {
+        expect(logged).toHaveLength(isDatabaseFailure(failure) ? 1 : 0)
+        if (isDatabaseFailure(failure)) {
           expect(JSON.stringify(logged)).toContain('DatabaseFailure')
           expect(JSON.stringify(logged)).not.toContain(failure.message)
         }
@@ -50,7 +52,7 @@ describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
           (yield* returned(deliveries, 'Delivery')).idempotencyKey,
           (yield* returned(deliveries, 'Delivery')).idempotencyKey,
         ])
-        expect(logged).toHaveLength(Schema.is(DatabaseFailure)(failure) ? 1 : 0)
+        expect(logged).toHaveLength(isDatabaseFailure(failure) ? 1 : 0)
       }).pipe(Effect.scoped, Effect.provide(trustTestLayer), Effect.provide(Logger.layer([logger])))
     })
   }

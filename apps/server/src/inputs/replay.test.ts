@@ -12,6 +12,8 @@ import { threads } from '../threads/tables.ts'
 import { InputStore, inputStoreLayer } from './store.ts'
 import { inputRequests } from './tables.ts'
 
+const isDatabaseFailure = Schema.is(DatabaseFailure)
+
 const question = { question: 'Which day?', options: [], allowsOwnAnswer: true }
 
 /** Answer writes and replay cross the real PostgreSQL seam with explicit failure injection. */
@@ -31,8 +33,8 @@ describe.skipIf(!testDatabaseConfigured)('Durable Input answer signals', () => {
         yield* Ref.set(observed.deliveryFailure, Option.some(failure))
         const request = yield* store.ask(test.vivid, question)
         yield* store.answer(test.personal, { id: request.id, answer: 'Monday' })
-        expect(logged).toHaveLength(Schema.is(DatabaseFailure)(failure) ? 1 : 0)
-        if (Schema.is(DatabaseFailure)(failure)) {
+        expect(logged).toHaveLength(isDatabaseFailure(failure) ? 1 : 0)
+        if (isDatabaseFailure(failure)) {
           expect(JSON.stringify(logged)).toContain('DatabaseFailure')
           expect(JSON.stringify(logged)).not.toContain(failure.message)
         }
@@ -46,7 +48,7 @@ describe.skipIf(!testDatabaseConfigured)('Durable Input answer signals', () => {
           (yield* returned(deliveries, 'Delivery')).idempotencyKey,
           (yield* returned(deliveries, 'Delivery')).idempotencyKey,
         ])
-        expect(logged).toHaveLength(Schema.is(DatabaseFailure)(failure) ? 1 : 0)
+        expect(logged).toHaveLength(isDatabaseFailure(failure) ? 1 : 0)
       }).pipe(Effect.scoped, Effect.provide(trustTestLayer), Effect.provide(Logger.layer([logger])))
     })
   }
