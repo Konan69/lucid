@@ -109,8 +109,8 @@ Running Firecracker ourselves means owning hosts, snapshot storage, networking, 
 and capacity. That is a company, not a feature. With state sync in place the machine is a commodity,
 so rent it.
 
-**Decision (20 Sep 2026): boat.dev, behind one owned boundary.** From its own site and docs, not yet
-exercised by us:
+**Decision (20 Sep 2026): boat.dev, behind one owned boundary. Native provider built 2 Oct 2026.**
+The provider claims below come from Boat’s docs; authenticated Boat behavior remains unexercised:
 
 |                 | boat.dev                                                                                    |
 | --------------- | ------------------------------------------------------------------------------------------- |
@@ -129,14 +129,42 @@ processes do not survive a stop. State sync makes all three tolerable: a stop is
 survivable, and the provider is replaceable. Self-run Firecracker is a later cost optimisation at
 fleet scale, not a starting point.
 
-The boundary is one `Context.Service` — create, ensure, stop, exec, copy in and out, desktop URL —
-with the provider behind a Layer. Nothing above it may know which provider is in use. None of the
-provider claims above have been exercised by us yet; the first task is a spike that proves create,
-desktop, stop, resume and a full state round trip on boat.dev.
+`Machine` is the owned `Context.Service`: ensure, status, stop, exec, browse, desktop, and the
+local provider's RFB connection. Select Boat with `VIVID_COMPUTER_PROVIDER=boat`; configure its
+Redacted API key, explicit organization, size and lifetime through Effect Config. One durable
+binding and creation intent per Person precedes allocation. Restart recovers the same identity;
+stop waits for disk archival and ensure resumes that snapshot. An unresolved creation intent
+past the replay window fails explicitly rather than buying a second machine.
 
-## Planned: one integrated computer, with the browser inside it
+Vivid uses Boat's shipped desktop, installed Chrome and guest-native Cua Driver. It installs
+no nested desktop image. Browser and desktop actions call the driver's CLI through Boat's
+command API and its daemon socket. Private action JSON is uploaded to a temporary private
+directory and redirected to stdin; full-size PNGs return through the file API. The provider
+returns the readable browser state and tabs, or a PNG with pointer and focused-window title.
+Chrome attachment goes through the native existing-profile permission gate; a denied or missing
+capability is a failure, never a substitute browser profile.
 
-**Status: planned, not built. Recorded here so the shape is settled before anything is written.**
+Running state distinguishes `screen: Relay` (offline Docker) from `screen: Viewer` (Boat's
+short-lived token-gated streaming page). `GetComputer` issues fresh viewer authority. Clients
+must refresh it before expiry and use a sandboxed frame. The API key remains server-only.
+Desktop actions use the same Gate and takeover recheck as browser actions: Look, Move, Scroll
+and Wait are reads; Click, Drag, Type and Press follow the existing write policy. The runtime's
+`use_desktop` returns real image content through Flue's public sandbox-tool API, alongside
+bounded human-readable metadata. Docker remains an offline stand-in and explicitly refuses
+desktop actions; it supports the expanded browser action vocabulary.
+
+Fake HTTP integration tests exercise durable allocation recovery, restart/resume, gated viewer
+issuance, native tools, response decoding, private input transport and uncertain-command handling.
+Runtime tests verify PNG bytes survive the text budget. No call has run against real Boat: the
+opt-in live test still needs an API key and explicit cost opt-in. Real guest tool compatibility,
+Chrome attachment, snapshot/profile retention, viewer embedding and provider timings are
+unexercised. Client support for the new screen union belongs to its own lane.
+
+## Runtime on the Computer: planned
+
+**Status: native browser and desktop backend built; runtime placement and external state sync planned.**
+The browser and desktop now share Boat’s shipped guest. Running Vivid’s Flue runtime inside that
+guest remains a separate step. The intended shape follows.
 
 The Computer is not a harness the agent calls out to. It is the machine the agent already lives on
 — `CONTEXT.md`: "the persistent private machine Vivid operates: filesystem, processes, browser
