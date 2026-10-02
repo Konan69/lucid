@@ -3,11 +3,12 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Schedule from 'effect/Schedule'
+import * as Schema from 'effect/Schema'
 import {
   Occurrence,
   RunState,
   ThreadId,
-  type NotFound,
+  NotFound,
   type RoutineId,
   type RuntimeUnavailable,
 } from '@vivid/contracts'
@@ -28,8 +29,10 @@ import {
   type RoutineAttempt,
 } from './attempts.ts'
 import type { RoutineRecord } from './records.ts'
-import { RoutineStore, type RoutineMissing } from './store.ts'
+import { RoutineStore, ScheduledFailure, type RoutineMissing } from './store.ts'
 import type { InvalidRoutineSchedule } from './timing.ts'
+
+const isNotFound = Schema.is(NotFound)
 
 export type RoutineDeliveryError =
   | DatabaseInfrastructureError
@@ -149,9 +152,8 @@ const openThread = Effect.fn('RoutineScheduler.openThread')(function* (
       companyId: record.companyId,
     })
     .pipe(
-      Effect.catchTag(
-        ['DatabaseConstraintViolation', 'DatabaseFailure', 'DatabaseUnavailable'],
-        () => openingFailed(services, record, attempt),
+      Effect.catchTag('DatabaseConstraintViolation', () =>
+        openingFailed(services, record, attempt),
       ),
     )
 })
@@ -201,9 +203,11 @@ const makeSubmit = (services: SubmissionServices) =>
         Effect.tapError((error) =>
           services.routines.failOccurrence(
             occurrence.id,
-            OccurrenceFailure.cases.Delivery.make({
-              reason: `Delivery was not admitted (${error._tag})`,
-            }),
+            isNotFound(error)
+              ? OccurrenceFailure.cases.Opening.make({})
+              : OccurrenceFailure.cases.Delivery.make({
+                  reason: `Delivery was not admitted (${error._tag})`,
+                }),
           ),
         ),
       )
@@ -234,6 +238,20 @@ const makeSubmit = (services: SubmissionServices) =>
       error: null,
     })
   })
+
+/** A claim may commit just before Membership is revoked; that receipt still needs a terminal reason. */
+const submitScheduled = Effect.fn('RoutineScheduler.submitScheduled')(function* (
+  routines: RoutineStore['Service'],
+  submit: ReturnType<typeof makeSubmit>,
+  record: RoutineRecord,
+  attempt: RoutineAttempt,
+) {
+  return yield* submit(record, Option.none(), attempt).pipe(
+    Effect.tapErrorTag('RoutineMissing', () =>
+      routines.failOccurrence(attempt.id, ScheduledFailure.cases.Membership.make({})),
+    ),
+  )
+})
 
 /** Captures delivery authorities once; manual calls still supply their current Actor per request. */
 export const routineSchedulerServiceLayer = Layer.effect(
@@ -273,7 +291,7 @@ export const routineSchedulerServiceLayer = Layer.effect(
       const due = yield* routines.claimDue()
       yield* Effect.forEach(due, ({ record }) => publish(changes)(record), { discard: true })
       const outcomes = yield* Effect.forEach(due, ({ record, attempt }) =>
-        Effect.exit(submit(record, Option.none(), attempt)),
+        Effect.exit(submitScheduled(routines, submit, record, attempt)),
       )
       for (const outcome of outcomes) yield* outcome
     })

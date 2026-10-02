@@ -52,6 +52,30 @@ export class RoutineWebhookRequired extends Schema.TaggedError<RoutineWebhookReq
   { title: 'Webhook Routine required' },
 ) {}
 
+/** Scheduled receipts have a finite admission window; no stale work is silently delivered later. */
+export const scheduledReplayMillis = 15 * 60 * 1000
+export const ScheduledFailure = Schema.TaggedUnion({
+  Disabled: {},
+  Membership: {},
+  Missed: {},
+})
+export type ScheduledFailure = typeof ScheduledFailure.Type
+const StoredOccurrenceFailure = Schema.Union([
+  OccurrenceFailure.cases.Opening,
+  OccurrenceFailure.cases.Delivery,
+  ScheduledFailure.cases.Disabled,
+  ScheduledFailure.cases.Membership,
+  ScheduledFailure.cases.Missed,
+]).pipe(Schema.toTaggedUnion('_tag'))
+
+/** Durable terminal reasons distinguish withdrawn authority from an expired delivery window. */
+const scheduledFailureReason = (failure: ScheduledFailure) =>
+  ScheduledFailure.match(failure, {
+    Disabled: () => 'Its Routine was disabled before delivery',
+    Membership: () => 'Its owner is no longer a Member of its Company',
+    Missed: () => 'Missed: delivery was not admitted within 15 minutes',
+  })
+
 type StoreError = DatabaseInfrastructureError | RoutineMissing
 type ChangeError = StoreError | InvalidRoutineSchedule
 type CreateInput = typeof CreateRoutineRequest.Type
@@ -93,7 +117,7 @@ export interface RoutineStoreService {
   ) => Effect.Effect<OccurrenceClaim, StoreError>
   readonly failOccurrence: (
     id: OccurrenceId,
-    failure: OccurrenceFailure,
+    failure: OccurrenceFailure | ScheduledFailure,
   ) => Effect.Effect<boolean, DatabaseInfrastructureError>
   readonly attachSubmission: (
     id: OccurrenceId,
@@ -306,7 +330,7 @@ const makeIssueWebhook = (
   })
 
 /** The Membership row is locked only for database work, so removal cannot overtake receipt insertion. */
-const requireMember = Effect.fn('RoutineStore.requireMember')(function* (
+const memberPresent = Effect.fn('RoutineStore.memberPresent')(function* (
   database: Pick<DatabaseService, 'select'>,
   record: RoutineRecord,
 ) {
@@ -322,9 +346,18 @@ const requireMember = Effect.fn('RoutineStore.requireMember')(function* (
       )
       .limit(1)
       .for('key share')
-    if (members.length === 0)
-      return yield* Effect.fail(new RoutineMissing({ id: record.routine.id }))
+    return members.length > 0
   }
+  return true
+})
+
+/** Membership removal conceals manual/webhook operations; the scheduler records that same loss. */
+const requireMember = Effect.fn('RoutineStore.requireMember')(function* (
+  database: Pick<DatabaseService, 'select'>,
+  record: RoutineRecord,
+) {
+  if (!(yield* memberPresent(database, record)))
+    return yield* Effect.fail(new RoutineMissing({ id: record.routine.id }))
   return yield* Effect.void
 })
 
@@ -351,32 +384,84 @@ const makeAuthorizeWebhook = (database: DatabaseService) =>
     return record
   })
 
-/** Claims each tick with its receipt atomically and replays every unsubmitted scheduled receipt.
- * Concurrent passes may replay the same receipt after commit; Conversation's original key makes
- * admission idempotent. No in-memory claim or lease is needed to recover a process crash.
+/** Terminal updates happen under the receipt lock and cannot overwrite an attached Run. A missed
+ * receipt also updates the Routine's visible missed timestamp, using the original receipt time.
+ */
+const retireScheduled = Effect.fn('RoutineStore.retireScheduled')(function* (
+  tx: Pick<DatabaseService, 'update'>,
+  occurrence: typeof occurrences.$inferSelect,
+  failure: ScheduledFailure,
+  now: number,
+) {
+  yield* tx
+    .update(occurrences)
+    .set({
+      status: 'failed',
+      error: scheduledFailureReason(failure),
+      finishedAt: now,
+    })
+    .where(and(eq(occurrences.id, occurrence.id), isNull(occurrences.submissionId)))
+  if (ScheduledFailure.guards.Missed(failure))
+    yield* tx
+      .update(routines)
+      .set({ lastMissedAt: sql`greatest(${routines.lastMissedAt}, ${occurrence.startedAt})` })
+      .where(eq(routines.id, occurrence.routineId))
+  // A departed owner cannot authorize future ticks either; retain the failed receipt once.
+  if (ScheduledFailure.guards.Membership(failure))
+    yield* tx
+      .update(routines)
+      .set({ enabled: false, nextExpectedAt: null })
+      .where(eq(routines.id, occurrence.routineId))
+})
+
+/** Enabled, fresh receipts require current Membership before replay. Disabled receipts are retired
+ * too, so enabling the Routine later cannot resurrect work the Person explicitly stopped.
+ */
+const replayScheduled = Effect.fn('RoutineStore.replayScheduled')(function* (
+  tx: Pick<DatabaseService, 'select' | 'update'>,
+  now: number,
+) {
+  const pending = yield* tx
+    .select({ routine: routines, occurrence: occurrences })
+    .from(occurrences)
+    .innerJoin(routines, eq(routines.id, occurrences.routineId))
+    .where(
+      and(
+        like(occurrences.id, 'scheduled-%'),
+        eq(occurrences.status, 'not-admitted'),
+        isNull(occurrences.submissionId),
+      ),
+    )
+    .for('update', { skipLocked: true, of: occurrences })
+  const receipts: ScheduledReceipt[] = []
+  for (const row of pending) {
+    const record = yield* decodeRoutine(row.routine)
+    if (!record.routine.enabled) {
+      yield* retireScheduled(tx, row.occurrence, ScheduledFailure.cases.Disabled.make({}), now)
+      continue
+    }
+    if (!(yield* memberPresent(tx, record))) {
+      yield* retireScheduled(tx, row.occurrence, ScheduledFailure.cases.Membership.make({}), now)
+      continue
+    }
+    if (now - row.occurrence.startedAt >= scheduledReplayMillis) {
+      yield* retireScheduled(tx, row.occurrence, ScheduledFailure.cases.Missed.make({}), now)
+      continue
+    }
+    receipts.push({ record, attempt: replayAttempt(OccurrenceId.make(row.occurrence.id)) })
+  }
+  return receipts
+})
+
+/** Claims each tick with its receipt atomically. Replay stops on withdrawal, lost authority or
+ * the 15-minute admission limit; Conversation still owns keyed admission across process crashes.
  */
 const makeClaimDue = (database: DatabaseService) =>
   Effect.fn('RoutineStore.claimDue')(function* () {
     const now = yield* Clock.currentTimeMillis
     return yield* database.transaction((tx) =>
       Effect.gen(function* () {
-        const pending = yield* tx
-          .select({ routine: routines, occurrence: occurrences })
-          .from(occurrences)
-          .innerJoin(routines, eq(routines.id, occurrences.routineId))
-          .where(
-            and(
-              like(occurrences.id, 'scheduled-%'),
-              eq(occurrences.status, 'not-admitted'),
-              isNull(occurrences.submissionId),
-            ),
-          )
-          .for('update', { skipLocked: true, of: occurrences })
-        const receipts: ScheduledReceipt[] = []
-        for (const row of pending) {
-          const record = yield* decodeRoutine(row.routine)
-          receipts.push({ record, attempt: replayAttempt(OccurrenceId.make(row.occurrence.id)) })
-        }
+        const receipts = yield* replayScheduled(tx, now)
         const rows = yield* tx
           .select()
           .from(routines)
@@ -396,7 +481,7 @@ const makeClaimDue = (database: DatabaseService) =>
             return yield* new DatabaseFailure({ message: 'Due Routine has no tick timestamp' })
           const attempt = scheduledAttempt(record.routine.id, row.nextExpectedAt)
           const next = yield* nextExpectedAt(record.routine.trigger, true, now)
-          yield* tx
+          const inserted = yield* tx
             .insert(occurrences)
             .values({
               id: attempt.id,
@@ -410,10 +495,16 @@ const makeClaimDue = (database: DatabaseService) =>
               error: null,
             })
             .onConflictDoNothing({ target: occurrences.id })
+            .returning()
           yield* tx
             .update(routines)
             .set({ nextExpectedAt: next })
             .where(eq(routines.id, record.routine.id))
+          if (!(yield* memberPresent(tx, record))) {
+            const occurrence = yield* returned(inserted, 'Scheduled receipt')
+            yield* retireScheduled(tx, occurrence, ScheduledFailure.cases.Membership.make({}), now)
+            continue
+          }
           receipts.push({ record, attempt })
         }
         return receipts
@@ -499,14 +590,29 @@ interface OccurrenceSnapshot {
   readonly error: string | null
 }
 
-/** Failure reasons stay durable; only opening failures stop replay, and admission errors keep the key. */
+/** Terminal authority failures stop replay; transient admission errors retain the original key. */
 const makeFailOccurrence = (database: DatabaseService) =>
   Effect.fn('RoutineStore.failOccurrence')(function* (
     id: OccurrenceId,
-    failure: OccurrenceFailure,
+    failure: OccurrenceFailure | ScheduledFailure,
   ) {
     const now = yield* Clock.currentTimeMillis
-    const snapshot = OccurrenceFailure.match(failure, {
+    const snapshot = StoredOccurrenceFailure.match(failure, {
+      Disabled: (value) => ({
+        status: 'failed',
+        error: scheduledFailureReason(value),
+        finishedAt: now,
+      }),
+      Membership: (value) => ({
+        status: 'failed',
+        error: scheduledFailureReason(value),
+        finishedAt: now,
+      }),
+      Missed: (value) => ({
+        status: 'failed',
+        error: scheduledFailureReason(value),
+        finishedAt: now,
+      }),
       Opening: () => ({ status: 'failed', error: THREAD_OPENING_FAILURE, finishedAt: now }),
       Delivery: ({ reason }) => ({ status: 'not-admitted', error: reason, finishedAt: now }),
     })

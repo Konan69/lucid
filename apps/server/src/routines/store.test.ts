@@ -21,6 +21,7 @@ import {
   RoutineId,
   RoutineTrigger,
   RuntimeUnavailable,
+  NotFound,
   RunId,
   SessionId,
   ThreadId,
@@ -43,7 +44,13 @@ import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { RoutineInvocation, RoutineThreadUnavailable } from './attempts.ts'
 import { routineHandlers } from './handlers.ts'
 import { occurrences, routines } from './tables.ts'
-import { RoutineStore, RoutineMissing, RoutineWebhookRequired, routineStoreLayer } from './store.ts'
+import {
+  RoutineStore,
+  RoutineMissing,
+  RoutineWebhookRequired,
+  routineStoreLayer,
+  scheduledReplayMillis,
+} from './store.ts'
 import { RoutineScheduler, routineSchedulerServiceLayer } from './scheduler.ts'
 import { routineWebhookRoutes } from './webhook.ts'
 import { InvalidRoutineSchedule } from './timing.ts'
@@ -57,7 +64,7 @@ class Deliveries extends Context.Service<Deliveries, Ref.Ref<ReadonlyArray<Deliv
 /** Tests may fail the next admission before a Run exists, then retry through the same HTTP route. */
 class DeliveryFailure extends Context.Service<
   DeliveryFailure,
-  Ref.Ref<Option.Option<RuntimeUnavailable>>
+  Ref.Ref<Option.Option<RuntimeUnavailable | NotFound>>
 >()('test/RoutineDeliveryFailure') {}
 
 /** The recording authority creates durable Runs and exposes delivery counts to behavior tests. */
@@ -66,7 +73,7 @@ const recordedConversationLayer = Layer.effectContext(
     const store = yield* RunStore
     const recorded = new Set<RunId>()
     const delivered = yield* Ref.make<ReadonlyArray<Delivery>>([])
-    const failure = yield* Ref.make<Option.Option<RuntimeUnavailable>>(Option.none())
+    const failure = yield* Ref.make<Option.Option<RuntimeUnavailable | NotFound>>(Option.none())
     const conversation = Conversation.of({
       /** Routine tests never use the gateway's receipt path; a call there must fail visibly. */
       admit: Effect.fn('Test.RoutineConversation.admit')(function* () {
@@ -558,6 +565,145 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         })
         expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
         expect((yield* store.get(owner, routine.id)).routine.nextRunAt).toBe(120_000)
+      }),
+    )
+
+    it.effect('retires a disabled scheduled receipt and never resurrects it on enable', () =>
+      Effect.gen(function* () {
+        const { owner } = yield* fixture()
+        const store = yield* RoutineStore
+        const scheduler = yield* RoutineScheduler
+        yield* TestClock.setTime(0)
+        const routine = yield* store.create(owner, {
+          name: 'Stopped',
+          prompt: 'Do work',
+          trigger: schedule,
+        })
+        yield* TestClock.setTime(60_000)
+        const due = yield* returned(yield* store.claimDue(), 'Scheduled tick')
+        yield* store.patch(owner, routine.id, { enabled: false })
+        yield* scheduler.runDue()
+        expect((yield* store.list(owner))[0]).toMatchObject({
+          runs: [
+            {
+              id: due.attempt.id,
+              status: 'failed',
+              error: 'Its Routine was disabled before delivery',
+              finishedAt: 60_000,
+            },
+          ],
+        })
+        yield* store.patch(owner, routine.id, { enabled: true })
+        yield* scheduler.runDue()
+        expect(yield* Ref.get(yield* Deliveries)).toEqual([])
+        expect(yield* store.claimDue()).toEqual([])
+      }),
+    )
+
+    for (const pending of [false, true]) {
+      it.effect(`records departed Membership once with an existing receipt ${pending}`, () =>
+        Effect.gen(function* () {
+          const { owner } = yield* fixture()
+          const store = yield* RoutineStore
+          const database = yield* Database
+          yield* TestClock.setTime(0)
+          const routine = yield* store.create(owner, {
+            name: 'Departed',
+            prompt: 'Do work',
+            trigger: schedule,
+          })
+          yield* TestClock.setTime(60_000)
+          if (pending) yield* store.claimDue()
+          yield* database.run(
+            database.delete(membershipTable).where(eq(membershipTable.userId, owner.person.id)),
+          )
+          yield* (yield* RoutineScheduler).runDue()
+          const failed = yield* returned(
+            (yield* returned(yield* store.list(owner), 'Routine')).runs,
+            'Occurrence',
+          )
+          expect(failed).toMatchObject({
+            status: 'failed',
+            finishedAt: 60_000,
+            error: 'Its owner is no longer a Member of its Company',
+          })
+          yield* TestClock.setTime(120_000)
+          yield* (yield* RoutineScheduler).runDue()
+          expect((yield* store.list(owner))[0]).toMatchObject({ enabled: false, runs: [failed] })
+          expect(yield* Ref.get(yield* Deliveries)).toEqual([])
+          expect(
+            yield* database.run(
+              database.select().from(occurrences).where(eq(occurrences.routineId, routine.id)),
+            ),
+          ).toHaveLength(1)
+        }),
+      )
+    }
+
+    for (const expired of [false, true]) {
+      it.effect(`enforces the 15-minute replay boundary with receipt expired ${expired}`, () =>
+        Effect.gen(function* () {
+          const { owner } = yield* fixture()
+          const store = yield* RoutineStore
+          yield* TestClock.setTime(0)
+          const routine = yield* store.create(owner, {
+            name: 'Bounded',
+            prompt: 'Do work',
+            trigger: schedule,
+          })
+          yield* TestClock.setTime(60_000)
+          const due = yield* returned(yield* store.claimDue(), 'Scheduled tick')
+          // Keep this receipt while moving the next tick beyond the replay window.
+          yield* store.patch(owner, routine.id, {
+            trigger: RoutineTrigger.cases.Schedule.make({ cron: '0 * * * *', timezone: 'UTC' }),
+          })
+          const finish = 60_000 + scheduledReplayMillis - (expired ? 0 : 1)
+          yield* TestClock.setTime(finish)
+          yield* (yield* RoutineScheduler).runDue()
+          const view = yield* returned(yield* store.list(owner), 'Routine')
+          if (expired) {
+            expect(view).toMatchObject({
+              lastMissedAt: 60_000,
+              runs: [
+                {
+                  id: due.attempt.id,
+                  status: 'failed',
+                  error: 'Missed: delivery was not admitted within 15 minutes',
+                  finishedAt: finish,
+                },
+              ],
+            })
+            yield* TestClock.setTime(finish + 20_000)
+            yield* (yield* RoutineScheduler).runDue()
+            expect((yield* store.list(owner))[0]).toEqual(view)
+            expect(yield* Ref.get(yield* Deliveries)).toEqual([])
+          } else {
+            expect(view.runs).toMatchObject([{ id: due.attempt.id, status: 'running' }])
+            expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
+          }
+        }),
+      )
+    }
+
+    it.effect('does not replay permanent Thread-authority delivery failure', () =>
+      Effect.gen(function* () {
+        const { owner } = yield* fixture()
+        const store = yield* RoutineStore
+        yield* TestClock.setTime(0)
+        yield* store.create(owner, { name: 'Lost Thread', prompt: 'Do work', trigger: schedule })
+        yield* TestClock.setTime(60_000)
+        yield* Ref.set(
+          yield* DeliveryFailure,
+          Option.some(new NotFound({ message: 'Thread cannot be opened' })),
+        )
+        expect(yield* (yield* RoutineScheduler).runDue().pipe(Effect.flip)).toBeInstanceOf(NotFound)
+        const before = yield* store.list(owner)
+        expect(before[0]).toMatchObject({
+          runs: [{ status: 'failed', error: 'Its thread could not be opened' }],
+        })
+        yield* (yield* RoutineScheduler).runDue()
+        expect(yield* store.list(owner)).toEqual(before)
+        expect(yield* Ref.get(yield* Deliveries)).toEqual([])
       }),
     )
 
