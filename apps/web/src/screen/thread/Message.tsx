@@ -116,7 +116,9 @@ export function Message({
   latest: boolean
   onContinue: (text: string) => void
 }) {
-  if (message.role === 'user') return <Said text={textOf(message)} mine />
+  if (message.role === 'user') {
+    return <Said text={textOf(message)} mine pictures={picturesOf(message)} />
+  }
   if (message.role === 'system') return <Signal message={message} context={context} />
   return (
     <FromVivid
@@ -133,11 +135,13 @@ export function Message({
 export function Said({
   text,
   mine,
+  pictures,
   unsent = false,
   from,
 }: {
   text: string
   mine: boolean
+  pictures: ReadonlyArray<{ url: string; name: string }>
   /** Words that did not arrive: drawn as an outline, where a sent message is filled. */
   unsent?: boolean
   from?: { readonly name: string }
@@ -154,6 +158,25 @@ export function Said({
               : 'bg-accent text-ink-on-accent selection:bg-ink-on-accent/30',
           )}
         >
+          {pictures.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {pictures.map((picture) => (
+                <a
+                  key={picture.url}
+                  href={picture.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block cursor-pointer rounded-control focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  <img
+                    src={picture.url}
+                    alt={picture.name}
+                    className="size-32 rounded-control object-cover picture-edge"
+                  />
+                </a>
+              ))}
+            </div>
+          )}
           <p className="whitespace-pre-wrap">{text}</p>
         </div>
       </div>
@@ -167,11 +190,40 @@ export function Said({
           <span className="mb-1 block text-meta font-title text-ink-3">{from.name}</span>
         )}
         <div className="max-w-bubble rounded-composer rounded-tl-sm bg-surface-2 px-4 py-2.5 text-body text-ink">
+          {pictures.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {pictures.map((picture) => (
+                <a
+                  key={picture.url}
+                  href={picture.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block cursor-pointer rounded-control focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  <img
+                    src={picture.url}
+                    alt={picture.name}
+                    className="size-32 rounded-control object-cover picture-edge"
+                  />
+                </a>
+              ))}
+            </div>
+          )}
           <p className="whitespace-pre-wrap">{text}</p>
         </div>
       </div>
     </div>
   )
+}
+
+/** A message's image files, in conversation order; other files are not shown as pictures. */
+function picturesOf(message: FlueConversationMessage) {
+  return message.parts.flatMap((part) => {
+    if (part.type !== 'file' || !part.mediaType.startsWith('image/') || part.url === undefined) {
+      return []
+    }
+    return [{ url: part.url, name: part.filename ?? '' }]
+  })
 }
 
 const SIGNAL_LINE = new Map([
@@ -209,6 +261,7 @@ function Signal({
     return (
       <Said
         text={textOf(message)}
+        pictures={[]}
         // Whose turn it was comes from the Thread's Runs; the conversation holds no identifier.
         mine={Option.exists(
           speakerOfTurn(context.runs, Option.fromUndefinedOr(attributes.turn)),

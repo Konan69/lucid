@@ -1,4 +1,4 @@
-import { Option, Result } from 'effect'
+import { Effect, Option, Predicate, Result } from 'effect'
 import { FileText, X } from 'lucide-react'
 import { useState } from 'react'
 import { run } from '../../data/app'
@@ -49,23 +49,30 @@ export interface Attachment {
 
 /** Reads a picture into what a message carries. The preview is the same bytes as a `data:` URL. */
 const readPicture = (file: File) =>
-  new Promise<Option.Option<Picture & { readonly preview: string }>>((resolve) => {
+  Effect.callback<Option.Option<Picture & { readonly preview: string }>>((resume) => {
     const reader = new FileReader()
-    reader.addEventListener('error', () => resolve(Option.none()))
+    reader.addEventListener('error', () => resume(Effect.succeed(Option.none())))
     reader.addEventListener('load', () => {
-      const preview = String(reader.result)
-      resolve(
-        Option.some({
-          type: 'image',
-          mimeType: file.type,
-          // A data URL is "data:<type>;base64,<bytes>"; the message wants the bytes alone.
-          data: preview.slice(preview.indexOf(',') + 1),
-          filename: file.name,
-          preview,
-        }),
+      if (!Predicate.isString(reader.result)) {
+        resume(Effect.succeed(Option.none()))
+        return
+      }
+      const preview = reader.result
+      resume(
+        Effect.succeed(
+          Option.some({
+            type: 'image',
+            mimeType: file.type,
+            // A data URL is "data:<type>;base64,<bytes>"; the message wants the bytes alone.
+            data: preview.slice(preview.indexOf(',') + 1),
+            filename: file.name,
+            preview,
+          }),
+        ),
       )
     })
     reader.readAsDataURL(file)
+    return Effect.sync(() => reader.abort())
   })
 
 /** The line a message carries for each file that made it, so Vivid knows what to read. */
@@ -92,7 +99,9 @@ export function useAttachments(pictures: boolean) {
       ])
     if (!pictures) return refused('Pictures can only be sent in a private thread for now.')
     if (file.size > LARGEST_PICTURE) return refused('Too large. Pictures can be up to 5 MB.')
-    const picture = await readPicture(file)
+    const read = await run(readPicture(file))
+    if (!Result.isSuccess(read)) return refused('It could not be read. Try another file.')
+    const picture = read.success
     if (Option.isNone(picture)) return refused('It could not be read. Try another file.')
     return setFiles((now) =>
       now.filter((one) => Option.isSome(one.picture)).length >= MOST_PICTURES
@@ -176,16 +185,7 @@ export function Attached({
             file.standing.at === 'refused' ? 'bg-danger-soft text-danger' : 'bg-surface-2 text-ink',
           )}
         >
-          {Option.match(file.picture, {
-            onNone: () => <FileText className="size-4 shrink-0 text-ink-3" />,
-            onSome: (picture) => (
-              <img
-                src={picture.preview}
-                alt=""
-                className="size-6 shrink-0 rounded-xs object-cover picture-edge"
-              />
-            ),
-          })}
+          {attachmentMark(file.picture)}
           <span className="truncate">{file.name}</span>
           <span className="shrink-0 text-meta font-meta text-ink-3 tabular-nums">
             {caption(file.standing)}
@@ -202,6 +202,20 @@ export function Attached({
       ))}
     </ul>
   )
+}
+
+/** Draws a small preview only when the attached file is a picture. */
+function attachmentMark(picture: Attachment['picture']) {
+  if (Option.isSome(picture)) {
+    return (
+      <img
+        src={picture.value.preview}
+        alt=""
+        className="size-6 shrink-0 rounded-xs object-cover picture-edge"
+      />
+    )
+  }
+  return <FileText className="size-4 shrink-0 text-ink-3" />
 }
 
 const caption = (standing: Standing) => {

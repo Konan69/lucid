@@ -178,7 +178,7 @@ export type Shown = typeof Shown.Type
 
 /**
  * The `show` tool's input as a surface reads it back from the conversation. `kind` is the word
- * the model writes ("table"); `Shown` is what the surfaces draw.
+ * the model writes in `_tag` ("Table"); `Shown` is what the surfaces draw.
  */
 export const ShowRequest = Schema.Struct({ show: Shown })
 export interface ShowRequest extends Schema.Schema.Type<typeof ShowRequest> {}

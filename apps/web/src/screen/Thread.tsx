@@ -105,6 +105,97 @@ const arrivingTitle = (first: FirstWords): Option.Option<string> =>
     Unsent: ({ words }) => Option.some(titleFromMessage(words)),
   })
 
+/** Keeps card attribution and pending questions tied to the same live Thread snapshot. */
+function contextFor(
+  detail: Option.Option<ThreadDetail>,
+  me: MeResponse['person']['id'],
+  shared: boolean,
+  runs: ThreadContext['runs'],
+): ThreadContext {
+  return {
+    me,
+    shared,
+    runs,
+    approvals: Option.match(detail, { onNone: () => [], onSome: (value) => value.approvals }),
+    requests: Option.match(detail, { onNone: () => [], onSome: (value) => value.requests }),
+  }
+}
+
+/** Keeps the conversation's message rows together, including deliveries still on their way. */
+function ConversationMessages({
+  ready,
+  empty,
+  working,
+  streaming,
+  failure,
+  onRetry,
+  visible,
+  context,
+  onContinue,
+  first,
+  onFirstAgain,
+  unsent,
+  lastSaid,
+  onUnsentAgain,
+  ended,
+  onSay,
+}: {
+  ready: boolean
+  empty: boolean
+  working: boolean
+  streaming: boolean
+  failure: string | null
+  onRetry: () => void
+  visible: ReadonlyArray<FlueConversationMessage>
+  context: ThreadContext
+  onContinue: (text: string, pictures?: ReadonlyArray<Picture>) => void
+  first: FirstWords
+  onFirstAgain: () => void
+  unsent: Option.Option<Unsent>
+  lastSaid: Option.Option<string>
+  onUnsentAgain: (value: Unsent) => void
+  ended: ReturnType<typeof newestRun>
+  onSay: (text: string, pictures?: ReadonlyArray<Picture>) => void
+}) {
+  return (
+    <Messages
+      ready={ready}
+      empty={empty}
+      working={working}
+      streaming={streaming}
+      // Transport details stay in the log; the Person gets a clear reason and a retry action.
+      failure={failure}
+      onRetry={onRetry}
+    >
+      {visible.map((message, position) => (
+        <li key={message.id} className="animate-rise-in">
+          <Message
+            message={message}
+            context={context}
+            working={working}
+            latest={position === visible.length - 1}
+            onContinue={onContinue}
+          />
+        </li>
+      ))}
+      <OnTheirWay first={first} onAgain={onFirstAgain} />
+      {Option.isSome(unsent) && (
+        <NotSent
+          words={unsent.value.words}
+          pictures={unsent.value.pictures}
+          // A private Thread already shows its own message; a shared one waits for server echo.
+          shown={Option.contains(lastSaid, unsent.value.words)}
+          why={unsent.value.why}
+          onAgain={() => onUnsentAgain(unsent.value)}
+        />
+      )}
+      {Option.isSome(ended) && (
+        <Outcome run={ended.value} onAgain={Option.map(lastSaid, (words) => () => onSay(words))} />
+      )}
+    </Messages>
+  )
+}
+
 function Conversation({
   id,
   me,
@@ -144,13 +235,7 @@ function Conversation({
     (message) =>
       (message.display !== 'hidden' || message.signal !== undefined) && !isBlank(message),
   )
-  const context: ThreadContext = {
-    me: me.person.id,
-    shared,
-    runs,
-    approvals: Option.match(detail, { onNone: () => [], onSome: (value) => value.approvals }),
-    requests: Option.match(detail, { onNone: () => [], onSome: (value) => value.requests }),
-  }
+  const context = contextFor(detail, me.person.id, shared, runs)
 
   /**
    * Sends words under a key that names this one delivery. A send whose answer was lost on the way
@@ -194,42 +279,24 @@ function Conversation({
         onTogglePanel={onTogglePanel}
       />
 
-      <Messages
+      <ConversationMessages
         ready={agent.historyReady}
         empty={visible.length === 0 && FirstWords.$is('Settled')(first)}
         working={working}
         streaming={visible.some(isStreaming)}
-        // Whatever the transport said went wrong is for a log, not for a Person: they are told
-        // what it means for them and given the one thing to do.
         failure={agent.error === undefined ? null : 'Vivid can’t be reached right now.'}
         onRetry={() => agent.refresh()}
-      >
-        {visible.map((message, position) => (
-          <li key={message.id} className="animate-rise-in">
-            <Message
-              message={message}
-              context={context}
-              working={working}
-              latest={position === visible.length - 1}
-              onContinue={say}
-            />
-          </li>
-        ))}
-        <OnTheirWay first={first} onAgain={() => firstWords.again(id)} />
-        {Option.isSome(unsent) && (
-          <NotSent
-            words={unsent.value.words}
-            // A private Thread already shows the words where they were said; only a shared one,
-            // which draws a message when it comes back from the server, needs them drawn here.
-            shown={Option.contains(lastSaid, unsent.value.words)}
-            why={unsent.value.why}
-            onAgain={() => send(unsent.value.words, unsent.value.key, unsent.value.pictures)}
-          />
-        )}
-        {Option.isSome(ended) && (
-          <Outcome run={ended.value} onAgain={Option.map(lastSaid, (words) => () => say(words))} />
-        )}
-      </Messages>
+        visible={visible}
+        context={context}
+        onContinue={say}
+        first={first}
+        onFirstAgain={() => firstWords.again(id)}
+        unsent={unsent}
+        lastSaid={lastSaid}
+        onUnsentAgain={(value) => send(value.words, value.key, value.pictures)}
+        ended={ended}
+        onSay={say}
+      />
 
       <Composer
         place={draftPlace(me.person.id, {
@@ -395,11 +462,11 @@ function OnTheirWay({ first, onAgain }: { first: FirstWords; onAgain: () => void
     Settled: () => null,
     Sending: ({ words }) => (
       <li>
-        <Said text={words} mine />
+        <Said text={words} mine pictures={[]} />
       </li>
     ),
     Unsent: ({ words }) => (
-      <NotSent words={words} shown={false} why={Option.none()} onAgain={onAgain} />
+      <NotSent words={words} pictures={[]} shown={false} why={Option.none()} onAgain={onAgain} />
     ),
   })
 }
@@ -434,11 +501,13 @@ const readBusy = Schema.decodeUnknownOption(Busy)
  */
 function NotSent({
   words,
+  pictures,
   shown,
   why,
   onAgain,
 }: {
   words: string
+  pictures: ReadonlyArray<Picture>
   /** Whether the conversation above already shows these words. */
   shown: boolean
   /** The server's own sentence for why, when it gave one meant for the Person. */
@@ -449,7 +518,15 @@ function NotSent({
     <li className="flex flex-col items-end gap-1.5">
       {!shown && (
         <div className="w-full">
-          <Said text={words} mine unsent />
+          <Said
+            text={words}
+            mine
+            unsent
+            pictures={pictures.map((picture) => ({
+              url: `data:${picture.mimeType};base64,${picture.data}`,
+              name: picture.filename,
+            }))}
+          />
         </div>
       )}
       <p role="alert" className="text-meta font-meta text-danger">
