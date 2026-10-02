@@ -18,6 +18,11 @@ import {
   type VividPagesBridge,
 } from '../shared/pages.ts'
 
+/** Sandboxed viewport events include Chromium zoom changes, even setZoomFactor/setZoomLevel. */
+declare const window: {
+  readonly addEventListener: (type: 'resize', listener: () => void) => void
+}
+
 /** Protocol mismatch is distinct from expected refusal of a page operation. */
 class PageBridgeResponseInvalid extends Schema.TaggedError<PageBridgeResponseInvalid>()(
   'PageBridgeResponseInvalid',
@@ -57,6 +62,27 @@ export function createPagesBridge<E>(
     return undefined
   })
 
+  /** Handle-returning operations share the same strict response contract. */
+  const opened = Effect.fn('DesktopPreload.pages.opened')(function* (request: PagesRequest) {
+    const response = yield* call(request)
+    if (!PagesResponse.guards.Opened(response)) return yield* new PageBridgeResponseInvalid({})
+    return response.tab
+  })
+
+  // Electron's zoom-changed covers wheel intent only. Chromium resizes the app viewport on actual
+  // zoom changes; a private decoded request re-places the current lease without reviving hidden pages.
+  window.addEventListener('resize', () => {
+    void run(
+      done(PagesRequest.cases.Reframe.make({})).pipe(
+        Effect.matchEffect({
+          onFailure: () =>
+            Effect.sync(() => console.error('desktop: page viewport refresh failed')),
+          onSuccess: () => Effect.void,
+        }),
+      ),
+    )
+  })
+
   /** Publish monotonic whole snapshots; an older invoke result cannot overwrite a newer push. */
   const accept = (state: BrowserState): void => {
     if (Option.exists(latest, (previous) => previous.revision >= state.revision)) return
@@ -82,15 +108,11 @@ export function createPagesBridge<E>(
   })
 
   return {
-    open: (input) =>
-      run(
-        Effect.gen(function* () {
-          const response = yield* call(PagesRequest.cases.Open.make(input))
-          if (!PagesResponse.guards.Opened(response))
-            return yield* new PageBridgeResponseInvalid({})
-          return response.tab
-        }),
-      ),
+    open: (input) => run(opened(PagesRequest.cases.Open.make(input))),
+    move: (input) => run(done(PagesRequest.cases.Move.make(input))),
+    duplicate: (tab) => run(opened(PagesRequest.cases.Duplicate.make({ tab }))),
+    reopen: () => run(opened(PagesRequest.cases.Reopen.make({}))),
+    closeOthers: (tab) => run(done(PagesRequest.cases.CloseOthers.make({ tab }))),
     show: (tab) => run(done(PagesRequest.cases.Show.make({ tab }))),
     close: (tab) => run(done(PagesRequest.cases.Close.make({ tab }))),
     go: (input) => run(done(PagesRequest.cases.Go.make(input))),

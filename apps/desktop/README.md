@@ -66,7 +66,7 @@ No IPC channel, filesystem, credential or app-cookie authority is exposed.
 ## Browser panel bridge
 
 The app renderer receives this exact surface on `window.vivid`. Import `Tab`, `PageInput`,
-`PagePlacement`, `BrowserState`, `PageDownloadRefused`, and `VividAppBridge` from the bridge export.
+`PagePlacement`, `BrowserState`, `PageFavicon`, `PageDownloadRefused`, and `VividAppBridge` from the bridge export.
 The renderer owns the panel, tab row, address input, and sign-out integration.
 
 ```ts
@@ -76,6 +76,10 @@ interface VividPagesBridge {
   readonly open: (input: PageInput) => Promise<Tab>
   readonly show: (tab: Tab) => Promise<void>
   readonly close: (tab: Tab) => Promise<void>
+  readonly move: (input: { readonly tab: Tab; readonly to: number }) => Promise<void>
+  readonly duplicate: (tab: Tab) => Promise<Tab>
+  readonly reopen: () => Promise<Tab>
+  readonly closeOthers: (tab: Tab) => Promise<void>
   readonly go: (input: { readonly tab: Tab; readonly address: string }) => Promise<void>
   readonly back: (tab: Tab) => Promise<void>
   readonly forward: (tab: Tab) => Promise<void>
@@ -84,7 +88,9 @@ interface VividPagesBridge {
   readonly place: (placement: PagePlacement) => Promise<void>
   readonly watch: (listener: (state: BrowserState) => void) => () => void
   readonly watchDownloads: (listener: (event: PageDownloadRefused) => void) => () => void
+  /** Close all pages on sign-out without deleting browsing data. */
   readonly reset: () => Promise<void>
+  /** Close all pages, then clear cookies, site storage, and cache in the pages partition only. */
   readonly forget: () => Promise<void>
 }
 ```
@@ -93,19 +99,42 @@ interface VividPagesBridge {
 `PagePlacement` is `'hidden'` or `{ readonly x: number; readonly y: number; readonly width: number;
 readonly height: number }`. Supply a content-relative rectangle from `getBoundingClientRect()`
 after layout, resize, scroll, or app zoom changes. Main converts CSS pixels using the app's zoom
-factor and clips bounds to the window content area. Use `'hidden'` before an app overlay covers
+factor and clips bounds to the window content area. Resizes update the same retained view. Menu,
+wheel and programmatic app zoom changes re-place the current view; preload reports actual viewport
+resize through a private schema-decoded request, without adding renderer authority. Use `'hidden'` before an app overlay covers
 the panel or when the panel unmounts; hidden guests are detached. `open()` selects the new tab,
-but views remain detached until a visible rectangle is supplied.
+but views remain detached until a visible rectangle is supplied. A selection change, hidden
+placement, window hide/minimize, or detachment revokes presentation and native input ownership.
+Main tracks a generation, selected owner and scale for each visible lease; resize or zoom never
+revives a revoked lease. Send a fresh `place()` after switching selection or dismissing a modal.
+Renderer layout/scroll and modal/menu coverage detection remain the renderer's responsibility.
 
 `watch()` hydrates the current state asynchronously and replays cached state synchronously when
 available. It then delivers whole snapshots: `{ revision, tabs, showing }`. `tabs` is ordered;
-each page has `{ tab, address, title, loading, canGoBack, canGoForward, failed }`. `showing` is
-`PageOption<Tab>` and `failed` is `PageOption<string>`: clone-safe schema-backed `None`/`Some`
+each page has `{ tab, address, title, favicon, loading, canGoBack, canGoForward, failed }`. `showing` is
+`PageOption<Tab>`; `failed` and `favicon` are `PageOption<string>`: clone-safe schema-backed `None`/`Some`
 objects with an own `_tag` property. Use `ShowingTab` and `PageLoadFailure` guards/match helpers
-exported by the bridge. Full Effect Option instances cannot cross Electron's context bridge,
+and `PageFavicon` guards/match helpers exported by the bridge. Full Effect Option instances cannot cross Electron's context bridge,
 which drops prototypes. A monotonic `revision` prevents older
 hydration responses overwriting newer pushed state. Both watch methods return an unsubscribe
-function. Download events carry `{ tab, address, filename }`; the download is already canceled.
+function. `move({ tab, to })` uses a final zero-based index, preserves selection, and rejects an
+out-of-range index with `PagePositionInvalid`. `duplicate(tab)` opens the current address in a
+fresh context immediately after its source and selects it. `reopen()` selects the last closed
+address with a fresh handle at its old slot, clamped to the current order; history is limited to
+ten descriptors and consumed only after successful admission. It rejects `PageReopenEmpty` when
+empty. Neither operation restores Chromium history, form state or a live browsing context.
+`closeOthers(tab)` selects the survivor and closes other pages in visual order. All new-context
+operations retain the 12-page `PageLimitReached` refusal. Opener relations and reopen descriptors
+stay internal. Reset/forget discard reopen history.
+
+Guest `window.open` and target-blank HTTP(S) links open immediately after their opener. Chromium's
+background-tab intent (including middle/modified link clicks) preserves the current selection.
+Foreground intent selects the new page. Native popups are denied: the shell recreates only the
+URL in its own sandboxed view. It does not preserve JavaScript `window.opener`, POST bodies,
+named-window reuse or the original popup context; target-blank POST requests are refused.
+
+Download events carry `{ tab, address, filename }`; the download is already canceled. Real download capability, permissions, progress, save/open and
+durable lifecycle handling are out of scope; downloads remain refused.
 
 Call `await window.vivid.pages.reset()` as part of sign-out: it closes all pages without deleting
 browsing data. Window close, whole app-document navigation and server changes also close every

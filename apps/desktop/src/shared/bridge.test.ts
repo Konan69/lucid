@@ -3,6 +3,7 @@ import * as Effect from 'effect/Effect'
 import * as Result from 'effect/Result'
 import {
   BridgeResponse,
+  BridgeRequest,
   BridgeEvent,
   InvalidBridgeMessage,
   decodeBridgeRequest,
@@ -15,10 +16,12 @@ import {
   BrowserState,
   Page,
   PagesResponse,
+  PagesRequest,
   Tab,
   PageAddressRefused,
   ShowingTab,
   PageLoadFailure,
+  PageFavicon,
 } from './pages.ts'
 
 describe('desktop bridge ingress', () => {
@@ -77,6 +80,16 @@ describe('desktop bridge ingress', () => {
         ['Show', { tab: 42 }],
         ['Show', { tab: '42' }],
         ['Show', { tab: null }],
+        ['Move', { tab: 'f198da28-8b59-4b86-8d14-f81f441954e1', to: -1 }],
+        ['Move', { tab: 'f198da28-8b59-4b86-8d14-f81f441954e1', to: 0.5 }],
+        ['Move', { tab: 'f198da28-8b59-4b86-8d14-f81f441954e1', to: Infinity }],
+        ['Move', { tab: 42, to: 0 }],
+        ['Move', { tab: 'f198da28-8b59-4b86-8d14-f81f441954e1' }],
+        ['Duplicate', { tab: 42 }],
+        ['Duplicate', { tab: 'f198da28-8b59-4b86-8d14-f81f441954e1', opener: 42 }],
+        ['Reopen', { address: 'https://example.com' }],
+        ['CloseOthers', { tab: '42' }],
+        ['Reframe', { scale: 2 }],
         ['Go', { address: 'example.com' }],
         ['Place', { placement: { x: 0, y: 0, width: -1, height: 100 } }],
         ['Place', { placement: { x: 0, y: 0, width: 100 } }],
@@ -99,6 +112,25 @@ describe('desktop bridge ingress', () => {
     }),
   )
 
+  it.effect(
+    'decodes the complete page operation surface without exposing internal identity or history',
+    () =>
+      Effect.gen(function* () {
+        const tab = Tab.make('f198da28-8b59-4b86-8d14-f81f441954e1')
+        for (const request of [
+          PagesRequest.cases.Move.make({ tab, to: 0 }),
+          PagesRequest.cases.Duplicate.make({ tab }),
+          PagesRequest.cases.Reopen.make({}),
+          PagesRequest.cases.CloseOthers.make({ tab }),
+          PagesRequest.cases.Reframe.make({}),
+        ]) {
+          const payload = BridgeRequest.cases.Pages.make({ request })
+          const decoded = yield* decodeBridgeRequest(payload)
+          expect(decoded).toEqual(payload)
+        }
+      }),
+  )
+
   it.effect('round-trips full state and typed failures through a real structured clone', () =>
     Effect.gen(function* () {
       const tab = Tab.make('f198da28-8b59-4b86-8d14-f81f441954e1')
@@ -110,6 +142,7 @@ describe('desktop bridge ingress', () => {
             tab,
             address: 'https://missing.example/',
             title: '',
+            favicon: PageFavicon.cases.Some.make({ value: 'https://missing.example/icon.png' }),
             loading: false,
             canGoBack: true,
             canGoForward: false,

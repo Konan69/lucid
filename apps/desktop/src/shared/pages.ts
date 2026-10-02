@@ -19,6 +19,8 @@ export type PageOption<A> = ReturnType<typeof pageOption<Schema.declare<A>>>['Ty
 export const ShowingTab = pageOption(Tab)
 /** Navigation failure is absent until Chromium reports its description. */
 export const PageLoadFailure = pageOption(Schema.String)
+/** The document may not supply an icon; its address stays clone-safe across preload. */
+export const PageFavicon = pageOption(Schema.String)
 
 /** Address bar input is interpreted by main, never treated as an executable URL. */
 export const PageInput = Schema.Struct({
@@ -47,6 +49,7 @@ export const Page = Schema.Struct({
   tab: Tab,
   address: Schema.String,
   title: Schema.String,
+  favicon: PageFavicon,
   loading: Schema.Boolean,
   canGoBack: Schema.Boolean,
   canGoForward: Schema.Boolean,
@@ -77,12 +80,17 @@ export const PagesRequest = Schema.TaggedUnion({
   Open: PageInput.fields,
   Show: { tab: Tab },
   Close: { tab: Tab },
+  Move: { tab: Tab, to: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)) },
+  Duplicate: { tab: Tab },
+  Reopen: {},
+  CloseOthers: { tab: Tab },
   Go: { tab: Tab, address: PageInput.fields.address },
   Back: { tab: Tab },
   Forward: { tab: Tab },
   Reload: { tab: Tab },
   Stop: { tab: Tab },
   Place: { placement: PagePlacement },
+  Reframe: {},
   Get: {},
   Reset: {},
   Forget: {},
@@ -113,6 +121,18 @@ export class PageLimitReached extends Schema.TaggedError<PageLimitReached>()(
   { limit: Schema.Int },
   { title: 'Too many pages are open. Close a page to open another.' },
 ) {}
+/** A move names a final zero-based position in the existing ordered pages. */
+export class PagePositionInvalid extends Schema.TaggedError<PagePositionInvalid>()(
+  'PagePositionInvalid',
+  { tab: Tab, to: Schema.Int },
+  { title: 'Page position is outside the open pages' },
+) {}
+/** Reopen cannot invent a page when there is no retained close descriptor. */
+export class PageReopenEmpty extends Schema.TaggedError<PageReopenEmpty>()(
+  'PageReopenEmpty',
+  {},
+  { title: 'There is no closed page to reopen' },
+) {}
 /** Cookies or site storage could not be cleared in the pages partition. */
 export class PageStorageClearFailed extends Schema.TaggedError<PageStorageClearFailed>()(
   'PageStorageClearFailed',
@@ -132,6 +152,8 @@ export const PagesFailure = Schema.Union([
   PageAddressRefused,
   PageUnavailable,
   PageLimitReached,
+  PagePositionInvalid,
+  PageReopenEmpty,
   PageStorageClearFailed,
   PageCacheClearFailed,
 ])
@@ -159,6 +181,10 @@ export interface VividPagesBridge {
   readonly open: (input: PageInput) => Promise<Tab>
   readonly show: (tab: Tab) => Promise<void>
   readonly close: (tab: Tab) => Promise<void>
+  readonly move: (input: { readonly tab: Tab; readonly to: number }) => Promise<void>
+  readonly duplicate: (tab: Tab) => Promise<Tab>
+  readonly reopen: () => Promise<Tab>
+  readonly closeOthers: (tab: Tab) => Promise<void>
   readonly go: (input: { readonly tab: Tab; readonly address: string }) => Promise<void>
   readonly back: (tab: Tab) => Promise<void>
   readonly forward: (tab: Tab) => Promise<void>

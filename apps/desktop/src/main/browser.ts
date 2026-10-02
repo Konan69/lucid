@@ -11,8 +11,8 @@ import {
   type WebContents,
 } from 'electron'
 import {
-  ShowingTab,
   PageLoadFailure,
+  PageFavicon,
   BrowserState,
   Page,
   Tab,
@@ -21,17 +21,30 @@ import {
   PageAddressRefused,
   PageUnavailable,
   PageLimitReached,
+  PagePositionInvalid,
+  PageReopenEmpty,
   PageStorageClearFailed,
   PageCacheClearFailed,
   PagesRequest,
   PagesResponse,
   type PagesFailure,
-  type PagePlacement,
 } from '../shared/pages.ts'
 import { AddressDecision, decideAddress, isPageAddress, type PageAddress } from './address.ts'
 import { pageZoomChanges } from './menu.ts'
 import { budgets } from './budgets.ts'
-import { PageChange, emptyBrowserState, reducePages } from './pages.ts'
+import {
+  PageChange,
+  emptyBrowserState,
+  reducePages,
+  browserSnapshot,
+  type PageDisposition,
+} from './pages.ts'
+import {
+  PagePresentation,
+  PresentationChange,
+  reducePresentation,
+  sameShowing,
+} from './presentation.ts'
 
 /** Rejected loadURL promises follow did-fail-load; the event carries Chromium's real description. */
 class PageLoadRejected extends Schema.TaggedError<PageLoadRejected>()(
@@ -69,16 +82,18 @@ export interface BrowserDependencies {
 export class Browser {
   private state = emptyBrowserState
   private readonly views = new Map<Tab, WebContentsView>()
-  private placement: PagePlacement = 'hidden'
+  private presentation: PagePresentation = PagePresentation.cases.Hidden.make({ generation: 0 })
   private attached = Option.none<WebContentsView>()
   private forgetting = false
 
   constructor(private readonly dependencies: BrowserDependencies) {
     this.secureSession()
-    const reposition = (): void => this.present()
+    const reposition = (): void => this.reframe()
     dependencies.window.on('resize', reposition)
+    dependencies.window.on('hide', () => this.invalidate('hidden'))
+    dependencies.window.on('minimize', () => this.invalidate('hidden'))
     const menuZoomChanged = (window: BrowserWindow): void => {
-      if (window === dependencies.window) this.present()
+      if (window === dependencies.window) this.reframe()
     }
     pageZoomChanges.on('changed', menuZoomChanged)
     dependencies.window.webContents.on('zoom-changed', () => setImmediate(reposition))
@@ -131,9 +146,10 @@ export class Browser {
   private change(change: PageChange): void {
     const next = reducePages(this.state, change)
     if (next === this.state) return
+    if (!sameShowing(this.state.showing, next.showing)) this.invalidate('switch')
     this.state = next
     this.present()
-    this.dependencies.publish(next)
+    this.dependencies.publish(browserSnapshot(next))
   }
 
   /** Detach the old guest even when there is no replacement; hidden guests never cover app UI. */
@@ -141,41 +157,79 @@ export class Browser {
     Option.match(this.attached, {
       onNone: () => undefined,
       onSome: (view) => {
-        if (!this.dependencies.window.isDestroyed())
-          this.dependencies.window.contentView.removeChildView(view)
+        const window = this.dependencies.window
+        if (!window.isDestroyed()) {
+          if (!view.webContents.isDestroyed() && view.webContents.isFocused())
+            window.webContents.focus()
+          window.contentView.removeChildView(view)
+        }
+        view.setVisible(false)
       },
     })
     this.attached = Option.none()
   }
 
-  /** CSS coordinates scale by app zoom into native DIP bounds, clipped to the content area. */
+  /** Revoke both presentation and native focus; later resize/zoom cannot reattach a stale lease. */
+  private invalidate(reason: typeof PresentationChange.cases.Invalidate.Type.reason): void {
+    this.presentation = reducePresentation(
+      this.presentation,
+      PresentationChange.cases.Invalidate.make({ reason }),
+    )
+    this.detach()
+  }
+
+  /** Native and preload viewport signals read the actual zoom, including programmatic changes. */
+  private reframe(): void {
+    if (this.dependencies.window.isDestroyed()) return
+    this.presentation = reducePresentation(
+      this.presentation,
+      PresentationChange.cases.Reframe.make({
+        scale: this.dependencies.window.webContents.getZoomFactor(),
+      }),
+    )
+    this.present()
+  }
+
+  /** CSS coordinates scale into native DIP bounds; resize keeps the same browsing context. */
   private present(): void {
     const window = this.dependencies.window
     if (window.isDestroyed()) return
-    const view = ShowingTab.match(this.state.showing, {
-      None: () => Option.none<WebContentsView>(),
-      Some: ({ value: tab }) => Option.fromNullishOr(this.views.get(tab)),
-    })
-    if (this.placement === 'hidden' || Option.isNone(view)) {
+    const lease = this.presentation
+    if (PagePresentation.guards.Hidden(lease)) {
       this.detach()
       return
     }
-    const zoom = window.webContents.getZoomFactor()
+    const view = this.views.get(lease.owner)
+    if (view === undefined || view.webContents.isDestroyed()) {
+      this.invalidate('detached')
+      return
+    }
+    const { rectangle, scale } = lease
     const { width: contentWidth, height: contentHeight } = window.getContentBounds()
-    const x = Math.min(contentWidth, Math.round(this.placement.x * zoom))
-    const y = Math.min(contentHeight, Math.round(this.placement.y * zoom))
-    const width = Math.min(contentWidth - x, Math.round(this.placement.width * zoom))
-    const height = Math.min(contentHeight - y, Math.round(this.placement.height * zoom))
+    const x = Math.min(contentWidth, Math.round(rectangle.x * scale))
+    const y = Math.min(contentHeight, Math.round(rectangle.y * scale))
+    const width = Math.min(contentWidth - x, Math.round(rectangle.width * scale))
+    const height = Math.min(contentHeight - y, Math.round(rectangle.height * scale))
     if (width <= 0 || height <= 0) {
-      this.detach()
+      this.invalidate('detached')
       return
     }
-    if (!Option.contains(this.attached, view.value)) {
+    if (!Option.contains(this.attached, view)) {
       this.detach()
-      window.contentView.addChildView(view.value)
-      this.attached = view
+      window.contentView.addChildView(view)
+      view.setVisible(true)
+      this.attached = Option.some(view)
     }
-    view.value.setBounds({ x, y, width, height })
+    view.setBounds({ x, y, width, height })
+  }
+
+  /** Retained background guests have no keyboard or pointer authority while detached. */
+  private ownsInput(tab: Tab, view: WebContentsView): boolean {
+    return (
+      PagePresentation.guards.Visible(this.presentation) &&
+      this.presentation.owner === tab &&
+      Option.contains(this.attached, view)
+    )
   }
 
   /** Only live handles owned by this Browser may be driven. */
@@ -205,6 +259,7 @@ export class Browser {
               ? address
               : page.address,
           title: contents.getTitle(),
+          favicon: page.favicon,
           loading: contents.isLoading(),
           canGoBack: contents.navigationHistory.canGoBack(),
           canGoForward: contents.navigationHistory.canGoForward(),
@@ -225,15 +280,22 @@ export class Browser {
       if (!isPageAddress(url)) event.preventDefault()
     })
     contents.on('will-attach-webview', (event) => event.preventDefault())
-    contents.setWindowOpenHandler(({ url }) => {
-      if (isPageAddress(url) && this.views.size < budgets.pages)
+    contents.on('before-input-event', (event) => {
+      if (!this.ownsInput(tab, view)) event.preventDefault()
+    })
+    contents.on('before-mouse-event', (event) => {
+      if (!this.ownsInput(tab, view)) event.preventDefault()
+    })
+    contents.setWindowOpenHandler(({ url, disposition, postBody }) => {
+      if (isPageAddress(url) && postBody === undefined && this.views.size < budgets.pages)
         this.dependencies.run(
-          this.open(url).pipe(
+          this.popup(url, tab, disposition === 'background-tab' ? 'background' : 'foreground').pipe(
             Effect.asVoid,
             Effect.catchTags({
               PageAddressRefused: () => Effect.void,
               PageUnavailable: () => Effect.void,
               PageLimitReached: () => Effect.void,
+              PageMissing: () => Effect.void,
             }),
           ),
         )
@@ -254,6 +316,14 @@ export class Browser {
     contents.on('did-navigate', sync)
     contents.on('did-navigate-in-page', sync)
     contents.on('page-title-updated', sync)
+    contents.on('page-favicon-updated', (_event, icons) => {
+      const icon = icons.find(isPageAddress)
+      const favicon =
+        icon === undefined
+          ? PageFavicon.cases.None.make({})
+          : PageFavicon.cases.Some.make({ value: icon })
+      this.change(PageChange.cases.Favicon.make({ tab, favicon }))
+    })
     contents.on('render-process-gone', (_event, details) => {
       const page = this.state.tabs.find((current) => current.tab === tab)
       if (page !== undefined)
@@ -283,9 +353,10 @@ export class Browser {
   }
 
   /** Mint the handle in main and create a sandboxed, preload-free guest before publishing it. */
-  private readonly open = Effect.fn('DesktopBrowser.open')(function* (
+  private readonly create = Effect.fn('DesktopBrowser.create')(function* (
     this: Browser,
     input: string,
+    opened: (page: Page) => PageChange,
   ) {
     const address = yield* resolveAddress(input)
     if (this.forgetting || this.dependencies.window.isDestroyed())
@@ -312,21 +383,84 @@ export class Browser {
     this.views.set(tab, view)
     this.observe(tab, view)
     this.change(
-      PageChange.cases.Opened.make({
-        page: Page.make({
+      opened(
+        Page.make({
           tab,
           address,
           title: view.webContents.getTitle(),
+          favicon: PageFavicon.cases.None.make({}),
           loading: true,
           canGoBack: false,
           canGoForward: false,
           failed: PageLoadFailure.cases.None.make({}),
         }),
-      }),
+      ),
     )
     this.load(tab, view, address)
     return PagesResponse.cases.Opened.make({ tab })
   })
+
+  /** New renderer pages append and select; admission is shared with duplicate/reopen/popup. */
+  private open(address: string) {
+    return this.create(address, (page) => PageChange.cases.Opened.make({ page }))
+  }
+
+  /** Popup URL recreation has an internal opener and explicit selection intent, without adoption. */
+  private readonly popup = Effect.fn('DesktopBrowser.popup')(function* (
+    this: Browser,
+    address: string,
+    opener: Tab,
+    disposition: PageDisposition,
+  ) {
+    yield* this.getView(opener)
+    return yield* this.create(address, (page) =>
+      PageChange.cases.Popup.make({ page, opener, disposition }),
+    )
+  })
+
+  /** Clone only the current URL into a fresh context, adjacent to the source page. */
+  private readonly duplicate = Effect.fn('DesktopBrowser.duplicate')(function* (
+    this: Browser,
+    tab: Tab,
+  ) {
+    yield* this.getView(tab)
+    const page = this.state.tabs.find((current) => current.tab === tab)
+    if (page === undefined) return yield* new PageMissing({ tab })
+    return yield* this.create(page.address, (created) =>
+      PageChange.cases.Duplicated.make({ tab, duplicate: created.tab }),
+    )
+  })
+
+  /** Consume a close descriptor only after successful native admission; a cap refusal retains it. */
+  private readonly reopen = Effect.fn('DesktopBrowser.reopen')(function* (this: Browser) {
+    const closed = this.state.closed.at(-1)
+    if (closed === undefined) return yield* new PageReopenEmpty({})
+    return yield* this.create(closed.page.address, (page) =>
+      PageChange.cases.Reopened.make({ tab: page.tab }),
+    )
+  })
+
+  /** Refuse invalid final indexes before the reducer changes order. */
+  private readonly move = Effect.fn('DesktopBrowser.move')(function* (
+    this: Browser,
+    tab: Tab,
+    to: number,
+  ) {
+    yield* this.getView(tab)
+    if (to >= this.state.tabs.length) return yield* new PagePositionInvalid({ tab, to })
+    this.change(PageChange.cases.Moved.make({ tab, to }))
+    return PagesResponse.cases.Done.make({})
+  })
+
+  /** Publish one complete state change before releasing every non-surviving guest. */
+  private closeOthers(tab: Tab): void {
+    const removed = [...this.views.entries()].filter(([current]) => current !== tab)
+    this.change(PageChange.cases.CloseOthers.make({ tab }))
+    for (const [current, view] of removed) {
+      this.views.delete(current)
+      view.webContents.close({ waitForBeforeUnload: false })
+    }
+  }
 
   /** Destroy even pages with beforeunload handlers; their scripts cannot veto a panel close. */
   private close(tab: Tab, view: WebContentsView): void {
@@ -337,8 +471,7 @@ export class Browser {
 
   /** Window close, document replacement, server change, and explicit sign-out release every guest. */
   reset(): void {
-    this.placement = 'hidden'
-    this.detach()
+    this.invalidate('detached')
     const views = [...this.views.values()]
     this.views.clear()
     this.change(PageChange.cases.Reset.make({}))
@@ -402,10 +535,27 @@ export class Browser {
   ) {
     return yield* PagesRequest.match<Effect.Effect<PagesResponse, PagesFailure>>(request, {
       Open: ({ address }) => this.open(address),
-      Get: () => Effect.succeed(PagesResponse.cases.State.make({ value: this.state })),
+      Move: ({ tab, to }) => this.move(tab, to),
+      Duplicate: ({ tab }) => this.duplicate(tab),
+      Reopen: () => this.reopen(),
+      CloseOthers: ({ tab }) => this.drive(tab, () => this.closeOthers(tab)),
+      Reframe: () =>
+        Effect.sync(() => {
+          this.reframe()
+          return PagesResponse.cases.Done.make({})
+        }),
+      Get: () =>
+        Effect.succeed(PagesResponse.cases.State.make({ value: browserSnapshot(this.state) })),
       Place: ({ placement }) =>
         Effect.sync(() => {
-          this.placement = placement
+          this.presentation = reducePresentation(
+            this.presentation,
+            PresentationChange.cases.Place.make({
+              placement,
+              owner: this.state.showing,
+              scale: this.dependencies.window.webContents.getZoomFactor(),
+            }),
+          )
           this.present()
           return PagesResponse.cases.Done.make({})
         }),
