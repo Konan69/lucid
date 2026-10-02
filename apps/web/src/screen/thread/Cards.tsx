@@ -7,6 +7,8 @@ import {
   ConnectionAuthorizationMessage,
   ConnectionRequestMessage,
   ConnectionState,
+  ConnectionStep,
+  type ConnectionId,
   InputRequestId,
   InputRequestState,
   type Approval,
@@ -499,24 +501,36 @@ function finishButton(
   onKey: (keying: Keying) => void,
 ) {
   return ConnectionAuthorization.match(authorization, {
-    OpenSignIn: ({ address }) => <SignInButton name={name} address={address} />,
+    OpenSignIn: ({ connectionId }) => <SignInButton name={name} connectionId={connectionId} />,
     EnterKey: ({ connectionId, fields }) => (
       <EnterKeyButton connectionId={connectionId} name={name} fields={fields} onKey={onKey} />
     ),
   })
 }
 
-/** Opens the authorization address from the initiating click so browser popup rules are met. */
-function SignInButton({ name, address }: { name: string; address: string }) {
+/**
+ * Signs in to the service in a tab of its own. The tab is opened by the click itself, which is
+ * the only moment a browser allows it, and is empty until the server says where the sign-in is.
+ * The address is asked for here, by the Person pressing the button, and never travels in the
+ * Thread: a sign-in link that anyone in a shared Thread could open would bind their account to
+ * this Person's integration.
+ */
+function SignInButton({ name, connectionId }: { name: string; connectionId: ConnectionId }) {
+  async function open() {
+    const tab = window.open('about:blank', '_blank')
+    const step = await change((client) => client.ResumeConnection({ id: connectionId }))
+    if (
+      Result.isSuccess(step) &&
+      ConnectionStep.guards.OpenSignIn(step.success) &&
+      showSignIn(tab, step.success.address)
+    ) {
+      return
+    }
+    if (tab !== null) tab.close()
+    say(`${name}’s sign-in page could not be opened. Allow pop-ups for this page and try again.`)
+  }
   return (
-    <Button
-      size="sm"
-      variant="primary"
-      onClick={() => {
-        if (showSignIn(window.open('about:blank', '_blank'), address)) return
-        say(`${name}’s sign-in page could not be opened. Allow pop-ups for this page.`)
-      }}
-    >
+    <Button size="sm" variant="primary" onClick={() => void open()}>
       Sign in
     </Button>
   )
