@@ -120,7 +120,7 @@ export function memoryChoices(items: readonly Memory[]) {
     message:
       items.length === 0
         ? 'No matching memory was found.'
-        : 'Choose one of these memories; nothing has changed.',
+        : 'No unique exact match was found. Choose one of these memories; nothing has changed.',
   }
 }
 

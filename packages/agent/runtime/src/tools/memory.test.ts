@@ -121,23 +121,52 @@ describe('conversational memory edits', () => {
       ),
   )
 
-  it.effect('forgets the sole recalled record and reports its words without any identifier', () =>
+  it.effect(
+    'a sole nonmatching semantic hit is previewed without forgetting or correcting it',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const tools = yield* fixture()
+          for (const operation of [
+            tools.forget('lunch'),
+            tools.correct('lunch', corrected.content),
+          ]) {
+            const [result] = yield* Effect.all(
+              [
+                operation,
+                tools.reply(
+                  'Recall',
+                  { query: 'lunch', limit: 100 },
+                  Exit.succeed({ memories: [memory] }),
+                ),
+              ],
+              { concurrency: 2 },
+            )
+            expect(result.output).toMatchObject({ ok: false, matches: [memory.content] })
+            expect(yield* Queue.size(tools.requests)).toBe(0)
+            wordsOnly(result.output)
+          }
+        }),
+      ),
+  )
+
+  it.effect('an exact statement containing all can be forgotten', () =>
     Effect.scoped(
       Effect.gen(function* () {
         const tools = yield* fixture()
-        const respond = Effect.fn('MemoryToolsTest.respond')(function* () {
+        const statement = Memory.make({ ...memory, content: 'Dami handles all vendor invoices' })
+        const respond = Effect.fn('MemoryToolsTest.all')(function* () {
           yield* tools.reply(
             'Recall',
-            { query: 'meeting preference', limit: 100 },
-            Exit.succeed({ memories: [memory] }),
+            { query: statement.content, limit: 100 },
+            Exit.succeed({ memories: [statement] }),
           )
-          yield* tools.reply('ForgetMemory', { id: memory.id }, Exit.succeed(undefined))
+          yield* tools.reply('ForgetMemory', { id: statement.id }, Exit.succeed(undefined))
         })
-        const [result] = yield* Effect.all([tools.forget('meeting preference'), respond()], {
+        const [result] = yield* Effect.all([tools.forget(statement.content), respond()], {
           concurrency: 2,
         })
-        expect(result).toEqual({ output: { ok: true, forgot: memory.content }, terminate: false })
-        wordsOnly(result.output)
+        expect(result.output).toEqual({ ok: true, forgot: statement.content })
       }),
     ),
   )
@@ -151,7 +180,7 @@ describe('conversational memory edits', () => {
           const respond = Effect.fn('MemoryToolsTest.respond')(function* () {
             yield* tools.reply(
               'Recall',
-              { query: 'meeting preference', limit: 100 },
+              { query: memory.content, limit: 100 },
               Exit.succeed({ memories: [memory] }),
             )
             yield* tools.reply(
@@ -161,7 +190,7 @@ describe('conversational memory edits', () => {
             )
           })
           const [result] = yield* Effect.all(
-            [tools.correct('meeting preference', corrected.content), respond()],
+            [tools.correct(memory.content, corrected.content), respond()],
             { concurrency: 2 },
           )
           expect(result).toEqual({
@@ -181,15 +210,15 @@ describe('conversational memory edits', () => {
           const tools = yield* fixture()
           const candidates = [memory, { ...memory, id: MemoryId.make('MARK-second') }, corrected]
           for (const operation of [
-            tools.forget('meetings'),
-            tools.correct('meetings', corrected.content),
+            tools.forget(memory.content),
+            tools.correct(memory.content, corrected.content),
           ]) {
             const [result] = yield* Effect.all(
               [
                 operation,
                 tools.reply(
                   'Recall',
-                  { query: 'meetings', limit: 100 },
+                  { query: memory.content, limit: 100 },
                   Exit.succeed({ memories: candidates }),
                 ),
               ],
@@ -198,7 +227,8 @@ describe('conversational memory edits', () => {
             expect(result.output).toEqual({
               ok: false,
               matches: [memory.content, `${memory.content} (2)`, corrected.content],
-              message: 'Choose one of these memories; nothing has changed.',
+              message:
+                'No unique exact match was found. Choose one of these memories; nothing has changed.',
             })
             wordsOnly(result.output)
             expect(yield* Queue.size(tools.requests)).toBe(0)
@@ -258,12 +288,12 @@ describe('conversational memory edits', () => {
           for (const kind of ['forget', 'correct'] as const) {
             const operation =
               kind === 'forget'
-                ? tools.forget('meetings')
-                : tools.correct('meetings', corrected.content)
+                ? tools.forget(memory.content)
+                : tools.correct(memory.content, corrected.content)
             const respond = Effect.fn('MemoryToolsTest.respond')(function* () {
               yield* tools.reply(
                 'Recall',
-                { query: 'meetings', limit: 100 },
+                { query: memory.content, limit: 100 },
                 Exit.succeed({ memories: [companyMemory] }),
               )
               const tag = kind === 'forget' ? 'ForgetMemory' : 'CorrectMemory'

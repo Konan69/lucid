@@ -20,8 +20,6 @@ const Target = Schema.TaggedUnion({
 const target = Effect.fn('MemoryTools.target')(function* (query: string) {
   const { client } = yield* Scope
   const response = yield* client.Recall({ query: query.slice(0, 400), limit: 100 })
-  if (/\b(?:all|every|everything)\b/iu.test(query))
-    return Target.cases.Preview.make({ memories: response.memories })
   const exact = named(
     response.memories.map((memory) => ({
       name: views.modelText(memory.content),
@@ -30,9 +28,6 @@ const target = Effect.fn('MemoryTools.target')(function* (query: string) {
     query,
   )
   if (Result.isSuccess(exact)) return Target.cases.One.make({ memory: exact.success })
-  const [memory] = response.memories
-  if (response.memories.length === 1 && memory !== undefined)
-    return Target.cases.One.make({ memory })
   return Target.cases.Preview.make({ memories: response.memories })
 })
 
