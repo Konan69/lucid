@@ -8,6 +8,8 @@ import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import './providers/openrouter.ts'
 import { Vivid } from './agents/vivid.ts'
+import { RuntimeRunRequest, ThreadOrigin } from '@vivid/contracts'
+import { modelDelivery, recordScope } from './delivery.ts'
 import { actingFor, threadOriginOf } from './client.ts'
 import { loadContext } from './context.ts'
 
@@ -35,39 +37,44 @@ const requireRuntimeToken = async (context: AppContext, next: () => Promise<void
   return next()
 }
 
-/**
- * What a delivery says about who it is for, read from the same body Flue is about to admit. Only
- * the two shapes the server sends are named; anything else has nobody behind it.
- */
-const Delivered = Schema.fromJsonString(
+/** Scope and creator initial data are server transport metadata; neither enters Flue's delivery attributes. */
+const Incoming = Schema.fromJsonString(
   Schema.Struct({
-    kind: Schema.Literals(['user', 'signal'] as const),
-    attributes: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-    initialData: Schema.optionalKey(Schema.Unknown),
+    ...RuntimeRunRequest.fields,
+    turn: RuntimeRunRequest.fields.turn.check(Schema.isInt(), Schema.isGreaterThan(0)),
+    initialData: ThreadOrigin,
   }),
 )
-const decodeDelivered = Schema.decodeUnknownOption(Delivered)
+const decodeIncoming = Schema.decodeUnknownOption(Incoming)
+const flueRouter = createAgentRouter(Vivid)
 
-/**
- * Loads the acting Person's context before Flue renders the response to their message. Flue's
- * render is synchronous, so what Vivid knows about the Person, the skills it can use and their
- * time zone have to be in hand first. A delivery this cannot read is passed on untouched: Flue
- * rejects what is malformed, and a Run never fails because context could not be loaded.
- */
-const prepareContext = async (context: AppContext, next: () => Promise<void>) => {
-  const threadId = context.req.param('id')
-  if (context.req.method === 'POST' && threadId !== undefined) {
-    const delivered = decodeDelivered(await context.req.raw.clone().text())
-    if (Option.isSome(delivered)) {
-      const message =
-        delivered.value.kind === 'signal'
-          ? { kind: 'signal' as const, type: '', body: '', attributes: delivered.value.attributes }
-          : { kind: 'user' as const, body: '' }
-      const acting = actingFor(threadId, message, threadOriginOf(delivered.value.initialData))
-      await runResult(loadContext(acting))
-    }
-  }
-  return next()
+/** Cache authority before the synchronous render, then send a freshly constructed, id-free delivery to Flue. */
+const prepareContext = async (context: AppContext) => {
+  const incoming = decodeIncoming(await context.req.raw.text())
+  if (Option.isNone(incoming)) return context.json({ error: 'Invalid runtime delivery' }, 400)
+  const delivery = incoming.value
+  if (delivery.threadId !== context.req.param('id'))
+    return context.json({ error: 'Wrong Thread' }, 400)
+  recordScope(delivery.threadId, delivery.turn, delivery.scope)
+  const message = modelDelivery(delivery)
+  await runResult(
+    loadContext(actingFor(delivery.threadId, message, threadOriginOf(delivery.initialData))),
+  )
+  const url = new URL(context.req.url)
+  url.pathname = `/${encodeURIComponent(delivery.threadId)}`
+  return flueRouter.fetch(
+    new Request(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal: context.req.raw.signal,
+      body: JSON.stringify({
+        ...message,
+        initialData: delivery.initialData,
+        idempotencyKey: delivery.idempotencyKey,
+      }),
+    }),
+    context.env,
+  )
 }
 
 app.get('/health', async (context) => {
@@ -82,7 +89,7 @@ app.get('/health', async (context) => {
 })
 
 app.use('/agents/vivid/*', requireRuntimeToken)
-app.use('/agents/vivid/:id', prepareContext)
-app.route('/agents/vivid', createAgentRouter(Vivid))
+app.post('/agents/vivid/:id', prepareContext)
+app.route('/agents/vivid', flueRouter)
 
 export default app

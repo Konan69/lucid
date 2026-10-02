@@ -75,7 +75,7 @@ export function Vivid({ id }: { id: string }) {
   const model = process.env.VIVID_MODEL ?? 'openrouter/z-ai/glm-5.3-flash'
   const delivery = useDelivery()
   const acting = actingFor(id, delivery, threadOriginOf(useInitialData()))
-  const runTool = toolRunner(scopeLayer(acting, delivery))
+  const runTool = toolRunner(scopeLayer(id, delivery, threadOriginOf(useInitialData())))
   const context = useVividContext(acting)
   // A person's own time zone decides what "tomorrow at 9" means. Without one, say so in UTC.
   const timezone = context.timezone.length > 0 ? context.timezone : 'UTC'

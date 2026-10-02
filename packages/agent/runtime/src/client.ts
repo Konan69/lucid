@@ -7,7 +7,8 @@ import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
 import { NodeHttpClient } from '@effect/platform-node'
 import { VividRpcClient } from '@vivid/client-runtime'
-import { PersonId, ThreadId, ThreadOrigin } from '@vivid/contracts'
+import { ThreadOrigin, type PersonId, type ThreadId } from '@vivid/contracts'
+import { cachedAuthority } from './delivery.ts'
 import { runtimeHeaders } from '@vivid/contracts/auth'
 
 /**
@@ -31,36 +32,25 @@ export class NobodyToActFor extends Schema.TaggedError<NobodyToActFor>()(
 
 /** Decodes what the server recorded when the conversation was created: who started the Thread. */
 export const threadOriginOf = Schema.decodeUnknownOption(ThreadOrigin)
-const decodePerson = Schema.decodeUnknownOption(PersonId)
-const decodeThread = Schema.decodeUnknownOption(ThreadId)
-
-/** The Person a signal names. The server writes this attribute on everything it delivers. */
-const speakerOf = (delivery: DeliveredMessage) =>
-  delivery.kind === 'signal' && delivery.attributes !== undefined
-    ? decodePerson(delivery.attributes.person)
-    : Option.none<PersonId>()
-
-/**
- * Works out who Vivid acts for from the message in front of the model.
- *
- * - A signal names its Person in the `person` attribute: a Member speaking in a shared Thread, a
- *   Routine's owner, the Person who decided an Approval. The server sets it; a client cannot.
- * - A plain user turn only happens in a private Thread, where the one Person is its creator,
- *   recorded when the conversation was created (`ThreadOrigin`).
- *
- * `delivery` is Flue's cursor: when a second Person's message joins a response in progress, the
- * next render sees that Person, so the next tool call is made as them.
- */
+/** The render consults server-prepared authority; it never decodes a Person from model-visible attributes. */
 export const actingFor = (
   threadId: string,
   delivery: DeliveredMessage,
   origin: Option.Option<ThreadOrigin>,
 ): Option.Option<Acting> =>
-  Option.flatMap(decodeThread(threadId), (thread) => {
-    const creator = Option.map(origin, (seed) => seed.creator)
-    const person = delivery.kind === 'signal' ? speakerOf(delivery) : creator
-    return Option.map(person, (personId) => ({ threadId: thread, personId }))
-  })
+  Option.map(cachedAuthority(threadId, delivery, origin), (scope) => scope.acting)
+
+/** A bare runtime credential is permitted only for the restart scope lookup. */
+export const runtimeClientLayer = Layer.unwrap(
+  Effect.gen(function* () {
+    const serverUrl = yield* Config.URL('VIVID_SERVER_URL')
+    const token = yield* Config.Redacted('VIVID_RUNTIME_TOKEN')
+    return VividRpcClient.layer({
+      url: new URL('/api/rpc', serverUrl).href,
+      headers: { authorization: `Bearer ${Redacted.value(token)}` },
+    }).pipe(Layer.provide(NodeHttpClient.layerUndici))
+  }),
+)
 
 const layers = new Map<string, Layer.Layer<VividRpcClient, Config.ConfigError>>()
 

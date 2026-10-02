@@ -100,7 +100,13 @@ describe.skipIf(!testDatabaseConfigured)('provider failure settlement chain', ()
       const receipt = yield* Effect.tryPromise(() => handle.dispatch('Hello'))
       const id = RunId.make(receipt.submissionId)
       const store = yield* RunStore
-      yield* store.start({ id, personId, threadId, origin: StoredRunOrigin.cases.Message.make({}) })
+      yield* store.start({
+        libraryFolder: null,
+        id,
+        personId,
+        threadId,
+        origin: StoredRunOrigin.cases.Message.make({}),
+      })
       const reason = yield* Effect.tryPromise({
         try: () => handle.read(receipt),
         catch: (error) => error,
