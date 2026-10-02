@@ -1,5 +1,4 @@
 import {
-  ActionTarget,
   ApprovalDecision,
   ApprovalState,
   ConnectionState,
@@ -15,7 +14,7 @@ import {
 import { Option, Result } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { Linking, View } from 'react-native'
-import { Check, Globe, Link2, ShieldQuestion, Terminal, type LucideIcon } from 'lucide-react-native'
+import { Check, Link2, ShieldQuestion } from 'lucide-react-native'
 import { commit, confirm, warn } from '../../data/haptics'
 import { useLiveData, useLiveValue } from '../../data/live'
 import { Card, cardOf, type ToolPart } from '../../data/message'
@@ -23,6 +22,7 @@ import { connectionsAddress } from '../../data/server'
 import { useTheme } from '../../theme'
 import { ServiceMark } from '../../ui/Mark'
 import { Button, Dot, Field, HAIRLINE, Label, Notice, Press, radius, styles } from '../../ui/ui'
+import { Exactly } from './Exactly'
 
 /**
  * The cards a Thread shows where a plain message will not do: something Vivid wants to do and
@@ -132,20 +132,6 @@ function Shell({
   )
 }
 
-const TARGET_ICON = {
-  Connection: Link2,
-  Command: Terminal,
-  Browser: Globe,
-} as const satisfies Record<ActionTarget['_tag'], LucideIcon>
-
-/** Where the action would happen, in a few words. */
-const targetLine = (target: ActionTarget) =>
-  ActionTarget.match(target, {
-    Connection: ({ account, tool }) => `${account} · ${tool}`,
-    Command: ({ command }) => command,
-    Browser: () => 'In the browser on Vivid’s computer',
-  })
-
 /** How an Approval that is no longer waiting ended, in a sentence and the color of its outcome. */
 function ApprovalOutcome({ state }: { state: ApprovalState }) {
   return ApprovalState.match(state, {
@@ -192,7 +178,8 @@ function ApprovalOutcome({ state }: { state: ApprovalState }) {
  * One thing Vivid wants to do and will not do without a yes. Only the Person it is addressed to
  * sees the buttons; everyone else in the Thread sees who it is waiting on. The decision quotes
  * the digest of exactly what is shown, so a card drawn from an older proposal cannot allow a
- * newer one. The phone answers a yes and a no differently in the hand as well as on screen.
+ * newer one; that is also why everything the digest covers is on the card (`Exactly`) before the
+ * buttons are. The phone answers a yes and a no differently in the hand as well as on screen.
  */
 function ApprovalCard({ approval, me }: { approval: Approval; me: PersonId }) {
   const data = useLiveData()
@@ -200,7 +187,6 @@ function ApprovalCard({ approval, me }: { approval: Approval; me: PersonId }) {
   const [refused, setRefused] = useState(false)
   const pending = ApprovalState.guards.Pending(approval.state)
   const mine = approval.askedOf.id === me
-  const Target = TARGET_ICON[approval.action.target._tag]
 
   async function decide(decision: ApprovalDecision) {
     if (ApprovalDecision.guards.Deny(decision)) warn()
@@ -226,23 +212,12 @@ function ApprovalCard({ approval, me }: { approval: Approval; me: PersonId }) {
           {approval.action.rationale}
         </Label>
       )}
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
-          paddingHorizontal: 10,
-          paddingVertical: 8,
-          // The card's radius less its padding, so the two corners share a centre.
-          borderRadius: radius.card - 10,
-          backgroundColor: c['surface-well'],
-        }}
-      >
-        <Target size={15} strokeWidth={1.7} color={c['ink-3']} />
-        <Label numberOfLines={2} size="label" tone="ink-2" style={{ flex: 1 }}>
-          {targetLine(approval.action.target)}
+      <Exactly target={approval.action.target} />
+      {pending && mine && (
+        <Label size="caption" tone="ink-3">
+          Your answer applies only to what is shown above.
         </Label>
-      </View>
+      )}
       {!pending && <ApprovalOutcome state={approval.state} />}
       {pending && !mine && (
         <Label size="label" tone="ink-3">

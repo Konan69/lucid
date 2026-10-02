@@ -43,6 +43,12 @@ export const radius = {
 /** One device pixel: the weight of every structural line in the app. */
 export const HAIRLINE = StyleSheet.hairlineWidth
 
+/**
+ * The fixed-width face, for what must be read character by character: a sign-in code, a command,
+ * a value exactly as it will be sent. Each platform's own; no font is bundled for it.
+ */
+export const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' })
+
 /** The margin every screen keeps between its content and the edge of the glass. */
 export const GUTTER = 20
 

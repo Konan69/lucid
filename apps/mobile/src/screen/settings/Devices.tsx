@@ -1,12 +1,11 @@
 import { Data, Result } from 'effect'
 import { useState } from 'react'
-import { Platform } from 'react-native'
 import { approveDevice } from '../../data/account'
 import { confirm } from '../../data/haptics'
 import { useLiveData } from '../../data/live'
 import { MOBILE_TYPOGRAPHY } from '../../data/typography'
 import { Sheet } from '../../ui/Sheet'
-import { Button, Field, Label, Labelled, Notice } from '../../ui/ui'
+import { Button, Field, Label, Labelled, MONO, Notice } from '../../ui/ui'
 
 /** How the last attempt to let a device in went. */
 type Outcome = Data.TaggedEnum<{ Idle: {}; Asking: {}; Paired: {}; Refused: {} }>
@@ -56,7 +55,7 @@ export function Devices({ onClose }: { onClose: () => void }) {
           onSubmitEditing={() => void pair()}
           style={{
             ...MOBILE_TYPOGRAPHY.headline,
-            fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+            fontFamily: MONO,
             letterSpacing: 2,
           }}
         />
