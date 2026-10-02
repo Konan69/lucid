@@ -30,6 +30,8 @@ import {
   RuleScope,
   type Rule,
   RuntimeUnavailable,
+  Conflict,
+  DatabaseFailure,
 } from '@vivid/contracts'
 import { type Actor, summaryOf } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
@@ -69,7 +71,7 @@ interface ObservationService {
   readonly deliveryGate: Ref.Ref<Option.Option<Deferred.Deferred<void>>>
   readonly admissionStarted: Queue.Queue<void>
   readonly deliveryDefect: Ref.Ref<boolean>
-  readonly deliveryFailure: Ref.Ref<Option.Option<RuntimeUnavailable>>
+  readonly deliveryFailure: Ref.Ref<Option.Option<RuntimeUnavailable | Conflict | DatabaseFailure>>
 }
 export class Observation extends Context.Service<Observation, ObservationService>()(
   'vivid/TrustTestObservation',
@@ -93,7 +95,9 @@ const ports = Layer.effectContext(
       deliveryGate: yield* Ref.make<Option.Option<Deferred.Deferred<void>>>(Option.none()),
       admissionStarted: yield* Queue.unbounded<void>(),
       deliveryDefect: yield* Ref.make(false),
-      deliveryFailure: yield* Ref.make<Option.Option<RuntimeUnavailable>>(Option.none()),
+      deliveryFailure: yield* Ref.make<
+        Option.Option<RuntimeUnavailable | Conflict | DatabaseFailure>
+      >(Option.none()),
     })
     const judge = RuleJudge.of({
       /** Tests control only the applicability port; the gate's policy remains production code. */

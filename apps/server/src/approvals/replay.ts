@@ -64,6 +64,15 @@ export const replaySignals = Effect.fn('Signals.replay')(function* (
       replayOne(table, token, value).pipe(
         Effect.interruptible,
         Effect.timeoutOption('60 seconds'),
+        // A corrupt debt or unexpected infrastructure/authority failure stays leased for retry.
+        // Log one safe diagnostic per attempt; never expose the signal body or SDK error message.
+        Effect.catch((error) =>
+          Effect.logError('Decision signal replay failed', {
+            id: value.id,
+            threadId: value.threadId,
+            failure: error._tag,
+          }),
+        ),
         Effect.asVoid,
       ),
     { concurrency: 16, discard: true },
@@ -110,7 +119,7 @@ const replayOne = Effect.fn('Signals.replayOne')(function* (
       .pipe(
         Effect.interruptible,
         Effect.timeoutOption('30 seconds'),
-        Effect.catch(() => Effect.succeed(Option.none())),
+        Effect.catchTag(['Conflict', 'RuntimeUnavailable'], () => Effect.succeed(Option.none())),
       )
     ending = Option.isSome(admitted)
       ? Signal.cases.Delivered.make({

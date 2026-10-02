@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
-import { ApprovalDecision, RuntimeUnavailable } from '@vivid/contracts'
+import { ApprovalDecision, Conflict, DatabaseFailure, RuntimeUnavailable } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
-import { Deferred, Effect, Exit, Fiber, Layer, Option, Queue, Ref } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Queue, Ref, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { Database, returned } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -16,6 +16,45 @@ const deny = ApprovalDecision.cases.Deny.make({})
 
 /** PostgreSQL owns debts and leases; abrupt defects represent a lost process without undoing SQL. */
 describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
+  for (const failure of [
+    new Conflict({ message: 'Busy' }),
+    new RuntimeUnavailable({ message: 'Unavailable' }),
+    new DatabaseFailure({ message: 'Private diagnostic must not enter logs' }),
+  ]) {
+    it.effect(`replay retains debt and logs only unexpected ${failure._tag} once`, () => {
+      const logged: string[] = []
+      const logger = Logger.make(({ message }) => logged.push(JSON.stringify(message)))
+      return Effect.gen(function* () {
+        const test = yield* fixture()
+        const store = yield* ApprovalStore
+        const observed = yield* Observation
+        yield* Ref.set(observed.deliveryFailure, Option.some(failure))
+        const approval = yield* store.raise(test.vivid, commandAction)
+        yield* store.decide(test.personal, {
+          id: approval.id,
+          digest: approval.digest,
+          decision: deny,
+        })
+        expect(logged).toHaveLength(Schema.is(DatabaseFailure)(failure) ? 1 : 0)
+        if (Schema.is(DatabaseFailure)(failure)) {
+          expect(JSON.stringify(logged)).toContain('DatabaseFailure')
+          expect(JSON.stringify(logged)).not.toContain(failure.message)
+        }
+        yield* Ref.set(observed.deliveryFailure, Option.none())
+        yield* TestClock.adjust('2 minutes')
+        yield* store.replay()
+        yield* store.replay()
+        const deliveries = yield* Ref.get(observed.deliveries)
+        expect(deliveries).toHaveLength(2)
+        expect(deliveries.map((delivery) => delivery.idempotencyKey)).toEqual([
+          (yield* returned(deliveries, 'Delivery')).idempotencyKey,
+          (yield* returned(deliveries, 'Delivery')).idempotencyKey,
+        ])
+        expect(logged).toHaveLength(Schema.is(DatabaseFailure)(failure) ? 1 : 0)
+      }).pipe(Effect.scoped, Effect.provide(trustTestLayer), Effect.provide(Logger.layer([logger])))
+    })
+  }
+
   it.effect(
     'a shared Thread decision carries its decider while continuing the asked Person authority',
     () =>

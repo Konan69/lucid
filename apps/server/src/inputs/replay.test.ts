@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
-import { RuntimeUnavailable, Workspace } from '@vivid/contracts'
+import { Conflict, DatabaseFailure, RuntimeUnavailable, Workspace } from '@vivid/contracts'
 import { and, eq } from 'drizzle-orm'
-import { Effect, Exit, Option, Ref } from 'effect'
+import { Effect, Exit, Logger, Option, Ref, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { fixture, Observation, trustTestLayer } from '../approvals/testing.ts'
 import { membershipTable } from '../companies/tables.ts'
@@ -16,6 +16,41 @@ const question = { question: 'Which day?', options: [], allowsOwnAnswer: true }
 
 /** Answer writes and replay cross the real PostgreSQL seam with explicit failure injection. */
 describe.skipIf(!testDatabaseConfigured)('Durable Input answer signals', () => {
+  for (const failure of [
+    new Conflict({ message: 'Busy' }),
+    new RuntimeUnavailable({ message: 'Unavailable' }),
+    new DatabaseFailure({ message: 'Private diagnostic must not enter logs' }),
+  ]) {
+    it.effect(`replay retains debt and logs only unexpected ${failure._tag} once`, () => {
+      const logged: string[] = []
+      const logger = Logger.make(({ message }) => logged.push(JSON.stringify(message)))
+      return Effect.gen(function* () {
+        const test = yield* fixture()
+        const store = yield* InputStore
+        const observed = yield* Observation
+        yield* Ref.set(observed.deliveryFailure, Option.some(failure))
+        const request = yield* store.ask(test.vivid, question)
+        yield* store.answer(test.personal, { id: request.id, answer: 'Monday' })
+        expect(logged).toHaveLength(Schema.is(DatabaseFailure)(failure) ? 1 : 0)
+        if (Schema.is(DatabaseFailure)(failure)) {
+          expect(JSON.stringify(logged)).toContain('DatabaseFailure')
+          expect(JSON.stringify(logged)).not.toContain(failure.message)
+        }
+        yield* Ref.set(observed.deliveryFailure, Option.none())
+        yield* TestClock.adjust('2 minutes')
+        yield* store.replay()
+        yield* store.replay()
+        const deliveries = yield* Ref.get(observed.deliveries)
+        expect(deliveries).toHaveLength(2)
+        expect(deliveries.map((delivery) => delivery.idempotencyKey)).toEqual([
+          (yield* returned(deliveries, 'Delivery')).idempotencyKey,
+          (yield* returned(deliveries, 'Delivery')).idempotencyKey,
+        ])
+        expect(logged).toHaveLength(Schema.is(DatabaseFailure)(failure) ? 1 : 0)
+      }).pipe(Effect.scoped, Effect.provide(trustTestLayer), Effect.provide(Logger.layer([logger])))
+    })
+  }
+
   it.effect(
     'a shared Thread answer carries its answerer while continuing the asked Person authority',
     () =>
