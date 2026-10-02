@@ -330,7 +330,9 @@ function ConnectionRow({
   onResume?: () => void
   onRemove?: () => void
 }) {
-  const unfinished = ConnectionState.guards.NeedsAuthorization(connection.state)
+  const unfinished =
+    ConnectionState.guards.NeedsAuthorization(connection.state) ||
+    ConnectionState.guards.Failed(connection.state)
   return (
     <div className="flex min-h-14 items-center gap-3 px-4 py-2.5">
       <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-surface-2 text-ink-3 ring-line">
