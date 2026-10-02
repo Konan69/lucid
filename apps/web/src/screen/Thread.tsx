@@ -9,7 +9,7 @@ import {
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
-import { draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
+import { draftPlace, standingWords, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { ArrowDown, ListTree, Lock, MonitorSmartphone, Share2, Users } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
@@ -246,12 +246,15 @@ function Conversation({
   )
 }
 
-/** How Vivid is doing in a Thread: the line under its title, and the look on its face. */
+/**
+ * How Vivid is doing in a Thread: the line under its title (the same words on every surface),
+ * and here the look on its face and the colour the line is set in.
+ */
 const STANDING = {
-  Working: { words: 'Working on it…', mood: 'thinking', tone: 'text-working' },
-  NeedsYou: { words: 'Waiting for you', mood: 'neutral', tone: 'text-attention' },
-  Unread: { words: 'Here with you', mood: 'happy', tone: 'text-ink-3' },
-  Quiet: { words: 'Here with you', mood: 'neutral', tone: 'text-ink-3' },
+  Working: { words: standingWords.Working, mood: 'thinking', tone: 'text-working' },
+  NeedsYou: { words: standingWords.NeedsYou, mood: 'neutral', tone: 'text-attention' },
+  Unread: { words: standingWords.Unread, mood: 'happy', tone: 'text-ink-3' },
+  Quiet: { words: standingWords.Quiet, mood: 'neutral', tone: 'text-ink-3' },
 } as const satisfies Record<
   ThreadRecord['attention'],
   { words: string; mood: FaceMood; tone: string }

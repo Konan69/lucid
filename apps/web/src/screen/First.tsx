@@ -1,6 +1,6 @@
 import type { MeResponse } from '@vivid/contracts'
 import { Workspace } from '@vivid/contracts'
-import { draftPlace, workspaceKey } from '@vivid/state'
+import { draftPlace, greetingAt, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
 import { ArrowUpRight } from 'lucide-react'
 import { useState } from 'react'
@@ -8,15 +8,6 @@ import { live, useLiveValue } from '../data/live'
 import { startThread } from '../data/threads'
 import { Face } from '../ui/Face'
 import { Composer } from './thread/Composer'
-
-/** The greeting for the hour it is where the Person is: said once, when the screen opens. */
-const greeting = () => {
-  const hour = new Date().getHours()
-  if (hour < 5) return 'Still up'
-  if (hour < 12) return 'Morning'
-  if (hour < 18) return 'Afternoon'
-  return 'Evening'
-}
 
 /**
  * The first screen: Vivid, and somewhere to write. There is nothing to set up and nothing to
@@ -31,7 +22,7 @@ const greeting = () => {
 export function First({ me }: { me: MeResponse }) {
   const suggestions = useLiveValue(live.suggestions)
   // Read once: a greeting that changed while someone was looking at it would be a glitch.
-  const [hello] = useState(greeting)
+  const [hello] = useState(() => greetingAt(new Date().getHours()))
   const first = me.person.name.trim().split(/\s+/u)[0]
   const where = Workspace.match(me.workspace, {
     Personal: () => 'What should I take off your plate?',

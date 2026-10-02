@@ -1,15 +1,5 @@
+import { signInPage } from '@vivid/state'
 import { Option } from 'effect'
-
-/**
- * A provider's sign-in address, when it is one a browser should be sent to. The address comes
- * from the Connection layer and ends up in a tab, so anything that is not a web page (a script
- * address, another app's scheme, something that does not parse) is treated as no address at all.
- */
-const signInPage = (address: string) =>
-  Option.filter(
-    Option.liftThrowable((value: string) => new URL(value))(address),
-    (page) => page.protocol === 'https:' || page.protocol === 'http:',
-  )
 
 /**
  * Sends the tab that was opened for a sign-in to the provider's page. The tab was opened by the
