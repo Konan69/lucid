@@ -55,12 +55,15 @@ const sources: readonly {
       numResults: 1,
     },
   },
+  // An OpenAPI document that asks for no sign-in. Swagger's Petstore was here and could never
+  // pass: it signs in with OAuth's implicit flow, and Executor's OpenAPI import only knows the
+  // authorization-code flow, so Vivid rightly answers that it cannot add it.
   {
-    name: 'Public Petstore',
-    address: 'https://petstore3.swagger.io/api/v3/openapi.json',
-    query: 'getOrderById',
-    tool: 'queries.getOrderById',
-    input: { orderId: 1 },
+    name: 'Public APIs.guru',
+    address: 'https://api.apis.guru/v2/openapi.yaml',
+    query: 'getMetrics',
+    tool: 'queries.getMetrics',
+    input: {},
   },
 ]
 
