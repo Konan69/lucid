@@ -11,8 +11,8 @@ import {
 } from '@vivid/contracts'
 import { draftPlace, titleFromMessage } from '@vivid/state'
 import { Option } from 'effect'
-import { Lock, MonitorSmartphone, Share2, Users } from 'lucide-react'
-import { useMemo, useState, useSyncExternalStore } from 'react'
+import { ArrowDown, Lock, MonitorSmartphone, Share2, Users } from 'lucide-react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { change, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
 import { Route, router } from '../data/route'
 import { orSay } from '../data/said'
@@ -319,7 +319,13 @@ function NotSent({ words, onAgain }: { words: string; onAgain: () => void }) {
   )
 }
 
-/** The scrolling column. It follows the newest message unless the Person has scrolled away. */
+/** How far back, in pixels, counts as having left the newest message: a little over a screen of text. */
+const AWAY_PX = 480
+
+/**
+ * The scrolling column. It follows the newest message unless the Person has scrolled away, and
+ * once they have, one press brings them back to it without touching what they were typing.
+ */
 function Messages({
   ready,
   empty,
@@ -338,43 +344,65 @@ function Messages({
   onRetry: () => void
   children: React.ReactNode
 }) {
+  const scroller = useRef<HTMLDivElement>(null)
+  // Whether the Person has scrolled well away from the newest message, to read something earlier.
+  const [away, setAway] = useState(false)
   return (
-    <div
-      className="flex flex-1 flex-col-reverse overflow-y-auto px-4 sm:px-6"
-      // Reversed column: the browser keeps the view pinned to the newest message by itself, with
-      // no scroll effect to run on every streamed token.
-    >
-      {/* The gutter is on the scroller, not the column, so the messages and the composer below
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div
+        ref={scroller}
+        className="flex flex-1 flex-col-reverse overflow-y-auto px-4 sm:px-6"
+        // Reversed column: the browser keeps the view pinned to the newest message by itself, with
+        // no scroll effect to run on every streamed token. In a reversed column the newest message
+        // is at scroll position zero and reading back goes negative.
+        onScroll={(event) => setAway(Math.abs(event.currentTarget.scrollTop) > AWAY_PX)}
+      >
+        {/* The gutter is on the scroller, not the column, so the messages and the composer below
           them are exactly the same width at every window size. */}
-      <ol className="mx-auto flex w-full max-w-(--thread-max-w) flex-col gap-5 py-5 sm:py-6">
-        {!ready && empty && (
-          <li className="py-12 text-center text-label text-ink-3" aria-busy>
-            Opening…
-          </li>
-        )}
-        {ready && empty && !working && (
-          <li className="py-12 text-center">
-            <Face size={36} mood="happy" className="mx-auto" />
-            <p className="mt-3 text-title font-title text-ink">Vivid is ready</p>
-            <p className="mt-1 text-label text-ink-3">What should I take off your plate?</p>
-          </li>
-        )}
-        {children}
-        {working && !streaming && (
-          <li className="flex animate-rise-in gap-3" aria-live="polite">
-            <Face size={24} mood="thinking" className="mt-1" />
-            <p className="pt-1 text-body text-ink-3">Thinking…</p>
-          </li>
-        )}
-        {failure !== null && (
-          <li className="flex items-center gap-3 rounded-panel bg-danger-soft px-4 py-3 text-label text-danger ring-line">
-            <span className="min-w-0 flex-1">{failure}</span>
-            <button className="cursor-pointer font-title underline" onClick={onRetry}>
-              Reconnect
-            </button>
-          </li>
-        )}
-      </ol>
+        <ol className="mx-auto flex w-full max-w-(--thread-max-w) flex-col gap-5 py-5 sm:py-6">
+          {!ready && empty && (
+            <li className="py-12 text-center text-label text-ink-3" aria-busy>
+              Opening…
+            </li>
+          )}
+          {ready && empty && !working && (
+            <li className="py-12 text-center">
+              <Face size={36} mood="happy" className="mx-auto" />
+              <p className="mt-3 text-title font-title text-ink">Vivid is ready</p>
+              <p className="mt-1 text-label text-ink-3">What should I take off your plate?</p>
+            </li>
+          )}
+          {children}
+          {working && !streaming && (
+            <li className="flex animate-rise-in gap-3" aria-live="polite">
+              <Face size={24} mood="thinking" className="mt-1" />
+              <p className="pt-1 text-body text-ink-3">Thinking…</p>
+            </li>
+          )}
+          {failure !== null && (
+            <li className="flex items-center gap-3 rounded-panel bg-danger-soft px-4 py-3 text-label text-danger ring-line">
+              <span className="min-w-0 flex-1">{failure}</span>
+              <button className="cursor-pointer font-title underline" onClick={onRetry}>
+                Reconnect
+              </button>
+            </li>
+          )}
+        </ol>
+      </div>
+      {away && (
+        <button
+          aria-label="Jump to the latest message"
+          title="Jump to latest"
+          // Pressing it must not take the keyboard out of the composer mid-sentence.
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (scroller.current !== null) scroller.current.scrollTo({ top: 0, behavior: 'smooth' })
+          }}
+          className="absolute bottom-3 left-1/2 z-10 inline-flex size-8 -translate-x-1/2 cursor-pointer items-center justify-center rounded-full text-ink-2 smooth-shadow-ring-sm glass transition-pop duration-(--dur-base) ease-out hover:text-ink active:scale-96 starting:translate-y-1 starting:opacity-0"
+        >
+          <ArrowDown className="size-4" />
+        </button>
+      )}
     </div>
   )
 }

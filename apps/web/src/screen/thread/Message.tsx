@@ -1,8 +1,8 @@
 import type { FlueConversationMessage } from '@flue/react'
 import type { Approval, InputRequest, PersonId, Run } from '@vivid/contracts'
-import { speakerOfTurn } from '@vivid/state'
+import { makeFullWhen, makeWhen, speakerOfTurn, thisReader } from '@vivid/state'
 import { Option, Schema } from 'effect'
-import { AlarmClock, Check, ChevronRight, Repeat2 } from 'lucide-react'
+import { AlarmClock, Check, ChevronRight, Copy as CopyIcon, Repeat2 } from 'lucide-react'
 import { useState } from 'react'
 import { describeToolCall, readAnswered, readAsked } from '../../data/activity'
 import { Avatar } from '../../ui/Avatar'
@@ -44,16 +44,22 @@ export interface ThreadContext {
   readonly requests: ReadonlyArray<InputRequest>
 }
 
-const clock = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+const reader = thisReader()
+const when = makeWhen(reader)
+const fullWhen = makeFullWhen(reader)
 
-/** When a message was finished, when Vivid said so; an unstamped message simply shows no time. */
+/**
+ * When a message was finished, when Vivid said so; an unstamped message simply shows no time. It
+ * is said against today (only the time today, "Yesterday", a date before that), with the whole
+ * date and time on hover for when that is not enough.
+ */
 function timeOf(message: FlueConversationMessage) {
   return Option.flatMap(decodeMetadata(message.metadata), (metadata) =>
     Option.map(
       Option.orElse(Option.fromUndefinedOr(metadata.finishedAt), () =>
         Option.fromUndefinedOr(metadata.startedAt),
       ),
-      (moment) => clock.format(moment),
+      (moment) => ({ said: when(moment, Date.now()), full: fullWhen(moment) }),
     ),
   )
 }
@@ -209,7 +215,14 @@ function Steps({ tools, live }: { tools: ReadonlyArray<ToolPart>; live: boolean 
     ),
     failed: tool.state === 'output-error',
   }))
-  const running = live && tools.some((tool) => stateOf(tool) === 'running')
+  const current = live
+    ? // The newest step still in progress is the one Vivid is on.
+      tools.reduce<Option.Option<ToolPart>>(
+        (latest, tool) => (stateOf(tool) === 'running' ? Option.some(tool) : latest),
+        Option.none(),
+      )
+    : Option.none()
+  const running = Option.isSome(current)
   return (
     <div className="mb-2">
       <button
@@ -221,7 +234,10 @@ function Steps({ tools, live }: { tools: ReadonlyArray<ToolPart>; live: boolean 
           className={cn('size-3.5 transition-transform duration-(--dur-fast)', open && 'rotate-90')}
         />
         {running && <i className="size-1.5 animate-status-pulse rounded-full bg-working" />}
-        {running ? 'Working' : tools.length === 1 ? 'Did one thing' : `Did ${tools.length} things`}
+        {summaryOf(
+          steps,
+          Option.map(current, (tool) => tool.toolCallId),
+        )}
       </button>
       {open && (
         <ol className="mt-1 ml-1.5 flex flex-col gap-1 border-l border-line-2 pl-4 text-label text-ink-2">
@@ -235,6 +251,27 @@ function Steps({ tools, live }: { tools: ReadonlyArray<ToolPart>; live: boolean 
       )}
     </div>
   )
+}
+
+/**
+ * The one line the steps collapse to. While Vivid is working it is what it is doing right now
+ * ("Searching the Library…"), not the word "Working". Afterwards it is what was done: the step
+ * itself when there was one, the first and a count when there were more.
+ */
+function summaryOf(
+  steps: ReadonlyArray<{ readonly id: string; readonly label: string }>,
+  current: Option.Option<string>,
+) {
+  const doing = Option.flatMap(current, (id) =>
+    Option.fromUndefinedOr(steps.find((step) => step.id === id)),
+  )
+  if (Option.isSome(doing)) return `${doing.value.label}…`
+  const [first, ...rest] = steps
+  if (first === undefined) return ''
+  if (rest.length === 0) return first.label
+  return rest.length === 1
+    ? `${first.label} and one more thing`
+    : `${first.label} and ${rest.length} more things`
 }
 
 /** A tool call's standing. A state this client does not know yet is still in progress. */
@@ -311,6 +348,49 @@ function answering(message: FlueConversationMessage, context: ThreadContext) {
   return run === undefined ? Option.none<string>() : Option.some(run.origin.person.name)
 }
 
+/** What the copy control says for each thing that can have happened to the last press. */
+const COPY = {
+  idle: 'Copy message',
+  copied: 'Copied',
+  refused: 'Could not copy. Select the text instead.',
+} satisfies Record<'idle' | 'copied' | 'refused', string>
+
+/**
+ * Copies a reply's words in one press. It is always there, quietly, beside the time: a control
+ * that only appears on hover does not exist on a touch screen, and one more thing appearing under
+ * the pointer is one more thing moving while reading.
+ */
+function CopyWords({ read }: { read: () => string }) {
+  const [state, setState] = useState<keyof typeof COPY>('idle')
+  return (
+    <button
+      type="button"
+      aria-label={COPY[state]}
+      title={COPY[state]}
+      onClick={() => {
+        // Over plain http from another machine the browser has no clipboard at all.
+        if (!('clipboard' in navigator)) {
+          setState('refused')
+          return
+        }
+        void navigator.clipboard.writeText(read()).then(
+          () => setState('copied'),
+          () => setState('refused'),
+        )
+      }}
+      // Back to rest when the pointer or the keyboard leaves, so "Copied" is about this press.
+      onBlur={() => setState('idle')}
+      onMouseLeave={() => setState('idle')}
+      className={cn(
+        'inline-flex size-6 cursor-pointer items-center justify-center rounded-control transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink active:scale-96',
+        state === 'refused' ? 'text-danger' : 'text-ink-4',
+      )}
+    >
+      {state === 'copied' ? <Check className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+    </button>
+  )
+}
+
 function FromVivid({
   message,
   context,
@@ -339,8 +419,11 @@ function FromVivid({
         <Steps tools={tools} live={working} />
         {text.length > 0 && <Markdown content={text} />}
         <ToolCards tools={tools} context={context} onContinue={onContinue} />
-        {Option.isSome(time) && (
-          <span className="mt-1 block text-meta text-ink-3">{time.value}</span>
+        {!streaming && text.length > 0 && (
+          <div className="mt-1 flex h-6 items-center gap-1.5 text-meta text-ink-3">
+            {Option.isSome(time) && <time title={time.value.full}>{time.value.said}</time>}
+            <CopyWords read={() => text} />
+          </div>
         )}
       </div>
     </div>

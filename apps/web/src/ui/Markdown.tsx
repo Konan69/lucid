@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from './cn'
@@ -73,7 +74,12 @@ function Plain({ content }: { content: string }) {
   return <p className="whitespace-pre-wrap">{content}</p>
 }
 
-export function Markdown({ content }: { content: string }) {
+/**
+ * A message's words, formatted. Memoised on the words: while a reply streams, the Thread
+ * re-renders for every token, and parsing Markdown is the expensive part of a message. Every
+ * reply above the one being written has the same words as last time and is not parsed again.
+ */
+export const Markdown = memo(function Markdown({ content }: { content: string }) {
   const linkedContent = content
     .replace(TYPED_BULLET, '$1- ')
     .replace(
@@ -95,4 +101,4 @@ export function Markdown({ content }: { content: string }) {
       </Recover>
     </div>
   )
-}
+})
