@@ -145,7 +145,7 @@ Product copy says **Vivid**, never “agent” or “automation.” Those are im
 - **Routine**: a reusable commitment for Vivid to act on a trigger; an **Occurrence** is one invocation and may start a Run.
 - **Library item**: reusable knowledge or a learned procedure. A procedure may become a Routine, but storing it does not schedule it.
 - **Artifact**: a durable, versioned input or output linked to its Thread and Run.
-- **Connection**: an authorized relationship with an external account or service; credential values never enter model context.
+- **Connection**: an authorized relationship with an external account or service; credential values never enter model context. People see it as an **Integration**: that is the word in every string a Person or the model reads, while code, contracts and tests keep `Connection`.
 
 Use these terms in code, contracts, tests, and copy. Do not create synonyms for established concepts.
 

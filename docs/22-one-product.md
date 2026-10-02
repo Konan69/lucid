@@ -228,25 +228,71 @@ The surface rule in [Principle](01-principle.md) holds: a Thread list, a Thread,
 - **Workspaces.** The switcher at the top of the sidebar lists the personal space and every Company
   the Person belongs to, and ends with **Create a company**: a name, and that is all. An invitation
   link shows who invited them and to what before they accept.
-- **Sidebar.** Vivid, then Routines, Library and Projects, then Threads grouped by attention:
+- **Sidebar.** Vivid, then Routines, Projects, Library, Skills and Integrations, then Threads
+  grouped by attention:
   **Needs you**, **Working**, then by day. A shared Thread shows the faces of the people in it. A
   search palette (⌘K) finds Threads, Messages, Library items, Tasks and Routines.
-- **Thread.** The header carries the title and **Share**: add people by name, or share with the whole
-  Company. In a shared Thread each Message shows who sent it, and Vivid shows who it is answering.
+- **Thread.** The header carries Vivid's face, the title, a line saying how Vivid is doing ("Here
+  with you", "Working on it…", "Waiting for you"), and **Share**: add people by name, or share
+  with the whole Company. A button opens what is around Vivid: its computers, its integrations and
+  what it lately did here. In a shared Thread each Message shows who sent it, and Vivid shows who it is answering.
   Cards in the Thread: a question to answer, an action to approve, a service to connect, a draft to
   send, a Routine created, a Task created, a result to open.
 - **Tasks.** There is no separate page of Tasks. What Vivid is tracking shows where it was agreed,
   as a card in its Thread, and anything that needs the Person reaches them as a notification and
   as a Thread under **Needs you**.
 - **Library.** Two shelves: **Mine** and the Company's.
-- **Settings.** General; **People** (invite, roles, remove); **Connections** (mine and shared);
+- **Skills.** What Vivid knows how to do: a starter set that ships with it, and what the Person or
+  their Company has taught it. Trying one starts a Thread and asks for it in words.
+- **Settings.** General; **People** (invite, roles, remove); **Integrations** (mine and shared);
   **Rules** (mine and the Company's); **What Vivid knows**; notifications. People, shared
-  Connections and Company rules appear only in a Company workspace.
-- **The Computer.** A panel beside the Thread shows the Person's own machine: its screen, what Vivid
-  is doing on it, and a control to take the keyboard and pointer back.
+  Integrations and Company rules appear only in a Company workspace.
+- **The Computer.** A panel beside the Thread, laid out like a browser window: tabs across the top,
+  a toolbar that says who has the keyboard, and the machine's screen. It can be widened to work
+  in. In the desktop app the same strip holds pages the Person opens beside the Thread, each a
+  browser view the app owns; a link in a reply opens there instead of leaving the app.
 - **Mobile** uses the same contracts and the same Thread, and pairs with a server by a code shown
   on a signed-in device, so a phone reaches a Vivid running on the Person's own machine.
 - **Desktop** is the same web surface in a packaged app that remembers which server it talks to.
+
+## How it looks
+
+Vivid is a character the Person works with, and the surface is built so that reads at a glance.
+
+- **A warm canvas.** Paper in light, charcoal in dark; ink and hairlines are tinted the same way.
+  Nothing on the page is a neutral grey.
+- **Two typefaces, shipped with the app.** Geist for everything read and operated. Bricolage
+  Grotesque for what Vivid says at size: the greeting, a page's opening line, its own name.
+- **One filled shape in a Thread.** What the Person said is in Vivid's colour; everything else is
+  the surface. Words that did not arrive are a dashed outline, never a faded copy.
+- **Vivid's face where work happens.** In the Thread's header with its standing, beside each
+  reply, on the first screen and the welcome. One identity, with moods; there is no roster.
+- **Waiting is shown, not announced.** A reply that starts within a second shows nothing. A longer
+  one gets an orb beside the step it is on, and a light travels the composer's edge. A request
+  waiting on the Person breathes at its edge until they answer. Each respects reduced motion and
+  runs only while there is something to wait for; nothing animates at rest.
+- **The word is Integration.** People see "Integration" for what the code calls a Connection.
+
+## What Vivid can do on its own
+
+- **Connect what it needs.** Asked to do something that needs a service, Vivid finds it among the
+  Person's integrations or the catalogue, and can add one from an address (an MCP server, an
+  OpenAPI spec, a docs page that links one). Signing in or entering a key happens on a card in the
+  Thread; a key goes straight to the integration and never into the Thread or the model.
+- **Use a computer.** `browse` drives the browser by what a page says (with tabs, scrolling,
+  history and waiting); `use_desktop` works any window by looking at the screen and using the
+  pointer and keys; `run_command` is a shell. The Computer wakes when work needs it and stops
+  when idle. The machine is Boat's (see [The Computer](04-computer.md)); a local container stands
+  in for it offline.
+- **Write a program.** `run_code` runs JavaScript Vivid wrote over the tools it already has, in an
+  isolated interpreter with no credentials; every call the program makes is authorised as the
+  acting Person and passes the same Gate, and an Approval ends the program.
+- **Read the web.** `read_page` reads one public page without a Computer.
+- **Follow procedures.** A starter set of skills ships with Vivid; a saved one of the same name
+  replaces it for whoever saved it.
+- **React to events.** A Routine can start on something happening in an integration ("when a new
+  email arrives from Dami"), found by polling behind one seam until native delivery has a public
+  address to call.
 
 ## Build order
 
@@ -270,8 +316,9 @@ Each step leaves a product that runs.
 
 ## Not in this build
 
-- **A hosted machine provider.** The Computer runs on a local container provider behind the
-  `Machine` boundary; a hosted provider needs an account this repository does not hold.
+- **A proven hosted machine.** The Boat provider is written and tested against a stand-in for
+  Boat's API; it has not run against Boat itself, which needs an account key this repository does
+  not hold.
 - **Voice.** The call work in `apps/web/src/call` stays as it is.
 - **Chat channels** (Slack, mail-in). The Thread model above is what they will deliver into.
 - **Ambient participation.** Vivid answers when addressed; it does not join rooms unasked.
