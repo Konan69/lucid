@@ -3,6 +3,7 @@ import * as NodeCrypto from 'node:crypto'
 import * as NodeProcess from 'node:process'
 import * as NodeURL from 'node:url'
 import * as Pg from 'pg'
+import { Schema } from 'effect'
 import type { TestProject } from 'vitest/node'
 
 declare module 'vitest' {
@@ -10,6 +11,8 @@ declare module 'vitest' {
     serverDatabaseTemplate: string
   }
 }
+
+const decodeNames = Schema.decodeUnknownSync(Schema.Array(Schema.Struct({ name: Schema.String })))
 
 /**
  * Migrate an empty template once through both production migration owners. Each test file clones
@@ -19,7 +22,7 @@ declare module 'vitest' {
 export default async function setup(project: TestProject) {
   const supplied = NodeProcess.env.VIVID_TEST_DATABASE_URL
   if (supplied === undefined) return () => {}
-  const name = `vivid_test_template_${NodeCrypto.randomUUID().replaceAll('-', '')}`
+  const name = `vivid_test_${NodeCrypto.randomUUID().replaceAll('-', '')}`
   const admin = new Pg.Client({ connectionString: supplied })
   const target = new URL(supplied)
   target.pathname = `/${name}`
@@ -27,6 +30,14 @@ export default async function setup(project: TestProject) {
   // Define cleanup before creating the database, including failures during migration/setup.
   const cleanup = async () => {
     try {
+      // Vitest does not run afterAll for entirely skipped files or failed collection. Only this
+      // invocation's captured UUID prefix grants teardown authority over their leftover databases.
+      const suites = await admin.query(
+        'SELECT quote_ident(datname) AS name FROM pg_database WHERE starts_with(datname, $1)',
+        [`${name}_`],
+      )
+      for (const suite of decodeNames(suites.rows))
+        await admin.query(`DROP DATABASE ${suite.name} WITH (FORCE)`)
       await admin.query(`DROP DATABASE IF EXISTS "${name}"`)
     } finally {
       await admin.end()

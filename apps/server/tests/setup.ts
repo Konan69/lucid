@@ -12,19 +12,26 @@ import './template.ts'
 const supplied = NodeProcess.env.VIVID_TEST_DATABASE_URL
 if (supplied !== undefined) {
   const template = inject('serverDatabaseTemplate')
-  const name = `vivid_test_suite_${NodeCrypto.randomUUID().replaceAll('-', '')}`
+  // PostgreSQL identifiers have a 63-byte limit; the invocation UUID plus 64 random bits fits.
+  const name = `${template}_${NodeCrypto.randomBytes(8).toString('hex')}`
   const admin = new Pg.Client({ connectionString: supplied })
   await admin.connect()
   afterAll(async () => {
+    const cleanup = new Pg.Client({ connectionString: supplied })
+    await cleanup.connect()
     try {
-      await admin.query(`DROP DATABASE IF EXISTS "${name}"`)
+      await cleanup.query(`DROP DATABASE IF EXISTS "${name}"`)
     } finally {
-      await admin.end()
+      await cleanup.end()
       NodeProcess.env.VIVID_TEST_DATABASE_URL = supplied
     }
   })
-  await admin.query(`CREATE DATABASE "${name}" TEMPLATE "${template}"`)
-  const target = new URL(supplied)
-  target.pathname = `/${name}`
-  NodeProcess.env.VIVID_TEST_DATABASE_URL = target.href
+  try {
+    await admin.query(`CREATE DATABASE "${name}" TEMPLATE "${template}"`)
+    const target = new URL(supplied)
+    target.pathname = `/${name}`
+    NodeProcess.env.VIVID_TEST_DATABASE_URL = target.href
+  } finally {
+    await admin.end()
+  }
 }
