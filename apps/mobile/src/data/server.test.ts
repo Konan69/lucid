@@ -3,9 +3,12 @@ import { Result } from 'effect'
 import { expect, it } from 'vitest'
 import {
   accountAddress,
+  connectionsAddress,
   libraryAddress,
   liveAddress,
   parseServer,
+  recordAddress,
+  rulesAddress,
   serverName,
   threadAddress,
 } from './server.ts'
@@ -46,4 +49,12 @@ it('reaches a conversation only through the gateway', () => {
   expect(threadAddress(server('https://vivid.example.com'), ThreadId.make('a/b'))).toBe(
     'https://vivid.example.com/api/vivid/a%2Fb',
   )
+})
+
+it('opens the web app on the Settings section a row names', () => {
+  // The web router reads the section from `?settings=`; a name it does not know opens nothing.
+  const local = server('http://192.168.1.20:5178')
+  expect(connectionsAddress(local)).toBe('http://192.168.1.20:5178/?settings=connections')
+  expect(rulesAddress(local)).toBe('http://192.168.1.20:5178/?settings=rules')
+  expect(recordAddress(local)).toBe('http://192.168.1.20:5178/?settings=record')
 })

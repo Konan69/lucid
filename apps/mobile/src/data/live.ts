@@ -74,6 +74,7 @@ function makeLiveData(session: SignedIn) {
       (client, query) => client.WatchLibrary(query),
     ),
     connections: one((client) => client.WatchConnections()),
+    memory: one((client) => client.WatchMemory()),
     suggestions: one((client) => client.WatchSuggestions()),
   }
 

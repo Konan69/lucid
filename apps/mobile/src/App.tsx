@@ -24,6 +24,7 @@ import { Folder, Library } from './screen/Library'
 import { Project, Projects } from './screen/Projects'
 import { Routines } from './screen/Routines'
 import { Settings } from './screen/Settings'
+import { Memory } from './screen/settings/Memory'
 import { People } from './screen/settings/People'
 import { ThemeProvider, useTheme } from './theme'
 import { Button, Face, GUTTER, Label } from './ui/ui'
@@ -224,6 +225,7 @@ function Shell() {
         <Stack.Screen name="Project" component={Project} />
         <Stack.Screen name="Settings" component={Settings} />
         <Stack.Screen name="People" component={People} />
+        <Stack.Screen name="Memory" component={Memory} />
       </Stack.Navigator>
     </NavigationContainer>
   )

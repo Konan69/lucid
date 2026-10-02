@@ -1,12 +1,12 @@
 import { Settings as SettingsRecord, Workspace, type Theme } from '@vivid/contracts'
 import { Data, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
-import { ScrollView, View } from 'react-native'
+import { Linking, ScrollView, View } from 'react-native'
 import { followThemeAtom } from '../data/appearance'
 import { door } from '../data/door'
 import { warn } from '../data/haptics'
 import { refusalOf, useLive, useLiveData, useLiveValue } from '../data/live'
-import { serverName } from '../data/server'
+import { connectionsAddress, recordAddress, rulesAddress, serverName } from '../data/server'
 import { leaveAtom } from '../data/signing'
 import { Avatar, pictureOf } from '../ui/Avatar'
 import { Header, Screen } from '../ui/Header'
@@ -28,13 +28,28 @@ const SWITCH = [
   { value: 'off', label: 'Off' },
 ] as const
 
+/**
+ * The parts of Settings that are done in the web app, which the server also serves: each row
+ * opens that section in the phone's browser instead of pretending the phone can do it.
+ */
+const IN_BROWSER = [
+  {
+    title: 'Connections',
+    detail: 'Connect services in your browser.',
+    address: connectionsAddress,
+  },
+  { title: 'Rules', detail: 'What Vivid must ask about first.', address: rulesAddress },
+  { title: 'Record', detail: 'What Vivid did, and for whom.', address: recordAddress },
+] as const
+
 /** What is open over Settings. One thing at a time. */
 type Over = Data.TaggedEnum<{ Nothing: {}; Zone: {}; Devices: {} }>
 const Over = Data.taggedEnum<Over>()
 
 /**
- * Settings: the Person's own preferences, which are the same in every workspace and on every
- * device; this phone's connection; who is in the Company they are working in; and the way out.
+ * Settings: the Person's own preferences and what Vivid has kept about them, which are the same
+ * on every device; this phone's connection; what belongs to the workspace they are working in;
+ * and the way out.
  */
 export function Settings() {
   const me = useMe()
@@ -66,6 +81,11 @@ export function Settings() {
             title={me.person.name}
             detail={me.person.email}
           />
+          <Row
+            title="What Vivid knows"
+            detail="What it has kept about you, to correct or remove."
+            onPress={() => go.navigate('Memory')}
+          />
         </Section>
         <Live state={settings} loading={<Skeleton rows={3} />}>
           {(value) => <Preferences settings={value} onZone={() => setOver(Over.Zone())} />}
@@ -78,7 +98,7 @@ export function Settings() {
             onPress={() => setOver(Over.Devices())}
           />
         </Section>
-        <Sharing workspace={me.workspace} onPeople={() => go.navigate('People')} />
+        <Shared workspace={me.workspace} onPeople={() => go.navigate('People')} />
         <Section title="Account">
           <Row title="Sign out" danger onPress={leave} />
         </Section>
@@ -91,24 +111,63 @@ export function Settings() {
 
 /**
  * Who the Person shares with here: in a Company, the way to its people; in their own space, how
- * to make one. Sharing only exists inside a Company, so the two are different sections.
+ * to make one. Sharing only exists inside a Company, so the two are different rows.
  */
 function Sharing({ workspace, onPeople }: { workspace: Workspace; onPeople: () => void }) {
   return Workspace.match(workspace, {
     Personal: () => (
-      <Section title="People">
-        <Row
-          title="You are working in your own space"
-          detail="To share threads, a library and connections, create a company from the switcher at the top of Home."
-        />
-      </Section>
+      <Row
+        title="You are working in your own space"
+        detail="To share threads, a library and connections, create a company from the switcher at the top of Home."
+      />
     ),
-    Company: ({ company }) => (
-      <Section title={company.name}>
-        <Row title="People" detail="Who is here, invitations and roles." onPress={onPeople} />
-      </Section>
+    Company: () => (
+      <Row title="People" detail="Who is here, invitations and roles." onPress={onPeople} />
     ),
   })
+}
+
+/**
+ * What belongs to the workspace the Person is working in, under that workspace's name as the web
+ * app has it. Connections, rules and the record exist in a Company and in a Person's own space
+ * alike and are done in the web app, so those rows leave for the browser and are marked as
+ * leaving.
+ */
+function Shared({ workspace, onPeople }: { workspace: Workspace; onPeople: () => void }) {
+  const data = useLiveData()
+  const [unopened, setUnopened] = useState<Option.Option<string>>(Option.none())
+
+  /** Hands an address to the phone's browser, and says so here if the phone would not take it. */
+  const open = (address: string) => {
+    setUnopened(Option.none())
+    void Linking.openURL(address).then(
+      () => undefined,
+      () => setUnopened(Option.some('That page could not be opened in your browser.')),
+    )
+  }
+
+  return (
+    <>
+      {Option.isSome(unopened) && <Notice message={unopened.value} />}
+      <Section
+        title={Workspace.match(workspace, {
+          Personal: () => 'Your space',
+          Company: ({ company }) => company.name,
+        })}
+      >
+        <Sharing workspace={workspace} onPeople={onPeople} />
+        {IN_BROWSER.map((page) => (
+          <Row
+            key={page.title}
+            outside
+            title={page.title}
+            detail={page.detail}
+            onPress={() => open(page.address(data.session.server))}
+          />
+        ))}
+      </Section>
+    </>
+  )
 }
 
 /** One setting with a control too wide to sit beside its name: the name, a line, then the control. */

@@ -21,7 +21,8 @@ import { createContext, useContext } from 'react'
  * - `Folder`, `Project`: one level down inside the Library or a Project. Each level is its own
  *   screen, so going deeper pushes and the back swipe climbs out one level at a time. A folder
  *   carries its name because only the listing it was opened from knows it.
- * - `Settings`: the Person's own settings; `People` is who is in the Company they are working in.
+ * - `Settings`: the Person's own settings; `People` is who is in the Company they are working in,
+ *   and `Memory` is what Vivid has kept about the Person, for them to correct or remove.
  */
 export type Routes = {
   Home: undefined
@@ -33,6 +34,7 @@ export type Routes = {
   Project: { id: ProjectId }
   Settings: undefined
   People: undefined
+  Memory: undefined
 }
 
 /**
