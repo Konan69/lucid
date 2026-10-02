@@ -95,6 +95,14 @@ const stop = (id: ThreadId) =>
     'Vivid could not be stopped just now. Try again.',
   )
 
+/** The title shown while a new Thread's first words are still in flight. */
+const arrivingTitle = (first: FirstWords): Option.Option<string> =>
+  FirstWords.$match(first, {
+    Settled: () => Option.none(),
+    Sending: ({ words }) => Option.some(titleFromMessage(words)),
+    Unsent: ({ words }) => Option.some(titleFromMessage(words)),
+  })
+
 function Conversation({
   id,
   me,
@@ -174,11 +182,7 @@ function Conversation({
       <Header
         id={id}
         thread={thread}
-        arriving={FirstWords.$match(first, {
-          Settled: () => Option.none(),
-          Sending: ({ words }) => Option.some(titleFromMessage(words)),
-          Unsent: ({ words }) => Option.some(titleFromMessage(words)),
-        })}
+        arriving={arrivingTitle(first)}
         working={working}
         present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
         me={me}
