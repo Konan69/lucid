@@ -247,6 +247,9 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
     runs: Option.match(detail, { onNone: () => [], onSome: (value) => value.runs }),
   }
   const shown = agent.messages.filter(isShown)
+  // The stream keeps a message it could not send, under the id it showed it with, so the Thread
+  // can draw it as not sent instead of as said. Sending again clears the list.
+  const undelivered = new Set(agent.failedSends.map((send) => send.id))
 
   function type(next: string) {
     // Whether there is something typed is part of what the Thread's presence says; see
@@ -323,6 +326,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
           trouble={trouble}
           around={around}
           detail={detail}
+          unsent={undelivered}
           onContinue={speak}
         />
       </View>
@@ -374,6 +378,8 @@ interface MessagesProps {
   readonly trouble: Option.Option<Trouble>
   readonly around: Around
   readonly detail: Option.Option<ThreadDetail>
+  /** The ids of the messages written here that did not arrive. */
+  readonly unsent: ReadonlySet<string>
   readonly onContinue: (text: string) => void
 }
 
@@ -408,6 +414,7 @@ function Messages(props: MessagesProps) {
           around={props.around}
           detail={props.detail}
           working={working}
+          unsent={props.unsent}
           onContinue={props.onContinue}
         />
       )}

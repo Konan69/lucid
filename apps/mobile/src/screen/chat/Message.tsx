@@ -1,6 +1,6 @@
 import type { FlueConversationMessage } from '@flue/sdk'
 import type { ThreadDetail } from '@vivid/contracts'
-import { Option, Result } from 'effect'
+import { Data, Option, Result } from 'effect'
 import { useState } from 'react'
 import { Linking, View } from 'react-native'
 import Markdown from 'react-native-markdown-display'
@@ -40,17 +40,22 @@ export function Message({
   around,
   detail,
   working,
+  unsent,
   onContinue,
 }: {
   message: FlueConversationMessage
   around: Around
   detail: Option.Option<ThreadDetail>
   working: boolean
+  /** The ids of the messages written here that did not arrive (`failedSends` of the stream). */
+  unsent: ReadonlySet<string>
   onContinue: (text: string) => void
 }) {
   return Speaker.$match(speakerOf(message, around), {
-    Me: () => <Said text={textOf(message)} from={Option.none()} mine />,
-    Member: ({ name }) => <Said text={textOf(message)} from={name} mine={false} />,
+    Me: () => (
+      <Said text={textOf(message)} voice={unsent.has(message.id) ? Voice.Unsent() : Voice.Mine()} />
+    ),
+    Member: ({ name }) => <Said text={textOf(message)} voice={Voice.Theirs({ name })} />,
     Vivid: ({ answering }) => (
       <FromVivid
         message={message}
@@ -68,13 +73,47 @@ export function Message({
 }
 
 /**
- * A Person's words. The reader's own sit on the right with the corner nearest the composer
- * squared off, which is what ties a bubble to where it was typed. Someone else's sit on the left
- * under their name; a message the server delivered without a name is drawn without one, never
- * with an invented one.
+ * Whose words a bubble holds, which is all that decides how it is drawn.
+ *
+ * - `Mine`: the reader's own, and with Vivid. The one filled shape in a Thread.
+ * - `Unsent`: the reader's own that did not arrive: an outline where a sent message is filled.
+ * - `Theirs`: someone else's in a shared Thread, under their name when the server gave one.
  */
-function Said({ text, from, mine }: { text: string; from: Option.Option<string>; mine: boolean }) {
+type Voice = Data.TaggedEnum<{
+  Mine: {}
+  Unsent: {}
+  Theirs: { readonly name: Option.Option<string> }
+}>
+const Voice = Data.taggedEnum<Voice>()
+
+/** The corner a bubble squares off: the one nearest whoever said it. */
+const TAIL = 6
+
+/**
+ * A Person's words. The reader's own sit on the right, filled in Vivid's accent with the corner
+ * nearest the composer squared off: in a Thread that is mostly Vivid's plain text, the Person's
+ * words are the one filled shape, found at a glance. Words that did not arrive keep their place
+ * and their shape but are only an outline, dashed, so nothing unsent is ever mistaken for said;
+ * the way to send them again is at the foot of the conversation.
+ *
+ * Someone else's sit on the left on the neutral surface, under their name; a message the server
+ * delivered without a name is drawn without one, never with an invented one.
+ *
+ * The reader's own bubble has the same one-point edge sent or not (on the filled one it is the
+ * fill's own colour), so a message that is sent again does not move when it stops being an
+ * outline.
+ */
+function Said({ text, voice }: { text: string; voice: Voice }) {
   const { colors: c } = useTheme()
+  const paint = Voice.$match(voice, {
+    Mine: () => ({ fill: c.accent, edge: c.accent, line: 1, ink: 'ink-on-accent' }) as const,
+    Unsent: () => ({ fill: 'transparent', edge: c['line-4'], line: 1, ink: 'ink-2' }) as const,
+    Theirs: () =>
+      ({ fill: c['surface-2'], edge: c['line-2'], line: HAIRLINE, ink: 'ink' }) as const,
+  })
+  const unsent = Voice.$is('Unsent')(voice)
+  const from = Voice.$is('Theirs')(voice) ? voice.name : Option.none<string>()
+  const mine = !Voice.$is('Theirs')(voice)
   return (
     <View
       style={{ flexDirection: 'row', gap: 10, justifyContent: mine ? 'flex-end' : 'flex-start' }}
@@ -91,18 +130,21 @@ function Said({ text, from, mine }: { text: string; from: Option.Option<string>;
           </Label>
         )}
         <View
+          // A screen reader cannot see an outline; it is told the words did not go.
+          accessibilityHint={unsent ? 'Not sent' : undefined}
           style={{
             paddingHorizontal: 14,
             paddingVertical: 10,
             borderRadius: radius.panel,
-            borderBottomRightRadius: mine ? 6 : radius.panel,
-            borderTopLeftRadius: mine ? radius.panel : 6,
-            backgroundColor: c['surface-2'],
-            borderWidth: HAIRLINE,
-            borderColor: c['line-2'],
+            borderBottomRightRadius: mine ? TAIL : radius.panel,
+            borderTopLeftRadius: mine ? radius.panel : TAIL,
+            backgroundColor: paint.fill,
+            borderWidth: paint.line,
+            borderStyle: unsent ? 'dashed' : 'solid',
+            borderColor: paint.edge,
           }}
         >
-          <Label selectable size="reading">
+          <Label selectable size="reading" tone={paint.ink}>
             {text}
           </Label>
         </View>
