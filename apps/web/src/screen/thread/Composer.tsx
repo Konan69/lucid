@@ -65,63 +65,60 @@ export function Composer({
               write next is the place that says something is happening. It fades in over the
               library's own 0.6 s, so a reply that starts at once never shows it. The beam clips
               what it wraps, which is why whatever is anchored above sits outside it. */}
-          <BorderBeam
-            active={working}
-            colorVariant="ocean"
-            strength={0.7}
-            theme={shown}
-            className="rounded-composer bg-surface-3 smooth-shadow-ring-sm"
-          >
-            <textarea
-              // What is typed here is kept for its place, so leaving by a shortcut loses nothing.
-              data-keeps-draft
-              rows={1}
-              aria-label={placeholder}
-              placeholder={placeholder}
-              value={message}
-              onChange={(event) => {
-                const next = event.target.value
-                // Only the edges are reported: starting to type and clearing the field.
-                if (onTyping !== undefined && (next.length === 0) !== (message.length === 0)) {
-                  onTyping(next.length > 0)
-                }
-                write(next)
-              }}
-              onKeyDown={(event) => {
-                // While an input method is composing, Enter picks a candidate; it does not send.
-                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                  event.preventDefault()
-                  submit()
-                }
-              }}
-              className="block field-sizing-content max-h-60 min-h-14 w-full resize-none bg-transparent px-5 pt-4 pb-1 text-body text-ink outline-none placeholder:text-ink-3"
-            />
-            <div className="flex items-center gap-1 px-3 pb-3">
-              <span className="flex-1" />
-              {onTalk !== undefined && (
-                <IconButton label="Talk to Vivid" onClick={onTalk}>
-                  <Mic className="size-4" />
-                </IconButton>
-              )}
-              <button
-                aria-label={working ? 'Stop' : 'Send'}
-                disabled={!working && empty}
-                onClick={() => (working ? onStop() : submit())}
-                className={cn(
-                  // With nothing to send it is a quiet disc, not a faded accent: an accent at 40%
-                  // reads as a broken button, a neutral one reads as "write something first".
-                  'inline-flex size-9 cursor-pointer items-center justify-center rounded-full text-ink-on-accent transition-press duration-(--dur-fast) active:scale-96 disabled:cursor-not-allowed disabled:bg-wash-pressed disabled:text-ink-4',
-                  working
-                    ? 'bg-ink text-surface-0 hover:bg-ink-2'
-                    : 'bg-accent smooth-shadow-xs hover:bg-accent-hover',
+          <BorderBeam active={working} colorVariant="ocean" strength={0.7} theme={shown}>
+            {/* The beam reads its corner radius from the one element it wraps. */}
+            <div className="rounded-composer bg-surface-3 smooth-shadow-ring-sm">
+              <textarea
+                // What is typed here is kept for its place, so leaving by a shortcut loses nothing.
+                data-keeps-draft
+                rows={1}
+                aria-label={placeholder}
+                placeholder={placeholder}
+                value={message}
+                onChange={(event) => {
+                  const next = event.target.value
+                  // Only the edges are reported: starting to type and clearing the field.
+                  if (onTyping !== undefined && (next.length === 0) !== (message.length === 0)) {
+                    onTyping(next.length > 0)
+                  }
+                  write(next)
+                }}
+                onKeyDown={(event) => {
+                  // While an input method is composing, Enter picks a candidate; it does not send.
+                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                    event.preventDefault()
+                    submit()
+                  }
+                }}
+                className="block field-sizing-content max-h-60 min-h-14 w-full resize-none bg-transparent px-5 pt-4 pb-1 text-body text-ink outline-none placeholder:text-ink-3"
+              />
+              <div className="flex items-center gap-1 px-3 pb-3">
+                <span className="flex-1" />
+                {onTalk !== undefined && (
+                  <IconButton label="Talk to Vivid" onClick={onTalk}>
+                    <Mic className="size-4" />
+                  </IconButton>
                 )}
-              >
-                {working ? (
-                  <Square className="size-3.5 fill-current" />
-                ) : (
-                  <ArrowUp className="size-4" strokeWidth={2.25} />
-                )}
-              </button>
+                <button
+                  aria-label={working ? 'Stop' : 'Send'}
+                  disabled={!working && empty}
+                  onClick={() => (working ? onStop() : submit())}
+                  className={cn(
+                    // With nothing to send it is a quiet disc, not a faded accent: an accent at 40%
+                    // reads as a broken button, a neutral one reads as "write something first".
+                    'inline-flex size-9 cursor-pointer items-center justify-center rounded-full text-ink-on-accent transition-press duration-(--dur-fast) active:scale-96 disabled:cursor-not-allowed disabled:bg-wash-pressed disabled:text-ink-4',
+                    working
+                      ? 'bg-ink text-surface-0 hover:bg-ink-2'
+                      : 'bg-accent smooth-shadow-xs hover:bg-accent-hover',
+                  )}
+                >
+                  {working ? (
+                    <Square className="size-3.5 fill-current" />
+                  ) : (
+                    <ArrowUp className="size-4" strokeWidth={2.25} />
+                  )}
+                </button>
+              </div>
             </div>
           </BorderBeam>
         </div>

@@ -172,7 +172,13 @@ function Conversation({
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0">
       <Header
+        id={id}
         thread={thread}
+        arriving={FirstWords.$match(first, {
+          Settled: () => Option.none(),
+          Sending: ({ words }) => Option.some(titleFromMessage(words)),
+          Unsent: ({ words }) => Option.some(titleFromMessage(words)),
+        })}
         working={working}
         present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
         me={me}
@@ -186,7 +192,9 @@ function Conversation({
         empty={visible.length === 0 && FirstWords.$is('Settled')(first)}
         working={working}
         streaming={visible.some(isStreaming)}
-        failure={agent.error === undefined ? null : agent.error.message}
+        // Whatever the transport said went wrong is for a log, not for a Person: they are told
+        // what it means for them and given the one thing to do.
+        failure={agent.error === undefined ? null : 'Vivid can’t be reached right now.'}
         onRetry={() => agent.refresh()}
       >
         {visible.map((message) => (
@@ -198,6 +206,9 @@ function Conversation({
         {Option.isSome(unsent) && (
           <NotSent
             words={unsent.value.words}
+            // A private Thread already shows the words where they were said; only a shared one,
+            // which draws a message when it comes back from the server, needs them drawn here.
+            shown={Option.contains(lastSaid, unsent.value.words)}
             why={unsent.value.why}
             onAgain={() => send(unsent.value.words, unsent.value.key)}
           />
@@ -247,7 +258,9 @@ const STANDING = {
  * who else is here, who can see the Thread, everything around Vivid, and its computer.
  */
 function Header({
+  id,
   thread,
+  arriving,
   working,
   present,
   me,
@@ -255,7 +268,10 @@ function Header({
   onShare,
   onTogglePanel,
 }: {
+  id: ThreadId
   thread: Option.Option<ThreadRecord>
+  /** What a Thread still on its way to the server will be called: its first words. */
+  arriving: Option.Option<string>
   /** Vivid is answering in this window right now, which the Thread's record may not say yet. */
   working: boolean
   present: ThreadDetail['present']
@@ -278,7 +294,10 @@ function Header({
       <Face size={28} mood={standing.mood} />
       <div className="min-w-0 flex-1">
         <h1 className="truncate text-title font-title text-ink">
-          {Option.match(thread, { onNone: () => '', onSome: (value) => value.title })}
+          {Option.match(thread, {
+            onNone: () => Option.getOrElse(arriving, () => 'New thread'),
+            onSome: (value) => value.title,
+          })}
         </h1>
         <p className={cn('truncate text-meta font-meta', standing.tone)} aria-live="polite">
           {typing.length > 0
@@ -307,18 +326,16 @@ function Header({
         <IconButton label="Around Vivid" active={about} onClick={() => setAbout((on) => !on)}>
           <ListTree className="size-4" />
         </IconButton>
-        {Option.isSome(thread) && (
-          <About
-            open={about}
-            thread={thread.value.id}
-            mood={standing.mood}
-            standing={standing.words}
-            onClose={() => setAbout(false)}
-            onOpenComputer={() => {
-              if (!panelOpen) onTogglePanel()
-            }}
-          />
-        )}
+        <About
+          open={about}
+          thread={id}
+          mood={standing.mood}
+          standing={standing.words}
+          onClose={() => setAbout(false)}
+          onOpenComputer={() => {
+            if (!panelOpen) onTogglePanel()
+          }}
+        />
       </span>
       <IconButton label="Vivid’s computer" active={panelOpen} onClick={onTogglePanel}>
         <MonitorSmartphone className="size-4" />
@@ -358,7 +375,9 @@ function OnTheirWay({ first, onAgain }: { first: FirstWords; onAgain: () => void
         <Said text={words} mine />
       </li>
     ),
-    Unsent: ({ words }) => <NotSent words={words} why={Option.none()} onAgain={onAgain} />,
+    Unsent: ({ words }) => (
+      <NotSent words={words} shown={false} why={Option.none()} onAgain={onAgain} />
+    ),
   })
 }
 
@@ -390,19 +409,24 @@ const readBusy = Schema.decodeUnknownOption(Busy)
  */
 function NotSent({
   words,
+  shown,
   why,
   onAgain,
 }: {
   words: string
+  /** Whether the conversation above already shows these words. */
+  shown: boolean
   /** The server's own sentence for why, when it gave one meant for the Person. */
   why: Option.Option<string>
   onAgain: () => void
 }) {
   return (
     <li className="flex flex-col items-end gap-1.5">
-      <div className="w-full opacity-60">
-        <Said text={words} mine />
-      </div>
+      {!shown && (
+        <div className="w-full">
+          <Said text={words} mine unsent />
+        </div>
+      )}
       <p role="alert" className="text-meta font-meta text-danger">
         {Option.getOrElse(why, () => 'Not sent.')}{' '}
         <button

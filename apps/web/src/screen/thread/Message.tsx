@@ -107,17 +107,27 @@ export function Message({
 export function Said({
   text,
   mine,
+  unsent = false,
   from,
 }: {
   text: string
   mine: boolean
+  /** Words that did not arrive: drawn as an outline, where a sent message is filled. */
+  unsent?: boolean
   from?: { readonly name: string }
 }) {
   if (mine) {
     return (
       <div className="flex justify-end">
         {/* The Person's own words are the one filled shape in a Thread: found at a glance. */}
-        <div className="max-w-bubble rounded-composer rounded-br-sm bg-accent px-4 py-2.5 text-body text-ink-on-accent selection:bg-ink-on-accent/30">
+        <div
+          className={cn(
+            'max-w-bubble rounded-composer rounded-br-sm px-4 py-2.5 text-body',
+            unsent
+              ? 'text-ink-2 outline-1 -outline-offset-1 outline-line-4 outline-dashed'
+              : 'bg-accent text-ink-on-accent selection:bg-ink-on-accent/30',
+          )}
+        >
           <p className="whitespace-pre-wrap">{text}</p>
         </div>
       </div>

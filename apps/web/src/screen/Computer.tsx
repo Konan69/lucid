@@ -1,6 +1,6 @@
-import { ComputerState, type Computer as ComputerRecord } from '@vivid/contracts'
+import { ComputerScreen, ComputerState, type Computer as ComputerRecord } from '@vivid/contracts'
 import RFB from '@novnc/novnc'
-import { Option } from 'effect'
+import { Option, Result } from 'effect'
 import { Hand, Maximize2, Minimize2, Monitor, MonitorPlay, Power, X } from 'lucide-react'
 import { useCallback, useReducer, useState } from 'react'
 import { change, live, LiveState, useLive } from '../data/live'
@@ -160,14 +160,27 @@ const RESTING = {
 function Screen({ computer }: { computer: ComputerRecord }) {
   const state = computer.state
   if (ComputerState.guards.Running(state)) {
-    return (
-      <Display
-        // Taking over or handing back changes who may type, so the screen reconnects with it.
-        key={computer.heldByPerson ? 'held' : 'watching'}
-        address={state.screen.address}
-        control={computer.heldByPerson}
-      />
-    )
+    // The machine's provider decides how its screen is watched: relayed through this server as a
+    // remote-framebuffer socket, or in the provider's own viewer page for this Person's machine.
+    return ComputerScreen.match(state.screen, {
+      Relay: ({ address }) => (
+        <Display
+          // Taking over or handing back changes who may type, so the screen reconnects with it.
+          key={computer.heldByPerson ? 'held' : 'watching'}
+          address={address}
+          control={computer.heldByPerson}
+        />
+      ),
+      Viewer: ({ address, expiresAt }) => (
+        <Viewer
+          // A new machine start has a new viewer; the one on screen is not carried over.
+          key={state.since}
+          address={address}
+          expiresAt={expiresAt}
+          control={computer.heldByPerson}
+        />
+      ),
+    })
   }
   if (ComputerState.guards.Failed(state)) {
     return (
@@ -186,6 +199,69 @@ function Screen({ computer }: { computer: ComputerRecord }) {
       action={resting.action}
       busy={resting.busy}
     />
+  )
+}
+
+/** How long before a viewer's permission runs out a fresh one is asked for. */
+const RENEW_BEFORE_MS = 60_000
+
+/**
+ * The provider's own viewer for this Person's machine, in a frame. Its address is a short-lived
+ * permission to watch one machine, issued by the server for whoever is signed in here; it is
+ * never written anywhere, and before it runs out the server is asked for the next one, so a
+ * screen left open keeps showing.
+ *
+ * The frame is another site's page: it is sandboxed, gets no referrer, and cannot reach this
+ * page. While the Person is only watching, nothing they do reaches it, so looking at the screen
+ * can never fight with what Vivid is doing on it.
+ */
+function Viewer({
+  address,
+  expiresAt,
+  control,
+}: {
+  address: string
+  expiresAt: number
+  control: boolean
+}) {
+  const [shown, setShown] = useState({ address, expiresAt })
+  const renew = useCallback(
+    (frame: HTMLIFrameElement | null) => {
+      if (frame === null) return undefined
+      const timer = setTimeout(
+        () => {
+          void change((client) => client.GetComputer()).then((answer) => {
+            if (Result.isFailure(answer)) return
+            const state = answer.success.computer.state
+            if (!ComputerState.guards.Running(state)) return
+            const next = state.screen
+            if (ComputerScreen.guards.Viewer(next)) {
+              setShown({ address: next.address, expiresAt: next.expiresAt })
+            }
+          })
+        },
+        Math.max(shown.expiresAt - Date.now() - RENEW_BEFORE_MS, 5_000),
+      )
+      return () => clearTimeout(timer)
+    },
+    [shown.expiresAt],
+  )
+  return (
+    <div className="relative aspect-16/9 max-h-full w-full shrink-0 desktop-wallpaper">
+      {/* The viewer is the provider's page on the provider's origin. It needs its scripts and
+          its own storage to run; "same origin" here is its origin, never this app's, so the two
+          together do not let it out of the frame the way they would for a page of ours. */}
+      {/* oxlint-disable-next-line react/iframe-missing-sandbox */}
+      <iframe
+        ref={renew}
+        src={shown.address}
+        title="Vivid’s computer"
+        sandbox="allow-scripts allow-same-origin allow-forms"
+        allow="clipboard-read; clipboard-write; fullscreen"
+        referrerPolicy="no-referrer"
+        className={cn('size-full border-0', !control && 'pointer-events-none')}
+      />
+    </div>
   )
 }
 
@@ -234,7 +310,9 @@ function Display({ address, control }: { address: string; control: boolean }) {
   }
   return (
     <div
-      className="relative min-h-0 flex-1 desktop-wallpaper"
+      // The machine's screen is 16:10 and the panel is taller, so the glass takes its own shape at
+      // the top instead of sitting as a small picture in a tall dark frame.
+      className="relative aspect-16/10 max-h-full w-full shrink-0 desktop-wallpaper"
       aria-busy={sight.seen === 'reaching'}
     >
       {/* Each attempt is its own element, so its socket is opened and closed with it. */}

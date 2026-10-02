@@ -122,7 +122,7 @@ export const nativeMetrics = {
   "radius-composer": 24,
   "sidebar-w": 268,
   "sidebar-rail-w": 56,
-  "panel-w": 440,
+  "panel-w": 520,
   "thread-max-w": 760,
   "topbar-h": 48,
   "row-h": 36,

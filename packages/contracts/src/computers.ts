@@ -2,6 +2,18 @@ import { Schema } from 'effect'
 import { ApprovalId, ComputerId } from './identity.js'
 
 /**
+ * How a running Computer's screen is watched. `Relay` is a remote-framebuffer socket this server
+ * relays, at a path on the app's own origin. `Viewer` is the machine provider's own viewer page
+ * for this Person's machine: a short-lived permission, renewed before `expiresAt`, shown in a
+ * sandboxed frame and never written down.
+ */
+export const ComputerScreen = Schema.TaggedUnion({
+  Relay: { address: Schema.String },
+  Viewer: { address: Schema.String, expiresAt: Schema.Number },
+})
+export type ComputerScreen = typeof ComputerScreen.Type
+
+/**
  * Where a Person's Computer stands. A Computer is created the first time it is needed and stopped
  * when idle; its files and sign-ins outlive the machine that held them.
  */
@@ -11,11 +23,7 @@ export const ComputerState = Schema.TaggedUnion({
   Starting: { since: Schema.Number },
   Running: {
     since: Schema.Number,
-    /** Relay is app-owned RFB; Viewer is fresh provider authority for this Person only. */
-    screen: Schema.TaggedUnion({
-      Relay: { address: Schema.String },
-      Viewer: { address: Schema.String, expiresAt: Schema.Number },
-    }),
+    screen: ComputerScreen,
   },
   Stopped: { since: Schema.Number },
   Failed: { since: Schema.Number, reason: Schema.String },
