@@ -17,7 +17,7 @@ import { FlatList, View } from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { Monitor, Share2, Users } from 'lucide-react-native'
-import { deliveryOf, type Delivery, type Unsent } from '../data/delivery'
+import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { commit } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
 import { inFront, onForeground } from '../data/foreground'
@@ -268,20 +268,24 @@ function useSend(
         sdk.PatchThread({ id, patch: { title: titleFromMessage(delivery.words) } }),
       )
     }
-    void deliver(delivery).then((why) => {
-      if (Option.isNone(why)) return
+    return deliver(delivery).then((why) => {
+      if (Option.isNone(why)) return true
       setUnsent(Option.some({ ...delivery, why: why.value }))
       // Nothing in a shared Thread shows words that did not arrive, so they go back into the
       // composer, and so back into what the phone keeps, unless the Person has started writing
       // something else there since.
       if (shared && draft.in(place).length === 0) draft.keep(place, delivery.words)
+      return false
     })
   }
 
   return {
     shared,
     unsent,
-    /** Sends words: as the delivery still in doubt when they are its words, else as a new one. */
+    /**
+     * Sends words: as the delivery still in doubt when they are its words, else as a new one.
+     * Answers whether they arrived.
+     */
     say: (words: string) => send(deliveryOf(unsent, words, randomUUID)),
   }
 }
@@ -334,9 +338,9 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
   }
 
   /** Says something in the Thread. Words that are on their way leave the composer they were in. */
-  function speak(words: string) {
+  const speak: Say = (words) => {
     if (typed.trim() === words) type('')
-    sending.say(words)
+    return sending.say(words)
   }
 
   // What went wrong at the foot of the conversation, and the one thing to do about it. A message
@@ -349,7 +353,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
       onAct: () => {
         // Sending is felt, from here as from the composer's own button.
         commit()
-        speak(unsent.words)
+        void speak(unsent.words)
       },
     })),
     () =>
@@ -367,7 +371,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
     (ending): Ended => ({
       words: ending.words,
       onAgain: ending.again
-        ? Option.map(lastWordsOf(shown, around), (words) => () => speak(words))
+        ? Option.map(lastWordsOf(shown, around), (words) => () => void speak(words))
         : Option.none(),
     }),
   )
@@ -405,7 +409,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
         disabled={false}
         onChange={type}
         // Emptying the composer, which `speak` does, is also what removes this Thread's kept draft.
-        onSend={() => speak(typed.trim())}
+        onSend={() => void speak(typed.trim())}
         onStop={() => void stopping.stop()}
       />
       {sharing && Option.isSome(thread) && Workspace.guards.Company(me.workspace) && (
@@ -443,7 +447,7 @@ interface MessagesProps {
   readonly detail: Option.Option<ThreadDetail>
   /** The ids of the messages written here that did not arrive. */
   readonly unsent: ReadonlySet<string>
-  readonly onContinue: (text: string) => void
+  readonly onContinue: Say
 }
 
 /**

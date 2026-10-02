@@ -5,6 +5,7 @@ import { MenuView } from '@react-native-menu/menu'
 import { useState } from 'react'
 import { ActionSheetIOS, Platform, View } from 'react-native'
 import { ChevronDown } from 'lucide-react-native'
+import type { Say } from '../../data/delivery'
 import { commit, tick } from '../../data/haptics'
 import { useTheme } from '../../theme'
 import { Sheet } from '../../ui/Sheet'
@@ -29,15 +30,7 @@ interface Entry {
  * answers in the Thread as the Person's next message, one "Label: value" line each; a field
  * left empty is simply not said.
  */
-export function Form({
-  form,
-  live,
-  onSay,
-}: {
-  form: FormKind
-  live: boolean
-  onSay: (words: string) => void
-}) {
+export function Form({ form, live, onSay }: { form: FormKind; live: boolean; onSay: Say }) {
   const [open, setOpen] = useState(false)
   const [sent, setSent] = useState(false)
   const [entries, setEntries] = useState<ReadonlyArray<Entry>>(() =>
@@ -52,7 +45,8 @@ export function Form({
     commit()
     setSent(true)
     setOpen(false)
-    onSay(words)
+    // Answers that did not arrive stay in their fields and can be sent, or changed, again.
+    void onSay(words).then(setSent)
   }
   return (
     <Frame title={form.title}>

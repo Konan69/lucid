@@ -14,6 +14,7 @@ import { Option, Result } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { View } from 'react-native'
 import { Check, ShieldQuestion } from 'lucide-react-native'
+import type { Say } from '../../data/delivery'
 import { commit, confirm, warn } from '../../data/haptics'
 import { useLiveData } from '../../data/live'
 import { Card, cardOf, type ToolPart } from '../../data/message'
@@ -41,7 +42,7 @@ export function Cards({
   me: PersonId
   /** Only the newest reply is answerable, once Vivid has stopped working. */
   live: boolean
-  onContinue: (text: string) => void
+  onContinue: Say
 }) {
   return tools.map((tool) => {
     if (drawn(tool)) {

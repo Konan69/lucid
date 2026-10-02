@@ -4,6 +4,7 @@ import { Data, Option, Result } from 'effect'
 import { useState } from 'react'
 import { Image, View } from 'react-native'
 import { AlarmClock, ChevronDown, ChevronRight, Monitor, Repeat2 } from 'lucide-react-native'
+import type { Say } from '../../data/delivery'
 import { CITATION_ADDRESS, linkCitations, openDocument } from '../../data/documents'
 import { useNow } from '../../data/foreground'
 import { useLiveData } from '../../data/live'
@@ -54,7 +55,7 @@ export function Message({
   latest: boolean
   /** The ids of the messages written here that did not arrive (`failedSends` of the stream). */
   unsent: ReadonlySet<string>
-  onContinue: (text: string) => void
+  onContinue: Say
 }) {
   return Speaker.$match(speakerOf(message, around), {
     Me: () => (
@@ -410,7 +411,7 @@ function FromVivid({
   around: Around
   working: boolean
   latest: boolean
-  onContinue: (text: string) => void
+  onContinue: Say
 }) {
   const text = textOf(message)
   const tools = toolsOf(message)

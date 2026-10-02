@@ -24,6 +24,13 @@ export interface Unsent extends Delivery {
 }
 
 /**
+ * Says words in a Thread and answers whether they arrived. Whatever sent them (a card with a
+ * choice on it, a form) closes while they are on their way and needs the answer to know whether
+ * to stay closed: words that did not arrive are the Person's to send again, or to change.
+ */
+export type Say = (words: string) => Promise<boolean>
+
+/**
  * The delivery for words that are about to be sent.
  *
  * When they are the words that last did not arrive, however they got back into the Person's hands

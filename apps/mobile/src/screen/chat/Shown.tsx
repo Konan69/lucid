@@ -11,6 +11,7 @@ import {
   ExternalLink,
   MapPin,
 } from 'lucide-react-native'
+import type { Say } from '../../data/delivery'
 import { useTheme } from '../../theme'
 import { Pictures } from '../../ui/Pictures'
 import { openWebLink } from '../../ui/Prose'
@@ -24,7 +25,7 @@ import { Options } from './Options'
 import { Table } from './Table'
 
 type Kind<Tag extends ShownKind['_tag']> = Extract<ShownKind, { readonly _tag: Tag }>
-type Interactive = { readonly live: boolean; readonly onSay: (words: string) => void }
+type Interactive = { readonly live: boolean; readonly onSay: Say }
 
 /**
  * What Vivid showed, drawn the way a phone reads each kind: sideways pages, sheets and rows

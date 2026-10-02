@@ -3,6 +3,7 @@ import { togglePicked } from '@vivid/state'
 import { useState } from 'react'
 import { View } from 'react-native'
 import { Check, ChevronRight } from 'lucide-react-native'
+import type { Say } from '../../data/delivery'
 import { commit, tick } from '../../data/haptics'
 import { useTheme } from '../../theme'
 import { Button, HAIRLINE, Label, Press, radius } from '../../ui/ui'
@@ -19,23 +20,18 @@ type Ask = Extract<Shown, { readonly _tag: 'Options' }>
  * shows the rows as plain text, which is also how it must read: nothing on it looks tappable.
  * What is chosen is said as the Person's next message, in plain words.
  */
-export function Options({
-  ask,
-  live,
-  onSay,
-}: {
-  ask: Ask
-  live: boolean
-  onSay: (words: string) => void
-}) {
+export function Options({ ask, live, onSay }: { ask: Ask; live: boolean; onSay: Say }) {
   const [picked, setPicked] = useState<ReadonlyArray<string>>([])
   // Once words are on their way the card must not say them twice, however fast the taps come.
+  // When they do not arrive it opens again: the card used to stay shut for good, so a choice
+  // that failed on a bad connection could be sent again from the foot of the Thread but never
+  // changed.
   const [sent, setSent] = useState(false)
   const open = live && !sent
   const say = (words: string) => {
     commit()
     setSent(true)
-    onSay(words)
+    void onSay(words).then(setSent)
   }
   const pick = (label: string) => {
     if (!open) return
