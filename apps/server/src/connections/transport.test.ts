@@ -38,10 +38,12 @@ import {
   ExecutorRequestId,
   ExecutorCopyRetained,
   ExecutorStep,
+  ExecutorPublicAddressRequired,
   executorLayer,
   connectionSetupMessage,
 } from './executor.ts'
 import { executorFailure } from './errors.ts'
+import { ConnectionSource } from './address.ts'
 import { connectionStoreLayer, ConnectionStore } from './store.ts'
 import { connectionTestLayer } from './testing.ts'
 import { testConfigLayer, testDatabaseConfigured } from '../database/testdb.ts'
@@ -182,11 +184,13 @@ const fixture = Effect.fn('ExecutorHttpTest.fixture')(function* () {
         ConfigProvider.fromUnknown({
           VIVID_EXECUTOR_URL: url.href.replace(/\/$/, ''),
           VIVID_EXECUTOR_KEY: 'isolated-test-key',
+          VIVID_EXECUTOR_PUBLIC_ONLY: true,
         }),
       ),
     ),
   )
   return {
+    address: url.href.replace(/\/$/u, ''),
     responses,
     catalogDefinitions,
     requests,
@@ -501,7 +505,7 @@ for (const failurePath of [
     }).pipe(Effect.scoped),
   )
 }
-it.effect('recovers a lost copy response and uses the Connection id for profile idempotency', () =>
+it.effect('recovers a lost copy response and uses the integration id for profile idempotency', () =>
   Effect.gen(function* () {
     const remote = yield* fixture()
     yield* Ref.update(remote.responses, (values) =>
@@ -650,7 +654,7 @@ it.effect('passes declared key fields through and compensates a failed authoriza
   }).pipe(Effect.scoped),
 )
 
-/** The foreign owner check must see the Connection's owner, even when the request id is valid. */
+/** The foreign owner check must see the integration's owner, even when the request id is valid. */
 it.effect('cannot resume an approval belonging to a different owner', () =>
   Effect.gen(function* () {
     const remote = yield* fixture()
@@ -1301,4 +1305,88 @@ it.effect('cancels a closed reconnect before replacing its pending request', () 
     ).toHaveLength(1)
     expect(requests.some((request) => request.path === 'POST /v1/apps/copies')).toBe(false)
   }).pipe(Effect.scoped),
+)
+
+/** Both import kinds use the SDK custom import endpoint, then the existing scoped copy/profile flow. */
+for (const source of [
+  ConnectionSource.cases.Mcp.make({
+    address: 'https://integration.example/mcp',
+    authorization: 'auto',
+  }),
+  ConnectionSource.cases.OpenApi.make({ address: 'https://integration.example/openapi.json' }),
+]) {
+  it.effect(`registers a custom ${source._tag} source under the acting owner`, () =>
+    Effect.gen(function* () {
+      const remote = yield* fixture()
+      yield* Ref.update(remote.responses, (values) =>
+        new Map(values).set('POST /dashboard/api/apps/import', reply(200, template)),
+      )
+      yield* Effect.gen(function* () {
+        const executor = yield* Executor
+        const step = yield* executor.add({
+          source,
+          connectionId: ConnectionId.make('custom-copy'),
+          service: ServiceId.make('custom-service'),
+          owner: references.owner,
+          subject: 'acting-person',
+          label: 'Records',
+          returnAddress: 'https://vivid.example/return',
+        })
+        expect(step._tag).toBe('Done')
+        expect(step.references.owner).toBe(references.owner)
+        const requests = yield* Ref.get(remote.requests)
+        expect(
+          requests.find((request) => request.path === 'POST /dashboard/api/apps/import'),
+        ).toMatchObject({ body: { source: { url: source.address } } })
+        expect(requests.find((request) => request.path === 'POST /v1/apps/copies')).toMatchObject({
+          body: { owner: references.owner },
+        })
+        expect(
+          requests.find((request) => request.path === 'POST /v1/apps/copy/profiles'),
+        ).toMatchObject({ body: { owner: references.owner, subject: 'acting-person' } })
+        expect(requests.some((request) => request.path === 'DELETE /v1/apps/template')).toBe(true)
+      }).pipe(Effect.provide(remote.layer))
+    }).pipe(Effect.scoped),
+  )
+}
+
+/** Preflight cannot constrain Executor's later fetch, so missing operator configuration fails closed. */
+it.effect(
+  'refuses URL registration before import when public-only Executor egress is not declared',
+  () =>
+    Effect.gen(function* () {
+      const remote = yield* fixture()
+      const unconfigured = executorLayer.pipe(
+        Layer.provide(FetchHttpClient.layer),
+        Layer.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              VIVID_EXECUTOR_URL: remote.address,
+              VIVID_EXECUTOR_KEY: 'isolated-test-key',
+            }),
+          ),
+        ),
+      )
+      yield* Effect.gen(function* () {
+        const error = yield* (yield* Executor)
+          .add({
+            connectionId: ConnectionId.make('disabled-import'),
+            service,
+            owner: references.owner,
+            subject: 'acting-person',
+            label: 'Disabled import',
+            returnAddress: 'https://vivid.example/return',
+            source: ConnectionSource.cases.OpenApi.make({
+              address: 'https://integration.example/spec',
+            }),
+          })
+          .pipe(Effect.flip)
+        expect(error).toBeInstanceOf(ExecutorPublicAddressRequired)
+        expect(
+          (yield* Ref.get(remote.requests)).some(
+            (request) => request.path === 'POST /dashboard/api/apps/import',
+          ),
+        ).toBe(false)
+      }).pipe(Effect.provide(unconfigured))
+    }).pipe(Effect.scoped),
 )

@@ -11,6 +11,6 @@ export function toolMessage(value: typeof Schema.Json.Type) {
       text,
     )
   )
-    return 'The service rejected the tool request; sensitive diagnostics were removed.'
+    return 'The integration rejected the tool request; sensitive diagnostics were removed.'
   return text.replace(/[A-Za-z0-9_-]{24,}/g, '[REDACTED]').slice(0, 400)
 }

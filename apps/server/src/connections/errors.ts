@@ -5,18 +5,23 @@ import { connectionSetupMessage, resourceReason, type ExecutorFailure } from './
 /** Provider internals never cross RPC; unavailable authority remains distinct from bad user input. */
 export const executorFailure = Match.type<ExecutorFailure>().pipe(
   Match.tagsExhaustive({
+    ExecutorPublicAddressRequired: () =>
+      new ServiceUnavailable({
+        service: 'connections',
+        message: 'Public integration address enforcement is not configured.',
+      }),
     ServiceUnavailable: (error) => error,
     ExecutorSetupRequired: () => new InvalidRequest({ message: connectionSetupMessage }),
     ExecutorRejected: ({ message }) => new InvalidRequest({ message }),
     ExecutorConflict: () =>
-      new Conflict({ message: 'The Connection changed; reload before continuing.' }),
+      new Conflict({ message: 'The integration changed; reload before continuing.' }),
     ExecutorSignInRequired: ({ message }) => new InvalidRequest({ message }),
     ExecutorNotReady: () =>
-      new InvalidRequest({ message: 'Authorize this Connection before continuing.' }),
+      new InvalidRequest({ message: 'Authorize this integration before continuing.' }),
     ExecutorAccessDenied: () =>
       new ServiceUnavailable({
         service: 'connections',
-        message: 'Connection authority is unavailable.',
+        message: 'Integration authority is unavailable.',
       }),
     ExecutorResourceMissing: ({ resource }) =>
       new InvalidRequest({ message: resourceReason(resource) }),
@@ -30,5 +35,8 @@ export const executorFailure = Match.type<ExecutorFailure>().pipe(
 
 /** Transport and protocol failures carry no provider payload or credential in the public error. */
 function unavailable() {
-  return new ServiceUnavailable({ service: 'connections', message: 'Connections are unavailable.' })
+  return new ServiceUnavailable({
+    service: 'connections',
+    message: 'Integrations are unavailable.',
+  })
 }

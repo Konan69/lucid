@@ -1,5 +1,8 @@
 import { Effect } from 'effect'
 import type {
+  AddIntegrationRequest,
+  FindIntegrationsRequest,
+  TestIntegrationRequest,
   BeginConnectionRequest,
   CompleteConnectionRequest,
   ConnectionId,
@@ -11,6 +14,7 @@ import type {
 import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
 import { live } from '../live/query.ts'
 import { ConnectionStore } from './store.ts'
+import { addIntegration, findIntegrations, testIntegration } from './integrations.ts'
 import { findTools, offerConnection, resolveTool, useTool } from './tools.ts'
 export { connectionRunner, runConnection } from './tools.ts'
 
@@ -21,6 +25,20 @@ const load = Effect.fn('Connections.load')(function* (actor: Actor) {
 
 /** Authentication belongs at transport ingress; account rules stay in the owned domain. */
 export const connectionHandlers = {
+  /** Discovery uses the same live Person/Company scope as every Connection read. */
+  FindIntegrations: Effect.fn('Rpc.FindIntegrations')(function* (request: FindIntegrationsRequest) {
+    return yield* findIntegrations(yield* requireActor(), request)
+  }),
+  /** Runtime authorization starts here; credential completion remains Person-only. */
+  AddIntegration: Effect.fn('Rpc.AddIntegration')(function* (request: AddIntegrationRequest) {
+    yield* requireVivid()
+    return yield* addIntegration(yield* requireActor(), request)
+  }),
+  /** A read test is still an external account action and requires the ordinary Gate. */
+  TestIntegration: Effect.fn('Rpc.TestIntegration')(function* (request: TestIntegrationRequest) {
+    yield* requireVivid()
+    return yield* testIntegration(yield* requireActor(), request)
+  }),
   ListConnections: Effect.fn('Rpc.ListConnections')(function* () {
     return yield* load(yield* requireActor())
   }),

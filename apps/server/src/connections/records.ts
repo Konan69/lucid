@@ -67,7 +67,7 @@ export const getRecord = Effect.fn('Connections.getRecord')(function* (
   )
   const row = rows[0]
   if (row === undefined)
-    return yield* Effect.fail(new NotFound({ message: 'Connection not found' }))
+    return yield* Effect.fail(new NotFound({ message: 'Integration not found' }))
   return yield* decodeRow(row)
 })
 
@@ -77,7 +77,7 @@ export const stateOf = (row: ConnectionRecord) => {
   if (row.status === 'needs-authorization')
     return Effect.succeed(ConnectionState.cases.NeedsAuthorization.make({}))
   if (row.reason === null)
-    return Effect.fail(new DatabaseFailure({ message: 'Failed Connection has no reason' }))
+    return Effect.fail(new DatabaseFailure({ message: 'Failed integration has no reason' }))
   return Effect.succeed(ConnectionState.cases.Failed.make({ reason: row.reason }))
 }
 
@@ -151,7 +151,7 @@ export const saveState = Effect.fn('Connections.saveState')(function* (
   if (rows.length === 0)
     return yield* Effect.fail(
       new Conflict({
-        message: 'This Connection changed before authorization finished; reload it.',
+        message: 'This integration changed before authorization finished; reload it.',
       }),
     )
   return yield* decodeRow(yield* returned(rows, 'Connection'))
@@ -187,7 +187,7 @@ export const retainResumer = Effect.fn('Connections.retainResumer')(function* (
   )
   if (rows.length === 0)
     return yield* Effect.fail(
-      new Conflict({ message: 'This Connection changed before resume; reload it.' }),
+      new Conflict({ message: 'This integration changed before resume; reload it.' }),
     )
   return yield* decodeRow(yield* returned(rows, 'Connection'))
 })

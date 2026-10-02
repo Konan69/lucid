@@ -36,7 +36,7 @@ export const Connection = Schema.Struct({
   ownership: ConnectionOwnership,
   state: ConnectionState,
   createdAt: Schema.Number,
-}).annotate({ identifier: 'Connection', title: 'Connection' })
+}).annotate({ identifier: 'Connection', title: 'Integration' })
 /** Decoded Connection. */
 export interface Connection extends Schema.Schema.Type<typeof Connection> {}
 
@@ -62,7 +62,7 @@ export const Service = Schema.Struct({
   /** The key of a mark in `@vivid/marks`, or of nothing when the catalog has no mark for it. */
   mark: Schema.NullOr(Schema.String),
   authorization: ServiceAuthorization,
-}).annotate({ identifier: 'Service', title: 'Service' })
+}).annotate({ identifier: 'Service', title: 'Integration' })
 export interface Service extends Schema.Schema.Type<typeof Service> {}
 
 /**
@@ -139,7 +139,7 @@ export const ConnectionTool = Schema.Struct({
   effect: ActionEffect,
   /** The tool's input as a JSON Schema document, for Vivid to fill in. */
   input: Schema.Json,
-}).annotate({ identifier: 'ConnectionTool', title: 'Connection tool' })
+}).annotate({ identifier: 'ConnectionTool', title: 'Integration tool' })
 export interface ConnectionTool extends Schema.Schema.Type<typeof ConnectionTool> {}
 
 /** Vivid looking for what it can do. Results are limited to what the acting Person may use here. */
@@ -194,7 +194,7 @@ export const ConnectionRequestMessage = Schema.Struct({
   reason: Schema.String,
   /** Whether the acting Person already has this service connected and ready. */
   ready: Schema.Boolean,
-}).annotate({ identifier: 'ConnectionRequestMessage', title: 'Connection request message' })
+}).annotate({ identifier: 'ConnectionRequestMessage', title: 'Integration request message' })
 /** Decoded Connection request message. */
 export interface ConnectionRequestMessage extends Schema.Schema.Type<
   typeof ConnectionRequestMessage
@@ -206,3 +206,104 @@ export const OfferConnectionRequest = Schema.Struct({
   reason: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(400)),
 })
 export interface OfferConnectionRequest extends Schema.Schema.Type<typeof OfferConnectionRequest> {}
+
+/** Discovery combines accessible accounts with Executor's catalogue, without exposing authority. */
+export const FindIntegrationsRequest = Schema.Struct({
+  query: Schema.String.check(Schema.isMaxLength(200)),
+})
+export interface FindIntegrationsRequest extends Schema.Schema.Type<
+  typeof FindIntegrationsRequest
+> {}
+
+/** Names are the runtime's only handles; disconnected catalogue entries have no account yet. */
+export const ConnectionMatch = Schema.TaggedUnion({
+  Account: {
+    name: Schema.String,
+    account: Schema.String,
+    connected: Schema.Boolean,
+    shared: Schema.Boolean,
+    state: ConnectionState,
+  },
+  Catalog: { name: Schema.String, description: Schema.String, connected: Schema.Boolean },
+})
+export const FindIntegrationsResponse = Schema.Struct({
+  integrations: Schema.Array(ConnectionMatch),
+  catalog: Schema.Literals(['available', 'unavailable']),
+})
+export interface FindIntegrationsResponse extends Schema.Schema.Type<
+  typeof FindIntegrationsResponse
+> {}
+
+/** URL imports are personal by default; shared imports require the existing Company admin role. */
+export const AddIntegrationRequest = Schema.Struct({
+  address: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(4000)),
+  name: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(40)),
+  shared: Schema.Boolean,
+})
+export interface AddIntegrationRequest extends Schema.Schema.Type<typeof AddIntegrationRequest> {}
+
+/** Failure reasons are precise and credential-free; documentation must publish a specification link. */
+export const ConnectionAddressRefusal = Schema.Literals([
+  'not a public web address',
+  'documentation page has no OpenAPI specification link',
+  'not an MCP server or OpenAPI specification',
+  'unsupported integration authorization or specification',
+])
+
+/** Existing authorization steps remain the single source of truth for client card payloads. */
+export const AddIntegrationOutcome = Schema.TaggedUnion({
+  Added: { account: Schema.String },
+  NeedsSignIn: { step: ConnectionStep.cases.OpenSignIn },
+  NeedsKey: { step: ConnectionStep.cases.EnterKey },
+  NotAnIntegration: { reason: ConnectionAddressRefusal },
+  Unreachable: {
+    reason: Schema.Literals([
+      'could not be reached',
+      'public address enforcement is not configured',
+    ]),
+  },
+})
+export type AddIntegrationOutcome = typeof AddIntegrationOutcome.Type
+
+/** The server chooses a safe call; the model supplies only an accessible account name. */
+export const TestIntegrationRequest = Schema.Struct({
+  account: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(300)),
+})
+export interface TestIntegrationRequest extends Schema.Schema.Type<typeof TestIntegrationRequest> {}
+
+/** A tool listing alone is never proof that an external call succeeded. */
+export const TestIntegrationOutcome = Schema.TaggedUnion({
+  Tested: { account: Schema.String, tools: Schema.Array(Schema.String), tool: Schema.String },
+  NotTested: {
+    account: Schema.String,
+    tools: Schema.Array(Schema.String),
+    reason: Schema.Literals([
+      'needs sign-in',
+      'integration failed',
+      'no read-only tool can be tested without extra input',
+      'call failed',
+    ]),
+  },
+  ApprovalRequired: { approvalId: ApprovalId, summary: Schema.String },
+  Blocked: { rule: Schema.String },
+  Unreachable: {},
+})
+export type TestIntegrationOutcome = typeof TestIntegrationOutcome.Type
+
+/** Runtime authorization cards carry only the references clients need to resume/complete securely. */
+export const ConnectionAuthorization = Schema.TaggedUnion({
+  OpenSignIn: { connectionId: ConnectionId, address: Schema.String },
+  EnterKey: {
+    connectionId: ConnectionId,
+    fields: ConnectionStep.cases.EnterKey.fields.fields,
+  },
+})
+/** Extends the existing connection-request treatment for an already-started URL import. */
+export const ConnectionAuthorizationMessage = Schema.Struct({
+  kind: Schema.Literal('connection-request'),
+  service: ServiceId,
+  serviceName: Schema.String,
+  reason: Schema.String,
+  ready: Schema.Literal(false),
+  authorization: ConnectionAuthorization,
+})

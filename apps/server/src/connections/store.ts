@@ -1,6 +1,8 @@
 import { and, eq, isNull } from 'drizzle-orm'
 import { Clock, Context, Effect, Layer, Redacted, Schema, Option, Semaphore } from 'effect'
 import {
+  AddIntegrationRequest,
+  ServiceId,
   AuditEvent,
   BeginConnectionRequest,
   CompanyId,
@@ -24,6 +26,7 @@ import {
   ExecutorOwnerId,
   ExecutorReferences,
   ExecutorResourceMissing,
+  ExecutorPublicAddressRequired,
   connectionSetupMessage,
   resourceReason,
   ExecutorStatus,
@@ -45,8 +48,10 @@ import {
 } from './records.ts'
 import { connections } from './tables.ts'
 import { rankServices } from './ranking.ts'
+import { connectionAddressLayer, type ConnectionSource } from './address.ts'
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
+const isPublicAddressRequired = Schema.is(ExecutorPublicAddressRequired)
 const isRetainedAuthorization = Schema.is(
   Schema.Union([ExecutorSignInRequired, ExecutorAuthorizationUnavailable]),
 )
@@ -124,15 +129,11 @@ const finish = Effect.fn('Connections.finish')(function* (
 const begin = Effect.fn('Connections.begin')(function* (
   actor: Actor,
   request: BeginConnectionRequest,
-  catalog: readonly Service[],
+  service: Service,
+  start: ExecutorService['begin'],
 ) {
   let companyId: CompanyId | null = null
   if (request.shared) companyId = (yield* requireAdmin(actor.workspace)).company.id
-  const service = catalog.find((entry) => entry.id === request.service)
-  if (service === undefined)
-    return yield* Effect.fail(
-      new InvalidRequest({ message: 'Choose a service from the current catalog.' }),
-    )
   if (ServiceAuthorization.guards.SetupRequired(service.authorization))
     return yield* Effect.fail(new InvalidRequest({ message: connectionSetupMessage }))
   if (request.label.trim().length === 0)
@@ -142,26 +143,24 @@ const begin = Effect.fn('Connections.begin')(function* (
   const owner = ExecutorOwnerId.make(companyId === null ? `p-${actor.person.id}` : `c-${companyId}`)
   const executor = yield* Executor
   // Revoke an unusable pending grant before reporting failure; never insert a dead product row.
-  const step = yield* executor
-    .begin({
-      connectionId: id,
-      service: request.service,
-      label: request.label,
-      owner,
-      subject: actor.person.id,
-      returnAddress: new URL(`/api/connections/return/${encodeURIComponent(id)}`, config.PUBLIC_URL)
-        .href,
-    })
-    .pipe(
-      Effect.catchTag(
-        'ExecutorSignInRequired',
-        Effect.fn('Connections.cancelSignIn')(function* (error) {
-          yield* executor.remove(error.references)
-          return yield* Effect.fail(error)
-        }),
-      ),
-      Effect.mapError(executorFailure),
-    )
+  const step = yield* start({
+    connectionId: id,
+    service: request.service,
+    label: request.label,
+    owner,
+    subject: actor.person.id,
+    returnAddress: new URL(`/api/connections/return/${encodeURIComponent(id)}`, config.PUBLIC_URL)
+      .href,
+  }).pipe(
+    Effect.catchTag(
+      'ExecutorSignInRequired',
+      Effect.fn('Connections.cancelSignIn')(function* (error) {
+        yield* executor.remove(error.references)
+        return yield* Effect.fail(error)
+      }),
+    ),
+    Effect.mapError((error) => (isPublicAddressRequired(error) ? error : executorFailure(error))),
+  )
   const now = yield* Clock.currentTimeMillis
   const status = ExecutorStep.guards.Done(step) ? 'ready' : 'needs-authorization'
   const database = yield* Database
@@ -358,7 +357,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
   ) {
     const entry = (yield* catalogServices()).find((candidate) => candidate.id === id)
     if (entry === undefined)
-      return yield* Effect.fail(new InvalidRequest({ message: 'Unknown service.' }))
+      return yield* Effect.fail(new InvalidRequest({ message: 'Unknown integration.' }))
     if (ServiceAuthorization.guards.SetupRequired(entry.authorization)) return entry
     return yield* inspectService(entry)
   })
@@ -391,7 +390,49 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     ) {
       // Refuse non-admin sharing before catalog lookup or provider mutation.
       if (request.shared) yield* requireAdmin(actor.workspace)
-      return yield* provide(begin(actor, request, yield* catalogServices()))
+      const entry = (yield* catalogServices()).find((item) => item.id === request.service)
+      if (entry === undefined)
+        return yield* Effect.fail(
+          new InvalidRequest({ message: 'Choose an integration from the current catalogue.' }),
+        )
+      const start = Effect.fn('Connections.beginCatalog')(
+        (input: Parameters<ExecutorService['begin']>[0]) => executor.begin(input),
+      )
+      return yield* provide(begin(actor, request, entry, start)).pipe(
+        Effect.catchTag('ExecutorPublicAddressRequired', (error) =>
+          Effect.fail(executorFailure(error)),
+        ),
+      )
+    }),
+    /** URL imports persist through the same compensation, ownership and authorization steps. */
+    add: Effect.fn('Connections.add')(function* (
+      actor: Actor,
+      request: AddIntegrationRequest,
+      source: ConnectionSource,
+    ) {
+      if (request.shared) yield* requireAdmin(actor.workspace)
+      const importedService = Service.make({
+        id: ServiceId.make(`url:${source.address}`),
+        name: request.name,
+        description: '',
+        mark: null,
+        authorization: ServiceAuthorization.cases.None.make({}),
+      })
+      const start: ExecutorService['begin'] = Effect.fn('Connections.import')((input) =>
+        executor.add({ ...input, source }),
+      )
+      return yield* provide(
+        begin(
+          actor,
+          {
+            service: importedService.id,
+            label: request.name,
+            shared: request.shared,
+          },
+          importedService,
+          start,
+        ),
+      )
     }),
     ...management,
   }
@@ -461,7 +502,7 @@ const makeManagement = (input: {
           })
         if (row.status === 'failed')
           return yield* Effect.fail(
-            new InvalidRequest({ message: 'Remove this failed Connection and connect again.' }),
+            new InvalidRequest({ message: 'Remove this failed integration and connect again.' }),
           )
         const service = (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).find(
           (entry) => entry.id === row.service,
@@ -555,9 +596,11 @@ const makeManagement = (input: {
   }
 }
 
-/** Product account authority over the external adapter; no credential values enter this service. */
+/** Product account authority over the external adapter; no credential values enter this integration. */
 export class ConnectionStore extends Context.Service<
   ConnectionStore,
   Effect.Success<ReturnType<typeof makeStore>>
 >()('vivid/ConnectionStore') {}
-export const connectionStoreLayer = Layer.effect(ConnectionStore, makeStore())
+export const connectionStoreLayer = Layer.effect(ConnectionStore, makeStore()).pipe(
+  Layer.provideMerge(connectionAddressLayer),
+)

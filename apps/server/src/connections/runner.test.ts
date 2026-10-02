@@ -143,7 +143,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
           expect(missing._tag).toBe('Failed')
           expect(missing).toMatchObject({
             reason:
-              'The Connection is no longer available; check its authorization and your access.',
+              'The integration is no longer available; check its authorization and your access.',
           })
           expect(yield* Ref.get(probe.calls)).toBe(calls + 1)
         }),
@@ -175,7 +175,8 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
         })
         expect(outcome._tag).toBe('Failed')
         expect(outcome).toMatchObject({
-          reason: 'The Connection is no longer available; check its authorization and your access.',
+          reason:
+            'The integration is no longer available; check its authorization and your access.',
         })
         expect(yield* Ref.get(probe.calls)).toBe(calls)
       }),

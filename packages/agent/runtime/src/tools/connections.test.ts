@@ -1,5 +1,19 @@
 import { describe, expect, it } from '@effect/vitest'
-import { ConnectionId, ConnectionTool, PersonId, ThreadId, ToolOutcome } from '@vivid/contracts'
+import {
+  AddIntegrationOutcome,
+  ApprovalId,
+  Connection,
+  ConnectionOwnership,
+  ConnectionState,
+  ConnectionStep,
+  ServiceId,
+  TestIntegrationOutcome,
+  ConnectionId,
+  ConnectionTool,
+  PersonId,
+  ThreadId,
+  ToolOutcome,
+} from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
 import { Effect, Exit, Fiber, Layer, Option, Predicate, Queue } from 'effect'
 import * as RpcClient from 'effect/unstable/rpc/RpcClient'
@@ -8,29 +22,165 @@ import type * as RpcMessage from 'effect/unstable/rpc/RpcMessage'
 import { connectionTools } from './connections.ts'
 import { Scope, toolRunner } from './scope.ts'
 
+/** Keep the generated RPC client intact; the controllable transport is the only test boundary. */
+const fixture = Effect.fn('ConnectionToolsTest.fixture')(function* () {
+  const requests = yield* Queue.unbounded<RpcMessage.FromClient<RpcGroup.Rpcs<typeof VividRpc>>>()
+  const rpc = yield* RpcClient.makeNoSerialization(VividRpc, {
+    onFromClient: ({ message }) => Queue.offer(requests, message).pipe(Effect.asVoid),
+  })
+  const scope = Layer.succeed(
+    Scope,
+    Scope.of({
+      acting: {
+        threadId: ThreadId.make('MARK-thread'),
+        personId: PersonId.make('MARK-person'),
+      },
+      client: rpc.client,
+      folder: Option.none(),
+    }),
+  )
+  return { requests, rpc, tools: connectionTools(toolRunner(scope)) }
+})
+
 /** Exercise the real Flue callback, generated client and projection; control only the RPC transport. */
 describe('connected tool execution', () => {
+  it.effect(
+    'registers a personal integration through the real runtime RPC seam using names only',
+    () =>
+      Effect.gen(function* () {
+        const { requests, rpc, tools } = yield* fixture()
+        const [, , , , add] = tools
+        const call = yield* Effect.promise(() =>
+          Promise.resolve(
+            add.run({
+              data: { address: 'https://records.example/mcp', name: 'Work Records' },
+              signal: new AbortController().signal,
+              toolCallId: 'MARK-call',
+              log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
+            }),
+          ),
+        ).pipe(Effect.forkScoped)
+        const request = yield* Queue.take(requests)
+        if (!Predicate.isTagged(request, 'Request')) expect.fail('Expected an RPC request')
+        expect(request.tag).toBe('AddIntegration')
+        expect(request.payload).toEqual({
+          address: 'https://records.example/mcp',
+          name: 'Work Records',
+          shared: false,
+        })
+        yield* rpc.write({
+          // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK protocol envelopes have no constructor in rc.116.
+          _tag: 'Exit',
+          clientId: 0,
+          requestId: request.id,
+          exit: Exit.succeed(AddIntegrationOutcome.cases.Added.make({ account: 'Work Records' })),
+        })
+        const result = yield* Fiber.join(call)
+        expect(result).toEqual({
+          output: { added: true, account: 'Work Records' },
+          terminate: false,
+        })
+        expect(JSON.stringify(result)).not.toContain('MARK-')
+      }).pipe(Effect.scoped),
+  )
+  for (const kind of ['OpenSignIn', 'EnterKey'] as const) {
+    it.effect(`stops the runtime turn for secure ${kind} completion`, () =>
+      Effect.gen(function* () {
+        const { requests, rpc, tools } = yield* fixture()
+        const [, , , , add] = tools
+        const call = yield* Effect.promise(() =>
+          Promise.resolve(
+            add.run({
+              data: { address: 'https://records.example/mcp', name: 'Work Records' },
+              signal: new AbortController().signal,
+              toolCallId: 'MARK-call',
+              log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
+            }),
+          ),
+        ).pipe(Effect.forkScoped)
+        const request = yield* Queue.take(requests)
+        if (!Predicate.isTagged(request, 'Request')) expect.fail('Expected an RPC request')
+        const connection = Connection.make({
+          id: ConnectionId.make('MARK-connection'),
+          service: ServiceId.make('MARK-service'),
+          serviceName: 'Records',
+          label: 'Work Records',
+          ownership: ConnectionOwnership.cases.Personal.make({
+            owner: { id: PersonId.make('MARK-person'), name: 'Ada', image: null },
+          }),
+          state: ConnectionState.cases.NeedsAuthorization.make({}),
+          createdAt: 1,
+        })
+        const outcome =
+          kind === 'OpenSignIn'
+            ? AddIntegrationOutcome.cases.NeedsSignIn.make({
+                step: ConnectionStep.cases.OpenSignIn.make({
+                  connection,
+                  address: 'https://records.example/sign-in',
+                }),
+              })
+            : AddIntegrationOutcome.cases.NeedsKey.make({
+                step: ConnectionStep.cases.EnterKey.make({
+                  connection,
+                  fields: [{ name: 'key', label: 'API key' }],
+                }),
+              })
+        yield* rpc.write({
+          // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK protocol envelopes have no constructor in rc.116.
+          _tag: 'Exit',
+          clientId: 0,
+          requestId: request.id,
+          exit: Exit.succeed(outcome),
+        })
+        const result = yield* Fiber.join(call)
+        expect(result).toMatchObject({
+          terminate: true,
+          output: { kind: 'connection-request', authorization: { _tag: kind } },
+        })
+        expect(JSON.stringify(result)).not.toContain('MARK-person')
+      }).pipe(Effect.scoped),
+    )
+  }
+  it.effect('stops a read test on the Gate approval receipt', () =>
+    Effect.gen(function* () {
+      const { requests, rpc, tools } = yield* fixture()
+      const [, , , , , test] = tools
+      const call = yield* Effect.promise(() =>
+        Promise.resolve(
+          test.run({
+            data: { account: 'Work Records' },
+            signal: new AbortController().signal,
+            toolCallId: 'MARK-call',
+            log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
+          }),
+        ),
+      ).pipe(Effect.forkScoped)
+      const request = yield* Queue.take(requests)
+      if (!Predicate.isTagged(request, 'Request')) expect.fail('Expected an RPC request')
+      expect(request.tag).toBe('TestIntegration')
+      expect(request.payload).toEqual({ account: 'Work Records' })
+      yield* rpc.write({
+        // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK protocol envelopes have no constructor in rc.116.
+        _tag: 'Exit',
+        clientId: 0,
+        requestId: request.id,
+        exit: Exit.succeed(
+          TestIntegrationOutcome.cases.ApprovalRequired.make({
+            approvalId: ApprovalId.make('MARK-approval'),
+            summary: 'Test Work Records',
+          }),
+        ),
+      })
+      const result = yield* Fiber.join(call)
+      expect(result).toMatchObject({ terminate: true, output: { kind: 'approval-request' } })
+    }).pipe(Effect.scoped),
+  )
   it.effect(
     'resolves an exact pair and preserves bounded provider record ids and email addresses',
     () =>
       Effect.gen(function* () {
-        const requests =
-          yield* Queue.unbounded<RpcMessage.FromClient<RpcGroup.Rpcs<typeof VividRpc>>>()
-        const rpc = yield* RpcClient.makeNoSerialization(VividRpc, {
-          onFromClient: ({ message }) => Queue.offer(requests, message).pipe(Effect.asVoid),
-        })
-        const scope = Layer.succeed(
-          Scope,
-          Scope.of({
-            acting: {
-              threadId: ThreadId.make('MARK-thread'),
-              personId: PersonId.make('MARK-person'),
-            },
-            client: rpc.client,
-            folder: Option.none(),
-          }),
-        )
-        const [, use] = connectionTools(toolRunner(scope))
+        const { requests, rpc, tools } = yield* fixture()
+        const [, use] = tools
         const call = yield* Effect.promise(() =>
           Promise.resolve(
             use.run({

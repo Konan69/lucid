@@ -26,6 +26,7 @@ import { Gate, GateDecision, type GateExposure } from '../approvals/gate.ts'
 import { silentChangesLayer } from '../live/changes.ts'
 import { threads } from '../threads/tables.ts'
 import {
+  type ExecutorService,
   Executor,
   ExecutorAppId,
   ExecutorAuthorizationId,
@@ -86,7 +87,7 @@ const authorized = (references: ExecutorReferences) =>
   })
 
 /** Source effects and recorded calls belong to the external adapter test boundary. */
-const makeExecutor = (probe: ConnectionProbeService) => {
+const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
   return Executor.of({
     configured: true,
     authorization: Effect.fn('Executor.Test.authorization')(() =>
@@ -103,6 +104,7 @@ const makeExecutor = (probe: ConnectionProbeService) => {
         }),
       ]
     }),
+    add: Effect.fn('Executor.Test.add')((input) => makeExecutor(probe).begin(input)),
     begin: Effect.fn('Executor.Test.begin')(function* (input) {
       yield* Ref.update(probe.begins, (count) => count + 1)
       const identity = {

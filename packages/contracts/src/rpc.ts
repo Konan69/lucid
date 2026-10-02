@@ -29,6 +29,12 @@ import {
   RunCommandRequest,
 } from './computers.js'
 import {
+  AddIntegrationRequest,
+  AddIntegrationOutcome,
+  FindIntegrationsRequest,
+  FindIntegrationsResponse,
+  TestIntegrationRequest,
+  TestIntegrationOutcome,
   BeginConnectionRequest,
   CompleteConnectionRequest,
   ConnectionListResponse,
@@ -461,6 +467,23 @@ const DeleteLibraryFolder = Rpc.make('DeleteLibraryFolder', {
   payload: { id: LibraryFolderId },
 })
 
+/** URL integration discovery/import/testing share the existing attributed Connection boundary. */
+const FindIntegrations = Rpc.make('FindIntegrations', {
+  ...call,
+  payload: FindIntegrationsRequest,
+  success: FindIntegrationsResponse,
+})
+const AddIntegration = Rpc.make('AddIntegration', {
+  ...call,
+  payload: AddIntegrationRequest,
+  success: AddIntegrationOutcome,
+})
+const TestIntegration = Rpc.make('TestIntegration', {
+  ...call,
+  payload: TestIntegrationRequest,
+  success: TestIntegrationOutcome,
+})
+
 // ── Connections (a provider's sign-in redirect returns over plain HTTP) ────
 const ListConnections = Rpc.make('ListConnections', { ...call, success: ConnectionListResponse })
 const WatchConnections = Rpc.make('WatchConnections', {
@@ -680,6 +703,9 @@ export const VividRpc = RpcGroup.make(
   CreateLibraryFolder,
   PatchLibraryFolder,
   DeleteLibraryFolder,
+  FindIntegrations,
+  AddIntegration,
+  TestIntegration,
   ListConnections,
   WatchConnections,
   FindServices,

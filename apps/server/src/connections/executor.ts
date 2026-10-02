@@ -27,13 +27,14 @@ import type * as HttpBody from 'effect/unstable/http/HttpBody'
 
 import { toolMessage } from './message.ts'
 import { retainCatalog } from './catalog.ts'
+import { ConnectionSource } from './address.ts'
 
 export const ExecutorAppId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorAppId'))
 export const ExecutorAccountId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorAccountId'))
 export const ExecutorDeploymentId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorDeploymentId'))
 export const ExecutorProfileId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorProfileId'))
 const ExecutorProviderId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorProviderId'))
-export const connectionSetupMessage = 'This service is not set up on this Vivid yet.'
+export const connectionSetupMessage = 'This integration is not set up on this Vivid yet.'
 export const ExecutorOwnerId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorOwnerId'))
 export const ExecutorAuthorizationId = Schema.NonEmptyString.pipe(
   Schema.brand('ExecutorAuthorizationId'),
@@ -107,6 +108,16 @@ export const ExecutorResumeOutcome = Schema.TaggedUnion({
 })
 
 const errorContext = { service: Schema.Literal('connections'), tool: Schema.NullOr(Schema.String) }
+/** URL registration is disabled until infrastructure declares Executor's public-only egress.
+ * Vivid's preflight cannot constrain a second fetch in a different process. The operator must
+ * disable Executor loopback access and private-origin exceptions before enabling this capability.
+ */
+export class ExecutorPublicAddressRequired extends Schema.TaggedError<ExecutorPublicAddressRequired>()(
+  'ExecutorPublicAddressRequired',
+  {},
+  { title: 'Public integration address enforcement required' },
+) {}
+
 /** Connectivity failures are retryable only before a consequential invocation is dispatched. */
 export class ExecutorTransportFailure extends Schema.TaggedError<ExecutorTransportFailure>()(
   'ExecutorTransportFailure',
@@ -192,6 +203,7 @@ export class ExecutorCopyRetained extends Schema.TaggedError<ExecutorCopyRetaine
 ) {}
 
 export type ExecutorFailure =
+  | ExecutorPublicAddressRequired
   | ServiceUnavailable
   | ExecutorTransportFailure
   | ExecutorResponseInvalid
@@ -251,6 +263,10 @@ export interface ExecutorService {
   >
   readonly begin: (
     input: typeof BeginInput.Type,
+  ) => Effect.Effect<typeof ExecutorStep.Type, ExecutorFailure>
+  /** Register a URL source, then use the same profile and authorization path as catalogue imports. */
+  readonly add: (
+    input: typeof BeginInput.Type & { readonly source: ConnectionSource },
   ) => Effect.Effect<typeof ExecutorStep.Type, ExecutorFailure>
   /** Renew authorization without allocating another app, profile, or account. */
   readonly reauthorize: (
@@ -433,7 +449,7 @@ const failureModes = {
   AccountConnectionNotFound: notReady,
   AccountConnectionClosed: notReady,
   ToolBlocked: FailureMode.cases.Rejected.make({
-    message: 'The service policy blocked this tool.',
+    message: 'The integration policy blocked this tool.',
   }),
   CredentialsError: denied,
   DashboardForbidden: denied,
@@ -469,20 +485,20 @@ const failureModes = {
     message: 'The request is invalid for this installation.',
   }),
   AccountFieldsInvalid: FailureMode.cases.Rejected.make({
-    message: 'Complete the required key fields shown by this service.',
+    message: 'Complete the required key fields shown by this integration.',
   }),
   AuthMethodInvalid: FailureMode.cases.Rejected.make({
-    message: 'The service authorization method changed; start authorization again.',
+    message: 'The integration authorization method changed; start authorization again.',
   }),
   OAuthClientUnavailable: FailureMode.cases.SetupRequired.make({}),
   OAuthSetupFailed: FailureMode.cases.Rejected.make({
-    message: 'The service could not prepare sign-in. Review its OAuth configuration.',
+    message: 'The integration could not prepare sign-in. Review its OAuth configuration.',
   }),
   OAuthCompletionFailed: FailureMode.cases.Rejected.make({
     message: 'Sign-in did not complete. Review the callback or start a new authorization.',
   }),
   AppEvaluationFailed: FailureMode.cases.Rejected.make({
-    message: 'The service could not load its tools. Check its deployment and authorization.',
+    message: 'The integration could not load its tools. Check its deployment and authorization.',
   }),
   CatalogImportFailed: FailureMode.cases.Rejected.make({
     message: 'This catalog entry could not be imported. Check its published configuration.',
@@ -556,7 +572,7 @@ function responseReader(client: HttpClient.HttpClient) {
           return yield* Effect.fail(
             ExecutorRejected.make({
               ...context,
-              message: 'The service refused this request before running the tool.',
+              message: 'The integration refused this request before running the tool.',
             }),
           )
         return yield* Effect.fail(translateFailure(failure._tag, tool))
@@ -573,13 +589,18 @@ function responseReader(client: HttpClient.HttpClient) {
   }
 }
 
-/** Only MCP entries with declared auth are honest before import. Unknown auth and unsupported
- * GraphQL/CLI/OpenAPI imports are excluded rather than advertised as unauthenticated services.
+/** MCP and OpenAPI entries with declared auth are honest before import. Unknown auth and
+ * unsupported GraphQL/CLI imports are excluded rather than advertised as unauthenticated integrations.
  * These are method hints; cached setup inspection selects a usable method before a service is
  * offered or a Connection begins. Mixed imports retain both methods during inspection.
  */
 function catalogEntry(entry: typeof WireCatalogEntry.Type) {
-  if (entry.kind !== 'mcp' || entry.connectUrl === undefined || entry.auth === undefined) return []
+  if (
+    !['mcp', 'openapi'].includes(entry.kind) ||
+    entry.connectUrl === undefined ||
+    entry.auth === undefined
+  )
+    return []
   const authorization = Match.value(entry.auth.kind).pipe(
     Match.when('none', () => ServiceAuthorization.cases.None.make({})),
     Match.whenOr('oauth', 'mixed', () => ServiceAuthorization.cases.SignIn.make({})),
@@ -826,7 +847,8 @@ function makeAuthorize(
         ExecutorRejected.make({
           service: 'connections',
           tool: null,
-          message: 'This service requires a configuration the Connection adapter does not support.',
+          message:
+            'This integration requires a configuration the integration adapter does not support.',
         }),
       )
     const [requirement, definition] = first
@@ -843,7 +865,7 @@ function makeAuthorize(
         ExecutorRejected.make({
           service: 'connections',
           tool: null,
-          message: 'The service does not declare one compatible authorization method.',
+          message: 'The integration does not declare one compatible authorization method.',
         }),
       )
     const [methodName, method] = chosen
@@ -1050,7 +1072,7 @@ function makeInspectSetup(http: ExecutorHttp) {
         ExecutorRejected.make({
           service: 'connections',
           tool: null,
-          message: 'This service does not declare a supported sign-in or key method.',
+          message: 'This integration does not declare a supported sign-in or key method.',
         }),
       )
     return ServiceAuthorization.cases.SetupRequired.make({})
@@ -1066,7 +1088,7 @@ function accountRequirement(app: typeof WireApp.Type) {
       ExecutorRejected.make({
         service: 'connections',
         tool: null,
-        message: 'This service does not declare one supported account.',
+        message: 'This integration does not declare one supported account.',
       }),
     )
   return Effect.succeed(requirement)
@@ -1086,7 +1108,7 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
   // Definitions enter only through explicit Begin/Resume; there is no catalog-detail endpoint.
   const definitions = yield* Ref.make(HashMap.empty<ServiceId, typeof Requirement.Type>())
   /** Publish each completed inspection separately so a slow service never delays its peers.
-   * Log only the service identity and typed failure tag, once on entering failed availability.
+   * Log only the integration identity and typed failure tag, once on entering failed availability.
    */
   const record = Effect.fn('Executor.recordAvailability')(function* (
     service: ServiceId,
@@ -1119,7 +1141,7 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
           ExecutorRejected.make({
             service: 'connections',
             tool: null,
-            message: 'Choose a service from the current catalog.',
+            message: 'Choose an integration from the current catalog.',
           }),
         )
       if (ServiceAuthorization.guards.None(entry.authorization)) return entry.authorization
@@ -1164,10 +1186,20 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
         service: input.service,
         returnAddress: input.returnAddress,
       })
-      return yield* Cache.get(inspections, {
-        service: input.service,
-        returnAddress: input.returnAddress,
-      })
+      const entry = (yield* catalog()).find((candidate) => candidate.id === input.service)
+      if (entry !== undefined)
+        return yield* Cache.get(inspections, {
+          service: input.service,
+          returnAddress: input.returnAddress,
+        })
+      const authorization = yield* inspect(requirement, input.returnAddress).pipe(
+        Effect.timeout('5 seconds'),
+        Effect.catchTag('TimeoutError', () =>
+          Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
+        ),
+      )
+      yield* record(input.service, authorization, Option.none())
+      return authorization
     }),
     authorization: Effect.fn('Executor.authorization')(
       (input: { readonly service: ServiceId; readonly returnAddress: string }) =>
@@ -1227,7 +1259,14 @@ function makeRecoverCopy(http: ExecutorHttp) {
 /** Deterministic names recover a copied app after a lost copy response. Exact owner/name lookup
  * is essential: the installation client itself may list resources belonging to every owner.
  */
-function makeCopy(http: ExecutorHttp) {
+type AppImporter = (
+  input: typeof BeginInput.Type,
+  entry: typeof ExecutorServiceEntry.Type,
+  name: string,
+) => Effect.Effect<typeof WireApp.Type, ExecutorFailure>
+
+/** The import operation varies; owner copying, recovery and cleanup remain one workflow. */
+function makeCopy(http: ExecutorHttp, importApp: AppImporter) {
   const recover = makeRecoverCopy(http)
   return Effect.fn('Executor.copy')(function* (
     input: typeof BeginInput.Type,
@@ -1284,16 +1323,7 @@ function makeCopy(http: ExecutorHttp) {
       return previous
     }
     const imported =
-      template === undefined
-        ? yield* http.readApp(
-            post('/dashboard/api/catalog/import', {
-              entry: entry.id,
-              name: templateName,
-              mcpAuth: yield* importAuthorization(entry.authorization),
-            }),
-            null,
-          )
-        : template
+      template === undefined ? yield* importApp(input, entry, templateName) : template
     const app = yield* http
       .readApp(
         post('/v1/apps/copies', {
@@ -1374,11 +1404,65 @@ function makeBegin(
   http: ExecutorHttp,
   availability: Effect.Success<ReturnType<typeof makeAuthorization>>,
 ) {
+  const copy = makeCopy(
+    http,
+    Effect.fn('Executor.importCatalog')((_input, entry, name) =>
+      Effect.gen(function* () {
+        return yield* http.readApp(
+          post('/dashboard/api/catalog/import', {
+            entry: entry.id,
+            name,
+            mcpAuth: yield* importAuthorization(entry.authorization),
+          }),
+          null,
+        )
+      }),
+    ),
+  )
+  const compensate = makeCompensation(http)
+  const configure = makeConfigure(http, availability)
+  const begin = Effect.fn('Executor.begin')(function* (input: typeof BeginInput.Type) {
+    const entry = (yield* availability.catalog()).find(
+      (candidate) => candidate.id === input.service,
+    )
+    if (entry === undefined)
+      return yield* Effect.fail(
+        ExecutorRejected.make({
+          service: 'connections',
+          tool: null,
+          message: 'Choose a supported integration from the current catalog.',
+        }),
+      )
+    if (ServiceAuthorization.guards.SetupRequired(entry.authorization))
+      return yield* Effect.fail(ExecutorSetupRequired.make({ service: 'connections', tool: null }))
+    const app = yield* copy(input, entry)
+    return yield* Effect.gen(function* () {
+      if (Object.keys(app.requirements.accounts).length === 0)
+        return yield* configure(input, app, entry)
+      const selected = yield* availability.inspectApp(input, app)
+      if (ServiceAuthorization.guards.SetupRequired(selected))
+        return yield* Effect.fail(
+          ExecutorSetupRequired.make({ service: 'connections', tool: null }),
+        )
+      return yield* configure(
+        input,
+        app,
+        ExecutorServiceEntry.make({ ...entry, authorization: selected }),
+      )
+    }).pipe(Effect.catch((error) => compensate(input, app, error)))
+  })
+  const add = makeAdd(http, availability, configure)
+  return { begin, add }
+}
+
+/** Catalogue and URL imports share profile creation, reconciliation and authorization. */
+function makeConfigure(
+  http: ExecutorHttp,
+  availability: Effect.Success<ReturnType<typeof makeAuthorization>>,
+) {
   const reconcile = makeReconcile(http)
   const authorize = makeAuthorize(http, availability.recordSetupRequired)
-  const copy = makeCopy(http)
-  const compensate = makeCompensation(http)
-  const configure = Effect.fn('Executor.configureCopy')(function* (
+  return Effect.fn('Executor.configureCopy')(function* (
     input: typeof BeginInput.Type,
     app: typeof WireApp.Type,
     entry: typeof ExecutorServiceEntry.Type,
@@ -1406,33 +1490,64 @@ function makeBegin(
     }
     return yield* authorize(input, app, references, entry.authorization)
   })
-  return Effect.fn('Executor.begin')(function* (input: typeof BeginInput.Type) {
-    const entry = (yield* availability.catalog()).find(
-      (candidate) => candidate.id === input.service,
+}
+
+/** CustomAppInput carries configuration only; credentials enter through account completion. */
+function makeAdd(
+  http: ExecutorHttp,
+  availability: Effect.Success<ReturnType<typeof makeAuthorization>>,
+  configure: ReturnType<typeof makeConfigure>,
+) {
+  const compensate = makeCompensation(http)
+  /** Executor's CustomAppInput retains configuration, never credentials. The temporary local app
+   * is copied to the caller's storage owner and removed before authorization is offered.
+   */
+  return Effect.fn('Executor.add')(function* (
+    input: typeof BeginInput.Type & { readonly source: ConnectionSource },
+  ) {
+    const entry = ExecutorServiceEntry.make({
+      id: input.service,
+      name: input.label,
+      description: '',
+      authorization: ServiceAuthorization.cases.None.make({}),
+    })
+    const copy = makeCopy(
+      http,
+      Effect.fn('Executor.importAddress')((_input, _entry, name) => {
+        const source = ConnectionSource.match(input.source, {
+          Mcp: ({ address, authorization }) => ({
+            kind: 'mcp',
+            name,
+            url: address,
+            auth:
+              authorization === 'apiKey'
+                ? { type: 'apiKey', header: 'Authorization', prefix: 'Bearer ' }
+                : { type: 'auto' },
+          }),
+          OpenApi: ({ address }) => ({ kind: 'openapi', name, url: address }),
+        })
+        return http.readApp(post('/dashboard/api/apps/import', { source }), null)
+      }),
     )
-    if (entry === undefined)
-      return yield* Effect.fail(
-        ExecutorRejected.make({
-          service: 'connections',
-          tool: null,
-          message: 'Choose a supported service from the current catalog.',
-        }),
-      )
-    if (ServiceAuthorization.guards.SetupRequired(entry.authorization))
-      return yield* Effect.fail(ExecutorSetupRequired.make({ service: 'connections', tool: null }))
     const app = yield* copy(input, entry)
     return yield* Effect.gen(function* () {
-      if (Object.keys(app.requirements.accounts).length === 0)
-        return yield* configure(input, app, entry)
-      const selected = yield* availability.inspectApp(input, app)
-      if (ServiceAuthorization.guards.SetupRequired(selected))
+      const authorization =
+        Object.keys(app.requirements.accounts).length === 0
+          ? ServiceAuthorization.cases.None.make({})
+          : yield* availability.inspectApp(input, app)
+      if (ServiceAuthorization.guards.SetupRequired(authorization))
         return yield* Effect.fail(
           ExecutorSetupRequired.make({ service: 'connections', tool: null }),
         )
       return yield* configure(
         input,
         app,
-        ExecutorServiceEntry.make({ ...entry, authorization: selected }),
+        ExecutorServiceEntry.make({
+          id: input.service,
+          name: input.label,
+          description: '',
+          authorization,
+        }),
       )
     }).pipe(Effect.catch((error) => compensate(input, app, error)))
   })
@@ -1534,7 +1649,7 @@ function makeComplete(http: ExecutorHttp) {
         ExecutorRejected.make({
           service: 'connections',
           tool: null,
-          message: 'This Connection is not waiting for key fields.',
+          message: 'This integration is not waiting for key fields.',
         }),
       )
     const body = yield* encodeKey({
@@ -1568,7 +1683,7 @@ function makeCompleteSignIn(http: ExecutorHttp) {
         ExecutorRejected.make({
           service: 'connections',
           tool: null,
-          message: 'This Connection is not waiting for sign-in.',
+          message: 'This integration is not waiting for sign-in.',
         }),
       )
     const body = yield* encodeSignIn({
@@ -1755,6 +1870,9 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
   url: string,
   key: Redacted.Redacted,
 ) {
+  const publicOnly = yield* Config.Boolean('VIVID_EXECUTOR_PUBLIC_ONLY').pipe(
+    Config.withDefault(false),
+  )
   const transport = yield* HttpClient.HttpClient
   const client = HttpClient.mapRequest(transport, (request) =>
     request.pipe(
@@ -1783,11 +1901,15 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
   const completeSignIn = makeCompleteSignIn(http)
   const remove = makeRemove(http)
   const call = makeCall(http, discover)
+  const registration = makeBegin(http, availability)
   return Executor.of({
     configured: true,
     catalog: availability.catalog,
     authorization: availability.authorization,
-    begin: makeBegin(http, availability),
+    begin: registration.begin,
+    add: Effect.fn('Executor.addPublic')((input) =>
+      publicOnly ? registration.add(input) : Effect.fail(ExecutorPublicAddressRequired.make({})),
+    ),
     reauthorize: makeReauthorize(http, availability),
     complete: Effect.fn('Executor.completeCached')(function* (input: typeof CompleteInput.Type) {
       const references = yield* complete(input)
@@ -1813,7 +1935,7 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
           Cache.invalidate(snapshots, input.references).pipe(
             Effect.as(
               ExecutorCallOutcome.cases.Rejected.make({
-                message: 'The Connection changed; discover its tools again.',
+                message: 'The integration changed; discover its tools again.',
               }),
             ),
           ),
@@ -1843,7 +1965,7 @@ export const executorLayer = Layer.effect(
       const unavailable = Effect.fail(
         ServiceUnavailable.make({
           service: 'connections',
-          message: 'Configure VIVID_EXECUTOR_URL and VIVID_EXECUTOR_KEY to use Connections',
+          message: 'Configure VIVID_EXECUTOR_URL and VIVID_EXECUTOR_KEY to use integrations',
         }),
       )
       return Executor.of({
@@ -1851,6 +1973,7 @@ export const executorLayer = Layer.effect(
         catalog: Effect.fn('Executor.catalog')(() => unavailable),
         authorization: Effect.fn('Executor.authorization')(() => unavailable),
         begin: Effect.fn('Executor.begin')(() => unavailable),
+        add: Effect.fn('Executor.add')(() => unavailable),
         reauthorize: Effect.fn('Executor.reauthorize')(() => unavailable),
         complete: Effect.fn('Executor.complete')(() => unavailable),
         completeSignIn: Effect.fn('Executor.completeSignIn')(() => unavailable),

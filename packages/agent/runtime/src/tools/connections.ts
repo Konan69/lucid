@@ -1,5 +1,5 @@
 import { defineTool } from '@flue/runtime'
-import { InvalidRequest } from '@vivid/contracts'
+import { AddIntegrationOutcome, InvalidRequest, TestIntegrationOutcome } from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
@@ -7,6 +7,8 @@ import { catalog, named } from './names.ts'
 import { toolOutcome } from './outcomes.ts'
 import { Scope, type RunTool } from './scope.ts'
 import * as views from './views.ts'
+import * as connectionViews from './connectionviews.ts'
+import { INTEGRATIONS } from './integrations.ts'
 
 const decodeInput = Schema.decodeUnknownEffect(Schema.Json)
 
@@ -16,7 +18,7 @@ export function connectionTools(runTool: RunTool) {
     defineTool({
       name: 'find_tools',
       description:
-        'Find connected tools for a concrete request and services that could be connected to help.',
+        'Find connected tools for a concrete request and integrations that could be connected to help.',
       input: v.object({ query: text('What you need to do or find.', 200) }),
       /** Account names are assigned by the server before ranking and limiting discovery. */
       run({ data, signal }) {
@@ -34,10 +36,11 @@ export function connectionTools(runTool: RunTool) {
     useTool(runTool),
     defineTool({
       name: 'connect',
-      description: 'Offer the service named in find_tools as a Connect card for the person.',
+      description:
+        'Offer the integration named in find_tools as a secure connect card for the person.',
       input: v.object({
-        service: text('The service name shown in unconnected by find_tools.', 200),
-        reason: text('Why this request needs the service.', 400),
+        service: text('The integration name shown in unconnected by find_tools.', 200),
+        reason: text('Why this request needs the integration.', 400),
       }),
       /** FindServices is Person-only; runtime authority resolves services through FindTools instead. */
       run({ data, signal }) {
@@ -61,6 +64,7 @@ export function connectionTools(runTool: RunTool) {
         )
       },
     }),
+    ...integrationTools(runTool),
   ] as const
 }
 
@@ -105,3 +109,72 @@ function useTool(runTool: RunTool) {
     },
   })
 }
+
+/** Fixed discovery/import/test tools keep credentials and record handles out of model inputs. */
+function integrationTools(runTool: RunTool) {
+  return [
+    defineTool({
+      name: 'find_integrations',
+      description: 'Find your integrations first, then catalogue matches, with connected status.',
+      input: v.object({ query: v.pipe(v.string(), v.maxLength(200)) }),
+      /** Access is rechecked by the server for the injected acting Person. */
+      run({ data, signal }) {
+        return runTool(
+          Effect.gen(function* () {
+            const { client } = yield* Scope
+            return { output: connectionViews.integrations(yield* client.FindIntegrations(data)) }
+          }),
+          { signal },
+        )
+      },
+    }),
+    defineTool({
+      name: 'add_integration',
+      description:
+        'Add an integration from a public MCP server URL, API documentation URL, or OpenAPI specification URL. Sign-in or key entry uses a secure card; stop and wait when needed. Documentation must publish a specification link.',
+      input: v.object({
+        address: text('Public MCP or OpenAPI specification URL, without credentials.', 4000),
+        name: text('A clear name for this integration account.', 40),
+      }),
+      /** Models cannot choose Company sharing or submit credential fields. */
+      run({ data, signal }) {
+        return runTool(
+          Effect.gen(function* () {
+            const { client } = yield* Scope
+            const outcome = yield* client.AddIntegration({ ...data, shared: false })
+            return {
+              output: connectionViews.added(outcome),
+              terminate: AddIntegrationOutcome.isAnyOf(['NeedsSignIn', 'NeedsKey'])(outcome),
+            }
+          }),
+          { signal },
+        )
+      },
+    }),
+    defineTool({
+      name: 'test_integration',
+      description:
+        'List an integration’s tools and test one read-only call when its input can be safely determined. Report the result in a sentence; stop when approval is needed.',
+      input: v.object({
+        account: text('The exact account name shown by find_integrations or find_tools.', 300),
+      }),
+      /** Gate decisions and external dispatch remain server-owned. */
+      run({ data, signal }) {
+        return runTool(
+          Effect.gen(function* () {
+            const { client } = yield* Scope
+            const outcome = yield* client.TestIntegration(data)
+            return {
+              output: connectionViews.tested(outcome),
+              terminate: TestIntegrationOutcome.guards.ApprovalRequired(outcome),
+            }
+          }),
+          { signal },
+        )
+      },
+    }),
+  ] as const
+}
+
+/** The instruction owner can use the already-imported factory to compose this lane's paragraph. */
+connectionTools.instructions = INTEGRATIONS

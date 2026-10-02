@@ -206,7 +206,7 @@ export const runConnection = Effect.fn('Connections.run')(function* (
           ExecutorResumeOutcome.match<ToolOutcome>(resumed, {
             Completed: ({ value }) => ToolOutcome.cases.Completed.make({ output: value }),
             Denied: () =>
-              ToolOutcome.cases.Rejected.make({ message: 'The service declined the action.' }),
+              ToolOutcome.cases.Rejected.make({ message: 'The integration declined the action.' }),
             Failed: ({ reason }) => ToolOutcome.cases.Rejected.make({ message: reason }),
             AlreadyConsumed: () => ToolOutcome.cases.OutcomeUnknown.make({}),
             OutcomeUnknown: () => ToolOutcome.cases.OutcomeUnknown.make({}),
@@ -241,7 +241,7 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
     Effect.catchTag('NotFound', () => Effect.succeed(Option.none())),
   )
   if (Option.isNone(found))
-    return ToolOutcome.cases.Rejected.make({ message: 'This Connection is not available to you.' })
+    return ToolOutcome.cases.Rejected.make({ message: 'This integration is not available to you.' })
   const row = found.value
   const state = yield* stateOf(row)
   if (ConnectionState.guards.Failed(state))
@@ -259,15 +259,15 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
     }),
   )
   if (Option.isNone(tools))
-    return ToolOutcome.cases.Rejected.make({ message: 'Connections are unavailable.' })
+    return ToolOutcome.cases.Rejected.make({ message: 'Integrations are unavailable.' })
   const tool = tools.value.find((entry) => entry.name === request.tool)
   if (tool === undefined)
     return ToolOutcome.cases.Rejected.make({
-      message: `Tool ${request.tool} is not available on this Connection.`,
+      message: `Tool ${request.tool} is not available on this integration.`,
     })
   if (row.companyId !== null && tool.effect !== 'read')
     return ToolOutcome.cases.Rejected.make({
-      message: 'Shared Connections are read-only. Connect your own account to make this change.',
+      message: 'Shared integrations are read-only. Connect your own account to make this change.',
     })
   const target = ActionTarget.cases.Connection.make({
     connectionId: row.id,
@@ -299,7 +299,7 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
 const unavailableAction = () =>
   Effect.succeed(
     ActionOutcome.cases.Failed.make({
-      reason: 'The Connection is no longer available; check its authorization and your access.',
+      reason: 'The integration is no longer available; check its authorization and your access.',
     }),
   )
 
@@ -327,7 +327,7 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     if (ConnectionState.guards.Failed(state))
       return ActionOutcome.cases.Failed.make({ reason: state.reason })
     if (ConnectionState.guards.NeedsAuthorization(state))
-      return ActionOutcome.cases.Failed.make({ reason: 'This Connection needs authorization.' })
+      return ActionOutcome.cases.Failed.make({ reason: 'This integration needs authorization.' })
     // This read precedes dispatch, so losing discovery is a failed, retryable action.
     const discovered = yield* store.tools(actor, row).pipe(
       Effect.catchTag('ServiceUnavailable', () =>
@@ -341,14 +341,14 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     const tool = discovered.find((entry) => entry.name === input.target.tool)
     if (tool === undefined || (row.companyId !== null && tool.effect !== 'read'))
       return ActionOutcome.cases.Failed.make({
-        reason: 'This tool is no longer available on this Connection.',
+        reason: 'This tool is no longer available on this integration.',
       })
     return ToolOutcome.match<ActionOutcome>(yield* runConnection(actor, row, input.target), {
       Completed: ({ output }) =>
         ActionOutcome.cases.Succeeded.make({ result: JSON.stringify(output).slice(0, 4000) }),
       Rejected: ({ message }) => ActionOutcome.cases.Failed.make({ reason: message }),
       ConnectionNotReady: () =>
-        ActionOutcome.cases.Failed.make({ reason: 'This Connection needs authorization.' }),
+        ActionOutcome.cases.Failed.make({ reason: 'This integration needs authorization.' }),
       OutcomeUnknown: () => ActionOutcome.cases.Unknown.make({}),
       Blocked: ({ rule }) => ActionOutcome.cases.Failed.make({ reason: rule }),
       ApprovalRequired: () =>

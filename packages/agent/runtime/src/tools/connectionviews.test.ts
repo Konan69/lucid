@@ -1,0 +1,116 @@
+import { describe, expect, it } from 'vitest'
+import {
+  AddIntegrationOutcome,
+  Connection,
+  ConnectionAuthorizationMessage,
+  ConnectionId,
+  ConnectionMatch,
+  ConnectionOwnership,
+  ConnectionState,
+  ConnectionStep,
+  PersonId,
+  ServiceId,
+  TestIntegrationOutcome,
+} from '@vivid/contracts'
+import { Schema } from 'effect'
+import { added, integrations, tested } from './connectionviews.ts'
+
+const connection = Connection.make({
+  id: ConnectionId.make('MARK-connection'),
+  service: ServiceId.make('MARK-service'),
+  serviceName: 'Records',
+  label: 'Work',
+  ownership: ConnectionOwnership.cases.Personal.make({
+    owner: { id: PersonId.make('MARK-person'), name: 'Ada', image: null },
+  }),
+  state: ConnectionState.cases.NeedsAuthorization.make({}),
+  createdAt: 1,
+})
+const decodeCard = Schema.decodeUnknownSync(ConnectionAuthorizationMessage)
+
+/** Projections are exercised with recognizable authority and secret markers from upstream records. */
+describe('integration model views', () => {
+  it('projects discovery and test receipts without identifiers or persisted failure diagnostics', () => {
+    const view = integrations({
+      catalog: 'available',
+      integrations: [
+        ConnectionMatch.cases.Account.make({
+          name: 'Records',
+          account: 'Work',
+          connected: false,
+          shared: false,
+          state: ConnectionState.cases.Failed.make({ reason: 'KEY-MUST-NOT-APPEAR' }),
+        }),
+        ConnectionMatch.cases.Catalog.make({
+          name: 'Linear',
+          description: 'Track issues',
+          connected: false,
+        }),
+      ],
+    })
+    expect(view).toMatchObject({
+      integrations: [
+        { account: 'Work', state: 'failed' },
+        { name: 'Linear', connected: false },
+      ],
+    })
+    expect(JSON.stringify(view)).not.toContain('KEY-MUST-NOT-APPEAR')
+    const receipt = tested(
+      TestIntegrationOutcome.cases.Tested.make({
+        account: 'Work',
+        tools: ['health'],
+        tool: 'health',
+      }),
+    )
+    expect(receipt).toEqual({
+      works: true,
+      account: 'Work',
+      tools: ['health'],
+      testedTool: 'health',
+    })
+    expect(JSON.stringify({ view, receipt })).not.toContain('MARK-')
+  })
+  it('emits an OAuth card with only the existing card references and secure address', () => {
+    const view = decodeCard(
+      added(
+        AddIntegrationOutcome.cases.NeedsSignIn.make({
+          step: ConnectionStep.cases.OpenSignIn.make({
+            connection,
+            address: 'https://service.example/sign-in',
+          }),
+        }),
+      ),
+    )
+    expect(view).toMatchObject({
+      kind: 'connection-request',
+      service: 'MARK-service',
+      authorization: {
+        connectionId: 'MARK-connection',
+        address: 'https://service.example/sign-in',
+      },
+    })
+    expect(JSON.stringify(view)).not.toContain('MARK-person')
+    expect(JSON.stringify(view)).not.toContain('ownership')
+  })
+  it('emits only masked-dialog field definitions and never a key submission', () => {
+    const view = decodeCard(
+      added(
+        AddIntegrationOutcome.cases.NeedsKey.make({
+          step: ConnectionStep.cases.EnterKey.make({
+            connection,
+            fields: [{ name: 'apiKey', label: 'API key' }],
+          }),
+        }),
+      ),
+    )
+    expect(view).toMatchObject({
+      kind: 'connection-request',
+      authorization: {
+        connectionId: 'MARK-connection',
+        fields: [{ name: 'apiKey', label: 'API key' }],
+      },
+    })
+    expect(JSON.stringify(view)).not.toContain('MARK-person')
+    expect(JSON.stringify(view)).not.toContain('KEY-MUST-NOT-APPEAR')
+  })
+})
