@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import { boolean, index, jsonb, pgTable, text } from 'drizzle-orm/pg-core'
 import { threads } from '../threads/tables.ts'
 import { personTable } from '../auth/tables.ts'
@@ -35,7 +36,9 @@ export const inputRequests = pgTable(
     createdAt: epoch('created_at').notNull(),
   },
   (table) => [
-    index('vivid_input_requests_signal').on(table.signalDueAt),
+    index('vivid_input_requests_signal')
+      .on(table.signalDueAt)
+      .where(sql`${table.signal}->>'_tag' = 'Owed'`),
     index('vivid_input_requests_thread').on(table.threadId, table.createdAt),
     index('vivid_input_requests_person').on(table.personId, table.status),
   ],

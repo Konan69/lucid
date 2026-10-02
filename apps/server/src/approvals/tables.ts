@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import { index, jsonb, pgTable, text } from 'drizzle-orm/pg-core'
 import { threads } from '../threads/tables.ts'
 import { personTable } from '../auth/tables.ts'
@@ -43,7 +44,9 @@ export const approvals = pgTable(
     createdAt: epoch('created_at').notNull(),
   },
   (table) => [
-    index('vivid_approvals_signal').on(table.signalDueAt),
+    index('vivid_approvals_signal')
+      .on(table.signalDueAt)
+      .where(sql`${table.signal}->>'_tag' = 'Owed'`),
     index('vivid_approvals_thread').on(table.threadId, table.createdAt),
     index('vivid_approvals_person').on(table.personId, table.status),
     index('vivid_approvals_pending').on(table.status, table.expiresAt),
