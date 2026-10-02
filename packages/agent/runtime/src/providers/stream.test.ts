@@ -85,6 +85,9 @@ describe.skipIf(!testDatabaseConfigured)('provider failure settlement chain', ()
       const db = yield* flueDatabase()
       const provider = {
         ...builtIn,
+        // pi-ai Models applies auth before invoking our stream. This controlled provider is
+        // keyless, like pi-ai's faux provider; no real credentials or network are involved.
+        auth: { apiKey: { name: 'Controlled test provider', resolve: async () => ({ auth: {} }) } },
         streamSimple: () =>
           new ModelStream(
             Stream.fail(new OpaqueFailure({ model: ModelName.make(model.id), transient: false })),
