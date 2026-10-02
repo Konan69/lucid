@@ -11,6 +11,8 @@ const project = {
     // SQL pools and supervised interpreter cgroups are real resources, independent of Vitest
     // workers. Bound file concurrency so host startup cannot starve another test's receipts.
     maxWorkers: 2,
+    // Vitest runs project groups with different worker caps only at distinct sequence orders.
+    sequence: { groupOrder: 1 },
   },
 }
 
