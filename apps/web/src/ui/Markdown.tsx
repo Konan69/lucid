@@ -149,7 +149,7 @@ function normalizeTypedBullets(content: string) {
         return line
       }
       if (marker !== null) {
-        fence = { marker: marker[0], length: marker.length }
+        fence = { marker: marker.charAt(0), length: marker.length }
         return line
       }
       if (/^(?: {4}|\t)/u.test(line)) return line
