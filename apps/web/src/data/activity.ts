@@ -28,6 +28,9 @@ const Asked = Schema.Struct({
   /** `update_task` and `schedule_follow_up` name the Task by its title. */
   task: text,
   question: text,
+  /** `forget` says what to forget; `correct` says what is true now. */
+  what: text,
+  now: text,
 })
 type Asked = typeof Asked.Type
 
@@ -185,6 +188,22 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.content)],
   },
+  forget: {
+    said: {
+      running: 'Forgetting',
+      done: 'Forgot something',
+      failed: 'Could not forget that',
+    },
+    detail: (asked) => [said(asked.what)],
+  },
+  correct: {
+    said: {
+      running: 'Correcting what it knows',
+      done: 'Corrected what it knows',
+      failed: 'Could not correct that',
+    },
+    detail: (asked) => [said(asked.now)],
+  },
   read_skill: {
     said: {
       running: 'Reading how it does this',
@@ -262,6 +281,8 @@ const NOTHING_ASKED: Asked = {
   title: Option.none(),
   task: Option.none(),
   question: Option.none(),
+  what: Option.none(),
+  now: Option.none(),
 }
 
 const NOTHING_ANSWERED: Answered = {

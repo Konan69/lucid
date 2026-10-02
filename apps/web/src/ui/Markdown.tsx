@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from './cn'
@@ -6,6 +6,66 @@ import { Recover } from './Recover'
 
 /** Stable plugin list: a fresh array each render would make ReactMarkdown rebuild its processor. */
 const REMARK_PLUGINS = [remarkGfm]
+
+/** What the table's copy control says for each thing that can have happened to the last press. */
+const COPY_TABLE = {
+  idle: 'Copy table',
+  copied: 'Copied',
+  refused: 'Could not copy',
+} satisfies Record<'idle' | 'copied' | 'refused', string>
+
+/**
+ * A table as a spreadsheet takes it: one row per line, cells separated by tabs. Pasted into
+ * Sheets, Excel or Numbers this lands as cells, which comma-separated text pasted from a
+ * clipboard does not. A tab or a line break inside a cell becomes a space, so it cannot split one.
+ */
+const asCells = (table: HTMLTableElement) =>
+  Array.from(table.rows)
+    .map((row) =>
+      Array.from(row.cells)
+        .map((cell) => cell.innerText.replaceAll(/[\t\n\r]+/gu, ' ').trim())
+        .join('\t'),
+    )
+    .join('\n')
+
+/**
+ * A table in a reply, with one press to take it elsewhere. A comparison or a schedule is usually
+ * on its way to a spreadsheet, and selecting a rendered table by hand copies its layout, not its
+ * cells. The control sits under the table, where it covers nothing and a touch screen can reach it.
+ */
+function Table({ children }: { children: ReactNode }) {
+  const [state, setState] = useState<keyof typeof COPY_TABLE>('idle')
+  return (
+    <div data-table className="my-3">
+      <div className="overflow-x-auto rounded-control ring-line">
+        <table className="w-full border-collapse text-label">{children}</table>
+      </div>
+      <div className="mt-1 flex justify-end">
+        <button
+          type="button"
+          onClick={(event) => {
+            // The table is read from the page as it is drawn: it is the control's own sibling.
+            const block = event.currentTarget.closest('[data-table]')
+            const table = block === null ? null : block.querySelector('table')
+            if (table === null || !('clipboard' in navigator)) {
+              setState('refused')
+              return
+            }
+            void navigator.clipboard.writeText(asCells(table)).then(
+              () => setState('copied'),
+              () => setState('refused'),
+            )
+          }}
+          onBlur={() => setState('idle')}
+          onMouseLeave={() => setState('idle')}
+          className="cursor-pointer rounded-xs px-1 text-meta font-meta text-ink-3 transition-colors duration-(--dur-fast) hover:text-ink"
+        >
+          {COPY_TABLE[state]}
+        </button>
+      </div>
+    </div>
+  )
+}
 
 /**
  * Element renderers for message Markdown. Module scope keeps their identity stable, so a
@@ -52,11 +112,7 @@ const MARKDOWN_COMPONENTS: Components = {
       {children}
     </pre>
   ),
-  table: ({ children }) => (
-    <div className="my-3 overflow-x-auto rounded-control ring-line">
-      <table className="w-full border-collapse text-label">{children}</table>
-    </div>
-  ),
+  table: ({ children }) => <Table>{children}</Table>,
   td: ({ children }) => <td className="border-t border-line-2 px-3 py-2 align-top">{children}</td>,
   th: ({ children }) => <th className="bg-surface-2 px-3 py-2 text-left font-title">{children}</th>,
   ul: ({ children }) => <ul className="my-2 list-disc space-y-1">{children}</ul>,
