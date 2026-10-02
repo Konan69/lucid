@@ -111,9 +111,8 @@ engine.registry.subscribe(live.me.atom, (result) => {
   engine.reopen()
 })
 
-// What has already been told, so each notice is announced once.
-const told = new Set<string>()
-let toldBefore = false
+// The latest notification window for each workspace is its baseline and deduplication set.
+const told = new Map<string, ReadonlySet<string>>()
 
 /**
  * Says so when something finishes or needs the Person while they are somewhere else in the app.
@@ -124,13 +123,13 @@ let toldBefore = false
  * nothing is announced about the Thread that is on screen, which the Person is already reading.
  */
 engine.registry.subscribe(live.notifications.atom, (result) => {
-  if (!AsyncResult.isSuccess(result)) return
+  if (!AsyncResult.isSuccess(result) || lastWhereabouts === 'nowhere') return
+  const previous = told.get(lastWhereabouts)
   const fresh = result.value.notifications.filter(
-    (notice) => notice.readAt === null && !told.has(notice.id),
+    (notice) => notice.readAt === null && (previous === undefined || !previous.has(notice.id)),
   )
-  for (const notice of result.value.notifications) told.add(notice.id)
-  if (!toldBefore) {
-    toldBefore = true
+  told.set(lastWhereabouts, new Set(result.value.notifications.map((notice) => notice.id)))
+  if (previous === undefined) {
     return
   }
   const here = router.route()
@@ -167,8 +166,17 @@ const markSeen = (id: ThreadId, result: LiveResult<ThreadDetail>) => {
   if (!AsyncResult.isSuccess(result)) return
   const moved = result.value.thread.updatedAt
   const last = seen.get(id)
-  if (last !== undefined && last >= moved) return
+  if (last !== undefined && last >= moved) {
+    seen.delete(id)
+    seen.set(id, last)
+    return
+  }
+  seen.delete(id)
   seen.set(id, moved)
+  if (seen.size > 50) {
+    const oldest = seen.keys().next().value
+    if (oldest !== undefined) seen.delete(oldest)
+  }
   // Remembered at once so a burst of results reports once, and forgotten again if the report did
   // not get through, so the next result tries again instead of leaving read work marked unread.
   const forget = () => {
