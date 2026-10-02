@@ -495,18 +495,17 @@ function RoutineDetail({
   /** The page shows the saved Routine at once; a refused save puts it back and says why. */
   async function save(event: FormEvent) {
     event.preventDefault()
-    const changes = {
+    const submitted = {
       name: fields.name.trim(),
       prompt: fields.prompt.trim(),
       trigger: routinesData.triggerOf(fields, zone),
     }
     const result = await change(
-      (client) => client.PatchRoutine({ id: routine.id, patch: changes }),
-      () => live.routines.expect(routinesData.edited(routine.id, changes)),
+      (client) => client.PatchRoutine({ id: routine.id, patch: submitted }),
+      () => live.routines.expect(routinesData.edited(routine.id, submitted)),
     )
-    // Saved: the Routine now says what the editor said, so nothing is the Person's edit any more.
-    // Refused: what they wrote stays in the editor.
-    if (Result.isSuccess(result)) setEdits(routinesData.noEdits)
+    // Keep edits made while the request was in flight; only the submitted values now live on the Routine.
+    if (Result.isSuccess(result)) setEdits((current) => routinesData.unsaved(current, submitted))
     onRefused(refusal(result))
   }
 
