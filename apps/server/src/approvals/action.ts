@@ -31,4 +31,5 @@ export const auditAction = (action: ProposedAction) =>
     Connection: ({ account, tool }) => ({ service: account, tool }),
     Command: () => ({ service: 'Computer', tool: 'command' }),
     Browser: () => ({ service: 'Computer', tool: 'browser' }),
+    Desktop: () => ({ service: 'Computer', tool: 'desktop' }),
   })

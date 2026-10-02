@@ -11,6 +11,8 @@ import {
   ApprovalDecision,
   ApprovalState,
   AuditEvent,
+  ActionTarget,
+  DesktopAction,
   Conflict,
   DatabaseFailure,
   NotFound,
@@ -34,6 +36,30 @@ const always = ApprovalDecision.cases.AlwaysAllow.make({})
 
 /** All writes use production stores against the isolated database; disabled without its explicit URL. */
 describe.skipIf(!testDatabaseConfigured)('Approval claims and outcomes', () => {
+  it.effect('a Desktop decision records capability metadata without private action input', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const store = yield* ApprovalStore
+      const action = ProposedAction.make({
+        ...commandAction,
+        target: ActionTarget.cases.Desktop.make({
+          action: DesktopAction.cases.Type.make({ text: 'Private content' }),
+        }),
+      })
+      const approval = yield* store.raise(test.vivid, action)
+      yield* store.decide(test.personal, {
+        id: approval.id,
+        digest: approval.digest,
+        decision: ApprovalDecision.cases.Deny.make({}),
+      })
+      const audit = yield* loadAudit(test.personal)
+      expect(audit.entries).toMatchObject([
+        { event: AuditEvent.cases.ActionDenied.make({ service: 'Computer', tool: 'desktop' }) },
+      ])
+      expect(JSON.stringify(audit)).not.toContain('Private content')
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
   it.effect('two concurrent decisions execute once and the loser gets Conflict', () =>
     Effect.gen(function* () {
       const test = yield* fixture()
