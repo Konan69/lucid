@@ -10,7 +10,7 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { draftPlace, titleFromMessage } from '@vivid/state'
-import { Option } from 'effect'
+import { Option, Schema } from 'effect'
 import { ArrowDown, Lock, MonitorSmartphone, Share2, Users } from 'lucide-react'
 import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { change, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
@@ -103,7 +103,7 @@ function Conversation({
   const agent = useFlueAgent({ client })
   const [sharing, setSharing] = useState(false)
   // Words that were sent from here and refused. They are kept, never dropped, until sent again.
-  const [unsent, setUnsent] = useState<Option.Option<string>>(Option.none())
+  const [unsent, setUnsent] = useState<Option.Option<Unsent>>(Option.none())
   // Being on this screen is what makes the Person present in the Thread; see `presentIn`.
   useAtomMount(presentIn(id))
   const setTyping = useAtomSet(typingIn(id))
@@ -138,7 +138,7 @@ function Conversation({
     const sending = shared
       ? client.send({ message: { kind: 'user', body: text } })
       : agent.sendMessage(text)
-    void sending.catch(() => setUnsent(Option.some(text)))
+    void sending.catch((refusal) => setUnsent(Option.some({ words: text, why: whyNot(refusal) })))
   }
 
   const lastSaid = lastWords(visible, me)
@@ -174,7 +174,11 @@ function Conversation({
         ))}
         <OnTheirWay first={first} onAgain={() => firstWords.again(id)} />
         {Option.isSome(unsent) && (
-          <NotSent words={unsent.value} onAgain={() => send(unsent.value)} />
+          <NotSent
+            words={unsent.value.words}
+            why={unsent.value.why}
+            onAgain={() => send(unsent.value.words)}
+          />
         )}
         {Option.isSome(ended) && (
           <Outcome run={ended.value} onAgain={Option.map(lastSaid, (words) => () => send(words))} />
@@ -292,22 +296,51 @@ function OnTheirWay({ first, onAgain }: { first: FirstWords; onAgain: () => void
         <Said text={words} mine />
       </li>
     ),
-    Unsent: ({ words }) => <NotSent words={words} onAgain={onAgain} />,
+    Unsent: ({ words }) => <NotSent words={words} why={Option.none()} onAgain={onAgain} />,
   })
 }
+
+/** Words that were sent from here and refused, and the reason when the server gave one. */
+interface Unsent {
+  readonly words: string
+  readonly why: Option.Option<string>
+}
+
+/**
+ * The one refusal that comes with a sentence for the Person: in a shared Thread, Vivid is still
+ * answering someone else, and one response is for one Person. The conversation gateway answers
+ * that with 409 and the sentence; any other failure has no words worth showing and reads as
+ * "Not sent".
+ */
+const Busy = Schema.Struct({
+  status: Schema.Literal(409),
+  body: Schema.Struct({ error: Schema.Struct({ message: Schema.String }) }),
+})
+const whyNot = (refusal: Parameters<typeof readBusy>[0]) =>
+  Option.map(readBusy(refusal), (busy) => busy.body.error.message)
+const readBusy = Schema.decodeUnknownOption(Busy)
 
 /**
  * Words that left this page and did not arrive. They stay where they were written, marked, with
  * the one thing to do about it; a message a Person typed is never silently lost.
  */
-function NotSent({ words, onAgain }: { words: string; onAgain: () => void }) {
+function NotSent({
+  words,
+  why,
+  onAgain,
+}: {
+  words: string
+  /** The server's own sentence for why, when it gave one meant for the Person. */
+  why: Option.Option<string>
+  onAgain: () => void
+}) {
   return (
     <li className="flex flex-col items-end gap-1.5">
       <div className="w-full opacity-60">
         <Said text={words} mine />
       </div>
       <p role="alert" className="text-meta font-meta text-danger">
-        Not sent.{' '}
+        {Option.getOrElse(why, () => 'Not sent.')}{' '}
         <button
           onClick={onAgain}
           className="cursor-pointer rounded-xs underline underline-offset-4 hover:text-ink focus-visible:text-ink"
