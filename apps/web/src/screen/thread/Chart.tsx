@@ -60,7 +60,7 @@ const { width: W, height: H, left: LEFT, right: RIGHT } = CHART
 
 /** Bars or lines over shared labels, on a scale that starts at zero unless values go below it. */
 function Plot({ chart }: { chart: ChartKind }) {
-  const { top, y, slot, every } = chartScale(chart)
+  const { top, y, slot, every } = chartScale(chart, CHART)
   return (
     <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={chart.title} className="w-full">
       <line
@@ -82,6 +82,10 @@ function Plot({ chart }: { chart: ChartKind }) {
       />
       <text x={LEFT} y={y(top) - 3} className="fill-ink-3 text-meta tabular-nums">
         {said(top, chart.unit)}
+      </text>
+      {/* Under the baseline, clear of the bars: the other end of the scale, so a height reads against two numbers. */}
+      <text x={LEFT} y={y(0) + 11} className="fill-ink-3 text-meta tabular-nums">
+        {said(0, chart.unit)}
       </text>
       {chart.kind === 'bar' ? (
         <Bars chart={chart} slot={slot} y={y} />
@@ -145,8 +149,17 @@ function Lines({
   y: (value: number) => number
 }) {
   const x = (index: number) => LEFT + slot * index + slot / 2
+  // One line alone also gets the area under it, in the same colour at a whisper; with several, the
+  // fills would stack into mud, so they stay lines.
+  const area = chart.series.length === 1
   return chart.series.map((series, order) => (
     <g key={series.name}>
+      {area && (
+        <polygon
+          points={`${x(0)},${y(0)} ${series.values.map((value, index) => `${x(index)},${y(value)}`).join(' ')} ${x(series.values.length - 1)},${y(0)}`}
+          className="fill-accent/10"
+        />
+      )}
       <polyline
         points={series.values.map((value, index) => `${x(index)},${y(value)}`).join(' ')}
         fill="none"

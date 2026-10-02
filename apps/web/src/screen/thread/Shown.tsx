@@ -1,12 +1,14 @@
 import { Shown as ShownKind } from '@vivid/contracts'
-import { DRAFT_WORDS as DRAFT, formReply, siteOf as site } from '@vivid/state'
+import { DRAFT_WORDS as DRAFT, formReply, siteOf as site, togglePicked } from '@vivid/state'
 import {
   Check,
   CheckCircle2,
   Circle,
   CircleDot,
   CircleSlash,
+  ChevronRight,
   ExternalLink,
+  ImageOff,
   Minus,
   Plus,
 } from 'lucide-react'
@@ -64,9 +66,9 @@ function Frame({
   children: ReactNode
 }) {
   return (
-    <section className="mt-3 overflow-hidden rounded-card bg-surface-3 smooth-shadow-ring-xs">
+    <section className="mt-3 min-w-0 overflow-hidden rounded-card bg-surface-3 smooth-shadow-ring-xs">
       {title !== undefined && (
-        <h3 className="px-4 pt-3.5 pb-1 text-label font-title text-balance text-ink">{title}</h3>
+        <h3 className="px-4 pt-3.5 pb-2 text-title font-title text-balance text-ink">{title}</h3>
       )}
       <div className={cn(!flush && 'px-4 pb-4', !flush && title === undefined && 'pt-4')}>
         {children}
@@ -75,18 +77,44 @@ function Frame({
   )
 }
 
+/** A cell that reads as a number, a price or a share: what a column of them should line up on. */
+const NUMBER = /^[-+−]?[$€£₦¥]?\s?\d[\d,.\s]*(?:%|[kKmMbB]|\s?[A-Za-z]{1,4})?$/u
+
+/** Columns whose every filled cell is a number are set flush right, so digits line up to compare. */
+const numericColumns = (table: Kind<'Table'>) =>
+  table.columns.map((_, column) => {
+    const cells = table.rows
+      .map((row) =>
+        row
+          .slice(column, column + 1)
+          .join('')
+          .trim(),
+      )
+      .filter((cell) => cell.length > 0)
+    return cells.length > 0 && cells.every((cell) => NUMBER.test(cell))
+  })
+
+/**
+ * Rows of text under a header that stays put while a long table scrolls inside its frame (sixty
+ * rows must not push the conversation off the screen). The first column names the row; numeric
+ * columns are right-aligned; a table with no rows says so instead of drawing a lone header.
+ */
 function TableShown({ table }: { table: Kind<'Table'> }) {
+  const numeric = numericColumns(table)
   return (
     <Frame title={table.title} flush>
-      <div className="overflow-x-auto">
+      <div className="max-h-96 overflow-auto">
         <table className="w-full border-collapse text-left text-label">
           <thead>
             <tr>
-              {table.columns.map((column) => (
+              {table.columns.map((column, cell) => (
                 <th
                   key={column}
                   scope="col"
-                  className="px-4 py-2 text-meta font-title whitespace-nowrap text-ink-3 hairline-b"
+                  className={cn(
+                    'sticky top-0 bg-surface-3 px-4 py-2 text-meta font-title whitespace-nowrap text-ink-3 hairline-b',
+                    numeric[cell] && 'text-right',
+                  )}
                 >
                   {column}
                 </th>
@@ -95,11 +123,21 @@ function TableShown({ table }: { table: Kind<'Table'> }) {
           </thead>
           <tbody>
             {table.rows.map((row, at) => (
-              // Rows have no identity but their place, and the table is drawn once.
-              // oxlint-disable-next-line react/no-array-index-key
-              <tr key={at} className="hairline-b last:shadow-none">
+              <tr
+                // Rows have no identity but their place, and the table is drawn once.
+                // oxlint-disable-next-line react/no-array-index-key
+                key={at}
+                className="group/row transition-colors duration-(--dur-fast) hover:bg-wash-hover"
+              >
                 {table.columns.map((column, cell) => (
-                  <td key={column} className="px-4 py-2.5 align-top text-ink tabular-nums">
+                  <td
+                    key={column}
+                    className={cn(
+                      'px-4 py-2.5 align-top tabular-nums hairline-b group-last/row:shadow-none',
+                      cell === 0 ? 'font-title text-ink' : 'text-ink-2',
+                      numeric[cell] && 'text-right',
+                    )}
+                  >
                     {row[cell]}
                   </td>
                 ))}
@@ -107,9 +145,12 @@ function TableShown({ table }: { table: Kind<'Table'> }) {
             ))}
           </tbody>
         </table>
+        {table.rows.length === 0 && (
+          <p className="p-4 text-label font-meta text-ink-3">No rows to show.</p>
+        )}
       </div>
       {table.note !== undefined && (
-        <p className="px-4 py-2.5 text-meta font-meta text-ink-3">{table.note}</p>
+        <p className="px-4 py-2.5 text-meta font-meta text-ink-3 hairline-t">{table.note}</p>
       )}
     </Frame>
   )
@@ -137,21 +178,26 @@ const STEP = {
   { icon: ReactNode; words: string }
 >
 
+/** A plan as a timeline: a rail joins the marks, so the order reads as a path and not a list. */
 function StepsShown({ plan }: { plan: Kind<'Steps'> }) {
   const done = plan.steps.filter((step) => step.state === 'done').length
   return (
     <Frame title={plan.title}>
-      <p className="mb-2 text-meta font-meta text-ink-3 tabular-nums">
+      <p className="mb-3 text-meta font-meta text-ink-3 tabular-nums">
         {done} of {plan.steps.length} done
       </p>
-      <ol className="flex flex-col gap-2">
+      <ol>
         {plan.steps.map((step) => (
-          <li key={step.label} className="flex items-start gap-2.5">
-            <span className="mt-0.5 shrink-0">{STEP[step.state].icon}</span>
+          <li
+            key={step.label}
+            aria-current={step.state === 'doing' ? 'step' : undefined}
+            className="relative flex items-start gap-2.5 pb-3.5 before:absolute before:top-6 before:bottom-0.5 before:left-2 before:w-px before:bg-line-2 last:pb-0 last:before:hidden"
+          >
+            <span className="mt-0.5 shrink-0 bg-surface-3">{STEP[step.state].icon}</span>
             <span className="min-w-0">
               <span className={cn('block text-label', STEP[step.state].words)}>{step.label}</span>
               {step.detail !== undefined && (
-                <span className="block text-meta font-meta text-ink-3">{step.detail}</span>
+                <span className="mt-0.5 block text-meta font-meta text-ink-3">{step.detail}</span>
               )}
             </span>
           </li>
@@ -177,7 +223,7 @@ function OptionsShown({
       onSay(label)
       return
     }
-    setPicked((now) => (now.includes(label) ? now.filter((one) => one !== label) : [...now, label]))
+    setPicked((now) => togglePicked(now, label))
   }
   return (
     <Frame title={ask.question}>
@@ -205,12 +251,14 @@ function OptionsShown({
                     {on && <Check className="size-3" strokeWidth={3} />}
                   </span>
                 )}
-                <span className="min-w-0">
+                <span className="min-w-0 flex-1">
                   <span className="block text-label font-title text-ink">{option.label}</span>
                   {option.detail !== undefined && (
                     <span className="block text-meta font-meta text-ink-3">{option.detail}</span>
                   )}
                 </span>
+                {/* A single choice is sent the moment it is pressed; the arrow says so. */}
+                {!ask.many && live && <ChevronRight className="size-4 shrink-0 text-ink-4" />}
               </button>
             </li>
           )
@@ -235,7 +283,9 @@ function ComparisonShown({ comparison }: { comparison: Kind<'Comparison'> }) {
   const picked = comparison.pick === undefined ? '' : comparison.pick.name
   return (
     <Frame title={comparison.title}>
-      <ul className="flex snap-x gap-2 overflow-x-auto py-1">
+      {/* The far edge fades and the list ends in room to scroll past it, so a card cut off at the
+          edge says there is more instead of looking like the whole list. */}
+      <ul className="flex snap-x gap-2 overflow-x-auto scroll-fade-end py-1 pr-10">
         {comparison.items.map((item) => (
           <li
             key={item.name}
@@ -255,7 +305,7 @@ function ComparisonShown({ comparison }: { comparison: Kind<'Comparison'> }) {
               )}
             </span>
             {item.summary !== undefined && (
-              <span className="text-meta font-meta text-ink-3">{item.summary}</span>
+              <span className="text-label font-meta text-ink-2">{item.summary}</span>
             )}
             <Points points={item.good} good />
             <Points points={item.bad} good={false} />
@@ -287,11 +337,11 @@ function Points({ points, good }: { points: ReadonlyArray<string>; good: boolean
   return (
     <ul className="flex flex-col gap-1">
       {points.map((point) => (
-        <li key={point} className="flex items-start gap-1.5 text-meta text-ink-2">
+        <li key={point} className="flex items-start gap-1.5 text-label text-ink-2">
           {good ? (
-            <Plus className="mt-0.5 size-3 shrink-0 text-success" strokeWidth={2.5} />
+            <Plus className="mt-0.5 size-3.5 shrink-0 text-success" strokeWidth={2.5} />
           ) : (
-            <Minus className="mt-0.5 size-3 shrink-0 text-danger" strokeWidth={2.5} />
+            <Minus className="mt-0.5 size-3.5 shrink-0 text-danger" strokeWidth={2.5} />
           )}
           {point}
         </li>
@@ -316,7 +366,7 @@ function LinksShown({ list }: { list: Kind<'Links'> }) {
                 event.preventDefault()
                 pages.open(link.address)
               }}
-              className="group/link flex items-start gap-3 px-4 py-2 transition-colors duration-(--dur-fast) hover:bg-wash-hover"
+              className="group/link flex items-start gap-3 px-4 py-2.5 transition-colors duration-(--dur-fast) outline-none hover:bg-wash-hover focus-visible:bg-wash-hover"
             >
               <span className="min-w-0 flex-1">
                 <span className="block text-label font-title text-ink">{link.title}</span>
@@ -324,10 +374,10 @@ function LinksShown({ list }: { list: Kind<'Links'> }) {
                   {site(link.address)}
                 </span>
                 {link.note !== undefined && (
-                  <span className="mt-0.5 block text-meta text-ink-2">{link.note}</span>
+                  <span className="mt-0.5 block text-label text-ink-2">{link.note}</span>
                 )}
               </span>
-              <ExternalLink className="mt-1 size-3.5 shrink-0 text-ink-4 group-hover/link:text-accent-ink" />
+              <ExternalLink className="mt-1 size-3.5 shrink-0 text-ink-4 group-hover/link:text-accent-ink group-focus-visible/link:text-accent-ink" />
             </a>
           </li>
         ))}
@@ -341,11 +391,11 @@ const TONE = { good: 'text-success', bad: 'text-danger' } as const
 function FactsShown({ board }: { board: Kind<'Facts'> }) {
   return (
     <Frame title={board.title}>
-      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+      <dl className="grid grid-cols-facts gap-2">
         {board.facts.map((fact) => (
           <div key={fact.label} className="rounded-control bg-surface-2 px-3 py-2.5">
             <dt className="truncate text-meta font-meta text-ink-3">{fact.label}</dt>
-            <dd className="mt-1 font-display text-section font-strong text-ink tabular-nums">
+            <dd className="mt-1 font-display text-section font-strong wrap-break-word text-ink tabular-nums">
               {fact.value}
             </dd>
             {fact.change !== undefined && (
@@ -395,7 +445,7 @@ function DraftShown({
           </div>
         )}
       </dl>
-      <p className="mt-3 max-h-80 overflow-y-auto rounded-control bg-well px-3 py-2.5 text-label wrap-break-word whitespace-pre-wrap text-ink">
+      <p className="mt-3 max-h-80 overflow-y-auto rounded-control bg-well px-3.5 py-3 text-title leading-relaxed wrap-break-word whitespace-pre-wrap text-ink">
         {draft.body}
       </p>
       <div className="mt-3 flex items-center gap-2">
@@ -423,10 +473,10 @@ function ScheduleShown({ schedule }: { schedule: Kind<'Schedule'> }) {
             key={`${item.at}:${item.title}`}
             className="flex gap-3 py-2 hairline-b last:shadow-none"
           >
-            <span className="w-20 shrink-0 text-label text-ink-2 tabular-nums">
+            <span className="w-20 shrink-0 text-label font-title text-ink tabular-nums">
               {item.at}
               {item.until !== undefined && (
-                <span className="block text-meta font-meta text-ink-3">{item.until}</span>
+                <span className="block text-meta font-meta text-ink-3">until {item.until}</span>
               )}
             </span>
             <span className="min-w-0">
@@ -530,26 +580,52 @@ function Field({ field, disabled }: { field: Kind<'Form'>['fields'][number]; dis
 function PicturesShown({ gallery }: { gallery: Kind<'Pictures'> }) {
   return (
     <Frame title={gallery.title}>
-      <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+      <ul className="grid grid-cols-pictures gap-2">
         {gallery.pictures.map((picture) => (
           <li key={picture.address}>
-            <figure>
-              <img
-                src={picture.address}
-                alt={picture.caption === undefined ? '' : picture.caption}
-                loading="lazy"
-                referrerPolicy="no-referrer"
-                className="aspect-square w-full rounded-control bg-surface-2 object-cover picture-edge"
-              />
-              {picture.caption !== undefined && (
-                <figcaption className="mt-1 truncate text-meta font-meta text-ink-3">
-                  {picture.caption}
-                </figcaption>
-              )}
-            </figure>
+            <Picture picture={picture} />
           </li>
         ))}
       </ul>
     </Frame>
+  )
+}
+
+/**
+ * One picture. An address Vivid gave can be dead or not an image at all, so a failed load is a
+ * tile that says so, not a broken-image icon and the caption floating under nothing. Opening it
+ * goes to the picture itself, at full size.
+ */
+function Picture({ picture }: { picture: Kind<'Pictures'>['pictures'][number] }) {
+  const [failed, setFailed] = useState(false)
+  const caption = picture.caption
+  return (
+    <figure>
+      {failed ? (
+        <div className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 rounded-control bg-surface-2 text-ink-3">
+          <ImageOff className="size-5" />
+          <span className="text-meta font-meta">Could not load</span>
+        </div>
+      ) : (
+        <a
+          href={picture.address}
+          target="_blank"
+          rel="noreferrer"
+          className="block cursor-pointer rounded-control outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <img
+            src={picture.address}
+            alt={caption === undefined ? '' : caption}
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            onError={() => setFailed(true)}
+            className="aspect-square w-full rounded-control bg-surface-2 object-cover picture-edge"
+          />
+        </a>
+      )}
+      {caption !== undefined && (
+        <figcaption className="mt-1 truncate text-meta font-meta text-ink-3">{caption}</figcaption>
+      )}
+    </figure>
   )
 }
