@@ -231,7 +231,8 @@ const classifyResponse = Effect.fn('Connections.classifyAddress')(function* (
   response: HttpClientResponse.HttpClientResponse,
   client: HttpClient.HttpClient,
 ) {
-  if ([401, 403, 405].includes(response.status)) return yield* probeMcp(address, client)
+  // Streamable MCP can reject GET's Accept negotiation (406) while accepting initialize POST.
+  if ([401, 403, 405, 406].includes(response.status)) return yield* probeMcp(address, client)
   if (response.status < 200 || response.status >= 300)
     return yield* Effect.fail(ConnectionAddressUnreachable.make({}))
   const type = response.headers['content-type']

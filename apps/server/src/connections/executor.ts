@@ -377,6 +377,25 @@ const WireCatalogEntry = Schema.Struct({
 })
 const WireCatalog = Schema.Array(Schema.Unknown)
 const decodeCatalogEntry = Schema.decodeUnknownEffect(WireCatalogEntry)
+/** Custom import egress has two honest carriers: an MCP connection address or fetched OpenAPI content.
+ * Schema-backed cases keep the HTTP request total without widening it to arbitrary JSON.
+ */
+const WireImportSource = Schema.Union([
+  Schema.Struct({
+    kind: Schema.tag('mcp'),
+    name: Schema.String,
+    url: Schema.String,
+    auth: Schema.Union([
+      Schema.Struct({
+        type: Schema.Literal('apiKey'),
+        header: Schema.Literal('Authorization'),
+        prefix: Schema.Literal('Bearer '),
+      }),
+      Schema.Struct({ type: Schema.Literal('auto') }),
+    ]),
+  }),
+  Schema.Struct({ kind: Schema.tag('openapi'), name: Schema.String, content: Schema.String }),
+]).pipe(Schema.toTaggedUnion('kind'))
 const WireCompleted = Schema.Struct({
   status: Schema.Literal('completed'),
   value: Schema.Json,
@@ -1512,18 +1531,18 @@ function makeAdd(
     const copy = makeCopy(
       http,
       Effect.fn('Executor.importAddress')((_input, _entry, name) => {
-        const source = ConnectionSource.match(input.source, {
-          Mcp: ({ address, authorization }) => ({
-            kind: 'mcp',
-            name,
-            url: address,
-            auth:
-              authorization === 'apiKey'
-                ? { type: 'apiKey', header: 'Authorization', prefix: 'Bearer ' }
-                : { type: 'auto' },
-          }),
+        const source = ConnectionSource.match<typeof WireImportSource.Type>(input.source, {
+          Mcp: ({ address, authorization }) =>
+            WireImportSource.cases.mcp.make({
+              name,
+              url: address,
+              auth:
+                authorization === 'apiKey'
+                  ? { type: 'apiKey', header: 'Authorization', prefix: 'Bearer ' }
+                  : { type: 'auto' },
+            }),
           // Pass the exact public-checked response bytes, never another fetch target.
-          OpenApi: ({ content }) => ({ kind: 'openapi', name, content }),
+          OpenApi: ({ content }) => WireImportSource.cases.openapi.make({ name, content }),
         })
         return http.readApp(post('/dashboard/api/apps/import', { source }), null)
       }),

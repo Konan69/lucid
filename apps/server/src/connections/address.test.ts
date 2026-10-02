@@ -70,7 +70,8 @@ const fixture = Effect.fn('AddressTest.fixture')(function* () {
             'Bearer resource_metadata="https://integration.example/.well-known/oauth-protected-resource"',
         },
       })
-    if (request.method === 'GET') return HttpServerResponse.empty({ status: 405 })
+    if (request.method === 'GET')
+      return HttpServerResponse.empty({ status: request.url === '/negotiated' ? 406 : 405 })
     if (request.url === '/postredirect')
       return HttpServerResponse.empty({ status: 307, headers: { location: '/mcp' } })
     if (request.url === '/postprivate')
@@ -137,6 +138,22 @@ const fixture = Effect.fn('AddressTest.fixture')(function* () {
 })
 
 describe('public integration addresses', () => {
+  it.effect('initializes MCP when its GET endpoint rejects content negotiation', () =>
+    Effect.gen(function* () {
+      const { client, pages, requests } = yield* fixture()
+      const result = yield* inspectAddress('https://integration.example/negotiated').pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provide(pages),
+      )
+      expect(result).toEqual(
+        ConnectionSource.cases.Mcp.make({
+          address: 'https://integration.example/negotiated',
+          authorization: 'auto',
+        }),
+      )
+      expect(yield* Ref.get(requests)).toEqual(['GET /negotiated', 'POST /negotiated'])
+    }).pipe(Effect.provide(NodeHttpClient.layerUndici), Effect.scoped),
+  )
   it.effect('accepts public specification query parameters and retains the fetched bytes', () =>
     Effect.gen(function* () {
       const { client, pages, requests } = yield* fixture()

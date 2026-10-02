@@ -1357,7 +1357,7 @@ for (const source of [
           requests.find((request) => request.path === 'POST /dashboard/api/apps/import'),
         ).toMatchObject({
           body: {
-            source: ConnectionSource.match(source, {
+            source: ConnectionSource.match<Schema.Json>(source, {
               Mcp: ({ address }) => ({ url: address }),
               OpenApi: ({ content }) => ({ content }),
             }),
