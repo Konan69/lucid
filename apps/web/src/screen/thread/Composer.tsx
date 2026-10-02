@@ -1,10 +1,11 @@
 import { BorderBeam } from 'border-beam'
-import { ArrowUp, Mic, Square } from 'lucide-react'
+import { ArrowUp, Mic, Paperclip, Square } from 'lucide-react'
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import { draft } from '../../data/drafts'
 import { theme } from '../../data/theme'
 import { IconButton } from '../../ui/Button'
 import { cn } from '../../ui/cn'
+import { ATTACHABLE, Attached, useAttachments } from './Attach'
 
 /**
  * Where a Person writes to Vivid. Enter sends, Shift+Enter makes a new line, and while Vivid is
@@ -35,7 +36,9 @@ export function Composer({
   above?: ReactNode
 }) {
   const [message, setMessage] = useState(() => draft.in(place))
-  const empty = message.trim().length === 0
+  const attached = useAttachments()
+  // Something to send: words, or a file that has arrived. A file still on its way holds the send.
+  const empty = (message.trim().length === 0 && attached.kept === 0) || attached.sending
   const shown = useSyncExternalStore(theme.subscribe, theme.shown)
 
   /** The field and the kept draft change together, so what is on screen is what is saved. */
@@ -45,8 +48,11 @@ export function Composer({
   }
 
   function submit() {
-    const body = message.trim()
-    if (body.length === 0) return
+    if (empty) return
+    // The files that made it are named under the words, so Vivid knows what to read; a message
+    // that is only files still says what is wanted of them.
+    const words = message.trim().length === 0 ? 'Have a look at this.' : message.trim()
+    const body = [words, ...attached.take()].join('\n\n')
     write('')
     if (onTyping !== undefined) onTyping(false)
     onSend(body)
@@ -67,7 +73,16 @@ export function Composer({
               what it wraps, which is why whatever is anchored above sits outside it. */}
           <BorderBeam active={working} colorVariant="ocean" strength={0.7} theme={shown}>
             {/* The beam reads its corner radius from the one element it wraps. */}
-            <div className="rounded-composer bg-surface-3 smooth-shadow-ring-sm">
+            <div
+              className="rounded-composer bg-surface-3 smooth-shadow-ring-sm"
+              // A file dropped anywhere on the composer is attached, the same as picking it.
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault()
+                attached.add(Array.from(event.dataTransfer.files))
+              }}
+            >
+              <Attached files={attached.files} onRemove={attached.remove} />
               <textarea
                 // What is typed here is kept for its place, so leaving by a shortcut loses nothing.
                 data-keeps-draft
@@ -93,6 +108,7 @@ export function Composer({
                 className="block field-sizing-content max-h-60 min-h-14 w-full resize-none bg-transparent px-5 pt-4 pb-1 text-body text-ink outline-none placeholder:text-ink-3"
               />
               <div className="flex items-center gap-1 px-3 pb-3">
+                <Pick onPick={attached.add} />
                 <span className="flex-1" />
                 {onTalk !== undefined && (
                   <IconButton label="Talk to Vivid" onClick={onTalk}>
@@ -124,5 +140,29 @@ export function Composer({
         </div>
       </div>
     </div>
+  )
+}
+
+/** The paperclip: picks documents to attach. The same file can be picked again once taken off. */
+function Pick({ onPick }: { onPick: (files: ReadonlyArray<File>) => void }) {
+  return (
+    <label
+      title="Attach a document"
+      className="inline-flex size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) focus-within:bg-wash-hover hover:bg-wash-hover hover:text-ink"
+    >
+      <Paperclip className="size-4" />
+      <span className="sr-only">Attach a document</span>
+      <input
+        type="file"
+        multiple
+        accept={ATTACHABLE}
+        className="sr-only"
+        onChange={(event) => {
+          const picked = event.currentTarget.files
+          if (picked !== null) onPick(Array.from(picked))
+          event.currentTarget.value = ''
+        }}
+      />
+    </label>
   )
 }
