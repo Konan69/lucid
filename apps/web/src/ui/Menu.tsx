@@ -14,7 +14,14 @@ const SIDE = {
    scale from 0.97 with opacity, never from nothing. It is a transition from a starting style, so
    there is no keyframe to restart if it is opened twice quickly. */
 const PLATE =
-  'z-50 max-h-96 min-w-56 overflow-y-auto rounded-panel p-1 outline-none smooth-shadow-ring-lg transition-pop duration-(--dur-fast) ease-out glass starting:scale-97 starting:opacity-0'
+  'z-50 min-w-56 overflow-y-auto rounded-panel outline-none smooth-shadow-ring-lg transition-pop duration-(--dur-fast) ease-out glass starting:scale-97 starting:opacity-0'
+
+/* A list of choices is inset from the plate's edge and stops growing at a screenful; a panel
+   (something with its own headings and rows) lays itself out edge to edge. */
+const FILL = {
+  list: 'max-h-96 p-1',
+  panel: 'max-h-[min(36rem,80vh)]',
+} as const
 
 /**
  * Moves through a menu's choices with the arrow keys and leaves it with Escape. The choices are
@@ -60,12 +67,15 @@ export function Menu({
   open,
   onClose,
   side = 'below',
+  fill = 'list',
   className,
   children,
 }: {
   open: boolean
   onClose: () => void
   side?: keyof typeof SIDE
+  /** A list of choices, or a panel that lays out its own content. */
+  fill?: keyof typeof FILL
   className?: string
   children: ReactNode
 }) {
@@ -78,7 +88,7 @@ export function Menu({
         role="menu"
         tabIndex={-1}
         onKeyDown={(event) => steer(event, onClose)}
-        className={cn('absolute', PLATE, SIDE[side], className)}
+        className={cn('absolute', PLATE, FILL[fill], SIDE[side], className)}
       >
         {children}
       </div>
@@ -138,6 +148,7 @@ export function ContextMenu({
           upward ? 'bottom-(--menu-y)' : 'top-(--menu-y)',
           CORNER[upward ? 'bottom' : 'top'][leftward ? 'right' : 'left'],
           PLATE,
+          FILL.list,
         )}
       >
         {children}

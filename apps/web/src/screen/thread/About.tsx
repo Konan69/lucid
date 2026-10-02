@@ -41,7 +41,7 @@ export function About({
   onOpenComputer: () => void
 }) {
   return (
-    <Menu open={open} onClose={onClose} side="below-end" className="w-80 p-0">
+    <Menu open={open} onClose={onClose} side="below-end" fill="panel" className="w-80">
       <div className="flex items-center gap-3 px-4 pt-4 pb-3">
         <Face size={44} mood={mood} />
         <div className="min-w-0">
