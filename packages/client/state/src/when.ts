@@ -88,3 +88,15 @@ export function makeFullWhen(reader: Reader) {
   })
   return (moment: number): string => full.format(moment)
 }
+
+/**
+ * How Vivid greets a Person at an hour of their own day (0 to 23, on the clock they keep): the
+ * word the first screen opens with, before their name. The day is cut where a person would cut
+ * it, not at midnight: someone writing at two in the morning has not started tomorrow.
+ */
+export const greetingAt = (hour: number): string => {
+  if (hour < 5) return 'Still up'
+  if (hour < 12) return 'Morning'
+  if (hour < 18) return 'Afternoon'
+  return 'Evening'
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { makeWhen } from './when.js'
+import { greetingAt, makeWhen } from './when.js'
 
 const when = makeWhen({ locale: 'en-GB', timeZone: 'Africa/Lagos' })
 
@@ -27,5 +27,14 @@ describe('when a message was written, as read today', () => {
     const tokyo = makeWhen({ locale: 'en-GB', timeZone: 'Asia/Tokyo' })
     // 23:10 on the 1st in Lagos is already 07:10 on the 2nd in Tokyo: today there.
     expect(tokyo(at('2026-10-01T23:10'), now)).toBe('7:10')
+  })
+})
+
+describe('the greeting for an hour of the day', () => {
+  it('changes where a person would say the day changes, not at midnight', () => {
+    expect([0, 4].map((hour) => greetingAt(hour))).toEqual(['Still up', 'Still up'])
+    expect([5, 11].map((hour) => greetingAt(hour))).toEqual(['Morning', 'Morning'])
+    expect([12, 17].map((hour) => greetingAt(hour))).toEqual(['Afternoon', 'Afternoon'])
+    expect([18, 23].map((hour) => greetingAt(hour))).toEqual(['Evening', 'Evening'])
   })
 })

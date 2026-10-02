@@ -13,4 +13,10 @@ export const MOBILE_TYPOGRAPHY = {
   title: { fontWeight: m['weight-title'], fontSize: m['type-section'], lineHeight: 26 },
   largeTitle: { fontWeight: m['weight-title'], fontSize: m['type-page'], lineHeight: 30 },
   display: { fontWeight: m['weight-title'], fontSize: m['type-hero'], lineHeight: 35 },
+  /**
+   * The one line a screen opens with: the greeting. The web sets it in its display face at 40;
+   * a phone sets it in the system's own face at the size the platform uses for a large title,
+   * heavier and drawn a little closer together, the way large type wants to be.
+   */
+  opening: { fontWeight: m['weight-strong'], fontSize: 34, lineHeight: 40, letterSpacing: -0.6 },
 } as const

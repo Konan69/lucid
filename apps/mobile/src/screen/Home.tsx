@@ -106,6 +106,7 @@ export function Home() {
           onRename={(thread) => setOver(Over.Renaming({ thread }))}
           onRefused={setRefused}
           onSuggest={start.suggest}
+          starting={start.sending}
         />
       </View>
       {Option.isSome(said) && (
@@ -468,6 +469,8 @@ interface ThreadsProps {
   /** What came of a row's quick action: a sentence when it was refused, none when it was not. */
   readonly onRefused: (message: Option.Option<string>) => void
   readonly onSuggest: (text: string) => void
+  /** A new Thread's first words are on their way, which the first screen's face shows. */
+  readonly starting: boolean
 }
 
 /**
@@ -481,7 +484,9 @@ function Threads(props: ThreadsProps) {
   if (Option.isSome(query)) {
     return <Found {...props} found={matching(threads, query.value)} now={now} />
   }
-  if (threads.length === 0) return <Welcome me={props.me} onSuggest={props.onSuggest} />
+  if (threads.length === 0) {
+    return <Welcome me={props.me} starting={props.starting} onSuggest={props.onSuggest} />
+  }
   const arrangement = arrange(threads, now)
   return (
     <FlatList
@@ -515,19 +520,33 @@ function Threads(props: ThreadsProps) {
   )
 }
 
-/** The first screen: no Threads yet, so Vivid, things to say, and the three places. */
-function Welcome({ me, onSuggest }: { me: MeResponse; onSuggest: (text: string) => void }) {
+/**
+ * The first screen: no Threads yet, so the places beside Threads at the top and, at the foot,
+ * Vivid with things to say. The greeting sits directly above the composer, so the one thing
+ * there is to do here (write) is where the thumb already is; on a short screen, or with the
+ * keyboard up, the column scrolls instead of being cut.
+ */
+function Welcome({
+  me,
+  starting,
+  onSuggest,
+}: {
+  me: MeResponse
+  starting: boolean
+  onSuggest: (text: string) => void
+}) {
   const data = useLiveData()
   const suggestions = useLiveValue(data.live.suggestions)
   return (
     <ScrollView
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="on-drag"
-      contentContainerStyle={[styles.column, { flexGrow: 1 }]}
+      contentContainerStyle={[styles.column, { flexGrow: 1, justifyContent: 'space-between' }]}
     >
       <Places />
       <First
         me={me}
+        sending={starting}
         suggestions={Option.match(suggestions, {
           onNone: () => [],
           onSome: (value) => value.suggestions,
