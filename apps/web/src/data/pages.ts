@@ -7,7 +7,7 @@ import {
   type Tab,
   type VividAppBridge,
 } from '@vivid/desktop/bridge'
-import { Option } from 'effect'
+import { Option, Schema } from 'effect'
 import { panel } from './panel'
 import { say } from './said'
 
@@ -63,8 +63,15 @@ if (Option.isSome(bridge)) {
 /** Runs one thing on the pages, and says so in plain words when the desktop app refuses it. */
 const ask = (act: (pages: VividAppBridge['pages']) => Promise<void | Tab>, refused: string) => {
   if (Option.isNone(bridge)) return
-  void act(bridge.value).catch(() => say(refused))
+  void act(bridge.value).catch((failure: Parameters<typeof tooMany>[0]) =>
+    // One refusal has its own sentence: there is a limit on open pages, and "could not be opened"
+    // would leave the Person trying again instead of closing one.
+    say(tooMany(failure) ? 'Too many pages are open. Close one and try again.' : refused),
+  )
 }
+
+/** Whether the desktop app refused because the limit on open pages was reached. */
+const tooMany = Schema.is(Schema.Struct({ _tag: Schema.Literal('PageLimitReached') }))
 
 /** The page that is showing, when there is one. */
 const showing = (browser: BrowserState): Option.Option<Page> =>
