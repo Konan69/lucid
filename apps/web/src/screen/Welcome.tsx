@@ -1,4 +1,5 @@
 import { Result } from 'effect'
+import { Check } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { createAccount, reload, signIn } from '../data/account'
 import { run } from '../data/app'
@@ -9,18 +10,26 @@ type Mode = 'create' | 'enter'
 
 const COPY = {
   create: {
-    title: 'Meet Vivid',
+    title: 'Meet Vivid.',
     lead: 'One teammate that remembers, follows up, and gets things done for you.',
     action: 'Create account',
     other: 'I already have an account',
   },
   enter: {
-    title: 'Welcome back',
+    title: 'Welcome back.',
     lead: 'Pick up where you and Vivid left off.',
     action: 'Sign in',
     other: 'Create an account',
   },
 } satisfies Record<Mode, { title: string; lead: string; action: string; other: string }>
+
+/** What Vivid does, said the way it would say it. Shown beside the form on a wide window. */
+const PROMISES = [
+  'Remembers what matters to you, and forgets what you tell it to.',
+  'Follows up on its own, so nothing waits on you to chase it.',
+  'Works in the tools you already use, on a computer of its own.',
+  'Asks first before anything that sends, spends or deletes.',
+] as const
 
 /**
  * The first thing anyone sees: who Vivid is, and one short form. There is nothing to configure
@@ -55,65 +64,82 @@ export function Welcome({ returnTo }: { returnTo: string }) {
   }
 
   return (
-    <main className="flex size-full items-center justify-center bg-surface-1 grain px-6">
-      <div className="w-full max-w-sm animate-rise-in">
-        <div className="flex flex-col items-center text-center">
-          <Face size={56} mood="happy" />
-          <h1 className="mt-5 text-page font-title text-ink">{copy.title}</h1>
-          <p className="mt-1 text-body text-ink-3">{copy.lead}</p>
+    // Two halves on a wide window: who Vivid is on the left, the one short form on the right.
+    // Stacked on a narrow one, with the form within reach of the thumb.
+    <main className="flex size-full items-center justify-center overflow-y-auto bg-surface-0 px-6 py-10">
+      <div className="grid w-full max-w-4xl animate-rise-in items-center gap-10 md:grid-cols-2 md:gap-16">
+        <div>
+          <span className="relative inline-flex">
+            <span aria-hidden className="pointer-events-none absolute -inset-12 aura" />
+            <Face size={72} mood="happy" className="relative" />
+          </span>
+          <h1 className="mt-7 font-display text-display font-strong tracking-display text-balance text-ink">
+            {copy.title}
+          </h1>
+          <p className="mt-3 max-w-sm text-section text-ink-3">{copy.lead}</p>
+          <ul className="mt-8 hidden flex-col gap-3 md:flex">
+            {PROMISES.map((promise) => (
+              <li key={promise} className="flex items-start gap-3 text-body text-ink-2">
+                <Check className="mt-1 size-4 shrink-0 text-accent-ink" strokeWidth={2.25} />
+                {promise}
+              </li>
+            ))}
+          </ul>
         </div>
 
-        <form
-          onSubmit={(event) => {
-            void submit(event)
-          }}
-          className="mt-8 flex flex-col gap-3 rounded-card bg-surface-3 p-5 smooth-shadow-ring-xs"
-        >
-          {mode === 'create' && (
+        <div className="w-full max-w-sm justify-self-center md:justify-self-end">
+          <form
+            onSubmit={(event) => {
+              void submit(event)
+            }}
+            className="flex flex-col gap-3 rounded-panel bg-surface-3 p-6 smooth-shadow-ring-sm"
+          >
+            {mode === 'create' && (
+              <Field
+                label="Your name"
+                value={name}
+                onChange={setName}
+                autoComplete="name"
+                autoFocus
+              />
+            )}
             <Field
-              label="Your name"
-              value={name}
-              onChange={setName}
-              autoComplete="name"
-              autoFocus
+              label="Email"
+              type="email"
+              value={email}
+              onChange={setEmail}
+              autoComplete="email"
+              autoFocus={mode === 'enter'}
             />
-          )}
-          <Field
-            label="Email"
-            type="email"
-            value={email}
-            onChange={setEmail}
-            autoComplete="email"
-            autoFocus={mode === 'enter'}
-          />
-          <Field
-            label="Password"
-            type="password"
-            value={password}
-            onChange={setPassword}
-            autoComplete={mode === 'create' ? 'new-password' : 'current-password'}
-            hint={mode === 'create' ? 'At least 8 characters.' : undefined}
-          />
-          {refusal !== null && (
-            <p role="alert" className="text-label text-danger">
-              {refusal}
-            </p>
-          )}
-          <Button type="submit" variant="primary" disabled={busy} className="mt-1 w-full">
-            {busy ? 'One moment…' : copy.action}
-          </Button>
-        </form>
+            <Field
+              label="Password"
+              type="password"
+              value={password}
+              onChange={setPassword}
+              autoComplete={mode === 'create' ? 'new-password' : 'current-password'}
+              hint={mode === 'create' ? 'At least 8 characters.' : undefined}
+            />
+            {refusal !== null && (
+              <p role="alert" className="text-label text-danger">
+                {refusal}
+              </p>
+            )}
+            <Button type="submit" variant="primary" disabled={busy} className="mt-1 w-full">
+              {busy ? 'One moment…' : copy.action}
+            </Button>
+          </form>
 
-        <button
-          type="button"
-          onClick={() => {
-            setMode(mode === 'create' ? 'enter' : 'create')
-            setRefusal(null)
-          }}
-          className="mx-auto mt-4 block cursor-pointer rounded-control px-2 py-1 text-label text-ink-3 transition-colors duration-(--dur-fast) hover:text-ink"
-        >
-          {copy.other}
-        </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode(mode === 'create' ? 'enter' : 'create')
+              setRefusal(null)
+            }}
+            className="mx-auto mt-4 block cursor-pointer rounded-control px-2 py-1 text-label text-ink-3 transition-colors duration-(--dur-fast) hover:text-ink"
+          >
+            {copy.other}
+          </button>
+        </div>
       </div>
     </main>
   )

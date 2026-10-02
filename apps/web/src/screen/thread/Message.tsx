@@ -2,8 +2,9 @@ import type { FlueConversationMessage } from '@flue/react'
 import type { Approval, InputRequest, PersonId, Run } from '@vivid/contracts'
 import { makeFullWhen, makeWhen, speakerOfTurn, thisReader } from '@vivid/state'
 import { Option, Schema } from 'effect'
-import { AlarmClock, Check, ChevronRight, Copy as CopyIcon, Repeat2 } from 'lucide-react'
+import { AlarmClock, Check, ChevronRight, Copy as CopyIcon, Monitor, Repeat2 } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
+import { panel } from '../../data/panel'
 import { useState } from 'react'
 import { describeToolCall, readAnswered, readAsked } from '../../data/activity'
 import { Avatar } from '../../ui/Avatar'
@@ -212,6 +213,9 @@ const TOOL_STATE = new Map<string, StepState>([
   ['output-error', 'failed'],
 ])
 
+/** The steps that happen on Vivid's computer, where there is something to watch. */
+const ON_COMPUTER = new Set(['run_command', 'browse', 'use_desktop'])
+
 /** What Vivid did while answering, collapsed to one line that opens into each step. */
 function Steps({ tools, live }: { tools: ReadonlyArray<ToolPart>; live: boolean }) {
   const [open, setOpen] = useState(false)
@@ -251,6 +255,16 @@ function Steps({ tools, live }: { tools: ReadonlyArray<ToolPart>; live: boolean 
           Option.map(current, (tool) => tool.toolCallId),
         )}
       </button>
+      {Option.exists(current, (tool) => ON_COMPUTER.has(tool.toolName)) && (
+        // While Vivid is on its computer, the way to see it do the work is one press away.
+        <button
+          onClick={panel.show}
+          className="ml-1.5 inline-flex cursor-pointer items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-meta font-title text-accent-ink transition-colors duration-(--dur-fast) hover:bg-wash-pressed"
+        >
+          <Monitor className="size-3" />
+          Watch
+        </button>
+      )}
       {open && (
         <ol className="mt-1 ml-1.5 flex flex-col gap-1 border-l border-line-2 pl-4 text-label text-ink-2">
           {steps.map((step) => (
