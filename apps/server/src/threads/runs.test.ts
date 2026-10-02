@@ -30,6 +30,7 @@ const reserve = Effect.fn('Run.test.reserve')(function* (
   const reservation = yield* (yield* RunStore).start(input)
   return yield* TurnReservation.match(reservation, {
     Reserved: ({ turn }) => Effect.succeed(turn),
+    Replayed: ({ turn }) => Effect.succeed(turn),
     Busy: () => Effect.sync(() => expect.fail('Fixture Thread unexpectedly busy')),
   })
 })

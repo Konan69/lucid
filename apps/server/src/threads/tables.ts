@@ -93,6 +93,8 @@ export const runs = pgTable(
     startedAt: epoch('started_at').notNull(),
     /** Flue's receipt has arrived; reservations alone never count as answering a Person. */
     admittedAt: epoch('admitted_at'),
+    /** The original receipt survives keyed retries without depending on runtime availability. */
+    receipt: jsonb('receipt'),
     finishedAt: epoch('finished_at'),
     /** Only failed Runs have a reason; pre-classification failures remain null in storage. */
     failureReason: text('failure_reason').$type<RunFailure>(),

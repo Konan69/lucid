@@ -298,19 +298,15 @@ describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
     }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
   )
 
-  it.effect('a replay cannot bypass another Person’s working authority', () =>
+  it.effect('an admitted replay returns its original receipt while another Person works', () =>
     Effect.gen(function* () {
       const test = yield* harness()
       const message = said(test.threadId, test.ada)
       const ada = yield* test.conversation.admit(message)
       yield* test.finish(ada.runId)
       const ben = yield* test.conversation.admit(said(test.threadId, test.ben))
-      const replay = yield* Effect.result(test.conversation.admit(message))
-      expect(Result.isFailure(replay) && replay.failure).toEqual(
-        Conflict.make({
-          message: 'Vivid is still answering Ben. Send this again when it has finished.',
-        }),
-      )
+      const replay = yield* test.conversation.admit(message)
+      expect(replay).toEqual(ada)
       expect(yield* Ref.get(test.admitted)).toHaveLength(2)
       yield* test.finish(ben.runId)
       expect((yield* test.conversation.admit(message)).runId).toBe(ada.runId)
@@ -463,8 +459,7 @@ describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
       expect(recorded.map((run) => run.turn)).toEqual([1])
       expect(yield* Ref.get(test.admitted)).toHaveLength(1)
       const requests = yield* Ref.get(test.requests)
-      expect(requests).toHaveLength(2)
-      expect(requests[1]).toEqual(requests[0])
+      expect(requests).toHaveLength(1)
     }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
   )
 

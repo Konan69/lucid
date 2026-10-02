@@ -189,8 +189,14 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         origin: delivery.origin,
         libraryFolder: delivery.libraryFolder === undefined ? null : delivery.libraryFolder,
       })
+      const said = previewOf(delivery.message)
+      if (TurnReservation.guards.Replayed(reservation)) {
+        yield* follow({ id, threadId: thread.id, person: speaker, said })
+        return reservation.receipt
+      }
       const turn = yield* TurnReservation.match<Effect.Effect<number, Conflict>>(reservation, {
         Reserved: (reserved) => Effect.succeed(reserved.turn),
+        Replayed: (replayed) => Effect.succeed(replayed.turn),
         Busy: ({ person }) =>
           Effect.fail(
             Conflict.make({
@@ -212,8 +218,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         Effect.tapError(() => runs.end(id, RunEnding.cases.Failed.make({ reason: 'Delivery' }))),
         Effect.onInterrupt(() => runs.end(id, RunEnding.cases.Failed.make({ reason: 'Delivery' }))),
       )
-      yield* runs.admitted(id)
-      const said = previewOf(delivery.message)
+      yield* runs.admitted(admission)
       yield* threads.touch(thread.id, said)
       // What a Person just sent is not unread for them. They were just shown to be able to see the
       // Thread, so the only failures left here are the database's own.

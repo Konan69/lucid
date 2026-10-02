@@ -8,7 +8,7 @@ import {
   type NotFound,
   type PersonId,
   type Run,
-  type RunId,
+  RunId,
   type RuntimeUnavailable,
   type ThreadId,
 } from '@vivid/contracts'
@@ -61,13 +61,14 @@ export interface SignalDelivery extends Delivery {
 }
 
 /** Flue's receipt for a delivery, which the gateway hands back to the client that sent it. */
-export interface Admitted {
-  readonly runId: RunId
+export const Admitted = Schema.Struct({
+  runId: RunId,
   /** Where this delivery's events begin in the Thread's stream. */
-  readonly offset: string
+  offset: Schema.String,
   /** The conversation's incarnation in the runtime. */
-  readonly incarnation: string
-}
+  incarnation: Schema.String,
+})
+export interface Admitted extends Schema.Schema.Type<typeof Admitted> {}
 
 export interface ConversationService {
   /**

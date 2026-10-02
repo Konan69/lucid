@@ -23,7 +23,7 @@ import {
 import { loadSummaries } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
-import { StoredRunOrigin } from './conversation.ts'
+import { Admitted, StoredRunOrigin } from './conversation.ts'
 import { runs, threads } from './tables.ts'
 import { summaryFor } from './wire.ts'
 
@@ -39,6 +39,7 @@ export type RunEnding = typeof RunEnding.Type
 /** A busy Thread keeps its first Person's authority; only a reserved turn may reach Flue. */
 export const TurnReservation = Schema.TaggedUnion({
   Reserved: { turn: Schema.Number },
+  Replayed: { turn: Schema.Number, receipt: Admitted },
   Busy: { person: PersonSummary },
 })
 export type TurnReservation = typeof TurnReservation.Type
@@ -60,7 +61,7 @@ export interface RunStoreService {
     readonly libraryFolder: LibraryFolderId | null
   }) => Effect.Effect<TurnReservation, DatabaseInfrastructureError>
   /** Records acceptance after Flue returns its receipt, and reopens a failed delivery on retry. */
-  readonly admitted: (id: RunId) => Effect.Effect<void, DatabaseInfrastructureError>
+  readonly admitted: (receipt: Admitted) => Effect.Effect<void, DatabaseInfrastructureError>
   /** Runtime-only lookup, by the harmless turn number a delivery shows the model. */
   readonly scope: (
     request: DeliveryScopeRequest,
@@ -86,6 +87,8 @@ export class RunStore extends Context.Service<RunStore, RunStoreService>()('vivi
 
 type DatabaseService = Database['Service']
 
+const decodeReceipt = decodeStored(Admitted, 'Run admission receipt')
+const encodeReceipt = Schema.encodeSync(Admitted)
 const decodeOrigin = decodeStored(StoredRunOrigin, 'Run origin')
 const decodeEnding = decodeStored(
   Schema.Literals(['completed', 'failed', 'stopped', 'unknown']),
@@ -141,13 +144,24 @@ const toRun = Effect.fn('RunStore.toRun')(function* (
   })
 })
 
+/** Idempotency never changes which Thread and Person owned the first reservation. */
+const sameAuthority = Effect.fn('RunStore.sameAuthority')(function* (
+  recorded: typeof runs.$inferSelect,
+  input: Parameters<RunStoreService['start']>[0],
+) {
+  if (recorded.threadId !== input.threadId || recorded.personId !== input.personId)
+    return yield* Effect.fail(
+      new DatabaseFailure({ message: 'Run authority conflicts with its original delivery' }),
+    )
+})
+
 /**
  * The server never joins a different Person's delivery into a response in progress. Flue 2.1
  * rerenders joined deliveries with their authority and has no queue-only dispatch, so checking
  * before calling Flue is mandatory. The working-Person check and turn reservation share the
  * parent Thread lock: simultaneous different-Person deliveries cannot both pass an idle check.
- * Same-Person follow-ups still join. Even a replay checks working authority before reaching Flue;
- * when it can proceed it preserves its original turn and confinement.
+ * Same-Person follow-ups still join. An admitted replay returns its original receipt before Busy;
+ * unadmitted reservations remain subject to the current working authority.
  */
 const makeStart = (database: DatabaseService): RunStoreService['start'] =>
   Effect.fn('RunStore.start')(function* (input) {
@@ -160,6 +174,15 @@ const makeStart = (database: DatabaseService): RunStoreService['start'] =>
           .from(threads)
           .where(eq(threads.id, input.threadId))
           .for('update')
+        const [existing] = yield* tx.select().from(runs).where(eq(runs.id, input.id))
+        if (existing !== undefined) {
+          yield* sameAuthority(existing, input)
+          if (existing.admittedAt !== null)
+            return TurnReservation.cases.Replayed.make({
+              turn: existing.turn,
+              receipt: yield* decodeReceipt(existing.receipt),
+            })
+        }
         const [answering] = yield* tx
           .select({ id: runs.personId, name: personTable.name, image: personTable.image })
           .from(runs)
@@ -189,15 +212,9 @@ const makeStart = (database: DatabaseService): RunStoreService['start'] =>
           })
           .onConflictDoNothing({ target: runs.id })
         const [recorded] = yield* tx.select().from(runs).where(eq(runs.id, input.id))
-        if (
-          recorded === undefined ||
-          recorded.threadId !== input.threadId ||
-          recorded.personId !== input.personId
-        ) {
-          return yield* Effect.fail(
-            new DatabaseFailure({ message: 'Run authority conflicts with its original delivery' }),
-          )
-        }
+        if (recorded === undefined)
+          return yield* Effect.fail(new DatabaseFailure({ message: 'Reserved Run not found' }))
+        yield* sameAuthority(recorded, input)
         return TurnReservation.cases.Reserved.make({ turn: recorded.turn })
       }),
     )
@@ -219,13 +236,19 @@ const makeScope = (database: DatabaseService): RunStoreService['scope'] =>
 
 /** A failed admission is replayable with its original turn; acceptance starts its observation. */
 const makeAdmitted = (database: DatabaseService) =>
-  Effect.fn('RunStore.admitted')(function* (id: RunId) {
+  Effect.fn('RunStore.admitted')(function* (receipt: Admitted) {
     const now = yield* Clock.currentTimeMillis
     yield* database.run(
       database
         .update(runs)
-        .set({ admittedAt: now, state: 'working', finishedAt: null, failureReason: null })
-        .where(and(eq(runs.id, id), sql`${runs.admittedAt} is null`)),
+        .set({
+          admittedAt: now,
+          receipt: encodeReceipt(receipt),
+          state: 'working',
+          finishedAt: null,
+          failureReason: null,
+        })
+        .where(and(eq(runs.id, receipt.runId), sql`${runs.admittedAt} is null`)),
     )
   })
 
