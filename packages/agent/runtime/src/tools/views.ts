@@ -14,15 +14,15 @@ import {
   type SkillSummary,
   type Task,
 } from '@vivid/contracts'
-import type { ContextSkill } from './snapshots.ts'
+import { Predicate, type Schema } from 'effect'
 import { assigneeName } from './assignees.ts'
-import { catalog, distinct, inventory } from './names.ts'
+import { distinct, inventory } from './names.ts'
 
 /** Dates cross the model boundary in ISO units; null remains genuine domain absence. */
 const date = (value: number | null) => (value === null ? null : new Date(value).toISOString())
 
 /** Catalog and read resolution share one order and one naming rule. */
-export function skills(items: readonly ContextSkill[]) {
+export function skills(items: readonly SkillSummary[]) {
   return inventory(items, (item) => modelText(item.name)).map(({ item, name }) =>
     skillSummary(item, name),
   )
@@ -84,7 +84,7 @@ export function tools(response: FindToolsResponse) {
       // runtime owns only Vivid record resolution and cannot truthfully invent that translation.
       input: item.input,
     })),
-    unconnected: catalog(response.unconnected, (item) => modelText(item.name)).map(
+    unconnected: inventory(response.unconnected, (item) => modelText(item.name)).map(
       ({ item, name }) => ({
         service: name,
         description: modelText(item.description),
@@ -161,7 +161,7 @@ export function routine(item: Routine, name: string) {
   }
 }
 
-/** Routine names use creation order, so later edits never change duplicate suffixes. */
+/** Routine names are assigned in server order just like procedure and Task names. */
 export function routines(items: readonly Routine[]) {
   return inventory(items, (item) => modelText(item.name)).map(({ item, name }) =>
     routine(item, name),
@@ -215,10 +215,39 @@ export function approval(item: { readonly approvalId: string; readonly summary: 
   }
 }
 
-/** Vivid text omits opaque references and image URLs; email addresses remain usable contact data. */
+/** Opaque provider and Computer text cannot have a hand-written domain projection; redact UUIDs and emails. */
 export function modelText(value: string) {
   return value
     .replaceAll(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/giu, '[reference]')
+    .replaceAll(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/giu, '[email]')
     .replaceAll(/https?:\/\/[^\s"<>]+\.(?:png|jpe?g|gif|webp|svg)(?:\?[^\s"<>]*)?/giu, '[image]')
 }
 
+/** Schema.Json is the provider's open wire type. Copy allowed entries explicitly, stripping identity fields.
+ * Provider-specific names cannot be resolved without a service-specific contract; no raw wire record is spread. */
+export function external(value: Schema.Json): Schema.Json {
+  if (Predicate.isString(value)) return modelText(value)
+  if (isList(value)) return value.map(external)
+  if (!isRecord(value)) return value
+  const output: Record<string, Schema.Json> = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (
+      /^(?:id|uuid|email|image|imageUrl)$/iu.test(key) ||
+      key.endsWith('Id') ||
+      key.endsWith('_id')
+    )
+      continue
+    output[key] = external(entry)
+  }
+  return output
+}
+
+/** Readonly JSON arrays need a guard that retains their element type. */
+function isList(value: Schema.Json): value is Schema.JsonArray {
+  return Array.isArray(value)
+}
+
+/** Narrow only the already-decoded JSON union, without widening values back to unknown. */
+function isRecord(value: Schema.Json): value is Schema.JsonObject {
+  return Predicate.isObject(value) && !isList(value)
+}

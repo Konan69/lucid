@@ -198,10 +198,18 @@ describe('model views', () => {
         outline: 'Signed',
         truncated: false,
       }),
+      views.external({
+        id: 'MARK-id',
+        personId: reference,
+        task_id: reference,
+        email: 'MARK-email',
+        imageUrl: 'MARK-image',
+        rows: [{ content: `Returned ${reference}` }],
+      }),
     ]
     const json = JSON.stringify(output)
     expect(json).not.toMatch(
-      /MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/iu,
+      /MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|@example\.test|https:\/\//iu,
     )
     const context = contextInstruction(
       VividContext.make({
@@ -212,7 +220,6 @@ describe('model views', () => {
     )
     expect(context).not.toMatch(/MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|"id"/iu)
     expect(context).toContain('Review agreement (2)')
-    expect(json).toContain('admin@example.test')
     expect(views.tools({ tools: [tool], unconnected: [] }).tools[0]).toHaveProperty(
       'input',
       tool.input,
