@@ -178,6 +178,90 @@ client or to the runtime; the server holds it and owns the permission model.
 
 The hand-written Google providers are retired when the Executor path covers the same three services.
 
+### Google connection setup on a local Executor
+
+Catalogue presence is separate from installation readiness. Vivid lists supported catalogue services
+whose authorization is missing or unsupported as `ServiceAuthorization.SetupRequired`, preserves
+that state in `FindIntegrations`, and tells Vivid that operator setup is needed. Such a service cannot
+produce a connect card. The Person hears one sentence: “Google is not set up on this Vivid yet;
+whoever runs it needs to register it with Google and add the sign-in details.”
+
+Executor v2 reads `https://integrations.sh/api.json` without enriching its authentication hints
+(`packages/catalog/src/implementation/source.ts:107`); `auth` is optional
+(`packages/catalog/src/contracts/catalog.ts:20`). Its catalogue route returns that list directly
+(`apps/local/server/src/implementation/dashboard.ts:345`). The observed Gmail, Calendar and Drive
+rows omit `auth`, although their OpenAPI documents and catalogue scope lists describe Google OAuth.
+This omission is feed metadata, not proof about whether any Google client has been saved.
+
+There is no Google auth broker or Google client environment setting in the local host configuration
+(`apps/local/server/src/contracts/config.ts:36`). Executor accepts an operator-supplied client ID and
+secret through its account OAuth setup form/API, then encrypts them in `executor_oauth_clients`.
+The saved identity is scoped to owner, provider, method, callback and scopes
+(`packages/sdk/src/implementation/oauth.ts:174`, `:263`, `:301`). A client saved for Executor’s local
+owner and callback does not configure a Vivid Person’s separate owner and callback.
+
+Operator procedure, using a Google Cloud project and client owned by this installation:
+
+1. Enable the Gmail API, Google Calendar API and Google Drive API in the Google Cloud project.
+   Configure Google Auth Platform Branding, Audience and Data Access for the intended users. For
+   an external app in testing, add the people who will test it. Review the permissions actually
+   needed: the current catalogue requests identity scopes (`openid`, `email`, `profile`) plus
+   Calendar `https://www.googleapis.com/auth/calendar`, Drive
+   `https://www.googleapis.com/auth/drive`, and Gmail `https://mail.google.com/` plus
+   `https://www.googleapis.com/auth/gmail.settings.basic`. These include broad access; complete
+   Google’s applicable consent/verification requirements before wider use.
+2. In Executor’s Catalogue, install the desired Google service. Preserve its operations and
+   provider method name (`googleOAuth2`). Before account setup, change the generated provider’s
+   OAuth declaration to Google discovery with explicit client authentication, then deploy the
+   updated source through Executor’s app source/deploy interface:
+
+   ```ts
+   oauth2({
+     discover: 'https://accounts.google.com',
+     scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/calendar'],
+     resource: null,
+     tokenEndpointAuthMethod: 'client_secret_post',
+   })
+   ```
+
+   Use the matching service’s reviewed scope list for Gmail or Drive. The importer reads OAuth
+   endpoints/scopes from the specification but omits `tokenEndpointAuthMethod`
+   (`packages/app-templates/src/implementation/openapi.ts:205`). Explicit endpoints default to
+   `none` (`packages/sdk/src/implementation/oauth-protocol.ts:349`); that mode rejects a supplied
+   client secret (`packages/sdk/src/implementation/oauth.ts:267`). Discovery also supplies the
+   metadata needed to validate identity tokens. Google’s published metadata supports
+   `client_secret_post` and has no automatic registration endpoint.
+
+3. Open the installed app’s account setup in Executor. Copy the **Redirect URL** shown in its
+   “Set up an OAuth client” form. When opened directly on the night local dashboard it is
+   `http://127.0.0.1:4323/api/oauth/callback`; if using a configured HTTPS browser origin, use the
+   exact displayed URL instead. The local callback path is `/api/oauth/callback`
+   (`apps/local/server/src/contracts/dashboard.ts:82`), derived from the request origin
+   (`apps/local/server/src/implementation/dashboard.ts:414`).
+4. In Google Auth Platform → Clients, create a **Web application** OAuth client. Add that exact
+   URL under **Authorized redirect URIs**. In Executor’s setup form enter its **Client ID** and
+   **Client secret**, choose an account name, and connect/approve the requested permissions. The
+   form submits `client: { clientId, clientSecret }` to
+   `POST /dashboard/api/accounts/oauth/start` with `provider`, `method` and `label`
+   (`apps/local/server/src/contracts/dashboard.ts:520`). Keep these values in Executor’s secure
+   form; never place them in a Thread, source file or Vivid environment variable.
+5. Confirm the account is ready and a read succeeds in Executor. This proves Executor setup only.
+   Vivid still needs a supported catalogue auth hint and client provisioning under each Vivid
+   owner/provider/callback. Its current adapter sends no `client` in OAuth start and cannot accept
+   operator client settings (`apps/server/src/connections/executor.ts:786`); saving a local
+   Executor account does not bridge this boundary.
+   Keep Google `SetupRequired` until those capabilities exist. Changing catalogue metadata to
+   `none` would falsely claim unauthenticated access.
+
+Executor’s source has no Google-specific offline authorization option: its authorization URL
+builder does not set Google’s `access_type=offline`
+(`packages/sdk/src/implementation/oauth-protocol.ts:447`). Durable Google refresh access therefore
+needs separate upstream support and verification; the steps above do not claim it.
+
+Google references: [credentials](https://developers.google.com/workspace/guides/create-credentials),
+[web-server OAuth](https://developers.google.com/identity/protocols/oauth2/web-server),
+[published OAuth metadata](https://accounts.google.com/.well-known/openid-configuration).
+
 ## Memory: HelixDB
 
 HelixDB holds Vivid's memory: a graph of records, each with a vector and a full-text index, all
