@@ -27,7 +27,7 @@ import { useTheme } from '../../theme'
 import { Avatar } from '../../ui/Avatar'
 import { openWebLink, Prose } from '../../ui/Prose'
 import { Sheet } from '../../ui/Sheet'
-import { Dot, Face, HAIRLINE, Label, Press, radius, TARGET } from '../../ui/ui'
+import { Dot, Face, HAIRLINE, Label, Press, radius } from '../../ui/ui'
 import { useGo } from '../../workspace'
 import { Cards } from './Cards'
 
@@ -178,21 +178,27 @@ function Said({
 function Pictures({ pictures }: { pictures: ReadonlyArray<MessagePicture> }) {
   const [opened, setOpened] = useState<Option.Option<MessagePicture>>(Option.none())
   if (pictures.length === 0) return null
+  // One picture is the point of the message and is drawn large; several are a tidy grid.
+  const side = pictures.length === 1 ? 216 : 104
   return (
     <>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-        {pictures.map((picture) => (
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+        {pictures.map((picture, index) => (
           <Press
             key={picture.key}
             accessibilityRole="imagebutton"
-            accessibilityLabel={Option.getOrUndefined(picture.name)}
+            accessibilityLabel={Option.getOrElse(
+              picture.name,
+              () => `Picture ${index + 1} of ${pictures.length}`,
+            )}
+            accessibilityHint="Opens full size"
             onPress={() => setOpened(Option.some(picture))}
             style={({ pressed }) => ({ opacity: pressed ? 0.82 : 1 })}
           >
             <Image
               source={{ uri: picture.url }}
               resizeMode="cover"
-              style={{ width: 128, height: 128, borderRadius: radius.control }}
+              style={{ width: side, height: side, borderRadius: radius.row }}
             />
           </Press>
         ))}
@@ -291,18 +297,21 @@ function Steps({ steps, working }: { steps: ReadonlyArray<Step>; working: boolea
         {Option.exists(current, (step) => step.onComputer) && (
           <Press
             accessibilityRole="button"
+            accessibilityLabel="Watch Vivid work on its Computer"
+            // The pill is a quiet 28 points beside the line it belongs to; the slop makes it 44.
+            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
             onPress={() => go.navigate('Computer')}
             style={({ pressed }) => ({
-              minHeight: TARGET,
-              paddingHorizontal: 8,
+              height: 28,
+              paddingHorizontal: 10,
               flexDirection: 'row',
               alignItems: 'center',
-              gap: 4,
-              borderRadius: TARGET / 2,
+              gap: 5,
+              borderRadius: 14,
               backgroundColor: pressed ? c['wash-pressed'] : c['accent-soft'],
             })}
           >
-            <Monitor pointerEvents="none" size={12} color={c['accent-ink']} />
+            <Monitor pointerEvents="none" size={13} strokeWidth={1.9} color={c['accent-ink']} />
             <Label size="caption" tone="accent-ink">
               Watch
             </Label>

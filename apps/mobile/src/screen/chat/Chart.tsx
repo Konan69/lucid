@@ -1,4 +1,4 @@
-import { CHART, chartScale, chartShares, chartValue, type ShownChart } from '@vivid/state'
+import { chartScale, chartShares, chartValue, type ShownChart } from '@vivid/state'
 import { View } from 'react-native'
 import Svg, { Circle, G, Line, Polyline, Rect, Text } from 'react-native-svg'
 import { useTheme } from '../../theme'
@@ -13,19 +13,17 @@ const COLORS = [
   'face-magenta',
   'face-yellow',
 ] as const
-const { width: W, height: H, left: LEFT, right: RIGHT } = CHART
+// These are SVG drawing units, not a guessed device width. The plot scales at the actual reply width.
+const DRAWING = { width: 320, height: 200, left: 8, right: 8, top: 22, bottom: 32 } as const
+const { width: W, height: H, left: LEFT, right: RIGHT } = DRAWING
 
-/** The palette is nonempty; indexing wraps for share charts with more than six parts. */
+/** Series colours repeat after six, which a share chart with more parts relies on. */
 function usePaint() {
   const { colors } = useTheme()
-  return (index: number) => {
-    const key = COLORS[index % COLORS.length]
-    if (key === undefined) throw new Error('A chart colour list is empty')
-    return colors[key]
-  }
+  return (index: number) => colors[COLORS[index % COLORS.length]]
 }
 
-/** Static SVG mirrors the web plot; the values remain available to a screen reader. */
+/** Phone-sized SVG keeps all values in its accessible name while using fewer visible axis labels. */
 export function Chart({ chart }: { chart: ShownChart }) {
   return (
     <View accessible accessibilityLabel={readingOf(chart)} style={{ gap: 8 }}>
@@ -35,10 +33,11 @@ export function Chart({ chart }: { chart: ShownChart }) {
   )
 }
 
-/** Bars and lines share a zero-inclusive scale and the web's label spacing. */
+/** Four axis labels at most leave room for readable type, while the data and zero scale stay shared. */
 function Plot({ chart }: { chart: ShownChart }) {
   const { colors: c } = useTheme()
-  const { top, y, slot, every } = chartScale(chart)
+  const { top, y, slot } = chartScale(chart, DRAWING)
+  const every = Math.ceil(chart.labels.length / 4)
   return (
     <View style={{ width: '100%', aspectRatio: W / H }}>
       <Svg
@@ -59,7 +58,7 @@ function Plot({ chart }: { chart: ShownChart }) {
           strokeWidth={1}
           strokeDasharray="3 4"
         />
-        <Text x={LEFT} y={y(top) - 3} fill={c['ink-3']} fontSize={12}>
+        <Text x={LEFT} y={y(top) - 3} fill={c['ink-3']} fontSize={16}>
           {chartValue(top, chart.unit)}
         </Text>
         {chart.kind === 'bar' ? (
@@ -75,9 +74,9 @@ function Plot({ chart }: { chart: ShownChart }) {
               y={H - 8}
               textAnchor="middle"
               fill={c['ink-3']}
-              fontSize={12}
+              fontSize={16}
             >
-              {label.length > 12 ? `${label.slice(0, 11)}…` : label}
+              {label.length > 10 ? `${label.slice(0, 9)}…` : label}
             </Text>
           ) : null,
         )}
@@ -116,7 +115,7 @@ function Bars({
   )
 }
 
-/** Lines retain the web's points for short series and omit them on dense plots. */
+/** Dots only mark short series; fewer markers keep dense phone plots legible. */
 function Lines({
   chart,
   slot,
@@ -138,7 +137,7 @@ function Lines({
         strokeLinejoin="round"
         strokeLinecap="round"
       />
-      {series.values.length <= 24 &&
+      {series.values.length <= 12 &&
         series.values.map((value, index) => (
           // A point has no identity apart from its position in the series.
           // oxlint-disable-next-line react/no-array-index-key
