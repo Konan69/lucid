@@ -15,25 +15,28 @@ export interface ScopeService {
 /** Authority is server-bound per render; neither actor nor folder can be chosen by model input. */
 export class Scope extends Context.Service<Scope, ScopeService>()('vivid/Tools/Scope') {}
 
-/** Tool-time recovery is lazy: a restart misses render context but still resolves authority before any action. */
+/** Tool-time recovery is lazy; the attributed client shares the tool Layer's lifetime.
+ * Returning a client from a nested Effect.provide closes its RPC scope before the first call. */
 export function scopeLayer(
   thread: string,
   delivery: DeliveredMessage,
   origin: Option.Option<ThreadOrigin>,
 ): Layer.Layer<Scope, ToolFailure> {
-  return Layer.effect(
-    Scope,
+  return Layer.unwrap(
     Effect.gen(function* () {
       const authority = yield* resolveAuthority(thread, delivery, origin, (threadId, turn) =>
         recoverAuthority(threadId, turn).pipe(Effect.provide(runtimeClientLayer)),
       )
-      return yield* Effect.gen(function* () {
-        return Scope.of({
-          acting: authority.acting,
-          client: yield* VividRpcClient,
-          folder: authority.folder,
-        })
-      }).pipe(Effect.provide(actingLayer(authority.acting)))
+      return Layer.effect(
+        Scope,
+        Effect.gen(function* () {
+          return Scope.of({
+            acting: authority.acting,
+            client: yield* VividRpcClient,
+            folder: authority.folder,
+          })
+        }),
+      ).pipe(Layer.provide(actingLayer(authority.acting)))
     }),
   )
 }
