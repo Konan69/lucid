@@ -249,6 +249,7 @@ describe('Supervised programs', () => {
         expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
         expect(yield* Ref.get(count)).toBe(1)
         expect(outcome.calls).toHaveLength(1)
+        expect(outcome.calls[0]).toHaveProperty('end', 'unknown')
       }),
     )
 

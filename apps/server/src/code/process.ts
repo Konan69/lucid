@@ -228,12 +228,12 @@ class Execution {
     return outcome
   }
 
-  /** Failure cannot replace a previously latched Approval, rule or unknown action. */
+  /** Failure cannot replace a latched decision. Copy receipts so late callbacks cannot rewrite its snapshot. */
   failed(failure: CodeFailure): CodeOutcome {
     if (Option.isSome(this.terminal)) return this.terminal.value
     if (this.calls.some((call) => call.end === 'unknown'))
-      return CodeOutcome.cases.OutcomeUnknown.make({ calls: this.calls })
-    return CodeOutcome.cases.Failed.make({ failure, calls: this.calls })
+      return CodeOutcome.cases.OutcomeUnknown.make({ calls: this.calls.slice() })
+    return CodeOutcome.cases.Failed.make({ failure, calls: this.calls.slice() })
   }
 
   /** Reserve bounded queue space before forking; arguments count even if completion cancels the call. */
@@ -281,19 +281,24 @@ class Execution {
       },
       ApprovalRequired: ({ approvalId }) =>
         this.latch(
-          () => CodeOutcome.cases.ApprovalRequired.make({ approvalId, summary, calls: this.calls }),
+          () =>
+            CodeOutcome.cases.ApprovalRequired.make({
+              approvalId,
+              summary,
+              calls: this.calls.slice(),
+            }),
           index,
           CodeCall.make({ kind: call.kind, summary, end: 'needs approval' }),
         ),
       Blocked: ({ rule }) =>
         this.latch(
-          () => CodeOutcome.cases.Blocked.make({ rule, calls: this.calls }),
+          () => CodeOutcome.cases.Blocked.make({ rule, calls: this.calls.slice() }),
           index,
           CodeCall.make({ kind: call.kind, summary, end: 'refused' }),
         ),
       Unknown: () =>
         this.latch(
-          () => CodeOutcome.cases.OutcomeUnknown.make({ calls: this.calls }),
+          () => CodeOutcome.cases.OutcomeUnknown.make({ calls: this.calls.slice() }),
           index,
           CodeCall.make({ kind: call.kind, summary, end: 'unknown' }),
         ),
@@ -313,7 +318,7 @@ class Execution {
     if (Option.isSome(this.terminal)) return this.terminal.value
     const outcome = CodeOutcome.cases.Completed.make({
       result,
-      calls: this.calls,
+      calls: this.calls.slice(),
       truncated: false,
     })
     return bytes(JSON.stringify(outcome)) > budgets.result
