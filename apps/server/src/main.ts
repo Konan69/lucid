@@ -17,6 +17,10 @@ import { approvalStoreLayer } from './approvals/store.ts'
 import { approvalSweeperLayer } from './approvals/sweeper.ts'
 import { auditLayer } from './audit/record.ts'
 import { companyStoreLayer } from './companies/store.ts'
+import { codeAuthorityLayer } from './code/authority.ts'
+import { codeCallsLayer } from './code/calls.ts'
+import { codeProcessLayer } from './code/process.ts'
+import { publicPageLayer } from './code/page.ts'
 import { machineLayer } from './computers/provider.ts'
 import { computerStoreLayer } from './computers/store.ts'
 import { loadServerConfig, ServerConfig } from './config.ts'
@@ -100,6 +104,9 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     libraryStoreLayer,
     executorLayer,
     machineLayer,
+    codeProcessLayer,
+    publicPageLayer,
+    codeAuthorityLayer,
   ).pipe(Layer.provideMerge(data))
   const reach = Layer.mergeAll(presenceLayer, notifierLayer, auditLayer).pipe(
     Layer.provideMerge(foundation),
@@ -115,7 +122,9 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     Layer.provideMerge(accounts),
   )
   const decisions = gateLayer.pipe(Layer.provideMerge(trust))
-  const work = Layer.mergeAll(taskStoreLayer, routineStoreLayer).pipe(Layer.provideMerge(decisions))
+  const work = Layer.mergeAll(taskStoreLayer, routineStoreLayer, codeCallsLayer).pipe(
+    Layer.provideMerge(decisions),
+  )
   const schedules = Layer.mergeAll(followUpsLayer, routineSchedulerServiceLayer).pipe(
     Layer.provideMerge(work),
   )

@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@alchemy.run/better-auth": "catalog:",
+    "@earendil-works/pi-codemode": "1.0.0",
     "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
     "@flue/sdk": "catalog:",
@@ -26,11 +27,14 @@
     "croner": "^10.0.1",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",
+    "html-to-text": "9.0.5",
+    "ipaddr.js": "2.2.0",
     "pg": "catalog:",
     "unpdf": "^1.8.1"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@types/html-to-text": "9.0.4",
     "@types/node": "catalog:",
     "@types/pg": "catalog:",
     "@typescript/native": "catalog:",

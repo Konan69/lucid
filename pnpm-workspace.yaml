@@ -130,3 +130,4 @@ minimumReleaseAgeExclude:
   - '@turbo/windows-arm64@2.11.2'
   - effect@4.0.0-rc.116
   - turbo@2.11.2
+  - '@earendil-works/pi-codemode@1.0.0'
