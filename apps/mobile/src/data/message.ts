@@ -6,9 +6,14 @@ import {
   type PersonId,
   type Run,
 } from '@vivid/contracts'
-import { speakerOfTurn } from '@vivid/state'
+import {
+  describeToolCall,
+  readAnswered,
+  readAsked,
+  speakerOfTurn,
+  summarizeSteps,
+} from '@vivid/state'
 import { Data, Option, Schema } from 'effect'
-import { describeToolCall, readAnswered, readAsked } from '../../../web/src/data/activity'
 
 /**
  * Reading one message of a Thread's conversation: who it is from, what it says, and which card
@@ -185,11 +190,24 @@ export const stepsOf = (tools: ReadonlyArray<ToolPart>): ReadonlyArray<Step> =>
     }
   })
 
-/** The one line the steps collapse to. */
-export const stepsSummary = (steps: ReadonlyArray<Step>, working: boolean): string => {
-  if (working && steps.some((step) => step.standing === 'running')) return 'Working'
-  return steps.length === 1 ? 'Did one thing' : `Did ${steps.length} things`
-}
+/**
+ * The step Vivid is on: the newest one still in progress, and only while the reply is being
+ * written. A call left "running" in a reply that has ended was abandoned, not in progress.
+ */
+export const currentStepOf = (steps: ReadonlyArray<Step>, working: boolean): Option.Option<Step> =>
+  working
+    ? Option.fromUndefinedOr(steps.findLast((step) => step.standing === 'running'))
+    : Option.none()
+
+/**
+ * The one line the steps collapse to, in the words every surface uses (`summarizeSteps` in
+ * `@vivid/state`): what Vivid is doing right now while it works, what it did once it has.
+ */
+export const stepsSummary = (steps: ReadonlyArray<Step>, working: boolean): string =>
+  summarizeSteps(
+    steps,
+    Option.map(currentStepOf(steps, working), (step) => step.id),
+  )
 
 // ── Cards ──────────────────────────────────────────────────────────────────
 

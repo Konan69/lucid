@@ -1,12 +1,19 @@
 import type { FlueConversationMessage } from '@flue/react'
 import type { Approval, InputRequest, PersonId, Run } from '@vivid/contracts'
-import { makeFullWhen, makeWhen, speakerOfTurn, thisReader } from '@vivid/state'
+import {
+  describeToolCall,
+  makeFullWhen,
+  makeWhen,
+  readAnswered,
+  readAsked,
+  speakerOfTurn,
+  thisReader,
+} from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { AlarmClock, Check, ChevronRight, Copy as CopyIcon, Monitor, Repeat2 } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
 import { panel } from '../../data/panel'
 import { useState } from 'react'
-import { describeToolCall, readAnswered, readAsked } from '../../data/activity'
 import { Avatar } from '../../ui/Avatar'
 import { cn } from '../../ui/cn'
 import { Face } from '../../ui/Face'

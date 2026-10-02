@@ -9,6 +9,7 @@ import { CITATION_ADDRESS, linkCitations, openDocument } from '../../data/docume
 import { useNow } from '../../data/foreground'
 import { useLiveData } from '../../data/live'
 import {
+  currentStepOf,
   isStreaming,
   momentOf,
   Speaker,
@@ -162,6 +163,7 @@ function Steps({ steps, working }: { steps: ReadonlyArray<Step>; working: boolea
   const [open, setOpen] = useState(false)
   if (steps.length === 0) return null
   const summary = stepsSummary(steps, working)
+  const busy = Option.isSome(currentStepOf(steps, working))
   const Chevron = open ? ChevronDown : ChevronRight
   return (
     <View style={{ marginBottom: 6 }}>
@@ -175,7 +177,7 @@ function Steps({ steps, working }: { steps: ReadonlyArray<Step>; working: boolea
         style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 24 }}
       >
         <Chevron pointerEvents="none" size={15} strokeWidth={1.8} color={c['ink-3']} />
-        {summary === 'Working' && <Dot tone="status-working" size={6} />}
+        {busy && <Dot tone="status-working" size={6} />}
         <Label size="label" tone="ink-3">
           {summary}
         </Label>

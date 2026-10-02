@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest'
 import {
   Card,
   cardOf,
+  currentStepOf,
   isShown,
   momentOf,
   Speaker,
@@ -188,10 +189,18 @@ describe('what Vivid did', () => {
     ])
   })
 
-  it('collapses to one line that says whether it is still going', () => {
-    expect(stepsSummary(stepsOf([running]), true)).toBe('Working')
-    expect(stepsSummary(stepsOf([tool('create_task', {})]), false)).toBe('Did one thing')
-    expect(stepsSummary(stepsOf([tool('a', {}), tool('b', {})]), false)).toBe('Did 2 things')
+  it('collapses to one line: what it is doing while it works, what it did once it has', () => {
+    const steps = stepsOf([tool('create_task', {}), running])
+    expect(stepsSummary(steps, true)).toBe('Searching the Library…')
+    expect(Option.map(currentStepOf(steps, true), (step) => step.id)).toEqual(Option.some('call-1'))
+    expect(stepsSummary(stepsOf([tool('create_task', {})]), false)).toBe('Started tracking a task')
+  })
+
+  it('does not call a step in progress once the reply has ended', () => {
+    // A call left running in a reply that is over was abandoned; nothing is happening now.
+    const steps = stepsOf([running, tool('create_task', {})])
+    expect(currentStepOf(steps, false)).toEqual(Option.none())
+    expect(stepsSummary(steps, false)).toBe('Searching the Library and one more thing')
   })
 })
 
