@@ -4,7 +4,7 @@ import { ThreadId, type MeResponse, type Thread as ThreadRecord } from '@vivid/c
 import { Array as Arr, Option, Order } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import { PanelLeft } from 'lucide-react'
-import { lazy, Suspense, useState, useSyncExternalStore } from 'react'
+import { lazy, Suspense, useSyncExternalStore } from 'react'
 import { live, LiveState, useLive, useLiveValue } from './data/live'
 import { panel } from './data/panel'
 import { Route, router } from './data/route'
@@ -245,7 +245,7 @@ function Shell({ me }: { me: MeResponse }) {
             key={workspaceKey(me.workspace)}
             route={route}
             me={me}
-            panel={beside}
+            beside={beside}
             onTogglePanel={panel.toggle}
           />
         </Suspense>
@@ -278,17 +278,17 @@ const openThread = (id: string) => router.go(Route.Thread({ id: ThreadId.make(id
 function Place({
   route,
   me,
-  panel,
+  beside,
   onTogglePanel,
 }: {
   route: Route
   me: MeResponse
-  panel: boolean
+  beside: boolean
   onTogglePanel: () => void
 }) {
   return Route.$match(route, {
     New: () => <First me={me} />,
-    Thread: ({ id }) => <Thread id={id} me={me} panelOpen={panel} onTogglePanel={onTogglePanel} />,
+    Thread: ({ id }) => <Thread id={id} me={me} panelOpen={beside} onTogglePanel={onTogglePanel} />,
     Routines: () => <Routines onOpenConversation={(thread) => openThread(thread.id)} />,
     Library: () => (
       <Library
