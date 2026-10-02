@@ -1,6 +1,6 @@
 import { Schema } from 'effect'
 import { Approval } from './approvals.js'
-import { PersonId, PersonSummary, ProjectId, RunId, ThreadId } from './identity.js'
+import { LibraryFolderId, PersonId, PersonSummary, ProjectId, RunId, ThreadId } from './identity.js'
 import { InputRequest } from './inputs.js'
 
 /**
@@ -127,6 +127,12 @@ export type RunState = typeof RunState.Type
 export const Run = Schema.Struct({
   id: RunId,
   threadId: ThreadId,
+  /**
+   * The Run's place in its Thread, counted from one. It is what the delivery that started the Run
+   * is called inside the conversation, where no identifier is ever written: the conversation says
+   * "turn 7, from Ada", and the Run with that number says who Ada is and what she may do.
+   */
+  turn: Schema.Number,
   origin: RunOrigin,
   state: RunState,
   startedAt: Schema.Number,
@@ -175,13 +181,43 @@ export const SignalType = Schema.Literals([
 ] as const)
 export type SignalType = typeof SignalType.Type
 
-/** One server-owned request for Flue to accept a Run without owning product state. */
+/**
+ * Who a delivery is for and what it may reach: the Person Vivid acts for, and the Library folder
+ * the work is confined to when there is one (a Routine's own folder).
+ *
+ * This is never written into the conversation. Flue shows a delivery's attributes to the model as
+ * text, so anything put there is something the model can read, repeat to the people in a shared
+ * Thread, or be talked into changing. The scope travels beside the conversation instead, from the
+ * server to the runtime, and reaches the tools through a Layer.
+ */
+export const DeliveryScope = Schema.Struct({
+  acting: PersonId,
+  libraryFolder: Schema.NullOr(LibraryFolderId),
+}).annotate({ identifier: 'DeliveryScope', title: 'Delivery scope' })
+export interface DeliveryScope extends Schema.Schema.Type<typeof DeliveryScope> {}
+
+/** Naming one delivery: its Thread and the turn it was given there. */
+export const DeliveryScopeRequest = Schema.Struct({
+  threadId: ThreadId,
+  turn: Schema.Number,
+})
+export interface DeliveryScopeRequest extends Schema.Schema.Type<typeof DeliveryScopeRequest> {}
+
+/**
+ * One server-owned request for Flue to accept a Run without owning product state.
+ *
+ * `body` and `attributes` are what the model reads, so they hold words only: who is speaking by
+ * name, what woke Vivid, and the delivery's `turn`. `scope` is what the runtime acts with and the
+ * model never sees.
+ */
 export const RuntimeRunRequest = Schema.Struct({
   threadId: ThreadId,
   idempotencyKey: Schema.String,
   type: SignalType,
   body: Schema.String,
   attributes: Schema.Record(Schema.String, Schema.String),
+  turn: Schema.Number,
+  scope: DeliveryScope,
 })
 export interface RuntimeRunRequest extends Schema.Schema.Type<typeof RuntimeRunRequest> {}
 

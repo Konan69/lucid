@@ -133,6 +133,8 @@ import {
   ThreadDetail,
   ThreadListResponse,
   ThreadResponse,
+  DeliveryScope,
+  DeliveryScopeRequest,
 } from './threads.js'
 
 /**
@@ -265,6 +267,16 @@ const MarkThreadRead = Rpc.make('MarkThreadRead', { ...call, payload: { id: Thre
 /** Stops the Run in progress. Work already done is not undone. */
 const StopThread = Rpc.make('StopThread', { ...call, payload: { id: ThreadId } })
 const ReportPresence = Rpc.make('ReportPresence', { ...call, payload: PresenceRequest })
+/**
+ * The runtime asking who a delivery is for, by the turn the conversation names. Only the runtime
+ * may ask, and it asks only when it no longer holds the scope it was handed with the delivery (it
+ * restarted in the middle of a response). No Person's client can call this.
+ */
+const GetDeliveryScope = Rpc.make('GetDeliveryScope', {
+  ...call,
+  payload: DeliveryScopeRequest,
+  success: DeliveryScope,
+})
 
 // ── What is waiting on the Person: questions and Approvals ─────────────────
 const GetInbox = Rpc.make('GetInbox', { ...call, success: Inbox })
@@ -588,6 +600,7 @@ export const VividRpc = RpcGroup.make(
   MarkThreadRead,
   StopThread,
   ReportPresence,
+  GetDeliveryScope,
   GetInbox,
   WatchInbox,
   DecideApproval,
