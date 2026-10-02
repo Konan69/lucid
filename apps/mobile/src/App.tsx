@@ -2,6 +2,7 @@ import { RegistryContext } from '@effect/atom-react'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
+import { workspaceKey } from '@vivid/state'
 import { StatusBar, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
@@ -98,7 +99,12 @@ function Session() {
     Failed: ({ failure }) => <Stopped message={failure.message} />,
     Ready: ({ value }) => (
       <MeProvider value={value}>
-        <Shell />
+        {/* One stack for each workspace. Screens stay mounted under whatever covers them, so a
+            Library item sheet opened in one Company used to stay up, with that Company's item and
+            its actions, after the Person moved to another (from the switcher, or from another
+            device). Keying the stack by where they are working ends every screen, sheet, editor
+            and half-finished action of the old workspace and starts the new one at Home. */}
+        <Shell key={workspaceKey(value.workspace)} />
       </MeProvider>
     ),
   })
