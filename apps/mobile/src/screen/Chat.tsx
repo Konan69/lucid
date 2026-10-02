@@ -1,4 +1,4 @@
-import { useAtomMount, useAtomSet } from '@effect/atom-react'
+import { useAtomMount, useAtomSet, useAtomValue } from '@effect/atom-react'
 import { useFlueAgent } from '@flue/react'
 import type { FlueConversationMessage } from '@flue/sdk'
 import {
@@ -14,13 +14,16 @@ import { Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useMemo, useState } from 'react'
 import { FlatList, View } from 'react-native'
+import { useIsFocused } from '@react-navigation/native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { Share2, Users } from 'lucide-react-native'
+import { deliveryOf, type Delivery, type Unsent } from '../data/delivery'
 import { draft, useDraft } from '../data/drafts'
-import { onForeground } from '../data/foreground'
-import { LiveState, useLive, useLiveData } from '../data/live'
-import { isShown, isStreaming, type Around } from '../data/message'
-import { conversation, say, UNTITLED } from '../data/threads'
+import { inFront, onForeground } from '../data/foreground'
+import { LiveState, refusalOf, useLive, useLiveData } from '../data/live'
+import { isShown, isStreaming, lastWordsOf, type Around } from '../data/message'
+import { endingOf, newestRun } from '../data/outcome'
+import { conversation, say, UNDELIVERED, UNTITLED } from '../data/threads'
 import { Composer } from '../ui/Composer'
 import { Header, Screen } from '../ui/Header'
 import { AboveKeyboard } from '../ui/Keyboard'
@@ -34,21 +37,55 @@ import { Share } from './chat/Share'
  *
  * Two sources feed this screen. The words come from Flue's stream through the server's gateway,
  * token by token. Everything else (who is in the Thread, who Vivid acted for, what is waiting on
- * someone, who is looking right now) comes from the Thread's live query, and reading that query
- * is also what marks the Thread read. Neither is fetched and neither is refreshed by hand.
+ * someone, who is looking right now) comes from the Thread's live query. Neither is fetched and
+ * neither is refreshed by hand.
+ *
+ * Looking at the Thread is what marks it read and what makes the Person present in it, and both
+ * are said only while they really are looking (`useLooking`). The screen reads the query that
+ * marks the Thread read (`seenThread`) then, and the Thread's plain query otherwise: the same
+ * detail is drawn either way, and a reply that lands while the screen is covered stays unread.
  */
 export function Chat({ route }: NativeStackScreenProps<Routes, 'Chat'>) {
   const data = useLiveData()
   const { id } = route.params
-  const detail = useLive(data.seenThread(id))
+  const looking = useLooking()
+  const detail = useLive(looking ? data.seenThread(id) : data.live.thread.get(id))
   if (LiveState.$is('Failed')(detail)) return <Gone />
   return (
-    <Conversation
-      key={id}
-      id={id}
-      detail={LiveState.$is('Ready')(detail) ? Option.some(detail.value) : Option.none()}
-    />
+    <>
+      {looking && <Present id={id} />}
+      <Conversation
+        key={id}
+        id={id}
+        detail={LiveState.$is('Ready')(detail) ? Option.some(detail.value) : Option.none()}
+      />
+    </>
   )
+}
+
+/**
+ * Whether the Person is looking at this screen: it is the one on top, and the app is in front.
+ *
+ * A native stack keeps a screen mounted under whatever is pushed over it, and an app in the
+ * background can go on receiving for a while. Being mounted used to be taken for looking, so a
+ * Thread the Person had left behind went on marking its replies read and saying they were there,
+ * and the server, believing it, sent no notification for work they had not seen.
+ */
+function useLooking(): boolean {
+  const focused = useIsFocused()
+  const front = useAtomValue(inFront)
+  return focused && front
+}
+
+/**
+ * Says "I am here" in a Thread for exactly as long as it is drawn (`presentIn`). It draws nothing;
+ * being a component is what lets the screen start and stop it by whether the Person is looking,
+ * with no effect to run.
+ */
+function Present({ id }: { id: ThreadId }) {
+  const data = useLiveData()
+  useAtomMount(data.presentIn(id))
+  return null
 }
 
 /** A Thread that is not there, or not this Person's to see. The two look the same on purpose. */
@@ -111,10 +148,76 @@ function useStop(id: ThreadId, working: boolean) {
   return { refused, stop }
 }
 
+/**
+ * Sending in one Thread, and the one delivery from here that is not known to have arrived.
+ *
+ * Each message goes out under a key that names it (`data/delivery.ts`). When it does not arrive,
+ * its words and its key are kept together here, so sending those words again, from the button
+ * under the conversation or from the composer, is the same delivery to the server and never a
+ * second message. It used to be sent again under a new key, which could run the work twice, and
+ * the button beside the refusal only reconnected the conversation and sent nothing.
+ */
+function useSend(
+  id: ThreadId,
+  thread: Option.Option<Thread>,
+  agent: ReturnType<typeof useFlueAgent>,
+  place: string,
+) {
+  const data = useLiveData()
+  const [unsent, setUnsent] = useState<Option.Option<Unsent>>(Option.none())
+  const shared = Option.exists(thread, (value) => !ThreadAudience.guards.Private(value.audience))
+
+  /**
+   * Hands one delivery to the server and answers with why it did not arrive, when it did not. In
+   * a shared Thread the server turns the message into an attributed one, so it is sent plainly
+   * and drawn when it comes back; in a private one the hook shows it at once and keeps it in the
+   * conversation if it fails.
+   */
+  const deliver = ({ words, key }: Delivery): Promise<Option.Option<string>> =>
+    shared
+      ? say(data, { id, body: words, key }).then(refusalOf)
+      : agent.sendMessage(words, { idempotencyKey: key }).then(
+          () => Option.none(),
+          () => Option.some(UNDELIVERED),
+        )
+
+  function send(delivery: Delivery) {
+    setUnsent(Option.none())
+    // A Thread started without a name takes its first message as one. A refusal is not said: the
+    // Person did not ask for this, the Thread keeps the title it had, and the next message tries
+    // again because the title is still the unnamed one.
+    if (Option.exists(thread, (value) => value.title === UNTITLED)) {
+      void data.change((sdk) =>
+        sdk.PatchThread({ id, patch: { title: titleFromMessage(delivery.words) } }),
+      )
+    }
+    void deliver(delivery).then((why) => {
+      if (Option.isNone(why)) return
+      setUnsent(Option.some({ ...delivery, why: why.value }))
+      // Nothing in a shared Thread shows words that did not arrive, so they go back into the
+      // composer, and so back into what the phone keeps, unless the Person has started writing
+      // something else there since.
+      if (shared && draft.in(place).length === 0) draft.keep(place, delivery.words)
+    })
+  }
+
+  return {
+    shared,
+    unsent,
+    /** Sends words: as the delivery still in doubt when they are its words, else as a new one. */
+    say: (words: string) => send(deliveryOf(unsent, words, randomUUID)),
+  }
+}
+
+/**
+ * One Thread's conversation: its words, the composer under them, and what is live around both. It
+ * is keyed by the Thread (`Chat`), so everything held here, the stream and the delivery that is in
+ * doubt included, belongs to that one Thread and to nothing opened after it.
+ */
 function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<ThreadDetail> }) {
   const me = useMe()
-  const data = useLiveData()
   const go = useGo()
+  const data = useLiveData()
   const client = useMemo(() => conversation(data.session, id), [data.session, id])
   const agent = useFlueAgent({ client })
   // A phone suspends the app when it is not in front, and the stream with it; coming back
@@ -127,13 +230,11 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
     thread: Option.some(id),
   })
   const typed = useDraft(place)
-  // Being on this screen is what makes the Person present in the Thread.
-  useAtomMount(data.presentIn(id))
   const setTyping = useAtomSet(data.typingIn(id))
   const [sharing, setSharing] = useState(false)
-  const [undelivered, setUndelivered] = useState<Option.Option<string>>(Option.none())
   const thread = Option.map(detail, (value) => value.thread)
-  const shared = Option.exists(thread, (value) => !ThreadAudience.guards.Private(value.audience))
+  const sending = useSend(id, thread, agent, place)
+  const { shared } = sending
   const working =
     agent.status === 'submitted' ||
     agent.status === 'streaming' ||
@@ -144,33 +245,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
     shared,
     runs: Option.match(detail, { onNone: () => [], onSome: (value) => value.runs }),
   }
-
-  function send(text: string) {
-    setUndelivered(Option.none())
-    // A Thread started without a name takes its first message as one. A refusal is not said: the
-    // Person did not ask for this, the Thread keeps the title it had, and the next message tries
-    // again because the title is still the unnamed one.
-    if (Option.exists(thread, (value) => value.title === UNTITLED)) {
-      void data.change((sdk) => sdk.PatchThread({ id, patch: { title: titleFromMessage(text) } }))
-    }
-    if (!shared) {
-      // The hook shows the message at once and keeps it, marked, if it did not arrive.
-      void agent.sendMessage(text).then(
-        () => undefined,
-        () => undefined,
-      )
-      return
-    }
-    // In a shared Thread the server turns the message into an attributed one, so it is sent
-    // plainly and drawn when it comes back.
-    void say(data, { id, body: text, key: randomUUID() }).then((result) => {
-      if (Result.isSuccess(result)) return
-      setUndelivered(Option.some(result.failure.message))
-      // The words go back into the composer, and so back into what the phone keeps, unless the
-      // Person has started writing something else there since.
-      if (draft.in(place).length === 0) draft.keep(place, text)
-    })
-  }
+  const shown = agent.messages.filter(isShown)
 
   function type(next: string) {
     // Whether there is something typed is part of what the Thread's presence says; see
@@ -178,6 +253,41 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
     setTyping(next.length > 0)
     draft.keep(place, next)
   }
+
+  /** Says something in the Thread. Words that are on their way leave the composer they were in. */
+  function speak(words: string) {
+    if (typed.trim() === words) type('')
+    sending.say(words)
+  }
+
+  // What went wrong at the foot of the conversation, and the one thing to do about it. A message
+  // that did not arrive comes first: its button sends those words again, as the same delivery.
+  // Otherwise it is the conversation's own stream that failed, and its button opens it again.
+  const trouble = Option.orElse(
+    Option.map(sending.unsent, (unsent): Trouble => ({
+      message: unsent.why,
+      action: 'Send again',
+      onAct: () => speak(unsent.words),
+    })),
+    () =>
+      Option.map(Option.fromUndefinedOr(agent.error), (error): Trouble => ({
+        message: error.message,
+        action: 'Try again',
+        onAct: () => agent.refresh(),
+      })),
+  )
+
+  // How the newest Run ended, when it ended without an answer; said once Vivid has stopped, where
+  // the answer would have been. "Try again" says the Person's last words again, as a new message.
+  const ended = Option.map(
+    working ? Option.none() : Option.flatMap(newestRun(around.runs), endingOf),
+    (ending): Ended => ({
+      words: ending.words,
+      onAgain: ending.again
+        ? Option.map(lastWordsOf(shown, around), (words) => () => speak(words))
+        : Option.none(),
+    }),
+  )
 
   return (
     <AboveKeyboard>
@@ -201,16 +311,14 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
       />
       <View ref={wake} style={{ flex: 1 }}>
         <Messages
-          messages={agent.messages.filter(isShown)}
+          messages={shown}
           ready={agent.historyReady}
           working={working}
-          failure={Option.orElse(undelivered, () =>
-            Option.map(Option.fromUndefinedOr(agent.error), (error) => error.message),
-          )}
+          ended={ended}
+          trouble={trouble}
           around={around}
           detail={detail}
-          onRetry={() => agent.refresh()}
-          onContinue={send}
+          onContinue={speak}
         />
       </View>
       {stopping.refused && (
@@ -224,12 +332,8 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
         working={working}
         disabled={false}
         onChange={type}
-        onSend={() => {
-          const text = typed.trim()
-          // Emptying the composer is also what removes this Thread's kept draft.
-          type('')
-          send(text)
-        }}
+        // Emptying the composer, which `speak` does, is also what removes this Thread's kept draft.
+        onSend={() => speak(typed.trim())}
         onStop={() => void stopping.stop()}
       />
       {sharing && Option.isSome(thread) && Workspace.guards.Company(me.workspace) && (
@@ -244,14 +348,27 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
   )
 }
 
+/** Something that went wrong under the conversation: what to say, and the one thing to do. */
+interface Trouble {
+  readonly message: string
+  readonly action: string
+  readonly onAct: () => void
+}
+
+/** A Run that ended without an answer: what to say, and the way to ask again when that can help. */
+interface Ended {
+  readonly words: string
+  readonly onAgain: Option.Option<() => void>
+}
+
 interface MessagesProps {
   readonly messages: ReadonlyArray<FlueConversationMessage>
   readonly ready: boolean
   readonly working: boolean
-  readonly failure: Option.Option<string>
+  readonly ended: Option.Option<Ended>
+  readonly trouble: Option.Option<Trouble>
   readonly around: Around
   readonly detail: Option.Option<ThreadDetail>
-  readonly onRetry: () => void
   readonly onContinue: (text: string) => void
 }
 
@@ -278,7 +395,7 @@ function Messages(props: MessagesProps) {
       ]}
       // The first thing in an inverted list is the last thing on screen.
       ListHeaderComponent={
-        <Tail working={working && !streaming} failure={props.failure} onRetry={props.onRetry} />
+        <Tail working={working && !streaming} ended={props.ended} trouble={props.trouble} />
       }
       renderItem={({ item }) => (
         <Message
@@ -309,15 +426,18 @@ function Blank({ ready }: { ready: boolean }) {
   )
 }
 
-/** What sits under the newest message: that Vivid is thinking, or that something did not arrive. */
+/**
+ * What sits under the newest message: that Vivid is thinking, that its last Run came to nothing,
+ * or that something did not arrive.
+ */
 function Tail({
   working,
-  failure,
-  onRetry,
+  ended,
+  trouble,
 }: {
   working: boolean
-  failure: Option.Option<string>
-  onRetry: () => void
+  ended: Option.Option<Ended>
+  trouble: Option.Option<Trouble>
 }) {
   return (
     <View style={{ gap: 12 }}>
@@ -330,12 +450,26 @@ function Tail({
           <Label tone="ink-3">Thinking…</Label>
         </View>
       )}
-      {Option.isSome(failure) && (
+      {Option.isSome(ended) && (
         <View style={{ gap: 8 }}>
-          <Notice message={failure.value} />
+          <Label size="label" tone="ink-3">
+            {ended.value.words}
+          </Label>
+          {Option.isSome(ended.value.onAgain) && (
+            <Button
+              label="Try again"
+              onPress={ended.value.onAgain.value}
+              containerStyle={{ alignSelf: 'flex-start' }}
+            />
+          )}
+        </View>
+      )}
+      {Option.isSome(trouble) && (
+        <View style={{ gap: 8 }}>
+          <Notice message={trouble.value.message} />
           <Button
-            label="Try again"
-            onPress={onRetry}
+            label={trouble.value.action}
+            onPress={trouble.value.onAct}
             containerStyle={{ alignSelf: 'flex-start' }}
           />
         </View>

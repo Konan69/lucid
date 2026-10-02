@@ -34,7 +34,9 @@ export class Undelivered extends Schema.TaggedError<Undelivered>()(
   { title: 'Message undelivered' },
 ) {}
 
-const UNDELIVERED = 'That message did not reach Vivid. Check your connection and send it again.'
+/** What a Person is told when a message left the phone and is not known to have arrived. */
+export const UNDELIVERED =
+  'That message did not reach Vivid. Check your connection and send it again.'
 
 /**
  * Delivers one message into a Thread. The gateway turns it into an attributed message when the

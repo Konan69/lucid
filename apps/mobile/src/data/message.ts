@@ -113,6 +113,21 @@ export const isShown = (message: FlueConversationMessage): boolean =>
 export const textOf = (message: FlueConversationMessage): string =>
   message.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n\n')
 
+/**
+ * What the Person holding this phone last said in the Thread, which is what "Try again" under a
+ * Run that came to nothing says again.
+ */
+export const lastWordsOf = (
+  messages: ReadonlyArray<FlueConversationMessage>,
+  around: Around,
+): Option.Option<string> =>
+  Option.map(
+    Option.fromUndefinedOr(
+      messages.findLast((message) => Speaker.$is('Me')(speakerOf(message, around))),
+    ),
+    textOf,
+  )
+
 /** What Vivid did while answering, in the order it did it. */
 export const toolsOf = (message: FlueConversationMessage): ReadonlyArray<ToolPart> =>
   message.parts.flatMap((part) => (part.type === 'dynamic-tool' ? [part] : []))
