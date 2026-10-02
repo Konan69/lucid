@@ -16,6 +16,7 @@ import { pages, type Front } from '../../data/pages'
 import { Button, IconButton } from '../../ui/Button'
 import { cn } from '../../ui/cn'
 import { Face } from '../../ui/Face'
+import { floatingSurfaces } from '../../ui/Layer'
 import { ContextMenu, MenuDivider, MenuItem, type MenuPoint } from '../../ui/Menu'
 
 /**
@@ -470,13 +471,10 @@ function Address({ page }: { page: Option.Option<Page> }) {
 }
 
 /**
- * Whether something is drawn over the panel that a native page would sit on top of: a modal
- * surface, or a menu. Menus and dialogs are drawn at the end of the document, so they arrive as
- * its children.
+ * Whether the native page has to be off the window: the window is not showing, or a floating
+ * surface is open, which the page would otherwise be drawn on top of.
  */
-const covered = () =>
-  document.visibilityState !== 'visible' ||
-  document.querySelector('[aria-modal="true"], [role="menu"]') !== null
+const covered = () => document.visibilityState !== 'visible' || floatingSurfaces.open()
 
 /**
  * Where the showing page is drawn. This element is empty: it reports its own rectangle to the
@@ -506,15 +504,14 @@ export function PageView({ page }: { page: Option.Option<Page> }) {
     }
     const sized = new ResizeObserver(schedule)
     sized.observe(element)
-    const layered = new MutationObserver(schedule)
-    layered.observe(document.body, { childList: true })
+    const unlayered = floatingSurfaces.subscribe(schedule)
     addEventListener('resize', schedule)
     document.addEventListener('visibilitychange', schedule)
     report()
     return () => {
       cancelAnimationFrame(frame)
       sized.disconnect()
-      layered.disconnect()
+      unlayered()
       removeEventListener('resize', schedule)
       document.removeEventListener('visibilitychange', schedule)
       pages.place('hidden')
