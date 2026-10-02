@@ -2,6 +2,7 @@ import * as Context from 'effect/Context'
 import type * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import {
+  MessageAttachment,
   SignalType,
   type Conflict,
   type LibraryFolderId,
@@ -22,7 +23,7 @@ import type { DatabaseInfrastructureError } from '../database/client.ts'
  * `type` is one of the fixed `SignalType`s every client knows how to draw.
  */
 export const DeliveryMessage = Schema.TaggedUnion({
-  Said: { body: Schema.String },
+  Said: { body: Schema.String, attachments: Schema.optionalKey(Schema.Array(MessageAttachment)) },
   Signal: {
     type: SignalType,
     body: Schema.String,
@@ -36,7 +37,9 @@ export type DeliveryMessage = typeof DeliveryMessage.Type
  * the Person Vivid acts for, whatever started it.
  */
 export const StoredRunOrigin = Schema.TaggedUnion({
-  Message: {},
+  // The immutable message fingerprint lives with its reservation, not in Flue-owned history.
+  // Older Runs and server-internal text deliveries predate fingerprinted gateway admission.
+  Message: { fingerprint: Schema.optionalKey(Schema.String) },
   Routine: { routineName: Schema.String },
   FollowUp: { taskTitle: Schema.String },
   Decision: {},

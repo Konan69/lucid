@@ -8,13 +8,24 @@ import * as Headers from 'effect/unstable/http/Headers'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
-import { Conflict, ThreadId, type PersonId } from '@vivid/contracts'
+import {
+  AttachmentTooLarge,
+  Conflict,
+  InvalidAttachment,
+  PictureMediaType,
+  PicturesRequirePrivateThread,
+  ThreadId,
+  TooManyAttachments,
+  UnsupportedAttachment,
+  type PersonId,
+} from '@vivid/contracts'
 import { authenticate } from '../auth/session.ts'
 import { Runtime } from '../runtime/client.ts'
 import { Database } from '../database/client.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { canSee, findThread, requireThread, type StoredThread } from './access.ts'
 import { Conversation, DeliverySpeaker, DeliveryMessage, StoredRunOrigin } from './conversation.ts'
+import { IncomingMessage, messageFingerprint, messagePictures } from './pictures.ts'
 
 /**
  * The conversation gateway: the only way any client reaches Flue.
@@ -36,16 +47,8 @@ import { Conversation, DeliverySpeaker, DeliveryMessage, StoredRunOrigin } from 
 
 const Params = Schema.Struct({ threadId: ThreadId })
 
-/** What a client may send: its own words. Signals are the server's to deliver, never a client's. */
-const Sent = Schema.Struct({
-  kind: Schema.Literal('user'),
-  body: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(100_000)),
-  idempotencyKey: Schema.optionalKey(
-    Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
-  ),
-})
-
-const decodeSent = Schema.decodeUnknownEffect(Sent)
+const decodeSent = Schema.decodeUnknownEffect(IncomingMessage)
+const decodePictureType = Schema.decodeUnknownOption(PictureMediaType)
 
 const refuse = (status: number, message: string) =>
   HttpServerResponse.jsonUnsafe({ error: { message } }, { status })
@@ -72,6 +75,32 @@ const refusalFor = (tag: string) => {
 }
 
 const isConflict = Schema.is(Conflict)
+const isTooLarge = Schema.is(AttachmentTooLarge)
+const isPictureRefusal = Schema.is(
+  Schema.Union([
+    AttachmentTooLarge,
+    InvalidAttachment,
+    PicturesRequirePrivateThread,
+    TooManyAttachments,
+    UnsupportedAttachment,
+  ]),
+)
+
+/** Attachment failures expose only their fixed, displayable sentence and stable contract tag. */
+const pictureRefusal = (error: { readonly _tag: string; readonly message: string }) =>
+  HttpServerResponse.jsonUnsafe(
+    { error: { _tag: error._tag, message: error.message } },
+    {
+      status: isTooLarge(error) ? 413 : 400,
+    },
+  )
+
+/** Ordinary Conflict responses retain their existing wire shape for clients already using them. */
+const answerFailure = (error: { readonly _tag: string }) => {
+  if (isConflict(error)) return refuse(409, error.message)
+  if (isPictureRefusal(error)) return pictureRefusal(error)
+  return refusalFor(error._tag)
+}
 
 /**
  * Preserves a busy-Thread Conflict's displayable message for every client of this gateway.
@@ -79,12 +108,7 @@ const isConflict = Schema.is(Conflict)
  */
 const answered = <R>(
   effect: Effect.Effect<HttpServerResponse.HttpServerResponse, { readonly _tag: string }, R>,
-) =>
-  effect.pipe(
-    Effect.catch((error) =>
-      Effect.succeed(isConflict(error) ? refuse(409, error.message) : refusalFor(error._tag)),
-    ),
-  )
+) => effect.pipe(Effect.catch((error) => Effect.succeed(answerFailure(error))))
 
 /**
  * The address this client used to reach the server, so the stream address handed back points to
@@ -118,6 +142,7 @@ const send = Effect.fn('Gateway.send')(function* () {
   const { request, person, thread } = yield* admitted()
   const sent = yield* decodeSent(yield* request.json).pipe(Effect.option)
   if (Option.isNone(sent)) return refuse(400, 'A message needs text')
+  const attachments = yield* messagePictures(sent.value, thread)
   const origin = originOf(request.headers)
   if (Option.isNone(origin)) return refuse(400, 'The request has no host')
   const conversation = yield* Conversation
@@ -125,8 +150,10 @@ const send = Effect.fn('Gateway.send')(function* () {
     speaker: DeliverySpeaker.cases.Acting.make({}),
     threadId: thread.id,
     personId: person.id,
-    message: DeliveryMessage.cases.Said.make({ body: sent.value.body }),
-    origin: StoredRunOrigin.cases.Message.make({}),
+    message: DeliveryMessage.cases.Said.make({ body: sent.value.body, attachments }),
+    origin: StoredRunOrigin.cases.Message.make({
+      fingerprint: messageFingerprint(sent.value.body, attachments),
+    }),
     idempotencyKey:
       sent.value.idempotencyKey === undefined
         ? crypto.randomUUID()
@@ -192,12 +219,33 @@ const read = (suffix: (params: { readonly attachmentId: string }) => string) =>
       search: new URL(request.url, 'http://gateway').search,
       accept: Option.getOrElse(Headers.get(request.headers, 'accept'), () => '*/*'),
     })
+    if (attachmentId !== undefined && response.status !== 200)
+      return refuse(404, 'Picture not found')
+    const headers =
+      attachmentId === undefined
+        ? HOP_HEADERS.reduce(Headers.remove, response.headers)
+        : yield* pictureHeaders(response.headers)
     const until = accessLost(thread, person.id).pipe(Effect.scoped, Effect.provideContext(services))
     return HttpServerResponse.stream(Stream.interruptWhen(response.stream, until), {
       status: response.status,
-      headers: HOP_HEADERS.reduce(Headers.remove, response.headers),
+      headers,
     })
   })
+
+/** Never forward runtime-supplied filenames, unsafe MIME types or public cache directives for private bytes. */
+const pictureHeaders = Effect.fn('Gateway.pictureHeaders')(function* (headers: Headers.Headers) {
+  const mediaType = Option.flatMap(Headers.get(headers, 'content-type'), decodePictureType)
+  if (Option.isNone(mediaType))
+    return yield* Effect.fail(
+      new UnsupportedAttachment({ message: 'This attachment is not a supported picture.' }),
+    )
+  return Headers.fromInput({
+    'content-type': mediaType.value,
+    'content-disposition': 'inline',
+    'x-content-type-options': 'nosniff',
+    'cache-control': 'private, no-store',
+  })
+})
 
 const stop = Effect.fn('Gateway.stop')(function* () {
   const { thread } = yield* admitted()

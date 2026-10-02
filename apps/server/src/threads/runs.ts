@@ -7,6 +7,7 @@ import * as Layer from 'effect/Layer'
 import * as Schema from 'effect/Schema'
 import {
   DatabaseFailure,
+  Conflict,
   DeliveryScope,
   NotFound,
   type DeliveryScopeRequest,
@@ -59,7 +60,7 @@ export interface RunStoreService {
     readonly personId: PersonId
     readonly origin: StoredRunOrigin
     readonly libraryFolder: LibraryFolderId | null
-  }) => Effect.Effect<TurnReservation, DatabaseInfrastructureError>
+  }) => Effect.Effect<TurnReservation, Conflict | DatabaseInfrastructureError>
   /** Records acceptance after Flue returns its receipt, and reopens a failed delivery on retry. */
   readonly admitted: (receipt: Admitted) => Effect.Effect<void, DatabaseInfrastructureError>
   /** Runtime-only lookup, by the harmless turn number a delivery shows the model. */
@@ -153,6 +154,16 @@ const sameAuthority = Effect.fn('RunStore.sameAuthority')(function* (
     return yield* Effect.fail(
       new DatabaseFailure({ message: 'Run authority conflicts with its original delivery' }),
     )
+  const origin = yield* decodeOrigin(recorded.origin)
+  if (StoredRunOrigin.guards.Message(input.origin) && input.origin.fingerprint !== undefined) {
+    if (!StoredRunOrigin.guards.Message(origin) || origin.fingerprint !== input.origin.fingerprint)
+      return yield* Effect.fail(
+        new Conflict({
+          message:
+            'This message key was already used for different text or pictures. Send it with a new key.',
+        }),
+      )
+  }
   return yield* Effect.void
 })
 
