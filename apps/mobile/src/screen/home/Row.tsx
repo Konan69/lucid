@@ -1,4 +1,5 @@
 import { ThreadAudience, type Thread } from '@vivid/contracts'
+import { Option, Result } from 'effect'
 import { Users } from 'lucide-react-native'
 import { useWindowDimensions, View } from 'react-native'
 import { commit, warn } from '../../data/haptics'
@@ -113,6 +114,10 @@ function LineFace({ thread, now, pressed }: { thread: Thread; now: number; press
  *
  * Marking done is shown at once and confirmed by the server's next result. Deleting is the one
  * thing here that cannot be taken back, so it is the one thing that asks first.
+ *
+ * Both are shown before the server has answered and taken back if it refuses. A row has nowhere
+ * to say that, and a Thread that silently slides back reads as a swipe that did nothing, so what
+ * came of each is handed to the list (`onRefused`), which says it where Home says refusals.
  */
 export function ThreadRow({
   thread,
@@ -120,21 +125,33 @@ export function ThreadRow({
   now,
   onOpen,
   onRename,
+  onRefused,
 }: {
   thread: Thread
   variant: Lane['variant']
   now: number
   onOpen: (thread: Thread) => void
   onRename: (thread: Thread) => void
+  /** A sentence when a quick action was refused; none when the next one went through. */
+  onRefused: (message: Option.Option<string>) => void
 }) {
   const { colors: c } = useTheme()
   const data = useLiveData()
   const window = useWindowDimensions()
   const shelveLabel = thread.archived ? 'Move back to threads' : 'Mark as done'
 
+  /** Follows a quick action to its end and tells the list what came of it. */
+  const follow = async (made: Promise<Result.Result<unknown, unknown>>, words: string) => {
+    const result = await made
+    onRefused(Result.isFailure(result) ? Option.some(words) : Option.none())
+  }
+
   const shelve = () => {
     commit()
-    void patchThread(data, thread.id, { archived: !thread.archived })
+    void follow(
+      patchThread(data, thread.id, { archived: !thread.archived }),
+      'That thread could not be moved just now. Try again.',
+    )
   }
   const remove = () =>
     confirmDestructive({
@@ -143,7 +160,10 @@ export function ThreadRow({
       action: 'Delete thread',
       onConfirm: () => {
         warn()
-        void deleteThread(data, thread.id)
+        void follow(
+          deleteThread(data, thread.id),
+          `“${thread.title}” could not be deleted, so it is back in the list.`,
+        )
       },
     })
   // What the long-press menu can do, by the id the native menu reports back when one is chosen.

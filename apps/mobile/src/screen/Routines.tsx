@@ -71,8 +71,15 @@ export function Routines() {
   const go = useGo()
   const list = useLive(data.live.routines)
   const [over, setOver] = useState<Over>(Over.Nothing())
+  // A delete closes its sheet at once, so a refused one has only the list to be said in.
+  const [undeleted, setUndeleted] = useState<Option.Option<string>>(Option.none())
   const close = () => setOver(Over.Nothing())
-  const create = () => setOver(Over.Creating())
+  /** Opens something over the list. The Person has moved on, so an old refusal is taken down. */
+  const open = (next: Over) => {
+    setUndeleted(Option.none())
+    setOver(next)
+  }
+  const create = () => open(Over.Creating())
   // A Routine open here can be deleted from somewhere else; its sheet then simply is not drawn.
   const selected =
     Over.$is('Showing')(over) && LiveState.$is('Ready')(list)
@@ -88,6 +95,7 @@ export function Routines() {
         trailing={<IconButton icon={Plus} label="New routine" onPress={create} />}
       />
       <ScrollView contentContainerStyle={[styles.page, styles.column]}>
+        {Option.isSome(undeleted) && <Notice message={undeleted.value} />}
         <Live state={list} loading={<Skeleton rows={4} />}>
           {(value) =>
             value.routines.length === 0 ? (
@@ -103,7 +111,7 @@ export function Routines() {
                   <RoutineRow
                     key={routine.id}
                     routine={routine}
-                    onOpen={() => setOver(Over.Showing({ id: routine.id }))}
+                    onOpen={() => open(Over.Showing({ id: routine.id }))}
                   />
                 ))}
               </Section>
@@ -117,6 +125,7 @@ export function Routines() {
           key={selected.value.id}
           routine={selected.value}
           onClose={close}
+          onUndeleted={(message) => setUndeleted(Option.some(message))}
           onOpenThread={(id) => {
             close()
             go.navigate('Chat', { id })
@@ -338,10 +347,13 @@ function Create({ onClose }: { onClose: () => void }) {
 function Detail({
   routine,
   onClose,
+  onUndeleted,
   onOpenThread,
 }: {
   routine: Routine
   onClose: () => void
+  /** Told when deleting was refused. This sheet has closed by then, so the list says it. */
+  onUndeleted: (message: string) => void
   onOpenThread: (id: ThreadId) => void
 }) {
   const data = useLiveData()
@@ -374,7 +386,12 @@ function Detail({
   return (
     <Sheet title={routine.name} detail={summaryOf(routine)} onClose={onClose}>
       {Option.isSome(refused) && <Notice message={refused.value} />}
-      <Controls routine={routine} onClose={onClose} onRefused={setRefused} />
+      <Controls
+        routine={routine}
+        onClose={onClose}
+        onRefused={setRefused}
+        onUndeleted={onUndeleted}
+      />
       {routine.lastMissedAt !== null && (
         <Notice
           message={`Vivid could not run this at ${formatTime(routine.lastMissedAt)}. It was not run later on its own. Run it now if you still want it.`}
@@ -392,10 +409,12 @@ function Controls({
   routine,
   onClose,
   onRefused,
+  onUndeleted,
 }: {
   routine: Routine
   onClose: () => void
   onRefused: (message: Option.Option<string>) => void
+  onUndeleted: (message: string) => void
 }) {
   const data = useLiveData()
   // Starting an Occurrence has no result to predict (its id is the server's), so the button says
@@ -421,7 +440,21 @@ function Controls({
     onRefused(refusalOf(result))
   }
 
-  /** Leaves the sheet at once; if the server refuses, the Routine is back in the list. */
+  /**
+   * Deletes the Routine, which leaves the list at once. If the server refuses, or was never
+   * reached, the Routine is put back, and the list says so: a Routine that silently reappears
+   * reads as a delete that did nothing.
+   */
+  async function discard() {
+    const result = await data.change(
+      (client) => client.DeleteRoutine({ id: routine.id }),
+      () => data.live.routines.expect(routines.removed(routine.id)),
+    )
+    if (Result.isFailure(result))
+      onUndeleted(`“${routine.name}” could not be deleted, so it is back in the list.`)
+  }
+
+  /** Asks first, then leaves the sheet at once; the list shows what came of it. */
   const remove = () =>
     confirmDestructive({
       title: `Delete “${routine.name}”?`,
@@ -430,10 +463,7 @@ function Controls({
       onConfirm: () => {
         warn()
         onClose()
-        void data.change(
-          (client) => client.DeleteRoutine({ id: routine.id }),
-          () => data.live.routines.expect(routines.removed(routine.id)),
-        )
+        void discard()
       },
     })
 

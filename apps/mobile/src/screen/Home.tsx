@@ -1,5 +1,6 @@
 import { useAtomValue } from '@effect/atom-react'
 import { Workspace, type MeResponse, type Thread, type ThreadId } from '@vivid/contracts'
+import { draftPlace } from '@vivid/state'
 import { Data, Option, Result } from 'effect'
 import { useRef, useState, type RefObject } from 'react'
 import { FlatList, ScrollView, View } from 'react-native'
@@ -15,6 +16,7 @@ import {
   Search,
   type LucideIcon,
 } from 'lucide-react-native'
+import { draft, useDraft } from '../data/drafts'
 import { useNow } from '../data/foreground'
 import { arrange, matching, Row, rowKey, rowsOf } from '../data/lanes'
 import { LiveState, useLive, useLiveData, useLiveValue } from '../data/live'
@@ -72,8 +74,13 @@ export function Home() {
   const threads = useLive(data.live.threads)
   const [over, setOver] = useState<Over>(Over.Nothing())
   const [query, setQuery] = useState<Option.Option<string>>(Option.none())
+  // A swipe or a menu choice on a row that the server refused. The row has nowhere to say it.
+  const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
   const editor = useRef<ComposerEditorHandle>(null)
   const start = useStart(editor)
+  // One place above the composer says both kinds of refusal; a message that was not sent matters
+  // more than a row that moved back, so it is the one shown when there are two.
+  const said = Option.orElse(start.refusal, () => refused)
   const close = () => setOver(Over.Nothing())
   const working =
     LiveState.$is('Ready')(threads) &&
@@ -97,12 +104,13 @@ export function Home() {
           query={query}
           onOpen={(thread) => go.navigate('Chat', { id: thread.id })}
           onRename={(thread) => setOver(Over.Renaming({ thread }))}
+          onRefused={setRefused}
           onSuggest={start.suggest}
         />
       </View>
-      {Option.isSome(start.refusal) && (
+      {Option.isSome(said) && (
         <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
-          <Notice message={start.refusal.value} />
+          <Notice message={said.value} />
         </View>
       )}
       <Composer
@@ -149,11 +157,19 @@ function Reconnecting() {
  * The Person is taken to the Thread only once their message is with Vivid, so words they typed
  * are never dropped on the way to a screen that could not say so. If the Thread was made and the
  * message did not arrive, sending again speaks into that Thread instead of making a second one.
+ *
+ * The words are kept on the phone as they are typed (`data/drafts.ts`), under the Person's own
+ * place for a new Thread, and are only removed once the Thread has started with them. So they are
+ * still in the composer after visiting another screen, after the app is closed, and after a send
+ * that was refused.
  */
 function useStart(editor: RefObject<ComposerEditorHandle | null>) {
+  const me = useMe()
   const data = useLiveData()
   const go = useGo()
-  const [draft, setDraft] = useState('')
+  const place = draftPlace(me.person.id, Option.none())
+  const typed = useDraft(place)
+  const setDraft = (text: string) => draft.keep(place, text)
   const [sending, setSending] = useState(false)
   const [last, setLast] = useState<Option.Option<Start>>(Option.none())
 
@@ -163,7 +179,7 @@ function useStart(editor: RefObject<ComposerEditorHandle | null>) {
   )
 
   async function send() {
-    const message = draft.trim()
+    const message = typed.trim()
     if (message.length === 0 || sending) return
     setSending(true)
     const outcome = await startThread(data, { message, projectId: null, resume })
@@ -178,7 +194,7 @@ function useStart(editor: RefObject<ComposerEditorHandle | null>) {
   }
 
   return {
-    draft,
+    draft: typed,
     sending,
     setDraft,
     send,
@@ -443,6 +459,8 @@ interface ThreadsProps {
   readonly query: Option.Option<string>
   readonly onOpen: (thread: Thread) => void
   readonly onRename: (thread: Thread) => void
+  /** What came of a row's quick action: a sentence when it was refused, none when it was not. */
+  readonly onRefused: (message: Option.Option<string>) => void
   readonly onSuggest: (text: string) => void
 }
 
@@ -482,6 +500,7 @@ function Threads(props: ThreadsProps) {
               now={now}
               onOpen={props.onOpen}
               onRename={props.onRename}
+              onRefused={props.onRefused}
             />
           ),
         })
@@ -534,6 +553,7 @@ function Found(props: ThreadsProps & { found: ReadonlyArray<Thread>; now: number
           now={props.now}
           onOpen={props.onOpen}
           onRename={props.onRename}
+          onRefused={props.onRefused}
         />
       )}
     />
@@ -578,6 +598,7 @@ function Shelf(props: ThreadsProps & { done: ReadonlyArray<Thread>; now: number 
             now={props.now}
             onOpen={props.onOpen}
             onRename={props.onRename}
+            onRefused={props.onRefused}
           />
         ))}
     </View>

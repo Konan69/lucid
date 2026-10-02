@@ -1,11 +1,16 @@
-import { Settings as SettingsRecord, Workspace, type Theme } from '@vivid/contracts'
+import {
+  PatchSettingsRequest,
+  Settings as SettingsRecord,
+  Workspace,
+  type Theme,
+} from '@vivid/contracts'
 import { Data, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { Linking, ScrollView, View } from 'react-native'
 import { followThemeAtom } from '../data/appearance'
 import { door } from '../data/door'
 import { warn } from '../data/haptics'
-import { refusalOf, useLive, useLiveData, useLiveValue } from '../data/live'
+import { refusalOf, useLive, useLiveData, useLiveValue, type LiveData } from '../data/live'
 import { connectionsAddress, recordAddress, rulesAddress, serverName } from '../data/server'
 import { leaveAtom } from '../data/signing'
 import { Avatar, pictureOf } from '../ui/Avatar'
@@ -194,6 +199,29 @@ function Setting({
 }
 
 /**
+ * Saves the one setting that was changed and shows it at once. Only that field is sent, and only
+ * that field is expected to change: sending all three from what this screen happens to hold wrote
+ * a stale value back over a change made on another device a moment ago.
+ *
+ * The expectation is laid over whatever the live settings are when it is read, not over the
+ * settings this screen was drawn with, for the same reason.
+ */
+const saveSettings = (data: LiveData, edit: PatchSettingsRequest) =>
+  data.change(
+    (client) => client.PatchSettings(edit),
+    () =>
+      data.live.settings.expect(
+        (current) =>
+          new SettingsRecord({
+            personId: current.personId,
+            theme: edit.theme === undefined ? current.theme : edit.theme,
+            timezone: edit.timezone === undefined ? current.timezone : edit.timezone,
+            notify: edit.notify === undefined ? current.notify : edit.notify,
+          }),
+      ),
+  )
+
+/**
  * How Vivid looks, the time zone it reads "tomorrow at 9" in, and whether it tells the Person
  * when something needs them. A change shows at once and the server's next result confirms it; a
  * refused change is put back and said.
@@ -202,15 +230,9 @@ function Preferences({ settings, onZone }: { settings: SettingsRecord; onZone: (
   const data = useLiveData()
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
 
-  async function save(next: { theme: Theme; timezone: string; notify: boolean }) {
-    const expected = new SettingsRecord({ personId: settings.personId, ...next })
-    const result = await data.change(
-      (client) => client.PatchSettings(next),
-      () => data.live.settings.expect(() => expected),
-    )
-    setRefused(refusalOf(result))
+  async function save(edit: PatchSettingsRequest) {
+    setRefused(refusalOf(await saveSettings(data, edit)))
   }
-  const current = { theme: settings.theme, timezone: settings.timezone, notify: settings.notify }
 
   return (
     <>
@@ -224,7 +246,7 @@ function Preferences({ settings, onZone }: { settings: SettingsRecord; onZone: (
             onChange={(theme) => {
               // The phone changes at once; the Person's other devices follow their settings.
               door.set(followThemeAtom, theme)
-              void save({ ...current, theme })
+              void save(new PatchSettingsRequest({ theme }))
             }}
           />
         </Setting>
@@ -233,7 +255,7 @@ function Preferences({ settings, onZone }: { settings: SettingsRecord; onZone: (
             label="Notifications"
             value={settings.notify ? 'on' : 'off'}
             options={SWITCH}
-            onChange={(next) => void save({ ...current, notify: next === 'on' })}
+            onChange={(next) => void save(new PatchSettingsRequest({ notify: next === 'on' }))}
           />
         </Setting>
         <Row
@@ -255,27 +277,18 @@ function Zone({ onClose }: { onClose: () => void }) {
   const settings = useLiveValue(data.live.settings)
   const here = Intl.DateTimeFormat().resolvedOptions().timeZone
   if (Option.isNone(settings)) return null
-  const { personId, theme, notify, timezone } = settings.value
   return (
     <NameSheet
       title="Time zone"
       detail={`Write a zone by its name, like ${here}, which is where this phone is.`}
       label="Time zone"
-      initial={timezone}
+      initial={settings.value.timezone}
       placeholder={here}
       action="Save"
       maxLength={64}
       onClose={onClose}
-      onSave={async (next) =>
-        refusalOf(
-          await data.change(
-            (client) => client.PatchSettings({ theme, notify, timezone: next }),
-            () =>
-              data.live.settings.expect(
-                () => new SettingsRecord({ personId, theme, notify, timezone: next }),
-              ),
-          ),
-        )
+      onSave={async (timezone) =>
+        refusalOf(await saveSettings(data, new PatchSettingsRequest({ timezone })))
       }
     />
   )

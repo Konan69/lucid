@@ -1,4 +1,5 @@
 import { Effect, Option, Schema } from 'effect'
+import { File, Paths } from 'expo-file-system'
 import * as SecureStore from 'expo-secure-store'
 import { Platform } from 'react-native'
 
@@ -41,6 +42,40 @@ export const keep = Effect.fn('Storage.keep')(function* (key: string, value: str
       onDevice
         ? SecureStore.setItemAsync(key, value)
         : Promise.resolve(localStorage.setItem(key, value)),
+    catch: () => new StorageUnavailable({ message: UNWRITABLE }),
+  })
+})
+
+/**
+ * What is kept in a file of the app's own, for things too long for the protected store. That
+ * store is for a few short secrets (a session, a server address) and the platforms do not promise
+ * it will take more: a Person's unsent drafts can run to pages. The app's documents are private
+ * to the app, which is as private as words the Person has typed and not sent need to be.
+ */
+export const recallFile = Effect.fn('Storage.recallFile')(function* (name: string) {
+  const kept = yield* Effect.tryPromise({
+    try: async () => {
+      if (!onDevice) return localStorage.getItem(name)
+      const file = new File(Paths.document, name)
+      return file.exists ? await file.text() : null
+    },
+    catch: () => new StorageUnavailable({ message: UNREADABLE }),
+  })
+  return Option.fromNullOr(kept)
+})
+
+/** Keeps a value in a file of the app's own, replacing whatever was there. */
+export const keepFile = Effect.fn('Storage.keepFile')(function* (name: string, value: string) {
+  yield* Effect.try({
+    try: () => {
+      if (!onDevice) {
+        localStorage.setItem(name, value)
+        return
+      }
+      const file = new File(Paths.document, name)
+      if (!file.exists) file.create()
+      file.write(value)
+    },
     catch: () => new StorageUnavailable({ message: UNWRITABLE }),
   })
 })

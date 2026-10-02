@@ -152,8 +152,15 @@ function LevelScreen({
 }) {
   const state = useLive(level.query)
   const [over, setOver] = useState<Over>(Over.Nothing())
+  // A delete closes its sheet at once, so a refused one has only the level to be said in.
+  const [undeleted, setUndeleted] = useState<Option.Option<string>>(Option.none())
   const adding = useAdd(level)
   const close = () => setOver(Over.Nothing())
+  /** Opens something over the level. The Person has moved on, so an old refusal is taken down. */
+  const open = (next: Over) => {
+    setUndeleted(Option.none())
+    setOver(next)
+  }
   return (
     <Screen>
       <Header
@@ -165,7 +172,7 @@ function LevelScreen({
             <IconButton
               icon={FolderPlus}
               label="New folder"
-              onPress={() => setOver(Over.NewFolder())}
+              onPress={() => open(Over.NewFolder())}
             />
             <IconButton
               icon={Upload}
@@ -184,12 +191,13 @@ function LevelScreen({
           </Label>
         )}
         {Option.isSome(adding.said) && <Notice message={adding.said.value} />}
+        {Option.isSome(undeleted) && <Notice message={undeleted.value} />}
         <Live state={state} loading={<Skeleton rows={4} />}>
           {(value) => (
             <Contents
               level={level}
               list={library.inFolder(value, level.folderId)}
-              onItem={(item) => setOver(Over.Item({ item }))}
+              onItem={(item) => open(Over.Item({ item }))}
               onAdd={() => void adding.add()}
             />
           )}
@@ -197,7 +205,14 @@ function LevelScreen({
         {below}
       </ScrollView>
       {Over.$is('NewFolder')(over) && <NewFolder level={level} onClose={close} />}
-      {Over.$is('Item')(over) && <ItemSheet level={level} item={over.item} onClose={close} />}
+      {Over.$is('Item')(over) && (
+        <ItemSheet
+          level={level}
+          item={over.item}
+          onClose={close}
+          onUndeleted={(message) => setUndeleted(Option.some(message))}
+        />
+      )}
     </Screen>
   )
 }
@@ -354,10 +369,13 @@ function ItemSheet({
   level,
   item,
   onClose,
+  onUndeleted,
 }: {
   level: Level
   item: LibraryItem
   onClose: () => void
+  /** Told when deleting was refused. This sheet has closed by then, so the level says it. */
+  onUndeleted: (message: string) => void
 }) {
   const data = useLiveData()
   const go = useGo()
@@ -388,6 +406,21 @@ function ItemSheet({
     setRefused(refusalOf(result))
   }
 
+  /**
+   * Deletes the file, which leaves the level at once. If the server refuses, or was never reached,
+   * the file is put back, and the level says so: a file that silently reappears reads as a delete
+   * that did nothing.
+   */
+  async function discard() {
+    const result = await data.change(
+      (client) => client.DeleteLibraryItem({ id: item.id }),
+      () => level.query.expect(library.itemRemoved(item.id)),
+    )
+    if (Result.isFailure(result))
+      onUndeleted(`“${item.name}” could not be deleted, so it is back in the Library.`)
+  }
+
+  /** Asks first, then leaves the sheet at once; the level shows what came of it. */
   const remove = () =>
     confirmDestructive({
       title: `Delete “${item.name}”?`,
@@ -396,10 +429,7 @@ function ItemSheet({
       onConfirm: () => {
         warn()
         onClose()
-        void data.change(
-          (client) => client.DeleteLibraryItem({ id: item.id }),
-          () => level.query.expect(library.itemRemoved(item.id)),
-        )
+        void discard()
       },
     })
 

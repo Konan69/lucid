@@ -9,13 +9,14 @@ import {
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
-import { titleFromMessage } from '@vivid/state'
+import { draftPlace, titleFromMessage } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useMemo, useState } from 'react'
 import { FlatList, View } from 'react-native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { Share2, Users } from 'lucide-react-native'
+import { draft, useDraft } from '../data/drafts'
 import { onForeground } from '../data/foreground'
 import { LiveState, useLive, useLiveData } from '../data/live'
 import { isShown, isStreaming, type Around } from '../data/message'
@@ -87,6 +88,29 @@ function standingOf(thread: Thread, detail: ThreadDetail, me: MeResponse): Optio
   })
 }
 
+/**
+ * Stopping Vivid in one Thread, and whether the last Stop went through.
+ *
+ * A Stop the server refuses, or that never reaches it, leaves Vivid working with nothing on screen
+ * to say the press was heard; that used to read as a button that did nothing. The refusal is about
+ * the Run that was being stopped: once Vivid is no longer working there is nothing left to try
+ * again, and the sentence must not come back when a later Run starts. Resetting state while
+ * rendering is React's own way to follow a value without an effect.
+ */
+function useStop(id: ThreadId, working: boolean) {
+  const data = useLiveData()
+  const [refused, setRefused] = useState(false)
+  if (refused && !working) setRefused(false)
+
+  async function stop() {
+    setRefused(false)
+    const result = await data.change((sdk) => sdk.StopThread({ id }))
+    setRefused(Result.isFailure(result))
+  }
+
+  return { refused, stop }
+}
+
 function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<ThreadDetail> }) {
   const me = useMe()
   const data = useLiveData()
@@ -96,7 +120,10 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
   // A phone suspends the app when it is not in front, and the stream with it; coming back
   // catches the conversation up. The subscription lives exactly as long as this view does.
   const wake = useMemo(() => onForeground(() => agent.refresh()), [agent])
-  const [draft, setDraft] = useState('')
+  // What is typed here and not sent is kept on the phone under this Thread's name, so it is still
+  // in the composer after leaving the Thread or closing the app.
+  const place = draftPlace(me.person.id, Option.some(id))
+  const typed = useDraft(place)
   // Being on this screen is what makes the Person present in the Thread.
   useAtomMount(data.presentIn(id))
   const setTyping = useAtomSet(data.typingIn(id))
@@ -108,6 +135,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
     agent.status === 'submitted' ||
     agent.status === 'streaming' ||
     Option.exists(thread, (value) => value.attention === 'Working')
+  const stopping = useStop(id, working)
   const around: Around = {
     me: me.person.id,
     shared,
@@ -116,7 +144,9 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
 
   function send(text: string) {
     setUndelivered(Option.none())
-    // A Thread started without a name takes its first message as one.
+    // A Thread started without a name takes its first message as one. A refusal is not said: the
+    // Person did not ask for this, the Thread keeps the title it had, and the next message tries
+    // again because the title is still the unnamed one.
     if (Option.exists(thread, (value) => value.title === UNTITLED)) {
       void data.change((sdk) => sdk.PatchThread({ id, patch: { title: titleFromMessage(text) } }))
     }
@@ -133,7 +163,9 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
     void say(data, { id, body: text, key: randomUUID() }).then((result) => {
       if (Result.isSuccess(result)) return
       setUndelivered(Option.some(result.failure.message))
-      setDraft((current) => (current.length === 0 ? text : current))
+      // The words go back into the composer, and so back into what the phone keeps, unless the
+      // Person has started writing something else there since.
+      if (draft.in(place).length === 0) draft.keep(place, text)
     })
   }
 
@@ -141,7 +173,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
     // Whether there is something typed is part of what the Thread's presence says; see
     // `presentIn`. The atom ignores a value it already holds, so every keystroke is fine.
     setTyping(next.length > 0)
-    setDraft(next)
+    draft.keep(place, next)
   }
 
   return (
@@ -178,18 +210,24 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
           onContinue={send}
         />
       </View>
+      {stopping.refused && (
+        <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
+          <Notice message="Vivid could not be stopped just now. Try again." />
+        </View>
+      )}
       <Composer
-        value={draft}
+        value={typed}
         placeholder={shared ? 'Message everyone and Vivid' : 'Message Vivid'}
         working={working}
         disabled={false}
         onChange={type}
         onSend={() => {
-          const text = draft.trim()
+          const text = typed.trim()
+          // Emptying the composer is also what removes this Thread's kept draft.
           type('')
           send(text)
         }}
-        onStop={() => void data.change((sdk) => sdk.StopThread({ id }))}
+        onStop={() => void stopping.stop()}
       />
       {sharing && Option.isSome(thread) && Workspace.guards.Company(me.workspace) && (
         <Share

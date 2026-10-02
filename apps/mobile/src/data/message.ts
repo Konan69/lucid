@@ -8,7 +8,7 @@ import {
 } from '@vivid/contracts'
 import { speakerOfTurn } from '@vivid/state'
 import { Data, Option, Schema } from 'effect'
-import { describeToolCall } from '../../../web/src/data/activity'
+import { describeToolCall, readAnswered, readAsked } from '../../../web/src/data/activity'
 
 /**
  * Reading one message of a Thread's conversation: who it is from, what it says, and which card
@@ -155,7 +155,13 @@ const STANDING = {
 export const stepsOf = (tools: ReadonlyArray<ToolPart>): ReadonlyArray<Step> =>
   tools.map((tool) => {
     const standing = STANDING[tool.state]
-    const described = describeToolCall(tool.toolName, null, null, standing)
+    const described = describeToolCall(
+      tool.toolName,
+      readAsked(tool.input),
+      // A call still running has no output; it reads as an answer with nothing in it yet.
+      readAnswered(tool.state === 'output-available' ? tool.output : {}),
+      standing,
+    )
     return {
       id: tool.toolCallId,
       label: described.label,

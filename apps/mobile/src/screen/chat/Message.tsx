@@ -6,6 +6,7 @@ import { Linking, View } from 'react-native'
 import Markdown from 'react-native-markdown-display'
 import { AlarmClock, ChevronDown, ChevronRight, Repeat2 } from 'lucide-react-native'
 import { CITATION_ADDRESS, linkCitations, openDocument } from '../../data/documents'
+import { useNow } from '../../data/foreground'
 import { useLiveData } from '../../data/live'
 import {
   isStreaming,
@@ -20,12 +21,12 @@ import {
   type Step,
 } from '../../data/message'
 import { MOBILE_TYPOGRAPHY } from '../../data/typography'
+import { when } from '../../data/when'
 import { useTheme } from '../../theme'
 import { Avatar } from '../../ui/Avatar'
+import { Recover } from '../../ui/Recover'
 import { Dot, Face, HAIRLINE, Label, Press, radius } from '../../ui/ui'
 import { Cards } from './Cards'
-
-const clock = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
 
 /**
  * One message in a Thread, drawn by who it is from (`data/message.ts` decides that). A Person's
@@ -205,6 +206,19 @@ function Steps({ steps, working }: { steps: ReadonlyArray<Step>; working: boolea
 }
 
 /**
+ * A reply as it was written, for when it cannot be formatted. It keeps the reading size and the
+ * space a formatted paragraph leaves under it, so the Thread does not jump if the reply draws
+ * properly once more of it has arrived.
+ */
+function Plain({ text }: { text: string }) {
+  return (
+    <Label selectable size="reading" style={{ marginBottom: 10 }}>
+      {text}
+    </Label>
+  )
+}
+
+/**
  * Vivid's words as formatted text. A citation of something in the Library is a link the Thread
  * opens through the Library (the device downloads the original and hands it to the share sheet);
  * any other web link opens in the browser. A link that could not be opened says so under the text.
@@ -213,6 +227,7 @@ function Words({ text }: { text: string }) {
   const { colors: c } = useTheme()
   const data = useLiveData()
   const [unopened, setUnopened] = useState<Option.Option<string>>(Option.none())
+  const linked = linkCitations(text)
 
   function open(address: string) {
     setUnopened(Option.none())
@@ -234,42 +249,60 @@ function Words({ text }: { text: string }) {
 
   return (
     <>
-      <Markdown
-        onLinkPress={(address) => {
-          open(address)
-          // The Thread has handled the link; the renderer must not also follow it.
-          return false
-        }}
-        style={{
-          body: { color: c.ink, ...MOBILE_TYPOGRAPHY.reading },
-          paragraph: { marginTop: 0, marginBottom: 10 },
-          heading1: { ...MOBILE_TYPOGRAPHY.title, marginTop: 6, marginBottom: 8 },
-          heading2: { ...MOBILE_TYPOGRAPHY.headline, marginTop: 6, marginBottom: 6 },
-          heading3: { ...MOBILE_TYPOGRAPHY.footnote, marginTop: 4, marginBottom: 4 },
-          bullet_list: { marginBottom: 10 },
-          ordered_list: { marginBottom: 10 },
-          code_inline: { backgroundColor: c['surface-2'], color: c.ink },
-          fence: { backgroundColor: c['surface-well'], color: c.ink, borderColor: c['line-2'] },
-          code_block: {
-            backgroundColor: c['surface-well'],
-            color: c.ink,
-            borderColor: c['line-2'],
-          },
-          link: { color: c['accent-ink'] },
-          blockquote: { backgroundColor: c['surface-2'], borderColor: c['line-3'] },
-          hr: { backgroundColor: c['line-2'] },
-          table: { borderColor: c['line-2'] },
-          tr: { borderColor: c['line-2'] },
-        }}
-      >
-        {linkCitations(text)}
-      </Markdown>
+      {/* A reply the formatter cannot draw is still a reply: it is shown as it was written, and
+          tried again when its text changes. One bad message must not take the Thread with it. */}
+      <Recover from={linked} fallback={<Plain text={text} />}>
+        <Markdown
+          onLinkPress={(address) => {
+            open(address)
+            // The Thread has handled the link; the renderer must not also follow it.
+            return false
+          }}
+          style={{
+            body: { color: c.ink, ...MOBILE_TYPOGRAPHY.reading },
+            paragraph: { marginTop: 0, marginBottom: 10 },
+            heading1: { ...MOBILE_TYPOGRAPHY.title, marginTop: 6, marginBottom: 8 },
+            heading2: { ...MOBILE_TYPOGRAPHY.headline, marginTop: 6, marginBottom: 6 },
+            heading3: { ...MOBILE_TYPOGRAPHY.footnote, marginTop: 4, marginBottom: 4 },
+            bullet_list: { marginBottom: 10 },
+            ordered_list: { marginBottom: 10 },
+            code_inline: { backgroundColor: c['surface-2'], color: c.ink },
+            fence: { backgroundColor: c['surface-well'], color: c.ink, borderColor: c['line-2'] },
+            code_block: {
+              backgroundColor: c['surface-well'],
+              color: c.ink,
+              borderColor: c['line-2'],
+            },
+            link: { color: c['accent-ink'] },
+            blockquote: { backgroundColor: c['surface-2'], borderColor: c['line-3'] },
+            hr: { backgroundColor: c['line-2'] },
+            table: { borderColor: c['line-2'] },
+            tr: { borderColor: c['line-2'] },
+          }}
+        >
+          {linked}
+        </Markdown>
+      </Recover>
       {Option.isSome(unopened) && (
         <Label size="label" tone="status-danger">
           {unopened.value}
         </Label>
       )}
     </>
+  )
+}
+
+/**
+ * When Vivid finished a reply. "Now" is the moment the app last came to the front
+ * (`data/foreground.ts`), so a Thread left open overnight stops calling yesterday's replies
+ * today's when it is picked up again, and no clock ticks under a Person who is reading.
+ */
+function Stamp({ moment }: { moment: number }) {
+  const now = useNow()
+  return (
+    <Label size="micro" tone="ink-4" style={{ marginTop: 2 }}>
+      {when(moment, now)}
+    </Label>
   )
 }
 
@@ -306,11 +339,7 @@ function FromVivid({
         <Steps steps={stepsOf(tools)} working={working} />
         {text.length > 0 && <Words text={text} />}
         <Cards tools={tools} detail={detail} me={around.me} onContinue={onContinue} />
-        {Option.isSome(moment) && (
-          <Label size="micro" tone="ink-4" style={{ marginTop: 2 }}>
-            {clock.format(moment.value)}
-          </Label>
-        )}
+        {Option.isSome(moment) && <Stamp moment={moment.value} />}
       </View>
     </View>
   )

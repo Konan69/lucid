@@ -17,6 +17,7 @@ import {
 } from './data/live'
 import { serverName } from './data/server'
 import { leaveAtom } from './data/signing'
+import { Broken } from './screen/Broken'
 import { Chat } from './screen/Chat'
 import { Door } from './screen/Door'
 import { Home } from './screen/Home'
@@ -27,6 +28,7 @@ import { Settings } from './screen/Settings'
 import { Memory } from './screen/settings/Memory'
 import { People } from './screen/settings/People'
 import { ThemeProvider, useTheme } from './theme'
+import { Recover } from './ui/Recover'
 import { Button, Face, GUTTER, Label } from './ui/ui'
 import { MeProvider, type Routes } from './workspace'
 
@@ -43,7 +45,12 @@ export default function App() {
       <SafeAreaProvider>
         <ThemeProvider>
           <Bar />
-          <Root />
+          {/* The last line of defence: whatever fails to draw, there is still a screen with a way
+              on. It sits inside the palette, which the fallback is painted in, and outside the
+              session, so trying again builds the signed-in tree afresh from its atoms. */}
+          <Recover from="app" fallback={<Broken />}>
+            <Root />
+          </Recover>
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
