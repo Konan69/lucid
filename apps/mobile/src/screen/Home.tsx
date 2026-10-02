@@ -14,6 +14,7 @@ import {
   Library as LibraryIcon,
   Repeat2,
   Search,
+  Sparkles,
   type LucideIcon,
 } from 'lucide-react-native'
 import { draft, useDraft } from '../data/drafts'
@@ -331,17 +332,23 @@ function SearchBar({
   )
 }
 
-/** The three places beside Threads, in the order the web sidebar lists them. */
+/** The places beside Threads, in the order the web sidebar lists them. */
 const PLACES = [
   { route: 'Routines', label: 'Routines', icon: Repeat2 },
   { route: 'Projects', label: 'Projects', icon: FolderKanban },
   { route: 'Library', label: 'Library', icon: LibraryIcon },
+  { route: 'Skills', label: 'Skills', icon: Sparkles },
 ] as const satisfies ReadonlyArray<{
   route: Exclude<keyof Routes, 'Home' | 'Chat' | 'Settings'>
   label: string
   icon: LucideIcon
 }>
 
+/**
+ * The way to each place beside Threads: one row of tiles, each a place's mark over its name.
+ * Four names do not fit side by side with their marks on a phone, and a name cut to "Routin…"
+ * is worse than a smaller one, so the mark sits above the name and every tile is the same width.
+ */
 function Places() {
   const go = useGo()
   const { colors: c } = useTheme()
@@ -354,19 +361,19 @@ function Places() {
           onPress={() => go.navigate(route)}
           containerStyle={{ flex: 1 }}
           style={({ pressed }) => ({
-            minHeight: TARGET,
-            flexDirection: 'row',
+            minHeight: 60,
+            paddingVertical: 10,
             alignItems: 'center',
             justifyContent: 'center',
-            gap: 7,
+            gap: 5,
             borderRadius: radius.control,
             borderWidth: HAIRLINE,
             borderColor: c['line-2'],
             backgroundColor: pressed ? c['wash-pressed'] : c['surface-2'],
           })}
         >
-          <Icon pointerEvents="none" size={16} strokeWidth={1.7} color={c['ink-2']} />
-          <Label numberOfLines={1} size="label" tone="ink-2">
+          <Icon pointerEvents="none" size={18} strokeWidth={1.7} color={c['ink-2']} />
+          <Label numberOfLines={1} size="caption" tone="ink-2">
             {label}
           </Label>
         </Press>
