@@ -6,7 +6,7 @@ import {
   type FlueConversationState,
 } from '@flue/sdk'
 import { RunFailure, type RunId } from '@vivid/contracts'
-import { Deferred, Effect, Filter, Option, Queue, Ref, Schema, Stream } from 'effect'
+import { Effect, Filter, Option, Queue, Ref, Schema, Stream } from 'effect'
 import { classifyFailure, decodeFailureEvidence } from './failure.ts'
 
 /** The runtime verdict includes the classified reason before any product persistence or publishing. */
@@ -49,7 +49,7 @@ const resultOf = (state: FlueConversationState, runId: RunId): Option.Option<Set
 /**
  * Vivid.durability.timeoutMs is one hour (runtime src/agents/vivid.ts), matching Flue 2.1's
  * DURABILITY_DEFAULT_TIMEOUT_MS in conversation-stream-store. Observation has the same finite
- * bound even when a restarted server sees stale content and the SDK reconnects forever.
+ * bound for a live runtime producing content. Transport loss has its own shorter bound.
  */
 export const responseTimeoutMillis = 60 * 60 * 1000
 
@@ -75,10 +75,10 @@ const resultOfSnapshot = (snapshot: AgentConversationObservationSnapshot, runId:
 }
 
 /**
- * Flue exposes host linkage only at settlement and abort cancels *all* queued and active work
- * (guide/durability). Never use conversation-wide abort for a Run deadline. The provider owns
- * scoped attempt cancellation. A queued/joined Run gets no first-token timer until its own
- * assistant response starts; host linkage, when published, counts the host's answer as content.
+ * Observe transport loss for at most the first-content budget (90 s by default), even if SDK
+ * retries clear their error between hydrates. Only reaching live resets this window. The content
+ * deadline starts at observation, including a restarted observer with no assistant message.
+ * Flue abort cancels all queued/active work; a product deadline must never abort the conversation.
  */
 export const observeRun = Effect.fn('Runtime.observeRun')(function* (
   client: FlueClient,
@@ -86,7 +86,7 @@ export const observeRun = Effect.fn('Runtime.observeRun')(function* (
   firstTokenMillis: number,
 ) {
   const states = yield* Queue.unbounded<AgentConversationObservationSnapshot>()
-  const started = yield* Deferred.make<void>()
+  const connectivity = yield* Queue.unbounded<boolean>()
   const seen = yield* Ref.make(false)
   const observation = yield* Effect.acquireRelease(
     Effect.sync(() => client.observe({ live: 'sse' })),
@@ -94,7 +94,9 @@ export const observeRun = Effect.fn('Runtime.observeRun')(function* (
   )
   /** Preserve phase even without a conversation so absence and permanent observation loss settle. */
   const changed = () => {
-    Queue.offerUnsafe(states, observation.getSnapshot())
+    const snapshot = observation.getSnapshot()
+    Queue.offerUnsafe(states, snapshot)
+    Queue.offerUnsafe(connectivity, snapshot.phase === 'live')
   }
   yield* Effect.acquireRelease(
     Effect.sync(() => observation.subscribe(changed)),
@@ -111,7 +113,6 @@ export const observeRun = Effect.fn('Runtime.observeRun')(function* (
           (message) => message.submissionId === host && message.role === 'assistant',
         )
         if (answers.some(meaningful)) yield* Ref.set(seen, true)
-        if (answers.length > 0) yield* Deferred.succeed(started, undefined)
       }),
     ),
     Stream.filterMap(Filter.fromPredicateOption((snapshot) => resultOfSnapshot(snapshot, runId))),
@@ -119,12 +120,25 @@ export const observeRun = Effect.fn('Runtime.observeRun')(function* (
     Effect.map(Option.getOrElse(() => Settlement.cases.Unknown.make({}))),
   )
   const deadline = Effect.fn('Runtime.firstTokenDeadline')(function* () {
-    yield* Deferred.await(started)
     yield* Effect.sleep(firstTokenMillis)
     if (yield* Ref.get(seen)) return yield* Effect.never
+    if (observation.getSnapshot().phase !== 'live') return Settlement.cases.Unknown.make({})
     return Settlement.cases.Failed.make({ reason: 'TimedOut' })
   })
-  return yield* Effect.raceFirst(outcome, deadline()).pipe(
+  // Repeated connecting/loading updates cannot renew the recovery window; a real live phase can.
+  const unavailable = Stream.fromQueue(connectivity).pipe(
+    Stream.changes,
+    Stream.switchMap((live) =>
+      live
+        ? Stream.never
+        : Stream.fromEffect(
+            Effect.sleep(firstTokenMillis).pipe(Effect.as(Settlement.cases.Unknown.make({}))),
+          ),
+    ),
+    Stream.runHead,
+    Effect.map(Option.getOrElse(() => Settlement.cases.Unknown.make({}))),
+  )
+  return yield* Effect.raceAll([outcome, deadline(), unavailable]).pipe(
     Effect.timeoutOrElse({
       duration: responseTimeoutMillis,
       orElse: () => Effect.succeed(Settlement.cases.Unknown.make({})),

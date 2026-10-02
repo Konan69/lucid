@@ -65,7 +65,12 @@ const fixture = Effect.fn('Runtime.test.fixture')(function* () {
     snapshot = { ...snapshot, phase: value }
     for (const listener of listeners) listener()
   }
-  return { client, ready, publish, phase, closed: () => closed, aborted: () => aborted }
+  /** SDK connection refusal, retryable HTTP failures and stalls all publish this recoverable phase. */
+  const disconnect = (error: Error) => {
+    snapshot = { ...snapshot, phase: 'connecting', error }
+    for (const listener of listeners) listener()
+  }
+  return { client, ready, publish, phase, disconnect, closed: () => closed, aborted: () => aborted }
 })
 
 /** Starts and empty parts alone are deliberately insufficient first-token evidence. */
@@ -157,7 +162,7 @@ describe('Run settlement observation', () => {
         expect(evidence.aborted()).toBe(false)
       }),
   )
-  it.effect('a queued Run outlives its first-token budget and reads its host reply', () =>
+  it.effect('a joined Run reads its host reply without aborting other work', () =>
     Effect.gen(function* () {
       const evidence = yield* fixture()
       const host = 'host-run'
@@ -168,7 +173,7 @@ describe('Run settlement observation', () => {
       const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
       yield* Queue.take(evidence.ready)
       evidence.publish({ conversationId: 'conversation', messages: [hostMessage], settlements: [] })
-      yield* TestClock.adjust('120 seconds')
+      yield* TestClock.adjust('89 seconds')
       expect(evidence.aborted()).toBe(false)
       evidence.publish({
         conversationId: 'conversation',
@@ -203,20 +208,104 @@ describe('Run settlement observation', () => {
     }
   }
 
-  it.effect('resumed partial output cannot pin a Run beyond the Flue durability bound', () =>
+  for (const spoke of [false, true]) {
+    it.effect(`bounds unreachable runtime after restart with prior content ${spoke}`, () =>
+      Effect.gen(function* () {
+        const evidence = yield* fixture()
+        if (spoke)
+          evidence.publish({
+            conversationId: 'conversation',
+            settlements: [],
+            messages: [assistant([{ type: 'text', text: 'Before restart', state: 'streaming' }])],
+          })
+        evidence.disconnect(new Error('ECONNREFUSED'))
+        const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
+        yield* Queue.take(evidence.ready)
+        yield* TestClock.adjust('89 seconds')
+        evidence.phase('loading')
+        evidence.phase('connecting')
+        yield* TestClock.adjust('1 second')
+        expect(yield* Fiber.join(run)).toEqual(Settlement.cases.Unknown.make({}))
+        expect(evidence.aborted()).toBe(false)
+        expect(evidence.closed()).toBe(true)
+      }),
+    )
+  }
+
+  it.effect('starts the content deadline before the first assistant message', () =>
     Effect.gen(function* () {
       const evidence = yield* fixture()
+      const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
+      yield* Queue.take(evidence.ready)
+      evidence.publish({ conversationId: 'conversation', messages: [], settlements: [] })
+      yield* TestClock.adjust('80 seconds')
+      evidence.publish({
+        conversationId: 'conversation',
+        messages: [assistant([])],
+        settlements: [],
+      })
+      yield* TestClock.adjust('10 seconds')
+      expect(yield* Fiber.join(run)).toEqual(Settlement.cases.Failed.make({ reason: 'TimedOut' }))
+      expect(evidence.aborted()).toBe(false)
+    }),
+  )
+
+  it.effect('bounds reconnect loss after live content independently of durability', () =>
+    Effect.gen(function* () {
+      const evidence = yield* fixture()
+      const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
+      yield* Queue.take(evidence.ready)
       evidence.publish({
         conversationId: 'conversation',
         settlements: [],
-        messages: [assistant([{ type: 'text', text: 'Before restart', state: 'streaming' }])],
+        messages: [assistant([{ type: 'text', text: 'Hello', state: 'streaming' }])],
       })
+      yield* TestClock.adjust('120 seconds')
+      evidence.disconnect(new Error('Agent conversation stream stalled'))
+      yield* TestClock.adjust('90 seconds')
+      expect(yield* Fiber.join(run)).toEqual(Settlement.cases.Unknown.make({}))
+    }),
+  )
+
+  it.effect(
+    'only live recovery resets the unavailable window and preserves a saved settlement',
+    () =>
+      Effect.gen(function* () {
+        const evidence = yield* fixture()
+        const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
+        yield* Queue.take(evidence.ready)
+        evidence.disconnect(new Error('HTTP 503'))
+        yield* TestClock.adjust('80 seconds')
+        evidence.publish({
+          conversationId: 'conversation',
+          settlements: [],
+          messages: [assistant([{ type: 'text', text: 'Hello', state: 'streaming' }])],
+        })
+        yield* TestClock.adjust('20 seconds')
+        evidence.disconnect(new Error('ECONNREFUSED'))
+        yield* TestClock.adjust('89 seconds')
+        evidence.publish({
+          conversationId: 'conversation',
+          settlements: [{ submissionId: runId, outcome: 'completed' }],
+          messages: [assistant([{ type: 'text', text: 'Hello', state: 'done' }])],
+        })
+        evidence.disconnect(new Error('HTTP 503'))
+        expect(yield* Fiber.join(run)).toEqual(Settlement.cases.Completed.make({ reply: 'Hello' }))
+      }),
+  )
+
+  it.effect('a live partial answer still has the one-hour durability bound', () =>
+    Effect.gen(function* () {
+      const evidence = yield* fixture()
       const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
       yield* Queue.take(evidence.ready)
-      evidence.phase('connecting')
+      evidence.publish({
+        conversationId: 'conversation',
+        settlements: [],
+        messages: [assistant([{ type: 'text', text: 'Hello', state: 'streaming' }])],
+      })
       yield* TestClock.adjust(responseTimeoutMillis)
       expect(yield* Fiber.join(run)).toEqual(Settlement.cases.Unknown.make({}))
-      expect(evidence.aborted()).toBe(false)
     }),
   )
 })
