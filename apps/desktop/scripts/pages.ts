@@ -83,12 +83,34 @@ function changedBounds(view: View, action: () => void) {
   })
 }
 
-/** Menu and programmatic zoom reuse the current view; revoked leases remain detached. */
+/**
+ * The guests the window is drawing. A guest stays a child of the window for as long as its page is
+ * open and is hidden in place, so being a child says nothing; being visible is the fact.
+ */
+const shown = (window: BrowserWindow) =>
+  window.contentView.children.filter((child) => child.getVisible())
+
+/**
+ * Waits until the guest's own document says it is being drawn. Counting the window's children
+ * passed for a guest that had been taken off the window and put back, which Electron 44.4.3
+ * leaves hidden: the proof was green while every page after the first was a blank panel.
+ */
+const drawn = (view: WebContentsView) =>
+  Effect.promise(() =>
+    view.webContents.executeJavaScript(
+      `new Promise((resolve) => {
+        if (document.visibilityState === 'visible') return resolve(true)
+        document.addEventListener('visibilitychange', () => resolve(true), { once: true })
+      })`,
+    ),
+  )
+
+/** Menu and programmatic zoom reuse the current view; revoked leases stay hidden. */
 const geometry = Effect.fn('NativePages.geometry')(function* (window: BrowserWindow, tab: Tab) {
   yield* renderer(window, `window.vivid.pages.show(${JSON.stringify(tab)})`)
   yield* renderer(window, 'window.vivid.pages.place({x:10,y:20,width:100,height:200})')
-  const visible = window.contentView.children[0]
-  if (visible === undefined) return yield* Effect.die('Expected attached guest')
+  const visible = shown(window)[0]
+  if (!(visible instanceof WebContentsView)) return yield* Effect.die('Expected attached guest')
   zoomPage(window, 'in')
   const zoom = window.webContents.getZoomFactor()
   NodeAssert.deepEqual(visible.getBounds(), {
@@ -101,16 +123,18 @@ const geometry = Effect.fn('NativePages.geometry')(function* (window: BrowserWin
   NodeAssert.deepEqual(visible.getBounds(), { x: 15, y: 30, width: 150, height: 300 })
   yield* renderer(window, 'window.vivid.pages.place({x:10,y:20,width:900,height:200})')
   yield* changedBounds(visible, () => window.setContentSize(640, 480))
-  NodeAssert.equal(window.contentView.children[0], visible)
+  NodeAssert.equal(shown(window)[0], visible)
   NodeAssert.equal(visible.getBounds().width, 625)
   yield* renderer(window, "window.vivid.pages.place('hidden')")
   window.webContents.setZoomFactor(1)
   yield* renderer(window, 'new Promise(resolve => requestAnimationFrame(() => resolve(true)))')
-  NodeAssert.equal(window.contentView.children.length, 0)
+  NodeAssert.equal(shown(window).length, 0)
   yield* renderer(window, 'window.vivid.pages.place({x:10,y:20,width:100,height:200})')
-  NodeAssert.equal(window.contentView.children[0], visible)
+  NodeAssert.equal(shown(window)[0], visible)
+  // Shown again after being hidden is the case that was broken: the document must be drawn.
+  yield* drawn(visible)
   window.hide()
-  NodeAssert.equal(window.contentView.children.length, 0)
+  NodeAssert.equal(shown(window).length, 0)
   window.show()
   return yield* Effect.void
 })
@@ -126,7 +150,7 @@ const operations = Effect.fn('NativePages.operations')(function* (
   )
   NodeAssert.notEqual(duplicate, tab)
   // Selection revoked the prior slot, even though the source's native context remains warm.
-  NodeAssert.equal(window.contentView.children.length, 0)
+  NodeAssert.equal(shown(window).length, 0)
   yield* renderer(window, `window.vivid.pages.move({tab:${JSON.stringify(duplicate)},to:0})`)
   const invalid = yield* browser
     .handle(PagesRequest.cases.Move.make({ tab, to: 2 }))
@@ -240,7 +264,7 @@ const popups = Effect.fn('NativePages.popups')(function* (input: {
     NodeAssert.deepEqual(foreground.tabs.map((page) => page.tab).slice(1), [
       foreground.showing.value,
     ])
-  NodeAssert.equal(input.window.contentView.children.length, 0)
+  NodeAssert.equal(shown(input.window).length, 0)
 })
 
 /**
@@ -323,7 +347,7 @@ const proof = Effect.scoped(
     yield* browser.handle(
       PagesRequest.cases.Place.make({ placement: { x: 0, y: 0, width: 600, height: 400 } }),
     )
-    const visible = window.contentView.children[0]
+    const visible = shown(window)[0]
     if (!(visible instanceof WebContentsView)) return yield* Effect.die('Expected retained view')
     const guest = visible.webContents
     guest.focus()

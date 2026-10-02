@@ -152,21 +152,47 @@ export class Browser {
     this.dependencies.publish(browserSnapshot(next))
   }
 
-  /** Detach the old guest even when there is no replacement; hidden guests never cover app UI. */
+  /**
+   * Whether this exact guest is the one on the window. Identity, not `Option.contains`: Effect's
+   * equality is structural, and two different guests compare equal under it, so a second page was
+   * taken for the one already attached and was sized without ever being put on the window.
+   */
+  private isAttached(view: WebContentsView): boolean {
+    return Option.exists(this.attached, (current) => current === view)
+  }
+
+  /**
+   * Hide the old guest even when there is no replacement; a hidden guest cannot cover app UI.
+   *
+   * It is hidden in place and stays a child of the window. It used to be taken off the window and
+   * put back, and in Electron 44.4.3 a `WebContentsView` that has been removed with
+   * `removeChildView` stays hidden when it is added again, whatever its bounds: the first page
+   * showed, and every page after a tab switch, a second tab or a closed dialog was a blank panel
+   * over a loaded document. A view that stays attached answers `setVisible` both ways. Measured
+   * against the pinned Electron with a probe of each primitive; re-check when the pin moves.
+   */
   private detach(): void {
     Option.match(this.attached, {
       onNone: () => undefined,
       onSome: (view) => {
         const window = this.dependencies.window
-        if (!window.isDestroyed()) {
-          if (!view.webContents.isDestroyed() && view.webContents.isFocused())
-            window.webContents.focus()
-          window.contentView.removeChildView(view)
-        }
+        if (
+          !window.isDestroyed() &&
+          !view.webContents.isDestroyed() &&
+          view.webContents.isFocused()
+        )
+          window.webContents.focus()
         view.setVisible(false)
       },
     })
     this.attached = Option.none()
+  }
+
+  /** Take a guest off the window for good. Only for a page that is closing: it cannot come back. */
+  private release(view: WebContentsView): void {
+    const window = this.dependencies.window
+    if (window.isDestroyed()) return
+    if (window.contentView.children.includes(view)) window.contentView.removeChildView(view)
   }
 
   /** Revoke both presentation and native focus; later resize/zoom cannot reattach a stale lease. */
@@ -214,10 +240,11 @@ export class Browser {
       this.invalidate('detached')
       return
     }
-    if (!Option.contains(this.attached, view)) {
+    if (!this.isAttached(view)) {
       this.detach()
-      window.contentView.addChildView(view)
-      view.setVisible(true)
+      // Added once, the first time it shows; after that it is only ever shown and hidden.
+      if (window.contentView.children.includes(view)) view.setVisible(true)
+      else window.contentView.addChildView(view)
       this.attached = Option.some(view)
     }
     view.setBounds({ x, y, width, height })
@@ -228,7 +255,7 @@ export class Browser {
     return (
       PagePresentation.guards.Visible(this.presentation) &&
       this.presentation.owner === tab &&
-      Option.contains(this.attached, view)
+      this.isAttached(view)
     )
   }
 
@@ -337,6 +364,7 @@ export class Browser {
     })
     contents.once('destroyed', () => {
       this.views.delete(tab)
+      this.release(view)
       this.change(PageChange.cases.Closed.make({ tab }))
     })
   }
@@ -458,6 +486,7 @@ export class Browser {
     this.change(PageChange.cases.CloseOthers.make({ tab }))
     for (const [current, view] of removed) {
       this.views.delete(current)
+      this.release(view)
       view.webContents.close({ waitForBeforeUnload: false })
     }
   }
@@ -466,6 +495,7 @@ export class Browser {
   private close(tab: Tab, view: WebContentsView): void {
     this.change(PageChange.cases.Closed.make({ tab }))
     this.views.delete(tab)
+    this.release(view)
     view.webContents.close({ waitForBeforeUnload: false })
   }
 
@@ -476,6 +506,7 @@ export class Browser {
     this.views.clear()
     this.change(PageChange.cases.Reset.make({}))
     for (const view of views) {
+      this.release(view)
       if (!view.webContents.isDestroyed()) view.webContents.close({ waitForBeforeUnload: false })
     }
   }
