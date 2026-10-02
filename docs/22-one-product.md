@@ -280,6 +280,12 @@ network Vivid runs in:
    `VIVID_EXECUTOR_PUBLIC_ONLY=true`. Without that declaration Vivid tells the Person that this
    Vivid is not set up to add a server by address, and adds nothing.
 
+What can be added is what Executor can import. An MCP server, and an OpenAPI document that asks
+for no sign-in, a key, or OAuth's authorization-code flow, are added and usable at once or after
+the Person signs in. A document that signs in only by a method Executor's import does not know
+(OAuth's implicit flow is one) is refused, and Vivid says it cannot add that service rather than
+adding something that would fail on first use.
+
 The declaration is a promise about the deployment, not something Vivid can verify. An address that
 answers publicly when Vivid checks it and privately when Executor fetches it is stopped only by
 Executor's own egress, which is why the second step is not optional.
