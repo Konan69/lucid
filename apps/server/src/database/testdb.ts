@@ -1,4 +1,5 @@
 import * as NodeProcess from 'node:process'
+import * as Clock from 'effect/Clock'
 import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
@@ -30,5 +31,14 @@ export const testConfigLayer = Layer.unwrap(
   ),
 )
 
-/** Provides the production Effect Drizzle adapter against the disposable test database. */
-export const testDatabaseLayer = databaseLayer.pipe(Layer.provide(testConfigLayer))
+/**
+ * The production adapter uses the disposable database, with real time only inside SQL resources.
+ * Effect rc.116 Pool captures its construction context for acquisition; PgConnection's handshake
+ * has a five-second deadline. Advancing product TestClock while a connection opens must not expire
+ * a real socket or the pool's idle timer. This provider stays inside the adapter: stores, schedulers,
+ * session expiry and persisted timestamps still use the test's controlled clock.
+ */
+export const testDatabaseLayer = databaseLayer.pipe(
+  Layer.provide(testConfigLayer),
+  Layer.provide(Layer.succeed(Clock.Clock, Clock.Clock.defaultValue())),
+)
