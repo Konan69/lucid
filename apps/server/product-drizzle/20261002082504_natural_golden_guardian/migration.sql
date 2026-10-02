@@ -1,0 +1,2 @@
+ALTER TABLE "vivid_approvals" ADD CONSTRAINT "vivid_approvals_thread_id_vivid_conversations_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "vivid_conversations"("id") ON DELETE CASCADE;--> statement-breakpoint
+ALTER TABLE "vivid_input_requests" ADD CONSTRAINT "vivid_input_requests_thread_id_vivid_conversations_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "vivid_conversations"("id") ON DELETE CASCADE;

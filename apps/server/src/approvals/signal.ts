@@ -16,7 +16,7 @@ export const Signal = Schema.TaggedUnion({
   Stopped: {
     idempotencyKey: Schema.String,
     stoppedAt: Schema.Number,
-    reason: Schema.Literals(['ThreadDeleted', 'AccessLost']),
+    reason: Schema.Literal('AccessLost'),
   },
 })
 export type Signal = typeof Signal.Type

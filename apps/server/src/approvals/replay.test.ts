@@ -120,51 +120,32 @@ describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
     }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
 
-  it.effect('Thread deletion ends replay and preserves one terminal reason', () =>
-    Effect.gen(function* () {
-      const test = yield* fixture()
-      const store = yield* ApprovalStore
-      const observed = yield* Observation
-      const database = yield* Database
-      const approval = yield* store.raise(test.vivid, commandAction)
-      yield* Ref.set(observed.changesDefect, true)
-      yield* Effect.exit(
-        store.decide(test.personal, { id: approval.id, digest: approval.digest, decision: deny }),
-      )
-      yield* Ref.set(observed.changesDefect, false)
-      // Retain a pending sibling too: removing cascade must not leave an orphan inbox card.
-      yield* store.raise(test.vivid, commandAction)
-      yield* database.run(database.delete(threads).where(eq(threads.id, test.personalId)))
-      expect(yield* store.inbox(test.personal)).toEqual([])
-      yield* store.replay()
-      const stopped = yield* returned(
-        yield* database.run(
-          database
-            .select({ signal: approvals.signal })
-            .from(approvals)
-            .where(eq(approvals.id, approval.id)),
-        ),
-        'stopped Approval',
-      )
-      expect(stopped.signal).toMatchObject({
-        reason: 'ThreadDeleted',
-        idempotencyKey: `approval-${approval.id}`,
-      })
-      yield* TestClock.adjust('1 minute')
-      yield* store.replay()
-      expect(
-        yield* returned(
+  it.effect(
+    'Thread deletion cascades pending and owed Approvals and never replays tombstones',
+    () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const store = yield* ApprovalStore
+        const observed = yield* Observation
+        const database = yield* Database
+        const approval = yield* store.raise(test.vivid, commandAction)
+        yield* Ref.set(observed.changesDefect, true)
+        yield* Effect.exit(
+          store.decide(test.personal, { id: approval.id, digest: approval.digest, decision: deny }),
+        )
+        yield* Ref.set(observed.changesDefect, false)
+        yield* store.raise(test.vivid, commandAction)
+        yield* database.run(database.delete(threads).where(eq(threads.id, test.personalId)))
+        expect(yield* store.inbox(test.personal)).toEqual([])
+        expect(yield* store.inThread(test.personalId)).toEqual([])
+        expect(
           yield* database.run(
-            database
-              .select({ signal: approvals.signal })
-              .from(approvals)
-              .where(eq(approvals.id, approval.id)),
+            database.select().from(approvals).where(eq(approvals.threadId, test.personalId)),
           ),
-          'stopped Approval',
-        ),
-      ).toEqual(stopped)
-      expect(yield* Ref.get(observed.deliveries)).toEqual([])
-    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+        ).toEqual([])
+        yield* store.replay()
+        expect(yield* Ref.get(observed.deliveries)).toEqual([])
+      }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
 
   it.effect('two workers cannot admit the same claimed debt concurrently', () =>

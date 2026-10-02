@@ -1,4 +1,5 @@
 import { index, jsonb, pgTable, text } from 'drizzle-orm/pg-core'
+import { threads } from '../threads/tables.ts'
 import { personTable } from '../auth/tables.ts'
 import { companyColumn, epoch, personColumn } from '../database/owner.ts'
 import { Signal, encodeSignal } from './signal.ts'
@@ -20,8 +21,9 @@ export const approvals = pgTable(
   'vivid_approvals',
   {
     id: text('id').primaryKey(),
-    // Keep the decision after Thread deletion so replay can record its terminal reason.
-    threadId: text('thread_id').notNull(),
+    threadId: text('thread_id')
+      .notNull()
+      .references(() => threads.id, { onDelete: 'cascade' }),
     runId: text('run_id'),
     personId: personColumn().notNull(),
     companyId: companyColumn(),

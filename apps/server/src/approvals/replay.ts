@@ -80,15 +80,20 @@ const replayOne = Effect.fn('Signals.replayOne')(function* (
   const row = yield* decodeClaimed(value)
   const now = yield* Clock.currentTimeMillis
   const thread = yield* findThread(row.threadId)
-  const stop = (reason: 'ThreadDeleted' | 'AccessLost') =>
-    Signal.cases.Stopped.make({ idempotencyKey: row.signal.idempotencyKey, stoppedAt: now, reason })
+  // The cascade also removes a claimed debt if its Thread disappears during admission.
+  if (Option.isNone(thread)) return
+  const stop = () =>
+    Signal.cases.Stopped.make({
+      idempotencyKey: row.signal.idempotencyKey,
+      stoppedAt: now,
+      reason: 'AccessLost',
+    })
   let ending: Signal
-  if (Option.isNone(thread)) ending = stop('ThreadDeleted')
-  else if (
+  if (
     !(yield* canSee(thread.value, row.personId)) ||
     (row.signal.deciderId !== null && !(yield* canSee(thread.value, row.signal.deciderId)))
   )
-    ending = stop('AccessLost')
+    ending = stop()
   else {
     const admitted = yield* (yield* Conversation)
       .admit({

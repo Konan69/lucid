@@ -95,43 +95,32 @@ describe.skipIf(!testDatabaseConfigured)('Durable Input answer signals', () => {
     }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
 
-  it.effect('a deleted Thread records its reason and never admits the answer', () =>
-    Effect.gen(function* () {
-      const test = yield* fixture()
-      const store = yield* InputStore
-      const observed = yield* Observation
-      const database = yield* Database
-      const request = yield* store.ask(test.vivid, question)
-      yield* Ref.set(observed.changesDefect, true)
-      yield* Effect.exit(store.answer(test.personal, { id: request.id, answer: 'Monday' }))
-      yield* Ref.set(observed.changesDefect, false)
-      yield* database.run(database.delete(threads).where(eq(threads.id, test.personalId)))
-      yield* store.replay()
-      const stopped = yield* returned(
-        yield* database.run(
-          database
-            .select({ signal: inputRequests.signal })
-            .from(inputRequests)
-            .where(eq(inputRequests.id, request.id)),
-        ),
-        'stopped Input',
-      )
-      expect(stopped.signal).toMatchObject({ reason: 'ThreadDeleted' })
-      yield* TestClock.adjust('1 minute')
-      yield* store.replay()
-      expect(
-        yield* returned(
+  it.effect(
+    'Thread deletion cascades waiting and owed Input requests and never replays tombstones',
+    () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const store = yield* InputStore
+        const observed = yield* Observation
+        const database = yield* Database
+        const request = yield* store.ask(test.vivid, question)
+        yield* Ref.set(observed.changesDefect, true)
+        yield* Effect.exit(store.answer(test.personal, { id: request.id, answer: 'Monday' }))
+        yield* Ref.set(observed.changesDefect, false)
+        yield* store.ask(test.vivid, question)
+        yield* database.run(database.delete(threads).where(eq(threads.id, test.personalId)))
+        expect(yield* store.inThread(test.personalId)).toEqual([])
+        expect(
           yield* database.run(
             database
-              .select({ signal: inputRequests.signal })
+              .select()
               .from(inputRequests)
-              .where(eq(inputRequests.id, request.id)),
+              .where(eq(inputRequests.threadId, test.personalId)),
           ),
-          'stopped Input',
-        ),
-      ).toEqual(stopped)
-      expect(yield* Ref.get(observed.deliveries)).toEqual([])
-    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+        ).toEqual([])
+        yield* store.replay()
+        expect(yield* Ref.get(observed.deliveries)).toEqual([])
+      }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
 
   it.effect('membership loss stops replay even if access is later restored', () =>
