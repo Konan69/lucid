@@ -16,10 +16,12 @@ import {
 import { Option, Predicate, Result, Schema } from 'effect'
 import { browserStep, desktopStep } from '@vivid/state'
 import { Check, Globe, Link2, MousePointer2, ShieldQuestion, Terminal, X } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { BorderBeam } from 'border-beam'
+import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import { change, live, useLiveValue } from '../../data/live'
 import { router } from '../../data/route'
 import { orSay, say } from '../../data/said'
+import { theme } from '../../data/theme'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { cn } from '../../ui/cn'
@@ -215,6 +217,13 @@ function ApprovalOutcome({ state }: { state: ApprovalState }) {
   })
 }
 
+/** How much an action can change, said plainly and coloured by how careful to be. */
+const EFFECT = {
+  read: { words: 'Only reads', tone: 'bg-info-soft text-info' },
+  write: { words: 'Changes something', tone: 'bg-approve-soft text-approve' },
+  destructive: { words: 'Sends, deletes or pays', tone: 'bg-danger-soft text-danger' },
+} as const satisfies Record<Approval['action']['effect'], { words: string; tone: string }>
+
 /**
  * One thing Vivid wants to do and will not do without a yes. Only the Person it is addressed to
  * sees the buttons; everyone else in the Thread sees who it is waiting on. The decision quotes the
@@ -224,6 +233,7 @@ export function ApprovalCard({ approval, me }: { approval: Approval; me: PersonI
   const [refusal, setRefusal] = useState<string | null>(null)
   const pending = ApprovalState.guards.Pending(approval.state)
   const mine = approval.askedOf.id === me
+  const shown = useSyncExternalStore(theme.subscribe, theme.shown)
 
   async function decide(decision: ApprovalDecision) {
     setRefusal(null)
@@ -234,52 +244,71 @@ export function ApprovalCard({ approval, me }: { approval: Approval; me: PersonI
   }
 
   return (
-    <Card className="mt-3 p-4">
-      <div className="flex items-center gap-2 text-meta text-approve">
-        <ShieldQuestion className="size-3.5" />
-        {pending ? 'Vivid is asking first' : 'Vivid asked first'}
-      </div>
-      <h3 className="mt-2 text-title font-title text-ink">{approval.action.summary}</h3>
-      {approval.action.rationale.length > 0 && (
-        <p className="mt-1 text-label text-ink-3">{approval.action.rationale}</p>
-      )}
-      <Exactly target={approval.action.target} />
-      {pending && mine && (
-        <p className="mt-2 text-meta font-meta text-ink-3">
-          Your answer applies only to what is shown above.
-        </p>
-      )}
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {!pending && <ApprovalOutcome state={approval.state} />}
-        {pending && !mine && (
-          <span className="text-label text-ink-3">Waiting on {approval.askedOf.name}.</span>
+    // A request waiting on this Person is the one thing in the Thread that needs them, so its
+    // edge breathes until they answer. Settled, or someone else's to answer, it is a plain card.
+    <BorderBeam
+      active={pending && mine}
+      size="pulse-inner"
+      colorVariant="mono"
+      strength={0.6}
+      theme={shown}
+      className="mt-3"
+    >
+      <Card className="p-4">
+        <div className="flex items-center gap-2 text-meta text-approve">
+          <ShieldQuestion className="size-3.5" />
+          <span className="flex-1">{pending ? 'Vivid is asking first' : 'Vivid asked first'}</span>
+          <span
+            className={cn(
+              'rounded-full px-2 py-0.5 font-title',
+              EFFECT[approval.action.effect].tone,
+            )}
+          >
+            {EFFECT[approval.action.effect].words}
+          </span>
+        </div>
+        <h3 className="mt-2 text-title font-title text-ink">{approval.action.summary}</h3>
+        {approval.action.rationale.length > 0 && (
+          <p className="mt-1 text-label text-ink-3">{approval.action.rationale}</p>
         )}
+        <Exactly target={approval.action.target} />
         {pending && mine && (
-          <>
-            <Button
-              variant="primary"
-              onClick={() => void decide(ApprovalDecision.cases.AllowOnce.make({}))}
-            >
-              Allow once
-            </Button>
-            <Button onClick={() => void decide(ApprovalDecision.cases.AlwaysAllow.make({}))}>
-              Always allow
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => void decide(ApprovalDecision.cases.Deny.make({}))}
-            >
-              Don’t
-            </Button>
-          </>
+          <p className="mt-2 text-meta font-meta text-ink-3">
+            Your answer applies only to what is shown above.
+          </p>
         )}
-      </div>
-      {refusal !== null && (
-        <p role="alert" className="mt-2 text-label text-danger">
-          {refusal}
-        </p>
-      )}
-    </Card>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {!pending && <ApprovalOutcome state={approval.state} />}
+          {pending && !mine && (
+            <span className="text-label text-ink-3">Waiting on {approval.askedOf.name}.</span>
+          )}
+          {pending && mine && (
+            <>
+              <Button
+                variant="primary"
+                onClick={() => void decide(ApprovalDecision.cases.AllowOnce.make({}))}
+              >
+                Allow once
+              </Button>
+              <Button onClick={() => void decide(ApprovalDecision.cases.AlwaysAllow.make({}))}>
+                Always allow
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => void decide(ApprovalDecision.cases.Deny.make({}))}
+              >
+                Don’t
+              </Button>
+            </>
+          )}
+        </div>
+        {refusal !== null && (
+          <p role="alert" className="mt-2 text-label text-danger">
+            {refusal}
+          </p>
+        )}
+      </Card>
+    </BorderBeam>
   )
 }
 
