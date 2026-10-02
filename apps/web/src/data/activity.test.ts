@@ -44,7 +44,7 @@ describe('a step, in words', () => {
         readAnswered({ ok: true }),
         'done',
       ),
-    ).toEqual({ label: 'Used a connection', detail: 'Gmail (Work) · Send Dami the NDA' })
+    ).toEqual({ label: 'Used an integration', detail: 'Gmail (Work) · Send Dami the NDA' })
   })
 
   it('says what work on the Computer was for, while it is still running', () => {
