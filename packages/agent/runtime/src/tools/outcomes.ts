@@ -1,4 +1,4 @@
-import { BrowseOutcome, CommandOutcome, ToolOutcome } from '@vivid/contracts'
+import { BrowseOutcome, CommandOutcome, DesktopOutcome, ToolOutcome } from '@vivid/contracts'
 import * as views from './views.ts'
 import type { ToolResult } from './result.ts'
 
@@ -92,6 +92,22 @@ export function browseOutcome(outcome: BrowseOutcome): ToolResult {
   return BrowseOutcome.match(outcome, {
     Completed: ({ result }) => ({
       output: { ok: true, result: views.browse(result), message: 'The browser action completed.' },
+    }),
+    ApprovalRequired: approval,
+    Blocked: blocked,
+    Unavailable: unavailable,
+  })
+}
+
+/** Picture bytes use Flue's image content, never bounded JSON text or an invented file URL. */
+export function desktopOutcome(outcome: DesktopOutcome): ToolResult {
+  return DesktopOutcome.match(outcome, {
+    Completed: ({ view }) => ({
+      output: {
+        ok: true,
+        view: views.desktop(view),
+        message: 'The desktop action completed; verify the picture.',
+      },
     }),
     ApprovalRequired: approval,
     Blocked: blocked,

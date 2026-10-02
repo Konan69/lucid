@@ -45,11 +45,12 @@ describe('outcome mapping', () => {
         title: 'Agreement',
         outline: 'Signed',
         truncated: false,
+        tabs: [{ title: 'Agreement', address: 'https://example.test', showing: true }],
       }
       expect(browseOutcome(BrowseOutcome.cases.Completed.make({ result: page }))).toEqual({
         output: {
           ok: true,
-          result: { title: page.title, outline: page.outline, truncated: page.truncated },
+          result: page,
           message: 'The browser action completed.',
         },
       })

@@ -39,7 +39,7 @@ import { contextInstruction } from '../context.ts'
 import { VividContext } from './snapshots.ts'
 import * as views from './views.ts'
 import { askTools } from './ask.ts'
-import { computerTools } from './computer.ts'
+import { computerDefinitions } from './computer.ts'
 import { connectionTools } from './connections.ts'
 import { libraryTools } from './library.ts'
 import { memoryTools } from './memory.ts'
@@ -193,7 +193,8 @@ describe('model views', () => {
         truncated: false,
       }),
       views.browse({
-        address: 'https://example.test/MARK-address',
+        address: 'https://example.test',
+        tabs: [{ title: 'Agreement', address: 'https://example.test', showing: true }],
         title: 'Agreement',
         outline: 'Signed',
         truncated: false,
@@ -301,7 +302,7 @@ function isRecord(value: Schema.Json): value is Schema.JsonObject {
 it('has no identifier key or UUID validator in any model tool input', () => {
   const groups = [
     askTools,
-    computerTools,
+    computerDefinitions,
     connectionTools,
     libraryTools,
     memoryTools,

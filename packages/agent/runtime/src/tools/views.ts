@@ -3,6 +3,7 @@ import {
   RoutineTrigger,
   type BrowseResult,
   type CommandResult,
+  type DesktopView,
   type ConnectionRequestMessage,
   type FindToolsResponse,
   type FollowUp,
@@ -176,9 +177,27 @@ export function command(item: CommandResult) {
 /** Browser addresses can contain authority or image URLs; only the readable page is shown. */
 export function browse(item: BrowseResult) {
   return {
+    address: modelText(item.address),
     title: modelText(item.title),
-    outline: modelText(item.outline),
+    outline: modelText(
+      item.outline.replace(/\[e[a-fA-F0-9]+\.[a-fA-F0-9]+:\d+\]/g, '').replace(/\[p\d+:\d+\]/g, ''),
+    ),
     truncated: item.truncated,
+    tabs: item.tabs.map((tab) => ({
+      title: modelText(tab.title),
+      address: modelText(tab.address),
+      showing: tab.showing,
+    })),
+  }
+}
+
+/** Coordinates and the focused title accompany actual image content; provider and Vivid identities stay out. */
+export function desktop(item: DesktopView) {
+  return {
+    width: item.width,
+    height: item.height,
+    pointer: item.pointer,
+    window: item.window === null ? null : modelText(item.window),
   }
 }
 
