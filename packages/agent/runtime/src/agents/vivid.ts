@@ -117,6 +117,7 @@ export function Vivid({ id }: { id: string }) {
       : 'There is no person behind this message, so you cannot act for anyone. Say that something went wrong and that they should send their message again.',
     ...ACTING,
     ...TOOLS,
+    connectionTools.instructions,
     ...FOLLOWING_THROUGH,
     ...KNOWING,
   ].join('\n')

@@ -33,5 +33,10 @@
     "file": "packages/agent/runtime/src/tools/scope.ts",
     "classification": "third-party-adapter",
     "symbols": ["runTool"]
+  },
+  {
+    "file": "apps/server/src/code/worker.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["invokeTool"]
   }
 ]
