@@ -3,7 +3,6 @@ import {
   ApprovalDecision,
   ApprovalId,
   ApprovalState,
-  BrowserAction,
   ConnectionRequestMessage,
   ConnectionState,
   InputRequestId,
@@ -13,7 +12,8 @@ import {
   type PersonId,
 } from '@vivid/contracts'
 import { Option, Predicate, Result, Schema } from 'effect'
-import { Check, Globe, Link2, ShieldQuestion, Terminal, X } from 'lucide-react'
+import { browserStep, desktopStep } from '@vivid/state'
+import { Check, Globe, Link2, MousePointer2, ShieldQuestion, Terminal, X } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { change, live, useLiveValue } from '../../data/live'
 import { router } from '../../data/route'
@@ -59,6 +59,7 @@ const TARGET_ICON = {
   Connection: <Link2 className="size-4" />,
   Command: <Terminal className="size-4" />,
   Browser: <Globe className="size-4" />,
+  Desktop: <MousePointer2 className="size-4" />,
 } satisfies Record<ActionTarget['_tag'], ReactNode>
 
 /** A field's name as a person reads it: `reply_to` and `replyTo` are both "Reply to". */
@@ -151,22 +152,15 @@ function Exactly({ target }: { target: ActionTarget }) {
     <div className="mt-3 flex items-start gap-2 rounded-control bg-well px-3 py-2 text-label text-ink-2 ring-line">
       <span className="mt-0.5 shrink-0 text-ink-3">{TARGET_ICON[target._tag]}</span>
       <span className="min-w-0 font-mono wrap-break-word whitespace-pre-wrap">
-        {ActionTarget.guards.Command(target) ? target.command : browserStep(target.action)}
+        {ActionTarget.match(target, {
+          Command: ({ command }) => command,
+          Browser: ({ action }) => browserStep(action),
+          Desktop: ({ action }) => desktopStep(action),
+        })}
       </span>
     </div>
   )
 }
-
-/** One step in the browser on Vivid's computer, in words. */
-const browserStep = (action: BrowserAction) =>
-  BrowserAction.match(action, {
-    Open: ({ address }) => `Open ${address}`,
-    Read: () => 'Read the page',
-    Click: ({ target }) => `Click “${target}”`,
-    Type: ({ target, text }) => `Type “${text}” into “${target}”`,
-    Press: ({ key }) => `Press ${key}`,
-    Screenshot: () => 'Look at the page',
-  })
 
 const SETTLED = 'inline-flex items-center gap-1.5 text-label'
 

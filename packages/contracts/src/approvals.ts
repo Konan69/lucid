@@ -1,5 +1,5 @@
 import { Schema } from 'effect'
-import { BrowserAction } from './computers.js'
+import { BrowserAction, DesktopAction } from './computers.js'
 import { ApprovalId, ConnectionId, PersonSummary, RunId, ThreadId } from './identity.js'
 
 /**
@@ -11,8 +11,8 @@ export const ActionEffect = Schema.Literals(['read', 'write', 'destructive'] as 
 export type ActionEffect = typeof ActionEffect.Type
 
 /**
- * What the action is done to. A Connection tool runs under one named account; a command and a
- * browser step run on the acting Person's Computer.
+ * What the action is done to. A Connection tool runs under one named account; a command, a
+ * browser step and a desktop action run on the acting Person's Computer.
  */
 export const ActionTarget = Schema.TaggedUnion({
   Connection: {
@@ -24,6 +24,8 @@ export const ActionTarget = Schema.TaggedUnion({
   },
   Command: { command: Schema.String },
   Browser: { action: BrowserAction },
+  /** One pointer or keyboard action on the Computer's desktop. */
+  Desktop: { action: DesktopAction },
 })
 export type ActionTarget = typeof ActionTarget.Type
 

@@ -5,6 +5,7 @@ import * as RpcMiddleware from 'effect/unstable/rpc/RpcMiddleware'
 import { ApprovalResponse, DecideApprovalRequest } from './approvals.js'
 import { AuditListResponse } from './audit.js'
 import type { AuthContext } from './auth.js'
+import { CodeOutcome, ReadPageOutcome, ReadPageRequest, RunCodeRequest } from './code.js'
 import {
   AcceptMembershipRequest,
   ChangeRoleRequest,
@@ -21,6 +22,8 @@ import {
 import {
   BrowseOutcome,
   BrowseRequest,
+  DesktopOutcome,
+  UseDesktopRequest,
   CommandOutcome,
   ComputerResponse,
   RunCommandRequest,
@@ -581,6 +584,22 @@ const RunCommand = Rpc.make('RunCommand', {
   success: CommandOutcome,
 })
 const Browse = Rpc.make('Browse', { ...call, payload: BrowseRequest, success: BrowseOutcome })
+/** One pointer or keyboard action on the Computer's desktop; the answer is the screen after it. */
+const UseDesktop = Rpc.make('UseDesktop', {
+  ...call,
+  payload: UseDesktopRequest,
+  success: DesktopOutcome,
+})
+
+// ── What Vivid can do without a Computer ───────────────────────────────────
+/** Runs a program Vivid wrote over the tools it already has. See `RunCodeRequest`. */
+const RunCode = Rpc.make('RunCode', { ...call, payload: RunCodeRequest, success: CodeOutcome })
+/** Reads one public page. Private and local addresses are refused before anything is fetched. */
+const ReadPage = Rpc.make('ReadPage', {
+  ...call,
+  payload: ReadPageRequest,
+  success: ReadPageOutcome,
+})
 
 // ── Finding things ─────────────────────────────────────────────────────────
 const Search = Rpc.make('Search', { ...call, payload: SearchRequest, success: SearchResponse })
@@ -693,6 +712,9 @@ export const VividRpc = RpcGroup.make(
   HoldComputer,
   RunCommand,
   Browse,
+  UseDesktop,
+  RunCode,
+  ReadPage,
   Search,
   ListSuggestions,
   WatchSuggestions,
