@@ -1,6 +1,6 @@
 import { useAtomValue } from '@effect/atom-react'
 import { workspaceKey } from '@vivid/state'
-import { ThreadId, Workspace, type MeResponse, type Thread as ThreadRecord } from '@vivid/contracts'
+import { ThreadId, type MeResponse, type Thread as ThreadRecord } from '@vivid/contracts'
 import { Array as Arr, Option, Order } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import { PanelLeft } from 'lucide-react'
