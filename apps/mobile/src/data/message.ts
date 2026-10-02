@@ -188,6 +188,8 @@ export interface Step {
   readonly label: string
   readonly detail: Option.Option<string>
   readonly standing: 'running' | 'done' | 'failed'
+  /** The web's ON_COMPUTER tools have something to watch on the Computer screen. */
+  readonly onComputer: boolean
 }
 
 const STANDING = {
@@ -195,6 +197,9 @@ const STANDING = {
   'output-available': 'done',
   'output-error': 'failed',
 } as const satisfies Record<ToolPart['state'], Step['standing']>
+
+/** Mirrors the web's watchable steps, without exposing tool names to the drawn UI. */
+const ON_COMPUTER = new Set(['run_command', 'browse', 'use_desktop'])
 
 /** Each tool call as a line in the product's words, never the tool's own name or payload. */
 export const stepsOf = (tools: ReadonlyArray<ToolPart>): ReadonlyArray<Step> =>
@@ -215,6 +220,7 @@ export const stepsOf = (tools: ReadonlyArray<ToolPart>): ReadonlyArray<Step> =>
         label: described.label,
         detail: Option.fromUndefinedOr(described.detail),
         standing,
+        onComputer: ON_COMPUTER.has(tool.toolName),
       }
     })
     .toArray()

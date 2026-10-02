@@ -9,7 +9,7 @@ import {
   type PersonId,
   type ThreadDetail,
 } from '@vivid/contracts'
-import { drawn, readShown } from '@vivid/state'
+import { APPROVAL_EFFECT_WORDS, drawn, readShown } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { View } from 'react-native'
@@ -112,11 +112,14 @@ function Shell({
   icon,
   kind,
   tone,
+  trailing,
   children,
 }: {
   icon: ReactNode
   kind: string
   tone: 'status-approve' | 'status-attention' | 'ink-3'
+  /** Only Approval headers carry an effect chip; Input requests have no action effect. */
+  trailing?: ReactNode
   children: ReactNode
 }) {
   const { colors: c } = useTheme()
@@ -133,11 +136,39 @@ function Shell({
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         {icon}
-        <Label size="caption" tone={tone}>
+        <Label size="caption" tone={tone} style={{ flex: 1 }}>
           {kind}
         </Label>
+        {trailing}
       </View>
       {children}
+    </View>
+  )
+}
+
+/** The web's informational, approval and destructive chip colours, read from native tokens. */
+const EFFECT = {
+  read: { fill: 'status-info-soft', ink: 'status-info' },
+  write: { fill: 'status-approve-soft', ink: 'status-approve' },
+  destructive: { fill: 'status-danger-soft', ink: 'status-danger' },
+} as const satisfies Record<Approval['action']['effect'], { fill: string; ink: string }>
+
+/** The effect is visible before a decision, and remains part of the settled card's record. */
+function EffectChip({ effect }: { effect: Approval['action']['effect'] }) {
+  const { colors: c } = useTheme()
+  const paint = EFFECT[effect]
+  return (
+    <View
+      style={{
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: radius.panel,
+        backgroundColor: c[paint.fill],
+      }}
+    >
+      <Label size="caption" style={{ color: c[paint.ink] }}>
+        {APPROVAL_EFFECT_WORDS[effect]}
+      </Label>
     </View>
   )
 }
@@ -213,6 +244,7 @@ function ApprovalCard({ approval, me }: { approval: Approval; me: PersonId }) {
       icon={<ShieldQuestion size={14} strokeWidth={1.8} color={c['status-approve']} />}
       kind={pending ? 'Vivid is asking first' : 'Vivid asked first'}
       tone="status-approve"
+      trailing={<EffectChip effect={approval.action.effect} />}
     >
       <Label size="footnote" style={{ fontSize: 15 }}>
         {approval.action.summary}

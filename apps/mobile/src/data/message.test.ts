@@ -236,6 +236,40 @@ describe('what Vivid did', () => {
     expect(stepsOf([tool('show', {}), running])).toEqual(stepsOf([running]))
     expect(stepsOf([tool('show', {})])).toEqual([])
   })
+
+  it('offers Watch only for the current computer step while the reply is working', () => {
+    const computer = ['run_command', 'browse', 'use_desktop'].map((toolName): ToolPart => ({
+      type: 'dynamic-tool',
+      toolName,
+      toolCallId: `call-${toolName}`,
+      state: 'input-available',
+      input: {},
+    }))
+    for (const call of computer) {
+      const steps = stepsOf([call])
+      expect(Option.exists(currentStepOf(steps, true), (step) => step.onComputer)).toBe(true)
+      expect(Option.exists(currentStepOf(steps, false), (step) => step.onComputer)).toBe(false)
+      expect(
+        Option.exists(currentStepOf(stepsOf([call, running]), true), (step) => step.onComputer),
+      ).toBe(false)
+    }
+    expect(currentStepOf(stepsOf([tool('browse', {})]), true)).toEqual(Option.none())
+    expect(
+      currentStepOf(
+        stepsOf([
+          {
+            type: 'dynamic-tool',
+            toolName: 'run_command',
+            toolCallId: 'failed',
+            state: 'output-error',
+            input: {},
+            errorText: 'Stopped',
+          },
+        ]),
+        true,
+      ),
+    ).toEqual(Option.none())
+  })
 })
 
 describe('the card a tool result asks for', () => {

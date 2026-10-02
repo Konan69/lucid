@@ -16,7 +16,7 @@ import {
   type PersonId,
 } from '@vivid/contracts'
 import { Option, Predicate, Result, Schema } from 'effect'
-import { browserStep, desktopStep } from '@vivid/state'
+import { APPROVAL_EFFECT_WORDS, browserStep, desktopStep } from '@vivid/state'
 import { Check, Globe, Link2, MousePointer2, ShieldQuestion, Terminal, X } from 'lucide-react'
 import { BorderBeam } from 'border-beam'
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
@@ -221,9 +221,9 @@ function ApprovalOutcome({ state }: { state: ApprovalState }) {
 
 /** How much an action can change, said plainly and coloured by how careful to be. */
 const EFFECT = {
-  read: { words: 'Only reads', tone: 'bg-info-soft text-info' },
-  write: { words: 'Changes something', tone: 'bg-approve-soft text-approve' },
-  destructive: { words: 'Sends, deletes or pays', tone: 'bg-danger-soft text-danger' },
+  read: { words: APPROVAL_EFFECT_WORDS.read, tone: 'bg-info-soft text-info' },
+  write: { words: APPROVAL_EFFECT_WORDS.write, tone: 'bg-approve-soft text-approve' },
+  destructive: { words: APPROVAL_EFFECT_WORDS.destructive, tone: 'bg-danger-soft text-danger' },
 } as const satisfies Record<Approval['action']['effect'], { words: string; tone: string }>
 
 /**

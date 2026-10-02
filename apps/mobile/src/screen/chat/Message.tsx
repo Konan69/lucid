@@ -3,7 +3,7 @@ import type { ThreadDetail } from '@vivid/contracts'
 import { Data, Option, Result } from 'effect'
 import { useState } from 'react'
 import { Image, View } from 'react-native'
-import { AlarmClock, ChevronDown, ChevronRight, Repeat2 } from 'lucide-react-native'
+import { AlarmClock, ChevronDown, ChevronRight, Monitor, Repeat2 } from 'lucide-react-native'
 import { CITATION_ADDRESS, linkCitations, openDocument } from '../../data/documents'
 import { useNow } from '../../data/foreground'
 import { useLiveData } from '../../data/live'
@@ -27,7 +27,8 @@ import { useTheme } from '../../theme'
 import { Avatar } from '../../ui/Avatar'
 import { openWebLink, Prose } from '../../ui/Prose'
 import { Sheet } from '../../ui/Sheet'
-import { Dot, Face, HAIRLINE, Label, Press, radius } from '../../ui/ui'
+import { Dot, Face, HAIRLINE, Label, Press, radius, TARGET } from '../../ui/ui'
+import { useGo } from '../../workspace'
 import { Cards } from './Cards'
 
 /**
@@ -262,28 +263,52 @@ const STEP_TONE = {
 /** What Vivid did while answering, collapsed to one line that opens into each step. */
 function Steps({ steps, working }: { steps: ReadonlyArray<Step>; working: boolean }) {
   const { colors: c } = useTheme()
+  const go = useGo()
   const [open, setOpen] = useState(false)
   if (steps.length === 0) return null
   const summary = stepsSummary(steps, working)
-  const busy = Option.isSome(currentStepOf(steps, working))
+  const current = currentStepOf(steps, working)
+  const busy = Option.isSome(current)
   const Chevron = open ? ChevronDown : ChevronRight
   return (
     <View style={{ marginBottom: 6 }}>
-      <Press
-        accessibilityRole="button"
-        accessibilityState={{ expanded: open }}
-        // The line is short; the slop makes it as easy to hit as any other control.
-        hitSlop={{ top: 10, bottom: 10, right: 16 }}
-        onPress={() => setOpen((shown) => !shown)}
-        containerStyle={{ alignSelf: 'flex-start' }}
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 24 }}
-      >
-        <Chevron pointerEvents="none" size={15} strokeWidth={1.8} color={c['ink-3']} />
-        {busy && <Dot tone="status-working" size={6} />}
-        <Label size="label" tone="ink-3">
-          {summary}
-        </Label>
-      </Press>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <Press
+          accessibilityRole="button"
+          accessibilityState={{ expanded: open }}
+          // The line is short; the slop makes it as easy to hit as any other control.
+          hitSlop={{ top: 10, bottom: 10 }}
+          onPress={() => setOpen((shown) => !shown)}
+          containerStyle={{ flexShrink: 1 }}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 24 }}
+        >
+          <Chevron pointerEvents="none" size={15} strokeWidth={1.8} color={c['ink-3']} />
+          {busy && <Dot tone="status-working" size={6} />}
+          <Label size="label" tone="ink-3" style={{ flexShrink: 1 }}>
+            {summary}
+          </Label>
+        </Press>
+        {Option.exists(current, (step) => step.onComputer) && (
+          <Press
+            accessibilityRole="button"
+            onPress={() => go.navigate('Computer')}
+            style={({ pressed }) => ({
+              minHeight: TARGET,
+              paddingHorizontal: 8,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 4,
+              borderRadius: TARGET / 2,
+              backgroundColor: pressed ? c['wash-pressed'] : c['accent-soft'],
+            })}
+          >
+            <Monitor pointerEvents="none" size={12} color={c['accent-ink']} />
+            <Label size="caption" tone="accent-ink">
+              Watch
+            </Label>
+          </Press>
+        )}
+      </View>
       {open && (
         <View
           style={{
