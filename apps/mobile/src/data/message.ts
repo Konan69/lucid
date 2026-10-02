@@ -122,6 +122,28 @@ export const textOf = (message: FlueConversationMessage): string =>
   message.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n\n')
 
 /**
+ * The SDK supplies hosted URLs for durable images and data URLs for local previews. Unresolved
+ * files have no bytes to draw yet; non-image files belong to the Library, never this gallery.
+ * A part's position gives repeated pictures distinct React keys even before durable ids arrive.
+ */
+export const picturesOf = (message: FlueConversationMessage) =>
+  message.parts.flatMap((part, position) => {
+    if (part.type !== 'file' || !part.mediaType.startsWith('image/') || part.url === undefined) {
+      return []
+    }
+    return [
+      {
+        key: `${message.id}:${position}`,
+        url: part.url,
+        name: Option.fromUndefinedOr(part.filename),
+      },
+    ]
+  })
+
+/** A resolvable image part, retaining the genuine absence of an uploader-provided filename. */
+export type MessagePicture = ReturnType<typeof picturesOf>[number]
+
+/**
  * What the Person holding this phone last said in the Thread, which is what "Try again" under a
  * Run that came to nothing says again.
  */

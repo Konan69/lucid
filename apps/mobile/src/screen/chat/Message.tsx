@@ -2,7 +2,7 @@ import type { FlueConversationMessage } from '@flue/sdk'
 import type { ThreadDetail } from '@vivid/contracts'
 import { Data, Option, Result } from 'effect'
 import { useState } from 'react'
-import { View } from 'react-native'
+import { Image, View } from 'react-native'
 import { AlarmClock, ChevronDown, ChevronRight, Repeat2 } from 'lucide-react-native'
 import { CITATION_ADDRESS, linkCitations, openDocument } from '../../data/documents'
 import { useNow } from '../../data/foreground'
@@ -11,6 +11,7 @@ import {
   currentStepOf,
   isStreaming,
   momentOf,
+  picturesOf,
   Speaker,
   speakerOf,
   stepsOf,
@@ -18,12 +19,14 @@ import {
   textOf,
   toolsOf,
   type Around,
+  type MessagePicture,
   type Step,
 } from '../../data/message'
 import { when } from '../../data/when'
 import { useTheme } from '../../theme'
 import { Avatar } from '../../ui/Avatar'
 import { openWebLink, Prose } from '../../ui/Prose'
+import { Sheet } from '../../ui/Sheet'
 import { Dot, Face, HAIRLINE, Label, Press, radius } from '../../ui/ui'
 import { Cards } from './Cards'
 
@@ -54,9 +57,15 @@ export function Message({
 }) {
   return Speaker.$match(speakerOf(message, around), {
     Me: () => (
-      <Said text={textOf(message)} voice={unsent.has(message.id) ? Voice.Unsent() : Voice.Mine()} />
+      <Said
+        text={textOf(message)}
+        pictures={picturesOf(message)}
+        voice={unsent.has(message.id) ? Voice.Unsent() : Voice.Mine()}
+      />
     ),
-    Member: ({ name }) => <Said text={textOf(message)} voice={Voice.Theirs({ name })} />,
+    Member: ({ name }) => (
+      <Said text={textOf(message)} pictures={picturesOf(message)} voice={Voice.Theirs({ name })} />
+    ),
     Vivid: ({ answering }) => (
       <FromVivid
         message={message}
@@ -105,7 +114,15 @@ const TAIL = 6
  * fill's own colour), so a message that is sent again does not move when it stops being an
  * outline.
  */
-function Said({ text, voice }: { text: string; voice: Voice }) {
+function Said({
+  text,
+  voice,
+  pictures,
+}: {
+  text: string
+  voice: Voice
+  pictures: ReadonlyArray<MessagePicture>
+}) {
   const { colors: c } = useTheme()
   const paint = Voice.$match(voice, {
     Mine: () => ({ fill: c.accent, edge: c.accent, line: 1, ink: 'ink-on-accent' }) as const,
@@ -146,12 +163,53 @@ function Said({ text, voice }: { text: string; voice: Voice }) {
             borderColor: paint.edge,
           }}
         >
+          <Pictures pictures={pictures} />
           <Label selectable size="reading" tone={paint.ink}>
             {text}
           </Label>
         </View>
       </View>
     </View>
+  )
+}
+
+/** A sent picture opens at full size, using the native sheet in place of the web's image link. */
+function Pictures({ pictures }: { pictures: ReadonlyArray<MessagePicture> }) {
+  const [opened, setOpened] = useState<Option.Option<MessagePicture>>(Option.none())
+  if (pictures.length === 0) return null
+  return (
+    <>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+        {pictures.map((picture) => (
+          <Press
+            key={picture.key}
+            accessibilityRole="imagebutton"
+            accessibilityLabel={Option.getOrUndefined(picture.name)}
+            onPress={() => setOpened(Option.some(picture))}
+            style={({ pressed }) => ({ opacity: pressed ? 0.82 : 1 })}
+          >
+            <Image
+              source={{ uri: picture.url }}
+              resizeMode="cover"
+              style={{ width: 128, height: 128, borderRadius: radius.control }}
+            />
+          </Press>
+        ))}
+      </View>
+      {Option.isSome(opened) && (
+        <Sheet
+          title={Option.getOrUndefined(opened.value.name)}
+          onClose={() => setOpened(Option.none())}
+        >
+          <Image
+            source={{ uri: opened.value.url }}
+            accessibilityLabel={Option.getOrUndefined(opened.value.name)}
+            resizeMode="contain"
+            style={{ width: '100%', aspectRatio: 1 }}
+          />
+        </Sheet>
+      )}
+    </>
   )
 }
 

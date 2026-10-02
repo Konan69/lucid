@@ -19,7 +19,8 @@ export function Sheet({
   onClose,
   children,
 }: {
-  title: string
+  /** Pictures may have no filename; the sheet keeps that absence instead of inventing a title. */
+  title?: string
   detail?: string
   onClose: () => void
   children: ReactNode
@@ -55,9 +56,13 @@ export function Sheet({
             minHeight: 52,
           }}
         >
-          <Label accessibilityRole="header" numberOfLines={1} size="headline" style={{ flex: 1 }}>
-            {title}
-          </Label>
+          <View style={{ flex: 1 }}>
+            {title !== undefined && (
+              <Label accessibilityRole="header" numberOfLines={1} size="headline">
+                {title}
+              </Label>
+            )}
+          </View>
           <IconButton icon={X} label="Close" onPress={onClose} />
         </View>
         <ScrollView

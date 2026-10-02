@@ -20,6 +20,7 @@ import {
   currentStepOf,
   isShown,
   momentOf,
+  picturesOf,
   Speaker,
   speakerOf,
   stepsOf,
@@ -171,6 +172,32 @@ describe('what a message holds', () => {
       Option.some(1),
     )
     expect(momentOf(message({ role: 'assistant' }))).toEqual(Option.none())
+  })
+
+  it('keeps named, unnamed and repeated image parts in order, including inline previews', () => {
+    const pictures = picturesOf(
+      message({
+        role: 'user',
+        parts: [
+          { type: 'text', text: 'Have a look at this.', state: 'done' },
+          {
+            type: 'file',
+            mediaType: 'image/png',
+            url: 'https://example.com/picture',
+            filename: 'Picture.png',
+          },
+          { type: 'file', mediaType: 'application/pdf', url: 'https://example.com/document' },
+          { type: 'file', mediaType: 'image/jpeg', url: 'data:image/jpeg;base64,/9j/4A==' },
+          { type: 'file', mediaType: 'image/png', url: 'https://example.com/picture' },
+          { type: 'file', mediaType: 'image/png' },
+        ],
+      }),
+    )
+    expect(pictures).toEqual([
+      { key: 'message:1', url: 'https://example.com/picture', name: Option.some('Picture.png') },
+      { key: 'message:3', url: 'data:image/jpeg;base64,/9j/4A==', name: Option.none() },
+      { key: 'message:4', url: 'https://example.com/picture', name: Option.none() },
+    ])
   })
 })
 
