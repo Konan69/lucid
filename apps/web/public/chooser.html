@@ -8,7 +8,9 @@
   bridge the shell's preload exposes; the shell itself checks the address and saves it.
 
   The colours and measures are copied from `packages/design/tokens/src/tokens.css` (the page has
-  no build step to import them). Change them there first, then here.
+  no build step to import them). Change them there first, then here. The two typefaces are the
+  app's own, as Latin subsets in `fonts/` beside this file: the build's copies carry a hash in
+  their names, and this page cannot know it.
 -->
 <html lang="en">
   <head>
@@ -16,18 +18,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src 'self'"
     />
     <title>Vivid</title>
     <style>
+      @font-face {
+        font-family: 'Geist Variable';
+        font-weight: 100 900;
+        font-display: swap;
+        src: url('fonts/geist.woff2') format('woff2-variations');
+      }
+      @font-face {
+        font-family: 'Bricolage Grotesque Variable';
+        font-weight: 200 800;
+        font-display: swap;
+        src: url('fonts/bricolage.woff2') format('woff2-variations');
+      }
       :root {
         color-scheme: dark;
-        --surface-0: #161616;
-        --surface-3: #2c2c2c;
-        --ink: rgb(252 252 252);
-        --ink-2: rgb(252 252 252 / 0.68);
-        --ink-3: rgb(252 252 252 / 0.5);
-        --line: rgb(252 252 252 / 0.16);
+        --surface-0: #171614;
+        --surface-3: #2e2b27;
+        --ink: rgb(250 247 240);
+        --ink-2: rgb(250 247 240 / 0.68);
+        --ink-3: rgb(250 247 240 / 0.56);
+        --line: rgb(250 247 240 / 0.16);
         --accent: #6a5aff;
         --accent-hover: #7263ff;
         --danger: #ff7a70;
@@ -36,12 +50,12 @@
       @media (prefers-color-scheme: light) {
         :root {
           color-scheme: light;
-          --surface-0: #ffffff;
+          --surface-0: #fbfaf7;
           --surface-3: #ffffff;
-          --ink: rgb(20 20 20);
-          --ink-2: rgb(20 20 20 / 0.74);
-          --ink-3: rgb(20 20 20 / 0.6);
-          --line: rgb(20 20 20 / 0.14);
+          --ink: rgb(28 25 23);
+          --ink-2: rgb(28 25 23 / 0.74);
+          --ink-3: rgb(28 25 23 / 0.64);
+          --line: rgb(28 25 23 / 0.16);
           --accent: #5b4bff;
           --accent-hover: #4d3df0;
           --danger: #c4281c;
@@ -62,7 +76,7 @@
         background: var(--surface-0);
         color: var(--ink);
         font:
-          14px/1.45 Inter,
+          14px/1.45 'Geist Variable',
           ui-sans-serif,
           system-ui,
           -apple-system,
@@ -111,11 +125,15 @@
       .face::after {
         right: 14px;
       }
+      /* The one line of display type, as on the first screen of the app itself. */
       h1 {
         margin-top: 20px;
-        font-size: 20px;
+        font-family:
+          'Bricolage Grotesque Variable', 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+        font-size: 28px;
         font-weight: 600;
-        letter-spacing: -0.01em;
+        line-height: 1.1;
+        letter-spacing: -0.025em;
         text-wrap: balance;
       }
       .lede {
