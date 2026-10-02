@@ -1,5 +1,4 @@
-import type { FlueConversationMessage } from '@flue/react'
-import { Option, Schema } from 'effect'
+import { Schema } from 'effect'
 
 const ToolTaskSchema = Schema.Struct({
   title: Schema.optionalKey(Schema.String),
@@ -14,52 +13,9 @@ const ToolPayloadSchema = Schema.Struct({
   results: Schema.optionalKey(Schema.Array(Schema.Unknown)),
   tasks: Schema.optionalKey(Schema.Array(Schema.Unknown)),
 })
-const MessageUsageSchema = Schema.Struct({
-  inputTokens: Schema.optionalKey(Schema.Number),
-  outputTokens: Schema.optionalKey(Schema.Number),
-  totalTokens: Schema.optionalKey(Schema.Number),
-})
-const MessageMetadataSchema = Schema.Struct({
-  startedAt: Schema.optionalKey(Schema.Number),
-  finishedAt: Schema.optionalKey(Schema.Number),
-  model: Schema.optionalKey(Schema.String),
-  usage: Schema.optionalKey(MessageUsageSchema),
-})
-const RuntimeMessageSchema = Schema.Struct({
-  purpose: Schema.optionalKey(Schema.String),
-  signal: Schema.optionalKey(
-    Schema.Struct({
-      attributes: Schema.optionalKey(
-        Schema.Struct({ scheduledAt: Schema.optionalKey(Schema.String) }),
-      ),
-    }),
-  ),
-})
-
-const decodeMessageMetadata = Schema.decodeUnknownOption(MessageMetadataSchema)
-const decodeRuntimeMessage = Schema.decodeUnknownOption(RuntimeMessageSchema)
-const decodeToolPayload = Schema.decodeUnknownOption(ToolPayloadSchema)
-
 type ToolPayload = typeof ToolPayloadSchema.Type
 type ToolState = 'running' | 'failed' | 'done'
 type ToolCallDescription = { label: string; detail?: string }
-
-type Activity = {
-  id: string
-  detail?: string
-  failed?: boolean
-  label: string
-  timestamp?: number
-  type: 'request' | 'response' | 'tool'
-}
-
-type MessageContext = {
-  finishedAt?: number
-  metadata: typeof MessageMetadataSchema.Type | null
-  runtimeMessage: typeof RuntimeMessageSchema.Type | null
-  startedAt?: number
-  text: string
-}
 
 const TOOL_LABELS = {
   search: {
@@ -88,16 +44,6 @@ const TOOL_LABELS = {
     done: 'Action completed',
   },
 } as const
-
-/** Collapses text parts exactly as the activity timeline presents them. */
-function messageText(message: FlueConversationMessage) {
-  return message.parts
-    .filter((part) => part.type === 'text')
-    .map((part) => part.text)
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
 
 /** Keeps state-dependent wording exhaustive without repeating nested conditionals per tool. */
 function labelForState(state: ToolState, labels: Record<ToolState, string>) {
@@ -211,130 +157,4 @@ export function describeToolCall(
     default:
       return { label: labelForState(state, TOOL_LABELS.fallback) }
   }
-}
-
-/** Decodes untrusted message metadata once before timeline classification. */
-function contextForMessage(message: FlueConversationMessage): MessageContext {
-  const metadataResult = decodeMessageMetadata(message.metadata)
-  const metadata = Option.isSome(metadataResult) ? metadataResult.value : null
-  const runtimeMessageResult = decodeRuntimeMessage(message)
-  const runtimeMessage = Option.isSome(runtimeMessageResult) ? runtimeMessageResult.value : null
-  const startedAt = metadata ? metadata.startedAt : undefined
-  return {
-    metadata,
-    runtimeMessage,
-    startedAt,
-    finishedAt: metadata ? (metadata.finishedAt ?? startedAt) : startedAt,
-    text: messageText(message),
-  }
-}
-
-/** Projects a Person-authored message into the single request event shown in the log. */
-function requestActivity(message: FlueConversationMessage, context: MessageContext): Activity[] {
-  return [
-    {
-      id: message.id,
-      label: 'Request submitted',
-      detail: context.text || undefined,
-      timestamp: context.startedAt,
-      type: 'request',
-    },
-  ]
-}
-
-/** Projects a dispatch signal into the routine event while rejecting invalid timestamps. */
-function dispatchActivity(message: FlueConversationMessage, context: MessageContext): Activity[] {
-  const runtimeMessage = context.runtimeMessage
-  const scheduledAt =
-    runtimeMessage && runtimeMessage.signal && runtimeMessage.signal.attributes
-      ? runtimeMessage.signal.attributes.scheduledAt
-      : undefined
-  const timestamp = scheduledAt ? Date.parse(scheduledAt) : undefined
-  return [
-    {
-      id: message.id,
-      label: 'Routine triggered',
-      detail: context.text || undefined,
-      timestamp: Number.isFinite(timestamp) ? timestamp : undefined,
-      type: 'request',
-    },
-  ]
-}
-
-/** Decodes one dynamic tool part and records its terminal state without leaking raw payloads. */
-function activityForTool(
-  message: FlueConversationMessage,
-  context: MessageContext,
-  tool: Extract<FlueConversationMessage['parts'][number], { type: 'dynamic-tool' }>,
-): Activity {
-  const inputResult = decodeToolPayload(tool.input)
-  const input = Option.isSome(inputResult) ? inputResult.value : null
-  const outputResult = decodeToolPayload('output' in tool ? tool.output : null)
-  const output = Option.isSome(outputResult) ? outputResult.value : null
-  const running = tool.state === 'input-available'
-  const failed = tool.state === 'output-error'
-  const described = describeToolCall(
-    tool.toolName,
-    input,
-    output,
-    running ? 'running' : failed ? 'failed' : 'done',
-  )
-  return {
-    id: `${message.id}:${tool.toolCallId}`,
-    label: described.label,
-    detail: described.detail,
-    failed,
-    timestamp: context.finishedAt,
-    type: 'tool',
-  }
-}
-
-/** Builds the compact model, duration, and token summary attached to a response event. */
-function responseFacts(context: MessageContext) {
-  const metadata = context.metadata
-  const model = metadata && metadata.model ? metadata.model.replace(/^openrouter\//, '') : undefined
-  const duration =
-    context.startedAt && context.finishedAt
-      ? `${Math.max(0, (context.finishedAt - context.startedAt) / 1000).toFixed(1)}s`
-      : undefined
-  const usage = metadata ? metadata.usage : undefined
-  const tokens = usage
-    ? (usage.totalTokens ?? ((usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) || undefined))
-    : undefined
-  return [model, duration, tokens ? `${tokens.toLocaleString()} tokens` : undefined]
-    .filter(Boolean)
-    .join(' · ')
-}
-
-/** Projects an assistant or advisory message into tool events followed by its response outcome. */
-function responseActivity(message: FlueConversationMessage, context: MessageContext): Activity[] {
-  const tools = message.parts
-    .filter((part) => part.type === 'dynamic-tool')
-    .map((tool) => activityForTool(message, context, tool))
-  const failed = message.settlement ? message.settlement.outcome === 'failed' : false
-  const facts = responseFacts(context)
-  return [
-    ...tools,
-    {
-      id: message.id,
-      label: failed ? 'Response failed' : 'Response completed',
-      detail: facts || context.text.slice(0, 120) || undefined,
-      failed,
-      timestamp: context.finishedAt,
-      type: 'response',
-    },
-  ]
-}
-
-/** Classifies one materialized Flue message into the ordered events shown in the activity panel. */
-export function activityForMessage(message: FlueConversationMessage): Activity[] {
-  const context = contextForMessage(message)
-  if (message.role === 'user') return requestActivity(message, context)
-  if (
-    message.role === 'system' &&
-    context.runtimeMessage &&
-    context.runtimeMessage.purpose === 'dispatch'
-  )
-    return dispatchActivity(message, context)
-  return responseActivity(message, context)
 }

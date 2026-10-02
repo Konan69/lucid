@@ -120,6 +120,13 @@ addressed to a Person, answered once, returned as a signal.
 Background work (a Routine with nobody present) may read. It may write only where a rule allows it;
 otherwise it asks and waits.
 
+The **Computer** is Vivid's own machine, and work on it is contained there: a command or a browser
+step is not an action in anyone's account. So with no matching rule it runs without asking. A
+rule can still forbid it or make it ask, and if the rule check cannot run, it asks. Every command
+is written to the audit record; browser steps are shown on the Computer's screen and are not
+recorded one by one. Anything done through a Connection, from the Computer or not, is a Connection
+action and follows the steps above.
+
 ## Connections: Executor
 
 Executor is the Connection layer. It runs beside the server as one more local process, reached over
