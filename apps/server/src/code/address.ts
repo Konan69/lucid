@@ -1,6 +1,6 @@
 import * as NodeDns from 'node:dns'
 import * as NodeNet from 'node:net'
-import * as ipaddr from 'ipaddr.js'
+import ipaddr from 'ipaddr.js'
 import { Context, Effect, Layer, Schema } from 'effect'
 
 /** Parsing, DNS and transport failures have different public refusals without leaking driver text. */
