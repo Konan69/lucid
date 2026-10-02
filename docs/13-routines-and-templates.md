@@ -37,6 +37,29 @@ repeat something, the thing it offers is a routine ("Vivid set up a routine · E
 Routines are plain and inspectable. A person can read every action before and after installing.
 No code, no flow editor, no implementation nouns.
 
+## Integration events (backend)
+
+A Routine can react to new items in an Integration named by its account label, such as
+“Gmail (Work)”. The server keeps the Connection reference private. `find_events` discovers actual
+provider read operations and their configuration; Vivid can offer “when this happens, I’ll do
+that” and create the Routine in its Thread.
+
+The local stack uses polling through `IntegrationWatch`: one read-only provider tool per
+observation, every five minutes by default, at least one minute apart. Creation establishes a
+baseline. The configured provider list must have a stable order and item identity. A watch whose
+cursor falls outside that list pauses with an explicit observation-gap reason. Every newly
+observed item and the advanced cursor commit together before admission; the receipt is keyed by
+Routine and provider event id. Replays and restarts reuse the original admission key. Events keep
+the provider's content, run as the Routine's owner, and report in its private Thread. Revoked or
+failed Integrations pause the Routine and produce one durable, idempotent Thread notice.
+
+Native delivery is the follow-up. Executor already supports account-bound webhooks, but this
+local-first stack has no public callback origin or provider-app forwarding destination to Vivid.
+Native delivery needs both, plus verified provider event identity/content delivery and subscription
+lifecycle handling. A native `IntegrationWatch` Layer will replace the polling Layer; the wire
+trigger, durable receipts, deduplication, and scheduler admission path stay the same. No frontend
+Integration-trigger editor ships in this backend change.
+
 ## The template model
 
 Every routine can become a template. A template is the routine's instructions plus a price and a
