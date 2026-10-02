@@ -102,6 +102,7 @@ export type RunOrigin = typeof RunOrigin.Type
  * failure Vivid has no name for, and it is never used to hide one of the others.
  */
 export const RunFailure = Schema.Literals([
+  'Delivery',
   'RateLimited',
   'ModelUnavailable',
   'NoAnswer',

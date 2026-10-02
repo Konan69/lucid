@@ -26,6 +26,7 @@ import {
   type Delivery,
   type SignalDelivery,
 } from './conversation.ts'
+import { serializeAdmissions } from './admissions.ts'
 import { flueMessage } from './message.ts'
 import { Presence } from './presence.ts'
 import { RunStore, RunEnding, TurnReservation, type WorkingRun } from './runs.ts'
@@ -155,6 +156,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
   const changes = yield* Changes
   const scope = yield* Effect.scope
   const observe = yield* makeObserve()
+  const withAdmission = serializeAdmissions()
   const withDatabase = Effect.provideService(Database, database)
 
   // Runs with an observer in this process. A delivery Flue recognises as a repeat does not mean
@@ -184,57 +186,66 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
    * The server never joins a different Person's delivery into a response in progress. The locked
    * reservation refuses it with the first Person's name before any message or signal reaches Flue.
    */
-  const admit: ConversationService['admit'] = Effect.fn('Conversation.admit')(function* (
-    delivery: Delivery,
-  ) {
-    const found = yield* findThread(delivery.threadId).pipe(withDatabase)
-    if (Option.isNone(found)) return yield* threadMissing()
-    const thread = found.value
-    if (!(yield* canSee(thread, delivery.personId).pipe(withDatabase)))
-      return yield* threadMissing()
-    const speaker = yield* personOf(delivery.personId)
-    const creator = yield* personOf(thread.personId)
-    const id = submissionId(thread.id, delivery.idempotencyKey)
-    const reservation = yield* runs.start({
-      id,
-      threadId: thread.id,
-      personId: speaker.id,
-      origin: delivery.origin,
-      libraryFolder: delivery.libraryFolder === undefined ? null : delivery.libraryFolder,
-    })
-    const turn = yield* TurnReservation.match<Effect.Effect<number, Conflict>>(reservation, {
-      Reserved: (reserved) => Effect.succeed(reserved.turn),
-      Busy: ({ person }) =>
-        Effect.fail(
-          Conflict.make({
-            message: `Vivid is still answering ${person.name}. Send this again when it has finished.`,
-          }),
-        ),
-    })
-    const deliveryScope = yield* runs.scope({ threadId: thread.id, turn })
-    const admission = yield* runtime.admit({
-      threadId: thread.id,
-      message: flueMessage(thread.audience, summaryOf(speaker).name, delivery.message, turn),
-      origin: { creator: creator.id, creatorName: creator.name },
-      idempotencyKey: delivery.idempotencyKey,
-      turn,
-      scope: deliveryScope,
-    })
-    const said = previewOf(delivery.message)
-    yield* threads.touch(thread.id, said)
-    // What a Person just sent is not unread for them. They were just shown to be able to see the
-    // Thread, so the only failures left here are the database's own.
-    yield* threads
-      .markRead(speaker.id, thread.id)
-      .pipe(Effect.catchTag(['NotFound', 'Forbidden', 'InvalidRequest', 'Conflict'], threadMissing))
-    yield* changes.publish(audienceTopics(thread, yield* threads.participants(thread.id)))
-    yield* follow({ id: admission.runId, threadId: thread.id, person: speaker, said })
-    return {
-      runId: admission.runId,
-      offset: admission.offset,
-      incarnation: admission.incarnation,
-    } satisfies Admitted
-  })
+  const admit: ConversationService['admit'] = Effect.fn('Conversation.admit')(
+    function* (delivery: Delivery) {
+      const found = yield* findThread(delivery.threadId).pipe(withDatabase)
+      if (Option.isNone(found)) return yield* threadMissing()
+      const thread = found.value
+      if (!(yield* canSee(thread, delivery.personId).pipe(withDatabase)))
+        return yield* threadMissing()
+      const speaker = yield* personOf(delivery.personId)
+      const creator = yield* personOf(thread.personId)
+      const id = submissionId(thread.id, delivery.idempotencyKey)
+      const reservation = yield* runs.start({
+        id,
+        threadId: thread.id,
+        personId: speaker.id,
+        origin: delivery.origin,
+        libraryFolder: delivery.libraryFolder === undefined ? null : delivery.libraryFolder,
+      })
+      const turn = yield* TurnReservation.match<Effect.Effect<number, Conflict>>(reservation, {
+        Reserved: (reserved) => Effect.succeed(reserved.turn),
+        Busy: ({ person }) =>
+          Effect.fail(
+            Conflict.make({
+              message: `Vivid is still answering ${person.name}. Send this again when it has finished.`,
+            }),
+          ),
+      })
+      const admission = yield* Effect.gen(function* () {
+        const deliveryScope = yield* runs.scope({ threadId: thread.id, turn })
+        return yield* runtime.admit({
+          threadId: thread.id,
+          message: flueMessage(thread.audience, summaryOf(speaker).name, delivery.message, turn),
+          origin: { creator: creator.id, creatorName: creator.name },
+          idempotencyKey: delivery.idempotencyKey,
+          turn,
+          scope: deliveryScope,
+        })
+      }).pipe(
+        Effect.tapError(() => runs.end(id, RunEnding.cases.Failed.make({ reason: 'Delivery' }))),
+        Effect.onInterrupt(() => runs.end(id, RunEnding.cases.Failed.make({ reason: 'Delivery' }))),
+      )
+      yield* runs.admitted(id)
+      const said = previewOf(delivery.message)
+      yield* threads.touch(thread.id, said)
+      // What a Person just sent is not unread for them. They were just shown to be able to see the
+      // Thread, so the only failures left here are the database's own.
+      yield* threads
+        .markRead(speaker.id, thread.id)
+        .pipe(
+          Effect.catchTag(['NotFound', 'Forbidden', 'InvalidRequest', 'Conflict'], threadMissing),
+        )
+      yield* changes.publish(audienceTopics(thread, yield* threads.participants(thread.id)))
+      yield* follow({ id: admission.runId, threadId: thread.id, person: speaker, said })
+      return {
+        runId: admission.runId,
+        offset: admission.offset,
+        incarnation: admission.incarnation,
+      } satisfies Admitted
+    },
+    (effect, delivery) => withAdmission(effect, delivery.threadId),
+  )
 
   const deliver: ConversationService['deliver'] = makeDeliver(admit, runs)
 

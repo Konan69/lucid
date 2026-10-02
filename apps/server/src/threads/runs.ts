@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ne, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, isNotNull, ne, sql } from 'drizzle-orm'
 import * as Arr from 'effect/Array'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
@@ -59,6 +59,8 @@ export interface RunStoreService {
     readonly origin: StoredRunOrigin
     readonly libraryFolder: LibraryFolderId | null
   }) => Effect.Effect<TurnReservation, DatabaseInfrastructureError>
+  /** Records acceptance after Flue returns its receipt, and reopens a failed delivery on retry. */
+  readonly admitted: (id: RunId) => Effect.Effect<void, DatabaseInfrastructureError>
   /** Runtime-only lookup, by the harmless turn number a delivery shows the model. */
   readonly scope: (
     request: DeliveryScopeRequest,
@@ -166,6 +168,7 @@ const makeStart = (database: DatabaseService): RunStoreService['start'] =>
             and(
               eq(runs.threadId, input.threadId),
               eq(runs.state, 'working'),
+              isNotNull(runs.admittedAt),
               ne(runs.personId, input.personId),
             ),
           )
@@ -212,6 +215,18 @@ const makeScope = (database: DatabaseService): RunStoreService['scope'] =>
     if (row === undefined)
       return yield* Effect.fail(new NotFound({ message: 'Delivery not found' }))
     return DeliveryScope.make({ acting: row.personId, libraryFolder: row.libraryFolder })
+  })
+
+/** A failed admission is replayable with its original turn; acceptance starts its observation. */
+const makeAdmitted = (database: DatabaseService) =>
+  Effect.fn('RunStore.admitted')(function* (id: RunId) {
+    const now = yield* Clock.currentTimeMillis
+    yield* database.run(
+      database
+        .update(runs)
+        .set({ admittedAt: now, state: 'working', finishedAt: null, failureReason: null })
+        .where(and(eq(runs.id, id), sql`${runs.admittedAt} is null`)),
+    )
   })
 
 type EndingColumns = Pick<typeof runs.$inferInsert, 'state' | 'failureReason'>
@@ -273,6 +288,7 @@ export const runStoreLayer = Layer.effect(
     const database = yield* Database
     return RunStore.of({
       start: makeStart(database),
+      admitted: makeAdmitted(database),
       scope: makeScope(database),
       end: makeEnd(database),
       working: makeWorking(database),

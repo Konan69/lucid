@@ -1,8 +1,16 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, it } from '@effect/vitest'
-import { CompanyId, Conflict, PersonId, RunId, RunState, ThreadId } from '@vivid/contracts'
+import {
+  CompanyId,
+  Conflict,
+  PersonId,
+  RunId,
+  RunState,
+  RuntimeUnavailable,
+  ThreadId,
+} from '@vivid/contracts'
 import { eq, inArray } from 'drizzle-orm'
-import { Deferred, Effect, Fiber, Layer, Queue, Ref, Result } from 'effect'
+import { Deferred, Effect, Fiber, Layer, Queue, Ref, Result, Option } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
@@ -97,9 +105,12 @@ type RuntimeInput = Parameters<Runtime['Service']['admit']>[0]
 const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
   const admitted = yield* Ref.make<ReadonlyArray<RuntimeInput>>([])
   const requests = yield* Ref.make<ReadonlyArray<RuntimeInput>>([])
+  const failure = yield* Ref.make(Option.none<RuntimeUnavailable>())
   const settlements = new Map<RunId, Deferred.Deferred<Settlement>>()
   const runtime = Runtime.of({
     admit: Effect.fn('Delivery.test.admit')(function* (input) {
+      const rejected = yield* Ref.getAndSet(failure, Option.none())
+      if (Option.isSome(rejected)) return yield* Effect.fail(rejected.value)
       const id = submissionId(input.threadId, input.idempotencyKey)
       yield* Ref.update(requests, (all) => [...all, input])
       const repeated = settlements.has(id)
@@ -131,7 +142,7 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
       Settlement.cases.Completed.make({ reply: 'Finished' }),
     )
   })
-  return { runtime, admitted, requests, finish }
+  return { runtime, admitted, requests, finish, failure }
 })
 
 /** Real RunStore methods also expose typed receipts so tests never sleep or poll for background work. */
@@ -208,6 +219,21 @@ const signals = [
 ] as const
 
 describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
+  it.effect('failed Flue admission ends the Run with Delivery and does not block Ben', () =>
+    Effect.gen(function* () {
+      const test = yield* harness()
+      yield* Ref.set(test.failure, Option.some(RuntimeUnavailable.make({ message: 'Unavailable' })))
+      const rejected = yield* Effect.result(test.conversation.admit(said(test.threadId, test.ada)))
+      expect(Result.isFailure(rejected) && rejected.failure).toBeInstanceOf(RuntimeUnavailable)
+      const recorded = yield* (yield* RunStore).list(test.threadId)
+      expect(recorded.map((run) => run.state)).toEqual([
+        RunState.cases.Failed.make({ finishedAt: 0, reason: 'Delivery' }),
+      ])
+      yield* test.conversation.admit(said(test.threadId, test.ben))
+      expect(yield* Ref.get(test.admitted)).toHaveLength(1)
+    }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
+  )
+
   it.effect('refuses Ben with Ada’s name, then admits him after Ada settles', () =>
     Effect.gen(function* () {
       const test = yield* harness()
