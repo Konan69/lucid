@@ -131,7 +131,11 @@ export const resolveAuthority = Effect.fn('Delivery.resolve')(function* <E, R>(
 /** A new object is the Flue ingress: authority and transport keys cannot leak into history or model text. */
 export function modelDelivery(delivery: RuntimeRunRequest) {
   if (Object.keys(delivery.attributes).length === 0)
-    return { kind: 'user' as const, body: delivery.body }
+    return {
+      kind: 'user' as const,
+      body: delivery.body,
+      attachments: delivery.attachments === undefined ? [] : Array.from(delivery.attachments),
+    }
   return {
     kind: 'signal' as const,
     type: delivery.type,

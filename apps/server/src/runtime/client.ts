@@ -13,6 +13,7 @@ import {
   RuntimeRunRequest,
   ThreadOrigin as ThreadOriginSchema,
   type DeliveryScope,
+  type MessageAttachment,
   type ThreadId,
   type ThreadOrigin,
 } from '@vivid/contracts'
@@ -56,7 +57,11 @@ export interface ConversationRead {
 
 /** Only the two server-built deliveries can cross this boundary; signal kinds stay contract-typed. */
 export type RuntimeMessage =
-  | { readonly kind: 'user'; readonly body: string }
+  | {
+      readonly kind: 'user'
+      readonly body: string
+      readonly attachments?: ReadonlyArray<MessageAttachment>
+    }
   | {
       readonly kind: 'signal'
       readonly body: string
@@ -125,6 +130,11 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
       idempotencyKey: input.idempotencyKey,
       type: input.message.kind === 'user' ? 'message' : input.message.type,
       body: input.message.body,
+      // Pictures stay on ordinary user messages; Flue signals cannot carry attachments.
+      attachments:
+        input.message.kind === 'user' && input.message.attachments !== undefined
+          ? input.message.attachments
+          : [],
       attributes: input.message.kind === 'user' ? {} : input.message.attributes,
       turn: input.turn,
       scope: input.scope,

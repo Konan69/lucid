@@ -3,6 +3,70 @@ import { Approval } from './approvals.js'
 import { LibraryFolderId, PersonId, PersonSummary, ProjectId, RunId, ThreadId } from './identity.js'
 import { InputRequest } from './inputs.js'
 
+/** The image formats accepted by the conversation gateway and served inline to every client. */
+export const PictureMediaType = Schema.Literals([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+] as const)
+export type PictureMediaType = typeof PictureMediaType.Type
+
+/** Flue's image wire shape. The gateway also checks decoded size and the bytes' signature. */
+export const MessageAttachment = Schema.Struct({
+  type: Schema.Literal('image'),
+  data: Schema.String,
+  mimeType: PictureMediaType,
+  filename: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(255))),
+})
+export interface MessageAttachment extends Schema.Schema.Type<typeof MessageAttachment> {}
+
+/** A Person's words and optional pictures; signals remain server-owned deliveries. */
+export const SendMessageRequest = Schema.Struct({
+  kind: Schema.Literal('user'),
+  body: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(100_000)),
+  attachments: Schema.optionalKey(Schema.Array(MessageAttachment)),
+  idempotencyKey: Schema.optionalKey(
+    Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
+  ),
+})
+export interface SendMessageRequest extends Schema.Schema.Type<typeof SendMessageRequest> {}
+
+/** Invalid formats and mismatched signatures need the Person to choose another image. */
+export class UnsupportedAttachment extends Schema.TaggedError<UnsupportedAttachment>()(
+  'UnsupportedAttachment',
+  { message: Schema.String },
+  { title: 'Unsupported picture' },
+) {}
+
+/** Invalid base64 or attachment fields cannot become a durable conversation input. */
+export class InvalidAttachment extends Schema.TaggedError<InvalidAttachment>()(
+  'InvalidAttachment',
+  { message: Schema.String },
+  { title: 'Invalid picture' },
+) {}
+
+/** The size limit applies to decoded bytes, separately for each picture. */
+export class AttachmentTooLarge extends Schema.TaggedError<AttachmentTooLarge>()(
+  'AttachmentTooLarge',
+  { message: Schema.String },
+  { title: 'Picture too large' },
+) {}
+
+/** A message accepts at most four pictures, including repeated pictures. */
+export class TooManyAttachments extends Schema.TaggedError<TooManyAttachments>()(
+  'TooManyAttachments',
+  { message: Schema.String },
+  { title: 'Too many pictures' },
+) {}
+
+/** Flue cannot preserve attachments on the attributed signals used by shared Threads. */
+export class PicturesRequirePrivateThread extends Schema.TaggedError<PicturesRequirePrivateThread>()(
+  'PicturesRequirePrivateThread',
+  { threadId: ThreadId, message: Schema.String },
+  { title: 'Pictures require a private Thread' },
+) {}
+
 /**
  * Who can see a Thread and send into it.
  *
@@ -216,6 +280,7 @@ export const RuntimeRunRequest = Schema.Struct({
   idempotencyKey: Schema.String,
   type: SignalType,
   body: Schema.String,
+  attachments: Schema.optionalKey(Schema.Array(MessageAttachment)),
   attributes: Schema.Record(Schema.String, Schema.String),
   turn: Schema.Number,
   scope: DeliveryScope,
