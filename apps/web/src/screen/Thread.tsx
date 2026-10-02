@@ -22,6 +22,7 @@ import { Faces } from '../ui/Avatar'
 import { Button, IconButton } from '../ui/Button'
 import { cn } from '../ui/cn'
 import { Face, type FaceMood } from '../ui/Face'
+import type { Picture } from './thread/Attach'
 import { Composer } from './thread/Composer'
 import { isBlank, Message, Said, textOf, type ThreadContext } from './thread/Message'
 import { newestRun, Outcome } from './thread/Outcome'
@@ -156,7 +157,7 @@ function Conversation({
    * back is "not sent" as far as this page can tell; sending it again under the same key is the
    * same delivery to the server, not a second message and a second Run.
    */
-  function send(text: string, key: string) {
+  function send(text: string, key: string, pictures: ReadonlyArray<Picture>) {
     setUnsent(Option.none())
     // A Thread started without a name takes its first message as one.
     if (Option.exists(thread, (value) => value.title === 'New thread')) {
@@ -166,14 +167,15 @@ function Conversation({
     // plainly and drawn when it comes back; in a private one the hook shows it at once.
     const sending = shared
       ? client.send({ message: { kind: 'user', body: text }, idempotencyKey: key })
-      : agent.sendMessage(text, { idempotencyKey: key })
+      : agent.sendMessage(text, { idempotencyKey: key, images: [...pictures] })
     void sending.catch((refusal) =>
-      setUnsent(Option.some({ words: text, key, why: whyNot(refusal) })),
+      setUnsent(Option.some({ words: text, key, pictures, why: whyNot(refusal) })),
     )
   }
 
   /** Says something new: a delivery of its own. */
-  const say = (text: string) => send(text, crypto.randomUUID())
+  const say = (text: string, pictures: ReadonlyArray<Picture> = []) =>
+    send(text, crypto.randomUUID(), pictures)
 
   const lastSaid = lastWords(visible, me)
   const ended = working ? Option.none() : newestRun(runs)
@@ -221,7 +223,7 @@ function Conversation({
             // which draws a message when it comes back from the server, needs them drawn here.
             shown={Option.contains(lastSaid, unsent.value.words)}
             why={unsent.value.why}
-            onAgain={() => send(unsent.value.words, unsent.value.key)}
+            onAgain={() => send(unsent.value.words, unsent.value.key, unsent.value.pictures)}
           />
         )}
         {Option.isSome(ended) && (
@@ -235,6 +237,9 @@ function Conversation({
           thread: Option.some(id),
         })}
         working={working}
+        // A picture goes with a message straight to Vivid; a shared Thread's messages take
+        // another path that cannot carry one yet.
+        pictures={!shared}
         onSend={say}
         onStop={() => stop(id)}
         onTyping={setTyping}
@@ -404,6 +409,8 @@ interface Unsent {
   readonly words: string
   /** The delivery these words were sent as, kept so sending again is the same delivery. */
   readonly key: string
+  /** The pictures that went with them, which go again with them. */
+  readonly pictures: ReadonlyArray<Picture>
   readonly why: Option.Option<string>
 }
 

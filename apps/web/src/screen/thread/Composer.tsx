@@ -5,7 +5,7 @@ import { draft } from '../../data/drafts'
 import { theme } from '../../data/theme'
 import { IconButton } from '../../ui/Button'
 import { cn } from '../../ui/cn'
-import { ATTACHABLE, Attached, useAttachments } from './Attach'
+import { attachable, Attached, useAttachments, type Picture } from './Attach'
 
 /**
  * Where a Person writes to Vivid. Enter sends, Shift+Enter makes a new line, and while Vivid is
@@ -18,6 +18,7 @@ export function Composer({
   placeholder = 'Message Vivid',
   working,
   onSend,
+  pictures = false,
   onStop,
   onTyping,
   onTalk,
@@ -27,7 +28,10 @@ export function Composer({
   place: string
   placeholder?: string
   working: boolean
-  onSend: (message: string) => void
+  /** The words, and any pictures attached to them. */
+  onSend: (message: string, pictures: ReadonlyArray<Picture>) => void
+  /** Whether a picture can be sent from here: only where the message goes straight to Vivid. */
+  pictures?: boolean
   onStop: () => void
   /** Told when the Person starts or stops having something typed, for the people watching. */
   onTyping?: (typing: boolean) => void
@@ -36,7 +40,7 @@ export function Composer({
   above?: ReactNode
 }) {
   const [message, setMessage] = useState(() => draft.in(place))
-  const attached = useAttachments()
+  const attached = useAttachments(pictures)
   // Something to send: words, or a file that has arrived. A file still on its way holds the send.
   const empty = (message.trim().length === 0 && attached.kept === 0) || attached.sending
   const shown = useSyncExternalStore(theme.subscribe, theme.shown)
@@ -52,10 +56,11 @@ export function Composer({
     // The files that made it are named under the words, so Vivid knows what to read; a message
     // that is only files still says what is wanted of them.
     const words = message.trim().length === 0 ? 'Have a look at this.' : message.trim()
-    const body = [words, ...attached.take()].join('\n\n')
+    const taken = attached.take()
+    const body = [words, ...taken.lines].join('\n\n')
     write('')
     if (onTyping !== undefined) onTyping(false)
-    onSend(body)
+    onSend(body, taken.pictures)
   }
 
   return (
@@ -108,7 +113,7 @@ export function Composer({
                 className="block field-sizing-content max-h-60 min-h-14 w-full resize-none bg-transparent px-5 pt-4 pb-1 text-body text-ink outline-none placeholder:text-ink-3"
               />
               <div className="flex items-center gap-1 px-3 pb-3">
-                <Pick onPick={attached.add} />
+                <Pick accept={attachable(pictures)} onPick={attached.add} />
                 <span className="flex-1" />
                 {onTalk !== undefined && (
                   <IconButton label="Talk to Vivid" onClick={onTalk}>
@@ -144,18 +149,24 @@ export function Composer({
 }
 
 /** The paperclip: picks documents to attach. The same file can be picked again once taken off. */
-function Pick({ onPick }: { onPick: (files: ReadonlyArray<File>) => void }) {
+function Pick({
+  accept,
+  onPick,
+}: {
+  accept: string
+  onPick: (files: ReadonlyArray<File>) => void
+}) {
   return (
     <label
-      title="Attach a document"
+      title="Attach a file"
       className="inline-flex size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) focus-within:bg-wash-hover hover:bg-wash-hover hover:text-ink"
     >
       <Paperclip className="size-4" />
-      <span className="sr-only">Attach a document</span>
+      <span className="sr-only">Attach a file</span>
       <input
         type="file"
         multiple
-        accept={ATTACHABLE}
+        accept={accept}
         className="sr-only"
         onChange={(event) => {
           const picked = event.currentTarget.files
