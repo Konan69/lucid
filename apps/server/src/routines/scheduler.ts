@@ -61,15 +61,31 @@ const publish = (changes: Changes['Service']) =>
   })
 
 /** The prompt keeps its Library scope; webhook text is appended as the outside payload. */
-const bodyOf = (record: RoutineRecord, payload: Option.Option<string>) => {
+export const bodyOf = (record: RoutineRecord, payload: Option.Option<string>) => {
   const routine = record.routine
   const prompt =
     routine.libraryFolderId === null
       ? routine.prompt
-      : `${routine.prompt}\n\nSearch Library folder "${routine.libraryFolderId}" and cite every source used.`
+      : `${routine.prompt}\n\nSearch this Routine's Library folder and cite every source used.`
   return Option.match(payload, {
     onNone: () => prompt,
     onSome: (text) => `${prompt}\n\nPayload:\n${text}`,
+  })
+}
+
+/** Folder authority travels with delivery rather than being a model-selected search argument.
+ * Flue 2.1 renders signal attributes into model text; hiding authority requires a framework seam
+ * beyond this scheduler. Keep this server-owned attribute available to the runtime Scope. */
+export function deliveryAttributes(record: RoutineRecord) {
+  if (record.routine.libraryFolderId === null)
+    return DeliveryMessage.cases.Signal.fields.attributes.make({
+      routine: record.routine.id,
+      name: record.routine.name,
+    })
+  return DeliveryMessage.cases.Signal.fields.attributes.make({
+    routine: record.routine.id,
+    name: record.routine.name,
+    libraryFolder: record.routine.libraryFolderId,
   })
 }
 
@@ -186,7 +202,7 @@ const makeSubmit = (services: SubmissionServices) =>
         message: DeliveryMessage.cases.Signal.make({
           type: 'schedule',
           body: bodyOf(record, payload),
-          attributes: { routine: routine.id, name: routine.name },
+          attributes: deliveryAttributes(record),
         }),
         origin: StoredRunOrigin.cases.Routine.make({ routineName: routine.name }),
         idempotencyKey: attempt.deliveryKey,
