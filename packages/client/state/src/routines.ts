@@ -145,6 +145,23 @@ export const editsIn = (routine: Routine, fields: RoutineFields): RoutineEdits =
   }
 }
 
+/**
+ * The edits still unsaved after a save was accepted. Only what was actually submitted is settled:
+ * the editor stays open and usable while a save is on its way, and words typed in that moment
+ * were not part of it. Clearing every edit on acknowledgment threw those words away.
+ */
+export const unsaved = (edits: RoutineEdits, submitted: RoutineFields): RoutineEdits => ({
+  name: Option.filter(edits.name, (name) => name !== submitted.name),
+  prompt: Option.filter(edits.prompt, (prompt) => prompt !== submitted.prompt),
+  trigger: Option.filter(
+    edits.trigger,
+    (trigger) =>
+      trigger.kind !== submitted.kind ||
+      trigger.cron !== submitted.cron ||
+      !Equal.equals(trigger.timezone, submitted.timezone),
+  ),
+})
+
 /** The trigger the editor describes. `zone` is the Person's own, used until they write another. */
 export const triggerOf = (fields: RoutineFields, zone: string): RoutineTrigger =>
   fields.kind === 'Webhook'

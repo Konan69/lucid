@@ -1,6 +1,6 @@
 import { useAtomValue } from '@effect/atom-react'
 import { Workspace, type MeResponse, type Thread, type ThreadId } from '@vivid/contracts'
-import { draftPlace } from '@vivid/state'
+import { draftPlace, workspaceKey } from '@vivid/state'
 import { Data, Option, Result } from 'effect'
 import { useRef, useState, type RefObject } from 'react'
 import { FlatList, ScrollView, View } from 'react-native'
@@ -167,7 +167,10 @@ function useStart(editor: RefObject<ComposerEditorHandle | null>) {
   const me = useMe()
   const data = useLiveData()
   const go = useGo()
-  const place = draftPlace(me.person.id, Option.none())
+  const place = draftPlace(me.person.id, {
+    workspace: workspaceKey(me.workspace),
+    thread: Option.none(),
+  })
   const typed = useDraft(place)
   const setDraft = (text: string) => draft.keep(place, text)
   const [sending, setSending] = useState(false)

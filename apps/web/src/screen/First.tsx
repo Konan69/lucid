@@ -1,6 +1,6 @@
 import type { MeResponse } from '@vivid/contracts'
 import { Workspace } from '@vivid/contracts'
-import { draftPlace } from '@vivid/state'
+import { draftPlace, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
 import { live, useLiveValue } from '../data/live'
 import { startThread } from '../data/threads'
@@ -46,7 +46,10 @@ export function First({ me }: { me: MeResponse }) {
         </ul>
       </div>
       <Composer
-        place={draftPlace(me.person.id, Option.none())}
+        place={draftPlace(me.person.id, {
+          workspace: workspaceKey(me.workspace),
+          thread: Option.none(),
+        })}
         working={false}
         onSend={(text) => startThread(text)}
         onStop={() => undefined}

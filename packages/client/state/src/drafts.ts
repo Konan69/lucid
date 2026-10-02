@@ -30,12 +30,23 @@ const KEPT = 50
 export const noDrafts: Drafts = { version: 1, entries: [] }
 
 /**
- * The name of a place a Person types: one Thread, or the composer that starts a new one. It
- * includes the Person, because a browser or a phone can be signed in as someone else later, and
- * one Person's unsent words are not the next one's to find.
+ * The name of a place a Person types: one Thread, or the composer that starts a new one in a
+ * workspace.
+ *
+ * It includes the Person, because a browser or a phone can be signed in as someone else later and
+ * one Person's unsent words are not the next one's to find. The new-Thread composer is also named
+ * for its workspace: a request half-written for one Company must not be waiting in the composer
+ * of another, where sending it would start the Thread there. A Thread belongs to one workspace
+ * already, so its own name is enough.
  */
-export const draftPlace = (person: string, thread: Option.Option<string>) =>
-  `${person}:${Option.getOrElse(thread, () => 'new')}`
+export const draftPlace = (
+  person: string,
+  spot: { readonly workspace: string; readonly thread: Option.Option<string> },
+) =>
+  Option.match(spot.thread, {
+    onNone: () => `${person}:${spot.workspace}:new`,
+    onSome: (thread) => `${person}:${thread}`,
+  })
 
 /** The words left in a place, or none. */
 export const draftIn = (drafts: Drafts, where: string): string =>

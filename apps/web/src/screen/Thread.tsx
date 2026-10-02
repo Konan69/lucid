@@ -9,7 +9,7 @@ import {
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
-import { draftPlace, titleFromMessage } from '@vivid/state'
+import { draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { ArrowDown, Lock, MonitorSmartphone, Share2, Users } from 'lucide-react'
 import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
@@ -186,7 +186,10 @@ function Conversation({
       </Messages>
 
       <Composer
-        place={draftPlace(me.person.id, Option.some(id))}
+        place={draftPlace(me.person.id, {
+          workspace: workspaceKey(me.workspace),
+          thread: Option.some(id),
+        })}
         working={working}
         onSend={send}
         onStop={() =>

@@ -1,4 +1,5 @@
 import { useAtomValue } from '@effect/atom-react'
+import { workspaceKey } from '@vivid/state'
 import { ThreadId, Workspace, type MeResponse, type Thread as ThreadRecord } from '@vivid/contracts'
 import { Array as Arr, Option, Order } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
@@ -212,7 +213,7 @@ function Shell({ me }: { me: MeResponse }) {
             // A screen holds things that belong to the workspace it was opened in: the folder it
             // is in, the item it has open, a half-written Routine. Changing workspace starts each
             // screen again, so nothing of one Company is left on screen under another's name.
-            key={scopeOf(me)}
+            key={workspaceKey(me.workspace)}
             route={route}
             me={me}
             panel={panel}
@@ -239,13 +240,6 @@ function Shell({ me }: { me: MeResponse }) {
     </div>
   )
 }
-
-/** Which workspace the Person is in, as a key: their own space, or one Company. */
-const scopeOf = (me: MeResponse) =>
-  Workspace.match(me.workspace, {
-    Personal: () => 'personal',
-    Company: ({ company }) => company.id,
-  })
 
 const openThread = (id: string) => router.go(Route.Thread({ id: ThreadId.make(id) }))
 

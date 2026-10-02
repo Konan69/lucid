@@ -2,7 +2,8 @@ import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { draftIn, draftPlace, noDrafts, readDrafts, withDraft, writeDrafts } from './drafts.js'
 
-const ada = (thread: string) => draftPlace('ada', Option.some(thread))
+const ada = (thread: string) =>
+  draftPlace('ada', { workspace: 'northwind', thread: Option.some(thread) })
 
 describe('drafts', () => {
   it('keeps what was typed in each place apart, and per Person', () => {
@@ -14,8 +15,20 @@ describe('drafts', () => {
     )
     expect(draftIn(typed, ada('t1'))).toBe('Ask Dami for')
     expect(draftIn(typed, ada('t2'))).toBe('Draft')
-    expect(draftIn(typed, draftPlace('ben', Option.some('t1')))).toBe('')
-    expect(draftIn(typed, draftPlace('ada', Option.none()))).toBe('')
+    expect(
+      draftIn(typed, draftPlace('ben', { workspace: 'northwind', thread: Option.some('t1') })),
+    ).toBe('')
+    expect(
+      draftIn(typed, draftPlace('ada', { workspace: 'northwind', thread: Option.none() })),
+    ).toBe('')
+  })
+
+  it('keeps a new Thread half-written in one workspace out of the next one', () => {
+    const northwind = draftPlace('ada', { workspace: 'northwind', thread: Option.none() })
+    const personal = draftPlace('ada', { workspace: 'personal', thread: Option.none() })
+    const typed = withDraft(noDrafts, northwind, 'Confidential: Q3 numbers for', 1)
+    expect(draftIn(typed, northwind)).toBe('Confidential: Q3 numbers for')
+    expect(draftIn(typed, personal)).toBe('')
   })
 
   it('has no draft once the words are sent or cleared', () => {

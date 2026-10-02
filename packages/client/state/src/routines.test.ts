@@ -89,6 +89,18 @@ describe('the editor', () => {
     expect(routines.editsIn(saved, typed)).toEqual(routines.noEdits)
   })
 
+  it('keeps what was typed while a save was on its way', () => {
+    const opened = routine('brief', {})
+    const submitted = { ...routines.editing(opened, routines.noEdits), name: 'Morning brief' }
+    // The save for the name is still out when the instruction is changed too.
+    const typedSince = { ...submitted, prompt: 'Write the brief, shorter.' }
+    const edits = routines.editsIn(opened, typedSince)
+    expect(routines.unsaved(edits, submitted)).toEqual({
+      ...routines.noEdits,
+      prompt: Option.some('Write the brief, shorter.'),
+    })
+  })
+
   it('cannot be saved without a name, an instruction and a whole schedule', () => {
     const fields = { ...routines.emptyFields(), name: 'Brief', prompt: 'Write it.' }
     expect(routines.fieldsComplete(fields, 'UTC')).toBe(true)

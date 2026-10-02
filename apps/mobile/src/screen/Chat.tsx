@@ -9,7 +9,7 @@ import {
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
-import { draftPlace, titleFromMessage } from '@vivid/state'
+import { draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useMemo, useState } from 'react'
@@ -122,7 +122,10 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
   const wake = useMemo(() => onForeground(() => agent.refresh()), [agent])
   // What is typed here and not sent is kept on the phone under this Thread's name, so it is still
   // in the composer after leaving the Thread or closing the app.
-  const place = draftPlace(me.person.id, Option.some(id))
+  const place = draftPlace(me.person.id, {
+    workspace: workspaceKey(me.workspace),
+    thread: Option.some(id),
+  })
   const typed = useDraft(place)
   // Being on this screen is what makes the Person present in the Thread.
   useAtomMount(data.presentIn(id))

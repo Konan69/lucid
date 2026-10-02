@@ -218,9 +218,11 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
   // The client, and so the socket, lives for as long as the page does.
   registry.mount(runtime)
 
-  // Every query's subscription atom, so `reopen` can tell them from everything else mounted.
-  // Held weakly: a query nothing refers to any more is collected with its atoms.
-  const sources = new WeakSet<object>()
+  // Every query, by its subscription atom. `reopen` uses it to tell a query's atom from anything
+  // else that is mounted. It also ties a query's life to its atom's: while the registry keeps the
+  // atom warm the query is kept with it, so coming back to a screen finds the same warm query and
+  // does not make a second, cold one. Once the atom is let go, both can be collected.
+  const sources = new WeakMap<object, object>()
 
   const query = <Value>(
     watch: (client: Client) => Stream.Stream<Value, ProductFailure>,
@@ -234,8 +236,9 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
         ),
       ),
     )
-    sources.add(source)
-    return expecting(registry, source)
+    const made = expecting(registry, source)
+    sources.set(source, made)
+    return made
   }
 
   const family = <Argument, Value>(
@@ -246,6 +249,11 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
     // it (a screen, a mounted atom), and is collected once nothing does. A plain Map kept one,
     // with its atoms, for every Thread and folder visited since the page loaded.
     const queries = new Map<string, WeakRef<LiveQuery<Value>>>()
+    // When a query is collected its name is taken out too, unless a newer query already has it.
+    const gone = new FinalizationRegistry<string>((name) => {
+      const held = queries.get(name)
+      if (held !== undefined && held.deref() === undefined) queries.delete(name)
+    })
     const known = (name: string) =>
       Option.flatMap(Option.fromUndefinedOr(queries.get(name)), (held) =>
         Option.fromUndefinedOr(held.deref()),
@@ -256,6 +264,7 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
         return Option.getOrElse(known(name), () => {
           const made = query((client) => watch(client, argument))
           queries.set(name, new WeakRef(made))
+          gone.register(made, name)
           return made
         })
       },

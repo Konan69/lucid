@@ -1,4 +1,4 @@
-import type { PersonSummary, Run, Thread } from '@vivid/contracts'
+import { Workspace, type PersonSummary, type Run, type Thread } from '@vivid/contracts'
 import { Option } from 'effect'
 
 export type RuntimeConversation = Omit<Thread, 'id'> & { id: string }
@@ -38,3 +38,14 @@ export const speakerOfTurn = (
       (run) => run.origin.person,
     ),
   )
+
+/**
+ * Which workspace a Person is in, as one comparable word: their own space, or one Company. Client
+ * state that belongs to a workspace (a screen's open item, a half-written new Thread) is keyed by
+ * it, so nothing of one Company is left standing under another.
+ */
+export const workspaceKey = (workspace: Workspace): string =>
+  Workspace.match(workspace, {
+    Personal: () => 'personal',
+    Company: ({ company }) => company.id,
+  })
