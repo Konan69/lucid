@@ -84,7 +84,7 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     .catalog()
     .pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
   const unconnected = services.filter(
-    (service) => !records.some((row) => row.service === service.id),
+    (service) => !records.some((row) => row.service === service.id && row.status === 'ready'),
   )
   const offered = yield* Effect.forEach(
     rank(unconnected, request.query, 3),
@@ -282,7 +282,17 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
       return ActionOutcome.cases.Failed.make({ reason: state.reason })
     if (ConnectionState.guards.NeedsAuthorization(state))
       return ActionOutcome.cases.Failed.make({ reason: 'This Connection needs authorization.' })
-    const tool = (yield* store.tools(actor, row)).find((entry) => entry.name === input.target.tool)
+    // This read precedes dispatch, so losing discovery is a failed, retryable action.
+    const discovered = yield* store.tools(actor, row).pipe(
+      Effect.catchTag('ServiceUnavailable', () =>
+        Effect.fail(
+          new InvalidRequest({
+            message: 'Tool discovery failed before the action was sent. Retry discovery.',
+          }),
+        ),
+      ),
+    )
+    const tool = discovered.find((entry) => entry.name === input.target.tool)
     if (tool === undefined || (row.companyId !== null && tool.effect !== 'read'))
       return ActionOutcome.cases.Failed.make({
         reason: 'This tool is no longer available on this Connection.',

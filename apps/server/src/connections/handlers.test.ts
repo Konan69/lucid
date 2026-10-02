@@ -16,6 +16,7 @@ import {
   NotFound,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
+import { Changes, Topic } from '../live/changes.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { connectionHandlers, connectionRunner } from './handlers.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
@@ -25,6 +26,10 @@ import {
   ExecutorCallOutcome,
   ExecutorRequestId,
   ExecutorResourceMissing,
+  ExecutorAuthorizationUnavailable,
+  ExecutorReferences,
+  ExecutorAuthorizationId,
+  ExecutorServiceEntry,
   connectionSetupMessage,
 } from './executor.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId, toolRequest } from './testing.ts'
@@ -145,6 +150,107 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
         }),
       )
     }
+    it.effect(
+      'refuses known missing installation setup without renewing the provider request',
+      () =>
+        Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
+          const probe = yield* ConnectionProbe
+          yield* Ref.set(probe.step, 'OpenSignIn')
+          const begun = yield* (yield* ConnectionStore).begin(ownerActor, {
+            service: serviceId,
+            label: 'Setup required',
+            shared: false,
+          })
+          const executor = yield* Executor
+          const setup = Executor.of({
+            ...executor,
+            catalog: Effect.fn('Executor.Test.setupCatalog')(() =>
+              Effect.succeed([
+                ExecutorServiceEntry.make({
+                  id: serviceId,
+                  name: 'Records',
+                  description: 'Records',
+                  authorization: ServiceAuthorization.cases.SetupRequired.make({}),
+                }),
+              ]),
+            ),
+          })
+          const auth = AuthState.Person({
+            person: ownerActor.person,
+            workspace: ownerActor.workspace,
+            sessionId: SessionId.make('setup-session'),
+          })
+          expect(
+            yield* connectionHandlers
+              .ResumeConnection({ id: begun.connection.id })
+              .pipe(
+                Effect.provide(connectionStoreLayer, { local: true }),
+                Effect.provideService(Executor, setup),
+                Effect.provideService(AuthContext, auth),
+                Effect.flip,
+              ),
+          ).toEqual(new InvalidRequest({ message: connectionSetupMessage }))
+          yield* Ref.set(probe.step, 'Done')
+        }),
+    )
+    it.effect(
+      'persists replacement authorization and publishes its owner topic when the address response is lost',
+      () =>
+        Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
+          const probe = yield* ConnectionProbe
+          yield* Ref.set(probe.step, 'OpenSignIn')
+          const store = yield* ConnectionStore
+          const begun = yield* store.begin(ownerActor, {
+            service: serviceId,
+            label: 'Lost renewal',
+            shared: false,
+          })
+          const row = yield* store.get(ownerActor, begun.connection.id)
+          const pending = ExecutorReferences.cases.SigningIn.make({
+            service: row.service,
+            app: row.references.app,
+            profile: row.references.profile,
+            owner: row.references.owner,
+            authorization: ExecutorAuthorizationId.make('retained-renewal'),
+          })
+          const executor = yield* Executor
+          const lost = Executor.of({
+            ...executor,
+            reauthorize: Effect.fn('Executor.Test.lostRenewal')(() =>
+              Effect.fail(ExecutorAuthorizationUnavailable.make({ references: pending })),
+            ),
+          })
+          const topics = yield* Ref.make<readonly Topic[]>([])
+          const changes = yield* Changes
+          const recording = Changes.of({
+            ...changes,
+            publish: Effect.fn('Changes.Test.record')((published) =>
+              Ref.update(topics, (current) => [...current, ...published]),
+            ),
+          })
+          const auth = AuthState.Person({
+            person: ownerActor.person,
+            workspace: ownerActor.workspace,
+            sessionId: SessionId.make('lost-session'),
+          })
+          const failure = yield* connectionHandlers
+            .ResumeConnection({ id: begun.connection.id })
+            .pipe(
+              Effect.provide(connectionStoreLayer, { local: true }),
+              Effect.provideService(Executor, lost),
+              Effect.provideService(Changes, recording),
+              Effect.provideService(AuthContext, auth),
+              Effect.flip,
+            )
+          expect(failure).toBeInstanceOf(ServiceUnavailable)
+          expect((yield* store.get(ownerActor, begun.connection.id)).references).toEqual(pending)
+          expect(yield* Ref.get(topics)).toContain(Topic.person(ownerActor.person.id))
+          expect((yield* store.list(ownerActor)).connections).toHaveLength(1)
+          yield* Ref.set(probe.step, 'Done')
+        }),
+    )
     it.effect('refuses strangers and non-admin shared management exactly as removal does', () =>
       Effect.gen(function* () {
         const { ownerActor, memberActor } = yield* fixture()
@@ -208,6 +314,70 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
 
 describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventory', () => {
   layer(connectionTestLayer)((it) => {
+    it.effect('offers a service whose only Connection has failed', () =>
+      Effect.gen(function* () {
+        const { ownerActor, threadId } = yield* fixture()
+        const store = yield* ConnectionStore
+        const step = yield* store.begin(ownerActor, {
+          service: serviceId,
+          label: 'Failed',
+          shared: false,
+        })
+        yield* store.failed(
+          ownerActor,
+          yield* store.get(ownerActor, step.connection.id),
+          'Provider removed',
+        )
+        const found = yield* connectionHandlers.FindTools({ query: 'records' }).pipe(
+          Effect.provideService(
+            AuthContext,
+            AuthState.Vivid({
+              person: ownerActor.person,
+              workspace: ownerActor.workspace,
+              threadId,
+            }),
+          ),
+        )
+        expect(found.unconnected.map((entry) => entry.id)).toContain(serviceId)
+      }),
+    )
+    it.effect('records an approved action as Failed when discovery fails before dispatch', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const store = yield* ConnectionStore
+        const probe = yield* ConnectionProbe
+        const begun = yield* store.begin(ownerActor, {
+          service: serviceId,
+          label: 'Unavailable discovery',
+          shared: false,
+        })
+        const executor = yield* Executor
+        const calls = yield* Ref.get(probe.calls)
+        const unavailable = Executor.of({
+          ...executor,
+          tools: Effect.fn('Executor.Test.discoveryUnavailable')(() =>
+            Effect.fail(
+              ServiceUnavailable.make({ service: 'connections', message: 'Discovery unavailable' }),
+            ),
+          ),
+        })
+        const outcome = yield* connectionRunner({
+          person: ownerActor.person,
+          workspace: ownerActor.workspace,
+          target: ActionTarget.cases.Connection.make({
+            connectionId: begun.connection.id,
+            account: 'Unavailable discovery',
+            tool: 'read',
+            input: {},
+          }),
+        }).pipe(
+          Effect.provide(connectionStoreLayer, { local: true }),
+          Effect.provideService(Executor, unavailable),
+        )
+        expect(outcome._tag).toBe('Failed')
+        expect(yield* Ref.get(probe.calls)).toBe(calls)
+      }),
+    )
     it.effect('refuses another Person’s personal account before gate or dispatch', () =>
       Effect.gen(function* () {
         const { ownerActor, memberActor, threadId } = yield* fixture()
