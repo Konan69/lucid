@@ -11,6 +11,26 @@ import { isAppRequest } from './security.ts'
 
 const decodeUrl = Schema.decodeUnknownEffect(Schema.URLFromString)
 
+/**
+ * Says where a forwarded request came from, when the request does not already say.
+ *
+ * Chromium adds `Origin` in its network service, after the point where this handler takes the
+ * request, so what arrives here carries none. The server refuses a request that changes anything
+ * without one, which made signing up and signing in from the desktop app fail with a 403 the first
+ * time the app was run for real.
+ *
+ * Naming the chosen server's origin is the truth, not a way round that check: the app session
+ * cancels every request to any other origin (`secureSession`), so no document from elsewhere can
+ * load in it, and every request that reaches this handler was made by the app served from that
+ * origin. A request that does name an origin keeps the one it named.
+ */
+const attributed = (request: Request, origin: string) => {
+  const forwarded = HttpClientRequest.fromWeb(request)
+  return request.headers.has('origin')
+    ? forwarded
+    : HttpClientRequest.setHeader(forwarded, 'origin', origin)
+}
+
 /** Only the saved origin reaches the credential-bearing HttpClient transport. */
 export const handleAppRequest = Effect.fn('DesktopProxy.handle')(function* (
   root: string,
@@ -24,7 +44,7 @@ export const handleAppRequest = Effect.fn('DesktopProxy.handle')(function* (
       return new Response(null, { status: 405 })
     return yield* serveAsset(root, request, url)
   }
-  const response = yield* HttpClient.execute(HttpClientRequest.fromWeb(request))
+  const response = yield* HttpClient.execute(attributed(request, url.origin))
   const body =
     [101, 204, 205, 304].includes(response.status) || request.method === 'HEAD'
       ? null

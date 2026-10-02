@@ -5,6 +5,7 @@ import * as NodePath from 'node:path'
 import { describe, expect, it } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
+import * as Option from 'effect/Option'
 import * as TestClock from 'effect/testing/TestClock'
 import * as Schema from 'effect/Schema'
 import { ServerAddress, ServerSettings, ServerChoice } from '../shared/settings.ts'
@@ -262,6 +263,35 @@ describe('desktop server selection', () => {
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
       }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
     }),
+  )
+
+  it.live(
+    'names the chosen server as the origin of a request Chromium handed over without one',
+    () =>
+      Effect.gen(function* () {
+        const seen: Array<Option.Option<string>> = []
+        const server = yield* fixture((request, response) => {
+          seen.push(Option.fromUndefinedOr(request.headers.origin))
+          response.end('{}')
+        })
+        const origin = yield* originOf(server)
+        const root = yield* directory
+        const settings = ServerSettings.cases.Server.make({ origin })
+        const send = (headers: Record<string, string>) =>
+          handleAppRequest(
+            root,
+            new Request(`${origin}/api/auth/sign-up/email`, {
+              method: 'POST',
+              headers,
+              body: '{}',
+            }),
+            settings,
+          )
+        expect((yield* send({})).status).toBe(200)
+        // One that does say where it came from is forwarded as it said.
+        expect((yield* send({ origin: 'https://elsewhere.example' })).status).toBe(200)
+        expect(seen).toEqual([Option.some(origin), Option.some('https://elsewhere.example')])
+      }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
   )
 
   it.effect(

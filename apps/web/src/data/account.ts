@@ -22,7 +22,9 @@ const UNREACHABLE = 'Vivid could not be reached. Try again.'
 /** Better Auth's wording is for developers; these are the cases a Person can act on. */
 const REASONS = new Map([
   [401, 'That email and password do not match an account.'],
-  [403, 'That email and password do not match an account.'],
+  // A 403 is the server declining where the request came from, never a wrong password. It used to
+  // be worded as one, which sent a Person whose desktop app was misconfigured to retype theirs.
+  [403, 'This Vivid did not accept a request from here. Try again in a moment.'],
   [422, 'An account with that email already exists. Sign in instead.'],
   [429, 'Too many attempts. Wait a minute and try again.'],
 ])
