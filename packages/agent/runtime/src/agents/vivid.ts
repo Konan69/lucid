@@ -19,6 +19,7 @@ import { libraryTools } from '../tools/library.ts'
 import { memoryTools } from '../tools/memory.ts'
 import { routineTools } from '../tools/routines.ts'
 import { skillTools } from '../tools/skills.ts'
+import { showTools } from '../tools/show.ts'
 import { scopeLayer, toolRunner } from '../tools/scope.ts'
 import { taskTools } from '../tools/tasks.ts'
 
@@ -100,6 +101,7 @@ export function Vivid({ id }: { id: string }) {
     routineTools(runTool),
     computerTools(runTool),
     codeTools(runTool),
+    showTools(),
   ]) {
     for (const tool of tools) useTool(tool)
   }
@@ -118,6 +120,7 @@ export function Vivid({ id }: { id: string }) {
     ...ACTING,
     ...TOOLS,
     connectionTools.instructions,
+    showTools.instructions,
     ...FOLLOWING_THROUGH,
     ...KNOWING,
   ].join('\n')
