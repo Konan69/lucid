@@ -18,6 +18,7 @@ import { libraryTools } from '../tools/library.ts'
 import { memoryTools } from '../tools/memory.ts'
 import { routineTools } from '../tools/routines.ts'
 import { skillTools } from '../tools/skills.ts'
+import { scopeLayer, toolRunner } from '../tools/scope.ts'
 import { taskTools } from '../tools/tasks.ts'
 
 /**
@@ -52,7 +53,7 @@ const ACTING = [
 ]
 
 const TOOLS = [
-  'To do anything in an outside service (email, calendar, files, chat, code, anything else), call find_tools with what you need, then use_tool with the exact tool it returned. Never invent a tool name or a connection. If nothing is connected for the job, call connect with the service and a one-line reason; that shows the person a card to connect it. Then wait.',
+  'To do anything in an outside service (email, calendar, files, chat, code, anything else), call find_tools with what you need, then use_tool with the exact account and tool names it returned. Never invent a tool name or a connection. If nothing is connected for the job, call connect with the service name and a one-line reason; that shows the person a card to connect it. Then wait.',
   'Some actions need the person to say yes first. When a tool reports that approval was requested, stop: tell them in one sentence what you asked to do and why, and end your turn. You will be woken with the outcome. When a rule blocks an action, say which rule and do not look for a way around it.',
   'When you cannot safely choose for the person (who to send to, which of two files, whether to spend money), call ask_person with one clear question and at most four short options, then end your turn. Do not ask what you can find out or sensibly decide yourself.',
   'You have your own computer with a shell and a browser. Use it for work that needs a real machine: running a script, reading a site that has no connection, filling a form. Say in the summary what each step is for. If the person has taken the keyboard, wait for them.',
@@ -67,26 +68,28 @@ const FOLLOWING_THROUGH = [
 const KNOWING = [
   'Before answering from memory, check it: call recall for what you already know about a person, a project or a decision, and search_library when the answer may be in their documents; cite the passages the tool returns.',
   'When you learn something that will matter later (a preference, a decision, who someone is, a deadline), call remember. Keep it to the fact, in one self-contained sentence. Only remember something for the whole company when the person says everyone should know, and tell them you did.',
-  'When you have worked out how to do something that will come up again, save it with save_skill so you do it the same way next time. When a saved skill fits the request, read it with read_skill and follow it.',
+  'When you have worked out how to do something that will come up again, save it with save_skill so you do it the same way next time. When a saved skill fits the request, read it with read_skill using its exact name and follow it.',
 ]
 
 export function Vivid({ id }: { id: string }) {
   const model = process.env.VIVID_MODEL ?? 'openrouter/z-ai/glm-5.3-flash'
-  const acting = actingFor(id, useDelivery(), threadOriginOf(useInitialData()))
+  const delivery = useDelivery()
+  const acting = actingFor(id, delivery, threadOriginOf(useInitialData()))
+  const runTool = toolRunner(scopeLayer(acting, delivery))
   const context = useVividContext(acting)
   // A person's own time zone decides what "tomorrow at 9" means. Without one, say so in UTC.
   const timezone = context.timezone.length > 0 ? context.timezone : 'UTC'
 
   useModel(model)
   for (const tools of [
-    taskTools(acting),
-    libraryTools(acting),
-    connectionTools(acting),
-    askTools(acting),
-    memoryTools(acting),
-    skillTools(acting),
-    routineTools(acting),
-    computerTools(acting),
+    taskTools(runTool),
+    libraryTools(runTool),
+    connectionTools(runTool),
+    askTools(runTool),
+    memoryTools(runTool),
+    skillTools(runTool),
+    routineTools(runTool),
+    computerTools(runTool),
   ]) {
     for (const tool of tools) useTool(tool)
   }

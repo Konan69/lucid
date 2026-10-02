@@ -1,30 +1,30 @@
 import { defineTool } from '@flue/runtime'
-import { SkillId } from '@vivid/contracts'
-import * as Effect from 'effect/Effect'
-import type * as Option from 'effect/Option'
+import { Effect } from 'effect'
 import * as v from 'valibot'
-import { asActing, type Acting } from '../client.ts'
-import { forCompany, id, text } from './inputs.ts'
-import { settle } from './result.ts'
+import { forCompany, text } from './inputs.ts'
+import { inventory, named, NameMissing } from './names.ts'
+import { Scope, type RunTool } from './scope.ts'
+import * as views from './views.ts'
 
-/** Saved procedures are read on demand and storing one never schedules work. */
-export function skillTools(acting: Option.Option<Acting>) {
+/** Saved procedures resolve only within the acting Person's catalog; storage never schedules work. */
+export function skillTools(runTool: RunTool) {
   return [
     defineTool({
       name: 'read_skill',
       description:
-        'Read a saved procedure whose useWhen matches this request before following its steps.',
-      input: v.object({ id }),
-      /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
+        'Read a saved procedure by its exact name from context before following its steps.',
+      input: v.object({ name: text('The procedure name shown in context.', 100) }),
+      /** The catalog and view share names, so duplicates never select an arbitrary procedure. */
       run({ data, signal }) {
-        return Effect.runPromise(
-          settle(
-            asActing(acting, (client) =>
-              client
-                .ReadSkill({ id: SkillId.make(data.id) })
-                .pipe(Effect.map((output) => ({ output }))),
-            ),
-          ),
+        return runTool(
+          Effect.gen(function* () {
+            const { client } = yield* Scope
+            const { skills } = yield* client.ListSkillSummaries()
+            const entries = inventory(skills, (item) => views.modelText(item.name))
+            const found = yield* Effect.fromResult(named(entries, data.name))
+            const response = yield* client.ReadSkill({ id: found.id })
+            return { output: views.skill(response.skill, data.name.trim()) }
+          }),
           { signal },
         )
       },
@@ -32,7 +32,7 @@ export function skillTools(acting: Option.Option<Acting>) {
     defineTool({
       name: 'save_skill',
       description:
-        'Save a reusable procedure when the person asks. Include its decisions and approval needs; saving it does not create a Routine.',
+        'Save a reusable procedure when the person asks. Include decisions and approval needs; saving it does not create a Routine.',
       input: v.object({
         name: text('A short procedure name.', 80),
         useWhen: text('When to use this procedure, in one sentence.', 300),
@@ -42,14 +42,19 @@ export function skillTools(acting: Option.Option<Acting>) {
         ),
         forCompany,
       }),
-      /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
+      /** Refresh catalog naming after storage so the returned name can be used by read_skill. */
       run({ data, signal }) {
-        return Effect.runPromise(
-          settle(
-            asActing(acting, (client) =>
-              client.SaveSkill(data).pipe(Effect.map((output) => ({ output }))),
-            ),
-          ),
+        return runTool(
+          Effect.gen(function* () {
+            const { client } = yield* Scope
+            const response = yield* client.SaveSkill(data)
+            const { skills } = yield* client.ListSkillSummaries()
+            const entry = inventory(skills, (item) => views.modelText(item.name)).find(
+              ({ item }) => item.id === response.skill.id,
+            )
+            if (entry === undefined) return yield* Effect.fail(new NameMissing({ name: data.name }))
+            return { output: views.skillSummary(response.skill, entry.name) }
+          }),
           { signal },
         )
       },

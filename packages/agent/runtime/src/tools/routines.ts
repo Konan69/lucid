@@ -1,14 +1,13 @@
 import { defineTool } from '@flue/runtime'
 import { RoutineTrigger } from '@vivid/contracts'
-import * as Effect from 'effect/Effect'
-import type * as Option from 'effect/Option'
+import { Effect } from 'effect'
 import * as v from 'valibot'
-import { asActing, type Acting } from '../client.ts'
 import { text } from './inputs.ts'
-import { settle } from './result.ts'
+import { Scope, type RunTool } from './scope.ts'
+import * as views from './views.ts'
 
-/** Routines belong to the acting Person; cron and timezone are always supplied explicitly. */
-export function routineTools(acting: Option.Option<Acting>) {
+/** Routines belong to the acting Person; cron and timezone are supplied explicitly. */
+export function routineTools(runTool: RunTool) {
   return [
     defineTool({
       name: 'create_routine',
@@ -19,23 +18,21 @@ export function routineTools(acting: Option.Option<Acting>) {
         cron: text('The cron schedule.', 200),
         timezone: text('The IANA timezone for this schedule.', 200),
       }),
-      /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
+      /** Storage references and past receipts never enter the model result. */
       run({ data, signal }) {
-        return Effect.runPromise(
-          settle(
-            asActing(acting, (client) =>
-              client
-                .CreateRoutine({
-                  name: data.name,
-                  prompt: data.prompt,
-                  trigger: RoutineTrigger.cases.Schedule.make({
-                    cron: data.cron,
-                    timezone: data.timezone,
-                  }),
-                })
-                .pipe(Effect.map((output) => ({ output }))),
-            ),
-          ),
+        return runTool(
+          Effect.gen(function* () {
+            const { client } = yield* Scope
+            const response = yield* client.CreateRoutine({
+              name: data.name,
+              prompt: data.prompt,
+              trigger: RoutineTrigger.cases.Schedule.make({
+                cron: data.cron,
+                timezone: data.timezone,
+              }),
+            })
+            return { output: views.routine(response.routine, response.routine.name) }
+          }),
           { signal },
         )
       },
@@ -44,14 +41,14 @@ export function routineTools(acting: Option.Option<Acting>) {
       name: 'list_routines',
       description: 'List the person’s Routines and their schedules.',
       input: v.object({}),
-      /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
+      /** Routine metadata is projected explicitly instead of returning RPC envelopes. */
       run({ signal }) {
-        return Effect.runPromise(
-          settle(
-            asActing(acting, (client) =>
-              client.ListRoutines().pipe(Effect.map((output) => ({ output }))),
-            ),
-          ),
+        return runTool(
+          Effect.gen(function* () {
+            const { client } = yield* Scope
+            const response = yield* client.ListRoutines()
+            return { output: { routines: views.routines(response.routines) } }
+          }),
           { signal },
         )
       },

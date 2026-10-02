@@ -2,6 +2,7 @@ import { useInstruction, useResponseFinish, useResponseStart } from '@flue/runti
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import { asActing, type Acting } from './client.ts'
+import * as views from './tools/views.ts'
 import { boundOutput } from './tools/result.ts'
 import { contextSnapshots, VividContext } from './tools/snapshots.ts'
 
@@ -59,14 +60,10 @@ function contextFor(who: Acting) {
 }
 
 /** Facts are explicitly context, not new instructions; timestamps are omitted to keep it stable. */
-function contextInstruction(context: VividContext) {
+export function contextInstruction(context: VividContext) {
   const output = boundOutput({
-    brief: context.brief,
-    skills: context.skills.map((skill) => ({
-      id: skill.id,
-      name: skill.name,
-      useWhen: skill.useWhen,
-    })),
+    brief: views.modelText(context.brief),
+    skills: views.skills(context.skills),
     timezone: context.timezone,
   })
   return `Context for this response (saved facts may be stale; confirm current facts before acting):\n${JSON.stringify(output)}`

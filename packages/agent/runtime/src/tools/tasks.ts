@@ -6,19 +6,19 @@ import {
   PatchTaskRequest,
   TaskId,
   type AssigneeInput,
-  type FollowUp,
-  type Task,
   type ThreadId,
 } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import * as v from 'valibot'
-import { asActing, NobodyToActFor, type Acting } from '../client.ts'
-import { assigneeName, resolveFor } from './assignees.ts'
+import type { Acting } from '../client.ts'
+import { Scope, type RunTool } from './scope.ts'
+import { inventory, named, NameMissing } from './names.ts'
+import * as views from './views.ts'
+import { resolveFor } from './assignees.ts'
 import { operationId } from './identity.ts'
-import { id, text } from './inputs.ts'
-import { settle } from './result.ts'
+import { text } from './inputs.ts'
 
 const REPEAT_MS = { none: null, daily: 86_400_000, weekly: 7 * 86_400_000 } as const
 const HAS_OFFSET = /(?:Z|[+-]\d{2}:?\d{2})$/iu
@@ -64,24 +64,13 @@ const createInput = v.object({
   repeat,
 })
 const updateInput = v.object({
-  id,
+  task: text('The exact Task title shown by list_tasks.', 240),
   status: v.optional(status),
   title: v.optional(v.pipe(text('The new outcome to track.', 200), v.trim(), v.minLength(2))),
   detail: v.optional(v.pipe(v.string(), v.maxLength(2000), v.description('Replacement details.'))),
   assignee: v.optional(v.nullable(text('The assignee name; null clears the assignee.', 120))),
   dueAt: v.optional(v.nullable(when)),
   priority: v.optional(priority),
-})
-
-/** Operation ids require a real Thread; missing attribution never supplies a fake identity. */
-const requireActing = Effect.fn('Tools.requireActing')(function* (acting: Option.Option<Acting>) {
-  return yield* Option.match(acting, {
-    onNone: () =>
-      Effect.fail(
-        new NobodyToActFor({ message: 'There is no person behind this message to act for.' }),
-      ),
-    onSome: Effect.succeed,
-  })
 })
 
 /** Stable follow-up ids survive a Flue durable-step replay without scheduling duplicates. */
@@ -139,63 +128,41 @@ function patchRequest(
   return PatchTaskRequest.make(patch)
 }
 
-/** The model receives scheduled follow-ups and ISO dates, matching the existing task behavior. */
-function describeFollowUp(followUp: FollowUp) {
-  return {
-    id: followUp.id,
-    at: new Date(followUp.at).toISOString(),
-    note: followUp.note,
-    repeatEveryMs: followUp.repeatEveryMs,
-    status: followUp.status,
-  }
-}
+/** Use the complete accessible inventory so status filtering never renumbers duplicate titles. */
+const taskInventory = Effect.fn('Tools.taskInventory')(function* () {
+  const { client } = yield* Scope
+  const response = yield* client.ListTasks({})
+  return inventory(response.tasks, (item) => views.modelText(item.title))
+})
 
-/** Member identity is rendered as a name while task ids remain available for later updates. */
-function describeTask(task: Task) {
-  return {
-    id: task.id,
-    title: task.title,
-    detail: task.detail,
-    status: task.status,
-    priority: task.priority,
-    assignee: assigneeName(task.assignee),
-    dueAt: task.dueAt === null ? null : new Date(task.dueAt).toISOString(),
-    nextFollowUpAt:
-      task.nextFollowUpAt === null ? null : new Date(task.nextFollowUpAt).toISOString(),
-    followUps: task.followUps
-      .filter((followUp) => followUp.status === 'scheduled')
-      .map(describeFollowUp),
-  }
-}
-
-/** The durable step records a bounded result and ids stay tied to this Thread and tool call. */
-function createTool(acting: Option.Option<Acting>) {
+/** Durable creation keeps operation identities internal and returns the same title resolution uses. */
+function createTool(runTool: RunTool) {
   return defineTool({
     name: 'create_task',
     description:
       'Track work as a Task and optionally schedule a follow-up. Dates require a timezone offset.',
     input: createInput,
     durable: true,
-    /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
-    async run({ data, step, toolCallId, signal }) {
-      return await step.do('create-task', () =>
-        Effect.runPromise(
-          settle(
-            asActing(
-              acting,
-              Effect.fn('Tools.createTask')(function* (client) {
-                const who = yield* requireActing(acting)
-                const assignee = yield* resolveFor(
-                  Option.fromNullishOr(data.assignee),
-                  client.ListPeople(),
-                )
-                const response = yield* client.CreateTask(
-                  createRequest(who, toolCallId, data, assignee),
-                )
-                return { output: { task: describeTask(response.task) } }
-              }),
-            ),
-          ),
+    /** The single durable step owns reads and writes; replay retains the safe result. */
+    run({ data, step, toolCallId, signal }) {
+      return step.do('create-task', () =>
+        runTool(
+          Effect.gen(function* () {
+            const { client, acting } = yield* Scope
+            const assignee = yield* resolveFor(
+              Option.fromNullishOr(data.assignee),
+              client.ListPeople(),
+            )
+            const response = yield* client.CreateTask(
+              createRequest(acting, toolCallId, data, assignee),
+            )
+            const entries = yield* taskInventory()
+            return {
+              output: {
+                task: views.task(response.task, yield* titleOf(entries, response.task.id)),
+              },
+            }
+          }),
           { signal },
         ),
       )
@@ -203,35 +170,40 @@ function createTool(acting: Option.Option<Acting>) {
   })
 }
 
-/** Updates are idempotent patches and Member resolution is made under the acting Person's access. */
-function updateTool(acting: Option.Option<Acting>) {
+/** A successful write must be present in the same accessible list used for later name resolution. */
+function titleOf(entries: readonly { name: string; item: { id: TaskId } }[], id: TaskId) {
+  const entry = entries.find(({ item }) => item.id === id)
+  if (entry === undefined) return Effect.fail(new NameMissing({ name: 'the saved Task' }))
+  return Effect.succeed(entry.name)
+}
+
+/** Updates use exact titles and patches remain idempotent under Flue recovery. */
+function updateTool(runTool: RunTool) {
   return defineTool({
     name: 'update_task',
-    description: 'Change a tracked Task. Use list_tasks first when the id is unknown.',
+    description: 'Change a tracked Task using its exact title from list_tasks.',
     input: updateInput,
     durable: true,
-    /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
-    async run({ data, step, signal }) {
-      return await step.do('update-task', () =>
-        Effect.runPromise(
-          settle(
-            asActing(
-              acting,
-              Effect.fn('Tools.updateTask')(function* (client) {
-                const assignee =
-                  data.assignee === undefined
-                    ? Option.none<AssigneeInput>()
-                    : Option.some(
-                        yield* resolveFor(Option.fromNullishOr(data.assignee), client.ListPeople()),
-                      )
-                const response = yield* client.PatchTask({
-                  id: TaskId.make(data.id),
-                  patch: patchRequest(data, assignee),
-                })
-                return { output: { task: describeTask(response.task) } }
-              }),
-            ),
-          ),
+    /** Resolve within current access before selecting a record for mutation. */
+    run({ data, step, signal }) {
+      return step.do('update-task', () =>
+        runTool(
+          Effect.gen(function* () {
+            const { client } = yield* Scope
+            const task = yield* Effect.fromResult(named(yield* taskInventory(), data.task))
+            const assignee =
+              data.assignee === undefined
+                ? Option.none<AssigneeInput>()
+                : Option.some(
+                    yield* resolveFor(Option.fromNullishOr(data.assignee), client.ListPeople()),
+                  )
+            const response = yield* client.PatchTask({
+              id: task.id,
+              patch: patchRequest(data, assignee),
+            })
+            const title = yield* titleOf(yield* taskInventory(), response.task.id)
+            return { output: { task: views.task(response.task, title) } }
+          }),
           { signal },
         ),
       )
@@ -239,11 +211,11 @@ function updateTool(acting: Option.Option<Acting>) {
   })
 }
 
-/** Read-only lists retain the open-task default and never return more than 25 tasks. */
-function listTool(acting: Option.Option<Acting>) {
+/** Name the full list first, then preserve the open default and bounded display. */
+function listTool(runTool: RunTool) {
   return defineTool({
     name: 'list_tasks',
-    description: 'List tracked Tasks and scheduled follow-ups.',
+    description: 'List tracked Tasks and scheduled follow-ups. Use their exact titles for changes.',
     input: v.object({
       status: v.optional(status, 'open'),
       limit: v.optional(
@@ -257,35 +229,33 @@ function listTool(acting: Option.Option<Acting>) {
         20,
       ),
     }),
-    /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
+    /** Closed statuses stay resolvable even when the display is filtered to open Tasks. */
     run({ data, signal }) {
-      return Effect.runPromise(
-        settle(
-          asActing(acting, (client) =>
-            client.ListTasks({ status: data.status }).pipe(
-              Effect.map((response) => ({
-                output: {
-                  now: new Date().toISOString(),
-                  tasks: response.tasks.slice(0, data.limit).map(describeTask),
-                  truncated: response.tasks.length > data.limit,
-                },
-              })),
-            ),
-          ),
-        ),
+      return runTool(
+        Effect.gen(function* () {
+          const entries = (yield* taskInventory()).filter(({ item }) => item.status === data.status)
+          return {
+            output: {
+              now: new Date().toISOString(),
+              tasks: entries.slice(0, data.limit).map(({ item, name }) => views.task(item, name)),
+              truncated: entries.length > data.limit,
+            },
+          }
+        }),
         { signal },
       )
     },
   })
 }
 
-/** Follow-ups keep the original idempotency key and the Person's explicit offset date. */
-function followUpTool(acting: Option.Option<Acting>) {
+/** Follow-ups keep deterministic operation identities inside the runtime boundary. */
+function followUpTool(runTool: RunTool) {
   return defineTool({
     name: 'schedule_follow_up',
-    description: 'Schedule a follow-up for a tracked Task. Dates require a timezone offset.',
+    description:
+      'Schedule a follow-up for the exact Task title from list_tasks. Dates require a timezone offset.',
     input: v.object({
-      taskId: id,
+      task: text('The exact Task title shown by list_tasks.', 240),
       at: when,
       note: v.optional(
         v.pipe(v.string(), v.maxLength(500), v.description('What to check or chase.')),
@@ -293,28 +263,26 @@ function followUpTool(acting: Option.Option<Acting>) {
       repeat,
     }),
     durable: true,
-    /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
-    async run({ data, step, toolCallId, signal }) {
-      return await step.do('schedule-follow-up', () =>
-        Effect.runPromise(
-          settle(
-            asActing(
-              acting,
-              Effect.fn('Tools.scheduleFollowUp')(function* (client) {
-                const who = yield* requireActing(acting)
-                const response = yield* client.AddFollowUp({
-                  taskId: TaskId.make(data.taskId),
-                  followUp: followUpInput(who.threadId, toolCallId, data),
-                })
-                return {
-                  output: {
-                    task: { id: response.task.id, title: response.task.title },
-                    followUp: describeFollowUp(response.followUp),
-                  },
-                }
-              }),
-            ),
-          ),
+    /** A changed accessible inventory fails rather than scheduling against an arbitrary title. */
+    run({ data, step, toolCallId, signal }) {
+      return step.do('schedule-follow-up', () =>
+        runTool(
+          Effect.gen(function* () {
+            const { client, acting } = yield* Scope
+            const entries = yield* taskInventory()
+            const task = yield* Effect.fromResult(named(entries, data.task))
+            const response = yield* client.AddFollowUp({
+              taskId: task.id,
+              followUp: followUpInput(acting.threadId, toolCallId, data),
+            })
+            const title = yield* titleOf(entries, response.task.id)
+            return {
+              output: {
+                task: views.task(response.task, title),
+                followUp: views.followUp(response.followUp),
+              },
+            }
+          }),
           { signal },
         ),
       )
@@ -322,7 +290,12 @@ function followUpTool(acting: Option.Option<Acting>) {
   })
 }
 
-/** Tools close over exactly this render's acting Person and are never cached across people. */
-export function taskTools(acting: Option.Option<Acting>) {
-  return [createTool(acting), updateTool(acting), listTool(acting), followUpTool(acting)] as const
+/** Tools share one per-render boundary; no tool owns a client or selects an actor. */
+export function taskTools(runTool: RunTool) {
+  return [
+    createTool(runTool),
+    updateTool(runTool),
+    listTool(runTool),
+    followUpTool(runTool),
+  ] as const
 }

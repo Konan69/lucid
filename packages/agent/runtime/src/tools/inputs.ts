@@ -11,7 +11,6 @@ export function text(description: string, maximum: number) {
   )
 }
 
-export const id = v.pipe(v.string(), v.uuid(), v.description('The exact saved id.'))
 export const summary = text('One sentence describing this action to the person.', 200)
 export const forCompany = v.pipe(
   v.boolean(),

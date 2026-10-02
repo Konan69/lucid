@@ -4,6 +4,9 @@ import * as Effect from 'effect/Effect'
 import * as Predicate from 'effect/Predicate'
 import type * as Schema from 'effect/Schema'
 import type * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
+import { modelText } from './views.ts'
+import type { NameMissing, NameAmbiguous } from './names.ts'
+import type { RediscoverTool } from './connections.ts'
 import type { NobodyToActFor } from '../client.ts'
 
 export interface ToolResult {
@@ -12,6 +15,9 @@ export interface ToolResult {
 }
 
 export type ToolFailure =
+  | NameMissing
+  | NameAmbiguous
+  | RediscoverTool
   | RpcFailure
   | NobodyToActFor
   | RpcClientError.RpcClientError
@@ -64,7 +70,7 @@ export function boundOutput(value: Schema.Json): Schema.Json {
 
 /** Product failures are safe sentences; driver payloads and supplied credentials never escape. */
 function failure(message: string) {
-  return Effect.succeed({ output: { ok: false, message }, terminate: false })
+  return Effect.succeed({ output: { ok: false, message: modelText(message) }, terminate: false })
 }
 
 /** Only declared product failures are recovered; transport, configuration and defects propagate. */
@@ -73,6 +79,10 @@ export const settle = Effect.fn('Tools.settle')(function* (
 ) {
   const result = yield* program.pipe(
     Effect.catchTags({
+      NameMissing: ({ name }) => failure(`Nothing here is called “${name}”; list them again.`),
+      NameAmbiguous: ({ name, matches }) =>
+        failure(`More than one match for “${name}”: ${matches.join(', ')}; list them again.`),
+      RediscoverTool: () => failure('Find it again with find_tools.'),
       NobodyToActFor: () => failure('There is no person behind this message to act for.'),
       NotFound: () => failure('It does not exist or the person cannot see it.'),
       Forbidden: () => failure('The person is not allowed to do that here.'),

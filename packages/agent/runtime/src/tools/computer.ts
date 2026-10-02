@@ -1,13 +1,11 @@
 import { defineTool } from '@flue/runtime'
 import { BrowserAction, RunCommandRequest } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
-import type * as Option from 'effect/Option'
 import type * as Schema from 'effect/Schema'
 import * as v from 'valibot'
-import { asActing, type Acting } from '../client.ts'
+import { Scope, type RunTool } from './scope.ts'
 import { summary, text } from './inputs.ts'
 import { browseOutcome, commandOutcome } from './outcomes.ts'
-import { settle } from './result.ts'
 
 const action = v.variant('kind', [
   v.object({ kind: v.literal('open'), address: text('The page address to open.', 4000) }),
@@ -42,7 +40,7 @@ function browserAction(input: v.InferOutput<typeof action>): BrowserAction {
 }
 
 /** Computer tools propose actions only; availability, takeover and approvals belong to the server. */
-export function computerTools(acting: Option.Option<Acting>) {
+export function computerTools(runTool: RunTool) {
   return [
     defineTool({
       name: 'run_command',
@@ -67,12 +65,11 @@ export function computerTools(acting: Option.Option<Acting>) {
           summary: data.summary,
         }
         if (data.timeoutSeconds !== undefined) request.timeoutSeconds = data.timeoutSeconds
-        return Effect.runPromise(
-          settle(
-            asActing(acting, (client) =>
-              client.RunCommand(RunCommandRequest.make(request)).pipe(Effect.map(commandOutcome)),
-            ),
-          ),
+        return runTool(
+          Effect.gen(function* () {
+            const { client } = yield* Scope
+            return commandOutcome(yield* client.RunCommand(RunCommandRequest.make(request)))
+          }),
           { signal },
         )
       },
@@ -87,14 +84,13 @@ export function computerTools(acting: Option.Option<Acting>) {
       }),
       /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
       run({ data, signal }) {
-        return Effect.runPromise(
-          settle(
-            asActing(acting, (client) =>
-              client
-                .Browse({ action: browserAction(data.action), summary: data.summary })
-                .pipe(Effect.map(browseOutcome)),
-            ),
-          ),
+        return runTool(
+          Effect.gen(function* () {
+            const { client } = yield* Scope
+            return browseOutcome(
+              yield* client.Browse({ action: browserAction(data.action), summary: data.summary }),
+            )
+          }),
           { signal },
         )
       },

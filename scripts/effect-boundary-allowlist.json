@@ -1,28 +1,13 @@
 [
   {
-    "file": "apps/server/src/runtime/settlement.ts",
+    "file": "packages/agent/runtime/src/providers/failure.ts",
     "classification": "third-party-adapter",
-    "symbols": ["observeRun"]
-  },
-  {
-    "file": "packages/agent/runtime/src/providers/policy.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["prepare"]
+    "symbols": ["readModelEvent"]
   },
   {
     "file": "packages/agent/runtime/src/db.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["query", "transaction"]
-  },
-  {
-    "file": "packages/agent/runtime/src/tools/library.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": ["run"]
-  },
-  {
-    "file": "packages/agent/runtime/src/tools/tasks.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": ["run", "do:create-task", "do:update-task", "do:schedule-follow-up"]
   },
   {
     "file": "apps/server/src/library/ingest.ts",
@@ -45,33 +30,8 @@
     "symbols": ["makeRuntime"]
   },
   {
-    "file": "packages/agent/runtime/src/tools/ask.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": ["run"]
-  },
-  {
-    "file": "packages/agent/runtime/src/tools/computer.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": ["run"]
-  },
-  {
-    "file": "packages/agent/runtime/src/tools/connections.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": ["run"]
-  },
-  {
-    "file": "packages/agent/runtime/src/tools/memory.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": ["run"]
-  },
-  {
-    "file": "packages/agent/runtime/src/tools/routines.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": ["run"]
-  },
-  {
-    "file": "packages/agent/runtime/src/tools/skills.ts",
-    "classification": "legacy-runtime-boundary",
-    "symbols": ["run"]
+    "file": "packages/agent/runtime/src/tools/scope.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["runTool"]
   }
 ]

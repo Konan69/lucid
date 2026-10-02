@@ -68,7 +68,7 @@ const layers = new Map<string, Layer.Layer<VividRpcClient, Config.ConfigError>>(
  * The product client for one Acting pair. The runtime token says the call comes from the runtime;
  * the two headers say for whom. The token never leaves this module and is never given to a tool.
  */
-const layerFor = (acting: Acting) => {
+export const actingLayer = (acting: Acting) => {
   const key = `${acting.threadId}\u0000${acting.personId}`
   const cached = layers.get(key)
   if (cached !== undefined) return cached
@@ -91,8 +91,8 @@ const layerFor = (acting: Acting) => {
 }
 
 /**
- * Runs one product call as the Person Vivid is acting for. Every tool goes through here, so a
- * tool cannot make a call that is not attributed to someone.
+ * Runs a context read as the acting Person. Tools acquire the same attributed Layer through
+ * Scope, retaining the client's resources for the whole tool program.
  */
 export const asActing = <A, E>(
   acting: Option.Option<Acting>,
@@ -106,5 +106,5 @@ export const asActing = <A, E>(
     onSome: (who) =>
       Effect.gen(function* () {
         return yield* use(yield* VividRpcClient)
-      }).pipe(Effect.provide(layerFor(who))),
+      }).pipe(Effect.provide(actingLayer(who))),
   })

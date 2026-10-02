@@ -47,7 +47,11 @@ describe('outcome mapping', () => {
         truncated: false,
       }
       expect(browseOutcome(BrowseOutcome.cases.Completed.make({ result: page }))).toEqual({
-        output: { ok: true, result: page, message: 'The browser action completed.' },
+        output: {
+          ok: true,
+          result: { title: page.title, outline: page.outline, truncated: page.truncated },
+          message: 'The browser action completed.',
+        },
       })
     }),
   )
@@ -81,7 +85,6 @@ describe('outcome mapping', () => {
         ).output,
       ).toEqual({
         ok: false,
-        service: 'mail',
         serviceName: 'Mail',
         message: 'Mail needs connecting; offer it to the person with connect.',
       })

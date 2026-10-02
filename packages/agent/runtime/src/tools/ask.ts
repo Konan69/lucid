@@ -1,14 +1,12 @@
 import { defineTool } from '@flue/runtime'
-import { InputRequestMessage } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
-import type * as Option from 'effect/Option'
 import * as v from 'valibot'
-import { asActing, type Acting } from '../client.ts'
+import { Scope, type RunTool } from './scope.ts'
+import * as views from './views.ts'
 import { text } from './inputs.ts'
-import { settle } from './result.ts'
 
 /** A durable question ends this turn; the server returns the answer as a new delivery. */
-export function askTools(acting: Option.Option<Acting>) {
+export function askTools(runTool: RunTool) {
   return [
     defineTool({
       name: 'ask_person',
@@ -33,25 +31,12 @@ export function askTools(acting: Option.Option<Acting>) {
       }),
       /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
       run({ data, signal }) {
-        return Effect.runPromise(
-          settle(
-            asActing(acting, (client) =>
-              client.AskInput(data).pipe(
-                Effect.map(({ request }) => ({
-                  output: {
-                    ...InputRequestMessage.make({
-                      kind: 'input-request',
-                      requestId: request.id,
-                      question: request.question,
-                    }),
-                    message:
-                      'End the turn now; the person has been asked and their answer will return here.',
-                  },
-                  terminate: true,
-                })),
-              ),
-            ),
-          ),
+        return runTool(
+          Effect.gen(function* () {
+            const { client } = yield* Scope
+            const { request } = yield* client.AskInput(data)
+            return { output: views.inputRequest(request), terminate: true }
+          }),
           { signal },
         )
       },
