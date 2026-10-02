@@ -20,10 +20,10 @@ const loadBrief = Effect.fn('Context.loadBrief')(
   Effect.catch(() => Effect.succeed('')),
 )
 
-/** ListSkills supplies immutable creation order; retain only naming evidence and the brief catalog. */
+/** Summaries supply immutable creation order without transporting every procedure's instructions. */
 const loadSkills = Effect.fn('Context.loadSkills')(
   function* (acting: Option.Option<Acting>) {
-    const response = yield* asActing(acting, (client) => client.ListSkills())
+    const response = yield* asActing(acting, (client) => client.ListSkillSummaries())
     return response.skills.map((skill) =>
       ContextSkill.make({
         id: skill.id,

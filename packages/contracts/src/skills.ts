@@ -46,6 +46,8 @@ export const SkillSummary = Schema.Struct({
   id: SkillId,
   name: Schema.String,
   useWhen: Schema.String,
+  /** Immutable order keeps duplicate display names stable without loading instructions. */
+  createdAt: Skill.fields.createdAt,
 })
 export interface SkillSummary extends Schema.Schema.Type<typeof SkillSummary> {}
 

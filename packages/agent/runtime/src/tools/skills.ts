@@ -19,7 +19,7 @@ export function skillTools(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            const { skills } = yield* client.ListSkills()
+            const { skills } = yield* client.ListSkillSummaries()
             const entries = inventory(skills, (item) => views.modelText(item.name))
             const found = yield* Effect.fromResult(named(entries, data.name))
             const response = yield* client.ReadSkill({ id: found.id })
@@ -50,7 +50,7 @@ export function skillTools(runTool: RunTool) {
           Effect.gen(function* () {
             const { client } = yield* Scope
             const response = yield* client.SaveSkill(data)
-            const { skills } = yield* client.ListSkills()
+            const { skills } = yield* client.ListSkillSummaries()
             const entry = inventory(skills, (item) => views.modelText(item.name)).find(
               ({ item }) => item.id === response.skill.id,
             )
