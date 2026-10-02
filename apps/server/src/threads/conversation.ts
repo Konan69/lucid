@@ -3,6 +3,7 @@ import type * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import {
   SignalType,
+  type Conflict,
   type LibraryFolderId,
   type NotFound,
   type PersonId,
@@ -54,6 +55,11 @@ export interface Delivery {
   readonly idempotencyKey: string
 }
 
+/** Server producers deliver signals; Person-authored messages use immediate `admit` instead. */
+export interface SignalDelivery extends Delivery {
+  readonly message: typeof DeliveryMessage.cases.Signal.Type
+}
+
 /** Flue's receipt for a delivery, which the gateway hands back to the client that sent it. */
 export interface Admitted {
   readonly runId: RunId
@@ -65,17 +71,21 @@ export interface Admitted {
 
 export interface ConversationService {
   /**
-   * Hands one message to Vivid in a Thread and records the Run it starts. This is the only way
-   * work begins: a Person's message, a Routine, a follow-up and a decision all come through here,
-   * so every Run has a Person it acts for and a row that says why it started.
+   * Delivers a server signal and records its Run. Routines, follow-ups, Approval outcomes and
+   * answers share the admission policy used by Person messages, so every Run records whose
+   * authority it carries. Signals retry busy-Thread Conflicts with their original key until the
+   * other Person's Run settles.
    */
   readonly deliver: (
-    delivery: Delivery,
+    delivery: SignalDelivery,
   ) => Effect.Effect<Run, RuntimeUnavailable | NotFound | DatabaseInfrastructureError>
-  /** `deliver`, returning the runtime's receipt instead of the Run. Used by the gateway only. */
+  /** Immediate admission: another Person's working Run returns a client-displayable Conflict. */
   readonly admit: (
     delivery: Delivery,
-  ) => Effect.Effect<Admitted, RuntimeUnavailable | NotFound | DatabaseInfrastructureError>
+  ) => Effect.Effect<
+    Admitted,
+    Conflict | RuntimeUnavailable | NotFound | DatabaseInfrastructureError
+  >
 }
 
 /** How work starts. Implemented in `threads/delivery.ts` by `conversationLayer`. */

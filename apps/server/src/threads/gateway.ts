@@ -7,7 +7,7 @@ import * as Headers from 'effect/unstable/http/Headers'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
-import { ThreadId, type PersonId } from '@vivid/contracts'
+import { Conflict, ThreadId, type PersonId } from '@vivid/contracts'
 import { authenticate } from '../auth/session.ts'
 import { Runtime } from '../runtime/client.ts'
 import { Database } from '../database/client.ts'
@@ -68,13 +68,20 @@ const refusalFor = (tag: string) => {
   return known === undefined ? refuse(503, 'Vivid is unavailable right now') : known
 }
 
+const isConflict = Schema.is(Conflict)
+
 /**
- * Turns every way a gateway call can fail into the status a client acts on. Nothing here says more
- * than the status: a database fault and an unreachable runtime are both "try again".
+ * Preserves a busy-Thread Conflict's displayable message for every client of this gateway.
+ * Other failures use fixed refusals, keeping database and runtime details private.
  */
 const answered = <R>(
   effect: Effect.Effect<HttpServerResponse.HttpServerResponse, { readonly _tag: string }, R>,
-) => effect.pipe(Effect.catch((error) => Effect.succeed(refusalFor(error._tag))))
+) =>
+  effect.pipe(
+    Effect.catch((error) =>
+      Effect.succeed(isConflict(error) ? refuse(409, error.message) : refusalFor(error._tag)),
+    ),
+  )
 
 /**
  * The address this client used to reach the server, so the stream address handed back points to

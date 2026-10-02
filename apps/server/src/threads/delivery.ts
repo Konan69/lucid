@@ -1,7 +1,15 @@
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
-import { NotFound, type Person, type PersonId, type RunId, type ThreadId } from '@vivid/contracts'
+import * as Schema from 'effect/Schema'
+import {
+  Conflict,
+  NotFound,
+  type Person,
+  type PersonId,
+  type RunId,
+  type ThreadId,
+} from '@vivid/contracts'
 import { findPerson, summaryOf } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
 import { Changes } from '../live/changes.ts'
@@ -16,10 +24,11 @@ import {
   type Admitted,
   type ConversationService,
   type Delivery,
+  type SignalDelivery,
 } from './conversation.ts'
 import { flueMessage } from './message.ts'
 import { Presence } from './presence.ts'
-import { RunStore, RunEnding, type WorkingRun } from './runs.ts'
+import { RunStore, RunEnding, TurnReservation, type WorkingRun } from './runs.ts'
 import { ThreadStore } from './store.ts'
 
 /** What the delivery says, for the Thread's preview. Only a Person's own words are shown there. */
@@ -116,6 +125,28 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
 
 const threadMissing = () => Effect.fail(new NotFound({ message: 'Thread not found' }))
 
+const isConflict = Schema.is(Conflict)
+
+/**
+ * A Routine, follow-up, Approval outcome or answer must not be dropped merely because another
+ * Person is being answered. Keep the caller awaiting a receipt and retry only that admission
+ * Conflict with its original key. The database reservation is authoritative on every attempt,
+ * including across server instances. Pace only Conflicts, then retry without a finite attempt
+ * limit: the refinement removes that failure from the signal producer's contract. Other failures
+ * retain the callers' existing recovery policy. Person-authored messages use immediate `admit`.
+ * This is an in-flight retry, not durable storage for decisions across a restart.
+ */
+const makeDeliver = (admit: ConversationService['admit'], runs: RunStore['Service']) =>
+  Effect.fn('Conversation.deliver')(function* (delivery: SignalDelivery) {
+    const admitted = yield* admit(delivery).pipe(
+      Effect.tapErrorTag('Conflict', () => Effect.void.pipe(Effect.delay('1 second'))),
+      Effect.retry({ while: isConflict }),
+    )
+    const recorded = yield* runs.list(delivery.threadId)
+    const run = recorded.find((candidate) => candidate.id === admitted.runId)
+    return run === undefined ? yield* threadMissing() : run
+  })
+
 const makeConversation = Effect.fn('Conversation.make')(function* () {
   const database = yield* Database
   const runtime = yield* Runtime
@@ -149,6 +180,10 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
     return Option.isNone(person) ? yield* threadMissing() : person.value
   })
 
+  /**
+   * The server never joins a different Person's delivery into a response in progress. The locked
+   * reservation refuses it with the first Person's name before any message or signal reaches Flue.
+   */
   const admit: ConversationService['admit'] = Effect.fn('Conversation.admit')(function* (
     delivery: Delivery,
   ) {
@@ -160,12 +195,21 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
     const speaker = yield* personOf(delivery.personId)
     const creator = yield* personOf(thread.personId)
     const id = submissionId(thread.id, delivery.idempotencyKey)
-    const turn = yield* runs.start({
+    const reservation = yield* runs.start({
       id,
       threadId: thread.id,
       personId: speaker.id,
       origin: delivery.origin,
       libraryFolder: delivery.libraryFolder === undefined ? null : delivery.libraryFolder,
+    })
+    const turn = yield* TurnReservation.match<Effect.Effect<number, Conflict>>(reservation, {
+      Reserved: (reserved) => Effect.succeed(reserved.turn),
+      Busy: ({ person }) =>
+        Effect.fail(
+          Conflict.make({
+            message: `Vivid is still answering ${person.name}. Send this again when it has finished.`,
+          }),
+        ),
     })
     const deliveryScope = yield* runs.scope({ threadId: thread.id, turn })
     const admission = yield* runtime.admit({
@@ -192,14 +236,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
     } satisfies Admitted
   })
 
-  const deliver: ConversationService['deliver'] = Effect.fn('Conversation.deliver')(function* (
-    delivery: Delivery,
-  ) {
-    const admitted = yield* admit(delivery)
-    const recorded = yield* runs.list(delivery.threadId)
-    const run = recorded.find((candidate) => candidate.id === admitted.runId)
-    return run === undefined ? yield* threadMissing() : run
-  })
+  const deliver: ConversationService['deliver'] = makeDeliver(admit, runs)
 
   // A server that restarts while Runs are in progress picks each one back up: Flue still knows
   // how they ended, or says it does not, and either way the row stops claiming it is working.
