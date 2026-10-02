@@ -6,6 +6,7 @@ export const Procedure = Schema.Struct({
   starter: Schema.Boolean,
   name: Schema.String,
   useWhen: Schema.String,
+  about: Schema.String,
   needs: Schema.Array(Schema.String),
   connections: Schema.Array(Schema.Array(Schema.String)),
   instructions: Schema.String,

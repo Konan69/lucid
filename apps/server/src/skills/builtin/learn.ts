@@ -4,6 +4,7 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: true,
   name: 'Learn how we do this',
+  about: 'Turns work you have verified into a reusable procedure for you to review and keep.',
   useWhen: 'When verified work should become a reviewed, reusable procedure.',
   needs: ['save_skill', 'read_skill', 'recall', 'ask_person', 'find_tools', 'connect'],
   connections: [],

@@ -33,6 +33,7 @@ export const procedures = [
 export const builtins = procedures.map((procedure) =>
   Skill.make({
     id: SkillId.make(`builtin:${procedure.name.toLowerCase().replaceAll(' ', '-')}`),
+    about: procedure.about,
     name: procedure.name,
     useWhen: procedure.useWhen,
     instructions: procedure.instructions,

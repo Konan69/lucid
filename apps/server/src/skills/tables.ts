@@ -14,6 +14,7 @@ export const skills = pgTable(
     personId: personColumn().notNull(),
     companyId: companyColumn(),
     name: text('name').notNull(),
+    about: text('about').notNull(),
     useWhen: text('use_when').notNull(),
     instructions: text('instructions').notNull(),
     createdAt: epoch('created_at').notNull(),

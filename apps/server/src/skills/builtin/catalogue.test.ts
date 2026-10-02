@@ -58,6 +58,10 @@ describe('shipped procedure catalogue', () => {
   it('uses registered tools, bounds instructions and projects no record handles', () => {
     expect(procedures).toHaveLength(12)
     for (const procedure of procedures) {
+      expect(procedure.about).not.toMatch(/the Person|^When\b|`/iu)
+      expect(procedure.about.length).toBeLessThanOrEqual(300)
+      for (const tool of registered)
+        expect(procedure.about).not.toMatch(new RegExp(`\\b${tool}\\b`, 'u'))
       expect(procedure.instructions.split(/\s+/).length).toBeGreaterThanOrEqual(150)
       expect(procedure.instructions.split(/\s+/).length).toBeLessThanOrEqual(350)
       for (const tool of procedure.needs)
@@ -88,6 +92,12 @@ describe('shipped procedure catalogue', () => {
   it('offers connected work only with all dependencies ready, otherwise the four starters', () => {
     const fallback = procedureSuggestions([])
     expect(fallback).toHaveLength(4)
+    for (const suggestion of fallback) {
+      expect(suggestion.reason).not.toMatch(/^When\b|the Person|`|save_skill|read_page/iu)
+      const builtin = builtins.find((skill) => skill.name === suggestion.text)
+      if (builtin === undefined) expect.fail('Suggestion must name a shipped skill')
+      expect(suggestion.reason).toBe(builtin.about)
+    }
     expect(
       procedureSuggestions([
         connection('Gmail', ConnectionState.cases.NeedsAuthorization.make({})),

@@ -4,6 +4,7 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: true,
   name: 'Connect a service',
+  about: 'Connects the services you need so your work can move forward.',
   useWhen: 'When a request needs access to an external account.',
   needs: [
     'find_integrations',

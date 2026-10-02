@@ -4,6 +4,7 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: false,
   name: 'Draft a reply',
+  about: 'Drafts a considered reply in your voice for you to review.',
   useWhen: 'When a connected conversation needs a considered reply for review.',
   needs: ['find_tools', 'use_tool', 'connect', 'search_library', 'recall', 'ask_person'],
   connections: [['Gmail', 'Outlook', 'Microsoft Outlook']],

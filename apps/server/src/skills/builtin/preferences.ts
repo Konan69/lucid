@@ -4,6 +4,7 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: true,
   name: 'Remember and correct preferences',
+  about: 'Remembers, corrects, or forgets your working preferences at your request.',
   useWhen: 'When the Person asks Vivid to remember, revise or forget how they like to work.',
   needs: ['recall', 'remember', 'correct', 'forget', 'ask_person'],
   connections: [],

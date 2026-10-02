@@ -43,7 +43,7 @@ export const procedureSuggestions = (connections: ReadonlyArray<Connection>) => 
   return offered.slice(0, 4).map((procedure) =>
     Suggestion.make({
       text: procedure.name,
-      reason: procedure.useWhen,
+      reason: procedure.about,
     }),
   )
 }

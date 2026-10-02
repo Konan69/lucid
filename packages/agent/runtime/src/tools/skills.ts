@@ -37,6 +37,10 @@ export function skillTools(runTool: RunTool) {
         'Save a reusable procedure when the person asks. Include decisions and approval needs; saving it does not create a Routine.',
       input: v.object({
         name: text('A short procedure name.', 80),
+        about: text(
+          'One sentence said to the person about what this does for them; use you/your, no tool names and no "the Person".',
+          300,
+        ),
         useWhen: text('When to use this procedure, in one sentence.', 300),
         instructions: text(
           'Steps, decisions, expected result and approval needs in Markdown.',

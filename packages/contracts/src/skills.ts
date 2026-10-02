@@ -30,6 +30,8 @@ export class SkillReadOnly extends Schema.TaggedError<SkillReadOnly>()(
 const content = {
   id: SkillId,
   name: Schema.String,
+  /** One sentence to you about what it does for you, without tool names or model instructions. */
+  about: Schema.String,
   /** When to use it, in a sentence. This is what Vivid matches a request against. */
   useWhen: Schema.String,
   /** The steps, decisions, expected result and what needs approval, as Markdown. */
@@ -50,6 +52,7 @@ export const Skill = Schema.Union([
 export type Skill = typeof Skill.Type
 
 export const SaveSkillRequest = Schema.Struct({
+  about: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(300)),
   name: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(80)),
   useWhen: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(300)),
   instructions: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(20_000)),
@@ -58,6 +61,7 @@ export const SaveSkillRequest = Schema.Struct({
 export interface SaveSkillRequest extends Schema.Schema.Type<typeof SaveSkillRequest> {}
 
 export const PatchSkillRequest = Schema.Struct({
+  about: Schema.optionalKey(SaveSkillRequest.fields.about),
   name: Schema.optionalKey(SaveSkillRequest.fields.name),
   useWhen: Schema.optionalKey(SaveSkillRequest.fields.useWhen),
   instructions: Schema.optionalKey(SaveSkillRequest.fields.instructions),

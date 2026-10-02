@@ -145,6 +145,7 @@ const makeSave = (database: Database['Service']) =>
             id,
             personId: owner.personId,
             companyId,
+            about: request.about,
             name: request.name,
             useWhen: request.useWhen,
             instructions: request.instructions,
@@ -173,6 +174,7 @@ const makePatch = (database: Database['Service']) =>
         const rows = yield* tx
           .update(skills)
           .set({
+            about: patch.about,
             name: patch.name,
             useWhen: patch.useWhen,
             instructions: patch.instructions,

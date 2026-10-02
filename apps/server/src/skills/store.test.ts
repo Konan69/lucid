@@ -1,6 +1,7 @@
+import * as NodeFS from 'node:fs'
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
-import { eq, inArray } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import { Effect, Layer, Option, Result } from 'effect'
 import {
   Company,
@@ -18,6 +19,7 @@ import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import type { Actor } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
 import { companyTable } from '../companies/tables.ts'
+import { skills as skillTable } from './tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { silentChangesLayer } from '../live/changes.ts'
@@ -31,6 +33,7 @@ const testLayer = skillStoreLayer.pipe(
 )
 const request = {
   name: 'Prepare a brief',
+  about: 'Turns your notes into a brief you can review.',
   useWhen: 'Before your weekly review',
   instructions: 'Read your notes and draft a brief.',
   forCompany: false,
@@ -108,6 +111,38 @@ const auth = (actor: Actor) =>
 
 describe.skipIf(!testDatabaseConfigured)('Skills', () => {
   layer(testLayer)((it) => {
+    it.effect(
+      'backfills existing skill descriptions from useWhen before enforcing the required column',
+      () =>
+        Effect.gen(function* () {
+          const database = yield* Database
+          const rows = yield* database.transaction((tx) =>
+            Effect.gen(function* () {
+              // A transaction-local shadow table exercises the generated SQL without altering app tables.
+              yield* tx.execute(
+                sql`CREATE TEMPORARY TABLE vivid_skills (use_when text NOT NULL) ON COMMIT DROP`,
+              )
+              yield* tx.execute(
+                sql`INSERT INTO vivid_skills (use_when) VALUES (${'When the Person asks for a brief.'})`,
+              )
+              for (const name of [
+                '20261002120142_tranquil_chameleon',
+                '20261002120212_nebulous_moondragon',
+              ]) {
+                const migration = NodeFS.readFileSync(
+                  new URL(`../../product-drizzle/${name}/migration.sql`, import.meta.url),
+                  'utf8',
+                )
+                for (const statement of migration.split('--> statement-breakpoint'))
+                  yield* tx.execute(sql.raw(statement))
+              }
+              return yield* tx.select({ about: skillTable.about }).from(skillTable)
+            }),
+          )
+          expect(rows).toEqual([{ about: 'When the Person asks for a brief.' }])
+        }),
+    )
+
     it.effect(
       'lists shipped procedures, keeps overrides scoped and refuses built-in mutations',
       () =>
@@ -189,6 +224,15 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
         )
         expect(Result.isFailure(failure)).toBe(true)
         if (Result.isFailure(failure)) expect(failure.failure._tag).toBe('NotFound')
+        expect(skill.about).toBe(request.about)
+        const updated = yield* store.patch(personal, skill.id, {
+          about: 'Prepares your weekly review.',
+        })
+        expect((yield* store.read(personal, updated.id)).about).toBe('Prepares your weekly review.')
+        expect((yield* store.list(personal)).find((item) => item.id === updated.id)).toHaveProperty(
+          'about',
+          'Prepares your weekly review.',
+        )
         expect(SkillScope.guards.Personal(skill.scope)).toBe(true)
       }),
     )

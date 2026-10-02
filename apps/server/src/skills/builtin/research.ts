@@ -4,6 +4,7 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: false,
   name: 'Deep research',
+  about: 'Investigates your question, checks the evidence, and brings you an answer with sources.',
   useWhen: 'When a question needs multiple primary sources, checked claims and citations.',
   needs: [
     'find_tools',

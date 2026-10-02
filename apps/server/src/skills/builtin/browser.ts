@@ -4,6 +4,7 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: false,
   name: 'Work in a signed-in browser',
+  about: 'Works through signed-in pages with you and checks that each step succeeded.',
   useWhen: 'When work requires an interactive page or an existing browser session.',
   needs: ['browse', 'use_desktop', 'ask_person', 'find_tools', 'connect'],
   connections: [],

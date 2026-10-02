@@ -4,6 +4,7 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: true,
   name: 'Watch a useful signal',
+  about: 'Checks a public page on your agreed schedule and tells you when a useful change happens.',
   useWhen: 'When a public page should be checked on an agreed schedule for a meaningful change.',
   needs: [
     'create_routine',

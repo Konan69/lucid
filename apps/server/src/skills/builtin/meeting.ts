@@ -4,6 +4,7 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: false,
   name: 'Prepare for a meeting',
+  about: 'Prepares you for a meeting with the context, decisions, and questions that matter.',
   useWhen: 'When a connected calendar and relevant sources can ground meeting preparation.',
   needs: [
     'find_tools',

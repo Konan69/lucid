@@ -4,6 +4,8 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: false,
   name: 'Triage my inbox',
+  about:
+    'Sorts your inbox into what needs you and what does not, and proposes the next step for each.',
   useWhen: 'When connected mail needs prioritizing and concrete next actions.',
   needs: ['find_tools', 'use_tool', 'connect', 'recall', 'ask_person', 'create_task'],
   connections: [['Gmail', 'Outlook', 'Microsoft Outlook']],

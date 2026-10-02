@@ -4,6 +4,8 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: false,
   name: 'Chase an outcome',
+  about:
+    'Tracks your commitment, follows up on progress, and checks the evidence before calling it done.',
   useWhen: 'When a commitment needs an owner, follow-up and evidence of completion.',
   needs: [
     'create_task',

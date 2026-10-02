@@ -4,6 +4,7 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: false,
   name: 'Find time and schedule',
+  about: 'Finds suitable meeting times and checks the details with you before booking.',
   useWhen: 'When connected calendars can establish availability and a concrete meeting.',
   needs: ['find_tools', 'use_tool', 'connect', 'recall', 'ask_person'],
   connections: [['Google Calendar', 'Outlook', 'Microsoft Outlook']],

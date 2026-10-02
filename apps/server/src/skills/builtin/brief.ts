@@ -4,6 +4,7 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: false,
   name: 'Morning brief',
+  about: 'Brings your meetings, urgent messages, and commitments into a short brief for the day.',
   useWhen: 'When connected mail and calendar should become a concise start to the day.',
   needs: [
     'create_routine',

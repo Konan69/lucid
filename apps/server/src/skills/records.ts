@@ -64,6 +64,7 @@ export const projectSkill = Effect.fn('SkillStore.project')(function* (
   const createdBy = yield* decodePerson(yield* returned(people, 'Skill owner'))
   return Skill.make({
     id: row.id,
+    about: row.about,
     name: row.name,
     useWhen: row.useWhen,
     instructions: row.instructions,
