@@ -49,7 +49,7 @@ export function Switcher({ me, onClose }: { me: MeResponse; onClose: () => void 
     return (
       <NameSheet
         title="Create a company"
-        detail="A shared space for you and the people you work with. Your own threads, notes and connections stay yours."
+        detail="A shared space for you and the people you work with. Your own threads, notes and integrations stay yours."
         label="Company name"
         initial=""
         placeholder="Acme"

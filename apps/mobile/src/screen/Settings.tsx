@@ -39,7 +39,7 @@ const SWITCH = [
  */
 const IN_BROWSER = [
   {
-    title: 'Connections',
+    title: 'Integrations',
     detail: 'Connect services in your browser.',
     address: connectionsAddress,
   },
@@ -123,7 +123,7 @@ function Sharing({ workspace, onPeople }: { workspace: Workspace; onPeople: () =
     Personal: () => (
       <Row
         title="You are working in your own space"
-        detail="To share threads, a library and connections, create a company from the switcher at the top of Home."
+        detail="To share threads, a library and integrations, create a company from the switcher at the top of Home."
       />
     ),
     Company: () => (

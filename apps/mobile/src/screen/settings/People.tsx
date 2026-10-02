@@ -157,7 +157,7 @@ function Listed({
       {Option.isSome(refused) && <Notice message={refused.value} />}
       <Section
         title={`In ${company}`}
-        detail="Members see shared threads, the company library and shared connections."
+        detail="Members see shared threads, the company library and shared integrations."
       >
         {people.members.map((member) => {
           const mine = member.person.id === me.person.id
@@ -224,7 +224,7 @@ function MemberSheet({ member, onClose }: { member: Member; onClose: () => void 
     confirmDestructive({
       title: `Remove ${member.person.name}?`,
       detail:
-        'They lose the company’s shared threads, library and connections. Their own space stays theirs.',
+        'They lose the company’s shared threads, library and integrations. Their own space stays theirs.',
       action: 'Remove',
       onConfirm: () => {
         warn()
