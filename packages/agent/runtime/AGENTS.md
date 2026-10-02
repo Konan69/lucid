@@ -42,3 +42,8 @@ schema-derived `VividRpcClient`.
   the server, which checks them again.
 - Product calls use the generated `/api/rpc` contract through `VividRpcClient`.
 - The default model is `openrouter/z-ai/glm-5.3-flash`; `VIVID_MODEL` may select another.
+- Pictures currently belong only to private Threads, whose deliveries are ordinary Flue user
+  messages. Shared Threads use attributed signals; Flue 2.1.0 accepts and persists attachments
+  only on user messages. The gateway refuses shared pictures before reserving a Run. Closing
+  this gap requires Flue to support signal attachments through validation, durable storage,
+  conversation projection and model input, while preserving signal attribution.
