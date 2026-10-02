@@ -1,4 +1,5 @@
 import { VividRpcClient } from '@vivid/client-runtime'
+import type { SkillReadOnly } from '@vivid/contracts'
 import type { RpcFailure } from '@vivid/contracts/rpc'
 import {
   Cause,
@@ -19,7 +20,7 @@ import * as Atom from 'effect/unstable/reactivity/Atom'
 import * as AtomRegistry from 'effect/unstable/reactivity/AtomRegistry'
 
 /** Everything a product call can fail with: what the server said, or that it could not be reached. */
-export type ProductFailure = RpcFailure | RpcClientError.RpcClientError
+export type ProductFailure = RpcFailure | SkillReadOnly | RpcClientError.RpcClientError
 
 type Client = VividRpcClient['Service']
 
