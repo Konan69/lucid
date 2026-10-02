@@ -125,7 +125,8 @@
   /* ── Layout ──────────────────────────────────────────────── */
   --sidebar-w: 268px;
   --sidebar-rail-w: 56px;
-  --panel-w: 420px;
+  --panel-w: 440px;
+  --panel-wide-w: min(62vw, 1040px); /* the computer panel, widened to work in */
   --thread-max-w: 760px;
   --topbar-h: 48px;
   --row-h: 36px; /* a full line: navigates */

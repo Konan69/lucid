@@ -3,6 +3,7 @@ import type { Approval, InputRequest, PersonId, Run } from '@vivid/contracts'
 import { makeFullWhen, makeWhen, speakerOfTurn, thisReader } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { AlarmClock, Check, ChevronRight, Copy as CopyIcon, Repeat2 } from 'lucide-react'
+import { ThinkingOrb } from 'thinking-orbs'
 import { useState } from 'react'
 import { describeToolCall, readAnswered, readAsked } from '../../data/activity'
 import { Avatar } from '../../ui/Avatar'
@@ -234,7 +235,7 @@ function Steps({ tools, live }: { tools: ReadonlyArray<ToolPart>; live: boolean 
         <ChevronRight
           className={cn('size-3.5 transition-transform duration-(--dur-fast)', open && 'rotate-90')}
         />
-        {running && <i className="size-1.5 animate-status-pulse rounded-full bg-working" />}
+        {running && <ThinkingOrb state="working" size={20} aria-hidden />}
         {summaryOf(
           steps,
           Option.map(current, (tool) => tool.toolCallId),

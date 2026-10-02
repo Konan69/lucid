@@ -1,10 +1,12 @@
 import { ComputerState, type Computer as ComputerRecord } from '@vivid/contracts'
 import RFB from '@novnc/novnc'
-import { Hand, MonitorPlay, Power, X } from 'lucide-react'
-import { useCallback, useReducer } from 'react'
+import { Option } from 'effect'
+import { Hand, Maximize2, Minimize2, Monitor, MonitorPlay, Power, X } from 'lucide-react'
+import { useCallback, useReducer, useState } from 'react'
 import { change, live, LiveState, useLive } from '../data/live'
 import { orSay } from '../data/said'
 import { Button, IconButton } from '../ui/Button'
+import { cn } from '../ui/cn'
 import { Face } from '../ui/Face'
 
 /**
@@ -12,28 +14,84 @@ import { Face } from '../ui/Face'
  * its screen while it runs, says honestly when it is off, starting or unavailable, and gives the
  * Person the one control that matters: taking the keyboard and pointer, which stops Vivid from
  * acting on it until they hand it back.
+ *
+ * It is laid out like a browser window, after the panel in ChatGPT's dot: a strip of tabs across
+ * the top (one today, the computer itself), a toolbar whose long field says what is on the glass
+ * and who has the keyboard, and the screen filling the rest. The panel can be widened to work in
+ * it, and is a full sheet on a narrow window.
  */
 export function Computer({ onClose }: { onClose: () => void }) {
   const state = useLive(live.computer)
+  const [wide, setWide] = useState(false)
+  const computer = LiveState.$is('Ready')(state) ? Option.some(state.value.computer) : Option.none()
+  const on = Option.exists(computer, (value) => ComputerState.guards.Running(value.state))
   return (
-    <aside className="fixed inset-0 z-30 flex size-full shrink-0 animate-fade-in flex-col bg-surface-1 sm:static sm:w-(--panel-w) sm:hairline-l">
-      <header className="flex h-(--topbar-h) shrink-0 items-center gap-2 px-3 hairline-b">
-        <h2 className="flex-1 text-label font-title text-ink">Vivid’s computer</h2>
-        {LiveState.$is('Ready')(state) && <Controls computer={state.value.computer} />}
+    <aside
+      className={cn(
+        'fixed inset-0 z-30 flex size-full shrink-0 animate-fade-in flex-col bg-surface-1 transition-width duration-(--dur-base) ease-out sm:static sm:hairline-l',
+        wide ? 'sm:w-(--panel-wide-w)' : 'sm:w-(--panel-w)',
+      )}
+    >
+      <header className="flex h-(--topbar-h) shrink-0 items-center gap-1 px-2">
+        {/* The one tab. It is drawn as a tab, not a title, because pages Vivid has open will sit
+            beside it here. */}
+        <span className="flex h-8 max-w-56 min-w-0 items-center gap-2 rounded-control bg-surface-3 pr-3 pl-2.5 text-label font-title text-ink smooth-shadow-ring-xs">
+          <Monitor className="size-4 shrink-0 text-ink-3" />
+          <span className="truncate">Vivid’s computer</span>
+          {on && <i aria-hidden className="size-1.5 shrink-0 rounded-full bg-success" />}
+        </span>
+        <span className="flex-1" />
+        <IconButton
+          label={wide ? 'Make it narrower' : 'Make it wider'}
+          className="hidden sm:inline-flex"
+          onClick={() => setWide((now) => !now)}
+        >
+          {wide ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+        </IconButton>
         <IconButton label="Close" onClick={onClose}>
           <X className="size-4" />
         </IconButton>
       </header>
-      {LiveState.$is('Loading')(state) && (
-        <Note title="One moment" detail="Looking for your computer." />
-      )}
-      {LiveState.$is('Failed')(state) && (
-        <Note title="Not available" detail="Vivid could not reach its computer right now." />
-      )}
-      {LiveState.$is('Ready')(state) && <Screen computer={state.value.computer} />}
+
+      <div className="flex h-11 shrink-0 items-center gap-2 px-2 pb-2">
+        {Option.isSome(computer) && <Keyboard computer={computer.value} />}
+        <p
+          className="flex h-9 min-w-0 flex-1 items-center justify-center truncate rounded-full bg-well px-4 text-label font-meta text-ink-3"
+          aria-live="polite"
+        >
+          {Option.match(computer, { onNone: () => 'Looking for your computer…', onSome: glass })}
+        </p>
+        {on && (
+          <IconButton label="Turn off" onClick={stop}>
+            <Power className="size-4" />
+          </IconButton>
+        )}
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-panel bg-surface-0 hairline-t sm:mx-2 sm:mb-2 sm:rounded-panel sm:ring-line">
+        {LiveState.$is('Loading')(state) && (
+          <Note title="One moment" detail="Looking for your computer." />
+        )}
+        {LiveState.$is('Failed')(state) && (
+          <Note title="Not available" detail="Vivid could not reach its computer right now." />
+        )}
+        {Option.isSome(computer) && <Screen computer={computer.value} />}
+      </div>
     </aside>
   )
 }
+
+/** What the toolbar's long field says: where the computer stands and who is using it. */
+const glass = (computer: ComputerRecord) =>
+  ComputerState.match(computer.state, {
+    Absent: () => 'Not started yet',
+    Starting: () => 'Starting up…',
+    Running: () =>
+      computer.heldByPerson ? 'You have the keyboard' : 'Vivid has the keyboard · you are watching',
+    Stopped: () => 'Turned off · files and sign-ins kept',
+    Failed: () => 'Did not start',
+    Unavailable: () => 'Not set up here',
+  })
 
 const start = () =>
   void orSay(
@@ -53,22 +111,18 @@ const hold = (held: boolean) =>
       : 'You still have the keyboard: handing back did not go through. Try again.',
   )
 
-function Controls({ computer }: { computer: ComputerRecord }) {
+/** Taking the keyboard and pointer, or handing them back. Only a running computer has them. */
+function Keyboard({ computer }: { computer: ComputerRecord }) {
   if (!ComputerState.guards.Running(computer.state)) return null
   return (
-    <>
-      <Button
-        size="sm"
-        variant={computer.heldByPerson ? 'primary' : 'control'}
-        icon={<Hand className="size-3.5" />}
-        onClick={() => hold(!computer.heldByPerson)}
-      >
-        {computer.heldByPerson ? 'Hand back' : 'Take over'}
-      </Button>
-      <IconButton label="Turn off" onClick={stop}>
-        <Power className="size-4" />
-      </IconButton>
-    </>
+    <Button
+      size="sm"
+      variant={computer.heldByPerson ? 'primary' : 'control'}
+      icon={<Hand className="size-3.5" />}
+      onClick={() => hold(!computer.heldByPerson)}
+    >
+      {computer.heldByPerson ? 'Hand back' : 'Take over'}
+    </Button>
   )
 }
 
@@ -162,15 +216,6 @@ const sightAfter = (now: Sight, heard: Heard): Sight => {
   return { seen: 'lost', attempt: now.attempt }
 }
 
-/** What the strip under the screen says while there is a screen, or one on its way. */
-const CAPTION = {
-  reaching: () => 'Connecting to the screen…',
-  showing: (control: boolean) =>
-    control
-      ? 'You have the keyboard. Vivid will wait until you hand it back.'
-      : 'Watching. Take over to use it yourself.',
-} as const
-
 /**
  * The machine's screen and the truth about whether it is showing. It used to say "Watching" from
  * the moment the machine ran, whether or not a single frame had arrived, so a socket that never
@@ -194,9 +239,11 @@ function Display({ address, control }: { address: string; control: boolean }) {
     >
       {/* Each attempt is its own element, so its socket is opened and closed with it. */}
       <Glass key={sight.attempt} address={address} control={control} onHeard={hear} />
-      <p className="pointer-events-none absolute inset-x-0 bottom-0 bg-scrim px-3 py-1.5 text-center text-meta text-ink-on-color">
-        {CAPTION[sight.seen](control)}
-      </p>
+      {sight.seen === 'reaching' && (
+        <p className="pointer-events-none absolute inset-x-0 bottom-0 bg-scrim px-3 py-1.5 text-center text-meta text-ink-on-color">
+          Connecting to the screen…
+        </p>
+      )}
     </div>
   )
 }

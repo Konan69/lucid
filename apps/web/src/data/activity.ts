@@ -18,6 +18,7 @@ const list = Schema.OptionFromOptionalKey(Schema.Array(Schema.Unknown))
 /** The fields of a tool's input a step can be described with. */
 const Asked = Schema.Struct({
   query: text,
+  address: text,
   summary: text,
   account: text,
   tool: text,
@@ -146,7 +147,7 @@ const STEPS = {
     said: {
       running: 'Looking for a way to do it',
       done: 'Looked for a way to do it',
-      failed: 'Could not look through the connections',
+      failed: 'Could not look through the integrations',
     },
     detail: (asked, answered) => [
       quoted(asked.query),
@@ -155,9 +156,9 @@ const STEPS = {
   },
   use_tool: {
     said: {
-      running: 'Using a connection',
-      done: 'Used a connection',
-      failed: 'The connection did not do it',
+      running: 'Using an integration',
+      done: 'Used an integration',
+      failed: 'The integration did not do it',
     },
     detail: (asked) => [said(asked.account), said(asked.summary)],
   },
@@ -165,7 +166,7 @@ const STEPS = {
     said: {
       running: 'Asking to connect a service',
       done: 'Asked to connect a service',
-      failed: 'Could not offer the connection',
+      failed: 'Could not offer the integration',
     },
     detail: (asked) => [said(asked.service)],
   },
@@ -252,6 +253,54 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.summary)],
   },
+  use_desktop: {
+    said: {
+      running: 'Using its computer',
+      done: 'Used its computer',
+      failed: 'The computer did not do it',
+    },
+    detail: (asked) => [said(asked.summary)],
+  },
+  run_code: {
+    said: {
+      running: 'Running a program',
+      done: 'Ran a program',
+      failed: 'The program did not finish',
+    },
+    detail: (asked) => [said(asked.summary)],
+  },
+  read_page: {
+    said: {
+      running: 'Reading a page',
+      done: 'Read a page',
+      failed: 'Could not read the page',
+    },
+    detail: (asked) => [said(asked.address)],
+  },
+  find_integrations: {
+    said: {
+      running: 'Looking through integrations',
+      done: 'Looked through integrations',
+      failed: 'Could not look through integrations',
+    },
+    detail: (asked) => [quoted(asked.query)],
+  },
+  add_integration: {
+    said: {
+      running: 'Adding an integration',
+      done: 'Added an integration',
+      failed: 'Could not add the integration',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  test_integration: {
+    said: {
+      running: 'Trying an integration',
+      done: 'Tried an integration',
+      failed: 'The integration did not answer',
+    },
+    detail: (asked) => [said(asked.account)],
+  },
   ask_person: {
     said: {
       running: 'Asking a question',
@@ -272,6 +321,7 @@ const STEP_OF = new Map<string, Step>(Object.entries(STEPS))
 
 const NOTHING_ASKED: Asked = {
   query: Option.none(),
+  address: Option.none(),
   summary: Option.none(),
   account: Option.none(),
   tool: Option.none(),
