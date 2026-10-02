@@ -59,14 +59,41 @@ const projectTools = Effect.fn('Connections.projectTools')(function* (
   store: typeof ConnectionStore.Service,
   actor: Actor,
   row: ConnectionRecord,
+  account: string,
 ) {
   const tools = yield* store.tools(actor, row)
   return tools.flatMap((tool) =>
     row.companyId !== null && tool.effect !== 'read'
       ? []
-      : [ConnectionTool.make({ ...tool, connectionId: row.id, account: row.label })],
+      : [ConnectionTool.make({ ...tool, connectionId: row.id, account })],
   )
 })
+
+/** Name all accessible Connections before status/query filtering; creation order fixes duplicate suffixes.
+ * Reserve literal labels too so an account actually named “Gmail (2)” cannot collide with a suffix. */
+export function namedAccounts(records: readonly ConnectionRecord[]) {
+  const ordered = Arr.sort(
+    records,
+    Order.combine(
+      Order.mapInput(Order.Number, (row: ConnectionRecord) => row.createdAt),
+      Order.mapInput(Order.String, (row: ConnectionRecord) => row.id),
+    ),
+  )
+  const reserved = new Set(ordered.map((row) => row.label.trim().toLowerCase()))
+  const used = new Set<string>()
+  return ordered.map((row) => {
+    const label = row.label.trim()
+    let account = label
+    let occurrence = 2
+    if (used.has(account.toLowerCase())) {
+      do {
+        account = `${label} (${occurrence++})`
+      } while (used.has(account.toLowerCase()) || reserved.has(account.toLowerCase()))
+    }
+    used.add(account.toLowerCase())
+    return { row, account }
+  })
+}
 
 /** Discovery removes shared writes before any tool enters model context. */
 export const findTools = Effect.fn('Connections.findTools')(function* (
@@ -76,8 +103,8 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
   const store = yield* ConnectionStore
   const records = yield* store.records(actor)
   const groups = yield* Effect.forEach(
-    records.filter((row) => row.status === 'ready'),
-    (row) => projectTools(store, actor, row),
+    namedAccounts(records).filter(({ row }) => row.status === 'ready'),
+    ({ row, account }) => projectTools(store, actor, row, account),
     { concurrency: 4 },
   )
   const services = yield* store
