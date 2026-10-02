@@ -455,7 +455,8 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
     it.effect('guest heap exhaustion reports a memory resource failure', () =>
       Effect.gen(function* () {
         const outcome = yield* run(
-          'const items=[]; while(true) items.push("x".repeat(1024));',
+          // Heap exhaustion is the claim, not thousands of interpreter string-allocation turns.
+          'const items=[]; while(true) items.push("x".repeat(1048576));',
           reply,
         )
         expect(outcome).toHaveProperty('failure.limit', 'memory')

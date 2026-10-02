@@ -1,4 +1,6 @@
 import * as NodeFS from 'node:fs'
+import * as NodeChildProcess from 'node:child_process'
+import * as NodeProcess from 'node:process'
 import * as NodeModule from 'node:module'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
@@ -11,6 +13,27 @@ export class CodeAssetsUnavailable extends Schema.TaggedError<CodeAssetsUnavaila
   {},
   { title: 'Program worker assets are unavailable' },
 ) {}
+
+/** Populate Node 24's public module compile cache with trusted code only. A fresh credential-free
+ * process writes it before any guest exists; guests can only read it. Cancellation kills precisely
+ * this captured preparation process. Module parsing previously cost 1.7 seconds in each guest.
+ */
+const warm = Effect.fn('Code.prepareCompileCache')((directory: string) =>
+  Effect.callback<void, CodeAssetsUnavailable>((resume) => {
+    const child = NodeChildProcess.spawn(
+      NodeProcess.execPath,
+      ['--wasm-num-compilation-tasks=1', NodePath.join(directory, 'start.mjs'), 'prepare'],
+      { stdio: 'ignore', env: { PATH: '/usr/bin:/bin', NODE_NO_WARNINGS: '1' } },
+    )
+    child.once('error', () => resume(Effect.fail(new CodeAssetsUnavailable({}))))
+    child.once('close', (code) =>
+      resume(code === 0 ? Effect.void : Effect.fail(new CodeAssetsUnavailable({}))),
+    )
+    return Effect.sync(() => {
+      child.kill('SIGKILL')
+    })
+  }),
+)
 
 /** Compile trusted assets once per supervisor lifetime, outside each one-CPU guest. Compilation
  * previously spent half a second inside every guest before importing the interpreter. The parent
@@ -57,5 +80,6 @@ export const prepareWorker = Effect.fn('Code.prepareWorker')(function* () {
     },
     catch: () => new CodeAssetsUnavailable({}),
   })
+  yield* warm(directory)
   return directory
 })

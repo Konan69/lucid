@@ -109,7 +109,7 @@ function command(runtimeDirectory: string, unit: string, source: string) {
     '/tmp',
     '--ro-bind',
     source,
-    '/vivid/worker',
+    source,
     '--chdir',
     '/tmp',
     '/usr/bin/prlimit',
@@ -119,7 +119,7 @@ function command(runtimeDirectory: string, unit: string, source: string) {
     // Node 24 defaults to 128 parallel WASM compilation tasks; this cgroup has one CPU.
     // Keep compilation serial so background optimizer work cannot starve VM/pipe callbacks.
     '--wasm-num-compilation-tasks=1',
-    '/vivid/worker/start.mjs',
+    NodePath.join(source, 'start.mjs'),
   )
   return { args, env: { PATH: '/usr/bin:/bin', XDG_RUNTIME_DIR: runtimeDirectory } }
 }

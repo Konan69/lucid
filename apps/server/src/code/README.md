@@ -12,8 +12,9 @@ The pipe protocol and JSON result tests need neither systemd nor delegation.
 
 The supervisor uses Node 24's public `stripTypeScriptTypes` compiler once to
 prepare trusted worker modules and Code/identity contracts in a unique scoped
-directory. Guests mount it read-only at `/vivid/worker`; it is removed when the
-supervisor closes. There is no TypeScript loader inherited by the QuickJS worker.
+directory and prepares Node's module compile cache in a credential-free process.
+Guests mount both read-only at the same absolute module paths; the directory is
+removed when the supervisor closes. There is no TypeScript loader inherited by the QuickJS worker.
 Each program still has a fresh process, VM, namespace and cgroup. Interpreter
 startup is charged to the existing program deadline; preparing trusted assets
 belongs to supervisor initialization. Generated code carries no product state.
