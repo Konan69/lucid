@@ -13,7 +13,7 @@ import { draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { ArrowDown, ListTree, Lock, MonitorSmartphone, Share2, Users } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
-import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { lazy, Suspense, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { change, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
 import { Route, router } from '../data/route'
 import { orSay } from '../data/said'
@@ -22,12 +22,13 @@ import { Faces } from '../ui/Avatar'
 import { Button, IconButton } from '../ui/Button'
 import { cn } from '../ui/cn'
 import { Face, type FaceMood } from '../ui/Face'
-import { About } from './thread/About'
 import { Composer } from './thread/Composer'
 import { isBlank, Message, Said, textOf, type ThreadContext } from './thread/Message'
 import { newestRun, Outcome } from './thread/Outcome'
 import { Share } from './thread/Share'
 import { BAR } from './bar'
+
+const About = lazy(async () => ({ default: (await import('./thread/About')).About }))
 
 /**
  * One Thread: the conversation with Vivid, and everything live around it.
@@ -330,16 +331,20 @@ function Header({
         <IconButton label="Around Vivid" active={about} onClick={() => setAbout((on) => !on)}>
           <ListTree className="size-4" />
         </IconButton>
-        <About
-          open={about}
-          thread={id}
-          mood={standing.mood}
-          standing={standing.words}
-          onClose={() => setAbout(false)}
-          onOpenComputer={() => {
-            if (!panelOpen) onTogglePanel()
-          }}
-        />
+        {about && (
+          <Suspense fallback={null}>
+            <About
+              open={about}
+              thread={id}
+              mood={standing.mood}
+              standing={standing.words}
+              onClose={() => setAbout(false)}
+              onOpenComputer={() => {
+                if (!panelOpen) onTogglePanel()
+              }}
+            />
+          </Suspense>
+        )}
       </span>
       <IconButton label="Vivid’s computer" active={panelOpen} onClick={onTogglePanel}>
         <MonitorSmartphone className="size-4" />
