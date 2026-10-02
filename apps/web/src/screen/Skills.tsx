@@ -5,6 +5,7 @@ import {
   ArrowUpRight,
   BookOpenCheck,
   CalendarClock,
+  ChevronRight,
   Globe,
   GraduationCap,
   Inbox,
@@ -22,6 +23,7 @@ import { change, live, LiveState, useLive } from '../data/live'
 import { orSay } from '../data/said'
 import { startThread } from '../data/threads'
 import { Button } from '../ui/Button'
+import { cn } from '../ui/cn'
 import { Dialog, DialogActions } from '../ui/Dialog'
 import { Markdown } from '../ui/Markdown'
 import { Notice } from '../ui/Notice'
@@ -241,10 +243,31 @@ function Detail({ skill, onClose }: { skill: Skill; onClose: () => void }) {
   )
 }
 
+/**
+ * How Vivid goes about a skill, for whoever wants to read it. It is written for Vivid, steps and
+ * all, so it is kept folded: what a Person needs from this dialog is what the skill is for and
+ * the way to try it.
+ */
 function Steps({ children }: { children: string }): ReactNode {
+  const [open, setOpen] = useState(false)
   return (
-    <div className="max-h-96 overflow-y-auto rounded-control bg-well px-4 py-3 text-label text-ink-2">
-      <Markdown content={children} />
+    <div>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((now) => !now)}
+        className="-ml-1 inline-flex cursor-pointer items-center gap-1 rounded-row px-1 py-0.5 text-label text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"
+      >
+        <ChevronRight
+          className={cn('size-3.5 transition-transform duration-(--dur-fast)', open && 'rotate-90')}
+        />
+        How Vivid goes about it
+      </button>
+      {open && (
+        <div className="mt-2 max-h-80 overflow-y-auto rounded-control bg-well px-4 pt-3 pb-5 text-label text-ink-2">
+          <Markdown content={children} />
+        </div>
+      )}
     </div>
   )
 }
