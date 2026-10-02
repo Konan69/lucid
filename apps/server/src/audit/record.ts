@@ -38,26 +38,35 @@ export const AuditAttribution = Schema.Struct({
 })
 export type AuditAttribution = typeof AuditAttribution.Type
 
-/** Appends metadata and wakes readers; explicit Thread attribution also covers a Person's decision. */
-export const recordAudit = Effect.fn('Audit.append')(function* (
+/** Writes metadata through the caller's database/transaction, without publishing before commit.
+ * Background owners can record a stop using stored attribution, without manufacturing an Actor. */
+export const appendAudit = Effect.fn('Audit.append')(function* (
+  database: Pick<Database['Service'], 'insert'>,
+  attribution: AuditAttribution,
+  event: AuditEvent,
+  at: number,
+) {
+  const encoded = yield* encodeEvent(event).pipe(
+    Effect.mapError(() => new DatabaseFailure({ message: 'Audit event could not be encoded' })),
+  )
+  yield* database.insert(auditEntries).values({
+    id: NodeCrypto.randomUUID(),
+    at,
+    personId: attribution.personId,
+    companyId: attribution.companyId,
+    by: attribution.by,
+    threadId: attribution.threadId,
+    event: encoded,
+  })
+})
+
+/** Appends committed metadata and wakes readers; explicit Thread attribution covers decisions. */
+export const recordAudit = Effect.fn('Audit.recordStored')(function* (
   attribution: AuditAttribution,
   event: AuditEvent,
 ) {
   const database = yield* Database
-  const encoded = yield* encodeEvent(event).pipe(
-    Effect.mapError(() => new DatabaseFailure({ message: 'Audit event could not be encoded' })),
-  )
-  yield* database.run(
-    database.insert(auditEntries).values({
-      id: NodeCrypto.randomUUID(),
-      at: yield* Clock.currentTimeMillis,
-      personId: attribution.personId,
-      companyId: attribution.companyId,
-      by: attribution.by,
-      threadId: attribution.threadId,
-      event: encoded,
-    }),
-  )
+  yield* database.run(appendAudit(database, attribution, event, yield* Clock.currentTimeMillis))
   const topics = [Topic.person(attribution.personId)].concat(
     Option.toArray(Option.map(Option.fromNullishOr(attribution.companyId), Topic.company)),
     Option.toArray(Option.map(Option.fromNullishOr(attribution.threadId), Topic.thread)),
