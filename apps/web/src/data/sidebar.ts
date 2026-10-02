@@ -30,7 +30,59 @@ const set = (open: boolean) => {
   tell()
 }
 
+// ── Width ────────────────────────────────────────────────────────────────────
+// How wide the column is, is the Person's to choose: long shared Thread titles want room on a
+// large display, and a small window wants it back. The choice is remembered, and never allowed
+// to squeeze the page beside it below a readable column.
+
+const widthKey = 'vivid.sidebar.width'
+/** Narrower than this, a Thread's title and time no longer fit on a row. */
+const NARROWEST = 208
+const USUAL = 268
+/** What is always left for the page: a full line of reading and the composer. */
+const READING = 640
+
+const remembered = Number(localStorage.getItem(widthKey))
+let wanted = Number.isFinite(remembered) && remembered >= NARROWEST ? remembered : USUAL
+
+/** The width that can be had right now: what was asked for, within what the window allows. */
+const fitting = () =>
+  Math.round(Math.min(Math.max(wanted, NARROWEST), Math.max(NARROWEST, innerWidth - READING)))
+
+// The width is a token (`--sidebar-w`); the choice overrides it on the document itself, so the
+// column, its inner layout and anything else that reads the token agree without a render.
+const applyWidth = () => {
+  // A drawer on a narrow window keeps the width Vivid gives it: the choice is about a column.
+  if (wide.matches) document.documentElement.style.setProperty('--sidebar-w', `${fitting()}px`)
+  else document.documentElement.style.removeProperty('--sidebar-w')
+}
+applyWidth()
+// A window made smaller takes room back from the sidebar; made larger, it gives the choice back.
+addEventListener('resize', applyWidth)
+
 export const sidebar = {
+  /** Sets the width while the edge is being dragged. Nothing is remembered until it is let go. */
+  widen: (to: number) => {
+    wanted = to
+    applyWidth()
+  },
+  /** Nudges the width from the keyboard, and remembers it. */
+  nudge: (by: number) => {
+    wanted = fitting() + by
+    applyWidth()
+    localStorage.setItem(widthKey, String(fitting()))
+  },
+  /** Remembers the width as it now stands. */
+  keepWidth: () => {
+    wanted = fitting()
+    localStorage.setItem(widthKey, String(wanted))
+  },
+  /** Back to the width Vivid starts with. */
+  usualWidth: () => {
+    wanted = USUAL
+    applyWidth()
+    localStorage.removeItem(widthKey)
+  },
   subscribe: (listener: () => void) => {
     listeners.add(listener)
     return () => {
@@ -46,6 +98,7 @@ export const sidebar = {
 // Crossing the width changes which of the two it is, so whoever draws it must look again.
 wide.addEventListener('change', () => {
   drawn = false
+  applyWidth()
   tell()
 })
 

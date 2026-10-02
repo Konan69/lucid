@@ -24,8 +24,45 @@ import { cn } from '../ui/cn'
 import { Dialog, DialogActions, DialogField } from '../ui/Dialog'
 import { Face } from '../ui/Face'
 import { Menu, MenuDivider, MenuItem, MenuLabel } from '../ui/Menu'
+import { sidebar } from '../data/sidebar'
 import { FULL, HOVER, ROW, TOOL } from './sidebar/rows'
 import { Threads, ThreadSkeleton } from './sidebar/Threads'
+
+/**
+ * The sidebar's right edge, which is dragged to make it wider or narrower. The width follows the
+ * pointer directly (the pointer is captured, and the show/hide transition is switched off while
+ * dragging, or the edge would trail the hand), is remembered when let go, and goes back to the
+ * usual width on a double-click. From the keyboard the arrow keys move it a step at a time.
+ */
+function Edge() {
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize the sidebar"
+      title="Drag to resize. Double-click to reset."
+      tabIndex={0}
+      onPointerDown={(event) => {
+        event.currentTarget.setPointerCapture(event.pointerId)
+        document.documentElement.dataset.resizing = 'sidebar'
+      }}
+      onPointerMove={(event) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) sidebar.widen(event.clientX)
+      }}
+      onPointerUp={(event) => {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+        delete document.documentElement.dataset.resizing
+        sidebar.keepWidth()
+      }}
+      onDoubleClick={sidebar.usualWidth}
+      onKeyDown={(event) => {
+        if (event.key === 'ArrowLeft') sidebar.nudge(-16)
+        if (event.key === 'ArrowRight') sidebar.nudge(16)
+      }}
+      className="absolute inset-y-0 right-0 z-10 hidden w-1.5 cursor-col-resize transition-colors duration-(--dur-fast) outline-none hover:bg-wash-pressed focus-visible:bg-accent-soft md:block"
+    />
+  )
+}
 
 /**
  * The rail: where the Person is working, the four places beside Threads, and every Thread they can
@@ -64,10 +101,11 @@ export function Sidebar({
       // page that gives up its width. One element, so its contents and their state are the same
       // sidebar either way.
       className={cn(
-        'fixed inset-y-0 left-0 z-40 flex h-full w-(--sidebar-w) shrink-0 flex-col overflow-hidden bg-surface-1 transition-pop duration-(--dur-base) ease-out md:static md:z-auto md:translate-x-0 md:transition-width',
+        'fixed inset-y-0 left-0 z-40 flex h-full w-(--sidebar-w) shrink-0 flex-col overflow-hidden bg-surface-1 transition-pop duration-(--dur-base) ease-out in-data-resizing:transition-none md:relative md:z-auto md:translate-x-0 md:transition-width',
         open ? 'translate-x-0 hairline-r' : '-translate-x-full md:w-0',
       )}
     >
+      <Edge />
       {/* The inner column keeps its full width while the aside narrows, so nothing reflows. */}
       <div className="flex h-full w-(--sidebar-w) shrink-0 flex-col">
         <div className="flex h-(--topbar-h) shrink-0 items-center px-2">
