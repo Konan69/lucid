@@ -8,9 +8,11 @@ import * as Option from 'effect/Option'
 import * as Redacted from 'effect/Redacted'
 import * as Ref from 'effect/Ref'
 import * as Schema from 'effect/Schema'
+import * as Stream from 'effect/Stream'
 import * as TestClock from 'effect/testing/TestClock'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import {
+  AuditEvent,
   Conflict,
   Company,
   CompanyId,
@@ -32,7 +34,8 @@ import { personTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database, returned } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { silentChangesLayer } from '../live/changes.ts'
+import { Changes, Topic } from '../live/changes.ts'
+import { auditEntries } from '../audit/tables.ts'
 import { Conversation, type Delivery } from '../threads/conversation.ts'
 import { submissionId } from '../runtime/identity.ts'
 import { RunStore, runStoreLayer } from '../threads/runs.ts'
@@ -113,13 +116,32 @@ const recordedConversationLayer = Layer.effectContext(
   }),
 )
 
+/** The change bus is an observable port; persisted Routine/audit data still uses PostgreSQL. */
+class Published extends Context.Service<Published, Ref.Ref<ReadonlyArray<Topic>>>()(
+  'test/RoutineChanges',
+) {}
+const recordedChangesLayer = Layer.effectContext(
+  Effect.gen(function* () {
+    const published = yield* Ref.make<ReadonlyArray<Topic>>([])
+    return Context.make(Published, published).pipe(
+      Context.add(
+        Changes,
+        Changes.of({
+          publish: (topics) => Ref.update(published, (previous) => previous.concat(topics)),
+          subscribe: () => Effect.succeed(Stream.never),
+        }),
+      ),
+    )
+  }),
+)
+
 const storesLayer = Layer.mergeAll(routineStoreLayer, threadStoreLayer, runStoreLayer).pipe(
   Layer.provideMerge(testDatabaseLayer),
+  Layer.provideMerge(recordedChangesLayer),
   Layer.provide(testConfigLayer),
 )
 const authoritiesLayer = Layer.mergeAll(recordedConversationLayer, notifierLayer).pipe(
   Layer.provideMerge(storesLayer),
-  Layer.provideMerge(silentChangesLayer),
 )
 const testLayer = routineSchedulerServiceLayer.pipe(Layer.provideMerge(authoritiesLayer))
 
@@ -192,6 +214,7 @@ const fixture = Effect.fn('Test.Routines.fixture')(function* () {
   const other = actors[2]
   if (owner === undefined || colleague === undefined || other === undefined)
     return yield* Effect.fail(new DatabaseFailure({ message: 'Test People are missing' }))
+  yield* Ref.set(yield* Published, [])
   yield* Ref.set(yield* Deliveries, [])
   yield* Ref.set(yield* DeliveryFailure, Option.none())
   return {
@@ -630,6 +653,31 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           yield* TestClock.setTime(120_000)
           yield* (yield* RoutineScheduler).runDue()
           expect((yield* store.list(owner))[0]).toMatchObject({ enabled: false, runs: [failed] })
+          const audit = yield* database.run(
+            database.select().from(auditEntries).where(eq(auditEntries.personId, owner.person.id)),
+          )
+          expect(audit).toMatchObject([
+            {
+              personId: owner.person.id,
+              companyId: companyColumnOf(owner.workspace),
+              by: 'vivid',
+              threadId: null,
+              event: AuditEvent.cases.RoutineStopped.make({
+                routineId: routine.id,
+                reason: 'Membership',
+              }),
+            },
+          ])
+          expect(audit).toHaveLength(1)
+          expect(yield* Ref.get(yield* Published)).toEqual([
+            Topic.person(owner.person.id),
+            Topic.company(
+              yield* returned(
+                Option.toArray(Option.fromNullishOr(companyColumnOf(owner.workspace))),
+                'Company',
+              ),
+            ),
+          ])
           expect(yield* Ref.get(yield* Deliveries)).toEqual([])
           expect(
             yield* database.run(

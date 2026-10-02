@@ -8,6 +8,7 @@ import * as Layer from 'effect/Layer'
 import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
 import {
+  AuditEvent,
   CreateRoutineRequest,
   DatabaseFailure,
   Occurrence,
@@ -20,8 +21,15 @@ import {
   type RunId,
 } from '@vivid/contracts'
 import { companyColumnOf, ownedHere, type Actor } from '../auth/access.ts'
+import { appendAudit, AuditAttribution } from '../audit/record.ts'
+import { Changes, Topic } from '../live/changes.ts'
 import { ServerConfig } from '../config.ts'
-import { Database, returned, type DatabaseInfrastructureError } from '../database/client.ts'
+import {
+  Database,
+  decodeStored,
+  returned,
+  type DatabaseInfrastructureError,
+} from '../database/client.ts'
 import { membershipTable } from '../companies/tables.ts'
 import {
   OccurrenceClaim,
@@ -384,11 +392,13 @@ const makeAuthorizeWebhook = (database: DatabaseService) =>
     return record
   })
 
+const decodeAttribution = decodeStored(AuditAttribution, 'Routine owner attribution')
+
 /** Terminal updates happen under the receipt lock and cannot overwrite an attached Run. A missed
  * receipt also updates the Routine's visible missed timestamp, using the original receipt time.
  */
 const retireScheduled = Effect.fn('RoutineStore.retireScheduled')(function* (
-  tx: Pick<DatabaseService, 'update'>,
+  tx: Pick<DatabaseService, 'update' | 'insert'>,
   occurrence: typeof occurrences.$inferSelect,
   failure: ScheduledFailure,
   now: number,
@@ -407,18 +417,35 @@ const retireScheduled = Effect.fn('RoutineStore.retireScheduled')(function* (
       .set({ lastMissedAt: sql`greatest(${routines.lastMissedAt}, ${occurrence.startedAt})` })
       .where(eq(routines.id, occurrence.routineId))
   // A departed owner cannot authorize future ticks either; retain the failed receipt once.
-  if (ScheduledFailure.guards.Membership(failure))
-    yield* tx
-      .update(routines)
-      .set({ enabled: false, nextExpectedAt: null })
-      .where(eq(routines.id, occurrence.routineId))
+  if (!ScheduledFailure.guards.Membership(failure)) return []
+  const stopped = yield* tx
+    .update(routines)
+    .set({ enabled: false, nextExpectedAt: null, updatedAt: now })
+    .where(and(eq(routines.id, occurrence.routineId), eq(routines.enabled, true)))
+    .returning({ personId: routines.personId, companyId: routines.companyId })
+  const topics: Topic[] = []
+  for (const owner of stopped) {
+    const attribution = yield* decodeAttribution({ ...owner, by: 'vivid', threadId: null })
+    yield* appendAudit(
+      tx,
+      attribution,
+      AuditEvent.cases.RoutineStopped.make({
+        routineId: RoutineId.make(occurrence.routineId),
+        reason: 'Membership',
+      }),
+      now,
+    )
+    topics.push(Topic.person(attribution.personId))
+    if (attribution.companyId !== null) topics.push(Topic.company(attribution.companyId))
+  }
+  return topics
 })
 
 /** Enabled, fresh receipts require current Membership before replay. Disabled receipts are retired
  * too, so enabling the Routine later cannot resurrect work the Person explicitly stopped.
  */
 const replayScheduled = Effect.fn('RoutineStore.replayScheduled')(function* (
-  tx: Pick<DatabaseService, 'select' | 'update'>,
+  tx: Pick<DatabaseService, 'select' | 'update' | 'insert'>,
   now: number,
 ) {
   const pending = yield* tx
@@ -434,6 +461,7 @@ const replayScheduled = Effect.fn('RoutineStore.replayScheduled')(function* (
     )
     .for('update', { skipLocked: true, of: occurrences })
   const receipts: ScheduledReceipt[] = []
+  const topics: Topic[] = []
   for (const row of pending) {
     const record = yield* decodeRoutine(row.routine)
     if (!record.routine.enabled) {
@@ -441,7 +469,14 @@ const replayScheduled = Effect.fn('RoutineStore.replayScheduled')(function* (
       continue
     }
     if (!(yield* memberPresent(tx, record))) {
-      yield* retireScheduled(tx, row.occurrence, ScheduledFailure.cases.Membership.make({}), now)
+      topics.push(
+        ...(yield* retireScheduled(
+          tx,
+          row.occurrence,
+          ScheduledFailure.cases.Membership.make({}),
+          now,
+        )),
+      )
       continue
     }
     if (now - row.occurrence.startedAt >= scheduledReplayMillis) {
@@ -450,18 +485,18 @@ const replayScheduled = Effect.fn('RoutineStore.replayScheduled')(function* (
     }
     receipts.push({ record, attempt: replayAttempt(OccurrenceId.make(row.occurrence.id)) })
   }
-  return receipts
+  return { receipts, topics }
 })
 
 /** Claims each tick with its receipt atomically. Replay stops on withdrawal, lost authority or
  * the 15-minute admission limit; Conversation still owns keyed admission across process crashes.
  */
-const makeClaimDue = (database: DatabaseService) =>
+const makeClaimDue = (database: DatabaseService, changes: Changes['Service']) =>
   Effect.fn('RoutineStore.claimDue')(function* () {
     const now = yield* Clock.currentTimeMillis
-    return yield* database.transaction((tx) =>
+    const claimed = yield* database.transaction((tx) =>
       Effect.gen(function* () {
-        const receipts = yield* replayScheduled(tx, now)
+        const { receipts, topics } = yield* replayScheduled(tx, now)
         const rows = yield* tx
           .select()
           .from(routines)
@@ -502,14 +537,24 @@ const makeClaimDue = (database: DatabaseService) =>
             .where(eq(routines.id, record.routine.id))
           if (!(yield* memberPresent(tx, record))) {
             const occurrence = yield* returned(inserted, 'Scheduled receipt')
-            yield* retireScheduled(tx, occurrence, ScheduledFailure.cases.Membership.make({}), now)
+            topics.push(
+              ...(yield* retireScheduled(
+                tx,
+                occurrence,
+                ScheduledFailure.cases.Membership.make({}),
+                now,
+              )),
+            )
             continue
           }
           receipts.push({ record, attempt })
         }
-        return receipts
+        return { receipts, topics }
       }),
     )
+    // Live readers wake only once the disabled state and its audit line have both committed.
+    if (claimed.topics.length > 0) yield* changes.publish([...new Set(claimed.topics)])
+    return claimed.receipts
   })
 
 /** An authorized Routine receipt remains readable even when its Thread and Run have been deleted. */
@@ -657,6 +702,7 @@ export const routineStoreLayer = Layer.effect(
   Effect.gen(function* () {
     const database = yield* Database
     const config = yield* ServerConfig
+    const changes = yield* Changes
     const get = makeGet(database)
     const view = makeView(database)
     const findOccurrence = makeFindOccurrence(database)
@@ -668,7 +714,7 @@ export const routineStoreLayer = Layer.effect(
       remove: makeRemove(database),
       issueWebhook: makeIssueWebhook(database, config.PUBLIC_URL, get),
       authorizeWebhook: makeAuthorizeWebhook(database),
-      claimDue: makeClaimDue(database),
+      claimDue: makeClaimDue(database, changes),
       findOccurrence,
       claimOccurrence: makeClaimOccurrence(database, findOccurrence),
       attachSubmission: makeAttachSubmission(database),

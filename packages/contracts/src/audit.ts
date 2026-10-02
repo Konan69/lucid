@@ -1,5 +1,5 @@
 import { Schema } from 'effect'
-import { AuditEntryId, PersonSummary, ThreadId } from './identity.js'
+import { AuditEntryId, PersonSummary, RoutineId, ThreadId } from './identity.js'
 
 /**
  * What happened, as a closed set. The record answers four questions a year later: who asked, what
@@ -27,6 +27,8 @@ export const AuditEvent = Schema.TaggedUnion({
   ThreadShared: { title: Schema.String, audience: Schema.String },
   MemorySaved: { scope: Schema.String },
   MemoryForgotten: { scope: Schema.String },
+  /** A background authority check stopped future ticks; attribution remains the stored owner. */
+  RoutineStopped: { routineId: RoutineId, reason: Schema.Literal('Membership') },
 })
 export type AuditEvent = typeof AuditEvent.Type
 
