@@ -60,7 +60,7 @@ if (Option.isSome(bridge)) {
 }
 
 /** Runs one thing on the pages, and says so in plain words when the desktop app refuses it. */
-const ask = (act: (pages: VividAppBridge['pages']) => Promise<unknown>, refused: string) => {
+const ask = (act: (pages: VividAppBridge['pages']) => Promise<void | Tab>, refused: string) => {
   if (Option.isNone(bridge)) return
   void act(bridge.value).catch(() => say(refused))
 }
