@@ -44,11 +44,7 @@ export function First({ me }: { me: MeResponse }) {
           ))}
         </ul>
       </div>
-      <Composer
-        working={false}
-        onSend={(text) => startThread(text)}
-        onStop={() => undefined}
-      />
+      <Composer working={false} onSend={(text) => startThread(text)} onStop={() => undefined} />
     </section>
   )
 }
