@@ -4,9 +4,15 @@ import {
   type CodemodeResult,
   type CodemodeTool,
 } from '@earendil-works/pi-codemode'
-import { CodeCallKind, CodeFailure } from '@vivid/contracts'
-import { NodeRuntime } from '@effect/platform-node'
-import { Deferred, Effect, Option, Schema, Semaphore } from 'effect'
+// A cold isolated process needs only Code's schemas and Node's runner; barrel imports eagerly
+// initialize unrelated product contracts and platform services on every interpreter startup.
+import { CodeCallKind, CodeFailure } from '@vivid/contracts/code'
+import * as NodeRuntime from '@effect/platform-node/NodeRuntime'
+import * as Deferred from 'effect/Deferred'
+import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
+import * as Schema from 'effect/Schema'
+import * as Semaphore from 'effect/Semaphore'
 import { boundedNesting, budgets, bytes } from './budgets.ts'
 import { FrameReader, writeFrame } from './pipe.ts'
 import {

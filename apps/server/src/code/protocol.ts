@@ -1,5 +1,5 @@
-import { CodeCallKind, CodeFailure } from '@vivid/contracts'
-import { Schema } from 'effect'
+import { CodeCallKind, CodeFailure } from '@vivid/contracts/code'
+import * as Schema from 'effect/Schema'
 
 /** IPC contains data and correlation only; Person/Thread/Connection authority stays in the parent. */
 export const ParentMessage = Schema.TaggedUnion({

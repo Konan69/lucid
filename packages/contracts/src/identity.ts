@@ -1,4 +1,4 @@
-import { Schema } from 'effect'
+import * as Schema from 'effect/Schema'
 
 /** Creates a branded identifier schema for one Vivid ownership boundary. */
 const identifier = <Name extends string>(name: Name) => Schema.String.pipe(Schema.brand(name))

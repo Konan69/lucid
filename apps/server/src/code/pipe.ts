@@ -1,6 +1,6 @@
 import type * as NodeStream from 'node:stream'
 import * as NodeBuffer from 'node:buffer'
-import { Effect } from 'effect'
+import * as Effect from 'effect/Effect'
 import { boundedNesting, budgets } from './budgets.ts'
 import { PipeFailure } from './protocol.ts'
 
