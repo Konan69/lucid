@@ -1,5 +1,14 @@
-import { boolean, index, jsonb, pgTable, primaryKey, text } from 'drizzle-orm/pg-core'
-import type { RunFailure, RunId } from '@vivid/contracts'
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core'
+import type { LibraryFolderId, RunFailure, RunId } from '@vivid/contracts'
 import { companyColumn, epoch, personColumn, threadColumn } from '../database/owner.ts'
 import { projectTable } from '../projects/tables.ts'
 
@@ -77,6 +86,8 @@ export const runs = pgTable(
       .notNull()
       .references(() => threads.id, { onDelete: 'cascade' }),
     personId: personColumn().notNull(),
+    turn: integer('turn').notNull(),
+    libraryFolder: text('library_folder').$type<LibraryFolderId>(),
     origin: jsonb('origin').notNull(),
     state: text('state').notNull(),
     startedAt: epoch('started_at').notNull(),
@@ -87,5 +98,6 @@ export const runs = pgTable(
   (table) => [
     index('vivid_runs_thread').on(table.threadId, table.startedAt),
     index('vivid_runs_state').on(table.state),
+    uniqueIndex('vivid_runs_thread_turn').on(table.threadId, table.turn),
   ],
 )

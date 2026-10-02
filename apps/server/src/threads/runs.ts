@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import * as Arr from 'effect/Array'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
@@ -7,6 +7,10 @@ import * as Layer from 'effect/Layer'
 import * as Schema from 'effect/Schema'
 import {
   DatabaseFailure,
+  DeliveryScope,
+  NotFound,
+  type DeliveryScopeRequest,
+  type LibraryFolderId,
   Run,
   RunFailure,
   RunOrigin,
@@ -19,7 +23,7 @@ import {
 import { loadSummaries } from '../auth/access.ts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
 import { StoredRunOrigin } from './conversation.ts'
-import { runs } from './tables.ts'
+import { runs, threads } from './tables.ts'
 import { summaryFor } from './wire.ts'
 
 /** How a Run that is no longer working ended, as its row stores it. */
@@ -45,7 +49,12 @@ export interface RunStoreService {
     readonly threadId: ThreadId
     readonly personId: PersonId
     readonly origin: StoredRunOrigin
-  }) => Effect.Effect<void, DatabaseInfrastructureError>
+    readonly libraryFolder: LibraryFolderId | null
+  }) => Effect.Effect<number, DatabaseInfrastructureError>
+  /** Runtime-only lookup, by the harmless turn number a delivery shows the model. */
+  readonly scope: (
+    request: DeliveryScopeRequest,
+  ) => Effect.Effect<DeliveryScope, NotFound | DatabaseInfrastructureError>
   /** Ends a Run that is still working. False when it had already ended, so nothing is done twice. */
   readonly end: (
     id: RunId,
@@ -115,33 +124,67 @@ const toRun = Effect.fn('RunStore.toRun')(function* (
   return Run.make({
     id: row.id,
     threadId: row.threadId,
+    turn: row.turn,
     origin: originOf(yield* decodeOrigin(row.origin), person),
     state: yield* stateOf(row),
     startedAt: row.startedAt,
   })
 })
 
-const makeStart = (database: DatabaseService) =>
-  Effect.fn('RunStore.start')(function* (input: {
-    readonly id: RunId
-    readonly threadId: ThreadId
-    readonly personId: PersonId
-    readonly origin: StoredRunOrigin
-  }) {
+/** Lock the parent Thread inside the insert transaction: racing deliveries allocate distinct turns.
+ * A replay preserves both its turn and its original authority, including after a failed admission. */
+const makeStart = (database: DatabaseService): RunStoreService['start'] =>
+  Effect.fn('RunStore.start')(function* (input) {
     const now = yield* Clock.currentTimeMillis
-    yield* database.run(
-      database
-        .insert(runs)
-        .values({
-          id: input.id,
-          threadId: input.threadId,
-          personId: input.personId,
-          origin: encodeOrigin(input.origin),
-          state: 'working',
-          startedAt: now,
-        })
-        .onConflictDoNothing({ target: runs.id }),
+    const folder = input.libraryFolder
+    return yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        yield* tx
+          .select({ id: threads.id })
+          .from(threads)
+          .where(eq(threads.id, input.threadId))
+          .for('update')
+        yield* tx
+          .insert(runs)
+          .values({
+            id: input.id,
+            threadId: input.threadId,
+            personId: input.personId,
+            libraryFolder: folder,
+            turn: sql`(select coalesce(max("turn"), 0) + 1 from "vivid_runs" where "thread_id" = ${input.threadId})`,
+            origin: encodeOrigin(input.origin),
+            state: 'working',
+            startedAt: now,
+          })
+          .onConflictDoNothing({ target: runs.id })
+        const [recorded] = yield* tx.select().from(runs).where(eq(runs.id, input.id))
+        if (
+          recorded === undefined ||
+          recorded.threadId !== input.threadId ||
+          recorded.personId !== input.personId ||
+          recorded.libraryFolder !== folder
+        ) {
+          return yield* Effect.fail(
+            new DatabaseFailure({ message: 'Run authority conflicts with its original delivery' }),
+          )
+        }
+        return recorded.turn
+      }),
     )
+  })
+
+/** The actor and optional confinement survive runtime restarts without entering Flue history. */
+const makeScope = (database: DatabaseService): RunStoreService['scope'] =>
+  Effect.fn('RunStore.scope')(function* ({ threadId, turn }) {
+    const [row] = yield* database.run(
+      database
+        .select()
+        .from(runs)
+        .where(and(eq(runs.threadId, threadId), eq(runs.turn, turn))),
+    )
+    if (row === undefined)
+      return yield* Effect.fail(new NotFound({ message: 'Delivery not found' }))
+    return DeliveryScope.make({ acting: row.personId, libraryFolder: row.libraryFolder })
   })
 
 type EndingColumns = Pick<typeof runs.$inferInsert, 'state' | 'failureReason'>
@@ -187,7 +230,7 @@ const makeList = (database: DatabaseService) =>
         .select()
         .from(runs)
         .where(eq(runs.threadId, threadId))
-        .orderBy(desc(runs.startedAt))
+        .orderBy(desc(runs.turn))
         .limit(200),
     )
     const summaries = yield* loadSummaries(rows.map((row) => row.personId)).pipe(
@@ -203,6 +246,7 @@ export const runStoreLayer = Layer.effect(
     const database = yield* Database
     return RunStore.of({
       start: makeStart(database),
+      scope: makeScope(database),
       end: makeEnd(database),
       working: makeWorking(database),
       list: makeList(database),

@@ -1,20 +1,13 @@
-import type { DeliveredMessage } from '@flue/sdk'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
-import {
-  NotFound,
-  type Person,
-  type PersonId,
-  type PersonSummary,
-  type RunId,
-  type ThreadId,
-} from '@vivid/contracts'
+import { NotFound, type Person, type PersonId, type RunId, type ThreadId } from '@vivid/contracts'
 import { findPerson, summaryOf } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
 import { Changes } from '../live/changes.ts'
 import { Learning } from '../memory/learn.ts'
 import { Notifier } from '../notifications/notifier.ts'
+import { submissionId } from '../runtime/identity.ts'
 import { Runtime, Settlement } from '../runtime/client.ts'
 import { audienceTopics, canSee, findThread, type StoredThread } from './access.ts'
 import {
@@ -24,41 +17,10 @@ import {
   type ConversationService,
   type Delivery,
 } from './conversation.ts'
+import { flueMessage } from './message.ts'
 import { Presence } from './presence.ts'
 import { RunStore, RunEnding, type WorkingRun } from './runs.ts'
 import { ThreadStore } from './store.ts'
-
-/**
- * A delivery as Flue takes it.
- *
- * In a private Thread a Person's words go in as an ordinary user turn: there is one Person, and
- * Vivid acts for the Thread's creator. In a shared Thread they go in as a signal that names the
- * speaker, which Flue shows the model as a user turn wrapped in `<message person=… from=…>` and
- * keeps in its own history, so the model and every client know who said what. Everything the
- * server itself delivers is a signal and always names the Person it is delivered for.
- */
-const flueMessage = (
-  thread: StoredThread,
-  speaker: PersonSummary,
-  message: DeliveryMessage,
-): DeliveredMessage => {
-  const attribution = { person: speaker.id, from: speaker.name }
-  return DeliveryMessage.match(message, {
-    Said: ({ body }): DeliveredMessage =>
-      thread.audience === 'private'
-        ? { kind: 'user', body }
-        : { kind: 'signal', type: 'message', tagName: 'message', body, attributes: attribution },
-    Signal: ({ type, body, attributes }): DeliveredMessage => ({
-      kind: 'signal',
-      type,
-      // The tag is the signal's type, so the model reads `<schedule …>` and a client can tell a
-      // Routine coming due from an answer without parsing the body.
-      tagName: type,
-      body,
-      attributes: { ...attributes, ...attribution },
-    }),
-  })
-}
 
 /** What the delivery says, for the Thread's preview. Only a Person's own words are shown there. */
 const previewOf = (message: DeliveryMessage) =>
@@ -196,17 +158,22 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
       return yield* threadMissing()
     const speaker = yield* personOf(delivery.personId)
     const creator = yield* personOf(thread.personId)
-    const admission = yield* runtime.admit({
-      threadId: thread.id,
-      message: flueMessage(thread, summaryOf(speaker), delivery.message),
-      origin: { creator: creator.id, creatorName: creator.name },
-      idempotencyKey: delivery.idempotencyKey,
-    })
-    yield* runs.start({
-      id: admission.runId,
+    const id = submissionId(thread.id, delivery.idempotencyKey)
+    const turn = yield* runs.start({
+      id,
       threadId: thread.id,
       personId: speaker.id,
       origin: delivery.origin,
+      libraryFolder: delivery.libraryFolder === undefined ? null : delivery.libraryFolder,
+    })
+    const deliveryScope = yield* runs.scope({ threadId: thread.id, turn })
+    const admission = yield* runtime.admit({
+      threadId: thread.id,
+      message: flueMessage(thread.audience, summaryOf(speaker).name, delivery.message, turn),
+      origin: { creator: creator.id, creatorName: creator.name },
+      idempotencyKey: delivery.idempotencyKey,
+      turn,
+      scope: deliveryScope,
     })
     const said = previewOf(delivery.message)
     yield* threads.touch(thread.id, said)

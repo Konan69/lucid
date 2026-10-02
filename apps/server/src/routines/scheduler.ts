@@ -73,20 +73,9 @@ export const bodyOf = (record: RoutineRecord, payload: Option.Option<string>) =>
   })
 }
 
-/** Folder authority travels with delivery rather than being a model-selected search argument.
- * Flue 2.1 renders signal attributes into model text; hiding authority requires a framework seam
- * beyond this scheduler. Keep this server-owned attribute available to the runtime Scope. */
+/** Only the Routine's human-readable name belongs in Flue's model-visible attributes. */
 export function deliveryAttributes(record: RoutineRecord) {
-  if (record.routine.libraryFolderId === null)
-    return DeliveryMessage.cases.Signal.fields.attributes.make({
-      routine: record.routine.id,
-      name: record.routine.name,
-    })
-  return DeliveryMessage.cases.Signal.fields.attributes.make({
-    routine: record.routine.id,
-    name: record.routine.name,
-    libraryFolder: record.routine.libraryFolderId,
-  })
+  return DeliveryMessage.cases.Signal.fields.attributes.make({ name: record.routine.name })
 }
 
 interface SubmissionServices {
@@ -199,6 +188,7 @@ const makeSubmit = (services: SubmissionServices) =>
       .deliver({
         threadId,
         personId: record.personId,
+        libraryFolder: routine.libraryFolderId,
         message: DeliveryMessage.cases.Signal.make({
           type: 'schedule',
           body: bodyOf(record, payload),

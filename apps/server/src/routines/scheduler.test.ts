@@ -38,9 +38,7 @@ describe('Routine delivery folder', () => {
       expect(body).not.toContain(folder)
       expect(body).not.toMatch(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/iu)
       expect(deliveryAttributes(routine)).toEqual({
-        routine: 'routine',
         name: 'Morning review',
-        libraryFolder: folder,
       })
     }
     expect(bodyOf(routine, Option.some('Incoming event'))).toContain('Payload:\nIncoming event')
@@ -48,6 +46,6 @@ describe('Routine delivery folder', () => {
   it('keeps unscoped Routine deliveries genuinely absent', () => {
     const routine = record(null)
     expect(bodyOf(routine, Option.none())).toBe('Review sources.')
-    expect(deliveryAttributes(routine)).toEqual({ routine: 'routine', name: 'Morning review' })
+    expect(deliveryAttributes(routine)).toEqual({ name: 'Morning review' })
   })
 })

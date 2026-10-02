@@ -1,12 +1,15 @@
 import * as Effect from 'effect/Effect'
 import {
   AuditEvent,
+  Forbidden,
+  type DeliveryScopeRequest,
   ThreadDetail,
   type PersonId,
   type PresenceRequest,
   type ShareThreadRequest,
   type ThreadId,
 } from '@vivid/contracts'
+import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { ApprovalStore } from '../approvals/store.ts'
 import { Audit } from '../audit/record.ts'
 import { requireActor, requirePerson, summaryOf, type Actor } from '../auth/access.ts'
@@ -79,6 +82,15 @@ const announce = Effect.fn('Threads.announce')(function* (
 })
 
 export const threadHandlers = {
+  /** Only the unattributed runtime token may retrieve authority; sessions/devices and acting calls cannot. */
+  GetDeliveryScope: Effect.fn('Rpc.GetDeliveryScope')(function* (request: DeliveryScopeRequest) {
+    const auth = yield* AuthContext
+    if (!AuthState.$is('Runtime')(auth))
+      return yield* Effect.fail(
+        new Forbidden({ message: 'Only the runtime may read delivery scope' }),
+      )
+    return yield* (yield* RunStore).scope(request)
+  }),
   ListThreads: Effect.fn('Rpc.ListThreads')(function* () {
     return yield* listThreads(yield* requireActor())
   }),

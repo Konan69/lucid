@@ -3,6 +3,7 @@ import type * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import {
   SignalType,
+  type LibraryFolderId,
   type NotFound,
   type PersonId,
   type Run,
@@ -45,6 +46,8 @@ export interface Delivery {
   readonly threadId: ThreadId
   /** The Person Vivid acts for in the Run this starts. They must be able to see the Thread. */
   readonly personId: PersonId
+  /** Only Routine deliveries carry a Library confinement; ordinary deliveries have none. */
+  readonly libraryFolder?: LibraryFolderId | null
   readonly message: DeliveryMessage
   readonly origin: StoredRunOrigin
   /** Repeating a delivery with the same key starts nothing new and returns the same Run. */

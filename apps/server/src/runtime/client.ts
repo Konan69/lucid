@@ -1,4 +1,4 @@
-import { createFlueClient, type DeliveredMessage } from '@flue/sdk'
+import { createFlueClient } from '@flue/sdk'
 import * as Config from 'effect/Config'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
@@ -7,12 +7,32 @@ import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
-import type * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
-import { RunId, type ThreadId, type ThreadOrigin } from '@vivid/contracts'
+import * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
+import {
+  RunId,
+  RuntimeRunRequest,
+  ThreadOrigin as ThreadOriginSchema,
+  type DeliveryScope,
+  type ThreadId,
+  type ThreadOrigin,
+} from '@vivid/contracts'
 import { RuntimeUnavailable } from '@vivid/contracts/rpc'
 import { ServerConfig } from '../config.ts'
+import { submissionId } from './identity.ts'
 import { observeRun, type Settlement } from './settlement.ts'
 export { Settlement } from './settlement.ts'
+
+/** Decode the installed Flue 2.1 admission wire response rather than trusting network JSON. */
+const Receipt = Schema.Struct({
+  submissionId: Schema.String,
+  offset: Schema.String,
+  uid: Schema.String,
+  deduplicated: Schema.optionalKey(Schema.Boolean),
+})
+
+const encodeRunRequest = Schema.encodeSync(RuntimeRunRequest)
+const encodeThreadOrigin = Schema.encodeSync(ThreadOriginSchema)
+const decodeReceipt = HttpClientResponse.schemaBodyJson(Receipt)
 
 /** Flue's receipt for one accepted message. `offset` is where its events begin in the stream. */
 export const Admission = Schema.Struct({
@@ -34,13 +54,26 @@ export interface ConversationRead {
   readonly accept: string
 }
 
+/** Only the two server-built deliveries can cross this boundary; signal kinds stay contract-typed. */
+export type RuntimeMessage =
+  | { readonly kind: 'user'; readonly body: string }
+  | {
+      readonly kind: 'signal'
+      readonly body: string
+      readonly type: RuntimeRunRequest['type']
+      readonly tagName: RuntimeRunRequest['type']
+      readonly attributes: RuntimeRunRequest['attributes']
+    }
+
 export interface RuntimeService {
   /** Puts one message in front of Vivid. Flue decides whether it starts a response or joins one. */
   readonly admit: (input: {
     readonly threadId: ThreadId
-    readonly message: DeliveredMessage
+    readonly message: RuntimeMessage
     readonly origin: ThreadOrigin
     readonly idempotencyKey: string
+    readonly turn: number
+    readonly scope: DeliveryScope
   }) => Effect.Effect<Admission, RuntimeUnavailable>
   /** Waits for a Run to end and says how. It never fails; what cannot be told is `Unknown`. */
   readonly settled: (threadId: ThreadId, runId: RunId) => Effect.Effect<Settlement>
@@ -80,16 +113,33 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
     createFlueClient({ url: conversationUrl(threadId).href, token })
 
   const admit: RuntimeService['admit'] = Effect.fn('Runtime.admit')(function* (input) {
-    const receipt = yield* Effect.tryPromise({
-      try: (signal) =>
-        flue(input.threadId).send({
-          message: input.message,
-          initialData: input.origin,
-          idempotencyKey: input.idempotencyKey,
-          signal,
-        }),
-      catch: unavailable('Vivid could not be reached'),
+    const payload = RuntimeRunRequest.make({
+      threadId: input.threadId,
+      idempotencyKey: input.idempotencyKey,
+      type: input.message.kind === 'user' ? 'message' : input.message.type,
+      body: input.message.body,
+      attributes: input.message.kind === 'user' ? {} : input.message.attributes,
+      turn: input.turn,
+      scope: input.scope,
     })
+    const request = yield* HttpClientRequest.bodyJson(
+      HttpClientRequest.post(conversationUrl(input.threadId)).pipe(
+        HttpClientRequest.bearerToken(token),
+      ),
+      {
+        ...encodeRunRequest(payload),
+        initialData: encodeThreadOrigin(input.origin),
+      },
+    ).pipe(Effect.mapError(unavailable('Vivid request could not be encoded')))
+    const response = yield* http
+      .execute(request)
+      .pipe(Effect.mapError(unavailable('Vivid could not be reached')))
+    const receipt = yield* decodeReceipt(response).pipe(
+      Effect.mapError(unavailable('Vivid returned an invalid receipt')),
+    )
+    if (receipt.submissionId !== submissionId(input.threadId, input.idempotencyKey)) {
+      return yield* Effect.fail(unavailable('Flue keyed-submission wire format changed')())
+    }
     return Admission.make({
       runId: RunId.make(receipt.submissionId),
       offset: receipt.offset,
