@@ -460,7 +460,16 @@ function Finish({
       </Button>
     )
   }
-  return ConnectionAuthorization.match(authorization.value, {
+  return finishButton(name, authorization.value, onKey)
+}
+
+/** Projects authorization state into the button that advances that integration. */
+function finishButton(
+  name: string,
+  authorization: ConnectionAuthorizationValue,
+  onKey: (keying: Keying) => void,
+) {
+  return ConnectionAuthorization.match(authorization, {
     OpenSignIn: ({ address }) => <SignInButton name={name} address={address} />,
     EnterKey: ({ connectionId, fields }) => (
       <EnterKeyButton connectionId={connectionId} name={name} fields={fields} onKey={onKey} />
