@@ -46,7 +46,12 @@ export const skillHandlers = {
     const { skills } = yield* loadSkills(yield* requireActor())
     return {
       skills: skills.map((skill) =>
-        SkillSummary.make({ id: skill.id, name: skill.name, useWhen: skill.useWhen }),
+        SkillSummary.make({
+          id: skill.id,
+          name: skill.name,
+          useWhen: skill.useWhen,
+          createdAt: skill.createdAt,
+        }),
       ),
     }
   }),
