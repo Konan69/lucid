@@ -1,17 +1,25 @@
 import { useAtomValue } from '@effect/atom-react'
 import { VividRpcClient } from '@vivid/client-runtime'
-import type { LibraryFolderId, LibraryShelf, ThreadDetail, ThreadId } from '@vivid/contracts'
+import type {
+  LibraryFolderId,
+  LibraryShelf,
+  MeResponse,
+  ThreadDetail,
+  ThreadId,
+} from '@vivid/contracts'
 import {
   LiveState,
   liveStateOf,
   makeLink,
   makeLive,
+  workspaceKey,
+  type LiveFamily,
   type LiveQuery,
   type LiveResult,
   type ProductFailure,
   type Settle,
 } from '@vivid/state'
-import { Data, Effect, Layer, Option, Predicate, Result } from 'effect'
+import { Data, Effect, Equal, Layer, Option, Predicate, Result } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import * as Atom from 'effect/unstable/reactivity/Atom'
 import { createContext, useContext } from 'react'
@@ -19,7 +27,8 @@ import { followThemeAtom, themeAtom } from './appearance'
 import { door } from './door'
 import { inFront } from './foreground'
 import { liveAddress } from './server'
-import { adoptAtom, Session, sessionAtom, type Outside, type SignedIn } from './session'
+import { dropAtom, sessionAtom } from './held'
+import { Session, type Outside, type SignedIn } from './session'
 import { bearerSocket } from './socket'
 import { start } from './app'
 
@@ -36,6 +45,77 @@ import { start } from './app'
  * reloaded when it changes. An app outlives its sessions, so the whole layer (socket, registry,
  * every query) is built per session and disposed with it.
  */
+
+/**
+ * The workspace a `WatchMe` result puts the Person in, as one comparable word, or none while the
+ * server has not said. One session is one Person, so the workspace alone tells two answers apart.
+ */
+const whereaboutsOf = (result: LiveResult<MeResponse>): Option.Option<string> =>
+  AsyncResult.isSuccess(result) ? Option.some(workspaceKey(result.value.workspace)) : Option.none()
+
+/**
+ * Builds the query a Thread's screen reads while the Person is looking at it: the Thread's live
+ * detail, which marks the Thread read each time it moves.
+ *
+ * Looking at a Thread is what marks it read, so that happens in the atom. It is an event on the
+ * data, not something a component has to remember to do after it renders; when nobody is reading
+ * the atom, nothing is reported. Being present is `presentIn`.
+ *
+ * The Thread's own query stays subscribed for minutes after its screen closes, so coming back is
+ * instant. This atom does not: it stops the moment nothing reads it, or a reply that arrived after
+ * the Person left would be marked read without ever being seen. For the same reason the screen
+ * reads it only while it is the one on top and the app is in front (`screen/Chat.tsx`), and the
+ * Thread's own query the rest of the time.
+ */
+function makeSeenThread(
+  engine: ReturnType<typeof makeLive>,
+  threads: LiveFamily<ThreadId, ThreadDetail>,
+) {
+  const seen = new Map<ThreadId, number>()
+
+  /** Tells the server a Thread was looked at as it now stands, once for each time it moves. */
+  const markSeen = (id: ThreadId, result: LiveResult<ThreadDetail>) => {
+    if (!AsyncResult.isSuccess(result)) return
+    const moved = result.value.thread.updatedAt
+    const last = seen.get(id)
+    if (last !== undefined && last >= moved) return
+    seen.set(id, moved)
+    void start(
+      engine.run(
+        Effect.gen(function* () {
+          const client = yield* VividRpcClient
+          yield* client.MarkThreadRead({ id })
+        }),
+      ),
+    ).then((reported) => {
+      // Forgotten again if the report did not get through, so the next result tries again
+      // instead of leaving read work marked unread.
+      if (Result.isFailure(reported) && seen.get(id) === moved) seen.delete(id)
+    })
+  }
+
+  // One watched query for each Thread's own query, for as long as that one exists.
+  const seenQueries = new WeakMap<LiveQuery<ThreadDetail>, LiveQuery<ThreadDetail>>()
+
+  return (id: ThreadId): LiveQuery<ThreadDetail> => {
+    const base = threads.get(id)
+    const existing = seenQueries.get(base)
+    if (existing !== undefined) return existing
+    const watched: LiveQuery<ThreadDetail> = {
+      expect: base.expect,
+      atom: Atom.setIdleTTL(
+        Atom.readable((get) => {
+          const result = get(base.atom)
+          markSeen(id, result)
+          return result
+        }),
+        0,
+      ),
+    }
+    seenQueries.set(base, watched)
+    return watched
+  }
+}
 
 /**
  * Builds the live data of one session: one socket, opened as the signed-in Person, and a query
@@ -81,34 +161,28 @@ function makeLiveData(session: SignedIn) {
     suggestions: one((client) => client.WatchSuggestions()),
   }
 
-  const seen = new Map<ThreadId, number>()
+  // Where the Person was working when a query was last asked, for the subscription below.
+  let whereabouts = Option.none<string>()
 
-  /** Tells the server a Thread was looked at as it now stands, once for each time it moves. */
-  const markSeen = (id: ThreadId, result: LiveResult<ThreadDetail>) => {
-    if (!AsyncResult.isSuccess(result)) return
-    const moved = result.value.thread.updatedAt
-    const last = seen.get(id)
-    if (last !== undefined && last >= moved) return
-    seen.set(id, moved)
-    void start(
-      engine.run(
-        Effect.gen(function* () {
-          const client = yield* VividRpcClient
-          yield* client.MarkThreadRead({ id })
-        }),
-      ),
-    ).then((reported) => {
-      // Forgotten again if the report did not get through, so the next result tries again
-      // instead of leaving read work marked unread.
-      if (Result.isFailure(reported) && seen.get(id) === moved) seen.delete(id)
-    })
-  }
+  // A query that ended because it was not the Person's to see ("people", in their own space) was
+  // answered for where they were, and an ended query asks nothing more. The web asks them again
+  // when the Person moves (`whereabouts` in `apps/web/src/data/live.ts`); the phone did not, so
+  // People opened in a Company still said what it had said in the Person's own space. When they
+  // move, every ended query is asked again; nothing else would ask it.
+  engine.registry.subscribe(live.me.atom, (result) => {
+    const now = whereaboutsOf(result)
+    if (Equal.equals(now, whereabouts)) return
+    whereabouts = now
+    engine.reopen()
+  })
 
   /** Whether this Person has something typed in a Thread's composer. The composer sets it. */
   const typingIn = Atom.family((_id: ThreadId) => Atom.make(false))
 
   /**
-   * "I am here" for one Thread, said for as long as its screen is open and the app is in front.
+   * "I am here" for one Thread, said for as long as something holds this atom and the app is in
+   * front. The Thread's screen holds it only while it is the screen on top (`Present` in
+   * `screen/Chat.tsx`): a screen left mounted under another is not someone looking.
    *
    * The server keeps a Person present for fifteen seconds after they last said so, and decides
    * from that who is shown at the top of a shared Thread and who gets a notification instead. It
@@ -125,37 +199,7 @@ function makeLiveData(session: SignedIn) {
     ),
   )
 
-  // One watched query for each Thread's own query, for as long as that one exists.
-  const seenQueries = new WeakMap<LiveQuery<ThreadDetail>, LiveQuery<ThreadDetail>>()
-
-  /**
-   * A Thread's live detail, for the screen that shows it. Looking at a Thread is what marks it
-   * read, so that happens here, in the atom, each time the Thread moves while someone has it
-   * open. It is an event on the data, not something a component has to remember to do after it
-   * renders; when nobody is reading the atom, nothing is reported. Being present is `presentIn`.
-   *
-   * The Thread's own query stays subscribed for minutes after its screen closes, so coming back
-   * is instant. This atom does not: it stops the moment the screen does, or a reply that arrived
-   * after the Person left would be marked read without ever being seen.
-   */
-  const seenThread = (id: ThreadId): LiveQuery<ThreadDetail> => {
-    const base = live.thread.get(id)
-    const existing = seenQueries.get(base)
-    if (existing !== undefined) return existing
-    const watched: LiveQuery<ThreadDetail> = {
-      expect: base.expect,
-      atom: Atom.setIdleTTL(
-        Atom.readable((get) => {
-          const result = get(base.atom)
-          markSeen(id, result)
-          return result
-        }),
-        0,
-      ),
-    }
-    seenQueries.set(base, watched)
-    return watched
-  }
+  const seenThread = makeSeenThread(engine, live.thread)
 
   // The Person's theme is theirs on every device; when their settings arrive, this one follows.
   engine.registry.subscribe(
@@ -172,13 +216,16 @@ function makeLiveData(session: SignedIn) {
 
   // A token the server no longer accepts (expired, revoked from another device, or left over from
   // a build that had no accounts) cannot be made to work by waiting. The device signs out, which
-  // puts the sign-in screen in front of the Person, saying so, with their server still chosen.
+  // puts the sign-in screen in front of the Person, saying so, with their server still chosen. It
+  // is dropped, not adopted: a dead token must leave the app even if the store cannot be written.
   engine.registry.subscribe(
     live.me.atom,
     (result) => {
       const state = liveStateOf(result)
       if (LiveState.$is('Failed')(state) && Predicate.isTagged(state.failure, 'Unauthenticated')) {
-        door.set(adoptAtom, Session.Expired({ server: session.server }))
+        // On the next turn, not in this one: dropping the session disposes this very registry,
+        // and it is in the middle of telling its listeners about this result.
+        queueMicrotask(() => door.set(dropAtom, Session.Expired({ server: session.server })))
       }
     },
     { immediate: true },

@@ -3,7 +3,8 @@ import * as Atom from 'effect/unstable/reactivity/Atom'
 import { pairingTransport, signIn, signOut, signUp } from './account'
 import { Pairing, pairing } from './device'
 import type { ServerAddress } from './server'
-import { adopt, Session, type SignedIn } from './session'
+import { adopt, drop } from './held'
+import { Session, type SignedIn } from './session'
 
 /**
  * Signing in and out, as atoms the sign-in screen reads and writes.
@@ -57,12 +58,15 @@ export const emailAtom = Atom.fn(
  * Signs out. The device forgets its token whether or not the server could be told: a phone that
  * is offline, or whose session the server already ended, must still be able to sign out. A
  * session the server was not told about stops working when it expires.
+ *
+ * It also forgets whether or not the device's store can be written (`makeCustody`): the app is signed
+ * out at once, and a store that refused is told again until it takes it.
  */
 export const leaveAtom = Atom.keepAlive(
   Atom.fn(
     Effect.fn('Signing.leave')(function* (session: SignedIn) {
       yield* Effect.ignore(signOut(session))
-      yield* adopt(Session.SignedOut({ server: session.server }))
+      yield* drop(Session.SignedOut({ server: session.server }))
     }),
   ),
 )

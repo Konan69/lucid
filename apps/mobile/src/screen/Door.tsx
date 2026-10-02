@@ -1,7 +1,7 @@
 import { Option, Result } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import { useState, type ReactNode } from 'react'
-import { Linking, Platform, ScrollView, View } from 'react-native'
+import { Linking, ScrollView, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ExternalLink, RotateCw } from 'lucide-react-native'
 import type { FaceMood } from '@vivid/marks'
@@ -9,7 +9,8 @@ import { Pairing, spellCode, type Ending } from '../data/device'
 import { attemptOf, door, useDoor } from '../data/door'
 import { commit } from '../data/haptics'
 import { approvalAddress, parseServer, serverName, type ServerAddress } from '../data/server'
-import { adoptAtom, Outside, Session } from '../data/session'
+import { adoptAtom, forgetAtom, forgettingAtom } from '../data/held'
+import { Forgetting, Outside, Session } from '../data/session'
 import { emailAtom, EmailEntry, pairingAtom } from '../data/signing'
 import { useTheme } from '../theme'
 import { AboveKeyboard } from '../ui/Keyboard'
@@ -22,6 +23,7 @@ import {
   HAIRLINE,
   Label,
   Labelled,
+  MONO,
   Notice,
   Press,
   radius,
@@ -162,10 +164,36 @@ function SignIn({ server, ended }: { server: ServerAddress; ended: Option.Option
       lead="This phone signs in as you and stays connected, so your threads are live here too."
     >
       {Option.isSome(ended) && <Notice message={ended.value} />}
+      <Unforgotten />
       <ServerLine server={server} />
       <Segmented label="How to sign in" value={way} options={WAYS} onChange={setWay} />
       {way === 'code' ? <Code server={server} /> : <Email server={server} />}
     </Frame>
+  )
+}
+
+/**
+ * Said when this phone signed out and its store would not drop the saved sign-in (`makeCustody`).
+ *
+ * The app is signed out either way. What is left is a store that still holds the token, which the
+ * next launch would read and sign the Person back in with, so they are told and given the way to
+ * try again. It is tried again by itself for a while first, and signing in again settles it; this
+ * is drawn only once the store has actually refused, so an ordinary sign-out never shows it.
+ */
+function Unforgotten() {
+  const forgetting = useDoor(forgettingAtom)
+  const trying = useDoor(forgetAtom).waiting
+  if (!Forgetting.$is('Refused')(forgetting)) return null
+  return (
+    <View style={{ gap: 8 }}>
+      <Notice message="You are signed out, but this phone could not remove its saved sign-in. Until it does, Vivid may open signed in again." />
+      <Button
+        label={trying ? 'Trying…' : 'Try again'}
+        disabled={trying}
+        onPress={() => door.set(forgetAtom, undefined)}
+        containerStyle={{ alignSelf: 'flex-start' }}
+      />
+    </View>
   )
 }
 
@@ -295,7 +323,7 @@ function Spelled({ code }: { code: Option.Option<string> }) {
       accessibilityLabel={`Code ${code.value.split('').join(' ')}`}
       style={{
         // Every character the same width, so the two halves line up and read as a code.
-        fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+        fontFamily: MONO,
         letterSpacing: 3,
       }}
     >
