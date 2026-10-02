@@ -4,20 +4,20 @@ import type { MenuAction } from '@react-native-menu/menu'
 import * as Haptics from 'expo-haptics'
 import { useCallback, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import type { ColorValue, StyleProp, ViewStyle } from 'react-native'
-import { Pressable, View } from 'react-native'
+import { View } from 'react-native'
 import ReanimatedSwipeable, {
   type SwipeableMethods,
 } from 'react-native-gesture-handler/ReanimatedSwipeable'
 import Animated, {
   Extrapolation,
   interpolate,
-  runOnJS,
   type SharedValue,
   useAnimatedReaction,
   useAnimatedStyle,
 } from 'react-native-reanimated'
+import { scheduleOnRN } from 'react-native-worklets'
 
-import { Label as Text } from '../ui/ui'
+import { Press, Label as Text } from '../ui/ui'
 import { useTheme } from '../theme'
 
 // Wide enough for the longest action label ("Unarchive").
@@ -251,10 +251,14 @@ type SwipeActionButtonContentProps = {
 function SwipeActionButtonContent(props: SwipeActionButtonContentProps) {
   const { colors: c } = useTheme()
   return (
-    <Pressable
+    // The app's own press (`ui/motion/Pressable.tsx`), so an action under a finger sinks like
+    // every other control. It used to dim only, which on a touch screen is easy to miss under
+    // the finger that is covering it.
+    <Press
       accessibilityLabel={props.accessibilityLabel}
       accessibilityRole="button"
       onPress={props.menu === undefined ? props.onPress : undefined}
+      containerStyle={{ height: '100%', width: '100%' }}
       style={({ pressed }) => ({
         alignItems: 'center',
         height: '100%',
@@ -313,7 +317,7 @@ function SwipeActionButtonContent(props: SwipeActionButtonContentProps) {
           {props.label}
         </Text>
       </Animated.View>
-    </Pressable>
+    </Press>
   )
 }
 
@@ -461,7 +465,9 @@ export function ThreadSwipeActions(props: {
     () => -props.translation.value >= props.fullSwipeThreshold,
     (armed, previous) => {
       if (armed !== previous) {
-        runOnJS(props.onFullSwipeArmedChange)(armed)
+        // Once, as the swipe crosses the threshold, not on every frame of it. `scheduleOnRN` is
+        // Reanimated 4's name for what `runOnJS` did.
+        scheduleOnRN(props.onFullSwipeArmedChange, armed)
       }
     },
     [props.fullSwipeThreshold, props.onFullSwipeArmedChange],

@@ -1,11 +1,10 @@
 import type { PressableProps, StyleProp, ViewStyle } from 'react-native'
 import { Pressable } from 'react-native'
 import Animated, {
-  Easing,
   ReduceMotion,
   useAnimatedStyle,
   useSharedValue,
-  withTiming,
+  withSpring,
 } from 'react-native-reanimated'
 import { nativeMetrics } from '@vivid/tokens/native'
 
@@ -15,11 +14,24 @@ import { nativeMetrics } from '@vivid/tokens/native'
  */
 const PRESSED_SCALE = 0.97
 
-/** A strong ease-out: it moves at once and settles, so the press is felt in its first frame. */
-const PRESS_TIMING = {
+/**
+ * The surface is on a spring, not a timed curve. A finger can lift, or come back down, before the
+ * last movement has finished, and a spring carries on from where the surface is, at the speed it
+ * was moving; a timed curve starts again from rest, which is felt as a hitch on a quick double
+ * tap. It is critically damped (ratio 1): nothing threw this surface, so it must not bounce.
+ *
+ * It sinks quickly, so the press is felt as the finger lands, and comes back a little slower, the
+ * way something released does. With reduced motion nothing travels: the surface is at its
+ * pressed size at once, and the pressed fill each control draws still shows.
+ */
+const SINK = {
   duration: nativeMetrics['dur-fast'],
-  easing: Easing.bezier(0.23, 1, 0.32, 1),
-  // With reduced motion the scale is skipped; the pressed fill each control draws still shows.
+  dampingRatio: 1,
+  reduceMotion: ReduceMotion.System,
+} as const
+const RISE = {
+  duration: nativeMetrics['dur-base'],
+  dampingRatio: 1,
   reduceMotion: ReduceMotion.System,
 } as const
 
@@ -47,11 +59,11 @@ export function Press({
         pressRetentionOffset={12}
         {...props}
         onPressIn={(event) => {
-          scale.set(withTiming(PRESSED_SCALE, PRESS_TIMING))
+          scale.set(withSpring(PRESSED_SCALE, SINK))
           if (onPressIn != null) onPressIn(event)
         }}
         onPressOut={(event) => {
-          scale.set(withTiming(1, PRESS_TIMING))
+          scale.set(withSpring(1, RISE))
           if (onPressOut != null) onPressOut(event)
         }}
       />
