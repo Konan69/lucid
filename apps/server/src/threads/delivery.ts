@@ -1,6 +1,7 @@
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
+import * as Predicate from 'effect/Predicate'
 import {
   Conflict,
   NotFound,
@@ -212,20 +213,24 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         libraryFolder: delivery.libraryFolder === undefined ? null : delivery.libraryFolder,
       })
       const said = previewOf(delivery.message)
-      if (TurnReservation.guards.Replayed(reservation)) {
-        yield* follow({ id, threadId: thread.id, person: speaker, said })
-        return reservation.receipt
-      }
-      const turn = yield* TurnReservation.match<Effect.Effect<number, Conflict>>(reservation, {
-        Reserved: (reserved) => Effect.succeed(reserved.turn),
-        Replayed: (replayed) => Effect.succeed(replayed.turn),
-        Busy: ({ person }) =>
-          Effect.fail(
-            Conflict.make({
-              message: `Vivid is still answering ${person.name}. Send this again when it has finished.`,
-            }),
-          ),
-      })
+      // Replay completes inside the reservation match; only a new reserved turn reaches Flue.
+      const turn = yield* TurnReservation.match<Effect.Effect<number | Admitted, Conflict>>(
+        reservation,
+        {
+          Reserved: (reserved) => Effect.succeed(reserved.turn),
+          Replayed: (replayed) =>
+            follow({ id, threadId: thread.id, person: speaker, said }).pipe(
+              Effect.as(replayed.receipt),
+            ),
+          Busy: ({ person }) =>
+            Effect.fail(
+              Conflict.make({
+                message: `Vivid is still answering ${person.name}. Send this again when it has finished.`,
+              }),
+            ),
+        },
+      )
+      if (!Predicate.isNumber(turn)) return turn
       const admission = yield* Effect.gen(function* () {
         const deliveryScope = yield* runs.scope({ threadId: thread.id, turn })
         return yield* runtime.admit({
