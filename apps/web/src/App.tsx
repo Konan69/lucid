@@ -32,12 +32,14 @@ const screens = {
   Projects: () => import('./screen/Projects'),
   Routines: () => import('./screen/Routines'),
   Settings: () => import('./screen/Settings'),
+  Skills: () => import('./screen/Skills'),
 }
 const Computer = lazy(async () => ({ default: (await screens.Computer()).Computer }))
 const Library = lazy(async () => ({ default: (await screens.Library()).Library }))
 const Projects = lazy(async () => ({ default: (await screens.Projects()).Projects }))
 const Routines = lazy(async () => ({ default: (await screens.Routines()).Routines }))
 const Settings = lazy(async () => ({ default: (await screens.Settings()).Settings }))
+const Skills = lazy(async () => ({ default: (await screens.Skills()).Skills }))
 
 const warm = () => {
   for (const load of Object.values(screens)) void load()
@@ -298,6 +300,7 @@ function Place({
       />
     ),
     Projects: () => <Projects onOpenThread={(id) => router.go(Route.Thread({ id }))} />,
+    Skills: () => <Skills />,
     Invite: ({ id }) => <Invite id={id} />,
     // A device waiting to be signed in is approved in Settings, with its code already filled in.
     Device: () => <First me={me} />,

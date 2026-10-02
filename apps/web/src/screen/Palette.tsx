@@ -14,6 +14,7 @@ import {
   Search,
   SlidersHorizontal,
   SquarePen,
+  Sparkles,
 } from 'lucide-react'
 import { useAtomSet, useAtomValue } from '@effect/atom-react'
 import { useCallback, useState, type ReactNode } from 'react'
@@ -108,6 +109,15 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     icon: <LibraryIcon className="size-4" />,
     keys: Option.none(),
     go: () => router.go(Route.Library()),
+  },
+  {
+    key: 'do:skills',
+    title: 'Skills',
+    detail: 'What Vivid knows how to do',
+    words: 'skills procedures how to learn teach built in',
+    icon: <Sparkles className="size-4" />,
+    keys: Option.none(),
+    go: () => router.go(Route.Skills()),
   },
   {
     key: 'do:connections',

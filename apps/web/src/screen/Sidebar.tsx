@@ -14,6 +14,7 @@ import {
   Repeat2,
   Search,
   Settings as SettingsIcon,
+  Sparkles,
   SquarePen,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
@@ -154,6 +155,12 @@ export function Sidebar({
             label="Library"
             active={Route.$is('Library')(route)}
             onClick={() => router.go(Route.Library())}
+          />
+          <ToolRow
+            icon={<Sparkles className="size-4" strokeWidth={1.6} />}
+            label="Skills"
+            active={Route.$is('Skills')(route)}
+            onClick={() => router.go(Route.Skills())}
           />
           <ToolRow
             icon={<Plug className="size-4" strokeWidth={1.6} />}
