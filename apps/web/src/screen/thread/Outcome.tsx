@@ -7,6 +7,7 @@ import { Option } from 'effect'
  * is not something asking again fixes, so that one offers nothing to press.
  */
 const FAILED = {
+  Delivery: { words: 'Vivid could not start on that. Send it again.', again: true },
   RateLimited: { words: 'Vivid’s model is busy. Give it a moment, then try again.', again: true },
   ModelUnavailable: {
     words: 'Vivid’s model can’t be reached. Whoever runs this Vivid needs to look at it.',
