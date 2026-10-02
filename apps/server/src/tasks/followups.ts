@@ -2,8 +2,10 @@ import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Schema from 'effect/Schema'
 import * as Schedule from 'effect/Schedule'
 import {
+  Conflict,
   InvalidRequest,
   type FollowUp,
   type FollowUpId,
@@ -18,6 +20,7 @@ import { DeliveryOutcome, DeliveryRecord, type StoredTask } from './projection.t
 import { TaskStore } from './store.ts'
 
 export const FOLLOW_UP_TICK_MS = 20_000
+const isConflict = Schema.is(Conflict)
 
 /** Include recorded Task context and the scheduled note without inventing an absent assignee. */
 const instruction = (task: StoredTask, followUp: FollowUp) => {
@@ -70,6 +73,9 @@ const makeFollowUps = (
       .pipe(
         Effect.matchEffect({
           onFailure: Effect.fn('FollowUps.deliveryFailed')(function* (error) {
+            // Busy is deferred admission, not a failed follow-up. The durable running claim
+            // retains firedAt and is retried by claimDueFollowUps on its recovery schedule.
+            if (isConflict(error)) return claim.followUp
             const failed = yield* tasks.finishDelivery(
               claim,
               DeliveryOutcome.cases.Failed.make({ message: error.message }),

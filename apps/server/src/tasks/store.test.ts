@@ -4,6 +4,7 @@ import { describe, expect, layer } from '@effect/vitest'
 import * as TestClock from 'effect/testing/TestClock'
 import { Clock, Context, Deferred, Effect, Fiber, Layer, Option, Ref, Stream } from 'effect'
 import {
+  Conflict,
   Assignee,
   AssigneeInput,
   Author,
@@ -563,6 +564,68 @@ describe.skipIf(!testDatabaseConfigured)('workspace Tasks and notifications', ()
           const delivery = yield* returned(yield* Ref.get(receipts), 'scheduled delivery')
           expect(delivery.personId).toBe(owner.person.id)
           expect((yield* store.getFollowUp(owner, followUp.id)).status).toBe('fired')
+        }),
+    )
+
+    it.effect(
+      'Busy preserves the follow-up claim and key while the scheduler delivers other work',
+      () =>
+        Effect.gen(function* () {
+          const { owner } = yield* fixture()
+          const store = yield* TaskStore
+          const conversation = yield* Conversation
+          const task = yield* store.create(owner, { title: 'Busy work', followUp: { at: 0 } })
+          const healthy = yield* store.create(owner, { title: 'Other work', followUp: { at: 0 } })
+          const calls = yield* Ref.make<ReadonlyArray<Delivery>>([])
+          const busy = yield* Ref.make(true)
+          const producer = Conversation.of({
+            ...conversation,
+            deliver: Effect.fn('Tasks.test.busy')(function* (delivery) {
+              yield* Ref.update(calls, (all) => [...all, delivery])
+              if (delivery.threadId === task.threadId && (yield* Ref.get(busy)))
+                return yield* Effect.fail(
+                  Conflict.make({ message: 'Vivid is still answering Ada.' }),
+                )
+              return yield* conversation.deliver(delivery)
+            }),
+          })
+          yield* Effect.gen(function* () {
+            const service = yield* FollowUps
+            yield* service.runDue()
+            const waiting = yield* returned(
+              (yield* store.get(owner, task.id)).followUps,
+              'waiting follow-up',
+            )
+            expect(waiting).toMatchObject({
+              status: 'running',
+              submissionId: null,
+              firedAt: 0,
+              error: null,
+            })
+            expect((yield* store.get(owner, healthy.id)).followUps).toMatchObject([
+              { status: 'fired' },
+            ])
+            yield* Ref.set(busy, false)
+            yield* TestClock.adjust(FOLLOW_UP_ABANDONED_MS + 1)
+            yield* service.runDue()
+            expect((yield* store.get(owner, task.id)).followUps).toMatchObject([
+              { status: 'fired' },
+            ])
+            const attempts = (yield* Ref.get(calls)).filter(
+              (delivery) => delivery.threadId === task.threadId,
+            )
+            expect(attempts.map((delivery) => delivery.idempotencyKey)).toEqual([
+              `${waiting.id}:0`,
+              `${waiting.id}:0`,
+            ])
+            const notices = yield* (yield* NotificationStore).list(owner)
+            expect(
+              notices.notifications.filter((notice) => notice.kind === 'follow-up-failed'),
+            ).toEqual([])
+          }).pipe(
+            Effect.provide(Layer.fresh(followUpsLayer)),
+            Effect.provideService(Conversation, producer),
+          )
         }),
     )
 
