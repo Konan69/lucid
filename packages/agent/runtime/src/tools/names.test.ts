@@ -6,11 +6,30 @@ import { distinct, inventory, named, NameAmbiguous, NameMissing } from './names.
 describe('human names', () => {
   it('numbers repeats in stable list order and reserves literal suffixes', () => {
     expect(distinct(['Draft', 'Draft', 'draft'])).toEqual(['Draft', 'Draft (2)', 'draft (3)'])
-    const items = ['Draft', 'Draft', 'Draft (2)', 'draft', 'Draft (3)']
-    const entries = inventory(items, (item) => item)
+    const items = ['Draft', 'Draft', 'Draft (2)', 'draft', 'Draft (3)'].map((name, index) => ({
+      id: String(index),
+      createdAt: index,
+      name,
+    }))
+    const entries = inventory(items, (item) => item.name)
     expect(new Set(entries.map((entry) => entry.name.toLowerCase())).size).toBe(items.length)
     for (const entry of entries)
       expect(named(entries, ` ${entry.name.toUpperCase()} `)).toEqual(Result.succeed(entry.item))
+  })
+  it('retains duplicate identity when status, due time, updated time and list order change', () => {
+    const first = { id: 'a', createdAt: 1, name: 'Draft', status: 'open', dueAt: 2, updatedAt: 1 }
+    const second = { id: 'b', createdAt: 1, name: 'Draft', status: 'open', dueAt: 1, updatedAt: 2 }
+    const shown = inventory([second, first], (item) => item.name)
+    const changed = { ...first, status: 'done', dueAt: 4, updatedAt: 5 }
+    const relisted = inventory([second, changed], (item) => item.name)
+    expect(shown.map(({ name, item }) => [name, item.id])).toEqual([
+      ['Draft', 'a'],
+      ['Draft (2)', 'b'],
+    ])
+    for (const entry of shown) {
+      const selected = named(relisted, entry.name)
+      expect(Result.isSuccess(selected) && selected.success.id).toBe(entry.item.id)
+    }
   })
   it('never makes a fuzzy or ambiguous selection', () => {
     const entries = [

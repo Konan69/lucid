@@ -4,7 +4,7 @@ import * as Option from 'effect/Option'
 import { asActing, type Acting } from './client.ts'
 import * as views from './tools/views.ts'
 import { boundOutput } from './tools/result.ts'
-import { contextSnapshots, VividContext } from './tools/snapshots.ts'
+import { ContextSkill, contextSnapshots, VividContext } from './tools/snapshots.ts'
 
 export type { VividContext } from './tools/snapshots.ts'
 
@@ -20,11 +20,18 @@ const loadBrief = Effect.fn('Context.loadBrief')(
   Effect.catch(() => Effect.succeed('')),
 )
 
-/** Only the catalog is loaded; long procedure instructions are fetched by read_skill when needed. */
+/** ListSkills supplies immutable creation order; retain only naming evidence and the brief catalog. */
 const loadSkills = Effect.fn('Context.loadSkills')(
   function* (acting: Option.Option<Acting>) {
-    const response = yield* asActing(acting, (client) => client.ListSkillSummaries())
-    return response.skills
+    const response = yield* asActing(acting, (client) => client.ListSkills())
+    return response.skills.map((skill) =>
+      ContextSkill.make({
+        id: skill.id,
+        name: skill.name,
+        useWhen: skill.useWhen,
+        createdAt: skill.createdAt,
+      }),
+    )
   },
   Effect.catch(() => Effect.succeed([])),
 )

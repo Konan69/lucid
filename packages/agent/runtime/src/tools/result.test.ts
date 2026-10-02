@@ -11,7 +11,7 @@ import {
   ServiceUnavailable,
   Unauthenticated,
 } from '@vivid/contracts'
-import { Config, ConfigProvider, Effect } from 'effect'
+import { Cause, Config, ConfigProvider, Effect, Exit } from 'effect'
 import { RpcClientDefect, RpcClientError } from 'effect/unstable/rpc/RpcClientError'
 import { boundOutput, settle } from './result.ts'
 
@@ -99,17 +99,32 @@ describe('RPC result boundary', () => {
     }),
   )
 
-  it.effect('leaves unexpected transport and configuration failures in the error channel', () =>
+  it.effect('returns fixed safe sentences for transport and configuration failures', () =>
     Effect.gen(function* () {
       const failure = new RpcClientError({
         reason: new RpcClientDefect({ message: 'Malformed RPC response', cause: null }),
       })
-      expect(yield* Effect.flip(settle(Effect.fail(failure)))).toBe(failure)
+      const expected = {
+        output: {
+          ok: false,
+          message: 'Vivid cannot reach its server right now; try again in a moment.',
+        },
+        terminate: false,
+      }
+      expect(yield* settle(Effect.fail(failure))).toEqual(expected)
       const configuration = Config.String('REQUIRED').pipe(
         Effect.map((value) => ({ output: value })),
         Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
       )
-      expect(yield* Effect.flip(settle(configuration))).toHaveProperty('_tag', 'ConfigError')
+      expect(yield* settle(configuration)).toEqual(expected)
+    }),
+  )
+
+  it.effect('keeps defects out of the safe-failure recovery path', () =>
+    Effect.gen(function* () {
+      const defect = new TypeError('Tool invariant failed')
+      const exit = yield* Effect.exit(settle(Effect.die(defect)))
+      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true)
     }),
   )
 

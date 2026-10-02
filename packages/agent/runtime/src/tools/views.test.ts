@@ -198,19 +198,9 @@ describe('model views', () => {
         outline: 'Signed',
         truncated: false,
       }),
-      views.external({
-        id: 'MARK-id',
-        personId: reference,
-        task_id: reference,
-        email: 'MARK-email',
-        imageUrl: 'MARK-image',
-        rows: [{ content: `Returned ${reference}` }],
-      }),
     ]
     const json = JSON.stringify(output)
-    expect(json).not.toMatch(
-      /MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|@example\.test|https:\/\//iu,
-    )
+    expect(json).not.toMatch(/MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/iu)
     const context = contextInstruction(
       VividContext.make({
         brief: `Review before signing. Legacy note: ${reference}.`,
@@ -220,6 +210,7 @@ describe('model views', () => {
     )
     expect(context).not.toMatch(/MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|"id"/iu)
     expect(context).toContain('Review agreement (2)')
+    expect(json).toContain('admin@example.test')
     expect(views.tools({ tools: [tool], unconnected: [] }).tools[0]).toHaveProperty(
       'input',
       tool.input,
@@ -228,6 +219,12 @@ describe('model views', () => {
       dueAt: '1970-01-01T00:00:02.000Z',
       followUps: [{ at: '1970-01-01T00:00:01.000Z', repeat: 86_400_000 }],
     })
+  })
+  it('keeps contact addresses in Person-authored content, including UUID-shaped mailboxes', () => {
+    const detail = `Contact ${reference}@example.test or ada@example.test; internal reference ${reference}.`
+    expect(views.task({ ...task, detail }, task.title).detail).toBe(
+      `Contact ${reference}@example.test or ada@example.test; internal reference [reference].`,
+    )
   })
   it('keeps exactly the documented client card references', () => {
     const request = InputRequest.make({

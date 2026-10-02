@@ -1,4 +1,4 @@
-import { Array as Arr, Result, Schema } from 'effect'
+import { Array as Arr, Order, Result, Schema } from 'effect'
 
 export class NameMissing extends Schema.TaggedError<NameMissing>()(
   'NameMissing',
@@ -51,8 +51,36 @@ export function named<A>(
   )
 }
 
-/** Both view and resolver use the full inventory before filtering or bounding its displayed rows. */
-export function inventory<A>(items: readonly A[], label: (item: A) => string) {
+/** Number an already ordered inventory, reserving every literal label before assigning suffixes. */
+function numbered<A>(items: readonly A[], label: (item: A) => string) {
   const names = distinct(items.map(label))
   return Arr.zip(items, names).map(([item, name]) => ({ item, name }))
+}
+
+/** Showing and resolving both sort immutable creation time and identity before numbering duplicates. */
+export function inventory<A extends { readonly createdAt: number; readonly id: string }>(
+  items: readonly A[],
+  label: (item: A) => string,
+) {
+  return numbered(
+    Arr.sort(
+      items,
+      Order.combine(
+        Order.mapInput(Order.Number, (item: A) => item.createdAt),
+        Order.mapInput(Order.String, (item: A) => item.id),
+      ),
+    ),
+    label,
+  )
+}
+
+/** Provider catalogs have no creation time; their immutable service key fixes duplicate naming. */
+export function catalog<A extends { readonly id: string }>(
+  items: readonly A[],
+  label: (item: A) => string,
+) {
+  return numbered(
+    Arr.sortWith(items, (item) => item.id, Order.String),
+    label,
+  )
 }

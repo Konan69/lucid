@@ -3,7 +3,7 @@ import { InvalidRequest } from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
-import { inventory, named } from './names.ts'
+import { catalog, named } from './names.ts'
 import { toolOutcome } from './outcomes.ts'
 import { Scope, type RunTool } from './scope.ts'
 import * as views from './views.ts'
@@ -47,7 +47,7 @@ export function connectionTools(runTool: RunTool) {
             const found = yield* client.FindTools({ query: data.service, limit: 25 })
             const service = yield* Effect.fromResult(
               named(
-                inventory(found.unconnected, (item) => views.modelText(item.name)),
+                catalog(found.unconnected, (item) => views.modelText(item.name)),
                 data.service,
               ),
             )
@@ -64,7 +64,7 @@ export function connectionTools(runTool: RunTool) {
   ] as const
 }
 
-/** Both account and tool must match rediscovery exactly; model input never carries Connection authority. */
+/** Both account and tool must resolve exactly; model input never carries Connection authority. */
 function useTool(runTool: RunTool) {
   return defineTool({
     name: 'use_tool',
@@ -81,7 +81,7 @@ function useTool(runTool: RunTool) {
         v.description('Why this action helps the request.'),
       ),
     }),
-    /** Unknown JSON is decoded at ingress; only a rediscovered pair determines the Connection. */
+    /** Unknown JSON is decoded at ingress; only a server-resolved pair determines the Connection. */
     run({ data, signal }) {
       return runTool(
         Effect.gen(function* () {
@@ -89,17 +89,7 @@ function useTool(runTool: RunTool) {
           const input = yield* decodeInput(data.input).pipe(
             Effect.mapError(() => new InvalidRequest({ message: 'Tool input must be JSON.' })),
           )
-          const found = yield* client.FindTools({ query: data.tool, limit: 25 })
-          const candidates = found.tools.filter(
-            (item) => item.name.trim().toLowerCase() === data.tool.trim().toLowerCase(),
-          )
-          const result = named(
-            candidates.map((item) => ({ name: views.modelText(item.account), item })),
-            data.account,
-          )
-          const match = yield* Effect.fromResult(result).pipe(
-            Effect.mapError(() => new RediscoverTool()),
-          )
+          const match = yield* client.ResolveTool({ account: data.account, tool: data.tool })
           return toolOutcome(
             yield* client.UseTool({
               connectionId: match.connectionId,
@@ -115,10 +105,3 @@ function useTool(runTool: RunTool) {
     },
   })
 }
-
-/** A stale account/tool pair needs fresh discovery rather than guessing a Connection. */
-export class RediscoverTool extends Schema.TaggedError<RediscoverTool>()(
-  'RediscoverTool',
-  {},
-  { title: 'Tool needs rediscovery' },
-) {}

@@ -38,11 +38,12 @@ function unavailable({ reason }: { readonly reason: string }): ToolResult {
   }
 }
 
-/** Each service outcome gives one truthful next step; an unknown side effect must never be retried blindly. */
+/** Provider records pass through untouched; settle bounds them without removing provider authority.
+ * Each service outcome gives one truthful next step; an unknown side effect must never be retried blindly. */
 export function toolOutcome(outcome: ToolOutcome): ToolResult {
   return ToolOutcome.match(outcome, {
     Completed: ({ output }) => ({
-      output: { ok: true, output: views.external(output), message: 'The action completed.' },
+      output: { ok: true, output, message: 'The action completed.' },
     }),
     ApprovalRequired: approval,
     Blocked: blocked,

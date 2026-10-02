@@ -19,11 +19,13 @@ export function skillTools(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            const { skills } = yield* client.ListSkillSummaries()
+            const { skills } = yield* client.ListSkills()
             const entries = inventory(skills, (item) => views.modelText(item.name))
             const found = yield* Effect.fromResult(named(entries, data.name))
             const response = yield* client.ReadSkill({ id: found.id })
-            return { output: views.skill(response.skill, data.name.trim()) }
+            const entry = entries.find(({ item }) => item.id === found.id)
+            if (entry === undefined) return yield* Effect.fail(new NameMissing({ name: data.name }))
+            return { output: views.skill(response.skill, entry.name) }
           }),
           { signal },
         )
@@ -48,7 +50,7 @@ export function skillTools(runTool: RunTool) {
           Effect.gen(function* () {
             const { client } = yield* Scope
             const response = yield* client.SaveSkill(data)
-            const { skills } = yield* client.ListSkillSummaries()
+            const { skills } = yield* client.ListSkills()
             const entry = inventory(skills, (item) => views.modelText(item.name)).find(
               ({ item }) => item.id === response.skill.id,
             )
