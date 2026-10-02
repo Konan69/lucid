@@ -95,7 +95,9 @@ describe.skipIf(!testDatabaseConfigured)('Delivery turn authority', () => {
         concurrency: 'unbounded',
       })
       expect(Arr.sort(turns, Order.Number)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
-      const replayed = yield* Effect.forEach(inputs, (input) => store.start(input))
+      const replayed = yield* Effect.forEach(inputs, (input) =>
+        store.start({ ...input, libraryFolder: LibraryFolderId.make(NodeCrypto.randomUUID()) }),
+      )
       expect(replayed).toEqual(turns)
       for (const turn of turns)
         expect(yield* store.scope({ threadId, turn })).toEqual({

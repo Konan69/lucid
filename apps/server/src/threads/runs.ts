@@ -161,8 +161,7 @@ const makeStart = (database: DatabaseService): RunStoreService['start'] =>
         if (
           recorded === undefined ||
           recorded.threadId !== input.threadId ||
-          recorded.personId !== input.personId ||
-          recorded.libraryFolder !== folder
+          recorded.personId !== input.personId
         ) {
           return yield* Effect.fail(
             new DatabaseFailure({ message: 'Run authority conflicts with its original delivery' }),
