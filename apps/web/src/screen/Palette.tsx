@@ -16,7 +16,7 @@ import {
   SquarePen,
 } from 'lucide-react'
 import { useAtomSet, useAtomValue } from '@effect/atom-react'
-import { useState, type ReactNode } from 'react'
+import { useCallback, useState, type ReactNode } from 'react'
 import { shortcut } from '../data/keys'
 import { findings, findQuery, live, useLiveValue } from '../data/live'
 import { Route, router } from '../data/route'
@@ -235,7 +235,7 @@ export function Palette({ onClose }: { onClose: () => void }) {
   const setQuery = useAtomSet(findQuery)
   const answer = liveStateOf(useAtomValue(findings))
   const threads = useLiveValue(live.threads)
-  const [index, setIndex] = useState(0)
+  const [selectedKey, setSelectedKey] = useState('do:new')
   const recent = Option.match(threads, {
     onNone: () => [],
     onSome: (value) =>
@@ -250,6 +250,13 @@ export function Palette({ onClose }: { onClose: () => void }) {
     LiveState.$is('Ready')(answer) ? answer.value.results : [],
   )
   const items = groups.flatMap((group) => group.items)
+  const selected = items.find((item) => item.key === selectedKey) ?? items[0]
+  const index = selected === undefined ? 0 : items.indexOf(selected)
+
+  /** Keep keyboard selection in view without moving the palette's own scroll position. */
+  const keepActiveVisible = useCallback((node: HTMLButtonElement | null) => {
+    if (node !== null) node.scrollIntoView({ block: 'nearest' })
+  }, [])
 
   /** Closes, and forgets what was typed: the next search starts from an empty field. */
   function close() {
@@ -300,18 +307,19 @@ export function Palette({ onClose }: { onClose: () => void }) {
               setTyped(next)
               // Actions are found here; only a search goes to the server.
               setQuery(next.startsWith('>') ? '' : next)
-              setIndex(0)
             }}
             // The arrows and Enter belong to the field: a result that has the keyboard through
             // Tab is activated by its own Enter, not by whichever one the arrows last marked.
             onKeyDown={(event) => {
               if (event.key === 'ArrowDown') {
                 event.preventDefault()
-                setIndex((current) => Math.min(current + 1, Math.max(items.length - 1, 0)))
+                const next = Math.min(index + 1, Math.max(items.length - 1, 0))
+                setSelectedKey(items[next]?.key ?? '')
               }
               if (event.key === 'ArrowUp') {
                 event.preventDefault()
-                setIndex((current) => Math.max(current - 1, 0))
+                const next = Math.max(index - 1, 0)
+                setSelectedKey(items[next]?.key ?? '')
               }
               if (event.key === 'Enter') choose(index)
             }}
@@ -333,8 +341,9 @@ export function Palette({ onClose }: { onClose: () => void }) {
                   <Row
                     key={item.key}
                     item={item}
-                    active={items.indexOf(item) === index}
-                    onHover={() => setIndex(items.indexOf(item))}
+                    active={item.key === selected?.key}
+                    activeRef={item.key === selected?.key ? keepActiveVisible : undefined}
+                    onHover={() => setSelectedKey(item.key)}
                     onChoose={() => choose(items.indexOf(item))}
                   />
                 ))}
@@ -350,17 +359,20 @@ export function Palette({ onClose }: { onClose: () => void }) {
 function Row({
   item,
   active,
+  activeRef,
   onHover,
   onChoose,
 }: {
   item: Item
   active: boolean
+  activeRef?: (node: HTMLButtonElement | null) => void
   onHover: () => void
   onChoose: () => void
 }) {
   return (
     <li>
       <button
+        ref={activeRef}
         onMouseEnter={onHover}
         onClick={onChoose}
         className={cn(
