@@ -12,19 +12,6 @@
         document.documentElement.dataset.theme = theme
       })()
     </script>
-    <link rel="preconnect" href="https://api.vapi.ai" crossorigin />
-    <link rel="preconnect" href="https://c.daily.co" crossorigin />
-    <link rel="preconnect" href="https://gs.daily.co" crossorigin />
-    <!-- Daily's call machine is downloaded before Vapi can join a room, and on a slow link that
-         download alone ran to eleven seconds — inside the fifteen Vapi allows a call before it
-         hangs up for silence. Preloading it while the Thread is idle takes it out of the click.
-         The version tracks the installed daily-js; a miss costs nothing but the old wait. -->
-    <link
-      rel="preload"
-      as="script"
-      crossorigin
-      href="https://c.daily.co/call-machine/versioned/0.87.0/static/call-machine-object-bundle.js"
-    />
   </head>
   <body>
     <div id="root"></div>

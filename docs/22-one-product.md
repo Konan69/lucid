@@ -425,7 +425,7 @@ Each step leaves a product that runs.
 - **A proven hosted machine.** The Boat provider is written and tested against a stand-in for
   Boat's API; it has not run against Boat itself, which needs an account key this repository does
   not hold.
-- **Voice.** The call work in `apps/web/src/call` stays as it is.
+- **Voice.** No calls in this build, and the page loads nothing for them.
 - **Chat channels** (Slack, mail-in). The Thread model above is what they will deliver into.
 - **Ambient participation.** Vivid answers when addressed; it does not join rooms unasked.
 - **Billing and usage limits.**
