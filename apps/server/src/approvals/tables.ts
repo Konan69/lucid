@@ -1,7 +1,7 @@
 import { index, jsonb, pgTable, text } from 'drizzle-orm/pg-core'
 import { personTable } from '../auth/tables.ts'
 import { companyColumn, epoch, personColumn } from '../database/owner.ts'
-import { threads } from '../threads/tables.ts'
+import { Signal, encodeSignal } from './signal.ts'
 
 /**
  * One row per Approval: the exact action Vivid proposed, and what became of it.
@@ -20,9 +20,8 @@ export const approvals = pgTable(
   'vivid_approvals',
   {
     id: text('id').primaryKey(),
-    threadId: text('thread_id')
-      .notNull()
-      .references(() => threads.id, { onDelete: 'cascade' }),
+    // Keep the decision after Thread deletion so replay can record its terminal reason.
+    threadId: text('thread_id').notNull(),
     runId: text('run_id'),
     personId: personColumn().notNull(),
     companyId: companyColumn(),
@@ -34,9 +33,15 @@ export const approvals = pgTable(
     decidedAt: epoch('decided_at'),
     finishedAt: epoch('finished_at'),
     outcome: text('outcome'),
+    signal: jsonb('signal')
+      .notNull()
+      .default(encodeSignal(Signal.cases.None.make({}))),
+    signalDueAt: epoch('signal_due_at').notNull().default(0),
+    signalClaim: text('signal_claim'),
     createdAt: epoch('created_at').notNull(),
   },
   (table) => [
+    index('vivid_approvals_signal').on(table.signalDueAt),
     index('vivid_approvals_thread').on(table.threadId, table.createdAt),
     index('vivid_approvals_person').on(table.personId, table.status),
     index('vivid_approvals_pending').on(table.status, table.expiresAt),

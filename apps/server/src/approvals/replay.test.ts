@@ -1,0 +1,190 @@
+import { describe, expect, it } from '@effect/vitest'
+import { ApprovalDecision, RuntimeUnavailable } from '@vivid/contracts'
+import { eq } from 'drizzle-orm'
+import { Deferred, Effect, Exit, Fiber, Layer, Option, Queue, Ref } from 'effect'
+import * as TestClock from 'effect/testing/TestClock'
+import { Database, returned } from '../database/client.ts'
+import { testDatabaseConfigured } from '../database/testdb.ts'
+import { threads } from '../threads/tables.ts'
+import { ApprovalStore, approvalStoreLayer } from './store.ts'
+import { approvals } from './tables.ts'
+import { approvalSweeperLayer } from './sweeper.ts'
+import { commandAction, fixture, Observation, trustTestLayer } from './testing.ts'
+
+const deny = ApprovalDecision.cases.Deny.make({})
+
+/** PostgreSQL owns debts and leases; abrupt defects represent a lost process without undoing SQL. */
+describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
+  it.effect('crash after decision and before admission is replayed by a fresh store', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const store = yield* ApprovalStore
+      const observed = yield* Observation
+      const approval = yield* store.raise(test.vivid, commandAction)
+      yield* Ref.set(observed.changesDefect, true)
+      const crash = yield* Effect.exit(
+        store.decide(test.personal, { id: approval.id, digest: approval.digest, decision: deny }),
+      )
+      expect(Exit.isFailure(crash)).toBe(true)
+      expect(yield* Ref.get(observed.deliveries)).toEqual([])
+      yield* Ref.set(observed.changesDefect, false)
+      yield* TestClock.adjust('30 seconds')
+      yield* Effect.gen(function* () {
+        yield* (yield* ApprovalStore).replay()
+      }).pipe(Effect.provide(approvalStoreLayer))
+      expect(yield* Ref.get(observed.deliveries)).toEqual([
+        expect.objectContaining({ idempotencyKey: `approval-${approval.id}` }),
+      ])
+      yield* store.replay()
+      expect(yield* Ref.get(observed.deliveries)).toHaveLength(1)
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
+  it.effect('the scoped startup worker admits debt without waiting for its first interval', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const store = yield* ApprovalStore
+      const observed = yield* Observation
+      const approval = yield* store.raise(test.vivid, commandAction)
+      yield* Ref.set(observed.changesDefect, true)
+      yield* Effect.exit(
+        store.decide(test.personal, { id: approval.id, digest: approval.digest, decision: deny }),
+      )
+      yield* Ref.set(observed.changesDefect, false)
+      yield* Layer.build(approvalSweeperLayer)
+      yield* Queue.take(observed.admissionStarted)
+      expect(
+        (yield* Ref.get(observed.deliveries)).map((delivery) => delivery.idempotencyKey),
+      ).toContain(`approval-${approval.id}`)
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
+  it.effect('a failed admission retries with its original key and then stops', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const store = yield* ApprovalStore
+      const observed = yield* Observation
+      const approval = yield* store.raise(test.vivid, commandAction)
+      yield* Ref.set(
+        observed.deliveryFailure,
+        Option.some(new RuntimeUnavailable({ message: 'Unavailable' })),
+      )
+      yield* store.decide(test.personal, {
+        id: approval.id,
+        digest: approval.digest,
+        decision: deny,
+      })
+      yield* Ref.set(observed.deliveryFailure, Option.none())
+      yield* store.replay()
+      expect(yield* Ref.get(observed.deliveries)).toHaveLength(1)
+      yield* TestClock.adjust('30 seconds')
+      yield* store.replay()
+      yield* store.replay()
+      expect(
+        (yield* Ref.get(observed.deliveries)).map((delivery) => delivery.idempotencyKey),
+      ).toEqual([`approval-${approval.id}`, `approval-${approval.id}`])
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
+  it.effect('Thread deletion ends replay and preserves one terminal reason', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const store = yield* ApprovalStore
+      const observed = yield* Observation
+      const database = yield* Database
+      const approval = yield* store.raise(test.vivid, commandAction)
+      yield* Ref.set(observed.changesDefect, true)
+      yield* Effect.exit(
+        store.decide(test.personal, { id: approval.id, digest: approval.digest, decision: deny }),
+      )
+      yield* Ref.set(observed.changesDefect, false)
+      // Retain a pending sibling too: removing cascade must not leave an orphan inbox card.
+      yield* store.raise(test.vivid, commandAction)
+      yield* database.run(database.delete(threads).where(eq(threads.id, test.personalId)))
+      expect(yield* store.inbox(test.personal)).toEqual([])
+      yield* store.replay()
+      const stopped = yield* returned(
+        yield* database.run(
+          database
+            .select({ signal: approvals.signal })
+            .from(approvals)
+            .where(eq(approvals.id, approval.id)),
+        ),
+        'stopped Approval',
+      )
+      expect(stopped.signal).toMatchObject({
+        reason: 'ThreadDeleted',
+        idempotencyKey: `approval-${approval.id}`,
+      })
+      yield* TestClock.adjust('1 minute')
+      yield* store.replay()
+      expect(
+        yield* returned(
+          yield* database.run(
+            database
+              .select({ signal: approvals.signal })
+              .from(approvals)
+              .where(eq(approvals.id, approval.id)),
+          ),
+          'stopped Approval',
+        ),
+      ).toEqual(stopped)
+      expect(yield* Ref.get(observed.deliveries)).toEqual([])
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
+  it.effect('two workers cannot admit the same claimed debt concurrently', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const store = yield* ApprovalStore
+      const observed = yield* Observation
+      const approval = yield* store.raise(test.vivid, commandAction)
+      yield* Ref.set(observed.changesDefect, true)
+      yield* Effect.exit(
+        store.decide(test.personal, { id: approval.id, digest: approval.digest, decision: deny }),
+      )
+      yield* Ref.set(observed.changesDefect, false)
+      const gate = yield* Deferred.make<void>()
+      yield* Ref.set(observed.deliveryGate, Option.some(gate))
+      const first = yield* store.replay().pipe(Effect.forkScoped)
+      yield* Queue.take(observed.admissionStarted)
+      yield* Effect.gen(function* () {
+        yield* (yield* ApprovalStore).replay()
+      }).pipe(Effect.provide(approvalStoreLayer))
+      yield* Deferred.succeed(gate, undefined)
+      yield* Fiber.join(first)
+      expect(
+        (yield* Ref.get(observed.deliveries)).filter(
+          (delivery) => delivery.idempotencyKey === `approval-${approval.id}`,
+        ),
+      ).toHaveLength(1)
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
+  it.effect('a crash after SQL claim is reclaimable when the lease expires', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const store = yield* ApprovalStore
+      const observed = yield* Observation
+      const approval = yield* store.raise(test.vivid, commandAction)
+      yield* Ref.set(observed.deliveryDefect, true)
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(
+            store.decide(test.personal, {
+              id: approval.id,
+              digest: approval.digest,
+              decision: deny,
+            }),
+          ),
+        ),
+      ).toBe(true)
+      yield* Ref.set(observed.deliveryDefect, false)
+      yield* store.replay()
+      expect(yield* Ref.get(observed.deliveries)).toEqual([])
+      yield* TestClock.adjust('2 minutes')
+      yield* store.replay()
+      expect(yield* Ref.get(observed.deliveries)).toHaveLength(1)
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+})

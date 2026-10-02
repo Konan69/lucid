@@ -1,7 +1,7 @@
 import { boolean, index, jsonb, pgTable, text } from 'drizzle-orm/pg-core'
 import { personTable } from '../auth/tables.ts'
 import { epoch, personColumn } from '../database/owner.ts'
-import { threads } from '../threads/tables.ts'
+import { Signal, encodeSignal } from '../approvals/signal.ts'
 
 /**
  * One row per Input request: a question a Run could not safely answer alone.
@@ -14,9 +14,8 @@ export const inputRequests = pgTable(
   'vivid_input_requests',
   {
     id: text('id').primaryKey(),
-    threadId: text('thread_id')
-      .notNull()
-      .references(() => threads.id, { onDelete: 'cascade' }),
+    // Keep the decision after Thread deletion so replay can record its terminal reason.
+    threadId: text('thread_id').notNull(),
     runId: text('run_id'),
     personId: personColumn().notNull(),
     question: text('question').notNull(),
@@ -26,9 +25,15 @@ export const inputRequests = pgTable(
     answeredBy: text('answered_by').references(() => personTable.id, { onDelete: 'set null' }),
     answer: text('answer'),
     settledAt: epoch('settled_at'),
+    signal: jsonb('signal')
+      .notNull()
+      .default(encodeSignal(Signal.cases.None.make({}))),
+    signalDueAt: epoch('signal_due_at').notNull().default(0),
+    signalClaim: text('signal_claim'),
     createdAt: epoch('created_at').notNull(),
   },
   (table) => [
+    index('vivid_input_requests_signal').on(table.signalDueAt),
     index('vivid_input_requests_thread').on(table.threadId, table.createdAt),
     index('vivid_input_requests_person').on(table.personId, table.status),
   ],

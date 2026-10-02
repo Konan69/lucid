@@ -4,6 +4,8 @@ import { eq, inArray } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
+import * as Deferred from 'effect/Deferred'
+import * as Queue from 'effect/Queue'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Ref from 'effect/Ref'
@@ -63,6 +65,10 @@ interface ObservationService {
   readonly outcome: Ref.Ref<ActionOutcome>
   readonly judgeCalls: Ref.Ref<ReadonlyArray<ReadonlyArray<Rule>>>
   readonly runnerDefect: Ref.Ref<boolean>
+  readonly changesDefect: Ref.Ref<boolean>
+  readonly deliveryGate: Ref.Ref<Option.Option<Deferred.Deferred<void>>>
+  readonly admissionStarted: Queue.Queue<void>
+  readonly deliveryDefect: Ref.Ref<boolean>
   readonly deliveryFailure: Ref.Ref<Option.Option<RuntimeUnavailable>>
 }
 export class Observation extends Context.Service<Observation, ObservationService>()(
@@ -83,6 +89,10 @@ const ports = Layer.effectContext(
       outcome: yield* Ref.make<ActionOutcome>(
         ActionOutcome.cases.Succeeded.make({ result: 'Done' }),
       ),
+      changesDefect: yield* Ref.make(false),
+      deliveryGate: yield* Ref.make<Option.Option<Deferred.Deferred<void>>>(Option.none()),
+      admissionStarted: yield* Queue.unbounded<void>(),
+      deliveryDefect: yield* Ref.make(false),
       deliveryFailure: yield* Ref.make<Option.Option<RuntimeUnavailable>>(Option.none()),
     })
     const judge = RuleJudge.of({
@@ -114,11 +124,22 @@ const ports = Layer.effectContext(
       }),
     })
     const conversation = Conversation.of({
-      /** Gateway admission is outside this lane; refuse accidental use by a trust test. */
-      admit: () =>
-        Effect.fail(
-          new RuntimeUnavailable({ message: 'Gateway admission is outside trust tests' }),
-        ),
+      /** The replay worker admits immediately; injected failures leave real SQL debt behind. */
+      admit: Effect.fn('TrustTest.admit')(function* (delivery) {
+        if (yield* Ref.get(state.deliveryDefect))
+          return yield* Effect.die('Injected delivery crash')
+        yield* Queue.offer(state.admissionStarted, undefined)
+        const gate = yield* Ref.get(state.deliveryGate)
+        if (Option.isSome(gate)) yield* Deferred.await(gate.value)
+        yield* Ref.update(state.deliveries, (deliveries) => deliveries.concat([delivery]))
+        const failure = yield* Ref.get(state.deliveryFailure)
+        if (Option.isSome(failure)) return yield* Effect.fail(failure.value)
+        return {
+          runId: RunId.make(`test-${delivery.idempotencyKey}`),
+          offset: '0',
+          incarnation: 'test',
+        }
+      }),
       /** Delivery returns a test Run while recording the exact signal and idempotency key. */
       deliver: Effect.fn('TrustTest.deliver')(function* (delivery) {
         yield* Ref.update(state.deliveries, (deliveries) => deliveries.concat([delivery]))
@@ -145,6 +166,7 @@ const ports = Layer.effectContext(
     })
     const changes = Changes.of({
       publish: Effect.fn('TrustTest.publish')(function* (topics) {
+        if (yield* Ref.get(state.changesDefect)) yield* Effect.die('Injected crash after recording')
         yield* Ref.update(state.topics, (previous) => previous.concat(topics))
       }),
       subscribe: () => Effect.succeed(Stream.never),

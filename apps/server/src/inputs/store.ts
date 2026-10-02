@@ -33,7 +33,9 @@ import { changed, Changes, Topic } from '../live/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { requireThread } from '../threads/access.ts'
 import { threads } from '../threads/tables.ts'
-import { Conversation, DeliveryMessage, StoredRunOrigin } from '../threads/conversation.ts'
+import { Conversation, DeliveryMessage } from '../threads/conversation.ts'
+import { Signal, encodeSignal } from '../approvals/signal.ts'
+import { replaySignals } from '../approvals/replay.ts'
 import { inputRequests } from './tables.ts'
 
 const fields = createSelectSchema(inputRequests, {
@@ -42,6 +44,7 @@ const fields = createSelectSchema(inputRequests, {
   runId: Schema.NullOr(RunId),
   personId: PersonId,
   options: Schema.Array(InputOption),
+  signal: Signal,
 }).fields
 const Row = Schema.Union([
   Schema.Struct({
@@ -128,6 +131,7 @@ const view = Effect.fn('Inputs.view')(function* (
 })
 
 export interface InputStoreService {
+  readonly replay: () => Effect.Effect<void, DatabaseInfrastructureError>
   readonly inThread: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<InputRequest>, DatabaseInfrastructureError>
@@ -213,6 +217,15 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
   yield* requireThread(row.threadId, actor.person.id)
   if (!row.allowsOwnAnswer && !row.options.some((option) => option.label === request.answer))
     return yield* Effect.fail(new Conflict({ message: 'Choose one of the offered answers' }))
+  const now = yield* Clock.currentTimeMillis
+  const signal = Signal.cases.Owed.make({
+    idempotencyKey: `answer-${request.id}`,
+    message: DeliveryMessage.cases.Signal.make({
+      type: 'answer',
+      body: request.answer,
+      attributes: { request: request.id },
+    }),
+  })
   const updated = yield* database.run(
     database
       .update(inputRequests)
@@ -220,7 +233,9 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
         status: 'answered',
         answeredBy: actor.person.id,
         answer: request.answer,
-        settledAt: yield* Clock.currentTimeMillis,
+        settledAt: now,
+        signal: encodeSignal(signal),
+        signalDueAt: now,
       })
       .where(
         and(
@@ -235,23 +250,9 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
     return yield* Effect.fail(new Conflict({ message: 'Input request already answered' }))
   const input = yield* returned(yield* view(updated), 'Input request')
   yield* changed(actor, Topic.thread(row.threadId))
-  yield* (yield* Conversation)
-    .deliver({
-      threadId: row.threadId,
-      personId: actor.person.id,
-      message: DeliveryMessage.cases.Signal.make({
-        type: 'answer',
-        body: request.answer,
-        attributes: { request: request.id },
-      }),
-      origin: StoredRunOrigin.cases.Decision.make({}),
-      idempotencyKey: `answer-${request.id}`,
-    })
-    .pipe(
-      Effect.catch(() =>
-        Effect.logError('Input answer delivery failed', { requestId: request.id }),
-      ),
-    )
+  yield* replaySignals(inputRequests, Option.some([request.id])).pipe(
+    Effect.catch(() => Effect.logError('Input answer replay failed', { requestId: request.id })),
+  )
   return input
 }, Effect.uninterruptible)
 
@@ -295,6 +296,7 @@ export const inputStoreLayer = Layer.effect(
       }),
       ask: (actor, request) => run(ask(actor, request)),
       answer: (actor, request) => run(answer(actor, request)),
+      replay: () => run(replaySignals(inputRequests, Option.none())),
     })
   }),
 )

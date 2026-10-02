@@ -9,6 +9,7 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
+import * as Struct from 'effect/Struct'
 import {
   Approval,
   ApprovalDecision,
@@ -40,10 +41,13 @@ import { changed, Topic, Changes } from '../live/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { RuleStore } from '../rules/store.ts'
 import { requireThread } from '../threads/access.ts'
-import { Conversation, DeliveryMessage, StoredRunOrigin } from '../threads/conversation.ts'
+import { threads } from '../threads/tables.ts'
+import { Conversation, DeliveryMessage } from '../threads/conversation.ts'
 import { ActionOutcome, ActionRunner } from './gate.ts'
 import { actionDigest, auditAction } from './action.ts'
 import { approvals } from './tables.ts'
+import { Signal, encodeSignal } from './signal.ts'
+import { replaySignals } from './replay.ts'
 
 const fields = createSelectSchema(approvals, {
   id: ApprovalId,
@@ -52,6 +56,7 @@ const fields = createSelectSchema(approvals, {
   personId: PersonId,
   companyId: Schema.NullOr(CompanyId),
   action: ProposedAction,
+  signal: Signal,
 }).fields
 const undecided = { decidedBy: Schema.Null, decidedAt: Schema.Null }
 const decided = { decidedBy: PersonId, decidedAt: Schema.Number }
@@ -202,6 +207,7 @@ export interface ApprovalStoreService {
     actor: Actor,
     id: ApprovalId,
   ) => Effect.Effect<ThreadId, NotFound | Conflict | DatabaseInfrastructureError>
+  readonly replay: () => Effect.Effect<void, DatabaseInfrastructureError>
   readonly expire: () => Effect.Effect<void, DatabaseInfrastructureError>
 }
 export class ApprovalStore extends Context.Service<ApprovalStore, ApprovalStoreService>()(
@@ -244,6 +250,8 @@ const claim = Effect.fn('Approvals.claim')(function* (
         status: ApprovalDecision.guards.Deny(request.decision) ? 'denied' : 'executing',
         decidedBy: actor.person.id,
         decidedAt: now,
+        signal: encodeSignal(decisionSignal(row, request.decision)),
+        signalDueAt: now,
       })
       .where(
         and(
@@ -261,52 +269,52 @@ const claim = Effect.fn('Approvals.claim')(function* (
   return yield* decodeRow(claimed)
 })
 
-const Settled = Schema.Union([
-  ApprovalState.cases.Denied,
-  ApprovalState.cases.Succeeded,
-  ApprovalState.cases.Failed,
-  ApprovalState.cases.OutcomeUnknown,
-  ApprovalState.cases.Expired,
+/** Only terminal outcomes have a signal body; execution first records an Awaiting debt. */
+const Conclusion = Schema.Union([
+  ApprovalState.cases.Denied.mapFields(Struct.pick(['_tag'])),
+  ApprovalState.cases.Expired.mapFields(Struct.pick(['_tag'])),
+  ApprovalState.cases.Succeeded.mapFields(Struct.pick(['_tag', 'result'])),
+  ApprovalState.cases.Failed.mapFields(Struct.pick(['_tag', 'reason'])),
+  ApprovalState.cases.OutcomeUnknown.mapFields(Struct.pick(['_tag'])),
 ]).pipe(Schema.toTaggedUnion('_tag'))
-const isSettled = Schema.is(Settled)
 
-/** Settled signals carry the result as truth; a delivery outage cannot undo an already executed action. */
-const deliver = Effect.fn('Approvals.deliver')(function* (personId: PersonId, approval: Approval) {
-  if (!isSettled(approval.state))
-    return yield* Effect.fail(
-      new DatabaseFailure({ message: 'Unsettled Approval cannot be delivered' }),
-    )
-  const body = Settled.match(approval.state, {
-    Expired: () =>
-      `Expired: ${approval.action.summary}. This request ran out. The action was not run.`,
-    Denied: () => `Denied: ${approval.action.summary}. The action was not run.`,
-    Succeeded: ({ result }) =>
-      `Approved: ${approval.action.summary}. Result: ${result.slice(0, 4000)}`,
-    Failed: ({ reason }) =>
-      `Approved: ${approval.action.summary}. Failed: ${reason.slice(0, 4000)}`,
+/** The decision and eventual settlement share one runtime delivery identity. */
+const approvalKey = (id: ApprovalId) => `approval-${id}`
+
+/** Freeze the outcome text in the settlement write so no later projection is needed for replay. */
+const owed = (id: ApprovalId, summary: string, conclusion: typeof Conclusion.Type) => {
+  const body = Conclusion.match(conclusion, {
+    Expired: () => `Expired: ${summary}. This request ran out. The action was not run.`,
+    Denied: () => `Denied: ${summary}. The action was not run.`,
+    Succeeded: ({ result }) => `Approved: ${summary}. Result: ${result.slice(0, 4000)}`,
+    Failed: ({ reason }) => `Approved: ${summary}. Failed: ${reason.slice(0, 4000)}`,
     OutcomeUnknown: () =>
-      `Approved: ${approval.action.summary}. The outcome is unknown. Check the service; never retry this action automatically.`,
+      `Approved: ${summary}. The outcome is unknown. Check the service; never retry this action automatically.`,
   })
-  return yield* (yield* Conversation)
-    .deliver({
-      threadId: approval.threadId,
-      personId,
-      message: DeliveryMessage.cases.Signal.make({
-        type: 'approval',
-        body,
-        attributes: {
-          approval: approval.id,
-          outcome: ApprovalState.guards.Expired(approval.state) ? 'expired' : approval.state._tag,
-        },
-      }),
-      origin: StoredRunOrigin.cases.Decision.make({}),
-      idempotencyKey: `approval-${approval.id}`,
-    })
-    .pipe(
-      Effect.catch(() =>
-        Effect.logError('Approval outcome delivery failed', { approvalId: approval.id }),
-      ),
-    )
+  return Signal.cases.Owed.make({
+    idempotencyKey: approvalKey(id),
+    message: DeliveryMessage.cases.Signal.make({
+      type: 'approval',
+      body,
+      attributes: {
+        approval: id,
+        outcome: Conclusion.guards.Expired(conclusion) ? 'expired' : conclusion._tag,
+      },
+    }),
+  })
+}
+
+/** A refusal already knows its result; permission owes the result of the once-only action. */
+const decisionSignal = (row: typeof Row.Type, decision: ApprovalDecision) =>
+  ApprovalDecision.guards.Deny(decision)
+    ? owed(row.id, row.action.summary, Conclusion.cases.Denied.make({}))
+    : Signal.cases.Awaiting.make({ idempotencyKey: approvalKey(row.id) })
+
+/** Request delivery is only an optimization; all failures leave the SQL debt for the sweeper. */
+const deliver = Effect.fn('Approvals.deliver')(function* (id: ApprovalId) {
+  yield* replaySignals(approvals, Option.some([id])).pipe(
+    Effect.catch(() => Effect.logError('Approval outcome replay failed', { approvalId: id })),
+  )
 })
 
 type StoredOutcome = Pick<typeof approvals.$inferSelect, 'status' | 'outcome'>
@@ -314,7 +322,7 @@ type StoredOutcome = Pick<typeof approvals.$inferSelect, 'status' | 'outcome'>
 /** Once executing, only the recorded outcome may settle this Approval; there is no retry path. */
 const finish = Effect.fn('Approvals.finish')(function* (
   actor: Actor,
-  id: ApprovalId,
+  row: typeof Row.Type,
   outcome: ActionOutcome,
 ) {
   const database = yield* Database
@@ -326,12 +334,27 @@ const finish = Effect.fn('Approvals.finish')(function* (
       outcome: null,
     }),
   })
+  const conclusion = ActionOutcome.match<typeof Conclusion.Type>(outcome, {
+    Succeeded: ({ result }) => Conclusion.cases.Succeeded.make({ result }),
+    Failed: ({ reason }) => Conclusion.cases.Failed.make({ reason }),
+    Unknown: () => Conclusion.cases.OutcomeUnknown.make({}),
+  })
+  const now = yield* Clock.currentTimeMillis
   const rows = yield* database.run(
     database
       .update(approvals)
-      .set({ ...ending, finishedAt: yield* Clock.currentTimeMillis })
+      .set({
+        ...ending,
+        finishedAt: now,
+        signal: encodeSignal(owed(row.id, row.action.summary, conclusion)),
+        signalDueAt: now,
+      })
       .where(
-        and(ownedHere(approvals, actor), eq(approvals.id, id), eq(approvals.status, 'executing')),
+        and(
+          ownedHere(approvals, actor),
+          eq(approvals.id, row.id),
+          eq(approvals.status, 'executing'),
+        ),
       )
       .returning(),
   )
@@ -351,7 +374,7 @@ const decide = Effect.fn('Approvals.decide')(function* (
   if (ApprovalDecision.guards.Deny(request.decision)) {
     yield* audit.record(decisionActor, AuditEvent.cases.ActionDenied.make(event))
     const approval = yield* returned(yield* view([row]), 'Approval')
-    yield* deliver(actor.person.id, approval)
+    yield* deliver(approval.id)
     return approval
   }
   if (ApprovalDecision.guards.AlwaysAllow(request.decision)) {
@@ -362,7 +385,7 @@ const decide = Effect.fn('Approvals.decide')(function* (
     workspace: actor.workspace,
     action: row.action,
   })
-  const settled = yield* finish(actor, row.id, outcome)
+  const settled = yield* finish(actor, row, outcome)
   yield* changed(actor, Topic.thread(row.threadId))
   yield* audit.record(
     decisionActor,
@@ -373,7 +396,7 @@ const decide = Effect.fn('Approvals.decide')(function* (
     }),
   )
   const approval = yield* returned(yield* view([settled]), 'Approval')
-  yield* deliver(actor.person.id, approval)
+  yield* deliver(approval.id)
   return approval
 }, Effect.uninterruptible)
 
@@ -442,25 +465,53 @@ const raise = Effect.fn('Approvals.raise')(function* (actor: Actor, action: Prop
   return approval
 })
 
+/** Recovery freezes a terminal signal under the row lock; executing actions are never re-run. */
+const recover = (
+  tx: Parameters<Parameters<Database['Service']['transaction']>[0]>[0],
+  now: number,
+) =>
+  Effect.fn('Approvals.recover')(function* (value: typeof approvals.$inferSelect) {
+    const row = yield* decodeRow(value)
+    const ranOut = Row.guards.pending(row)
+    const ending = ranOut
+      ? { status: 'expired', finishedAt: now, outcome: null }
+      : { status: 'unknown', finishedAt: now, outcome: null }
+    const conclusion = ranOut
+      ? Conclusion.cases.Expired.make({})
+      : Conclusion.cases.OutcomeUnknown.make({})
+    const updated = yield* tx
+      .update(approvals)
+      .set({
+        ...ending,
+        signal: encodeSignal(owed(row.id, row.action.summary, conclusion)),
+        signalDueAt: now,
+      })
+      .where(eq(approvals.id, row.id))
+      .returning()
+    return yield* decodeRow(yield* returned(updated, 'Recovered Approval'))
+  })
+
 /** Conditional sweeps settle expired questions and abandoned executions; nothing is ever re-run. */
 const expire = Effect.fn('Approvals.expire')(function* () {
   const database = yield* Database
   const now = yield* Clock.currentTimeMillis
-  const expired = yield* database.run(
-    database
-      .update(approvals)
-      .set({ status: 'expired', finishedAt: now })
-      .where(and(eq(approvals.status, 'pending'), lte(approvals.expiresAt, now)))
-      .returning(),
+  const rows = yield* database.transaction((tx) =>
+    Effect.gen(function* () {
+      const expired = yield* tx
+        .select()
+        .from(approvals)
+        .where(and(eq(approvals.status, 'pending'), lte(approvals.expiresAt, now)))
+        .for('update', { skipLocked: true })
+      const abandoned = yield* tx
+        .select()
+        .from(approvals)
+        .where(
+          and(eq(approvals.status, 'executing'), lt(approvals.decidedAt, now - 10 * 60 * 1000)),
+        )
+        .for('update', { skipLocked: true })
+      return yield* Effect.forEach(expired.concat(abandoned), recover(tx, now))
+    }),
   )
-  const abandoned = yield* database.run(
-    database
-      .update(approvals)
-      .set({ status: 'unknown', finishedAt: now, outcome: null })
-      .where(and(eq(approvals.status, 'executing'), lt(approvals.decidedAt, now - 10 * 60 * 1000)))
-      .returning(),
-  )
-  const rows = yield* Effect.forEach(expired.concat(abandoned), decodeRow)
   yield* (yield* Changes).publish(
     rows.flatMap((row) =>
       [Topic.person(row.personId), Topic.thread(row.threadId)].concat(
@@ -492,10 +543,10 @@ const settleRecovered = Effect.fn('Approvals.settleRecovered')(
           AuditEvent.cases.ActionOutcomeUnknown.make(auditAction(approval.action)),
         ),
       )
-      yield* deliver(approval.state.decidedBy.id, approval)
+      yield* deliver(approval.id)
       if (Result.isFailure(audit)) yield* Effect.fail(audit.failure)
     } else {
-      yield* deliver(approval.askedOf.id, approval)
+      yield* deliver(approval.id)
     }
   },
   (effect) =>
@@ -529,16 +580,17 @@ export const approvalStoreLayer = Layer.effect(
         )
         return yield* run(view(rows))
       }),
-      /** The inbox never grants a Company owner access to another Person's Approval. */
+      /** Pending cards need a surviving Thread; retained tombstones never appear in an inbox. */
       inbox: Effect.fn('ApprovalStore.inbox')(function* (actor) {
         const rows = yield* database.run(
           database
-            .select()
+            .select({ approval: approvals })
             .from(approvals)
+            .innerJoin(threads, eq(threads.id, approvals.threadId))
             .where(and(ownedHere(approvals, actor), eq(approvals.status, 'pending')))
             .orderBy(asc(approvals.createdAt), asc(approvals.id)),
         )
-        return yield* run(view(rows))
+        return yield* run(view(rows.map((row) => row.approval)))
       }),
       raise: (actor, action) => run(raise(actor, action)),
       decide: (actor, request) => run(decide(actor, request)),
@@ -569,6 +621,7 @@ export const approvalStoreLayer = Layer.effect(
         return row.threadId
       }),
       expire: () => run(expire()),
+      replay: () => run(replaySignals(approvals, Option.none())),
     })
   }),
 )
