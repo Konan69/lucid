@@ -1,0 +1,479 @@
+import * as NodeCrypto from 'node:crypto'
+import * as NodeBuffer from 'node:buffer'
+import * as NodeHttp from 'node:http'
+import { NodeHttpServer } from '@effect/platform-node'
+import { describe, expect, it } from '@effect/vitest'
+import { BrowserAction, ComputerState, DesktopAction } from '@vivid/contracts'
+import { eq } from 'drizzle-orm'
+import { ConfigProvider, Context, Effect, Layer, Ref, Schema, Predicate } from 'effect'
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from 'effect/unstable/http'
+import { Database } from '../database/client.ts'
+import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
+import { boatMachineLayer } from './boat.ts'
+import { Machine, MachineKey } from './machine.ts'
+import { machineBindings } from './tables.ts'
+import * as Protocol from './boat/protocol.ts'
+
+// Deliberate PNG fixture, not a claim that the guest was exercised.
+const png =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j9f8AAAAASUVORK5CYII='
+const id = 'bx_23456789'
+interface EvidenceService {
+  readonly state: Ref.Ref<'ready' | 'archived'>
+  readonly created: Ref.Ref<number>
+  readonly intents: Ref.Ref<ReadonlyArray<string>>
+  readonly commands: Ref.Ref<ReadonlyArray<string>>
+  readonly files: Ref.Ref<ReadonlyMap<string, string>>
+  readonly calls: Ref.Ref<ReadonlyArray<string>>
+  readonly address: Ref.Ref<string>
+  readonly breakCreate: Ref.Ref<boolean>
+  readonly breakCommand: Ref.Ref<boolean>
+  readonly publicViewer: Ref.Ref<boolean>
+  readonly malformed: Ref.Ref<boolean>
+}
+class Evidence extends Context.Service<Evidence, EvidenceService>()('vivid/BoatProtocolEvidence') {}
+const evidenceLayer = Layer.effect(
+  Evidence,
+  Effect.gen(function* () {
+    return Evidence.of({
+      state: yield* Ref.make<'ready' | 'archived'>('ready'),
+      created: yield* Ref.make(0),
+      intents: yield* Ref.make<ReadonlyArray<string>>([]),
+      commands: yield* Ref.make<ReadonlyArray<string>>([]),
+      files: yield* Ref.make<ReadonlyMap<string, string>>(new Map()),
+      calls: yield* Ref.make<ReadonlyArray<string>>([]),
+      address: yield* Ref.make('https://example.com'),
+      breakCreate: yield* Ref.make(false),
+      breakCommand: yield* Ref.make(false),
+      publicViewer: yield* Ref.make(false),
+      malformed: yield* Ref.make(false),
+    })
+  }),
+)
+const Create = HttpServerRequest.schemaBodyJson(Protocol.CreateRequest)
+const Input = HttpServerRequest.schemaBodyJson(
+  Schema.Struct({
+    command: Schema.String,
+    timeoutSeconds: Schema.Int,
+    detached: Schema.Literal(false),
+    stream: Schema.Literal(false),
+  }),
+)
+const File = HttpServerRequest.schemaBodyJson(
+  Schema.Struct({ path: Schema.String, content: Schema.String, encoding: Schema.Literal('utf8') }),
+)
+const Viewer = HttpServerRequest.schemaBodyJson(
+  Schema.Struct({ publicAccess: Schema.Literal(false) }),
+)
+const Stop = HttpServerRequest.schemaBodyJson(Schema.Struct({ force: Schema.Literal(false) }))
+const Resume = HttpServerRequest.schemaBodyJson(
+  Schema.Struct({ ttlSeconds: Schema.NullOr(Protocol.Lifetime), noEnv: Schema.Literal(true) }),
+)
+const decodeAddress = Schema.decodeUnknownEffect(Schema.String)
+const decodeArgs = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
+)
+const record = (state: 'ready' | 'archived') => ({
+  id,
+  name: 'Fixture',
+  state,
+  desktopAvailable: state === 'ready',
+  snapshotAvailable: state === 'archived',
+})
+const rejected = (status: number) =>
+  HttpServerResponse.jsonUnsafe(
+    {
+      ok: false,
+      type: 'error',
+      requestId: 'fixture',
+      error: { code: 'fixture_failure', message: 'fixture', status },
+    },
+    { status },
+  )
+const commandReply = (stdout: string) =>
+  HttpServerResponse.jsonUnsafe({
+    ok: true,
+    type: 'command.finished',
+    success: true,
+    exitCode: 0,
+    stdout,
+    stderr: '',
+    timedOut: false,
+  })
+
+/** The guest fixture speaks actual Cua CLI JSON; unexpected tools fail the fixture. */
+const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService, command: string) {
+  const match = /cua-driver call '([a-z_]+)'/.exec(command)
+  if (match === null || match[1] === undefined) return commandReply('{"window":"Fixture Chrome"}')
+  const tool = match[1]
+  yield* Ref.update(evidence.calls, (calls) => [...calls, tool])
+  const path = /< '([^']+)'$/.exec(command)
+  if (path === null || path[1] === undefined) return rejected(400)
+  const content = (yield* Ref.get(evidence.files)).get(path[1])
+  if (content === undefined) return rejected(400)
+  const args = yield* decodeArgs(content)
+  switch (tool) {
+    case 'get_desktop_state': {
+      const output = /--screenshot-out-file '([^']+)'/.exec(command)
+      if (output === null || output[1] === undefined) return rejected(400)
+      const destination = output[1]
+      yield* Ref.update(evidence.files, (files) => new Map(files).set(destination, png))
+      return commandReply(
+        JSON.stringify({
+          screenshot_mime_type: 'image/png',
+          screenshot_width: 1,
+          screenshot_height: 1,
+          screen_width: 1,
+          screen_height: 1,
+          scale_factor: 1,
+          platform: 'linux',
+          display: 'primary',
+        }),
+      )
+    }
+    case 'browser_prepare': {
+      expect(args.allow_launch).toBe(false)
+      return commandReply('{"status":"ok","prepared":true}')
+    }
+    case 'get_cursor_position':
+      return commandReply('{"x":0,"y":0}')
+    case 'list_windows':
+      return commandReply(
+        '{"windows":[{"pid":7,"window_id":9,"app_name":"Google Chrome","title":"Example"}]}',
+      )
+    case 'get_browser_state': {
+      const address = yield* Ref.get(evidence.address)
+      if (Object.hasOwn(args, 'snapshot_format'))
+        return commandReply(
+          JSON.stringify({
+            status: 'ok',
+            mode: 'snapshot',
+            page: { url: address, title: 'Example' },
+            outline: 'button "Continue"\ntextbox "Message"',
+            snapshot: { complete: true },
+            refs: [
+              { ref: 'p1:1', name: 'Continue', actions: ['click'] },
+              { ref: 'p1:2', name: 'Message', actions: ['type'] },
+            ],
+          }),
+        )
+      return commandReply(
+        JSON.stringify({
+          status: 'ok',
+          mode: 'bind',
+          target_id: 'fixture-target',
+          binding_quality: 'exact',
+          tabs: [{ tab_id: 'fixture-tab', title: 'Example', url: address, active: true }],
+        }),
+      )
+    }
+    case 'browser_navigate': {
+      const address = yield* decodeAddress(args.url)
+      yield* Ref.set(evidence.address, address)
+      return commandReply('{"status":"ok"}')
+    }
+    case 'get_window_state':
+      return commandReply(
+        '{"elements":[{"role":"page tab","label":"Example","element_token":"fixture-token"}]}',
+      )
+    case 'click':
+    case 'move_cursor':
+    case 'drag':
+    case 'scroll':
+    case 'hotkey':
+    case 'type_text':
+    case 'browser_click':
+    case 'browser_type':
+    case 'launch_app':
+      return commandReply('{"status":"ok"}')
+    default:
+      return rejected(400)
+  }
+})
+
+/** Simulate a minted machine whose first receipt is lost; the next identical intent recovers it. */
+const create = Effect.fn('BoatTest.create')(function* (
+  evidence: EvidenceService,
+  request: HttpServerRequest.HttpServerRequest,
+) {
+  const body = yield* Create
+  expect(body.type).toBe('default')
+  expect(body.ttlSeconds).toBe(3600)
+  expect(body.noEnv).toBe(true)
+  expect(body.snapshots).toBe(true)
+  const intent = request.headers['idempotency-key']
+  expect(intent === undefined).toBe(false)
+  if (intent === undefined) return rejected(400)
+  const intents = yield* Ref.get(evidence.intents)
+  if (!intents.includes(intent)) yield* Ref.update(evidence.created, (value) => value + 1)
+  yield* Ref.update(evidence.intents, (values) => [...values, intent])
+  if (yield* Ref.get(evidence.breakCreate)) {
+    yield* Ref.set(evidence.breakCreate, false)
+    return rejected(503)
+  }
+  return HttpServerResponse.jsonUnsafe({
+    ok: true,
+    type: 'sandbox.created',
+    status: 'ready',
+    ttlSeconds: body.ttlSeconds,
+    sandbox: record('ready'),
+  })
+})
+const commands = Effect.fn('BoatTest.commands')(function* (evidence: EvidenceService) {
+  const input = yield* Input
+  yield* Ref.update(evidence.commands, (values) => [...values, input.command])
+  if (yield* Ref.get(evidence.breakCommand)) return rejected(502)
+  if (input.command.startsWith('umask 077; mkdir')) return commandReply('')
+  if (input.command.startsWith('rm -f --')) {
+    const match = /rm -f -- '([^']+)'/.exec(input.command)
+    const paths = Array.from(input.command.matchAll(/'([^']+)'/g), (item) => item[1])
+    const path = match === null ? undefined : match[1]
+    if (path !== undefined)
+      yield* Ref.update(evidence.files, (files) => {
+        const next = new Map(files)
+        for (const file of paths) if (file !== undefined) next.delete(file)
+        return next
+      })
+    return commandReply('')
+  }
+  if (input.command === 'echo receipt') return commandReply('receipt\n')
+  return yield* native(evidence, input.command)
+})
+
+/** Actual ephemeral HTTP, real Effect HttpClient and real durable Drizzle binding. */
+const serverLayer = Layer.effect(
+  HttpClient.HttpClient,
+  Effect.gen(function* () {
+    const evidence = yield* Evidence
+    const server = yield* HttpServer.HttpServer
+    const client = yield* HttpClient.HttpClient
+    const application = Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest
+      // Assert booleans to avoid ever displaying an authorization header in a failed assertion.
+      expect(request.headers.authorization === 'Bearer protocol-test-key').toBe(true)
+      expect(request.headers['x-boat-org'] === 'personal').toBe(true)
+      const path = request.url.split('?')[0]
+      if (path === '/api/v1/sandboxes' && request.method === 'POST')
+        return yield* create(evidence, request)
+      if (path === `/api/v1/sandboxes/${id}` && request.method === 'GET') {
+        if (yield* Ref.get(evidence.malformed))
+          return HttpServerResponse.jsonUnsafe({ ok: true, sandbox: {} })
+        return HttpServerResponse.jsonUnsafe({
+          ok: true,
+          type: 'sandbox.info',
+          sandbox: record(yield* Ref.get(evidence.state)),
+        })
+      }
+      if (path === `/api/v1/sandboxes/${id}/stop`) {
+        yield* Stop
+        yield* Ref.set(evidence.state, 'archived')
+        return HttpServerResponse.jsonUnsafe({
+          ok: true,
+          type: 'sandbox.stopping',
+          id,
+          status: 'archiving',
+        })
+      }
+      if (path === `/api/v1/sandboxes/${id}/resume`) {
+        yield* Resume
+        yield* Ref.set(evidence.state, 'ready')
+        return HttpServerResponse.jsonUnsafe({
+          ok: true,
+          type: 'sandbox.resuming',
+          id,
+          status: 'resuming',
+        })
+      }
+      if (path === `/api/v1/sandboxes/${id}/desktop`) {
+        yield* Viewer
+        const address = (yield* Ref.get(evidence.publicViewer))
+          ? 'https://viewer.boat.test/stream.html'
+          : 'https://viewer.boat.test/stream.html#token=fixture-only'
+        return HttpServerResponse.jsonUnsafe({ ok: true, type: 'desktop.url', desktopUrl: address })
+      }
+      if (path === `/api/v1/sandboxes/${id}/files` && request.method === 'GET') {
+        const query = new URL(request.url, 'http://fixture.test').searchParams
+        const file = query.get('path')
+        if (file === null || query.get('encoding') !== 'base64') return rejected(400)
+        const content = (yield* Ref.get(evidence.files)).get(file)
+        if (content === undefined) return rejected(404)
+        return HttpServerResponse.jsonUnsafe({
+          ok: true,
+          type: 'file.read',
+          success: true,
+          path: file,
+          encoding: 'base64',
+          size: NodeBuffer.Buffer.from(content, 'base64').length,
+          content,
+        })
+      }
+      if (path === `/api/v1/sandboxes/${id}/files` && request.method === 'PUT') {
+        const file = yield* File
+        yield* Ref.update(evidence.files, (files) => new Map(files).set(file.path, file.content))
+        return HttpServerResponse.jsonUnsafe({
+          ok: true,
+          type: 'file.written',
+          success: true,
+          path: file.path,
+          encoding: 'utf8',
+          size: file.content.length,
+        })
+      }
+      if (path === `/api/v1/sandboxes/${id}/commands`) return yield* commands(evidence)
+      return rejected(404)
+    }).pipe(Effect.catch(() => Effect.succeed(rejected(400))))
+    yield* server.serve(application)
+    const origin = new URL(HttpServer.formatAddress(server.address))
+    origin.hostname = '127.0.0.1'
+    return HttpClient.mapRequest(client, (request) => {
+      const url = new URL(request.url)
+      url.protocol = origin.protocol
+      url.host = origin.host
+      return HttpClientRequest.setUrl(request, url.toString())
+    })
+  }),
+).pipe(
+  Layer.provideMerge(evidenceLayer),
+  Layer.provide(
+    Layer.mergeAll(NodeHttpServer.layer(NodeHttp.createServer, { port: 0 }), FetchHttpClient.layer),
+  ),
+)
+const configLayer = ConfigProvider.layerAdd(
+  ConfigProvider.fromUnknown({
+    VIVID_BOAT_API_KEY: 'protocol-test-key',
+    VIVID_BOAT_ORG: 'personal',
+  }),
+  { asPrimary: true },
+)
+const dependencies = Layer.mergeAll(testDatabaseLayer, serverLayer, configLayer)
+const testLayer = boatMachineLayer.pipe(Layer.provideMerge(dependencies))
+
+/** Register cleanup before provisioning; only this fixture's private binding is removed. */
+const fixture = Effect.fn('BoatTest.fixture')(function* () {
+  const key = MachineKey.make(NodeCrypto.randomUUID())
+  const database = yield* Database
+  yield* Effect.addFinalizer(() =>
+    database
+      .run(database.delete(machineBindings).where(eq(machineBindings.key, key)))
+      .pipe(Effect.ignore),
+  )
+  return key
+})
+
+describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => {
+  it.effect(
+    'creates once, returns a gated viewer, executes native desktop/browser, stops and resumes after Layer restart',
+    () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        const running = yield* machine.ensure(key)
+        expect(running.screen._tag).toBe('Viewer')
+        if (Predicate.isTagged(running.screen, 'Viewer'))
+          expect(running.screen.expiresAt > running.since).toBe(true)
+        const view = yield* machine.desktop({ key, action: DesktopAction.cases.Look.make({}) })
+        expect(view).toEqual({
+          picture: png,
+          width: 1,
+          height: 1,
+          pointer: { x: 0, y: 0 },
+          window: 'Fixture Chrome',
+        })
+        yield* machine.desktop({
+          key,
+          action: DesktopAction.cases.Type.make({ text: 'private-fixture-input' }),
+        })
+        expect(
+          (yield* Ref.get(evidence.commands)).some((value) =>
+            value.includes('private-fixture-input'),
+          ),
+        ).toBe(false)
+        expect((yield* Ref.get(evidence.files)).size).toBe(0)
+        const page = yield* machine.browse({
+          key,
+          action: BrowserAction.cases.Open.make({ address: 'https://example.com/proof' }),
+        })
+        expect(page.address).toBe('https://example.com/proof')
+        expect(page.outline).toContain('Continue')
+        expect(page.tabs).toEqual([{ title: 'Example', address: page.address, showing: true }])
+        expect(
+          (yield* machine.exec({ key, command: 'echo receipt', timeoutSeconds: 10 })).output,
+        ).toBe('receipt\n')
+        yield* machine.stop(key)
+        expect(ComputerState.guards.Stopped(yield* machine.status(key))).toBe(true)
+        const restored = yield* Effect.gen(function* () {
+          const restarted = yield* Machine
+          return yield* restarted.ensure(key)
+        }).pipe(Effect.provide(boatMachineLayer))
+        expect(restored.screen._tag).toBe('Viewer')
+        expect(yield* Ref.get(evidence.created)).toBe(1)
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    15000,
+  )
+
+  it.effect(
+    'recovers a lost create receipt with the persisted original body and key after restart',
+    () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const evidence = yield* Evidence
+        const machine = yield* Machine
+        yield* Ref.set(evidence.breakCreate, true)
+        expect((yield* Effect.flip(machine.ensure(key)))._tag).toBe('MachineRequestRejected')
+        yield* Effect.gen(function* () {
+          yield* (yield* Machine).ensure(key)
+        }).pipe(
+          Effect.provide(
+            boatMachineLayer.pipe(
+              Layer.provide(
+                ConfigProvider.layerAdd(
+                  ConfigProvider.fromUnknown({
+                    VIVID_BOAT_SIZE: 'large',
+                    VIVID_BOAT_LIFETIME_SECONDS: '7200',
+                  }),
+                  { asPrimary: true },
+                ),
+              ),
+            ),
+          ),
+        )
+        const intents = yield* Ref.get(evidence.intents)
+        expect(intents.length).toBe(2)
+        expect(intents[0] === intents[1]).toBe(true)
+        expect(yield* Ref.get(evidence.created)).toBe(1)
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    15000,
+  )
+
+  it.effect(
+    'refuses public viewer URLs and malformed state, and never retries an uncertain command',
+    () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        yield* machine.ensure(key)
+        yield* Ref.set(evidence.publicViewer, true)
+        expect((yield* Effect.flip(machine.status(key)))._tag).toBe('MachineResponseInvalid')
+        yield* Ref.set(evidence.publicViewer, false)
+        yield* Ref.set(evidence.breakCommand, true)
+        const before = (yield* Ref.get(evidence.commands)).length
+        expect(
+          (yield* Effect.flip(machine.exec({ key, command: 'echo receipt', timeoutSeconds: 10 })))
+            ._tag,
+        ).toBe('MachineExecutionUnknown')
+        expect((yield* Ref.get(evidence.commands)).length - before).toBe(1)
+        yield* Ref.set(evidence.malformed, true)
+        expect((yield* Effect.flip(machine.status(key)))._tag).toBe('MachineResponseInvalid')
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    15000,
+  )
+})

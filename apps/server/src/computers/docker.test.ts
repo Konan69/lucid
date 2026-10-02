@@ -316,7 +316,7 @@ describe.skipIf(process.env.VIVID_TEST_DOCKER !== '1')('local Computer', () => {
         const before = performance.now()
         const running = yield* machine.ensure(key)
         console.info(`Computer cold start milliseconds: ${Math.round(performance.now() - before)}`)
-        expect(running.screenAddress).toBe('/api/computer/screen/websockify')
+        expect(running.screen.address).toBe('/api/computer/screen/websockify')
         const initialScreen = yield* machine.screen(key)
         const direct = new NodeURL.URL(initialScreen.address)
         const screenPort = Number(direct.port)

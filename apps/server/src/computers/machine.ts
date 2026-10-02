@@ -2,6 +2,8 @@ import {
   type BrowseResult,
   type BrowserAction,
   type CommandResult,
+  type DesktopAction,
+  type DesktopView,
   ComputerState,
 } from '@vivid/contracts'
 import { Context, Effect, Layer, Schema, type Redacted } from 'effect'
@@ -80,6 +82,48 @@ export class BrowserStepFailed extends Schema.TaggedError<BrowserStepFailed>()(
   { title: 'BrowserStepFailed' },
 ) {}
 
+/** Configuration failures carry no supplied values, including accidentally pasted credentials. */
+export class MachineConfigurationInvalid extends Schema.TaggedError<MachineConfigurationInvalid>()(
+  'MachineConfigurationInvalid',
+  {},
+  { title: 'MachineConfigurationInvalid' },
+) {}
+
+/** Provider authentication is configuration failure, not a retryable machine operation. */
+export class MachineAuthenticationFailed extends Schema.TaggedError<MachineAuthenticationFailed>()(
+  'MachineAuthenticationFailed',
+  {},
+  { title: 'MachineAuthenticationFailed' },
+) {}
+
+/** An unbound create past Boat's idempotency window needs reconciliation, never another billable create. */
+export class MachineCreationUnresolved extends Schema.TaggedError<MachineCreationUnresolved>()(
+  'MachineCreationUnresolved',
+  { key: MachineKey },
+  { title: 'MachineCreationUnresolved' },
+) {}
+
+/** Provider refusals preserve only HTTP status; bodies can contain private commands or credentials. */
+export class MachineRequestRejected extends Schema.TaggedError<MachineRequestRejected>()(
+  'MachineRequestRejected',
+  { status: Schema.Int },
+  { title: 'MachineRequestRejected' },
+) {}
+
+/** File persistence is required before provisioning and cannot be replaced by an in-memory binding. */
+export class MachinePersistenceFailed extends Schema.TaggedError<MachinePersistenceFailed>()(
+  'MachinePersistenceFailed',
+  {},
+  { title: 'MachinePersistenceFailed' },
+) {}
+
+/** Unsupported local capabilities are explicit; the offline provider never imitates Boat results. */
+export class MachineCapabilityUnavailable extends Schema.TaggedError<MachineCapabilityUnavailable>()(
+  'MachineCapabilityUnavailable',
+  { capability: Schema.Literals(['relay', 'desktop', 'browser']) },
+  { title: 'MachineCapabilityUnavailable' },
+) {}
+
 /** Precise adapter failures remain visible for orchestration and RPC translation. */
 export type MachineFailure =
   | MachineUnavailable
@@ -90,6 +134,12 @@ export type MachineFailure =
   | MachineInputInvalid
   | BrowserAddressRefused
   | BrowserStepFailed
+  | MachineConfigurationInvalid
+  | MachineAuthenticationFailed
+  | MachineCreationUnresolved
+  | MachineRequestRejected
+  | MachinePersistenceFailed
+  | MachineCapabilityUnavailable
 
 /** One machine boundary; ownership, approvals, receipts, and RPC remain application concerns. */
 export interface MachineOperations {
@@ -106,6 +156,10 @@ export interface MachineOperations {
     readonly key: MachineKey
     readonly action: BrowserAction
   }) => Effect.Effect<BrowseResult, MachineFailure>
+  readonly desktop: (input: {
+    readonly key: MachineKey
+    readonly action: DesktopAction
+  }) => Effect.Effect<DesktopView, MachineFailure>
 }
 
 /** Authority over the machine provider, distinct from application ownership and approvals. */
@@ -124,6 +178,9 @@ export const unavailableMachineLayer = Layer.effect(
       screen: Effect.fn('Machine.unavailable.screen')(() => Effect.fail(new MachineUnavailable())),
       exec: Effect.fn('Machine.unavailable.exec')(() => Effect.fail(new MachineUnavailable())),
       browse: Effect.fn('Machine.unavailable.browse')(() => Effect.fail(new MachineUnavailable())),
+      desktop: Effect.fn('Machine.unavailable.desktop')(() =>
+        Effect.fail(new MachineUnavailable()),
+      ),
     }),
   ),
 )

@@ -15,6 +15,10 @@ import {
 import {
   ActionTarget,
   BrowserAction,
+  DesktopAction,
+  DesktopOutcome,
+  type DesktopView,
+  type UseDesktopRequest,
   BrowseOutcome,
   CommandOutcome,
   ProposedAction,
@@ -32,13 +36,7 @@ import { Database, decodeStored, type DatabaseInfrastructureError } from '../dat
 import { type Actor } from '../auth/access.ts'
 import { Gate, GateDecision, ActionOutcome } from '../approvals/gate.ts'
 import { Changes, Topic } from '../live/changes.ts'
-import {
-  Machine,
-  MachineKey,
-  computerScreenAddress,
-  type MachineFailure,
-  type MachineScreen,
-} from './machine.ts'
+import { Machine, MachineKey, type MachineFailure, type MachineScreen } from './machine.ts'
 import { computers } from './tables.ts'
 
 export { computerScreenAddress } from './machine.ts'
@@ -59,6 +57,15 @@ export const machineFailureReason = (failure: MachineFailure): string =>
   Match.value(failure).pipe(
     Match.tagsExhaustive({
       MachineUnavailable: () => 'No Computer provider is configured on this installation.',
+      MachineConfigurationInvalid: () =>
+        'The Computer provider configuration is incomplete or invalid.',
+      MachineAuthenticationFailed: () => 'The Computer provider credentials were refused.',
+      MachineCreationUnresolved: () =>
+        'The Computer creation receipt needs reconciliation; another machine will not be created.',
+      MachineRequestRejected: () => 'The Computer provider refused the operation.',
+      MachinePersistenceFailed: () => 'The Computer provider binding could not be saved or read.',
+      MachineCapabilityUnavailable: ({ capability }) =>
+        `The configured Computer provider does not support ${capability}.`,
       MachineNotRunning: () => 'The Computer is no longer running.',
       MachineOperationFailed: () => 'The Computer provider could not finish the operation.',
       MachineResponseInvalid: () => 'The Computer provider returned an invalid response.',
@@ -75,19 +82,9 @@ export const machineFailureReason = (failure: MachineFailure): string =>
 export const computerMachineKey = (person: PersonId): MachineKey =>
   MachineKey.make(NodeCrypto.createHash('sha256').update(person).digest('hex').slice(0, 48))
 
-/** Stored states have no host address; the wire's running variant always uses the authenticated route. */
-const wire = (row: Stored): Computer =>
-  Computer.make({
-    id: row.id,
-    heldByPerson: row.held,
-    state: Stored.match(row, {
-      starting: ({ since }) => ComputerState.cases.Starting.make({ since }),
-      running: ({ since }) =>
-        ComputerState.cases.Running.make({ since, screenAddress: computerScreenAddress }),
-      stopped: ({ since }) => ComputerState.cases.Stopped.make({ since }),
-      failed: ({ since, reason }) => ComputerState.cases.Failed.make({ since, reason }),
-    }),
-  })
+/** Screen authority comes from the provider on this read; URLs are never reconstructed from persisted status. */
+const wire = (row: Stored, state: ComputerState): Computer =>
+  Computer.make({ id: row.id, heldByPerson: row.held, state })
 
 /** Absence and disabled installation are distinct even before a record exists. */
 const withoutRow = (state: ComputerState): Computer =>
@@ -268,6 +265,10 @@ export interface ComputerStoreService {
     person: PersonId,
     input: { readonly command: string; readonly timeoutSeconds: number },
   ) => Effect.Effect<CommandResult, StoreError | MachineFailure | ComputerNotReady>
+  readonly desktop: (
+    person: PersonId,
+    action: DesktopAction,
+  ) => Effect.Effect<DesktopView, StoreError | MachineFailure | ComputerNotReady>
   readonly browse: (
     person: PersonId,
     action: BrowserAction,
@@ -333,16 +334,17 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
     )
     if (ComputerState.guards.Unavailable(reported)) return withoutRow(reported)
     if (Option.isNone(row)) return withoutRow(ComputerState.cases.Absent.make({}))
-    if (pending.has(person)) return wire(row.value)
+    if (pending.has(person) && Stored.guards.starting(row.value))
+      return wire(row.value, ComputerState.cases.Starting.make({ since: row.value.since }))
     const actual = ComputerState.guards.Absent(reported)
       ? ComputerState.cases.Stopped.make({ since: row.value.since })
       : reported
-    const current = wire(row.value)
+    const current = wire(row.value, actual)
     if (sameState(row.value, actual)) return current
     const updated = yield* rows.update(person, row.value, actual)
     return Option.match(updated, {
       onNone: () => withoutRow(ComputerState.cases.Absent.make({})),
-      onSome: wire,
+      onSome: (value) => wire(value, actual),
     })
   })
   /** Start returns the persisted starting receipt before its scope-owned worker acquires the lifecycle permit. */
@@ -364,7 +366,7 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
         Effect.forkIn(scope, { startImmediately: false }),
       )
       workers.set(person, worker)
-      return wire(row.value)
+      return wire(row.value, ComputerState.cases.Starting.make({ since: row.value.since }))
     },
     (effect, person) => lock(person).withPermit(effect),
   )
@@ -390,7 +392,7 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
       yield* rows.update(person, row.value, state)
       return Option.match(yield* rows.load(person), {
         onNone: () => withoutRow(ComputerState.cases.Absent.make({})),
-        onSome: wire,
+        onSome: (value) => wire(value, state),
       })
     },
     (effect, person) => lock(person).withPermit(effect),
@@ -399,6 +401,7 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
   const stop = Effect.fn('ComputerStore.stop')(function* (person: PersonId) {
     const worker = workers.get(person)
     if (worker !== undefined) yield* Fiber.interrupt(worker)
+    yield* forget(person)
     return yield* halt(person)
   })
   /** Taking or releasing the keyboard shares the execution permit, so no new action begins while held. */
@@ -420,16 +423,11 @@ export const computerStoreLayer = Layer.effect(
     /** Resolve provider identity only after a current lifecycle and keyboard-ownership check. */
     const access = Effect.fn('ComputerStore.access')(function* (person: PersonId) {
       const row = yield* state.rows.load(person)
-      const computer = Option.isSome(row) ? wire(row.value) : yield* state.get(person)
+      const computer = yield* state.get(person)
       const result = accessTo(computer, computerMachineKey(person))
       if (ComputerAccess.guards.Unavailable(result)) return result
       if (Option.isNone(row))
         return ComputerAccess.cases.Unavailable.make({ reason: 'The Computer is absent.' })
-      const actual = yield* state.machine.screen(row.value.machine).pipe(Effect.result)
-      if (Result.isFailure(actual))
-        return ComputerAccess.cases.Unavailable.make({
-          reason: machineFailureReason(actual.failure),
-        })
       return ComputerAccess.cases.Ready.make({ key: row.value.machine })
     })
     /** The session's Person owns the endpoint; a fresh screen check returns 404 for a lost machine without warming action status checks. */
@@ -474,6 +472,20 @@ export const computerStoreLayer = Layer.effect(
         }),
       )
     })
+    /** Desktop input shares the same Person permit as hold, stop, exec and browse. */
+    const desktop = Effect.fn('ComputerStore.desktop')(function* (
+      person: PersonId,
+      action: DesktopAction,
+    ) {
+      return yield* state.lock(person).withPermit(
+        Effect.gen(function* () {
+          const ready = yield* access(person)
+          if (ComputerAccess.guards.Unavailable(ready))
+            return yield* Effect.fail(new ComputerNotReady({ reason: ready.reason }))
+          return yield* state.machine.desktop({ key: ready.key, action })
+        }),
+      )
+    })
     return ComputerStore.of({
       get: state.get,
       start: state.start,
@@ -483,6 +495,7 @@ export const computerStoreLayer = Layer.effect(
       screen,
       exec,
       browse,
+      desktop,
     })
   }),
 )
@@ -510,6 +523,13 @@ const browserEffect = (action: BrowserAction) =>
     Click: () => 'write' as const,
     Type: () => 'write' as const,
     Press: () => 'write' as const,
+    Scroll: () => 'read' as const,
+    Back: () => 'read' as const,
+    Forward: () => 'read' as const,
+    Wait: () => 'read' as const,
+    OpenTab: () => 'read' as const,
+    ShowTab: () => 'read' as const,
+    CloseTab: () => 'read' as const,
   })
 
 /** Gate decisions run before any command reaches the provider, and refusal is a wire outcome. */
@@ -597,9 +617,63 @@ export const computerBrowse = Effect.fn('Computer.browse')(function* (
   })
 })
 
+/** Looking, moving, scrolling and waiting are reads. Input that changes external state uses
+ * precisely the browse input policy; the Gate still evaluates Never rules for read actions. */
+const desktopEffect = (action: DesktopAction) =>
+  DesktopAction.match(action, {
+    Look: () => 'read' as const,
+    Move: () => 'read' as const,
+    Scroll: () => 'read' as const,
+    Wait: () => 'read' as const,
+    Click: () => 'write' as const,
+    Drag: () => 'write' as const,
+    Type: () => 'write' as const,
+    Press: () => 'write' as const,
+  })
+
+/** The Gate precedes execution and the store rechecks takeover under its Person permit. */
+export const computerDesktop = Effect.fn('Computer.desktop')(function* (
+  actor: Actor,
+  request: UseDesktopRequest,
+) {
+  const store = yield* ComputerStore
+  const ready = yield* store.access(actor.person.id)
+  if (ComputerAccess.guards.Unavailable(ready))
+    return DesktopOutcome.cases.Unavailable.make({ reason: ready.reason })
+  const gate = yield* Gate
+  const action = ProposedAction.make({
+    summary: request.summary,
+    rationale: '',
+    effect: desktopEffect(request.action),
+    target: ActionTarget.cases.Desktop.make({ action: request.action }),
+  })
+  const decision = yield* gate.check(actor, action, 'Ordinary')
+  return yield* GateDecision.match(decision, {
+    Blocked: ({ rule }) => Effect.succeed(DesktopOutcome.cases.Blocked.make({ rule })),
+    ApprovalRequired: ({ approval }) =>
+      Effect.succeed(
+        DesktopOutcome.cases.ApprovalRequired.make({
+          approvalId: approval.id,
+          summary: approval.action.summary,
+        }),
+      ),
+    Allowed: Effect.fn('Computer.desktop.allowed')((): Effect.Effect<DesktopOutcome> =>
+      store.desktop(actor.person.id, request.action).pipe(
+        Effect.map((view) => DesktopOutcome.cases.Completed.make({ view })),
+        Effect.catch((failure) =>
+          Effect.succeed(
+            DesktopOutcome.cases.Unavailable.make({ reason: executionReason(failure) }),
+          ),
+        ),
+      ),
+    ),
+  })
+})
+
 type ComputerTarget =
   | typeof ActionTarget.cases.Command.Type
   | typeof ActionTarget.cases.Browser.Type
+  | typeof ActionTarget.cases.Desktop.Type
 
 /** Approved actions run from their stored target once; a lost exec remains Unknown and is never retried. */
 export const computerRunner = Effect.fn('Computer.runner')(function* (input: {
@@ -626,6 +700,14 @@ export const computerRunner = Effect.fn('Computer.runner')(function* (input: {
             ActionOutcome.cases.Succeeded.make({ result: receipt.outline.slice(0, 4000) }),
           ),
         ),
+    Desktop: ({ action }) =>
+      store.desktop(input.person.id, action).pipe(
+        Effect.map(() =>
+          ActionOutcome.cases.Succeeded.make({
+            result: 'The desktop action completed; look again to verify its outcome.',
+          }),
+        ),
+      ),
     Connection: () =>
       Effect.succeed(
         ActionOutcome.cases.Failed.make({ reason: 'This action does not target the Computer.' }),

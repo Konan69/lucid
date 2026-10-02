@@ -22,6 +22,8 @@ import {
   ApprovalId,
   ApprovalState,
   BrowserAction,
+  DesktopAction,
+  DesktopOutcome,
   ComputerState,
   Person,
   PersonId,
@@ -62,6 +64,7 @@ interface EvidenceService {
   readonly lost: Ref.Ref<boolean>
   readonly boot: Ref.Ref<Option.Option<Deferred.Deferred<void>>>
   readonly bootFailed: Ref.Ref<boolean>
+  readonly beforeGateReturn: Ref.Ref<Effect.Effect<void>>
 }
 class ProviderEvidence extends Context.Service<ProviderEvidence, EvidenceService>()(
   'vivid/ComputerTestEvidence',
@@ -77,6 +80,7 @@ const evidenceLayer = Layer.effect(
       actions: yield* Ref.make<ReadonlyArray<ProposedAction>>([]),
       lost: yield* Ref.make(false),
       bootFailed: yield* Ref.make(false),
+      beforeGateReturn: yield* Ref.make(Effect.void),
       boot: yield* Ref.make<Option.Option<Deferred.Deferred<void>>>(Option.none()),
     })
   }),
@@ -99,7 +103,9 @@ const providerLayer = Layer.effect(
         return yield* Effect.fail(new MachineOperationFailed({ operation: 'startup' }))
       const state = ComputerState.cases.Running.make({
         since: 100,
-        screenAddress: computerScreenAddress,
+        screen: ComputerState.cases.Running.fields.screen.cases.Relay.make({
+          address: computerScreenAddress,
+        }),
       })
       yield* Ref.update(evidence.states, (states) => new Map(states).set(key, state))
       return state
@@ -126,6 +132,7 @@ const providerLayer = Layer.effect(
         title: 'Example',
         outline: 'Example outline',
         truncated: false,
+        tabs: [{ title: 'Example', address: 'https://example.com', showing: true }],
       }
     })
     const screen = Effect.fn('Computer.test.screen')(function* (key: MachineKey) {
@@ -137,7 +144,19 @@ const providerLayer = Layer.effect(
         authorization: Redacted.make('test-only-screen-authority'),
       }
     })
-    return Machine.of({ status, ensure, stop, exec, browse, screen })
+    const desktop = Effect.fn('Computer.test.desktop')(function* ({
+      key,
+    }: Parameters<typeof Machine.Service.desktop>[0]) {
+      yield* Ref.update(evidence.calls, (calls) => [...calls, key])
+      return {
+        picture: 'test-picture',
+        width: 1920,
+        height: 1080,
+        pointer: { x: 1, y: 2 },
+        window: 'Example',
+      }
+    })
+    return Machine.of({ status, ensure, stop, exec, browse, screen, desktop })
   }),
 ).pipe(Layer.provide(evidenceLayer))
 
@@ -169,6 +188,7 @@ const gateLayer = Layer.effect(
       check: Effect.fn('Computer.test.gate')(function* (_actor, action, exposure) {
         expect(exposure).toBe('Ordinary')
         yield* Ref.update(evidence.actions, (actions) => [...actions, action])
+        yield* yield* Ref.get(evidence.beforeGateReturn)
         return yield* Ref.get(evidence.decisions)
       }),
     })
@@ -299,7 +319,12 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         )
         expect(companyRead.computer.id).toBe(own.computer.id)
         expect(own.computer.state).toEqual(
-          ComputerState.cases.Running.make({ since: 100, screenAddress: computerScreenAddress }),
+          ComputerState.cases.Running.make({
+            since: 100,
+            screen: ComputerState.cases.Running.fields.screen.cases.Relay.make({
+              address: computerScreenAddress,
+            }),
+          }),
         )
         expect(
           (yield* computerHandlers.GetComputer().pipe(asPerson(second))).computer.state._tag,
@@ -424,6 +449,76 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           (yield* computerHandlers.HoldComputer({ held: false }).pipe(asVivid(first), Effect.flip))
             ._tag,
         ).toBe('Forbidden')
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    15000,
+  )
+
+  it.effect(
+    'desktop policy classifies observational steps as read, gates mutations, and rechecks takeover',
+    () =>
+      Effect.gen(function* () {
+        const { first } = yield* fixture()
+        const store = yield* ComputerStore
+        const evidence = yield* ProviderEvidence
+        yield* start(first)
+        const actions = [
+          DesktopAction.cases.Look.make({}),
+          DesktopAction.cases.Move.make({ to: { x: 1, y: 2 } }),
+          DesktopAction.cases.Scroll.make({ at: { x: 1, y: 2 }, direction: 'down', notches: 1 }),
+          DesktopAction.cases.Wait.make({ seconds: 1 }),
+          DesktopAction.cases.Click.make({ at: { x: 1, y: 2 }, button: 'left', times: 1 }),
+          DesktopAction.cases.Drag.make({ from: { x: 1, y: 2 }, to: { x: 3, y: 4 } }),
+          DesktopAction.cases.Type.make({ text: 'Private text' }),
+          DesktopAction.cases.Press.make({ keys: 'Return' }),
+        ]
+        for (const action of actions) {
+          const result = yield* computerHandlers
+            .UseDesktop({ action, summary: 'Desktop fixture' })
+            .pipe(asVivid(first))
+          expect(DesktopOutcome.guards.Completed(result)).toBe(true)
+        }
+        expect((yield* Ref.get(evidence.actions)).map((action) => action.effect)).toEqual([
+          'read',
+          'read',
+          'read',
+          'read',
+          'write',
+          'write',
+          'write',
+          'write',
+        ])
+        const count = (yield* Ref.get(evidence.calls)).length
+        yield* Ref.set(evidence.decisions, GateDecision.cases.Blocked.make({ rule: 'Never' }))
+        expect(
+          DesktopOutcome.guards.Blocked(
+            yield* computerHandlers
+              .UseDesktop({
+                action: DesktopAction.cases.Click.make({
+                  at: { x: 1, y: 2 },
+                  button: 'left',
+                  times: 1,
+                }),
+                summary: 'Click fixture',
+              })
+              .pipe(asVivid(first)),
+          ),
+        ).toBe(true)
+        yield* Ref.set(evidence.decisions, GateDecision.cases.Allowed.make({}))
+        yield* Ref.set(
+          evidence.beforeGateReturn,
+          store.hold(first.id, true).pipe(
+            Effect.asVoid,
+            Effect.catch(() => Effect.sync(() => expect.fail('Takeover fixture failed'))),
+          ),
+        )
+        expect(
+          yield* computerHandlers
+            .UseDesktop({ action: DesktopAction.cases.Look.make({}), summary: 'Look fixture' })
+            .pipe(asVivid(first)),
+        ).toEqual(
+          DesktopOutcome.cases.Unavailable.make({ reason: 'the Person is using the Computer' }),
+        )
+        expect((yield* Ref.get(evidence.calls)).length).toBe(count)
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     15000,
   )

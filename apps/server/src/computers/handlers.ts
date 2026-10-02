@@ -1,8 +1,13 @@
 import { Effect } from 'effect'
-import { ComputerResponse, type BrowseRequest, type RunCommandRequest } from '@vivid/contracts'
+import {
+  ComputerResponse,
+  type BrowseRequest,
+  type UseDesktopRequest,
+  type RunCommandRequest,
+} from '@vivid/contracts'
 import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
 import { live } from '../live/query.ts'
-import { ComputerStore, computerRunCommand, computerBrowse } from './store.ts'
+import { ComputerStore, computerRunCommand, computerBrowse, computerDesktop } from './store.ts'
 export { computerRunner } from './store.ts'
 
 /** A plain and live read share the same Computer loader and wire envelope. */
@@ -41,5 +46,9 @@ export const computerHandlers = {
   Browse: Effect.fn('Rpc.Browse')(function* (request: BrowseRequest) {
     yield* requireVivid()
     return yield* computerBrowse(yield* requireActor(), request)
+  }),
+  UseDesktop: Effect.fn('Rpc.UseDesktop')(function* (request: UseDesktopRequest) {
+    yield* requireVivid()
+    return yield* computerDesktop(yield* requireActor(), request)
   }),
 }

@@ -1,0 +1,91 @@
+import { type BrowseResult } from '@vivid/contracts'
+import { Effect, Layer, Option } from 'effect'
+import {
+  Machine,
+  MachineCapabilityUnavailable,
+  MachineInputInvalid,
+  MachineResponseInvalid,
+  type MachineKey,
+} from './machine.ts'
+import { bindings } from './boat/bindings.ts'
+import { transport } from './boat/transport.ts'
+import { driver } from './boat/driver.ts'
+import { desktopStep, look } from './boat/desktop.ts'
+import { browse } from './boat/browser.ts'
+import { lifecycle } from './boat/lifecycle.ts'
+
+/** Boat ships the desktop, Chrome and Cua. This Layer installs no image and no driver.
+ * Binding lookup is durable; only per-process serialization is cached. Viewer authority is
+ * freshly issued for GetComputer and never persisted, logged or reused across Persons. */
+export const boatMachineLayer = Layer.effect(
+  Machine,
+  Effect.gen(function* () {
+    const api = yield* transport()
+    const saved = yield* bindings()
+    const tabs = new Map<MachineKey, BrowseResult['tabs']>()
+    const { ensure, status, stop, running, permit } = lifecycle(api, saved, (key) => {
+      tabs.delete(key)
+    })
+    return Machine.of({
+      ensure,
+      status,
+      stop,
+      screen: Effect.fn('Machine.boat.relay')(() =>
+        Effect.fail(new MachineCapabilityUnavailable({ capability: 'relay' })),
+      ),
+      exec: Effect.fn('Machine.boat.exec')(
+        function* (input) {
+          if (
+            !Number.isInteger(input.timeoutSeconds) ||
+            input.timeoutSeconds < 1 ||
+            input.timeoutSeconds > 600 ||
+            input.command.length < 1 ||
+            input.command.length > 8000
+          )
+            return yield* Effect.fail(new MachineInputInvalid())
+          const identity = yield* running(input.key)
+          const receipt = yield* api.command(
+            identity.id,
+            input.key,
+            input.command,
+            input.timeoutSeconds,
+          )
+          if (receipt.exitCode === null)
+            return yield* Effect.fail(new MachineResponseInvalid({ operation: 'command-exit' }))
+          const output = receipt.stdout + receipt.stderr
+          return {
+            exitCode: receipt.exitCode,
+            output: output.slice(0, 32768),
+            truncated:
+              receipt.stdoutTruncated === true ||
+              receipt.stderrTruncated === true ||
+              output.length > 32768,
+          }
+        },
+        (effect, input) => permit(input.key).withPermit(effect),
+      ),
+      desktop: Effect.fn('Machine.boat.desktop')(
+        function* (input) {
+          const identity = yield* running(input.key)
+          const native = driver(api, identity.id, input.key)
+          yield* desktopStep(native, input.action)
+          return yield* look(native, api, { id: identity.id, key: input.key })
+        },
+        (effect, input) => permit(input.key).withPermit(effect),
+      ),
+      browse: Effect.fn('Machine.boat.browse')(
+        function* (input) {
+          const identity = yield* running(input.key)
+          const result = yield* browse(
+            driver(api, identity.id, input.key),
+            input.action,
+            Option.fromUndefinedOr(tabs.get(input.key)),
+          )
+          tabs.set(input.key, result.tabs)
+          return result
+        },
+        (effect, input) => permit(input.key).withPermit(effect),
+      ),
+    })
+  }),
+)

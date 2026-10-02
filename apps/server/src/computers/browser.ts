@@ -11,7 +11,7 @@ import {
 const decodeBrowseResult = Schema.decodeUnknownEffect(Schema.fromJsonString(BrowseResult))
 
 /** Reject non-web navigation and local literals; namespace firewall handles DNS and redirects. */
-const validateAddress = Effect.fn('Machine.browser.address')(function* (address: string) {
+export const validateAddress = Effect.fn('Machine.browser.address')(function* (address: string) {
   const url = yield* Effect.try({
     try: () => new NodeURL.URL(address),
     catch: () => new BrowserAddressRefused(),
@@ -30,7 +30,7 @@ const validateAddress = Effect.fn('Machine.browser.address')(function* (address:
 })
 
 /** Only editing/navigation keys are accepted; closing tabs/windows and browser control shortcuts are excluded. */
-const validateKey = Effect.fn('Machine.browser.key')(function* (key: string) {
+export const validateKey = Effect.fn('Machine.browser.key')(function* (key: string) {
   if (
     !/^(Enter|Tab|Escape|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Backspace|Delete|Home|End|PageUp|PageDown|[^\p{C}\p{Zl}\p{Zp}]|Shift\+[^\p{C}\p{Zl}\p{Zp}]|Control\+[aAcCvVfF]|Control\+Shift\+[vV])$/u.test(
       key,
@@ -45,6 +45,7 @@ export const browserArguments = Effect.fn('Machine.browser.arguments')(function*
   action: BrowserAction,
 ) {
   if (BrowserAction.guards.Open(action)) yield* validateAddress(action.address)
+  if (BrowserAction.guards.OpenTab(action)) yield* validateAddress(action.address)
   if (BrowserAction.guards.Press(action)) yield* validateKey(action.key)
   const step = BrowserAction.match(action, {
     Open: ({ address }) => ({ step: 'open', address }),
@@ -53,6 +54,13 @@ export const browserArguments = Effect.fn('Machine.browser.arguments')(function*
     Type: ({ target, text }) => ({ step: 'type', target, text }),
     Press: ({ key }) => ({ step: 'press', key }),
     Screenshot: () => ({ step: 'screenshot' }),
+    Scroll: ({ direction, notches }) => ({ step: 'scroll', direction, notches }),
+    Back: () => ({ step: 'back' }),
+    Forward: () => ({ step: 'forward' }),
+    Wait: ({ seconds }) => ({ step: 'wait', seconds }),
+    OpenTab: ({ address }) => ({ step: 'openTab', address }),
+    ShowTab: ({ tab }) => ({ step: 'showTab', tab }),
+    CloseTab: ({ tab }) => ({ step: 'closeTab', tab }),
   })
   return { args: ['node', '/opt/vivid/browser.mjs'], input: JSON.stringify(step) }
 })

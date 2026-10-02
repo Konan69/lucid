@@ -133,7 +133,7 @@ const machineFixture = Effect.fn('Computer.screen.test.machine')(function* (pers
   if (Option.isNone(ready)) expect.fail('Computer startup must publish its terminal receipt.')
   expect(ready.value.state._tag).toBe('Running')
   if (ComputerState.guards.Running(ready.value.state))
-    expect(ready.value.state.screenAddress).toBe('/api/computer/screen/websockify')
+    expect(ready.value.state.screen.address).toBe('/api/computer/screen/websockify')
   return key
 })
 

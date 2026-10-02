@@ -9,7 +9,14 @@ export const ComputerState = Schema.TaggedUnion({
   /** This Person has never needed one. */
   Absent: {},
   Starting: { since: Schema.Number },
-  Running: { since: Schema.Number, screenAddress: Schema.String },
+  Running: {
+    since: Schema.Number,
+    /** Relay is app-owned RFB; Viewer is fresh provider authority for this Person only. */
+    screen: Schema.TaggedUnion({
+      Relay: { address: Schema.String },
+      Viewer: { address: Schema.String, expiresAt: Schema.Number },
+    }),
+  },
   Stopped: { since: Schema.Number },
   Failed: { since: Schema.Number, reason: Schema.String },
   /** No machine provider is configured on this installation. */

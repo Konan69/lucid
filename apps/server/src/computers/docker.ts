@@ -2,7 +2,6 @@ import * as NodeServices from '@effect/platform-node/NodeServices'
 import { CommandResult, ComputerState } from '@vivid/contracts'
 import {
   Cache,
-  Config,
   Duration,
   Effect,
   Exit,
@@ -22,12 +21,12 @@ import {
   Machine,
   computerScreenAddress,
   MachineInputInvalid,
+  MachineCapabilityUnavailable,
   MachineExecutionUnknown,
   MachineNotRunning,
   MachineOperationFailed,
   MachineResponseInvalid,
   type MachineKey,
-  unavailableMachineLayer,
 } from './machine.js'
 
 const outputBudget = 65_536
@@ -255,7 +254,12 @@ const inspectedStatus = Effect.fn('Machine.docker.inspectedStatus')(function* (
   const ready = yield* dockerCommand(['exec', containerName(key), 'test', '-f', '/tmp/vivid/ready'])
   if (ready.exitCode !== 0) return ComputerState.cases.Starting.make({ since })
   yield* screenEndpoint(inspection)
-  return ComputerState.cases.Running.make({ since, screenAddress: computerScreenAddress })
+  return ComputerState.cases.Running.make({
+    since,
+    screen: ComputerState.cases.Running.fields.screen.cases.Relay.make({
+      address: computerScreenAddress,
+    }),
+  })
 })
 
 /** Docker status is observed independently of app-owned Computer records, without exposing host addresses. */
@@ -548,18 +552,9 @@ export const dockerMachineLayer = (image: string) =>
         screen: Effect.fn('Machine.screen')(actions.screen, provide),
         exec: Effect.fn('Machine.exec')(actions.exec, provide),
         browse: Effect.fn('Machine.browse')(actions.browse, provide),
+        desktop: Effect.fn('Machine.docker.desktop')(() =>
+          Effect.fail(new MachineCapabilityUnavailable({ capability: 'desktop' })),
+        ),
       })
     }),
   ).pipe(Layer.provide(NodeServices.layer))
-
-/** Only an explicit provider enables machine authority; image configuration is required when enabled. */
-export const machineLayer = Layer.unwrap(
-  Effect.gen(function* () {
-    const provider = yield* Config.option(
-      Config.schema(Schema.Literal('docker'), 'VIVID_COMPUTER_PROVIDER'),
-    )
-    if (Option.isNone(provider)) return unavailableMachineLayer
-    const image = yield* Config.NonEmptyString('VIVID_COMPUTER_IMAGE')
-    return dockerMachineLayer(image)
-  }),
-)
