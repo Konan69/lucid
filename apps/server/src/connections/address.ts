@@ -29,7 +29,7 @@ export class ConnectionAddressUnreachable extends Schema.TaggedError<ConnectionA
 /** A credential-free import target established by probing the public endpoint. */
 export const ConnectionSource = Schema.TaggedUnion({
   Mcp: { address: Schema.String, authorization: Schema.Literals(['auto', 'apiKey']) },
-  OpenApi: { address: Schema.String },
+  OpenApi: { address: Schema.String, content: Schema.String },
 })
 export type ConnectionSource = typeof ConnectionSource.Type
 
@@ -41,7 +41,6 @@ export function publicAddress(value: string) {
     !['https:', 'http:'].includes(url.protocol) ||
     url.username ||
     url.password ||
-    url.search ||
     url.hash ||
     /[{}]/u.test(value)
   )
@@ -214,7 +213,10 @@ const specificationFromPage = Effect.fn('Connections.specificationFromPage')(fun
       Effect.mapError(() => ConnectionAddressUnreachable.make({})),
     )
     if (Option.isSome(decodeSpec(body)) || /^openapi:\s*['"]?3\./mu.test(body))
-      return ConnectionSource.cases.OpenApi.make({ address: candidate.value.address.href })
+      return ConnectionSource.cases.OpenApi.make({
+        address: candidate.value.address.href,
+        content: body,
+      })
   }
   return yield* Effect.fail(
     ConnectionAddressInvalid.make({
@@ -241,7 +243,7 @@ const classifyResponse = Effect.fn('Connections.classifyAddress')(function* (
     Effect.mapError(() => ConnectionAddressUnreachable.make({})),
   )
   if (Option.isSome(decodeSpec(body)) || /^openapi:\s*['"]?3\./mu.test(body))
-    return ConnectionSource.cases.OpenApi.make({ address: address.href })
+    return ConnectionSource.cases.OpenApi.make({ address: address.href, content: body })
   return yield* probeMcp(address, client)
 })
 

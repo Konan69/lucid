@@ -44,6 +44,20 @@ const Request = Schema.Struct({
 })
 const decodeRequest = Schema.decodeUnknownEffect(Request)
 
+/** Byte imports carry an absolute API base; no spec address needs a second fetch. */
+const specification = (address: string) => {
+  return {
+    openapi: '3.0.3',
+    info: { title: 'Fixture', version: '1' },
+    servers: [{ url: `${address}/api` }],
+    paths: {
+      '/health': {
+        get: { operationId: 'health', responses: { '200': { description: 'Healthy' } } },
+      },
+    },
+  }
+}
+
 /** A real MCP endpoint requires a Bearer token for initialization, discovery and invocation.
  * It records only whether the correct header arrived; the credential itself is never retained.
  */
@@ -52,20 +66,15 @@ const upstream = Effect.fn('IntegrationLive.upstream')(function* (secret: string
     host: '127.0.0.1',
     port: 0,
   })
+  if (!NetAddress.isInetAddress(server.address)) return yield* Effect.die('Expected TCP fixture')
+  const address = (yield* Effect.fromResult(NetAddress.toUrl(server.address))).href.replace(
+    /\/$/u,
+    '',
+  )
   const called = yield* Ref.make(0)
   const handler = Effect.fn('IntegrationLive.request')(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
-    if (request.url === '/spec')
-      return HttpServerResponse.jsonUnsafe({
-        openapi: '3.0.3',
-        info: { title: 'Fixture', version: '1' },
-        servers: [{ url: '/api' }],
-        paths: {
-          '/health': {
-            get: { operationId: 'health', responses: { '200': { description: 'Healthy' } } },
-          },
-        },
-      })
+    if (request.url === '/spec') return HttpServerResponse.jsonUnsafe(specification(address))
     if (request.url === '/api/health') {
       yield* Ref.update(called, (count) => count + 1)
       return HttpServerResponse.jsonUnsafe({ ok: true })
@@ -112,11 +121,6 @@ const upstream = Effect.fn('IntegrationLive.upstream')(function* (secret: string
     return HttpServerResponse.empty({ status: 400 })
   })
   yield* server.serve(handler())
-  if (!NetAddress.isInetAddress(server.address)) return yield* Effect.die('Expected TCP fixture')
-  const address = (yield* Effect.fromResult(NetAddress.toUrl(server.address))).href.replace(
-    /\/$/u,
-    '',
-  )
   return { address, called }
 })
 
@@ -153,7 +157,10 @@ describe.skipIf(!enabled)('Executor integration registration', () => {
                       address: `${remote.address}/mcp`,
                       authorization: 'apiKey',
                     })
-                  : ConnectionSource.cases.OpenApi.make({ address: `${remote.address}/spec` }),
+                  : ConnectionSource.cases.OpenApi.make({
+                      address: `${remote.address}/spec`,
+                      content: JSON.stringify(specification(remote.address)),
+                    }),
               ),
             ),
           })

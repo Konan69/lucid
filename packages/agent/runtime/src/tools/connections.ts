@@ -126,7 +126,8 @@ function integrationTools(runTool: RunTool) {
   return [
     defineTool({
       name: 'find_integrations',
-      description: 'Find your integrations first, then catalogue matches, with connected status.',
+      description:
+        'Find your integrations first, then catalogue matches, with connected status and whether this Vivid is set up to connect them.',
       input: v.object({ query: v.pipe(v.string(), v.maxLength(200)) }),
       /** Access is rechecked by the server for the injected acting Person. */
       run({ data, signal }) {

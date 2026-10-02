@@ -1,12 +1,12 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
-import { ConnectionStep, Forbidden, SessionId } from '@vivid/contracts'
+import { AddIntegrationOutcome, ConnectionStep, Forbidden, SessionId } from '@vivid/contracts'
 import { Effect, Redacted, Ref } from 'effect'
 import { eq } from 'drizzle-orm'
 import { connectionHandlers } from './handlers.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { ConnectionAddress, ConnectionSource } from './address.ts'
-import { Executor, ExecutorTool } from './executor.ts'
+import { Executor, ExecutorPublicAddressRequired, ExecutorTool } from './executor.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { auditLayer } from '../audit/record.ts'
@@ -16,6 +16,48 @@ import { Database } from '../database/client.ts'
 /** Handler calls retain transport authentication, real store scope and real disposable SQL. */
 describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
   layer(connectionTestLayer)((it) => {
+    it.effect('explains unavailable server-by-address support in plain words before import', () =>
+      Effect.gen(function* () {
+        const { personalActor, threadId } = yield* fixture()
+        const executor = yield* Executor
+        const refused = Executor.of({
+          ...executor,
+          add: Effect.fn('Test.refusedImport')(() =>
+            Effect.fail(new ExecutorPublicAddressRequired({})),
+          ),
+        })
+        const addresses = ConnectionAddress.of({
+          inspect: Effect.fn('Test.serverAddress')(() =>
+            Effect.succeed(
+              ConnectionSource.cases.Mcp.make({
+                address: 'https://server.example/mcp',
+                authorization: 'auto',
+              }),
+            ),
+          ),
+        })
+        const result = yield* connectionHandlers
+          .AddIntegration({ address: 'https://server.example/mcp', name: 'Server', shared: false })
+          .pipe(
+            Effect.provideService(ConnectionAddress, addresses),
+            Effect.provide(connectionStoreLayer, { local: true }),
+            Effect.provideService(Executor, refused),
+            Effect.provideService(
+              AuthContext,
+              AuthState.Vivid({
+                person: personalActor.person,
+                workspace: personalActor.workspace,
+                threadId,
+              }),
+            ),
+          )
+        expect(result).toEqual(
+          AddIntegrationOutcome.cases.Unreachable.make({
+            reason: 'this Vivid is not set up to add a server by address yet',
+          }),
+        )
+      }),
+    )
     it.effect(
       'finds owned and shared accounts before catalogue matches, excludes another Person and enforces sharing roles before import',
       () =>

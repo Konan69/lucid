@@ -25,7 +25,9 @@ function matches(query: string, name: string, description: string) {
   return words.length === 0 || words.some((word) => text.includes(word))
 }
 
-/** Accessible accounts always precede catalogue suggestions, even when the catalogue is offline. */
+/** Accessible accounts precede catalogue suggestions, even when the catalogue is offline.
+ * Provider slugs retain names such as Google for Gmail without exposing identifiers to the model.
+ * Authorization stays explicit: a catalogue listing alone never promises a working sign-in. */
 export const findIntegrations = Effect.fn('Connections.findIntegrations')(function* (
   actor: Actor,
   request: FindIntegrationsRequest,
@@ -54,12 +56,13 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
   const services = Option.isNone(catalog)
     ? []
     : catalog.value
-        .filter((entry) => matches(request.query, entry.name, entry.description))
+        .filter((entry) => matches(request.query, entry.name, `${entry.description} ${entry.id}`))
         .slice(0, 24)
         .map((entry) =>
           ConnectionMatch.cases.Catalog.make({
             name: entry.name,
             description: entry.description,
+            authorization: entry.authorization,
             connected: records.some((row) => row.service === entry.id && row.status === 'ready'),
           }),
         )
@@ -95,7 +98,7 @@ export const addIntegration = Effect.fn('Connections.addIntegration')(
         ExecutorPublicAddressRequired: () =>
           Effect.succeed(
             AddIntegrationOutcome.cases.Unreachable.make({
-              reason: 'public address enforcement is not configured',
+              reason: 'this Vivid is not set up to add a server by address yet',
             }),
           ),
         ConnectionAddressInvalid: ({ reason }) =>
@@ -146,6 +149,9 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
     const tools = yield* store.tools(actor, row)
     const visible = tools.filter((tool) => row.companyId === null || tool.effect === 'read')
     const names = visible.map((tool) => tool.name)
+    // Read-only is Executor/provider metadata, not a behavioral proof. An empty optional-input
+    // list/search can still read private records; the response is discarded and the Person sees
+    // the exact called tool. Gate still decides whether this read may cross the Thread boundary.
     const candidates = visible.flatMap((tool) => {
       if (tool.effect !== 'read') return []
       return Option.toArray(

@@ -42,7 +42,8 @@ const fixture = Effect.fn('AddressTest.fixture')(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
     yield* Ref.update(requests, (items) => [...items, `${request.method} ${request.url}`])
     expect(request.headers.authorization).toBeUndefined()
-    if (request.url === '/spec') return HttpServerResponse.jsonUnsafe(specification)
+    if (request.url === '/spec' || request.url === '/spec?format=json')
+      return HttpServerResponse.jsonUnsafe(specification)
     if (request.url === '/redirect')
       return HttpServerResponse.empty({ status: 302, headers: { location: '/spec' } })
     if (request.url === '/private')
@@ -136,6 +137,22 @@ const fixture = Effect.fn('AddressTest.fixture')(function* () {
 })
 
 describe('public integration addresses', () => {
+  it.effect('accepts public specification query parameters and retains the fetched bytes', () =>
+    Effect.gen(function* () {
+      const { client, pages, requests } = yield* fixture()
+      const result = yield* inspectAddress('https://integration.example/spec?format=json').pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provide(pages),
+      )
+      expect(result).toEqual(
+        ConnectionSource.cases.OpenApi.make({
+          address: 'https://integration.example/spec?format=json',
+          content: JSON.stringify(specification),
+        }),
+      )
+      expect(yield* Ref.get(requests)).toContain('GET /spec?format=json')
+    }).pipe(Effect.provide(NodeHttpClient.layerUndici), Effect.scoped),
+  )
   it.effect(
     'probes a real local MCP protocol fixture and reads a local OpenAPI fixture through the network boundary',
     () =>
@@ -153,7 +170,10 @@ describe('public integration addresses', () => {
           }),
         )
         expect(yield* inspect('/linked')).toEqual(
-          ConnectionSource.cases.OpenApi.make({ address: 'https://integration.example/spec' }),
+          ConnectionSource.cases.OpenApi.make({
+            address: 'https://integration.example/spec',
+            content: JSON.stringify(specification),
+          }),
         )
         expect(yield* inspect('/postredirect')).toEqual(
           ConnectionSource.cases.Mcp.make({
@@ -165,10 +185,16 @@ describe('public integration addresses', () => {
           reason: 'not a public web address',
         })
         expect(yield* inspect('/spec')).toEqual(
-          ConnectionSource.cases.OpenApi.make({ address: 'https://integration.example/spec' }),
+          ConnectionSource.cases.OpenApi.make({
+            address: 'https://integration.example/spec',
+            content: JSON.stringify(specification),
+          }),
         )
         expect(yield* inspect('/redirect')).toEqual(
-          ConnectionSource.cases.OpenApi.make({ address: 'https://integration.example/spec' }),
+          ConnectionSource.cases.OpenApi.make({
+            address: 'https://integration.example/spec',
+            content: JSON.stringify(specification),
+          }),
         )
         expect(yield* inspect('/key')).toEqual(
           ConnectionSource.cases.Mcp.make({
@@ -206,7 +232,6 @@ describe('public integration addresses', () => {
           'https://localhost/',
           'https://service.internal/',
           'https://user:key@example.com/',
-          'https://example.com/?key=secret',
         ])
           expect(publicAddress(address)).toBeUndefined()
         const reader = yield* ConnectionAddress

@@ -224,7 +224,12 @@ export const ConnectionMatch = Schema.TaggedUnion({
     shared: Schema.Boolean,
     state: ConnectionState,
   },
-  Catalog: { name: Schema.String, description: Schema.String, connected: Schema.Boolean },
+  Catalog: {
+    name: Schema.String,
+    description: Schema.String,
+    connected: Schema.Boolean,
+    authorization: ServiceAuthorization,
+  },
 })
 export const FindIntegrationsResponse = Schema.Struct({
   integrations: Schema.Array(ConnectionMatch),
@@ -259,7 +264,7 @@ export const AddIntegrationOutcome = Schema.TaggedUnion({
   Unreachable: {
     reason: Schema.Literals([
       'could not be reached',
-      'public address enforcement is not configured',
+      'this Vivid is not set up to add a server by address yet',
     ]),
   },
 })

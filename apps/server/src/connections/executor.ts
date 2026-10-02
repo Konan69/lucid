@@ -108,8 +108,8 @@ export const ExecutorResumeOutcome = Schema.TaggedUnion({
 })
 
 const errorContext = { service: Schema.Literal('connections'), tool: Schema.NullOr(Schema.String) }
-/** URL registration is disabled until infrastructure declares Executor's public-only egress.
- * Vivid's preflight cannot constrain a second fetch in a different process. The operator must
+/** MCP URL registration is disabled until infrastructure declares Executor's public-only egress.
+ * OpenAPI content never needs a second spec fetch. The operator must
  * disable Executor loopback access and private-origin exceptions before enabling this capability.
  */
 export class ExecutorPublicAddressRequired extends Schema.TaggedError<ExecutorPublicAddressRequired>()(
@@ -589,25 +589,23 @@ function responseReader(client: HttpClient.HttpClient) {
   }
 }
 
-/** MCP and OpenAPI entries with declared auth are honest before import. Unknown auth and
- * unsupported GraphQL/CLI imports are excluded rather than advertised as unauthenticated integrations.
+/** Supported catalogue entries remain discoverable even when this installation cannot authorize them.
+ * Missing or unknown auth requires operator setup; it never means unauthenticated access.
+ * Unsupported GraphQL/CLI imports remain excluded.
  * These are method hints; cached setup inspection selects a usable method before a service is
  * offered or a Connection begins. Mixed imports retain both methods during inspection.
  */
 function catalogEntry(entry: typeof WireCatalogEntry.Type) {
-  if (
-    !['mcp', 'openapi'].includes(entry.kind) ||
-    entry.connectUrl === undefined ||
+  if (!['mcp', 'openapi'].includes(entry.kind) || entry.connectUrl === undefined) return []
+  const authorization =
     entry.auth === undefined
-  )
-    return []
-  const authorization = Match.value(entry.auth.kind).pipe(
-    Match.when('none', () => ServiceAuthorization.cases.None.make({})),
-    Match.whenOr('oauth', 'mixed', () => ServiceAuthorization.cases.SignIn.make({})),
-    Match.when('api_key', () => ServiceAuthorization.cases.Key.make({ fields: [] })),
-    Match.orElse(() => null),
-  )
-  if (authorization === null) return []
+      ? ServiceAuthorization.cases.SetupRequired.make({})
+      : Match.value(entry.auth.kind).pipe(
+          Match.when('none', () => ServiceAuthorization.cases.None.make({})),
+          Match.whenOr('oauth', 'mixed', () => ServiceAuthorization.cases.SignIn.make({})),
+          Match.when('api_key', () => ServiceAuthorization.cases.Key.make({ fields: [] })),
+          Match.orElse(() => ServiceAuthorization.cases.SetupRequired.make({})),
+        )
   return [
     ExecutorServiceEntry.make({
       id: entry.id,
@@ -1524,7 +1522,8 @@ function makeAdd(
                 ? { type: 'apiKey', header: 'Authorization', prefix: 'Bearer ' }
                 : { type: 'auto' },
           }),
-          OpenApi: ({ address }) => ({ kind: 'openapi', name, url: address }),
+          // Pass the exact public-checked response bytes, never another fetch target.
+          OpenApi: ({ content }) => ({ kind: 'openapi', name, content }),
         })
         return http.readApp(post('/dashboard/api/apps/import', { source }), null)
       }),
@@ -1908,7 +1907,9 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
     authorization: availability.authorization,
     begin: registration.begin,
     add: Effect.fn('Executor.addPublic')((input) =>
-      publicOnly ? registration.add(input) : Effect.fail(ExecutorPublicAddressRequired.make({})),
+      ConnectionSource.guards.OpenApi(input.source) || publicOnly
+        ? registration.add(input)
+        : Effect.fail(ExecutorPublicAddressRequired.make({})),
     ),
     reauthorize: makeReauthorize(http, availability),
     complete: Effect.fn('Executor.completeCached')(function* (input: typeof CompleteInput.Type) {

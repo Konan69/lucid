@@ -10,6 +10,7 @@ import {
   ConnectionStep,
   PersonId,
   ServiceId,
+  ServiceAuthorization,
   TestIntegrationOutcome,
 } from '@vivid/contracts'
 import { Schema } from 'effect'
@@ -45,6 +46,7 @@ describe('integration model views', () => {
           name: 'Linear',
           description: 'Track issues',
           connected: false,
+          authorization: ServiceAuthorization.cases.SignIn.make({}),
         }),
       ],
     })

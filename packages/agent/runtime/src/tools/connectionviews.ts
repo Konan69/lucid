@@ -4,13 +4,15 @@ import {
   ConnectionAuthorizationMessage,
   ConnectionMatch,
   ConnectionState,
+  ServiceAuthorization,
   TestIntegrationOutcome,
   type FindIntegrationsResponse,
 } from '@vivid/contracts'
 import type { Schema } from 'effect'
 import { approval, modelText } from './views.ts'
 
-/** Projection is explicit: discovery exposes no product or provider references. */
+/** Discovery preserves setup readiness in plain words, so a catalogue listing cannot imply
+ * a working sign-in button. Product and provider references stay out of model context. */
 export function integrations(response: FindIntegrationsResponse) {
   return {
     catalog: response.catalog,
@@ -27,10 +29,17 @@ export function integrations(response: FindIntegrationsResponse) {
             Failed: () => 'failed',
           }),
         }),
-        Catalog: ({ name, description, connected }) => ({
+        Catalog: ({ name, description, connected, authorization }) => ({
           name: modelText(name),
           description: modelText(description),
           connected,
+          authorization: ServiceAuthorization.match(authorization, {
+            None: () => 'Ready to connect without sign-in.',
+            SignIn: () => 'Ready to sign in.',
+            Key: () => 'Ready to connect with a key in the secure dialog.',
+            SetupRequired: () =>
+              'Not set up on this Vivid yet; whoever runs it needs to finish connection setup before you can connect it. Do not offer a connect card.',
+          }),
         }),
       }),
     ),

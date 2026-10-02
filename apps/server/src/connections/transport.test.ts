@@ -1313,7 +1313,10 @@ for (const source of [
     address: 'https://integration.example/mcp',
     authorization: 'auto',
   }),
-  ConnectionSource.cases.OpenApi.make({ address: 'https://integration.example/openapi.json' }),
+  ConnectionSource.cases.OpenApi.make({
+    address: 'https://integration.example/openapi.json',
+    content: '{"openapi":"3.0.3","paths":{}}',
+  }),
 ]) {
   it.effect(`registers a custom ${source._tag} source under the acting owner`, () =>
     Effect.gen(function* () {
@@ -1321,6 +1324,21 @@ for (const source of [
       yield* Ref.update(remote.responses, (values) =>
         new Map(values).set('POST /dashboard/api/apps/import', reply(200, template)),
       )
+      const importer = ConnectionSource.match(source, {
+        Mcp: () => remote.layer,
+        OpenApi: () =>
+          executorLayer.pipe(
+            Layer.provide(FetchHttpClient.layer),
+            Layer.provide(
+              ConfigProvider.layer(
+                ConfigProvider.fromUnknown({
+                  VIVID_EXECUTOR_URL: remote.address,
+                  VIVID_EXECUTOR_KEY: 'isolated-test-key',
+                }),
+              ),
+            ),
+          ),
+      })
       yield* Effect.gen(function* () {
         const executor = yield* Executor
         const step = yield* executor.add({
@@ -1337,7 +1355,18 @@ for (const source of [
         const requests = yield* Ref.get(remote.requests)
         expect(
           requests.find((request) => request.path === 'POST /dashboard/api/apps/import'),
-        ).toMatchObject({ body: { source: { url: source.address } } })
+        ).toMatchObject({
+          body: {
+            source: ConnectionSource.match(source, {
+              Mcp: ({ address }) => ({ url: address }),
+              OpenApi: ({ content }) => ({ content }),
+            }),
+          },
+        })
+        if (ConnectionSource.guards.OpenApi(source))
+          expect(
+            requests.find((request) => request.path === 'POST /dashboard/api/apps/import'),
+          ).not.toHaveProperty('body.source.url')
         expect(requests.find((request) => request.path === 'POST /v1/apps/copies')).toMatchObject({
           body: { owner: references.owner },
         })
@@ -1345,7 +1374,7 @@ for (const source of [
           requests.find((request) => request.path === 'POST /v1/apps/copy/profiles'),
         ).toMatchObject({ body: { owner: references.owner, subject: 'acting-person' } })
         expect(requests.some((request) => request.path === 'DELETE /v1/apps/template')).toBe(true)
-      }).pipe(Effect.provide(remote.layer))
+      }).pipe(Effect.provide(importer))
     }).pipe(Effect.scoped),
   )
 }
@@ -1376,8 +1405,9 @@ it.effect(
             subject: 'acting-person',
             label: 'Disabled import',
             returnAddress: 'https://vivid.example/return',
-            source: ConnectionSource.cases.OpenApi.make({
-              address: 'https://integration.example/spec',
+            source: ConnectionSource.cases.Mcp.make({
+              address: 'https://integration.example/mcp',
+              authorization: 'auto',
             }),
           })
           .pipe(Effect.flip)
