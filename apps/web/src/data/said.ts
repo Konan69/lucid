@@ -13,6 +13,8 @@ import { Option, Result } from 'effect'
 export interface Saying {
   readonly id: number
   readonly words: string
+  /** The caller's identity for deduplicating this sentence, when it has one. */
+  readonly key: Option.Option<string>
   /** Where the sentence leads, when it leads somewhere: "Open" on something that finished. */
   readonly action: Option.Option<{ readonly label: string; readonly go: () => void }>
 }
@@ -40,13 +42,19 @@ export const said = {
   dismiss: (id: number) => set(sayings.filter((saying) => saying.id !== id)),
 }
 
-/** Says one sentence, with somewhere to go from it. The same sentence showing is not said twice. */
-export function sayWith(words: string, action: Saying['action']) {
-  if (sayings.some((saying) => saying.words === words)) return
+/** Says one sentence, with somewhere to go from it; a caller key deduplicates the same event. */
+export function sayWith(words: string, action: Saying['action'], key?: string) {
+  const identity = Option.fromNullishOr(key)
+  if (
+    Option.isSome(identity) &&
+    sayings.some((saying) => Option.isSome(saying.key) && saying.key.value === identity.value)
+  ) {
+    return
+  }
   count += 1
   const id = count
   // The newest three are kept: more than that is a wall, and the oldest was the first read.
-  set([...sayings, { id, words, action }].slice(-3))
+  set([...sayings, { id, words, action, key: identity }].slice(-3))
   setTimeout(() => said.dismiss(id), SAID_FOR_MS)
 }
 

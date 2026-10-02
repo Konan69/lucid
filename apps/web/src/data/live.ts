@@ -136,11 +136,12 @@ engine.registry.subscribe(live.notifications.atom, (result) => {
   for (const notice of fresh) {
     const threadId = notice.threadId
     if (threadId === null) {
-      sayWith(notice.title, Option.none())
+      sayWith(notice.title, Option.none(), notice.id)
     } else if (!(Route.$is('Thread')(here) && here.id === threadId)) {
       sayWith(
         notice.title,
         Option.some({ label: 'Open', go: () => router.go(Route.Thread({ id: threadId })) }),
+        notice.id,
       )
     }
   }
