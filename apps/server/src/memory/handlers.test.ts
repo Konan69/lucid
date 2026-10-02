@@ -335,12 +335,12 @@ const companyOwnership = Effect.fn('MemoryTest.company')(function* (fixture: Fix
     yield* callAs(outsider, memoryHandlers.ForgetMemory({ id: saved.memory.id })).pipe(Effect.flip),
   ).toBeInstanceOf(NotFound)
   const denied = yield* callAs(
-    personAuth(fixture.member, workspace),
+    AuthState.Vivid({ person: fixture.member, workspace, threadId: fixture.room }),
     memoryHandlers.ForgetMemory({ id: saved.memory.id }),
   ).pipe(Effect.flip)
   expect(denied).toBeInstanceOf(NotFound)
   const deniedCorrection = yield* callAs(
-    personAuth(fixture.member, workspace),
+    AuthState.Vivid({ person: fixture.member, workspace, threadId: fixture.room }),
     memoryHandlers.CorrectMemory({
       id: saved.memory.id,
       content: 'A member cannot replace a fact they did not teach.',
@@ -351,7 +351,11 @@ const companyOwnership = Effect.fn('MemoryTest.company')(function* (fixture: Fix
     saved.memory.id,
   )
   yield* callAs(
-    personAuth(fixture.admin, companyWorkspace(fixture, 'admin')),
+    AuthState.Vivid({
+      person: fixture.admin,
+      workspace: companyWorkspace(fixture, 'admin'),
+      threadId: fixture.room,
+    }),
     memoryHandlers.ForgetMemory({ id: saved.memory.id }),
   )
   expect((yield* callAs(teacher, recall)).memories.map((memory) => memory.id)).not.toContain(

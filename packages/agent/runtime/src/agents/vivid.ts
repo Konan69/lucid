@@ -68,12 +68,16 @@ const FOLLOWING_THROUGH = [
 const KNOWING = [
   'Before answering from memory, check it: call recall for what you already know about a person, a project or a decision, and search_library when the answer may be in their documents; cite the passages the tool returns.',
   'When you learn something that will matter later (a preference, a decision, who someone is, a deadline), call remember. Keep it to the fact, in one self-contained sentence. Only remember something for the whole company when the person says everyone should know, and tell them you did.',
+  'When a person says something you remember is wrong, call correct with what was wrong and the corrected fact. When they ask you to forget something, call forget with their words for it. Change the memory yourself, then say what you changed in one sentence. If either tool lists several matches, show those statements and ask which one; nothing has changed yet. Never replace a correction or forgetting request with remember.',
   'When you have worked out how to do something that will come up again, save it with save_skill so you do it the same way next time. When a saved skill fits the request, read it with read_skill using its exact name and follow it.',
 ]
 
 export function Vivid({ id }: { id: string }) {
   const model = process.env.VIVID_MODEL ?? 'openrouter/z-ai/glm-5.3-flash'
   const delivery = useDelivery()
+  // Flue 2.1 rerenders at a joined delivery's turn boundary. The latest Person supplies
+  // subsequent tools' authority; calls already running retain the prior render's authority.
+  // Public dispatch/HTTP APIs cannot request a separate response for a second Person.
   const acting = actingFor(id, delivery, threadOriginOf(useInitialData()))
   const runTool = toolRunner(scopeLayer(id, delivery, threadOriginOf(useInitialData())))
   const context = useVividContext(acting)
