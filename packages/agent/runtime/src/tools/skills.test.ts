@@ -65,13 +65,13 @@ const fixture = Effect.fn('SkillToolsTest.fixture')(function* () {
   /** Compare server-bound requests while leaving all record references inside this transport seam. */
   const reply = Effect.fn('SkillToolsTest.reply')(function* (
     tag: string,
-    payload: Schema.Json | undefined,
+    payload: Option.Option<Schema.Json>,
     exit: RpcExit,
   ) {
     const request = yield* Queue.take(requests)
     if (!Predicate.isTagged(request, 'Request')) expect.fail('Expected an RPC request')
     expect(request.tag).toBe(tag)
-    expect(request.payload).toEqual(payload)
+    expect(Option.fromUndefinedOr(request.payload)).toEqual(payload)
     yield* rpc.write({
       // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK protocol envelopes have no constructor in rc.116.
       _tag: 'Exit',
@@ -101,8 +101,16 @@ describe('procedure catalog discovery', () => {
       Effect.gen(function* () {
         const tools = yield* fixture()
         const respond = Effect.fn('SkillToolsTest.read')(function* () {
-          yield* tools.reply('ListSkillSummaries', undefined, Exit.succeed({ skills: summaries }))
-          yield* tools.reply('ReadSkill', { id: second.id }, Exit.succeed({ skill: second }))
+          yield* tools.reply(
+            'ListSkillSummaries',
+            Option.none(),
+            Exit.succeed({ skills: summaries }),
+          )
+          yield* tools.reply(
+            'ReadSkill',
+            Option.some({ id: second.id }),
+            Exit.succeed({ skill: second }),
+          )
         })
         const [result] = yield* Effect.all([tools.read('Review (2)'), respond()], {
           concurrency: 2,
@@ -121,8 +129,12 @@ describe('procedure catalog discovery', () => {
       Effect.gen(function* () {
         const tools = yield* fixture()
         const respond = Effect.fn('SkillToolsTest.save')(function* () {
-          yield* tools.reply('SaveSkill', saveRequest, Exit.succeed({ skill: second }))
-          yield* tools.reply('ListSkillSummaries', undefined, Exit.succeed({ skills: summaries }))
+          yield* tools.reply('SaveSkill', Option.some(saveRequest), Exit.succeed({ skill: second }))
+          yield* tools.reply(
+            'ListSkillSummaries',
+            Option.none(),
+            Exit.succeed({ skills: summaries }),
+          )
         })
         const [result] = yield* Effect.all([tools.save(), respond()], { concurrency: 2 })
         expect(result.output).toEqual({ name: 'Review (2)', useWhen: saveRequest.useWhen })
