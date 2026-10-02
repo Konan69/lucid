@@ -16,19 +16,24 @@ import { lifecycle } from './boat/lifecycle.ts'
 
 /** Boat ships the desktop, Chrome and Cua. This Layer installs no image and no driver.
  * Binding lookup is durable; only per-process serialization is cached. Viewer authority is
- * freshly issued for GetComputer and never persisted, logged or reused across Persons. */
+ * cached until sixty seconds before expiry and never persisted, logged or reused across Persons. */
 export const boatMachineLayer = Layer.effect(
   Machine,
   Effect.gen(function* () {
     const api = yield* transport()
     const saved = yield* bindings()
     const tabs = new Map<MachineKey, BrowseResult['tabs']>()
-    const { ensure, status, stop, running, permit } = lifecycle(api, saved, (key) => {
-      tabs.delete(key)
-    })
+    const { ensure, status, inspect, stop, running, permit } = yield* lifecycle(
+      api,
+      saved,
+      (key) => {
+        tabs.delete(key)
+      },
+    )
     return Machine.of({
       ensure,
       status,
+      inspect,
       stop,
       screen: Effect.fn('Machine.boat.relay')(() =>
         Effect.fail(new MachineCapabilityUnavailable({ capability: 'relay' })),

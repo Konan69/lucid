@@ -38,6 +38,16 @@ function unavailable({ reason }: { readonly reason: string }): ToolResult {
   }
 }
 
+/** A lost receipt preserves uncertainty and never turns a possible side effect into retry permission. */
+function outcomeUnknown(): ToolResult {
+  return {
+    output: {
+      ok: false,
+      message: 'The action may or may not have happened; do not retry without asking the person.',
+    },
+  }
+}
+
 /** Provider records pass through untouched; settle bounds them without removing provider authority.
  * Each service outcome gives one truthful next step; an unknown side effect must never be retried blindly. */
 export function toolOutcome(outcome: ToolOutcome): ToolResult {
@@ -62,12 +72,7 @@ export function toolOutcome(outcome: ToolOutcome): ToolResult {
         message: views.modelText(`The service rejected the action: ${message}.`),
       },
     }),
-    OutcomeUnknown: () => ({
-      output: {
-        ok: false,
-        message: 'The action may or may not have happened; do not retry without asking the person.',
-      },
-    }),
+    OutcomeUnknown: outcomeUnknown,
   })
 }
 
@@ -84,6 +89,7 @@ export function commandOutcome(outcome: CommandOutcome): ToolResult {
     ApprovalRequired: approval,
     Blocked: blocked,
     Unavailable: unavailable,
+    OutcomeUnknown: outcomeUnknown,
   })
 }
 
@@ -96,6 +102,7 @@ export function browseOutcome(outcome: BrowseOutcome): ToolResult {
     ApprovalRequired: approval,
     Blocked: blocked,
     Unavailable: unavailable,
+    OutcomeUnknown: outcomeUnknown,
   })
 }
 
@@ -112,5 +119,6 @@ export function desktopOutcome(outcome: DesktopOutcome): ToolResult {
     ApprovalRequired: approval,
     Blocked: blocked,
     Unavailable: unavailable,
+    OutcomeUnknown: outcomeUnknown,
   })
 }

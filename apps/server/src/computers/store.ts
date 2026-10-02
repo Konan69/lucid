@@ -37,7 +37,13 @@ import { Database, decodeStored, type DatabaseInfrastructureError } from '../dat
 import { type Actor } from '../auth/access.ts'
 import { Gate, GateDecision, ActionOutcome } from '../approvals/gate.ts'
 import { Changes, Topic } from '../live/changes.ts'
-import { Machine, MachineKey, type MachineFailure, type MachineScreen } from './machine.ts'
+import {
+  Machine,
+  MachineKey,
+  MachineState,
+  type MachineFailure,
+  type MachineScreen,
+} from './machine.ts'
 import { computers } from './tables.ts'
 
 export { computerScreenAddress } from './machine.ts'
@@ -91,12 +97,18 @@ export const computerMachineKey = (person: PersonId): MachineKey =>
   MachineKey.make(NodeCrypto.createHash('sha256').update(person).digest('hex').slice(0, 48))
 
 /** Screen authority comes from the provider on this read; URLs are never reconstructed from persisted status. */
-const wire = (row: Stored, state: ComputerState): Computer =>
-  Computer.make({ id: row.id, heldByPerson: row.held, state })
+const wire = <State extends MachineState>(row: Stored, state: State) => ({
+  id: row.id,
+  heldByPerson: row.held,
+  state,
+})
 
 /** Absence and disabled installation are distinct even before a record exists. */
-const withoutRow = (state: ComputerState): Computer =>
-  Computer.make({ id: null, state, heldByPerson: false })
+const withoutRow = <State extends MachineState>(state: State) => ({
+  id: null,
+  state,
+  heldByPerson: false,
+})
 
 export const ComputerAccess = Schema.TaggedUnion({
   Ready: { key: MachineKey },
@@ -105,10 +117,13 @@ export const ComputerAccess = Schema.TaggedUnion({
 export type ComputerAccess = typeof ComputerAccess.Type
 
 /** Passive access reports status; only the permitted execution path may wake the Computer. */
-const accessTo = (computer: Computer, key: MachineKey): ComputerAccess => {
+const accessTo = (
+  computer: { readonly heldByPerson: boolean; readonly state: MachineState },
+  key: MachineKey,
+): ComputerAccess => {
   if (computer.heldByPerson)
     return ComputerAccess.cases.Unavailable.make({ reason: 'the Person is using the Computer' })
-  return ComputerState.match(computer.state, {
+  return MachineState.match(computer.state, {
     Running: (): ComputerAccess => ComputerAccess.cases.Ready.make({ key }),
     Absent: () =>
       ComputerAccess.cases.Unavailable.make({
@@ -132,8 +147,8 @@ const accessTo = (computer: Computer, key: MachineKey): ComputerAccess => {
 }
 
 /** Comparing the persisted state prevents read/publish loops when the provider has not changed. */
-const sameState = (row: Stored, state: ComputerState): boolean =>
-  ComputerState.match(state, {
+const sameState = (row: Stored, state: MachineState): boolean =>
+  MachineState.match(state, {
     Absent: () => false,
     Unavailable: () => false,
     Starting: ({ since }) => Stored.guards.starting(row) && row.since === since,
@@ -143,94 +158,8 @@ const sameState = (row: Stored, state: ComputerState): boolean =>
       Stored.guards.failed(row) && row.since === since && row.reason === reason,
   })
 
-/** All record reads and mutations are constrained by Person ownership, including background completions. */
-const persistence = Effect.fn('ComputerStore.persistence')(function* () {
-  const database = yield* Database
-  const changes = yield* Changes
-  const load = Effect.fn('ComputerStore.load')(function* (person: PersonId) {
-    const rows = yield* database.run(
-      database.select().from(computers).where(eq(computers.personId, person)).limit(1),
-    )
-    const row = rows[0]
-    return row === undefined ? Option.none<Stored>() : Option.some(yield* decode(row))
-  })
-  const publish = Effect.fn('ComputerStore.publish')((person: PersonId) =>
-    changes.publish([Topic.person(person)]),
-  )
-  /** Compare the generation and state so a stale read or worker cannot overwrite a newer lifecycle transition. */
-  const update = Effect.fn('ComputerStore.update')(function* (
-    person: PersonId,
-    before: Stored,
-    state: ComputerState,
-  ) {
-    const values = ComputerState.match(state, {
-      Absent: (): StateColumns => ({
-        status: 'stopped',
-        since: before.since,
-        reason: null,
-      }),
-      Starting: ({ since }) => ({ status: 'starting', since, reason: null }),
-      Running: ({ since }) => ({ status: 'running', since, reason: null }),
-      Stopped: ({ since }) => ({ status: 'stopped', since, reason: null }),
-      Failed: ({ since, reason }) => ({ status: 'failed', since, reason }),
-      Unavailable: () => ({
-        status: 'failed',
-        since: before.since,
-        reason: 'No Computer provider is configured on this installation.',
-      }),
-    })
-    const rows = yield* database.run(
-      database
-        .update(computers)
-        .set(values)
-        .where(
-          and(
-            eq(computers.personId, person),
-            eq(computers.status, before.status),
-            eq(computers.since, before.since),
-          ),
-        )
-        .returning(),
-    )
-    if (rows.length > 0) yield* publish(person)
-    return yield* load(person)
-  })
-  /** Claim startup atomically; only the RETURNING owner may fork an ensure. */
-  const starting = Effect.fn('ComputerStore.starting')(function* (person: PersonId) {
-    const since = yield* Clock.currentTimeMillis
-    const claimed = yield* database.run(
-      database
-        .insert(computers)
-        .values({
-          id: NodeCrypto.randomUUID(),
-          personId: person,
-          machine: computerMachineKey(person),
-          status: 'starting',
-          since,
-          held: false,
-          reason: null,
-          createdAt: since,
-          lastActivityAt: since,
-        })
-        .onConflictDoUpdate({
-          target: computers.personId,
-          set: { status: 'starting', since, lastActivityAt: since, reason: null },
-          setWhere: inArray(computers.status, ['stopped', 'failed']),
-        })
-        .returning(),
-    )
-    const row = claimed[0]
-    if (row === undefined) return Option.none<Stored>()
-    yield* publish(person)
-    return Option.some(yield* decode(row))
-  })
-  /** Holding an absent Computer does not create one. Keyboard ownership is independent of workspace. */
-  const hold = Effect.fn('ComputerStore.holdRow')(function* (person: PersonId, held: boolean) {
-    const rows = yield* database.run(
-      database.update(computers).set({ held }).where(eq(computers.personId, person)).returning(),
-    )
-    if (rows.length > 0) yield* publish(person)
-  })
+/** Activity persistence owns millisecond epochs and restoration scans independently of lifecycle writes. */
+const activityRows = (database: Database['Service']) => {
   /** Startup restores timers from persisted activity; it never treats a restart as new activity. */
   const active = Effect.fn('ComputerStore.active')(function* () {
     const values = yield* database.run(
@@ -248,7 +177,122 @@ const persistence = Effect.fn('ComputerStore.persistence')(function* () {
       database.update(computers).set({ lastActivityAt }).where(eq(computers.personId, person)),
     )
   })
-  return { load, update, starting, hold, active, touch }
+  return { active, touch }
+}
+
+/** All record reads and mutations are constrained by Person ownership, including background completions. */
+const persistence = Effect.fn('ComputerStore.persistence')(function* (
+  machine: Machine['Service'],
+  lock: ReturnType<typeof personLocks>,
+) {
+  const database = yield* Database
+  const changes = yield* Changes
+  const load = Effect.fn('ComputerStore.load')(function* (person: PersonId) {
+    const rows = yield* database.run(
+      database.select().from(computers).where(eq(computers.personId, person)).limit(1),
+    )
+    const row = rows[0]
+    return row === undefined ? Option.none<Stored>() : Option.some(yield* decode(row))
+  })
+  const publish = Effect.fn('ComputerStore.publish')((person: PersonId) =>
+    changes.publish([Topic.person(person)]),
+  )
+  /** Every lifecycle write arms before publication; readers cannot observe an active state without its idle worker. */
+  const commitState = Effect.fn('ComputerStore.commitState')(function* (
+    person: PersonId,
+    mutation: Effect.Effect<
+      ReadonlyArray<typeof computers.$inferSelect>,
+      DatabaseInfrastructureError
+    >,
+  ): Effect.fn.Return<ReadonlyArray<typeof computers.$inferSelect>, DatabaseInfrastructureError> {
+    const written = yield* mutation
+    if (written.length > 0) {
+      yield* inactivity.arm(person)
+      yield* publish(person)
+    }
+    return written
+  })
+  /** Compare the generation and state so a stale read or worker cannot overwrite a newer lifecycle transition. */
+  const update = Effect.fn('ComputerStore.update')(function* (
+    person: PersonId,
+    before: Stored,
+    state: MachineState,
+  ) {
+    const values = MachineState.match(state, {
+      Absent: (): StateColumns => ({
+        status: 'stopped',
+        since: before.since,
+        reason: null,
+      }),
+      Starting: ({ since }) => ({ status: 'starting', since, reason: null }),
+      Running: ({ since }) => ({ status: 'running', since, reason: null }),
+      Stopped: ({ since }) => ({ status: 'stopped', since, reason: null }),
+      Failed: ({ since, reason }) => ({ status: 'failed', since, reason }),
+      Unavailable: () => ({
+        status: 'failed',
+        since: before.since,
+        reason: 'No Computer provider is configured on this installation.',
+      }),
+    })
+    yield* commitState(
+      person,
+      database.run(
+        database
+          .update(computers)
+          .set(values)
+          .where(
+            and(
+              eq(computers.personId, person),
+              eq(computers.status, before.status),
+              eq(computers.since, before.since),
+            ),
+          )
+          .returning(),
+      ),
+    )
+    return yield* load(person)
+  })
+  /** Claim startup atomically; only the RETURNING owner may fork an ensure. */
+  const starting = Effect.fn('ComputerStore.starting')(function* (person: PersonId) {
+    const since = yield* Clock.currentTimeMillis
+    const claimed = yield* commitState(
+      person,
+      database.run(
+        database
+          .insert(computers)
+          .values({
+            id: NodeCrypto.randomUUID(),
+            personId: person,
+            machine: computerMachineKey(person),
+            status: 'starting',
+            since,
+            held: false,
+            reason: null,
+            createdAt: since,
+            lastActivityAt: since,
+          })
+          .onConflictDoUpdate({
+            target: computers.personId,
+            set: { status: 'starting', since, lastActivityAt: since, reason: null },
+            setWhere: inArray(computers.status, ['stopped', 'failed']),
+          })
+          .returning(),
+      ),
+    )
+    const row = claimed[0]
+    if (row === undefined) return Option.none<Stored>()
+    return Option.some(yield* decode(row))
+  })
+  /** Holding an absent Computer does not create one. Keyboard ownership is independent of workspace. */
+  const hold = Effect.fn('ComputerStore.holdRow')(function* (person: PersonId, held: boolean) {
+    const rows = yield* database.run(
+      database.update(computers).set({ held }).where(eq(computers.personId, person)).returning(),
+    )
+    if (rows.length > 0) yield* publish(person)
+  })
+  const { active, touch } = activityRows(database)
+  const inactivity = yield* idle({ rows: { load, update, active, touch }, machine, lock })
+  return { load, update, starting, hold, active, touch, inactivity }
 })
 
 type Persistence = Effect.Success<ReturnType<typeof persistence>>
@@ -363,30 +407,24 @@ const personLocks = () => {
   }
 }
 
-/** Scoped lifecycle workers and Person locks order start/stop/hold/execution without tying startup to an RPC fiber. */
-const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
-  const rows = yield* persistence()
-  const machine = yield* Machine
-  const scope = yield* Effect.scope
-  const pending = new Set<PersonId>()
-  const workers = new Map<PersonId, Fiber.Fiber<void>>()
-  /** Startup markers precede publication; cleanup removes both ownership records together. */
-  const forget = Effect.fn('ComputerStore.forget')((person: PersonId) =>
-    Effect.sync(() => {
-      pending.delete(person)
-      workers.delete(person)
-    }),
-  )
-  const lock = personLocks()
+/** The same persisted reconciliation projects Person viewer reads and screen-free action observations. */
+const observations = (
+  rows: Persistence,
+  machine: Machine['Service'],
+  pending: ReadonlySet<PersonId>,
+) => {
   /** Provider absence maps to stopped only for an existing row, never an invented running address. */
-  const get = Effect.fn('ComputerStore.get')(function* (person: PersonId) {
+  const read = Effect.fn('ComputerStore.read')(function* <State extends MachineState>(
+    person: PersonId,
+    observe: (key: MachineKey) => Effect.Effect<State, MachineFailure>,
+  ) {
     const row = yield* rows.load(person)
     const key = Option.match(row, {
       onNone: () => computerMachineKey(person),
       onSome: (value) => value.machine,
     })
     const recordedSince = Option.isSome(row) ? row.value.since : yield* Clock.currentTimeMillis
-    const reported = yield* machine.status(key).pipe(
+    const reported = yield* observe(key).pipe(
       Effect.catch((failure) =>
         Effect.succeed(
           ComputerState.cases.Failed.make({
@@ -396,16 +434,16 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
         ),
       ),
     )
-    if (ComputerState.guards.Unavailable(reported)) return withoutRow(reported)
+    if (MachineState.guards.Unavailable(reported)) return withoutRow(reported)
     if (Option.isNone(row)) return withoutRow(ComputerState.cases.Absent.make({}))
     if (pending.has(person) && Stored.guards.starting(row.value))
       return wire(row.value, ComputerState.cases.Starting.make({ since: row.value.since }))
-    if (Stored.guards.failed(row.value) && !ComputerState.guards.Running(reported))
+    if (Stored.guards.failed(row.value) && !MachineState.guards.Running(reported))
       return wire(
         row.value,
         ComputerState.cases.Failed.make({ since: row.value.since, reason: row.value.reason }),
       )
-    const actual = ComputerState.guards.Absent(reported)
+    const actual = MachineState.guards.Absent(reported)
       ? ComputerState.cases.Stopped.make({ since: row.value.since })
       : reported
     const current = wire(row.value, actual)
@@ -416,13 +454,39 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
       onSome: (value) => wire(value, actual),
     })
   })
+  /** Person reads include the cached viewer; action checks carry lifecycle facts only. */
+  const get = Effect.fn('ComputerStore.get')((person: PersonId) =>
+    read(person, (key) => machine.status(key)).pipe(Effect.map((value) => Computer.make(value))),
+  )
+  const inspect = Effect.fn('ComputerStore.inspect')((person: PersonId) =>
+    read(person, (key) => machine.inspect(key)),
+  )
+  return { get, inspect }
+}
+
+/** Scoped lifecycle workers and Person locks order start/stop/hold/execution without tying startup to an RPC fiber. */
+const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
+  const machine = yield* Machine
+  const lock = personLocks()
+  const rows = yield* persistence(machine, lock)
+  const scope = yield* Effect.scope
+  const pending = new Set<PersonId>()
+  const workers = new Map<PersonId, Fiber.Fiber<void>>()
+  /** Startup markers precede publication; cleanup removes both ownership records together. */
+  const forget = Effect.fn('ComputerStore.forget')((person: PersonId) =>
+    Effect.sync(() => {
+      pending.delete(person)
+      workers.delete(person)
+    }),
+  )
+  const { get, inspect } = observations(rows, machine, pending)
   /** Start returns the persisted starting receipt before its scope-owned worker acquires the lifecycle permit. */
   const begin = Effect.fn('ComputerStore.begin')(
     function* (person: PersonId) {
-      const current = yield* get(person)
-      if (ComputerState.isAnyOf(['Running', 'Unavailable'])(current.state)) return current
+      const current = yield* inspect(person)
+      if (MachineState.isAnyOf(['Running', 'Unavailable'])(current.state)) return current
       pending.add(person)
-      const claim = ComputerState.guards.Starting(current.state)
+      const claim = MachineState.guards.Starting(current.state)
         ? rows.load(person)
         : rows.starting(person)
       const row = yield* claim.pipe(
@@ -431,7 +495,7 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
       )
       if (Option.isNone(row)) {
         yield* forget(person)
-        return yield* get(person)
+        return yield* inspect(person)
       }
       const worker = yield* startMachine(machine, rows, person, row.value).pipe(
         (effect) => lock(person).withPermit(effect),
@@ -446,7 +510,7 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
   )
   /** An idempotent request during startup returns its receipt immediately, without waiting for ensure. */
   const start = Effect.fn('ComputerStore.start')(function* (person: PersonId) {
-    if (pending.has(person)) return yield* get(person)
+    if (pending.has(person)) return yield* inspect(person)
     return yield* begin(person)
   })
   /** Stop is ordered after startup and records a provider failure rather than claiming the machine stopped. */
@@ -478,24 +542,22 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
     yield* forget(person)
     return yield* halt(person)
   })
-  /** Taking or releasing the keyboard shares the execution permit, so no new action begins while held. */
-  const hold = Effect.fn('ComputerStore.hold')(
-    function* (person: PersonId, held: boolean) {
-      yield* rows.hold(person, held)
-      return yield* get(person)
-    },
-    (effect, person) => lock(person).withPermit(effect),
-  )
-  return { get, start, stop, hold, lock, rows, machine, workers }
+  /** Takeover is an atomic row write independent of the action permit. The in-flight tool may finish,
+   * while the next action's final readiness check sees the hold. The response must not queue either. */
+  const hold = Effect.fn('ComputerStore.hold')(function* (person: PersonId, held: boolean) {
+    yield* rows.hold(person, held)
+    return yield* get(person)
+  })
+  return { get, inspect, start, stop, hold, lock, rows, machine, workers }
 })
 
 /** Actions may wake absent/stopped machines once; failed starts require an explicit Person decision.
  * Starting uses the same provider ensure receipt, including a persisted startup after a restart. */
 const prepare = Effect.fn('ComputerStore.prepare')(
   function* (state: Effect.Success<ReturnType<typeof lifecycle>>, person: PersonId) {
-    const current = yield* state.get(person)
+    const current = yield* state.inspect(person)
     if (current.heldByPerson) return
-    if (ComputerState.isAnyOf(['Absent', 'Stopped', 'Starting'])(current.state))
+    if (MachineState.isAnyOf(['Absent', 'Stopped', 'Starting'])(current.state))
       yield* state.start(person)
     const worker = state.workers.get(person)
     if (worker !== undefined) yield* Fiber.await(worker)
@@ -512,11 +574,11 @@ const requireReady = Effect.fn('ComputerStore.requireReady')(function* (
   state: Effect.Success<ReturnType<typeof lifecycle>>,
   person: PersonId,
 ) {
-  const computer = yield* state.get(person)
+  const computer = yield* state.inspect(person)
   if (computer.heldByPerson) return yield* Effect.fail(new ComputerHeld({ person }))
-  if (ComputerState.guards.Unavailable(computer.state))
+  if (MachineState.guards.Unavailable(computer.state))
     return yield* Effect.fail(new ComputerProviderUnavailable({ person }))
-  if (ComputerState.guards.Failed(computer.state))
+  if (MachineState.guards.Failed(computer.state))
     return yield* Effect.fail(new ComputerStartFailed({ person, reason: computer.state.reason }))
   const ready = accessTo(computer, computerMachineKey(person))
   if (ComputerAccess.guards.Unavailable(ready))
@@ -524,14 +586,29 @@ const requireReady = Effect.fn('ComputerStore.requireReady')(function* (
   const row = yield* state.rows.load(person)
   if (Option.isNone(row))
     return yield* Effect.fail(new ComputerNotReady({ reason: 'The Computer is absent.' }))
+  // Provider observation can await I/O while takeover commits; use the latest durable hold before dispatch.
+  if (row.value.held) return yield* Effect.fail(new ComputerHeld({ person }))
   return row.value.machine
 })
 
 /** One scoped timer owns each Computer's idle deadline. Activity cancels it before updating time.
  * Watches are counted by subscription lifetime, never by repeated status reads. Keyboard ownership also suppresses stop. */
-const idle = Effect.fn('ComputerStore.idle')(function* (
-  state: Effect.Success<ReturnType<typeof lifecycle>>,
-) {
+const idle = Effect.fn('ComputerStore.idle')(function* (state: {
+  readonly rows: {
+    readonly load: (
+      person: PersonId,
+    ) => Effect.Effect<Option.Option<Stored>, DatabaseInfrastructureError>
+    readonly update: (
+      person: PersonId,
+      before: Stored,
+      state: MachineState,
+    ) => Effect.Effect<Option.Option<Stored>, DatabaseInfrastructureError>
+    readonly active: () => Effect.Effect<ReadonlyArray<Stored>, DatabaseInfrastructureError>
+    readonly touch: (person: PersonId) => Effect.Effect<void, DatabaseInfrastructureError>
+  }
+  readonly machine: Machine['Service']
+  readonly lock: ReturnType<typeof personLocks>
+}) {
   const scope = yield* Effect.scope
   const timers = new Map<PersonId, Fiber.Fiber<void>>()
   const watchers = new Map<PersonId, number>()
@@ -614,11 +691,11 @@ export const computerStoreLayer = Layer.effect(
   ComputerStore,
   Effect.gen(function* () {
     const state = yield* lifecycle()
-    const inactivity = yield* idle(state)
+    const inactivity = state.rows.inactivity
     /** Resolve provider identity only after a current lifecycle and keyboard-ownership check. */
     const access = Effect.fn('ComputerStore.access')(function* (person: PersonId) {
       const row = yield* state.rows.load(person)
-      const computer = yield* state.get(person)
+      const computer = yield* state.inspect(person)
       const result = accessTo(computer, computerMachineKey(person))
       if (ComputerAccess.guards.Unavailable(result)) return result
       if (Option.isNone(row))
@@ -630,8 +707,8 @@ export const computerStoreLayer = Layer.effect(
       const row = yield* state.rows.load(person)
       if (Option.isNone(row) || !Stored.guards.running(row.value))
         return Option.none<MachineScreen>()
-      const actual = yield* state.machine.status(row.value.machine).pipe(Effect.option)
-      if (Option.isNone(actual) || !ComputerState.guards.Running(actual.value))
+      const actual = yield* state.machine.inspect(row.value.machine).pipe(Effect.option)
+      if (Option.isNone(actual) || !MachineState.guards.Running(actual.value))
         return Option.none<MachineScreen>()
       return yield* state.machine.screen(row.value.machine).pipe(Effect.option)
     })
@@ -641,8 +718,8 @@ export const computerStoreLayer = Layer.effect(
         person: PersonId,
         action: (key: MachineKey) => Effect.Effect<A, MachineFailure>,
       ) {
-        const key = yield* requireReady(state, person)
         yield* inactivity.activity(person)
+        const key = yield* requireReady(state, person)
         return yield* action(key).pipe(
           Effect.ensuring(
             inactivity.activity(person).pipe(
@@ -687,7 +764,12 @@ export const computerStoreLayer = Layer.effect(
       const computer = yield* state.start(person)
       yield* inactivity.activity(person)
       yield* inactivity.arm(person)
-      return computer
+      if (MachineState.guards.Running(computer.state)) return yield* state.get(person)
+      return Computer.make({
+        id: computer.id,
+        heldByPerson: computer.heldByPerson,
+        state: computer.state,
+      })
     })
     const hold = Effect.fn('ComputerStore.holdActive')(function* (person: PersonId, held: boolean) {
       const computer = yield* state.hold(person, held)
@@ -788,6 +870,9 @@ export const computerRunCommand = Effect.fn('Computer.runCommand')(function* (
         })
         .pipe(
           Effect.map((result) => CommandOutcome.cases.Completed.make({ result })),
+          Effect.catchTag('MachineExecutionUnknown', () =>
+            Effect.succeed(CommandOutcome.cases.OutcomeUnknown.make({})),
+          ),
           Effect.catch((failure) =>
             Effect.succeed(
               CommandOutcome.cases.Unavailable.make({ reason: executionReason(failure) }),
@@ -823,6 +908,9 @@ export const computerBrowse = Effect.fn('Computer.browse')(function* (
     Allowed: Effect.fn('Computer.browser.allowed')((): Effect.Effect<BrowseOutcome> =>
       store.browse(actor.person.id, request.action).pipe(
         Effect.map((result) => BrowseOutcome.cases.Completed.make({ result })),
+        Effect.catchTag('MachineExecutionUnknown', () =>
+          Effect.succeed(BrowseOutcome.cases.OutcomeUnknown.make({})),
+        ),
         Effect.catch((failure) =>
           Effect.succeed(
             BrowseOutcome.cases.Unavailable.make({ reason: executionReason(failure) }),
@@ -873,6 +961,9 @@ export const computerDesktop = Effect.fn('Computer.desktop')(function* (
     Allowed: Effect.fn('Computer.desktop.allowed')((): Effect.Effect<DesktopOutcome> =>
       store.desktop(actor.person.id, request.action).pipe(
         Effect.map((view) => DesktopOutcome.cases.Completed.make({ view })),
+        Effect.catchTag('MachineExecutionUnknown', () =>
+          Effect.succeed(DesktopOutcome.cases.OutcomeUnknown.make({})),
+        ),
         Effect.catch((failure) =>
           Effect.succeed(
             DesktopOutcome.cases.Unavailable.make({ reason: executionReason(failure) }),

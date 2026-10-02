@@ -23,6 +23,18 @@ export interface MachineScreen {
   readonly authorization: Redacted.Redacted
 }
 
+/** Lifecycle observation carries no viewer authority; Vivid never needs a screen permission to act. */
+const lifecycleStates = {
+  Absent: ComputerState.cases.Absent.fields,
+  Starting: ComputerState.cases.Starting.fields,
+  Running: { since: ComputerState.cases.Running.fields.since },
+  Stopped: ComputerState.cases.Stopped.fields,
+  Failed: ComputerState.cases.Failed.fields,
+  Unavailable: ComputerState.cases.Unavailable.fields,
+} satisfies Record<keyof typeof ComputerState.cases, Schema.Struct.Fields>
+export const MachineState = Schema.TaggedUnion(lifecycleStates)
+export type MachineState = typeof MachineState.Type
+
 /** Docker's healthy machine facts are also the transport's Running state. */
 export type RunningMachine = typeof ComputerState.cases.Running.Type
 
@@ -143,9 +155,12 @@ export type MachineFailure =
 
 /** One machine boundary; ownership, approvals, receipts, and RPC remain application concerns. */
 export interface MachineOperations {
-  readonly ensure: (key: MachineKey) => Effect.Effect<RunningMachine, MachineFailure>
+  readonly ensure: (
+    key: MachineKey,
+  ) => Effect.Effect<typeof MachineState.cases.Running.Type, MachineFailure>
   readonly stop: (key: MachineKey) => Effect.Effect<void, MachineFailure>
   readonly screen: (key: MachineKey) => Effect.Effect<MachineScreen, MachineFailure>
+  readonly inspect: (key: MachineKey) => Effect.Effect<MachineState, MachineFailure>
   readonly status: (key: MachineKey) => Effect.Effect<ComputerState, MachineFailure>
   readonly exec: (input: {
     readonly key: MachineKey
@@ -172,6 +187,9 @@ export const unavailableMachineLayer = Layer.effect(
     Machine.of({
       ensure: Effect.fn('Machine.unavailable.ensure')(() => Effect.fail(new MachineUnavailable())),
       stop: Effect.fn('Machine.unavailable.stop')(() => Effect.fail(new MachineUnavailable())),
+      inspect: Effect.fn('Machine.unavailable.inspect')(() =>
+        Effect.succeed(MachineState.cases.Unavailable.make({})),
+      ),
       status: Effect.fn('Machine.unavailable.status')(() =>
         Effect.succeed(ComputerState.cases.Unavailable.make({})),
       ),

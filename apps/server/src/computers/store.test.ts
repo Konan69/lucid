@@ -68,6 +68,7 @@ interface EvidenceService {
   readonly calls: Ref.Ref<ReadonlyArray<MachineKey>>
   readonly decisions: Ref.Ref<GateDecision>
   readonly actions: Ref.Ref<ReadonlyArray<ProposedAction>>
+  readonly viewerReads: Ref.Ref<number>
   readonly lost: Ref.Ref<boolean>
   readonly boot: Ref.Ref<Option.Option<Deferred.Deferred<void>>>
   readonly executionGate: Ref.Ref<Option.Option<Deferred.Deferred<void>>>
@@ -90,6 +91,7 @@ const evidenceLayer = Layer.effect(
       calls: yield* Ref.make<ReadonlyArray<MachineKey>>([]),
       decisions: yield* Ref.make<GateDecision>(GateDecision.cases.Allowed.make({})),
       actions: yield* Ref.make<ReadonlyArray<ProposedAction>>([]),
+      viewerReads: yield* Ref.make(0),
       lost: yield* Ref.make(false),
       executing: yield* Queue.unbounded<MachineKey>(),
       executionGate: yield* Ref.make<Option.Option<Deferred.Deferred<void>>>(Option.none()),
@@ -105,10 +107,14 @@ const providerLayer = Layer.effect(
   Machine,
   Effect.gen(function* () {
     const evidence = yield* ProviderEvidence
-    const status = Effect.fn('Computer.test.status')(function* (key: MachineKey) {
+    const inspect = Effect.fn('Computer.test.inspect')(function* (key: MachineKey) {
       const states = yield* Ref.get(evidence.states)
       const state = states.get(key)
       return state === undefined ? ComputerState.cases.Absent.make({}) : state
+    })
+    const status = Effect.fn('Computer.test.status')(function* (key: MachineKey) {
+      yield* Ref.update(evidence.viewerReads, (count) => count + 1)
+      return yield* inspect(key)
     })
     const ensure = Effect.fn('Computer.test.ensure')(function* (key: MachineKey) {
       yield* Ref.update(evidence.ensures, (calls) => [...calls, key])
@@ -147,6 +153,8 @@ const providerLayer = Layer.effect(
       key,
     }: Parameters<typeof Machine.Service.browse>[0]) {
       yield* Ref.update(evidence.calls, (calls) => [...calls, key])
+      if (yield* Ref.get(evidence.lost))
+        return yield* Effect.fail(new MachineExecutionUnknown({ key }))
       return {
         address: 'https://example.com',
         title: 'Example',
@@ -156,7 +164,7 @@ const providerLayer = Layer.effect(
       }
     })
     const screen = Effect.fn('Computer.test.screen')(function* (key: MachineKey) {
-      const state = yield* status(key)
+      const state = yield* inspect(key)
       if (!ComputerState.guards.Running(state))
         return yield* Effect.fail(new MachineNotRunning({ key }))
       return {
@@ -168,6 +176,8 @@ const providerLayer = Layer.effect(
       key,
     }: Parameters<typeof Machine.Service.desktop>[0]) {
       yield* Ref.update(evidence.calls, (calls) => [...calls, key])
+      if (yield* Ref.get(evidence.lost))
+        return yield* Effect.fail(new MachineExecutionUnknown({ key }))
       return {
         picture: 'test-picture',
         width: 1920,
@@ -176,7 +186,7 @@ const providerLayer = Layer.effect(
         window: 'Example',
       }
     })
-    return Machine.of({ status, ensure, stop, exec, browse, screen, desktop })
+    return Machine.of({ status, inspect, ensure, stop, exec, browse, screen, desktop })
   }),
 ).pipe(Layer.provide(evidenceLayer))
 
@@ -745,7 +755,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           }))._tag,
         ).toBe('Unknown')
         expect((yield* computerHandlers.RunCommand(request).pipe(asVivid(first)))._tag).toBe(
-          'Unavailable',
+          'OutcomeUnknown',
         )
         expect(
           (yield* computerHandlers.RunCommand(request).pipe(asPerson(first), Effect.flip))._tag,
@@ -829,6 +839,112 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         expect((yield* Ref.get(evidence.calls)).length).toBe(count)
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     15000,
+  )
+
+  it.effect('Vivid readiness and permitted actions never request Person viewer authority', () =>
+    Effect.gen(function* () {
+      const { first } = yield* fixture()
+      const store = yield* ComputerStore
+      const evidence = yield* ProviderEvidence
+      expect((yield* computerHandlers.RunCommand(request).pipe(asVivid(first)))._tag).toBe(
+        'Completed',
+      )
+      expect(yield* Ref.get(evidence.viewerReads)).toBe(0)
+      expect(
+        (yield* computerHandlers.GetComputer().pipe(asPerson(first))).computer.state._tag,
+      ).toBe('Running')
+      const before = yield* Ref.get(evidence.viewerReads)
+      yield* store.access(first.id)
+      yield* computerHandlers.RunCommand(request).pipe(asVivid(first))
+      yield* computerHandlers
+        .Browse({ action: BrowserAction.cases.Read.make({}), summary: 'Read' })
+        .pipe(asVivid(first))
+      yield* computerHandlers
+        .UseDesktop({ action: DesktopAction.cases.Look.make({}), summary: 'Look' })
+        .pipe(asVivid(first))
+      expect(yield* Ref.get(evidence.viewerReads)).toBe(before)
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('public Computer outcomes distinguish lost dispatch receipts from refused calls', () =>
+    Effect.gen(function* () {
+      const { first } = yield* fixture()
+      yield* start(first)
+      const evidence = yield* ProviderEvidence
+      yield* Ref.set(evidence.lost, true)
+      const outcomes = [
+        yield* computerHandlers.RunCommand(request).pipe(asVivid(first)),
+        yield* computerHandlers
+          .Browse({ action: BrowserAction.cases.Read.make({}), summary: 'Read page' })
+          .pipe(asVivid(first)),
+        yield* computerHandlers
+          .UseDesktop({ action: DesktopAction.cases.Look.make({}), summary: 'Look' })
+          .pipe(asVivid(first)),
+      ]
+      expect(outcomes.map((outcome) => outcome._tag)).toEqual([
+        'OutcomeUnknown',
+        'OutcomeUnknown',
+        'OutcomeUnknown',
+      ])
+      expect(yield* Ref.get(evidence.calls)).toHaveLength(3)
+      yield* (yield* ComputerStore).hold(first.id, true)
+      expect((yield* computerHandlers.RunCommand(request).pipe(asVivid(first)))._tag).toBe(
+        'Unavailable',
+      )
+      expect(yield* Ref.get(evidence.calls)).toHaveLength(3)
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect(
+    'taking the keyboard returns before an in-flight action and refuses the next action',
+    () =>
+      Effect.gen(function* () {
+        const { first } = yield* fixture()
+        const store = yield* ComputerStore
+        const evidence = yield* ProviderEvidence
+        yield* start(first)
+        const finish = yield* Deferred.make<void>()
+        yield* Ref.set(evidence.executionGate, Option.some(finish))
+        const command = yield* store.exec(first.id, request).pipe(Effect.forkScoped)
+        yield* Queue.take(evidence.executing)
+        expect(
+          (yield* computerHandlers.HoldComputer({ held: true }).pipe(asPerson(first))).computer
+            .heldByPerson,
+        ).toBe(true)
+        expect((yield* store.get(first.id)).heldByPerson).toBe(true)
+        yield* Deferred.succeed(finish, undefined)
+        expect((yield* Fiber.join(command)).output).toBe('hello')
+        expect((yield* computerHandlers.RunCommand(request).pipe(asVivid(first)))._tag).toBe(
+          'Unavailable',
+        )
+        expect(yield* Ref.get(evidence.calls)).toHaveLength(1)
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('a running state learned by a status read always arms its idle deadline', () =>
+    Effect.gen(function* () {
+      const { first } = yield* fixture()
+      const store = yield* ComputerStore
+      const evidence = yield* ProviderEvidence
+      const key = computerMachineKey(first.id)
+      yield* Ref.set(evidence.bootFailed, true)
+      yield* store.exec(first.id, request).pipe(Effect.flip)
+      yield* Ref.update(evidence.states, (states) =>
+        new Map(states).set(
+          key,
+          ComputerState.cases.Running.make({
+            since: 100,
+            screen: ComputerState.cases.Running.fields.screen.cases.Relay.make({
+              address: computerScreenAddress,
+            }),
+          }),
+        ),
+      )
+      expect((yield* store.get(first.id)).state._tag).toBe('Running')
+      yield* TestClock.adjust('20 minutes')
+      expect(yield* Queue.take(evidence.stopped)).toBe(key)
+      expect((yield* store.get(first.id)).state._tag).toBe('Stopped')
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
   )
 
   it.effect(

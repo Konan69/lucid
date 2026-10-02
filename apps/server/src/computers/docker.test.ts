@@ -314,7 +314,10 @@ describe.skipIf(process.env.VIVID_TEST_DOCKER !== '1')('local Computer', () => {
         const machine = yield* Machine
         expect(ComputerState.guards.Absent(yield* machine.status(key))).toBe(true)
         const before = performance.now()
-        const running = yield* machine.ensure(key)
+        yield* machine.ensure(key)
+        const running = yield* machine.status(key)
+        if (!ComputerState.guards.Running(running))
+          expect.fail('The created Computer must be running')
         console.info(`Computer cold start milliseconds: ${Math.round(performance.now() - before)}`)
         expect(running.screen.address).toBe('/api/computer/screen/websockify')
         const initialScreen = yield* machine.screen(key)

@@ -18,6 +18,7 @@ import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { boatMachineLayer } from './boat.ts'
 import { Machine, MachineKey } from './machine.ts'
+import * as TestClock from 'effect/testing/TestClock'
 import { machineBindings } from './tables.ts'
 import * as Protocol from './boat/protocol.ts'
 
@@ -35,6 +36,7 @@ interface EvidenceService {
   readonly address: Ref.Ref<string>
   readonly breakCreate: Ref.Ref<boolean>
   readonly breakCommand: Ref.Ref<boolean>
+  readonly viewers: Ref.Ref<number>
   readonly publicViewer: Ref.Ref<boolean>
   readonly malformed: Ref.Ref<boolean>
   readonly wrongIdentity: Ref.Ref<boolean>
@@ -53,6 +55,7 @@ const evidenceLayer = Layer.effect(
       address: yield* Ref.make('https://example.com'),
       breakCreate: yield* Ref.make(false),
       breakCommand: yield* Ref.make(false),
+      viewers: yield* Ref.make(0),
       publicViewer: yield* Ref.make(false),
       malformed: yield* Ref.make(false),
       wrongIdentity: yield* Ref.make(false),
@@ -306,6 +309,7 @@ const serverLayer = Layer.effect(
       }
       if (path === `/api/v1/sandboxes/${id}/desktop`) {
         yield* Viewer
+        yield* Ref.update(evidence.viewers, (count) => count + 1)
         const address = (yield* Ref.get(evidence.publicViewer))
           ? 'https://viewer.boat.test/stream.html'
           : 'https://viewer.boat.test/stream.html#token=fixture-only'
@@ -388,7 +392,10 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         const key = yield* fixture()
         const machine = yield* Machine
         const evidence = yield* Evidence
-        const running = yield* machine.ensure(key)
+        yield* machine.ensure(key)
+        const running = yield* machine.status(key)
+        if (!ComputerState.guards.Running(running))
+          expect.fail('The created Computer must be running')
         expect(running.screen._tag).toBe('Viewer')
         if (Predicate.isTagged(running.screen, 'Viewer'))
           expect(running.screen.expiresAt > running.since).toBe(true)
@@ -441,12 +448,60 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         expect(ComputerState.guards.Stopped(yield* machine.status(key))).toBe(true)
         const restored = yield* Effect.gen(function* () {
           const restarted = yield* Machine
-          return yield* restarted.ensure(key)
+          yield* restarted.ensure(key)
+          return yield* restarted.status(key)
         }).pipe(Effect.provide(boatMachineLayer))
+        if (!ComputerState.guards.Running(restored))
+          expect.fail('The resumed Computer must be running')
         expect(restored.screen._tag).toBe('Viewer')
         expect(yield* Ref.get(evidence.created)).toBe(1)
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     15000,
+  )
+
+  it.effect('reuses one viewer until sixty seconds before expiry and shares concurrent reads', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const machine = yield* Machine
+      const evidence = yield* Evidence
+      yield* machine.ensure(key)
+      expect(yield* Ref.get(evidence.viewers)).toBe(0)
+      const first = yield* machine.status(key)
+      expect(yield* Ref.get(evidence.viewers)).toBe(1)
+      expect(yield* machine.status(key)).toEqual(first)
+      yield* TestClock.adjust('7 minutes')
+      expect(yield* machine.status(key)).toEqual(first)
+      expect(yield* Ref.get(evidence.viewers)).toBe(1)
+      yield* TestClock.adjust('2 minutes')
+      const refreshed = yield* Effect.all([machine.status(key), machine.status(key)], {
+        concurrency: 'unbounded',
+      })
+      expect(refreshed[0]).toEqual(refreshed[1])
+      expect(yield* Ref.get(evidence.viewers)).toBe(2)
+      const database = yield* Database
+      const rows = yield* database.run(
+        database.select().from(machineBindings).where(eq(machineBindings.key, key)),
+      )
+      expect(JSON.stringify(rows).includes('#token=')).toBe(false)
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('status never reconciles an unresolved create or resumes a stopped machine', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const machine = yield* Machine
+      const evidence = yield* Evidence
+      yield* Ref.set(evidence.breakCreate, true)
+      yield* machine.ensure(key).pipe(Effect.flip)
+      expect((yield* machine.status(key))._tag).toBe('Failed')
+      expect((yield* Ref.get(evidence.intents)).length).toBe(1)
+      expect((yield* machine.stop(key).pipe(Effect.flip))._tag).toBe('MachineCreationUnresolved')
+      expect((yield* Ref.get(evidence.intents)).length).toBe(1)
+      yield* machine.ensure(key)
+      yield* machine.stop(key)
+      expect((yield* machine.status(key))._tag).toBe('Stopped')
+      expect(yield* Ref.get(evidence.state)).toBe('archived')
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
   )
 
   it.effect(
@@ -492,6 +547,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         const evidence = yield* Evidence
         yield* machine.ensure(key)
         yield* Ref.set(evidence.publicViewer, true)
+        yield* TestClock.adjust('10 minutes')
         expect((yield* Effect.flip(machine.status(key)))._tag).toBe('MachineResponseInvalid')
         yield* Ref.set(evidence.publicViewer, false)
         yield* Ref.set(evidence.breakCommand, true)

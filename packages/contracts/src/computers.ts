@@ -174,23 +174,29 @@ export const CommandOutcome = Schema.TaggedUnion({
   Blocked: { rule: Schema.String },
   /** A Person holds the Computer, or it is not running and could not be started. */
   Unavailable: { reason: Schema.String },
+  /** Dispatch may have happened; a missing receipt never authorizes an automatic retry. */
+  OutcomeUnknown: {},
 })
 export type CommandOutcome = typeof CommandOutcome.Type
 
-/** What came of a browser step, with the same four possibilities. */
+/** What came of a browser step, including uncertain dispatch. */
 export const BrowseOutcome = Schema.TaggedUnion({
   Completed: { result: BrowseResult },
   ApprovalRequired: { approvalId: ApprovalId, summary: Schema.String },
   Blocked: { rule: Schema.String },
   Unavailable: { reason: Schema.String },
+  /** Dispatch may have happened; a missing receipt never authorizes an automatic retry. */
+  OutcomeUnknown: {},
 })
 export type BrowseOutcome = typeof BrowseOutcome.Type
 
-/** What came of a desktop action, with the same four possibilities. */
+/** What came of a desktop action, including uncertain dispatch. */
 export const DesktopOutcome = Schema.TaggedUnion({
   Completed: { view: DesktopView },
   ApprovalRequired: { approvalId: ApprovalId, summary: Schema.String },
   Blocked: { rule: Schema.String },
   Unavailable: { reason: Schema.String },
+  /** Dispatch may have happened; a missing receipt never authorizes an automatic retry. */
+  OutcomeUnknown: {},
 })
 export type DesktopOutcome = typeof DesktopOutcome.Type

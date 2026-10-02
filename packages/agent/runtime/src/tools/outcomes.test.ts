@@ -1,11 +1,35 @@
 import { describe, expect, it } from '@effect/vitest'
-import { ApprovalId, BrowseOutcome, CommandOutcome, ServiceId, ToolOutcome } from '@vivid/contracts'
+import {
+  ApprovalId,
+  BrowseOutcome,
+  CommandOutcome,
+  DesktopOutcome,
+  ServiceId,
+  ToolOutcome,
+} from '@vivid/contracts'
 import { Effect } from 'effect'
-import { browseOutcome, commandOutcome, toolOutcome } from './outcomes.ts'
+import { browseOutcome, commandOutcome, desktopOutcome, toolOutcome } from './outcomes.ts'
 
 const approval = { approvalId: ApprovalId.make('approval-1'), summary: 'Send the draft.' }
 
 describe('outcome mapping', () => {
+  it.effect('uncertain Computer dispatch refuses blind retries for all three tools', () =>
+    Effect.sync(() => {
+      const outcomes = [
+        commandOutcome(CommandOutcome.cases.OutcomeUnknown.make({})),
+        browseOutcome(BrowseOutcome.cases.OutcomeUnknown.make({})),
+        desktopOutcome(DesktopOutcome.cases.OutcomeUnknown.make({})),
+      ]
+      for (const result of outcomes) {
+        expect(result.output).toEqual({
+          ok: false,
+          message:
+            'The action may or may not have happened; do not retry without asking the person.',
+        })
+      }
+    }),
+  )
+
   it.effect(
     'ends the turn for every approval-bearing capability with a client-renderable card',
     () =>

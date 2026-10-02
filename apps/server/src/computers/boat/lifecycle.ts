@@ -2,18 +2,22 @@ import { ComputerState } from '@vivid/contracts'
 import { Clock, Effect, Option, Semaphore } from 'effect'
 import {
   MachineCreationUnresolved,
+  MachineState,
   MachineOperationFailed,
   type MachineKey,
   type MachineFailure,
-  type RunningMachine,
 } from '../machine.ts'
 import { active, observations } from './state.ts'
 import type { Transport } from './transport.ts'
 import type { Bindings } from './bindings.ts'
 
 /** Persist before provisioning, replay only the original intent, and wait for snapshot archival. */
-export function lifecycle(api: Transport, saved: Bindings, invalidate: (key: MachineKey) => void) {
-  const { bound, running, view, wait } = observations(api, saved)
+export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
+  api: Transport,
+  saved: Bindings,
+  invalidate: (key: MachineKey) => void,
+) {
+  const { bound, running, permission, wait, invalidateViewer } = yield* observations(api, saved)
   const creating = new Set<MachineKey>()
   const permits = new Map<MachineKey, Semaphore.Semaphore>()
   /** The app serializes one Person; this also protects direct Machine users within this process. */
@@ -26,7 +30,7 @@ export function lifecycle(api: Transport, saved: Bindings, invalidate: (key: Mac
   }
   const ensureUnlocked = Effect.fn('Machine.boat.reconcile')(function* (
     key: MachineKey,
-  ): Effect.fn.Return<RunningMachine, MachineFailure> {
+  ): Effect.fn.Return<typeof MachineState.cases.Running.Type, MachineFailure> {
     let row = yield* saved.intend(key, api.create)
     if (row.providerId === null) {
       const now = yield* Clock.currentTimeMillis
@@ -40,11 +44,13 @@ export function lifecycle(api: Transport, saved: Bindings, invalidate: (key: Mac
     if (record.state === 'archiving') record = yield* wait(key, 'archived')
     if (record.state === 'archived') {
       invalidate(key)
+      yield* invalidateViewer(key)
       if (!record.snapshotAvailable)
         return yield* Effect.fail(new MachineOperationFailed({ operation: 'snapshot-missing' }))
       yield* api.transition(identity.id, 'resume')
     }
-    return yield* view(key, yield* wait(key, 'running'))
+    const ready = yield* wait(key, 'running')
+    return MachineState.cases.Running.make({ since: yield* saved.observe(key, row, ready.state) })
   })
   /** A live create reports Starting immediately; a restart replays only the persisted intent. */
   const ensure = Effect.fn('Machine.boat.ensure')(
@@ -56,16 +62,22 @@ export function lifecycle(api: Transport, saved: Bindings, invalidate: (key: Mac
     },
     (effect, key) => permit(key).withPermit(effect),
   )
-  const status = Effect.fn('Machine.boat.status')(function* (key: MachineKey) {
+  const inspect = Effect.fn('Machine.boat.inspect')(function* (key: MachineKey) {
     const row = yield* saved.load(key)
     if (Option.isNone(row)) return ComputerState.cases.Absent.make({})
     if (row.value.providerId === null) {
       if (creating.has(key))
         return ComputerState.cases.Starting.make({ since: row.value.requestedAt })
-      return yield* ensure(key)
+      return ComputerState.cases.Failed.make({
+        since: row.value.requestedAt,
+        reason: 'The Computer creation is unresolved; explicitly start it to reconcile.',
+      })
     }
     const record = (yield* api.get(row.value.providerId)).sandbox
-    if (active(record.state)) return yield* view(key, record)
+    if (active(record.state))
+      return MachineState.cases.Running.make({
+        since: yield* saved.observe(key, row.value, record.state),
+      })
     const since = yield* saved.observe(key, row.value, record.state)
     if (record.state === 'archived') {
       if (!record.snapshotAvailable)
@@ -82,16 +94,27 @@ export function lifecycle(api: Transport, saved: Bindings, invalidate: (key: Mac
       })
     return ComputerState.cases.Starting.make({ since })
   })
+  /** Viewer issuance is an explicit Person projection of passive lifecycle facts. */
+  const status = Effect.fn('Machine.boat.status')(function* (key: MachineKey) {
+    const observed = yield* inspect(key)
+    if (!MachineState.guards.Running(observed)) return observed
+    return ComputerState.cases.Running.make({
+      since: observed.since,
+      screen: yield* permission(key),
+    })
+  })
   const stop = Effect.fn('Machine.boat.stop')(
     function* (key: MachineKey) {
       const row = yield* saved.load(key)
       if (Option.isNone(row)) return undefined
-      // Complete an unbound intent with its original idempotency key before archiving; do not orphan it.
-      if (row.value.providerId === null) yield* ensureUnlocked(key)
+      // Stop cannot create a paid machine. Preserve unresolved authority for an explicit Start to reconcile.
+      if (row.value.providerId === null)
+        return yield* Effect.fail(new MachineCreationUnresolved({ key }))
       const identity = yield* bound(key)
       const record = (yield* api.get(identity.id)).sandbox
       if (record.state === 'archived') return undefined
       invalidate(key)
+      yield* invalidateViewer(key)
       yield* api.transition(identity.id, 'stop')
       const archived = yield* wait(key, 'archived')
       if (archived.state !== 'archived' || !archived.snapshotAvailable)
@@ -101,5 +124,5 @@ export function lifecycle(api: Transport, saved: Bindings, invalidate: (key: Mac
     },
     (effect, key) => permit(key).withPermit(effect),
   )
-  return { ensure, status, stop, running, permit }
-}
+  return { ensure, status, inspect, stop, running, permit }
+})

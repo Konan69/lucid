@@ -549,6 +549,7 @@ export const dockerMachineLayer = (image: string) =>
         ensure: Effect.fn('Machine.ensure')(lifecycle.ensure, provide),
         stop: Effect.fn('Machine.stop')(lifecycle.stop, provide),
         status: Effect.fn('Machine.status')(lifecycle.observe, provide),
+        inspect: Effect.fn('Machine.inspect')(lifecycle.observe, provide),
         screen: Effect.fn('Machine.screen')(actions.screen, provide),
         exec: Effect.fn('Machine.exec')(actions.exec, provide),
         browse: Effect.fn('Machine.browse')(actions.browse, provide),

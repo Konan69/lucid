@@ -34,7 +34,10 @@ describe.skipIf(!enabled)('Boat native guest live proof', () => {
               ),
             ),
         )
-        const created = yield* machine.ensure(key)
+        yield* machine.ensure(key)
+        const created = yield* machine.status(key)
+        if (!ComputerState.guards.Running(created))
+          expect.fail('The created Computer must be running')
         expect(Predicate.isTagged(created.screen, 'Viewer')).toBe(true)
         const view = yield* machine.desktop({ key, action: DesktopAction.cases.Look.make({}) })
         expect(view.picture.length > 0 && view.width > 0 && view.height > 0).toBe(true)
@@ -45,7 +48,11 @@ describe.skipIf(!enabled)('Boat native guest live proof', () => {
         expect(page.title.includes('Example')).toBe(true)
         yield* machine.stop(key)
         expect(ComputerState.guards.Stopped(yield* machine.status(key))).toBe(true)
-        expect(Predicate.isTagged((yield* machine.ensure(key)).screen, 'Viewer')).toBe(true)
+        yield* machine.ensure(key)
+        const resumed = yield* machine.status(key)
+        if (!ComputerState.guards.Running(resumed))
+          expect.fail('The resumed Computer must be running')
+        expect(Predicate.isTagged(resumed.screen, 'Viewer')).toBe(true)
       }).pipe(Effect.scoped, Effect.provide(provider)),
     25 * 60_000,
   )
