@@ -14,7 +14,9 @@ import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import * as Atom from 'effect/unstable/reactivity/Atom'
 import { VividRpcClient } from '@vivid/client-runtime'
 import { change, run } from './app'
+import { Route, router } from './route'
 import { engine } from './runtime'
+import { sayWith } from './said'
 
 /**
  * Every screen's data, live, as Effect Atoms.
@@ -107,6 +109,42 @@ engine.registry.subscribe(live.me.atom, (result) => {
   if (now === lastWhereabouts) return
   lastWhereabouts = now
   engine.reopen()
+})
+
+// What has already been told, so each notice is announced once.
+const told = new Set<string>()
+let toldBefore = false
+
+/**
+ * Says so when something finishes or needs the Person while they are somewhere else in the app.
+ *
+ * A Routine that ran, a reply that landed in another Thread, an Approval waiting: these only moved
+ * a number on the bell. Each new one now says its title at the foot of the window with a way to
+ * open it. What was already waiting when the page opened is not announced, it is in the bell; and
+ * nothing is announced about the Thread that is on screen, which the Person is already reading.
+ */
+engine.registry.subscribe(live.notifications.atom, (result) => {
+  if (!AsyncResult.isSuccess(result)) return
+  const fresh = result.value.notifications.filter(
+    (notice) => notice.readAt === null && !told.has(notice.id),
+  )
+  for (const notice of result.value.notifications) told.add(notice.id)
+  if (!toldBefore) {
+    toldBefore = true
+    return
+  }
+  const here = router.route()
+  for (const notice of fresh) {
+    const threadId = notice.threadId
+    if (threadId === null) {
+      sayWith(notice.title, Option.none())
+    } else if (!(Route.$is('Thread')(here) && here.id === threadId)) {
+      sayWith(
+        notice.title,
+        Option.some({ label: 'Open', go: () => router.go(Route.Thread({ id: threadId })) }),
+      )
+    }
+  }
 })
 
 /** Reads a live query. The component re-renders when, and only when, the result changes. */

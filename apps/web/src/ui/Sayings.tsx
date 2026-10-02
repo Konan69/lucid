@@ -1,3 +1,4 @@
+import { Option } from 'effect'
 import { X } from 'lucide-react'
 import { useSyncExternalStore } from 'react'
 import { said } from '../data/said'
@@ -19,6 +20,18 @@ export function Sayings() {
           className="pointer-events-auto flex max-w-md items-center gap-2 rounded-panel py-1.5 pr-1.5 pl-3.5 text-label text-ink smooth-shadow-ring-lg glass transition-pop duration-(--dur-base) ease-out starting:translate-y-2 starting:opacity-0"
         >
           <span className="min-w-0 flex-1 text-pretty">{saying.words}</span>
+          {Option.isSome(saying.action) && (
+            <button
+              onClick={() => {
+                said.dismiss(saying.id)
+                // Read once more here: the handler is only reached when there is an action.
+                Option.map(saying.action, (action) => action.go())
+              }}
+              className="shrink-0 cursor-pointer rounded-control px-2 py-1 font-title text-accent-ink transition-colors duration-(--dur-fast) hover:bg-wash-hover"
+            >
+              {saying.action.value.label}
+            </button>
+          )}
           <button
             aria-label="Dismiss"
             onClick={() => said.dismiss(saying.id)}

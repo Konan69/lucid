@@ -60,10 +60,7 @@ export function Invite({ id }: { id: InvitationId }) {
             <Avatar name={preview.invitedBy.name} image={preview.invitedBy.image} size={20} />
             {preview.invitedBy.name} invited you as {article(preview.role)}.
           </p>
-          <p className="max-w-sm text-label text-ink-3">
-            You will share threads, a library and connections with the company. Your own threads,
-            notes and connections stay yours.
-          </p>
+          <Boundaries company={preview.company.name} />
           {preview.status === 'pending' ? (
             <div className="flex gap-2">
               <Button variant="ghost" onClick={() => router.go(Route.New())}>
@@ -83,6 +80,55 @@ export function Invite({ id }: { id: InvitationId }) {
           )}
         </>
       )}
+    </section>
+  )
+}
+
+/**
+ * What joining shares and what it does not, said before the Person joins. Someone asked to bring
+ * their assistant into a company needs to know, first, what the company will be able to see; a
+ * single reassuring sentence did not say it. Each line is something the server enforces.
+ */
+const SHARED = [
+  'Threads you start for everyone or share',
+  'The company’s Library and Projects',
+  'Connections an admin sets up for all',
+  'Rules its admins write',
+]
+const YOURS = [
+  'Your private threads',
+  'What Vivid knows about you',
+  'Your own Connections',
+  'Your own computer',
+]
+
+function Boundaries({ company }: { company: string }) {
+  return (
+    <div className="grid w-full max-w-lg gap-2.5 text-left sm:grid-cols-2">
+      <Boundary title={`Shared with ${company}`} lines={SHARED} />
+      <Boundary title="Still only yours" lines={YOURS} note="Admins cannot read these." />
+    </div>
+  )
+}
+
+function Boundary({
+  title,
+  lines,
+  note,
+}: {
+  title: string
+  lines: ReadonlyArray<string>
+  note?: string
+}) {
+  return (
+    <section className="rounded-card bg-surface-3 p-4 smooth-shadow-ring-xs">
+      <h2 className="text-label font-title text-ink">{title}</h2>
+      <ul className="mt-2 flex flex-col gap-1.5 text-label text-ink-2">
+        {lines.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+      {note !== undefined && <p className="mt-2 text-meta font-meta text-ink-3">{note}</p>}
     </section>
   )
 }

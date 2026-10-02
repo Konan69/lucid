@@ -3,6 +3,7 @@ import {
   ApprovalDecision,
   ApprovalId,
   ApprovalState,
+  BrowserAction,
   ConnectionRequestMessage,
   ConnectionState,
   InputRequestId,
@@ -11,7 +12,7 @@ import {
   type InputRequest,
   type PersonId,
 } from '@vivid/contracts'
-import { Option, Result, Schema } from 'effect'
+import { Option, Predicate, Result, Schema } from 'effect'
 import { Check, Globe, Link2, ShieldQuestion, Terminal, X } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { change, live, useLiveValue } from '../../data/live'
@@ -60,12 +61,81 @@ const TARGET_ICON = {
   Browser: <Globe className="size-4" />,
 } satisfies Record<ActionTarget['_tag'], ReactNode>
 
-/** Where the action would happen, in a few words. */
-const targetLine = (target: ActionTarget) =>
-  ActionTarget.match(target, {
-    Connection: ({ account, tool }) => `${account} · ${tool}`,
-    Command: ({ command }) => command,
-    Browser: () => 'In the browser on Vivid’s computer',
+/** A field's name as a person reads it: `reply_to` and `replyTo` are both "Reply to". */
+const fieldName = (key: string) => {
+  const words = key
+    .replaceAll('_', ' ')
+    .replaceAll(/([a-z0-9])([A-Z])/gu, '$1 $2')
+    .trim()
+    .toLocaleLowerCase()
+  return words.slice(0, 1).toLocaleUpperCase() + words.slice(1)
+}
+
+/** One value of an action, as it will be sent. Words stay words; anything structured is shown whole. */
+const fieldValue = (value: Schema.Json): string => {
+  if (Predicate.isString(value)) return value
+  if (Predicate.isNumber(value) || Predicate.isBoolean(value)) return String(value)
+  if (value === null) return '—'
+  if (Array.isArray(value) && value.every(Predicate.isString)) return value.join(', ')
+  return JSON.stringify(value, null, 2)
+}
+
+/** A JSON object, as opposed to a list or a single value. The guard keeps its values typed. */
+const isRecord = (value: Schema.Json): value is Schema.JsonObject =>
+  Predicate.isObject(value) && !Array.isArray(value)
+
+/** The fields of an action's input, in the order they were written. */
+const fieldsOf = (input: Schema.Json): ReadonlyArray<readonly [string, string]> =>
+  isRecord(input)
+    ? Object.entries(input).map(([key, value]) => [fieldName(key), fieldValue(value)] as const)
+    : [['Details', fieldValue(input)] as const]
+
+/**
+ * Exactly what would be done, in full. An Approval is consent to one specific action, so the card
+ * shows that action and not a summary of it: the account it would use and every field as it
+ * would be sent (who it goes to, the subject, the whole message), or the whole command. One line
+ * cut off with an ellipsis is not something a Person can approve.
+ */
+function Exactly({ target }: { target: ActionTarget }) {
+  if (ActionTarget.guards.Connection(target)) {
+    return (
+      <div className="mt-3 overflow-hidden rounded-control bg-well ring-line">
+        <div className="flex items-center gap-2 px-3 py-2 text-label text-ink-2 hairline-b">
+          <span className="shrink-0 text-ink-3">{TARGET_ICON.Connection}</span>
+          <span className="min-w-0 truncate">
+            {target.account} <span className="text-ink-3">· {fieldName(target.tool)}</span>
+          </span>
+        </div>
+        <dl className="flex max-h-72 flex-col gap-2 overflow-y-auto px-3 py-2.5 text-label">
+          {fieldsOf(target.input).map(([name, value]) => (
+            <div key={name}>
+              <dt className="text-meta font-meta text-ink-3">{name}</dt>
+              <dd className="wrap-break-word whitespace-pre-wrap text-ink">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    )
+  }
+  return (
+    <div className="mt-3 flex items-start gap-2 rounded-control bg-well px-3 py-2 text-label text-ink-2 ring-line">
+      <span className="mt-0.5 shrink-0 text-ink-3">{TARGET_ICON[target._tag]}</span>
+      <span className="min-w-0 font-mono wrap-break-word whitespace-pre-wrap">
+        {ActionTarget.guards.Command(target) ? target.command : browserStep(target.action)}
+      </span>
+    </div>
+  )
+}
+
+/** One step in the browser on Vivid's computer, in words. */
+const browserStep = (action: BrowserAction) =>
+  BrowserAction.match(action, {
+    Open: ({ address }) => `Open ${address}`,
+    Read: () => 'Read the page',
+    Click: ({ target }) => `Click “${target}”`,
+    Type: ({ target, text }) => `Type “${text}” into “${target}”`,
+    Press: ({ key }) => `Press ${key}`,
+    Screenshot: () => 'Look at the page',
   })
 
 const SETTLED = 'inline-flex items-center gap-1.5 text-label'
@@ -132,10 +202,12 @@ export function ApprovalCard({ approval, me }: { approval: Approval; me: PersonI
       {approval.action.rationale.length > 0 && (
         <p className="mt-1 text-label text-ink-3">{approval.action.rationale}</p>
       )}
-      <div className="mt-3 flex items-center gap-2 rounded-control bg-well px-3 py-2 text-label text-ink-2">
-        <span className="shrink-0 text-ink-3">{TARGET_ICON[approval.action.target._tag]}</span>
-        <span className="min-w-0 truncate font-mono">{targetLine(approval.action.target)}</span>
-      </div>
+      <Exactly target={approval.action.target} />
+      {pending && mine && (
+        <p className="mt-2 text-meta font-meta text-ink-3">
+          Your answer applies only to what is shown above.
+        </p>
+      )}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {!pending && <ApprovalOutcome state={approval.state} />}
         {pending && !mine && (

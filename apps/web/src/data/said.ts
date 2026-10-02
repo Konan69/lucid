@@ -1,4 +1,4 @@
-import { Result } from 'effect'
+import { Option, Result } from 'effect'
 
 /**
  * Things the app has to tell the Person that have no place of their own on screen.
@@ -13,6 +13,8 @@ import { Result } from 'effect'
 export interface Saying {
   readonly id: number
   readonly words: string
+  /** Where the sentence leads, when it leads somewhere: "Open" on something that finished. */
+  readonly action: Option.Option<{ readonly label: string; readonly go: () => void }>
 }
 
 /** Long enough to read one sentence twice; short enough not to sit over the composer. */
@@ -38,15 +40,18 @@ export const said = {
   dismiss: (id: number) => set(sayings.filter((saying) => saying.id !== id)),
 }
 
-/** Says one sentence. The same sentence already showing is not said twice. */
-export function say(words: string) {
+/** Says one sentence, with somewhere to go from it. The same sentence showing is not said twice. */
+export function sayWith(words: string, action: Saying['action']) {
   if (sayings.some((saying) => saying.words === words)) return
   count += 1
   const id = count
   // The newest three are kept: more than that is a wall, and the oldest was the first read.
-  set([...sayings, { id, words }].slice(-3))
+  set([...sayings, { id, words, action }].slice(-3))
   setTimeout(() => said.dismiss(id), SAID_FOR_MS)
 }
+
+/** Says one sentence. */
+export const say = (words: string) => sayWith(words, Option.none())
 
 /**
  * Follows a change whose refusal has nowhere on screen to be said, and says it. The result is
