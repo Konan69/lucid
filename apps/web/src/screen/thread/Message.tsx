@@ -1,5 +1,6 @@
 import type { FlueConversationMessage } from '@flue/react'
 import type { Approval, InputRequest, PersonId, Run } from '@vivid/contracts'
+import { speakerOfTurn } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { AlarmClock, Check, ChevronRight, Repeat2 } from 'lucide-react'
 import { useState } from 'react'
@@ -162,7 +163,11 @@ function Signal({
     return (
       <Said
         text={textOf(message)}
-        mine={attributes.person === context.me}
+        // Whose turn it was comes from the Thread's Runs; the conversation holds no identifier.
+        mine={Option.exists(
+          speakerOfTurn(context.runs, attributes.turn),
+          (speaker) => speaker.id === context.me,
+        )}
         from={{ name: attributes.from === undefined ? 'Someone' : attributes.from }}
       />
     )

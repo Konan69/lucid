@@ -34,12 +34,23 @@ const dami = { id: PersonId.make('dami'), name: 'Dami Cole', image: null }
 const damisRun: Run = {
   id: RunId.make('submission-7'),
   threadId: ThreadId.make('thread'),
+  turn: 7,
   origin: RunOrigin.cases.Message.make({ person: dami }),
   state: RunState.cases.Completed.make({ finishedAt: 2 }),
   startedAt: 1,
 }
 
-const shared: Around = { me: ada.id, shared: true, runs: [damisRun] }
+/** A Run Ada started, the turn after Dami's. */
+const adasRun: Run = {
+  id: RunId.make('submission-8'),
+  threadId: ThreadId.make('thread'),
+  turn: 8,
+  origin: RunOrigin.cases.Message.make({ person: ada }),
+  state: RunState.cases.Completed.make({ finishedAt: 4 }),
+  startedAt: 3,
+}
+
+const shared: Around = { me: ada.id, shared: true, runs: [damisRun, adasRun] }
 const alone: Around = { me: ada.id, shared: false, runs: [damisRun] }
 
 const message = (
@@ -74,17 +85,15 @@ describe('who a message is from', () => {
     expect(speakerOf(message({ role: 'user' }), alone)).toEqual(Speaker.Me())
   })
 
-  it('is whoever the server named on a shared Thread’s message', () => {
-    expect(speakerOf(said({ person: 'dami', from: 'Dami Cole' }), shared)).toEqual(
+  it('is whoever the Run behind that turn says, on a shared Thread’s message', () => {
+    expect(speakerOf(said({ turn: '7', from: 'Dami Cole' }), shared)).toEqual(
       Speaker.Member({ name: Option.some('Dami Cole') }),
     )
-    expect(speakerOf(said({ person: 'ada', from: 'Ada Obi' }), shared)).toEqual(Speaker.Me())
+    expect(speakerOf(said({ turn: '8', from: 'Ada Obi' }), shared)).toEqual(Speaker.Me())
   })
 
   it('draws a message that came without a name without one, rather than making one up', () => {
-    expect(speakerOf(said({ person: 'dami' }), shared)).toEqual(
-      Speaker.Member({ name: Option.none() }),
-    )
+    expect(speakerOf(said({ turn: '7' }), shared)).toEqual(Speaker.Member({ name: Option.none() }))
   })
 
   it('says who Vivid is answering only where more than one Person could have asked', () => {
@@ -133,7 +142,7 @@ describe('who a message is from', () => {
 
 describe('what a message holds', () => {
   it('shows a shared Thread’s message although Flue hides signals', () => {
-    expect(isShown(said({ person: 'dami', from: 'Dami Cole' }))).toBe(true)
+    expect(isShown(said({ turn: '7', from: 'Dami Cole' }))).toBe(true)
     expect(isShown(message({ role: 'system', display: 'hidden' }))).toBe(false)
     expect(isShown(message({ role: 'assistant' }))).toBe(true)
   })

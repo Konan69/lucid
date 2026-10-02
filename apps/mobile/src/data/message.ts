@@ -6,6 +6,7 @@ import {
   type PersonId,
   type Run,
 } from '@vivid/contracts'
+import { speakerOfTurn } from '@vivid/state'
 import { Data, Option, Schema } from 'effect'
 import { describeToolCall } from '../../../web/src/data/activity'
 
@@ -61,7 +62,7 @@ const WAKES = new Map<string, 'routine' | 'follow-up'>([
 /**
  * Who a `system`-role message is from. The server delivers everything that is not a private
  * user turn as a signal: a `message` signal is a Person speaking in a shared Thread
- * (`attributes.person` is their id, `attributes.from` their name).
+ * (`attributes.turn` names the Run that says who they are, `attributes.from` their name).
  */
 function signalSpeaker(message: FlueConversationMessage, around: Around): Speaker {
   const signal = message.signal
@@ -71,7 +72,11 @@ function signalSpeaker(message: FlueConversationMessage, around: Around): Speake
   }
   const attributes = signal.attributes === undefined ? {} : signal.attributes
   if (signal.tagName === 'message') {
-    return attributes.person === around.me
+    // Whose turn it was comes from the Thread's Runs; the conversation holds no identifier.
+    return Option.exists(
+      speakerOfTurn(around.runs, attributes.turn),
+      (speaker) => speaker.id === around.me,
+    )
       ? Speaker.Me()
       : Speaker.Member({ name: Option.fromUndefinedOr(attributes.from) })
   }
