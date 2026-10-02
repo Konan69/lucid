@@ -1,6 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
 import { and, eq, inArray } from 'drizzle-orm'
+import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
@@ -56,6 +57,7 @@ import {
   routineStoreServiceLayer,
   scheduledReplayMillis,
 } from './store.ts'
+import { IntegrationNotice, IntegrationStopReason } from './integration.ts'
 import { RoutineScheduler, routineSchedulerServiceLayer } from './scheduler.ts'
 import { routineWebhookRoutes } from './webhook.ts'
 import { InvalidRoutineSchedule } from './timing.ts'
@@ -63,6 +65,8 @@ import { hashKey } from './keys.ts'
 import {
   IntegrationWatch,
   IntegrationRevoked,
+  IntegrationReadFailed,
+  IntegrationCursorLost,
   ProviderEvent,
   ProviderEventId,
   Watch,
@@ -160,11 +164,18 @@ class WatchEvents extends Context.Service<WatchEvents, Ref.Ref<readonly Provider
 ) {}
 class WatchRevoked extends Context.Service<WatchRevoked, Ref.Ref<boolean>>()('test/WatchRevoked') {}
 class WatchReads extends Context.Service<WatchReads, Ref.Ref<number>>()('test/WatchReads') {}
+/** The provider may lose its observation window without losing authorization. */
+class WatchGap extends Context.Service<WatchGap, Ref.Ref<boolean>>()('test/WatchGap') {}
+class WatchTransient extends Context.Service<WatchTransient, Ref.Ref<boolean>>()(
+  'test/WatchTransient',
+) {}
 const fakeWatchLayer = Layer.effectContext(
   Effect.gen(function* () {
     const events = yield* Ref.make<readonly ProviderEvent[]>([])
     const revoked = yield* Ref.make(false)
     const reads = yield* Ref.make(0)
+    const gap = yield* Ref.make(false)
+    const transient = yield* Ref.make(false)
     const connectionId = ConnectionId.make('PRIVATE-CONNECTION-MARKER')
     const watcher = IntegrationWatch.of({
       discover: Effect.fn('Test.IntegrationWatch.discover')(() =>
@@ -188,6 +199,16 @@ const fakeWatchLayer = Layer.effectContext(
         yield* Ref.update(reads, (count) => count + 1)
         if (yield* Ref.get(revoked))
           return yield* Effect.fail(new IntegrationRevoked({ connectionId }))
+        if (yield* Ref.get(transient))
+          return yield* Effect.fail(new IntegrationReadFailed({ connectionId }))
+        if (yield* Ref.getAndSet(gap, false))
+          return yield* Effect.fail(
+            new IntegrationCursorLost({
+              connectionId,
+              cursor: WatchCursor.cases.Item.make({ id: ProviderEventId.make('baseline-now') }),
+              reason: 'Window',
+            }),
+          )
         const items = yield* Ref.get(events)
         const last = items[items.length - 1]
         return WatchBatch.make({
@@ -203,6 +224,8 @@ const fakeWatchLayer = Layer.effectContext(
       Context.add(WatchEvents, events),
       Context.add(WatchRevoked, revoked),
       Context.add(WatchReads, reads),
+      Context.add(WatchGap, gap),
+      Context.add(WatchTransient, transient),
     )
   }),
 )
@@ -399,6 +422,8 @@ const integrationFixture = Effect.fn('Test.Routines.integrationFixture')(functio
   yield* Ref.set(yield* WatchEvents, [])
   yield* Ref.set(yield* WatchRevoked, false)
   yield* Ref.set(yield* WatchReads, 0)
+  yield* Ref.set(yield* WatchGap, false)
+  yield* Ref.set(yield* WatchTransient, false)
   const store = yield* RoutineStore
   const routine = yield* store.create(owner, {
     name: 'New mail',
@@ -1369,6 +1394,198 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
     )
 
     it.effect(
+      'corrupt Integration rows are recorded and skipped while healthy Routines still deliver',
+      () =>
+        Effect.gen(function* () {
+          const { owner, routine, store, scheduler } = yield* integrationFixture()
+          const database = yield* Database
+          yield* database.run(
+            database.update(routines).set({ integration: null }).where(eq(routines.id, routine.id)),
+          )
+          const healthy = yield* store.create(owner, {
+            name: 'Healthy mail',
+            prompt: 'Summarize',
+            trigger: RoutineTrigger.cases.Integration.make({
+              account: 'Gmail (Work)',
+              event: 'mail.received',
+              filter: {},
+            }),
+          })
+          yield* Ref.set(yield* WatchEvents, [email(5)])
+          yield* TestClock.adjust('5 minutes')
+          yield* scheduler.runDue()
+          expect((yield* store.get(owner, healthy.id)).routine.enabled).toBe(true)
+          expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
+          const corrupted = yield* database.run(
+            database
+              .select({ enabled: routines.enabled, pause: routines.pause })
+              .from(routines)
+              .where(eq(routines.id, routine.id)),
+          )
+          expect(corrupted).toEqual([
+            {
+              enabled: false,
+              pause: IntegrationNotice.cases.Corrupt.make({
+                reason: 'Its stored Integration configuration is invalid',
+              }),
+            },
+          ])
+          yield* scheduler.runDue()
+          expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
+        }),
+    )
+
+    it.effect(
+      're-enabling an Integration Routine prepares a fresh baseline while metadata edits preserve its cursor',
+      () =>
+        Effect.gen(function* () {
+          const { owner, routine, store, scheduler } = yield* integrationFixture()
+          const previous = WatchCursor.cases.Item.make({
+            id: ProviderEventId.make('previous-baseline'),
+          })
+          yield* store.recordEvents(
+            yield* store.get(owner, routine.id),
+            WatchBatch.make({ items: [], cursor: previous }),
+          )
+          yield* store.patch(owner, routine.id, { prompt: 'Summarize briefly' })
+          expect(
+            Option.map(
+              Option.fromNullishOr((yield* store.get(owner, routine.id)).integration),
+              (watch) => watch.cursor,
+            ),
+          ).toEqual(Option.some(previous))
+          yield* store.patch(owner, routine.id, { enabled: false })
+          yield* store.patch(owner, routine.id, { enabled: true })
+          expect(
+            Option.map(
+              Option.fromNullishOr((yield* store.get(owner, routine.id)).integration),
+              (watch) => watch.cursor,
+            ),
+          ).toEqual(Option.some(WatchCursor.cases.Empty.make({})))
+          yield* Ref.set(yield* WatchEvents, [email(7)])
+          yield* TestClock.adjust('5 minutes')
+          yield* scheduler.runDue()
+          expect((yield* returned(yield* store.list(owner), 'Routine')).runs).toHaveLength(1)
+        }),
+    )
+
+    it.effect(
+      'a lost cursor starts from now, keeps the Routine enabled and tells its Thread once',
+      () =>
+        Effect.gen(function* () {
+          const { owner, routine, store, scheduler } = yield* integrationFixture()
+          yield* Ref.set(yield* WatchGap, true)
+          yield* Ref.set(yield* WatchEvents, [email(1)])
+          yield* TestClock.adjust('5 minutes')
+          yield* scheduler.runDue()
+          const record = yield* store.get(owner, routine.id)
+          expect(record.routine.enabled).toBe(true)
+          expect(
+            Option.map(Option.fromNullishOr(record.integration), (watch) => watch.cursor),
+          ).toEqual(
+            Option.some(WatchCursor.cases.Item.make({ id: ProviderEventId.make('baseline-now') })),
+          )
+          expect((yield* returned(yield* store.list(owner), 'Routine')).runs).toHaveLength(0)
+          yield* Ref.set(yield* WatchEvents, [])
+          yield* scheduler.runDue()
+          expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
+          expect(
+            (yield* returned(yield* Ref.get(yield* Deliveries), 'Delivery')).message.body,
+          ).toContain('from now')
+          yield* Ref.set(yield* WatchEvents, [email(2)])
+          yield* TestClock.adjust('5 minutes')
+          yield* scheduler.runDue()
+          expect((yield* returned(yield* store.list(owner), 'Routine')).runs).toHaveLength(1)
+        }),
+    )
+
+    it.effect(
+      'transient reads back off one, five, fifteen and sixty minutes across restart, then recover',
+      () =>
+        Effect.gen(function* () {
+          const { owner, routine, store, scheduler } = yield* integrationFixture()
+          yield* Ref.set(yield* WatchTransient, true)
+          yield* TestClock.adjust('5 minutes')
+          const delays = [1, 5, 15, 60, 60]
+          for (const minutes of delays) {
+            const reads = yield* Ref.get(yield* WatchReads)
+            yield* Effect.gen(function* () {
+              yield* (yield* RoutineScheduler).runDue()
+            }).pipe(
+              Effect.provide(routineSchedulerServiceLayer),
+              Effect.provide(routineStoreServiceLayer),
+              Effect.provide(testConfigLayer),
+            )
+            const current = yield* store.get(owner, routine.id)
+            expect(current.routine.enabled).toBe(true)
+            expect(current.routine.nextExpectedAt).toBe(
+              (yield* Clock.currentTimeMillis) + minutes * 60_000,
+            )
+            expect(yield* Ref.get(yield* WatchReads)).toBe(reads + 1)
+            yield* scheduler.runDue()
+            expect(yield* Ref.get(yield* WatchReads)).toBe(reads + 1)
+            yield* TestClock.adjust(minutes * 60_000)
+          }
+          yield* Ref.set(yield* WatchTransient, false)
+          yield* Ref.set(yield* WatchEvents, [email(9)])
+          yield* Effect.gen(function* () {
+            yield* (yield* RoutineScheduler).runDue()
+          }).pipe(
+            Effect.provide(routineSchedulerServiceLayer),
+            Effect.provide(routineStoreServiceLayer),
+            Effect.provide(testConfigLayer),
+          )
+          expect((yield* returned(yield* store.list(owner), 'Routine')).runs).toHaveLength(1)
+          yield* Ref.set(yield* WatchTransient, true)
+          yield* TestClock.adjust('5 minutes')
+          yield* scheduler.runDue()
+          expect((yield* store.get(owner, routine.id)).routine.nextExpectedAt).toBe(
+            (yield* Clock.currentTimeMillis) + 60_000,
+          )
+          expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
+        }),
+    )
+
+    it.effect(
+      'Integration Membership loss is audited once, advances revision and publishes both scopes',
+      () =>
+        Effect.gen(function* () {
+          const { owner, routine, store, scheduler } = yield* integrationFixture()
+          const before = yield* store.get(owner, routine.id)
+          const database = yield* Database
+          yield* database.run(
+            database.delete(membershipTable).where(eq(membershipTable.userId, owner.person.id)),
+          )
+          yield* Ref.set(yield* Published, [])
+          yield* TestClock.adjust('5 minutes')
+          yield* scheduler.runDue()
+          const stopped = yield* store.get(owner, routine.id)
+          expect(stopped.routine.enabled).toBe(false)
+          expect(stopped.watchRevision).toBe(before.watchRevision + 1)
+          yield* scheduler.runDue()
+          const audit = yield* database.run(
+            database.select().from(auditEntries).where(eq(auditEntries.personId, owner.person.id)),
+          )
+          expect(audit).toMatchObject([
+            {
+              by: 'vivid',
+              personId: owner.person.id,
+              companyId: companyColumnOf(owner.workspace),
+              event: AuditEvent.cases.RoutineStopped.make({
+                routineId: routine.id,
+                reason: 'Membership',
+              }),
+            },
+          ])
+          expect(audit).toHaveLength(1)
+          expect(yield* Ref.get(yield* Published)).toContain(Topic.person(owner.person.id))
+          const company = companyColumnOf(owner.workspace)
+          if (company === null) expect.fail('The fixture must belong to a Company')
+          expect(yield* Ref.get(yield* Published)).toContain(Topic.company(company))
+        }),
+    )
+
+    it.effect(
       'a revoked Integration pauses its Routine, persists a reason and tells its Thread once',
       () =>
         Effect.gen(function* () {
@@ -1424,12 +1641,42 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         }),
     )
 
+    it.effect(
+      'a failing Integration notice does not block later notices and retries only its own key',
+      () =>
+        Effect.gen(function* () {
+          const { owner, routine, store, scheduler } = yield* integrationFixture()
+          const second = yield* store.create(owner, {
+            name: 'Second notice',
+            prompt: 'Summarize',
+            trigger: routine.trigger,
+          })
+          for (const id of [routine.id, second.id])
+            yield* store.pauseIntegration(
+              yield* store.get(owner, id),
+              IntegrationStopReason.cases.Revoked.make({}),
+            )
+          yield* Ref.set(
+            yield* DeliveryFailure,
+            Option.some(new RuntimeUnavailable({ message: 'Unavailable' })),
+          )
+          expect(yield* scheduler.runDue().pipe(Effect.flip)).toBeInstanceOf(RuntimeUnavailable)
+          expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
+          expect(yield* store.integrationNotices()).toHaveLength(1)
+          yield* scheduler.runDue()
+          expect(yield* Ref.get(yield* Deliveries)).toHaveLength(2)
+          expect(yield* store.integrationNotices()).toHaveLength(0)
+          yield* scheduler.runDue()
+          expect(yield* Ref.get(yield* Deliveries)).toHaveLength(2)
+        }),
+    )
+
     it.effect('editing a paused Routine preserves its undelivered Integration notice', () =>
       Effect.gen(function* () {
         const { owner, routine, store, scheduler } = yield* integrationFixture()
         yield* store.pauseIntegration(
           yield* store.get(owner, routine.id),
-          'Its Integration failed to return the watched items',
+          IntegrationStopReason.cases.Revoked.make({}),
         )
         yield* store.patch(owner, routine.id, { prompt: 'Summarize briefly.' })
         expect(yield* store.integrationNotices()).toHaveLength(1)
@@ -1438,7 +1685,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
         expect(
           (yield* returned(yield* Ref.get(yield* Deliveries), 'Delivery')).message.body,
-        ).toContain('Its Integration failed to return the watched items')
+        ).toContain('Its Integration was revoked or needs sign-in')
       }),
     )
 

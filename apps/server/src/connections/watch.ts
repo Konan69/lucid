@@ -19,6 +19,8 @@ import {
 } from '../routines/watch.ts'
 import {
   Executor,
+  ExecutorResourceMissing,
+  type ExecutorFailure,
   ExecutorCallOutcome,
   ExecutorReferences,
   ExecutorStatus,
@@ -31,7 +33,7 @@ import { namedAccounts } from './tools.ts'
 import { connections } from './tables.ts'
 
 /** Output paths describe a provider list; only metadata-classified reads may ever be selected.
- * Snapshots must have stable newest/oldest ordering. A lost high-water id pauses instead of skipping.
+ * Snapshots must have stable newest/oldest ordering. A lost high-water id re-baselines from now and records a Thread gap notice.
  */
 const PollFilter = Schema.Struct({
   input: Schema.Json,
@@ -116,8 +118,49 @@ function cursorOf(items: readonly ProviderEvent[]) {
   const first = items[0]
   return first === undefined
     ? WatchCursor.cases.Empty.make({})
-    : WatchCursor.cases.Item.make({ id: first.id })
+    : WatchCursor.cases.Window.make({ ids: [first.id, ...items.slice(1).map((item) => item.id)] })
 }
+
+/** A bounded list cannot prove what happened across a gap. Reject both a vanished head and new
+ * identities below it; re-baselining reports the loss instead of silently skipping or replaying.
+ * Older Item cursors gain full-window checking after their next successful observation. */
+const newBatch = Effect.fn('IntegrationWatch.newBatch')(function* (
+  watch: Watch,
+  items: readonly ProviderEvent[],
+) {
+  const cursor = cursorOf(items)
+  const boundary = WatchCursor.match(watch.cursor, {
+    Empty: () => items.length,
+    Item: ({ id }) => items.findIndex((item) => item.id === id),
+    Window: ({ ids }) => items.findIndex((item) => item.id === ids[0]),
+  })
+  if (boundary < 0)
+    return yield* Effect.fail(
+      new IntegrationCursorLost({ connectionId: watch.connectionId, cursor, reason: 'Window' }),
+    )
+  const seen = WatchCursor.match(watch.cursor, {
+    Empty: () => new Set<ProviderEventId>(),
+    Item: ({ id }) => new Set([id]),
+    Window: ({ ids }) => new Set(ids),
+  })
+  if (
+    WatchCursor.guards.Window(watch.cursor) &&
+    items.slice(boundary + 1).some((item) => !seen.has(item.id))
+  )
+    return yield* Effect.fail(
+      new IntegrationCursorLost({ connectionId: watch.connectionId, cursor, reason: 'Ordering' }),
+    )
+  return WatchBatch.make({
+    items: Arr.reverse(items.slice(0, boundary).filter((item) => !seen.has(item.id))),
+    cursor: items.length === 0 ? watch.cursor : cursor,
+  })
+})
+
+/** A vanished provider binding is permanent; network, Executor and provider refusals remain retryable reads. */
+const observationFailure = (connectionId: Watch['connectionId']) => (error: ExecutorFailure) =>
+  error instanceof ExecutorResourceMissing
+    ? new IntegrationRevoked({ connectionId })
+    : new IntegrationReadFailed({ connectionId })
 
 /** One read-only call per observation, with current metadata and authorization rechecked each time. */
 const read = (executor: Executor['Service']) =>
@@ -131,7 +174,7 @@ const read = (executor: Executor['Service']) =>
     if (row.status !== 'ready') return yield* Effect.fail(new IntegrationRevoked({ connectionId }))
     const status = yield* executor
       .status(row.references)
-      .pipe(Effect.mapError(() => new IntegrationReadFailed({ connectionId })))
+      .pipe(Effect.mapError(observationFailure(connectionId)))
     yield* ExecutorStatus.match<Effect.Effect<void, import('../routines/watch.ts').WatchFailure>>(
       status,
       {
@@ -142,7 +185,7 @@ const read = (executor: Executor['Service']) =>
     )
     const tools = yield* executor
       .tools(row.references)
-      .pipe(Effect.mapError(() => new IntegrationReadFailed({ connectionId })))
+      .pipe(Effect.mapError(observationFailure(connectionId)))
     const tool = tools.find((item) => item.name === trigger.event && item.effect === 'read')
     if (tool === undefined) return yield* Effect.fail(new IntegrationReadFailed({ connectionId }))
     const input = providerInput(tool, row.references)
@@ -158,14 +201,7 @@ const read = (executor: Executor['Service']) =>
     }
     const outcome = yield* executor
       .call({ references: row.references, tool: tool.name, input: provider })
-      .pipe(
-        Effect.catchTag('ExecutorResourceMissing', () =>
-          Effect.fail(new IntegrationRevoked({ connectionId })),
-        ),
-        Effect.mapError((error) =>
-          error instanceof IntegrationRevoked ? error : new IntegrationReadFailed({ connectionId }),
-        ),
-      )
+      .pipe(Effect.mapError(observationFailure(connectionId)))
     const value = yield* ExecutorCallOutcome.match<
       Effect.Effect<Schema.Json, import('../routines/watch.ts').WatchFailure>
     >(outcome, {
@@ -308,16 +344,7 @@ export const integrationPollingServiceLayer = Layer.effect(
         if (raw === undefined)
           return yield* Effect.fail(new IntegrationRevoked({ connectionId: watch.connectionId }))
         const items = yield* observe(yield* decodeConnection(raw), watch.trigger)
-        const boundary = WatchCursor.match(watch.cursor, {
-          Empty: () => items.length,
-          Item: ({ id }) => items.findIndex((item) => item.id === id),
-        })
-        if (boundary < 0)
-          return yield* Effect.fail(new IntegrationCursorLost({ connectionId: watch.connectionId }))
-        return WatchBatch.make({
-          items: Arr.reverse(items.slice(0, boundary)),
-          cursor: items.length === 0 ? watch.cursor : cursorOf(items),
-        })
+        return yield* newBatch(watch, items)
       }),
     })
   }),

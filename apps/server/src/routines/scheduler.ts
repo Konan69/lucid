@@ -36,6 +36,7 @@ import {
   type RoutineAttempt,
 } from './attempts.ts'
 import type { RoutineRecord } from './records.ts'
+import { IntegrationNotice, IntegrationStopReason } from './integration.ts'
 import { RoutineStore, ScheduledFailure, type RoutineMissing } from './store.ts'
 import type { InvalidRoutineSchedule } from './timing.ts'
 
@@ -262,36 +263,48 @@ const submitScheduled = Effect.fn('RoutineScheduler.submitScheduled')(function* 
   )
 })
 
-/** A pause intent is durable before this notice; Conversation owns one admission per notice key. */
+/** A durable notice key owns one Thread admission, independent of other Routine deliveries. */
+const sendIntegrationNotice = (services: SubmissionServices) =>
+  Effect.fn('RoutineScheduler.integrationNotice')(function* ({
+    record,
+    notice,
+  }: Effect.Success<ReturnType<RoutineStore['Service']['integrationNotices']>>[number]) {
+    const thread = yield* services.threads.ensure({
+      id: ThreadId.make(`routine-${record.routine.id}`),
+      title: record.routine.name,
+      personId: record.personId,
+      companyId: record.companyId,
+    })
+    yield* services.conversation.deliver({
+      speaker: DeliverySpeaker.cases.Vivid.make({}),
+      threadId: thread.id,
+      personId: record.personId,
+      libraryFolder: record.routine.libraryFolderId,
+      message: DeliveryMessage.cases.Signal.make({
+        type: 'schedule',
+        body: IntegrationNotice.guards.GapPending(notice)
+          ? `${record.routine.name}: ${notice.reason}. Tell the Person once; do not perform the Routine's work.`
+          : `${record.routine.name} is paused: ${notice.reason}. Tell the Person once; do not perform the Routine's work.`,
+        attributes: deliveryAttributes(record),
+      }),
+      origin: StoredRunOrigin.cases.Routine.make({ routineName: record.routine.name }),
+      idempotencyKey: `integration-pause-${notice.key}`,
+    })
+    yield* services.routines.markIntegrationNotified(record.routine.id, notice)
+    yield* publish(services.changes)(record)
+  })
+
+/** Attempt every notice before propagating a failure. A busy or vanished Thread retains only its
+ * own pending key; it cannot starve the other Routines' notices on this or subsequent passes. */
 const sendIntegrationNotices = (services: SubmissionServices) =>
   Effect.fn('RoutineScheduler.integrationNotices')(function* () {
     const notices = yield* services.routines.integrationNotices()
-    for (const { record, notice } of notices) {
-      const thread = yield* services.threads.ensure({
-        id: ThreadId.make(`routine-${record.routine.id}`),
-        title: record.routine.name,
-        personId: record.personId,
-        companyId: record.companyId,
-      })
-      yield* services.conversation.deliver({
-        speaker: DeliverySpeaker.cases.Vivid.make({}),
-        threadId: thread.id,
-        personId: record.personId,
-        libraryFolder: record.routine.libraryFolderId,
-        message: DeliveryMessage.cases.Signal.make({
-          type: 'schedule',
-          body: `${record.routine.name} is paused: ${notice.reason}. Tell the Person once; do not perform the Routine's work.`,
-          attributes: deliveryAttributes(record),
-        }),
-        origin: StoredRunOrigin.cases.Routine.make({ routineName: record.routine.name }),
-        idempotencyKey: `integration-pause-${notice.key}`,
-      })
-      yield* services.routines.markIntegrationNotified(record.routine.id, notice)
-      yield* publish(services.changes)(record)
-    }
+    const send = sendIntegrationNotice(services)
+    const outcomes = yield* Effect.forEach(notices, (notice) => Effect.exit(send(notice)))
+    for (const outcome of outcomes) yield* outcome
   })
 
-/** Observation errors pause one Routine; infrastructure failures remain retryable worker failures. */
+/** Authorization loss pauses one Routine; transient reads defer it and cursor gaps re-baseline from now. */
 const observeIntegrations = (services: SubmissionServices) =>
   Effect.fn('RoutineScheduler.observeIntegrations')(function* () {
     const integrations = services.routines
@@ -301,16 +314,15 @@ const observeIntegrations = (services: SubmissionServices) =>
         Effect.flatMap((batch) => integrations.recordEvents(record, batch)),
         Effect.catchTags({
           IntegrationRevoked: () =>
-            integrations.pauseIntegration(record, 'Its Integration was revoked or needs sign-in'),
-          IntegrationReadFailed: () =>
-            integrations.pauseIntegration(
+            integrations.pauseIntegration(record, IntegrationStopReason.cases.Revoked.make({})),
+          IntegrationReadFailed: () => integrations.backoffIntegration(record),
+          IntegrationCursorLost: ({ cursor, reason }) =>
+            integrations.rebaselineIntegration(
               record,
-              'Its Integration failed to return the watched items',
-            ),
-          IntegrationCursorLost: () =>
-            integrations.pauseIntegration(
-              record,
-              'Its Integration observation window was exceeded; some items may have been missed',
+              cursor,
+              reason === 'Ordering'
+                ? 'Its Integration returned new items below the cursor; watching again from now without replaying older items'
+                : 'Its Integration observation window was exceeded; watching again from now without replaying older items',
             ),
         }),
       )

@@ -1,21 +1,32 @@
 import { and, asc, eq, isNotNull, isNull, lte } from 'drizzle-orm'
-import { Clock, Effect, Schema } from 'effect'
-import { DatabaseFailure, OccurrenceId, RoutineId, RoutineTrigger } from '@vivid/contracts'
+import { Clock, Effect, Option, Result, Schema } from 'effect'
+import {
+  AuditEvent,
+  DatabaseFailure,
+  OccurrenceId,
+  RoutineId,
+  RoutineTrigger,
+} from '@vivid/contracts'
+import { appendAudit, AuditAttribution } from '../audit/record.ts'
+import { Changes, Topic } from '../live/changes.ts'
 import { Database, decodeStored } from '../database/client.ts'
 import { integrationAttempt, replayAttempt } from './attempts.ts'
 import { decodeRoutine, type RoutineRecord } from './records.ts'
 import { occurrences, routines } from './tables.ts'
-import { IntegrationWatch, ProviderEvent, Watch, type WatchBatch } from './watch.ts'
+import { IntegrationWatch, ProviderEvent, Watch, WatchCursor, type WatchBatch } from './watch.ts'
 
 /** Notice intent survives crashes; the immutable key makes Thread delivery retry-safe. */
-const Pause = Schema.TaggedUnion({
+export const IntegrationNotice = Schema.TaggedUnion({
   Pending: { key: Schema.String, reason: Schema.String },
   Notified: { key: Schema.String, reason: Schema.String },
+  GapPending: { key: Schema.String, reason: Schema.String },
+  GapNotified: { key: Schema.String, reason: Schema.String },
+  Corrupt: { reason: Schema.String },
 })
-const decodePause = decodeStored(Pause, 'Routine Integration pause')
+const decodePause = decodeStored(IntegrationNotice, 'Routine Integration pause')
 const decodeEvent = decodeStored(ProviderEvent, 'Routine provider event')
 const encodeWatch = Schema.encodeSync(Watch)
-const encodePause = Schema.encodeSync(Pause)
+const encodePause = Schema.encodeSync(IntegrationNotice)
 const encodeEvent = Schema.encodeSync(ProviderEvent)
 type Membership = (
   database: Pick<Database['Service'], 'select'>,
@@ -26,48 +37,227 @@ type Membership = (
   | import('effect/unstable/sql/SqlError').SqlError
 >
 
-/** A single conditional transition owns the reason and one durable Thread notice. */
-const pauseIntegration = (database: Database['Service']) =>
-  Effect.fn('RoutineIntegration.pause')(function* (record: RoutineRecord, reason: string) {
-    const now = yield* Clock.currentTimeMillis
-    return yield* database.transaction((tx) =>
-      Effect.gen(function* () {
-        const changed = yield* tx
-          .update(routines)
-          .set({
-            enabled: false,
-            nextExpectedAt: null,
-            pause: encodePause(Pause.cases.Pending.make({ key: crypto.randomUUID(), reason })),
-            updatedAt: now,
-            watchRevision: record.watchRevision + 1,
-          })
-          .where(
-            and(
-              eq(routines.id, record.routine.id),
-              eq(routines.enabled, true),
-              eq(routines.watchRevision, record.watchRevision),
-            ),
-          )
-          .returning()
-        if (changed.length === 0) return false
-        yield* tx
-          .update(occurrences)
-          .set({ status: 'failed', error: reason, finishedAt: now })
-          .where(
-            and(
-              eq(occurrences.routineId, record.routine.id),
-              isNotNull(occurrences.providerEvent),
-              isNull(occurrences.submissionId),
-              eq(occurrences.status, 'not-admitted'),
-            ),
-          )
-        return true
-      }),
-    )
+/** Server retirement reasons are closed decisions, independent of provider error text. */
+export const IntegrationStopReason = Schema.TaggedUnion({ Membership: {}, Revoked: {} })
+export type IntegrationStopReason = typeof IntegrationStopReason.Type
+/** Stable notice wording is derived from the retirement decision, never a provider payload. */
+const stopMessage = (reason: IntegrationStopReason) =>
+  IntegrationStopReason.match(reason, {
+    Membership: () => 'Its owner is no longer a Member of its Company',
+    Revoked: () => 'Its Integration was revoked or needs sign-in',
   })
 
+/** The conditional row write owns one durable notice and terminal queued receipts. Membership
+ * audit metadata commits with the stop, preserving the stored owner after their access disappears. */
+const retireIntegration = Effect.fn('RoutineIntegration.retire')(function* (
+  tx: Pick<Database['Service'], 'update' | 'insert'>,
+  record: RoutineRecord,
+  reason: IntegrationStopReason,
+  now: number,
+) {
+  const changed = yield* tx
+    .update(routines)
+    .set({
+      enabled: false,
+      nextExpectedAt: null,
+      pause: encodePause(
+        IntegrationNotice.cases.Pending.make({
+          key: crypto.randomUUID(),
+          reason: stopMessage(reason),
+        }),
+      ),
+      updatedAt: now,
+      watchRevision: record.watchRevision + 1,
+    })
+    .where(
+      and(
+        eq(routines.id, record.routine.id),
+        eq(routines.enabled, true),
+        eq(routines.watchRevision, record.watchRevision),
+      ),
+    )
+    .returning()
+  if (changed.length === 0) return false
+  yield* tx
+    .update(occurrences)
+    .set({ status: 'failed', error: stopMessage(reason), finishedAt: now })
+    .where(
+      and(
+        eq(occurrences.routineId, record.routine.id),
+        isNotNull(occurrences.providerEvent),
+        isNull(occurrences.submissionId),
+        eq(occurrences.status, 'not-admitted'),
+      ),
+    )
+  if (IntegrationStopReason.guards.Membership(reason))
+    yield* appendAudit(
+      tx,
+      AuditAttribution.make({
+        personId: record.personId,
+        companyId: record.companyId,
+        by: 'vivid',
+        threadId: null,
+      }),
+      AuditEvent.cases.RoutineStopped.make({ routineId: record.routine.id, reason: 'Membership' }),
+      now,
+    )
+  return true
+})
+
+/** Publish only committed transitions; both the owner's and Company's readers observe retirement. */
+const publishRetirement = (changes: Changes['Service']) =>
+  Effect.fn('RoutineIntegration.publishRetirement')((record: RoutineRecord) =>
+    changes.publish(
+      record.companyId === null
+        ? [Topic.person(record.personId)]
+        : [Topic.person(record.personId), Topic.company(record.companyId)],
+    ),
+  )
+
+/** A single conditional transition owns the reason and one durable Thread notice. */
+const pauseIntegration = (database: Database['Service'], changes: Changes['Service']) =>
+  Effect.fn('RoutineIntegration.pause')(function* (
+    record: RoutineRecord,
+    reason: IntegrationStopReason,
+  ) {
+    const now = yield* Clock.currentTimeMillis
+    const changed = yield* database.transaction((tx) => retireIntegration(tx, record, reason, now))
+    if (changed) yield* publishRetirement(changes)(record)
+    return changed
+  })
+
+/** Losing a cursor grants no authority to replay older content. Persist the new baseline and a
+ * retry-safe notice together; the Routine remains enabled and observes only subsequent arrivals. */
+const rebaselineIntegration = (database: Database['Service']) =>
+  Effect.fn('RoutineIntegration.rebaseline')(function* (
+    record: RoutineRecord,
+    cursor: WatchCursor,
+    reason: string,
+  ) {
+    if (record.integration === null)
+      return yield* Effect.fail(
+        new DatabaseFailure({ message: 'Integration Routine has no Watch' }),
+      )
+    const now = yield* Clock.currentTimeMillis
+    const changed = yield* database.run(
+      database
+        .update(routines)
+        .set({
+          integration: encodeWatch(
+            Watch.make({ ...record.integration, cursor, failures: Option.none() }),
+          ),
+          watchRevision: record.watchRevision + 1,
+          pause: encodePause(
+            IntegrationNotice.cases.GapPending.make({ key: crypto.randomUUID(), reason }),
+          ),
+          nextExpectedAt: now + record.integration.intervalMillis,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(routines.id, record.routine.id),
+            eq(routines.enabled, true),
+            eq(routines.watchRevision, record.watchRevision),
+          ),
+        )
+        .returning(),
+    )
+    return changed.length > 0
+  })
+
+/** Retry delay is persisted per Routine, so restarting the server cannot reset a failing provider's budget.
+ * Reads are safe to retry; four or more consecutive failures stay at sixty minutes until a success. */
+const retryMinutes = (failures: number) => {
+  if (failures === 1) return 1
+  if (failures === 2) return 5
+  if (failures === 3) return 15
+  return 60
+}
+const backoffIntegration = (database: Database['Service']) =>
+  Effect.fn('RoutineIntegration.backoff')(function* (record: RoutineRecord) {
+    if (record.integration === null)
+      return yield* Effect.fail(
+        new DatabaseFailure({ message: 'Integration Routine has no Watch' }),
+      )
+    const failures = Option.match(record.integration.failures, {
+      onNone: () => 1,
+      onSome: (count) => count + 1,
+    })
+    const now = yield* Clock.currentTimeMillis
+    const changed = yield* database.run(
+      database
+        .update(routines)
+        .set({
+          integration: encodeWatch(
+            Watch.make({ ...record.integration, failures: Option.some(failures) }),
+          ),
+          watchRevision: record.watchRevision + 1,
+          nextExpectedAt: now + retryMinutes(failures) * 60_000,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(routines.id, record.routine.id),
+            eq(routines.enabled, true),
+            eq(routines.watchRevision, record.watchRevision),
+          ),
+        )
+        .returning(),
+    )
+    if (changed.length > 0)
+      yield* Effect.logWarning('Routine Integration read deferred', {
+        routineId: record.routine.id,
+        failures,
+        retryMinutes: retryMinutes(failures),
+      })
+    return changed.length > 0
+  })
+
+/** Invalid persisted configuration is quarantined once, with a bounded stored reason. Decoding
+ * failure never aborts the installation-wide claim transaction or leaks the invalid payload. */
+const skipCorrupt = Effect.fn('RoutineIntegration.skipCorrupt')(function* (
+  tx: Pick<Database['Service'], 'update'>,
+  row: typeof routines.$inferSelect,
+  now: number,
+) {
+  yield* tx
+    .update(routines)
+    .set({
+      enabled: false,
+      nextExpectedAt: null,
+      updatedAt: now,
+      watchRevision: row.watchRevision + 1,
+      pause: encodePause(
+        IntegrationNotice.cases.Corrupt.make({
+          reason: 'Its stored Integration configuration is invalid',
+        }),
+      ),
+    })
+    .where(eq(routines.id, row.id))
+  yield* tx
+    .update(occurrences)
+    .set({
+      status: 'failed',
+      finishedAt: now,
+      error: 'Its stored Integration configuration is invalid',
+    })
+    .where(
+      and(
+        eq(occurrences.routineId, row.id),
+        isNotNull(occurrences.providerEvent),
+        isNull(occurrences.submissionId),
+        eq(occurrences.status, 'not-admitted'),
+      ),
+    )
+  yield* Effect.logError('Corrupt Integration Routine skipped', { routineId: row.id })
+})
+
 /** Due claims persist cadence before observing; a crash merely delays the next read. */
-const claimWatches = (database: Database['Service'], memberPresent: Membership) =>
+const claimWatches = (
+  database: Database['Service'],
+  memberPresent: Membership,
+  changes: Changes['Service'],
+) =>
   Effect.fn('RoutineIntegration.claim')(function* () {
     const now = yield* Clock.currentTimeMillis
     const claimed = yield* database.transaction((tx) =>
@@ -84,27 +274,29 @@ const claimWatches = (database: Database['Service'], memberPresent: Membership) 
           )
           .orderBy(asc(routines.nextExpectedAt), asc(routines.id))
           .for('update', { skipLocked: true })
-        const records = yield* Effect.forEach(rows, decodeRoutine)
         const allowed: RoutineRecord[] = []
-        for (const record of records) {
-          if (record.integration === null)
-            return yield* Effect.fail(
-              new DatabaseFailure({ message: 'Integration Routine has no Watch' }),
-            )
+        const stopped: RoutineRecord[] = []
+        for (const row of rows) {
+          const decoded = yield* decodeRoutine(row).pipe(Effect.result)
+          if (Result.isFailure(decoded)) {
+            yield* skipCorrupt(tx, row, now)
+            continue
+          }
+          const record = decoded.success
+          if (record.integration === null) {
+            yield* skipCorrupt(tx, row, now)
+            continue
+          }
           if (!(yield* memberPresent(tx, record))) {
-            yield* tx
-              .update(routines)
-              .set({
-                enabled: false,
-                nextExpectedAt: null,
-                pause: encodePause(
-                  Pause.cases.Pending.make({
-                    key: crypto.randomUUID(),
-                    reason: 'Its owner is no longer a Member of its Company',
-                  }),
-                ),
-              })
-              .where(eq(routines.id, record.routine.id))
+            if (
+              yield* retireIntegration(
+                tx,
+                record,
+                IntegrationStopReason.cases.Membership.make({}),
+                now,
+              )
+            )
+              stopped.push(record)
             continue
           }
           yield* tx
@@ -113,10 +305,11 @@ const claimWatches = (database: Database['Service'], memberPresent: Membership) 
             .where(eq(routines.id, record.routine.id))
           allowed.push(record)
         }
-        return allowed
+        return { allowed, stopped }
       }),
     )
-    return claimed
+    yield* Effect.forEach(claimed.stopped, publishRetirement(changes), { discard: true })
+    return claimed.allowed
   })
 
 /** Advance a cursor only in the transaction that persists every item in provider order. */
@@ -166,7 +359,9 @@ const recordEvents = (database: Database['Service'], memberPresent: Membership) 
         yield* tx
           .update(routines)
           .set({
-            integration: encodeWatch(Watch.make({ ...binding, cursor: batch.cursor })),
+            integration: encodeWatch(
+              Watch.make({ ...binding, cursor: batch.cursor, failures: Option.none() }),
+            ),
             watchRevision: row.watchRevision + 1,
             eventCounter: row.eventCounter + batch.items.length,
           })
@@ -229,7 +424,7 @@ const pendingEvents = (
         continue
       }
       if (!(yield* database.run(memberPresent(database, record)))) {
-        yield* pause(record, 'Its owner is no longer a Member of its Company')
+        yield* pause(record, IntegrationStopReason.cases.Membership.make({}))
         continue
       }
       const event = yield* decodeEvent(row.occurrence.providerEvent)
@@ -251,7 +446,8 @@ const integrationNotices = (database: Database['Service']) =>
     const pending = []
     for (const row of rows) {
       const notice = yield* decodePause(row.pause)
-      if (Pause.guards.Pending(notice)) pending.push({ record: yield* decodeRoutine(row), notice })
+      if (IntegrationNotice.isAnyOf(['Pending', 'GapPending'])(notice))
+        pending.push({ record: yield* decodeRoutine(row), notice })
     }
     return pending
   })
@@ -260,13 +456,19 @@ const integrationNotices = (database: Database['Service']) =>
 const markIntegrationNotified = (database: Database['Service']) =>
   Effect.fn('RoutineIntegration.notified')(function* (
     id: RoutineId,
-    notice: typeof Pause.cases.Pending.Type,
+    notice:
+      | typeof IntegrationNotice.cases.Pending.Type
+      | typeof IntegrationNotice.cases.GapPending.Type,
   ) {
     yield* database.run(
       database
         .update(routines)
         .set({
-          pause: encodePause(Pause.cases.Notified.make({ key: notice.key, reason: notice.reason })),
+          pause: encodePause(
+            IntegrationNotice.guards.GapPending(notice)
+              ? IntegrationNotice.cases.GapNotified.make({ key: notice.key, reason: notice.reason })
+              : IntegrationNotice.cases.Notified.make({ key: notice.key, reason: notice.reason }),
+          ),
         })
         .where(and(eq(routines.id, id), eq(routines.pause, encodePause(notice)))),
     )
@@ -277,11 +479,14 @@ export function integrationOperations(
   database: Database['Service'],
   watch: IntegrationWatch['Service'],
   memberPresent: Membership,
+  changes: Changes['Service'],
 ) {
-  const pause = pauseIntegration(database)
+  const pause = pauseIntegration(database, changes)
   return {
     pauseIntegration: pause,
-    claimWatches: claimWatches(database, memberPresent),
+    rebaselineIntegration: rebaselineIntegration(database),
+    backoffIntegration: backoffIntegration(database),
+    claimWatches: claimWatches(database, memberPresent, changes),
     recordEvents: recordEvents(database, memberPresent),
     readIntegration: readIntegration(watch),
     pendingEvents: pendingEvents(database, memberPresent, pause),

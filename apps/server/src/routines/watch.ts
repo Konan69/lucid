@@ -9,22 +9,33 @@ import {
   type InvalidRequest,
   type ServiceUnavailable,
 } from '@vivid/contracts'
-import { Context, Schema, type Effect } from 'effect'
+import { Context, Schema, Effect, Option } from 'effect'
 import type { Actor } from '../auth/access.ts'
 import type { DatabaseInfrastructureError } from '../database/client.ts'
 
 /** A provider's record identity deduplicates events without becoming Vivid authority. */
 export const ProviderEventId = Schema.NonEmptyString.pipe(Schema.brand('ProviderEventId'))
+export type ProviderEventId = typeof ProviderEventId.Type
 export const ProviderEvent = Schema.Struct({ id: ProviderEventId, content: Schema.Json })
 export type ProviderEvent = typeof ProviderEvent.Type
-/** Empty means the established baseline contained no items; Item marks the newest observed id. */
-export const WatchCursor = Schema.TaggedUnion({ Empty: {}, Item: { id: ProviderEventId } })
+/** Empty is a proven empty baseline; Window holds the full newest-first id set. Item is the older persisted format. */
+export const WatchCursor = Schema.TaggedUnion({
+  Empty: {},
+  /** Read old persisted cursors until their first successful observation upgrades them. */
+  Item: { id: ProviderEventId },
+  /** The full previous observation makes additions below the high-water id detectable. */
+  Window: { ids: Schema.NonEmptyArray(ProviderEventId) },
+})
 export type WatchCursor = typeof WatchCursor.Type
 /** The private binding persists beside the public name and provider configuration. */
 export const Watch = Schema.Struct({
   connectionId: ConnectionId,
   trigger: RoutineTrigger.cases.Integration,
   cursor: WatchCursor,
+  /** Absence means no consecutive read failures, including rows written before retries existed. */
+  failures: Schema.OptionFromOptionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))).pipe(
+    Schema.withConstructorDefault(Effect.succeed(Option.none())),
+  ),
   intervalMillis: Schema.Int.check(Schema.isGreaterThanOrEqualTo(60_000)),
 })
 export type Watch = typeof Watch.Type
@@ -51,7 +62,11 @@ export class IntegrationReadFailed extends Schema.TaggedError<IntegrationReadFai
 ) {}
 export class IntegrationCursorLost extends Schema.TaggedError<IntegrationCursorLost>()(
   'IntegrationCursorLost',
-  { connectionId: ConnectionId },
+  {
+    connectionId: ConnectionId,
+    cursor: WatchCursor,
+    reason: Schema.Literals(['Window', 'Ordering']),
+  },
   { title: 'Integration observation window exceeded' },
 ) {}
 export type WatchFailure = IntegrationRevoked | IntegrationReadFailed | IntegrationCursorLost

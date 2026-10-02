@@ -274,7 +274,10 @@ const makeCreate = (database: DatabaseService, watch: IntegrationWatch['Service'
 /** Trigger changes replace the binding; metadata-only patches retain the established cursor. */
 function patchedTrigger(current: RoutineRecord, input: PatchInput, prepared: Watch | null) {
   if (input.trigger === undefined)
-    return { trigger: current.routine.trigger, integration: current.integration }
+    return {
+      trigger: current.routine.trigger,
+      integration: prepared === null ? current.integration : prepared,
+    }
   if (prepared === null) return { trigger: input.trigger, integration: null }
   return { trigger: prepared.trigger, integration: prepared }
 }
@@ -304,10 +307,12 @@ const makePatch = (
   Effect.fn('RoutineStore.patch')(function* (actor: Actor, id: RoutineId, input: PatchInput) {
     const now = yield* Clock.currentTimeMillis
     // Authorize before the read-only baseline call; network I/O never runs under a row lock.
-    yield* makeGet(database)(actor, id)
+    const authorized = yield* makeGet(database)(actor, id)
+    const selected = input.trigger === undefined ? authorized.routine.trigger : input.trigger
+    const rebaseline = input.trigger !== undefined || input.enabled === true
     const prepared =
-      input.trigger !== undefined && RoutineTrigger.guards.Integration(input.trigger)
-        ? yield* watch.prepare(actor, input.trigger)
+      rebaseline && RoutineTrigger.guards.Integration(selected)
+        ? yield* watch.prepare(actor, selected)
         : null
     const updated = yield* database.transaction((tx) =>
       Effect.gen(function* () {
@@ -778,7 +783,7 @@ export const routineStoreServiceLayer = Layer.effect(
     const view = makeView(database)
     const findOccurrence = makeFindOccurrence(database)
     return RoutineStore.of({
-      ...integrationOperations(database, watch, memberPresent),
+      ...integrationOperations(database, watch, memberPresent, changes),
       /** Keep the provider service receiver intact when discovery crosses the store boundary. */
       findEvents: Effect.fn('RoutineStore.findEvents')(function* (actor: Actor, account: string) {
         return yield* watch.discover(actor, account)

@@ -124,7 +124,7 @@ describe.skipIf(!testDatabaseConfigured)('Integration polling adapter', () => {
           const { ownerActor, probe, watcher, trigger } = yield* setup()
           const watch = yield* watcher.prepare(ownerActor, trigger)
           expect(watch.intervalMillis).toBe(300_000)
-          expect(WatchCursor.guards.Item(watch.cursor)).toBe(true)
+          expect(WatchCursor.guards.Window(watch.cursor)).toBe(true)
           yield* Ref.set(probe.calls, 0)
           yield* Ref.set(
             probe.outcome,
@@ -184,6 +184,44 @@ describe.skipIf(!testDatabaseConfigured)('Integration polling adapter', () => {
               })
               .pipe(Effect.flip),
           ).toBeInstanceOf(IntegrationCursorLost)
+        }),
+    )
+
+    it.effect(
+      'a new item below the high-water mark surfaces a gap and re-baselines without replay',
+      () =>
+        Effect.gen(function* () {
+          const { ownerActor, probe, watcher, trigger } = yield* setup()
+          yield* Ref.set(
+            probe.outcome,
+            ExecutorCallOutcome.cases.Completed.make({
+              value: { messages: [{ id: 'head' }, { id: 'older' }] },
+            }),
+          )
+          const watch = yield* watcher.prepare(ownerActor, trigger)
+          yield* Ref.set(
+            probe.outcome,
+            ExecutorCallOutcome.cases.Completed.make({
+              value: {
+                messages: [{ id: 'head' }, { id: 'imported-with-old-date' }, { id: 'older' }],
+              },
+            }),
+          )
+          const input = {
+            routineId: RoutineId.make('test-routine'),
+            personId: ownerActor.person.id,
+            companyId: null,
+            watch,
+          }
+          const failure = yield* watcher.newItems(input).pipe(Effect.flip)
+          expect(failure).toBeInstanceOf(IntegrationCursorLost)
+          if (!(failure instanceof IntegrationCursorLost))
+            expect.fail('A typed ordering gap is required')
+          expect(failure.reason).toBe('Ordering')
+          expect(
+            (yield* watcher.newItems({ ...input, watch: { ...watch, cursor: failure.cursor } }))
+              .items,
+          ).toEqual([])
         }),
     )
 
