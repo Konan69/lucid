@@ -27,6 +27,13 @@ for localhost, loopback and private IP addresses. Credentials, paths, queries an
 rejected. Main probes `/health` for `{ "ok": true, "service": "vivid" }` with a three-second timeout,
 without cookies or redirects. Only a verified server is saved.
 
+The address to enter is the one people open Vivid at in a browser, which is the server's
+`PUBLIC_URL`. The app serves its interface at that origin and names it as the origin of every
+request it forwards, because Chromium adds `Origin` only after the app has taken the request, and
+the server accepts sign-in from that one origin. In development that is the web dev server
+(`http://localhost:5178`), which forwards `/api` and `/health`; the server's own port answers the
+health check but refuses sign-in, since it is not the origin the server was told to trust.
+
 `settings.json` in Electron's user data directory stores version 2 and the tagged server state.
 Writes use an exclusive temporary file, fsync and atomic rename before updating memory. Damaged
 or unreadable settings show the chooser and are moved beside the original with a `.damaged`
