@@ -32,6 +32,7 @@ import {
   ConnectionRequestMessage,
   ConnectionResponse,
   ConnectionStep,
+  ConnectionTool,
   FindServicesRequest,
   FindToolsRequest,
   FindToolsResponse,
@@ -497,6 +498,20 @@ const FindTools = Rpc.make('FindTools', {
   payload: FindToolsRequest,
   success: FindToolsResponse,
 })
+/**
+ * The one tool an account offers under a name, exactly. Vivid names a tool by the account and
+ * tool it was shown, never by an identifier, and a search is the wrong way to turn that pair back
+ * into a tool: a search ranks, pages, and can leave the wanted one off the end. This answers for
+ * the pair itself, under the acting Person's access, or says it is not there.
+ */
+const ResolveTool = Rpc.make('ResolveTool', {
+  ...call,
+  payload: {
+    account: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
+    tool: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
+  },
+  success: ConnectionTool,
+})
 /** Vivid asking to do one thing through a Connection. The server decides whether it happens. */
 const UseTool = Rpc.make('UseTool', { ...call, payload: UseToolRequest, success: ToolOutcome })
 /** Vivid offering a service in the Thread, with the acting Person's real state for it. */
@@ -654,6 +669,7 @@ export const VividRpc = RpcGroup.make(
   ResumeConnection,
   RemoveConnection,
   FindTools,
+  ResolveTool,
   UseTool,
   OfferConnection,
   ListMemory,
