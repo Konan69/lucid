@@ -68,46 +68,78 @@ export function Computer({ onClose }: { onClose: () => void }) {
         </IconButton>
       </header>
 
-      <div className="flex h-11 shrink-0 items-center gap-1 px-2 pb-2">
-        {front === 'computer' ? (
-          <>
-            {Option.isSome(computer) && <Keyboard computer={computer.value} />}
-            <p
-              className="mx-1 flex h-9 min-w-0 flex-1 items-center justify-center truncate rounded-full bg-well px-4 text-label font-meta text-ink-3"
-              aria-live="polite"
-            >
-              {Option.match(computer, {
-                onNone: () => 'Looking for your computer…',
-                onSome: glass,
-              })}
-            </p>
-            {on && (
-              <IconButton label="Turn off" onClick={stop}>
-                <Power className="size-4" />
-              </IconButton>
-            )}
-          </>
-        ) : (
-          <PageToolbar page={front === 'page' ? page : Option.none()} />
-        )}
-      </div>
+      <ToolbarRow front={front} page={page} computer={computer} on={on} />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-panel bg-surface-0 hairline-t sm:mx-2 sm:mb-2 sm:rounded-panel sm:ring-line">
-        {front === 'computer' ? (
-          <>
-            {LiveState.$is('Loading')(state) && (
-              <Note title="One moment" detail="Looking for your computer." />
-            )}
-            {LiveState.$is('Failed')(state) && (
-              <Note title="Not available" detail="Vivid could not reach its computer right now." />
-            )}
-            {Option.isSome(computer) && <Screen computer={computer.value} />}
-          </>
-        ) : (
-          <PageView page={front === 'page' ? page : Option.none()} />
-        )}
+        <ComputerBody
+          front={front}
+          page={page}
+          loading={LiveState.$is('Loading')(state)}
+          failed={LiveState.$is('Failed')(state)}
+          computer={computer}
+        />
       </div>
     </aside>
+  )
+}
+
+/** The computer controls or the page address row, in the same toolbar slot. */
+function ToolbarRow({
+  front,
+  page,
+  computer,
+  on,
+}: {
+  front: ReturnType<typeof pages.front>
+  page: Option.Option<import('@vivid/desktop/bridge').Page>
+  computer: Option.Option<ComputerRecord>
+  on: boolean
+}) {
+  if (front !== 'computer') return <PageToolbar page={front === 'page' ? page : Option.none()} />
+  return (
+    <>
+      {Option.isSome(computer) && <Keyboard computer={computer.value} />}
+      <p
+        className="mx-1 flex h-9 min-w-0 flex-1 items-center justify-center truncate rounded-full bg-well px-4 text-label font-meta text-ink-3"
+        aria-live="polite"
+      >
+        {Option.match(computer, {
+          onNone: () => 'Looking for your computer…',
+          onSome: glass,
+        })}
+      </p>
+      {on && (
+        <IconButton label="Turn off" onClick={stop}>
+          <Power className="size-4" />
+        </IconButton>
+      )}
+    </>
+  )
+}
+
+/** The current computer receipt or the page surface, in the panel's body. */
+function ComputerBody({
+  front,
+  page,
+  loading,
+  failed,
+  computer,
+}: {
+  front: ReturnType<typeof pages.front>
+  page: Option.Option<import('@vivid/desktop/bridge').Page>
+  loading: boolean
+  failed: boolean
+  computer: Option.Option<ComputerRecord>
+}) {
+  if (front !== 'computer') return <PageView page={front === 'page' ? page : Option.none()} />
+  return (
+    <>
+      {loading && <Note title="One moment" detail="Looking for your computer." />}
+      {failed && (
+        <Note title="Not available" detail="Vivid could not reach its computer right now." />
+      )}
+      {Option.isSome(computer) && <Screen computer={computer.value} />}
+    </>
   )
 }
 
