@@ -114,9 +114,7 @@ function command(runtimeDirectory: string, unit: string) {
     '--cpu=30',
     '--',
     NodeProcess.execPath,
-    '--import',
-    NodeURL.fileURLToPath(import.meta.resolve('tsx')),
-    NodePath.join(server, 'src/code/worker.ts'),
+    NodePath.join(server, 'src/code/start.mjs'),
   )
   return { args, env: { PATH: '/usr/bin:/bin', XDG_RUNTIME_DIR: runtimeDirectory } }
 }
@@ -436,7 +434,11 @@ const execute = Effect.fn('Code.supervise')(function* (
       )
     }),
   ).pipe(
-    Effect.catchCause(() => Effect.succeed(state.failed(CodeFailure.cases.Unavailable.make({})))),
+    Effect.catchCause((cause) =>
+      Effect.logError('Program supervision failed', cause).pipe(
+        Effect.as(state.failed(CodeFailure.cases.Unavailable.make({}))),
+      ),
+    ),
   )
   const deadline = Effect.sleep(`${budgets.seconds} seconds`).pipe(
     Effect.map(() =>
@@ -451,6 +453,8 @@ export const codeProcessLayer = Layer.effect(
   CodeProcess,
   Effect.gen(function* () {
     const runtimeDirectory = yield* Config.option(Config.String('XDG_RUNTIME_DIR'))
+    if (Option.isNone(runtimeDirectory))
+      yield* Effect.logError('Programs are unavailable: XDG_RUNTIME_DIR is not configured')
     const capacity = yield* Semaphore.make(budgets.processes)
     const active = new Set<ThreadId>()
     return CodeProcess.of({
@@ -461,7 +465,7 @@ export const codeProcessLayer = Layer.effect(
         })
         if (bytes(request.code) > budgets.source)
           return CodeOutcome.cases.Failed.make({
-            failure: CodeFailure.cases.OverLimit.make({ limit: 'data' }),
+            failure: CodeFailure.cases.Threw.make({ message: 'Program source exceeds 16 KiB.' }),
             calls: [],
           })
         if (Option.isNone(runtimeDirectory) || active.has(boundary)) return unavailable

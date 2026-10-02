@@ -7,13 +7,13 @@ import {
 // A cold isolated process needs only Code's schemas and Node's runner; barrel imports eagerly
 // initialize unrelated product contracts and platform services on every interpreter startup.
 import { CodeCallKind, CodeFailure } from '@vivid/contracts/code'
-import * as NodeRuntime from '@effect/platform-node/NodeRuntime'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import * as Semaphore from 'effect/Semaphore'
-import { boundedNesting, budgets, bytes } from './budgets.ts'
+import { budgets } from './budgets.ts'
+import { finish, guestJson } from './results.ts'
 import { FrameReader, writeFrame } from './pipe.ts'
 import {
   decodeParent,
@@ -22,8 +22,6 @@ import {
   PipeFailure,
   WorkerMessage,
 } from './protocol.ts'
-
-const decodeGuestJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))
 
 /** The only Promise adapter is pi's public callback API; tools themselves never run in this child. */
 function invokeTool(call: Effect.Effect<Schema.Json, PipeFailure>, signal: AbortSignal) {
@@ -41,58 +39,6 @@ const execute = Effect.fn('Code.executeGuest')((sandbox: CodemodeSandbox, code: 
   }),
 )
 
-/** Serialize and check size/depth before recursive decoding. This is the pi SDK's unknown ingress. */
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Public third-party SDK input is unknown; decoded once here.
-const guestJson = Effect.fn('Code.guestJson')(function* (input: unknown, maximum: number) {
-  const text = yield* Effect.try({
-    try: () => JSON.stringify(input),
-    catch: () => new PipeFailure({ reason: 'size' }),
-  })
-  if (text === undefined) return yield* Effect.fail(new PipeFailure({ reason: 'invalid' }))
-  if (bytes(text) > maximum || !boundedNesting(text))
-    return yield* Effect.fail(new PipeFailure({ reason: 'size' }))
-  return yield* decodeGuestJson(text).pipe(
-    Effect.mapError(() => new PipeFailure({ reason: 'invalid' })),
-  )
-})
-
-/** Only JSON returns or text prints are supported; persistent store writes and images are discarded. */
-const finish = Effect.fn('Code.finishGuest')(function* (result: CodemodeResult) {
-  if (!result.ok) {
-    if (result.error.kind === 'sandbox' || result.error.kind === 'aborted')
-      return WorkerMessage.cases.Failed.make({ failure: CodeFailure.cases.Unavailable.make({}) })
-    if (/out of memory/i.test(result.error.message))
-      return WorkerMessage.cases.Failed.make({
-        failure: CodeFailure.cases.OverLimit.make({ limit: 'memory' }),
-      })
-    const failure =
-      result.error.kind === 'timeout'
-        ? CodeFailure.cases.TimedOut.make({ seconds: budgets.seconds })
-        : CodeFailure.cases.Threw.make({ message: result.error.message.slice(0, 500) })
-    return WorkerMessage.cases.Failed.make({ failure })
-  }
-  if (result.output.some((item) => item.type === 'image'))
-    return WorkerMessage.cases.Failed.make({
-      failure: CodeFailure.cases.Threw.make({
-        message: 'Programs return JSON or text, not images.',
-      }),
-    })
-  const value =
-    result.value === undefined
-      ? result.output
-          .filter((item) => item.type === 'text')
-          .map((item) => item.text)
-          .join('\n')
-      : result.value
-  const json = yield* guestJson(value, budgets.result)
-  const message = WorkerMessage.cases.Done.make({ result: json })
-  if (bytes(encodeWorker(message)) > budgets.result)
-    return WorkerMessage.cases.Failed.make({
-      failure: CodeFailure.cases.OverLimit.make({ limit: 'result' }),
-    })
-  return message
-})
-
 /** Bounded callback bookkeeping and a permanent quota latch also protect unawaited call storms. */
 class Bridge {
   readonly pending = new Map<number, Deferred.Deferred<Schema.Json, PipeFailure>>()
@@ -100,7 +46,12 @@ class Bridge {
   private next = 0
   private attempts = 0
 
-  constructor(private readonly writes: Semaphore.Semaphore) {}
+  private readonly writes: Semaphore.Semaphore
+
+  /** A single writer serializes frames; explicit fields keep the child in Node's erasable subset. */
+  constructor(writes: Semaphore.Semaphore) {
+    this.writes = writes
+  }
 
   /** A quota failure is a host latch, even if guest code catches the rejected Promise. */
   readonly call = Effect.fn('Code.guestCall')(function* (
@@ -195,18 +146,9 @@ const program = Effect.scoped(
     )
     const message = Option.isSome(bridge.failure)
       ? WorkerMessage.cases.Failed.make({ failure: bridge.failure.value })
-      : yield* finish(result).pipe(
-          Effect.catchTag('CodePipeFailure', () =>
-            Effect.succeed(
-              WorkerMessage.cases.Failed.make({
-                failure: CodeFailure.cases.OverLimit.make({ limit: 'result' }),
-              }),
-            ),
-          ),
-        )
+      : yield* finish(result)
     return yield* writes.withPermit(writeFrame(NodeProcess.stdout, encodeWorker(message), 'result'))
   }),
 ).pipe(Effect.catchCause(() => Effect.void))
 
-// oxlint-disable-next-line vivid/no-platform-runtime-runmain-in-library -- This file is an executable isolated child entry point, never imported by the server.
-NodeRuntime.runMain(program, { disableErrorReporting: true })
+export { program }

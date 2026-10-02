@@ -2,6 +2,7 @@ import { type PersonId, type ThreadId } from '@vivid/contracts'
 import { Context, Effect, Layer, Option, Schema } from 'effect'
 import type { Actor } from '../auth/access.ts'
 import { authenticateVivid } from '../auth/session.ts'
+import type { DatabaseInfrastructureError } from '../database/client.ts'
 
 export interface CodeBoundary {
   readonly person: PersonId
@@ -15,7 +16,9 @@ export class CodeAuthorityRevoked extends Schema.TaggedError<CodeAuthorityRevoke
 ) {}
 
 export interface CodeAuthorityService {
-  readonly refresh: (boundary: CodeBoundary) => Effect.Effect<Actor, CodeAuthorityRevoked>
+  readonly refresh: (
+    boundary: CodeBoundary,
+  ) => Effect.Effect<Actor, CodeAuthorityRevoked | DatabaseInfrastructureError>
 }
 
 /** Identity is bound at the RPC boundary. Every queued call reloads Thread visibility and Membership. */
@@ -37,7 +40,10 @@ export const codeAuthorityLayer = Layer.effect(
             by: 'vivid',
             threadId: Option.some(auth.threadId),
           })),
-          Effect.mapError(() => new CodeAuthorityRevoked({})),
+          Effect.catchTags({
+            NotFound: () => Effect.fail(new CodeAuthorityRevoked({})),
+            Forbidden: () => Effect.fail(new CodeAuthorityRevoked({})),
+          }),
         ),
       ),
     })

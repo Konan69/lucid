@@ -13,7 +13,7 @@ import type { Actor } from '../auth/access.ts'
 import { findTools, resolveTool, useTool } from '../connections/tools.ts'
 import { computerBrowse, computerRunCommand } from '../computers/store.ts'
 import { CodeAuthority, type CodeBoundary } from './authority.ts'
-import { PageReader } from './page.ts'
+import { readPage } from './pages.ts'
 import { CallOutcome, type Dispatch } from './process.ts'
 import type { WorkerMessage } from './protocol.ts'
 
@@ -84,7 +84,7 @@ const connection = Effect.fn('Code.useConnection')(function* (actor: Actor, inpu
   })
 })
 
-/** Computer's existing contracts collapse lost execution and availability; conservatively stop on either. */
+/** Computer distinguishes refusal before dispatch from a lost execution receipt. Only the latter stops the guest. */
 const command = Effect.fn('Code.runCommand')(function* (actor: Actor, input: Schema.Json) {
   const request = yield* decodeCommand(input, { onExcessProperty: 'error' })
   if (
@@ -108,7 +108,13 @@ const command = Effect.fn('Code.runCommand')(function* (actor: Actor, input: Sch
     ApprovalRequired: ({ approvalId, summary }) =>
       CallOutcome.cases.ApprovalRequired.make({ approvalId, summary }),
     Blocked: ({ rule }) => CallOutcome.cases.Blocked.make({ rule, summary: request.summary }),
-    Unavailable: () => CallOutcome.cases.Unknown.make({ summary: request.summary }),
+    Unavailable: () =>
+      returned(
+        { ok: false, reason: 'The Computer is unavailable. No action was sent.' },
+        request.summary,
+        'refused',
+      ),
+    OutcomeUnknown: () => CallOutcome.cases.Unknown.make({ summary: request.summary }),
   })
 })
 
@@ -127,7 +133,13 @@ const browse = Effect.fn('Code.browse')(function* (actor: Actor, input: Schema.J
     ApprovalRequired: ({ approvalId, summary }) =>
       CallOutcome.cases.ApprovalRequired.make({ approvalId, summary }),
     Blocked: ({ rule }) => CallOutcome.cases.Blocked.make({ rule, summary: request.summary }),
-    Unavailable: () => CallOutcome.cases.Unknown.make({ summary: request.summary }),
+    Unavailable: () =>
+      returned(
+        { ok: false, reason: 'The Computer is unavailable. No action was sent.' },
+        request.summary,
+        'refused',
+      ),
+    OutcomeUnknown: () => CallOutcome.cases.Unknown.make({ summary: request.summary }),
   })
 })
 
@@ -150,7 +162,7 @@ const dispatch = Effect.fn('Code.dispatch')(function* (
       return yield* browse(actor, call.input)
     case 'read_page': {
       const request = yield* decodePage(call.input, { onExcessProperty: 'error' })
-      const outcome = yield* (yield* PageReader).read(request)
+      const outcome = yield* readPage(request)
       return ReadPageOutcome.match(outcome, {
         Read: ({ address, title, text: content, truncated }) =>
           returned({ ok: true, address, title, text: content, truncated }, 'Read a public page'),
@@ -220,9 +232,15 @@ export const codeCallsLayer = Layer.effect(
                   ),
                 ),
             }),
+            // Owning adapters report post-dispatch loss as values. Remaining typed errors are
+            // pre-dispatch refusals; defects deliberately bypass this typed recovery.
             Effect.catch(() =>
               Effect.succeed(
-                CallOutcome.cases.Unknown.make({ summary: 'The call could not be confirmed' }),
+                returned(
+                  { ok: false, reason: 'The service is unavailable. No action was sent.' },
+                  'Check service availability',
+                  'refused',
+                ),
               ),
             ),
           ),

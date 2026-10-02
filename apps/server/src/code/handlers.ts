@@ -1,8 +1,8 @@
 import type { ReadPageRequest, RunCodeRequest } from '@vivid/contracts'
 import { Effect } from 'effect'
-import { requireActor, requireVivid } from '../auth/access.ts'
+import { requireVivid } from '../auth/access.ts'
 import { CodeCalls } from './calls.ts'
-import { PageReader } from './page.ts'
+import { readPage } from './pages.ts'
 import { CodeProcess } from './process.ts'
 
 /** Both entry points inject identity. Programs cannot target a Person, Company, Computer or Thread. */
@@ -17,7 +17,7 @@ export const codeHandlers = {
     )
   }),
   ReadPage: Effect.fn('Rpc.ReadPage')(function* (request: ReadPageRequest) {
-    yield* requireActor()
-    return yield* (yield* PageReader).read(request)
+    yield* requireVivid()
+    return yield* readPage(request)
   }),
 }

@@ -1,9 +1,15 @@
-import { describe, expect, layer } from '@effect/vitest'
+import * as NodeProcess from 'node:process'
+import { ConfigProvider, Context, Layer, Logger } from 'effect'
+import { programHost } from './host.ts'
+import { describe, expect, it as standalone, layer } from '@effect/vitest'
 import { ApprovalId, CodeFailure, CodeOutcome, ThreadId } from '@vivid/contracts'
-import { Deferred, Effect, Fiber, Ref, type Schema } from 'effect'
+import { Deferred, Effect, Fiber, Ref, Option, type Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { CallOutcome, CodeProcess, codeProcessLayer, type Dispatch } from './process.ts'
 import { budgets } from './budgets.ts'
+
+const missingHost = programHost(Option.fromUndefinedOr(NodeProcess.env.XDG_RUNTIME_DIR))
+if (Option.isSome(missingHost)) console.warn(`Skipping supervised programs: ${missingHost.value}`)
 
 /** Compare observable variants without constructing partial domain records in matchers. */
 function check(outcome: CodeOutcome, tag: CodeOutcome['_tag'], fields: Schema.JsonObject) {
@@ -11,8 +17,16 @@ function check(outcome: CodeOutcome, tag: CodeOutcome['_tag'], fields: Schema.Js
   expect(outcome).toMatchObject(fields)
 }
 
+interface RunningLoopsService {
+  readonly fibers: readonly Fiber.Fiber<CodeOutcome>[]
+}
+/** Suite fixture owns two already-admitted real guests; the test owns the parent deadline and recovery. */
+class RunningLoops extends Context.Service<RunningLoops, RunningLoopsService>()(
+  'Test/RunningLoops',
+) {}
+
 /** Every execution here uses the production bwrap/cgroup child and published pi QuickJS interpreter. */
-describe('Supervised programs', () => {
+describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
   layer(codeProcessLayer)((it) => {
     const run = Effect.fn('Test.program')(function* (code: string, dispatch: Dispatch) {
       return yield* (yield* CodeProcess).run(
@@ -173,7 +187,7 @@ describe('Supervised programs', () => {
     it.effect('enforces the UTF-8 source budget before startup', () =>
       Effect.gen(function* () {
         check(yield* run(`return "${'é'.repeat(8192)}";`, reply), 'Failed', {
-          failure: CodeFailure.cases.OverLimit.make({ limit: 'data' }),
+          failure: CodeFailure.cases.Threw.make({ message: 'Program source exceeds 16 KiB.' }),
           calls: [],
         })
       }),
@@ -281,10 +295,6 @@ describe('Supervised programs', () => {
           boundary: ThreadId.make('one-thread'),
         }
         const first = yield* Effect.forkChild(process.run(input, dispatch))
-        yield* Deferred.await(entered)
-        check(yield* process.run(input, reply), 'Failed', {
-          failure: CodeFailure.cases.Unavailable.make({}),
-        })
         const secondEntered = yield* Deferred.make<void>()
         const second = yield* Effect.forkChild(
           process.run(
@@ -295,7 +305,17 @@ describe('Supervised programs', () => {
             }),
           ),
         )
-        yield* Deferred.await(secondEntered)
+        yield* Effect.raceFirst(
+          Deferred.await(entered),
+          Fiber.join(first).pipe(Effect.flatMap((outcome) => Effect.die(outcome))),
+        )
+        check(yield* process.run(input, reply), 'Failed', {
+          failure: CodeFailure.cases.Unavailable.make({}),
+        })
+        yield* Effect.raceFirst(
+          Deferred.await(secondEntered),
+          Fiber.join(second).pipe(Effect.flatMap((outcome) => Effect.die(outcome))),
+        )
         check(
           yield* process.run({ ...input, boundary: ThreadId.make('third-thread') }, reply),
           'Failed',
@@ -309,27 +329,59 @@ describe('Supervised programs', () => {
       }),
     )
 
-    for (const loop of ['while(true) {}', 'while(true) await Promise.resolve();']) {
-      it.effect(`parent deadline stops ${loop} and releases interpreter capacity`, () =>
-        Effect.gen(function* () {
-          const entered = yield* Deferred.make<void>()
-          const dispatch: Dispatch = Effect.fn('Test.loopStarted')(function* (call) {
+    const loopsLayer = Layer.effect(
+      RunningLoops,
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>()
+        const count = yield* Ref.make(0)
+        const dispatch: Dispatch = Effect.fn('Test.loopsStarted')(function* (call) {
+          if ((yield* Ref.updateAndGet(count, (value) => value + 1)) === 2)
             yield* Deferred.succeed(entered, undefined)
-            return yield* reply(call)
-          })
-          const running = yield* Effect.forkChild(
-            run(`await tools.find_tools({}); ${loop}`, dispatch),
-          )
-          yield* Deferred.await(entered)
-          yield* TestClock.adjust('31 seconds')
-          const outcome = yield* Fiber.join(running)
-          expect(CodeOutcome.guards.Failed(outcome)).toBe(true)
-          expect(outcome).toHaveProperty('failure._tag', 'TimedOut')
-          expect(outcome.calls.map((call) => call.end)).toEqual(['completed'])
-          expect(yield* run('return 42;', reply)).toHaveProperty('result', 42)
-        }),
+          return yield* reply(call)
+        })
+        // Startup is a fixture precondition, independent of how quickly a parent deadline must stop
+        // admitted guests. Keep both real cgroups alive in the suite scope until the test advances time.
+        const fibers = yield* Effect.forEach(
+          ['while(true) {}', 'while(true) await Promise.resolve();'],
+          (loop) => Effect.forkScoped(run(`await tools.find_tools({}); ${loop}`, dispatch)),
+        )
+        yield* Effect.raceFirst(
+          Deferred.await(entered),
+          Effect.forEach(
+            fibers,
+            (fiber) => Fiber.join(fiber).pipe(Effect.flatMap((outcome) => Effect.die(outcome))),
+            { concurrency: 'unbounded' },
+          ),
+        )
+        return RunningLoops.of({ fibers })
+      }),
+    )
+    it.layer(loopsLayer)('Parent deadline', (deadline) => {
+      deadline.effect(
+        'stops synchronous and microtask loops and releases both interpreter slots',
+        () =>
+          Effect.gen(function* () {
+            const running = yield* RunningLoops
+            yield* TestClock.adjust('31 seconds')
+            for (const fiber of running.fibers) {
+              const outcome = yield* Fiber.join(fiber)
+              expect(CodeOutcome.guards.Failed(outcome)).toBe(true)
+              expect(outcome).toHaveProperty('failure._tag', 'TimedOut')
+              expect(outcome.calls.map((call) => call.end)).toEqual(['completed'])
+            }
+            const recovered = yield* Effect.forEach(
+              [42, 43],
+              (value) => run(`return ${value};`, reply),
+              { concurrency: 'unbounded' },
+            )
+            expect(
+              recovered.map((outcome) =>
+                CodeOutcome.guards.Completed(outcome) ? outcome.result : outcome,
+              ),
+            ).toEqual([42, 43])
+          }),
       )
-    }
+    })
 
     it.effect(
       'marks a timed-out consequential dispatch unknown and retains a previous completed receipt',
@@ -415,7 +467,9 @@ describe('Supervised programs', () => {
       () =>
         Effect.gen(function* () {
           const outcome = yield* run(
-            'const value="x".repeat(16384); for(let i=0;i<1000000;i++) text(value);',
+            // Large transfers measure host output memory, without thousands of small WASM callbacks
+            // consuming the test deadline before the lean executable reaches its cgroup ceiling.
+            'const value="x".repeat(1048576); for(let i=0;i<1000;i++) text(value);',
             reply,
           )
           expect(outcome).toHaveProperty('failure.limit', 'memory')
@@ -433,7 +487,7 @@ describe('Supervised programs', () => {
             return yield* Effect.never
           })
           const outcome = yield* run(
-            'await tools.find_tools({}); tools.use_tool({}); const value="x".repeat(16384); for(let i=0;i<1000000;i++) text(value);',
+            'await tools.find_tools({}); tools.use_tool({}); const value="x".repeat(1048576); for(let i=0;i<1000;i++) text(value);',
             dispatch,
           )
           expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
@@ -442,4 +496,54 @@ describe('Supervised programs', () => {
       { timeout: 15_000 },
     )
   })
+})
+
+/** A missing runtime is diagnosed once during construction, independent of how many requests arrive. */
+standalone.effect('logs absent program configuration once and refuses each request', () => {
+  const messages: string[] = []
+  const logger = Logger.make((entry) => messages.push(String(entry.message)))
+  return Effect.gen(function* () {
+    const process = yield* CodeProcess
+    for (let index = 0; index < 2; index++) {
+      const result = yield* process.run(
+        {
+          request: { code: 'return 1;', summary: 'Read' },
+          boundary: ThreadId.make(crypto.randomUUID()),
+        },
+        () => Effect.die('Unavailable configuration must never dispatch'),
+      )
+      check(result, 'Failed', { failure: CodeFailure.cases.Unavailable.make({}) })
+    }
+    expect(messages.filter((message) => message.includes('XDG_RUNTIME_DIR'))).toHaveLength(1)
+  }).pipe(
+    Effect.provide(codeProcessLayer),
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
+    Effect.provide(Logger.layer([logger])),
+  )
+})
+
+/** An invalid launch environment exercises the real supervisor defect boundary without starting a child. */
+standalone.effect('logs a launch defect before returning Unavailable', () => {
+  const messages: string[] = []
+  const logger = Logger.make((entry) => messages.push(Logger.formatSimple.log(entry)))
+  return Effect.gen(function* () {
+    const result = yield* (yield* CodeProcess).run(
+      {
+        request: { code: 'return 1;', summary: 'Read' },
+        boundary: ThreadId.make(crypto.randomUUID()),
+      },
+      () => Effect.die('Launch must not dispatch'),
+    )
+    check(result, 'Failed', { failure: CodeFailure.cases.Unavailable.make({}) })
+    expect(
+      messages.some(
+        (message) =>
+          message.includes('Program supervision failed') && message.includes('null bytes'),
+      ),
+    ).toBe(true)
+  }).pipe(
+    Effect.provide(codeProcessLayer),
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ XDG_RUNTIME_DIR: '\0' }))),
+    Effect.provide(Logger.layer([logger])),
+  )
 })

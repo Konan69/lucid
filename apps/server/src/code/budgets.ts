@@ -11,6 +11,7 @@ export const budgets = {
   result: 32_768,
   depth: 32,
   processes: 2,
+  pages: 4,
   pageBytes: 524_288,
   pageText: 24_576,
   pageSeconds: 10,

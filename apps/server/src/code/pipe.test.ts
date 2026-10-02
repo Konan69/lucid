@@ -3,7 +3,7 @@ import * as NodeChildProcess from 'node:child_process'
 import * as NodeProcess from 'node:process'
 import * as NodeURL from 'node:url'
 import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Fiber } from 'effect'
 import { FrameReader, writeFrame } from './pipe.ts'
 import { budgets } from './budgets.ts'
 import { decodeWorker, encodeParent, ParentMessage, WorkerMessage } from './protocol.ts'
@@ -65,6 +65,27 @@ describe('Program pipes', () => {
   )
 
   it.effect(
+    'refuses reads after EOF and truncated pipe destruction instead of waiting forever',
+    () =>
+      Effect.gen(function* () {
+        const ended = new NodeStream.PassThrough()
+        const eof = Effect.callback<void>((resume) => {
+          ended.once('end', () => resume(Effect.void))
+          ended.resume()
+          ended.end()
+        })
+        yield* eof
+        expect((yield* new FrameReader(ended).read().pipe(Effect.flip)).reason).toBe('closed')
+        const truncated = new NodeStream.PassThrough()
+        truncated.write(Buffer.from([1, 0, 0, 0, 10, 123]))
+        const read = new FrameReader(truncated).read()
+        const waiting = yield* Effect.forkChild(read, { startImmediately: true })
+        truncated.destroy()
+        expect((yield* Fiber.join(waiting).pipe(Effect.flip)).reason).toBe('closed')
+      }),
+  )
+
+  it.effect(
     'pipe EOF after a callback exits the real worker and cancels the guest without replying',
     () =>
       Effect.scoped(
@@ -73,11 +94,7 @@ describe('Program pipes', () => {
             Effect.sync(() =>
               NodeChildProcess.spawn(
                 NodeProcess.execPath,
-                [
-                  '--import',
-                  NodeURL.fileURLToPath(import.meta.resolve('tsx')),
-                  NodeURL.fileURLToPath(new URL('./worker.ts', import.meta.url)),
-                ],
+                [NodeURL.fileURLToPath(new URL('./start.mjs', import.meta.url))],
                 { stdio: ['pipe', 'pipe', 'ignore'], env: { PATH: '/usr/bin:/bin' } },
               ),
             ),

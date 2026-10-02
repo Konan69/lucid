@@ -12,7 +12,12 @@ export class FrameReader {
   private used = 0
   private size = 0
 
-  constructor(private readonly input: NodeStream.Readable) {}
+  private readonly input: NodeStream.Readable
+
+  /** Keep the stream receiver explicit; the executable uses Node's erasable TypeScript subset. */
+  constructor(input: NodeStream.Readable) {
+    this.input = input
+  }
 
   /** Header validation precedes allocation, including the stricter limit for final results. */
   private allocate(limit: number) {
@@ -37,7 +42,7 @@ export class FrameReader {
         while (true) {
           const needed = this.head < 5 ? 5 - this.head : this.size - this.used
           const chunk: unknown = this.input.read(Math.min(needed, 65_536))
-          if (chunk === null) return
+          if (chunk === null) return exhausted()
           if (!Buffer.isBuffer(chunk)) {
             complete(Effect.fail(new PipeFailure({ reason: 'invalid' })))
             return
@@ -72,15 +77,21 @@ export class FrameReader {
           }
         }
       }
+      // End can precede read() and a truncated stream can close without an end event.
+      const exhausted = () => {
+        if (this.input.readableEnded || this.input.destroyed) closed()
+      }
       const closed = () => complete(Effect.fail(new PipeFailure({ reason: 'closed' })))
       const cleanup = () => {
         this.input.off('readable', drain)
         this.input.off('end', closed)
         this.input.off('error', closed)
+        this.input.off('close', closed)
       }
       this.input.on('readable', drain)
       this.input.on('end', closed)
       this.input.on('error', closed)
+      this.input.on('close', closed)
       drain()
       return Effect.sync(cleanup)
     }),
