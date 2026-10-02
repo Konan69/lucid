@@ -38,7 +38,7 @@ import { Changes, Topic } from '../live/changes.ts'
 import { auditEntries } from '../audit/tables.ts'
 import { Conversation, type Delivery } from '../threads/conversation.ts'
 import { submissionId } from '../runtime/identity.ts'
-import { RunStore, runStoreLayer } from '../threads/runs.ts'
+import { RunStore, runStoreLayer, TurnReservation } from '../threads/runs.ts'
 import { ThreadStore, threadStoreLayer } from '../threads/store.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { notifications } from '../tasks/tables.ts'
@@ -90,13 +90,21 @@ const recordedConversationLayer = Layer.effectContext(
         if (Option.isSome(failed)) return yield* Effect.fail(failed.value)
         // Persist through the production allocator: parallel deliveries and replays keep real turns.
         const id = submissionId(delivery.threadId, delivery.idempotencyKey)
-        yield* store.start({
+        const reservation = yield* store.start({
           id,
           threadId: delivery.threadId,
           personId: delivery.personId,
           origin: delivery.origin,
           libraryFolder: delivery.libraryFolder === undefined ? null : delivery.libraryFolder,
         })
+        if (TurnReservation.guards.Busy(reservation))
+          return yield* Effect.fail(new Conflict({ message: 'Test Thread is busy' }))
+        if (TurnReservation.guards.Reserved(reservation))
+          yield* store.admitted({
+            runId: id,
+            offset: String(reservation.turn),
+            incarnation: 'test',
+          })
         const stored = yield* returned(
           (yield* store.list(delivery.threadId)).filter((run) => run.id === id),
           'Test Run',
