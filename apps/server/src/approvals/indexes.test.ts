@@ -17,6 +17,7 @@ const planRows = Schema.Array(
     ),
   }),
 )
+const planResult = Schema.Struct({ rows: planRows })
 
 /** A replay index must exclude settled/history rows itself, rather than filter them after scanning.
  * Local planner settings make index eligibility observable even in a small disposable database. */
@@ -35,7 +36,7 @@ describe.skipIf(!testDatabaseConfigured)('Signal replay query plans', () => {
             `)
           }),
         )
-        const plans = yield* decodeStored(planRows, 'replay query plan')(result.rows)
+        const { rows: plans } = yield* decodeStored(planResult, 'replay query plan')(result)
         expect(plans).toMatchObject([
           { 'QUERY PLAN': [{ Plan: { 'Index Name': `${table}_signal` } }] },
         ])

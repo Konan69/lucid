@@ -153,6 +153,7 @@ const sameAuthority = Effect.fn('RunStore.sameAuthority')(function* (
     return yield* Effect.fail(
       new DatabaseFailure({ message: 'Run authority conflicts with its original delivery' }),
     )
+  return yield* Effect.void
 })
 
 /**
