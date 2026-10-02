@@ -654,13 +654,19 @@ export const computerStoreLayer = Layer.effect(
       },
       (effect, person) => state.lock(person).withPermit(effect),
     )
+    /** Idle cleanup must preserve the original readiness failure even if its database write fails. */
+    const recoverIdle = Effect.fn('ComputerStore.recoverIdle')((person: PersonId) =>
+      inactivity
+        .arm(person)
+        .pipe(Effect.catch(() => Effect.logError('Computer idle deadline could not be restored.'))),
+    )
     /** Startup never waits while holding the action permit needed by the boot worker. */
     const execute = Effect.fn('ComputerStore.execute')(function* <A>(
       person: PersonId,
       action: (key: MachineKey) => Effect.Effect<A, MachineFailure>,
     ) {
       yield* inactivity.activity(person)
-      yield* prepare(state, person).pipe(Effect.onError(() => inactivity.arm(person)))
+      yield* prepare(state, person).pipe(Effect.onError(() => recoverIdle(person)))
       return yield* executeReady(person, action)
     })
     /** Commands, browser steps and desktop input share precisely the same readiness and idle policy. */
