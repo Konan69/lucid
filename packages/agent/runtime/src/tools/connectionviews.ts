@@ -38,7 +38,7 @@ export function integrations(response: FindIntegrationsResponse) {
             SignIn: () => 'Ready to sign in.',
             Key: () => 'Ready to connect with a key in the secure dialog.',
             SetupRequired: () =>
-              'Not set up on this Vivid yet; whoever runs it needs to finish connection setup before you can connect it. Do not offer a connect card.',
+              `${modelText(name)} is not set up on this Vivid yet; whoever runs it needs to register a sign-in application for it. Do not offer a connect card.`,
           }),
         }),
       }),
