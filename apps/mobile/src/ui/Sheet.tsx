@@ -2,6 +2,7 @@ import { Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { Modal, Platform, ScrollView, View } from 'react-native'
 import { X } from 'lucide-react-native'
+import { useReducedMotion } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTheme } from '../theme'
 import { Button, Field, GUTTER, IconButton, Label, Labelled, Notice } from './ui'
@@ -9,7 +10,8 @@ import { Button, Field, GUTTER, IconButton, Label, Labelled, Notice } from './ui
 /**
  * Something asked or shown over the screen the Person was on: a form, a choice, a detail. It is
  * the system's own sheet, so it slides and swipes away the way every other sheet on the phone
- * does, and none of that motion is written here.
+ * does, and none of that motion is written here. With reduced motion it fades in instead of
+ * travelling up the screen.
  */
 export function Sheet({
   title,
@@ -24,9 +26,10 @@ export function Sheet({
 }) {
   const { colors: c } = useTheme()
   const insets = useSafeAreaInsets()
+  const still = useReducedMotion()
   return (
     <Modal
-      animationType="slide"
+      animationType={still ? 'fade' : 'slide'}
       presentationStyle="pageSheet"
       allowSwipeDismissal={Platform.OS === 'ios'}
       onRequestClose={onClose}
@@ -38,6 +41,9 @@ export function Sheet({
           // An iOS sheet starts below the status bar by itself; Android's covers the screen.
           paddingTop: Platform.OS === 'ios' ? 8 : insets.top,
           paddingBottom: insets.bottom,
+          // Clear of a notch or a rounded corner when the phone is on its side.
+          paddingLeft: insets.left,
+          paddingRight: insets.right,
         }}
       >
         <View

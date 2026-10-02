@@ -58,8 +58,24 @@ export function Header({
   )
 }
 
-/** A screen's ground: the palette's own surface from edge to edge. */
+/**
+ * A screen's ground: the palette's own surface from edge to edge, with what is drawn on it kept
+ * clear of a notch or a rounded corner at the sides. Upright, those insets are nothing; with the
+ * phone on its side they are what keeps a row's first letters out from under the camera.
+ */
 export function Screen({ children }: { children: ReactNode }) {
   const { colors: c } = useTheme()
-  return <View style={{ flex: 1, backgroundColor: c['surface-0'] }}>{children}</View>
+  const insets = useSafeAreaInsets()
+  return (
+    <View
+      style={{
+        flex: 1,
+        paddingLeft: insets.left,
+        paddingRight: insets.right,
+        backgroundColor: c['surface-0'],
+      }}
+    >
+      {children}
+    </View>
+  )
 }

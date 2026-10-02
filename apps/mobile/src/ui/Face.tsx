@@ -1,6 +1,6 @@
 import { useId } from 'react'
 import Svg, { Circle, Defs, RadialGradient, Rect, Stop } from 'react-native-svg'
-import Animated, { cubicBezier } from 'react-native-reanimated'
+import Animated, { cubicBezier, useReducedMotion } from 'react-native-reanimated'
 import { nativeMetrics as m } from '@vivid/tokens/native'
 import { faceGeometry, type FaceMood } from '@vivid/marks'
 import { useTheme } from '../theme'
@@ -15,10 +15,12 @@ const TILT_CURVE = cubicBezier(0.2, 0, 0, 1)
  *
  * The tilt between moods is a transition on the style, not an animation started from an effect:
  * a mood is a state, the face is drawn in it, and Reanimated carries the change on the UI thread.
- * It runs once per change of mood and never loops.
+ * It runs once per change of mood and never loops. A Person who has asked their phone for less
+ * motion gets the new tilt at once: the mood still shows, nothing turns.
  */
 export function Face({ size = 28, mood = 'neutral' }: { size?: number; mood?: FaceMood }) {
   const { colors: c } = useTheme()
+  const still = useReducedMotion()
   // `useId` embeds colons, which are not legal in an SVG fragment identifier.
   const id = useId().replace(/:/g, '')
   const geometry = faceGeometry(size, mood)
@@ -32,7 +34,7 @@ export function Face({ size = 28, mood = 'neutral' }: { size?: number; mood?: Fa
         height: size,
         transform: [{ rotate: `${geometry.tiltDegrees}deg` }],
         transitionProperty: 'transform',
-        transitionDuration: m['dur-base'],
+        transitionDuration: still ? 0 : m['dur-base'],
         transitionTimingFunction: TILT_CURVE,
       }}
     >

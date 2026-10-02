@@ -5,6 +5,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import { workspaceKey } from '@vivid/state'
 import { StatusBar, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
+import { useReducedMotion } from 'react-native-reanimated'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { door, patienceAtom, useDoor } from './data/door'
 import {
@@ -208,9 +209,13 @@ function Stopped({ message }: { message: string }) {
  * The signed-in app: one native stack. Pushing, popping and the back swipe are the platform's
  * own; nothing here animates a screen. Each screen draws its own bar (`ui/Header.tsx`), so the
  * native one is off everywhere.
+ *
+ * A Person who has asked their phone for less motion gets a cross-fade between screens instead
+ * of the platform's slide: the change of place still shows, nothing travels across the glass.
  */
 function Shell() {
   const { colors: c, dark } = useTheme()
+  const still = useReducedMotion()
   const base = dark ? DarkTheme : DefaultTheme
   return (
     <NavigationContainer
@@ -227,7 +232,11 @@ function Shell() {
       }}
     >
       <Stack.Navigator
-        screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c['surface-0'] } }}
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: c['surface-0'] },
+          animation: still ? 'fade' : 'default',
+        }}
       >
         <Stack.Screen name="Home" component={Home} />
         <Stack.Screen name="Chat" component={Chat} />
