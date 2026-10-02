@@ -4,7 +4,7 @@ import { speakerOfTurn } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { AlarmClock, Check, ChevronRight, Repeat2 } from 'lucide-react'
 import { useState } from 'react'
-import { describeToolCall } from '../../data/activity'
+import { describeToolCall, readAnswered, readAsked } from '../../data/activity'
 import { Avatar } from '../../ui/Avatar'
 import { cn } from '../../ui/cn'
 import { Face } from '../../ui/Face'
@@ -200,7 +200,13 @@ function Steps({ tools, live }: { tools: ReadonlyArray<ToolPart>; live: boolean 
   if (tools.length === 0) return null
   const steps = tools.map((tool) => ({
     id: tool.toolCallId,
-    ...describeToolCall(tool.toolName, null, null, stateOf(tool)),
+    ...describeToolCall(
+      tool.toolName,
+      readAsked(tool.input),
+      // A call still running has no output; it reads as an answer with nothing in it yet.
+      readAnswered(tool.state === 'output-available' ? tool.output : {}),
+      stateOf(tool),
+    ),
     failed: tool.state === 'output-error',
   }))
   const running = live && tools.some((tool) => stateOf(tool) === 'running')
