@@ -99,6 +99,13 @@ export class Runtime extends Context.Service<Runtime, RuntimeService>()('vivid/R
 
 const unavailable = (message: string) => () => new RuntimeUnavailable({ message })
 
+/**
+ * How long the runtime has to accept a delivery. It reads the acting Person's context before it
+ * answers, which is three calls back to this server, so the bound is generous; past it the
+ * delivery fails as unreachable and its caller decides whether to try again.
+ */
+const ADMIT_WITHIN = '30 seconds'
+
 const makeRuntime = Effect.fn('Runtime.make')(function* () {
   const config = yield* ServerConfig
   const http = yield* HttpClient.HttpClient
@@ -131,9 +138,16 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
         initialData: encodeThreadOrigin(input.origin),
       },
     ).pipe(Effect.mapError(unavailable('Vivid request could not be encoded')))
-    const response = yield* http
-      .execute(request)
-      .pipe(Effect.mapError(unavailable('Vivid could not be reached')))
+    // Admission queues the work and answers; it does not wait for the answer itself. A runtime
+    // that accepts the connection and then says nothing would otherwise hold the delivery (and
+    // the Person's message with it) for as long as the socket stayed open.
+    const response = yield* http.execute(request).pipe(
+      Effect.mapError(unavailable('Vivid could not be reached')),
+      Effect.timeoutOrElse({
+        duration: ADMIT_WITHIN,
+        orElse: () => Effect.fail(unavailable('Vivid did not answer in time')()),
+      }),
+    )
     const receipt = yield* decodeReceipt(response).pipe(
       Effect.mapError(unavailable('Vivid returned an invalid receipt')),
     )
