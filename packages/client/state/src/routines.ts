@@ -43,6 +43,7 @@ export const describeTrigger = (trigger: RoutineTrigger): string =>
   RoutineTrigger.match(trigger, {
     Schedule: ({ cron, timezone }) => `${describeCron(cron)} · ${timezone}`,
     Webhook: () => 'When something calls it',
+    Integration: ({ account, event }) => `When ${event} in ${account}`,
   })
 
 /** The Occurrence that started last. The server sends them newest first. */
@@ -63,7 +64,17 @@ export interface RoutineFields {
   readonly kind: TriggerKind
   readonly cron: string
   readonly timezone: Option.Option<string>
+  /**
+   * What the Routine is watching for, when it starts on something happening in an Integration.
+   * Vivid sets that up in conversation, where it can find the account and the event; the editor
+   * shows it and does not change it. While it is present it is what starts the Routine, and the
+   * kind and schedule above are not.
+   */
+  readonly watching: Option.Option<Watching>
 }
+
+/** An Integration trigger as it is: the account, what happens there, and which of it counts. */
+export type Watching = Omit<typeof RoutineTrigger.cases.Integration.Type, '_tag'>
 
 /** The editor's starting values for a new Routine. */
 export const emptyFields = (): RoutineFields => ({
@@ -72,6 +83,7 @@ export const emptyFields = (): RoutineFields => ({
   kind: 'Schedule',
   cron: DEFAULT_CRON,
   timezone: Option.none(),
+  watching: Option.none(),
 })
 
 /** The editor's starting values for a Routine that already exists. */
@@ -83,6 +95,7 @@ export const fieldsOf = (routine: Routine): RoutineFields =>
       kind: 'Schedule',
       cron,
       timezone: Option.some(timezone),
+      watching: Option.none(),
     }),
     Webhook: (): RoutineFields => ({
       name: routine.name,
@@ -90,6 +103,15 @@ export const fieldsOf = (routine: Routine): RoutineFields =>
       kind: 'Webhook',
       cron: DEFAULT_CRON,
       timezone: Option.none(),
+      watching: Option.none(),
+    }),
+    Integration: ({ account, event, filter }): RoutineFields => ({
+      name: routine.name,
+      prompt: routine.prompt,
+      kind: 'Schedule',
+      cron: DEFAULT_CRON,
+      timezone: Option.none(),
+      watching: Option.some({ account, event, filter }),
     }),
   })
 
@@ -126,6 +148,7 @@ export const editing = (routine: Routine, edits: RoutineEdits): RoutineFields =>
     kind: trigger.kind,
     cron: trigger.cron,
     timezone: trigger.timezone,
+    watching: saved.watching,
   }
 }
 
@@ -164,12 +187,16 @@ export const unsaved = (edits: RoutineEdits, submitted: RoutineFields): RoutineE
 
 /** The trigger the editor describes. `zone` is the Person's own, used until they write another. */
 export const triggerOf = (fields: RoutineFields, zone: string): RoutineTrigger =>
-  fields.kind === 'Webhook'
-    ? RoutineTrigger.cases.Webhook.make({})
-    : RoutineTrigger.cases.Schedule.make({
-        cron: fields.cron.trim(),
-        timezone: Option.getOrElse(fields.timezone, () => zone).trim(),
-      })
+  Option.match(fields.watching, {
+    onSome: (watching) => RoutineTrigger.cases.Integration.make(watching),
+    onNone: () =>
+      fields.kind === 'Webhook'
+        ? RoutineTrigger.cases.Webhook.make({})
+        : RoutineTrigger.cases.Schedule.make({
+            cron: fields.cron.trim(),
+            timezone: Option.getOrElse(fields.timezone, () => zone).trim(),
+          }),
+  })
 
 /** Whether two triggers start a Routine the same way. */
 const sameTrigger = (left: RoutineTrigger, right: RoutineTrigger): boolean =>
@@ -177,6 +204,11 @@ const sameTrigger = (left: RoutineTrigger, right: RoutineTrigger): boolean =>
     Webhook: () => RoutineTrigger.guards.Webhook(right),
     Schedule: ({ cron, timezone }) =>
       RoutineTrigger.guards.Schedule(right) && right.cron === cron && right.timezone === timezone,
+    Integration: ({ account, event, filter }) =>
+      RoutineTrigger.guards.Integration(right) &&
+      right.account === account &&
+      right.event === event &&
+      Equal.equals(right.filter, filter),
   })
 
 /** Whether the editor holds something the Routine does not. */
@@ -192,6 +224,7 @@ export const fieldsComplete = (fields: RoutineFields, zone: string): boolean =>
   RoutineTrigger.match(triggerOf(fields, zone), {
     Webhook: () => true,
     Schedule: ({ cron, timezone }) => cron !== '' && timezone !== '',
+    Integration: () => true,
   })
 
 // ── Expectations: the result the server is expected to send next ───────────

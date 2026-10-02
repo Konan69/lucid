@@ -13,6 +13,7 @@ import {
   RotateCcw,
   Trash2,
   Webhook,
+  Plug,
 } from 'lucide-react'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { change, live, LiveState, useLive, useLiveValue } from '../data/live'
@@ -250,6 +251,7 @@ function routineSummary(routine: Routine): string {
 const TRIGGER_MARK = {
   Schedule: <Clock3 className="size-4" />,
   Webhook: <Webhook className="size-4" />,
+  Integration: <Plug className="size-4" />,
 } satisfies Record<RoutineTrigger['_tag'], ReactNode>
 
 /** The mark a row leads with: paused, or how the Routine starts. */
@@ -341,6 +343,35 @@ function RoutineFieldset({
           placeholder="Review what moved in the Project and write a short brief."
         />
       </Field>
+      {Option.isSome(fields.watching) ? (
+        // Set up by Vivid in conversation, where it could find the account and the event. It is
+        // shown as it is; to watch for something else, ask Vivid.
+        <div className="flex flex-col items-start gap-1.5">
+          <span className="text-label font-title text-ink-2">Starts</span>
+          <p className="w-full rounded-card bg-surface-2 px-4 py-3 text-label text-ink-2">
+            When {fields.watching.value.event} in {fields.watching.value.account}.{' '}
+            <span className="text-ink-3">To watch for something else, ask Vivid.</span>
+          </p>
+        </div>
+      ) : (
+        <StartsOn fields={fields} zone={zone} onChange={onChange} />
+      )}
+    </>
+  )
+}
+
+/** What starts a Routine the editor can set: a schedule, or an outside service calling it. */
+function StartsOn({
+  fields,
+  zone,
+  onChange,
+}: {
+  fields: routinesData.RoutineFields
+  zone: string
+  onChange: (fields: routinesData.RoutineFields) => void
+}) {
+  return (
+    <>
       <div className="flex flex-col items-start gap-1.5">
         <span className="text-label font-title text-ink-2">Starts</span>
         <Segmented
