@@ -162,25 +162,25 @@ function Screen({ computer }: { computer: ComputerRecord }) {
   if (ComputerState.guards.Running(state)) {
     // The machine's provider decides how its screen is watched: relayed through this server as a
     // remote-framebuffer socket, or in the provider's own viewer page for this Person's machine.
-    return ComputerScreen.match(state.screen, {
-      Relay: ({ address }) => (
+    if (ComputerScreen.guards.Relay(state.screen)) {
+      return (
         <Display
           // Taking over or handing back changes who may type, so the screen reconnects with it.
           key={computer.heldByPerson ? 'held' : 'watching'}
-          address={address}
+          address={state.screen.address}
           control={computer.heldByPerson}
         />
-      ),
-      Viewer: ({ address, expiresAt }) => (
-        <Viewer
-          // A new machine start has a new viewer; the one on screen is not carried over.
-          key={state.since}
-          address={address}
-          expiresAt={expiresAt}
-          control={computer.heldByPerson}
-        />
-      ),
-    })
+      )
+    }
+    return (
+      <Viewer
+        // A new machine start has a new viewer; the one on screen is not carried over.
+        key={state.since}
+        address={state.screen.address}
+        expiresAt={state.screen.expiresAt}
+        control={computer.heldByPerson}
+      />
+    )
   }
   if (ComputerState.guards.Failed(state)) {
     return (
@@ -251,11 +251,11 @@ function Viewer({
       {/* The viewer is the provider's page on the provider's origin. It needs its scripts and
           its own storage to run; "same origin" here is its origin, never this app's, so the two
           together do not let it out of the frame the way they would for a page of ours. */}
-      {/* oxlint-disable-next-line react/iframe-missing-sandbox */}
       <iframe
         ref={renew}
         src={shown.address}
         title="Vivid’s computer"
+        // oxlint-disable-next-line react/iframe-missing-sandbox
         sandbox="allow-scripts allow-same-origin allow-forms"
         allow="clipboard-read; clipboard-write; fullscreen"
         referrerPolicy="no-referrer"
