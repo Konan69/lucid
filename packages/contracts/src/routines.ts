@@ -3,11 +3,13 @@ import { LibraryFolderId, OccurrenceId, RoutineId, ThreadId } from './identity.j
 
 /**
  * What starts a Routine. A schedule fires on a cron expression in a time zone. A webhook fires
- * when an outside service calls the Routine's address with its key.
+ * when an outside service calls the Routine's address with its key. An Integration is addressed
+ * by its Person-visible account label; the Connection binding remains private on the server.
  */
 export const RoutineTrigger = Schema.TaggedUnion({
   Schedule: { cron: Schema.String, timezone: Schema.String },
   Webhook: {},
+  Integration: { account: Schema.String, event: Schema.String, filter: Schema.Json },
 })
 export type RoutineTrigger = typeof RoutineTrigger.Type
 
@@ -69,6 +71,18 @@ export const RoutineListResponse = Schema.Struct({ routines: Schema.Array(Routin
 export const RoutineResponse = Schema.Struct({ routine: Routine })
 /** Accepted Routine occurrence response. */
 export const OccurrenceResponse = Schema.Struct({ run: Occurrence })
+
+/** Provider event discovery is readable configuration, never a Connection reference. */
+export const FindEventsRequest = Schema.Struct({ account: Schema.String })
+export const FindEventsResponse = Schema.Struct({
+  events: Schema.Array(
+    Schema.Struct({
+      event: Schema.String,
+      description: Schema.String,
+      filter: Schema.Json,
+    }),
+  ),
+})
 
 /**
  * The address and key an outside service uses to start a webhook Routine. Shown once to its owner

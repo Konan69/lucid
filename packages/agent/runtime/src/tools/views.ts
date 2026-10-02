@@ -158,6 +158,7 @@ export function routine(item: Routine, name: string) {
     schedule: RoutineTrigger.match<{ cron: string; timezone: string } | string>(item.trigger, {
       Schedule: ({ cron, timezone }) => ({ cron, timezone }),
       Webhook: () => 'when called',
+      Integration: ({ account, event }) => `when ${event} happens in ${account}`,
     }),
     enabled: item.enabled,
     nextRunAt: date(item.nextRunAt),

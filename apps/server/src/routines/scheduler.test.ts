@@ -12,6 +12,8 @@ function record(libraryFolderId: LibraryFolderId | null): RoutineRecord {
     personId: PersonId.make('person'),
     companyId: null,
     webhookKeyHash: null,
+    integration: null,
+    watchRevision: 0,
     routine: Routine.make({
       id: RoutineId.make('routine'),
       name: 'Morning review',

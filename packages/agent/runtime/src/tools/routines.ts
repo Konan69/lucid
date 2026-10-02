@@ -1,22 +1,56 @@
 import { defineTool } from '@flue/runtime'
-import { RoutineTrigger } from '@vivid/contracts'
-import { Effect } from 'effect'
+import { InvalidRequest, RoutineTrigger } from '@vivid/contracts'
+import { Effect, Schema } from 'effect'
 import * as v from 'valibot'
 import { text } from './inputs.ts'
 import { Scope, type RunTool } from './scope.ts'
 import * as views from './views.ts'
 
-/** Routines belong to the acting Person; cron and timezone are supplied explicitly. */
+/** This paragraph is also model-visible in create_routine's description, without an agent edit. */
+export const instructions =
+  'When a Person describes a recurring reaction, offer “when this happens, I’ll do that”. Use find_events with the Integration’s account name to discover what can be watched, then create_routine with that account, the event description and its filter. Explain the actual delivery cadence and stop if the Integration cannot support the event. Background work follows the same approval rules as work asked for in a Thread.'
+
+const triggerInput = v.variant('kind', [
+  v.object({
+    kind: v.literal('Schedule'),
+    cron: text('The cron schedule.', 200),
+    timezone: text('The IANA timezone.', 200),
+  }),
+  v.object({
+    kind: v.literal('Integration'),
+    account: text('The account name the Person was shown, such as Gmail (Work).', 300),
+    event: text('The event name or plain description returned by find_events.', 1000),
+    filter: v.pipe(v.unknown(), v.description('JSON configuration following find_events.')),
+  }),
+])
+const decodeJson = Schema.decodeUnknownEffect(Schema.Json)
+
+/** The model supplies names and provider data; server authority resolves the private Connection. */
+const triggerOf = Effect.fn('RoutineTools.triggerOf')(function* (
+  input: v.InferOutput<typeof triggerInput>,
+) {
+  if (input.kind === 'Schedule')
+    return RoutineTrigger.cases.Schedule.make({ cron: input.cron, timezone: input.timezone })
+  const filter = yield* decodeJson(input.filter).pipe(
+    Effect.mapError(() => new InvalidRequest({ message: 'The event filter must be JSON.' })),
+  )
+  return RoutineTrigger.cases.Integration.make({
+    account: input.account,
+    event: input.event,
+    filter,
+  })
+})
+
+/** Routines belong to the acting Person, whether a schedule or Integration starts them. */
 export function routineTools(runTool: RunTool) {
   return [
     defineTool({
       name: 'create_routine',
-      description: 'Create a Routine when the person asks for recurring work on a schedule.',
+      description: `Create a Routine for recurring work. ${instructions}`,
       input: v.object({
         name: text('A short name for the recurring work.', 200),
         prompt: text('What Vivid should do each time.', 4000),
-        cron: text('The cron schedule.', 200),
-        timezone: text('The IANA timezone for this schedule.', 200),
+        trigger: triggerInput,
       }),
       /** Storage references and past receipts never enter the model result. */
       run({ data, signal }) {
@@ -26,10 +60,7 @@ export function routineTools(runTool: RunTool) {
             const response = yield* client.CreateRoutine({
               name: data.name,
               prompt: data.prompt,
-              trigger: RoutineTrigger.cases.Schedule.make({
-                cron: data.cron,
-                timezone: data.timezone,
-              }),
+              trigger: yield* triggerOf(data.trigger),
             })
             return { output: views.routine(response.routine, response.routine.name) }
           }),
@@ -38,8 +69,23 @@ export function routineTools(runTool: RunTool) {
       },
     }),
     defineTool({
+      name: 'find_events',
+      description: 'Find what can happen in an Integration to start a Routine, in words.',
+      input: v.object({ account: text('The exact account name the Person was shown.', 300) }),
+      /** Discovery returns names and provider filter schemas without storage authority. */
+      run({ data, signal }) {
+        return runTool(
+          Effect.gen(function* () {
+            const { client } = yield* Scope
+            return { output: yield* client.FindEvents({ account: data.account }) }
+          }),
+          { signal },
+        )
+      },
+    }),
+    defineTool({
       name: 'list_routines',
-      description: 'List the person’s Routines and their schedules.',
+      description: 'List the Person’s Routines and what starts them.',
       input: v.object({}),
       /** Routine metadata is projected explicitly instead of returning RPC envelopes. */
       run({ signal }) {

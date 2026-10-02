@@ -77,3 +77,13 @@ export type OccurrenceFailure = typeof OccurrenceFailure.Type
 /** Persisted scheduled receipts retain their original key even if the schedule is edited later. */
 export const replayAttempt = (id: OccurrenceId): RoutineAttempt =>
   RoutineAttempt.make({ id, deliveryKey: id })
+
+/** Provider identity is scoped to a Routine; replay retains the same private admission key. */
+export const integrationAttempt = (routineId: RoutineId, eventId: string): RoutineAttempt => {
+  const id = OccurrenceId.make(
+    `integration-${NodeCrypto.createHash('sha256')
+      .update(JSON.stringify([routineId, eventId]))
+      .digest('hex')}`,
+  )
+  return RoutineAttempt.make({ id, deliveryKey: id })
+}

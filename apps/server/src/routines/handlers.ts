@@ -7,6 +7,7 @@ import {
   RoutineListResponse,
   RoutineResponse,
   type RoutineId,
+  type FindEventsRequest,
   type CreateRoutineRequest,
   type PatchRoutineRequest,
   type RoutineParams,
@@ -34,7 +35,44 @@ const loadRoutines = Effect.fn('Rpc.loadRoutines')(function* (actor: Actor) {
 const concealMissing = <A, E, R>(effect: Effect.Effect<A, E | RoutineMissing, R>) =>
   effect.pipe(Effect.catchTag('RoutineMissing', () => Effect.fail(missing())))
 
+/** Watch failures are readable setup refusals, without revealing private Connection identity. */
+const integrationFailure = <A, R>(
+  effect: Effect.Effect<
+    A,
+    | NotFound
+    | Conflict
+    | InvalidRequest
+    | InvalidRoutineSchedule
+    | import('@vivid/contracts').ServiceUnavailable
+    | import('../database/client.ts').DatabaseInfrastructureError
+    | import('./watch.ts').WatchFailure,
+    R
+  >,
+) =>
+  effect.pipe(
+    Effect.catchTags({
+      IntegrationRevoked: () =>
+        Effect.fail(
+          new InvalidRequest({ message: 'Reconnect this Integration before watching it.' }),
+        ),
+      IntegrationReadFailed: () =>
+        Effect.fail(
+          new InvalidRequest({
+            message: 'The Integration could not return the configured ordered list.',
+          }),
+        ),
+      IntegrationCursorLost: () =>
+        Effect.fail(
+          new InvalidRequest({ message: 'The Integration observation window was exceeded.' }),
+        ),
+    }),
+  )
+
 export const routineHandlers = {
+  /** Discovery resolves account names under exactly the same acting Person as creation. */
+  FindEvents: Effect.fn('Rpc.FindEvents')(function* (request: typeof FindEventsRequest.Type) {
+    return yield* (yield* RoutineStore).findEvents(yield* requireActor(), request.account)
+  }),
   /** Both a Person and Vivid acting for them see precisely their own Routines. */
   ListRoutines: Effect.fn('Rpc.ListRoutines')(function* () {
     return yield* loadRoutines(yield* requireActor())
@@ -46,7 +84,9 @@ export const routineHandlers = {
     request: typeof CreateRoutineRequest.Type,
   ) {
     const actor = yield* requireActor()
-    const routine = yield* concealMissing((yield* RoutineStore).create(actor, request)).pipe(
+    const routine = yield* integrationFailure(
+      concealMissing((yield* RoutineStore).create(actor, request)),
+    ).pipe(
       Effect.catchTag('InvalidRoutineSchedule', (error) => Effect.fail(invalidSchedule(error))),
     )
     yield* changed(actor)
@@ -61,7 +101,9 @@ export const routineHandlers = {
     readonly patch: typeof PatchRoutineRequest.Type
   }) {
     const actor = yield* requireActor()
-    const routine = yield* concealMissing((yield* RoutineStore).patch(actor, id, patch)).pipe(
+    const routine = yield* integrationFailure(
+      concealMissing((yield* RoutineStore).patch(actor, id, patch)),
+    ).pipe(
       Effect.catchTag('InvalidRoutineSchedule', (error) => Effect.fail(invalidSchedule(error))),
     )
     yield* changed(actor)

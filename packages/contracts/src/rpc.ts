@@ -107,6 +107,8 @@ import {
 import { CreateProjectRequest, Project, ProjectListResponse } from './projects.js'
 import {
   CreateRoutineRequest,
+  FindEventsRequest,
+  FindEventsResponse,
   OccurrenceResponse,
   PatchRoutineRequest,
   RoutineListResponse,
@@ -384,6 +386,11 @@ const ReadNotifications = Rpc.make('ReadNotifications', {
 })
 
 // ── Routines ───────────────────────────────────────────────────────────────
+const FindEvents = Rpc.make('FindEvents', {
+  ...call,
+  payload: FindEventsRequest,
+  success: FindEventsResponse,
+})
 const ListRoutines = Rpc.make('ListRoutines', { ...call, success: RoutineListResponse })
 const WatchRoutines = Rpc.make('WatchRoutines', { ...live, success: RoutineListResponse })
 const CreateRoutine = Rpc.make('CreateRoutine', {
@@ -689,6 +696,7 @@ export const VividRpc = RpcGroup.make(
   ListNotifications,
   WatchNotifications,
   ReadNotifications,
+  FindEvents,
   ListRoutines,
   WatchRoutines,
   CreateRoutine,

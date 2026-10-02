@@ -28,7 +28,7 @@ export const nextExpectedAt = Effect.fn('RoutineSchedule.nextExpectedAt')(functi
   enabled: boolean,
   now: number,
 ) {
-  if (RoutineTrigger.guards.Webhook(trigger)) return null
+  if (!RoutineTrigger.guards.Schedule(trigger)) return null
   const cron = yield* probe(trigger)
   const next = cron.nextRun(new Date(now))
   cron.stop()

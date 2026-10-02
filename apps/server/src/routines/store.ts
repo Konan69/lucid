@@ -45,6 +45,9 @@ import { hashKey, issueKey, matchesKey } from './keys.ts'
 import { decodeOccurrence, decodeRoutine, triggerColumns, type RoutineRecord } from './records.ts'
 import { occurrences, routines } from './tables.ts'
 import { nextExpectedAt, type InvalidRoutineSchedule } from './timing.ts'
+import { IntegrationWatch, Watch, type WatchError } from './watch.ts'
+import { integrationPollingLayer } from '../connections/watch.ts'
+import { integrationOperations } from './integration.ts'
 
 export class RoutineMissing extends Schema.TaggedError<RoutineMissing>()(
   'RoutineMissing',
@@ -85,12 +88,20 @@ const scheduledFailureReason = (failure: ScheduledFailure) =>
   })
 
 type StoreError = DatabaseInfrastructureError | RoutineMissing
-type ChangeError = StoreError | InvalidRoutineSchedule
+type ChangeError =
+  | import('@vivid/contracts').Conflict
+  | StoreError
+  | InvalidRoutineSchedule
+  | WatchError
+  | import('@vivid/contracts').InvalidRequest
+  | import('@vivid/contracts').ServiceUnavailable
 type CreateInput = typeof CreateRoutineRequest.Type
 type PatchInput = typeof PatchRoutineRequest.Type
+const encodeWatch = Schema.encodeSync(Watch)
 type DatabaseService = Database['Service']
 
-export interface RoutineStoreService {
+export interface RoutineStoreService extends ReturnType<typeof integrationOperations> {
+  readonly findEvents: IntegrationWatch['Service']['discover']
   readonly list: (
     actor: Actor,
   ) => Effect.Effect<ReadonlyArray<Routine>, DatabaseInfrastructureError>
@@ -225,10 +236,17 @@ const makeList = (database: DatabaseService, view: ReturnType<typeof makeView>) 
   })
 
 /** Computes the schedule before writing, so invalid cron cannot leave a partially created Routine. */
-const makeCreate = (database: DatabaseService) =>
+const makeCreate = (database: DatabaseService, watch: IntegrationWatch['Service']) =>
   Effect.fn('RoutineStore.create')(function* (actor: Actor, input: CreateInput) {
     const now = yield* Clock.currentTimeMillis
-    const next = yield* nextExpectedAt(input.trigger, true, now)
+    const integration = RoutineTrigger.guards.Integration(input.trigger)
+      ? yield* watch.prepare(actor, input.trigger)
+      : null
+    const trigger = integration === null ? input.trigger : integration.trigger
+    const next =
+      integration === null
+        ? yield* nextExpectedAt(trigger, true, now)
+        : now + integration.intervalMillis
     const rows = yield* database.run(
       database
         .insert(routines)
@@ -238,7 +256,8 @@ const makeCreate = (database: DatabaseService) =>
           companyId: companyColumnOf(actor.workspace),
           name: input.name,
           prompt: input.prompt,
-          ...triggerColumns(input.trigger),
+          ...triggerColumns(trigger),
+          integration: integration === null ? null : encodeWatch(integration),
           webhookKeyHash: null,
           libraryFolderId: input.libraryFolderId === undefined ? null : input.libraryFolderId,
           enabled: true,
@@ -252,10 +271,44 @@ const makeCreate = (database: DatabaseService) =>
     return routineView(yield* decodeRoutine(yield* returned(rows, 'Routine')), [])
   })
 
+/** Trigger changes replace the binding; metadata-only patches retain the established cursor. */
+function patchedTrigger(current: RoutineRecord, input: PatchInput, prepared: Watch | null) {
+  if (input.trigger === undefined)
+    return { trigger: current.routine.trigger, integration: current.integration }
+  if (prepared === null) return { trigger: input.trigger, integration: null }
+  return { trigger: prepared.trigger, integration: prepared }
+}
+
+/** Resume schedules a future observation; editing the prompt does not reset the provider baseline. */
+const patchedDue = Effect.fn('RoutineStore.patchedDue')(function* (change: {
+  readonly current: RoutineRecord
+  readonly input: PatchInput
+  readonly trigger: RoutineTrigger
+  readonly integration: Watch | null
+  readonly enabled: boolean
+  readonly now: number
+}) {
+  if (change.input.trigger === undefined && change.input.enabled === undefined)
+    return change.current.routine.nextExpectedAt
+  if (change.integration === null)
+    return yield* nextExpectedAt(change.trigger, change.enabled, change.now)
+  return change.enabled ? change.now + change.integration.intervalMillis : null
+})
+
 /** Row locking preserves concurrent partial updates and key rotation while a trigger is changed. */
-const makePatch = (database: DatabaseService, view: ReturnType<typeof makeView>) =>
+const makePatch = (
+  database: DatabaseService,
+  view: ReturnType<typeof makeView>,
+  watch: IntegrationWatch['Service'],
+) =>
   Effect.fn('RoutineStore.patch')(function* (actor: Actor, id: RoutineId, input: PatchInput) {
     const now = yield* Clock.currentTimeMillis
+    // Authorize before the read-only baseline call; network I/O never runs under a row lock.
+    yield* makeGet(database)(actor, id)
+    const prepared =
+      input.trigger !== undefined && RoutineTrigger.guards.Integration(input.trigger)
+        ? yield* watch.prepare(actor, input.trigger)
+        : null
     const updated = yield* database.transaction((tx) =>
       Effect.gen(function* () {
         const rows = yield* tx
@@ -266,19 +319,36 @@ const makePatch = (database: DatabaseService, view: ReturnType<typeof makeView>)
         const row = rows[0]
         if (row === undefined) return yield* Effect.fail(new RoutineMissing({ id }))
         const current = yield* decodeRoutine(row)
-        const trigger = input.trigger === undefined ? current.routine.trigger : input.trigger
+        const { trigger, integration } = patchedTrigger(current, input, prepared)
         const enabled = input.enabled === undefined ? current.routine.enabled : input.enabled
-        const next =
-          input.trigger === undefined && input.enabled === undefined
-            ? current.routine.nextExpectedAt
-            : yield* nextExpectedAt(trigger, enabled, now)
+        const next = yield* patchedDue({ current, input, trigger, integration, enabled, now })
+        // A changed trigger must not admit queued content from the previous Integration binding.
+        if (input.trigger !== undefined)
+          yield* tx
+            .update(occurrences)
+            .set({
+              status: 'failed',
+              error: 'Its Integration trigger changed before delivery',
+              finishedAt: now,
+            })
+            .where(
+              and(
+                eq(occurrences.routineId, id),
+                isNotNull(occurrences.providerEvent),
+                isNull(occurrences.submissionId),
+                eq(occurrences.status, 'not-admitted'),
+              ),
+            )
         const result = yield* tx
           .update(routines)
           .set({
             name: input.name === undefined ? current.routine.name : input.name,
             prompt: input.prompt === undefined ? current.routine.prompt : input.prompt,
             ...triggerColumns(trigger),
-            webhookKeyHash: RoutineTrigger.guards.Schedule(trigger) ? null : current.webhookKeyHash,
+            webhookKeyHash: RoutineTrigger.guards.Webhook(trigger) ? current.webhookKeyHash : null,
+            integration: integration === null ? null : encodeWatch(integration),
+            watchRevision: current.watchRevision + 1,
+            pause: input.enabled === true || input.trigger !== undefined ? null : row.pause,
             libraryFolderId:
               input.libraryFolderId === undefined
                 ? current.routine.libraryFolderId
@@ -697,20 +767,26 @@ const makeAttachSubmission = (database: DatabaseService) =>
   })
 
 /** Persistence and key authority are acquired once; callers pass their Actor explicitly. */
-export const routineStoreLayer = Layer.effect(
+export const routineStoreServiceLayer = Layer.effect(
   RoutineStore,
   Effect.gen(function* () {
     const database = yield* Database
     const config = yield* ServerConfig
     const changes = yield* Changes
+    const watch = yield* IntegrationWatch
     const get = makeGet(database)
     const view = makeView(database)
     const findOccurrence = makeFindOccurrence(database)
     return RoutineStore.of({
+      ...integrationOperations(database, watch, memberPresent),
+      /** Keep the provider service receiver intact when discovery crosses the store boundary. */
+      findEvents: Effect.fn('RoutineStore.findEvents')(function* (actor: Actor, account: string) {
+        return yield* watch.discover(actor, account)
+      }),
       list: makeList(database, view),
       get,
-      create: makeCreate(database),
-      patch: makePatch(database, view),
+      create: makeCreate(database, watch),
+      patch: makePatch(database, view, watch),
       remove: makeRemove(database),
       issueWebhook: makeIssueWebhook(database, config.PUBLIC_URL, get),
       authorizeWebhook: makeAuthorizeWebhook(database),
@@ -721,4 +797,9 @@ export const routineStoreLayer = Layer.effect(
       failOccurrence: makeFailOccurrence(database),
     })
   }),
+)
+
+/** Production chooses polling here; replacing the Watch Layer leaves receipt/admission code intact. */
+export const routineStoreLayer = routineStoreServiceLayer.pipe(
+  Layer.provide(integrationPollingLayer),
 )

@@ -13,9 +13,11 @@ import {
 } from '@vivid/contracts'
 import { decodeStored } from '../database/client.ts'
 import { occurrences, routines } from './tables.ts'
+import { Watch } from './watch.ts'
 
 const RoutineRow = createSelectSchema(routines, {
   id: RoutineId,
+  integration: Schema.NullOr(Watch),
   personId: PersonId,
   companyId: Schema.NullOr(CompanyId),
   libraryFolderId: Schema.NullOr(LibraryFolderId),
@@ -30,22 +32,46 @@ export interface RoutineRecord {
   readonly personId: PersonId
   readonly companyId: CompanyId | null
   readonly webhookKeyHash: string | null
+  readonly integration: Watch | null
+  readonly watchRevision: number
 }
+
+/** Schedule authority cannot coexist with an Integration binding or webhook credential. */
+const scheduleTrigger = Effect.fn('RoutineStore.scheduleTrigger')(function* (
+  row: typeof RoutineRow.Type,
+) {
+  if (
+    row.cron === null ||
+    row.timezone === null ||
+    row.webhookKeyHash !== null ||
+    row.integration !== null
+  )
+    return yield* Effect.fail(new DatabaseFailure({ message: 'Routine trigger columns disagree' }))
+  return RoutineTrigger.cases.Schedule.make({ cron: row.cron, timezone: row.timezone })
+})
+/** Integration authority has a fully typed private Watch and no webhook credential. */
+const integrationTrigger = Effect.fn('RoutineStore.integrationTrigger')(function* (
+  row: typeof RoutineRow.Type,
+) {
+  if (
+    row.integration === null ||
+    row.cron !== null ||
+    row.timezone !== null ||
+    row.webhookKeyHash !== null
+  )
+    return yield* Effect.fail(new DatabaseFailure({ message: 'Routine trigger columns disagree' }))
+  return row.integration.trigger
+})
 
 /** Rejects contradictory storage rather than guessing a trigger from nullable columns. */
 const triggerOf = Effect.fn('RoutineStore.triggerOf')(function* (row: typeof RoutineRow.Type) {
-  if (
-    row.trigger === 'schedule' &&
-    row.cron !== null &&
-    row.timezone !== null &&
-    row.webhookKeyHash === null
-  ) {
-    return RoutineTrigger.cases.Schedule.make({ cron: row.cron, timezone: row.timezone })
-  }
+  if (row.trigger === 'schedule') return yield* scheduleTrigger(row)
+  if (row.trigger === 'integration') return yield* integrationTrigger(row)
   if (
     row.trigger === 'webhook' &&
     row.cron === null &&
     row.timezone === null &&
+    row.integration === null &&
     row.nextExpectedAt === null
   ) {
     return RoutineTrigger.cases.Webhook.make({})
@@ -63,6 +89,8 @@ export const decodeRoutine = Effect.fn('RoutineStore.decodeRoutine')(function* (
     personId: row.personId,
     companyId: row.companyId,
     webhookKeyHash: row.webhookKeyHash,
+    integration: row.integration,
+    watchRevision: row.watchRevision,
     routine: Routine.make({
       id: row.id,
       name: row.name,
@@ -118,7 +146,7 @@ export const decodeOccurrence = Effect.fn('RoutineStore.decodeOccurrence')(funct
 })
 
 interface TriggerColumns {
-  readonly trigger: 'schedule' | 'webhook'
+  readonly trigger: 'schedule' | 'webhook' | 'integration'
   readonly cron: string | null
   readonly timezone: string | null
 }
@@ -131,6 +159,7 @@ export const triggerColumns = (trigger: RoutineTrigger) =>
       cron,
       timezone,
     }),
+    Integration: (): TriggerColumns => ({ trigger: 'integration', cron: null, timezone: null }),
     Webhook: (): TriggerColumns => ({
       trigger: 'webhook',
       cron: null,

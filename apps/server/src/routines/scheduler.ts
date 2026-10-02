@@ -1,4 +1,5 @@
 import * as Context from 'effect/Context'
+import * as Arr from 'effect/Array'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
@@ -261,6 +262,83 @@ const submitScheduled = Effect.fn('RoutineScheduler.submitScheduled')(function* 
   )
 })
 
+/** A pause intent is durable before this notice; Conversation owns one admission per notice key. */
+const sendIntegrationNotices = (services: SubmissionServices) =>
+  Effect.fn('RoutineScheduler.integrationNotices')(function* () {
+    const notices = yield* services.routines.integrationNotices()
+    for (const { record, notice } of notices) {
+      const thread = yield* services.threads.ensure({
+        id: ThreadId.make(`routine-${record.routine.id}`),
+        title: record.routine.name,
+        personId: record.personId,
+        companyId: record.companyId,
+      })
+      yield* services.conversation.deliver({
+        speaker: DeliverySpeaker.cases.Vivid.make({}),
+        threadId: thread.id,
+        personId: record.personId,
+        libraryFolder: record.routine.libraryFolderId,
+        message: DeliveryMessage.cases.Signal.make({
+          type: 'schedule',
+          body: `${record.routine.name} is paused: ${notice.reason}. Tell the Person once; do not perform the Routine's work.`,
+          attributes: deliveryAttributes(record),
+        }),
+        origin: StoredRunOrigin.cases.Routine.make({ routineName: record.routine.name }),
+        idempotencyKey: `integration-pause-${notice.key}`,
+      })
+      yield* services.routines.markIntegrationNotified(record.routine.id, notice)
+      yield* publish(services.changes)(record)
+    }
+  })
+
+/** Observation errors pause one Routine; infrastructure failures remain retryable worker failures. */
+const observeIntegrations = (services: SubmissionServices) =>
+  Effect.fn('RoutineScheduler.observeIntegrations')(function* () {
+    const integrations = services.routines
+    const claimed = yield* integrations.claimWatches()
+    for (const record of claimed) {
+      const observed = integrations.readIntegration(record).pipe(
+        Effect.flatMap((batch) => integrations.recordEvents(record, batch)),
+        Effect.catchTags({
+          IntegrationRevoked: () =>
+            integrations.pauseIntegration(record, 'Its Integration was revoked or needs sign-in'),
+          IntegrationReadFailed: () =>
+            integrations.pauseIntegration(
+              record,
+              'Its Integration failed to return the watched items',
+            ),
+          IntegrationCursorLost: () =>
+            integrations.pauseIntegration(
+              record,
+              'Its Integration observation window was exceeded; some items may have been missed',
+            ),
+        }),
+      )
+      yield* observed
+      yield* publish(services.changes)(record)
+    }
+  })
+
+/** Persist before admission and stop a Routine's burst at the first refusal, retaining ordered replay. */
+const makeIntegrationPass = (services: SubmissionServices, submit: ReturnType<typeof makeSubmit>) =>
+  Effect.fn('RoutineScheduler.integrationPass')(function* () {
+    yield* observeIntegrations(services)()
+    const pending = yield* services.routines.pendingEvents()
+    const groups = Arr.groupBy(pending, (receipt) => receipt.record.routine.id)
+    const outcomes = yield* Effect.forEach(Object.values(groups), (receipts) =>
+      Effect.exit(
+        Effect.forEach(
+          receipts,
+          ({ record, attempt, event }) =>
+            submit(record, Option.some(JSON.stringify(event.content)), attempt),
+          { discard: true },
+        ),
+      ),
+    )
+    yield* sendIntegrationNotices(services)()
+    for (const outcome of outcomes) yield* outcome
+  })
+
 /** Captures delivery authorities once; manual calls still supply their current Actor per request. */
 export const routineSchedulerServiceLayer = Layer.effect(
   RoutineScheduler,
@@ -270,7 +348,9 @@ export const routineSchedulerServiceLayer = Layer.effect(
     const conversation = yield* Conversation
     const changes = yield* Changes
     const notifier = yield* Notifier
-    const submit = makeSubmit({ routines, threads, conversation, changes, notifier })
+    const services = { routines, threads, conversation, changes, notifier }
+    const submit = makeSubmit(services)
+    const integrationPass = makeIntegrationPass(services, submit)
 
     /** Loading through the owner predicate makes another Person's id indistinguishable from absence. */
     const run = Effect.fn('RoutineScheduler.run')(function* (actor: Actor, id: RoutineId) {
@@ -301,7 +381,9 @@ export const routineSchedulerServiceLayer = Layer.effect(
       const outcomes = yield* Effect.forEach(due, ({ record, attempt }) =>
         Effect.exit(submitScheduled(routines, submit, record, attempt)),
       )
+      const integrationOutcome = yield* Effect.exit(integrationPass())
       for (const outcome of outcomes) yield* outcome
+      yield* integrationOutcome
     })
     return RoutineScheduler.of({ run, webhook, runDue })
   }),
