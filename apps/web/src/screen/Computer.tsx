@@ -95,6 +95,25 @@ function ToolbarRow({
   computer: Option.Option<ComputerRecord>
   on: boolean
 }) {
+  // One row, whichever it holds: the long field takes what the controls leave, and no more.
+  return (
+    <div className="flex h-11 shrink-0 items-center gap-1 px-2 pb-2">
+      <ToolbarControls front={front} page={page} computer={computer} on={on} />
+    </div>
+  )
+}
+
+function ToolbarControls({
+  front,
+  page,
+  computer,
+  on,
+}: {
+  front: ReturnType<typeof pages.front>
+  page: Option.Option<import('@vivid/desktop/bridge').Page>
+  computer: Option.Option<ComputerRecord>
+  on: boolean
+}) {
   if (front !== 'computer') return <PageToolbar page={front === 'page' ? page : Option.none()} />
   return (
     <>

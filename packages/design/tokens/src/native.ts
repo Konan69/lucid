@@ -9,7 +9,7 @@ export const nativeTokens = {
     "scrim": "rgba(12, 11, 9, 0.72)",
     "ink": "rgb(250, 247, 240)",
     "ink-2": "rgba(250, 247, 240, 0.68)",
-    "ink-3": "rgba(250, 247, 240, 0.5)",
+    "ink-3": "rgba(250, 247, 240, 0.56)",
     "ink-4": "rgba(250, 247, 240, 0.28)",
     "ink-on-accent": "#ffffff",
     "ink-on-color": "#ffffff",

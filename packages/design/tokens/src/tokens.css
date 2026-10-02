@@ -35,7 +35,7 @@
   /* ink-3 is supporting text people have to read (times, details, captions), so it holds 4.5:1
      on every surface it is set on, the raised ones included. At 0.42 it was 3.7:1 on a control. */
   --ink-2: rgb(var(--ink-base) / 0.68);
-  --ink-3: rgb(var(--ink-base) / 0.5);
+  --ink-3: rgb(var(--ink-base) / 0.56);
   --ink-4: rgb(var(--ink-base) / 0.28);
   --ink-on-accent: #ffffff;
   --ink-on-color: #ffffff;
@@ -126,7 +126,7 @@
   --sidebar-w: 268px;
   --sidebar-rail-w: 56px;
   --panel-w: 520px;
-  --panel-wide-w: min(52vw, 960px); /* the computer panel, widened to work in */
+  --panel-wide-w: min(46vw, 900px); /* the computer panel, widened to work in */
   --thread-max-w: 760px;
   --topbar-h: 48px;
   --row-h: 36px; /* a full line: navigates */

@@ -484,7 +484,8 @@ function Messages({
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={scroller}
-        className="flex flex-1 flex-col-reverse overflow-y-auto px-4 sm:px-6"
+        // The top edge fades, so a message scrolling out of view leaves instead of being sliced.
+        className="flex flex-1 flex-col-reverse overflow-y-auto scroll-fade-top px-4 sm:px-6"
         // Reversed column: the browser keeps the view pinned to the newest message by itself, with
         // no scroll effect to run on every streamed token. In a reversed column the newest message
         // is at scroll position zero and reading back goes negative.

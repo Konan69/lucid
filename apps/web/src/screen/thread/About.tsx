@@ -1,4 +1,5 @@
 import {
+  AuditEvent,
   ComputerState,
   ConnectionState,
   type Computer,
@@ -63,6 +64,18 @@ export function About({
   )
 }
 
+/** The record's lines that are something Vivid did, or was stopped from doing, with a service. */
+const DONE = [
+  'ActionAllowed',
+  'ActionApproved',
+  'ActionDenied',
+  'ActionFailed',
+  'ActionBlocked',
+  'ActionOutcomeUnknown',
+  'ConnectionAdded',
+  'ConnectionRemoved',
+] as const
+
 const reader = thisReader()
 const when = makeWhen(reader)
 
@@ -91,7 +104,12 @@ function Around({
   })
   const here = Option.match(audit, {
     onNone: () => [],
-    onSome: (value) => value.entries.filter((entry) => entry.threadId === thread).slice(0, 4),
+    onSome: (value) =>
+      value.entries
+        // What Vivid did out in the world from this Thread. What it kept or forgot is in
+        // "What Vivid knows", and saying "kept something" four times here told nobody anything.
+        .filter((entry) => entry.threadId === thread && AuditEvent.isAnyOf(DONE)(entry.event))
+        .slice(0, 4),
   })
   return (
     <div className="pb-2">
@@ -128,7 +146,7 @@ function Around({
       <Row
         icon={<Plus className="size-4" />}
         title={mine.length === 0 ? 'Connect your first one' : 'Add another'}
-        detail="Mail, calendar, files, or anything with an address"
+        detail="Mail, calendar, files, anything"
         lit={false}
         onClick={() => settings('connections')}
       />

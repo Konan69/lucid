@@ -175,12 +175,14 @@ function Signal({
 }) {
   const signal = message.signal
   if (signal === undefined) {
+    // A system message with no signal is the runtime talking to itself (its instructions were
+    // reloaded, a session was compacted). None of that is for a Person. The one thing worth
+    // saying is that an answer was not finished, and that is said in Vivid's words, not the
+    // runtime's.
+    if (message.settlement === undefined || message.settlement.outcome !== 'failed') return null
     return (
-      <div className="rounded-panel bg-surface-2 px-4 py-3 text-label text-ink-3 ring-line">
-        {message.settlement !== undefined && message.settlement.outcome === 'failed'
-          ? 'Vivid could not finish that. '
-          : ''}
-        {textOf(message)}
+      <div className="rounded-panel bg-surface-2 px-4 py-3 text-label text-ink-3">
+        Vivid could not finish that.
       </div>
     )
   }
