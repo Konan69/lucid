@@ -1,15 +1,16 @@
 import * as Option from 'effect/Option'
-import { Menu, type BrowserWindow, type MenuItemConstructorOptions } from 'electron'
+import { EventEmitter } from 'node:events'
+import { BrowserWindow, Menu, type MenuItemConstructorOptions } from 'electron'
 import type { DesktopPlatform } from '../shared/bridge.ts'
 
 /** App zoom changes also reposition the native page viewport; Electron's zoom event covers wheels only. */
-export const pageZoomChanged = 'vivid-page-zoom-changed'
+export const pageZoomChanges = new EventEmitter<{ changed: [BrowserWindow] }>()
 
 /** Follow Electron 44.4.3 role increments, then notify the window that owns native guest bounds. */
 export function zoomPage(window: BrowserWindow, change: 'reset' | 'in' | 'out'): void {
   const level = window.webContents.getZoomLevel()
   window.webContents.setZoomLevel(change === 'reset' ? 0 : level + (change === 'in' ? 0.5 : -0.5))
-  window.emit(pageZoomChanged)
+  pageZoomChanges.emit('changed', window)
 }
 
 /** Menu and accelerator zoom share one public adapter so guest bounds cannot lag behind app zoom. */
@@ -22,7 +23,8 @@ function zoomItem(
     label,
     accelerator,
     click: (_item, window) => {
-      if (window !== undefined && 'webContents' in window) zoomPage(window, change)
+      // Electron 44 supplies BaseWindow here too; only BrowserWindow owns app webContents.
+      if (window instanceof BrowserWindow) zoomPage(window, change)
     },
   }
 }

@@ -8,6 +8,9 @@ import { Context, Effect, Layer, Schema } from 'effect'
 import * as Esbuild from 'esbuild'
 import electron from 'electron'
 
+// Electron's Node entry returns its executable path; its browser declaration describes the API.
+const electronExecutable = Schema.decodeUnknownSync(Schema.String)(electron)
+
 class NativeProofFailed extends Schema.TaggedError<NativeProofFailed>()(
   'NativeProofFailed',
   {},
@@ -47,7 +50,7 @@ const nativeProofLayer = Layer.effect(
       >((resume) => {
         const child = NodeChildProcess.spawn(
           '/usr/bin/xvfb-run',
-          ['-a', electron, executable, `${directory}/profile`],
+          ['-a', electronExecutable, executable, `${directory}/profile`],
           { stdio: 'pipe' },
         )
         const output = { text: '' }
@@ -67,7 +70,7 @@ const nativeProofLayer = Layer.effect(
     )
     return NativeProof.of({
       run: Effect.fn('Test.nativePages')(() =>
-        Effect.callback((resume) => {
+        Effect.callback<{ code: number | null; output: string }, NativeProofFailed>((resume) => {
           launched.child.once('close', (code) =>
             resume(Effect.succeed({ code, output: launched.output.text })),
           )

@@ -29,7 +29,7 @@ import {
   type PagePlacement,
 } from '../shared/pages.ts'
 import { AddressDecision, decideAddress, isPageAddress, type PageAddress } from './address.ts'
-import { pageZoomChanged } from './menu.ts'
+import { pageZoomChanges } from './menu.ts'
 import { budgets } from './budgets.ts'
 import { PageChange, emptyBrowserState, reducePages } from './pages.ts'
 
@@ -77,13 +77,17 @@ export class Browser {
     this.secureSession()
     const reposition = (): void => this.present()
     dependencies.window.on('resize', reposition)
-    dependencies.window.on(pageZoomChanged, reposition)
+    const menuZoomChanged = (window: BrowserWindow): void => {
+      if (window === dependencies.window) this.present()
+    }
+    pageZoomChanges.on('changed', menuZoomChanged)
     dependencies.window.webContents.on('zoom-changed', () => setImmediate(reposition))
     // A replaced app document has no viewport lease; close guests before its new renderer loads.
     dependencies.window.webContents.on('did-start-navigation', (_event, _url, inPlace, main) => {
       if (main && !inPlace) this.reset()
     })
     dependencies.window.once('closed', () => {
+      pageZoomChanges.removeListener('changed', menuZoomChanged)
       this.reset()
       dependencies.session.removeListener('will-download', this.refuseDownload)
     })

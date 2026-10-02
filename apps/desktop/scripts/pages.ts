@@ -84,6 +84,7 @@ const proof = Effect.scoped(
     yield* browser.handle(PagesRequest.cases.Close.make({ tab: first.tab }))
     yield* browser.handle(PagesRequest.cases.Open.make({ address: 'https://fixture.example/' }))
     console.log('Vivid native pages proof passed')
+    return yield* Effect.void
   }),
 )
 
