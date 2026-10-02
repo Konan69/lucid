@@ -262,6 +262,28 @@ Google references: [credentials](https://developers.google.com/workspace/guides/
 [web-server OAuth](https://developers.google.com/identity/protocols/oauth2/web-server),
 [published OAuth metadata](https://accounts.google.com/.well-known/openid-configuration).
 
+### Integrations added by address
+
+A Person can hand Vivid the address of an MCP server or an OpenAPI document and Vivid adds it as an
+Integration. An address someone typed is untrusted, so two things stand between it and the
+network Vivid runs in:
+
+1. **Vivid checks first.** The address must be `http` or `https` with no credentials in it. Every
+   DNS answer and every redirect is checked at connection time, and anything loopback, private,
+   link-local or otherwise not public is refused. A documentation page is followed to its
+   specification under the same check.
+2. **Executor must be public-only too.** Executor fetches the checked address again from its own
+   process, and Vivid cannot constrain that second fetch. So adding by address is off until the
+   operator has run Executor with loopback access disabled
+   (`EXECUTOR_URL_ALLOW_LOOPBACK_HTTP=false`) and no private-origin exceptions, on a network where
+   it cannot reach internal services, and has then declared it with
+   `VIVID_EXECUTOR_PUBLIC_ONLY=true`. Without that declaration Vivid tells the Person that this
+   Vivid is not set up to add a server by address, and adds nothing.
+
+The declaration is a promise about the deployment, not something Vivid can verify. An address that
+answers publicly when Vivid checks it and privately when Executor fetches it is stopped only by
+Executor's own egress, which is why the second step is not optional.
+
 ## Memory: HelixDB
 
 HelixDB holds Vivid's memory: a graph of records, each with a vector and a full-text index, all
