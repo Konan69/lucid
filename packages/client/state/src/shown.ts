@@ -13,8 +13,18 @@ export type ShownChart = Extract<Shown, { readonly _tag: 'Chart' }>
 /** Both SVG surfaces use these drawing units, independent of the device's pixel density. */
 export const CHART = { width: 640, height: 240, left: 8, right: 8, top: 12, bottom: 28 } as const
 
+/** SVG drawing units are explicit so phone plots can use readable type without changing data. */
+export interface ChartDrawing {
+  readonly width: number
+  readonly height: number
+  readonly left: number
+  readonly right: number
+  readonly top: number
+  readonly bottom: number
+}
+
 /** Zero stays in the scale, including negative values and charts whose values are all zero. */
-export function chartScale(chart: ShownChart) {
+export function chartScale(chart: ShownChart, drawing: ChartDrawing) {
   const all = chart.series.flatMap((series) => series.values)
   const top = Math.max(0, ...all)
   const floor = Math.min(0, ...all)
@@ -22,8 +32,8 @@ export function chartScale(chart: ShownChart) {
   return {
     top,
     y: (value: number) =>
-      CHART.top + ((top - value) / span) * (CHART.height - CHART.top - CHART.bottom),
-    slot: (CHART.width - CHART.left - CHART.right) / chart.labels.length,
+      drawing.top + ((top - value) / span) * (drawing.height - drawing.top - drawing.bottom),
+    slot: (drawing.width - drawing.left - drawing.right) / chart.labels.length,
     every: Math.ceil(chart.labels.length / 8),
   }
 }
@@ -72,3 +82,30 @@ export const formReply = (
   entries
     .flatMap(({ label, value }) => (value.trim().length === 0 ? [] : [`${label}: ${value.trim()}`]))
     .join('\n')
+
+/** Selection order is the order said in the Thread; removing a choice preserves the others. */
+export const togglePicked = (
+  picked: ReadonlyArray<string>,
+  label: string,
+): ReadonlyArray<string> =>
+  picked.includes(label) ? picked.filter((one) => one !== label) : [...picked, label]
+
+/** Native paging puts Vivid's recommendation first without changing any item or the other order. */
+export function comparisonOrder(comparison: Extract<Shown, { readonly _tag: 'Comparison' }>) {
+  if (comparison.pick === undefined) return comparison.items
+  const { name } = comparison.pick
+  return comparison.items.toSorted(
+    (left, right) => Number(right.name === name) - Number(left.name === name),
+  )
+}
+
+/** Short drafts stay fully visible; long prose or many paragraphs get a separate reading view. */
+export const draftIsLong = (body: string): boolean =>
+  body.length > 320 || body.split('\n').length > 6
+
+/**
+ * A table row's cells, one per column. The contract only bounds a row's length, so a short row
+ * leaves its later cells empty (as the web's table does) instead of drawing "undefined".
+ */
+export const rowCells = (row: ReadonlyArray<string>, count: number): ReadonlyArray<string> =>
+  Array.from({ length: count }, (_, index) => row.slice(index, index + 1).join(''))

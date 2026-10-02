@@ -1,7 +1,19 @@
 import { Shown } from '@vivid/contracts'
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { chartScale, chartShares, chartValue, formReply, readShown, siteOf } from './shown'
+import {
+  CHART,
+  chartScale,
+  chartShares,
+  chartValue,
+  comparisonOrder,
+  draftIsLong,
+  formReply,
+  readShown,
+  rowCells,
+  siteOf,
+  togglePicked,
+} from './shown'
 
 /** Charts may have missing cells; both surfaces must retain their labels without NaN geometry. */
 const share = Shown.cases.Chart.make({
@@ -70,6 +82,7 @@ describe('display data shared by web and mobile', () => {
         labels: ['A', 'B'],
         series: [{ name: 'Change', values: [-10, 30] }],
       }),
+      CHART,
     )
     expect(mixed.y(30)).toBe(12)
     expect(mixed.y(0)).toBe(162)
@@ -80,6 +93,7 @@ describe('display data shared by web and mobile', () => {
         labels: ['A'],
         series: [{ name: 'Change', values: [0] }],
       }),
+      CHART,
     )
     expect(zero.y(0)).toBe(12)
     expect(zero.slot).toBe(624)
@@ -101,5 +115,59 @@ describe('display data shared by web and mobile', () => {
     expect(siteOf('https://www.example.com/path?q=1')).toBe('example.com')
     expect(siteOf('https://docs.example.com/path')).toBe('docs.example.com')
     expect(siteOf('not an address')).toBe('not an address')
+  })
+
+  it('keeps multiple-choice answers in selection order across unpicking and re-picking', () => {
+    const first = togglePicked([], 'B')
+    const second = togglePicked(first, 'A')
+    expect(second.join(', ')).toBe('B, A')
+    expect(togglePicked(second, 'B')).toEqual(['A'])
+    expect(togglePicked(togglePicked(second, 'B'), 'B')).toEqual(['A', 'B'])
+    expect(second).toEqual(['B', 'A'])
+  })
+
+  it('pages the recommendation first without rewriting alternatives or their remaining order', () => {
+    const comparison = Shown.cases.Comparison.make({
+      items: [
+        { name: 'A', good: ['Fast'], bad: [], facts: [] },
+        { name: 'B', good: [], bad: ['Cost'], facts: [] },
+        { name: 'C', good: ['Fits'], bad: [], facts: [] },
+      ],
+      pick: { name: 'C', why: 'Fits the work.' },
+    })
+    expect(comparisonOrder(comparison).map((item) => item.name)).toEqual(['C', 'A', 'B'])
+    expect(comparisonOrder(comparison)[0]).toBe(comparison.items[2])
+    expect(comparison.items.map((item) => item.name)).toEqual(['A', 'B', 'C'])
+    expect(comparisonOrder(Shown.cases.Comparison.make({ items: comparison.items }))).toEqual(
+      comparison.items,
+    )
+  })
+
+  it('separates long drafts for reading while retaining all of a short body', () => {
+    expect(draftIsLong('A short reply.')).toBe(false)
+    expect(draftIsLong('x'.repeat(321))).toBe(true)
+    expect(draftIsLong('One\nTwo\nThree\nFour\nFive\nSix\nSeven')).toBe(true)
+  })
+
+  it('uses phone drawing units without changing the numbers or direction of the scale', () => {
+    const chart = Shown.cases.Chart.make({
+      kind: 'line',
+      labels: ['A', 'B'],
+      series: [{ name: 'Change', values: [-10, 30] }],
+    })
+    const drawing = { width: 320, height: 200, left: 8, right: 8, top: 22, bottom: 32 }
+    const scale = chartScale(chart, drawing)
+    expect(scale.y(30)).toBe(22)
+    expect(scale.y(-10)).toBe(168)
+    expect(scale.y(0)).toBeGreaterThan(scale.y(30))
+    expect(scale.y(0)).toBeLessThan(scale.y(-10))
+    expect(scale.slot).toBe(152)
+  })
+})
+
+describe('table rows on a phone', () => {
+  it('pads a short row and drops cells past the last column', () => {
+    expect(rowCells(['A'], 3)).toEqual(['A', '', ''])
+    expect(rowCells(['A', 'B', 'C'], 2)).toEqual(['A', 'B'])
   })
 })

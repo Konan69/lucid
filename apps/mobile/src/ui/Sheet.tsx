@@ -5,6 +5,8 @@ import { X } from 'lucide-react-native'
 import { useReducedMotion } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTheme } from '../theme'
+import { useKeyboardShowing } from '../data/keyboard'
+import { AboveKeyboard } from './Keyboard'
 import { Button, Field, GUTTER, IconButton, Label, Labelled, Notice } from './ui'
 
 /**
@@ -18,67 +20,90 @@ export function Sheet({
   detail,
   onClose,
   children,
+  footer,
+  presentation = 'pageSheet',
+  content = 'scroll',
 }: {
-  /** Pictures may have no filename; the sheet keeps that absence instead of inventing a title. */
   title?: string
   detail?: string
   onClose: () => void
   children: ReactNode
+  /** Forms and choices keep their action outside scrolling content, above the native keyboard. */
+  footer?: ReactNode
+  /** Long tables and pictures use all available screen space; ordinary forms use the system sheet. */
+  presentation?: 'pageSheet' | 'fullScreen'
+  content?: 'scroll' | 'fill'
 }) {
   const { colors: c } = useTheme()
   const insets = useSafeAreaInsets()
   const still = useReducedMotion()
+  const keyboard = useKeyboardShowing()
   return (
     <Modal
       animationType={still ? 'fade' : 'slide'}
-      presentationStyle="pageSheet"
-      allowSwipeDismissal={Platform.OS === 'ios'}
+      presentationStyle={presentation}
+      allowSwipeDismissal={Platform.OS === 'ios' && presentation === 'pageSheet'}
       onRequestClose={onClose}
     >
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: c['surface-0'],
-          // An iOS sheet starts below the status bar by itself; Android's covers the screen.
-          paddingTop: Platform.OS === 'ios' ? 8 : insets.top,
-          paddingBottom: insets.bottom,
-          // Clear of a notch or a rounded corner when the phone is on its side.
-          paddingLeft: insets.left,
-          paddingRight: insets.right,
-        }}
-      >
+      <AboveKeyboard>
         <View
           style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            paddingLeft: GUTTER,
-            paddingRight: 6,
-            minHeight: 52,
+            flex: 1,
+            backgroundColor: c['surface-0'],
+            paddingTop: Platform.OS === 'ios' && presentation === 'pageSheet' ? 8 : insets.top,
+            paddingBottom: keyboard ? 0 : insets.bottom,
           }}
         >
-          <View style={{ flex: 1 }}>
-            {title !== undefined && (
-              <Label accessibilityRole="header" numberOfLines={1} size="headline">
-                {title}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingLeft: GUTTER,
+              paddingRight: 6,
+              minHeight: 52,
+            }}
+          >
+            <View style={{ flex: 1 }}>
+              {title !== undefined && (
+                <Label accessibilityRole="header" numberOfLines={1} size="headline">
+                  {title}
+                </Label>
+              )}
+            </View>
+            <IconButton icon={X} label="Close" onPress={onClose} />
+          </View>
+          <SheetBody content={content}>
+            {detail !== undefined && (
+              <Label size="label" tone="ink-3">
+                {detail}
               </Label>
             )}
-          </View>
-          <IconButton icon={X} label="Close" onPress={onClose} />
-        </View>
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          automaticallyAdjustKeyboardInsets
-          contentContainerStyle={{ paddingHorizontal: GUTTER, paddingBottom: 32, gap: 16 }}
-        >
-          {detail !== undefined && (
-            <Label size="label" tone="ink-3">
-              {detail}
-            </Label>
+            {children}
+          </SheetBody>
+          {footer !== undefined && (
+            <View style={{ paddingHorizontal: GUTTER, paddingTop: 8, paddingBottom: 12 }}>
+              {footer}
+            </View>
           )}
-          {children}
-        </ScrollView>
-      </View>
+        </View>
+      </AboveKeyboard>
     </Modal>
+  )
+}
+
+/** A single scroll owner lets pinned table columns move together; pictures fill the remaining space. */
+function SheetBody({ content, children }: { content: 'scroll' | 'fill'; children: ReactNode }) {
+  if (content === 'fill')
+    return <View style={{ flex: 1, paddingHorizontal: GUTTER }}>{children}</View>
+  return (
+    <ScrollView
+      style={{ flex: 1 }}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="interactive"
+      contentContainerStyle={{ paddingHorizontal: GUTTER, paddingBottom: 32, gap: 16 }}
+    >
+      {children}
+    </ScrollView>
   )
 }
 
