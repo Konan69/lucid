@@ -3,27 +3,45 @@ import { ThreadId, Workspace, type MeResponse, type Thread as ThreadRecord } fro
 import { Array as Arr, Option, Order } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import { PanelLeft } from 'lucide-react'
-import { Suspense, useState, useSyncExternalStore } from 'react'
+import { lazy, Suspense, useState, useSyncExternalStore } from 'react'
 import { live, LiveState, useLive, useLiveValue } from './data/live'
 import { Route, router } from './data/route'
 import { engine, link } from './data/runtime'
 import { sidebar } from './data/sidebar'
 import { theme } from './data/theme'
 import { startThread } from './data/threads'
-import { Computer } from './screen/Computer'
 import { First } from './screen/First'
 import { Invite } from './screen/Invite'
-import { Library } from './screen/Library'
 import { Notifications } from './screen/Notifications'
 import { Palette } from './screen/Palette'
-import { Projects } from './screen/Projects'
-import { Routines } from './screen/Routines'
-import { Settings } from './screen/Settings'
 import { Sidebar } from './screen/Sidebar'
 import { Thread } from './screen/Thread'
 import { Welcome } from './screen/Welcome'
 import { Face } from './ui/Face'
 import { Sayings } from './ui/Sayings'
+
+// The screens a Person may not open in a session, each in its own file on the wire: the Thread
+// is what loads first, and the Computer's screen client alone is a third of everything else.
+// Each is fetched when it is first drawn, and all of them are fetched once the first screen is
+// up and the browser is idle, so opening one later does not wait on the network.
+const screens = {
+  Computer: () => import('./screen/Computer'),
+  Library: () => import('./screen/Library'),
+  Projects: () => import('./screen/Projects'),
+  Routines: () => import('./screen/Routines'),
+  Settings: () => import('./screen/Settings'),
+}
+const Computer = lazy(async () => ({ default: (await screens.Computer()).Computer }))
+const Library = lazy(async () => ({ default: (await screens.Library()).Library }))
+const Projects = lazy(async () => ({ default: (await screens.Projects()).Projects }))
+const Routines = lazy(async () => ({ default: (await screens.Routines()).Routines }))
+const Settings = lazy(async () => ({ default: (await screens.Settings()).Settings }))
+
+const warm = () => {
+  for (const load of Object.values(screens)) void load()
+}
+if ('requestIdleCallback' in globalThis) requestIdleCallback(warm)
+else setTimeout(warm, 2000)
 
 /** What floats over the app. One at a time, because each takes the keyboard. */
 type Overlay = 'none' | 'palette' | 'notifications'
@@ -201,14 +219,20 @@ function Shell({ me }: { me: MeResponse }) {
             onTogglePanel={() => setPanel((on) => !on)}
           />
         </Suspense>
-        {panel && Route.$is('Thread')(route) && <Computer onClose={() => setPanel(false)} />}
+        {panel && Route.$is('Thread')(route) && (
+          <Suspense fallback={null}>
+            <Computer onClose={() => setPanel(false)} />
+          </Suspense>
+        )}
       </main>
       {Option.isSome(section) && (
-        <Settings
-          me={me}
-          section={section.value}
-          deviceCode={Route.$is('Device')(route) ? Option.getOrElse(route.code, () => '') : ''}
-        />
+        <Suspense fallback={null}>
+          <Settings
+            me={me}
+            section={section.value}
+            deviceCode={Route.$is('Device')(route) ? Option.getOrElse(route.code, () => '') : ''}
+          />
+        </Suspense>
       )}
       {floating === 'palette' && <Palette onClose={() => setOverlay('none')} />}
       {floating === 'notifications' && <Notifications onClose={() => setOverlay('none')} />}
