@@ -17,6 +17,7 @@ import { createContext, useContext } from 'react'
  * - `Home`: every Thread the Person can see, and somewhere to write to start a new one. It is
  *   the root, so it is also the first screen: with no Threads yet it is just Vivid and a composer.
  * - `Chat`: one Thread. Only its id travels; its title and everything else are read live.
+ * - `Computer`: Vivid's computer, reached from a Thread's bar: where it stands and its controls.
  * - `Routines`, `Projects`, `Library`, `Skills`: the places beside Threads.
  * - `Folder`, `Project`: one level down inside the Library or a Project. Each level is its own
  *   screen, so going deeper pushes and the back swipe climbs out one level at a time. A folder
@@ -27,6 +28,7 @@ import { createContext, useContext } from 'react'
 export type Routes = {
   Home: undefined
   Chat: { id: ThreadId }
+  Computer: undefined
   Routines: undefined
   Library: undefined
   Folder: { shelf: LibraryShelf; id: LibraryFolderId; name: string }

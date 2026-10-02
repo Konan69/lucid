@@ -16,7 +16,7 @@ import { useMemo, useState } from 'react'
 import { FlatList, View } from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import { Share2, Users } from 'lucide-react-native'
+import { Monitor, Share2, Users } from 'lucide-react-native'
 import { deliveryOf, type Delivery, type Unsent } from '../data/delivery'
 import { commit } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
@@ -140,7 +140,8 @@ const audienceWords = (thread: Thread): string =>
  * The top of a Thread. Vivid is in it, not just named by it: its face, the Thread's title, and a
  * line saying how it is doing right now (here, working, waiting for the Person). While someone
  * else is writing, the line says that instead, because it is the thing about to change the
- * Thread. On the right: who else is looking, and who the Thread is shared with.
+ * Thread. On the right: who else is looking, who the Thread is shared with, and the way to
+ * Vivid's computer.
  */
 function Top({
   thread,
@@ -190,6 +191,11 @@ function Top({
               onPress={onShare}
             />
           )}
+          <IconButton
+            icon={Monitor}
+            label="Vivid’s computer"
+            onPress={() => go.navigate('Computer')}
+          />
         </>
       }
     />

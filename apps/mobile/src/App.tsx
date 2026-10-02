@@ -21,6 +21,7 @@ import { serverName } from './data/server'
 import { leaveAtom } from './data/signing'
 import { Broken } from './screen/Broken'
 import { Chat } from './screen/Chat'
+import { Computer } from './screen/Computer'
 import { Door } from './screen/Door'
 import { Home } from './screen/Home'
 import { Folder, Library } from './screen/Library'
@@ -241,6 +242,7 @@ function Shell() {
       >
         <Stack.Screen name="Home" component={Home} />
         <Stack.Screen name="Chat" component={Chat} />
+        <Stack.Screen name="Computer" component={Computer} />
         <Stack.Screen name="Routines" component={Routines} />
         <Stack.Screen name="Library" component={Library} />
         <Stack.Screen name="Folder" component={Folder} />
