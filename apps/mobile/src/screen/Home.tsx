@@ -161,7 +161,7 @@ function Reconnecting() {
  * The words are kept on the phone as they are typed (`data/drafts.ts`), under the Person's own
  * place for a new Thread, and are only removed once the Thread has started with them. So they are
  * still in the composer after visiting another screen, after the app is closed, and after a send
- * that was refused.
+ * that was refused. Words typed while a send was on its way were not sent, and stay too.
  */
 function useStart(editor: RefObject<ComposerEditorHandle | null>) {
   const me = useMe()
@@ -188,7 +188,10 @@ function useStart(editor: RefObject<ComposerEditorHandle | null>) {
     const outcome = await startThread(data, { message, projectId: null, resume })
     setSending(false)
     if (Start.$is('Started')(outcome)) {
-      setDraft('')
+      // Only the words that were sent leave the composer. It stays usable while the send is on
+      // its way, so by now it can hold a second request; emptying it whatever it held used to
+      // throw that away. Anything else is still the Person's and is here when they come back.
+      if (draft.in(place).trim() === message) setDraft('')
       setLast(Option.none())
       go.navigate('Chat', { id: outcome.id })
       return

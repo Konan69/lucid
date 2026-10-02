@@ -368,18 +368,22 @@ function Detail({
 
   /** The sheet shows the saved Routine at once; a refused save puts it back and says why. */
   async function save() {
+    // What the editor held when Save was pressed: this, and only this, is what the server is sent.
+    const submitted = fields
     const changes = {
-      name: fields.name.trim(),
-      prompt: fields.prompt.trim(),
-      trigger: routines.triggerOf(fields, zone),
+      name: submitted.name.trim(),
+      prompt: submitted.prompt.trim(),
+      trigger: routines.triggerOf(submitted, zone),
     }
     const result = await data.change(
       (client) => client.PatchRoutine({ id: routine.id, patch: changes }),
       () => data.live.routines.expect(routines.edited(routine.id, changes)),
     )
-    // Saved: the Routine now says what the editor said, so nothing is the Person's edit any more.
-    // Refused: what they wrote stays in the editor.
-    if (Result.isSuccess(result)) setEdits(routines.noEdits)
+    // Saved: the Routine now says what was sent, so that much is no longer the Person's edit. The
+    // editor stays usable while a save is on its way, and what they wrote in that moment was not
+    // part of it; clearing every edit here used to throw those words away. Refused: everything
+    // they wrote stays in the editor.
+    if (Result.isSuccess(result)) setEdits((since) => routines.unsaved(since, submitted))
     setRefused(refusalOf(result))
   }
 
