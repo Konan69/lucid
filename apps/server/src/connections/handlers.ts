@@ -11,7 +11,7 @@ import type {
 import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
 import { live } from '../live/query.ts'
 import { ConnectionStore } from './store.ts'
-import { findTools, offerConnection, useTool } from './tools.ts'
+import { findTools, offerConnection, resolveTool, useTool } from './tools.ts'
 export { connectionRunner, runConnection } from './tools.ts'
 
 /** Both inventory calls share the persisted Connection loader. */
@@ -62,6 +62,13 @@ export const connectionHandlers = {
   }),
   FindTools: Effect.fn('Rpc.FindTools')(function* (request: FindToolsRequest) {
     return yield* findTools(yield* requireActor(), request)
+  }),
+  /** Exact resolution uses discovery's acting Person and account vocabulary. */
+  ResolveTool: Effect.fn('Rpc.ResolveTool')(function* (request: {
+    readonly account: string
+    readonly tool: string
+  }) {
+    return yield* resolveTool(yield* requireActor(), request)
   }),
   /** Only a Run proposes tool actions to the gate. */
   UseTool: Effect.fn('Rpc.UseTool')(function* (request: UseToolRequest) {

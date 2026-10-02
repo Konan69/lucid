@@ -1,15 +1,62 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Ref } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { ConnectionStep } from '@vivid/contracts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
+import { ExecutorTool } from './executor.ts'
 import { ConnectionStore } from './store.ts'
-import { connectionTestLayer, fixture, serviceId } from './testing.ts'
-import { findTools } from './tools.ts'
+import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
+import { findTools, resolveTool } from './tools.ts'
 
 /** Discovery uses real scoped records; suffixes must remain stable across ranking queries and ownership. */
 describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
   layer(connectionTestLayer)((it) => {
+    it.effect(
+      'resolves a tool beyond the ranked discovery limit and a name with no query words',
+      () =>
+        Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
+          const store = yield* ConnectionStore
+          const probe = yield* ConnectionProbe
+          const previousTools = yield* Ref.get(probe.tools)
+          yield* Effect.addFinalizer(() => Ref.set(probe.tools, previousTools))
+          yield* Ref.set(probe.tools, [
+            ...Array.from({ length: 40 }, (_, index) =>
+              ExecutorTool.make({
+                name: `get_records_${index}`,
+                description: 'Get records',
+                effect: 'read',
+                input: {},
+              }),
+            ),
+            ExecutorTool.make({
+              name: 'get_records_target',
+              description: 'Get records',
+              effect: 'read',
+              input: {},
+            }),
+            ExecutorTool.make({ name: '---', description: '', effect: 'read', input: {} }),
+          ])
+          const connected = yield* store.begin(ownerActor, {
+            service: serviceId,
+            label: 'Records',
+            shared: false,
+          })
+          const found = yield* findTools(ownerActor, { query: 'get records', limit: 25 })
+          expect(found.tools).toHaveLength(25)
+          expect(found.tools.some((tool) => tool.name === 'get_records_target')).toBe(false)
+          for (const name of ['get_records_target', '---']) {
+            const resolved = yield* resolveTool(ownerActor, { account: 'Records', tool: name })
+            expect(resolved.connectionId).toBe(connected.connection.id)
+            expect(resolved.name).toBe(name)
+          }
+          expect(
+            (yield* Effect.flip(resolveTool(ownerActor, { account: 'Records', tool: 'missing' })))
+              ._tag,
+          ).toBe('NotFound')
+        }),
+    )
+
     it.effect('distinguishes duplicate accounts by creation order before query filtering', () =>
       Effect.gen(function* () {
         const { ownerActor, memberActor } = yield* fixture()
@@ -40,12 +87,37 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           first.connection.id,
           second.connection.id,
         ])
+        expect(
+          (yield* resolveTool(ownerActor, { account: 'Gmail (Gmail)', tool: 'read' })).connectionId,
+        ).toBe(first.connection.id)
+        expect(
+          (yield* resolveTool(ownerActor, { account: 'Gmail (Gmail) (2)', tool: 'read' }))
+            .connectionId,
+        ).toBe(second.connection.id)
+        expect(
+          (yield* resolveTool(memberActor, { account: 'Gmail (Gmail)', tool: 'read' }))
+            .connectionId,
+        ).toBe(second.connection.id)
+        expect(
+          (yield* Effect.flip(
+            resolveTool(ownerActor, { account: 'Gmail (Gmail) (2)', tool: 'write' }),
+          ))._tag,
+        ).toBe('NotFound')
+        expect(
+          (yield* Effect.flip(resolveTool(ownerActor, { account: 'gmail (gmail)', tool: 'read' })))
+            ._tag,
+        ).toBe('NotFound')
         const writes = yield* findTools(ownerActor, { query: 'write', limit: 25 })
         expect(writes.tools.map((tool) => tool.account)).toEqual(['Gmail (Gmail)'])
         const again = yield* findTools(ownerActor, { query: 'records', limit: 25 })
         expect(
           again.tools.filter((tool) => tool.name === 'read').map((tool) => tool.account),
         ).toEqual(labels.map((tool) => tool.account))
+        yield* store.begin(ownerActor, { service: serviceId, label: 'Owner only', shared: false })
+        expect(
+          (yield* Effect.flip(resolveTool(memberActor, { account: 'Owner only', tool: 'read' })))
+            ._tag,
+        ).toBe('NotFound')
       }),
     )
   })

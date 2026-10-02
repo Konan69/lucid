@@ -57,6 +57,7 @@ export const writeTool = ExecutorTool.make({
 
 /** Recording authority keeps external behavior deliberate while exercising the production store and SQL. */
 interface ConnectionProbeService {
+  readonly tools: Ref.Ref<readonly (typeof ExecutorTool.Type)[]>
   readonly calls: Ref.Ref<number>
   readonly signIns: Ref.Ref<number>
   readonly step: Ref.Ref<'Done' | 'OpenSignIn' | 'EnterKey'>
@@ -179,7 +180,7 @@ const makeExecutor = (probe: ConnectionProbeService) => {
     ),
     tools: Effect.fn('Executor.Test.tools')(function* () {
       yield* Ref.update(probe.discoveries, (count) => count + 1)
-      return [readTool, writeTool]
+      return yield* Ref.get(probe.tools)
     }),
     call: Effect.fn('Executor.Test.call')(function* () {
       yield* Ref.update(probe.calls, (count) => count + 1)
@@ -195,6 +196,7 @@ const makeExecutor = (probe: ConnectionProbeService) => {
 const probeLayer = Layer.effectContext(
   Effect.gen(function* () {
     const probe = ConnectionProbe.of({
+      tools: yield* Ref.make<readonly (typeof ExecutorTool.Type)[]>([readTool, writeTool]),
       calls: yield* Ref.make(0),
       signIns: yield* Ref.make(0),
       step: yield* Ref.make<'Done' | 'OpenSignIn' | 'EnterKey'>('Done'),

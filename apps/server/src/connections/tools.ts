@@ -5,6 +5,7 @@ import {
   ConnectionTool,
   ConnectionState,
   InvalidRequest,
+  NotFound,
   ProposedAction,
   ServiceAuthorization,
   ToolOutcome,
@@ -129,6 +130,23 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
       (service) => !ServiceAuthorization.guards.SetupRequired(service.authorization),
     ),
   }
+})
+
+/** Resolve the exact pair under the same account naming and effect restrictions as discovery.
+ * Ranking and result limits never participate; inaccessible or stale pairs are simply absent. */
+export const resolveTool = Effect.fn('Connections.resolveTool')(function* (
+  actor: Actor,
+  request: { readonly account: string; readonly tool: string },
+) {
+  const store = yield* ConnectionStore
+  const account = namedAccounts(yield* store.records(actor)).find(
+    (entry) => entry.account === request.account && entry.row.status === 'ready',
+  )
+  if (account === undefined) return yield* Effect.fail(new NotFound({ message: 'Tool not found' }))
+  const tools = yield* projectTools(store, actor, account.row, account.account)
+  const tool = tools.find((entry) => entry.name === request.tool)
+  if (tool === undefined) return yield* Effect.fail(new NotFound({ message: 'Tool not found' }))
+  return tool
 })
 
 /** Shared Threads expose personal results even when the operation is a read. */
