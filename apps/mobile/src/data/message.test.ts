@@ -1,6 +1,8 @@
 import type { FlueConversationMessage } from '@flue/sdk'
 import {
   ApprovalId,
+  ConnectionAuthorization,
+  ConnectionId,
   InputRequestId,
   PersonId,
   RunId,
@@ -231,7 +233,26 @@ describe('the card a tool result asks for', () => {
       reason: 'To send the note',
       ready: false,
     }
-    expect(cardOf(tool('connect', request))).toEqual(Option.some(Card.Connection({ request })))
+    expect(cardOf(tool('connect', request))).toEqual(
+      Option.some(Card.Connection({ request, authorization: Option.none() })),
+    )
+  })
+
+  it('carries what finishing it takes when Vivid has already begun adding the Integration', () => {
+    const request = {
+      kind: 'connection-request' as const,
+      service: ServiceId.make('linear'),
+      serviceName: 'Linear',
+      reason: 'To read the issue',
+      ready: false as const,
+    }
+    const authorization = ConnectionAuthorization.cases.EnterKey.make({
+      connectionId: ConnectionId.make('started'),
+      fields: [{ name: 'api_key', label: 'API key' }],
+    })
+    expect(cardOf(tool('add_integration', { ...request, authorization }))).toEqual(
+      Option.some(Card.Connection({ request, authorization: Option.some(authorization) })),
+    )
   })
 
   it('is a tracked Task, waiting on someone only when it is not the asker’s own', () => {

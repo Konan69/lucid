@@ -1,6 +1,7 @@
 import type { FlueConversationMessage } from '@flue/sdk'
 import {
   ApprovalId,
+  ConnectionAuthorizationMessage,
   ConnectionRequestMessage,
   InputRequestId,
   type PersonId,
@@ -14,6 +15,7 @@ import {
   summarizeSteps,
 } from '@vivid/state'
 import { Data, Option, Schema } from 'effect'
+import type { Authorization } from './integration'
 
 /**
  * Reading one message of a Thread's conversation: who it is from, what it says, and which card
@@ -216,12 +218,16 @@ export const stepsSummary = (steps: ReadonlyArray<Step>, working: boolean): stri
  *
  * An Approval and an Input request name a record the Thread's live detail carries; the card is
  * drawn from that record, so it keeps telling the truth after it is settled. A Connection request
- * and a tracked Task carry what they show.
+ * and a tracked Task carry what they show. A Connection request for an Integration Vivid has
+ * already begun adding also carries what finishing it takes: a sign-in, or a key.
  */
 export type Card = Data.TaggedEnum<{
   Approval: { readonly id: ApprovalId }
   Input: { readonly id: InputRequestId }
-  Connection: { readonly request: ConnectionRequestMessage }
+  Connection: {
+    readonly request: ConnectionRequestMessage
+    readonly authorization: Option.Option<Authorization>
+  }
   Tracked: { readonly title: string; readonly waitingOn: Option.Option<string> }
 }>
 export const Card = Data.taggedEnum<Card>()
@@ -233,6 +239,8 @@ const decodeInput = Schema.decodeUnknownOption(
   Schema.Struct({ kind: Schema.Literal('input-request'), requestId: InputRequestId }),
 )
 const decodeConnection = Schema.decodeUnknownOption(ConnectionRequestMessage)
+// The same message with one more field: what comes next for an Integration already begun.
+const decodeAuthorization = Schema.decodeUnknownOption(ConnectionAuthorizationMessage)
 
 /**
  * What `create_task` answers with. The runtime writes the assignee as a name, and as `you` when
@@ -266,7 +274,15 @@ export function cardOf(tool: ToolPart): Option.Option<Card> {
       Option.map(decodeInput(tool.output), (out) => Card.Input({ id: out.requestId })),
     ),
     Option.orElse(() =>
-      Option.map(decodeConnection(tool.output), (request) => Card.Connection({ request })),
+      Option.map(decodeConnection(tool.output), (request) =>
+        Card.Connection({
+          request,
+          authorization: Option.map(
+            decodeAuthorization(tool.output),
+            (message) => message.authorization,
+          ),
+        }),
+      ),
     ),
   )
 }

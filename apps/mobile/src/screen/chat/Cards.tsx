@@ -1,11 +1,9 @@
 import {
   ApprovalDecision,
   ApprovalState,
-  ConnectionState,
   InputRequestState,
   type Approval,
   type ApprovalId,
-  type ConnectionRequestMessage,
   type InputRequest,
   type InputRequestId,
   type PersonId,
@@ -13,15 +11,14 @@ import {
 } from '@vivid/contracts'
 import { Option, Result } from 'effect'
 import { useState, type ReactNode } from 'react'
-import { Linking, View } from 'react-native'
-import { Check, Link2, ShieldQuestion } from 'lucide-react-native'
+import { View } from 'react-native'
+import { Check, ShieldQuestion } from 'lucide-react-native'
 import { commit, confirm, warn } from '../../data/haptics'
-import { useLiveData, useLiveValue } from '../../data/live'
+import { useLiveData } from '../../data/live'
 import { Card, cardOf, type ToolPart } from '../../data/message'
-import { connectionsAddress } from '../../data/server'
 import { useTheme } from '../../theme'
-import { ServiceMark } from '../../ui/Mark'
 import { Button, Dot, Field, HAIRLINE, Label, Notice, Press, radius, styles } from '../../ui/ui'
+import { IntegrationCard } from '../integration/Card'
 import { Exactly } from './Exactly'
 
 /**
@@ -92,7 +89,9 @@ function Drawn({
         onNone: () => null,
         onSome: (request) => <InputCard request={request} me={me} />,
       }),
-    Connection: ({ request }) => <ConnectionCard request={request} onContinue={onContinue} />,
+    Connection: ({ request, authorization }) => (
+      <IntegrationCard request={request} authorization={authorization} onContinue={onContinue} />
+    ),
     Tracked: ({ title, waitingOn }) => <TrackedCard title={title} waitingOn={waitingOn} />,
   })
 }
@@ -355,67 +354,6 @@ function Answering({ request }: { request: InputRequest }) {
         </View>
       )}
       {refused && <Notice message="That answer did not go through. It may already be answered." />}
-    </View>
-  )
-}
-
-/**
- * Vivid needs a service connected to go on. The card says why in Vivid's own words. A service is
- * authorized in a browser, so the card opens Vivid's Connections there; whether it is connected
- * is read live, so the card turns to "Carry on" by itself when the Person comes back.
- */
-function ConnectionCard({
-  request,
-  onContinue,
-}: {
-  request: ConnectionRequestMessage
-  onContinue: (message: string) => void
-}) {
-  const data = useLiveData()
-  const { colors: c } = useTheme()
-  const connections = useLiveValue(data.live.connections)
-  const connected = Option.exists(connections, (value) =>
-    value.connections.some(
-      (connection) =>
-        connection.service === request.service && ConnectionState.guards.Ready(connection.state),
-    ),
-  )
-  const ready = request.ready || connected
-  return (
-    <View
-      style={{
-        padding: 12,
-        gap: 12,
-        borderRadius: radius.card,
-        borderWidth: HAIRLINE,
-        borderColor: c['line-3'],
-        backgroundColor: c['surface-2'],
-      }}
-    >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-        <ServiceMark service={request.service} size={32} />
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Label numberOfLines={1} size="footnote">
-            {request.serviceName}
-          </Label>
-          <Label size="label" tone="ink-3">
-            {request.reason}
-          </Label>
-        </View>
-      </View>
-      {ready ? (
-        <Button
-          kind="primary"
-          label="Carry on"
-          onPress={() => onContinue(`${request.serviceName} is connected. Carry on.`)}
-        />
-      ) : (
-        <Button
-          icon={Link2}
-          label="Connect in your browser"
-          onPress={() => void Linking.openURL(connectionsAddress(data.session.server))}
-        />
-      )}
     </View>
   )
 }
