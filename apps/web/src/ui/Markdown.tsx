@@ -1,3 +1,4 @@
+import { pages } from '../data/pages'
 import { memo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -78,6 +79,13 @@ const MARKDOWN_COMPONENTS: Components = {
       href={href}
       target="_blank"
       rel="noreferrer"
+      onClick={(event) => {
+        // In the desktop app a link from a reply opens beside the Thread, in a page of its own,
+        // instead of sending the Person away to another window. Anywhere else it is a link.
+        if (!pages.available || href === undefined || !/^https?:/u.test(href)) return
+        event.preventDefault()
+        pages.open(href)
+      }}
       className={
         href && href.startsWith('/api/library/source')
           ? 'inline-flex rounded-full bg-accent-soft px-2 py-0.5 text-label font-title text-accent-ink no-underline ring-line'

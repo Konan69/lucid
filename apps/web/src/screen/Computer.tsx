@@ -2,12 +2,14 @@ import { ComputerScreen, ComputerState, type Computer as ComputerRecord } from '
 import RFB from '@novnc/novnc'
 import { Option, Result } from 'effect'
 import { Hand, Maximize2, Minimize2, Monitor, MonitorPlay, Power, X } from 'lucide-react'
-import { useCallback, useReducer, useState } from 'react'
+import { useCallback, useReducer, useState, useSyncExternalStore } from 'react'
 import { change, live, LiveState, useLive } from '../data/live'
+import { pages } from '../data/pages'
 import { orSay } from '../data/said'
 import { Button, IconButton } from '../ui/Button'
 import { cn } from '../ui/cn'
 import { Face } from '../ui/Face'
+import { PageTabs, PageToolbar, PageView } from './computer/Pages'
 
 /**
  * Vivid's computer, beside the Thread: a real machine that is this Person's alone. The panel shows
@@ -23,6 +25,9 @@ import { Face } from '../ui/Face'
 export function Computer({ onClose }: { onClose: () => void }) {
   const state = useLive(live.computer)
   const [wide, setWide] = useState(false)
+  const browser = useSyncExternalStore(pages.subscribe, pages.current)
+  const front = useSyncExternalStore(pages.subscribe, pages.front)
+  const page = pages.showing(browser)
   const computer = LiveState.$is('Ready')(state) ? Option.some(state.value.computer) : Option.none()
   const on = Option.exists(computer, (value) => ComputerState.guards.Running(value.state))
   return (
@@ -33,14 +38,24 @@ export function Computer({ onClose }: { onClose: () => void }) {
       )}
     >
       <header className="flex h-(--topbar-h) shrink-0 items-center gap-1 px-2">
-        {/* The one tab. It is drawn as a tab, not a title, because pages Vivid has open will sit
-            beside it here. */}
-        <span className="flex h-8 max-w-56 min-w-0 items-center gap-2 rounded-control bg-surface-3 pr-3 pl-2.5 text-label font-title text-ink smooth-shadow-ring-xs">
-          <Monitor className="size-4 shrink-0 text-ink-3" />
-          <span className="truncate">Vivid’s computer</span>
-          {on && <i aria-hidden className="size-1.5 shrink-0 rounded-full bg-success" />}
-        </span>
-        <span className="flex-1" />
+        {/* Tabs, not a title: in the desktop app, pages opened beside the Thread sit next to the
+            computer here. In a browser there is only the computer. */}
+        <div className="flex min-w-0 flex-1 scrollbar-hidden items-center gap-1 overflow-x-auto">
+          <button
+            onClick={pages.toComputer}
+            className={cn(
+              'flex h-8 max-w-56 min-w-0 shrink-0 cursor-pointer items-center gap-2 rounded-control pr-3 pl-2.5 text-label transition-colors duration-(--dur-fast)',
+              front === 'computer'
+                ? 'bg-surface-3 font-title text-ink smooth-shadow-ring-xs'
+                : 'text-ink-3 hover:bg-wash-hover hover:text-ink',
+            )}
+          >
+            <Monitor className="size-4 shrink-0 text-ink-3" />
+            <span className="truncate">Vivid’s computer</span>
+            {on && <i aria-hidden className="size-1.5 shrink-0 rounded-full bg-success" />}
+          </button>
+          {pages.available && <PageTabs open={browser.tabs} front={front} showing={page} />}
+        </div>
         <IconButton
           label={wide ? 'Make it narrower' : 'Make it wider'}
           className="hidden sm:inline-flex"
@@ -53,29 +68,44 @@ export function Computer({ onClose }: { onClose: () => void }) {
         </IconButton>
       </header>
 
-      <div className="flex h-11 shrink-0 items-center gap-2 px-2 pb-2">
-        {Option.isSome(computer) && <Keyboard computer={computer.value} />}
-        <p
-          className="flex h-9 min-w-0 flex-1 items-center justify-center truncate rounded-full bg-well px-4 text-label font-meta text-ink-3"
-          aria-live="polite"
-        >
-          {Option.match(computer, { onNone: () => 'Looking for your computer…', onSome: glass })}
-        </p>
-        {on && (
-          <IconButton label="Turn off" onClick={stop}>
-            <Power className="size-4" />
-          </IconButton>
+      <div className="flex h-11 shrink-0 items-center gap-1 px-2 pb-2">
+        {front === 'computer' ? (
+          <>
+            {Option.isSome(computer) && <Keyboard computer={computer.value} />}
+            <p
+              className="mx-1 flex h-9 min-w-0 flex-1 items-center justify-center truncate rounded-full bg-well px-4 text-label font-meta text-ink-3"
+              aria-live="polite"
+            >
+              {Option.match(computer, {
+                onNone: () => 'Looking for your computer…',
+                onSome: glass,
+              })}
+            </p>
+            {on && (
+              <IconButton label="Turn off" onClick={stop}>
+                <Power className="size-4" />
+              </IconButton>
+            )}
+          </>
+        ) : (
+          <PageToolbar page={front === 'page' ? page : Option.none()} />
         )}
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-panel bg-surface-0 hairline-t sm:mx-2 sm:mb-2 sm:rounded-panel sm:ring-line">
-        {LiveState.$is('Loading')(state) && (
-          <Note title="One moment" detail="Looking for your computer." />
+        {front === 'computer' ? (
+          <>
+            {LiveState.$is('Loading')(state) && (
+              <Note title="One moment" detail="Looking for your computer." />
+            )}
+            {LiveState.$is('Failed')(state) && (
+              <Note title="Not available" detail="Vivid could not reach its computer right now." />
+            )}
+            {Option.isSome(computer) && <Screen computer={computer.value} />}
+          </>
+        ) : (
+          <PageView page={front === 'page' ? page : Option.none()} />
         )}
-        {LiveState.$is('Failed')(state) && (
-          <Note title="Not available" detail="Vivid could not reach its computer right now." />
-        )}
-        {Option.isSome(computer) && <Screen computer={computer.value} />}
       </div>
     </aside>
   )

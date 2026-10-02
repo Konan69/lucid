@@ -38,6 +38,7 @@
     "@types/react-dom": "catalog:",
     "@typescript/native": "catalog:",
     "@vitejs/plugin-react": "catalog:",
+    "@vivid/desktop": "workspace:*",
     "shadow-plugin": "2.1.1",
     "tailwindcss": "catalog:",
     "typescript": "catalog:",

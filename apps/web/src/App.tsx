@@ -6,6 +6,7 @@ import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import { PanelLeft } from 'lucide-react'
 import { lazy, Suspense, useState, useSyncExternalStore } from 'react'
 import { live, LiveState, useLive, useLiveValue } from './data/live'
+import { panel } from './data/panel'
 import { Route, router } from './data/route'
 import { engine, link } from './data/runtime'
 import { sidebar } from './data/sidebar'
@@ -200,7 +201,7 @@ function Shell({ me }: { me: MeResponse }) {
   const section = useSyncExternalStore(router.subscribe, router.settings)
   const sidebarOpen = useSyncExternalStore(sidebar.subscribe, sidebar.isOpen)
   const floating = useSyncExternalStore(subscribeOverlay, () => overlay)
-  const [panel, setPanel] = useState(false)
+  const beside = useSyncExternalStore(panel.subscribe, panel.isOpen)
   const notices = useLiveValue(live.notifications)
   const settings = useLiveValue(live.settings)
   // The Person's theme is theirs on every device; when their settings arrive, this device follows.
@@ -244,13 +245,13 @@ function Shell({ me }: { me: MeResponse }) {
             key={workspaceKey(me.workspace)}
             route={route}
             me={me}
-            panel={panel}
-            onTogglePanel={() => setPanel((on) => !on)}
+            panel={beside}
+            onTogglePanel={panel.toggle}
           />
         </Suspense>
-        {panel && Route.$is('Thread')(route) && (
+        {beside && Route.$is('Thread')(route) && (
           <Suspense fallback={null}>
-            <Computer onClose={() => setPanel(false)} />
+            <Computer onClose={panel.hide} />
           </Suspense>
         )}
       </main>
