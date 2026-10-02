@@ -1604,6 +1604,21 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             'Its Integration was revoked or needs sign-in',
           )
           expect((yield* returned(delivered, 'Delivery')).threadId).toBe(`routine-${routine.id}`)
+          // Vivid switched this Routine off on its own, so the record says so, once.
+          const database = yield* Database
+          const audit = yield* database.run(
+            database.select().from(auditEntries).where(eq(auditEntries.personId, owner.person.id)),
+          )
+          expect(audit).toMatchObject([
+            {
+              by: 'vivid',
+              event: AuditEvent.cases.RoutineStopped.make({
+                routineId: routine.id,
+                reason: 'Revoked',
+              }),
+            },
+          ])
+          expect(audit).toHaveLength(1)
         }),
     )
 

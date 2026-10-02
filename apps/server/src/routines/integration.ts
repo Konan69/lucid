@@ -47,8 +47,9 @@ const stopMessage = (reason: IntegrationStopReason) =>
     Revoked: () => 'Its Integration was revoked or needs sign-in',
   })
 
-/** The conditional row write owns one durable notice and terminal queued receipts. Membership
- * audit metadata commits with the stop, preserving the stored owner after their access disappears. */
+/** The conditional row write owns one durable notice and terminal queued receipts. The audit line
+ * commits with the stop, whatever the reason: a Routine that Vivid switched off on its own is on
+ * the record, attributed to the stored owner even after their access disappears. */
 const retireIntegration = Effect.fn('RoutineIntegration.retire')(function* (
   tx: Pick<Database['Service'], 'update' | 'insert'>,
   record: RoutineRecord,
@@ -89,18 +90,17 @@ const retireIntegration = Effect.fn('RoutineIntegration.retire')(function* (
         eq(occurrences.status, 'not-admitted'),
       ),
     )
-  if (IntegrationStopReason.guards.Membership(reason))
-    yield* appendAudit(
-      tx,
-      AuditAttribution.make({
-        personId: record.personId,
-        companyId: record.companyId,
-        by: 'vivid',
-        threadId: null,
-      }),
-      AuditEvent.cases.RoutineStopped.make({ routineId: record.routine.id, reason: 'Membership' }),
-      now,
-    )
+  yield* appendAudit(
+    tx,
+    AuditAttribution.make({
+      personId: record.personId,
+      companyId: record.companyId,
+      by: 'vivid',
+      threadId: null,
+    }),
+    AuditEvent.cases.RoutineStopped.make({ routineId: record.routine.id, reason: reason._tag }),
+    now,
+  )
   return true
 })
 

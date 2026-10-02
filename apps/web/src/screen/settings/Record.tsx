@@ -10,6 +10,15 @@ const when = new Intl.DateTimeFormat(undefined, {
   minute: '2-digit',
 })
 
+/**
+ * Why Vivid stopped a Routine nobody asked it to stop. Keyed by the contract's own reasons, so a
+ * new one cannot be added without its sentence.
+ */
+const STOPPED: Record<typeof AuditEvent.cases.RoutineStopped.Type.reason, string> = {
+  Membership: 'A Routine was stopped: its owner is no longer a member',
+  Revoked: 'A Routine was stopped: its integration was disconnected or needs signing in again',
+}
+
 /** One line of the record as a sentence. It says what happened, never what the content was. */
 export const auditSentence = (event: AuditEvent) =>
   AuditEvent.match(event, {
@@ -34,7 +43,7 @@ export const auditSentence = (event: AuditEvent) =>
     ThreadShared: ({ title, audience }) => `Shared “${title}” with ${audience}`,
     MemorySaved: ({ scope }) => `Vivid kept something (${scope})`,
     MemoryForgotten: ({ scope }) => `Vivid forgot something (${scope})`,
-    RoutineStopped: () => 'A Routine was stopped: its owner is no longer a member',
+    RoutineStopped: ({ reason }) => STOPPED[reason],
   })
 
 /**

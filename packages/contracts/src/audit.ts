@@ -27,8 +27,12 @@ export const AuditEvent = Schema.TaggedUnion({
   ThreadShared: { title: Schema.String, audience: Schema.String },
   MemorySaved: { scope: Schema.String },
   MemoryForgotten: { scope: Schema.String },
-  /** A background authority check stopped future ticks; attribution remains the stored owner. */
-  RoutineStopped: { routineId: RoutineId, reason: Schema.Literal('Membership') },
+  /**
+   * Vivid stopped a Routine by its own decision, with nobody asking: its owner is no longer a
+   * Member (`Membership`), or the Integration it watches was revoked or needs signing in again
+   * (`Revoked`). Attribution remains the stored owner.
+   */
+  RoutineStopped: { routineId: RoutineId, reason: Schema.Literals(['Membership', 'Revoked']) },
 })
 export type AuditEvent = typeof AuditEvent.Type
 
