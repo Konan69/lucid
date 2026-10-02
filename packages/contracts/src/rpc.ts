@@ -117,6 +117,7 @@ import { CreateRuleRequest, RuleListResponse, RuleResponse } from './rules.js'
 import { SearchRequest, SearchResponse, SuggestionListResponse } from './search.js'
 import { PatchSettingsRequest, Settings } from './settings.js'
 import {
+  SkillReadOnly,
   PatchSkillRequest,
   SaveSkillRequest,
   SkillListResponse,
@@ -585,10 +586,15 @@ const SaveSkill = Rpc.make('SaveSkill', {
 })
 const PatchSkill = Rpc.make('PatchSkill', {
   ...call,
+  error: Schema.Union([RpcFailure, SkillReadOnly]),
   payload: { id: SkillId, patch: PatchSkillRequest },
   success: SkillResponse,
 })
-const DeleteSkill = Rpc.make('DeleteSkill', { ...call, payload: { id: SkillId } })
+const DeleteSkill = Rpc.make('DeleteSkill', {
+  ...call,
+  error: Schema.Union([RpcFailure, SkillReadOnly]),
+  payload: { id: SkillId },
+})
 
 // ── The Computer ───────────────────────────────────────────────────────────
 const GetComputer = Rpc.make('GetComputer', { ...call, success: ComputerResponse })

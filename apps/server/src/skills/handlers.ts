@@ -5,6 +5,8 @@ import {
   Forbidden,
   NotFound,
   SkillSummary,
+  SkillOrigin,
+  SkillReadOnly,
   type SkillId,
   type SaveSkillRequest,
   type PatchSkillRequest,
@@ -13,10 +15,15 @@ import { requireActor, type Actor } from '../auth/access.ts'
 import { changed, Topic } from '../live/changes.ts'
 import { live } from '../live/query.ts'
 import { SkillStore, type SkillStoreError } from './store.ts'
+import { summary } from './builtin/index.ts'
 
 /** Expected domain failures become the fixed RPC variants without exposing foreign ownership. */
 const skillFailure = (error: SkillStoreError) =>
   Match.value(error).pipe(
+    Match.tag(
+      'SkillReadOnly',
+      () => new Forbidden({ message: 'Save your own procedure to change built-in instructions' }),
+    ),
     Match.tag('SkillMissing', () => new NotFound({ message: 'Skill was not found' })),
     Match.tag(
       'SkillNotEditable',
@@ -28,6 +35,10 @@ const skillFailure = (error: SkillStoreError) =>
     ),
     Match.orElse((other) => other),
   )
+
+/** Only mutation RPCs expose the read-only variant; ordinary reads keep their existing failures. */
+const mutationFailure = (error: SkillStoreError) =>
+  error instanceof SkillReadOnly ? error : skillFailure(error)
 
 /** List and Watch share their loader so the subscribed view has identical access rules. */
 const loadSkills = Effect.fn('Skills.load')(function* (actor: Actor) {
@@ -49,7 +60,7 @@ export const skillHandlers = {
         SkillSummary.make({
           id: skill.id,
           name: skill.name,
-          useWhen: skill.useWhen,
+          useWhen: summary(skill),
           createdAt: skill.createdAt,
         }),
       ),
@@ -83,8 +94,9 @@ export const skillHandlers = {
     const actor = yield* requireActor()
     const skill = yield* (yield* SkillStore)
       .patch(actor, id, patch)
-      .pipe(Effect.mapError(skillFailure))
-    yield* changed(actor, Topic.person(skill.createdBy.id))
+      .pipe(Effect.mapError(mutationFailure))
+    if (SkillOrigin.guards.Saved(skill.origin))
+      yield* changed(actor, Topic.person(skill.origin.createdBy.id))
     return { skill }
   }),
   /** Load the authorized owner before removal so their open view receives the deletion too. */
@@ -92,7 +104,8 @@ export const skillHandlers = {
     const actor = yield* requireActor()
     const store = yield* SkillStore
     const skill = yield* store.read(actor, id).pipe(Effect.mapError(skillFailure))
-    yield* store.remove(actor, id).pipe(Effect.mapError(skillFailure))
-    yield* changed(actor, Topic.person(skill.createdBy.id))
+    yield* store.remove(actor, id).pipe(Effect.mapError(mutationFailure))
+    if (SkillOrigin.guards.Saved(skill.origin))
+      yield* changed(actor, Topic.person(skill.origin.createdBy.id))
   }),
 }

@@ -9,6 +9,7 @@ import {
   PersonId,
   SessionId,
   SkillScope,
+  SkillOrigin,
   ThreadId,
   Workspace,
   type Role,
@@ -22,6 +23,7 @@ import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts
 import { silentChangesLayer } from '../live/changes.ts'
 import { skillHandlers } from './handlers.ts'
 import { SkillStore, skillStoreLayer } from './store.ts'
+import { builtins } from './builtin/index.ts'
 
 const testLayer = skillStoreLayer.pipe(
   Layer.provideMerge(testDatabaseLayer),
@@ -106,6 +108,51 @@ const auth = (actor: Actor) =>
 
 describe.skipIf(!testDatabaseConfigured)('Skills', () => {
   layer(testLayer)((it) => {
+    it.effect(
+      'lists shipped procedures, keeps overrides scoped and refuses built-in mutations',
+      () =>
+        Effect.gen(function* () {
+          const { personal, other, admin, member } = yield* fixture()
+          const store = yield* SkillStore
+          const builtin = builtins[0]
+          if (builtin === undefined) expect.fail('Shipped procedures are required')
+          expect(yield* store.list(personal)).toEqual(builtins)
+          const saved = yield* store.save(personal, { ...request, name: builtin.name })
+          expect(
+            (yield* store.list(personal)).filter((skill) => skill.name === builtin.name),
+          ).toEqual([saved])
+          expect((yield* store.list(other)).filter((skill) => skill.name === builtin.name)).toEqual(
+            [builtin],
+          )
+          const company = yield* store.save(admin, {
+            ...request,
+            name: builtin.name,
+            forCompany: true,
+          })
+          expect(
+            (yield* store.list(member)).filter((skill) => skill.name === builtin.name),
+          ).toEqual([company])
+          expect((yield* store.list(other)).filter((skill) => skill.name === builtin.name)).toEqual(
+            [builtin],
+          )
+          expect(yield* store.read(personal, builtin.id)).toEqual(builtin)
+          const summaries = yield* skillHandlers
+            .ListSkillSummaries()
+            .pipe(Effect.provideService(AuthContext, auth(personal)))
+          const summary = summaries.skills.find((skill) => skill.id === saved.id)
+          if (summary === undefined) expect.fail('Saved procedure summary is required')
+          expect(summary.useWhen).toContain('overrides')
+          const patch = yield* skillHandlers
+            .PatchSkill({ id: builtin.id, patch: { name: 'Changed' } })
+            .pipe(Effect.provideService(AuthContext, auth(personal)), Effect.flip)
+          expect(patch._tag).toBe('SkillReadOnly')
+          const remove = yield* skillHandlers
+            .DeleteSkill({ id: builtin.id })
+            .pipe(Effect.provideService(AuthContext, auth(admin)), Effect.flip)
+          expect(remove._tag).toBe('SkillReadOnly')
+        }),
+    )
+
     it.effect('summary discovery preserves creation order without fetching procedure bodies', () =>
       Effect.gen(function* () {
         const { personal } = yield* fixture()
@@ -115,9 +162,13 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
         const { skills } = yield* skillHandlers
           .ListSkillSummaries()
           .pipe(Effect.provideService(AuthContext, auth(personal)))
-        expect(skills).toEqual([
-          { id: skill.id, name: skill.name, useWhen: skill.useWhen, createdAt: skill.createdAt },
-        ])
+        expect(skills).toContainEqual({
+          id: skill.id,
+          name: skill.name,
+          useWhen: skill.useWhen,
+          createdAt: skill.createdAt,
+        })
+        expect(skills).toHaveLength(builtins.length + 1)
       }),
     )
 
@@ -129,8 +180,8 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
           .SaveSkill(request)
           .pipe(Effect.provideService(AuthContext, auth(personal)))
         expect((yield* store.list(admin)).map((item) => item.id)).toContain(skill.id)
-        expect(yield* store.list(other)).toEqual([])
-        expect(yield* store.list(member)).toEqual([])
+        expect(yield* store.list(other)).toEqual(builtins)
+        expect(yield* store.list(member)).toEqual(builtins)
         const failure = yield* Effect.result(
           skillHandlers
             .ReadSkill({ id: skill.id })
@@ -159,7 +210,7 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
           const store = yield* SkillStore
           expect(SkillScope.guards.Company(skill.scope)).toBe(true)
           expect((yield* store.read(member, skill.id)).name).toBe(request.name)
-          expect(yield* store.list(other)).toEqual([])
+          expect(yield* store.list(other)).toEqual(builtins)
         }),
     )
 
@@ -191,7 +242,7 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
         yield* skillHandlers
           .DeleteSkill({ id: skill.id })
           .pipe(Effect.provideService(AuthContext, auth(otherAdmin)))
-        expect(yield* (yield* SkillStore).list(admin)).toEqual([])
+        expect(yield* (yield* SkillStore).list(admin)).toEqual(builtins)
       }),
     )
 
@@ -206,7 +257,9 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
         const { skill } = yield* skillHandlers
           .SaveSkill(request)
           .pipe(Effect.provideService(AuthContext, vivid))
-        expect(skill.createdBy.id).toBe(personal.person.id)
+        expect(SkillOrigin.guards.Saved(skill.origin)).toBe(true)
+        if (SkillOrigin.guards.Saved(skill.origin))
+          expect(skill.origin.createdBy.id).toBe(personal.person.id)
         const memberCall = AuthState.Vivid({
           person: member.person,
           workspace: member.workspace,
@@ -252,7 +305,11 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
         yield* store.patch(personal, first.id, { instructions: 'Updated steps' })
         expect((yield* store.read(personal, first.id)).instructions).toBe('Updated steps')
         yield* store.remove(personal, first.id)
-        expect((yield* store.list(personal)).map((skill) => skill.id)).toEqual([second.id])
+        expect(
+          (yield* store.list(personal))
+            .filter((skill) => !SkillOrigin.guards.BuiltIn(skill.origin))
+            .map((skill) => skill.id),
+        ).toEqual([second.id])
       }),
     )
   })

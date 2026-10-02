@@ -5,6 +5,7 @@ import {
   Skill,
   SkillId,
   SkillScope,
+  SkillOrigin,
   SkillSummary,
   ThreadId,
 } from '@vivid/contracts'
@@ -26,7 +27,9 @@ const first = Skill.make({
   ...saveRequest,
   id: SkillId.make('MARK-first'),
   scope: SkillScope.cases.Personal.make({}),
-  createdBy: PersonSummary.make({ id: PersonId.make('MARK-person'), name: 'Ada', image: null }),
+  origin: SkillOrigin.cases.Saved.make({
+    createdBy: PersonSummary.make({ id: PersonId.make('MARK-person'), name: 'Ada', image: null }),
+  }),
   createdAt: 1,
   updatedAt: 10,
 })

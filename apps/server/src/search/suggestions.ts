@@ -3,6 +3,8 @@ import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
 import {
   Author,
+  ConnectionState,
+  type Connection,
   Assignee,
   Suggestion,
   type LibraryItem,
@@ -15,23 +17,36 @@ import { libraryFailure } from '../library/failures.ts'
 import { LibraryStore } from '../library/store.ts'
 import { RoutineStore } from '../routines/store.ts'
 import { TaskStore } from '../tasks/store.ts'
+import { ConnectionStore } from '../connections/store.ts'
+import { procedures } from '../skills/builtin/index.ts'
 
 const DAY_MS = 86_400_000
-const starters: ReadonlyArray<Suggestion> = [
-  Suggestion.make({ text: 'Plan my week', reason: 'Make time for what matters to you' }),
-  Suggestion.make({
-    text: 'Draft a reply to an email I paste in',
-    reason: 'Bring an email you want to answer',
-  }),
-  Suggestion.make({
-    text: 'Remind me of something tomorrow at 9',
-    reason: 'Choose what you want to remember',
-  }),
-  Suggestion.make({
-    text: 'Set up a morning brief',
-    reason: 'Start your day with what matters to you',
-  }),
-]
+/** Offer connected procedures only when every required service group has a ready account.
+ * Unknown service names do not imply a capability; the four starters can explain missing access. */
+export const procedureSuggestions = (connections: ReadonlyArray<Connection>) => {
+  const ready = new Set(
+    Arr.filterMap(connections, (connection) =>
+      ConnectionState.guards.Ready(connection.state)
+        ? Result.succeed(connection.serviceName.toLowerCase())
+        : Result.failVoid,
+    ),
+  )
+  const connected = procedures.filter(
+    (procedure) =>
+      procedure.connections.length > 0 &&
+      procedure.connections.every((group) =>
+        group.some((service) => ready.has(service.toLowerCase())),
+      ),
+  )
+  const offered =
+    connected.length > 0 ? connected : procedures.filter((procedure) => procedure.starter)
+  return offered.slice(0, 4).map((procedure) =>
+    Suggestion.make({
+      text: procedure.name,
+      reason: procedure.useWhen,
+    }),
+  )
+}
 
 /** Visible Tasks can include shared work; the empty screen only offers work owned by or assigned to this Person. */
 const personalTask = (task: Task, personId: PersonId) => {
@@ -97,6 +112,7 @@ export const suggest = (
     readonly routines: ReadonlyArray<Routine>
   },
   now: number,
+  starters: ReadonlyArray<Suggestion>,
 ): ReadonlyArray<Suggestion> => {
   const suggestions = [
     ...taskSuggestions(data.tasks, now),
@@ -114,14 +130,15 @@ export const loadSuggestions = Effect.fn('Suggestions.load')(function* (actor: A
     .pipe(Effect.mapError(libraryFailure))
   const routines = yield* (yield* RoutineStore).list(actor)
   const now = yield* Clock.currentTimeMillis
-  return {
-    suggestions: suggest(
-      {
-        tasks: tasks.filter((task) => personalTask(task, actor.person.id)),
-        items: library.documents,
-        routines,
-      },
-      now,
-    ),
-  }
+  const { connections } = yield* (yield* ConnectionStore).list(actor)
+  const suggestions = suggest(
+    {
+      tasks: tasks.filter((task) => personalTask(task, actor.person.id)),
+      items: library.documents,
+      routines,
+    },
+    now,
+    procedureSuggestions(connections),
+  )
+  return { suggestions }
 })

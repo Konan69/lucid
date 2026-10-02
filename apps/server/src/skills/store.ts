@@ -8,6 +8,7 @@ import * as Schema from 'effect/Schema'
 import {
   SkillId,
   SkillScope,
+  SkillReadOnly,
   type Skill,
   type SaveSkillRequest,
   type PatchSkillRequest,
@@ -24,6 +25,7 @@ import {
   type SkillRow,
 } from './records.ts'
 import { skills } from './tables.ts'
+import { builtins, catalogue } from './builtin/index.ts'
 
 /** An inaccessible identifier must reveal nothing about another scope. */
 export class SkillMissing extends Schema.TaggedError<SkillMissing>()(
@@ -53,6 +55,7 @@ export type SkillStoreError =
   | SkillMissing
   | SkillNotEditable
   | SkillNameTaken
+  | SkillReadOnly
 type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
 
 export interface SkillStoreService {
@@ -158,6 +161,8 @@ const makeSave = (database: Database['Service']) =>
 /** Renames share the save lock; column updates preserve fields omitted from the patch. */
 const makePatch = (database: Database['Service']) =>
   Effect.fn('SkillStore.patch')(function* (actor: Actor, id: SkillId, patch: PatchSkillRequest) {
+    if (builtins.some((skill) => skill.id === id))
+      return yield* Effect.fail(new SkillReadOnly({ id }))
     const original = yield* loadRow(database, actor, id)
     yield* editable(actor, original)
     const now = yield* Clock.currentTimeMillis
@@ -186,6 +191,7 @@ const makePatch = (database: Database['Service']) =>
 /** Delete confirms visibility and authority before touching the row, even for Company admins. */
 const makeRemove = (database: Database['Service']) =>
   Effect.fn('SkillStore.remove')(function* (actor: Actor, id: SkillId) {
+    if (builtins.some((skill) => skill.id === id)) yield* Effect.fail(new SkillReadOnly({ id }))
     const row = yield* loadRow(database, actor, id)
     yield* editable(actor, row)
     const removed = yield* database.run(
@@ -218,10 +224,12 @@ export const skillStoreLayer = Layer.effect(
             .where(visibleSkills(actor))
             .orderBy(desc(skills.updatedAt), asc(skills.id)),
         )
-        return yield* Effect.forEach(rows, makeProjection(database))
+        return catalogue(yield* Effect.forEach(rows, makeProjection(database)))
       }),
       /** Projection only happens after the identifier has passed scope filtering. */
       read: Effect.fn('SkillStore.read')(function* (actor, id) {
+        const builtin = builtins.find((skill) => skill.id === id)
+        if (builtin !== undefined) return builtin
         return yield* projectSkill(database, yield* loadRow(database, actor, id))
       }),
       save: makeSave(database),

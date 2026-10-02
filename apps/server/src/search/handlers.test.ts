@@ -34,6 +34,7 @@ import { RoutineStore } from '../routines/store.ts'
 import { TaskStore } from '../tasks/store.ts'
 import { ThreadStore } from '../threads/store.ts'
 import { searchHandlers } from './handlers.ts'
+import { ConnectionStore } from '../connections/store.ts'
 
 const person = new Person({
   id: PersonId.make('search-person'),
@@ -164,6 +165,9 @@ const visibleLayer = (data: VisibleData) =>
         sessionId: SessionId.make('search-session'),
       }),
     ),
+    Layer.mock(ConnectionStore, {
+      list: Effect.fn('SearchTest.connections')(() => Effect.succeed({ connections: [] })),
+    }),
     Layer.mock(ThreadStore, {
       list: Effect.fn('SearchTest.threads')(function* (actor: Actor) {
         expect(actor.person.id).toBe(person.id)
@@ -280,6 +284,9 @@ describe('Search', () => {
             sessionId: SessionId.make('search-session'),
           }),
         ),
+        Layer.mock(ConnectionStore, {
+          list: Effect.fn('SearchTest.connections')(() => Effect.succeed({ connections: [] })),
+        }),
         Layer.mock(ThreadStore, { list: () => Effect.succeed(threads) }),
         Layer.mock(TaskStore, {}),
         Layer.mock(RoutineStore, {}),
@@ -373,10 +380,10 @@ describe('Suggestions', () => {
           .ListSuggestions()
           .pipe(Effect.provide(visibleLayer(data)))
         expect(suggestions.map((suggestion) => suggestion.text)).toEqual([
-          'Plan my week',
-          'Draft a reply to an email I paste in',
-          'Remind me of something tomorrow at 9',
-          'Set up a morning brief',
+          'Connect a service',
+          'Watch a useful signal',
+          'Remember and correct preferences',
+          'Learn how we do this',
         ])
       }),
   )

@@ -17,6 +17,7 @@ import {
   Skill,
   SkillId,
   SkillScope,
+  SkillOrigin,
   Task,
   TaskId,
   ThreadId,
@@ -93,7 +94,7 @@ const skill = Skill.make({
   useWhen: 'Before signing',
   instructions: 'Read the terms.',
   scope: SkillScope.cases.Personal.make({}),
-  createdBy: person,
+  origin: SkillOrigin.cases.Saved.make({ createdBy: person }),
   createdAt: 0,
   updatedAt: 0,
 })

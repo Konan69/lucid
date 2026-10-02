@@ -1,30 +1,53 @@
 import { Schema } from 'effect'
 import { PersonSummary, SkillId } from './identity.js'
 
-/** Whose procedure it is: one Person's, or the Company's for everyone to use. */
+/** Procedures are personal, shared by a Company, or shipped with Vivid. */
 export const SkillScope = Schema.TaggedUnion({
   Personal: {},
   Company: {},
+  BuiltIn: {},
 })
 export type SkillScope = typeof SkillScope.Type
+
+/** Built-ins have no human author; saved procedures preserve real attribution. */
+export const SkillOrigin = Schema.TaggedUnion({
+  Saved: { createdBy: PersonSummary },
+  BuiltIn: {},
+})
+export type SkillOrigin = typeof SkillOrigin.Type
+
+/** API mutations cannot change shipped instructions; save a scoped override instead. */
+export class SkillReadOnly extends Schema.TaggedError<SkillReadOnly>()(
+  'SkillReadOnly',
+  { id: SkillId },
+  { title: 'Built-in procedure is read-only' },
+) {}
 
 /**
  * A saved procedure: how to do a piece of work the way this Person or Company does it. Storing one
  * does not schedule it; a Routine does that.
  */
-export const Skill = Schema.Struct({
+const content = {
   id: SkillId,
   name: Schema.String,
   /** When to use it, in a sentence. This is what Vivid matches a request against. */
   useWhen: Schema.String,
   /** The steps, decisions, expected result and what needs approval, as Markdown. */
   instructions: Schema.String,
-  scope: SkillScope,
-  createdBy: PersonSummary,
+
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
-}).annotate({ identifier: 'Skill', title: 'Skill' })
-export interface Skill extends Schema.Schema.Type<typeof Skill> {}
+}
+/** Origin and scope agree by construction; a shipped procedure cannot acquire a fabricated creator. */
+export const Skill = Schema.Union([
+  Schema.Struct({
+    ...content,
+    scope: Schema.Union([SkillScope.cases.Personal, SkillScope.cases.Company]),
+    origin: SkillOrigin.cases.Saved,
+  }),
+  Schema.Struct({ ...content, scope: SkillScope.cases.BuiltIn, origin: SkillOrigin.cases.BuiltIn }),
+]).annotate({ identifier: 'Skill', title: 'Skill' })
+export type Skill = typeof Skill.Type
 
 export const SaveSkillRequest = Schema.Struct({
   name: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(80)),
@@ -47,7 +70,7 @@ export const SkillSummary = Schema.Struct({
   name: Schema.String,
   useWhen: Schema.String,
   /** Immutable order keeps duplicate display names stable without loading instructions. */
-  createdAt: Skill.fields.createdAt,
+  createdAt: content.createdAt,
 })
 export interface SkillSummary extends Schema.Schema.Type<typeof SkillSummary> {}
 

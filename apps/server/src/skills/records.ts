@@ -9,6 +9,7 @@ import {
   Skill,
   SkillId,
   SkillScope,
+  SkillOrigin,
   Workspace,
 } from '@vivid/contracts'
 import { inWorkspace, type Actor } from '../auth/access.ts'
@@ -41,7 +42,7 @@ export const skillScope = (owner: Pick<SkillRow, 'personId' | 'companyId'>) =>
     : eq(skills.companyId, owner.companyId)
 
 /** Scope is derived from ownership columns and can never drift from persistence. */
-export const scopeOf = (companyId: CompanyId | null): SkillScope =>
+export const scopeOf = (companyId: CompanyId | null) =>
   companyId === null ? SkillScope.cases.Personal.make({}) : SkillScope.cases.Company.make({})
 
 /** A deleted owner cascades their procedures; a missing owner on a surviving row is a fault. */
@@ -67,7 +68,7 @@ export const projectSkill = Effect.fn('SkillStore.project')(function* (
     useWhen: row.useWhen,
     instructions: row.instructions,
     scope: scopeOf(row.companyId),
-    createdBy,
+    origin: SkillOrigin.cases.Saved.make({ createdBy }),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   })

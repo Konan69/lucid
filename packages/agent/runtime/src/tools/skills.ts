@@ -12,7 +12,7 @@ export function skillTools(runTool: RunTool) {
     defineTool({
       name: 'read_skill',
       description:
-        'Read a saved procedure by its exact name from context before following its steps.',
+        'Read a built-in or saved procedure by its exact name from context before following its steps.',
       input: v.object({ name: text('The procedure name shown in context.', 100) }),
       /** The catalog and view share names, so duplicates never select an arbitrary procedure. */
       run({ data, signal }) {

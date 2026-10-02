@@ -1,5 +1,6 @@
 import {
   MemoryScope,
+  SkillOrigin,
   RoutineTrigger,
   type BrowseResult,
   type CommandResult,
@@ -40,6 +41,7 @@ export function skill(item: Skill, name: string) {
     name: modelText(name),
     useWhen: modelText(item.useWhen),
     instructions: modelText(item.instructions),
+    source: SkillOrigin.guards.BuiltIn(item.origin) ? 'Built into Vivid' : 'Saved procedure',
   }
 }
 
