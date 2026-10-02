@@ -9,7 +9,7 @@ import {
   type RunId,
   type ThreadId,
 } from '@vivid/contracts'
-import { findPerson, summaryOf } from '../auth/access.ts'
+import { findPerson } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
 import { Changes } from '../live/changes.ts'
 import { Learning } from '../memory/learn.ts'
@@ -20,6 +20,7 @@ import { audienceTopics, canSee, findThread, type StoredThread } from './access.
 import {
   Conversation,
   DeliveryMessage,
+  DeliverySpeaker,
   type Admitted,
   type ConversationService,
   type Delivery,
@@ -169,6 +170,26 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
   })
 
   /**
+   * A decision continues the Run under the Person it started for, including their Connections.
+   * The decider speaks in the signal and must independently still be able to see the Thread;
+   * approving or answering never lends the decider's authority to that continuation.
+   */
+  const speakerName = Effect.fn('Conversation.speakerName')(function* (
+    delivery: Delivery,
+    thread: StoredThread,
+    acting: Person,
+  ) {
+    return yield* DeliverySpeaker.match(delivery.speaker, {
+      Acting: () => Effect.succeed(acting.name),
+      Vivid: () => Effect.succeed('Vivid'),
+      Decider: Effect.fn('Conversation.decider')(function* ({ personId }) {
+        if (!(yield* canSee(thread, personId).pipe(withDatabase))) return yield* threadMissing()
+        return (yield* personOf(personId)).name
+      }),
+    })
+  })
+
+  /**
    * The server never joins a different Person's delivery into a response in progress. The locked
    * reservation refuses it with the first Person's name before any message or signal reaches Flue.
    */
@@ -180,6 +201,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
       if (!(yield* canSee(thread, delivery.personId).pipe(withDatabase)))
         return yield* threadMissing()
       const speaker = yield* personOf(delivery.personId)
+      const from = yield* speakerName(delivery, thread, speaker)
       const creator = yield* personOf(thread.personId)
       const id = submissionId(thread.id, delivery.idempotencyKey)
       const reservation = yield* runs.start({
@@ -208,7 +230,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         const deliveryScope = yield* runs.scope({ threadId: thread.id, turn })
         return yield* runtime.admit({
           threadId: thread.id,
-          message: flueMessage(thread.audience, summaryOf(speaker).name, delivery.message, turn),
+          message: flueMessage(thread.audience, from, delivery.message, turn),
           origin: { creator: creator.id, creatorName: creator.name },
           idempotencyKey: delivery.idempotencyKey,
           turn,

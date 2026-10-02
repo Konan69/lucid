@@ -7,6 +7,7 @@ import { fixture, Observation, trustTestLayer } from '../approvals/testing.ts'
 import { membershipTable } from '../companies/tables.ts'
 import { Database, returned } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
+import { DeliverySpeaker } from '../threads/conversation.ts'
 import { threads } from '../threads/tables.ts'
 import { InputStore, inputStoreLayer } from './store.ts'
 import { inputRequests } from './tables.ts'
@@ -15,6 +16,33 @@ const question = { question: 'Which day?', options: [], allowsOwnAnswer: true }
 
 /** Answer writes and replay cross the real PostgreSQL seam with explicit failure injection. */
 describe.skipIf(!testDatabaseConfigured)('Durable Input answer signals', () => {
+  it.effect(
+    'a shared Thread answer carries its answerer while continuing the asked Person authority',
+    () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const database = yield* Database
+        const store = yield* InputStore
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'company' })
+            .where(eq(threads.id, test.companyId)),
+        )
+        const request = yield* store.ask(test.companyVivid, question)
+        yield* store.answer(test.owner, { id: request.id, answer: 'Monday' })
+        expect(yield* Ref.get((yield* Observation).deliveries)).toMatchObject([
+          {
+            personId: test.member.person.id,
+            speaker: DeliverySpeaker.cases.Decider.make({ personId: test.owner.person.id }),
+          },
+        ])
+        expect(yield* store.inThread(test.companyId)).toMatchObject([
+          { state: { answeredBy: { id: test.owner.person.id } } },
+        ])
+      }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
   it.effect('a fresh store returns an answer recorded before a crash', () =>
     Effect.gen(function* () {
       const test = yield* fixture()

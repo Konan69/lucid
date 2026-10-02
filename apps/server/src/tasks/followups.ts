@@ -15,7 +15,12 @@ import {
 } from '@vivid/contracts'
 import { type Actor } from '../auth/access.ts'
 import { Notifier } from '../notifications/notifier.ts'
-import { Conversation, DeliveryMessage, StoredRunOrigin } from '../threads/conversation.ts'
+import {
+  Conversation,
+  DeliverySpeaker,
+  DeliveryMessage,
+  StoredRunOrigin,
+} from '../threads/conversation.ts'
 import { DeliveryOutcome, DeliveryRecord, type StoredTask } from './projection.ts'
 import { TaskStore } from './store.ts'
 
@@ -60,6 +65,7 @@ const makeFollowUps = (
       )
     const receipt = yield* conversation
       .deliver({
+        speaker: DeliverySpeaker.cases.Acting.make({}),
         threadId: task.conversationId,
         personId,
         message: DeliveryMessage.cases.Signal.make({

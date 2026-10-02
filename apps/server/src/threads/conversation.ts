@@ -6,7 +6,7 @@ import {
   type Conflict,
   type LibraryFolderId,
   type NotFound,
-  type PersonId,
+  PersonId,
   type Run,
   RunId,
   type RuntimeUnavailable,
@@ -43,10 +43,19 @@ export const StoredRunOrigin = Schema.TaggedUnion({
 })
 export type StoredRunOrigin = typeof StoredRunOrigin.Type
 
+/** Speaker attribution is independent of the Person whose authority a Run carries. */
+export const DeliverySpeaker = Schema.TaggedUnion({
+  Acting: {},
+  Decider: { personId: PersonId },
+  Vivid: {},
+})
+export type DeliverySpeaker = typeof DeliverySpeaker.Type
+
 export interface Delivery {
   readonly threadId: ThreadId
   /** The Person Vivid acts for in the Run this starts. They must be able to see the Thread. */
   readonly personId: PersonId
+  readonly speaker: DeliverySpeaker
   /** Only Routine deliveries carry a Library confinement; ordinary deliveries have none. */
   readonly libraryFolder?: LibraryFolderId | null
   readonly message: DeliveryMessage

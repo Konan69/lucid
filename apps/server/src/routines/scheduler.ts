@@ -17,7 +17,12 @@ import type { Actor } from '../auth/access.ts'
 import type { DatabaseInfrastructureError } from '../database/client.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Changes, Topic } from '../live/changes.ts'
-import { Conversation, DeliveryMessage, StoredRunOrigin } from '../threads/conversation.ts'
+import {
+  Conversation,
+  DeliverySpeaker,
+  DeliveryMessage,
+  StoredRunOrigin,
+} from '../threads/conversation.ts'
 import { ThreadStore } from '../threads/store.ts'
 import {
   identifyAttempt,
@@ -190,6 +195,7 @@ const makeSubmit = (services: SubmissionServices) =>
     yield* publish(services.changes)(record)
     const run = yield* services.conversation
       .deliver({
+        speaker: DeliverySpeaker.cases.Acting.make({}),
         threadId,
         personId: record.personId,
         libraryFolder: routine.libraryFolderId,

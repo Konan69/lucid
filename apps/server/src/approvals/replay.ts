@@ -8,7 +8,7 @@ import { PersonId, ThreadId } from '@vivid/contracts'
 import { Database, decodeStored } from '../database/client.ts'
 import type { inputRequests } from '../inputs/tables.ts'
 import { canSee, findThread } from '../threads/access.ts'
-import { Conversation, StoredRunOrigin } from '../threads/conversation.ts'
+import { Conversation, DeliverySpeaker, StoredRunOrigin } from '../threads/conversation.ts'
 import { Signal, encodeSignal } from './signal.ts'
 import type { approvals } from './tables.ts'
 
@@ -84,12 +84,20 @@ const replayOne = Effect.fn('Signals.replayOne')(function* (
     Signal.cases.Stopped.make({ idempotencyKey: row.signal.idempotencyKey, stoppedAt: now, reason })
   let ending: Signal
   if (Option.isNone(thread)) ending = stop('ThreadDeleted')
-  else if (!(yield* canSee(thread.value, row.personId))) ending = stop('AccessLost')
+  else if (
+    !(yield* canSee(thread.value, row.personId)) ||
+    (row.signal.deciderId !== null && !(yield* canSee(thread.value, row.signal.deciderId)))
+  )
+    ending = stop('AccessLost')
   else {
     const admitted = yield* (yield* Conversation)
       .admit({
         threadId: row.threadId,
         personId: row.personId,
+        speaker:
+          row.signal.deciderId === null
+            ? DeliverySpeaker.cases.Vivid.make({})
+            : DeliverySpeaker.cases.Decider.make({ personId: row.signal.deciderId }),
         message: row.signal.message,
         origin: StoredRunOrigin.cases.Decision.make({}),
         idempotencyKey: row.signal.idempotencyKey,

@@ -14,7 +14,7 @@ import { Runtime } from '../runtime/client.ts'
 import { Database } from '../database/client.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { canSee, findThread, requireThread, type StoredThread } from './access.ts'
-import { Conversation, DeliveryMessage, StoredRunOrigin } from './conversation.ts'
+import { Conversation, DeliverySpeaker, DeliveryMessage, StoredRunOrigin } from './conversation.ts'
 
 /**
  * The conversation gateway: the only way any client reaches Flue.
@@ -122,6 +122,7 @@ const send = Effect.fn('Gateway.send')(function* () {
   if (Option.isNone(origin)) return refuse(400, 'The request has no host')
   const conversation = yield* Conversation
   const receipt = yield* conversation.admit({
+    speaker: DeliverySpeaker.cases.Acting.make({}),
     threadId: thread.id,
     personId: person.id,
     message: DeliveryMessage.cases.Said.make({ body: sent.value.body }),

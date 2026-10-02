@@ -33,6 +33,7 @@ import { submissionId } from '../runtime/identity.ts'
 import {
   Conversation,
   DeliveryMessage,
+  DeliverySpeaker,
   StoredRunOrigin,
   type Delivery,
   type SignalDelivery,
@@ -212,6 +213,7 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
 const said = (threadId: ThreadId, personId: PersonId): Delivery => ({
   threadId,
   personId,
+  speaker: DeliverySpeaker.cases.Acting.make({}),
   idempotencyKey: NodeCrypto.randomUUID(),
   message: DeliveryMessage.cases.Said.make({ body: 'Please help' }),
   origin: StoredRunOrigin.cases.Message.make({}),
@@ -295,6 +297,38 @@ describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
       expect(refused.map((outcome) => outcome.failure)).toEqual([expect.any(Conflict)])
       expect(yield* Ref.get(test.admitted)).toHaveLength(1)
       expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(1)
+    }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
+  )
+
+  it.effect('names the decider as speaker while Flue acts for the original Person', () =>
+    Effect.gen(function* () {
+      const test = yield* harness()
+      const delivery: SignalDelivery = {
+        threadId: test.threadId,
+        personId: test.ada,
+        speaker: DeliverySpeaker.cases.Decider.make({ personId: test.ben }),
+        idempotencyKey: 'decision-speaker',
+        message: DeliveryMessage.cases.Signal.make({
+          type: 'answer',
+          body: 'Monday',
+          attributes: {},
+        }),
+        origin: StoredRunOrigin.cases.Decision.make({}),
+      }
+      yield* test.conversation.deliver(delivery)
+      const requests = yield* Ref.get(test.requests)
+      expect(requests).toMatchObject([
+        { scope: { acting: test.ada }, message: { attributes: { from: 'Ben' } } },
+      ])
+      const database = yield* Database
+      yield* database.run(
+        database.delete(membershipTable).where(eq(membershipTable.userId, test.ben)),
+      )
+      const lost = yield* Effect.result(
+        test.conversation.deliver({ ...delivery, idempotencyKey: 'access-lost' }),
+      )
+      expect(Result.isFailure(lost) && lost.failure._tag).toBe('NotFound')
+      expect(yield* Ref.get(test.requests)).toHaveLength(1)
     }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
   )
 
@@ -384,6 +418,7 @@ describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
           const test = yield* harness()
           const ada = yield* test.conversation.admit(said(test.threadId, test.ada))
           const delivery: SignalDelivery = {
+            speaker: DeliverySpeaker.cases.Acting.make({}),
             threadId: test.threadId,
             personId: test.ben,
             idempotencyKey: `${type}-receipt`,

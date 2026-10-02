@@ -220,7 +220,7 @@ const claim = Effect.fn('Approvals.claim')(function* (
   request: DecideApprovalRequest,
 ) {
   const database = yield* Database
-  const scope = and(eq(approvals.id, request.id), ownedHere(approvals, actor))
+  const scope = eq(approvals.id, request.id)
   const values = yield* database.run(database.select().from(approvals).where(scope).limit(1))
   const value = values[0]
   if (value === undefined)
@@ -250,7 +250,7 @@ const claim = Effect.fn('Approvals.claim')(function* (
         status: ApprovalDecision.guards.Deny(request.decision) ? 'denied' : 'executing',
         decidedBy: actor.person.id,
         decidedAt: now,
-        signal: encodeSignal(decisionSignal(row, request.decision)),
+        signal: encodeSignal(decisionSignal(row, request.decision, actor.person.id)),
         signalDueAt: now,
       })
       .where(
@@ -282,7 +282,12 @@ const Conclusion = Schema.Union([
 const approvalKey = (id: ApprovalId) => `approval-${id}`
 
 /** Freeze the outcome text in the settlement write so no later projection is needed for replay. */
-const owed = (id: ApprovalId, summary: string, conclusion: typeof Conclusion.Type) => {
+const owed = (
+  id: ApprovalId,
+  summary: string,
+  conclusion: typeof Conclusion.Type,
+  deciderId: PersonId | null,
+) => {
   const body = Conclusion.match(conclusion, {
     Expired: () => `Expired: ${summary}. This request ran out. The action was not run.`,
     Denied: () => `Denied: ${summary}. The action was not run.`,
@@ -293,6 +298,7 @@ const owed = (id: ApprovalId, summary: string, conclusion: typeof Conclusion.Typ
   })
   return Signal.cases.Owed.make({
     idempotencyKey: approvalKey(id),
+    deciderId,
     message: DeliveryMessage.cases.Signal.make({
       type: 'approval',
       body,
@@ -305,9 +311,9 @@ const owed = (id: ApprovalId, summary: string, conclusion: typeof Conclusion.Typ
 }
 
 /** A refusal already knows its result; permission owes the result of the once-only action. */
-const decisionSignal = (row: typeof Row.Type, decision: ApprovalDecision) =>
+const decisionSignal = (row: typeof Row.Type, decision: ApprovalDecision, deciderId: PersonId) =>
   ApprovalDecision.guards.Deny(decision)
-    ? owed(row.id, row.action.summary, Conclusion.cases.Denied.make({}))
+    ? owed(row.id, row.action.summary, Conclusion.cases.Denied.make({}), deciderId)
     : Signal.cases.Awaiting.make({ idempotencyKey: approvalKey(row.id) })
 
 /** Request delivery is only an optimization; all failures leave the SQL debt for the sweeper. */
@@ -346,12 +352,12 @@ const finish = Effect.fn('Approvals.finish')(function* (
       .set({
         ...ending,
         finishedAt: now,
-        signal: encodeSignal(owed(row.id, row.action.summary, conclusion)),
+        signal: encodeSignal(owed(row.id, row.action.summary, conclusion, row.decidedBy)),
         signalDueAt: now,
       })
       .where(
         and(
-          ownedHere(approvals, actor),
+          eq(approvals.decidedBy, actor.person.id),
           eq(approvals.id, row.id),
           eq(approvals.status, 'executing'),
         ),
@@ -483,7 +489,7 @@ const recover = (
       .update(approvals)
       .set({
         ...ending,
-        signal: encodeSignal(owed(row.id, row.action.summary, conclusion)),
+        signal: encodeSignal(owed(row.id, row.action.summary, conclusion, row.decidedBy)),
         signalDueAt: now,
       })
       .where(eq(approvals.id, row.id))

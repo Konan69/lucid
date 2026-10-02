@@ -8,7 +8,7 @@ import { Signal, encodeSignal } from './signal.ts'
  *
  * `action` is the encoded `ProposedAction` and `digest` its SHA-256; a decision must quote the
  * digest, so a card drawn from an older proposal cannot authorize a newer one. `person_id` is the
- * Person asked, the only one who may decide.
+ * Person whose Run continues; any Person deciding must be able to see the Thread.
  *
  * `status` moves `pending` → `executing` → `succeeded` | `failed` | `unknown`, or `pending` →
  * `denied` | `expired` | `withdrawn`. The move out of `pending` is one conditional `UPDATE`, which

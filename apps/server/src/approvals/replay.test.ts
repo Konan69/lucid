@@ -5,6 +5,7 @@ import { Deferred, Effect, Exit, Fiber, Layer, Option, Queue, Ref } from 'effect
 import * as TestClock from 'effect/testing/TestClock'
 import { Database, returned } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
+import { DeliverySpeaker } from '../threads/conversation.ts'
 import { threads } from '../threads/tables.ts'
 import { ApprovalStore, approvalStoreLayer } from './store.ts'
 import { approvals } from './tables.ts'
@@ -15,6 +16,39 @@ const deny = ApprovalDecision.cases.Deny.make({})
 
 /** PostgreSQL owns debts and leases; abrupt defects represent a lost process without undoing SQL. */
 describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
+  it.effect(
+    'a shared Thread decision carries its decider while continuing the asked Person authority',
+    () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const database = yield* Database
+        const store = yield* ApprovalStore
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'company' })
+            .where(eq(threads.id, test.companyId)),
+        )
+        const approval = yield* store.raise(test.companyVivid, commandAction)
+        yield* store.decide(test.owner, {
+          id: approval.id,
+          digest: approval.digest,
+          decision: deny,
+        })
+        const delivered = yield* Ref.get((yield* Observation).deliveries)
+        expect(delivered).toMatchObject([
+          {
+            personId: test.member.person.id,
+            speaker: DeliverySpeaker.cases.Decider.make({ personId: test.owner.person.id }),
+          },
+        ])
+        const rows = yield* database.run(
+          database.select().from(approvals).where(eq(approvals.id, approval.id)),
+        )
+        expect(rows).toMatchObject([{ decidedBy: test.owner.person.id }])
+      }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
   it.effect('crash after decision and before admission is replayed by a fresh store', () =>
     Effect.gen(function* () {
       const test = yield* fixture()

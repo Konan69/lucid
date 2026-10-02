@@ -1,3 +1,4 @@
+import { PersonId } from '@vivid/contracts'
 import * as Schema from 'effect/Schema'
 import { DeliveryMessage } from '../threads/conversation.ts'
 
@@ -5,7 +6,12 @@ import { DeliveryMessage } from '../threads/conversation.ts'
 export const Signal = Schema.TaggedUnion({
   None: {},
   Awaiting: { idempotencyKey: Schema.String },
-  Owed: { idempotencyKey: Schema.String, message: DeliveryMessage.cases.Signal },
+  Owed: {
+    idempotencyKey: Schema.String,
+    /** Expiry has no decider; every human decision retains its original Person. */
+    deciderId: Schema.NullOr(PersonId),
+    message: DeliveryMessage.cases.Signal,
+  },
   Delivered: { idempotencyKey: Schema.String, deliveredAt: Schema.Number },
   Stopped: {
     idempotencyKey: Schema.String,

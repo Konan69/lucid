@@ -193,7 +193,7 @@ const ask = Effect.fn('Inputs.ask')(function* (actor: Actor, request: AskInputRe
   return input
 })
 
-/** An answer claims once, using the addressed Person and the Thread's current workspace. */
+/** A visible shared Thread may be answered once; continuation keeps the addressed Person's authority. */
 const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: AnswerInputRequest) {
   const database = yield* Database
   const rows = yield* database.run(
@@ -201,13 +201,7 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
       .select({ request: inputRequests })
       .from(inputRequests)
       .innerJoin(threads, eq(threads.id, inputRequests.threadId))
-      .where(
-        and(
-          eq(inputRequests.id, request.id),
-          eq(inputRequests.personId, actor.person.id),
-          inWorkspace(threads, actor),
-        ),
-      )
+      .where(and(eq(inputRequests.id, request.id), inWorkspace(threads, actor)))
       .limit(1),
   )
   const value = rows[0]
@@ -220,6 +214,7 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
   const now = yield* Clock.currentTimeMillis
   const signal = Signal.cases.Owed.make({
     idempotencyKey: `answer-${request.id}`,
+    deciderId: actor.person.id,
     message: DeliveryMessage.cases.Signal.make({
       type: 'answer',
       body: request.answer,
@@ -237,13 +232,7 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
         signal: encodeSignal(signal),
         signalDueAt: now,
       })
-      .where(
-        and(
-          eq(inputRequests.id, request.id),
-          eq(inputRequests.personId, actor.person.id),
-          eq(inputRequests.status, 'waiting'),
-        ),
-      )
+      .where(and(eq(inputRequests.id, request.id), eq(inputRequests.status, 'waiting')))
       .returning(),
   )
   if (updated.length === 0)
