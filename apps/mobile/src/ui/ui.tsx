@@ -55,7 +55,8 @@ export const GUTTER = 20
 /** The least a finger needs. A control that draws smaller than this still answers this large. */
 export const TARGET = 44
 
-type Tone =
+/** The inks text and glyphs are drawn in: the palette's own, and one for each kind of state. */
+export type Tone =
   | 'ink'
   | 'ink-2'
   | 'ink-3'

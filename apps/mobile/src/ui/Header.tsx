@@ -4,22 +4,30 @@ import { ChevronLeft } from 'lucide-react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { nativeMetrics as m } from '@vivid/tokens/native'
 import { useTheme } from '../theme'
-import { GUTTER, IconButton, Label } from './ui'
+import { GUTTER, IconButton, Label, type Tone } from './ui'
 
 /**
  * The bar at the top of every screen: the way back, what this is, and at most a couple of
  * actions. It is drawn by the app on both platforms, so a Thread's title (which is live) and the
  * tokens it is painted in never have to be pushed into a native bar after render. The system's
  * back swipe is the stack's and works whether or not this bar is shown.
+ *
+ * - `leading` stands before the title: Vivid's face, on the screens where Vivid is at work.
+ * - `subtitleTone` is the ink the line under the title is said in. That line can be a state
+ *   (working, waiting for the Person), and a state is said in its own colour as well as in words.
  */
 export function Header({
   title,
   subtitle,
+  subtitleTone = 'ink-3',
+  leading,
   onBack,
   trailing,
 }: {
   title: string
   subtitle?: string
+  subtitleTone?: Tone
+  leading?: ReactNode
   onBack?: () => void
   trailing?: ReactNode
 }) {
@@ -42,17 +50,38 @@ export function Header({
         {onBack !== undefined && (
           <IconButton icon={ChevronLeft} label="Back" tone="ink" onPress={onBack} />
         )}
-        <View style={{ flex: 1, minWidth: 0, marginLeft: onBack === undefined ? 0 : 2 }}>
+        {leading !== undefined && (
+          <View style={{ marginLeft: onBack === undefined ? 0 : 2, marginRight: 10 }}>
+            {leading}
+          </View>
+        )}
+        <View
+          style={{
+            flex: 1,
+            minWidth: 0,
+            // What stands before the title already keeps it clear of the way back.
+            marginLeft: onBack === undefined || leading !== undefined ? 0 : 2,
+          }}
+        >
           <Label accessibilityRole="header" numberOfLines={1} size="headline">
             {title}
           </Label>
           {subtitle !== undefined && (
-            <Label numberOfLines={1} size="caption" tone="ink-3">
+            // Said again to a screen reader when it changes: it is where a Thread says that
+            // Vivid has started working, or is now waiting for the Person.
+            <Label
+              accessibilityLiveRegion="polite"
+              numberOfLines={1}
+              size="caption"
+              tone={subtitleTone}
+            >
               {subtitle}
             </Label>
           )}
         </View>
-        {trailing}
+        {trailing !== undefined && (
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>{trailing}</View>
+        )}
       </View>
     </View>
   )

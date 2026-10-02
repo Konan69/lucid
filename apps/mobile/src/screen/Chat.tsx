@@ -4,12 +4,12 @@ import type { FlueConversationMessage } from '@flue/sdk'
 import {
   ThreadAudience,
   Workspace,
-  type MeResponse,
   type Thread,
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
-import { draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
+import type { FaceMood } from '@vivid/marks'
+import { draftPlace, standingWords, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useMemo, useState } from 'react'
@@ -25,10 +25,22 @@ import { LiveState, refusalOf, useLive, useLiveData } from '../data/live'
 import { isShown, isStreaming, lastWordsOf, type Around } from '../data/message'
 import { endingOf, newestRun } from '../data/outcome'
 import { conversation, say, UNDELIVERED, UNTITLED } from '../data/threads'
+import { Faces } from '../ui/Avatar'
 import { Composer } from '../ui/Composer'
 import { Header, Screen } from '../ui/Header'
 import { AboveKeyboard } from '../ui/Keyboard'
-import { Button, Empty, Face, GUTTER, IconButton, Label, Notice, Skeleton, styles } from '../ui/ui'
+import {
+  Button,
+  Empty,
+  Face,
+  GUTTER,
+  IconButton,
+  Label,
+  Notice,
+  Skeleton,
+  styles,
+  type Tone,
+} from '../ui/ui'
 import { useGo, useMe, type Routes } from '../workspace'
 import { Message } from './chat/Message'
 import { Share } from './chat/Share'
@@ -105,25 +117,83 @@ function Gone() {
   )
 }
 
-/** What the header says under the title: who is writing, who is here, or who it is shared with. */
-function standingOf(thread: Thread, detail: ThreadDetail, me: MeResponse): Option.Option<string> {
-  const others = detail.present.filter((seen) => seen.person.id !== me.person.id)
-  const typing = others.filter((seen) => seen.typing)
-  if (typing.length > 0) {
-    return Option.some(`${typing.map((seen) => seen.person.name).join(', ')} typing…`)
-  }
-  if (others.length > 0) {
-    return Option.some(`${others.map((seen) => seen.person.name).join(', ')} here now`)
-  }
-  return ThreadAudience.match(thread.audience, {
-    Private: () => Option.none(),
-    People: ({ participants }) => Option.some(`Shared with ${participants.length + 1} people`),
-    Company: () =>
-      Workspace.match(me.workspace, {
-        Personal: () => Option.none(),
-        Company: ({ company }) => Option.some(`Everyone in ${company.name}`),
-      }),
+/**
+ * How Vivid is doing in a Thread, beside the words for it (`standingWords`, shared with the web):
+ * the look on its face, and the ink the line under the title is said in.
+ */
+const STANDING = {
+  Working: { mood: 'thinking', tone: 'status-working' },
+  NeedsYou: { mood: 'neutral', tone: 'status-attention' },
+  Unread: { mood: 'happy', tone: 'ink-3' },
+  Quiet: { mood: 'neutral', tone: 'ink-3' },
+} as const satisfies Record<Thread['attention'], { mood: FaceMood; tone: Tone }>
+
+/** Who can see a Thread, in a sentence, for whoever cannot see the mark that says so. */
+const audienceWords = (thread: Thread): string =>
+  ThreadAudience.match(thread.audience, {
+    Private: () => 'Only you can see this thread',
+    People: ({ participants }) => `Shared with ${participants.length + 1} people`,
+    Company: () => 'Everyone in the company can see this thread',
   })
+
+/**
+ * The top of a Thread. Vivid is in it, not just named by it: its face, the Thread's title, and a
+ * line saying how it is doing right now (here, working, waiting for the Person). While someone
+ * else is writing, the line says that instead, because it is the thing about to change the
+ * Thread. On the right: who else is looking, and who the Thread is shared with.
+ */
+function Top({
+  thread,
+  present,
+  working,
+  onShare,
+}: {
+  thread: Option.Option<Thread>
+  present: ThreadDetail['present']
+  /** Vivid is answering on this phone right now, which the Thread's record may not say yet. */
+  working: boolean
+  onShare: () => void
+}) {
+  const me = useMe()
+  const go = useGo()
+  const others = present.filter((seen) => seen.person.id !== me.person.id)
+  const typing = others.filter((seen) => seen.typing)
+  const attention: Thread['attention'] = working
+    ? 'Working'
+    : Option.match(thread, { onNone: () => 'Quiet', onSome: (value) => value.attention })
+  const standing = STANDING[attention]
+  const someoneTyping = typing.length > 0
+  return (
+    <Header
+      leading={<Face size={28} mood={standing.mood} />}
+      title={Option.match(thread, { onNone: () => '', onSome: (value) => value.title })}
+      subtitle={
+        someoneTyping
+          ? `${typing.map((seen) => seen.person.name).join(', ')} typing…`
+          : standingWords[attention]
+      }
+      subtitleTone={someoneTyping ? 'ink-3' : standing.tone}
+      onBack={go.goBack}
+      trailing={
+        <>
+          {others.length > 0 && (
+            <View style={{ marginRight: 4 }}>
+              <Faces people={others.map((seen) => seen.person)} size={20} />
+            </View>
+          )}
+          {Option.isSome(thread) && Workspace.guards.Company(me.workspace) && (
+            <IconButton
+              icon={ThreadAudience.guards.Private(thread.value.audience) ? Share2 : Users}
+              label={`${audienceWords(thread.value)}. Choose who can see this thread`}
+              // Only its creator may change who a Thread is shared with.
+              disabled={thread.value.createdBy.id !== me.person.id}
+              onPress={onShare}
+            />
+          )}
+        </>
+      }
+    />
+  )
 }
 
 /**
@@ -217,7 +287,6 @@ function useSend(
  */
 function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<ThreadDetail> }) {
   const me = useMe()
-  const go = useGo()
   const data = useLiveData()
   const client = useMemo(() => conversation(data.session, id), [data.session, id])
   const agent = useFlueAgent({ client })
@@ -299,23 +368,11 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
 
   return (
     <AboveKeyboard>
-      <Header
-        title={Option.match(thread, { onNone: () => '', onSome: (value) => value.title })}
-        subtitle={Option.getOrUndefined(
-          Option.flatMap(detail, (value) => standingOf(value.thread, value, me)),
-        )}
-        onBack={go.goBack}
-        trailing={
-          Option.isSome(thread) && Workspace.guards.Company(me.workspace) ? (
-            <IconButton
-              icon={shared ? Users : Share2}
-              label="Choose who can see this thread"
-              // Only its creator may change who a Thread is shared with.
-              disabled={thread.value.createdBy.id !== me.person.id}
-              onPress={() => setSharing(true)}
-            />
-          ) : undefined
-        }
+      <Top
+        thread={thread}
+        present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
+        working={working}
+        onShare={() => setSharing(true)}
       />
       <View ref={wake} style={{ flex: 1 }}>
         <Messages

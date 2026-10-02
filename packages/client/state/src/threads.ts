@@ -49,3 +49,15 @@ export const workspaceKey = (workspace: Workspace): string =>
     Personal: () => 'personal',
     Company: ({ company }) => company.id,
   })
+
+/**
+ * How Vivid is doing in a Thread, in the words every surface puts under the Thread's title. Vivid
+ * is in the Thread, not just named by it: when nothing is happening it is "here", not idle. A new
+ * kind of attention fails to compile here until it has words.
+ */
+export const standingWords = {
+  Working: 'Working on it…',
+  NeedsYou: 'Waiting for you',
+  Unread: 'Here with you',
+  Quiet: 'Here with you',
+} as const satisfies Record<Thread['attention'], string>
