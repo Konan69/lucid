@@ -104,7 +104,15 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           ))._tag,
         ).toBe('NotFound')
         expect(
-          (yield* Effect.flip(resolveTool(ownerActor, { account: 'gmail (gmail)', tool: 'read' })))
+          (yield* resolveTool(ownerActor, { account: '  gmail (GMAIL)  ', tool: 'read' }))
+            .connectionId,
+        ).toBe(first.connection.id)
+        expect(
+          (yield* resolveTool(ownerActor, { account: ' GMAIL (gmail) (2) ', tool: 'read' }))
+            .connectionId,
+        ).toBe(second.connection.id)
+        expect(
+          (yield* Effect.flip(resolveTool(ownerActor, { account: 'gmail (gmail)', tool: 'READ' })))
             ._tag,
         ).toBe('NotFound')
         const writes = yield* findTools(ownerActor, { query: 'write', limit: 25 })
