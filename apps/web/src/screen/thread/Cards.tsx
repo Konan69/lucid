@@ -461,25 +461,46 @@ function Finish({
     )
   }
   return ConnectionAuthorization.match(authorization.value, {
-    OpenSignIn: ({ address }) => (
-      <Button
-        size="sm"
-        variant="primary"
-        onClick={() => {
-          // The tab is opened by the click itself, which is the only time a browser allows it.
-          if (showSignIn(window.open('about:blank', '_blank'), address)) return
-          say(`${name}’s sign-in page could not be opened. Allow pop-ups for this page.`)
-        }}
-      >
-        Sign in
-      </Button>
-    ),
+    OpenSignIn: ({ address }) => <SignInButton name={name} address={address} />,
     EnterKey: ({ connectionId, fields }) => (
-      <Button size="sm" variant="primary" onClick={() => onKey({ id: connectionId, name, fields })}>
-        Enter key
-      </Button>
+      <EnterKeyButton connectionId={connectionId} name={name} fields={fields} onKey={onKey} />
     ),
   })
+}
+
+/** Opens the authorization address from the initiating click so browser popup rules are met. */
+function SignInButton({ name, address }: { name: string; address: string }) {
+  return (
+    <Button
+      size="sm"
+      variant="primary"
+      onClick={() => {
+        if (showSignIn(window.open('about:blank', '_blank'), address)) return
+        say(`${name}’s sign-in page could not be opened. Allow pop-ups for this page.`)
+      }}
+    >
+      Sign in
+    </Button>
+  )
+}
+
+/** Opens the key dialog with the fields required by the authorization record. */
+function EnterKeyButton({
+  connectionId,
+  name,
+  fields,
+  onKey,
+}: {
+  connectionId: Keying['id']
+  name: string
+  fields: Keying['fields']
+  onKey: (keying: Keying) => void
+}) {
+  return (
+    <Button size="sm" variant="primary" onClick={() => onKey({ id: connectionId, name, fields })}>
+      Enter key
+    </Button>
+  )
 }
 
 /** Finds the record a card stands for among what the Thread carries. */
