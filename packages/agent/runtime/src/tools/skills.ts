@@ -27,7 +27,7 @@ export function skillTools(runTool: RunTool) {
             if (entry === undefined) return yield* Effect.fail(new NameMissing({ name: data.name }))
             return { output: views.skill(response.skill, entry.name) }
           }),
-          { signal },
+          { signal, tool: 'read_skill' },
         )
       },
     }),
@@ -57,7 +57,7 @@ export function skillTools(runTool: RunTool) {
             if (entry === undefined) return yield* Effect.fail(new NameMissing({ name: data.name }))
             return { output: views.skillSummary(response.skill, entry.name) }
           }),
-          { signal },
+          { signal, tool: 'save_skill' },
         )
       },
     }),

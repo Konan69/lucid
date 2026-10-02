@@ -1,5 +1,10 @@
 import { defineTool } from '@flue/runtime'
-import { AddIntegrationOutcome, InvalidRequest, TestIntegrationOutcome } from '@vivid/contracts'
+import {
+  AddIntegrationOutcome,
+  InvalidRequest,
+  TestIntegrationOutcome,
+  ToolOutcome,
+} from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
@@ -9,6 +14,7 @@ import { Scope, type RunTool } from './scope.ts'
 import * as views from './views.ts'
 import * as connectionViews from './connectionviews.ts'
 import { INTEGRATIONS } from './integrations.ts'
+import { warnFailure } from './result.ts'
 
 const decodeInput = Schema.decodeUnknownEffect(Schema.Json)
 
@@ -29,7 +35,7 @@ export function connectionTools(runTool: RunTool) {
               output: views.tools(yield* client.FindTools({ query: data.query, limit: 25 })),
             }
           }),
-          { signal },
+          { signal, tool: 'find_tools' },
         )
       },
     }),
@@ -60,7 +66,7 @@ export function connectionTools(runTool: RunTool) {
             })
             return { output: views.connectionRequest(response) }
           }),
-          { signal },
+          { signal, tool: 'connect' },
         )
       },
     }),
@@ -94,17 +100,22 @@ function useTool(runTool: RunTool) {
             Effect.mapError(() => new InvalidRequest({ message: 'Tool input must be JSON.' })),
           )
           const match = yield* client.ResolveTool({ account: data.account, tool: data.tool })
-          return toolOutcome(
-            yield* client.UseTool({
-              connectionId: match.connectionId,
-              tool: match.name,
-              input,
-              summary: data.summary,
-              rationale: data.rationale,
-            }),
+          const outcome = yield* client.UseTool({
+            connectionId: match.connectionId,
+            tool: match.name,
+            input,
+            summary: data.summary,
+            rationale: data.rationale,
+          })
+          if (
+            ToolOutcome.isAnyOf(['Blocked', 'ConnectionNotReady', 'Rejected', 'OutcomeUnknown'])(
+              outcome,
+            )
           )
+            yield* warnFailure('use_tool', outcome._tag)
+          return toolOutcome(outcome)
         }),
-        { signal },
+        { signal, tool: 'use_tool' },
       )
     },
   })
@@ -122,9 +133,12 @@ function integrationTools(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            return { output: connectionViews.integrations(yield* client.FindIntegrations(data)) }
+            const response = yield* client.FindIntegrations(data)
+            if (response.catalog === 'unavailable')
+              yield* warnFailure('find_integrations', 'ServiceUnavailable')
+            return { output: connectionViews.integrations(response) }
           }),
-          { signal },
+          { signal, tool: 'find_integrations' },
         )
       },
     }),
@@ -142,12 +156,14 @@ function integrationTools(runTool: RunTool) {
           Effect.gen(function* () {
             const { client } = yield* Scope
             const outcome = yield* client.AddIntegration({ ...data, shared: false })
+            if (AddIntegrationOutcome.isAnyOf(['NotAnIntegration', 'Unreachable'])(outcome))
+              yield* warnFailure('add_integration', outcome._tag)
             return {
               output: connectionViews.added(outcome),
               terminate: AddIntegrationOutcome.isAnyOf(['NeedsSignIn', 'NeedsKey'])(outcome),
             }
           }),
-          { signal },
+          { signal, tool: 'add_integration' },
         )
       },
     }),
@@ -164,12 +180,14 @@ function integrationTools(runTool: RunTool) {
           Effect.gen(function* () {
             const { client } = yield* Scope
             const outcome = yield* client.TestIntegration(data)
+            if (TestIntegrationOutcome.isAnyOf(['NotTested', 'Blocked', 'Unreachable'])(outcome))
+              yield* warnFailure('test_integration', outcome._tag)
             return {
               output: connectionViews.tested(outcome),
               terminate: TestIntegrationOutcome.guards.ApprovalRequired(outcome),
             }
           }),
-          { signal },
+          { signal, tool: 'test_integration' },
         )
       },
     }),

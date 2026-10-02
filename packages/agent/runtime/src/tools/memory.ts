@@ -48,7 +48,7 @@ function forgetTool(runTool: RunTool) {
           yield* client.ForgetMemory({ id: selected.memory.id })
           return { output: views.forgotten(selected.memory) }
         }),
-        { signal },
+        { signal, tool: 'forget' },
       )
     },
   })
@@ -77,7 +77,7 @@ function correctTool(runTool: RunTool) {
           })
           return { output: views.corrected(selected.memory, response.memory) }
         }),
-        { signal },
+        { signal, tool: 'correct' },
       )
     },
   })
@@ -99,7 +99,7 @@ export function memoryTools(runTool: RunTool) {
             const response = yield* client.Recall({ query: data.query, limit: 25 })
             return { output: views.memories(response.memories) }
           }),
-          { signal },
+          { signal, tool: 'recall' },
         )
       },
     }),
@@ -120,7 +120,7 @@ export function memoryTools(runTool: RunTool) {
             const response = yield* client.Remember(data)
             return { output: views.remembered(response.memory) }
           }),
-          { signal },
+          { signal, tool: 'remember' },
         )
       },
     }),

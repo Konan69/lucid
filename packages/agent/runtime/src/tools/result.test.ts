@@ -11,7 +11,7 @@ import {
   ServiceUnavailable,
   Unauthenticated,
 } from '@vivid/contracts'
-import { Cause, Config, ConfigProvider, Effect, Exit } from 'effect'
+import { Cause, Config, ConfigProvider, Effect, Exit, Logger } from 'effect'
 import { RpcClientDefect, RpcClientError } from 'effect/unstable/rpc/RpcClientError'
 import { boundOutput, settle } from './result.ts'
 
@@ -71,6 +71,33 @@ describe('output limits', () => {
 })
 
 describe('RPC result boundary', () => {
+  it.effect(
+    'logs one warning with the tool and tag, without failure payloads or successful results',
+    () =>
+      Effect.gen(function* () {
+        const logs: string[] = []
+        const logger = Logger.make(({ message, logLevel }) => {
+          logs.push(JSON.stringify({ message, logLevel }))
+        })
+        yield* Effect.gen(function* () {
+          yield* settle(
+            Effect.fail(
+              new ServiceUnavailable({
+                service: 'connections',
+                message: 'secret-token-and-private-output',
+              }),
+            ),
+            'create_task',
+          )
+          yield* settle(Effect.succeed({ output: 'private-successful-output' }), 'read_page')
+        }).pipe(Effect.provide(Logger.layer([logger])))
+        expect(logs).toHaveLength(1)
+        expect(logs[0]).toContain('Warn')
+        expect(logs[0]).toContain('create_task')
+        expect(logs[0]).toContain('ServiceUnavailable')
+        expect(logs[0]).not.toMatch(/private|secret|read_page/u)
+      }),
+  )
   it.effect('turns every declared product failure into a safe, bounded output', () =>
     Effect.gen(function* () {
       const message = 'Private driver payload that must never reach the model'
@@ -87,12 +114,12 @@ describe('RPC result boundary', () => {
         new ServiceUnavailable({ service: 'memory', message }),
       ]
       for (const failure of failures) {
-        const result = yield* settle(Effect.fail(failure))
+        const result = yield* settle(Effect.fail(failure), 'test-tool')
         expect(result.output).toHaveProperty('ok', false)
         expect(JSON.stringify(result.output)).not.toContain(message)
         expect(result.terminate).toBe(false)
       }
-      expect((yield* settle(Effect.fail(new NotFound({ message })))).output).toEqual({
+      expect((yield* settle(Effect.fail(new NotFound({ message })), 'test-tool')).output).toEqual({
         ok: false,
         message: 'It does not exist or the person cannot see it.',
       })
@@ -111,26 +138,26 @@ describe('RPC result boundary', () => {
         },
         terminate: false,
       }
-      expect(yield* settle(Effect.fail(failure))).toEqual(expected)
+      expect(yield* settle(Effect.fail(failure), 'test-tool')).toEqual(expected)
       const configuration = Config.String('REQUIRED').pipe(
         Effect.map((value) => ({ output: value })),
         Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
       )
-      expect(yield* settle(configuration)).toEqual(expected)
+      expect(yield* settle(configuration, 'test-tool')).toEqual(expected)
     }),
   )
 
   it.effect('keeps defects out of the safe-failure recovery path', () =>
     Effect.gen(function* () {
       const defect = new TypeError('Tool invariant failed')
-      const exit = yield* Effect.exit(settle(Effect.die(defect)))
+      const exit = yield* Effect.exit(settle(Effect.die(defect), 'test-tool'))
       expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true)
     }),
   )
 
   it.effect('returns a boolean stop flag for ordinary results so Flue accepts the envelope', () =>
     Effect.gen(function* () {
-      expect(yield* settle(Effect.succeed({ output: { tasks: [] } }))).toEqual({
+      expect(yield* settle(Effect.succeed({ output: { tasks: [] } }), 'test-tool')).toEqual({
         output: { tasks: [] },
         terminate: false,
       })
@@ -149,6 +176,7 @@ describe('RPC result boundary', () => {
             },
             terminate: true,
           }),
+          'test-tool',
         ),
       ).toEqual({
         output: {

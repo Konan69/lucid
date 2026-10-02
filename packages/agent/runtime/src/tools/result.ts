@@ -1,6 +1,8 @@
 import type { RpcFailure } from '@vivid/contracts/rpc'
 import * as Config from 'effect/Config'
+import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
 import * as Predicate from 'effect/Predicate'
 import type * as Schema from 'effect/Schema'
 import type * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
@@ -71,11 +73,24 @@ function failure(message: string) {
   return Effect.succeed({ output: { ok: false, message: modelText(message) }, terminate: false })
 }
 
+/** Only tool identity and the declared failure tag reach logs; payloads and causes stay private. */
+export const warnFailure = (tool: string, tag: string) =>
+  Effect.logWarning(`Tool failed tool=${tool} tag=${tag}`)
+
 /** Only declared product failures are recovered; transport and configuration have fixed safe wording; defects propagate. */
 export const settle = Effect.fn('Tools.settle')(function* (
   program: Effect.Effect<ToolResult, ToolFailure>,
+  tool: string,
 ) {
   const result = yield* program.pipe(
+    Effect.tapCause((cause) => {
+      const error = Cause.findErrorOption(cause)
+      const tag = Option.match(error, {
+        onSome: (declared) => declared._tag,
+        onNone: () => (Cause.hasDies(cause) ? 'Defect' : 'Interrupted'),
+      })
+      return warnFailure(tool, tag)
+    }),
     Effect.catchTags({
       NameMissing: ({ name }) => failure(`Nothing here is called “${name}”; list them again.`),
       NameAmbiguous: ({ name, matches }) =>

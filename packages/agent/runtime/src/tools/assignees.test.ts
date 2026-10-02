@@ -140,7 +140,7 @@ describe('assignee directory failures', () => {
           return { output: { assignee } }
         }),
       )
-      expect(yield* settle(program)).toEqual({
+      expect(yield* settle(program, 'create_task')).toEqual({
         output: { ok: false, message: 'Vivid cannot reach its saved records right now.' },
         terminate: false,
       })

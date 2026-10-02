@@ -12,6 +12,8 @@ import {
   BrowserAction,
   RunCommandRequest,
   DesktopOutcome,
+  CommandOutcome,
+  BrowseOutcome,
   UseDesktopRequest,
   type DesktopView,
 } from '@vivid/contracts'
@@ -20,6 +22,7 @@ import * as Schema from 'effect/Schema'
 import * as Option from 'effect/Option'
 import * as Result from 'effect/Result'
 import * as Match from 'effect/Match'
+import { warnFailure } from './result.ts'
 import * as v from 'valibot'
 import { Scope, type RunTool } from './scope.ts'
 import { summary, text } from './inputs.ts'
@@ -117,9 +120,12 @@ export function computerDefinitions(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            return commandOutcome(yield* client.RunCommand(RunCommandRequest.make(request)))
+            const outcome = yield* client.RunCommand(RunCommandRequest.make(request))
+            if (CommandOutcome.isAnyOf(['Blocked', 'Unavailable'])(outcome))
+              yield* warnFailure('run_command', outcome._tag)
+            return commandOutcome(outcome)
           }),
-          { signal },
+          { signal, tool: 'run_command' },
         )
       },
     }),
@@ -136,11 +142,15 @@ export function computerDefinitions(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            return browseOutcome(
-              yield* client.Browse({ action: browserAction(data.action), summary: data.summary }),
-            )
+            const outcome = yield* client.Browse({
+              action: browserAction(data.action),
+              summary: data.summary,
+            })
+            if (BrowseOutcome.isAnyOf(['Blocked', 'Unavailable'])(outcome))
+              yield* warnFailure('browse', outcome._tag)
+            return browseOutcome(outcome)
           }),
-          { signal },
+          { signal, tool: 'browse' },
         )
       },
     }),
@@ -190,10 +200,12 @@ export function desktopModelTool(runTool: RunTool) {
         Effect.gen(function* () {
           const { client } = yield* Scope
           const outcome = yield* client.UseDesktop(request.success)
+          if (DesktopOutcome.isAnyOf(['Blocked', 'Unavailable'])(outcome))
+            yield* warnFailure('use_desktop', outcome._tag)
           if (DesktopOutcome.guards.Completed(outcome)) picture = Option.some(outcome.view)
           return desktopOutcome(outcome)
         }),
-        { signal: cancellation },
+        { signal: cancellation, tool: 'use_desktop' },
       ).then((result): DesktopToolResult => {
         const metadata = { type: 'text' as const, text: JSON.stringify(result.output) }
         return Option.match(picture, {

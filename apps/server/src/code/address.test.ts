@@ -19,16 +19,16 @@ it.effect(
           ['--import', import.meta.resolve('tsx'), '--input-type=module', '-e', source],
           { stdio: ['ignore', 'pipe', 'pipe'] },
         )
-        let output = ''
+        let childOutput = ''
         child.stdout.setEncoding('utf8')
         child.stdout.on('data', (chunk: string) => {
-          output += chunk
+          childOutput += chunk
         })
         child.on('error', () => resume(Effect.die('Could not start the server loader')))
         child.on('close', (code) =>
           resume(
             code === 0
-              ? Effect.succeed(output)
+              ? Effect.succeed(childOutput)
               : Effect.die('The public address policy failed under the server loader'),
           ),
         )

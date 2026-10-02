@@ -163,7 +163,7 @@ function createTool(runTool: RunTool) {
               },
             }
           }),
-          { signal },
+          { signal, tool: 'create_task' },
         ),
       )
     },
@@ -204,7 +204,7 @@ function updateTool(runTool: RunTool) {
             const title = yield* titleOf(yield* taskInventory(), response.task.id)
             return { output: { task: views.task(response.task, title) } }
           }),
-          { signal },
+          { signal, tool: 'update_task' },
         ),
       )
     },
@@ -242,7 +242,7 @@ function listTool(runTool: RunTool) {
             },
           }
         }),
-        { signal },
+        { signal, tool: 'list_tasks' },
       )
     },
   })
@@ -283,7 +283,7 @@ function followUpTool(runTool: RunTool) {
               },
             }
           }),
-          { signal },
+          { signal, tool: 'schedule_follow_up' },
         ),
       )
     },

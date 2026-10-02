@@ -64,7 +64,7 @@ export function routineTools(runTool: RunTool) {
             })
             return { output: views.routine(response.routine, response.routine.name) }
           }),
-          { signal },
+          { signal, tool: 'create_routine' },
         )
       },
     }),
@@ -79,7 +79,7 @@ export function routineTools(runTool: RunTool) {
             const { client } = yield* Scope
             return { output: yield* client.FindEvents({ account: data.account }) }
           }),
-          { signal },
+          { signal, tool: 'find_events' },
         )
       },
     }),
@@ -95,7 +95,7 @@ export function routineTools(runTool: RunTool) {
             const response = yield* client.ListRoutines()
             return { output: { routines: views.routines(response.routines) } }
           }),
-          { signal },
+          { signal, tool: 'list_routines' },
         )
       },
     }),

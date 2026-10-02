@@ -35,7 +35,7 @@ export function libraryTools(runTool: RunTool) {
             const response = yield* scope.client.SearchLibrary(request)
             return { output: { results: views.passages(response.results) } }
           }),
-          { signal },
+          { signal, tool: 'search_library' },
         )
       },
     }),

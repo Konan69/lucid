@@ -146,7 +146,7 @@ describe('Routine Library authority', () => {
         yield* Scope
         return { output: { ok: true } }
       }).pipe(Effect.provide(scopeLayer('thread', { kind: 'user', body: 'Do it.' }, Option.none())))
-      expect((yield* settle(program)).output).toEqual({
+      expect((yield* settle(program, 'test-tool')).output).toEqual({
         ok: false,
         message: 'There is no person behind this message to act for.',
       })

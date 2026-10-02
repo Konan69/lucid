@@ -37,7 +37,7 @@ export function askTools(runTool: RunTool) {
             const { request } = yield* client.AskInput(data)
             return { output: views.inputRequest(request), terminate: true }
           }),
-          { signal },
+          { signal, tool: 'ask_person' },
         )
       },
     }),

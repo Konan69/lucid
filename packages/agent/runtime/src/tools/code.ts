@@ -4,7 +4,7 @@ import { Effect, Schema } from 'effect'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
 import { Scope, type RunTool } from './scope.ts'
-import type { ToolResult } from './result.ts'
+import { warnFailure, type ToolResult } from './result.ts'
 import * as views from './views.ts'
 
 /** These are the entire guest API, with human account names and no Vivid ownership arguments. */
@@ -86,9 +86,14 @@ export function codeTools(runTool: RunTool) {
       run({ data, signal }) {
         return runTool(
           Effect.gen(function* () {
-            return codeOutcome(yield* (yield* Scope).client.RunCode(data))
+            const outcome = yield* (yield* Scope).client.RunCode(data)
+            if (CodeOutcome.guards.Failed(outcome))
+              yield* warnFailure('run_code', outcome.failure._tag)
+            if (CodeOutcome.isAnyOf(['Blocked', 'OutcomeUnknown'])(outcome))
+              yield* warnFailure('run_code', outcome._tag)
+            return codeOutcome(outcome)
           }),
-          { signal },
+          { signal, tool: 'run_code' },
         )
       },
     }),
@@ -100,9 +105,12 @@ export function codeTools(runTool: RunTool) {
       run({ data, signal }) {
         return runTool(
           Effect.gen(function* () {
-            return pageOutcome(yield* (yield* Scope).client.ReadPage(data))
+            const outcome = yield* (yield* Scope).client.ReadPage(data)
+            if (ReadPageOutcome.guards.Refused(outcome))
+              yield* warnFailure('read_page', outcome._tag)
+            return pageOutcome(outcome)
           }),
-          { signal },
+          { signal, tool: 'read_page' },
         )
       },
     }),

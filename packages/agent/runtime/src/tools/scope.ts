@@ -45,10 +45,10 @@ export function scopeLayer(
 export function toolRunner(layer: Layer.Layer<Scope, ToolFailure>) {
   return function runTool(
     program: Effect.Effect<ToolResult, ToolFailure, Scope>,
-    { signal }: Pick<ToolContext<undefined>, 'signal'>,
+    { signal, tool }: Pick<ToolContext<undefined>, 'signal'> & { readonly tool: string },
   ) {
     // oxlint-disable-next-line vivid/no-runpromise-in-library -- This is the single Flue tool execution boundary, classified exactly by the Effect audit.
-    return Effect.runPromise(settle(program.pipe(Effect.provide(layer))), { signal })
+    return Effect.runPromise(settle(program.pipe(Effect.provide(layer)), tool), { signal })
   }
 }
 
