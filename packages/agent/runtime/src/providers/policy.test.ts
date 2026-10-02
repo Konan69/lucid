@@ -161,10 +161,7 @@ describe('bounded model policy', () => {
 
   it.effect('an attempt deadline aborts its provider before retrying', () =>
     Effect.gen(function* () {
-      const evidence = yield* fixture([
-        [{ type: 'start', partial: message('primary', [], 'pending') }],
-        answer('primary', 'Hello'),
-      ])
+      const evidence = yield* fixture([[], answer('primary', 'Hello')])
       const run = yield* modelStream(evidence.provider, primary, { messages: [] }, {}).pipe(
         Stream.runCollect,
         Effect.forkScoped,
@@ -180,6 +177,29 @@ describe('bounded model policy', () => {
       const events = yield* Fiber.join(run)
       expect(events.map((event) => event.type)).toEqual(['start', 'done'])
     }).pipe(Effect.provide(configuration({ VIVID_MODEL_ATTEMPT_TIMEOUT_MS: '1000' }))),
+  )
+
+  it.effect('reasoning for thirty seconds stays alive without making output visible', () =>
+    Effect.gen(function* () {
+      const thinking = message('primary', [{ type: 'thinking', thinking: 'Working' }], 'pending')
+      const evidence = yield* fixture([
+        [{ type: 'thinking_delta', contentIndex: 0, delta: 'Working', partial: thinking }],
+      ])
+      const run = yield* modelStream(evidence.provider, primary, { messages: [] }, {}).pipe(
+        Stream.runCollect,
+        Effect.forkScoped,
+      )
+      yield* Queue.take(evidence.calls)
+      yield* TestClock.adjust('30 seconds')
+      const source = evidence.sources[0]
+      const signal = evidence.signals[0]
+      if (source === undefined || signal === undefined) expect.fail('Provider was not started')
+      expect(signal.aborted).toBe(false)
+      for (const event of answer('primary', 'Answer')) source.push(event)
+      const events = yield* Fiber.join(run)
+      expect(events.map((event) => event.type)).toEqual(['thinking_delta', 'start', 'done'])
+      expect(evidence.sources).toHaveLength(1)
+    }).pipe(Effect.provide(configuration({}))),
   )
 
   it.effect('one overall deadline fails a provider that never produces content', () =>

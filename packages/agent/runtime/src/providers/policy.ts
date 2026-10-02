@@ -91,10 +91,21 @@ const checked = Effect.fn('Models.checked')(function* (
 const prepare = Effect.fn('Models.prepare')(function* (
   iterator: AsyncIterator<AssistantMessageEvent>,
   name: ModelName,
+  attemptMillis: number,
 ) {
   const buffered: AssistantMessageEvent[] = []
   while (true) {
-    const next = yield* readModelEvent(iterator, name)
+    // The attempt budget measures provider liveness. After any event, only the overall
+    // visible-content deadline applies; reasoning remains buffered and cannot disable retries.
+    const pull = readModelEvent(iterator, name)
+    const next = yield* buffered.length === 0
+      ? pull.pipe(
+          Effect.timeoutOrElse({
+            duration: attemptMillis,
+            orElse: () => Effect.fail(new TimedOut({ model: name })),
+          }),
+        )
+      : pull
     if (next.done) return yield* Effect.fail(new NoAnswer({ model: name }))
     const event = yield* checked(next.value, name)
     buffered.push(event)
@@ -130,12 +141,7 @@ const attempt = (input: Attempt) =>
         },
       )
       const iterator = source[Symbol.asyncIterator]()
-      const buffered = yield* prepare(iterator, name).pipe(
-        Effect.timeoutOrElse({
-          duration: input.attemptMillis,
-          orElse: () => Effect.fail(new TimedOut({ model: name })),
-        }),
-      )
+      const buffered = yield* prepare(iterator, name, input.attemptMillis)
       yield* Ref.set(input.visible, true)
       const tail = Stream.unfold(iterator, (current) =>
         readModelEvent(current, name).pipe(
