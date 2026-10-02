@@ -70,7 +70,7 @@ describe('integration model views', () => {
     })
     expect(JSON.stringify({ view, receipt })).not.toContain('MARK-')
   })
-  it('emits an OAuth card with only the existing card references and secure address', () => {
+  it('keeps the OAuth sign-in address out of the model-visible card', () => {
     const view = decodeCard(
       added(
         AddIntegrationOutcome.cases.NeedsSignIn.make({
@@ -86,11 +86,12 @@ describe('integration model views', () => {
       service: 'MARK-service',
       authorization: {
         connectionId: 'MARK-connection',
-        address: 'https://service.example/sign-in',
       },
     })
     expect(JSON.stringify(view)).not.toContain('MARK-person')
     expect(JSON.stringify(view)).not.toContain('ownership')
+    expect(JSON.stringify(view)).not.toContain('https://service.example/sign-in')
+    expect(view.authorization).not.toHaveProperty('address')
   })
   it('emits only masked-dialog field definitions and never a key submission', () => {
     const view = decodeCard(

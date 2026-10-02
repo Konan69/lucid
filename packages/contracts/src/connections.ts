@@ -292,7 +292,7 @@ export type TestIntegrationOutcome = typeof TestIntegrationOutcome.Type
 
 /** Runtime authorization cards carry only the references clients need to resume/complete securely. */
 export const ConnectionAuthorization = Schema.TaggedUnion({
-  OpenSignIn: { connectionId: ConnectionId, address: Schema.String },
+  OpenSignIn: { connectionId: ConnectionId },
   EnterKey: {
     connectionId: ConnectionId,
     fields: ConnectionStep.cases.EnterKey.fields.fields,

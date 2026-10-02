@@ -50,7 +50,6 @@ export function added(outcome: AddIntegrationOutcome) {
         ready: false,
         authorization: ConnectionAuthorization.cases.OpenSignIn.make({
           connectionId: step.connection.id,
-          address: step.address,
         }),
       }),
     NeedsKey: ({ step }) =>
