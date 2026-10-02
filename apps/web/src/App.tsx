@@ -82,21 +82,41 @@ const step = (by: -1 | 1) => {
   if (Option.isSome(next)) router.go(Route.Thread({ id: next.value.id }))
 }
 
+/** Whether a modal is open: Settings, a confirmation, the palette. */
+const inDialog = () => document.querySelector('[aria-modal="true"]') !== null
+
+/**
+ * Whether going somewhere else now would throw away something being written. The shortcuts that
+ * change the screen stand down inside a dialog and while the keyboard is in a field of an editor
+ * (a Routine, a Library item, a rule): leaving unmounts it with whatever was typed. The Thread's
+ * own composer is the exception, because what is typed there is kept for its place.
+ */
+const leavingWouldLose = (event: KeyboardEvent) => {
+  if (inDialog()) return true
+  const target = event.target
+  if (!(target instanceof HTMLElement)) return false
+  const editing = target.isContentEditable || target.matches('input, textarea, select')
+  return editing && target.closest('[data-keeps-draft]') === null
+}
+
 // The shortcuts that work from anywhere. They are module-level listeners, like the sidebar's ⌘B,
 // so they exist for the life of the page and not for the life of a component.
 //   ⌘K          find anything, do anything
 //   ⌘⇧O         new thread
 //   ⌘⇧[  ⌘⇧]    the thread before, the thread after
-addEventListener('keydown', (event) => {
-  if (!(event.metaKey || event.ctrlKey)) return
-  const key = event.key.toLocaleLowerCase()
-  if (key === 'k' && !event.shiftKey) {
-    event.preventDefault()
-    setOverlay(overlay === 'palette' ? 'none' : 'palette')
-    return
-  }
-  if (!event.shiftKey) return
-  if (key === 'o') {
+/** ⌘K: opens the palette over the app, and always closes it. */
+const togglePalette = (event: KeyboardEvent) => {
+  // Over a dialog that is already open (Settings, a confirmation) the palette would be a second
+  // modal on top of the first; it only opens over the app itself.
+  if (overlay !== 'palette' && inDialog()) return
+  event.preventDefault()
+  setOverlay(overlay === 'palette' ? 'none' : 'palette')
+}
+
+/** ⌘⇧O and ⌘⇧[ ]: the shortcuts that change the screen, which stand down over unsaved writing. */
+const goElsewhere = (event: KeyboardEvent) => {
+  if (leavingWouldLose(event)) return
+  if (event.key.toLocaleLowerCase() === 'o') {
     event.preventDefault()
     setOverlay('none')
     router.go(Route.New())
@@ -107,6 +127,14 @@ addEventListener('keydown', (event) => {
     event.preventDefault()
     step(event.code === 'BracketLeft' ? -1 : 1)
   }
+}
+
+addEventListener('keydown', (event) => {
+  if (!(event.metaKey || event.ctrlKey)) return
+  // Not while an input method is composing, and not for a key something else already used.
+  if (event.defaultPrevented || event.isComposing) return
+  if (event.shiftKey) goElsewhere(event)
+  else if (event.key.toLocaleLowerCase() === 'k') togglePalette(event)
 })
 
 /**
@@ -229,6 +257,8 @@ function Shell({ me }: { me: MeResponse }) {
       {Option.isSome(section) && (
         <Suspense fallback={null}>
           <Settings
+            // What is half-typed in Settings belongs to the workspace it was opened in.
+            key={workspaceKey(me.workspace)}
             me={me}
             section={section.value}
             deviceCode={Route.$is('Device')(route) ? Option.getOrElse(route.code, () => '') : ''}

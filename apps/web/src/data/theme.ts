@@ -1,4 +1,6 @@
-import type { Theme } from '@vivid/contracts'
+import { Theme } from '@vivid/contracts'
+import { Option, Schema } from 'effect'
+import { kept } from './kept'
 
 /**
  * How Vivid looks: light, dark, or whatever the system says. The choice is applied to the document
@@ -9,10 +11,11 @@ import type { Theme } from '@vivid/contracts'
 const KEY = 'vivid-theme'
 const dark = matchMedia('(prefers-color-scheme: dark)')
 
-const remembered = (): Theme => {
-  const saved = localStorage.getItem(KEY)
-  return saved === 'light' || saved === 'dark' ? saved : 'system'
-}
+const decodeTheme = Schema.decodeUnknownOption(Theme)
+
+/** The choice this browser kept, when it kept one it still understands. */
+const remembered = (): Theme =>
+  Option.getOrElse(Option.flatMap(kept.read(KEY), decodeTheme), () => 'system')
 
 let preference: Theme = remembered()
 
@@ -32,7 +35,7 @@ export const theme = {
   set: (next: Theme) => {
     if (next === preference) return
     preference = next
-    localStorage.setItem(KEY, next)
+    kept.write(KEY, next)
     apply()
   },
 }

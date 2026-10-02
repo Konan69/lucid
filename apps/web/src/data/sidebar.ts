@@ -1,3 +1,5 @@
+import { Option } from 'effect'
+import { kept } from './kept'
 import { router } from './route'
 
 /**
@@ -12,7 +14,7 @@ import { router } from './route'
 
 const key = 'vivid.sidebar'
 const wide = matchMedia('(min-width: 48rem)')
-let pinned = localStorage.getItem(key) !== 'hidden'
+let pinned = !Option.contains(kept.read(key), 'hidden')
 let drawn = false
 const listeners = new Set<() => void>()
 
@@ -23,7 +25,7 @@ const tell = () => {
 const set = (open: boolean) => {
   if (wide.matches) {
     pinned = open
-    localStorage.setItem(key, open ? 'shown' : 'hidden')
+    kept.write(key, open ? 'shown' : 'hidden')
   } else {
     drawn = open
   }
@@ -42,8 +44,10 @@ const USUAL = 268
 /** What is always left for the page: a full line of reading and the composer. */
 const READING = 640
 
-const remembered = Number(localStorage.getItem(widthKey))
-let wanted = Number.isFinite(remembered) && remembered >= NARROWEST ? remembered : USUAL
+let wanted = Option.getOrElse(
+  Option.filter(Option.map(kept.read(widthKey), Number), (width) => width >= NARROWEST),
+  () => USUAL,
+)
 
 /** The width that can be had right now: what was asked for, within what the window allows. */
 const fitting = () =>
@@ -70,18 +74,18 @@ export const sidebar = {
   nudge: (by: number) => {
     wanted = fitting() + by
     applyWidth()
-    localStorage.setItem(widthKey, String(fitting()))
+    kept.write(widthKey, String(fitting()))
   },
   /** Remembers the width as it now stands. */
   keepWidth: () => {
     wanted = fitting()
-    localStorage.setItem(widthKey, String(wanted))
+    kept.write(widthKey, String(wanted))
   },
   /** Back to the width Vivid starts with. */
   usualWidth: () => {
     wanted = USUAL
     applyWidth()
-    localStorage.removeItem(widthKey)
+    kept.remove(widthKey)
   },
   subscribe: (listener: () => void) => {
     listeners.add(listener)

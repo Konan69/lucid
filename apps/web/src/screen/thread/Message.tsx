@@ -383,7 +383,7 @@ function CopyWords({ read }: { read: () => string }) {
       onMouseLeave={() => setState('idle')}
       className={cn(
         'inline-flex size-6 cursor-pointer items-center justify-center rounded-control transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink active:scale-96',
-        state === 'refused' ? 'text-danger' : 'text-ink-4',
+        state === 'refused' ? 'text-danger' : 'text-ink-3',
       )}
     >
       {state === 'copied' ? <Check className="size-3.5" /> : <CopyIcon className="size-3.5" />}

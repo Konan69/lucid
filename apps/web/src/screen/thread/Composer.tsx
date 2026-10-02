@@ -59,6 +59,8 @@ export function Composer({
             </div>
           )}
           <textarea
+            // What is typed here is kept for its place, so leaving by a shortcut loses nothing.
+            data-keeps-draft
             rows={1}
             aria-label={placeholder}
             placeholder={placeholder}

@@ -80,6 +80,18 @@ function Gone() {
   )
 }
 
+/** Whether Vivid's words in this message are still arriving. */
+const isStreaming = (message: { role: string; parts: ReadonlyArray<object> }) =>
+  message.role === 'assistant' &&
+  message.parts.some((part) => 'state' in part && part.state === 'streaming')
+
+/** Stops Vivid in this Thread, and says so when the server did not take it. */
+const stop = (id: ThreadId) =>
+  void orSay(
+    change((sdk) => sdk.StopThread({ id })),
+    'Vivid could not be stopped just now. Try again.',
+  )
+
 function Conversation({
   id,
   me,
@@ -127,7 +139,12 @@ function Conversation({
     requests: Option.match(detail, { onNone: () => [], onSome: (value) => value.requests }),
   }
 
-  function send(text: string) {
+  /**
+   * Sends words under a key that names this one delivery. A send whose answer was lost on the way
+   * back is "not sent" as far as this page can tell; sending it again under the same key is the
+   * same delivery to the server, not a second message and a second Run.
+   */
+  function send(text: string, key: string) {
     setUnsent(Option.none())
     // A Thread started without a name takes its first message as one.
     if (Option.exists(thread, (value) => value.title === 'New thread')) {
@@ -136,10 +153,15 @@ function Conversation({
     // In a shared Thread the server turns the message into an attributed one, so it is sent
     // plainly and drawn when it comes back; in a private one the hook shows it at once.
     const sending = shared
-      ? client.send({ message: { kind: 'user', body: text } })
-      : agent.sendMessage(text)
-    void sending.catch((refusal) => setUnsent(Option.some({ words: text, why: whyNot(refusal) })))
+      ? client.send({ message: { kind: 'user', body: text }, idempotencyKey: key })
+      : agent.sendMessage(text, { idempotencyKey: key })
+    void sending.catch((refusal) =>
+      setUnsent(Option.some({ words: text, key, why: whyNot(refusal) })),
+    )
   }
+
+  /** Says something new: a delivery of its own. */
+  const say = (text: string) => send(text, crypto.randomUUID())
 
   const lastSaid = lastWords(visible, me)
   const ended = working ? Option.none() : newestRun(runs)
@@ -159,17 +181,13 @@ function Conversation({
         ready={agent.historyReady}
         empty={visible.length === 0 && FirstWords.$is('Settled')(first)}
         working={working}
-        streaming={visible.some(
-          (message) =>
-            message.role === 'assistant' &&
-            message.parts.some((part) => 'state' in part && part.state === 'streaming'),
-        )}
+        streaming={visible.some(isStreaming)}
         failure={agent.error === undefined ? null : agent.error.message}
         onRetry={() => agent.refresh()}
       >
         {visible.map((message) => (
           <li key={message.id} className="animate-rise-in">
-            <Message message={message} context={context} working={working} onContinue={send} />
+            <Message message={message} context={context} working={working} onContinue={say} />
           </li>
         ))}
         <OnTheirWay first={first} onAgain={() => firstWords.again(id)} />
@@ -177,11 +195,11 @@ function Conversation({
           <NotSent
             words={unsent.value.words}
             why={unsent.value.why}
-            onAgain={() => send(unsent.value.words)}
+            onAgain={() => send(unsent.value.words, unsent.value.key)}
           />
         )}
         {Option.isSome(ended) && (
-          <Outcome run={ended.value} onAgain={Option.map(lastSaid, (words) => () => send(words))} />
+          <Outcome run={ended.value} onAgain={Option.map(lastSaid, (words) => () => say(words))} />
         )}
       </Messages>
 
@@ -191,13 +209,8 @@ function Conversation({
           thread: Option.some(id),
         })}
         working={working}
-        onSend={send}
-        onStop={() =>
-          void orSay(
-            change((sdk) => sdk.StopThread({ id })),
-            'Vivid could not be stopped just now. Try again.',
-          )
-        }
+        onSend={say}
+        onStop={() => stop(id)}
         onTyping={setTyping}
       />
 
@@ -306,6 +319,8 @@ function OnTheirWay({ first, onAgain }: { first: FirstWords; onAgain: () => void
 /** Words that were sent from here and refused, and the reason when the server gave one. */
 interface Unsent {
   readonly words: string
+  /** The delivery these words were sent as, kept so sending again is the same delivery. */
+  readonly key: string
   readonly why: Option.Option<string>
 }
 
@@ -357,6 +372,9 @@ function NotSent({
 
 /** How far back, in pixels, counts as having left the newest message: a little over a screen of text. */
 const AWAY_PX = 480
+
+/** Whether this Person has asked their system for less motion. */
+const STILL = matchMedia('(prefers-reduced-motion: reduce)')
 
 /**
  * The scrolling column. It follows the newest message unless the Person has scrolled away, and
@@ -432,7 +450,10 @@ function Messages({
           // Pressing it must not take the keyboard out of the composer mid-sentence.
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => {
-            if (scroller.current !== null) scroller.current.scrollTo({ top: 0, behavior: 'smooth' })
+            if (scroller.current !== null) {
+              // A Person who asked for less motion gets there at once; CSS cannot reach this.
+              scroller.current.scrollTo({ top: 0, behavior: STILL.matches ? 'auto' : 'smooth' })
+            }
           }}
           className="absolute bottom-3 left-1/2 z-10 inline-flex size-8 -translate-x-1/2 cursor-pointer items-center justify-center rounded-full text-ink-2 smooth-shadow-ring-sm glass transition-pop duration-(--dur-base) ease-out hover:text-ink active:scale-96 starting:translate-y-1 starting:opacity-0"
         >

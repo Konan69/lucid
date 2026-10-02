@@ -71,24 +71,48 @@ const fieldName = (key: string) => {
   return words.slice(0, 1).toLocaleUpperCase() + words.slice(1)
 }
 
-/** One value of an action, as it will be sent. Words stay words; anything structured is shown whole. */
-const fieldValue = (value: Schema.Json): string => {
-  if (Predicate.isString(value)) return value
-  if (Predicate.isNumber(value) || Predicate.isBoolean(value)) return String(value)
-  if (value === null) return '—'
-  if (Array.isArray(value) && value.every(Predicate.isString)) return value.join(', ')
-  return JSON.stringify(value, null, 2)
+/**
+ * One value of an action, as it will be sent, without losing what kind of value it is. Text is
+ * shown as text. A number, true, false or nothing is shown as itself, set apart from text, so the
+ * word "false" and the value false cannot be mistaken for each other. A list is one item to a
+ * line, so "a, b" as one item is not two. Anything nested is shown whole.
+ */
+function Value({ value }: { value: Schema.Json }) {
+  if (Predicate.isString(value)) {
+    return <span className="wrap-break-word whitespace-pre-wrap text-ink">{value}</span>
+  }
+  if (Array.isArray(value)) {
+    return (
+      <ol className="flex flex-col gap-0.5">
+        {value.map((item, position) => (
+          // A list's items have no identity but their place, and the list is drawn once.
+          // oxlint-disable-next-line react/no-array-index-key
+          <li key={position} className="flex gap-2">
+            <span className="shrink-0 text-ink-3 tabular-nums">{position + 1}.</span>
+            <Value value={item} />
+          </li>
+        ))}
+      </ol>
+    )
+  }
+  return (
+    <code className="font-mono wrap-break-word whitespace-pre-wrap text-ink-2">
+      {isRecord(value) ? JSON.stringify(value, null, 2) : String(value)}
+    </code>
+  )
 }
 
 /** A JSON object, as opposed to a list or a single value. The guard keeps its values typed. */
 const isRecord = (value: Schema.Json): value is Schema.JsonObject =>
   Predicate.isObject(value) && !Array.isArray(value)
 
-/** The fields of an action's input, in the order they were written. */
-const fieldsOf = (input: Schema.Json): ReadonlyArray<readonly [string, string]> =>
-  isRecord(input)
-    ? Object.entries(input).map(([key, value]) => [fieldName(key), fieldValue(value)] as const)
-    : [['Details', fieldValue(input)] as const]
+/**
+ * The fields of an action's input, in the order they were written. Each keeps its own key beside
+ * the friendly name: two keys can read the same once tidied (`reply_to`, `replyTo`), and an
+ * Approval must not blur which is which.
+ */
+const fieldsOf = (input: Schema.Json): ReadonlyArray<readonly [string, Schema.Json]> =>
+  isRecord(input) ? Object.entries(input) : [['details', input] as const]
 
 /**
  * Exactly what would be done, in full. An Approval is consent to one specific action, so the card
@@ -100,17 +124,23 @@ function Exactly({ target }: { target: ActionTarget }) {
   if (ActionTarget.guards.Connection(target)) {
     return (
       <div className="mt-3 overflow-hidden rounded-control bg-well ring-line">
-        <div className="flex items-center gap-2 px-3 py-2 text-label text-ink-2 hairline-b">
-          <span className="shrink-0 text-ink-3">{TARGET_ICON.Connection}</span>
-          <span className="min-w-0 truncate">
-            {target.account} <span className="text-ink-3">· {fieldName(target.tool)}</span>
+        <div className="flex items-start gap-2 px-3 py-2 text-label text-ink-2 hairline-b">
+          <span className="mt-0.5 shrink-0 text-ink-3">{TARGET_ICON.Connection}</span>
+          {/* In full and wrapping: the account is where the action lands. */}
+          <span className="min-w-0 wrap-break-word">
+            {target.account} <span className="text-ink-3">· {target.tool}</span>
           </span>
         </div>
         <dl className="flex max-h-72 flex-col gap-2 overflow-y-auto px-3 py-2.5 text-label">
-          {fieldsOf(target.input).map(([name, value]) => (
-            <div key={name}>
-              <dt className="text-meta font-meta text-ink-3">{name}</dt>
-              <dd className="wrap-break-word whitespace-pre-wrap text-ink">{value}</dd>
+          {fieldsOf(target.input).map(([key, value]) => (
+            <div key={key}>
+              <dt className="flex items-baseline gap-1.5 text-meta font-meta text-ink-3">
+                {fieldName(key)}
+                <code className="font-mono">{key}</code>
+              </dt>
+              <dd>
+                <Value value={value} />
+              </dd>
             </div>
           ))}
         </dl>
