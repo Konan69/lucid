@@ -1,41 +1,83 @@
 import { it } from '@effect/vitest'
-import { Memory, MemoryId, MemoryScope, PersonId, PersonSummary } from '@vivid/contracts'
+import { Memory, MemoryId, MemoryScope, PersonId, PersonSummary, ThreadId } from '@vivid/contracts'
 import { Effect } from 'effect'
 import { expect } from 'vitest'
-import { candidatesWithKnownRelations, MemoryCandidate, MemoryRelation } from './extract.js'
+import {
+  candidatesWithKnownRelations,
+  MemoryCandidate,
+  MemoryRelation,
+  shownExchange,
+  shownKnown,
+  shownMemory,
+  WrittenRelation,
+  type WrittenCandidate,
+} from './extract.js'
 
-/** Invalid references reject one candidate without turning an otherwise useful exchange into a failed extraction. */
-it.effect('retains new and known-related candidates while dropping unknown relation ids', () =>
+const dami = PersonSummary.make({ id: PersonId.make('person-a'), name: 'Dami', image: null })
+
+const known = Memory.make({
+  id: MemoryId.make('memory-known'),
+  kind: 'fact',
+  content: 'Dami works on launch planning.',
+  scope: MemoryScope.cases.Thread.make({ threadId: ThreadId.make('thread-7'), title: 'Launch' }),
+  learnedIn: ThreadId.make('thread-7'),
+  learnedFrom: dami,
+  createdAt: 1,
+  updatedAt: 1,
+})
+
+const written = (relation: WrittenCandidate['relation']): WrittenCandidate => ({
+  shouldStore: true,
+  content: 'Dami prefers written updates.',
+  kind: 'preference',
+  aliases: [],
+  relation,
+  forCompany: false,
+})
+
+/** A made-up handle rejects one candidate without failing an otherwise useful extraction. */
+it.effect('resolves a handle to the memory it stands for and drops one that names nothing', () =>
   Effect.sync(() => {
-    const known = Memory.make({
-      id: MemoryId.make('known'),
-      kind: 'fact',
-      content: 'Dami works on launch planning.',
-      scope: MemoryScope.cases.Person.make({}),
-      learnedIn: null,
-      learnedFrom: PersonSummary.make({ id: PersonId.make('A'), name: 'Dami', image: null }),
-      createdAt: 1,
-      updatedAt: 1,
-    })
-    const fresh = MemoryCandidate.make({
-      shouldStore: true,
-      content: 'Dami prefers written updates.',
-      kind: 'preference',
-      aliases: [],
-      relation: MemoryRelation.cases.new.make({}),
-      forCompany: false,
-    })
-    const related = MemoryCandidate.make({
-      ...fresh,
-      relation: MemoryRelation.cases.extends.make({ id: known.id }),
-    })
-    const invalid = MemoryCandidate.make({
-      ...fresh,
-      relation: MemoryRelation.cases.updates.make({ id: MemoryId.make('unknown') }),
-    })
+    const fresh = written(WrittenRelation.cases.new.make({}))
+    const related = written(WrittenRelation.cases.extends.make({ ref: 'm1' }))
+    const invalid = written(WrittenRelation.cases.updates.make({ ref: 'm9' }))
     expect(candidatesWithKnownRelations([invalid, fresh, related], [known])).toEqual([
-      fresh,
-      related,
+      MemoryCandidate.make({ ...fresh, relation: MemoryRelation.cases.new.make({}) }),
+      MemoryCandidate.make({
+        ...related,
+        relation: MemoryRelation.cases.extends.make({ id: known.id }),
+      }),
+    ])
+  }),
+)
+
+/**
+ * The model is never handed an identifier. This is checked on the exact values sent to it, as
+ * text, so a field added to a record later cannot slip one through unnoticed.
+ */
+it.effect('shows the model words and handles, and no identifier of any kind', () =>
+  Effect.sync(() => {
+    const sent = JSON.stringify({
+      brief: shownMemory(known),
+      known: shownKnown([known]),
+      exchange: shownExchange({
+        person: dami,
+        message: 'Keep updates written.',
+        reply: 'Noted.',
+        previousReply: null,
+        recent: [],
+      }),
+    })
+    for (const identifier of ['memory-known', 'thread-7', 'person-a']) {
+      expect(sent).not.toContain(identifier)
+    }
+    expect(shownKnown([known])).toEqual([
+      {
+        ref: 'm1',
+        kind: 'fact',
+        content: 'Dami works on launch planning.',
+        about: 'the Thread “Launch”',
+      },
     ])
   }),
 )

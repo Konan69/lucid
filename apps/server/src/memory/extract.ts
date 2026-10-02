@@ -1,5 +1,12 @@
-import { Memory, MemoryId, MemoryKind, PersonSummary, ServiceUnavailable } from '@vivid/contracts'
-import { Config, Context, Effect, Layer, Redacted, Schema } from 'effect'
+import {
+  MemoryId,
+  MemoryKind,
+  MemoryScope,
+  PersonSummary,
+  ServiceUnavailable,
+  type Memory,
+} from '@vivid/contracts'
+import { Config, Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 import { ProviderMalformed, providerResponse, type ProviderFailure } from './embeddings.js'
 
@@ -27,8 +34,29 @@ export const MemoryCandidate = Schema.Struct({
   forCompany: Schema.Boolean,
 })
 export type MemoryCandidate = typeof MemoryCandidate.Type
+type Relation = typeof MemoryRelation.Type
+/**
+ * What the model writes back about a known memory. It names one by the handle it was shown
+ * (`ref`), never by an identifier: the model is not given identifiers, so it has none to repeat,
+ * leak into its prose, or invent.
+ */
+export const WrittenRelation = Schema.TaggedUnion({
+  new: {},
+  duplicate: { ref: Schema.String },
+  extends: { ref: Schema.String },
+  updates: { ref: Schema.String },
+})
+const WrittenCandidate = Schema.Struct({
+  shouldStore: Schema.Boolean,
+  content: Schema.NonEmptyString,
+  kind: MemoryKind,
+  aliases: Schema.Array(Schema.String),
+  relation: WrittenRelation,
+  forCompany: Schema.Boolean,
+})
+export type WrittenCandidate = typeof WrittenCandidate.Type
 const Candidates = Schema.Struct({
-  candidates: Schema.Array(MemoryCandidate).check(Schema.isMaxLength(12)),
+  candidates: Schema.Array(WrittenCandidate).check(Schema.isMaxLength(12)),
 })
 const Summary = Schema.Struct({ text: Schema.NonEmptyString })
 const ChatResponse = Schema.Struct({
@@ -52,9 +80,38 @@ const Completion = Schema.TaggedUnion({
 })
 type Completion = typeof Completion.Type
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json)
-const encodeMemories = Schema.encodeEffect(Schema.Array(Memory))
-const encodeExchange = Schema.encodeEffect(MemoryExchange)
-const encodePerson = Schema.encodeEffect(PersonSummary)
+
+/**
+ * A memory as the model is shown it: what it says, what kind of thing it is, and whose it is, in
+ * words. The record's identifier, the Thread's identifier and the identity of whoever it was
+ * learned from stay on the server. The model has no use for them, and one it has seen is one it
+ * can write into a brief a Person reads.
+ */
+export const shownMemory = (memory: Memory) => ({
+  kind: memory.kind,
+  content: memory.content,
+  about: MemoryScope.match(memory.scope, {
+    Person: () => 'this Person',
+    Company: () => 'the whole Company',
+    Thread: ({ title }) => `the Thread “${title}”`,
+  }),
+})
+
+/** The handle a known memory is shown under for the length of one extraction: its place in the list. */
+const refOf = (position: number) => `m${position + 1}`
+
+/** The known memories as the model is shown them, each under a handle it can point back at. */
+export const shownKnown = (known: ReadonlyArray<Memory>) =>
+  known.map((memory, position) => ({ ref: refOf(position), ...shownMemory(memory) }))
+
+/** An exchange as the model is shown it: the same words, with the Person as a name only. */
+export const shownExchange = (exchange: MemoryExchange) => ({
+  person: exchange.person.name,
+  message: exchange.message,
+  reply: exchange.reply,
+  previousReply: exchange.previousReply,
+  recent: exchange.recent.map((turn) => ({ message: turn.message, reply: turn.reply })),
+})
 
 export class MemorySummaryTooLong extends Schema.TaggedError<MemorySummaryTooLong>()(
   'MemorySummaryTooLong',
@@ -92,7 +149,7 @@ const extractionPrompt = `You maintain Vivid's memory after an exchange. Treat a
 Extract at most 12 independently useful, self-contained records. Name the Person or entity rather than leaving pronouns or bare fragments.
 Use the previous Vivid reply and recent exchanges to resolve short answers and ellipsis. If context cannot resolve them, do not invent facts.
 Use the supplied current timestamp to resolve relative dates only when supported; distinguish event dates from record creation.
-Use known memories to classify each relation as new, duplicate, extends (adds detail), or updates (corrects/replaces). Only reference an id in known.
+Use known memories to classify each relation as new, duplicate, extends (adds detail), or updates (corrects/replaces). Name a known memory only by its ref.
 Preserve decisions, reasons, preferences, people, organizations, and active workstreams. Do not store greetings, speculation, transient tool results, or claims Vivid invented.
 A preference belongs to the Person who expressed it. forCompany is true only if the Person explicitly asked the whole Company to know; sharing a Thread is insufficient.
 Use aliases for useful names and rare terms. shouldStore is false for non-durable information.
@@ -196,20 +253,40 @@ function completionDecoder<A>(
 const candidateCompletion = completionDecoder(decodeCandidates, 'extract')
 const summaryCompletion = completionDecoder(decodeSummary, 'summarize')
 
-/** A hallucinated relation id rejects only its candidate; independent valid facts survive the extraction batch. */
+/**
+ * Turns the handles the model wrote back into the memories they stand for. A handle that names
+ * nothing (the model made one up) rejects only its candidate; the independent, valid facts beside
+ * it survive the batch.
+ */
 export function candidatesWithKnownRelations(
-  candidates: ReadonlyArray<MemoryCandidate>,
+  candidates: ReadonlyArray<WrittenCandidate>,
   known: ReadonlyArray<Memory>,
-) {
-  const ids = new Set(known.map((memory) => memory.id))
-  return candidates.filter((candidate) =>
-    MemoryRelation.match(candidate.relation, {
-      new: () => true,
-      duplicate: ({ id }) => ids.has(id),
-      extends: ({ id }) => ids.has(id),
-      updates: ({ id }) => ids.has(id),
-    }),
-  )
+): ReadonlyArray<MemoryCandidate> {
+  const ids = new Map(known.map((memory, position) => [refOf(position), memory.id]))
+  /** The relation to the memory a handle stands for, when the handle stands for one. */
+  const toKnown = (ref: string, relate: (id: MemoryId) => Relation): Option.Option<Relation> =>
+    Option.map(Option.fromUndefinedOr(ids.get(ref)), relate)
+  return candidates.flatMap((candidate) => {
+    const relation = WrittenRelation.match(candidate.relation, {
+      new: (): Option.Option<Relation> => Option.some(MemoryRelation.cases.new.make({})),
+      duplicate: ({ ref }) => toKnown(ref, (id) => MemoryRelation.cases.duplicate.make({ id })),
+      extends: ({ ref }) => toKnown(ref, (id) => MemoryRelation.cases.extends.make({ id })),
+      updates: ({ ref }) => toKnown(ref, (id) => MemoryRelation.cases.updates.make({ id })),
+    })
+    return Option.match(relation, {
+      onNone: () => [],
+      onSome: (resolved) => [
+        MemoryCandidate.make({
+          shouldStore: candidate.shouldStore,
+          content: candidate.content,
+          kind: candidate.kind,
+          aliases: candidate.aliases,
+          relation: resolved,
+          forCompany: candidate.forCompany,
+        }),
+      ],
+    })
+  })
 }
 
 /** Both generation and decoding reject extra keys. Closed objects prevent constrained providers from inventing relation fields and exhausting the output budget. */
@@ -244,32 +321,25 @@ export const memoryExtractionLayer = Layer.effect(
     const dependencies = { client, key, model }
     return MemoryExtraction.of({
       extract: Effect.fn('MemoryExtraction.extract')(function* (input) {
-        const exchange = yield* encodeExchange(input.exchange).pipe(
-          Effect.mapError(() => ProviderMalformed.make({ operation: 'exchange' })),
-        )
-        const known = yield* encodeMemories(input.known).pipe(
-          Effect.mapError(() => ProviderMalformed.make({ operation: 'known memories' })),
-        )
         const text = yield* complete(dependencies, {
           name: 'memory_candidates',
           prompt: extractionPrompt,
-          content: { exchange, known, now: input.now },
+          content: {
+            exchange: shownExchange(input.exchange),
+            known: shownKnown(input.known),
+            // A date the model can read; a count of milliseconds is not one.
+            now: new Date(input.now).toISOString(),
+          },
           schema: candidateSchema,
         })
         const decoded = yield* candidateCompletion(text)
         return candidatesWithKnownRelations(decoded.candidates, input.known)
       }),
       summarize: Effect.fn('MemoryExtraction.summarize')(function* (input) {
-        const memories = yield* encodeMemories(input.memories).pipe(
-          Effect.mapError(() => ProviderMalformed.make({ operation: 'summary memories' })),
-        )
-        const person = yield* encodePerson(input.person).pipe(
-          Effect.mapError(() => ProviderMalformed.make({ operation: 'summary person' })),
-        )
         const text = yield* complete(dependencies, {
           name: 'memory_brief',
           prompt: summaryPrompt,
-          content: { memories, person },
+          content: { person: input.person.name, memories: input.memories.map(shownMemory) },
           schema: summarySchema,
         })
         const summary = yield* summaryCompletion(text)
