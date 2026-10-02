@@ -127,6 +127,8 @@ const ports = Layer.effectContext(
         return Run.make({
           id: RunId.make(NodeCrypto.randomUUID()),
           threadId: delivery.threadId,
+          // This receipt is never persisted; only stored Runs allocate a per-Thread turn.
+          turn: 1,
           origin: RunOrigin.cases.Decision.make({
             person: PersonSummary.make({ id: delivery.personId, name: 'Test Person', image: null }),
           }),

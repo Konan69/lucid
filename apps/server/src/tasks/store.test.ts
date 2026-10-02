@@ -68,6 +68,8 @@ const conversationLayer = Layer.effectContext(
       return Run.make({
         id: RunId.make(NodeCrypto.randomUUID()),
         threadId: delivery.threadId,
+        // This receipt is never persisted; only stored Runs allocate a per-Thread turn.
+        turn: 1,
         origin,
         state: RunState.cases.Working.make({}),
         startedAt: yield* Clock.currentTimeMillis,

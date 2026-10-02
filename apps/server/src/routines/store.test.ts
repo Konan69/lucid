@@ -1,7 +1,6 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, layer } from '@effect/vitest'
 import { and, eq, inArray } from 'drizzle-orm'
-import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
@@ -17,10 +16,6 @@ import {
   CompanyId,
   DatabaseFailure,
   OccurrenceId,
-  PersonSummary,
-  Run,
-  RunOrigin,
-  RunState,
   Person,
   PersonId,
   RoutineId,
@@ -34,10 +29,12 @@ import {
 import { companyColumnOf, type Actor } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
-import { Database, decodeStored, returned } from '../database/client.ts'
+import { Database, returned } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { silentChangesLayer } from '../live/changes.ts'
-import { Conversation, StoredRunOrigin, type Delivery } from '../threads/conversation.ts'
+import { Conversation, type Delivery } from '../threads/conversation.ts'
+import { submissionId } from '../runtime/identity.ts'
+import { RunStore, runStoreLayer } from '../threads/runs.ts'
 import { ThreadStore, threadStoreLayer } from '../threads/store.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { notifications } from '../tasks/tables.ts'
@@ -63,13 +60,11 @@ class DeliveryFailure extends Context.Service<
   Ref.Ref<Option.Option<RuntimeUnavailable>>
 >()('test/RoutineDeliveryFailure') {}
 
-const decodePersonSummary = decodeStored(PersonSummary, 'Test Person')
-const encodeOrigin = Schema.encodeSync(StoredRunOrigin)
-
 /** The recording authority creates durable Runs and exposes delivery counts to behavior tests. */
 const recordedConversationLayer = Layer.effectContext(
   Effect.gen(function* () {
-    const database = yield* Database
+    const store = yield* RunStore
+    const recorded = new Set<RunId>()
     const delivered = yield* Ref.make<ReadonlyArray<Delivery>>([])
     const failure = yield* Ref.make<Option.Option<RuntimeUnavailable>>(Option.none())
     const conversation = Conversation.of({
@@ -83,51 +78,24 @@ const recordedConversationLayer = Layer.effectContext(
       deliver: Effect.fn('Test.RoutineConversation.deliver')(function* (delivery) {
         const failed = yield* Ref.getAndSet(failure, Option.none())
         if (Option.isSome(failed)) return yield* Effect.fail(failed.value)
-        // The test authority honours Conversation's per-Thread idempotency contract in PostgreSQL.
-        const id = RunId.make(
-          NodeCrypto.createHash('sha256')
-            .update(JSON.stringify([delivery.threadId, delivery.idempotencyKey]))
-            .digest('hex'),
-        )
-        const now = yield* Clock.currentTimeMillis
-        if (!StoredRunOrigin.guards.Routine(delivery.origin)) {
-          return yield* Effect.fail(
-            new DatabaseFailure({ message: 'Test expected a Routine delivery' }),
-          )
-        }
-        const people = yield* database.run(
-          database
-            .select({ id: personTable.id, name: personTable.name, image: personTable.image })
-            .from(personTable)
-            .where(eq(personTable.id, delivery.personId)),
-        )
-        const person = yield* decodePersonSummary(yield* returned(people, 'Test Person'))
-        const inserted = yield* database.run(
-          database
-            .insert(runs)
-            .values({
-              id,
-              threadId: delivery.threadId,
-              personId: delivery.personId,
-              origin: encodeOrigin(delivery.origin),
-              state: 'working',
-              startedAt: now,
-              finishedAt: null,
-            })
-            .onConflictDoNothing({ target: runs.id })
-            .returning({ id: runs.id }),
-        )
-        const stored = Run.make({
+        // Persist through the production allocator: parallel deliveries and replays keep real turns.
+        const id = submissionId(delivery.threadId, delivery.idempotencyKey)
+        yield* store.start({
           id,
           threadId: delivery.threadId,
-          origin: RunOrigin.cases.Routine.make({
-            person,
-            routineName: delivery.origin.routineName,
-          }),
-          state: RunState.cases.Working.make({}),
-          startedAt: now,
+          personId: delivery.personId,
+          origin: delivery.origin,
+          libraryFolder: delivery.libraryFolder === undefined ? null : delivery.libraryFolder,
         })
-        if (inserted.length > 0) yield* Ref.update(delivered, (previous) => [...previous, delivery])
+        const stored = yield* returned(
+          (yield* store.list(delivery.threadId)).filter((run) => run.id === id),
+          'Test Run',
+        )
+        // The recording port observes each accepted key once, independently of concurrent retries.
+        if (!recorded.has(id)) {
+          recorded.add(id)
+          yield* Ref.update(delivered, (previous) => [...previous, delivery])
+        }
         return stored
       }),
     })
@@ -138,7 +106,7 @@ const recordedConversationLayer = Layer.effectContext(
   }),
 )
 
-const storesLayer = Layer.mergeAll(routineStoreLayer, threadStoreLayer).pipe(
+const storesLayer = Layer.mergeAll(routineStoreLayer, threadStoreLayer, runStoreLayer).pipe(
   Layer.provideMerge(testDatabaseLayer),
   Layer.provide(testConfigLayer),
 )
@@ -373,7 +341,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             idempotencyKey: acceptedReceipt.occurrenceId,
             message: {
               body: 'Handle incoming update\n\nPayload:\nNew update',
-              attributes: { routine: routine.id, name: routine.name },
+              attributes: { name: routine.name },
             },
           })
           const wrong = yield* post({
