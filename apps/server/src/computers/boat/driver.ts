@@ -21,7 +21,8 @@ const decodeCapture = Schema.decodeUnknownEffect(Schema.fromJsonString(Capture))
 /** Native Cua CLI over the shipped daemon socket. Named sessions retain snapshot-bound refs.
  * Source: trycua/cua libs/cua-driver/rust/crates/cua-driver/src/cli.rs, call + stdin + image output. */
 export const driver = (api: Transport, id: ProviderId, key: MachineKey) => {
-  const session = `vivid-${key}`
+  // Sessions are already guest-local. A public label must never paint a private key on an overlay.
+  const session = 'Vivid'
   /** Upload into a mode-0700 directory before dispatch; private input never appears in argv.
    * Cleanup covers input and PNG even on refusal. Same-uid/root guest processes remain privileged. */
   const input = <A, E>(

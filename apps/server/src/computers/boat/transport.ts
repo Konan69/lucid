@@ -136,9 +136,15 @@ export const transport = Effect.fn('Machine.boat.transport')(function* () {
   })
   return {
     create,
-    get: Effect.fn('Machine.boat.get')((id: Protocol.ProviderId) =>
-      request(Request.cases.Get.make({ path: `/sandboxes/${id}` }), Protocol.Info),
-    ),
+    get: Effect.fn('Machine.boat.get')(function* (id: Protocol.ProviderId) {
+      const reply = yield* request(
+        Request.cases.Get.make({ path: `/sandboxes/${id}` }),
+        Protocol.Info,
+      )
+      if (reply.sandbox.id !== id)
+        return yield* Effect.fail(new MachineResponseInvalid({ operation: 'machine-identity' }))
+      return reply
+    }),
     createMachine: Effect.fn('Machine.boat.create')(
       (body: Protocol.CreateRequest, intent: string) =>
         request(Request.cases.Create.make({ intent, body }), Protocol.Created),

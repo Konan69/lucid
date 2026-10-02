@@ -45,7 +45,7 @@ export const Page = Schema.Struct({
   refs: Schema.Array(
     Schema.Struct({
       ref: Schema.String,
-      name: Schema.String,
+      name: Schema.NullOr(Schema.String),
       actions: Schema.Array(Schema.String),
     }),
   ),
@@ -149,7 +149,9 @@ const targetRef = Effect.fn('Machine.boat.browser.target')(function* (
   const page = yield* snapshot(native, bound)
   const matches = page.refs.filter(
     (ref) =>
-      ref.name.toLocaleLowerCase() === target.toLocaleLowerCase() && ref.actions.includes(action),
+      ref.name !== null &&
+      ref.name.toLocaleLowerCase() === target.toLocaleLowerCase() &&
+      ref.actions.includes(action),
   )
   const match = matches[0]
   if (matches.length !== 1 || match === undefined)

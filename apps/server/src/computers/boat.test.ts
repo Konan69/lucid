@@ -37,6 +37,7 @@ interface EvidenceService {
   readonly breakCommand: Ref.Ref<boolean>
   readonly publicViewer: Ref.Ref<boolean>
   readonly malformed: Ref.Ref<boolean>
+  readonly wrongIdentity: Ref.Ref<boolean>
 }
 class Evidence extends Context.Service<Evidence, EvidenceService>()('vivid/BoatProtocolEvidence') {}
 const evidenceLayer = Layer.effect(
@@ -54,6 +55,7 @@ const evidenceLayer = Layer.effect(
       breakCommand: yield* Ref.make(false),
       publicViewer: yield* Ref.make(false),
       malformed: yield* Ref.make(false),
+      wrongIdentity: yield* Ref.make(false),
     })
   }),
 )
@@ -119,6 +121,7 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
   const content = (yield* Ref.get(evidence.files)).get(path[1])
   if (content === undefined) return rejected(400)
   const args = yield* decodeArgs(content)
+  if (tool !== 'list_windows') expect(args.session).toBe('Vivid')
   switch (tool) {
     case 'get_desktop_state': {
       const output = /--screenshot-out-file '([^']+)'/.exec(command)
@@ -159,6 +162,7 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
             outline: 'button "Continue"\ntextbox "Message"',
             snapshot: { complete: true },
             refs: [
+              { ref: 'p1:0', name: null, actions: [] },
               { ref: 'p1:1', name: 'Continue', actions: ['click'] },
               { ref: 'p1:2', name: 'Message', actions: ['type'] },
             ],
@@ -189,9 +193,16 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
     case 'scroll':
     case 'hotkey':
     case 'type_text':
-    case 'browser_click':
-    case 'browser_type':
     case 'launch_app':
+      return commandReply('{"status":"ok"}')
+    case 'browser_click':
+      expect(args.ref).toBe('p1:1')
+      expect(args.delivery_mode).toBe('foreground')
+      return commandReply('{"status":"ok"}')
+    case 'browser_type':
+      expect(args.ref).toBe('p1:2')
+      expect(args.replace).toBe(true)
+      expect(args.text).toBe('private-fixture-input')
       return commandReply('{"status":"ok"}')
     default:
       return rejected(400)
@@ -268,7 +279,9 @@ const serverLayer = Layer.effect(
         return HttpServerResponse.jsonUnsafe({
           ok: true,
           type: 'sandbox.info',
-          sandbox: record(yield* Ref.get(evidence.state)),
+          sandbox: Object.assign({}, record(yield* Ref.get(evidence.state)), {
+            id: (yield* Ref.get(evidence.wrongIdentity)) ? 'bx_abcdefgh' : id,
+          }),
         })
       }
       if (path === `/api/v1/sandboxes/${id}/stop`) {
@@ -404,6 +417,23 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         expect(page.address).toBe('https://example.com/proof')
         expect(page.outline).toContain('Continue')
         expect(page.tabs).toEqual([{ title: 'Example', address: page.address, showing: true }])
+        yield* machine.browse({
+          key,
+          action: BrowserAction.cases.Click.make({ target: 'Continue' }),
+        })
+        yield* machine.browse({
+          key,
+          action: BrowserAction.cases.Type.make({
+            target: 'Message',
+            text: 'private-fixture-input',
+          }),
+        })
+        expect(
+          (yield* Ref.get(evidence.commands)).some((value) =>
+            value.includes('private-fixture-input'),
+          ),
+        ).toBe(false)
+        expect((yield* Ref.get(evidence.files)).size).toBe(0)
         expect(
           (yield* machine.exec({ key, command: 'echo receipt', timeoutSeconds: 10 })).output,
         ).toBe('receipt\n')
@@ -472,6 +502,9 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         ).toBe('MachineExecutionUnknown')
         expect((yield* Ref.get(evidence.commands)).length - before).toBe(1)
         yield* Ref.set(evidence.malformed, true)
+        expect((yield* Effect.flip(machine.status(key)))._tag).toBe('MachineResponseInvalid')
+        yield* Ref.set(evidence.malformed, false)
+        yield* Ref.set(evidence.wrongIdentity, true)
         expect((yield* Effect.flip(machine.status(key)))._tag).toBe('MachineResponseInvalid')
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     15000,

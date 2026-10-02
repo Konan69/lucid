@@ -1,6 +1,6 @@
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeCrypto from 'node:crypto'
-import { Schema } from 'effect'
+import { Match, Schema } from 'effect'
 import { chromium } from 'playwright-core'
 
 // This is the private one-step driver protocol, mapped exhaustively from the product contract.
@@ -181,10 +181,14 @@ async function step(connection, action) {
     read: () => snapshot(connection),
     scroll: async ({ direction, notches }) => {
       const amount = notches * 100
-      await connection.page.mouse.wheel(
-        direction === 'left' ? -amount : direction === 'right' ? amount : 0,
-        direction === 'up' ? -amount : direction === 'down' ? amount : 0,
+      const delta = Match.value(direction).pipe(
+        Match.when('left', () => ({ x: -amount, y: 0 })),
+        Match.when('right', () => ({ x: amount, y: 0 })),
+        Match.when('up', () => ({ x: 0, y: -amount })),
+        Match.when('down', () => ({ x: 0, y: amount })),
+        Match.exhaustive,
       )
+      await connection.page.mouse.wheel(delta.x, delta.y)
       return snapshot(connection)
     },
     back: async () => {
