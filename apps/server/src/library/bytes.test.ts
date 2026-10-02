@@ -29,8 +29,8 @@ const uploadRequest = (token: string, shelf: string) => {
 }
 
 /** Each HTTP call owns the SDK pool and multipart resources until its response has completed.
- * Better Auth's Promise adapter cannot cancel an in-flight query; the virtual TestClock can
- * interrupt it and finalize the pool early. Real-clock tests avoid that false teardown race.
+ * Better Auth's Promise adapter cannot cancel an in-flight query: a test timeout can finalize
+ * its pool early. Real clocks and focused claims keep SDK work within the existing deadline.
  */
 const httpFixture = Effect.fn('LibraryBytesTest.fixture')(function* () {
   const people = yield* fixture()
