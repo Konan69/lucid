@@ -1,4 +1,5 @@
 import {
+  PageFavicon,
   ShowingTab,
   type BrowserState,
   type Page,
@@ -84,6 +85,12 @@ export const pages = {
   current: () => state,
   front: () => front,
   showing,
+  /** The page's own icon, when the document has declared one; otherwise the tab draws a globe. */
+  favicon: (page: Page) =>
+    PageFavicon.match(page.favicon, {
+      None: () => Option.none<string>(),
+      Some: ({ value }) => Option.some(value),
+    }),
   /** Puts Vivid's computer in front. The pages stay open behind it. */
   toComputer: () => bring('computer'),
   /** A page that has not been opened yet: the address field, waiting for somewhere to go. */
@@ -99,6 +106,22 @@ export const pages = {
     ask((browser) => browser.show(tab), 'That page is no longer open.')
   },
   close: (tab: Tab) => ask((browser) => browser.close(tab), 'That page could not be closed.'),
+  /** Main closes the others in one step, so it keeps its own selection and reopen history. */
+  closeOthers: (keep: Tab) =>
+    ask((browser) => browser.closeOthers(keep), 'The other pages could not be closed.'),
+  /** Main owns the order and reports it back through the same subscription; nothing is guessed here. */
+  reorder: (tab: Tab, to: number) =>
+    ask((browser) => browser.move({ tab, to }), 'The page could not be moved.'),
+  /** A duplicate is a new page with its own history, not a second view of the first. */
+  duplicate: (tab: Tab) => {
+    bring('page')
+    ask((browser) => browser.duplicate(tab), 'The page could not be duplicated.')
+  },
+  /** Main restores the page it kept when it was closed; the address is never guessed here. */
+  reopen: () => {
+    bring('page')
+    ask((browser) => browser.reopen(), 'There is no closed page to reopen.')
+  },
   go: (tab: Tab, address: string) =>
     ask((browser) => browser.go({ tab, address }), 'That page could not be opened.'),
   back: (tab: Tab) => ask((browser) => browser.back(tab), 'There is nowhere to go back to.'),

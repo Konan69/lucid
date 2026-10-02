@@ -304,7 +304,8 @@ html[data-theme='light'] body {
 
   /* Named transition sets: screens name the surface behaviour, never a property list. */
   --transition-property-surface: background-color, box-shadow;
-  --transition-property-press: background-color, box-shadow, transform;
+  /* Press feedback moves `scale` (what Tailwind's `scale-*` sets), not `transform`, so the shrink eases. */
+  --transition-property-press: color, background-color, box-shadow, scale;
   --transition-property-width: width;
   /* What floats in: a menu or a drawer. Opacity and the two transform longhands, nothing laid out. */
   --transition-property-pop: opacity, scale, translate;

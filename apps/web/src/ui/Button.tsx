@@ -29,7 +29,7 @@ export function Button({
   return (
     <button
       className={cn(
-        'inline-flex cursor-pointer items-center justify-center font-title whitespace-nowrap transition-colors duration-(--dur-fast) select-none disabled:cursor-not-allowed disabled:opacity-60',
+        'inline-flex cursor-pointer items-center justify-center font-title whitespace-nowrap transition-press duration-(--dur-fast) select-none active:enabled:scale-96 disabled:cursor-not-allowed disabled:opacity-60',
         VARIANT[variant],
         SIZE[size],
         className,
@@ -54,7 +54,7 @@ export function IconButton({
       aria-label={label}
       title={label}
       className={cn(
-        'inline-flex size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink disabled:cursor-not-allowed disabled:opacity-60',
+        'inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-press duration-(--dur-fast) hover:bg-wash-hover hover:text-ink active:enabled:scale-96 disabled:cursor-not-allowed disabled:opacity-60',
         active && 'bg-wash-selected text-ink',
         className,
       )}

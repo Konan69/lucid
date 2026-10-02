@@ -1,125 +1,111 @@
 import { ComputerScreen, ComputerState, type Computer as ComputerRecord } from '@vivid/contracts'
 import RFB from '@novnc/novnc'
 import { Option, Result } from 'effect'
-import { Hand, Maximize2, Minimize2, Monitor, MonitorPlay, Power, X } from 'lucide-react'
+import { Hand, Maximize2, Minimize2, MonitorPlay, Power, X } from 'lucide-react'
 import { useCallback, useReducer, useState, useSyncExternalStore } from 'react'
 import { change, live, LiveState, useLive } from '../data/live'
 import { pages } from '../data/pages'
+import { split } from '../data/split'
 import { orSay } from '../data/said'
 import { Button, IconButton } from '../ui/Button'
 import { cn } from '../ui/cn'
 import { Face } from '../ui/Face'
 import { PageTabs, PageToolbar, PageView } from './computer/Pages'
+import { Edge } from './computer/Edge'
 
 /**
- * Vivid's computer, beside the Thread: a real machine that is this Person's alone. The panel shows
- * its screen while it runs, says honestly when it is off, starting or unavailable, and gives the
- * Person the one control that matters: taking the keyboard and pointer, which stops Vivid from
- * acting on it until they hand it back.
+ * Vivid's computer, beside the Thread: a real machine that is this Person's alone. It is laid out
+ * like a browser window. A strip of tabs across the top (Vivid's computer, and in the desktop app
+ * every page opened beside the Thread), a toolbar under it, and the content filling the rest.
  *
- * It is laid out like a browser window, after the panel in ChatGPT's dot: a strip of tabs across
- * the top (one today, the computer itself), a toolbar whose long field says what is on the glass
- * and who has the keyboard, and the screen filling the rest. The panel can be widened to work in
- * it, and is a full sheet on a narrow window.
+ * The divider on its left edge is dragged to share the page with the Thread, and a control in the
+ * strip takes the whole page. Where there is not room for both, it is always the whole page.
+ *
+ * It shows the machine's screen while it runs, says honestly when it is off, starting or
+ * unavailable, and gives the Person the one control that matters: taking the keyboard and
+ * pointer, which stops Vivid from acting on it until they hand it back.
  */
 export function Computer({ onClose }: { onClose: () => void }) {
   const state = useLive(live.computer)
-  const [wide, setWide] = useState(false)
+  const full = useSyncExternalStore(split.subscribe, split.isFull)
+  const canSplit = useSyncExternalStore(split.subscribe, split.canSplit)
   const browser = useSyncExternalStore(pages.subscribe, pages.current)
   const front = useSyncExternalStore(pages.subscribe, pages.front)
   const page = pages.showing(browser)
   const computer = LiveState.$is('Ready')(state) ? Option.some(state.value.computer) : Option.none()
   const on = Option.exists(computer, (value) => ComputerState.guards.Running(value.state))
+  // The ref's cleanup stops observing the room beside the sidebar when the panel closes.
+  const attach = useCallback((element: HTMLElement | null) => split.attach(element), [])
   return (
     <aside
-      className={cn(
-        'fixed inset-0 z-30 flex size-full shrink-0 animate-fade-in flex-col bg-surface-1 transition-width duration-(--dur-base) ease-out sm:static sm:hairline-l',
-        wide ? 'sm:w-(--panel-wide-w)' : 'sm:w-(--panel-w)',
-      )}
+      ref={attach}
+      data-full={full}
+      aria-label="Vivid’s computer"
+      className="computer-workspace flex h-full shrink-0 flex-col bg-surface-1 transition-width duration-(--dur-base) ease-out in-data-resizing:transition-none"
     >
-      <header className="flex h-(--topbar-h) shrink-0 items-center gap-1 px-2">
-        {/* Tabs, not a title: in the desktop app, pages opened beside the Thread sit next to the
-            computer here. In a browser there is only the computer. */}
-        <div className="flex min-w-0 flex-1 scrollbar-hidden items-center gap-1 overflow-x-auto">
-          <button
-            onClick={pages.toComputer}
-            className={cn(
-              'flex h-8 max-w-56 min-w-0 shrink-0 cursor-pointer items-center gap-2 rounded-control pr-3 pl-2.5 text-label transition-colors duration-(--dur-fast)',
-              front === 'computer'
-                ? 'bg-surface-3 font-title text-ink smooth-shadow-ring-xs'
-                : 'text-ink-3 hover:bg-wash-hover hover:text-ink',
-            )}
-          >
-            <Monitor className="size-4 shrink-0 text-ink-3" />
-            <span className="truncate">Vivid’s computer</span>
-            {on && <i aria-hidden className="size-1.5 shrink-0 rounded-full bg-success" />}
-          </button>
-          {pages.available && <PageTabs open={browser.tabs} front={front} showing={page} />}
-        </div>
+      {!full && <Edge />}
+      {/* 52 high with 32-high tabs: 10 above and below, 8 at the sides. */}
+      <header className="flex h-(--page-strip-h) shrink-0 items-center gap-1 px-2 py-2.5 hairline-b">
+        <PageTabs open={browser.tabs} front={front} showing={page} running={on} />
         <IconButton
-          label={wide ? 'Make it narrower' : 'Make it wider'}
-          className="hidden sm:inline-flex"
-          onClick={() => setWide((now) => !now)}
+          label={full && canSplit ? 'Back to the Thread' : 'Full view'}
+          // With no room beside the Thread, full view is the only view, so there is nothing to undo.
+          disabled={!canSplit}
+          onClick={split.toggleFull}
         >
-          {wide ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+          {full ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
         </IconButton>
         <IconButton label="Close" onClick={onClose}>
           <X className="size-4" />
         </IconButton>
       </header>
 
-      <ToolbarRow front={front} page={page} computer={computer} on={on} />
+      {/* 48 high; whichever it holds, the long field takes what the controls leave. */}
+      <div className="flex h-12 shrink-0 items-center gap-2 px-2 hairline-b">
+        {front === 'computer' ? (
+          <ComputerToolbar computer={computer} on={on} />
+        ) : (
+          <PageToolbar page={front === 'page' ? page : Option.none()} />
+        )}
+      </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-panel bg-surface-0 hairline-t sm:mx-2 sm:mb-2 sm:rounded-panel sm:ring-line">
-        <ComputerBody
-          front={front}
-          page={page}
-          loading={LiveState.$is('Loading')(state)}
-          failed={LiveState.$is('Failed')(state)}
-          computer={computer}
-        />
+      <div
+        id="computer-surface"
+        role="tabpanel"
+        aria-label={front === 'computer' ? 'Vivid’s computer' : 'Page'}
+        className={cn(
+          'flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-0',
+          // The machine's screen sits in a frame of its own; a page fills its slot flush under the toolbar.
+          front === 'computer' && 'mx-2 mb-2 rounded-panel ring-line',
+        )}
+      >
+        {front === 'computer' ? (
+          <ComputerBody
+            loading={LiveState.$is('Loading')(state)}
+            failed={LiveState.$is('Failed')(state)}
+            computer={computer}
+          />
+        ) : (
+          <PageView page={front === 'page' ? page : Option.none()} />
+        )}
       </div>
     </aside>
   )
 }
 
-/** The computer controls or the page address row, in the same toolbar slot. */
-function ToolbarRow({
-  front,
-  page,
+/** Who has the keyboard, in the toolbar's long field, with the controls that change it. */
+function ComputerToolbar({
   computer,
   on,
 }: {
-  front: ReturnType<typeof pages.front>
-  page: Option.Option<import('@vivid/desktop/bridge').Page>
   computer: Option.Option<ComputerRecord>
   on: boolean
 }) {
-  // One row, whichever it holds: the long field takes what the controls leave, and no more.
-  return (
-    <div className="flex h-11 shrink-0 items-center gap-1 px-2 pb-2">
-      <ToolbarControls front={front} page={page} computer={computer} on={on} />
-    </div>
-  )
-}
-
-function ToolbarControls({
-  front,
-  page,
-  computer,
-  on,
-}: {
-  front: ReturnType<typeof pages.front>
-  page: Option.Option<import('@vivid/desktop/bridge').Page>
-  computer: Option.Option<ComputerRecord>
-  on: boolean
-}) {
-  if (front !== 'computer') return <PageToolbar page={front === 'page' ? page : Option.none()} />
   return (
     <>
       {Option.isSome(computer) && <Keyboard computer={computer.value} />}
       <p
-        className="mx-1 flex h-9 min-w-0 flex-1 items-center justify-center truncate rounded-full bg-well px-4 text-label font-meta text-ink-3"
+        className="flex h-8 min-w-0 flex-1 items-center justify-center truncate rounded-full bg-surface-2 px-4 text-title font-meta text-ink-3"
         aria-live="polite"
       >
         {Option.match(computer, {
@@ -136,21 +122,16 @@ function ToolbarControls({
   )
 }
 
-/** The current computer receipt or the page surface, in the panel's body. */
+/** What the panel shows for Vivid's computer: its screen, or the honest reason there is none. */
 function ComputerBody({
-  front,
-  page,
   loading,
   failed,
   computer,
 }: {
-  front: ReturnType<typeof pages.front>
-  page: Option.Option<import('@vivid/desktop/bridge').Page>
   loading: boolean
   failed: boolean
   computer: Option.Option<ComputerRecord>
 }) {
-  if (front !== 'computer') return <PageView page={front === 'page' ? page : Option.none()} />
   return (
     <>
       {loading && <Note title="One moment" detail="Looking for your computer." />}

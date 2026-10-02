@@ -238,7 +238,7 @@ function Shell({ me }: { me: MeResponse }) {
           <PanelLeft className="size-4" />
         </button>
       )}
-      <main className="flex min-w-0 flex-1">
+      <main className="relative flex min-w-0 flex-1">
         <Suspense fallback={<Splash />}>
           <Place
             // A screen holds things that belong to the workspace it was opened in: the folder it

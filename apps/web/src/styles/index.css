@@ -2,6 +2,62 @@
 @import '@vivid/tokens/tokens.css';
 @import 'shadow-plugin';
 
+/* Workspace measurements the classes below share. The Computer's width is set by `data/split.ts`
+   as it is dragged, and its bounds live there too; these are only the fixed ones. */
+:root {
+  --computer-w: 600px;
+  --page-strip-h: 52px;
+  --page-tab-w: 236px;
+  --page-tab-min-w: 90px;
+  --page-nav-w: 98px;
+  --around-w: 300px;
+  --around-reserve-w: 312px;
+}
+
+/* The Computer beside the Thread: as wide as the divider was left, or the whole page in full view. */
+@utility computer-workspace {
+  position: relative;
+  width: var(--computer-w);
+  &[data-full='true'] {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    z-index: 30;
+  }
+}
+/* The divider's line, centred in its wider hit area so the hairline stays one pixel. */
+@utility computer-edge {
+  &::after {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    left: 50%;
+    width: 1px;
+    background: var(--line-2);
+  }
+}
+/* Above this width the card has room beside a readable column, so the conversation steps aside
+   for it; below, the card floats over the conversation instead. */
+@utility around-space {
+  @container thread (min-width: 1096px) {
+    margin-right: var(--around-reserve-w);
+  }
+}
+/* The layer that closes the card on a click elsewhere, only where the card floats (the same width
+   as `around-space`, so the two never disagree about which mode it is in). */
+@utility around-scrim {
+  display: none;
+  @container thread (max-width: 1095px) {
+    display: block;
+  }
+}
+@utility around-card {
+  width: min(var(--around-w), calc(100% - 24px));
+  top: calc(var(--topbar-h) + 4px);
+  right: 12px;
+  max-height: calc(100% - var(--topbar-h) - 16px);
+}
+
 @layer base {
   html,
   body,
