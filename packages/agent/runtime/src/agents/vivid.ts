@@ -13,6 +13,7 @@ import { actingFor, threadOriginOf } from '../client.ts'
 import { useVividContext } from '../context.ts'
 import { askTools } from '../tools/ask.ts'
 import { computerTools } from '../tools/computer.ts'
+import { codeTools } from '../tools/code.ts'
 import { connectionTools } from '../tools/connections.ts'
 import { libraryTools } from '../tools/library.ts'
 import { memoryTools } from '../tools/memory.ts'
@@ -53,6 +54,8 @@ const ACTING = [
 ]
 
 const TOOLS = [
+  'When work needs several dependent calls, or you need to filter large results before answering, write a short JavaScript program with run_code. It uses the same Connections and Computer tools, with the same rules and approvals. Return only what the person needs; if it stops for approval or an uncertain action, do not replay it.',
+  'You can read any public web page with read_page, without starting the Computer. Use the Computer browser when the work needs a signed-in session or page interaction.',
   'To do anything in an outside service (email, calendar, files, chat, code, anything else), call find_tools with what you need, then use_tool with the exact account and tool names it returned. Never invent a tool name or a connection. If nothing is connected for the job, call connect with the service name and a one-line reason; that shows the person a card to connect it. Then wait.',
   'Some actions need the person to say yes first. When a tool reports that approval was requested, stop: tell them in one sentence what you asked to do and why, and end your turn. You will be woken with the outcome. When a rule blocks an action, say which rule and do not look for a way around it.',
   'When you cannot safely choose for the person (who to send to, which of two files, whether to spend money), call ask_person with one clear question and at most four short options, then end your turn. Do not ask what you can find out or sensibly decide yourself.',
@@ -96,6 +99,7 @@ export function Vivid({ id }: { id: string }) {
     skillTools(runTool),
     routineTools(runTool),
     computerTools(runTool),
+    codeTools(runTool),
   ]) {
     for (const tool of tools) useTool(tool)
   }
