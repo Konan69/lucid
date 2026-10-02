@@ -241,58 +241,71 @@ function Fieldset({
           style={{ minHeight: 120, textAlignVertical: 'top' }}
         />
       </Labelled>
-      <Labelled label="Starts">
-        <Segmented
-          label="What starts this routine"
-          value={fields.kind}
-          options={KINDS}
-          onChange={(kind) => onChange({ ...fields, kind })}
-        />
-      </Labelled>
-      {fields.kind === 'Webhook' ? (
-        <Label size="label" tone="ink-3">
-          Vivid starts this routine each time an outside service calls its address with its key, and
-          reads whatever the service sends. You get the address and the key once the routine is
-          saved.
-        </Label>
+      {Option.isSome(fields.watching) ? (
+        <Labelled label="Starts">
+          <Label size="label" tone="ink-3">
+            When {fields.watching.value.event} in {fields.watching.value.account}. To watch for
+            something else, ask Vivid.
+          </Label>
+        </Labelled>
       ) : (
         <>
-          <Labelled label="When">
-            <Chips
-              label="When it runs"
-              value={named ? fields.cron : OWN}
-              options={[
-                ...routines.SCHEDULE_PRESETS.map((preset) => ({
-                  value: preset.cron,
-                  label: preset.label,
-                })),
-                { value: OWN, label: 'Its own schedule' },
-              ]}
-              // Choosing "its own" drops the named schedule; the field below is where one is written.
-              onChange={(cron) => onChange({ ...fields, cron: cron === OWN ? '' : cron })}
+          <Labelled label="Starts">
+            <Segmented
+              label="What starts this routine"
+              value={fields.kind}
+              options={KINDS}
+              onChange={(kind) => onChange({ ...fields, kind })}
             />
           </Labelled>
-          {!named && (
-            <Labelled label="Cron expression">
-              <Field
-                accessibilityLabel="Cron expression"
-                value={fields.cron}
-                autoCapitalize="none"
-                autoCorrect={false}
-                placeholder="0 9 * * 1-5"
-                onChangeText={(cron) => onChange({ ...fields, cron })}
-              />
-            </Labelled>
+          {fields.kind === 'Webhook' ? (
+            <Label size="label" tone="ink-3">
+              Vivid starts this routine each time an outside service calls its address with its key,
+              and reads whatever the service sends. You get the address and the key once the routine
+              is saved.
+            </Label>
+          ) : (
+            <>
+              <Labelled label="When">
+                <Chips
+                  label="When it runs"
+                  value={named ? fields.cron : OWN}
+                  options={[
+                    ...routines.SCHEDULE_PRESETS.map((preset) => ({
+                      value: preset.cron,
+                      label: preset.label,
+                    })),
+                    { value: OWN, label: 'Its own schedule' },
+                  ]}
+                  // Choosing "its own" drops the named schedule; the field below is where one is written.
+                  onChange={(cron) => onChange({ ...fields, cron: cron === OWN ? '' : cron })}
+                />
+              </Labelled>
+              {!named && (
+                <Labelled label="Cron expression">
+                  <Field
+                    accessibilityLabel="Cron expression"
+                    value={fields.cron}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    placeholder="0 9 * * 1-5"
+                    onChangeText={(cron) => onChange({ ...fields, cron })}
+                  />
+                </Labelled>
+              )}
+              <Labelled label="Time zone">
+                <Field
+                  accessibilityLabel="Time zone"
+                  value={Option.getOrElse(fields.timezone, () => zone)}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onChangeText={(timezone) =>
+                    onChange({ ...fields, timezone: Option.some(timezone) })
+                  }
+                />
+              </Labelled>
+            </>
           )}
-          <Labelled label="Time zone">
-            <Field
-              accessibilityLabel="Time zone"
-              value={Option.getOrElse(fields.timezone, () => zone)}
-              autoCapitalize="none"
-              autoCorrect={false}
-              onChangeText={(timezone) => onChange({ ...fields, timezone: Option.some(timezone) })}
-            />
-          </Labelled>
         </>
       )}
     </>
