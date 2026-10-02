@@ -1,13 +1,15 @@
 import { describe, expect, it, vi } from '@effect/vitest'
 import { VividRpcClient } from '@vivid/client-runtime'
-import { Forbidden, RuntimeUnavailable, ThreadId } from '@vivid/contracts'
+import { Forbidden, RuntimeUnavailable, SkillReadOnly, ThreadId } from '@vivid/contracts'
 import { Clock, Deferred, Effect, Fiber, Layer, Queue, Ref, Result, Stream } from 'effect'
 import * as Atom from 'effect/unstable/reactivity/Atom'
 import * as TestClock from 'effect/testing/TestClock'
 import { LiveState, liveStateOf, makeLive, type ProductFailure } from './live.js'
 
+type MarkThreadReadFailure = Exclude<ProductFailure, SkillReadOnly>
+
 /** Provides a controlled RPC write and shares the test clock with the atom runtime. */
-const testClientLayer = (markPlans: Queue.Queue<Effect.Effect<void, ProductFailure>>) =>
+const testClientLayer = (markPlans: Queue.Queue<Effect.Effect<void, MarkThreadReadFailure>>) =>
   TestClock.testClockWith((clock) =>
     Effect.succeed(
       Layer.provide(
@@ -23,7 +25,7 @@ const testClientLayer = (markPlans: Queue.Queue<Effect.Effect<void, ProductFailu
 const queuedQuery = Effect.fn('LiveTest.queuedQuery')(function* () {
   const values = yield* Queue.unbounded<number>()
   const received = yield* Queue.unbounded<number>()
-  const plans = yield* Queue.unbounded<Effect.Effect<void, ProductFailure>>()
+  const plans = yield* Queue.unbounded<Effect.Effect<void, MarkThreadReadFailure>>()
   const live = makeLive(yield* testClientLayer(plans))
   const query = live.query((_client) =>
     Stream.fromQueue(values).pipe(
@@ -55,7 +57,7 @@ describe('live state', () => {
     Effect.gen(function* () {
       const values = yield* Queue.unbounded<number>()
       const received = yield* Queue.unbounded<number>()
-      const plans = yield* Queue.unbounded<Effect.Effect<void, ProductFailure>>()
+      const plans = yield* Queue.unbounded<Effect.Effect<void, MarkThreadReadFailure>>()
       const live = makeLive(yield* testClientLayer(plans))
       const query = live.query(() =>
         Stream.fromQueue(values).pipe(Stream.tap((value) => Queue.offer(received, value))),
@@ -76,7 +78,7 @@ describe('live state', () => {
 
   it.effect('ends on a final failure without reopening the stream', () =>
     Effect.gen(function* () {
-      const plans = yield* Queue.unbounded<Effect.Effect<void, ProductFailure>>()
+      const plans = yield* Queue.unbounded<Effect.Effect<void, MarkThreadReadFailure>>()
       const opens = yield* Ref.make(0)
       const live = makeLive(yield* testClientLayer(plans))
       const query = live.query(() =>
@@ -101,7 +103,7 @@ describe('live state', () => {
 
   it.effect('reopens after a transient failure and recovers on the scheduled retry', () =>
     Effect.gen(function* () {
-      const plans = yield* Queue.unbounded<Effect.Effect<void, ProductFailure>>()
+      const plans = yield* Queue.unbounded<Effect.Effect<void, MarkThreadReadFailure>>()
       const opens = yield* Ref.make(0)
       const failed = yield* Deferred.make<void>()
       const recovered = yield* Deferred.make<void>()
@@ -149,8 +151,8 @@ describe('live state', () => {
         yield* TestClock.adjust(0)
         // Each call waits on its own gate, so the moment between sending and hearing back can be
         // looked at: that is when the expected value must already be on screen.
-        const refusal = yield* Deferred.make<void, ProductFailure>()
-        const acceptance = yield* Deferred.make<void, ProductFailure>()
+        const refusal = yield* Deferred.make<void, MarkThreadReadFailure>()
+        const acceptance = yield* Deferred.make<void, MarkThreadReadFailure>()
         yield* Queue.offer(test.plans, Deferred.await(refusal))
         yield* Queue.offer(test.plans, Deferred.await(acceptance))
         const shown = () => liveStateOf(test.live.registry.get(test.query.atom))
@@ -191,7 +193,7 @@ describe('live state', () => {
 
   it.effect('returns Result values from run for both success and failure', () =>
     Effect.gen(function* () {
-      const plans = yield* Queue.unbounded<Effect.Effect<void, ProductFailure>>()
+      const plans = yield* Queue.unbounded<Effect.Effect<void, MarkThreadReadFailure>>()
       const live = makeLive(yield* testClientLayer(plans))
       const success = yield* live.run(Effect.succeed('done'))
       const failure = yield* live.run(Effect.fail(Forbidden.make({ message: 'Denied' })))
@@ -207,7 +209,7 @@ describe('live state', () => {
   it.effect('debounces new ask arguments and retains the last answer while pending', () => {
     const program = Effect.fn('LiveTest.ask')(function* () {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-      const plans = yield* Queue.unbounded<Effect.Effect<void, ProductFailure>>()
+      const plans = yield* Queue.unbounded<Effect.Effect<void, MarkThreadReadFailure>>()
       const argumentsAtom = Atom.make('first')
       const asked = yield* Ref.make<ReadonlyArray<string>>([])
       const pending = yield* Deferred.make<string>()
@@ -255,7 +257,7 @@ describe('live state', () => {
       const program = Effect.fn('LiveTest.beat')(function* () {
         // The atom runtime waits on real timers, so the test holds those, as the search test does.
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-        const plans = yield* Queue.unbounded<Effect.Effect<void, ProductFailure>>()
+        const plans = yield* Queue.unbounded<Effect.Effect<void, MarkThreadReadFailure>>()
         const said = yield* Queue.unbounded<boolean>()
         const typing = Atom.make(false)
         const live = makeLive(yield* testClientLayer(plans))
