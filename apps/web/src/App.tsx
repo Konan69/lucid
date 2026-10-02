@@ -1,11 +1,12 @@
 import { useAtomValue } from '@effect/atom-react'
-import { ThreadId, Workspace, type MeResponse } from '@vivid/contracts'
-import { Option } from 'effect'
+import { ThreadId, Workspace, type MeResponse, type Thread as ThreadRecord } from '@vivid/contracts'
+import { Array as Arr, Option, Order } from 'effect'
+import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import { PanelLeft } from 'lucide-react'
 import { Suspense, useState, useSyncExternalStore } from 'react'
 import { live, LiveState, useLive, useLiveValue } from './data/live'
 import { Route, router } from './data/route'
-import { link } from './data/runtime'
+import { engine, link } from './data/runtime'
 import { sidebar } from './data/sidebar'
 import { theme } from './data/theme'
 import { startThread } from './data/threads'
@@ -40,12 +41,53 @@ const subscribeOverlay = (listener: () => void) => {
   }
 }
 
-// ⌘K / Ctrl+K finds anything, from anywhere. A module-level listener, like the sidebar's ⌘B, so
-// the shortcut exists for the life of the page and not for the life of a component.
+/** The Threads still in play, newest first: the order ⌘⇧[ and ⌘⇧] walk through. */
+const inPlay = () => {
+  const result = engine.registry.get(live.threads.atom)
+  return AsyncResult.isSuccess(result)
+    ? Arr.sort(
+        result.value.threads.filter((thread) => !thread.archived),
+        Order.mapInput(Order.flip(Order.Number), (thread: ThreadRecord) => thread.updatedAt),
+      )
+    : []
+}
+
+/** Goes to the Thread before or after the one on screen; from anywhere else, to the newest. */
+const step = (by: -1 | 1) => {
+  const threads = inPlay()
+  const here = router.route()
+  const at = Route.$is('Thread')(here) ? threads.findIndex((thread) => thread.id === here.id) : -1
+  const next = Option.fromUndefinedOr(
+    threads[at === -1 ? 0 : Math.min(Math.max(at + by, 0), threads.length - 1)],
+  )
+  if (Option.isSome(next)) router.go(Route.Thread({ id: next.value.id }))
+}
+
+// The shortcuts that work from anywhere. They are module-level listeners, like the sidebar's ⌘B,
+// so they exist for the life of the page and not for the life of a component.
+//   ⌘K          find anything, do anything
+//   ⌘⇧O         new thread
+//   ⌘⇧[  ⌘⇧]    the thread before, the thread after
 addEventListener('keydown', (event) => {
-  if (event.key.toLocaleLowerCase() !== 'k' || !(event.metaKey || event.ctrlKey)) return
-  event.preventDefault()
-  setOverlay(overlay === 'palette' ? 'none' : 'palette')
+  if (!(event.metaKey || event.ctrlKey)) return
+  const key = event.key.toLocaleLowerCase()
+  if (key === 'k' && !event.shiftKey) {
+    event.preventDefault()
+    setOverlay(overlay === 'palette' ? 'none' : 'palette')
+    return
+  }
+  if (!event.shiftKey) return
+  if (key === 'o') {
+    event.preventDefault()
+    setOverlay('none')
+    router.go(Route.New())
+    return
+  }
+  // By position on the keyboard, not by character: with Shift held the key reads "{" or "}".
+  if (event.code === 'BracketLeft' || event.code === 'BracketRight') {
+    event.preventDefault()
+    step(event.code === 'BracketLeft' ? -1 : 1)
+  }
 })
 
 /**
