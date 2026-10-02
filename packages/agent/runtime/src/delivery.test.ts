@@ -6,7 +6,7 @@ import { Effect, Exit, Fiber, Option, Predicate, Queue } from 'effect'
 import * as RpcClient from 'effect/unstable/rpc/RpcClient'
 import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/unstable/rpc/RpcMessage'
-import { cachedAuthority, recordScope, resolveAuthority } from './delivery.ts'
+import { cachedAuthority, recordScope, recoverAuthority, resolveAuthority } from './delivery.ts'
 
 /** Recovery crosses the generated client; the controlled transport delays and fails real lookup requests. */
 describe('delivery authority recovery', () => {
@@ -24,7 +24,7 @@ describe('delivery authority recovery', () => {
         body: 'Read mail.',
         attributes: { turn: '1' },
       }
-      const recover = resolveAuthority(thread, delivery, Option.none()).pipe(
+      const recover = resolveAuthority(thread, delivery, Option.none(), recoverAuthority).pipe(
         Effect.provideService(VividRpcClient, rpc.client),
       )
       const first = yield* recover.pipe(Effect.result, Effect.forkScoped)

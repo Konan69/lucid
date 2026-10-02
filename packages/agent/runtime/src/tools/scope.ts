@@ -3,7 +3,7 @@ import { VividRpcClient } from '@vivid/client-runtime'
 import type { LibraryFolderId, ThreadOrigin } from '@vivid/contracts'
 import { Context, Effect, Layer, Option } from 'effect'
 import { actingLayer, runtimeClientLayer, type Acting } from '../client.ts'
-import { resolveAuthority } from '../delivery.ts'
+import { recoverAuthority, resolveAuthority } from '../delivery.ts'
 import { settle, type ToolFailure, type ToolResult } from './result.ts'
 
 export interface ScopeService {
@@ -24,8 +24,8 @@ export function scopeLayer(
   return Layer.effect(
     Scope,
     Effect.gen(function* () {
-      const authority = yield* resolveAuthority(thread, delivery, origin).pipe(
-        Effect.provide(runtimeClientLayer),
+      const authority = yield* resolveAuthority(thread, delivery, origin, (threadId, turn) =>
+        recoverAuthority(threadId, turn).pipe(Effect.provide(runtimeClientLayer)),
       )
       return yield* Effect.gen(function* () {
         return Scope.of({

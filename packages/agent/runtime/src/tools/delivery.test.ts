@@ -14,7 +14,13 @@ import {
 import { VividRpc } from '@vivid/contracts/rpc'
 import { DeliveryMessage } from '../../../../../apps/server/src/threads/conversation.ts'
 import { flueMessage } from '../../../../../apps/server/src/threads/message.ts'
-import { cachedAuthority, modelDelivery, recordScope, resolveAuthority } from '../delivery.ts'
+import {
+  cachedAuthority,
+  modelDelivery,
+  recordScope,
+  recoverAuthority,
+  resolveAuthority,
+} from '../delivery.ts'
 
 const marker = '69d8a703-98ad-41e7-a584-390a472a6637'
 const scope = DeliveryScope.make({
@@ -121,9 +127,12 @@ describe('delivery authority outside model text', () => {
             body: 'Review.',
             attributes: { turn: '4' },
           }
-          const recover = resolveAuthority(threadId, delivery, Option.none()).pipe(
-            Effect.provide(Layer.succeed(VividRpcClient, rpc.client)),
-          )
+          const recover = resolveAuthority(
+            threadId,
+            delivery,
+            Option.none(),
+            recoverAuthority,
+          ).pipe(Effect.provide(Layer.succeed(VividRpcClient, rpc.client)))
           const answer = Effect.fn('Test.DeliveryScope.answer')(function* () {
             const request = yield* Queue.take(requests)
             if (!Predicate.isTagged(request, 'Request')) expect.fail('Expected a scope request')

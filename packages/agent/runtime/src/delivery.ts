@@ -102,10 +102,20 @@ const recoveryCache = Effect.fn('Delivery.recoveryCache')(function* () {
 })
 
 /** Reuse successful authority and concurrent recovery, but retry a failed lookup on the next call. */
-export const resolveAuthority = Effect.fn('Delivery.resolve')(function* (
+export const recoverAuthority = Effect.fn('Delivery.recover')(function* (
+  threadId: ThreadId,
+  turn: number,
+) {
+  return yield* Cache.get(yield* recoveryCache(), new RecoveryKey({ threadId, turn }))
+})
+
+/** Validate attribution before acquiring recovery transport. An unowned user message cannot
+ * require server configuration or credentials merely to report that no Person can act. */
+export const resolveAuthority = Effect.fn('Delivery.resolve')(function* <E, R>(
   thread: string,
   delivery: DeliveredMessage,
   origin: Option.Option<ThreadOrigin>,
+  recover: (threadId: ThreadId, turn: number) => Effect.Effect<DeliveryAuthority, E, R>,
 ) {
   const prepared = cachedAuthority(thread, delivery, origin)
   if (Option.isSome(prepared)) return prepared.value
@@ -115,13 +125,7 @@ export const resolveAuthority = Effect.fn('Delivery.resolve')(function* (
     return yield* Effect.fail(
       new NobodyToActFor({ message: 'There is no Person behind this message to act for.' }),
     )
-  return yield* Cache.get(
-    yield* recoveryCache(),
-    new RecoveryKey({
-      threadId: threadId.value,
-      turn: turn.value,
-    }),
-  )
+  return yield* recover(threadId.value, turn.value)
 })
 
 /** A new object is the Flue ingress: authority and transport keys cannot leak into history or model text. */
