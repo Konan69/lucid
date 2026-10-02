@@ -9,6 +9,7 @@ import {
   FolderKanban,
   Library,
   PanelLeft,
+  Plug,
   Plus,
   Repeat2,
   Search,
@@ -154,6 +155,12 @@ export function Sidebar({
             active={Route.$is('Library')(route)}
             onClick={() => router.go(Route.Library())}
           />
+          <ToolRow
+            icon={<Plug className="size-4" strokeWidth={1.6} />}
+            label="Integrations"
+            active={false}
+            onClick={() => router.openSettings(Option.some('connections'))}
+          />
         </div>
 
         <nav className="mt-2 min-h-0 flex-1 scrollbar-hidden overflow-y-auto scroll-fade-y px-2 pb-2">
@@ -249,7 +256,10 @@ function WorkspaceSwitcher({
         <span className="relative inline-flex size-5.5 items-center justify-center">
           <Face size={20} mood={working ? 'thinking' : 'neutral'} />
         </span>
-        <span className="min-w-0 flex-1 truncate text-title text-ink">{here}</span>
+        {/* Where the Person is, in the face Vivid speaks in: the one line of the rail with a voice. */}
+        <span className="min-w-0 flex-1 truncate font-display text-dialog font-strong text-ink">
+          {here}
+        </span>
         <ChevronsUpDown className="size-3.5 text-ink-4 group-hover/row:text-ink-2" />
       </button>
       <Menu open={open} onClose={() => setOpen(false)} className="w-64">
