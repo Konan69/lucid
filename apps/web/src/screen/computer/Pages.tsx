@@ -199,16 +199,16 @@ export function PageView({ page }: { page: Option.Option<Page> }) {
       <Blank title="Open a page" detail="Type an address above, or a few words to search for." />
     )
   }
-  return PageLoadFailure.match(page.value.failed, {
-    None: () => <div ref={place} className="min-h-0 flex-1" />,
-    Some: ({ value }) => (
+  if (PageLoadFailure.guards.Some(page.value.failed)) {
+    return (
       <Blank
         title="This page did not load"
-        detail={value}
+        detail={page.value.failed.value}
         action={<Button onClick={() => pages.reload(page.value.tab)}>Try again</Button>}
       />
-    ),
-  })
+    )
+  }
+  return <div ref={place} className="min-h-0 flex-1" />
 }
 
 function Blank({
