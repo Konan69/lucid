@@ -20,6 +20,7 @@ export const executorFailure = Match.type<ExecutorFailure>().pipe(
       }),
     ExecutorResourceMissing: ({ resource }) =>
       new InvalidRequest({ message: resourceReason(resource) }),
+    ExecutorAuthorizationUnavailable: unavailable,
     ExecutorCopyRetained: unavailable,
     ExecutorTransportFailure: unavailable,
     ExecutorResponseInvalid: unavailable,

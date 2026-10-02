@@ -65,11 +65,18 @@ export const inspectCatalog = Effect.fn('Connections.inspectCatalog')(function* 
   executor: Pick<ExecutorService, 'catalog' | 'authorization'>,
   returnAddress: string,
 ) {
+  /** Per-service failure leaves the adapter fact intact and cannot cancel healthy peers. */
+  const inspect = Effect.fn('Connections.inspectAvailability')(
+    (entry: typeof ExecutorServiceEntry.Type) =>
+      executor
+        .authorization({ service: entry.id, returnAddress })
+        .pipe(Effect.catch(() => Effect.void)),
+  )
   const refresh = Effect.fn('Connections.refreshAvailability')(function* () {
     const entries = yield* executor.catalog()
     yield* Effect.forEach(
       entries.filter((entry) => !ServiceAuthorization.guards.None(entry.authorization)),
-      (entry) => executor.authorization({ service: entry.id, returnAddress }),
+      inspect,
       { concurrency: 4, discard: true },
     )
   })

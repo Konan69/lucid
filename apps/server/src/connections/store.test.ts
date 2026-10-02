@@ -13,6 +13,8 @@ import {
   ServiceId,
 } from '@vivid/contracts'
 import { and, eq } from 'drizzle-orm'
+import * as TestClock from 'effect/testing/TestClock'
+import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { membershipTable } from '../companies/tables.ts'
 import { auditEntries } from '../audit/tables.ts'
@@ -30,6 +32,50 @@ import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './test
 
 describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
   layer(connectionTestLayer)((it) => {
+    it.effect('revokes provider resources when the real product insert is rejected', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const database = yield* Database
+        const probe = yield* ConnectionProbe
+        const removals = yield* Ref.get(probe.removals)
+        yield* database.run(
+          database.delete(personTable).where(eq(personTable.id, ownerActor.person.id)),
+        )
+        const failure = yield* (yield* ConnectionStore)
+          .begin(ownerActor, { service: serviceId, label: 'Rejected insert', shared: false })
+          .pipe(Effect.flip)
+        expect(failure._tag).toBe('DatabaseConstraintViolation')
+        expect(yield* Ref.get(probe.removals)).toBe(removals + 1)
+        expect((yield* (yield* ConnectionStore).list(ownerActor)).connections).toEqual([])
+      }),
+    )
+    it.effect('starts no availability worker when the installation has no Executor', () =>
+      Effect.gen(function* () {
+        const executor = yield* Executor
+        const calls = yield* Ref.make(0)
+        const disabled = Executor.of({
+          ...executor,
+          configured: false,
+          catalog: Effect.fn('Executor.Test.disabledCatalog')(() =>
+            Ref.update(calls, (count) => count + 1).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  ServiceUnavailable.make({ service: 'connections', message: 'Unconfigured' }),
+                ),
+              ),
+            ),
+          ),
+        })
+        yield* Effect.gen(function* () {
+          yield* ConnectionStore
+          yield* TestClock.adjust('1 hour')
+          expect(yield* Ref.get(calls)).toBe(0)
+        }).pipe(
+          Effect.provide(connectionStoreLayer, { local: true }),
+          Effect.provideService(Executor, disabled),
+        )
+      }),
+    )
     it.effect(
       'keeps personal accounts private across workspaces and stores opaque owner references',
       () =>

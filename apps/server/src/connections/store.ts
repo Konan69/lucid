@@ -1,5 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm'
-import { Clock, Context, Effect, Layer, Redacted, Schema, Option } from 'effect'
+import { Clock, Context, Effect, Layer, Redacted, Schema, Option, Semaphore } from 'effect'
 import {
   AuditEvent,
   BeginConnectionRequest,
@@ -29,6 +29,8 @@ import {
   ExecutorStatus,
   ExecutorStep,
   type ExecutorService,
+  ExecutorSignInRequired,
+  ExecutorAuthorizationUnavailable,
 } from './executor.ts'
 import { executorFailure } from './errors.ts'
 import {
@@ -45,6 +47,9 @@ import { rankServices } from './ranking.ts'
 import { inspectCatalog } from './catalog.ts'
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
+const isRetainedAuthorization = Schema.is(
+  Schema.Union([ExecutorSignInRequired, ExecutorAuthorizationUnavailable]),
+)
 
 /** Availability changes metadata only; explicit construction preserves the wire Service model. */
 function authorizedService(service: Service, authorization: ServiceAuthorization) {
@@ -160,24 +165,34 @@ const begin = Effect.fn('Connections.begin')(function* (
   const now = yield* Clock.currentTimeMillis
   const status = ExecutorStep.guards.Done(step) ? 'ready' : 'needs-authorization'
   const database = yield* Database
-  const rows = yield* database.run(
-    database
-      .insert(connections)
-      .values({
-        id,
-        service: service.id,
-        serviceName: service.name,
-        label: request.label,
-        personId: actor.person.id,
-        companyId,
-        references: encodeReferences(step.references),
-        status,
-        reason: null,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning(),
-  )
+  const rows = yield* database
+    .run(
+      database
+        .insert(connections)
+        .values({
+          id,
+          service: service.id,
+          serviceName: service.name,
+          label: request.label,
+          personId: actor.person.id,
+          companyId,
+          references: encodeReferences(step.references),
+          status,
+          reason: null,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning(),
+    )
+    .pipe(
+      Effect.catch(
+        Effect.fn('Connections.compensateInsert')(function* (error) {
+          // The provider grant cannot outlive a rejected product insert; cleanup failure stays unavailable.
+          yield* executor.remove(step.references).pipe(Effect.mapError(executorFailure))
+          return yield* Effect.fail(error)
+        }),
+      ),
+    )
   const row = yield* getRecord(
     actor,
     ConnectionId.make((yield* returned(rows, 'Connection')).id),
@@ -200,6 +215,21 @@ const begin = Effect.fn('Connections.begin')(function* (
   })
 })
 
+/** Retain a replacement request before reporting failure so the next Resume resolves that exact grant. */
+const retainAuthorization = Effect.fn('Connections.retainAuthorization')(function* (
+  actor: Actor,
+  row: ConnectionRecord,
+  error: ExecutorSignInRequired | ExecutorAuthorizationUnavailable,
+) {
+  const saved = yield* saveState(
+    row,
+    ConnectionState.cases.NeedsAuthorization.make({}),
+    error.references,
+  )
+  yield* recordChanged(actor, saved)
+  return yield* Effect.fail(executorFailure(error))
+})
+
 /** Resume changes only authorization state on the existing row; ownership and creation remain stable. */
 const resume = Effect.fn('Connections.resume')(function* (actor: Actor, row: ConnectionRecord) {
   const config = yield* ServerConfig
@@ -217,7 +247,13 @@ const resume = Effect.fn('Connections.resume')(function* (actor: Actor, row: Con
         config.PUBLIC_URL,
       ).href,
     })
-    .pipe(Effect.mapError(executorFailure))
+    .pipe(
+      Effect.mapError((error) => (isRetainedAuthorization(error) ? error : executorFailure(error))),
+      Effect.catchTags({
+        ExecutorSignInRequired: (error) => retainAuthorization(actor, row, error),
+        ExecutorAuthorizationUnavailable: (error) => retainAuthorization(actor, row, error),
+      }),
+    )
   const saved = yield* saveState(
     row,
     ExecutorStep.guards.Done(step)
@@ -269,7 +305,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const executor: ExecutorService = yield* Executor
   const database = yield* Database
   const returnAddress = (yield* ServerConfig).PUBLIC_URL.href
-  yield* inspectCatalog(executor, returnAddress)
+  if (executor.configured) yield* inspectCatalog(executor, returnAddress)
   const dependencies = yield* Effect.context<
     Executor | Database | Audit | ServerConfig | import('../live/changes.ts').Changes
   >()
@@ -289,7 +325,17 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const inspectService = Effect.fn('Connections.inspectService')(function* (service: Service) {
     const authorization = yield* executor
       .authorization({ service: service.id, returnAddress })
-      .pipe(Effect.mapError(executorFailure))
+      .pipe(
+        // The downloaded catalog is an explicit optimistic hint until read-only inspection succeeds.
+        // Never cache a transient answer or hide a virgin service because no app definition exists yet.
+        Effect.catchTags({
+          ExecutorNotReady: () => Effect.succeed(service.authorization),
+          ExecutorTransportFailure: () => Effect.succeed(service.authorization),
+          ExecutorExecutionUncertain: () => Effect.succeed(service.authorization),
+          ExecutorResponseInvalid: () => Effect.succeed(service.authorization),
+        }),
+        Effect.mapError(executorFailure),
+      )
     return authorizedService(service, authorization)
   })
   /** Search uses only completed availability facts in the adapter's snapshot. A cold sign-in
@@ -313,7 +359,9 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     return yield* inspectService(entry)
   })
   const get = (actor: Actor, id: ConnectionId) => provide(getRecord(actor, id, false))
-  const management = makeManagement({ executor, database, provide, get })
+  // Serialize renewal through persistence: two closed-dialog clicks must not allocate parallel grants.
+  const resuming = yield* Semaphore.make(1)
+  const management = makeManagement({ executor, database, provide, get, resuming })
   return {
     get,
     catalog: catalogServices,
@@ -350,6 +398,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
 /** Management shares the Layer's authority and publishes every persisted state change. */
 const makeManagement = (input: {
   readonly executor: ExecutorService
+  readonly resuming: Semaphore.Semaphore
   readonly database: typeof Database.Service
   readonly provide: <A, E>(
     effect: Effect.Effect<
@@ -367,22 +416,33 @@ const makeManagement = (input: {
     | import('../database/client.ts').DatabaseInfrastructureError
   >
 }) => {
-  const { executor, database, provide, get } = input
+  const { executor, database, provide, get, resuming } = input
   return {
     /** Resume has exactly removal's scoped lookup and admin check, before provider access. */
-    resume: Effect.fn('Connections.resumeExisting')(function* (actor: Actor, id: ConnectionId) {
-      const row = yield* get(actor, id)
-      yield* mayManage(actor, row)
-      if (row.status === 'ready')
-        return ConnectionStep.cases.Done.make({
-          connection: yield* provide(publicConnection(actor, row)),
-        })
-      if (row.status === 'failed')
-        return yield* Effect.fail(
-          new InvalidRequest({ message: 'Remove this failed Connection and connect again.' }),
+    resume: Effect.fn('Connections.resumeExisting')(
+      function* (actor: Actor, id: ConnectionId) {
+        const row = yield* get(actor, id)
+        yield* mayManage(actor, row)
+        if (row.status === 'ready')
+          return ConnectionStep.cases.Done.make({
+            connection: yield* provide(publicConnection(actor, row)),
+          })
+        if (row.status === 'failed')
+          return yield* Effect.fail(
+            new InvalidRequest({ message: 'Remove this failed Connection and connect again.' }),
+          )
+        const service = (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).find(
+          (entry) => entry.id === row.service,
         )
-      return yield* provide(resume(actor, row))
-    }),
+        if (
+          service !== undefined &&
+          ServiceAuthorization.guards.SetupRequired(service.authorization)
+        )
+          return yield* Effect.fail(new InvalidRequest({ message: connectionSetupMessage }))
+        return yield* provide(resume(actor, row))
+      },
+      (effect) => resuming.withPermit(effect),
+    ),
     /** Only a managing Person submits keys; the store retains identifiers alone. */
     complete: Effect.fn('Connections.complete')(function* (
       actor: Actor,

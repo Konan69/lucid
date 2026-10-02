@@ -17,6 +17,8 @@ import * as NetAddress from 'effect/unstable/net/NetAddress'
 import {
   Executor,
   ExecutorAppId,
+  ExecutorAccountId,
+  ExecutorAuthorizationId,
   ExecutorCallOutcome,
   ExecutorResumeOutcome,
   ExecutorOwnerId,
@@ -31,7 +33,8 @@ import {
 import { executorFailure } from './errors.ts'
 import { connectionStoreLayer, ConnectionStore } from './store.ts'
 import { connectionTestLayer } from './testing.ts'
-import { testDatabaseConfigured } from '../database/testdb.ts'
+import { ServerConfig } from '../config.ts'
+import { testConfigLayer, testDatabaseConfigured } from '../database/testdb.ts'
 import { ServiceCatalog } from '@vivid/contracts'
 
 const service = ServiceId.make('test/service')
@@ -91,6 +94,7 @@ const WireError = Schema.TaggedUnion({
   NewInputRefusal: { message: Schema.String },
   OAuthSetupFailed: { reason: Schema.String },
   OAuthClientUnavailable: {},
+  OAuthReconnectRequired: {},
 })
 const Begin = Schema.Struct({ owner: Schema.String, name: Schema.String })
 const Resume = Schema.Struct({ owner: Schema.String, requestId: Schema.String })
@@ -112,6 +116,7 @@ const fixture = Effect.fn('ExecutorHttpTest.fixture')(function* () {
   const copied = yield* Ref.make(false)
   const imported = yield* Ref.make(false)
   const paginated = yield* Ref.make(false)
+  const catalogDefinitions = yield* Ref.make<readonly (typeof Schema.Json.Type)[]>([])
   const server = yield* NodeHttpServer.make(() => NodeHttp.createServer(), {
     host: '127.0.0.1',
     port: 0,
@@ -120,7 +125,7 @@ const fixture = Effect.fn('ExecutorHttpTest.fixture')(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
     const url = new URL(request.url, 'http://fixture.test')
     const body =
-      request.method === 'GET' || request.method === 'DELETE'
+      request.method === 'GET' || request.method === 'DELETE' || url.pathname.endsWith('/cancel')
         ? null
         : yield* request.json.pipe(Effect.flatMap(Json))
     const path = `${request.method} ${url.pathname}`
@@ -146,7 +151,14 @@ const fixture = Effect.fn('ExecutorHttpTest.fixture')(function* () {
     }
     const fault = (yield* Ref.get(responses)).get(path)
     if (fault !== undefined) return yield* serveFault(request, fault)
-    const response = yield* defaultResponse({ path, url, copied, imported, paginated })
+    const response = yield* defaultResponse({
+      path,
+      url,
+      copied,
+      imported,
+      paginated,
+      catalogDefinitions,
+    })
     return HttpServerResponse.jsonUnsafe(response)
   })
   yield* server.serve(handler())
@@ -166,6 +178,7 @@ const fixture = Effect.fn('ExecutorHttpTest.fixture')(function* () {
   )
   return {
     responses,
+    catalogDefinitions,
     requests,
     catalogRequests,
     setupRequests,
@@ -199,6 +212,7 @@ const defaultResponse = Effect.fn('ExecutorHttpTest.response')(function* (input:
   copied: Ref.Ref<boolean>
   imported: Ref.Ref<boolean>
   paginated: Ref.Ref<boolean>
+  catalogDefinitions: Ref.Ref<readonly (typeof Schema.Json.Type)[]>
 }) {
   switch (input.path) {
     case 'GET /dashboard/api/catalog':
@@ -217,6 +231,8 @@ const defaultResponse = Effect.fn('ExecutorHttpTest.response')(function* (input:
     case 'POST /v1/tools/resume':
       return { status: 'completed', value: { ok: true } }
     case 'GET /v1/apps':
+      if (input.url.searchParams.get('name') === `Vivid catalog ${service}`)
+        return yield* Ref.get(input.catalogDefinitions)
       if (input.url.searchParams.get('owner') === 'local')
         return (yield* Ref.get(input.imported)) ? [template] : []
       return (yield* Ref.get(input.copied)) ? [app] : []
@@ -600,7 +616,7 @@ it.effect('passes declared key fields through and compensates a failed authoriza
         .set('POST /dashboard/api/catalog/import', reply(200, { ...keyApp, id: 'template' }))
         .set(
           'POST /v1/account-connections',
-          reply(200, { id: 'authorization', state: { status: 'pending' } }),
+          reply(200, { id: 'authorization', reconnectAccount: null, state: { status: 'pending' } }),
         ),
     )
     yield* Effect.gen(function* () {
@@ -745,6 +761,7 @@ const setupFixture = Effect.fn('ExecutorHttpTest.setupFixture')(function* (
   const remote = yield* fixture()
   const requirement = setupDefinition(mixed)
   const accounts = { primary: requirement }
+  yield* Ref.set(remote.catalogDefinitions, [{ id: 'template', requirements: { accounts } }])
   yield* Ref.update(remote.responses, (values) =>
     new Map(values)
       .set(
@@ -763,7 +780,7 @@ const setupFixture = Effect.fn('ExecutorHttpTest.setupFixture')(function* (
       )
       .set(
         'POST /v1/account-connections',
-        reply(200, { id: 'authorization', state: { status: 'pending' } }),
+        reply(200, { id: 'authorization', reconnectAccount: null, state: { status: 'pending' } }),
       ),
   )
   return remote
@@ -786,8 +803,7 @@ for (const mode of ['automatic', 'saved', 'client-required']) {
             expect(authorization.fields).toEqual([{ name: 'pat', label: 'Personal access token' }])
           if (expected === 'SetupRequired') {
             const failure = yield* executor.begin(beginInput).pipe(Effect.flip)
-            expect(failure._tag).toBe('ExecutorRejected')
-            expect(failure).toHaveProperty('message', connectionSetupMessage)
+            expect(failure._tag).toBe('ExecutorSetupRequired')
             expect(executorFailure(failure)).toEqual(
               new InvalidRequest({ message: connectionSetupMessage }),
             )
@@ -822,37 +838,47 @@ for (const mode of ['automatic', 'saved', 'client-required']) {
   }
 }
 
-/** Negative inspection results protect the provider from repeated request retries, while expiry
- * permits newly repaired setup to replace the retained fact on the next background pass.
- */
-it.effect('retains failed inspection for ten minutes and retries on refresh', () =>
-  Effect.gen(function* () {
-    const remote = yield* setupFixture(false, 'client-required')
-    yield* Ref.update(remote.responses, (values) =>
-      new Map(values).set('POST /v1/account-connections/oauth/setup', reply(503, null)),
-    )
-    yield* Effect.gen(function* () {
-      const executor = yield* Executor
-      const input = { service, returnAddress: beginInput.returnAddress }
-      expect((yield* executor.authorization(input))._tag).toBe('SetupRequired')
-      expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
-      yield* Ref.update(remote.responses, (values) =>
-        new Map(values).set(
-          'POST /v1/account-connections/oauth/setup',
-          reply(200, { mode: 'automatic' }),
-        ),
-      )
-      expect((yield* executor.authorization(input))._tag).toBe('SetupRequired')
-      yield* TestClock.adjust('10 minutes')
-      expect((yield* executor.authorization(input))._tag).toBe('SignIn')
-      expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
-      expect(
-        (yield* Ref.get(remote.requests)).filter(
-          (request) => request.path === 'POST /v1/account-connections/oauth/setup',
-        ),
-      ).toHaveLength(2)
-    }).pipe(Effect.provide(remote.layer))
-  }).pipe(Effect.scoped),
+/** A transient response neither overwrites the retained fact nor survives as a cached answer. */
+it.effect(
+  'keeps known sign-in availability across transient inspection failure and retries immediately',
+  () =>
+    Effect.gen(function* () {
+      const remote = yield* setupFixture(false, 'automatic')
+      yield* Effect.gen(function* () {
+        const executor = yield* Executor
+        const input = { service, returnAddress: beginInput.returnAddress }
+        expect((yield* executor.authorization(input))._tag).toBe('SignIn')
+        yield* Ref.update(remote.responses, (values) =>
+          new Map(values).set('POST /v1/account-connections/oauth/setup', reply(503, null)),
+        )
+        const retry = { service, returnAddress: 'https://vivid.test/retry' }
+        expect((yield* executor.authorization(retry).pipe(Effect.flip))._tag).toBe(
+          'ExecutorExecutionUncertain',
+        )
+        expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+        yield* Ref.update(remote.responses, (values) =>
+          new Map(values).set(
+            'POST /v1/account-connections/oauth/setup',
+            reply(200, { mode: 'automatic' }),
+          ),
+        )
+        expect((yield* executor.authorization(retry))._tag).toBe('SignIn')
+        yield* TestClock.adjust('10 minutes')
+        expect((yield* executor.authorization(input))._tag).toBe('SignIn')
+        const requests = yield* Ref.get(remote.requests)
+        expect(
+          requests.filter((request) => request.path === 'POST /v1/account-connections/oauth/setup'),
+        ).toHaveLength(4)
+        expect(requests.filter((request) => request.path === 'GET /v1/apps')).toHaveLength(1)
+        expect(
+          requests.some(
+            (request) =>
+              request.path === 'POST /dashboard/api/catalog/import' ||
+              request.path.startsWith('DELETE '),
+          ),
+        ).toBe(false)
+      }).pipe(Effect.provide(remote.layer))
+    }).pipe(Effect.scoped),
 )
 
 /** Sign-in can discover missing client setup after an optimistic inspection. That authority failure
@@ -899,8 +925,10 @@ it.effect('times out inspection at five seconds and leaves the catalog readable'
       expect(yield* Deferred.isDone(completed)).toBe(false)
       expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
       yield* TestClock.adjust('1 second')
-      expect((yield* Fiber.join(inspection))._tag).toBe('SetupRequired')
-      expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+      expect((yield* Fiber.join(inspection).pipe(Effect.flip))._tag).toBe(
+        'ExecutorTransportFailure',
+      )
+      expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
       yield* Deferred.succeed(gate, undefined)
     }).pipe(Effect.provide(remote.layer), Effect.ensuring(Deferred.succeed(gate, undefined)))
   }).pipe(Effect.scoped),
@@ -910,6 +938,30 @@ it.effect('times out inspection at five seconds and leaves the catalog readable'
  * The database is the isolated test Layer, and searching needs no fixture writes.
  */
 describe.skipIf(!testDatabaseConfigured)('Catalog search during setup inspection', () => {
+  it.effect('offers the catalog hint before an explicit connection supplies its definition', () =>
+    Effect.gen(function* () {
+      const remote = yield* setupFixture(false, 'automatic')
+      yield* Ref.set(remote.catalogDefinitions, [])
+      const storeLayer = Layer.fresh(connectionStoreLayer).pipe(
+        Layer.provideMerge(remote.layer),
+        Layer.provide(connectionTestLayer),
+      )
+      yield* Effect.gen(function* () {
+        const store = yield* ConnectionStore
+        expect((yield* store.service(service)).authorization).toEqual(
+          ServiceAuthorization.cases.SignIn.make({}),
+        )
+        const requests = yield* Ref.get(remote.requests)
+        expect(
+          requests.some(
+            (request) =>
+              request.path === 'POST /dashboard/api/catalog/import' ||
+              request.path.startsWith('DELETE '),
+          ),
+        ).toBe(false)
+      }).pipe(Effect.provide(storeLayer))
+    }).pipe(Effect.scoped),
+  )
   it.effect('answers cold search while background setup is still blocked', () =>
     Effect.gen(function* () {
       const remote = yield* setupFixture(false, 'automatic')
@@ -961,24 +1013,26 @@ describe.skipIf(!testDatabaseConfigured)('Catalog search during setup inspection
           const store = yield* ConnectionStore
           const executor = yield* Executor
           // Join the identical cached operation the background worker owns, not its request gate.
-          yield* executor.authorization({ service, returnAddress: 'http://127.0.0.1:8787/' })
+          yield* executor
+            .authorization({ service, returnAddress: (yield* ServerConfig).PUBLIC_URL.href })
+            .pipe(Effect.flip)
           const result = yield* store.find('test')
           expect(ServiceCatalog.guards.Ready(result)).toBe(true)
           if (ServiceCatalog.guards.Ready(result)) {
             expect(result.total).toBe(2)
             expect(result.services.map((entry) => [entry.id, entry.authorization])).toEqual([
+              [service, ServiceAuthorization.cases.SignIn.make({})],
               ['test/public', ServiceAuthorization.cases.None.make({})],
-              [service, ServiceAuthorization.cases.SetupRequired.make({})],
             ])
           }
-        }).pipe(Effect.provide(storeLayer))
+        }).pipe(Effect.provide(storeLayer), Effect.provide(testConfigLayer))
       }).pipe(Effect.scoped),
     )
   }
 })
 
-/** A gate on actual HTTP setup responses proves four in-flight lookups globally, with one import. */
-it.effect('bounds simultaneous setup lookups and deduplicates public definition registration', () =>
+/** A gate on actual HTTP setup responses proves four in-flight lookups with one read-only definition lookup. */
+it.effect('bounds simultaneous setup lookups and deduplicates read-only definitions', () =>
   Effect.gen(function* () {
     const remote = yield* setupFixture(true, 'client-required')
     const gate = yield* Deferred.make<void>()
@@ -1003,10 +1057,234 @@ it.effect('bounds simultaneous setup lookups and deduplicates public definition 
       const resolved = yield* Effect.forEach(fibers, (fiber) => Fiber.join(fiber))
       expect(resolved.every(ServiceAuthorization.guards.Key)).toBe(true)
       expect(
-        (yield* Ref.get(remote.requests)).filter(
-          (request) => request.path === 'POST /dashboard/api/catalog/import',
-        ),
+        (yield* Ref.get(remote.requests)).filter((request) => request.path === 'GET /v1/apps'),
       ).toHaveLength(1)
     }).pipe(Effect.provide(remote.layer))
+  }).pipe(Effect.scoped),
+)
+
+/** One bad registry row cannot hide unrelated services on a cold download. */
+it.effect('isolates malformed catalog entries and retains healthy services', () =>
+  Effect.gen(function* () {
+    const remote = yield* fixture()
+    const broken = [
+      null,
+      { id: 'invalid-kind', kind: 42 },
+      { ...catalogService('invalid-name'), name: 42 },
+      { ...catalogService('invalid-popularity'), popularity: 'popular' },
+    ]
+    yield* Ref.update(remote.responses, (values) =>
+      new Map(values).set(
+        'GET /dashboard/api/catalog',
+        reply(200, [...broken, catalogService('healthy')]),
+      ),
+    )
+    yield* Effect.gen(function* () {
+      expect((yield* (yield* Executor).catalog()).map((entry) => entry.id)).toEqual(['healthy'])
+    }).pipe(Effect.provide(remote.layer))
+  }).pipe(Effect.scoped),
+)
+
+/** A failure before the dispatch boundary proves nothing ran; real sockets exercise that classification. */
+for (const fault of [
+  reply(503, null),
+  Fault.cases.Reset.make({}),
+  reply(200, { malformed: true }),
+]) {
+  it.effect('reports failed discovery as a refusal without dispatching the action', () =>
+    Effect.gen(function* () {
+      const remote = yield* fixture()
+      yield* Ref.update(remote.responses, (values) => new Map(values).set('GET /v1/tools', fault))
+      yield* Effect.gen(function* () {
+        const outcome = yield* (yield* Executor).call({ references, tool: 'read', input: {} })
+        expect(outcome._tag).toBe('Rejected')
+        expect(JSON.stringify(outcome)).toContain('before the action was sent')
+      }).pipe(Effect.provide(remote.layer))
+      expect(
+        (yield* Ref.get(remote.requests)).some((request) => request.path === 'POST /v1/tools/call'),
+      ).toBe(false)
+    }).pipe(Effect.scoped),
+  )
+}
+
+/** Resuming a pending request keeps its account connection, app and profile; only OAuth's address changes. */
+for (const kind of ['SignIn', 'Key'] as const) {
+  it.effect(`reopens pending ${kind} without importing or issuing another grant`, () =>
+    Effect.gen(function* () {
+      const remote = yield* setupFixture(
+        kind === 'Key',
+        kind === 'Key' ? 'client-required' : 'automatic',
+      )
+      const pending =
+        kind === 'SignIn'
+          ? ExecutorReferences.cases.SigningIn.make({
+              service: references.service,
+              app: references.app,
+              profile: references.profile,
+              owner: references.owner,
+              authorization: ExecutorAuthorizationId.make('saved'),
+            })
+          : ExecutorReferences.cases.EnteringKey.make({
+              service: references.service,
+              app: references.app,
+              profile: references.profile,
+              owner: references.owner,
+              authorization: ExecutorAuthorizationId.make('saved'),
+              label: 'Saved',
+              method: 'key',
+            })
+      yield* Ref.update(remote.responses, (values) =>
+        new Map(values)
+          .set(
+            'GET /v1/account-connections/saved',
+            reply(200, { id: 'saved', reconnectAccount: null, state: { status: 'pending' } }),
+          )
+          .set(
+            'GET /v1/apps/app',
+            reply(200, {
+              id: references.app,
+              requirements: { accounts: { primary: setupDefinition(kind === 'Key') } },
+            }),
+          )
+          .set(
+            'POST /v1/account-connections/oauth/start',
+            reply(200, {
+              status: 'redirect',
+              authorizationUrl: 'https://service.test/new-sign-in',
+            }),
+          ),
+      )
+      yield* Effect.gen(function* () {
+        const step = yield* (yield* Executor).reauthorize({ ...beginInput, references: pending })
+        expect(step._tag).toBe(kind === 'SignIn' ? 'OpenSignIn' : 'EnterKey')
+        expect(step.references).toMatchObject({
+          app: references.app,
+          profile: references.profile,
+          authorization: 'saved',
+        })
+        if (ExecutorStep.guards.OpenSignIn(step))
+          expect(step.address).toBe('https://service.test/new-sign-in')
+      }).pipe(Effect.provide(remote.layer))
+      const requests = yield* Ref.get(remote.requests)
+      expect(
+        requests.some(
+          (request) =>
+            request.path === 'POST /dashboard/api/catalog/import' ||
+            request.path === 'POST /v1/apps/copies' ||
+            request.path === 'POST /v1/account-connections',
+        ),
+      ).toBe(false)
+    }).pipe(Effect.scoped),
+  )
+}
+
+/** A lapsed account reconnects in place: the provider API receives that exact existing account. */
+it.effect('binds renewed authorization to the saved account', () =>
+  Effect.gen(function* () {
+    const remote = yield* setupFixture(false, 'automatic')
+    const saved = ExecutorReferences.cases.Authorized.make({
+      service: references.service,
+      app: references.app,
+      profile: references.profile,
+      owner: references.owner,
+      account: ExecutorAccountId.make('saved-account'),
+    })
+    yield* Ref.update(remote.responses, (values) =>
+      new Map(values)
+        .set('GET /v1/tools', reply(422, WireError.cases.OAuthReconnectRequired.make({})))
+        .set(
+          'GET /v1/apps/app',
+          reply(200, {
+            id: references.app,
+            requirements: { accounts: { primary: setupDefinition(false) } },
+          }),
+        ),
+    )
+    yield* Effect.gen(function* () {
+      expect(
+        (yield* (yield* Executor).reauthorize({ ...beginInput, references: saved }))._tag,
+      ).toBe('OpenSignIn')
+    }).pipe(Effect.provide(remote.layer))
+    const requests = yield* Ref.get(remote.requests)
+    expect(
+      requests.filter((request) => request.path === 'POST /v1/account-connections'),
+    ).toMatchObject([
+      {
+        body: {
+          account: 'saved-account',
+          target: { app: references.app, profile: references.profile },
+        },
+      },
+    ])
+    expect(requests.some((request) => request.path === 'POST /v1/apps/copies')).toBe(false)
+  }).pipe(Effect.scoped),
+)
+
+/** Closing an expired reconnect clears the old request before creating its replacement on the same account. */
+it.effect('cancels a closed reconnect before replacing its pending request', () =>
+  Effect.gen(function* () {
+    const remote = yield* setupFixture(false, 'automatic')
+    const pending = ExecutorReferences.cases.SigningIn.make({
+      service: references.service,
+      app: references.app,
+      profile: references.profile,
+      owner: references.owner,
+      authorization: ExecutorAuthorizationId.make('closed'),
+    })
+    yield* Ref.update(remote.responses, (values) =>
+      new Map(values)
+        .set(
+          'GET /v1/account-connections/closed',
+          reply(200, {
+            id: 'closed',
+            reconnectAccount: { id: 'original-account' },
+            state: { status: 'expired' },
+          }),
+        )
+        .set(
+          'POST /v1/account-connections/closed/cancel',
+          reply(200, {
+            id: 'closed',
+            reconnectAccount: { id: 'original-account' },
+            state: { status: 'expired' },
+          }),
+        )
+        .set(
+          'GET /v1/apps/app',
+          reply(200, {
+            id: references.app,
+            requirements: { accounts: { primary: setupDefinition(false) } },
+          }),
+        )
+        .set('GET /v1/tools', reply(422, WireError.cases.OAuthReconnectRequired.make({}))),
+    )
+    yield* Effect.gen(function* () {
+      const step = yield* (yield* Executor).reauthorize({ ...beginInput, references: pending })
+      expect(step._tag).toBe('OpenSignIn')
+      expect(step.references).toMatchObject({
+        app: references.app,
+        profile: references.profile,
+        authorization: 'authorization',
+      })
+    }).pipe(Effect.provide(remote.layer))
+    const requests = yield* Ref.get(remote.requests)
+    const cancellation = requests.findIndex(
+      (request) => request.path === 'POST /v1/account-connections/closed/cancel',
+    )
+    const replacement = requests.findIndex(
+      (request) => request.path === 'POST /v1/account-connections',
+    )
+    expect(cancellation).toBeGreaterThan(-1)
+    expect(replacement).toBeGreaterThan(cancellation)
+    expect(requests[replacement]).toMatchObject({
+      body: {
+        account: 'original-account',
+        target: { app: references.app, profile: references.profile },
+      },
+    })
+    expect(
+      requests.filter((request) => request.path === 'POST /v1/account-connections'),
+    ).toHaveLength(1)
+    expect(requests.some((request) => request.path === 'POST /v1/apps/copies')).toBe(false)
   }).pipe(Effect.scoped),
 )

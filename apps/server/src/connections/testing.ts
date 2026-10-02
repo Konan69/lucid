@@ -87,6 +87,7 @@ const authorized = (references: ExecutorReferences) =>
 /** Source effects and recorded calls belong to the external adapter test boundary. */
 const makeExecutor = (probe: ConnectionProbeService) => {
   return Executor.of({
+    configured: true,
     authorization: Effect.fn('Executor.Test.authorization')(() =>
       Effect.succeed(ServiceAuthorization.cases.None.make({})),
     ),
@@ -132,6 +133,7 @@ const makeExecutor = (probe: ConnectionProbeService) => {
         references: ExecutorReferences.cases.Public.make(identity),
       })
     }),
+    /** Renewal deliberately retains the provider target while returning a fresh next step. */
     reauthorize: Effect.fn('Executor.Test.reauthorize')(function* (input) {
       const identity = {
         service: input.references.service,
