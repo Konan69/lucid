@@ -79,6 +79,7 @@ describe.skipIf(!testDatabaseConfigured)('Library bytes HTTP', () => {
             }),
           )).status,
         ).toBe(404)
+        return yield* Effect.void
       }),
     )
     it.effect('lets a Company Member download Company bytes', () =>
@@ -88,6 +89,7 @@ describe.skipIf(!testDatabaseConfigured)('Library bytes HTTP', () => {
         const company = (yield* store.list(people.owner.actor, { shelf: 'Company' })).documents[0]
         if (company === undefined) return yield* Effect.die('Uploaded Company document must exist')
         expect((yield* send(download(company.id, people.reader.token))).status).toBe(200)
+        return yield* Effect.void
       }),
     )
     it.effect('refuses runtime authority, missing sessions and invalid upload metadata', () =>

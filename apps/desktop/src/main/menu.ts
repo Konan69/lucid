@@ -1,10 +1,10 @@
 import * as Option from 'effect/Option'
-import { EventEmitter } from 'node:events'
+import * as NodeEvents from 'node:events'
 import { BrowserWindow, Menu, type MenuItemConstructorOptions } from 'electron'
 import type { DesktopPlatform } from '../shared/bridge.ts'
 
 /** App zoom changes also reposition the native page viewport; Electron's zoom event covers wheels only. */
-export const pageZoomChanges = new EventEmitter<{ changed: [BrowserWindow] }>()
+export const pageZoomChanges = new NodeEvents.EventEmitter<{ changed: [BrowserWindow] }>()
 
 /** Follow Electron 44.4.3 role increments, then notify the window that owns native guest bounds. */
 export function zoomPage(window: BrowserWindow, change: 'reset' | 'in' | 'out'): void {
