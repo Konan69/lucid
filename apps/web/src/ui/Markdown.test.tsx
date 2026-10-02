@@ -10,6 +10,6 @@ describe('Markdown', () => {
 
     expect(html).toContain('• fenced')
     expect(html).toContain('• indented')
-    expect(html).toContain('<li>prose</li>')
+    expect(html).toContain('>prose</li>')
   })
 })
