@@ -7,6 +7,7 @@ import {
   type ComponentProps,
   type ReactElement,
 } from 'react'
+import { hold } from '../data/haptics'
 import { useTheme } from '../theme'
 
 // T3's long-press suppression: releasing a menu gesture must not open the row.
@@ -16,7 +17,10 @@ export function ControlPillMenu(props: ComponentProps<typeof MenuView>) {
   // child below while rendering, and a handler built during render may not close over a ref.
   const [menu, setMenu] = useState<MenuComponentRef | null>(null)
   const openMenu = () => {
-    if (Platform.OS === 'android' && menu !== null) menu.show()
+    if (Platform.OS !== 'android' || menu === null) return
+    // Felt at the moment the menu appears, which is the moment the hold is long enough.
+    hold()
+    menu.show()
   }
   let children = props.children
   if (props.shouldOpenOnLongPress && isValidElement(children)) {

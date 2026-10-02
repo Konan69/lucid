@@ -21,6 +21,18 @@ export const commit = () => {
   if (onDevice) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
 }
 
+/**
+ * A long press was held long enough to open its menu. Android only: there the app opens the menu
+ * itself (`t3/Menu.tsx`), and the platform's own long-press tick is what every other menu on the
+ * phone gives, following the Person's own touch-feedback setting. On iOS the system opens the
+ * menu and answers the hold itself; saying it here too would be felt twice.
+ */
+export const hold = () => {
+  if (Platform.OS === 'android') {
+    void Haptics.performAndroidHapticsAsync(Haptics.AndroidHaptics.Long_Press)
+  }
+}
+
 /** A consequential yes: allowing an action, signing a device in. */
 export const confirm = () => {
   if (onDevice) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)

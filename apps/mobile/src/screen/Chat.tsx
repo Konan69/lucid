@@ -18,6 +18,7 @@ import { useIsFocused } from '@react-navigation/native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { Share2, Users } from 'lucide-react-native'
 import { deliveryOf, type Delivery, type Unsent } from '../data/delivery'
+import { commit } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
 import { inFront, onForeground } from '../data/foreground'
 import { LiveState, refusalOf, useLive, useLiveData } from '../data/live'
@@ -267,7 +268,11 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
     Option.map(sending.unsent, (unsent): Trouble => ({
       message: unsent.why,
       action: 'Send again',
-      onAct: () => speak(unsent.words),
+      onAct: () => {
+        // Sending is felt, from here as from the composer's own button.
+        commit()
+        speak(unsent.words)
+      },
     })),
     () =>
       Option.map(Option.fromUndefinedOr(agent.error), (error): Trouble => ({
