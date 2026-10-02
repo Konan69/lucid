@@ -75,6 +75,9 @@ const KNOWING = [
 export function Vivid({ id }: { id: string }) {
   const model = process.env.VIVID_MODEL ?? 'openrouter/z-ai/glm-5.3-flash'
   const delivery = useDelivery()
+  // Flue 2.1 rerenders at a joined delivery's turn boundary. The latest Person supplies
+  // subsequent tools' authority; calls already running retain the prior render's authority.
+  // Public dispatch/HTTP APIs cannot request a separate response for a second Person.
   const acting = actingFor(id, delivery, threadOriginOf(useInitialData()))
   const runTool = toolRunner(scopeLayer(id, delivery, threadOriginOf(useInitialData())))
   const context = useVividContext(acting)

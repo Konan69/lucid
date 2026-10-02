@@ -3,6 +3,7 @@ import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
+import * as ManagedRuntime from 'effect/ManagedRuntime'
 import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
 import { NodeHttpClient } from '@effect/platform-node'
@@ -15,8 +16,11 @@ import { runtimeHeaders } from '@vivid/contracts/auth'
  * Who Vivid is acting for right now: one Person, in one Thread.
  *
  * Vivid has no identity of its own. Every product call a tool makes is made as the Person whose
- * message is in front of the model, and the server checks that Person's access again on every
- * call. This is the only thing a tool needs to know about identity, and a tool never chooses it.
+ * latest delivered message is in front of the model, and the server checks that Person's access
+ * again on every call. Flue 2.1 joins busy deliveries at turn boundaries and rerenders tools for
+ * the joined message: a second Person changes subsequent tool authority within the response.
+ * Earlier tool calls retain their captured authority. There is no public queue-only delivery
+ * option. A tool never chooses its acting Person.
  */
 export interface Acting {
   readonly threadId: ThreadId
@@ -40,6 +44,14 @@ export const actingFor = (
 ): Option.Option<Acting> =>
   Option.map(cachedAuthority(threadId, delivery, origin), (scope) => scope.acting)
 
+/** One HTTP client and Undici's process-owned pool serve every tool and context read.
+ * dispatcherLayerGlobal owns no scoped Agent, so per-call Layer teardown cannot close the pool.
+ * The ManagedRuntime memoizes the built HttpClient, rather than just the Layer description. */
+const httpRuntime = ManagedRuntime.make(
+  NodeHttpClient.layerUndiciNoDispatcher.pipe(Layer.provide(NodeHttpClient.dispatcherLayerGlobal)),
+)
+const httpLayer = Layer.effectContext(httpRuntime.contextEffect)
+
 /** A bare runtime credential is permitted only for the restart scope lookup. */
 export const runtimeClientLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -48,21 +60,16 @@ export const runtimeClientLayer = Layer.unwrap(
     return VividRpcClient.layer({
       url: new URL('/api/rpc', serverUrl).href,
       headers: { authorization: `Bearer ${Redacted.value(token)}` },
-    }).pipe(Layer.provide(NodeHttpClient.layerUndici))
+    }).pipe(Layer.provide(httpLayer))
   }),
 )
-
-const layers = new Map<string, Layer.Layer<VividRpcClient, Config.ConfigError>>()
 
 /**
  * The product client for one Acting pair. The runtime token says the call comes from the runtime;
  * the two headers say for whom. The token never leaves this module and is never given to a tool.
  */
 export const actingLayer = (acting: Acting) => {
-  const key = `${acting.threadId}\u0000${acting.personId}`
-  const cached = layers.get(key)
-  if (cached !== undefined) return cached
-  const layer = Layer.unwrap(
+  return Layer.unwrap(
     Effect.gen(function* () {
       const serverUrl = yield* Config.URL('VIVID_SERVER_URL')
       const token = yield* Config.Redacted('VIVID_RUNTIME_TOKEN')
@@ -73,11 +80,9 @@ export const actingLayer = (acting: Acting) => {
           [runtimeHeaders.thread]: acting.threadId,
           [runtimeHeaders.actor]: acting.personId,
         },
-      }).pipe(Layer.provide(NodeHttpClient.layerUndici))
+      }).pipe(Layer.provide(httpLayer))
     }),
   )
-  layers.set(key, layer)
-  return layer
 }
 
 /**

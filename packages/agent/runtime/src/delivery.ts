@@ -7,7 +7,7 @@ import {
   type RuntimeRunRequest,
   type ThreadOrigin,
 } from '@vivid/contracts'
-import { Effect, Option, Schema } from 'effect'
+import { Cache, Data, Duration, Effect, Exit, Option, Schema } from 'effect'
 import { NobodyToActFor, type Acting } from './client.ts'
 
 export interface DeliveryAuthority {
@@ -16,7 +16,7 @@ export interface DeliveryAuthority {
 }
 
 const scopes = new Map<string, DeliveryAuthority>()
-const lookups = new Map<string, ReturnType<typeof lookup>>()
+const capacity = 512
 const keyOf = (thread: ThreadId, turn: number) => `${thread}\u0000${turn}`
 const decodeThread = Schema.decodeUnknownOption(ThreadId)
 const decodeTurn = Schema.decodeUnknownOption(
@@ -39,6 +39,12 @@ export function recordScope(
     folder: decodeFolder(scope.libraryFolder),
   }
   scopes.set(keyOf(threadId, turn), authority)
+  // Flue renders synchronously, so this projection needs a synchronous, oldest-out bound.
+  // Evicted authority remains recoverable from the persisted Run on the next tool call.
+  if (scopes.size > capacity) {
+    const oldest = scopes.keys().next()
+    if (!oldest.done) scopes.delete(oldest.value)
+  }
   return authority
 }
 
@@ -72,7 +78,30 @@ const lookup = Effect.fn('Delivery.lookup')(function* (threadId: ThreadId, turn:
   return recordScope(threadId, turn, yield* rpc.GetDeliveryScope({ threadId, turn }))
 })
 
-/** The cached Effect shares concurrent recovery calls and remembers the server's answer across tool calls. */
+/** Value equality lets separate renders share the same persisted turn lookup. */
+class RecoveryKey extends Data.Class<{ readonly threadId: ThreadId; readonly turn: number }> {}
+
+/** Bound recoveries and cache only successes; resolve services per lookup to avoid capturing a client. */
+const makeRecoveries = () =>
+  Cache.makeWith(
+    (key: { readonly threadId: ThreadId; readonly turn: number }) => lookup(key.threadId, key.turn),
+    {
+      capacity,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+      requireServicesAt: 'lookup',
+    },
+  )
+let recoveries = Option.none<Effect.Success<ReturnType<typeof makeRecoveries>>>()
+
+/** Cache construction is synchronous and happens once; no I/O can race the initial publication. */
+const recoveryCache = Effect.fn('Delivery.recoveryCache')(function* () {
+  if (Option.isSome(recoveries)) return recoveries.value
+  const cache = yield* makeRecoveries()
+  recoveries = Option.some(cache)
+  return cache
+})
+
+/** Reuse successful authority and concurrent recovery, but retry a failed lookup on the next call. */
 export const resolveAuthority = Effect.fn('Delivery.resolve')(function* (
   thread: string,
   delivery: DeliveredMessage,
@@ -86,13 +115,13 @@ export const resolveAuthority = Effect.fn('Delivery.resolve')(function* (
     return yield* Effect.fail(
       new NobodyToActFor({ message: 'There is no Person behind this message to act for.' }),
     )
-  const key = keyOf(threadId.value, turn.value)
-  let recover = lookups.get(key)
-  if (recover === undefined) {
-    recover = yield* Effect.cached(lookup(threadId.value, turn.value))
-    lookups.set(key, recover)
-  }
-  return yield* recover
+  return yield* Cache.get(
+    yield* recoveryCache(),
+    new RecoveryKey({
+      threadId: threadId.value,
+      turn: turn.value,
+    }),
+  )
 })
 
 /** A new object is the Flue ingress: authority and transport keys cannot leak into history or model text. */
