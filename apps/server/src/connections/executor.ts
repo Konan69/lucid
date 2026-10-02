@@ -108,9 +108,9 @@ export const ExecutorResumeOutcome = Schema.TaggedUnion({
 })
 
 const errorContext = { service: Schema.Literal('connections'), tool: Schema.NullOr(Schema.String) }
-/** MCP URL registration is disabled until infrastructure declares Executor's public-only egress.
- * OpenAPI content never needs a second spec fetch. The operator must
- * disable Executor loopback access and private-origin exceptions before enabling this capability.
+/** MCP and OpenAPI URL registration need Executor's own public-only egress, since it resolves
+ * the checked URL again. The operator must disable loopback access and private-origin exceptions
+ * before declaring VIVID_EXECUTOR_PUBLIC_ONLY and enabling either import kind.
  */
 export class ExecutorPublicAddressRequired extends Schema.TaggedError<ExecutorPublicAddressRequired>()(
   'ExecutorPublicAddressRequired',
@@ -377,7 +377,7 @@ const WireCatalogEntry = Schema.Struct({
 })
 const WireCatalog = Schema.Array(Schema.Unknown)
 const decodeCatalogEntry = Schema.decodeUnknownEffect(WireCatalogEntry)
-/** Custom import egress has two honest carriers: an MCP connection address or fetched OpenAPI content.
+/** Executor's custom import API takes a checked URL for both MCP and OpenAPI.
  * Schema-backed cases keep the HTTP request total without widening it to arbitrary JSON.
  */
 const WireImportSource = Schema.Union([
@@ -394,7 +394,7 @@ const WireImportSource = Schema.Union([
       Schema.Struct({ type: Schema.Literal('auto') }),
     ]),
   }),
-  Schema.Struct({ kind: Schema.tag('openapi'), name: Schema.String, content: Schema.String }),
+  Schema.Struct({ kind: Schema.tag('openapi'), name: Schema.String, url: Schema.String }),
 ]).pipe(Schema.toTaggedUnion('kind'))
 const WireCompleted = Schema.Struct({
   status: Schema.Literal('completed'),
@@ -1541,8 +1541,11 @@ function makeAdd(
                   ? { type: 'apiKey', header: 'Authorization', prefix: 'Bearer ' }
                   : { type: 'auto' },
             }),
-          // Pass the exact public-checked response bytes, never another fetch target.
-          OpenApi: ({ content }) => WireImportSource.cases.openapi.make({ name, content }),
+          // Vivid checks every DNS answer and redirect, including docs-to-spec discovery, before
+          // handing off the final spec URL. Executor resolves it again: this remaining gap relies
+          // on its own public-only egress with EXECUTOR_URL_ALLOW_LOOPBACK_HTTP=false (set by the
+          // night stack), and no private-origin exceptions. This Executor accepts URLs, not bytes.
+          OpenApi: ({ address }) => WireImportSource.cases.openapi.make({ name, url: address }),
         })
         return http.readApp(post('/dashboard/api/apps/import', { source }), null)
       }),
@@ -1926,9 +1929,7 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
     authorization: availability.authorization,
     begin: registration.begin,
     add: Effect.fn('Executor.addPublic')((input) =>
-      ConnectionSource.guards.OpenApi(input.source) || publicOnly
-        ? registration.add(input)
-        : Effect.fail(ExecutorPublicAddressRequired.make({})),
+      publicOnly ? registration.add(input) : Effect.fail(ExecutorPublicAddressRequired.make({})),
     ),
     reauthorize: makeReauthorize(http, availability),
     complete: Effect.fn('Executor.completeCached')(function* (input: typeof CompleteInput.Type) {

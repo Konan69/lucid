@@ -1315,7 +1315,6 @@ for (const source of [
   }),
   ConnectionSource.cases.OpenApi.make({
     address: 'https://integration.example/openapi.json',
-    content: '{"openapi":"3.0.3","paths":{}}',
   }),
 ]) {
   it.effect(`registers a custom ${source._tag} source under the acting owner`, () =>
@@ -1324,21 +1323,6 @@ for (const source of [
       yield* Ref.update(remote.responses, (values) =>
         new Map(values).set('POST /dashboard/api/apps/import', reply(200, template)),
       )
-      const importer = ConnectionSource.match(source, {
-        Mcp: () => remote.layer,
-        OpenApi: () =>
-          executorLayer.pipe(
-            Layer.provide(FetchHttpClient.layer),
-            Layer.provide(
-              ConfigProvider.layer(
-                ConfigProvider.fromUnknown({
-                  VIVID_EXECUTOR_URL: remote.address,
-                  VIVID_EXECUTOR_KEY: 'isolated-test-key',
-                }),
-              ),
-            ),
-          ),
-      })
       yield* Effect.gen(function* () {
         const executor = yield* Executor
         const step = yield* executor.add({
@@ -1359,14 +1343,14 @@ for (const source of [
           body: {
             source: ConnectionSource.match<Schema.Json>(source, {
               Mcp: ({ address }) => ({ url: address }),
-              OpenApi: ({ content }) => ({ content }),
+              OpenApi: ({ address }) => ({ url: address }),
             }),
           },
         })
         if (ConnectionSource.guards.OpenApi(source))
           expect(
             requests.find((request) => request.path === 'POST /dashboard/api/apps/import'),
-          ).not.toHaveProperty('body.source.url')
+          ).not.toHaveProperty('body.source.content')
         expect(requests.find((request) => request.path === 'POST /v1/apps/copies')).toMatchObject({
           body: { owner: references.owner },
         })
@@ -1374,49 +1358,54 @@ for (const source of [
           requests.find((request) => request.path === 'POST /v1/apps/copy/profiles'),
         ).toMatchObject({ body: { owner: references.owner, subject: 'acting-person' } })
         expect(requests.some((request) => request.path === 'DELETE /v1/apps/template')).toBe(true)
-      }).pipe(Effect.provide(importer))
+      }).pipe(Effect.provide(remote.layer))
     }).pipe(Effect.scoped),
   )
 }
 
 /** Preflight cannot constrain Executor's later fetch, so missing operator configuration fails closed. */
-it.effect(
-  'refuses URL registration before import when public-only Executor egress is not declared',
-  () =>
-    Effect.gen(function* () {
-      const remote = yield* fixture()
-      const unconfigured = executorLayer.pipe(
-        Layer.provide(FetchHttpClient.layer),
-        Layer.provide(
-          ConfigProvider.layer(
-            ConfigProvider.fromUnknown({
-              VIVID_EXECUTOR_URL: remote.address,
-              VIVID_EXECUTOR_KEY: 'isolated-test-key',
-            }),
+for (const source of [
+  ConnectionSource.cases.Mcp.make({
+    address: 'https://integration.example/mcp',
+    authorization: 'auto',
+  }),
+  ConnectionSource.cases.OpenApi.make({ address: 'https://integration.example/spec' }),
+]) {
+  it.effect(
+    `refuses ${source._tag} URL registration before import when public-only Executor egress is not declared`,
+    () =>
+      Effect.gen(function* () {
+        const remote = yield* fixture()
+        const unconfigured = executorLayer.pipe(
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromUnknown({
+                VIVID_EXECUTOR_URL: remote.address,
+                VIVID_EXECUTOR_KEY: 'isolated-test-key',
+              }),
+            ),
           ),
-        ),
-      )
-      yield* Effect.gen(function* () {
-        const error = yield* (yield* Executor)
-          .add({
-            connectionId: ConnectionId.make('disabled-import'),
-            service,
-            owner: references.owner,
-            subject: 'acting-person',
-            label: 'Disabled import',
-            returnAddress: 'https://vivid.example/return',
-            source: ConnectionSource.cases.Mcp.make({
-              address: 'https://integration.example/mcp',
-              authorization: 'auto',
-            }),
-          })
-          .pipe(Effect.flip)
-        expect(error).toBeInstanceOf(ExecutorPublicAddressRequired)
-        expect(
-          (yield* Ref.get(remote.requests)).some(
-            (request) => request.path === 'POST /dashboard/api/apps/import',
-          ),
-        ).toBe(false)
-      }).pipe(Effect.provide(unconfigured))
-    }).pipe(Effect.scoped),
-)
+        )
+        yield* Effect.gen(function* () {
+          const error = yield* (yield* Executor)
+            .add({
+              connectionId: ConnectionId.make('disabled-import'),
+              service,
+              owner: references.owner,
+              subject: 'acting-person',
+              label: 'Disabled import',
+              returnAddress: 'https://vivid.example/return',
+              source,
+            })
+            .pipe(Effect.flip)
+          expect(error).toBeInstanceOf(ExecutorPublicAddressRequired)
+          expect(
+            (yield* Ref.get(remote.requests)).some(
+              (request) => request.path === 'POST /dashboard/api/apps/import',
+            ),
+          ).toBe(false)
+        }).pipe(Effect.provide(unconfigured))
+      }).pipe(Effect.scoped),
+  )
+}

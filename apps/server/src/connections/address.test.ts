@@ -46,6 +46,8 @@ const fixture = Effect.fn('AddressTest.fixture')(function* () {
       return HttpServerResponse.jsonUnsafe(specification)
     if (request.url === '/redirect')
       return HttpServerResponse.empty({ status: 302, headers: { location: '/spec' } })
+    if (request.url === '/openapi.json')
+      return HttpServerResponse.empty({ status: 302, headers: { location: '/spec?format=json' } })
     if (request.url === '/private')
       return HttpServerResponse.empty({
         status: 302,
@@ -54,6 +56,11 @@ const fixture = Effect.fn('AddressTest.fixture')(function* () {
     if (request.url === '/linked')
       return HttpServerResponse.text(
         '<html><body><a href="https://integration.example/spec">OpenAPI specification</a></body></html>',
+        { headers: { 'content-type': 'text/html' } },
+      )
+    if (request.url === '/linkedredirect')
+      return HttpServerResponse.text(
+        '<html><body><a href="https://integration.example/openapi.json">OpenAPI specification</a></body></html>',
         { headers: { 'content-type': 'text/html' } },
       )
     if (request.url === '/docs')
@@ -138,6 +145,22 @@ const fixture = Effect.fn('AddressTest.fixture')(function* () {
 })
 
 describe('public integration addresses', () => {
+  it.effect('resolves a docs link and spec redirect to the final import URL', () =>
+    Effect.gen(function* () {
+      const { client, pages, requests } = yield* fixture()
+      const result = yield* inspectAddress('https://integration.example/linkedredirect').pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provide(pages),
+      )
+      expect(result).toEqual(
+        ConnectionSource.cases.OpenApi.make({
+          address: 'https://integration.example/spec?format=json',
+        }),
+      )
+      expect(yield* Ref.get(requests)).toContain('GET /openapi.json')
+      expect(yield* Ref.get(requests)).toContain('GET /spec?format=json')
+    }).pipe(Effect.provide(NodeHttpClient.layerUndici), Effect.scoped),
+  )
   it.effect('initializes MCP when its GET endpoint rejects content negotiation', () =>
     Effect.gen(function* () {
       const { client, pages, requests } = yield* fixture()
@@ -154,7 +177,7 @@ describe('public integration addresses', () => {
       expect(yield* Ref.get(requests)).toEqual(['GET /negotiated', 'POST /negotiated'])
     }).pipe(Effect.provide(NodeHttpClient.layerUndici), Effect.scoped),
   )
-  it.effect('accepts public specification query parameters and retains the fetched bytes', () =>
+  it.effect('accepts public specification query parameters and retains the checked URL', () =>
     Effect.gen(function* () {
       const { client, pages, requests } = yield* fixture()
       const result = yield* inspectAddress('https://integration.example/spec?format=json').pipe(
@@ -164,7 +187,6 @@ describe('public integration addresses', () => {
       expect(result).toEqual(
         ConnectionSource.cases.OpenApi.make({
           address: 'https://integration.example/spec?format=json',
-          content: JSON.stringify(specification),
         }),
       )
       expect(yield* Ref.get(requests)).toContain('GET /spec?format=json')
@@ -189,7 +211,6 @@ describe('public integration addresses', () => {
         expect(yield* inspect('/linked')).toEqual(
           ConnectionSource.cases.OpenApi.make({
             address: 'https://integration.example/spec',
-            content: JSON.stringify(specification),
           }),
         )
         expect(yield* inspect('/postredirect')).toEqual(
@@ -204,13 +225,11 @@ describe('public integration addresses', () => {
         expect(yield* inspect('/spec')).toEqual(
           ConnectionSource.cases.OpenApi.make({
             address: 'https://integration.example/spec',
-            content: JSON.stringify(specification),
           }),
         )
         expect(yield* inspect('/redirect')).toEqual(
           ConnectionSource.cases.OpenApi.make({
             address: 'https://integration.example/spec',
-            content: JSON.stringify(specification),
           }),
         )
         expect(yield* inspect('/key')).toEqual(

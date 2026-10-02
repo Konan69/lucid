@@ -44,7 +44,7 @@ const Request = Schema.Struct({
 })
 const decodeRequest = Schema.decodeUnknownEffect(Request)
 
-/** Byte imports carry an absolute API base; no spec address needs a second fetch. */
+/** URL imports carry an absolute API base so this fixture tests the provider call too. */
 const specification = (address: string) => {
   return {
     openapi: '3.0.3',
@@ -159,7 +159,6 @@ describe.skipIf(!enabled)('Executor integration registration', () => {
                     })
                   : ConnectionSource.cases.OpenApi.make({
                       address: `${remote.address}/spec`,
-                      content: JSON.stringify(specification(remote.address)),
                     }),
               ),
             ),
