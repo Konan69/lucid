@@ -124,7 +124,7 @@ describe('show tool', () => {
           { name: 'B', good: [], bad: [], facts: [] },
         ],
       }),
-      Shown.cases.Links.make({ links: [{ title: 'Source', address: 'source' }] }),
+      Shown.cases.Links.make({ links: [{ title: 'Source', address: 'https://example.test' }] }),
       Shown.cases.Facts.make({ facts: [{ label: 'Count', value: '2' }] }),
       Shown.cases.Draft.make({ kind: 'document', to: [], body: 'Draft' }),
       Shown.cases.Schedule.make({ items: [{ at: '09:00', title: 'Review' }] }),
@@ -133,7 +133,7 @@ describe('show tool', () => {
         fields: [{ label: 'Name', kind: 'text', choices: [] }],
         submit: 'Save',
       }),
-      Shown.cases.Pictures.make({ pictures: [{ address: 'picture' }] }),
+      Shown.cases.Pictures.make({ pictures: [{ address: 'https://example.test/a.png' }] }),
     ]
     for (const sample of inputs) {
       const input = { show: sample }
@@ -286,7 +286,10 @@ describe('show tool', () => {
       name: 'too many links',
       value: {
         ...samples.Links,
-        links: Array.from({ length: 13 }, () => ({ title: 'Link', address: 'source' })),
+        links: Array.from({ length: 13 }, () => ({
+          title: 'Link',
+          address: 'https://example.test',
+        })),
       },
     },
     {
@@ -295,7 +298,23 @@ describe('show tool', () => {
     },
     {
       name: 'overlong address',
-      value: { ...samples.Links, links: [{ title: 'Source', address: 'x'.repeat(2001) }] },
+      value: {
+        ...samples.Links,
+        links: [{ title: 'Source', address: `https://example.test/${'x'.repeat(2000)}` }],
+      },
+    },
+    // An address becomes a link's target on every surface, so only the web's own schemes pass.
+    {
+      name: 'script address',
+      value: { ...samples.Links, links: [{ title: 'Source', address: 'javascript:alert(1)' }] },
+    },
+    {
+      name: 'file address',
+      value: { ...samples.Links, links: [{ title: 'Source', address: 'file:///etc/passwd' }] },
+    },
+    {
+      name: 'address without a scheme',
+      value: { ...samples.Links, links: [{ title: 'Source', address: 'example.test/guide' }] },
     },
     { name: 'empty facts', value: { ...samples.Facts, facts: [] } },
     {
@@ -351,10 +370,17 @@ describe('show tool', () => {
     },
     { name: 'empty pictures', value: { ...samples.Pictures, pictures: [] } },
     {
+      name: 'inline picture data',
+      value: {
+        ...samples.Pictures,
+        pictures: [{ address: 'data:image/svg+xml,<svg onload="alert(1)"/>' }],
+      },
+    },
+    {
       name: 'too many pictures',
       value: {
         ...samples.Pictures,
-        pictures: Array.from({ length: 13 }, () => ({ address: 'picture' })),
+        pictures: Array.from({ length: 13 }, () => ({ address: 'https://example.test/a.png' })),
       },
     },
   ])('rejects $name identically', ({ value }) => {

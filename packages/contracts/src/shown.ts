@@ -20,6 +20,14 @@ import { Schema } from 'effect'
 const Line = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200))
 const Words = Schema.String.check(Schema.isMaxLength(2000))
 const Title = Schema.optionalKey(Line)
+/** The same test the model's own schema applies; see the runtime's `show` tool. */
+export const WEB_ADDRESS = /^https?:\/\/\S+$/iu
+/**
+ * Somewhere on the web a surface may open or load. Only `http` and `https`: the address is model
+ * output that becomes a link's target and a picture's source, and any other scheme (`javascript:`,
+ * `file:`, `data:`, another app's own) would run or open something the Person never asked for.
+ */
+const WebAddress = Schema.String.check(Schema.isMaxLength(2000), Schema.isPattern(WEB_ADDRESS))
 
 const Table = {
   title: Title,
@@ -89,7 +97,7 @@ const Links = {
   links: Schema.Array(
     Schema.Struct({
       title: Line,
-      address: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(2000)),
+      address: WebAddress,
       /** Why this one is worth opening, in a sentence. */
       note: Schema.optionalKey(Words),
     }),
@@ -154,7 +162,7 @@ const Pictures = {
   title: Title,
   pictures: Schema.Array(
     Schema.Struct({
-      address: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(2000)),
+      address: WebAddress,
       caption: Schema.optionalKey(Line),
     }),
   ).check(Schema.isMinLength(1), Schema.isMaxLength(12)),

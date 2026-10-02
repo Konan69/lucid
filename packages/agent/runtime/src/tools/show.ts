@@ -1,5 +1,5 @@
 import { defineTool } from '@flue/runtime'
-import { Shown } from '@vivid/contracts'
+import { Shown, WEB_ADDRESS } from '@vivid/contracts'
 import * as v from 'valibot'
 
 /** Match the contract's length-only rule; trimming would reject valid display input. */
@@ -15,6 +15,16 @@ function words(description: string) {
 /** Surfaces decode these exact capitalized tags directly from the tool input. */
 function tag<const Kind extends Shown['_tag']>(kind: Kind) {
   return v.pipe(v.literal(kind), v.description('Display kind; use this exact spelling.'))
+}
+
+/** Links and pictures open and load on every surface, so only web addresses are accepted. */
+function address(description: string) {
+  return v.pipe(
+    v.string(),
+    v.maxLength(2000),
+    v.regex(WEB_ADDRESS, 'Use a full web address starting with https:// or http://.'),
+    v.description(description),
+  )
 }
 
 const title = v.exactOptional(line('A short heading; omit when unnecessary.'))
@@ -179,12 +189,7 @@ const kinds = {
         v.array(
           v.object({
             title: line('The source or page title.'),
-            address: v.pipe(
-              v.string(),
-              v.minLength(1),
-              v.maxLength(2000),
-              v.description('The source address.'),
-            ),
+            address: address('The source address, starting with https://.'),
             note: v.exactOptional(words('Why this source is worth opening.')),
           }),
         ),
@@ -299,12 +304,7 @@ const kinds = {
       pictures: v.pipe(
         v.array(
           v.object({
-            address: v.pipe(
-              v.string(),
-              v.minLength(1),
-              v.maxLength(2000),
-              v.description('The picture address.'),
-            ),
+            address: address('The picture address, starting with https://.'),
             caption: v.exactOptional(line('A short caption for the picture.')),
           }),
         ),
