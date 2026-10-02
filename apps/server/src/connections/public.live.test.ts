@@ -92,11 +92,13 @@ describe.skipIf(!enabled)('Public integrations through Vivid and Executor', () =
             // Cleanup is installed before registration, including failures after a saved card.
             yield* Effect.addFinalizer(() =>
               Effect.gen(function* () {
-                const rows = yield* store.records(personalActor)
-                for (const row of rows) {
-                  const removed = yield* Effect.exit(store.remove(personalActor, row.id))
-                  expect(removed._tag).toBe('Success')
-                }
+                const removed = yield* Effect.exit(
+                  Effect.gen(function* () {
+                    const rows = yield* store.records(personalActor)
+                    for (const row of rows) yield* store.remove(personalActor, row.id)
+                  }),
+                )
+                expect(removed._tag).toBe('Success')
               }),
             )
             const added = yield* connectionHandlers.AddIntegration({
