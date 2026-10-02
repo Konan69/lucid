@@ -130,23 +130,24 @@ const TYPED_BULLET = /^([ \t]*)[•●▪◦‣][ \t]+/gm
  * preserve literal source because changing their contents would misrepresent the reply.
  */
 function normalizeTypedBullets(content: string) {
-  let fence: { readonly marker: string; readonly length: number } | undefined
+  let fence: { readonly marker: string; readonly length: number } | null = null
   return content
     .split('\n')
     .map((line) => {
-      const marker = /^ {0,3}(`{3,}|~{3,})/u.exec(line)?.[1]
-      if (fence !== undefined) {
+      const fenceMatch = /^ {0,3}(`{3,}|~{3,})/u.exec(line)
+      const marker = fenceMatch === null ? null : fenceMatch[1]
+      if (fence !== null) {
         if (
-          marker !== undefined &&
+          marker !== null &&
           marker[0] === fence.marker &&
           marker.length >= fence.length &&
           line.slice(line.indexOf(marker) + marker.length).trim().length === 0
         ) {
-          fence = undefined
+          fence = null
         }
         return line
       }
-      if (marker !== undefined) {
+      if (marker !== null) {
         fence = { marker: marker[0], length: marker.length }
         return line
       }

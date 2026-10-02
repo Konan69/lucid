@@ -314,12 +314,14 @@ export function Palette({ onClose }: { onClose: () => void }) {
               if (event.key === 'ArrowDown') {
                 event.preventDefault()
                 const next = Math.min(index + 1, Math.max(items.length - 1, 0))
-                setSelectedKey(items[next]?.key ?? '')
+                const nextItem = items[next]
+                setSelectedKey(nextItem === undefined ? '' : nextItem.key)
               }
               if (event.key === 'ArrowUp') {
                 event.preventDefault()
                 const next = Math.max(index - 1, 0)
-                setSelectedKey(items[next]?.key ?? '')
+                const nextItem = items[next]
+                setSelectedKey(nextItem === undefined ? '' : nextItem.key)
               }
               if (event.key === 'Enter') choose(index)
             }}
@@ -337,16 +339,19 @@ export function Palette({ onClose }: { onClose: () => void }) {
             <section key={group.heading} aria-label={group.heading}>
               <h3 className="px-3 pt-2 pb-1 text-meta font-meta text-ink-3">{group.heading}</h3>
               <ul>
-                {group.items.map((item) => (
-                  <Row
-                    key={item.key}
-                    item={item}
-                    active={item.key === selected?.key}
-                    activeRef={item.key === selected?.key ? keepActiveVisible : undefined}
-                    onHover={() => setSelectedKey(item.key)}
-                    onChoose={() => choose(items.indexOf(item))}
-                  />
-                ))}
+                {group.items.map((item) => {
+                  const active = selected !== undefined && item.key === selected.key
+                  return (
+                    <Row
+                      key={item.key}
+                      item={item}
+                      active={active}
+                      activeRef={active ? keepActiveVisible : undefined}
+                      onHover={() => setSelectedKey(item.key)}
+                      onChoose={() => choose(items.indexOf(item))}
+                    />
+                  )
+                })}
               </ul>
             </section>
           ))}
