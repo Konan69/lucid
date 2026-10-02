@@ -82,6 +82,8 @@ export const handleBridgeRequest = Effect.fn('DesktopBridge.handleRequest')(func
             Effect.succeed(PagesResponse.cases.Rejected.make({ reason })),
           PageUnavailable: (reason) =>
             Effect.succeed(PagesResponse.cases.Rejected.make({ reason })),
+          PageLimitReached: (reason) =>
+            Effect.succeed(PagesResponse.cases.Rejected.make({ reason })),
           PageStorageClearFailed: (reason) =>
             Effect.succeed(PagesResponse.cases.Rejected.make({ reason })),
           PageCacheClearFailed: (reason) =>

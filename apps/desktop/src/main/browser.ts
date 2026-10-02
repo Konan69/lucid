@@ -20,6 +20,7 @@ import {
   PageMissing,
   PageAddressRefused,
   PageUnavailable,
+  PageLimitReached,
   PageStorageClearFailed,
   PageCacheClearFailed,
   PagesRequest,
@@ -28,6 +29,8 @@ import {
   type PagePlacement,
 } from '../shared/pages.ts'
 import { AddressDecision, decideAddress, isPageAddress, type PageAddress } from './address.ts'
+import { pageZoomChanged } from './menu.ts'
+import { budgets } from './budgets.ts'
 import { PageChange, emptyBrowserState, reducePages } from './pages.ts'
 
 /** Rejected loadURL promises follow did-fail-load; the event carries Chromium's real description. */
@@ -74,6 +77,7 @@ export class Browser {
     this.secureSession()
     const reposition = (): void => this.present()
     dependencies.window.on('resize', reposition)
+    dependencies.window.on(pageZoomChanged, reposition)
     dependencies.window.webContents.on('zoom-changed', () => setImmediate(reposition))
     // A replaced app document has no viewport lease; close guests before its new renderer loads.
     dependencies.window.webContents.on('did-start-navigation', (_event, _url, inPlace, main) => {
@@ -91,6 +95,7 @@ export class Browser {
     pagesSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
     pagesSession.setPermissionCheckHandler(() => false)
     pagesSession.setDevicePermissionHandler(() => false)
+    // Electron 44.4.3 session docs: an empty streams object refuses getDisplayMedia.
     pagesSession.setDisplayMediaRequestHandler((_request, callback) => callback({}))
     // Navigation includes subframes and server redirects; programmatic loads use this guard too.
     pagesSession.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
@@ -217,13 +222,14 @@ export class Browser {
     })
     contents.on('will-attach-webview', (event) => event.preventDefault())
     contents.setWindowOpenHandler(({ url }) => {
-      if (isPageAddress(url))
+      if (isPageAddress(url) && this.views.size < budgets.pages)
         this.dependencies.run(
           this.open(url).pipe(
             Effect.asVoid,
             Effect.catchTags({
               PageAddressRefused: () => Effect.void,
               PageUnavailable: () => Effect.void,
+              PageLimitReached: () => Effect.void,
             }),
           ),
         )
@@ -280,6 +286,8 @@ export class Browser {
     const address = yield* resolveAddress(input)
     if (this.forgetting || this.dependencies.window.isDestroyed())
       return yield* new PageUnavailable({})
+    if (this.views.size >= budgets.pages)
+      return yield* new PageLimitReached({ limit: budgets.pages })
     const tab = Tab.make(NodeCrypto.randomUUID())
     const view = yield* Effect.try({
       try: () =>

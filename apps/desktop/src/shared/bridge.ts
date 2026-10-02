@@ -164,6 +164,7 @@ export {
   PageMissing,
   PageAddressRefused,
   PageUnavailable,
+  PageLimitReached,
   PageStorageClearFailed,
   PageCacheClearFailed,
   type VividPagesBridge,

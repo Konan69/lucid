@@ -107,6 +107,12 @@ export class PageUnavailable extends Schema.TaggedError<PageUnavailable>()(
   {},
   { title: 'Page view is unavailable' },
 ) {}
+/** Bound guest renderer resources before allocating another page. */
+export class PageLimitReached extends Schema.TaggedError<PageLimitReached>()(
+  'PageLimitReached',
+  { limit: Schema.Int },
+  { title: 'Too many pages are open. Close a page to open another.' },
+) {}
 /** Cookies or site storage could not be cleared in the pages partition. */
 export class PageStorageClearFailed extends Schema.TaggedError<PageStorageClearFailed>()(
   'PageStorageClearFailed',
@@ -125,6 +131,7 @@ export const PagesFailure = Schema.Union([
   PageMissing,
   PageAddressRefused,
   PageUnavailable,
+  PageLimitReached,
   PageStorageClearFailed,
   PageCacheClearFailed,
 ])

@@ -10,11 +10,16 @@ import * as Schema from 'effect/Schema'
 import { ServerAddress, ServerSettings, ServerChoice } from '../shared/settings.ts'
 import { DesktopSettings, settingsLayer } from './settings.ts'
 import { chooseServer } from './server.ts'
-import { BridgeRequest, BridgeResponse, InvalidBridgeMessage } from '../shared/bridge.ts'
+import {
+  BridgeRequest,
+  BridgeResponse,
+  InvalidBridgeMessage,
+  encodeBridgeResponse,
+} from '../shared/bridge.ts'
 import { handleBridgeRequest, type BridgeHandlers } from './requests.ts'
 import { isAllowedBridgeRequest } from './security.ts'
 import { handleAppRequest } from './proxy.ts'
-import { PageUnavailable } from '../shared/pages.ts'
+import { PageUnavailable, PageLimitReached, PagesRequest, PagesResponse } from '../shared/pages.ts'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 
 class FixtureFailed extends Schema.TaggedError<FixtureFailed>()(
@@ -58,6 +63,38 @@ const directory = Effect.acquireRelease(
 )
 
 describe('desktop server selection', () => {
+  /** A native allocation refusal survives IPC encoding as a renderer-readable domain receipt. */
+  it.effect('returns the native page limit through the public bridge', () =>
+    Effect.gen(function* () {
+      const root = yield* directory
+      yield* Effect.gen(function* () {
+        const settings = yield* DesktopSettings
+        const reason = new PageLimitReached({ limit: 12 })
+        const handlers: BridgeHandlers = {
+          settings,
+          getAppVersion: () => '1.0.0',
+          openExternal: () => Effect.void,
+          pages: () => Effect.fail(reason),
+          onServerChanged: () => {},
+        }
+        expect(
+          yield* handleBridgeRequest(
+            BridgeRequest.cases.Pages.make({
+              request: PagesRequest.cases.Open.make({ address: 'https://example.com/' }),
+            }),
+            handlers,
+            () => true,
+          ),
+        ).toEqual(
+          yield* encodeBridgeResponse(
+            BridgeResponse.cases.Pages.make({
+              value: PagesResponse.cases.Rejected.make({ reason }),
+            }),
+          ),
+        )
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+    }),
+  )
   it.effect('denies selected-server documents before shell settings or browsing can change', () =>
     Effect.gen(function* () {
       const root = yield* directory
