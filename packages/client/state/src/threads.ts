@@ -26,13 +26,13 @@ export function titleFromMessage(message: string) {
  *
  * The conversation itself never holds an identifier (the model reads everything in it), so a
  * message there says only its turn number and the speaker's name. The Thread's Runs say who that
- * was. `turn` is the attribute as written, absent on anything that is not a delivery.
+ * was. `turn` is the attribute as written; anything that is not a delivery has none.
  */
 export const speakerOfTurn = (
   runs: ReadonlyArray<Run>,
-  turn: string | undefined,
+  turn: Option.Option<string>,
 ): Option.Option<PersonSummary> =>
-  Option.flatMap(Option.fromUndefinedOr(turn), (written) =>
+  Option.flatMap(turn, (written) =>
     Option.map(
       Option.fromUndefinedOr(runs.find((run) => String(run.turn) === written)),
       (run) => run.origin.person,

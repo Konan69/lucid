@@ -165,7 +165,7 @@ function Signal({
         text={textOf(message)}
         // Whose turn it was comes from the Thread's Runs; the conversation holds no identifier.
         mine={Option.exists(
-          speakerOfTurn(context.runs, attributes.turn),
+          speakerOfTurn(context.runs, Option.fromUndefinedOr(attributes.turn)),
           (speaker) => speaker.id === context.me,
         )}
         from={{ name: attributes.from === undefined ? 'Someone' : attributes.from }}

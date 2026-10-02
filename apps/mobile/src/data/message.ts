@@ -74,7 +74,7 @@ function signalSpeaker(message: FlueConversationMessage, around: Around): Speake
   if (signal.tagName === 'message') {
     // Whose turn it was comes from the Thread's Runs; the conversation holds no identifier.
     return Option.exists(
-      speakerOfTurn(around.runs, attributes.turn),
+      speakerOfTurn(around.runs, Option.fromUndefinedOr(attributes.turn)),
       (speaker) => speaker.id === around.me,
     )
       ? Speaker.Me()
