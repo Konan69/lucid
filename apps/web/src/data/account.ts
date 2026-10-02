@@ -1,6 +1,7 @@
 import { VividRpcClient } from '@vivid/client-runtime'
-import { Data, Effect, Layer, Option, Schema } from 'effect'
+import { Array as Arr, Data, Effect, Layer, Option, Order, Redacted, Schema } from 'effect'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
+import { deviceName } from './device'
 
 /**
  * Signing in and out. These are Better Auth's own routes (`/api/auth/*`), the one part of the
@@ -93,6 +94,76 @@ export const signIn = (input: { readonly email: string; readonly password: strin
   post('sign-in/email', input)
 
 export const signOut = () => post('sign-out', {})
+
+/** One place this Person is signed in, as Better Auth lists it. Its token is a credential. */
+const Session = Schema.Struct({
+  id: Schema.String,
+  token: Schema.Redacted(Schema.String),
+  userAgent: Schema.NullOr(Schema.String),
+  updatedAt: Schema.String,
+})
+const Sessions = Schema.Array(Session)
+const Here = Schema.Struct({ session: Schema.Struct({ id: Schema.String }) })
+
+/** Reads one account answer on the page's own origin, cookies included, and decodes it. */
+const read = <Value, Encoded>(path: string, schema: Schema.Codec<Value, Encoded>) =>
+  Effect.gen(function* () {
+    const response = yield* Effect.tryPromise({
+      try: () => fetch(`/api/auth/${path}`, { credentials: 'same-origin' }),
+      catch: () => new AccountRefused({ message: UNREACHABLE }),
+    })
+    if (!response.ok) return yield* Effect.fail(new AccountRefused({ message: UNREACHABLE }))
+    const body = yield* Effect.tryPromise({
+      try: () => response.text(),
+      catch: () => new AccountRefused({ message: UNREACHABLE }),
+    })
+    return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(body).pipe(
+      Effect.mapError(() => new AccountRefused({ message: UNREACHABLE })),
+    )
+  })
+
+/** Somewhere this Person is signed in: what to call it, when it was last used, and whether it is this one. */
+export interface SignedInDevice {
+  readonly id: string
+  readonly name: string
+  readonly lastUsedAt: number
+  readonly here: boolean
+  /** What signing it out takes. Kept wrapped: it is that device's credential. */
+  readonly token: Redacted.Redacted
+}
+
+/**
+ * Everywhere this Person is signed in: browsers, the desktop app, phones. This device first, then
+ * the most recently used. It is what lets a lost phone or an old shared computer be signed out
+ * without changing a password.
+ */
+export const signedInDevices = () =>
+  Effect.gen(function* () {
+    const [sessions, here] = yield* Effect.all([
+      read('list-sessions', Sessions),
+      read('get-session', Here),
+    ])
+    return Arr.sort(
+      sessions.map((session): SignedInDevice => ({
+        id: session.id,
+        name: deviceName(Option.fromNullOr(session.userAgent)),
+        lastUsedAt: Date.parse(session.updatedAt),
+        here: session.id === here.session.id,
+        token: session.token,
+      })),
+      Order.combine(
+        Order.mapInput(Order.flip(Order.Boolean), (device: SignedInDevice) => device.here),
+        Order.mapInput(Order.flip(Order.Number), (device: SignedInDevice) => device.lastUsedAt),
+      ),
+    )
+  })
+
+/** Signs one other device out. It has to sign in, or be paired, again. */
+export const signOutDevice = (device: SignedInDevice) =>
+  post('revoke-session', { token: Redacted.value(device.token) })
+
+/** Signs out everywhere except here. */
+export const signOutElsewhere = () => post('revoke-other-sessions', {})
 
 /** Lets a device that is waiting with this code sign in as the Person approving it. */
 export const approveDevice = (userCode: string) => post('device/approve', { userCode })
