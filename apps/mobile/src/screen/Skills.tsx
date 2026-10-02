@@ -210,7 +210,7 @@ function Shelf({
           key={skill.id}
           leading={<Mark icon={markOf(skill.name)} />}
           title={skill.name}
-          detail={skill.useWhen}
+          detail={skill.about}
           onPress={() => onOpen(skill)}
         />
       ))}
@@ -296,7 +296,7 @@ function Detail({
   )
 
   return (
-    <Sheet title={skill.name} detail={skill.useWhen} onClose={onClose}>
+    <Sheet title={skill.name} detail={skill.about} onClose={onClose}>
       {Option.isSome(refused) && <Notice message={refused.value} />}
       <Button
         kind="primary"

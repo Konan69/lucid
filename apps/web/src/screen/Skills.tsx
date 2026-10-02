@@ -164,7 +164,7 @@ function Shelf({
               <span>
                 <span className="block text-title font-title text-ink">{skill.name}</span>
                 <span className="mt-1 line-clamp-2 text-label font-meta text-ink-3">
-                  {skill.useWhen}
+                  {skill.about}
                 </span>
               </span>
             </button>
@@ -217,7 +217,7 @@ function Detail({ skill, onClose }: { skill: Skill; onClose: () => void }) {
     )
   }
   return (
-    <Dialog title={skill.name} description={skill.useWhen} width="lg" onClose={onClose}>
+    <Dialog title={skill.name} description={skill.about} width="lg" onClose={onClose}>
       <Steps>{skill.instructions}</Steps>
       <DialogActions>
         {taught(skill) && (
