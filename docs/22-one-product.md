@@ -127,6 +127,41 @@ is written to the audit record; browser steps are shown on the Computer's screen
 recorded one by one. Anything done through a Connection, from the Computer or not, is a Connection
 action and follows the steps above.
 
+## What the model is shown
+
+The model never sees an identifier and never supplies one. Everything it reads can be repeated to
+the people in a shared Thread, or steered by what someone writes, so nothing in front of it is a
+handle on a record.
+
+- **Who and where is injected, not said.** The server sends each delivery to the runtime with its
+  scope beside it: the Person Vivid acts for, and the Library folder the work is confined to when
+  there is one (a Routine's own). The conversation itself carries only the speaker's name and the
+  delivery's turn number. Tools receive the scope through a Layer; the model cannot read it or
+  change it. After a restart the runtime asks the server for the scope of a turn, with its own
+  credential and for no Person.
+- **Things are named, not numbered.** A Task is its title, a skill its name, a Connection its
+  account ("Gmail (Work)"), a memory its words. What the model was shown is what it can say back,
+  and code resolves the name to the record under the acting Person's access. Two things with the
+  same name are told apart in the list, in a stable order.
+- **Every tool result is a view.** Each record a tool returns is projected, field by field, into
+  what a person would be told about it. A test builds every view from records whose identifiers
+  are recognisable markers and fails if one reaches the model.
+- **The outside world's data is not Vivid's.** An email address is how a person is reached, and a
+  provider's own record ids are what its tools take back, so a Connection tool's output passes
+  through as the provider gave it.
+- **One exception, and why.** The cards for an Approval, a question and a service to connect are
+  drawn by the clients from the tool result in the conversation, so those three results still
+  carry the reference the card needs. Flue has no way to send a client data the model does not
+  also read.
+- **One response is for one Person.** In a shared Thread, a message from someone else while Vivid
+  is still answering is not joined into that response; it is refused with a sentence, and sent
+  again when the answer is done. Otherwise the rest of one Person's request would run with
+  another's accounts.
+
+Memory follows the same rule on its own path: the background pass that learns from an exchange and
+writes the brief is shown words and names only, and points back at a known memory by a handle that
+exists for that one call.
+
 ## Connections: Executor
 
 Executor is the Connection layer. It runs beside the server as one more local process, reached over
@@ -137,7 +172,8 @@ client or to the runtime; the server holds it and owns the permission model.
 - The catalog of services, the live tool list, the read or write classification and credential
   storage come from Executor. Vivid stores the mapping and the ownership, never a credential.
 - The model sees a small fixed tool set: `find_tools` and `use_tool`, plus `connect` to offer a
-  service in the Thread. Fifty connected services cost the prompt what one does.
+  service in the Thread. Fifty connected services cost the prompt what one does. A tool is named by
+  the account and tool it was shown under, and the server resolves that pair exactly.
 - Authorization happens in the browser and returns to the Thread, as it does today.
 
 The hand-written Google providers are retired when the Executor path covers the same three services.
