@@ -1,35 +1,23 @@
 import { useAtomMount, useAtomSet } from '@effect/atom-react'
 import { useFlueAgent, type FlueConversationMessage } from '@flue/react'
 import { createFlueClient } from '@flue/sdk'
-import {
-  ThreadAudience,
-  Workspace,
-  type MeResponse,
-  type Thread as ThreadRecord,
-  type ThreadDetail,
-  type ThreadId,
-} from '@vivid/contracts'
-import { draftPlace, standingWords, titleFromMessage, workspaceKey } from '@vivid/state'
+import { ThreadAudience, type MeResponse, type ThreadDetail, type ThreadId } from '@vivid/contracts'
+import { draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Schema } from 'effect'
-import { ArrowDown, ListTree, Lock, MonitorSmartphone, Share2, Users } from 'lucide-react'
+import { ArrowDown } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
-import { lazy, Suspense, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { change, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
 import { Route, router } from '../data/route'
 import { orSay } from '../data/said'
 import { FirstWords, firstWords } from '../data/threads'
-import { Faces } from '../ui/Avatar'
-import { Button, IconButton } from '../ui/Button'
-import { cn } from '../ui/cn'
-import { Face, type FaceMood } from '../ui/Face'
+import { Button } from '../ui/Button'
+import { Face } from '../ui/Face'
 import type { Picture } from './thread/Attach'
 import { Composer } from './thread/Composer'
 import { isBlank, Message, Said, textOf, type ThreadContext } from './thread/Message'
 import { newestRun, Outcome } from './thread/Outcome'
-import { Share } from './thread/Share'
-import { BAR } from './bar'
-
-const About = lazy(async () => ({ default: (await import('./thread/About')).About }))
+import { Layout } from './thread/Layout'
 
 /**
  * One Thread: the conversation with Vivid, and everything live around it.
@@ -139,7 +127,9 @@ function ConversationMessages({
   onUnsentAgain,
   ended,
   onSay,
+  hero,
 }: {
+  hero: React.ReactNode
   ready: boolean
   empty: boolean
   working: boolean
@@ -159,6 +149,7 @@ function ConversationMessages({
 }) {
   return (
     <Messages
+      hero={hero}
       ready={ready}
       empty={empty}
       working={working}
@@ -217,7 +208,6 @@ function Conversation({
     [id],
   )
   const agent = useFlueAgent({ client })
-  const [sharing, setSharing] = useState(false)
   // Words that were sent from here and refused. They are kept, never dropped, until sent again.
   const [unsent, setUnsent] = useState<Option.Option<Unsent>>(Option.none())
   // Being on this screen is what makes the Person present in the Thread; see `presentIn`.
@@ -264,182 +254,55 @@ function Conversation({
 
   const lastSaid = lastWords(visible, me)
   const ended = working ? Option.none() : newestRun(runs)
-
   return (
-    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0">
-      <Header
-        id={id}
-        thread={thread}
-        arriving={arrivingTitle(first)}
-        working={working}
-        present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
-        me={me}
-        panelOpen={panelOpen}
-        onShare={() => setSharing(true)}
-        onTogglePanel={onTogglePanel}
-      />
+    <Layout
+      id={id}
+      me={me}
+      thread={thread}
+      arriving={arrivingTitle(first)}
+      present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
+      working={working}
+      panelOpen={panelOpen}
+      onTogglePanel={onTogglePanel}
+    >
+      {(hero) => (
+        <>
+          <ConversationMessages
+            hero={hero}
+            ready={agent.historyReady}
+            empty={visible.length === 0 && FirstWords.$is('Settled')(first)}
+            working={working}
+            streaming={visible.some(isStreaming)}
+            failure={agent.error === undefined ? null : 'Vivid can’t be reached right now.'}
+            onRetry={() => agent.refresh()}
+            visible={visible}
+            context={context}
+            onContinue={say}
+            first={first}
+            onFirstAgain={() => firstWords.again(id)}
+            unsent={unsent}
+            lastSaid={lastSaid}
+            onUnsentAgain={(value) => send(value.words, value.key, value.pictures)}
+            ended={ended}
+            onSay={say}
+          />
 
-      <ConversationMessages
-        ready={agent.historyReady}
-        empty={visible.length === 0 && FirstWords.$is('Settled')(first)}
-        working={working}
-        streaming={visible.some(isStreaming)}
-        failure={agent.error === undefined ? null : 'Vivid can’t be reached right now.'}
-        onRetry={() => agent.refresh()}
-        visible={visible}
-        context={context}
-        onContinue={say}
-        first={first}
-        onFirstAgain={() => firstWords.again(id)}
-        unsent={unsent}
-        lastSaid={lastSaid}
-        onUnsentAgain={(value) => send(value.words, value.key, value.pictures)}
-        ended={ended}
-        onSay={say}
-      />
-
-      <Composer
-        place={draftPlace(me.person.id, {
-          workspace: workspaceKey(me.workspace),
-          thread: Option.some(id),
-        })}
-        working={working}
-        // A picture goes with a message straight to Vivid; a shared Thread's messages take
-        // another path that cannot carry one yet.
-        pictures={!shared}
-        onSend={say}
-        onStop={() => stop(id)}
-        onTyping={setTyping}
-      />
-
-      {sharing && Option.isSome(thread) && Workspace.guards.Company(me.workspace) && (
-        <Share
-          thread={thread.value}
-          company={me.workspace.company.name}
-          me={me.person.id}
-          onClose={() => setSharing(false)}
-        />
+          <Composer
+            place={draftPlace(me.person.id, {
+              workspace: workspaceKey(me.workspace),
+              thread: Option.some(id),
+            })}
+            working={working}
+            // A picture goes with a message straight to Vivid; a shared Thread's messages take
+            // another path that cannot carry one yet.
+            pictures={!shared}
+            onSend={say}
+            onStop={() => stop(id)}
+            onTyping={setTyping}
+          />
+        </>
       )}
-    </section>
-  )
-}
-
-/**
- * How Vivid is doing in a Thread: the line under its title (the same words on every surface),
- * and here the look on its face and the colour the line is set in.
- */
-const STANDING = {
-  Working: { words: standingWords.Working, mood: 'thinking', tone: 'text-working' },
-  NeedsYou: { words: standingWords.NeedsYou, mood: 'neutral', tone: 'text-attention' },
-  Unread: { words: standingWords.Unread, mood: 'happy', tone: 'text-ink-3' },
-  Quiet: { words: standingWords.Quiet, mood: 'neutral', tone: 'text-ink-3' },
-} as const satisfies Record<
-  ThreadRecord['attention'],
-  { words: string; mood: FaceMood; tone: string }
->
-
-/**
- * The top of a Thread. Vivid is in it, not just named by it: its face, the Thread's title, and a
- * line saying how it is doing right now (here, working, waiting for the Person). On the right,
- * who else is here, who can see the Thread, everything around Vivid, and its computer.
- */
-function Header({
-  id,
-  thread,
-  arriving,
-  working,
-  present,
-  me,
-  panelOpen,
-  onShare,
-  onTogglePanel,
-}: {
-  id: ThreadId
-  thread: Option.Option<ThreadRecord>
-  /** What a Thread still on its way to the server will be called: its first words. */
-  arriving: Option.Option<string>
-  /** Vivid is answering in this window right now, which the Thread's record may not say yet. */
-  working: boolean
-  present: ThreadDetail['present']
-  me: MeResponse
-  panelOpen: boolean
-  onShare: () => void
-  onTogglePanel: () => void
-}) {
-  const [about, setAbout] = useState(false)
-  const others = present.filter((seen) => seen.person.id !== me.person.id)
-  const typing = others.filter((seen) => seen.typing)
-  const inCompany = Workspace.guards.Company(me.workspace)
-  const mine = Option.exists(thread, (value) => value.createdBy.id === me.person.id)
-  const attention: ThreadRecord['attention'] = working
-    ? 'Working'
-    : Option.match(thread, { onNone: () => 'Quiet', onSome: (value) => value.attention })
-  const standing = STANDING[attention]
-  return (
-    <header className={cn(BAR, 'gap-3')}>
-      <Face size={28} mood={standing.mood} />
-      <div className="min-w-0 flex-1">
-        <h1 className="truncate text-title font-title text-ink">
-          {Option.match(thread, {
-            onNone: () => Option.getOrElse(arriving, () => 'New thread'),
-            onSome: (value) => value.title,
-          })}
-        </h1>
-        <p className={cn('truncate text-meta font-meta', standing.tone)} aria-live="polite">
-          {typing.length > 0
-            ? `${typing.map((seen) => seen.person.name).join(', ')} typing…`
-            : standing.words}
-        </p>
-      </div>
-      {others.length > 0 && <Faces people={others.map((seen) => seen.person)} size={20} />}
-      {Option.isSome(thread) && inCompany && (
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={!mine}
-          title={mine ? 'Choose who can see this thread' : 'Only its creator can change this'}
-          icon={<AudienceIcon audience={thread.value.audience} />}
-          onClick={onShare}
-        >
-          {ThreadAudience.match(thread.value.audience, {
-            Private: () => 'Share',
-            People: ({ participants }) => `${participants.length + 1} people`,
-            Company: () => 'Everyone',
-          })}
-        </Button>
-      )}
-      <span className="relative">
-        <IconButton label="Around Vivid" active={about} onClick={() => setAbout((on) => !on)}>
-          <ListTree className="size-4" />
-        </IconButton>
-        {about && (
-          <Suspense fallback={null}>
-            <About
-              open={about}
-              thread={id}
-              mood={standing.mood}
-              standing={standing.words}
-              onClose={() => setAbout(false)}
-              onOpenComputer={() => {
-                if (!panelOpen) onTogglePanel()
-              }}
-            />
-          </Suspense>
-        )}
-      </span>
-      <IconButton label="Vivid’s computer" active={panelOpen} onClick={onTogglePanel}>
-        <MonitorSmartphone className="size-4" />
-      </IconButton>
-    </header>
-  )
-}
-
-function AudienceIcon({ audience }: { audience: ThreadAudience }) {
-  if (ThreadAudience.guards.Private(audience)) return <Share2 className="size-3.5" />
-  return ThreadAudience.guards.People(audience) ? (
-    <Users className="size-3.5" />
-  ) : (
-    <Lock className="hidden" />
+    </Layout>
   )
 }
 
@@ -560,7 +423,9 @@ function Messages({
   failure,
   onRetry,
   children,
+  hero,
 }: {
+  hero: React.ReactNode
   ready: boolean
   /** Nothing has been said here yet, by anyone. */
   empty: boolean
@@ -586,17 +451,18 @@ function Messages({
       >
         {/* The gutter is on the scroller, not the column, so the messages and the composer below
           them are exactly the same width at every window size. */}
-        <ol className="mx-auto flex w-full max-w-(--thread-max-w) flex-col gap-5 py-5 sm:py-6">
+        <ol className="mx-auto flex min-h-full w-full max-w-(--thread-max-w) shrink-0 flex-col gap-5 py-5 sm:py-6">
+          {/* Vivid at the top, part of the conversation: it scrolls away with it. */}
+          {hero}
           {!ready && empty && (
             <li className="py-12 text-center text-label text-ink-3" aria-busy>
               Opening…
             </li>
           )}
           {ready && empty && !working && (
-            <li className="py-12 text-center">
-              <Face size={36} mood="happy" className="mx-auto" />
-              <p className="mt-3 text-title font-title text-ink">Vivid is ready</p>
-              <p className="mt-1 text-label text-ink-3">What should I take off your plate?</p>
+            // Under the hero, which is Vivid's face and name: the line is what it says to start.
+            <li className="text-center font-display text-page tracking-display text-ink">
+              What should I take off your plate?
             </li>
           )}
           {children}

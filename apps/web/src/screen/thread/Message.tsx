@@ -481,6 +481,19 @@ const COPY = {
   refused: 'Could not copy. Select the text instead.',
 } satisfies Record<'idle' | 'copied' | 'refused', string>
 
+/** Past this, a reply reads as a document, not a line said to someone. */
+const BUBBLE_MOST = 700
+
+/**
+ * Whether a reply is a few plain words: no steps or displays with it, no Markdown block (heading,
+ * quote, list, code, table), and short. Those get a bubble the size of the words; everything else
+ * keeps the reading column, which blocks and long text need.
+ */
+const simpleWords = (text: string, tools: ReadonlyArray<ToolPart>) =>
+  tools.length === 0 &&
+  text.length <= BUBBLE_MOST &&
+  !/^(#{1,6} |>|[-*+] |\d+\. |```|~~~)|\|.*\|/mu.test(text)
+
 /**
  * Copies a reply's words in one press. It is always there, quietly, beside the time: a control
  * that only appears on hover does not exist on a touch screen, and one more thing appearing under
@@ -517,6 +530,11 @@ function CopyWords({ read }: { read: () => string }) {
   )
 }
 
+/**
+ * Vivid's reply. A few plain words sit in a bubble beside its face, shaped like the other
+ * people's in a shared Thread (soft, with the corner nearest the face squared); steps, displays and
+ * longer or structured text keep the open column.
+ */
 function FromVivid({
   message,
   context,
@@ -535,6 +553,7 @@ function FromVivid({
   const time = timeOf(message)
   const forWhom = answering(message, context)
   const streaming = message.parts.some((part) => 'state' in part && part.state === 'streaming')
+  const simple = simpleWords(text, tools)
   return (
     <div className="flex gap-3">
       <Face size={28} className="mt-0.5" mood={streaming ? 'thinking' : 'neutral'} />
@@ -545,19 +564,35 @@ function FromVivid({
           </span>
         )}
         <Steps tools={tools.filter((tool) => !drawn(tool))} live={working} />
-        {text.length > 0 && <Markdown content={text} />}
+        <div className={cn(simple && 'flex items-end gap-2')}>
+          {text.length > 0 && (
+            <div
+              className={cn(
+                simple &&
+                  'w-fit max-w-bubble min-w-0 rounded-composer rounded-tl-sm bg-surface-2 px-4 py-2.5',
+              )}
+            >
+              <Markdown content={text} />
+            </div>
+          )}
+          {!streaming && text.length > 0 && (
+            <div
+              className={cn(
+                'flex h-6 items-center gap-1.5 text-meta text-ink-3',
+                simple ? 'shrink-0' : 'mt-1',
+              )}
+            >
+              {Option.isSome(time) && <time title={time.value.full}>{time.value.said}</time>}
+              <CopyWords read={() => text} />
+            </div>
+          )}
+        </div>
         <ToolCards
           tools={tools}
           context={context}
           live={latest && !working}
           onContinue={onContinue}
         />
-        {!streaming && text.length > 0 && (
-          <div className="mt-1 flex h-6 items-center gap-1.5 text-meta text-ink-3">
-            {Option.isSome(time) && <time title={time.value.full}>{time.value.said}</time>}
-            <CopyWords read={() => text} />
-          </div>
-        )}
       </div>
     </div>
   )
