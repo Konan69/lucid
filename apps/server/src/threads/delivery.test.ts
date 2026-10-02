@@ -96,17 +96,22 @@ type RuntimeInput = Parameters<Runtime['Service']['admit']>[0]
 /** Control only the external runtime: the server's actual admission, SQL locks and observers run. */
 const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
   const admitted = yield* Ref.make<ReadonlyArray<RuntimeInput>>([])
+  const requests = yield* Ref.make<ReadonlyArray<RuntimeInput>>([])
   const settlements = new Map<RunId, Deferred.Deferred<Settlement>>()
   const runtime = Runtime.of({
     admit: Effect.fn('Delivery.test.admit')(function* (input) {
       const id = submissionId(input.threadId, input.idempotencyKey)
-      if (!settlements.has(id)) settlements.set(id, yield* Deferred.make<Settlement>())
-      yield* Ref.update(admitted, (all) => [...all, input])
+      yield* Ref.update(requests, (all) => [...all, input])
+      const repeated = settlements.has(id)
+      if (!repeated) {
+        settlements.set(id, yield* Deferred.make<Settlement>())
+        yield* Ref.update(admitted, (all) => [...all, input])
+      }
       return Admission.make({
         runId: id,
-        offset: String(input.turn),
+        offset: repeated ? '-1' : String(input.turn),
         incarnation: 'test',
-        repeated: false,
+        repeated,
       })
     }),
     settled: Effect.fn('Delivery.test.settled')(function* (_threadId, id) {
@@ -126,7 +131,7 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
       Settlement.cases.Completed.make({ reply: 'Finished' }),
     )
   })
-  return { runtime, admitted, finish }
+  return { runtime, admitted, requests, finish }
 })
 
 /** Real RunStore methods also expose typed receipts so tests never sleep or poll for background work. */
@@ -316,6 +321,52 @@ describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
       }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
     )
   }
+
+  it.effect('the gateway repeats one client key with one Run, one turn and the same receipt', () =>
+    Effect.gen(function* () {
+      const test = yield* harness()
+      const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
+      const send = Effect.fn('Gateway.test.send')(function* () {
+        return yield* handle.pipe(
+          Effect.provideService(Conversation, test.conversation),
+          Effect.provideService(Runtime, test.runtime),
+          Effect.provide(silentChangesLayer),
+          Effect.provide(testConfigLayer),
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(
+              new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
+                method: 'POST',
+                headers: {
+                  authorization: `Bearer ${test.token}`,
+                  host: 'gateway.test',
+                  'content-type': 'application/json',
+                },
+                body: JSON.stringify({
+                  kind: 'user',
+                  body: 'Please help',
+                  idempotencyKey: 'lost-http-response',
+                }),
+              }),
+            ),
+          ),
+        )
+      })
+      const first = yield* send()
+      // Discarding the first response represents admission succeeding before HTTP delivery fails.
+      const repeated = yield* send()
+      expect(first.status).toBe(202)
+      expect(repeated.status).toBe(202)
+      expect(repeated.body).toEqual(first.body)
+      const recorded = yield* (yield* RunStore).list(test.threadId)
+      expect(recorded).toHaveLength(1)
+      expect(recorded.map((run) => run.turn)).toEqual([1])
+      expect(yield* Ref.get(test.admitted)).toHaveLength(1)
+      const requests = yield* Ref.get(test.requests)
+      expect(requests).toHaveLength(2)
+      expect(requests[1]).toEqual(requests[0])
+    }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
+  )
 
   it.effect('the shared HTTP gateway returns 409 and the exact Conflict message', () =>
     Effect.gen(function* () {

@@ -1,3 +1,4 @@
+import * as NodeCrypto from 'node:crypto'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
@@ -39,7 +40,9 @@ const Params = Schema.Struct({ threadId: ThreadId })
 const Sent = Schema.Struct({
   kind: Schema.Literal('user'),
   body: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(100_000)),
-  idempotencyKey: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+  idempotencyKey: Schema.optionalKey(
+    Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
+  ),
 })
 
 const decodeSent = Schema.decodeUnknownEffect(Sent)
@@ -104,6 +107,13 @@ const originOf = (headers: Headers.Headers) => {
 const SCHEMES = new Set(['http', 'https'])
 const HOST = /^[a-z0-9.-]+(?::\d{1,5})?$|^\[[0-9a-f:]+\](?::\d{1,5})?$/iu
 
+/** Client keys belong to one Person and cannot collide with server-produced signal keys. */
+const messageKey = (personId: PersonId, key: string) =>
+  `message-${NodeCrypto.createHash('sha256')
+    .update(JSON.stringify([personId, key]))
+    .digest('hex')}`
+
+/** Admission repeats preserve the Run and use a stable stream origin for keyed HTTP receipts. */
 const send = Effect.fn('Gateway.send')(function* () {
   const { request, person, thread } = yield* admitted()
   const sent = yield* decodeSent(yield* request.json).pipe(Effect.option)
@@ -117,17 +127,22 @@ const send = Effect.fn('Gateway.send')(function* () {
     message: DeliveryMessage.cases.Said.make({ body: sent.value.body }),
     origin: StoredRunOrigin.cases.Message.make({}),
     idempotencyKey:
-      sent.value.idempotencyKey === undefined ? crypto.randomUUID() : sent.value.idempotencyKey,
+      sent.value.idempotencyKey === undefined
+        ? crypto.randomUUID()
+        : messageKey(person.id, sent.value.idempotencyKey),
   })
   const streamUrl = `${origin.value}/api/vivid/${encodeURIComponent(thread.id)}`
+  // Flue returns a tight offset on first admission and '-1' on replay. Keyed callers always
+  // receive the full Thread stream origin, so losing an HTTP response does not change the receipt.
+  const offset = sent.value.idempotencyKey === undefined ? receipt.offset : '-1'
   return HttpServerResponse.jsonUnsafe(
     {
       streamUrl,
-      offset: receipt.offset,
+      offset,
       submissionId: receipt.runId,
       uid: receipt.incarnation,
     },
-    { status: 202, headers: { location: streamUrl, 'stream-next-offset': receipt.offset } },
+    { status: 202, headers: { location: streamUrl, 'stream-next-offset': offset } },
   )
 })
 
