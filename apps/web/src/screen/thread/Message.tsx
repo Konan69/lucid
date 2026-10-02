@@ -1,5 +1,11 @@
 import type { FlueConversationMessage } from '@flue/react'
-import type { Approval, InputRequest, PersonId, Run } from '@vivid/contracts'
+import {
+  ShowRequest,
+  type Approval,
+  type InputRequest,
+  type PersonId,
+  type Run,
+} from '@vivid/contracts'
 import {
   describeToolCall,
   makeFullWhen,
@@ -26,6 +32,7 @@ import {
   InputCard,
   requestById,
 } from './Cards'
+import { Display } from './Shown'
 
 type ToolPart = Extract<FlueConversationMessage['parts'][number], { type: 'dynamic-tool' }>
 
@@ -99,16 +106,27 @@ export function Message({
   message,
   context,
   working,
+  latest,
   onContinue,
 }: {
   message: FlueConversationMessage
   context: ThreadContext
   working: boolean
+  /** Whether this is the newest message in the Thread, the one a Person can still answer. */
+  latest: boolean
   onContinue: (text: string) => void
 }) {
   if (message.role === 'user') return <Said text={textOf(message)} mine />
   if (message.role === 'system') return <Signal message={message} context={context} />
-  return <FromVivid message={message} context={context} working={working} onContinue={onContinue} />
+  return (
+    <FromVivid
+      message={message}
+      context={context}
+      working={working}
+      latest={latest}
+      onContinue={onContinue}
+    />
+  )
 }
 
 /** A Person's words. In a shared Thread everyone else's carry their name and face. */
@@ -333,17 +351,32 @@ function TrackedCard({ title, assignee }: { title: string; assignee?: string }) 
   )
 }
 
+const readShown = Schema.decodeUnknownOption(ShowRequest)
+
+/** A step that draws something is not a step to list: the thing drawn is the record of it. */
+const drawn = (tool: ToolPart) => tool.toolName === 'show'
+
 /** The cards a response's tool results ask for, in the order Vivid produced them. */
 function ToolCards({
   tools,
   context,
+  live,
   onContinue,
 }: {
   tools: ReadonlyArray<ToolPart>
   context: ThreadContext
+  /** Whether this reply is the newest thing in the Thread and Vivid has finished it. */
+  live: boolean
   onContinue: (text: string) => void
 }) {
   return tools.map((tool) => {
+    if (drawn(tool)) {
+      // What Vivid asked to show is the tool's own input, complete once the call was made.
+      const shown = readShown(tool.input)
+      return Option.isNone(shown) ? null : (
+        <Display key={tool.toolCallId} shown={shown.value.show} live={live} onSay={onContinue} />
+      )
+    }
     if (tool.state !== 'output-available') return null
     const tracked = tool.toolName === 'create_task' ? decodeTracked(tool.output) : Option.none()
     if (Option.isSome(tracked)) {
@@ -435,11 +468,13 @@ function FromVivid({
   message,
   context,
   working,
+  latest,
   onContinue,
 }: {
   message: FlueConversationMessage
   context: ThreadContext
   working: boolean
+  latest: boolean
   onContinue: (text: string) => void
 }) {
   const text = textOf(message)
@@ -456,9 +491,14 @@ function FromVivid({
             Answering {forWhom.value}
           </span>
         )}
-        <Steps tools={tools} live={working} />
+        <Steps tools={tools.filter((tool) => !drawn(tool))} live={working} />
         {text.length > 0 && <Markdown content={text} />}
-        <ToolCards tools={tools} context={context} onContinue={onContinue} />
+        <ToolCards
+          tools={tools}
+          context={context}
+          live={latest && !working}
+          onContinue={onContinue}
+        />
         {!streaming && text.length > 0 && (
           <div className="mt-1 flex h-6 items-center gap-1.5 text-meta text-ink-3">
             {Option.isSome(time) && <time title={time.value.full}>{time.value.said}</time>}

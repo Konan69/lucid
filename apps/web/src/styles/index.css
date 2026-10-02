@@ -146,6 +146,16 @@
   animation-delay: 180ms;
 }
 
+/* ── Picture edge: a hairline that gives every image the same depth whatever is in it. Pure
+      black in light and pure white in dark, never a tinted neutral, which reads as dirt. ── */
+@utility picture-edge {
+  outline: 1px solid oklch(0 0 0 / 0.1);
+  outline-offset: -1px;
+  :where(html:not([data-theme='light'])) & {
+    outline-color: oklch(1 0 0 / 0.1);
+  }
+}
+
 /* ── Aura: the soft light Vivid sits in on the first screen. One radial of its own colour,
       painted once; it does not move. ── */
 @utility aura {

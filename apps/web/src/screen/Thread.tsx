@@ -202,9 +202,15 @@ function Conversation({
         failure={agent.error === undefined ? null : 'Vivid can’t be reached right now.'}
         onRetry={() => agent.refresh()}
       >
-        {visible.map((message) => (
+        {visible.map((message, position) => (
           <li key={message.id} className="animate-rise-in">
-            <Message message={message} context={context} working={working} onContinue={say} />
+            <Message
+              message={message}
+              context={context}
+              working={working}
+              latest={position === visible.length - 1}
+              onContinue={say}
+            />
           </li>
         ))}
         <OnTheirWay first={first} onAgain={() => firstWords.again(id)} />
