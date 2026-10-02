@@ -32,6 +32,9 @@ describe.skipIf(!testDatabaseConfigured)('Input request answers', () => {
       expect(answers.filter(Result.isFailure).map((answer) => answer.failure)).toEqual([
         expect.any(Conflict),
       ])
+      // SKIP LOCKED may defer the signal while the losing answer holds its row lock. Both answers
+      // have now returned, so the next real replay pass must deliver the durable debt exactly once.
+      yield* store.replay()
       const deliveries = yield* Ref.get((yield* Observation).deliveries)
       expect(deliveries).toHaveLength(1)
       expect(deliveries[0]).toMatchObject({

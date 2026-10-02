@@ -138,18 +138,17 @@ describe.skipIf(!testDatabaseConfigured)('Programs under live authority', () => 
           const result = yield* run(
             test.personal,
             test.personalId,
-            `const found=await tools.find_tools({query:"read"}); const result=await ${use('read')}; return {found,result};`,
+            `const found=await tools.find_tools({query:"read"}); const result=await ${use('read')};
+            const forged=await tools.use_tool({account:"Records",tool:"read",connectionId:"other-person",input:{},summary:"Read",rationale:"Read"}); return {found,result,forged};`,
           )
           expect(CodeOutcome.guards.Completed(result)).toBe(true)
           expect(JSON.stringify(result)).not.toContain('connectionId')
           expect(JSON.stringify(result)).not.toContain(test.other.person.id)
-          expect(yield* Ref.get(probe.calls)).toBe(1)
-          const forged = yield* run(
-            test.personal,
-            test.personalId,
-            `return await tools.use_tool({account:"Records",tool:"read",connectionId:"other-person",input:{},summary:"Read",rationale:"Read"});`,
-          )
-          expect(forged.calls.map((call) => call.end)).toEqual(['refused'])
+          expect(result.calls.map((call) => call.end)).toEqual([
+            'completed',
+            'completed',
+            'refused',
+          ])
           expect(yield* Ref.get(probe.calls)).toBe(1)
         }),
       ).pipe(Effect.provide(testLayer)),
@@ -311,46 +310,46 @@ describe.skipIf(!testDatabaseConfigured)('Programs under live authority', () => 
     ).pipe(Effect.provide(testLayer)),
   )
 
-  it.effect('denied and expired program Approvals execute nothing', () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        yield* (yield* ConnectionStore).begin(test.personal, {
-          service: serviceId,
-          label: 'Records',
-          shared: false,
-        })
-        const store = yield* ApprovalStore
-        yield* run(test.personal, test.personalId, `await ${use('write')};`)
-        const denied = (yield* store.inThread(test.personalId))[0]
-        if (denied === undefined) return yield* Effect.die('No approval')
-        yield* store.decide(test.personal, {
-          id: denied.id,
-          digest: denied.digest,
-          decision: ApprovalDecision.cases.Deny.make({}),
-        })
-        yield* run(test.personal, test.personalId, `await ${use('write')};`)
-        const pending = (yield* store.inThread(test.personalId)).find(
-          (approval) => approval.id !== denied.id,
-        )
-        if (pending === undefined) return yield* Effect.die('No pending approval')
-        yield* TestClock.adjust('25 hours')
-        expect(
-          Result.isFailure(
-            yield* Effect.result(
-              store.decide(test.personal, {
-                id: pending.id,
-                digest: pending.digest,
-                decision: ApprovalDecision.cases.AllowOnce.make({}),
-              }),
-            ),
-          ),
-        ).toBe(true)
-        expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
-        return yield* Effect.void
-      }),
-    ).pipe(Effect.provide(testLayer)),
-  )
+  // Each decision needs one real interpreter startup; independent questions own independent fixtures.
+  for (const decision of ['denied', 'expired'] as const)
+    it.effect(`${decision} program Approvals execute nothing`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          yield* (yield* ConnectionStore).begin(test.personal, {
+            service: serviceId,
+            label: 'Records',
+            shared: false,
+          })
+          const store = yield* ApprovalStore
+          yield* run(test.personal, test.personalId, `await ${use('write')};`)
+          const approval = (yield* store.inThread(test.personalId))[0]
+          if (approval === undefined) return yield* Effect.die('No approval')
+          if (decision === 'denied')
+            yield* store.decide(test.personal, {
+              id: approval.id,
+              digest: approval.digest,
+              decision: ApprovalDecision.cases.Deny.make({}),
+            })
+          else {
+            yield* TestClock.adjust('25 hours')
+            expect(
+              Result.isFailure(
+                yield* Effect.result(
+                  store.decide(test.personal, {
+                    id: approval.id,
+                    digest: approval.digest,
+                    decision: ApprovalDecision.cases.AllowOnce.make({}),
+                  }),
+                ),
+              ),
+            ).toBe(true)
+          }
+          expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+          return yield* Effect.void
+        }),
+      ).pipe(Effect.provide(testLayer)),
+    )
 
   it.effect('a Never rule is terminal despite a guest catch and queued writes', () =>
     Effect.scoped(

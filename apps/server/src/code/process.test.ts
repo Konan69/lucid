@@ -136,48 +136,61 @@ describe('Supervised programs', () => {
         }),
     )
 
-    it.effect(
-      'preserves earlier receipts on a later throw and an unknown consequential outcome, without replay',
-      () =>
-        Effect.gen(function* () {
-          check(
-            yield* run('await tools.use_tool({}); throw new Error("stopped");', reply),
-            'Failed',
-            { calls: [{ end: 'completed' }] },
-          )
-          const unknown: Dispatch = Effect.fn('Test.unknown')((call) =>
-            Effect.succeed(
-              call.id === 1
-                ? CallOutcome.cases.Returned.make({
-                    value: { changed: true },
-                    summary: 'First action',
-                    end: 'completed',
-                  })
-                : CallOutcome.cases.Unknown.make({ summary: 'Second action' }),
-            ),
-          )
-          check(
-            yield* run(
-              'await tools.use_tool({}); await tools.use_tool({}); await tools.use_tool({});',
-              unknown,
-            ),
-            'OutcomeUnknown',
-            { calls: [{ end: 'completed' }, { end: 'unknown' }] },
-          )
-        }),
+    it.effect('preserves earlier receipts on a later throw', () =>
+      Effect.gen(function* () {
+        check(
+          yield* run('await tools.use_tool({}); throw new Error("stopped");', reply),
+          'Failed',
+          { calls: [{ end: 'completed' }] },
+        )
+      }),
     )
 
-    it.effect('enforces UTF-8 source, call and final-result budgets', () =>
+    it.effect('preserves earlier receipts on an unknown consequential outcome without replay', () =>
+      Effect.gen(function* () {
+        const unknown: Dispatch = Effect.fn('Test.unknown')((call) =>
+          Effect.succeed(
+            call.id === 1
+              ? CallOutcome.cases.Returned.make({
+                  value: { changed: true },
+                  summary: 'First action',
+                  end: 'completed',
+                })
+              : CallOutcome.cases.Unknown.make({ summary: 'Second action' }),
+          ),
+        )
+        check(
+          yield* run(
+            'await tools.use_tool({}); await tools.use_tool({}); await tools.use_tool({});',
+            unknown,
+          ),
+          'OutcomeUnknown',
+          { calls: [{ end: 'completed' }, { end: 'unknown' }] },
+        )
+      }),
+    )
+
+    it.effect('enforces the UTF-8 source budget before startup', () =>
       Effect.gen(function* () {
         check(yield* run(`return "${'é'.repeat(8192)}";`, reply), 'Failed', {
           failure: CodeFailure.cases.OverLimit.make({ limit: 'data' }),
           calls: [],
         })
+      }),
+    )
+
+    it.effect('enforces the call budget', () =>
+      Effect.gen(function* () {
         check(
           yield* run('for(let i=0;i<26;i++) await tools.find_tools({query:"x"});', reply),
           'Failed',
           { failure: CodeFailure.cases.OverLimit.make({ limit: 'calls' }) },
         )
+      }),
+    )
+
+    it.effect('enforces the final-result budget', () =>
+      Effect.gen(function* () {
         check(yield* run('return "x".repeat(32768);', reply), 'Failed', {
           failure: CodeFailure.cases.OverLimit.make({ limit: 'result' }),
         })
