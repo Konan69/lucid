@@ -94,9 +94,12 @@ export const togglePicked = (
 export function comparisonOrder(comparison: Extract<Shown, { readonly _tag: 'Comparison' }>) {
   if (comparison.pick === undefined) return comparison.items
   const { name } = comparison.pick
-  return comparison.items.toSorted(
-    (left, right) => Number(right.name === name) - Number(left.name === name),
-  )
+  // Vivid's pick first, everything else in the order it was given. A partition keeps that order
+  // without `toSorted`, which the web build's library target does not have.
+  return [
+    ...comparison.items.filter((item) => item.name === name),
+    ...comparison.items.filter((item) => item.name !== name),
+  ]
 }
 
 /** Short drafts stay fully visible; long prose or many paragraphs get a separate reading view. */
