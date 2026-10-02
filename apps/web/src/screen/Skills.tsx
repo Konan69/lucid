@@ -163,7 +163,9 @@ function Shelf({
               </span>
               <span>
                 <span className="block text-title font-title text-ink">{skill.name}</span>
-                <span className="mt-1 line-clamp-2 text-label font-meta text-ink-3">
+                {/* Three lines: every built-in description reads whole in the narrowest column,
+                    and one a Person wrote long is still held to the card. */}
+                <span className="mt-1 line-clamp-3 text-label font-meta text-ink-3">
                   {skill.about}
                 </span>
               </span>
