@@ -204,6 +204,11 @@ describe('what Vivid did', () => {
     expect(currentStepOf(steps, false)).toEqual(Option.none())
     expect(stepsSummary(steps, false)).toBe('Searching the Library and one more thing')
   })
+
+  it('keeps show calls out of steps even when their input cannot be drawn', () => {
+    expect(stepsOf([tool('show', {}), running])).toEqual(stepsOf([running]))
+    expect(stepsOf([tool('show', {})])).toEqual([])
+  })
 })
 
 describe('the card a tool result asks for', () => {

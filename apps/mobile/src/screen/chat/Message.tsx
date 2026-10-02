@@ -38,6 +38,7 @@ export function Message({
   around,
   detail,
   working,
+  latest,
   unsent,
   onContinue,
 }: {
@@ -45,6 +46,8 @@ export function Message({
   around: Around
   detail: Option.Option<ThreadDetail>
   working: boolean
+  /** Whether this is the newest visible message, matching the web reply’s answerability. */
+  latest: boolean
   /** The ids of the messages written here that did not arrive (`failedSends` of the stream). */
   unsent: ReadonlySet<string>
   onContinue: (text: string) => void
@@ -61,6 +64,7 @@ export function Message({
         detail={detail}
         around={around}
         working={working}
+        latest={latest}
         onContinue={onContinue}
       />
     ),
@@ -305,6 +309,7 @@ function FromVivid({
   detail,
   around,
   working,
+  latest,
   onContinue,
 }: {
   message: FlueConversationMessage
@@ -312,6 +317,7 @@ function FromVivid({
   detail: Option.Option<ThreadDetail>
   around: Around
   working: boolean
+  latest: boolean
   onContinue: (text: string) => void
 }) {
   const text = textOf(message)
@@ -330,7 +336,13 @@ function FromVivid({
         )}
         <Steps steps={stepsOf(tools)} working={working} />
         {text.length > 0 && <Words text={text} />}
-        <Cards tools={tools} detail={detail} me={around.me} onContinue={onContinue} />
+        <Cards
+          tools={tools}
+          detail={detail}
+          me={around.me}
+          live={latest && !working}
+          onContinue={onContinue}
+        />
         {Option.isSome(moment) && <Stamp moment={moment.value} />}
       </View>
     </View>

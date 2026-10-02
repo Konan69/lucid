@@ -471,12 +471,13 @@ function Messages(props: MessagesProps) {
       ListHeaderComponent={
         <Tail working={working && !streaming} ended={props.ended} trouble={props.trouble} />
       }
-      renderItem={({ item }) => (
+      renderItem={({ item, index }) => (
         <Message
           message={item}
           around={props.around}
           detail={props.detail}
           working={working}
+          latest={index === 0}
           unsent={props.unsent}
           onContinue={props.onContinue}
         />

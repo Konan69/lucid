@@ -1,4 +1,5 @@
 import type { Shown } from '@vivid/contracts'
+import { CHART, chartScale, chartShares as shares, chartValue as said } from '@vivid/state'
 import { cn } from '../../ui/cn'
 
 type ChartKind = Extract<Shown, { readonly _tag: 'Chart' }>
@@ -55,29 +56,11 @@ const at = <Item,>(list: ReadonlyArray<Item>, index: number): Item => {
   return item
 }
 
-/** A value as it reads beside a chart: grouped digits, and the unit Vivid gave. */
-const numbers = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 })
-const said = (value: number, unit: string | undefined) =>
-  `${numbers.format(value)}${unit === undefined ? '' : unit}`
-
-// The drawing's own units. The SVG scales to the width it is given.
-const W = 640
-const H = 240
-const LEFT = 8
-const RIGHT = 8
-const TOP = 12
-const BOTTOM = 28
+const { width: W, height: H, left: LEFT, right: RIGHT } = CHART
 
 /** Bars or lines over shared labels, on a scale that starts at zero unless values go below it. */
 function Plot({ chart }: { chart: ChartKind }) {
-  const all = chart.series.flatMap((series) => series.values)
-  const top = Math.max(0, ...all)
-  const floor = Math.min(0, ...all)
-  const span = top - floor === 0 ? 1 : top - floor
-  const y = (value: number) => TOP + ((top - value) / span) * (H - TOP - BOTTOM)
-  const slot = (W - LEFT - RIGHT) / chart.labels.length
-  // With many labels only some are written, so they never run into each other.
-  const every = Math.ceil(chart.labels.length / 8)
+  const { top, y, slot, every } = chartScale(chart)
   return (
     <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={chart.title} className="w-full">
       <line
@@ -187,12 +170,10 @@ function Lines({
 /** The first series as parts of one whole: one bar, split by each part's share of the total. */
 function Share({ chart }: { chart: ChartKind }) {
   const parts = shares(chart)
-  let from = 0
   return (
     <svg viewBox={`0 0 ${W} 28`} role="img" aria-label={chart.title} className="w-full">
       {parts.map((part, index) => {
-        const x = from
-        from += part.share * W
+        const x = part.from * W
         return (
           <rect
             key={part.label}
@@ -209,18 +190,6 @@ function Share({ chart }: { chart: ChartKind }) {
       })}
     </svg>
   )
-}
-
-/** Each label's value in the first series and its share of their sum. Negative parts count as none. */
-const shares = (chart: ChartKind) => {
-  const first = chart.series[0]
-  const values = first === undefined ? [] : first.values.map((value) => Math.max(value, 0))
-  const total = values.reduce((sum, value) => sum + value, 0)
-  return chart.labels.map((label, index) => {
-    const value = values[index]
-    const amount = value === undefined ? 0 : value
-    return { label, value: amount, share: total === 0 ? 0 : amount / total }
-  })
 }
 
 /** Which colour is which: the series of a plot, or the parts of a share with their percentages. */

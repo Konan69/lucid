@@ -1,4 +1,5 @@
 import { Shown as ShownKind } from '@vivid/contracts'
+import { DRAFT_WORDS as DRAFT, formReply, siteOf as site } from '@vivid/state'
 import {
   Check,
   CheckCircle2,
@@ -57,7 +58,7 @@ function Frame({
   flush = false,
   children,
 }: {
-  title: string | undefined
+  title: Kind<'Table'>['title']
   /** The content runs to the frame's edge (a table, a list of rows) and pads itself. */
   flush?: boolean
   children: ReactNode
@@ -131,7 +132,10 @@ const STEP = {
     icon: <CircleSlash className="size-4 text-ink-4" />,
     words: 'text-ink-4 line-through',
   },
-} as const satisfies Record<Kind<'Steps'>['steps'][number]['state'], object>
+} as const satisfies Record<
+  Kind<'Steps'>['steps'][number]['state'],
+  { icon: ReactNode; words: string }
+>
 
 function StepsShown({ plan }: { plan: Kind<'Steps'> }) {
   const done = plan.steps.filter((step) => step.state === 'done').length
@@ -187,8 +191,8 @@ function OptionsShown({
                 aria-pressed={ask.many ? on : undefined}
                 onClick={() => pick(option.label)}
                 className={cn(
-                  'flex min-h-10 w-full cursor-pointer items-center gap-3 rounded-control px-3 py-2 text-left transition-press duration-(--dur-fast) active:scale-98 disabled:cursor-default disabled:active:scale-100',
-                  on ? 'bg-accent-soft' : 'bg-surface-2 enabled:hover:bg-wash-pressed',
+                  'flex min-h-10 w-full cursor-pointer items-center gap-3 rounded-control px-3 py-2 text-left transition-press duration-(--dur-fast) active:scale-98 disabled:cursor-default active:disabled:scale-100',
+                  on ? 'bg-accent-soft' : 'bg-surface-2 hover:enabled:bg-wash-pressed',
                 )}
               >
                 {ask.many && (
@@ -231,7 +235,7 @@ function ComparisonShown({ comparison }: { comparison: Kind<'Comparison'> }) {
   const picked = comparison.pick === undefined ? '' : comparison.pick.name
   return (
     <Frame title={comparison.title}>
-      <ul className="flex snap-x gap-2 overflow-x-auto pt-1 pb-1">
+      <ul className="flex snap-x gap-2 overflow-x-auto py-1">
         {comparison.items.map((item) => (
           <li
             key={item.name}
@@ -295,10 +299,6 @@ function Points({ points, good }: { points: ReadonlyArray<string>; good: boolean
     </ul>
   )
 }
-
-/** A web address as people say it: the site, without the scheme or a leading "www". */
-const site = (address: string) =>
-  URL.canParse(address) ? new URL(address).hostname.replace(/^www\./u, '') : address
 
 function LinksShown({ list }: { list: Kind<'Links'> }) {
   return (
@@ -365,14 +365,6 @@ function FactsShown({ board }: { board: Kind<'Facts'> }) {
   )
 }
 
-/** What a draft is called on its card, and what sending it is called. */
-const DRAFT = {
-  email: { name: 'Email draft', send: 'Send it' },
-  message: { name: 'Message draft', send: 'Send it' },
-  post: { name: 'Post draft', send: 'Post it' },
-  document: { name: 'Draft', send: 'Use it' },
-} as const satisfies Record<Kind<'Draft'>['kind'], { name: string; send: string }>
-
 /**
  * Something written for the Person to send. Pressing send says so in the Thread; whether it then
  * goes out is the trust loop's business, so the card never sends anything itself.
@@ -399,7 +391,7 @@ function DraftShown({
         {draft.subject !== undefined && (
           <div className="flex gap-2">
             <dt className="w-14 shrink-0 text-ink-3">Subject</dt>
-            <dd className="min-w-0 wrap-break-word font-title text-ink">{draft.subject}</dd>
+            <dd className="min-w-0 font-title wrap-break-word text-ink">{draft.subject}</dd>
           </div>
         )}
       </dl>
@@ -473,13 +465,15 @@ function FormShown({
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const filled = new FormData(event.currentTarget)
-    const lines = form.fields.flatMap((field) => {
-      const value = filled.get(field.label)
-      // A form's entries can be files; these fields are all text.
-      const text = value === null || value instanceof File ? '' : value.trim()
-      return text.length === 0 ? [] : [`${field.label}: ${text}`]
-    })
-    if (lines.length > 0) onSay(lines.join('\n'))
+    const words = formReply(
+      form.fields.map((field) => {
+        const value = filled.get(field.label)
+        // A form's entries can be files; these fields are all text.
+        const text = value === null || value instanceof File ? '' : value.trim()
+        return { label: field.label, value: text }
+      }),
+    )
+    if (words.length > 0) onSay(words)
   }
   return (
     <Frame title={form.title}>

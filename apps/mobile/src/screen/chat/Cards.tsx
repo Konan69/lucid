@@ -9,6 +9,7 @@ import {
   type PersonId,
   type ThreadDetail,
 } from '@vivid/contracts'
+import { drawn, readShown } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { View } from 'react-native'
@@ -20,6 +21,7 @@ import { useTheme } from '../../theme'
 import { Button, Dot, Field, HAIRLINE, Label, Notice, Press, radius, styles } from '../../ui/ui'
 import { IntegrationCard } from '../integration/Card'
 import { Exactly } from './Exactly'
+import { Display } from './Shown'
 
 /**
  * The cards a Thread shows where a plain message will not do: something Vivid wants to do and
@@ -32,22 +34,31 @@ export function Cards({
   detail,
   me,
   onContinue,
+  live,
 }: {
   tools: ReadonlyArray<ToolPart>
   detail: Option.Option<ThreadDetail>
   me: PersonId
+  /** Only the newest reply is answerable, once Vivid has stopped working. */
+  live: boolean
   onContinue: (text: string) => void
 }) {
-  return tools.map((tool) =>
-    Option.match(cardOf(tool), {
+  return tools.map((tool) => {
+    if (drawn(tool)) {
+      const shown = readShown(tool.input)
+      return Option.isNone(shown) ? null : (
+        <Display key={tool.toolCallId} shown={shown.value.show} live={live} onSay={onContinue} />
+      )
+    }
+    return Option.match(cardOf(tool), {
       onNone: () => null,
       onSome: (card) => (
         <View key={tool.toolCallId} style={{ marginTop: 8, marginBottom: 6 }}>
           <Drawn card={card} detail={detail} me={me} onContinue={onContinue} />
         </View>
       ),
-    }),
-  )
+    })
+  })
 }
 
 /** The Approval a card stands for, once the Thread's live detail carries it. */

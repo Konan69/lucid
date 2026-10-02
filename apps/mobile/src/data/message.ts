@@ -9,6 +9,7 @@ import {
 } from '@vivid/contracts'
 import {
   describeToolCall,
+  drawn,
   readAnswered,
   readAsked,
   speakerOfTurn,
@@ -175,22 +176,26 @@ const STANDING = {
 
 /** Each tool call as a line in the product's words, never the tool's own name or payload. */
 export const stepsOf = (tools: ReadonlyArray<ToolPart>): ReadonlyArray<Step> =>
-  tools.map((tool) => {
-    const standing = STANDING[tool.state]
-    const described = describeToolCall(
-      tool.toolName,
-      readAsked(tool.input),
-      // A call still running has no output; it reads as an answer with nothing in it yet.
-      readAnswered(tool.state === 'output-available' ? tool.output : {}),
-      standing,
-    )
-    return {
-      id: tool.toolCallId,
-      label: described.label,
-      detail: Option.fromUndefinedOr(described.detail),
-      standing,
-    }
-  })
+  tools
+    .values()
+    .filter((tool) => !drawn(tool))
+    .map((tool) => {
+      const standing = STANDING[tool.state]
+      const described = describeToolCall(
+        tool.toolName,
+        readAsked(tool.input),
+        // A call still running has no output; it reads as an answer with nothing in it yet.
+        readAnswered(tool.state === 'output-available' ? tool.output : {}),
+        standing,
+      )
+      return {
+        id: tool.toolCallId,
+        label: described.label,
+        detail: Option.fromUndefinedOr(described.detail),
+        standing,
+      }
+    })
+    .toArray()
 
 /**
  * The step Vivid is on: the newest one still in progress, and only while the reply is being
