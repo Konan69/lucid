@@ -40,12 +40,13 @@ packaged resources directory. Put the chooser source in the web build's public a
 owner. The shell uses the same saved origin and staged assets in development and production;
 `VIVID_DESKTOP_RENDERER_URL` is no longer used.
 
-Import `VividDesktopBridge`, `ServerSettings` and `ServerChoice` from `@vivid/desktop/bridge`
-(`src/shared/bridge.ts`). The chooser receives `window.vivid` with this interface; selected-server
-documents receive only `getAppVersion()`:
+Import bridge types from `@vivid/desktop/bridge` (`src/shared/bridge.ts`). The chooser receives
+`window.vivid` with `VividDesktopBridge`; selected-server documents receive `VividAppBridge`,
+containing `getAppVersion()` and `pages`:
 
 ```ts
 interface VividDesktopBridge {
+  readonly pages: VividPagesBridge
   server: {
     get(): Promise<{ _tag: 'NoServer' } | { _tag: 'Server'; origin: string }>
     choose(
@@ -60,7 +61,61 @@ interface VividDesktopBridge {
 
 Invalid arguments and persistence failures reject the call. The chooser should display them and
 stay open; `Chosen` means both probe and durable save succeeded, and main replaces the document.
-No IPC channel, filesystem, credential, cookie or arbitrary navigation authority is exposed.
+No IPC channel, filesystem, credential or app-cookie authority is exposed.
+
+## Browser panel bridge
+
+The app renderer receives this exact surface on `window.vivid`. Import `Tab`, `PageInput`,
+`PagePlacement`, `BrowserState`, `PageDownloadRefused`, and `VividAppBridge` from the bridge export.
+The renderer owns the panel, tab row, address input, and sign-out integration.
+
+```ts
+type VividAppBridge = Pick<VividDesktopBridge, 'getAppVersion' | 'pages'>
+
+interface VividPagesBridge {
+  readonly open: (input: PageInput) => Promise<Tab>
+  readonly show: (tab: Tab) => Promise<void>
+  readonly close: (tab: Tab) => Promise<void>
+  readonly go: (input: { readonly tab: Tab; readonly address: string }) => Promise<void>
+  readonly back: (tab: Tab) => Promise<void>
+  readonly forward: (tab: Tab) => Promise<void>
+  readonly reload: (tab: Tab) => Promise<void>
+  readonly stop: (tab: Tab) => Promise<void>
+  readonly place: (placement: PagePlacement) => Promise<void>
+  readonly watch: (listener: (state: BrowserState) => void) => () => void
+  readonly watchDownloads: (listener: (event: PageDownloadRefused) => void) => () => void
+  readonly reset: () => Promise<void>
+  readonly forget: () => Promise<void>
+}
+```
+
+`Tab` is a branded opaque string minted by main. `PageInput` is `{ readonly address: string }`.
+`PagePlacement` is `'hidden'` or `{ readonly x: number; readonly y: number; readonly width: number;
+readonly height: number }`. Supply a content-relative rectangle from `getBoundingClientRect()`
+after layout, resize, scroll, or app zoom changes. Main converts CSS pixels using the app's zoom
+factor and clips bounds to the window content area. Use `'hidden'` before an app overlay covers
+the panel or when the panel unmounts; hidden guests are detached. `open()` selects the new tab,
+but views remain detached until a visible rectangle is supplied.
+
+`watch()` hydrates the current state asynchronously and replays cached state synchronously when
+available. It then delivers whole snapshots: `{ revision, tabs, showing }`. `tabs` is ordered;
+each page has `{ tab, address, title, loading, canGoBack, canGoForward, failed }`. `showing` is
+`PageOption<Tab>` and `failed` is `PageOption<string>`: clone-safe schema-backed `None`/`Some`
+objects with an own `_tag` property. Use `ShowingTab` and `PageLoadFailure` guards/match helpers
+exported by the bridge. Full Effect Option instances cannot cross Electron's context bridge,
+which drops prototypes. A monotonic `revision` prevents older
+hydration responses overwriting newer pushed state. Both watch methods return an unsubscribe
+function. Download events carry `{ tab, address, filename }`; the download is already canceled.
+
+Call `await window.vivid.pages.reset()` as part of sign-out: it closes all pages without deleting
+browsing data. Window close, whole app-document navigation and server changes also close every
+page. `forget()` closes all pages and clears only the `persist:vivid-pages` partition's cookies,
+site storage and cache; opening a page while clearing is refused. Neither operation touches the
+app's cookies or session.
+
+Typed text uses HTTPS for bare addresses and DuckDuckGo for search text. Localhost, loopback
+aliases, credentials, and non-HTTP(S) schemes are refused. Load failures retain Chromium's error
+description in `failed` until the next navigation; main supplies no substitute error page.
 
 ## Signing in by code
 
@@ -81,7 +136,13 @@ blocked, including WebSocket upgrades. Same-origin redirects remain usable. Fore
 and popup destinations open in the system browser only for HTTP(S); other schemes are refused.
 Only the main frame may invoke the schema-decoded bridge. Main checks its document URL for every
 request: the bundled chooser alone can choose or forget a server, read settings, or invoke
-external browsing. Selected-server documents can only read the app version.
+external browsing. Selected-server documents can read the app version and drive the isolated
+Browser through validated page requests. No page guest has preload or bridge access.
+
+Each page uses its own main-owned `WebContentsView` in `persist:vivid-pages`, with sandbox,
+context isolation, web security and no Node integration. Only HTTP(S) page and frame navigation
+is admitted. Guest permissions, including display capture and device permissions, are denied.
+Guest popups open new tabs in the same Browser and downloads are refused with a typed event.
 
 Notifications and sanitized clipboard writes are allowed only for the selected app origin.
 Media, clipboard reads and every other permission are denied, including on the chooser.

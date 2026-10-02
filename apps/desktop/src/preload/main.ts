@@ -11,6 +11,7 @@ import {
   encodeBridgeRequest,
 } from '../shared/bridge.ts'
 import { SettingsSaveFailed } from '../shared/settings.ts'
+import { createPagesBridge } from './pages.ts'
 
 /** The sandbox has browser location; this narrow view keeps DOM and Node authority out of the bridge contract. */
 declare const window: {
@@ -91,6 +92,7 @@ const openExternal = Effect.fn('DesktopPreload.openExternal')(function* (value: 
 
 /** Promise terminals live only at Electron's isolated context bridge. */
 const bridge: VividDesktopBridge = {
+  pages: createPagesBridge(invoke, (program) => Effect.runPromise(program)),
   server: {
     get: () => Effect.runPromise(getServer()),
     choose: (origin) => Effect.runPromise(chooseServer(origin)),
@@ -104,5 +106,5 @@ const chooserDocument =
   window.location.protocol === 'file:' && window.location.pathname.endsWith('/chooser.html')
 contextBridge.exposeInMainWorld(
   BRIDGE_NAMESPACE,
-  chooserDocument ? bridge : { getAppVersion: bridge.getAppVersion },
+  chooserDocument ? bridge : { getAppVersion: bridge.getAppVersion, pages: bridge.pages },
 )

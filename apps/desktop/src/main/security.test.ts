@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { BridgeRequest } from '../shared/bridge.ts'
 import { ServerAddress, ServerSettings } from '../shared/settings.ts'
+import { PagesRequest } from '../shared/pages.ts'
 import {
   isAllowedPermission,
   isAllowedBridgeRequest,
@@ -102,6 +103,15 @@ describe('desktop origin policy', () => {
 })
 
 describe('desktop bridge sender authority', () => {
+  it('grants pages only to the app document or exact chooser, never a foreign guest or subframe origin', () => {
+    const request = BridgeRequest.cases.Pages.make({ request: PagesRequest.cases.Get.make({}) })
+    expect(
+      isAllowedBridgeRequest('https://vivid.example/thread/123', server, chooser, request),
+    ).toBe(true)
+    for (const url of ['https://example.com', 'file:///application/other.html', 'malformed'])
+      expect(isAllowedBridgeRequest(url, server, chooser, request)).toBe(false)
+    expect(isAllowedBridgeRequest('https://vivid.example', absent, chooser, request)).toBe(false)
+  })
   it('restricts shell changes and external browsing to the precise bundled chooser', () => {
     const requests = [
       BridgeRequest.cases.GetServer.make({}),

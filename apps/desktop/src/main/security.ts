@@ -75,7 +75,7 @@ export function isAllowedResponse(input: {
   )
 }
 
-/** Only the bundled chooser can mutate shell authority; selected-origin documents get version metadata. */
+/** Only the chooser changes shell authority; app documents receive the closed page capability. */
 export function isAllowedBridgeRequest(
   url: string,
   server: ServerSettings,
@@ -83,5 +83,8 @@ export function isAllowedBridgeRequest(
   request: BridgeRequest,
 ): boolean {
   if (isTrustedDocument(url, ServerSettings.cases.NoServer.make({}), chooser)) return true
-  return BridgeRequest.guards.GetAppVersion(request) && isTrustedDocument(url, server, chooser)
+  return (
+    BridgeRequest.isAnyOf(['GetAppVersion', 'Pages'])(request) &&
+    isTrustedDocument(url, server, chooser)
+  )
 }

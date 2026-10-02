@@ -14,6 +14,7 @@ import { BridgeRequest, BridgeResponse, InvalidBridgeMessage } from '../shared/b
 import { handleBridgeRequest, type BridgeHandlers } from './requests.ts'
 import { isAllowedBridgeRequest } from './security.ts'
 import { handleAppRequest } from './proxy.ts'
+import { PageUnavailable } from '../shared/pages.ts'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 
 class FixtureFailed extends Schema.TaggedError<FixtureFailed>()(
@@ -64,6 +65,7 @@ describe('desktop server selection', () => {
         const settings = yield* DesktopSettings
         const changes: string[] = []
         const handlers: BridgeHandlers = {
+          pages: () => Effect.fail(new PageUnavailable({})),
           settings,
           getAppVersion: () => '1.0.0',
           openExternal: () => Effect.sync(() => changes.push('external')),
@@ -120,6 +122,7 @@ describe('desktop server selection', () => {
           settings,
           getAppVersion: () => '1.0.0',
           openExternal: () => Effect.void,
+          pages: () => Effect.fail(new PageUnavailable({})),
           onServerChanged: (state) => changes.push(state._tag),
         }
         expect(

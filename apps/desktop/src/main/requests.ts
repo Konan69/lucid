@@ -10,9 +10,11 @@ import {
 import { ServerChoice, type ServerSettings, type ServerAddress } from '../shared/settings.ts'
 import type { DesktopSettings } from './settings.ts'
 import { chooseServer } from './server.ts'
+import { type PagesRequest, PagesResponse, type PagesFailure } from '../shared/pages.ts'
 
-/** Persistence, version metadata, and external browsing are the complete bridge authorities. */
+/** Main supplies settings, version metadata, external browsing and the isolated Browser authority. */
 export interface BridgeHandlers {
+  readonly pages: (request: PagesRequest) => Effect.Effect<PagesResponse, PagesFailure>
   readonly getAppVersion: () => string
   readonly settings: DesktopSettings['Service']
   readonly onServerChanged: (value: ServerSettings) => void
@@ -71,6 +73,21 @@ export const handleBridgeRequest = Effect.fn('DesktopBridge.handleRequest')(func
         Effect.catchTag('ExternalUrlOpenFailed', () =>
           Effect.succeed(BridgeResponse.cases.ExternalOpenFailed.make({})),
         ),
+      ),
+    Pages: ({ request: pagesRequest }) =>
+      handlers.pages(pagesRequest).pipe(
+        Effect.catchTags({
+          PageMissing: (reason) => Effect.succeed(PagesResponse.cases.Rejected.make({ reason })),
+          PageAddressRefused: (reason) =>
+            Effect.succeed(PagesResponse.cases.Rejected.make({ reason })),
+          PageUnavailable: (reason) =>
+            Effect.succeed(PagesResponse.cases.Rejected.make({ reason })),
+          PageStorageClearFailed: (reason) =>
+            Effect.succeed(PagesResponse.cases.Rejected.make({ reason })),
+          PageCacheClearFailed: (reason) =>
+            Effect.succeed(PagesResponse.cases.Rejected.make({ reason })),
+        }),
+        Effect.map((value) => BridgeResponse.cases.Pages.make({ value })),
       ),
   })
   return yield* encodeBridgeResponse(response)

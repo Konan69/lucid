@@ -4,8 +4,9 @@ import * as NodeProcess from 'node:process'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
-import { app, protocol, screen, session, type BrowserWindow } from 'electron'
+import { app, protocol, screen, session, type BrowserWindow, type Session } from 'electron'
 import { registerBridge } from './bridge.ts'
+import { Browser } from './browser.ts'
 import {
   parseVividUrl,
   VIVID_PROTOCOL,
@@ -24,7 +25,14 @@ import {
 import { ColorSchemeController } from './theme.ts'
 import { loadThemeSurfaces } from './tokens.ts'
 import { RendererSource, createMainWindow, loadRenderer, openExternalUrl } from './window.ts'
-import { AppInfo, type DesktopPlatform } from '../shared/bridge.ts'
+import {
+  AppInfo,
+  BRIDGE_EVENT_CHANNEL,
+  BridgeEvent,
+  encodeBridgeEvent,
+  type DesktopPlatform,
+} from '../shared/bridge.ts'
+import { PageUnavailable } from '../shared/pages.ts'
 import { DesktopSettings, settingsLayer } from './settings.ts'
 import { registerAppProxy } from './proxy.ts'
 import { secureSession } from './session.ts'
@@ -125,6 +133,31 @@ function runNonFatal(program: Effect.Effect<void, object>, message: string): voi
   )
 }
 
+/** Page events target only their owning app window; guests never receive a bridge event channel. */
+function createBrowser(window: BrowserWindow, pagesSession: Session): Browser {
+  return new Browser({
+    window,
+    session: pagesSession,
+    run: (program) => {
+      void Effect.runPromise(program)
+    },
+    publish: (value) => {
+      if (!window.webContents.isDestroyed())
+        window.webContents.send(
+          BRIDGE_EVENT_CHANNEL,
+          encodeBridgeEvent(BridgeEvent.cases.PagesChanged.make({ value })),
+        )
+    },
+    downloadRefused: (value) => {
+      if (!window.webContents.isDestroyed())
+        window.webContents.send(
+          BRIDGE_EVENT_CHANNEL,
+          encodeBridgeEvent(BridgeEvent.cases.PageDownloadRefused.make({ value })),
+        )
+    },
+  })
+}
+
 /**
  * Finish startup after Electron is ready: decode configuration and disk state, construct one window,
  * and install bridge handlers. Placement failure is deliberately recoverable because geometry is a
@@ -168,13 +201,21 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
     () => defaultWindowPlacement,
   )
   const colorScheme = new ColorSchemeController(surfaces)
+  let browser = Option.none<Browser>()
+  const pagesSession = session.fromPartition('persist:vivid-pages')
 
   registerBridge({
     handlers: {
+      pages: (request) =>
+        Option.match(browser, {
+          onNone: () => Effect.fail(new PageUnavailable({})),
+          onSome: (available) => available.handle(request),
+        }),
       getAppVersion: () => information.appVersion,
       settings,
       openExternal: openExternalUrl,
       onServerChanged: (value) => {
+        Option.map(browser, (available) => available.reset())
         serverSettings = value
         // Complete invoke before replacing the document that owns its pending Promise.
         setImmediate(() =>
@@ -217,8 +258,10 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
       },
     })
     mainWindow = Option.some(window)
+    browser = Option.some(createBrowser(window, pagesSession))
     window.on('closed', () => {
       mainWindow = Option.none()
+      browser = Option.none()
     })
     runNonFatal(loadRenderer(window, renderer()), 'desktop: renderer failed to load')
   }
