@@ -29,14 +29,24 @@ function zoomItem(
   }
 }
 
-/** Build standard menus from the injected host platform, with owned zoom geometry notifications. */
-export function installApplicationMenu(platform: DesktopPlatform): void {
+/**
+ * Build standard menus from the injected host platform, with owned zoom geometry notifications.
+ *
+ * `changeServer` takes the app back to its first screen to be pointed at another Vivid. It sits
+ * in the File menu on every platform because that is the menu all three have.
+ */
+export function installApplicationMenu(platform: DesktopPlatform, changeServer: () => void): void {
   const mac = platform === 'darwin'
   const template: MenuItemConstructorOptions[] = [
     ...(mac ? [{ role: 'appMenu' as const }] : []),
     {
       label: 'File',
-      submenu: [...(mac ? [] : [{ role: 'quit' as const }]), { role: 'close' }],
+      submenu: [
+        { label: 'Use a Different Vivid…', click: changeServer },
+        { type: 'separator' },
+        ...(mac ? [] : [{ role: 'quit' as const }]),
+        { role: 'close' },
+      ],
     },
     { role: 'editMenu' },
     {

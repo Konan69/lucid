@@ -165,7 +165,6 @@ function createBrowser(window: BrowserWindow, pagesSession: Session): Browser {
  */
 const boot = Effect.fn('DesktopMain.boot')(function* () {
   registerProtocolClient()
-  installApplicationMenu(platform)
 
   const surfaces = yield* loadThemeSurfaces(themeTokensPath())
   const settings = yield* DesktopSettings
@@ -204,6 +203,27 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
   let browser = Option.none<Browser>()
   const pagesSession = session.fromPartition('persist:vivid-pages')
 
+  /** A different server, or none: every page closes and the window loads what that means. */
+  const serverChanged = (value: ServerSettings): void => {
+    Option.map(browser, (available) => available.reset())
+    serverSettings = value
+    // Complete invoke before replacing the document that owns its pending Promise.
+    setImmediate(() =>
+      Option.map(mainWindow, (window) =>
+        runNonFatal(loadRenderer(window, renderer()), 'desktop: renderer failed to load'),
+      ),
+    )
+  }
+
+  // The menu is the one place a Person can leave a server: the app's own document is deliberately
+  // refused that request over the bridge, so before this the only way was to delete a settings file.
+  installApplicationMenu(platform, () =>
+    runNonFatal(
+      settings.forget.pipe(Effect.map(serverChanged)),
+      'desktop: the server could not be forgotten',
+    ),
+  )
+
   registerBridge({
     handlers: {
       pages: (request) =>
@@ -214,16 +234,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
       getAppVersion: () => information.appVersion,
       settings,
       openExternal: openExternalUrl,
-      onServerChanged: (value) => {
-        Option.map(browser, (available) => available.reset())
-        serverSettings = value
-        // Complete invoke before replacing the document that owns its pending Promise.
-        setImmediate(() =>
-          Option.map(mainWindow, (window) =>
-            runNonFatal(loadRenderer(window, renderer()), 'desktop: renderer failed to load'),
-          ),
-        )
-      },
+      onServerChanged: serverChanged,
     },
     runtime: { run: (program) => Effect.runPromise(program) },
     isTrustedSender: (id, url, request) =>
