@@ -92,13 +92,13 @@ export function Invite({ id }: { id: InvitationId }) {
 const SHARED = [
   'Threads you start for everyone or share',
   'The company’s Library and Projects',
-  'Connections an admin sets up for all',
+  'Integrations an admin sets up for all',
   'Rules its admins write',
 ]
 const YOURS = [
   'Your private threads',
   'What Vivid knows about you',
-  'Your own Connections',
+  'Your own Integrations',
   'Your own computer',
 ]
 

@@ -115,7 +115,8 @@ export function Said({
   if (mine) {
     return (
       <div className="flex justify-end">
-        <div className="max-w-bubble rounded-panel rounded-br-sm bg-surface-2 px-4 py-3 text-body text-ink">
+        {/* The Person's own words are the one filled shape in a Thread: found at a glance. */}
+        <div className="max-w-bubble rounded-composer rounded-br-sm bg-accent px-4 py-2.5 text-body text-ink-on-accent selection:bg-ink-on-accent/30">
           <p className="whitespace-pre-wrap">{text}</p>
         </div>
       </div>
@@ -128,7 +129,7 @@ export function Said({
         {from !== undefined && (
           <span className="mb-1 block text-meta font-title text-ink-3">{from.name}</span>
         )}
-        <div className="max-w-bubble rounded-panel rounded-tl-sm bg-surface-2 px-4 py-3 text-body text-ink">
+        <div className="max-w-bubble rounded-composer rounded-tl-sm bg-surface-2 px-4 py-2.5 text-body text-ink">
           <p className="whitespace-pre-wrap">{text}</p>
         </div>
       </div>
@@ -325,7 +326,12 @@ function ToolCards({
     const wanted = card.value
     if (wanted.kind === 'connection') {
       return (
-        <ConnectionCard key={tool.toolCallId} request={wanted.request} onContinue={onContinue} />
+        <ConnectionCard
+          key={tool.toolCallId}
+          request={wanted.request}
+          authorization={wanted.authorization}
+          onContinue={onContinue}
+        />
       )
     }
     if (wanted.kind === 'approval') {
@@ -409,7 +415,7 @@ function FromVivid({
   const streaming = message.parts.some((part) => 'state' in part && part.state === 'streaming')
   return (
     <div className="flex gap-3">
-      <Face size={24} className="mt-1" mood={streaming ? 'thinking' : 'neutral'} />
+      <Face size={28} className="mt-0.5" mood={streaming ? 'thinking' : 'neutral'} />
       <div className="min-w-0 flex-1 text-body text-ink">
         {Option.isSome(forWhom) && (
           <span className="mb-1 block text-meta font-meta text-ink-3">

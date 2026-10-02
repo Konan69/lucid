@@ -130,6 +130,24 @@
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0.035 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
+/* ── Stagger: a short list arriving one item after another, once. The delay is on the
+      animation, which Tailwind's `delay-*` (a transition delay) does not reach. ── */
+@utility stagger-1 {
+  animation-delay: 60ms;
+}
+@utility stagger-2 {
+  animation-delay: 120ms;
+}
+@utility stagger-3 {
+  animation-delay: 180ms;
+}
+
+/* ── Aura: the soft light Vivid sits in on the first screen. One radial of its own colour,
+      painted once; it does not move. ── */
+@utility aura {
+  background: radial-gradient(closest-side, var(--accent-soft), transparent);
+}
+
 /* ── Face: sized by --face-size; eye geometry is computed once in Face.tsx ── */
 @utility face {
   width: var(--face-size);

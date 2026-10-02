@@ -29,13 +29,31 @@ const apply = () => {
 dark.addEventListener('change', apply)
 apply()
 
+const media = {
+  /** Told when the look actually on screen changes: a choice here, or the system's own switch. */
+  subscribe: (listener: () => void) => {
+    listeners.add(listener)
+    dark.addEventListener('change', listener)
+    return () => {
+      listeners.delete(listener)
+      dark.removeEventListener('change', listener)
+    }
+  },
+}
+const listeners = new Set<() => void>()
+
 export const theme = {
   current: () => preference,
+  /** Light or dark as it is drawn right now, for the few things that are painted, not styled. */
+  shown: (): 'light' | 'dark' =>
+    preference === 'system' ? (dark.matches ? 'dark' : 'light') : preference,
+  subscribe: media.subscribe,
   /** Adopts a choice: from this device's Settings, or from the Person's settings arriving live. */
   set: (next: Theme) => {
     if (next === preference) return
     preference = next
     kept.write(KEY, next)
     apply()
+    for (const listener of listeners) listener()
   },
 }

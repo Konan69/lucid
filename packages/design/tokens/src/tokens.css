@@ -13,22 +13,24 @@
       same order descending in light. A token never changes tier between themes.
    3. Text and borders are alpha ink, so they read the same on every tier.
    4. Accent is Vivid's own color. It appears on the face, the focus ring, the
-      one primary button, and "working". Nowhere else.
+      one primary button, "working", and what the Person themselves said. Nowhere else.
+   5. The canvas is warm, never neutral grey: paper in light, charcoal in dark. Ink is tinted
+      the same way, so nothing on the page is a dead #000 or #fff.
    ───────────────────────────────────────────────────────────── */
 
 :root {
   color-scheme: dark;
 
   /* ── Surface ramp (dark) ─────────────────────────────────── */
-  --surface-0: #161616; /* the page */
-  --surface-1: #1c1c1c; /* sidebar, chrome */
-  --surface-2: #232323; /* cards, bubbles, rows */
-  --surface-3: #2c2c2c; /* controls, composer, popups */
-  --surface-well: #0e0f12; /* code, terminal, Vivid's screen frame */
-  --scrim: rgba(10, 10, 10, 0.72);
+  --surface-0: #171614; /* the page: warm charcoal */
+  --surface-1: #1d1b18; /* sidebar, chrome */
+  --surface-2: #25231f; /* cards, bubbles, rows */
+  --surface-3: #2e2b27; /* controls, composer, popups */
+  --surface-well: #100f0d; /* code, terminal, Vivid's screen frame */
+  --scrim: rgba(12, 11, 9, 0.72);
 
   /* ── Ink (alpha over surface) ────────────────────────────── */
-  --ink-base: 252 252 252; /* rgb triplet */
+  --ink-base: 250 247 240; /* rgb triplet: warm white */
   --ink: rgb(var(--ink-base));
   /* ink-3 is supporting text people have to read (times, details, captions), so it holds 4.5:1
      on every surface it is set on, the raised ones included. At 0.42 it was 3.7:1 on a control. */
@@ -86,7 +88,13 @@
   --face-eye: #0f0f0f; /* existing Vivid Face eye color */
 
   /* ── Type ────────────────────────────────────────────────── */
-  --sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
+  /* Two faces. Geist carries everything that is read and operated; Bricolage Grotesque, a
+     grotesque with visible character, carries what Vivid says at size: the greeting, a page's
+     title, its own name. Both are variable and shipped with the app, so the product looks the
+     same on every system instead of taking each one's default. */
+  --sans:
+    'Geist Variable', -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --display: 'Bricolage Grotesque Variable', var(--sans);
   --mono: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;
   --type-meta: 11px;
   --type-label: 13px;
@@ -96,6 +104,7 @@
   --type-section: 19px;
   --type-page: 24px;
   --type-hero: 28px;
+  --type-display: 40px; /* the one line a screen opens with */
   --leading-tight: 1.25;
   --leading-body: 1.5;
   --weight-meta: 400;
@@ -142,20 +151,20 @@
 html[data-theme='light'] {
   color-scheme: light;
 
-  --surface-0: #ffffff; /* the page: paper white */
-  --surface-1: #f6f6f6; /* sidebar, chrome: OpenSession's raised step */
-  --surface-2: #f0f0ef; /* cards, bubbles, rows */
+  --surface-0: #fbfaf7; /* the page: paper */
+  --surface-1: #f4f2ec; /* sidebar, chrome */
+  --surface-2: #ece9e1; /* cards, bubbles, rows */
   --surface-3: #ffffff; /* controls: white + hairline */
-  --surface-well: #f4f5f7;
-  --scrim: rgba(20, 20, 20, 0.42);
+  --surface-well: #f1eee7;
+  --scrim: rgba(28, 25, 23, 0.42);
 
-  --ink-base: 20 20 20;
+  --ink-base: 28 25 23;
   /* Dark ink on white loses more contrast per step of alpha than light ink on near-black, so the
      light ramp sits higher: supporting text (ink-3) holds 4.5:1 on every surface, and ink-4 is for
      marks and placeholders only, never for words that have to be read. */
   --ink-2: rgb(var(--ink-base) / 0.74);
-  --ink-3: rgb(var(--ink-base) / 0.6);
-  --ink-4: rgb(var(--ink-base) / 0.34);
+  --ink-3: rgb(var(--ink-base) / 0.64);
+  --ink-4: rgb(var(--ink-base) / 0.36);
   --ink-on-accent: #ffffff;
 
   --line-1: rgb(var(--ink-base) / 0.05);
@@ -185,7 +194,7 @@ html[data-theme='light'] {
   --status-info: #0c64c1;
   --status-info-soft: rgb(12 100 193 / 0.1);
 
-  /* In light the page is white and so is a control, so the hairline is the whole edge. */
+  /* In light the page is paper and a control is white, so the hairline is most of the edge. */
   --smooth-ring-color: rgb(var(--ink-base) / 0.1);
 }
 
@@ -256,6 +265,7 @@ html[data-theme='light'] body {
   --color-face-gray: var(--face-gray);
 
   --font-sans: var(--sans);
+  --font-display: var(--display);
   --font-mono: var(--mono);
 
   --text-meta: var(--type-meta);
@@ -274,6 +284,9 @@ html[data-theme='light'] body {
   --text-page--line-height: var(--leading-tight);
   --text-hero: var(--type-hero);
   --text-hero--line-height: var(--leading-tight);
+  --text-display: var(--type-display);
+  --text-display--line-height: 1.05;
+  --tracking-display: -0.025em;
 
   --font-weight-meta: var(--weight-meta);
   --font-weight-title: var(--weight-title);

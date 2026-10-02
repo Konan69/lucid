@@ -5,6 +5,9 @@ import App from './App'
 import { Broken } from './screen/Broken'
 import { Recover } from './ui/Recover'
 import { engine } from './data/runtime'
+// The two typefaces ship with the app, so Vivid looks the same on every system.
+import '@fontsource-variable/geist'
+import '@fontsource-variable/bricolage-grotesque'
 import './styles/index.css'
 
 const root = document.getElementById('root')

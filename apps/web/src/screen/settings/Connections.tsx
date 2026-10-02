@@ -7,18 +7,18 @@ import {
   ServiceCatalog,
   Workspace,
   type Connection,
-  type ConnectionId,
   type MeResponse,
   type Service,
 } from '@vivid/contracts'
 import { liveStateOf } from '@vivid/state'
-import { Option, Redacted, Result } from 'effect'
+import { Result } from 'effect'
 import { Link2, Search } from 'lucide-react'
 import { useState } from 'react'
 import { change, live, LiveState, services, serviceSearch, useLive } from '../../data/live'
 import { orSay } from '../../data/said'
 import { Button } from '../../ui/Button'
-import { Dialog, DialogActions } from '../../ui/Dialog'
+import { EnterKey, type Keying } from '../integration/Key'
+import { showSignIn } from '../integration/signin'
 import { Awaiting, Empty, Refusal, Row, Section } from './Parts'
 
 const HOW = (service: Service) =>
@@ -28,35 +28,6 @@ const HOW = (service: Service) =>
     None: () => 'No sign-in needed',
     SetupRequired: () => 'Not set up on this Vivid',
   })
-
-/**
- * A provider's sign-in address, when it is one a browser should be sent to. The address comes
- * from the Connection layer and ends up in a tab, so anything that is not a web page (a script
- * address, another app's scheme, something that does not parse) is treated as no address at all.
- */
-const signInPage = (address: string) =>
-  Option.filter(
-    Option.liftThrowable((value: string) => new URL(value))(address),
-    (page) => page.protocol === 'https:' || page.protocol === 'http:',
-  )
-
-/**
- * Sends the tab that was opened for a sign-in to the provider's page. The tab was opened by the
- * click itself, before the server was asked anything, because a browser only lets a page open a
- * tab while it is still handling the click. Without a tab or a real address there is nothing to
- * show, and the caller says so.
- */
-function showSignIn(tab: Window | null, address: string) {
-  const page = signInPage(address)
-  if (tab === null || Option.isNone(page)) {
-    if (tab !== null) tab.close()
-    return false
-  }
-  // The provider's page must not be able to reach back into this one.
-  tab.opener = null
-  tab.location.replace(page.value.href)
-  return true
-}
 
 const STANDING = (connection: Connection) =>
   ConnectionState.match(connection.state, {
@@ -78,12 +49,6 @@ const WHICH = (connection: Connection) => {
 }
 
 /** A key being collected for a Connection that began: which one, and what it asks for. */
-interface Keying {
-  readonly id: ConnectionId
-  readonly name: string
-  readonly fields: ReadonlyArray<{ readonly name: string; readonly label: string }>
-}
-
 /**
  * The outside services Vivid can use. A Person's own Connections act only for them, in every
  * workspace. A Company's are added by an admin and can be read through by every member's Vivid.
@@ -174,7 +139,11 @@ export function Connections({ me }: { me: MeResponse }) {
     <>
       <Refusal message={refusal} />
       <Section title="Yours" detail="Vivid uses these only when it is acting for you.">
-        {mine.length === 0 && <Empty>Nothing connected yet. Pick a service below.</Empty>}
+        {mine.length === 0 && (
+          <Empty>
+            Nothing connected yet. Pick a service below, or give Vivid an address in a thread.
+          </Empty>
+        )}
         {mine.map((connection) => (
           <ConnectionRow
             key={connection.id}
@@ -189,7 +158,7 @@ export function Connections({ me }: { me: MeResponse }) {
           title={`${me.workspace.company.name}’s`}
           detail="Every member’s Vivid can read through these. Only admins add or remove them."
         >
-          {shared.length === 0 && <Empty>No shared connections.</Empty>}
+          {shared.length === 0 && <Empty>Nothing shared yet.</Empty>}
           {shared.map((connection) => (
             <ConnectionRow
               key={connection.id}
@@ -355,74 +324,5 @@ function ConnectionRow({
         </Button>
       )}
     </div>
-  )
-}
-
-/**
- * Collects the key a service asks for. The values are wrapped the moment they leave the form and
- * sent once; they are not kept in state after the dialog closes and never appear anywhere else.
- */
-function EnterKey({ keying, onClose }: { keying: Keying; onClose: () => void }) {
-  const [refusal, setRefusal] = useState<string | null>(null)
-
-  async function submit(form: HTMLFormElement) {
-    // Each field is read from its own input, by the name the service gave it: an input's value is
-    // always text, where a form's entries could also be files.
-    const typed = (name: string) => {
-      const input = form.elements.namedItem(name)
-      return input instanceof HTMLInputElement ? input.value : ''
-    }
-    const fields = Object.fromEntries(
-      keying.fields.map((field) => [field.name, Redacted.make(typed(field.name))]),
-    )
-    const result = await change((client) => client.CompleteConnection({ id: keying.id, fields }))
-    if (Result.isFailure(result)) {
-      setRefusal('That was not accepted. Check it and try again.')
-      return
-    }
-    onClose()
-  }
-
-  return (
-    <Dialog
-      title={`Connect ${keying.name}`}
-      description="This goes straight to the connection and is never shown to Vivid or kept in a thread."
-      width="md"
-      onClose={onClose}
-    >
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          void submit(event.currentTarget)
-        }}
-        className="flex flex-col gap-3"
-      >
-        {keying.fields.map((field) => (
-          <label key={field.name} className="flex flex-col gap-1.5">
-            <span className="text-label text-ink-2">{field.label}</span>
-            <input
-              required
-              name={field.name}
-              type="password"
-              autoComplete="off"
-              className="h-9 rounded-control bg-well px-3 font-mono text-label text-ink ring-line outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </label>
-        ))}
-        {refusal !== null && (
-          <p role="alert" className="text-label text-danger">
-            {refusal}
-          </p>
-        )}
-        <DialogActions>
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary">
-            Connect
-          </Button>
-        </DialogActions>
-      </form>
-    </Dialog>
   )
 }

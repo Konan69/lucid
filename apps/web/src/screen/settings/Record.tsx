@@ -11,7 +11,7 @@ const when = new Intl.DateTimeFormat(undefined, {
 })
 
 /** One line of the record as a sentence. It says what happened, never what the content was. */
-const sentence = (event: AuditEvent) =>
+export const auditSentence = (event: AuditEvent) =>
   AuditEvent.match(event, {
     ActionAllowed: ({ service, tool }) => `Used ${tool} on ${service}, allowed by a rule`,
     ActionApproved: ({ service, tool }) => `Used ${tool} on ${service}, after being allowed`,
@@ -24,7 +24,7 @@ const sentence = (event: AuditEvent) =>
     ConnectionAdded: ({ service, shared }) =>
       shared ? `Connected ${service} for the company` : `Connected ${service}`,
     ConnectionRemoved: ({ service, shared }) =>
-      shared ? `Removed the company’s ${service} connection` : `Removed ${service}`,
+      shared ? `Removed the company’s ${service} integration` : `Removed ${service}`,
     MemberInvited: ({ email, role }) => `Invited ${email} as ${role}`,
     MemberJoined: ({ name, role }) => `${name} joined as ${role}`,
     MemberRemoved: ({ name }) => `${name} left the company`,
@@ -34,11 +34,12 @@ const sentence = (event: AuditEvent) =>
     ThreadShared: ({ title, audience }) => `Shared “${title}” with ${audience}`,
     MemorySaved: ({ scope }) => `Vivid kept something (${scope})`,
     MemoryForgotten: ({ scope }) => `Vivid forgot something (${scope})`,
+    RoutineStopped: () => 'A Routine was stopped: its owner is no longer a member',
   })
 
 /**
  * The record of what was done, and by whom: every action Vivid took for someone, every
- * connection, rule and membership change. In a Company an admin reads the whole Company's record
+ * integration, rule and membership change. In a Company an admin reads the whole Company's record
  * and a member reads their own. It names actions and services, never the contents of a Thread, an
  * email or a file.
  */
@@ -60,7 +61,7 @@ function Line({ entry }: { entry: AuditEntry }) {
     <div className="flex min-h-12 items-center gap-3 px-4 py-2">
       <Avatar name={entry.actor.name} image={entry.actor.image} size={22} />
       <div className="min-w-0 flex-1">
-        <div className="text-label text-ink">{sentence(entry.event)}</div>
+        <div className="text-label text-ink">{auditSentence(entry.event)}</div>
         <div className="text-meta font-meta text-ink-3">
           {entry.by === 'vivid' ? `Vivid, for ${entry.actor.name}` : entry.actor.name} ·{' '}
           {when.format(entry.at)}

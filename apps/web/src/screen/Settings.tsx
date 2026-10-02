@@ -36,7 +36,7 @@ const YOURS: ReadonlyArray<Entry> = [
 ]
 const SHARED: ReadonlyArray<Entry> = [
   { id: 'people', label: 'People', icon: <Users className="size-4" /> },
-  { id: 'connections', label: 'Connections', icon: <Link2 className="size-4" /> },
+  { id: 'connections', label: 'Integrations', icon: <Link2 className="size-4" /> },
   { id: 'rules', label: 'Rules', icon: <ShieldCheck className="size-4" /> },
   { id: 'record', label: 'Record', icon: <ScrollText className="size-4" /> },
 ]
@@ -45,7 +45,7 @@ const TITLE = {
   general: 'General',
   devices: 'Devices',
   people: 'People',
-  connections: 'Connections',
+  connections: 'Integrations',
   rules: 'Rules',
   memory: 'What Vivid knows',
   record: 'Record',

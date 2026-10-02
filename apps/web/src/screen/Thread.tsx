@@ -11,7 +11,8 @@ import {
 } from '@vivid/contracts'
 import { draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Schema } from 'effect'
-import { ArrowDown, Lock, MonitorSmartphone, Share2, Users } from 'lucide-react'
+import { ArrowDown, ListTree, Lock, MonitorSmartphone, Share2, Users } from 'lucide-react'
+import { ThinkingOrb } from 'thinking-orbs'
 import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { change, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
 import { Route, router } from '../data/route'
@@ -19,7 +20,9 @@ import { orSay } from '../data/said'
 import { FirstWords, firstWords } from '../data/threads'
 import { Faces } from '../ui/Avatar'
 import { Button, IconButton } from '../ui/Button'
-import { Face } from '../ui/Face'
+import { cn } from '../ui/cn'
+import { Face, type FaceMood } from '../ui/Face'
+import { About } from './thread/About'
 import { Composer } from './thread/Composer'
 import { isBlank, Message, Said, textOf, type ThreadContext } from './thread/Message'
 import { newestRun, Outcome } from './thread/Outcome'
@@ -170,6 +173,7 @@ function Conversation({
     <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0">
       <Header
         thread={thread}
+        working={working}
         present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
         me={me}
         panelOpen={panelOpen}
@@ -226,8 +230,25 @@ function Conversation({
   )
 }
 
+/** How Vivid is doing in a Thread: the line under its title, and the look on its face. */
+const STANDING = {
+  Working: { words: 'Working on it…', mood: 'thinking', tone: 'text-working' },
+  NeedsYou: { words: 'Waiting for you', mood: 'neutral', tone: 'text-attention' },
+  Unread: { words: 'Here with you', mood: 'happy', tone: 'text-ink-3' },
+  Quiet: { words: 'Here with you', mood: 'neutral', tone: 'text-ink-3' },
+} as const satisfies Record<
+  ThreadRecord['attention'],
+  { words: string; mood: FaceMood; tone: string }
+>
+
+/**
+ * The top of a Thread. Vivid is in it, not just named by it: its face, the Thread's title, and a
+ * line saying how it is doing right now (here, working, waiting for the Person). On the right,
+ * who else is here, who can see the Thread, everything around Vivid, and its computer.
+ */
 function Header({
   thread,
+  working,
   present,
   me,
   panelOpen,
@@ -235,28 +256,38 @@ function Header({
   onTogglePanel,
 }: {
   thread: Option.Option<ThreadRecord>
+  /** Vivid is answering in this window right now, which the Thread's record may not say yet. */
+  working: boolean
   present: ThreadDetail['present']
   me: MeResponse
   panelOpen: boolean
   onShare: () => void
   onTogglePanel: () => void
 }) {
+  const [about, setAbout] = useState(false)
   const others = present.filter((seen) => seen.person.id !== me.person.id)
   const typing = others.filter((seen) => seen.typing)
   const inCompany = Workspace.guards.Company(me.workspace)
   const mine = Option.exists(thread, (value) => value.createdBy.id === me.person.id)
+  const standing =
+    STANDING[
+      working
+        ? 'Working'
+        : Option.match(thread, { onNone: () => 'Quiet', onSome: (value) => value.attention })
+    ]
   return (
-    <header className={BAR}>
+    <header className={cn(BAR, 'gap-3')}>
+      <Face size={28} mood={standing.mood} />
       <div className="min-w-0 flex-1">
         <h1 className="truncate text-title font-title text-ink">
           {Option.match(thread, { onNone: () => '', onSome: (value) => value.title })}
         </h1>
+        <p className={cn('truncate text-meta font-meta', standing.tone)} aria-live="polite">
+          {typing.length > 0
+            ? `${typing.map((seen) => seen.person.name).join(', ')} typing…`
+            : standing.words}
+        </p>
       </div>
-      {typing.length > 0 && (
-        <span className="hidden text-meta font-meta text-ink-3 sm:inline" aria-live="polite">
-          {typing.map((seen) => seen.person.name).join(', ')} typing…
-        </span>
-      )}
       {others.length > 0 && <Faces people={others.map((seen) => seen.person)} size={20} />}
       {Option.isSome(thread) && inCompany && (
         <Button
@@ -274,6 +305,23 @@ function Header({
           })}
         </Button>
       )}
+      <span className="relative">
+        <IconButton label="Around Vivid" active={about} onClick={() => setAbout((on) => !on)}>
+          <ListTree className="size-4" />
+        </IconButton>
+        {Option.isSome(thread) && (
+          <About
+            open={about}
+            thread={thread.value.id}
+            mood={standing.mood}
+            standing={standing.words}
+            onClose={() => setAbout(false)}
+            onOpenComputer={() => {
+              if (!panelOpen) onTogglePanel()
+            }}
+          />
+        )}
+      </span>
       <IconButton label="Vivid’s computer" active={panelOpen} onClick={onTogglePanel}>
         <MonitorSmartphone className="size-4" />
       </IconButton>
@@ -428,9 +476,14 @@ function Messages({
           )}
           {children}
           {working && !streaming && (
-            <li className="flex animate-rise-in gap-3" aria-live="polite">
-              <Face size={24} mood="thinking" className="mt-1" />
-              <p className="pt-1 text-body text-ink-3">Thinking…</p>
+            // It arrives late on purpose: an answer that starts within a second never shows it,
+            // and one that takes longer has something alive to look at.
+            <li
+              className="flex items-center gap-2.5 transition-opacity delay-700 duration-(--dur-slow) starting:opacity-0"
+              aria-live="polite"
+            >
+              <ThinkingOrb state="breathing" size={20} aria-hidden />
+              <p className="text-body text-ink-3">Thinking…</p>
             </li>
           )}
           {failure !== null && (

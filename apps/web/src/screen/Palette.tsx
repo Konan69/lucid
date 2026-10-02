@@ -111,7 +111,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
   },
   {
     key: 'do:connections',
-    title: 'Connections',
+    title: 'Integrations',
     detail: 'The services Vivid can use',
     words: 'connect integrations accounts gmail slack calendar',
     icon: <Link2 className="size-4" />,

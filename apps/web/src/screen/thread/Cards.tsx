@@ -3,6 +3,8 @@ import {
   ApprovalDecision,
   ApprovalId,
   ApprovalState,
+  ConnectionAuthorization,
+  ConnectionAuthorizationMessage,
   ConnectionRequestMessage,
   ConnectionState,
   InputRequestId,
@@ -17,10 +19,12 @@ import { Check, Globe, Link2, MousePointer2, ShieldQuestion, Terminal, X } from 
 import { useState, type ReactNode } from 'react'
 import { change, live, useLiveValue } from '../../data/live'
 import { router } from '../../data/route'
-import { orSay } from '../../data/said'
+import { orSay, say } from '../../data/said'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { cn } from '../../ui/cn'
+import { EnterKey, type Keying } from '../integration/Key'
+import { showSignIn } from '../integration/signin'
 
 /**
  * The cards a Thread shows where a plain message will not do: something Vivid wants to do and
@@ -36,12 +40,19 @@ const decodeInputRequest = Schema.decodeUnknownOption(
   Schema.Struct({ kind: Schema.Literal('input-request'), requestId: InputRequestId }),
 )
 const decodeConnectionRequest = Schema.decodeUnknownOption(ConnectionRequestMessage)
+// An integration Vivid has already started adding carries what comes next: a sign-in or a key.
+const decodeAuthorization = Schema.decodeUnknownOption(ConnectionAuthorizationMessage)
 
 /** What a tool's output asks the Thread to draw, when it asks for anything. */
 export type CardRequest =
   | { readonly kind: 'approval'; readonly id: ApprovalId }
   | { readonly kind: 'input'; readonly id: InputRequestId }
-  | { readonly kind: 'connection'; readonly request: ConnectionRequestMessage }
+  | {
+      readonly kind: 'connection'
+      readonly request: ConnectionRequestMessage
+      /** What finishing it takes, when Vivid has already begun adding it. */
+      readonly authorization: Option.Option<ConnectionAuthorization>
+    }
 
 /** Reads a tool's output for a card. Outputs that are not cards are simply not cards. */
 export function cardFor(
@@ -52,7 +63,11 @@ export function cardFor(
     return Option.some({ kind: 'approval', id: approval.value.approvalId })
   const input = decodeInputRequest(output)
   if (Option.isSome(input)) return Option.some({ kind: 'input', id: input.value.requestId })
-  return Option.map(decodeConnectionRequest(output), (request) => ({ kind: 'connection', request }))
+  return Option.map(decodeConnectionRequest(output), (request) => ({
+    kind: 'connection',
+    request,
+    authorization: Option.map(decodeAuthorization(output), (message) => message.authorization),
+  }))
 }
 
 const TARGET_ICON = {
@@ -363,18 +378,22 @@ function Answering({
 }
 
 /**
- * Vivid needs a service connected to go on. The card says why in Vivid's own words and takes the
- * Person to where they connect it; whether it is connected is read live, so the card turns to
- * "Connected" by itself and offers to carry on.
+ * Vivid needs a service to go on. The card says why in Vivid's own words and finishes the job
+ * where the Person already is: a sign-in opens in its own tab, a key is typed into a dialog that
+ * sends it straight to the integration (never into the Thread, never to Vivid). Whether it is
+ * connected is read live, so the card turns to "Carry on" by itself.
  */
 export function ConnectionCard({
   request,
+  authorization,
   onContinue,
 }: {
   request: ConnectionRequestMessage
+  authorization: Option.Option<ConnectionAuthorization>
   onContinue: (message: string) => void
 }) {
   const connections = useLiveValue(live.connections)
+  const [keying, setKeying] = useState<Option.Option<Keying>>(Option.none())
   const ready =
     request.ready ||
     Option.match(connections, {
@@ -382,13 +401,18 @@ export function ConnectionCard({
       onSome: (value) =>
         value.connections.some(
           (connection) =>
-            connection.service === request.service &&
-            ConnectionState.guards.Ready(connection.state),
+            ConnectionState.guards.Ready(connection.state) &&
+            // The integration Vivid started is this one exactly; a service offered from the
+            // catalogue is satisfied by any ready account on it.
+            Option.match(authorization, {
+              onNone: () => connection.service === request.service,
+              onSome: (next) => connection.id === next.connectionId,
+            }),
         ),
     })
   return (
     <Card className="mt-3 flex items-center gap-3 p-3">
-      <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-control bg-surface-2 text-ink-2 ring-line">
+      <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink">
         <Link2 className="size-5" strokeWidth={1.6} />
       </span>
       <span className="min-w-0 flex-1">
@@ -404,12 +428,56 @@ export function ConnectionCard({
           Carry on
         </Button>
       ) : (
-        <Button size="sm" onClick={() => router.openSettings(Option.some('connections'))}>
-          Connect
-        </Button>
+        <Finish
+          name={request.serviceName}
+          authorization={authorization}
+          onKey={(next) => setKeying(Option.some(next))}
+        />
+      )}
+      {Option.isSome(keying) && (
+        <EnterKey keying={keying.value} onClose={() => setKeying(Option.none())} />
       )}
     </Card>
   )
+}
+
+/** The one thing left to do to connect it: sign in, give it a key, or pick it in Settings. */
+function Finish({
+  name,
+  authorization,
+  onKey,
+}: {
+  name: string
+  authorization: Option.Option<ConnectionAuthorization>
+  onKey: (keying: Keying) => void
+}) {
+  if (Option.isNone(authorization)) {
+    return (
+      <Button size="sm" onClick={() => router.openSettings(Option.some('connections'))}>
+        Connect
+      </Button>
+    )
+  }
+  return ConnectionAuthorization.match(authorization.value, {
+    OpenSignIn: ({ address }) => (
+      <Button
+        size="sm"
+        variant="primary"
+        onClick={() => {
+          // The tab is opened by the click itself, which is the only time a browser allows it.
+          if (showSignIn(window.open('about:blank', '_blank'), address)) return
+          say(`${name}’s sign-in page could not be opened. Allow pop-ups for this page.`)
+        }}
+      >
+        Sign in
+      </Button>
+    ),
+    EnterKey: ({ connectionId, fields }) => (
+      <Button size="sm" variant="primary" onClick={() => onKey({ id: connectionId, name, fields })}>
+        Enter key
+      </Button>
+    ),
+  })
 }
 
 /** Finds the record a card stands for among what the Thread carries. */
