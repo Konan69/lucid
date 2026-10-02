@@ -125,6 +125,37 @@ const MARKDOWN_COMPONENTS: Components = {
  */
 const TYPED_BULLET = /^([ \t]*)[•●▪◦‣][ \t]+/gm
 
+/**
+ * Normalize typed bullets only in prose. Markdown code fences and four-space/tab-indented code
+ * preserve literal source because changing their contents would misrepresent the reply.
+ */
+function normalizeTypedBullets(content: string) {
+  let fence: { readonly marker: string; readonly length: number } | undefined
+  return content
+    .split('\n')
+    .map((line) => {
+      const marker = /^ {0,3}(`{3,}|~{3,})/u.exec(line)?.[1]
+      if (fence !== undefined) {
+        if (
+          marker !== undefined &&
+          marker[0] === fence.marker &&
+          marker.length >= fence.length &&
+          line.slice(line.indexOf(marker) + marker.length).trim().length === 0
+        ) {
+          fence = undefined
+        }
+        return line
+      }
+      if (marker !== undefined) {
+        fence = { marker: marker[0], length: marker.length }
+        return line
+      }
+      if (/^(?: {4}|\t)/u.test(line)) return line
+      return line.replace(TYPED_BULLET, '$1- ')
+    })
+    .join('\n')
+}
+
 /** A message as it was written, for when it cannot be formatted. */
 function Plain({ content }: { content: string }) {
   return <p className="whitespace-pre-wrap">{content}</p>
@@ -136,16 +167,14 @@ function Plain({ content }: { content: string }) {
  * reply above the one being written has the same words as last time and is not parsed again.
  */
 export const Markdown = memo(function Markdown({ content }: { content: string }) {
-  const linkedContent = content
-    .replace(TYPED_BULLET, '$1- ')
-    .replace(
-      /\[([^\]\n]+?\.(?:pdf|md|markdown|txt))(?:,\s*p\.(\d+))?\](?!\()/gi,
-      (_match, filename: string, page?: string) => {
-        const label = page ? `${filename}, p.${page}` : filename
-        const fragment = page ? `#page=${page}` : ''
-        return `[${label}](</api/library/source?name=${encodeURIComponent(filename)}${fragment}>)`
-      },
-    )
+  const linkedContent = normalizeTypedBullets(content).replace(
+    /\[([^\]\n]+?\.(?:pdf|md|markdown|txt))(?:,\s*p\.(\d+))?\](?!\()/gi,
+    (_match, filename: string, page?: string) => {
+      const label = page ? `${filename}, p.${page}` : filename
+      const fragment = page ? `#page=${page}` : ''
+      return `[${label}](</api/library/source?name=${encodeURIComponent(filename)}${fragment}>)`
+    },
+  )
   return (
     <div className="min-w-0 text-body text-ink">
       {/* A reply the formatter cannot draw is still a reply: it is shown as it was written, and
