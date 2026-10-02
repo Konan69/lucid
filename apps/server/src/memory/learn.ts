@@ -1,4 +1,4 @@
-import { AuditEvent, MemoryScope, Workspace, type Person } from '@vivid/contracts'
+import { AuditEvent, MemoryScope, Workspace, type Person, type RunId } from '@vivid/contracts'
 import { Cause, Clock, Context, Effect, Layer, Option } from 'effect'
 import { Audit } from '../audit/record.ts'
 import { summaryOf, type Actor } from '../auth/access.ts'
@@ -6,12 +6,15 @@ import { Changes, Topic } from '../live/changes.ts'
 import type { StoredThread } from '../threads/access.ts'
 import { MemoryExchange, MemoryExtraction, type MemoryCandidate } from './extract.js'
 import { MemoryAccess } from './store.js'
+import { conversationContext } from './history.ts'
+import { Runtime } from '../runtime/client.ts'
 
 export interface LearningInput {
   readonly thread: StoredThread
   readonly person: Person
   readonly said: string
   readonly replied: string
+  readonly runId: RunId
 }
 export interface LearningService {
   readonly afterRun: (input: LearningInput) => Effect.Effect<void>
@@ -72,12 +75,14 @@ export const learningLayer = Layer.effect(
     const extraction = yield* MemoryExtraction
     const changes = yield* Changes
     const audit = yield* Audit
+    const runtime = yield* Runtime
     const dependencies = { access, changes, audit }
     return Learning.of({
       afterRun: Effect.fn('Learning.afterRun')(
         function* (input: LearningInput) {
           if (input.said.trim().length === 0) return
           const actor = yield* access.actorFor(input.thread, input.person)
+          const context = yield* conversationContext(runtime, input)
           const known = yield* access.recall(actor, {
             query: `${input.said}\n${input.replied}`.slice(0, 400),
             limit: 12,
@@ -87,8 +92,8 @@ export const learningLayer = Layer.effect(
               person: summaryOf(input.person),
               message: input.said,
               reply: input.replied,
-              previousReply: null,
-              recent: [],
+              previousReply: context.previousReply,
+              recent: context.recent,
             }),
             known,
             now: yield* Clock.currentTimeMillis,

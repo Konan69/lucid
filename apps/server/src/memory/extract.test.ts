@@ -65,7 +65,7 @@ it.effect('shows the model words and handles, and no identifier of any kind', ()
         message: 'Keep updates written.',
         reply: 'Noted.',
         previousReply: null,
-        recent: [],
+        recent: [{ speaker: 'Ada', message: 'Morning meetings.', reply: 'Noted.' }],
       }),
     })
     for (const identifier of ['memory-known', 'thread-7', 'person-a']) {

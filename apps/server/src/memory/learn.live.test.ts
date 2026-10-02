@@ -1,6 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { it } from '@effect/vitest'
-import { AuditEvent, MemoryScope, Person, PersonId, ThreadId } from '@vivid/contracts'
+import { AuditEvent, MemoryScope, Person, PersonId, RunId, ThreadId } from '@vivid/contracts'
+import { RuntimeUnavailable } from '@vivid/contracts/rpc'
 import { eq } from 'drizzle-orm'
 import { ConfigProvider, Effect, Layer, Ref, Stream } from 'effect'
 import { TestConsole } from 'effect/testing'
@@ -19,6 +20,7 @@ import { memoryExtractionLayer } from './extract.js'
 import { HelixMemory, helixMemoryLayer, MemoryPartition, MemoryScopeKey } from './helix.js'
 import { Learning, learningLayer } from './learn.js'
 import { memoryAccessLayer, MemoryStore, memoryStoreLayer } from './store.js'
+import { Runtime } from '../runtime/client.ts'
 
 const url = process.env['VIVID_TEST_HELIX_URL']
 const enabled =
@@ -129,6 +131,7 @@ describe.skipIf(!enabled)('Settled Run learning', () => {
             said: 'Remember my lasting personal preference: I want written project updates on Friday mornings. Call that preference quartzfern329. This is just for me.',
             replied:
               'I will remember your preference for written project updates on Friday mornings as quartzfern329.',
+            runId: RunId.make(`learning-${suffix}`),
           })
           const remembered = yield* store.list({ partition, scopes })
           expect(
@@ -153,10 +156,20 @@ describe.skipIf(!enabled)('Settled Run learning', () => {
             person,
             said: 'An inaccessible Thread must not teach new facts.',
             replied: 'The Run has already finished.',
+            runId: RunId.make(`inaccessible-${suffix}`),
           })
           expect(yield* store.list({ partition, scopes })).toEqual(before)
         }).pipe(
           Effect.provide(learningLayer),
+          Effect.provide(
+            Layer.mock(Runtime, {
+              read: Effect.fn('MemoryTest.noHistory')(() =>
+                Effect.fail(
+                  RuntimeUnavailable.make({ message: 'No conversation in this fixture' }),
+                ),
+              ),
+            }),
+          ),
           Effect.provideService(Changes, changes),
           Effect.provideService(Audit, audit),
         )

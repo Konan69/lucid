@@ -108,6 +108,7 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
         person: run.person,
         said: run.said.value,
         replied: reply.value,
+        runId: run.id,
       })
     }
   })
