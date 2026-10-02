@@ -30,8 +30,10 @@
   /* ── Ink (alpha over surface) ────────────────────────────── */
   --ink-base: 252 252 252; /* rgb triplet */
   --ink: rgb(var(--ink-base));
-  --ink-2: rgb(var(--ink-base) / 0.62);
-  --ink-3: rgb(var(--ink-base) / 0.42);
+  /* ink-3 is supporting text people have to read (times, details, captions), so it holds 4.5:1
+     on every surface it is set on, the raised ones included. At 0.42 it was 3.7:1 on a control. */
+  --ink-2: rgb(var(--ink-base) / 0.68);
+  --ink-3: rgb(var(--ink-base) / 0.5);
   --ink-4: rgb(var(--ink-base) / 0.28);
   --ink-on-accent: #ffffff;
   --ink-on-color: #ffffff;
@@ -48,10 +50,12 @@
   --wash-selected: rgb(var(--ink-base) / 0.08);
 
   /* ── Accent: Vivid ───────────────────────────────────────── */
-  --accent: #7c6cff;
+  /* White on the accent is a button's label, so the fill holds 4.5:1 against it (#7c6cff was
+     3.9:1). Hover goes a step lighter, as everything on dark does, and still clears 4:1. */
+  --accent: #6a5aff;
   --accent-ink: #a89cff; /* accent as text on dark */
-  --accent-soft: rgb(124 108 255 / 0.16);
-  --accent-hover: #8b7dff;
+  --accent-soft: rgb(106 90 255 / 0.18);
+  --accent-hover: #7263ff;
   --ring: var(--accent);
 
   /* ── Status (Grok Bot's matched pairs) ───────────────────── */
@@ -147,10 +151,10 @@ html[data-theme='light'] {
 
   --ink-base: 20 20 20;
   /* Dark ink on white loses more contrast per step of alpha than light ink on near-black, so the
-     light ramp sits higher: supporting text (ink-3) stays near 4:1, and ink-4 is for marks and
-     placeholders only, never for words that have to be read. */
-  --ink-2: rgb(var(--ink-base) / 0.68);
-  --ink-3: rgb(var(--ink-base) / 0.54);
+     light ramp sits higher: supporting text (ink-3) holds 4.5:1 on every surface, and ink-4 is for
+     marks and placeholders only, never for words that have to be read. */
+  --ink-2: rgb(var(--ink-base) / 0.74);
+  --ink-3: rgb(var(--ink-base) / 0.6);
   --ink-4: rgb(var(--ink-base) / 0.34);
   --ink-on-accent: #ffffff;
 
