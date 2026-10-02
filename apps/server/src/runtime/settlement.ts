@@ -60,6 +60,22 @@ const hostOf = (state: FlueConversationState, runId: RunId): string => {
   return settled.answeredBySubmissionId
 }
 
+/** Joined hosts have no linkage until settlement; new unsettled content is live progress evidence. */
+const contentSince = (
+  state: FlueConversationState,
+  host: string,
+  initialParts: ReadonlyMap<string, string>,
+): boolean => {
+  return state.messages.some((message) => {
+    if (message.role !== 'assistant' || !meaningful(message)) return false
+    if (message.submissionId === host) return true
+    // Settled earlier responses are history, even if the first hydrate arrived late.
+    if (state.settlements.some((settled) => settled.submissionId === message.submissionId))
+      return false
+    return initialParts.get(message.id) !== JSON.stringify(message.parts)
+  })
+}
+
 /**
  * SDK 2.1 scheduleRetry publishes connecting while recovery is possible, error only on permanent
  * 400 or exhausted auth retries. A saved terminal settlement outranks a subsequent transport loss.
@@ -92,6 +108,15 @@ export const observeRun = Effect.fn('Runtime.observeRun')(function* (
     Effect.sync(() => client.observe({ live: 'sse' })),
     (source) => Effect.sync(() => source.close()),
   )
+  // Flue exposes a joined response's host only in its settlement. Capture initial history so
+  // new or growing host content can satisfy the deadline without borrowing an old answer.
+  const initial = observation.getSnapshot().conversation
+  const initialParts = new Map(
+    (initial === undefined ? [] : initial.messages).map((message) => [
+      message.id,
+      JSON.stringify(message.parts),
+    ]),
+  )
   /** Preserve phase even without a conversation so absence and permanent observation loss settle. */
   const changed = () => {
     const snapshot = observation.getSnapshot()
@@ -109,10 +134,8 @@ export const observeRun = Effect.fn('Runtime.observeRun')(function* (
         const state = snapshot.conversation
         if (state === undefined) return
         const host = hostOf(state, runId)
-        const answers = state.messages.filter(
-          (message) => message.submissionId === host && message.role === 'assistant',
-        )
-        if (answers.some(meaningful)) yield* Ref.set(seen, true)
+        const content = contentSince(state, host, initialParts)
+        if (content) yield* Ref.set(seen, true)
       }),
     ),
     Stream.filterMap(Filter.fromPredicateOption((snapshot) => resultOfSnapshot(snapshot, runId))),

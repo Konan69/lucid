@@ -162,27 +162,56 @@ describe('Run settlement observation', () => {
         expect(evidence.aborted()).toBe(false)
       }),
   )
-  it.effect('a joined Run reads its host reply without aborting other work', () =>
+  it.effect(
+    'a joined Run still reads its host reply after 91 seconds without aborting other work',
+    () =>
+      Effect.gen(function* () {
+        const evidence = yield* fixture()
+        const host = 'host-run'
+        const hostMessage = {
+          ...assistant([{ type: 'text', text: 'Host answer', state: 'streaming' }]),
+          submissionId: host,
+        }
+        const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
+        yield* Queue.take(evidence.ready)
+        evidence.publish({
+          conversationId: 'conversation',
+          messages: [hostMessage],
+          settlements: [],
+        })
+        yield* TestClock.adjust('91 seconds')
+        expect(evidence.closed()).toBe(false)
+        expect(evidence.aborted()).toBe(false)
+        evidence.publish({
+          conversationId: 'conversation',
+          messages: [hostMessage],
+          settlements: [
+            { submissionId: runId, outcome: 'completed', answeredBySubmissionId: host },
+          ],
+        })
+        expect(yield* Fiber.join(run)).toEqual(
+          Settlement.cases.Completed.make({ reply: 'Host answer' }),
+        )
+      }),
+  )
+
+  it.effect('an old unrelated answer cannot extend a joined Run first-content deadline', () =>
     Effect.gen(function* () {
       const evidence = yield* fixture()
-      const host = 'host-run'
-      const hostMessage = {
-        ...assistant([{ type: 'text', text: 'Host answer', state: 'streaming' }]),
-        submissionId: host,
-      }
-      const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
-      yield* Queue.take(evidence.ready)
-      evidence.publish({ conversationId: 'conversation', messages: [hostMessage], settlements: [] })
-      yield* TestClock.adjust('89 seconds')
-      expect(evidence.aborted()).toBe(false)
       evidence.publish({
         conversationId: 'conversation',
-        messages: [hostMessage],
-        settlements: [{ submissionId: runId, outcome: 'completed', answeredBySubmissionId: host }],
+        messages: [
+          {
+            ...assistant([{ type: 'text', text: 'Old answer', state: 'done' }]),
+            submissionId: 'old-run',
+          },
+        ],
+        settlements: [{ submissionId: 'old-run', outcome: 'completed' }],
       })
-      expect(yield* Fiber.join(run)).toEqual(
-        Settlement.cases.Completed.make({ reply: 'Host answer' }),
-      )
+      const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
+      yield* Queue.take(evidence.ready)
+      yield* TestClock.adjust('91 seconds')
+      expect(yield* Fiber.join(run)).toEqual(Settlement.cases.Failed.make({ reason: 'TimedOut' }))
     }),
   )
 
