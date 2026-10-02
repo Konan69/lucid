@@ -926,6 +926,28 @@ describe.skipIf(!testDatabaseConfigured)('Pictures through the gateway', () => {
     )
   }
 
+  it.effect('refuses a message that declares more than four pictures can weigh, unread', () =>
+    Effect.gen(function* () {
+      const test = yield* harness()
+      yield* privateThread(test)
+      const response = yield* gateway(
+        test,
+        new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${test.token}`,
+            host: 'gateway.test',
+            'content-type': 'application/json',
+            'content-length': String(29 * 1024 * 1024),
+          },
+          body: JSON.stringify({ kind: 'user', body: 'Look' }),
+        }),
+      )
+      expect(response.status).toBe(413)
+      expect(yield* Ref.get(test.admitted)).toHaveLength(0)
+    }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
+  )
+
   const secondPicture = { ...png, filename: 'second.png' }
   const keyedChanges = [
     { name: 'removing all pictures', body: 'Look', attachments: [] },

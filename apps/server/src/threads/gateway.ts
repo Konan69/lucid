@@ -1,4 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
+import * as ByteSize from 'effect/ByteSize'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
@@ -137,9 +138,29 @@ const messageKey = (personId: PersonId, key: string) =>
     .update(JSON.stringify([personId, key]))
     .digest('hex')}`
 
+/**
+ * The most one message can weigh on the wire. Four pictures of 5 MB each grow by a third as
+ * base64, which is a little under 27 MiB, and the words and the JSON around them fit in the rest.
+ *
+ * It is a bound on reading, not a picture rule: before it, the whole body was buffered and parsed
+ * before any per-picture limit was looked at, so one signed-in client could make the server hold
+ * as much as it cared to send.
+ */
+const MESSAGE_LIMIT = ByteSize.mebibytes(28)
+
+/** Whether the client says up front that it is sending more than a message can weigh. */
+const declaresTooMuch = (headers: Headers.Headers) =>
+  Option.exists(
+    Headers.get(headers, 'content-length'),
+    (length) => /^\d+$/u.test(length) && BigInt(length) > MESSAGE_LIMIT,
+  )
+
 /** Admission repeats preserve the Run and use a stable stream origin for keyed HTTP receipts. */
 const send = Effect.fn('Gateway.send')(function* () {
   const { request, person, thread } = yield* admitted()
+  // An honest client is told why. One that understates or omits the length is stopped by the
+  // bound on the read itself, set where this route is added.
+  if (declaresTooMuch(request.headers)) return refuse(413, 'That message is too large to send')
   const sent = yield* decodeSent(yield* request.json).pipe(Effect.option)
   if (Option.isNone(sent)) return refuse(400, 'A message needs text')
   const attachments = yield* messagePictures(sent.value, thread)
@@ -259,7 +280,11 @@ const attachmentRead = read(
 )
 
 export const gatewayRoutes = Layer.mergeAll(
-  HttpRouter.add('POST', '/api/vivid/:threadId', answered(send())),
+  HttpRouter.add(
+    'POST',
+    '/api/vivid/:threadId',
+    answered(send().pipe(Effect.provideService(HttpServerRequest.MaxBodySize, MESSAGE_LIMIT))),
+  ),
   HttpRouter.add('GET', '/api/vivid/:threadId', answered(conversationRead())),
   HttpRouter.add(
     'GET',
