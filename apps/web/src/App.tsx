@@ -22,6 +22,7 @@ import { Sidebar } from './screen/Sidebar'
 import { Thread } from './screen/Thread'
 import { Welcome } from './screen/Welcome'
 import { Face } from './ui/Face'
+import { Sayings } from './ui/Sayings'
 
 /** What floats over the app. One at a time, because each takes the keyboard. */
 type Overlay = 'none' | 'palette' | 'notifications'
@@ -62,6 +63,7 @@ export default function App() {
       <>
         <Shell me={value} />
         {reach === 'lost' && <Reconnecting />}
+        <Sayings />
       </>
     ),
   })

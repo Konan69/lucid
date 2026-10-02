@@ -8,6 +8,7 @@ import {
 import { Result } from 'effect'
 import { useState } from 'react'
 import { change, live, LiveState, useLive } from '../../data/live'
+import { orSay } from '../../data/said'
 import { Button } from '../../ui/Button'
 import { Segmented } from '../../ui/Segmented'
 import { Awaiting, Empty, Refusal, Section } from './Parts'
@@ -45,7 +46,11 @@ export function Rules({ me }: { me: MeResponse }) {
     setRefusal(Result.isFailure(result) ? 'That rule could not be saved.' : null)
     return Result.isSuccess(result)
   }
-  const remove = (rule: Rule) => void change((client) => client.DeleteRule({ id: rule.id }))
+  const remove = (rule: Rule) =>
+    void orSay(
+      change((client) => client.DeleteRule({ id: rule.id })),
+      'That rule could not be removed. Try again.',
+    )
 
   return (
     <>

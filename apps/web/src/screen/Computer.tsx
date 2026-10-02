@@ -3,6 +3,7 @@ import RFB from '@novnc/novnc'
 import { Hand, MonitorPlay, Power, X } from 'lucide-react'
 import { useCallback, useReducer } from 'react'
 import { change, live, LiveState, useLive } from '../data/live'
+import { orSay } from '../data/said'
 import { Button, IconButton } from '../ui/Button'
 import { Face } from '../ui/Face'
 
@@ -34,9 +35,23 @@ export function Computer({ onClose }: { onClose: () => void }) {
   )
 }
 
-const start = () => void change((client) => client.StartComputer())
-const stop = () => void change((client) => client.StopComputer())
-const hold = (held: boolean) => void change((client) => client.HoldComputer({ held }))
+const start = () =>
+  void orSay(
+    change((client) => client.StartComputer()),
+    'The computer could not be turned on. Try again.',
+  )
+const stop = () =>
+  void orSay(
+    change((client) => client.StopComputer()),
+    'The computer could not be turned off. Try again.',
+  )
+const hold = (held: boolean) =>
+  void orSay(
+    change((client) => client.HoldComputer({ held })),
+    held
+      ? 'Vivid still has the keyboard: taking over did not go through. Try again.'
+      : 'You still have the keyboard: handing back did not go through. Try again.',
+  )
 
 function Controls({ computer }: { computer: ComputerRecord }) {
   if (!ComputerState.guards.Running(computer.state)) return null

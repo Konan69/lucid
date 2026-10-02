@@ -16,6 +16,7 @@ import { Check, Globe, Link2, ShieldQuestion, Terminal, X } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { change, live, useLiveValue } from '../../data/live'
 import { router } from '../../data/route'
+import { orSay } from '../../data/said'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { cn } from '../../ui/cn'
@@ -181,7 +182,10 @@ export function InputCard({ request, me }: { request: InputRequest; me: PersonId
   function answer(text: string) {
     const body = text.trim()
     if (body.length === 0) return
-    void change((client) => client.AnswerInput({ id: request.id, answer: body }))
+    void orSay(
+      change((client) => client.AnswerInput({ id: request.id, answer: body })),
+      'Your answer did not reach Vivid. Try again.',
+    )
   }
 
   return (

@@ -5,6 +5,7 @@ import { Check, CircleCheck, Pencil, Trash2, Undo2, Users } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { change, live } from '../../data/live'
 import { Route, router } from '../../data/route'
+import { orSay } from '../../data/said'
 import { Faces } from '../../ui/Avatar'
 import { Button } from '../../ui/Button'
 import { cn } from '../../ui/cn'
@@ -25,19 +26,27 @@ type Doing = Data.TaggedEnum<{
 }>
 const Doing = Data.taggedEnum<Doing>()
 
-/** Changes a Thread and shows the change before the server has confirmed it. */
+/**
+ * Changes a Thread and shows the change before the server has confirmed it. A refusal takes the
+ * change back, and says so: a title that jumped back on its own read as the rename being lost.
+ */
 function patchThread(
   id: ThreadId,
   patch: { readonly title?: string; readonly archived?: boolean },
 ) {
-  void change(
-    (client) => client.PatchThread({ id, patch }),
-    () =>
-      live.threads.expect((current) => ({
-        threads: current.threads.map((thread) =>
-          thread.id === id ? { ...thread, ...patch } : thread,
-        ),
-      })),
+  void orSay(
+    change(
+      (client) => client.PatchThread({ id, patch }),
+      () =>
+        live.threads.expect((current) => ({
+          threads: current.threads.map((thread) =>
+            thread.id === id ? { ...thread, ...patch } : thread,
+          ),
+        })),
+    ),
+    patch.title === undefined
+      ? 'That thread could not be moved just now. Try again.'
+      : 'That thread could not be renamed just now. Try again.',
   )
 }
 
@@ -412,12 +421,15 @@ function DeleteThread({ thread, onClose }: { thread: Thread; onClose: () => void
             // not take the Person away from what they are reading.
             const here = router.route()
             if (Route.$is('Thread')(here) && here.id === thread.id) router.replace(Route.New())
-            void change(
-              (client) => client.DeleteThread({ id: thread.id }),
-              () =>
-                live.threads.expect((current) => ({
-                  threads: current.threads.filter((candidate) => candidate.id !== thread.id),
-                })),
+            void orSay(
+              change(
+                (client) => client.DeleteThread({ id: thread.id }),
+                () =>
+                  live.threads.expect((current) => ({
+                    threads: current.threads.filter((candidate) => candidate.id !== thread.id),
+                  })),
+              ),
+              `“${thread.title}” could not be deleted, so it is back in the list.`,
             )
           }}
         >

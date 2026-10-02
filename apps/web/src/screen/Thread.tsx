@@ -9,12 +9,13 @@ import {
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
-import { titleFromMessage } from '@vivid/state'
+import { draftPlace, titleFromMessage } from '@vivid/state'
 import { Option } from 'effect'
 import { Lock, MonitorSmartphone, Share2, Users } from 'lucide-react'
 import { useMemo, useState, useSyncExternalStore } from 'react'
 import { change, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
 import { Route, router } from '../data/route'
+import { orSay } from '../data/said'
 import { FirstWords, firstWords } from '../data/threads'
 import { Faces } from '../ui/Avatar'
 import { Button, IconButton } from '../ui/Button'
@@ -181,9 +182,15 @@ function Conversation({
       </Messages>
 
       <Composer
+        place={draftPlace(me.person.id, Option.some(id))}
         working={working}
         onSend={send}
-        onStop={() => void change((sdk) => sdk.StopThread({ id }))}
+        onStop={() =>
+          void orSay(
+            change((sdk) => sdk.StopThread({ id })),
+            'Vivid could not be stopped just now. Try again.',
+          )
+        }
         onTyping={setTyping}
       />
 

@@ -1,15 +1,17 @@
 import { ArrowUp, Mic, Square } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
+import { draft } from '../../data/drafts'
 import { IconButton } from '../../ui/Button'
 import { cn } from '../../ui/cn'
 
 /**
  * Where a Person writes to Vivid. Enter sends, Shift+Enter makes a new line, and while Vivid is
- * working the send button becomes the way to stop it. The field keeps its own draft; the Thread
- * it belongs to decides what sending means.
+ * working the send button becomes the way to stop it. What is typed is kept on this device for
+ * the place it was typed in (`place`), so it is still here after leaving and coming back; the
+ * Thread the composer belongs to decides what sending means.
  */
 export function Composer({
-  initialMessage = '',
+  place,
   placeholder = 'Message Vivid',
   working,
   onSend,
@@ -18,7 +20,8 @@ export function Composer({
   onTalk,
   above,
 }: {
-  initialMessage?: string
+  /** Where this composer's unsent words are kept: one Thread, or the start of a new one. */
+  place: string
   placeholder?: string
   working: boolean
   onSend: (message: string) => void
@@ -29,13 +32,19 @@ export function Composer({
   /** Something anchored above the composer: a live call, a notice. */
   above?: ReactNode
 }) {
-  const [message, setMessage] = useState(initialMessage)
+  const [message, setMessage] = useState(() => draft.in(place))
   const empty = message.trim().length === 0
+
+  /** The field and the kept draft change together, so what is on screen is what is saved. */
+  function write(next: string) {
+    setMessage(next)
+    draft.keep(place, next)
+  }
 
   function submit() {
     const body = message.trim()
     if (body.length === 0) return
-    setMessage('')
+    write('')
     if (onTyping !== undefined) onTyping(false)
     onSend(body)
   }
@@ -60,7 +69,7 @@ export function Composer({
               if (onTyping !== undefined && (next.length === 0) !== (message.length === 0)) {
                 onTyping(next.length > 0)
               }
-              setMessage(next)
+              write(next)
             }}
             onKeyDown={(event) => {
               // While an input method is composing, Enter picks a candidate; it does not send.

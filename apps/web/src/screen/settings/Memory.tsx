@@ -2,6 +2,7 @@ import { MemoryScope, type Memory as MemoryRecord } from '@vivid/contracts'
 import { Result } from 'effect'
 import { useState } from 'react'
 import { change, live, LiveState, useLive } from '../../data/live'
+import { orSay } from '../../data/said'
 import { Button } from '../../ui/Button'
 import { Awaiting, Empty, Section } from './Parts'
 
@@ -55,7 +56,11 @@ export function Memory() {
 
 function MemoryRow({ memory }: { memory: MemoryRecord }) {
   const [draft, setDraft] = useState<string | null>(null)
-  const forget = () => void change((client) => client.ForgetMemory({ id: memory.id }))
+  const forget = () =>
+    void orSay(
+      change((client) => client.ForgetMemory({ id: memory.id })),
+      'That could not be forgotten. Try again.',
+    )
   const [refused, setRefused] = useState(false)
 
   /** Saves a correction. The words stay in the field until it is saved; a refusal keeps them. */

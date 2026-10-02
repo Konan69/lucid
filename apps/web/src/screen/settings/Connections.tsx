@@ -16,6 +16,7 @@ import { Option, Redacted, Result } from 'effect'
 import { Link2, Search } from 'lucide-react'
 import { useState } from 'react'
 import { change, live, LiveState, services, serviceSearch, useLive } from '../../data/live'
+import { orSay } from '../../data/said'
 import { Button } from '../../ui/Button'
 import { Dialog, DialogActions } from '../../ui/Dialog'
 import { Awaiting, Empty, Refusal, Row, Section } from './Parts'
@@ -164,7 +165,10 @@ export function Connections({ me }: { me: MeResponse }) {
   }
 
   const remove = (connection: Connection) =>
-    void change((client) => client.RemoveConnection({ id: connection.id }))
+    void orSay(
+      change((client) => client.RemoveConnection({ id: connection.id })),
+      `${connection.serviceName} could not be removed. Try again.`,
+    )
 
   return (
     <>

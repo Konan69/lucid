@@ -1,6 +1,7 @@
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from './cn'
+import { Recover } from './Recover'
 
 /** Stable plugin list: a fresh array each render would make ReactMarkdown rebuild its processor. */
 const REMARK_PLUGINS = [remarkGfm]
@@ -67,6 +68,11 @@ const MARKDOWN_COMPONENTS: Components = {
  */
 const TYPED_BULLET = /^([ \t]*)[•●▪◦‣][ \t]+/gm
 
+/** A message as it was written, for when it cannot be formatted. */
+function Plain({ content }: { content: string }) {
+  return <p className="whitespace-pre-wrap">{content}</p>
+}
+
 export function Markdown({ content }: { content: string }) {
   const linkedContent = content
     .replace(TYPED_BULLET, '$1- ')
@@ -80,9 +86,13 @@ export function Markdown({ content }: { content: string }) {
     )
   return (
     <div className="min-w-0 text-body text-ink">
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
-        {linkedContent}
-      </ReactMarkdown>
+      {/* A reply the formatter cannot draw is still a reply: it is shown as it was written, and
+          tried again when more of it arrives. One bad message must not take the Thread with it. */}
+      <Recover from={linkedContent} fallback={<Plain content={content} />}>
+        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
+          {linkedContent}
+        </ReactMarkdown>
+      </Recover>
     </div>
   )
 }
