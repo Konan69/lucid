@@ -57,6 +57,6 @@ export const summary = (skill: Skill) => {
   if (SkillScope.guards.BuiltIn(skill.scope))
     return `${skill.useWhen} Built into Vivid; a saved procedure of this name takes precedence for its Person or Company.`
   if (builtins.some((builtin) => key(builtin.name) === key(skill.name)))
-    return `${skill.useWhen} This saved procedure overrides Vivid's built-in procedure in its scope.`
+    return `${skill.useWhen} This saved procedure overrides Vivid's built-in procedure for its Person or Company.`
   return skill.useWhen
 }

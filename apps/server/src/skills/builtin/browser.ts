@@ -11,7 +11,7 @@ export const procedure = Procedure.make({
 
 Use \`browse\` to open the intended address and read fresh page state. Confirm the visible account and inspect the page before clicking. Use \`use_desktop\` when a page cannot be operated through the browser's named targets. After navigation, submission or a dialog change, look again; targets and screen coordinates from an older view may be stale.
 
-If the Person is holding the keyboard, stop issuing input. For sign-in, a challenge or a verification prompt, use \`ask_person\` to explain what they must finish on the Computer. Never request passwords or verification codes in the Thread. Continue only after they return control, then inspect fresh state. If the provider is unavailable or startup fails, describe that outcome without repeatedly restarting.
+If the Person is holding the keyboard, stop issuing input. For sign-in, a challenge or a verification prompt, use \`ask_person\` to explain what they must finish on the Computer. Never request passwords or verification codes in the Thread. Continue only after they return control, then inspect fresh state. If the Computer service is unavailable or startup fails, describe that outcome without repeatedly restarting.
 
 Before a consequential submission, show the exact recipient, content and consequence and wait for the required Approval. Do not retry a submission with an uncertain result. Verify the site's confirmation and, where possible, read back the resulting record. Report what was confirmed and what remains unresolved; an input step completing alone is not proof that the work succeeded.`,
 })

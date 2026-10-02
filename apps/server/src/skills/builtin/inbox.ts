@@ -13,5 +13,5 @@ Read the bounded set of recent messages and their full conversations. Inspect se
 
 Return a short priority list with source links, the requested outcome and a proposed next step for each important conversation. Ask with \`ask_person\` when ownership, a deadline or an unfamiliar sender cannot be resolved safely. Use \`create_task\` only for commitments the Person has actually asked Vivid to track; keep its title specific and tied to the outcome.
 
-Do not archive, mark read, unsubscribe, delete or send as part of a read-only triage. Such changes need the exact action's permission and Approval. Before saying triage is complete, state the account and time window examined, pagination or access gaps, and how many conversations still need a decision. Never claim the entire inbox was reviewed if the result was truncated.`,
+Do not archive, mark read, unsubscribe, delete or send as part of a read-only triage. Such changes need the exact action's permission and Approval. Before saying triage is complete, state the account and time window examined, additional pages or access gaps, and how many conversations still need a decision. Never claim the entire inbox was reviewed if the result was cut short.`,
 })
