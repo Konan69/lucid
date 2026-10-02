@@ -1,5 +1,5 @@
 import { VividRpcClient } from '@vivid/client-runtime'
-import { makeLive, type ProductFailure } from '@vivid/state'
+import { makeLink, makeLive, type ProductFailure } from '@vivid/state'
 import type { Effect } from 'effect'
 import { Layer } from 'effect'
 import * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
@@ -24,13 +24,16 @@ export function clientFailure(message: string, cause: unknown): RpcClientError.R
  */
 const liveAddress = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live`
 
+/** Whether the page can reach its server; the shell says so when it cannot. */
+export const link = makeLink()
+
 /**
  * The web app's client and its Atom registry. One socket for the whole app: every call and every
  * live query rides it. The browser sends the session cookie with the upgrade, so signing in or
  * out reloads the page to open a new one.
  */
 export const engine = makeLive(
-  VividRpcClient.layerLive({ url: liveAddress }).pipe(
+  VividRpcClient.layerLive({ url: liveAddress, onLink: link.heard }).pipe(
     Layer.provide(Socket.layerWebSocketConstructorGlobal),
   ),
 )

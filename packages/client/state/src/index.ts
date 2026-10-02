@@ -1,4 +1,5 @@
 export * from './lanes.js'
+export * from './link.js'
 export * from './live.js'
 export * from './resource.js'
 export * from './threads.js'

@@ -175,27 +175,35 @@ export const presentIn = Atom.family((id: ThreadId) =>
   ),
 )
 
-const seenQueries = new Map<ThreadId, LiveQuery<ThreadDetail>>()
+// One watched query for each Thread's own query, for as long as that one exists.
+const seenQueries = new WeakMap<LiveQuery<ThreadDetail>, LiveQuery<ThreadDetail>>()
 
 /**
  * A Thread's live detail, for the screen that shows it. Looking at a Thread is what marks it read,
  * so that happens here, in the atom, each time the Thread moves while someone has it open. It is
  * an event on the data, not something a component has to remember to do after it renders; when
  * nobody is reading the atom, nothing is reported. Being present is `presentIn`.
+ *
+ * The Thread's own query stays subscribed for minutes after its screen closes, so coming back is
+ * instant. This atom does not: it stops the moment the screen does, or a reply that arrived after
+ * the Person left would be marked read without ever being seen.
  */
 export function seenThread(id: ThreadId): LiveQuery<ThreadDetail> {
-  const existing = seenQueries.get(id)
-  if (existing !== undefined) return existing
   const base = live.thread.get(id)
+  const existing = seenQueries.get(base)
+  if (existing !== undefined) return existing
   const watched: LiveQuery<ThreadDetail> = {
     expect: base.expect,
-    atom: Atom.readable((get) => {
-      const result = get(base.atom)
-      markSeen(id, result)
-      return result
-    }),
+    atom: Atom.setIdleTTL(
+      Atom.readable((get) => {
+        const result = get(base.atom)
+        markSeen(id, result)
+        return result
+      }),
+      0,
+    ),
   }
-  seenQueries.set(id, watched)
+  seenQueries.set(base, watched)
   return watched
 }
 

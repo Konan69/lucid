@@ -1,3 +1,4 @@
+import { useAtomValue } from '@effect/atom-react'
 import { Workspace, type MeResponse, type Thread, type ThreadId } from '@vivid/contracts'
 import { Data, Option, Result } from 'effect'
 import { useRef, useState, type RefObject } from 'react'
@@ -88,6 +89,7 @@ export function Home() {
         onSwitch={() => setOver(Over.Switching())}
         onSettings={() => go.navigate('Settings')}
       />
+      <Reconnecting />
       <View style={{ flex: 1 }}>
         <Listed
           me={me}
@@ -116,6 +118,28 @@ export function Home() {
       {Over.$is('Switching')(over) && <Switcher me={me} onClose={close} />}
       {Over.$is('Renaming')(over) && <Rename thread={over.thread} onClose={close} />}
     </AboveKeyboard>
+  )
+}
+
+/**
+ * Said under the top bar while the phone cannot reach its server. The list below stays, since it
+ * is the last thing the server said; this is the note that it may be behind. The client is
+ * already trying again, so there is nothing here to press.
+ */
+function Reconnecting() {
+  const data = useLiveData()
+  const reach = useAtomValue(data.link)
+  if (reach !== 'lost') return null
+  return (
+    <View
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
+      style={{ alignItems: 'center', paddingVertical: 6 }}
+    >
+      <Label size="label" tone="ink-3">
+        Reconnecting…
+      </Label>
+    </View>
   )
 }
 

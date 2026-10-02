@@ -1,9 +1,11 @@
+import { useAtomValue } from '@effect/atom-react'
 import { ThreadId, Workspace, type MeResponse } from '@vivid/contracts'
 import { Option } from 'effect'
 import { PanelLeft } from 'lucide-react'
 import { Suspense, useState, useSyncExternalStore } from 'react'
 import { live, LiveState, useLive, useLiveValue } from './data/live'
 import { Route, router } from './data/route'
+import { link } from './data/runtime'
 import { sidebar } from './data/sidebar'
 import { theme } from './data/theme'
 import { startThread } from './data/threads'
@@ -52,18 +54,53 @@ addEventListener('keydown', (event) => {
  */
 export default function App() {
   const me = useLive(live.me)
+  const reach = useAtomValue(link.atom)
   return LiveState.$match(me, {
-    Loading: () => <Splash />,
+    Loading: () => <Splash unreachable={reach === 'lost'} />,
     Failed: () => <Welcome returnTo={`${location.pathname}${location.search}`} />,
-    Ready: ({ value }) => <Shell me={value} />,
+    Ready: ({ value }) => (
+      <>
+        <Shell me={value} />
+        {reach === 'lost' && <Reconnecting />}
+      </>
+    ),
   })
 }
 
-function Splash() {
+/**
+ * The first moment of the page. A server that cannot be reached used to look exactly like this
+ * for as long as it lasted; now it says so, under the face, and keeps trying.
+ */
+function Splash({ unreachable = false }: { unreachable?: boolean }) {
   return (
-    <main className="flex size-full items-center justify-center bg-surface-1" aria-busy>
+    <main
+      className="flex size-full flex-col items-center justify-center gap-4 bg-surface-1"
+      aria-busy
+    >
       <Face size={40} mood="thinking" />
+      {unreachable && (
+        <p role="status" className="animate-fade-in text-label text-ink-3">
+          Can’t reach Vivid. Trying again…
+        </p>
+      )}
     </main>
+  )
+}
+
+/**
+ * Said over the app while its connection is down. What is on screen stays, since it is the last
+ * thing the server said, and this is the note that it may be behind. It waits a second before it
+ * shows: most drops are over before anyone could read it, and a pill that flashes on every one
+ * of them would be noise.
+ */
+function Reconnecting() {
+  return (
+    <p
+      role="status"
+      className="pointer-events-none fixed top-3 left-1/2 z-50 -translate-x-1/2 rounded-full px-3 py-1 text-meta text-ink-2 smooth-shadow-ring-sm glass transition-opacity delay-1000 duration-(--dur-base) starting:opacity-0"
+    >
+      Reconnecting…
+    </p>
   )
 }
 

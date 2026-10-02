@@ -4,6 +4,7 @@ import type { LibraryFolderId, LibraryShelf, ThreadDetail, ThreadId } from '@viv
 import {
   LiveState,
   liveStateOf,
+  makeLink,
   makeLive,
   type LiveQuery,
   type LiveResult,
@@ -41,8 +42,10 @@ import { start } from './app'
  * for every `Watch…` call the app draws from.
  */
 function makeLiveData(session: SignedIn) {
+  // Whether the phone can reach the server; Home says so when it cannot.
+  const link = makeLink()
   const engine = makeLive(
-    VividRpcClient.layerLive({ url: liveAddress(session.server) }).pipe(
+    VividRpcClient.layerLive({ url: liveAddress(session.server), onLink: link.heard }).pipe(
       Layer.provide(bearerSocket(session.token)),
     ),
   )
@@ -122,27 +125,35 @@ function makeLiveData(session: SignedIn) {
     ),
   )
 
-  const seenQueries = new Map<ThreadId, LiveQuery<ThreadDetail>>()
+  // One watched query for each Thread's own query, for as long as that one exists.
+  const seenQueries = new WeakMap<LiveQuery<ThreadDetail>, LiveQuery<ThreadDetail>>()
 
   /**
    * A Thread's live detail, for the screen that shows it. Looking at a Thread is what marks it
    * read, so that happens here, in the atom, each time the Thread moves while someone has it
    * open. It is an event on the data, not something a component has to remember to do after it
    * renders; when nobody is reading the atom, nothing is reported. Being present is `presentIn`.
+   *
+   * The Thread's own query stays subscribed for minutes after its screen closes, so coming back
+   * is instant. This atom does not: it stops the moment the screen does, or a reply that arrived
+   * after the Person left would be marked read without ever being seen.
    */
   const seenThread = (id: ThreadId): LiveQuery<ThreadDetail> => {
-    const existing = seenQueries.get(id)
-    if (existing !== undefined) return existing
     const base = live.thread.get(id)
+    const existing = seenQueries.get(base)
+    if (existing !== undefined) return existing
     const watched: LiveQuery<ThreadDetail> = {
       expect: base.expect,
-      atom: Atom.readable((get) => {
-        const result = get(base.atom)
-        markSeen(id, result)
-        return result
-      }),
+      atom: Atom.setIdleTTL(
+        Atom.readable((get) => {
+          const result = get(base.atom)
+          markSeen(id, result)
+          return result
+        }),
+        0,
+      ),
     }
-    seenQueries.set(id, watched)
+    seenQueries.set(base, watched)
     return watched
   }
 
@@ -188,6 +199,7 @@ function makeLiveData(session: SignedIn) {
       program: (client: VividRpcClient['Service']) => Effect.Effect<Value, ProductFailure>,
       ...expectations: ReadonlyArray<() => Settle>
     ) => start(engine.change(program, ...expectations)),
+    link: link.atom,
     seenThread,
     typingIn,
     presentIn,

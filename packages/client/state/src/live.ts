@@ -7,6 +7,7 @@ import {
   Exit,
   Layer,
   Option,
+  Predicate,
   Result,
   Schedule,
   Stream,
@@ -149,9 +150,11 @@ function expecting<Value>(
   registry: AtomRegistry.AtomRegistry,
   source: Atom.Atom<LiveResult<Value>>,
 ): LiveQuery<Value> {
-  // What this client has changed and not yet seen the server say. Kept alive on its own: a
-  // screen that unmounts for a moment must not lose the fact that a write is in flight.
-  const pending = Atom.keepAlive(Atom.make<ReadonlyArray<Expected<Value>>>([]))
+  // What this client has changed and not yet seen the server say. It lives as long as the view
+  // that reads it and for the registry's idle time after, so a screen that unmounts for a moment
+  // does not lose the fact that a write is in flight. It is not kept alive beyond that: a query
+  // for every Thread ever opened would each leave one behind for the life of the page.
+  const pending = Atom.make<ReadonlyArray<Expected<Value>>>([])
   const drop = (id: number) =>
     registry.set(
       pending,
@@ -194,22 +197,30 @@ function expecting<Value>(
 }
 
 /**
+ * How long a query stays subscribed after the last screen reading it has gone: five minutes, so
+ * moving between Threads, Routines and the Library in the course of a piece of work is instant
+ * and current. It costs the server an open subscription, not a refetch.
+ */
+const IDLE_FOR_MS = 5 * 60_000
+
+/**
  * The live data layer for one client: one Atom registry, one runtime atom that owns the socket,
  * and a query atom for every `Watch…` call. Web, mobile and desktop build this once from the
  * client Layer their platform provides and read the same atoms.
  *
- * Atoms subscribe when something first reads them and stay subscribed for half a minute after the
+ * Atoms subscribe when something first reads them and stay subscribed for `IDLE_FOR_MS` after the
  * last reader leaves (the registry's idle TTL), so going back to a screen shows it at once. Nothing
  * here polls and nothing is refetched: the server sends a result when it changes.
  */
 export function makeLive(layer: Layer.Layer<VividRpcClient>) {
-  const registry = AtomRegistry.make({ defaultIdleTTL: 30_000 })
+  const registry = AtomRegistry.make({ defaultIdleTTL: IDLE_FOR_MS })
   const runtime = Atom.runtime(layer)
   // The client, and so the socket, lives for as long as the page does.
   registry.mount(runtime)
 
-  // One per query: asks it again if it had ended. See `reopen`.
-  const reopeners = new Set<() => void>()
+  // Every query's subscription atom, so `reopen` can tell them from everything else mounted.
+  // Held weakly: a query nothing refers to any more is collected with its atoms.
+  const sources = new WeakSet<object>()
 
   const query = <Value>(
     watch: (client: Client) => Stream.Stream<Value, ProductFailure>,
@@ -223,13 +234,7 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
         ),
       ),
     )
-    reopeners.add(() => {
-      // Only a query something is reading, and only one that ended: an atom nobody has mounted
-      // would be started just by being asked how it is.
-      if (registry.getNodes().has(source) && AsyncResult.isFailure(registry.get(source))) {
-        registry.refresh(source)
-      }
-    })
+    sources.add(source)
     return expecting(registry, source)
   }
 
@@ -237,15 +242,22 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
     key: (argument: Argument) => string,
     watch: (client: Client, argument: Argument) => Stream.Stream<Value, ProductFailure>,
   ): LiveFamily<Argument, Value> => {
-    const queries = new Map<string, LiveQuery<Value>>()
+    // Held weakly: the query for a Thread is the same object for as long as anything refers to
+    // it (a screen, a mounted atom), and is collected once nothing does. A plain Map kept one,
+    // with its atoms, for every Thread and folder visited since the page loaded.
+    const queries = new Map<string, WeakRef<LiveQuery<Value>>>()
+    const known = (name: string) =>
+      Option.flatMap(Option.fromUndefinedOr(queries.get(name)), (held) =>
+        Option.fromUndefinedOr(held.deref()),
+      )
     return {
       get: (argument) => {
         const name = key(argument)
-        const existing = queries.get(name)
-        if (existing !== undefined) return existing
-        const made = query((client) => watch(client, argument))
-        queries.set(name, made)
-        return made
+        return Option.getOrElse(known(name), () => {
+          const made = query((client) => watch(client, argument))
+          queries.set(name, new WeakRef(made))
+          return made
+        })
       },
     }
   }
@@ -346,7 +358,12 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
    * the same question can have a different answer, and nothing else would ever ask it.
    */
   const reopen = () => {
-    for (const reopener of reopeners) reopener()
+    // Only a query something is reading, and only one that ended: an atom nobody has mounted
+    // would be started just by being asked how it is.
+    for (const atom of registry.getNodes().keys()) {
+      if (Predicate.isString(atom) || !sources.has(atom)) continue
+      if (AsyncResult.isFailure(registry.get(atom))) registry.refresh(atom)
+    }
   }
 
   return { registry, query, family, ask, beat, run, change, reopen }
