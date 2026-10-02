@@ -91,6 +91,7 @@ const task = Task.make({
 const skill = Skill.make({
   id: SkillId.make(reference),
   name: 'Review agreement',
+  about: 'Reviews your agreement before you sign.',
   useWhen: 'Before signing',
   instructions: 'Read the terms.',
   scope: SkillScope.cases.Personal.make({}),

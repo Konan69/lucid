@@ -19,6 +19,7 @@ import { Scope, toolRunner } from './scope.ts'
 
 const saveRequest = {
   name: 'Review',
+  about: 'Reviews your agreement before you sign.',
   useWhen: 'Before signing',
   instructions: 'Read the agreement.',
   forCompany: false,
