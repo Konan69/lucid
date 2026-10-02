@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect, Stream } from 'effect'
 import {
   ComputerResponse,
   type BrowseRequest,
@@ -23,7 +23,15 @@ export const computerHandlers = {
     const store = yield* ComputerStore
     return ComputerResponse.make({ computer: yield* store.get(auth.person.id) })
   }),
-  WatchComputer: () => live(load),
+  /** The subscription owns watching presence; ending it starts a fresh idle deadline. */
+  WatchComputer: () =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const auth = yield* requirePerson()
+        yield* (yield* ComputerStore).watching(auth.person.id)
+        return live(load)
+      }),
+    ),
   StartComputer: Effect.fn('Rpc.StartComputer')(function* () {
     const auth = yield* requirePerson()
     const store = yield* ComputerStore

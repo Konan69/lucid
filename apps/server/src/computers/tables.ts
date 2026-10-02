@@ -8,6 +8,8 @@ import { epoch, personColumn } from '../database/owner.ts'
  * `machine` is the provider's reference for the machine behind it. `status` is `starting`,
  * `running`, `stopped` or `failed`, changed at `since`; `reason` explains `failed`. `held` is true
  * while the Person has the keyboard and pointer, during which Vivid may not act on it.
+ * `lastActivityAt` is epoch milliseconds for action/watch activity. Zero marks pre-policy rows
+ * with no observation, so their first restored deadline is overdue rather than invented.
  */
 export const computers = pgTable(
   'vivid_computers',
@@ -17,6 +19,7 @@ export const computers = pgTable(
     machine: text('machine').notNull(),
     status: text('status').notNull(),
     since: epoch('since').notNull(),
+    lastActivityAt: epoch('last_activity_at').notNull().default(0),
     reason: text('reason'),
     held: boolean('held').notNull().default(false),
     createdAt: epoch('created_at').notNull(),

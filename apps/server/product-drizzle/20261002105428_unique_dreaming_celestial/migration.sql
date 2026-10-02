@@ -1,0 +1,1 @@
+ALTER TABLE "vivid_computers" ADD COLUMN "last_activity_at" bigint DEFAULT 0 NOT NULL;
