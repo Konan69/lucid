@@ -13,7 +13,9 @@ export const CreateRequest = Schema.Struct({
   ttlSeconds: Schema.NullOr(Lifetime),
   noEnv: Schema.Literal(true),
   snapshots: Schema.Literal(true),
-  org: Schema.String.check(Schema.isNonEmpty()),
+  /** The organization whose wallet pays. Absent, Boat bills the account the API key belongs to:
+   * an account that is in no organization has nothing to name here. */
+  org: Schema.optionalKey(Schema.String.check(Schema.isNonEmpty())),
 })
 export type CreateRequest = typeof CreateRequest.Type
 export const State = Schema.Literals([

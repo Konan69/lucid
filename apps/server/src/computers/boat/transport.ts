@@ -1,4 +1,4 @@
-import { Config, Effect, Schema, type Redacted } from 'effect'
+import { Config, Effect, Function, Option, Schema, type Redacted } from 'effect'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
@@ -23,11 +23,18 @@ type Request = typeof Request.Type
 const jsonBody = HttpClientRequest.schemaBodyJson(Schema.Json)
 const decodeError = HttpClientResponse.schemaBodyJson(Protocol.ErrorReply)
 
-/** Select billing explicitly and persist the immutable, credential-free create body. */
+/**
+ * Says who pays, and persists the immutable, credential-free create body.
+ *
+ * `VIVID_BOAT_ORG` names an organization's wallet. It is optional because a Boat account need not
+ * belong to one: without it every request is billed to the account that owns the API key. Set it
+ * whenever the key's account is in an organization, since Boat otherwise follows that account's
+ * active wallet, which someone can change from the dashboard.
+ */
 const configuration = Effect.fn('Machine.boat.configuration')(
   function* () {
     const key = yield* Config.Redacted('VIVID_BOAT_API_KEY')
-    const org = yield* Config.NonEmptyString('VIVID_BOAT_ORG')
+    const org = yield* Config.option(Config.NonEmptyString('VIVID_BOAT_ORG'))
     const size = yield* Config.Literals(['small', 'default', 'large'], 'VIVID_BOAT_SIZE').pipe(
       Config.withDefault('default'),
     )
@@ -38,12 +45,15 @@ const configuration = Effect.fn('Machine.boat.configuration')(
       ),
       'VIVID_BOAT_LIFETIME_SECONDS',
     ).pipe(Config.withDefault(3600))
-    const create = Protocol.CreateRequest.make({
+    const machine = {
       type: size,
       ttlSeconds: lifetime === 0 ? null : lifetime,
       noEnv: true,
       snapshots: true,
-      org,
+    } as const
+    const create = Option.match(org, {
+      onNone: () => Protocol.CreateRequest.make(machine),
+      onSome: (name) => Protocol.CreateRequest.make({ ...machine, org: name }),
     })
     return { key, org, create }
   },
@@ -51,7 +61,16 @@ const configuration = Effect.fn('Machine.boat.configuration')(
 )
 
 /** Authenticated requests have one response boundary and bounded dispatch/body deadlines. */
-const requests = (client: HttpClient.HttpClient, key: Redacted.Redacted, org: string) => {
+const requests = (
+  client: HttpClient.HttpClient,
+  key: Redacted.Redacted,
+  org: Option.Option<string>,
+) => {
+  /** Names the paying organization on every request, or leaves it to the key's own account. */
+  const billed = Option.match(org, {
+    onNone: () => Function.identity<HttpClientRequest.HttpClientRequest>,
+    onSome: (name) => HttpClientRequest.setHeader('X-Boat-Org', name),
+  })
   /** Each decoder is compiled at its ingress; only bounded status survives a refusal. */
   return <A>(input: Request, schema: Schema.ConstraintDecoder<A>) =>
     Effect.gen(function* () {
@@ -75,7 +94,7 @@ const requests = (client: HttpClient.HttpClient, key: Redacted.Redacted, org: st
           outgoing.pipe(
             HttpClientRequest.prependUrl('https://boat.dev/api/v1'),
             HttpClientRequest.bearerToken(key),
-            HttpClientRequest.setHeader('X-Boat-Org', org),
+            billed,
             HttpClientRequest.acceptJson,
           ),
         )

@@ -131,7 +131,9 @@ fleet scale, not a starting point.
 
 `Machine` is the owned `Context.Service`: ensure, status, stop, exec, browse, desktop, and the
 local provider's RFB connection. Select Boat with `VIVID_COMPUTER_PROVIDER=boat`; configure its
-Redacted API key, explicit organization, size and lifetime through Effect Config. One durable
+Redacted API key (`VIVID_BOAT_API_KEY`), size and lifetime through Effect Config. Name the paying
+organization with `VIVID_BOAT_ORG` whenever the key's account belongs to one; leave it unset for an
+account that belongs to none, and Boat bills that account. One durable
 binding and creation intent per Person precedes allocation. Restart recovers the same identity;
 stop waits for disk archival and ensure resumes that snapshot. An unresolved creation intent
 past the replay window fails explicitly rather than buying a second machine.

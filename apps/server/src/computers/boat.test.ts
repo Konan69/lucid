@@ -5,7 +5,7 @@ import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, it } from '@effect/vitest'
 import { BrowserAction, ComputerState, DesktopAction } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
-import { ConfigProvider, Context, Effect, Layer, Ref, Schema, Predicate } from 'effect'
+import { ConfigProvider, Context, Effect, Layer, Option, Ref, Schema, Predicate } from 'effect'
 import {
   FetchHttpClient,
   HttpClient,
@@ -40,6 +40,8 @@ interface EvidenceService {
   readonly publicViewer: Ref.Ref<boolean>
   readonly malformed: Ref.Ref<boolean>
   readonly wrongIdentity: Ref.Ref<boolean>
+  /** The organization every request must name as the payer; none when the key's own account pays. */
+  readonly org: Ref.Ref<Option.Option<string>>
 }
 class Evidence extends Context.Service<Evidence, EvidenceService>()('vivid/BoatProtocolEvidence') {}
 const evidenceLayer = Layer.effect(
@@ -59,6 +61,7 @@ const evidenceLayer = Layer.effect(
       publicViewer: yield* Ref.make(false),
       malformed: yield* Ref.make(false),
       wrongIdentity: yield* Ref.make(false),
+      org: yield* Ref.make(Option.some('personal')),
     })
   }),
 )
@@ -222,6 +225,7 @@ const create = Effect.fn('BoatTest.create')(function* (
   expect(body.ttlSeconds).toBe(3600)
   expect(body.noEnv).toBe(true)
   expect(body.snapshots).toBe(true)
+  expect(body.org).toBe(Option.getOrUndefined(yield* Ref.get(evidence.org)))
   const intent = request.headers['idempotency-key']
   expect(intent === undefined).toBe(false)
   if (intent === undefined) return rejected(400)
@@ -272,7 +276,9 @@ const serverLayer = Layer.effect(
       const request = yield* HttpServerRequest.HttpServerRequest
       // Assert booleans to avoid ever displaying an authorization header in a failed assertion.
       expect(request.headers.authorization === 'Bearer protocol-test-key').toBe(true)
-      expect(request.headers['x-boat-org'] === 'personal').toBe(true)
+      expect(request.headers['x-boat-org']).toBe(
+        Option.getOrUndefined(yield* Ref.get(evidence.org)),
+      )
       const path = request.url.split('?')[0]
       if (path === '/api/v1/sandboxes' && request.method === 'POST')
         return yield* create(evidence, request)
@@ -362,15 +368,23 @@ const serverLayer = Layer.effect(
     Layer.mergeAll(NodeHttpServer.layer(NodeHttp.createServer, { port: 0 }), FetchHttpClient.layer),
   ),
 )
-const configLayer = ConfigProvider.layerAdd(
-  ConfigProvider.fromUnknown({
-    VIVID_BOAT_API_KEY: 'protocol-test-key',
-    VIVID_BOAT_ORG: 'personal',
-  }),
-  { asPrimary: true },
-)
-const dependencies = Layer.mergeAll(testDatabaseLayer, serverLayer, configLayer)
-const testLayer = boatMachineLayer.pipe(Layer.provideMerge(dependencies))
+/** The provider against the fake Boat, configured the way one deployment would configure it. */
+const configured = (settings: Readonly<Record<string, string>>) =>
+  boatMachineLayer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        testDatabaseLayer,
+        serverLayer,
+        ConfigProvider.layerAdd(ConfigProvider.fromUnknown(settings), { asPrimary: true }),
+      ),
+    ),
+  )
+const testLayer = configured({
+  VIVID_BOAT_API_KEY: 'protocol-test-key',
+  VIVID_BOAT_ORG: 'personal',
+})
+/** An account that belongs to no organization: there is only the key. */
+const accountLayer = configured({ VIVID_BOAT_API_KEY: 'protocol-test-key' })
 
 /** Register cleanup before provisioning; only this fixture's private binding is removed. */
 const fixture = Effect.fn('BoatTest.fixture')(function* () {
@@ -484,6 +498,20 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
       )
       expect(JSON.stringify(rows).includes('#token=')).toBe(false)
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect("names no organization when none is configured, so the key's own account pays", () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const machine = yield* Machine
+      const evidence = yield* Evidence
+      // The fake refuses any request, and any create body, that names a payer other than this.
+      yield* Ref.set(evidence.org, Option.none())
+      yield* machine.ensure(key)
+      expect(yield* Ref.get(evidence.created)).toBe(1)
+      yield* machine.stop(key)
+      expect(yield* Ref.get(evidence.state)).toBe('archived')
+    }).pipe(Effect.scoped, Effect.provide(accountLayer)),
   )
 
   it.effect('status never reconciles an unresolved create or resumes a stopped machine', () =>
