@@ -12,6 +12,7 @@ import {
 } from '@vivid/contracts'
 import { Config, Context, Deferred, Effect, Fiber, Layer, Option, Schema, Semaphore } from 'effect'
 import { budgets, bytes } from './budgets.ts'
+import { prepareWorker } from './source.ts'
 import { FrameReader, writeFrame } from './pipe.ts'
 import {
   decodeWorker,
@@ -55,7 +56,7 @@ export class CodeProcess extends Context.Service<CodeProcess, CodeProcessService
 ) {}
 
 /** Mount only executable dependencies, contracts and this adapter, never the repository or live state. */
-function command(runtimeDirectory: string, unit: string) {
+function command(runtimeDirectory: string, unit: string, source: string) {
   const root = NodeURL.fileURLToPath(new URL('../../../../', import.meta.url))
   const server = NodePath.join(root, 'apps/server')
   const mounts = [
@@ -64,9 +65,7 @@ function command(runtimeDirectory: string, unit: string) {
     '/lib64',
     NodePath.join(root, 'node_modules'),
     NodePath.join(server, 'node_modules'),
-    NodePath.join(server, 'src/code'),
     NodePath.join(server, 'package.json'),
-    NodePath.join(root, 'packages/contracts'),
   ]
   const args = [
     '--user',
@@ -108,13 +107,19 @@ function command(runtimeDirectory: string, unit: string) {
     '/dev',
     '--tmpfs',
     '/tmp',
+    '--ro-bind',
+    source,
+    '/vivid/worker',
     '--chdir',
     '/tmp',
     '/usr/bin/prlimit',
     '--cpu=30',
     '--',
     NodeProcess.execPath,
-    NodePath.join(server, 'src/code/start.mjs'),
+    // Node 24 defaults to 128 parallel WASM compilation tasks; this cgroup has one CPU.
+    // Keep compilation serial so background optimizer work cannot starve VM/pipe callbacks.
+    '--wasm-num-compilation-tasks=1',
+    '/vivid/worker/start.mjs',
   )
   return { args, env: { PATH: '/usr/bin:/bin', XDG_RUNTIME_DIR: runtimeDirectory } }
 }
@@ -168,9 +173,12 @@ const resourceFailure = Effect.fn('Code.resourceFailure')((unit: string, env: No
 )
 
 /** Cancellation owns this captured process and unit; it never searches for someone else's PID. */
-const launch = Effect.fn('Code.launchProcess')(function* (runtimeDirectory: string) {
+const launch = Effect.fn('Code.launchProcess')(function* (
+  runtimeDirectory: string,
+  source: string,
+) {
   const unit = `vivid-code-${crypto.randomUUID()}`
-  const options = command(runtimeDirectory, unit)
+  const options = command(runtimeDirectory, unit, source)
   const child = yield* Effect.acquireRelease(
     Effect.callback<
       NodeChildProcess.ChildProcessByStdio<
@@ -412,6 +420,7 @@ const exchange = Effect.fn('Code.exchange')(function* (
 /** The parent clock includes tools and process startup. No failure path replays a program. */
 const execute = Effect.fn('Code.supervise')(function* (
   runtimeDirectory: string,
+  source: string,
   request: RunCodeRequest,
   dispatch: Dispatch,
 ) {
@@ -419,7 +428,7 @@ const execute = Effect.fn('Code.supervise')(function* (
   const failed = (failure: CodeFailure) => state.failed(failure)
   const program = Effect.scoped(
     Effect.gen(function* () {
-      const launched = yield* launch(runtimeDirectory)
+      const launched = yield* launch(runtimeDirectory, source)
       yield* writeFrame(
         launched.child.stdin,
         encodeParent(ParentMessage.cases.Start.make({ code: request.code })),
@@ -455,6 +464,16 @@ export const codeProcessLayer = Layer.effect(
     const runtimeDirectory = yield* Config.option(Config.String('XDG_RUNTIME_DIR'))
     if (Option.isNone(runtimeDirectory))
       yield* Effect.logError('Programs are unavailable: XDG_RUNTIME_DIR is not configured')
+    const source = Option.isNone(runtimeDirectory)
+      ? Option.none<string>()
+      : yield* prepareWorker().pipe(
+          Effect.map(Option.some),
+          Effect.catchTag('CodeAssetsUnavailable', (error) =>
+            Effect.logError('Program worker assets could not be prepared', error).pipe(
+              Effect.as(Option.none<string>()),
+            ),
+          ),
+        )
     const capacity = yield* Semaphore.make(budgets.processes)
     const active = new Set<ThreadId>()
     return CodeProcess.of({
@@ -468,10 +487,13 @@ export const codeProcessLayer = Layer.effect(
             failure: CodeFailure.cases.Threw.make({ message: 'Program source exceeds 16 KiB.' }),
             calls: [],
           })
-        if (Option.isNone(runtimeDirectory) || active.has(boundary)) return unavailable
+        if (Option.isNone(runtimeDirectory) || Option.isNone(source) || active.has(boundary))
+          return unavailable
         active.add(boundary)
         const admitted = yield* capacity
-          .withPermitsIfAvailable(1)(execute(runtimeDirectory.value, request, dispatch))
+          .withPermitsIfAvailable(1)(
+            execute(runtimeDirectory.value, source.value, request, dispatch),
+          )
           .pipe(Effect.ensuring(Effect.sync(() => active.delete(boundary))))
         return Option.getOrElse(admitted, () => unavailable)
       }),

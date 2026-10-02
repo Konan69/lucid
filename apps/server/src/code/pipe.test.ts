@@ -1,12 +1,13 @@
 import * as NodeStream from 'node:stream'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeProcess from 'node:process'
-import * as NodeURL from 'node:url'
+import * as NodePath from 'node:path'
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Fiber } from 'effect'
 import { FrameReader, writeFrame } from './pipe.ts'
 import { budgets } from './budgets.ts'
 import { decodeWorker, encodeParent, ParentMessage, WorkerMessage } from './protocol.ts'
+import { prepareWorker } from './source.ts'
 
 /** Real streams exercise the framing boundary before JSON or SDK callbacks can allocate data. */
 describe('Program pipes', () => {
@@ -90,11 +91,12 @@ describe('Program pipes', () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
+          const directory = yield* prepareWorker()
           const child = yield* Effect.acquireRelease(
             Effect.sync(() =>
               NodeChildProcess.spawn(
                 NodeProcess.execPath,
-                [NodeURL.fileURLToPath(new URL('./start.mjs', import.meta.url))],
+                ['--wasm-num-compilation-tasks=1', NodePath.join(directory, 'start.mjs')],
                 { stdio: ['pipe', 'pipe', 'ignore'], env: { PATH: '/usr/bin:/bin' } },
               ),
             ),

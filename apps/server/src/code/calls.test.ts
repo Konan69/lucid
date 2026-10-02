@@ -451,9 +451,10 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
         Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ConnectionStore
+          yield* store.begin(test.personal, { service: serviceId, label: 'Records', shared: false })
           const unavailable = ConnectionStore.of({
             ...store,
-            records: () =>
+            tools: () =>
               Effect.fail(
                 new ServiceUnavailable({ service: 'connections', message: 'isolated fault' }),
               ),
