@@ -42,6 +42,7 @@ const decodeInputRequest = Schema.decodeUnknownOption(
 const decodeConnectionRequest = Schema.decodeUnknownOption(ConnectionRequestMessage)
 // An integration Vivid has already started adding carries what comes next: a sign-in or a key.
 const decodeAuthorization = Schema.decodeUnknownOption(ConnectionAuthorizationMessage)
+type ConnectionAuthorizationValue = typeof ConnectionAuthorization.Type
 
 /** What a tool's output asks the Thread to draw, when it asks for anything. */
 export type CardRequest =
@@ -51,7 +52,7 @@ export type CardRequest =
       readonly kind: 'connection'
       readonly request: ConnectionRequestMessage
       /** What finishing it takes, when Vivid has already begun adding it. */
-      readonly authorization: Option.Option<ConnectionAuthorization>
+      readonly authorization: Option.Option<ConnectionAuthorizationValue>
     }
 
 /** Reads a tool's output for a card. Outputs that are not cards are simply not cards. */
@@ -168,6 +169,7 @@ function Exactly({ target }: { target: ActionTarget }) {
       <span className="mt-0.5 shrink-0 text-ink-3">{TARGET_ICON[target._tag]}</span>
       <span className="min-w-0 font-mono wrap-break-word whitespace-pre-wrap">
         {ActionTarget.match(target, {
+          Connection: ({ account, tool }) => `${account} · ${tool}`,
           Command: ({ command }) => command,
           Browser: ({ action }) => browserStep(action),
           Desktop: ({ action }) => desktopStep(action),
@@ -389,7 +391,7 @@ export function ConnectionCard({
   onContinue,
 }: {
   request: ConnectionRequestMessage
-  authorization: Option.Option<ConnectionAuthorization>
+  authorization: Option.Option<ConnectionAuthorizationValue>
   onContinue: (message: string) => void
 }) {
   const connections = useLiveValue(live.connections)
@@ -448,7 +450,7 @@ function Finish({
   onKey,
 }: {
   name: string
-  authorization: Option.Option<ConnectionAuthorization>
+  authorization: Option.Option<ConnectionAuthorizationValue>
   onKey: (keying: Keying) => void
 }) {
   if (Option.isNone(authorization)) {

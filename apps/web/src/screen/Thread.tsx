@@ -269,12 +269,10 @@ function Header({
   const typing = others.filter((seen) => seen.typing)
   const inCompany = Workspace.guards.Company(me.workspace)
   const mine = Option.exists(thread, (value) => value.createdBy.id === me.person.id)
-  const standing =
-    STANDING[
-      working
-        ? 'Working'
-        : Option.match(thread, { onNone: () => 'Quiet', onSome: (value) => value.attention })
-    ]
+  const attention: ThreadRecord['attention'] = working
+    ? 'Working'
+    : Option.match(thread, { onNone: () => 'Quiet', onSome: (value) => value.attention })
+  const standing = STANDING[attention]
   return (
     <header className={cn(BAR, 'gap-3')}>
       <Face size={28} mood={standing.mood} />

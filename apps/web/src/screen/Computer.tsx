@@ -110,7 +110,7 @@ function Screen({ computer }: { computer: ComputerRecord }) {
       <Display
         // Taking over or handing back changes who may type, so the screen reconnects with it.
         key={computer.heldByPerson ? 'held' : 'watching'}
-        address={state.screenAddress}
+        address={state.screen.address}
         control={computer.heldByPerson}
       />
     )

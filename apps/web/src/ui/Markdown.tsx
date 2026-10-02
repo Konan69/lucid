@@ -135,7 +135,8 @@ function normalizeTypedBullets(content: string) {
     .split('\n')
     .map((line) => {
       const fenceMatch = /^ {0,3}(`{3,}|~{3,})/u.exec(line)
-      const marker = fenceMatch === null ? null : fenceMatch[1]
+      const capturedMarker = fenceMatch === null ? undefined : fenceMatch[1]
+      const marker = capturedMarker === undefined ? null : capturedMarker
       if (fence !== null) {
         if (
           marker !== null &&
