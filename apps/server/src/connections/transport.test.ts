@@ -8,7 +8,18 @@ import {
   ServiceId,
   ServiceUnavailable,
 } from '@vivid/contracts'
-import { ConfigProvider, Deferred, Effect, Fiber, Layer, Option, Queue, Ref, Schema } from 'effect'
+import {
+  ConfigProvider,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Queue,
+  Ref,
+  Schema,
+  Result,
+} from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
@@ -33,7 +44,6 @@ import {
 import { executorFailure } from './errors.ts'
 import { connectionStoreLayer, ConnectionStore } from './store.ts'
 import { connectionTestLayer } from './testing.ts'
-import { ServerConfig } from '../config.ts'
 import { testConfigLayer, testDatabaseConfigured } from '../database/testdb.ts'
 import { ServiceCatalog } from '@vivid/contracts'
 
@@ -794,38 +804,35 @@ for (const mode of ['automatic', 'saved', 'client-required']) {
         yield* Effect.gen(function* () {
           const executor = yield* Executor
           const input = { service, returnAddress: beginInput.returnAddress }
-          const authorization = yield* executor.authorization(input)
           const expected = mode !== 'client-required' ? 'SignIn' : mixed ? 'Key' : 'SetupRequired'
+          const outcome = yield* executor.begin(beginInput).pipe(Effect.result)
+          const authorization = yield* executor.authorization(input)
           expect(authorization._tag).toBe(expected)
           expect(yield* executor.authorization({ ...input })).toEqual(authorization)
-          expect(yield* Ref.get(remote.imported)).toBe(false)
           if (ServiceAuthorization.guards.Key(authorization))
             expect(authorization.fields).toEqual([{ name: 'pat', label: 'Personal access token' }])
-          if (expected === 'SetupRequired') {
-            const failure = yield* executor.begin(beginInput).pipe(Effect.flip)
-            expect(failure._tag).toBe('ExecutorSetupRequired')
-            expect(executorFailure(failure)).toEqual(
+          if (Result.isFailure(outcome)) {
+            expect(expected).toBe('SetupRequired')
+            expect(outcome.failure._tag).toBe('ExecutorSetupRequired')
+            expect(executorFailure(outcome.failure)).toEqual(
               new InvalidRequest({ message: connectionSetupMessage }),
             )
-            expect(yield* Ref.get(remote.copies)).toEqual([])
             expect(
               (yield* Ref.get(remote.requests)).some(
                 (request) => request.path === 'POST /v1/account-connections',
               ),
             ).toBe(false)
           } else if (ServiceAuthorization.guards.Key(authorization)) {
-            const step = yield* executor.begin(beginInput)
-            expect(ExecutorStep.guards.EnterKey(step)).toBe(true)
-            expect(step).toHaveProperty('fields', authorization.fields)
+            expect(ExecutorStep.guards.EnterKey(outcome.success)).toBe(true)
+            expect(outcome.success).toHaveProperty('fields', authorization.fields)
             expect(
               (yield* Ref.get(remote.requests)).some(
                 (request) => request.path === 'POST /v1/account-connections/oauth/start',
               ),
             ).toBe(false)
           } else {
-            const step = yield* executor.begin(beginInput)
-            expect(ExecutorStep.guards.OpenSignIn(step)).toBe(true)
-            expect(step).toHaveProperty('address', 'https://service.test/sign-in')
+            expect(ExecutorStep.guards.OpenSignIn(outcome.success)).toBe(true)
+            expect(outcome.success).toHaveProperty('address', 'https://service.test/sign-in')
           }
           expect(
             (yield* Ref.get(remote.requests)).filter(
@@ -846,6 +853,8 @@ it.effect(
       const remote = yield* setupFixture(false, 'automatic')
       yield* Effect.gen(function* () {
         const executor = yield* Executor
+        yield* executor.begin(beginInput)
+        const before = (yield* Ref.get(remote.requests)).length
         const input = { service, returnAddress: beginInput.returnAddress }
         expect((yield* executor.authorization(input))._tag).toBe('SignIn')
         yield* Ref.update(remote.responses, (values) =>
@@ -869,13 +878,15 @@ it.effect(
         expect(
           requests.filter((request) => request.path === 'POST /v1/account-connections/oauth/setup'),
         ).toHaveLength(4)
-        expect(requests.filter((request) => request.path === 'GET /v1/apps')).toHaveLength(1)
+        expect(requests.filter((request) => request.path === 'GET /v1/apps')).toHaveLength(2)
         expect(
-          requests.some(
-            (request) =>
-              request.path === 'POST /dashboard/api/catalog/import' ||
-              request.path.startsWith('DELETE '),
-          ),
+          requests
+            .slice(before)
+            .some(
+              (request) =>
+                request.path === 'POST /dashboard/api/catalog/import' ||
+                request.path.startsWith('DELETE '),
+            ),
         ).toBe(false)
       }).pipe(Effect.provide(remote.layer))
     }).pipe(Effect.scoped),
@@ -914,12 +925,10 @@ it.effect('times out inspection at five seconds and leaves the catalog readable'
     yield* Effect.gen(function* () {
       const executor = yield* Executor
       const completed = yield* Deferred.make<void>()
-      const inspection = yield* executor
-        .authorization({ service, returnAddress: beginInput.returnAddress })
-        .pipe(
-          Effect.tap(() => Deferred.succeed(completed, undefined)),
-          Effect.forkChild,
-        )
+      const inspection = yield* executor.begin(beginInput).pipe(
+        Effect.tap(() => Deferred.succeed(completed, undefined)),
+        Effect.forkChild,
+      )
       yield* Queue.take(remote.setupRequests)
       yield* TestClock.adjust('4 seconds')
       expect(yield* Deferred.isDone(completed)).toBe(false)
@@ -962,7 +971,7 @@ describe.skipIf(!testDatabaseConfigured)('Catalog search during setup inspection
       }).pipe(Effect.provide(storeLayer))
     }).pipe(Effect.scoped),
   )
-  it.effect('answers cold search while background setup is still blocked', () =>
+  it.effect('starts no setup I/O during cold search or subsequent refreshes', () =>
     Effect.gen(function* () {
       const remote = yield* setupFixture(false, 'automatic')
       const gate = yield* Deferred.make<void>()
@@ -981,7 +990,12 @@ describe.skipIf(!testDatabaseConfigured)('Catalog search during setup inspection
             ServiceAuthorization.cases.SignIn.make({}),
           ])
         }
-        yield* Queue.take(remote.setupRequests)
+        yield* TestClock.adjust('10 minutes')
+        expect(
+          (yield* Ref.get(remote.requests)).some(
+            (request) => request.path === 'POST /v1/account-connections/oauth/setup',
+          ),
+        ).toBe(false)
         expect((yield* store.find(''))._tag).toBe('Ready')
         expect(yield* Deferred.isDone(gate)).toBe(false)
       }).pipe(Effect.provide(storeLayer), Effect.ensuring(Deferred.succeed(gate, undefined)))
@@ -1012,10 +1026,8 @@ describe.skipIf(!testDatabaseConfigured)('Catalog search during setup inspection
         yield* Effect.gen(function* () {
           const store = yield* ConnectionStore
           const executor = yield* Executor
-          // Join the identical cached operation the background worker owns, not its request gate.
-          yield* executor
-            .authorization({ service, returnAddress: (yield* ServerConfig).PUBLIC_URL.href })
-            .pipe(Effect.flip)
+          // Setup is learned by this explicit Begin; discovery keeps the last optimistic hint.
+          yield* executor.begin(beginInput).pipe(Effect.flip)
           const result = yield* store.find('test')
           expect(ServiceCatalog.guards.Ready(result)).toBe(true)
           if (ServiceCatalog.guards.Ready(result)) {
@@ -1031,14 +1043,16 @@ describe.skipIf(!testDatabaseConfigured)('Catalog search during setup inspection
   }
 })
 
-/** A gate on actual HTTP setup responses proves four in-flight lookups with one read-only definition lookup. */
-it.effect('bounds simultaneous setup lookups and deduplicates read-only definitions', () =>
+/** A gate on actual HTTP setup responses proves four in-flight lookups reusing an explicitly begun app definition. */
+it.effect('bounds simultaneous setup lookups without looking up catalog apps', () =>
   Effect.gen(function* () {
     const remote = yield* setupFixture(true, 'client-required')
     const gate = yield* Deferred.make<void>()
-    yield* Ref.set(remote.setupGate, Option.some(gate))
     yield* Effect.gen(function* () {
       const executor = yield* Executor
+      yield* executor.begin(beginInput)
+      yield* Queue.take(remote.setupRequests)
+      yield* Ref.set(remote.setupGate, Option.some(gate))
       const fibers = yield* Effect.forEach(
         Array.from({ length: 5 }, (_, index) => index),
         (index) =>
@@ -1051,14 +1065,14 @@ it.effect('bounds simultaneous setup lookups and deduplicates read-only definiti
         (yield* Ref.get(remote.requests)).filter(
           (request) => request.path === 'POST /v1/account-connections/oauth/setup',
         ),
-      ).toHaveLength(4)
+      ).toHaveLength(5)
       yield* Deferred.succeed(gate, undefined)
       yield* Queue.take(remote.setupRequests)
       const resolved = yield* Effect.forEach(fibers, (fiber) => Fiber.join(fiber))
       expect(resolved.every(ServiceAuthorization.guards.Key)).toBe(true)
       expect(
         (yield* Ref.get(remote.requests)).filter((request) => request.path === 'GET /v1/apps'),
-      ).toHaveLength(1)
+      ).toHaveLength(2)
     }).pipe(Effect.provide(remote.layer))
   }).pipe(Effect.scoped),
 )

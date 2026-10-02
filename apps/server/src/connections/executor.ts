@@ -1057,24 +1057,6 @@ function makeInspectSetup(http: ExecutorHttp) {
   })
 }
 
-/** Inspection reads existing public definitions only. Executor has no read-only catalog detail
- * endpoint (dashboard contracts); explicit Begin/Resume also seed definitions from their own app.
- */
-function makeCatalogDefinition(http: ExecutorHttp) {
-  return Effect.fn('Executor.catalogDefinition')(function* (service: ServiceId) {
-    const apps = yield* http.readApps(
-      Effect.succeed(
-        HttpClientRequest.get(`/v1/apps?owner=local&name=${query(`Vivid catalog ${service}`)}`),
-      ),
-      null,
-    )
-    const app = apps[0]
-    if (app === undefined)
-      return yield* Effect.fail(ExecutorNotReady.make({ service: 'connections', tool: null }))
-    return yield* accountRequirement(app)
-  })
-}
-
 /** A single requirement keeps authorization targeted; incompatible definitions remain typed failures. */
 function accountRequirement(app: typeof WireApp.Type) {
   const requirements = Object.values(app.requirements.accounts)
@@ -1101,10 +1083,8 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
   const permits = yield* Semaphore.make(4)
   const facts = yield* Ref.make(HashMap.empty<ServiceId, ServiceAuthorization>())
   const failures = yield* Ref.make(HashMap.empty<ServiceId, string>())
-  const definitions = yield* Cache.makeWith(makeCatalogDefinition(http), {
-    capacity: 1000,
-    timeToLive: (exit) => (Exit.isSuccess(exit) ? '24 hours' : 0),
-  })
+  // Definitions enter only through explicit Begin/Resume; there is no catalog-detail endpoint.
+  const definitions = yield* Ref.make(HashMap.empty<ServiceId, typeof Requirement.Type>())
   /** Publish each completed inspection separately so a slow service never delays its peers.
    * Log only the service identity and typed failure tag, once on entering failed availability.
    */
@@ -1143,10 +1123,10 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
           }),
         )
       if (ServiceAuthorization.guards.None(entry.authorization)) return entry.authorization
+      const definition = HashMap.get(yield* Ref.get(definitions), input.service)
+      if (Option.isNone(definition)) return entry.authorization
       const authorization = yield* permits.withPermits(1)(
-        Effect.gen(function* () {
-          return yield* inspect(yield* Cache.get(definitions, input.service), input.returnAddress)
-        }).pipe(
+        inspect(definition.value, input.returnAddress).pipe(
           Effect.timeout('5 seconds'),
           Effect.catchTag('TimeoutError', () =>
             Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
@@ -1179,7 +1159,11 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
       app: typeof WireApp.Type,
     ) {
       const requirement = yield* accountRequirement(app)
-      yield* Cache.set(definitions, input.service, requirement)
+      yield* Ref.update(definitions, (current) => HashMap.set(current, input.service, requirement))
+      yield* Cache.invalidate(inspections, {
+        service: input.service,
+        returnAddress: input.returnAddress,
+      })
       return yield* Cache.get(inspections, {
         service: input.service,
         returnAddress: input.returnAddress,

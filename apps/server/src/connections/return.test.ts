@@ -1,8 +1,10 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { Effect, Logger, Ref } from 'effect'
 import { HttpRouter, HttpServerRequest } from 'effect/unstable/http'
-import { ConnectionId, ServiceUnavailable } from '@vivid/contracts'
+import { ConnectionId, ServiceUnavailable, Workspace, type PersonId } from '@vivid/contracts'
 import { sessionTable } from '../auth/tables.ts'
+import { eq } from 'drizzle-orm'
+import { membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { ServerConfig } from '../config.ts'
@@ -55,6 +57,96 @@ describe.skipIf(!testDatabaseConfigured)('Connection provider return', () => {
         expect(messages.join()).not.toContain('callback-secret')
         expect(messages.join()).not.toContain(token)
       }),
+    )
+    it.effect(
+      'returns a resumed shared Connection only for its current admin in its owning Company',
+      () =>
+        Effect.gen(function* () {
+          const { ownerActor, memberActor } = yield* fixture()
+          const outsider = (yield* fixture()).ownerActor
+          const database = yield* Database
+          const config = yield* ServerConfig
+          const store = yield* ConnectionStore
+          const probe = yield* ConnectionProbe
+          if (!Workspace.guards.Company(memberActor.workspace))
+            expect.fail('Company fixture required')
+          yield* database.run(
+            database
+              .update(membershipTable)
+              .set({ role: 'admin' })
+              .where(eq(membershipTable.userId, memberActor.person.id)),
+          )
+          const admin = {
+            ...memberActor,
+            by: 'person' as const,
+            workspace: Workspace.cases.Company.make({
+              company: memberActor.workspace.company,
+              role: 'admin',
+            }),
+          }
+          yield* Ref.set(probe.step, 'OpenSignIn')
+          const begun = yield* store.begin(ownerActor, {
+            service: serviceId,
+            label: 'Shared return',
+            shared: true,
+          })
+          yield* store.resume(admin, begun.connection.id)
+          const handle = yield* HttpRouter.toHttpEffect(connectionReturnRoutes)
+          /** Real bearer sessions exercise authentication, row scope and fresh Company membership. */
+          const send = Effect.fn('Connections.Test.resumedReturn')(function* (personId: PersonId) {
+            const token = crypto.randomUUID()
+            yield* database.run(
+              database.insert(sessionTable).values({
+                id: crypto.randomUUID(),
+                token,
+                userId: personId,
+                expiresAt: new Date(Date.UTC(2099, 0, 1)),
+              }),
+            )
+            return yield* handle.pipe(
+              Effect.provideService(
+                HttpServerRequest.HttpServerRequest,
+                HttpServerRequest.fromWeb(
+                  new Request(
+                    new URL(
+                      `/api/connections/return/${begun.connection.id}?code=return-secret`,
+                      config.PUBLIC_URL,
+                    ),
+                    {
+                      headers: { authorization: `Bearer ${token}` },
+                    },
+                  ),
+                ),
+              ),
+            )
+          })
+          const before = yield* Ref.get(probe.signIns)
+          for (const personId of [ownerActor.person.id, outsider.person.id])
+            expect((yield* send(personId)).headers.location).toBe(
+              new URL(`/settings/connections?failed=${begun.connection.id}`, config.PUBLIC_URL)
+                .href,
+            )
+          expect(yield* Ref.get(probe.signIns)).toBe(before)
+          expect((yield* send(admin.person.id)).headers.location).toBe(
+            new URL(`/settings/connections?connected=${begun.connection.id}`, config.PUBLIC_URL)
+              .href,
+          )
+          expect(yield* Ref.get(probe.signIns)).toBe(before + 1)
+          // A new return still requires current admin authority, even if the session stays valid.
+          yield* store.notReady(admin, yield* store.get(admin, begun.connection.id))
+          yield* store.resume(admin, begun.connection.id)
+          yield* database.run(
+            database
+              .update(membershipTable)
+              .set({ role: 'member' })
+              .where(eq(membershipTable.userId, admin.person.id)),
+          )
+          expect((yield* send(admin.person.id)).headers.location).toBe(
+            new URL(`/settings/connections?failed=${begun.connection.id}`, config.PUBLIC_URL).href,
+          )
+          expect(yield* Ref.get(probe.signIns)).toBe(before + 1)
+          yield* Ref.set(probe.step, 'Done')
+        }),
     )
     it.effect(
       'redirects authenticated success and failure without logging the provider address or diagnostics',

@@ -1,8 +1,9 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { Deferred, Effect, Redacted, Ref, Layer } from 'effect'
+import { Deferred, Effect, Redacted, Ref, Layer, Fiber, Option } from 'effect'
 import {
   AuditEvent,
   ConnectionStep,
+  Workspace,
   ConnectionState,
   Forbidden,
   NotFound,
@@ -49,31 +50,235 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         expect((yield* (yield* ConnectionStore).list(ownerActor)).connections).toEqual([])
       }),
     )
-    it.effect('starts no availability worker when the installation has no Executor', () =>
-      Effect.gen(function* () {
-        const executor = yield* Executor
-        const calls = yield* Ref.make(0)
-        const disabled = Executor.of({
-          ...executor,
-          configured: false,
-          catalog: Effect.fn('Executor.Test.disabledCatalog')(() =>
-            Ref.update(calls, (count) => count + 1).pipe(
-              Effect.andThen(
-                Effect.fail(
-                  ServiceUnavailable.make({ service: 'connections', message: 'Unconfigured' }),
+    for (const configured of [false, true]) {
+      it.effect(`starts no setup sweep with Executor configured ${configured}`, () =>
+        Effect.gen(function* () {
+          const executor = yield* Executor
+          const calls = yield* Ref.make(0)
+          const controlled = Executor.of({
+            ...executor,
+            configured,
+            catalog: () =>
+              Ref.update(calls, (count) => count + 1).pipe(Effect.andThen(executor.catalog())),
+            authorization: () =>
+              Ref.update(calls, (count) => count + 1).pipe(
+                Effect.andThen(
+                  executor.authorization({
+                    service: serviceId,
+                    returnAddress: 'https://example.test/return',
+                  }),
                 ),
               ),
+          })
+          yield* Effect.gen(function* () {
+            yield* ConnectionStore
+            yield* TestClock.adjust('1 hour')
+            expect(yield* Ref.get(calls)).toBe(0)
+          }).pipe(
+            Effect.provide(connectionStoreLayer, { local: true }),
+            Effect.provideService(Executor, controlled),
+          )
+        }),
+      )
+    }
+
+    it.effect('preserves the insert failure when provider compensation also fails', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const database = yield* Database
+        const executor = yield* Executor
+        yield* database.run(
+          database.delete(personTable).where(eq(personTable.id, ownerActor.person.id)),
+        )
+        const failed = Executor.of({
+          ...executor,
+          remove: () =>
+            Effect.fail(
+              new ServiceUnavailable({ service: 'connections', message: 'Cleanup failed' }),
             ),
-          ),
         })
-        yield* Effect.gen(function* () {
-          yield* ConnectionStore
-          yield* TestClock.adjust('1 hour')
-          expect(yield* Ref.get(calls)).toBe(0)
+        const failure = yield* Effect.gen(function* () {
+          return yield* (yield* ConnectionStore).begin(ownerActor, {
+            service: serviceId,
+            label: 'Rejected',
+            shared: false,
+          })
         }).pipe(
           Effect.provide(connectionStoreLayer, { local: true }),
-          Effect.provideService(Executor, disabled),
+          Effect.provideService(Executor, failed),
+          Effect.flip,
         )
+        expect(failure._tag).toBe('DatabaseConstraintViolation')
+      }),
+    )
+
+    it.effect('resumes shared sign-in for another admin and scopes its return to that Person', () =>
+      Effect.gen(function* () {
+        const { ownerActor, memberActor } = yield* fixture()
+        const outsider = (yield* fixture()).ownerActor
+        const store = yield* ConnectionStore
+        const probe = yield* ConnectionProbe
+        const database = yield* Database
+        yield* database.run(
+          database
+            .update(membershipTable)
+            .set({ role: 'admin' })
+            .where(eq(membershipTable.userId, memberActor.person.id)),
+        )
+        if (!Workspace.guards.Company(memberActor.workspace))
+          expect.fail('Company fixture required')
+        const admin = {
+          ...memberActor,
+          by: 'person' as const,
+          workspace: Workspace.cases.Company.make({
+            company: memberActor.workspace.company,
+            role: 'admin',
+          }),
+        }
+        yield* Ref.set(probe.step, 'OpenSignIn')
+        const begun = yield* store.begin(ownerActor, {
+          service: serviceId,
+          label: 'Shared',
+          shared: true,
+        })
+        const original = yield* store.get(ownerActor, begun.connection.id)
+        const executor = yield* Executor
+        const renewed = Executor.of({
+          ...executor,
+          reauthorize: (input) => {
+            expect(input.subject).toBe(admin.person.id)
+            return executor.reauthorize(input)
+          },
+        })
+        yield* Effect.gen(function* () {
+          const resumedStore = yield* ConnectionStore
+          const resumed = yield* resumedStore.resume(admin, begun.connection.id)
+          expect(resumed._tag).toBe('OpenSignIn')
+          const retained = yield* resumedStore.get(admin, begun.connection.id)
+          expect(retained).toMatchObject({
+            personId: admin.person.id,
+            companyId: original.companyId,
+            createdAt: original.createdAt,
+            references: { owner: original.references.owner },
+          })
+          for (const actor of [ownerActor, outsider]) {
+            expect(
+              yield* resumedStore
+                .callback(actor, begun.connection.id, Redacted.make('https://example.test/return'))
+                .pipe(Effect.flip),
+            ).toBeInstanceOf(NotFound)
+          }
+          const personal = {
+            ...admin,
+            workspace: Workspace.cases.Personal.make({}),
+            threadId: Option.none(),
+          }
+          expect(
+            (yield* resumedStore.callback(
+              personal,
+              begun.connection.id,
+              Redacted.make('https://example.test/return'),
+            ))._tag,
+          ).toBe('Ready')
+        }).pipe(
+          Effect.provide(connectionStoreLayer, { local: true }),
+          Effect.provideService(Executor, renewed),
+        )
+        yield* Ref.set(probe.step, 'Done')
+      }),
+    )
+
+    it.effect('rejects a resumed return when its admin leaves the owning Company', () =>
+      Effect.gen(function* () {
+        const { ownerActor, memberActor } = yield* fixture()
+        const database = yield* Database
+        const probe = yield* ConnectionProbe
+        const store = yield* ConnectionStore
+        yield* database.run(
+          database
+            .update(membershipTable)
+            .set({ role: 'admin' })
+            .where(eq(membershipTable.userId, memberActor.person.id)),
+        )
+        if (!Workspace.guards.Company(memberActor.workspace))
+          expect.fail('Company fixture required')
+        const admin = {
+          ...memberActor,
+          workspace: Workspace.cases.Company.make({
+            company: memberActor.workspace.company,
+            role: 'admin',
+          }),
+        }
+        yield* Ref.set(probe.step, 'OpenSignIn')
+        const step = yield* store.begin(ownerActor, {
+          service: serviceId,
+          label: 'Shared',
+          shared: true,
+        })
+        yield* store.resume(admin, step.connection.id)
+        const before = yield* Ref.get(probe.signIns)
+        yield* database.run(
+          database.delete(membershipTable).where(eq(membershipTable.userId, admin.person.id)),
+        )
+        expect(
+          (yield* store
+            .callback(admin, step.connection.id, Redacted.make('https://example.test/return'))
+            .pipe(Effect.flip))._tag,
+        ).toBe('Forbidden')
+        expect(yield* Ref.get(probe.signIns)).toBe(before)
+        yield* Ref.set(probe.step, 'Done')
+      }),
+    )
+
+    it.effect('serializes the same Connection while another Connection resumes independently', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const store = yield* ConnectionStore
+        const probe = yield* ConnectionProbe
+        yield* Ref.set(probe.step, 'OpenSignIn')
+        const first = yield* store.begin(ownerActor, {
+          service: serviceId,
+          label: 'First',
+          shared: false,
+        })
+        const second = yield* store.begin(ownerActor, {
+          service: serviceId,
+          label: 'Second',
+          shared: false,
+        })
+        const executor = yield* Executor
+        const entered = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const calls = yield* Ref.make(0)
+        const controlled = Executor.of({
+          ...executor,
+          reauthorize: Effect.fn('Executor.Test.blockResume')(function* (input) {
+            if (input.connectionId === first.connection.id) {
+              yield* Ref.update(calls, (count) => count + 1)
+              yield* Deferred.succeed(entered, undefined)
+              yield* Deferred.await(release)
+            }
+            return yield* executor.reauthorize(input)
+          }),
+        })
+        yield* Effect.gen(function* () {
+          const scoped = yield* ConnectionStore
+          const slow = yield* scoped.resume(ownerActor, first.connection.id).pipe(Effect.forkChild)
+          yield* Deferred.await(entered)
+          const repeated = yield* scoped
+            .resume(ownerActor, first.connection.id)
+            .pipe(Effect.forkChild)
+          expect((yield* scoped.resume(ownerActor, second.connection.id))._tag).toBe('OpenSignIn')
+          expect(yield* Ref.get(calls)).toBe(1)
+          yield* Deferred.succeed(release, undefined)
+          yield* Fiber.join(slow)
+          yield* Fiber.join(repeated)
+          expect(yield* Ref.get(calls)).toBe(2)
+        }).pipe(
+          Effect.provide(connectionStoreLayer, { local: true }),
+          Effect.provideService(Executor, controlled),
+        )
+        yield* Ref.set(probe.step, 'Done')
       }),
     )
     it.effect(

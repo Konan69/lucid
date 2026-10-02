@@ -39,12 +39,12 @@ import {
   listRecords,
   publicConnection,
   recordChanged,
+  retainResumer,
   saveState,
   type ConnectionRecord,
 } from './records.ts'
 import { connections } from './tables.ts'
 import { rankServices } from './ranking.ts'
-import { inspectCatalog } from './catalog.ts'
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
 const isRetainedAuthorization = Schema.is(
@@ -187,8 +187,13 @@ const begin = Effect.fn('Connections.begin')(function* (
     .pipe(
       Effect.catch(
         Effect.fn('Connections.compensateInsert')(function* (error) {
-          // The provider grant cannot outlive a rejected product insert; cleanup failure stays unavailable.
-          yield* executor.remove(step.references).pipe(Effect.mapError(executorFailure))
+          // Cleanup is attempted and logged; the rejected insert remains the operation's original failure.
+          yield* executor.remove(step.references).pipe(
+            Effect.tapError((failure) =>
+              Effect.logError('Connection insert compensation failed', failure._tag),
+            ),
+            Effect.ignore,
+          )
           return yield* Effect.fail(error)
         }),
       ),
@@ -230,7 +235,7 @@ const retainAuthorization = Effect.fn('Connections.retainAuthorization')(functio
   return yield* Effect.fail(executorFailure(error))
 })
 
-/** Resume changes only authorization state on the existing row; ownership and creation remain stable. */
+/** Resume keeps the same Company owner and provider target while attributing the grant to its admin. */
 const resume = Effect.fn('Connections.resume')(function* (actor: Actor, row: ConnectionRecord) {
   const config = yield* ServerConfig
   const executor = yield* Executor
@@ -240,7 +245,7 @@ const resume = Effect.fn('Connections.resume')(function* (actor: Actor, row: Con
       service: row.service,
       label: row.label,
       owner: row.references.owner,
-      subject: row.personId,
+      subject: actor.person.id,
       references: row.references,
       returnAddress: new URL(
         `/api/connections/return/${encodeURIComponent(row.id)}`,
@@ -305,7 +310,6 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const executor: ExecutorService = yield* Executor
   const database = yield* Database
   const returnAddress = (yield* ServerConfig).PUBLIC_URL.href
-  if (executor.configured) yield* inspectCatalog(executor, returnAddress)
   const dependencies = yield* Effect.context<
     Executor | Database | Audit | ServerConfig | import('../live/changes.ts').Changes
   >()
@@ -339,7 +343,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     return authorizedService(service, authorization)
   })
   /** Search uses only completed availability facts in the adapter's snapshot. A cold sign-in
-   * hint remains optimistic; the scoped inspector corrects it without delaying this request.
+   * hint remains optimistic until Begin or Resume supplies a real app definition.
    */
   const find = Effect.fn('Connections.findServices')(function* (query: string) {
     const services = yield* catalogServices()
@@ -359,9 +363,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     return yield* inspectService(entry)
   })
   const get = (actor: Actor, id: ConnectionId) => provide(getRecord(actor, id, false))
-  // Serialize renewal through persistence: two closed-dialog clicks must not allocate parallel grants.
-  const resuming = yield* Semaphore.make(1)
-  const management = makeManagement({ executor, database, provide, get, resuming })
+  const management = makeManagement({ executor, database, provide, get })
   return {
     get,
     catalog: catalogServices,
@@ -395,10 +397,39 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
   }
 })
 
+/** Each Connection has its own lock through the last holder/waiter; idle locks are removed.
+ * A slow external call cannot block unrelated Connections, and eviction cannot split a busy lock.
+ */
+const serializeResumes = () => {
+  const resuming = new Map<ConnectionId, { permit: Semaphore.Semaphore; users: number }>()
+  const withResume = <A, E, R>(effect: Effect.Effect<A, E, R>, id: ConnectionId) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const lock = yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            let current = resuming.get(id)
+            if (current === undefined) {
+              current = { permit: Semaphore.makeUnsafe(1), users: 0 }
+              resuming.set(id, current)
+            }
+            current.users += 1
+            return current
+          }),
+          (current) =>
+            Effect.sync(() => {
+              current.users -= 1
+              if (current.users === 0) resuming.delete(id)
+            }),
+        )
+        return yield* lock.permit.withPermit(effect)
+      }),
+    )
+  return withResume
+}
+
 /** Management shares the Layer's authority and publishes every persisted state change. */
 const makeManagement = (input: {
   readonly executor: ExecutorService
-  readonly resuming: Semaphore.Semaphore
   readonly database: typeof Database.Service
   readonly provide: <A, E>(
     effect: Effect.Effect<
@@ -416,7 +447,8 @@ const makeManagement = (input: {
     | import('../database/client.ts').DatabaseInfrastructureError
   >
 }) => {
-  const { executor, database, provide, get, resuming } = input
+  const { executor, database, provide, get } = input
+  const withResume = serializeResumes()
   return {
     /** Resume has exactly removal's scoped lookup and admin check, before provider access. */
     resume: Effect.fn('Connections.resumeExisting')(
@@ -439,9 +471,11 @@ const makeManagement = (input: {
           ServiceAuthorization.guards.SetupRequired(service.authorization)
         )
           return yield* Effect.fail(new InvalidRequest({ message: connectionSetupMessage }))
-        return yield* provide(resume(actor, row))
+        const managing = yield* provide(rowActor(actor, row))
+        const retained = yield* provide(retainResumer(managing, row))
+        return yield* provide(resume(managing, retained))
       },
-      (effect) => resuming.withPermit(effect),
+      (effect, _actor, id) => withResume(effect, id),
     ),
     /** Only a managing Person submits keys; the store retains identifiers alone. */
     complete: Effect.fn('Connections.complete')(function* (

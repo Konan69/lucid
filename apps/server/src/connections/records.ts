@@ -50,7 +50,7 @@ export const listRecords = Effect.fn('Connections.listRecords')(function* (actor
   return yield* Effect.forEach(rows, decodeRow)
 })
 
-/** Callback authority is the Person who began authorization, independently of their current workspace. */
+/** Callback authority follows the Person who most recently began/resumed authorization across workspaces. */
 export const getRecord = Effect.fn('Connections.getRecord')(function* (
   actor: Actor,
   id: ConnectionId,
@@ -153,6 +153,41 @@ export const saveState = Effect.fn('Connections.saveState')(function* (
       new Conflict({
         message: 'This Connection changed before authorization finished; reload it.',
       }),
+    )
+  return yield* decodeRow(yield* returned(rows, 'Connection'))
+})
+
+/** Shared ownership is the Company; person_id attributes its current authorization attempt. Persist
+ * the resuming admin before provider access so the returned grant cannot stay bound to its creator.
+ * Compare the observed revision to refuse a concurrent change instead of transferring its authority.
+ */
+export const retainResumer = Effect.fn('Connections.retainResumer')(function* (
+  actor: Actor,
+  row: ConnectionRecord,
+) {
+  if (row.companyId === null || row.personId === actor.person.id) return row
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .update(connections)
+      .set({
+        personId: actor.person.id,
+        updatedAt: yield* Clock.currentTimeMillis,
+      })
+      .where(
+        and(
+          eq(connections.id, row.id),
+          eq(connections.companyId, row.companyId),
+          eq(connections.personId, row.personId),
+          eq(connections.updatedAt, row.updatedAt),
+          eq(connections.status, row.status),
+        ),
+      )
+      .returning(),
+  )
+  if (rows.length === 0)
+    return yield* Effect.fail(
+      new Conflict({ message: 'This Connection changed before resume; reload it.' }),
     )
   return yield* decodeRow(yield* returned(rows, 'Connection'))
 })
