@@ -73,12 +73,12 @@ export interface ConversationService {
   /**
    * Delivers a server signal and records its Run. Routines, follow-ups, Approval outcomes and
    * answers share the admission policy used by Person messages, so every Run records whose
-   * authority it carries. Signals retry busy-Thread Conflicts with their original key until the
-   * other Person's Run settles.
+   * authority it carries. Busy returns a typed Conflict immediately; producers retain their
+   * durable receipt and retry its original key on their own schedule.
    */
   readonly deliver: (
     delivery: SignalDelivery,
-  ) => Effect.Effect<Run, RuntimeUnavailable | NotFound | DatabaseInfrastructureError>
+  ) => Effect.Effect<Run, Conflict | RuntimeUnavailable | NotFound | DatabaseInfrastructureError>
   /** Immediate admission: another Person's working Run returns a client-displayable Conflict. */
   readonly admit: (
     delivery: Delivery,

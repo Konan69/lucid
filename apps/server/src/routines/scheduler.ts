@@ -5,6 +5,7 @@ import * as Option from 'effect/Option'
 import * as Schedule from 'effect/Schedule'
 import * as Schema from 'effect/Schema'
 import {
+  type Conflict,
   Occurrence,
   RunState,
   ThreadId,
@@ -35,6 +36,7 @@ import type { InvalidRoutineSchedule } from './timing.ts'
 const isNotFound = Schema.is(NotFound)
 
 export type RoutineDeliveryError =
+  | Conflict
   | DatabaseInfrastructureError
   | RoutineMissing
   | RoutineThreadUnavailable

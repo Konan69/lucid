@@ -1,7 +1,6 @@
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
-import * as Schema from 'effect/Schema'
 import {
   Conflict,
   NotFound,
@@ -126,23 +125,10 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
 
 const threadMissing = () => Effect.fail(new NotFound({ message: 'Thread not found' }))
 
-const isConflict = Schema.is(Conflict)
-
-/**
- * A Routine, follow-up, Approval outcome or answer must not be dropped merely because another
- * Person is being answered. Keep the caller awaiting a receipt and retry only that admission
- * Conflict with its original key. The database reservation is authoritative on every attempt,
- * including across server instances. Pace only Conflicts, then retry without a finite attempt
- * limit: the refinement removes that failure from the signal producer's contract. Other failures
- * retain the callers' existing recovery policy. Person-authored messages use immediate `admit`.
- * This is an in-flight retry, not durable storage for decisions across a restart.
- */
+/** Producers keep durable receipts and retry on their own schedule; Busy never waits in-process. */
 const makeDeliver = (admit: ConversationService['admit'], runs: RunStore['Service']) =>
   Effect.fn('Conversation.deliver')(function* (delivery: SignalDelivery) {
-    const admitted = yield* admit(delivery).pipe(
-      Effect.tapErrorTag('Conflict', () => Effect.void.pipe(Effect.delay('1 second'))),
-      Effect.retry({ while: isConflict }),
-    )
+    const admitted = yield* admit(delivery)
     const recorded = yield* runs.list(delivery.threadId)
     const run = recorded.find((candidate) => candidate.id === admitted.runId)
     return run === undefined ? yield* threadMissing() : run

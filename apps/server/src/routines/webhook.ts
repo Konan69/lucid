@@ -106,6 +106,9 @@ export const routineWebhookRoutes = HttpRouter.add(
         HttpServerResponse.jsonUnsafe({ error: 'Invalid Idempotency-Key' }, { status: 400 }),
       ),
     ),
+    Effect.catchTag('Conflict', (error) =>
+      Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 409 })),
+    ),
     Effect.catchTag('RoutineMissing', () => Effect.succeed(notFound())),
     Effect.catchTag('NotFound', () => Effect.succeed(notFound())),
     Effect.catchTag('RoutinePayloadTooLarge', () =>

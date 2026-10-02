@@ -4,6 +4,9 @@ import {
   CompanyId,
   Conflict,
   PersonId,
+  Company,
+  RoutineTrigger,
+  Workspace,
   RunId,
   RunState,
   RuntimeUnavailable,
@@ -14,6 +17,10 @@ import { Deferred, Effect, Fiber, Layer, Queue, Ref, Result, Option } from 'effe
 import * as TestClock from 'effect/testing/TestClock'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
+import { findPerson } from '../auth/access.ts'
+import { RoutineStore, routineStoreLayer } from '../routines/store.ts'
+import { RoutineScheduler, routineSchedulerServiceLayer } from '../routines/scheduler.ts'
+import { ThreadStore } from './store.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
@@ -96,7 +103,7 @@ const fixture = Effect.fn('Delivery.test.fixture')(function* () {
       expiresAt: new Date('2100-01-01'),
     }),
   )
-  return { ada, ben, threadId, token }
+  return { ada, ben, threadId, token, companyId }
 })
 
 type RuntimeInput = Parameters<Runtime['Service']['admit']>[0]
@@ -198,7 +205,7 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
     yield* runtime.finish(id)
     expect(yield* Queue.take(recorded.ended)).toBe(id)
   })
-  return { ...rows, ...runtime, ...recorded, conversation, finish }
+  return { ...rows, ...runtime, ...recorded, conversation, finish, services }
 })
 
 /** Use a new submission key for ordinary messages, just as the gateway does. */
@@ -311,40 +318,107 @@ describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
     }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
   )
 
+  it.effect('a Busy Routine keeps its tick while another due Routine runs in the same pass', () =>
+    Effect.gen(function* () {
+      const test = yield* harness()
+      const database = yield* Database
+      const person = yield* findPerson(test.ben)
+      if (Option.isNone(person)) expect.fail('Missing Ben')
+      const actor = {
+        person: person.value,
+        workspace: Workspace.cases.Company.make({
+          company: new Company({ id: test.companyId, name: 'Delivery test', slug: test.companyId }),
+          role: 'member',
+        }),
+        by: 'person' as const,
+        threadId: Option.none<ThreadId>(),
+      }
+      const foundation = Layer.mergeAll(
+        test.services,
+        testConfigLayer,
+        Layer.succeed(Conversation, test.conversation),
+      )
+      const schedulerContext = yield* Layer.build(
+        routineSchedulerServiceLayer.pipe(
+          Layer.provideMerge(routineStoreLayer),
+          Layer.provide(foundation),
+        ),
+      )
+      const store = yield* RoutineStore.pipe(Effect.provideContext(schedulerContext))
+      const scheduler = yield* RoutineScheduler.pipe(Effect.provideContext(schedulerContext))
+      const trigger = RoutineTrigger.cases.Schedule.make({ cron: '* * * * *', timezone: 'UTC' })
+      const busy = yield* store.create(actor, { name: 'Busy', prompt: 'Review', trigger })
+      const healthy = yield* store.create(actor, { name: 'Healthy', prompt: 'Review', trigger })
+      const threadStore = yield* ThreadStore.pipe(Effect.provide(test.services))
+      const busyThread = yield* threadStore.ensure({
+        id: ThreadId.make(`routine-${busy.id}`),
+        title: 'Busy',
+        personId: test.ben,
+        companyId: test.companyId,
+      })
+      yield* database.run(
+        database.update(threads).set({ audience: 'company' }).where(eq(threads.id, busyThread.id)),
+      )
+      const ada = yield* test.conversation.admit(said(busyThread.id, test.ada))
+      yield* TestClock.setTime(60_000)
+      const pass = yield* Effect.result(scheduler.runDue())
+      expect(Result.isFailure(pass) && pass.failure).toBeInstanceOf(Conflict)
+      const waiting = (yield* store.list(actor)).find((routine) => routine.id === busy.id)
+      if (waiting === undefined) expect.fail('Missing Busy Routine')
+      expect(waiting.runs).toMatchObject([
+        { submissionId: null, error: 'Delivery was not admitted (Conflict)' },
+      ])
+      const running = (yield* store.list(actor)).find((routine) => routine.id === healthy.id)
+      if (running === undefined) expect.fail('Missing Healthy Routine')
+      expect(running.runs).toMatchObject([{ status: 'running' }])
+      yield* test.finish(ada.runId)
+      yield* scheduler.runDue()
+      const replayed = (yield* store.list(actor)).find((routine) => routine.id === busy.id)
+      if (replayed === undefined) expect.fail('Missing replayed Routine')
+      expect(replayed.runs.map((run) => run.id)).toEqual(waiting.runs.map((run) => run.id))
+      expect(replayed.runs).toMatchObject([{ status: 'running', error: null }])
+    }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
+  )
+
   for (const { type, origin } of signals) {
-    it.effect(`retains a ${type} signal for Ben until Ada settles, then replays the same key`, () =>
-      Effect.gen(function* () {
-        const test = yield* harness()
-        const ada = yield* test.conversation.admit(said(test.threadId, test.ada))
-        const delivery: SignalDelivery = {
-          threadId: test.threadId,
-          personId: test.ben,
-          idempotencyKey: `${type}-receipt`,
-          message: DeliveryMessage.cases.Signal.make({
-            type,
-            body: 'Server delivery',
-            attributes: {},
-          }),
-          origin,
-        }
-        const pending = yield* test.conversation.deliver(delivery).pipe(Effect.forkScoped)
-        expect(yield* Queue.take(test.blocked)).toBe(
-          submissionId(test.threadId, delivery.idempotencyKey),
-        )
-        expect(yield* Ref.get(test.admitted)).toHaveLength(1)
-        yield* test.finish(ada.runId)
-        yield* TestClock.adjust('1 second')
-        const admitted = yield* Fiber.join(pending)
-        expect(admitted.id).toBe(submissionId(test.threadId, delivery.idempotencyKey))
-        expect(RunState.guards.Working(admitted.state)).toBe(true)
-        expect((yield* Ref.get(test.admitted)).map((input) => input.scope.acting)).toEqual([
-          test.ada,
-          test.ben,
-        ])
-        const replayed = yield* test.conversation.deliver(delivery)
-        expect(replayed.id).toBe(admitted.id)
-        expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(2)
-      }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
+    it.effect(
+      `returns Busy for a ${type} signal immediately and replays its key on the next attempt`,
+      () =>
+        Effect.gen(function* () {
+          const test = yield* harness()
+          const ada = yield* test.conversation.admit(said(test.threadId, test.ada))
+          const delivery: SignalDelivery = {
+            threadId: test.threadId,
+            personId: test.ben,
+            idempotencyKey: `${type}-receipt`,
+            message: DeliveryMessage.cases.Signal.make({
+              type,
+              body: 'Server delivery',
+              attributes: {},
+            }),
+            origin,
+          }
+          const pending = yield* Effect.result(test.conversation.deliver(delivery)).pipe(
+            Effect.forkScoped,
+          )
+          expect(yield* Queue.take(test.blocked)).toBe(
+            submissionId(test.threadId, delivery.idempotencyKey),
+          )
+          expect(yield* Ref.get(test.admitted)).toHaveLength(1)
+          const busy = yield* Fiber.join(pending)
+          expect(Result.isFailure(busy) && busy.failure).toBeInstanceOf(Conflict)
+          yield* test.finish(ada.runId)
+          const admitted = yield* test.conversation.deliver(delivery)
+          expect(admitted.id).toBe(submissionId(test.threadId, delivery.idempotencyKey))
+          expect(RunState.guards.Working(admitted.state)).toBe(true)
+          expect((yield* Ref.get(test.admitted)).map((input) => input.scope.acting)).toEqual([
+            test.ada,
+            test.ben,
+          ])
+          const replayed = yield* test.conversation.deliver(delivery)
+          expect(replayed.id).toBe(admitted.id)
+          expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(2)
+        }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
     )
   }
 
