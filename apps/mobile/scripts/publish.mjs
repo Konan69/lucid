@@ -3,6 +3,8 @@ import * as NodePath from 'node:path'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeProcess from 'node:process'
 import * as NodeURL from 'node:url'
+import * as Option from 'effect/Option'
+import * as Schema from 'effect/Schema'
 
 /**
  * Exports the app's JavaScript as one over-the-air update, in the directory layout the server
@@ -38,18 +40,37 @@ function capture(command, args) {
 }
 
 /**
+ * What `expo-updates runtimeversion:resolve` prints: one JSON line, the `runtimeVersionInfo` that
+ * `resolveRuntimeVersion` in `expo-updates/cli/build/resolveRuntimeVersion.js` (57.0.24) passes to
+ * `console.log(JSON.stringify(...))`. `resolveRuntimeVersionAsync` returns `runtimeVersion: null`
+ * when the app config sets none; that is not publishable, because the version names the directory
+ * the server reads, so null and the empty string fail the decode. `fingerprintSources` and
+ * `workflow` are also printed and are not read here.
+ */
+const RuntimeVersionInfo = Schema.Struct({ runtimeVersion: Schema.NonEmptyString })
+const decodeRuntimeVersionInfo = Schema.decodeUnknownOption(
+  Schema.fromJsonString(RuntimeVersionInfo),
+)
+
+/**
+ * Resolves one platform's runtime version through expo-updates' own resolver. The printed line is
+ * decoded once, here; the failure names the platform and never the rejected output.
+ */
+function resolveRuntimeVersion(platform) {
+  const info = decodeRuntimeVersionInfo(
+    capture('pnpm', ['exec', 'expo-updates', 'runtimeversion:resolve', '--platform', platform]),
+  )
+  if (Option.isNone(info))
+    throw new Error(`expo-updates did not resolve a runtime version for ${platform}`)
+  return info.value.runtimeVersion
+}
+
+/**
  * One export carries both platforms, so both must resolve to the same runtime version. That holds
  * under the `appVersion` policy in `app.json`; a policy that differs by platform would need one
  * export for each, and this stops instead of mislabelling one of them.
  */
-const versions = new Set(
-  platforms.map(
-    (platform) =>
-      JSON.parse(
-        capture('pnpm', ['exec', 'expo-updates', 'runtimeversion:resolve', '--platform', platform]),
-      ).runtimeVersion,
-  ),
-)
+const versions = new Set(platforms.map(resolveRuntimeVersion))
 if (versions.size !== 1)
   throw new Error(`Platforms disagree on the runtime version: ${[...versions].join(', ')}`)
 const [runtimeVersion] = versions
