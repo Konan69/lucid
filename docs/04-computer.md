@@ -133,7 +133,12 @@ fleet scale, not a starting point.
 local provider's RFB connection. Select Boat with `VIVID_COMPUTER_PROVIDER=boat`; configure its
 Redacted API key (`VIVID_BOAT_API_KEY`), size and lifetime through Effect Config. Name the paying
 organization with `VIVID_BOAT_ORG` whenever the key's account belongs to one; leave it unset for an
-account that belongs to none, and Boat bills that account. One durable
+account that belongs to none, and Boat bills that account. The key needs these actions:
+`sandbox.create`, `sandbox.read`, `sandbox.update`, `sandbox.stop`, `exec`, `file.read`,
+`file.write`, `desktop`, `snapshot.read`, `snapshot.write` and `account.read`. Boat's
+`full-sandbox` preset leaves out `sandbox.create`, and a key made with it is refused at the first
+machine (`api_key_action_forbidden`), so name the actions:
+`boat api-key create <name> --actions sandbox.create,sandbox.read,…`. One durable
 binding and creation intent per Person precedes allocation. Restart recovers the same identity;
 stop waits for disk archival and ensure resumes that snapshot. An unresolved creation intent
 past the replay window fails explicitly rather than buying a second machine.
