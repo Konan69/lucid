@@ -144,7 +144,7 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
     )
 
     it.effect(
-      'lists shipped procedures, keeps overrides scoped and refuses built-in mutations',
+      'lists shipped procedures beside same-name saved ones in scope and refuses built-in mutations',
       () =>
         Effect.gen(function* () {
           const { personal, other, admin, member } = yield* fixture()
@@ -152,31 +152,36 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
           const builtin = builtins[0]
           if (builtin === undefined) expect.fail('Shipped procedures are required')
           expect(yield* store.list(personal)).toEqual(builtins)
+          // `catalogue` puts saved rows first and always appends every built-in: a saved procedure
+          // sharing a shipped name coexists with it and never replaces it.
           const saved = yield* store.save(personal, { ...request, name: builtin.name })
-          expect(
-            (yield* store.list(personal)).filter((skill) => skill.name === builtin.name),
-          ).toEqual([saved])
-          expect((yield* store.list(other)).filter((skill) => skill.name === builtin.name)).toEqual(
-            [builtin],
-          )
+          expect(saved.id).not.toBe(builtin.id)
+          expect(SkillOrigin.guards.Saved(saved.origin)).toBe(true)
+          expect(yield* store.list(personal)).toEqual([saved, ...builtins])
+          expect(yield* store.list(other)).toEqual(builtins)
           const company = yield* store.save(admin, {
             ...request,
             name: builtin.name,
             forCompany: true,
           })
-          expect(
-            (yield* store.list(member)).filter((skill) => skill.name === builtin.name),
-          ).toEqual([company])
-          expect((yield* store.list(other)).filter((skill) => skill.name === builtin.name)).toEqual(
-            [builtin],
-          )
+          // The Member sees the Company row but not the admin's personal one; outsiders see neither.
+          expect(yield* store.list(member)).toEqual([company, ...builtins])
+          expect(yield* store.list(personal)).toEqual([saved, ...builtins])
+          expect(yield* store.list(other)).toEqual(builtins)
           expect(yield* store.read(personal, builtin.id)).toEqual(builtin)
+          // A summary carries the saved routing rule verbatim; there is no override wording.
           const summaries = yield* skillHandlers
             .ListSkillSummaries()
             .pipe(Effect.provideService(AuthContext, auth(personal)))
-          const summary = summaries.skills.find((skill) => skill.id === saved.id)
-          if (summary === undefined) expect.fail('Saved procedure summary is required')
-          expect(summary.useWhen).toContain('overrides')
+          expect(summaries.skills).toEqual(
+            [saved, ...builtins].map((skill) => ({
+              id: skill.id,
+              name: skill.name,
+              useWhen: skill.useWhen,
+              createdAt: skill.createdAt,
+            })),
+          )
+          expect(saved.useWhen).toBe(request.useWhen)
           const patch = yield* skillHandlers
             .PatchSkill({ id: builtin.id, patch: { name: 'Changed' } })
             .pipe(Effect.provideService(AuthContext, auth(personal)), Effect.flip)
@@ -185,6 +190,8 @@ describe.skipIf(!testDatabaseConfigured)('Skills', () => {
             .DeleteSkill({ id: builtin.id })
             .pipe(Effect.provideService(AuthContext, auth(admin)), Effect.flip)
           expect(remove._tag).toBe('SkillReadOnly')
+          // Refused mutations leave the shipped record and the saved twin untouched.
+          expect(yield* store.list(personal)).toEqual([saved, ...builtins])
         }),
     )
 

@@ -40,7 +40,12 @@ import { Database, returned } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { auditEntries } from '../audit/tables.ts'
-import { Conversation, StoredRunOrigin, type Delivery } from '../threads/conversation.ts'
+import {
+  Conversation,
+  DeliveryMessage,
+  StoredRunOrigin,
+  type Delivery,
+} from '../threads/conversation.ts'
 import { submissionId } from '../runtime/identity.ts'
 import { RunStore, runStoreLayer, TurnReservation } from '../threads/runs.ts'
 import { ThreadStore, threadStoreLayer } from '../threads/store.ts'
@@ -82,6 +87,16 @@ import {
 class Deliveries extends Context.Service<Deliveries, Ref.Ref<ReadonlyArray<Delivery>>>()(
   'test/RoutineDeliveries',
 ) {}
+
+/**
+ * Routines deliver only Signals. A FirstConversation or Said delivery carries no Routine text, so
+ * reaching one here is a wrong delivery and fails the test rather than reading an absent body.
+ */
+const signalBody = (delivery: Delivery) => {
+  if (!DeliveryMessage.guards.Signal(delivery.message))
+    expect.fail(`Expected a Signal delivery, received ${delivery.message._tag}`)
+  return delivery.message.body
+}
 
 /** Tests may fail the next admission before a Run exists, then retry through the same HTTP route. */
 class DeliveryFailure extends Context.Service<
@@ -1576,10 +1591,10 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           expect((yield* returned(delivered, 'Delivery')).threadId).toBe(`routine-${routine.id}`)
           expect(
             yield* decodeProviderPayload(
-              (yield* returned(delivered, 'Delivery')).message.body.split('Payload:\n')[1],
+              signalBody(yield* returned(delivered, 'Delivery')).split('Payload:\n')[1],
             ),
           ).toEqual(email(1).content)
-          expect((yield* returned(delivered, 'Delivery')).message.body).not.toContain(
+          expect(signalBody(yield* returned(delivered, 'Delivery'))).not.toContain(
             'PRIVATE-CONNECTION-MARKER',
           )
         }),
@@ -1608,7 +1623,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           yield* scheduler.runDue()
           const delivered = yield* Ref.get(yield* Deliveries)
           const content = yield* Effect.forEach(delivered, (delivery) =>
-            decodeProviderPayload(delivery.message.body.split('Payload:\n')[1]),
+            decodeProviderPayload(signalBody(delivery).split('Payload:\n')[1]),
           )
           expect(content).toEqual([email(1).content, email(2).content, email(3).content])
           expect((yield* returned(yield* store.list(owner), 'Routine')).runs).toHaveLength(3)
@@ -1713,7 +1728,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           yield* scheduler.runDue()
           expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
           expect(
-            (yield* returned(yield* Ref.get(yield* Deliveries), 'Delivery')).message.body,
+            signalBody(yield* returned(yield* Ref.get(yield* Deliveries), 'Delivery')),
           ).toContain('from now')
           yield* Ref.set(yield* WatchEvents, [email(2)])
           yield* TestClock.adjust('5 minutes')
@@ -1823,7 +1838,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           expect(yield* store.integrationNotices()).toHaveLength(0)
           const delivered = yield* Ref.get(yield* Deliveries)
           expect(delivered).toHaveLength(1)
-          expect((yield* returned(delivered, 'Delivery')).message.body).toContain(
+          expect(signalBody(yield* returned(delivered, 'Delivery'))).toContain(
             'Its Integration was revoked or needs sign-in',
           )
           expect((yield* returned(delivered, 'Delivery')).threadId).toBe(`routine-${routine.id}`)
@@ -1922,7 +1937,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         yield* scheduler.runDue()
         expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
         expect(
-          (yield* returned(yield* Ref.get(yield* Deliveries), 'Delivery')).message.body,
+          signalBody(yield* returned(yield* Ref.get(yield* Deliveries), 'Delivery')),
         ).toContain('Its Integration was revoked or needs sign-in')
       }),
     )
