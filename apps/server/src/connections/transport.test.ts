@@ -241,8 +241,12 @@ describe('Executor hosted transport', () => {
           (request) => request.path === `GET ${hostedPrefix}/apps/app/tools`,
         )
         expect(pages).toHaveLength(2)
-        expect(new URLSearchParams(requestAt(pages, 1).search).get('cursor')).toBe('next/with+&symbols')
-        expect(new URLSearchParams(requestAt(pages, 1).search).get('expectedProfileRevision')).toBe('1')
+        expect(new URLSearchParams(requestAt(pages, 1).search).get('cursor')).toBe(
+          'next/with+&symbols',
+        )
+        expect(new URLSearchParams(requestAt(pages, 1).search).get('expectedProfileRevision')).toBe(
+          '1',
+        )
         expect(
           requests.find((request) => request.path === `POST ${hostedPrefix}/apps/app/tools/call`),
         ).toMatchObject({
@@ -283,7 +287,14 @@ describe('Executor hosted transport', () => {
   )
 
   for (const value of [
-    { title: 'structured result', result: { content: [{ type: 'text', text: 'Done' }], structuredContent: { ok: true }, isError: false } },
+    {
+      title: 'structured result',
+      result: {
+        content: [{ type: 'text', text: 'Done' }],
+        structuredContent: { ok: true },
+        isError: false,
+      },
+    },
     { title: 'array result', result: { result: [1, 2, 3] } },
     { title: 'plain OpenAPI result', result: 'plain OpenAPI result' },
   ]) {
@@ -503,8 +514,7 @@ describe('Executor hosted transport', () => {
         })
         const step = yield* executor.reauthorize({ ...begin, references: authorized })
         expect(ExecutorStep.guards.EnterKey(step)).toBe(true)
-        if (ExecutorStep.guards.EnterKey(step))
-          expect(step.references).toEqual(key)
+        if (ExecutorStep.guards.EnterKey(step)) expect(step.references).toEqual(key)
         const requests = yield* Ref.get(remote.requests)
         expect(
           requests.filter(

@@ -126,9 +126,7 @@ describe.skipIf(!testDatabaseConfigured)('setup-required public discovery', () =
           expect(error._tag).toBe('InvalidRequest')
           expect(error.message).toBe(connectionSetupMessage)
           expect(
-            (yield* Ref.get(http.requests)).every((path) =>
-              path === `GET ${hostedPrefix}/catalog`,
-            ),
+            (yield* Ref.get(http.requests)).every((path) => path === `GET ${hostedPrefix}/catalog`),
           ).toBe(true)
         }).pipe(Effect.provide(store, { local: true }), Effect.provideService(AuthContext, auth))
       }).pipe(Effect.scoped),
