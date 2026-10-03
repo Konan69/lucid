@@ -38,9 +38,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check package-manager policy
-        run: node scripts/package-manager.mjs
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
@@ -52,6 +49,11 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Runs after the install because the script imports `effect`; before it, Node cannot
+      # resolve the package and the job stopped here without checking anything.
+      - name: Check package-manager policy
+        run: node scripts/package-manager.mjs
 
       - name: Check version lockstep
         run: pnpm check:versions
@@ -83,6 +85,11 @@ jobs:
     name: Secret scan
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # The action lists a pull request's commits to scan them; with only `contents: read` GitHub
+    # answered 403 and the scan never ran.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Checkout full history
         uses: actions/checkout@v4
