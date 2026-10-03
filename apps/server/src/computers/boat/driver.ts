@@ -22,10 +22,15 @@ const Capture = Schema.Struct({
 })
 const decodeCapture = decodeTool('get_desktop_state', Capture)
 
-/** Native Cua CLI over the shipped daemon socket. Named sessions retain snapshot-bound refs.
+/** Native Cua CLI over the owned guest daemon socket. Named sessions retain snapshot-bound refs.
  * Source: trycua/cua libs/cua-driver/rust/crates/cua-driver/src/cli.rs, call + stdin + image output. */
-export const driver = (api: Transport, id: ProviderId, key: MachineKey, socket: string) => {
-  // Ended session labels cannot be reused. Each serialized action owns fresh refs and a public label.
+export const driver = (
+  api: Transport,
+  id: ProviderId,
+  key: MachineKey,
+  location: { readonly socket: string; readonly binary: string },
+) => {
+  // Ended labels cannot be reused; one daemon generation retains this private browser grant.
   const session = `Vivid-${NodeCrypto.randomUUID()}`
   /** Upload into a mode-0700 directory before dispatch; private input never appears in argv.
    * Cleanup covers input and PNG even on refusal. Same-uid/root guest processes remain privileged. */
@@ -81,7 +86,7 @@ export const driver = (api: Transport, id: ProviderId, key: MachineKey, socket: 
       args,
       Effect.fn('Machine.boat.driver.call')(function* (_directory, path) {
         const stdout = yield* invoke(
-          `/opt/ascii/cua-driver/cua-driver call '${tool}' --socket '${socket}' < '${path}'`,
+          `${location.binary} call '${tool}' --socket '${location.socket}' < '${path}'`,
         )
         return yield* decode(stdout)
       }),
@@ -105,7 +110,7 @@ export const driver = (api: Transport, id: ProviderId, key: MachineKey, socket: 
         MachineFailure
       > {
         const stdout = yield* invoke(
-          `/opt/ascii/cua-driver/cua-driver call 'get_desktop_state' --socket '${socket}' --screenshot-out-file '${directory}/picture.png' < '${path}'`,
+          `${location.binary} call 'get_desktop_state' --socket '${location.socket}' --screenshot-out-file '${directory}/picture.png' < '${path}'`,
         )
         const metadata = yield* decodeCapture(stdout)
         const picture = yield* api.read(id, `${directory}/picture.png`)

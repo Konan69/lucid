@@ -39,6 +39,7 @@ interface EvidenceService {
   readonly files: Ref.Ref<ReadonlyMap<string, string>>
   readonly calls: Ref.Ref<ReadonlyArray<string>>
   readonly address: Ref.Ref<string>
+  readonly prepared: Ref.Ref<ReadonlySet<string>>
   readonly breakCreate: Ref.Ref<boolean>
   readonly breakCommand: Ref.Ref<boolean>
   readonly refuseBrowser: Ref.Ref<boolean>
@@ -61,6 +62,7 @@ const evidenceLayer = Layer.effect(
       files: yield* Ref.make<ReadonlyMap<string, string>>(new Map()),
       calls: yield* Ref.make<ReadonlyArray<string>>([]),
       address: yield* Ref.make('https://example.com'),
+      prepared: yield* Ref.make<ReadonlySet<string>>(new Set()),
       breakCreate: yield* Ref.make(false),
       breakCommand: yield* Ref.make(false),
       refuseBrowser: yield* Ref.make(false),
@@ -126,7 +128,7 @@ const commandReply = (stdout: string) =>
 
 /** The guest fixture speaks actual Cua CLI JSON; unexpected tools fail the fixture. */
 const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService, command: string) {
-  const match = /cua-driver call '([a-z_]+)'/.exec(command)
+  const match = /(?:cua-driver|\/driver) call '([a-z_]+)'/.exec(command)
   if (match === null || match[1] === undefined) return commandReply('{"window":"Fixture Chrome"}')
   const tool = match[1]
   yield* Ref.update(evidence.calls, (calls) => [...calls, tool])
@@ -171,6 +173,8 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
           '{"status":"refused","refusal":{"code":"browser_route_unavailable","message":"private-fixture-input"}}',
         )
       expect(args.allow_launch).toBe(false)
+      const session = yield* decodeSession(args.session)
+      yield* Ref.update(evidence.prepared, (sessions) => new Set(sessions).add(session))
       return commandReply('{"status":"ok","prepared":true}')
     }
     case 'get_cursor_position':
@@ -209,6 +213,9 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
         }),
       )
     case 'get_browser_state': {
+      const session = yield* decodeSession(args.session)
+      if (!(yield* Ref.get(evidence.prepared)).has(session))
+        return commandReply('{"status":"refused","refusal":{"code":"consent_required"}}')
       const address = yield* Ref.get(evidence.address)
       if (Object.hasOwn(args, 'snapshot_format'))
         return commandReply(
@@ -238,7 +245,15 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
     case 'browser_navigate': {
       const address = yield* decodeAddress(args.url)
       yield* Ref.set(evidence.address, address)
-      return commandReply('{"status":"ok"}')
+      return commandReply(
+        JSON.stringify({
+          status: 'ok',
+          target_id: 'fixture-target',
+          tab_id: 'fixture-tab',
+          url: address,
+          refs_invalidated: true,
+        }),
+      )
     }
     case 'get_window_state':
       return commandReply(
@@ -251,17 +266,26 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
     case 'press_key':
     case 'hotkey':
     case 'type_text':
+      return commandReply(
+        '{"effect":"unverifiable","route":"synthetic_events","delivery":{"mode":"foreground"}}',
+      )
     case 'launch_app':
-      return commandReply('{"status":"ok"}')
+      return commandReply(
+        '{"active":false,"bundle_id":null,"name":"google-chrome-stable","pid":7,"running":true,"windows":[]}',
+      )
     case 'browser_click':
       expect(args.ref).toBe('p1:1')
       expect(args.input_route).toBe('trusted')
-      return commandReply('{"status":"ok"}')
+      return commandReply(
+        '{"effect":"unverifiable","route":"trusted_input","delivery":{"mode":"background"}}',
+      )
     case 'browser_type':
       expect(args.ref).toBe('p1:2')
       expect(args.replace).toBe(true)
       expect(args.text).toBe('private-fixture-input')
-      return commandReply('{"status":"ok"}')
+      return commandReply(
+        '{"effect":"unverifiable","route":"trusted_input","delivery":{"mode":"background"}}',
+      )
     default:
       return rejected(400)
   }
@@ -313,8 +337,10 @@ const commands = Effect.fn('BoatTest.commands')(function* (evidence: EvidenceSer
       })
     return commandReply('')
   }
-  if (input.command === guestCommand(11))
-    return commandReply('{"socket":"/run/user/1000/vivid-driver.sock"}')
+  if (input.command === guestCommand)
+    return commandReply(
+      '{"socket":"/run/user/1000/vivid-driver.sock","binary":"/home/user/.local/share/vivid/computer/driver","generation":"0123456789abcdef0123456789abcdef"}',
+    )
   if (input.command === 'echo receipt') return commandReply('receipt\n')
   return yield* native(evidence, input.command)
 })
@@ -461,12 +487,10 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         const machine = yield* Machine
         const evidence = yield* Evidence
         yield* machine.ensure(key)
-        const guest = driver(
-          yield* transport(),
-          Protocol.ProviderId.make(id),
-          key,
-          '/run/ascii-cua/driver.sock',
-        )
+        const guest = driver(yield* transport(), Protocol.ProviderId.make(id), key, {
+          socket: '/run/ascii-cua/driver.sock',
+          binary: '/opt/ascii/cua-driver/cua-driver',
+        })
         const invalid = yield* guest
           .call('get_desktop_state', { max_image_dimension: 0 }, Schema.Json)
           .pipe(Effect.flip)

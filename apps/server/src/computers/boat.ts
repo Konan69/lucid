@@ -9,13 +9,13 @@ import {
 } from './machine.ts'
 import { bindings } from './boat/bindings.ts'
 import { transport } from './boat/transport.ts'
-import { driver } from './boat/driver.ts'
-import { browserDriver } from './boat/guest.ts'
+import type { Driver } from './boat/driver.ts'
+import { guestDriver } from './boat/guest.ts'
 import { desktopStep, look } from './boat/desktop.ts'
 import { browse } from './boat/browser.ts'
 import { lifecycle } from './boat/lifecycle.ts'
 
-/** Boat ships the desktop, Chrome and Cua. This Layer installs no image and no driver.
+/** Boat ships the desktop and Chrome; this Layer owns a pinned guest driver prerequisite.
  * Binding lookup is durable; only per-process serialization is cached. Viewer authority is
  * cached until sixty seconds before expiry and never persisted, logged or reused across Persons. */
 export const boatMachineLayer = Layer.effect(
@@ -23,14 +23,27 @@ export const boatMachineLayer = Layer.effect(
   Effect.gen(function* () {
     const api = yield* transport()
     const saved = yield* bindings()
+    const drivers = new Map<MachineKey, { readonly native: Driver; readonly generation: string }>()
     const tabs = new Map<MachineKey, BrowseResult['tabs']>()
     const { ensure, status, inspect, stop, running, permit } = yield* lifecycle(
       api,
       saved,
       (key) => {
         tabs.delete(key)
+        drivers.delete(key)
       },
     )
+    /** Keep the public session through one guest generation so later reads retain the existing
+     * profile grant. Resume or a guest service restart discards stale refs and session authority. */
+    const nativeDriver = Effect.fn('Machine.boat.native')(function* (key: MachineKey) {
+      const identity = yield* running(key)
+      const current = yield* guestDriver(api, identity.id, key)
+      const previous = drivers.get(key)
+      if (previous !== undefined && previous.generation === current.generation)
+        return previous.native
+      drivers.set(key, current)
+      return current.native
+    })
     return Machine.of({
       ensure,
       status,
@@ -73,7 +86,7 @@ export const boatMachineLayer = Layer.effect(
       desktop: Effect.fn('Machine.boat.desktop')(
         function* (input) {
           const identity = yield* running(input.key)
-          const native = driver(api, identity.id, input.key, '/run/ascii-cua/driver.sock')
+          const native = yield* nativeDriver(input.key)
           yield* desktopStep(native, input.action)
           return yield* look(native, api, { id: identity.id, key: input.key })
         },
@@ -81,9 +94,8 @@ export const boatMachineLayer = Layer.effect(
       ),
       browse: Effect.fn('Machine.boat.browse')(
         function* (input) {
-          const identity = yield* running(input.key)
           const result = yield* browse(
-            yield* browserDriver(api, identity.id, input.key),
+            yield* nativeDriver(input.key),
             input.action,
             Option.fromUndefinedOr(tabs.get(input.key)),
           )

@@ -10,6 +10,7 @@ import {
 import type { Driver } from './driver.ts'
 import type { ProviderId } from './protocol.ts'
 import type { Transport } from './transport.ts'
+import { ActionReceipt } from './receipt.ts'
 
 export const Cursor = Schema.Struct({ source: Schema.String, x: Schema.Int, y: Schema.Int })
 const Focus = Schema.Struct({ window: Schema.NullOr(Schema.String) })
@@ -55,18 +56,18 @@ export const desktopStep = Effect.fn('Machine.boat.desktop.step')(function* (
     Look: () => Effect.void,
     Move: ({ to }) =>
       native
-        .call('move_cursor', { scope: 'desktop', x: to.x, y: to.y }, Schema.Json)
+        .call('move_cursor', { scope: 'desktop', x: to.x, y: to.y }, ActionReceipt)
         .pipe(Effect.asVoid),
     Click: ({ at, button, times }) =>
       native
-        .call('click', { ...common, x: at.x, y: at.y, button, count: times }, Schema.Json)
+        .call('click', { ...common, x: at.x, y: at.y, button, count: times }, ActionReceipt)
         .pipe(Effect.asVoid),
     Drag: ({ from, to }) =>
       native
         .call(
           'drag',
           { ...common, from_x: from.x, from_y: from.y, to_x: to.x, to_y: to.y },
-          Schema.Json,
+          ActionReceipt,
         )
         .pipe(Effect.asVoid),
     Scroll: ({ at, direction, notches }) =>
@@ -74,16 +75,16 @@ export const desktopStep = Effect.fn('Machine.boat.desktop.step')(function* (
         .call(
           'scroll',
           { ...common, x: at.x, y: at.y, direction, amount: notches, by: 'line' },
-          Schema.Json,
+          ActionReceipt,
         )
         .pipe(Effect.asVoid),
     Type: ({ text }) =>
-      native.call('type_text', { ...common, text }, Schema.Json).pipe(Effect.asVoid),
+      native.call('type_text', { ...common, text }, ActionReceipt).pipe(Effect.asVoid),
     Press: Effect.fn('Machine.boat.desktop.press')(function* ({ keys }) {
       const parts = keys.split('+')
       const key = parts.pop()
       if (key === undefined || key === '') return yield* Effect.fail(new MachineInputInvalid())
-      yield* native.call('press_key', { ...common, key, modifiers: parts }, Schema.Json)
+      yield* native.call('press_key', { ...common, key, modifiers: parts }, ActionReceipt)
       return undefined
     }),
     Wait: ({ seconds }) => Effect.sleep(`${seconds} seconds`),

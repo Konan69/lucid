@@ -4,7 +4,7 @@ import { MachineOperationFailed, MachineResponseInvalid } from '../machine.ts'
 const RefusalCode = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9_]*$/)).pipe(
   Schema.brand('ComputerToolRefusalCode'),
 )
-const ArgumentsRefused = Schema.Struct({ code: RefusalCode, detail: Schema.String })
+const ArgumentsRefused = Schema.Struct({ code: RefusalCode })
 const BrowserRefused = Schema.Struct({
   status: Schema.Literal('refused'),
   refusal: Schema.Struct({ code: RefusalCode }),

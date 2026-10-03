@@ -8,6 +8,7 @@ import {
 } from '../machine.ts'
 import { validateAddress, validateKey } from '../browser.ts'
 import type { Driver } from './driver.ts'
+import { ActionReceipt, NavigationReceipt } from './receipt.ts'
 
 /** Exact browser bindings and semantic state, from Cua core/src/browser/tools.rs.
  * References remain inside this adapter; the model names controls from their accessible labels. */
@@ -84,7 +85,7 @@ const chrome = Effect.fn('Machine.boat.browser.chrome')(function* (
     yield* native.call(
       'launch_app',
       { name: 'google-chrome-stable', additional_arguments: ['--force-renderer-accessibility'] },
-      Schema.Json,
+      Launched,
     )
     // Launch is dispatched once; only discovery is retried while the native window appears.
     for (let attempt = 0; attempt < 10; attempt++) {
@@ -98,6 +99,11 @@ const chrome = Effect.fn('Machine.boat.browser.chrome')(function* (
   if (matches.length !== 1 || window === undefined || window.pid === null)
     return yield* Effect.fail(new BrowserStepFailed())
   return { pid: window.pid, window_id: window.window_id }
+})
+const Launched = Schema.Struct({
+  running: Schema.Boolean,
+  pid: Schema.Int,
+  windows: Windows.fields.windows,
 })
 const Prepared = Schema.Struct({ status: Schema.Literal('ok'), prepared: Schema.Boolean })
 
@@ -197,7 +203,7 @@ const selectTab = Effect.fn('Machine.boat.browser.select')(function* (
   yield* native.call(
     'click',
     { ...window, element_token: item.element_token, delivery_mode: 'foreground' },
-    Schema.Json,
+    ActionReceipt,
   )
   return undefined
 })
@@ -215,7 +221,7 @@ const step = Effect.fn('Machine.boat.browser.step')(function* (
     yield* native.call(
       'press_key',
       { ...window, key, modifiers: pressed.slice(0, -1), delivery_mode: 'foreground' },
-      Schema.Json,
+      ActionReceipt,
     )
     return undefined
   })
@@ -226,18 +232,18 @@ const step = Effect.fn('Machine.boat.browser.step')(function* (
       yield* native.call(
         'browser_navigate',
         { target_id: bound.target_id, tab_id: tab.tab_id, url: address },
-        Schema.Json,
+        NavigationReceipt,
       )
     }),
     Read: () => Effect.void,
     Screenshot: () => native.capture().pipe(Effect.asVoid),
     Click: Effect.fn('Machine.boat.browser.click')(function* ({ target }) {
       const ref = yield* targetRef(native, bound, target, 'click')
-      yield* native.call('browser_click', { ...ref, input_route: 'trusted' }, Schema.Json)
+      yield* native.call('browser_click', { ...ref, input_route: 'trusted' }, ActionReceipt)
     }),
     Type: Effect.fn('Machine.boat.browser.type')(function* ({ target, text }) {
       const ref = yield* targetRef(native, bound, target, 'type')
-      yield* native.call('browser_type', { ...ref, text, replace: true }, Schema.Json)
+      yield* native.call('browser_type', { ...ref, text, replace: true }, ActionReceipt)
     }),
     Press: Effect.fn('Machine.boat.browser.press')(function* ({ key }) {
       yield* validateKey(key)
@@ -248,7 +254,7 @@ const step = Effect.fn('Machine.boat.browser.step')(function* (
         .call(
           'scroll',
           { ...window, direction, amount: notches, by: 'line', delivery_mode: 'foreground' },
-          Schema.Json,
+          ActionReceipt,
         )
         .pipe(Effect.asVoid),
     Back: () => keys(['alt', 'Left']),
@@ -260,7 +266,7 @@ const step = Effect.fn('Machine.boat.browser.step')(function* (
       yield* native.call(
         'type_text',
         { ...window, text: address, delivery_mode: 'foreground' },
-        Schema.Json,
+        ActionReceipt,
       )
       yield* keys(['Return'])
     }),
