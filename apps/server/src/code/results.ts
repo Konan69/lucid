@@ -4,7 +4,7 @@ import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import { boundedNesting, budgets, bytes } from './budgets.ts'
 import { printed } from './logs.ts'
-import { encodeWorker, PipeFailure, WorkerMessage } from './protocol.ts'
+import { PipeFailure, WorkerMessage } from './protocol.ts'
 
 const decodeGuestJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))
 
@@ -52,9 +52,9 @@ export const finish = Effect.fn('Code.finishGuest')(function* (result: CodemodeR
       logs: logs.logs,
       logsTruncated: logs.logsTruncated,
     })
-    return bytes(encodeWorker(message)) > budgets.result
-      ? failed(CodeFailure.cases.OverLimit.make({ limit: 'result' }))
-      : message
+    // The parent alone knows receipt size and shrinks logs after reserving the value.
+    // IPC reserves at most 32 KiB JSON plus 8 KiB logs and a bounded frame envelope.
+    return message
   }).pipe(
     Effect.catchTag('CodePipeFailure', (failure) =>
       Effect.succeed(
