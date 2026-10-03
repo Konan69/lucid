@@ -50,6 +50,9 @@ const PackageDocument = Schema.Struct({
 })
 const decodeTargetDocument = Schema.decodeUnknownSync(Schema.fromJsonString(TargetDocument))
 const decodePackageDocument = Schema.decodeUnknownSync(Schema.fromJsonString(PackageDocument))
+const decodeContainerCommand = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Array(Schema.String)),
+)
 const source = (root, relativePath) =>
   NodeFS.readFileSync(NodePath.join(root, relativePath), 'utf8')
 
@@ -260,6 +263,37 @@ const assertMigrationPolicy = (migrationSource) => {
   assert.doesNotMatch(migrationSource, /\bgenerate\b/, 'startup must never generate migrations')
 }
 
+/**
+ * Railway startCommand overrides image CMD. Verify their parity so the offline image proof
+ * exercises the deployed entry, and require the root context that installs workspace packages.
+ * Alchemy's context source uploads these Dockerfiles; it does not bundle the runtime itself.
+ */
+const assertContainerPolicy = (root) => {
+  const railwaySource = source(root, 'infra/railway.ts')
+  for (const [name, dockerfilePath] of [
+    ['Runtime', 'packages/agent/runtime/Dockerfile'],
+    ['Server', 'apps/server/Dockerfile'],
+  ]) {
+    const declaration = railwaySource.match(
+      new RegExp(`Railway\\.Service\\('${name}', \\{([\\s\\S]*?)^  \\}\\)`, 'm'),
+    )
+    assert.notEqual(declaration, null, `${name} must declare a Railway Service`)
+    const block = declaration[1]
+    assert.ok(block.includes("context: '.'"), `${name} must upload the workspace root`)
+    assert.ok(
+      block.includes(`dockerfilePath: '${dockerfilePath}'`),
+      `${name} must select its checked-in Dockerfile`,
+    )
+    const entry = source(root, dockerfilePath).match(/^CMD (\[.*\])$/m)
+    assert.notEqual(entry, null, `${name} Dockerfile must declare its production command`)
+    const command = decodeContainerCommand(entry[1]).join(' ')
+    assert.ok(
+      block.includes(`startCommand: '${command}'`),
+      `${name} Railway startCommand must match image CMD`,
+    )
+  }
+}
+
 const assertRepositoryPolicy = (root) => {
   assert.equal(
     NodeFS.existsSync(NodePath.join(root, 'apps/web/wrangler.jsonc')),
@@ -300,6 +334,7 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   assertDatabasePolicy(databaseSource)
   assertEnvironmentWiring(root, stackSource)
   assertMigrationPolicy(source(root, 'scripts/migrate.mjs'))
+  assertContainerPolicy(root)
   assertRepositoryPolicy(root)
   return { targets: targetKeys.length, serverEnvironmentVariables: 7, result: 'ok' }
 }

@@ -84,6 +84,10 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     port: ports.runtime,
     publicDomain: false,
     healthcheckPath: '/health',
+    /** Bare Node runs the bundled workspace sources; a retained dashboard command cannot bypass it. */
+    startCommand: 'node packages/agent/runtime/dist/server.mjs',
+    /** Flue migrates its own schema at startup; clear any inherited pre-deploy command. */
+    preDeploy: { command: null },
     env: {
       DATABASE_URL: database.connectionUri,
       HOST: listenHost,
@@ -95,6 +99,12 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     },
   })
 
+  /**
+   * Server and Runtime are independent graph nodes. Resource.ts:Resource registers them;
+   * Apply.ts:executePlan reconciles siblings concurrently and executeNode collects failures
+   * without cancelling peers. Literal private URLs preserve this independence: Server health,
+   * auth, migrations and static routes do not require Runtime to become healthy.
+   */
   const server = yield* Railway.Service('Server', {
     project,
     name: serviceNames.server,
@@ -103,6 +113,8 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     port: ports.server,
     publicDomain: true,
     healthcheckPath: '/health',
+    /** Pin the image entry: omitting this prop preserves an existing Railway override. */
+    startCommand: 'pnpm --filter @vivid/server start',
     /**
      * Auth tables, then product tables, in the order `scripts/migrate.mjs` owns. Railway runs this
      * in the freshly built image before the new server takes traffic; a failure keeps the previous
