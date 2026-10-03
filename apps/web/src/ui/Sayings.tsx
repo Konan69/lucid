@@ -4,9 +4,10 @@ import { useSyncExternalStore } from 'react'
 import { said } from '../data/said'
 
 /**
- * The sentences the app says at the foot of the window (see `data/said.ts`). Each rises a little
- * as it arrives, from where it will sit, and goes at once when dismissed or when its time is up:
- * the arrival is worth a moment of motion, the leaving is not.
+ * The sentences the app says at the foot of the window (see `data/said.ts`). Each comes up from
+ * below and leaves the way it came, faster (`motion-toast`): a sentence that vanished mid-read
+ * looked like a fault, and one that leaves by the edge it entered is plainly done. While it
+ * leaves it cannot be pressed.
  */
 export function Sayings() {
   const sayings = useSyncExternalStore(said.subscribe, said.all)
@@ -17,7 +18,9 @@ export function Sayings() {
         <li
           key={saying.id}
           role="status"
-          className="pointer-events-auto flex max-w-md items-center gap-2 rounded-panel py-1.5 pr-1.5 pl-3.5 text-label text-ink lift glass transition-pop duration-(--dur-base) ease-out starting:translate-y-2 starting:opacity-0"
+          data-leaving={saying.leaving ? '' : undefined}
+          inert={saying.leaving}
+          className="pointer-events-auto flex max-w-md motion-toast items-center gap-2 rounded-panel py-1.5 pr-1.5 pl-3.5 text-label text-ink lift glass"
         >
           <span className="min-w-0 flex-1 text-pretty">{saying.words}</span>
           {Option.isSome(saying.action) && (
