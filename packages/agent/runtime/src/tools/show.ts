@@ -4,7 +4,12 @@ import * as v from 'valibot'
 
 /** Match the contract's length-only rule; trimming would reject valid display input. */
 function line(description: string) {
-  return v.pipe(v.string(), v.minLength(1), v.maxLength(200), v.description(description))
+  return v.pipe(
+    v.string('Use text.'),
+    v.minLength(1, 'Use at least one character.'),
+    v.maxLength(200, 'Use at most 200 characters.'),
+    v.description(`${description} Between 1 and 200 characters.`),
+  )
 }
 
 /** Cells and explanatory text may be empty, unlike labels and titles. */
@@ -28,6 +33,23 @@ function address(description: string) {
 }
 
 const title = v.exactOptional(line('A short heading; omit when unnecessary.'))
+
+const comparisonRules = {
+  good: 'Provide the good array; use [] when there are no advantages.',
+  bad: 'Provide the bad array; use [] when there are no drawbacks.',
+  facts: 'Provide the facts array; use [] when there are no attributes.',
+}
+
+/** Valibot reports absent keys at the containing object, before visiting the array schema. */
+function comparisonIssue(issue: v.BaseIssue<unknown>) {
+  const [path] = issue.path ?? []
+  const rule = Object.entries(comparisonRules).find(
+    ([key]) => path !== undefined && key === path.key,
+  )
+  return rule === undefined
+    ? 'Provide each comparison item as an object with name, good, bad and facts.'
+    : rule[1]
+}
 
 /**
  * Flue requires Valibot at model ingress. Keep every field and bound aligned with Shown;
@@ -147,27 +169,46 @@ const kinds = {
       title,
       items: v.pipe(
         v.array(
-          v.object({
-            name: line('The item being compared.'),
-            summary: v.exactOptional(words('A short overview of this item.')),
-            good: v.pipe(
-              v.array(line('An advantage.')),
-              v.maxLength(6),
-              v.description('Advantages.'),
-            ),
-            bad: v.pipe(v.array(line('A drawback.')), v.maxLength(6), v.description('Drawbacks.')),
-            facts: v.pipe(
-              v.array(
-                v.object({ label: line('An attribute.'), value: line('Its value for this item.') }),
+          v.object(
+            {
+              name: line('The item being compared.'),
+              summary: v.exactOptional(words('A short overview of this item.')),
+              good: v.pipe(
+                v.array(line('An advantage.'), comparisonRules.good),
+                v.maxLength(6, 'Use at most six advantages.'),
+                v.description(
+                  'Required good array, including [] when there are no advantages; at most six.',
+                ),
               ),
-              v.maxLength(8),
-              v.description('The same attributes across the items.'),
-            ),
-          }),
+              bad: v.pipe(
+                v.array(line('A drawback.'), comparisonRules.bad),
+                v.maxLength(6, 'Use at most six drawbacks.'),
+                v.description(
+                  'Required bad array, including [] when there are no drawbacks; at most six.',
+                ),
+              ),
+              facts: v.pipe(
+                v.array(
+                  v.object({
+                    label: line('An attribute.'),
+                    value: line('Its value for this item.'),
+                  }),
+                  comparisonRules.facts,
+                ),
+                v.maxLength(8, 'Use at most eight attributes.'),
+                v.description(
+                  'Required facts array, including [] when empty; at most eight label/value attributes, each 1–200 characters.',
+                ),
+              ),
+            },
+            comparisonIssue,
+          ),
         ),
         v.minLength(2),
         v.maxLength(5),
-        v.description('Between two and five things to compare.'),
+        v.description(
+          'Between two and five things to compare. Every item must include name, good, bad and facts; empty arrays are valid.',
+        ),
       ),
       pick: v.exactOptional(
         v.pipe(
@@ -317,22 +358,49 @@ const kinds = {
   ),
 } satisfies { [Kind in Shown['_tag']]: v.GenericSchema<unknown, Extract<Shown, { _tag: Kind }>> }
 
+const display = v.variant(
+  '_tag',
+  Object.values(kinds),
+  'Provide show as a JSON object with a valid _tag; do not quote or stringify it.',
+)
+const request = v.object({ show: display })
+
+/** Name the failed field without echoing the submitted display; one corrected call may succeed. */
+function refusal(issues: readonly v.BaseIssue<unknown>[]) {
+  const problems = issues.map((issue) => `${v.getDotPath(issue) ?? 'show'}: ${issue.message}`)
+  return {
+    output: {
+      ok: false,
+      message: `${problems.join(' ')} Correct these fields and call show again once. Nothing was displayed.`,
+    },
+    terminate: false,
+  }
+}
+
 /** The input itself is drawn by every surface; there is no RPC, storage, or second data copy. */
 export function showTools() {
   return [
     defineTool({
       name: 'show',
       description:
-        'Show a rich result in the Thread. Options, Form and Draft stop the turn for the Person to answer.',
+        'Show a rich result in the Thread. Pass show as a JSON object, never a quoted JSON string. Comparison items require name, good, bad and facts (use [] for empty arrays); short labels are 1–200 characters. If refused, correct the named field and retry once. Options, Form and Draft stop the turn for the Person to answer.',
       input: v.object({
         show: v.pipe(
-          v.variant('_tag', Object.values(kinds)),
-          v.description('The complete display to show in the Thread.'),
+          // Flue 2.2.2 / pi 0.87.1 checks generated JSON Schema before our Valibot messages.
+          // Retain the complete advertised shape, but admit untrusted input to this callback
+          // solely for a field-specific refusal. The strict request below still gates every
+          // success; clients independently decode ShowRequest before drawing the input.
+          v.union([display, v.unknown()]),
+          v.description(
+            'The complete display object, not serialized JSON text. Invalid input is refused; follow the described shape.',
+          ),
         ),
       }),
       /** Only acknowledge the input; repeating it in output would create a second display payload. */
       run({ data }) {
-        const shown = Shown.match(data.show, {
+        const parsed = v.safeParse(request, data)
+        if (!parsed.success) return refusal(parsed.issues)
+        const shown = Shown.match(parsed.output.show, {
           Table: () => 'table',
           Chart: () => 'chart',
           Steps: () => 'steps',
@@ -345,7 +413,7 @@ export function showTools() {
           Form: () => 'form',
           Pictures: () => 'pictures',
         })
-        if (Shown.isAnyOf(['Options', 'Form', 'Draft'])(data.show)) {
+        if (Shown.isAnyOf(['Options', 'Form', 'Draft'])(parsed.output.show)) {
           return {
             output: {
               ok: true,

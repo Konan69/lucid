@@ -87,6 +87,12 @@ const decodeReceipt = Schema.decodeUnknownSync(
     terminate: Schema.Boolean,
   }),
 )
+const decodeRefusal = Schema.decodeUnknownSync(
+  Schema.Struct({
+    output: Schema.Struct({ ok: Schema.Literal(false), message: Schema.String }),
+    terminate: Schema.Literal(false),
+  }),
+)
 const context = {
   toolCallId: 'show-call',
   signal: new AbortController().signal,
@@ -383,10 +389,61 @@ describe('show tool', () => {
         pictures: Array.from({ length: 13 }, () => ({ address: 'https://example.test/a.png' })),
       },
     },
-  ])('rejects $name identically', ({ value }) => {
+  ])('refuses $name without weakening the surface contract', async ({ value }) => {
     const input = { show: value }
-    expect(v.safeParse(show.input, input).success).toBe(false)
+    const result = decodeRefusal(await show.run({ ...context, data: v.parse(show.input, input) }))
+    expect(result.output.ok).toBe(false)
     expect(Option.isSome(decodeRequest(input))).toBe(false)
+  })
+
+  it.each(['good', 'bad', 'facts'] as const)(
+    'names the missing %s array and succeeds after one correction',
+    async (field) => {
+      const item = { name: 'Zoom', good: [], bad: [], facts: [] }
+      const incomplete = Object.fromEntries(Object.entries(item).filter(([key]) => key !== field))
+      const result = decodeRefusal(
+        await show.run({
+          ...context,
+          data: v.parse(show.input, {
+            show: {
+              ...samples.Comparison,
+              items: [incomplete, { name: 'Meet', good: [], bad: [], facts: [] }],
+            },
+          }),
+        }),
+      )
+      expect(result.output.message).toContain(`show.items.0.${field}: Provide the ${field} array`)
+      expect(result.output.message).toContain('use []')
+      expect(result.output.message).toContain('call show again once')
+      expect(
+        decodeReceipt(
+          await show.run({ ...context, data: v.parse(show.input, { show: samples.Comparison }) }),
+        ).output,
+      ).toEqual({ ok: true, shown: 'comparison' })
+    },
+  )
+
+  it('refuses quoted JSON instead of silently changing the display payload', async () => {
+    const input = { show: `${JSON.stringify(samples.Comparison)}]` }
+    const result = decodeRefusal(await show.run({ ...context, data: v.parse(show.input, input) }))
+    expect(result.output.message).toContain('show: Provide show as a JSON object')
+    expect(result.output.message).toContain('do not quote or stringify it')
+    expect(result.output.message).toContain('Nothing was displayed.')
+    expect(Option.isSome(decodeRequest(input))).toBe(false)
+  })
+
+  it('names the field and 200-character rule for an overlong comparison label', async () => {
+    const input = {
+      show: {
+        ...samples.Comparison,
+        items: [
+          { name: 'x'.repeat(201), good: [], bad: [], facts: [] },
+          { name: 'Meet', good: [], bad: [], facts: [] },
+        ],
+      },
+    }
+    const result = decodeRefusal(await show.run({ ...context, data: v.parse(show.input, input) }))
+    expect(result.output.message).toContain('show.items.0.name: Use at most 200 characters.')
   })
 
   it.each([samples.Options, samples.Form, samples.Draft])(
