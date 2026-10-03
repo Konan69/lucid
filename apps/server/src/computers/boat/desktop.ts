@@ -1,12 +1,17 @@
 import * as NodeBuffer from 'node:buffer'
-import { DesktopAction, DesktopView, ScreenPoint } from '@vivid/contracts'
+import { DesktopAction, DesktopView } from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
-import { MachineResponseInvalid, type MachineFailure, type MachineKey } from '../machine.ts'
+import {
+  MachineInputInvalid,
+  MachineResponseInvalid,
+  type MachineFailure,
+  type MachineKey,
+} from '../machine.ts'
 import type { Driver } from './driver.ts'
 import type { ProviderId } from './protocol.ts'
 import type { Transport } from './transport.ts'
 
-export const Cursor = ScreenPoint
+export const Cursor = Schema.Struct({ source: Schema.String, x: Schema.Int, y: Schema.Int })
 const Focus = Schema.Struct({ window: Schema.NullOr(Schema.String) })
 const decodeFocus = Schema.decodeUnknownEffect(Schema.fromJsonString(Focus))
 
@@ -74,8 +79,13 @@ export const desktopStep = Effect.fn('Machine.boat.desktop.step')(function* (
         .pipe(Effect.asVoid),
     Type: ({ text }) =>
       native.call('type_text', { ...common, text }, Schema.Json).pipe(Effect.asVoid),
-    Press: ({ keys }) =>
-      native.call('hotkey', { ...common, keys: keys.split('+') }, Schema.Json).pipe(Effect.asVoid),
+    Press: Effect.fn('Machine.boat.desktop.press')(function* ({ keys }) {
+      const parts = keys.split('+')
+      const key = parts.pop()
+      if (key === undefined || key === '') return yield* Effect.fail(new MachineInputInvalid())
+      yield* native.call('press_key', { ...common, key, modifiers: parts }, Schema.Json)
+      return undefined
+    }),
     Wait: ({ seconds }) => Effect.sleep(`${seconds} seconds`),
   })
 })
@@ -109,7 +119,7 @@ export const look = Effect.fn('Machine.boat.desktop.look')(function* (
     picture: picture.screenshot_png_b64,
     width: picture.screen_width,
     height: picture.screen_height,
-    pointer,
+    pointer: { x: pointer.x, y: pointer.y },
     window: focus.window,
   })
 })

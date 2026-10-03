@@ -8,6 +8,7 @@ import {
 } from '../machine.ts'
 import type { ProviderId } from './protocol.ts'
 import type { Transport } from './transport.ts'
+import { decodeTool } from './refusal.ts'
 
 const Capture = Schema.Struct({
   screenshot_mime_type: Schema.Literal('image/png'),
@@ -16,13 +17,13 @@ const Capture = Schema.Struct({
   screen_width: Schema.Int,
   screen_height: Schema.Int,
 })
-const decodeCapture = Schema.decodeUnknownEffect(Schema.fromJsonString(Capture))
+const decodeCapture = decodeTool('get_desktop_state', Capture)
 
 /** Native Cua CLI over the shipped daemon socket. Named sessions retain snapshot-bound refs.
  * Source: trycua/cua libs/cua-driver/rust/crates/cua-driver/src/cli.rs, call + stdin + image output. */
 export const driver = (api: Transport, id: ProviderId, key: MachineKey) => {
-  // Sessions are already guest-local. A public label must never paint a private key on an overlay.
-  const session = 'Vivid'
+  // Ended session labels cannot be reused. Each serialized action owns fresh refs and a public label.
+  const session = `Vivid-${NodeCrypto.randomUUID()}`
   /** Upload into a mode-0700 directory before dispatch; private input never appears in argv.
    * Cleanup covers input and PNG even on refusal. Same-uid/root guest processes remain privileged. */
   const input = <A, E>(
@@ -41,7 +42,7 @@ export const driver = (api: Transport, id: ProviderId, key: MachineKey) => {
           id,
           path,
           JSON.stringify(
-            tool === 'list_windows' || tool === 'list_apps'
+            tool === 'list_windows' || tool === 'list_apps' || tool === 'launch_app'
               ? args
               : Object.assign({}, args, { session }),
           ),
@@ -71,7 +72,7 @@ export const driver = (api: Transport, id: ProviderId, key: MachineKey) => {
   })
   /** Decode every guest tool's JSON at ingress; public responses never contain native handles. */
   const call = <A>(tool: string, args: Schema.JsonObject, schema: Schema.ConstraintDecoder<A>) => {
-    const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(schema))
+    const decode = decodeTool(tool, schema)
     return input(
       tool,
       args,
@@ -79,9 +80,7 @@ export const driver = (api: Transport, id: ProviderId, key: MachineKey) => {
         const stdout = yield* invoke(
           `/opt/ascii/cua-driver/cua-driver call '${tool}' --socket /run/ascii-cua/driver.sock < '${path}'`,
         )
-        return yield* decode(stdout).pipe(
-          Effect.mapError(() => new MachineResponseInvalid({ operation: 'computer-tool' })),
-        )
+        return yield* decode(stdout)
       }),
     )
   }
@@ -90,7 +89,7 @@ export const driver = (api: Transport, id: ProviderId, key: MachineKey) => {
   const capture = Effect.fn('Machine.boat.driver.capture')(() =>
     input(
       'get_desktop_state',
-      { max_image_dimension: 0 },
+      {},
       Effect.fn('Machine.boat.driver.picture')(function* (directory, path): Effect.fn.Return<
         {
           screenshot_png_b64: string
@@ -105,9 +104,7 @@ export const driver = (api: Transport, id: ProviderId, key: MachineKey) => {
         const stdout = yield* invoke(
           `/opt/ascii/cua-driver/cua-driver call 'get_desktop_state' --socket /run/ascii-cua/driver.sock --screenshot-out-file '${directory}/picture.png' < '${path}'`,
         )
-        const metadata = yield* decodeCapture(stdout).pipe(
-          Effect.mapError(() => new MachineResponseInvalid({ operation: 'computer-tool' })),
-        )
+        const metadata = yield* decodeCapture(stdout)
         const picture = yield* api.read(id, `${directory}/picture.png`)
         return {
           screenshot_png_b64: picture.content,

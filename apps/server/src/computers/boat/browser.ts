@@ -91,21 +91,15 @@ const prepare = Effect.fn('Machine.boat.browser.prepare')(function* (
   native: Driver,
   window: Window,
 ) {
-  const receipt = yield* native
-    .call(
-      'browser_prepare',
-      {
-        ...window,
-        strategy: { kind: 'existing_profile' },
-        allow_launch: false,
-      },
-      Prepared,
-    )
-    .pipe(
-      Effect.catchTag('MachineOperationFailed', () =>
-        Effect.fail(new MachineCapabilityUnavailable({ capability: 'browser' })),
-      ),
-    )
+  const receipt = yield* native.call(
+    'browser_prepare',
+    {
+      ...window,
+      strategy: { kind: 'existing_profile' },
+      allow_launch: false,
+    },
+    Prepared,
+  )
   if (!receipt.prepared)
     return yield* Effect.fail(new MachineCapabilityUnavailable({ capability: 'browser' }))
   return undefined
@@ -199,10 +193,16 @@ const step = Effect.fn('Machine.boat.browser.step')(function* (
   bound: BrowserBinding,
   action: BrowserAction,
 ) {
-  const keys = (pressed: ReadonlyArray<string>) =>
-    native
-      .call('hotkey', { ...window, keys: pressed, delivery_mode: 'foreground' }, Schema.Json)
-      .pipe(Effect.asVoid)
+  const keys = Effect.fn('Machine.boat.browser.keys')(function* (pressed: ReadonlyArray<string>) {
+    const key = pressed[pressed.length - 1]
+    if (key === undefined) return yield* Effect.fail(new MachineInputInvalid())
+    yield* native.call(
+      'press_key',
+      { ...window, key, modifiers: pressed.slice(0, -1), delivery_mode: 'foreground' },
+      Schema.Json,
+    )
+    return undefined
+  })
   yield* BrowserAction.match<Effect.Effect<void, MachineFailure>>(action, {
     Open: Effect.fn('Machine.boat.browser.open')(function* ({ address }) {
       yield* validateAddress(address)
@@ -217,7 +217,7 @@ const step = Effect.fn('Machine.boat.browser.step')(function* (
     Screenshot: () => native.capture().pipe(Effect.asVoid),
     Click: Effect.fn('Machine.boat.browser.click')(function* ({ target }) {
       const ref = yield* targetRef(native, bound, target, 'click')
-      yield* native.call('browser_click', { ...ref, delivery_mode: 'foreground' }, Schema.Json)
+      yield* native.call('browser_click', { ...ref, input_route: 'trusted' }, Schema.Json)
     }),
     Type: Effect.fn('Machine.boat.browser.type')(function* ({ target, text }) {
       const ref = yield* targetRef(native, bound, target, 'type')

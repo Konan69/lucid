@@ -21,6 +21,10 @@ import { Machine, MachineKey } from './machine.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { machineBindings } from './tables.ts'
 import * as Protocol from './boat/protocol.ts'
+import { argumentsByTool } from './boat/fixture.ts'
+import { ComputerToolRefused } from './boat/refusal.ts'
+import { driver } from './boat/driver.ts'
+import { transport } from './boat/transport.ts'
 
 // Deliberate PNG fixture, not a claim that the guest was exercised.
 const png =
@@ -36,6 +40,7 @@ interface EvidenceService {
   readonly address: Ref.Ref<string>
   readonly breakCreate: Ref.Ref<boolean>
   readonly breakCommand: Ref.Ref<boolean>
+  readonly refuseBrowser: Ref.Ref<boolean>
   readonly viewers: Ref.Ref<number>
   readonly publicViewer: Ref.Ref<boolean>
   readonly malformed: Ref.Ref<boolean>
@@ -57,6 +62,7 @@ const evidenceLayer = Layer.effect(
       address: yield* Ref.make('https://example.com'),
       breakCreate: yield* Ref.make(false),
       breakCommand: yield* Ref.make(false),
+      refuseBrowser: yield* Ref.make(false),
       viewers: yield* Ref.make(0),
       publicViewer: yield* Ref.make(false),
       malformed: yield* Ref.make(false),
@@ -84,6 +90,7 @@ const Stop = HttpServerRequest.schemaBodyJson(Schema.Struct({ force: Schema.Lite
 const Resume = HttpServerRequest.schemaBodyJson(
   Schema.Struct({ ttlSeconds: Schema.NullOr(Protocol.Lifetime), noEnv: Schema.Literal(true) }),
 )
+const decodeSession = Schema.decodeUnknownEffect(Schema.String.check(Schema.isStartsWith('Vivid-')))
 const decodeAddress = Schema.decodeUnknownEffect(Schema.String)
 const decodeArgs = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
@@ -127,7 +134,17 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
   const content = (yield* Ref.get(evidence.files)).get(path[1])
   if (content === undefined) return rejected(400)
   const args = yield* decodeArgs(content)
-  if (tool !== 'list_windows') expect(args.session).toBe('Vivid')
+  const allowed = Object.entries(argumentsByTool).find(([name]) => name === tool)
+  if (allowed === undefined) return rejected(400)
+  const [, contract] = allowed
+  if (
+    Object.keys(args).some((name) => !contract.allowed.some((key) => key === name)) ||
+    contract.required.some((name) => !Object.hasOwn(args, name))
+  )
+    return commandReply(
+      JSON.stringify({ code: 'invalid_arguments', detail: 'private-fixture-input', tool }),
+    )
+  if (contract.allowed.some((key) => key === 'session')) yield* decodeSession(args.session)
   switch (tool) {
     case 'get_desktop_state': {
       const output = /--screenshot-out-file '([^']+)'/.exec(command)
@@ -148,11 +165,15 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
       )
     }
     case 'browser_prepare': {
+      if (yield* Ref.get(evidence.refuseBrowser))
+        return commandReply(
+          '{"status":"refused","refusal":{"code":"browser_route_unavailable","message":"private-fixture-input"}}',
+        )
       expect(args.allow_launch).toBe(false)
       return commandReply('{"status":"ok","prepared":true}')
     }
     case 'get_cursor_position':
-      return commandReply('{"x":0,"y":0}')
+      return commandReply('{"source":"x11","x":0,"y":0}')
     case 'list_windows':
       return commandReply(
         '{"windows":[{"pid":7,"window_id":9,"app_name":"Google Chrome","title":"Example"}]}',
@@ -197,13 +218,14 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
     case 'move_cursor':
     case 'drag':
     case 'scroll':
+    case 'press_key':
     case 'hotkey':
     case 'type_text':
     case 'launch_app':
       return commandReply('{"status":"ok"}')
     case 'browser_click':
       expect(args.ref).toBe('p1:1')
-      expect(args.delivery_mode).toBe('foreground')
+      expect(args.input_route).toBe('trusted')
       return commandReply('{"status":"ok"}')
     case 'browser_type':
       expect(args.ref).toBe('p1:2')
@@ -399,6 +421,37 @@ const fixture = Effect.fn('BoatTest.fixture')(function* () {
 })
 
 describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => {
+  it.effect(
+    'preserves exit-zero refusal codes and cleans private inputs, even for JSON success decoders',
+    () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        yield* machine.ensure(key)
+        const guest = driver(yield* transport(), Protocol.ProviderId.make(id), key)
+        const invalid = yield* guest
+          .call('get_desktop_state', { max_image_dimension: 0 }, Schema.Json)
+          .pipe(Effect.flip)
+        expect(invalid instanceof ComputerToolRefused).toBe(true)
+        if (invalid instanceof ComputerToolRefused) expect(invalid.code).toBe('invalid_arguments')
+        expect(JSON.stringify(invalid).includes('private-fixture-input')).toBe(false)
+        expect((yield* Ref.get(evidence.files)).size).toBe(0)
+        yield* Ref.set(evidence.refuseBrowser, true)
+        const refused = yield* machine
+          .browse({
+            key,
+            action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
+          })
+          .pipe(Effect.flip)
+        expect(refused instanceof ComputerToolRefused).toBe(true)
+        if (refused instanceof ComputerToolRefused)
+          expect(refused.code).toBe('browser_route_unavailable')
+        expect(JSON.stringify(refused).includes('private-fixture-input')).toBe(false)
+        expect((yield* Ref.get(evidence.files)).size).toBe(0)
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
   it.effect(
     'creates once, returns a gated viewer, executes native desktop/browser, stops and resumes after Layer restart',
     () =>
