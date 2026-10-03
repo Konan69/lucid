@@ -1,56 +1,29 @@
 import { useAtomValue } from '@effect/atom-react'
-import { Workspace, type MeResponse, type Thread, type ThreadId } from '@vivid/contracts'
+import type { Thread, ThreadId } from '@vivid/contracts'
 import { draftPlace, workspaceKey } from '@vivid/state'
 import { Data, Option, Result } from 'effect'
 import { useRef, useState } from 'react'
-import { FlatList, ScrollView, View } from 'react-native'
+import { ScrollView, useWindowDimensions, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import {
-  ChevronDown,
-  ChevronRight,
-  ChevronsUpDown,
-  CircleCheck,
-  FolderKanban,
-  Library as LibraryIcon,
-  Repeat2,
-  Search,
-  Sparkles,
-  type LucideIcon,
-} from 'lucide-react-native'
 import { draft, useDraft } from '../data/drafts'
-import { useNow } from '../data/foreground'
-import { arrange, matching, Row, rowKey, rowsOf } from '../data/lanes'
+import { closeDrawer, openDrawer } from '../data/drawer'
 import { LiveState, useLive, useLiveData } from '../data/live'
 import { patchThread, Start, startThread } from '../data/threads'
 import type { ComposerEditorHandle } from '../native/composer/types'
-import { useTheme } from '../theme'
-import { Avatar, pictureOf } from '../ui/Avatar'
 import { Composer } from '../ui/Composer'
+import { Drawer, drawerWidth } from '../ui/Drawer'
+import { Glass } from '../ui/Glass'
 import { AboveKeyboard } from '../ui/Keyboard'
 import { NameSheet } from '../ui/Sheet'
-import {
-  Button,
-  Face,
-  Field,
-  GUTTER,
-  HAIRLINE,
-  IconButton,
-  Label,
-  Notice,
-  Press,
-  radius,
-  Skeleton,
-  styles,
-  TARGET,
-} from '../ui/ui'
-import { useGo, useMe, type Routes } from '../workspace'
+import { Face, GUTTER, Label, Notice, Press, styles, TARGET } from '../ui/ui'
+import { useGo, useMe } from '../workspace'
 import { First } from './home/First'
-import { ThreadRow } from './home/Row'
+import { Menu } from './home/Menu'
 import { Switcher } from './home/Switcher'
 
 /**
- * What is open over the list. It is one thing at a time, so the workspace sheet and a Thread
- * being renamed can never be up together.
+ * What is open over Home. It is one thing at a time, so the workspace sheet and a Thread being
+ * renamed can never be up together.
  */
 type Over = Data.TaggedEnum<{
   Nothing: {}
@@ -60,80 +33,122 @@ type Over = Data.TaggedEnum<{
 const Over = Data.taggedEnum<Over>()
 
 /**
- * Home: every Thread the Person can see, in the order a busy Person should look at them, and at
- * the bottom somewhere to write. It is the root of the app and so the first screen: with no
- * Threads yet it is just Vivid, a few things to say, and the composer.
+ * Home: Vivid's greeting and somewhere to write. It is the root of the app and the first screen,
+ * and it is only that: every Thread the Person has, the places beside Threads, the workspace and
+ * Settings are in the drawer, one swipe or one tap on Vivid's mark away.
  *
- * It owns no data. Threads move between lanes because the server says their attention changed;
- * the workspace changes because the Person's session did. What is local is only what the Person
- * is in the middle of: what they have typed, what they are searching for, which sheet is up.
+ * It owns no data. What is local is only what the Person is in the middle of: what they have
+ * typed, which sheet is up, and a row's action the server refused.
  */
 export function Home() {
   const me = useMe()
   const data = useLiveData()
   const go = useGo()
+  const width = drawerWidth(useWindowDimensions().width)
   const threads = useLive(data.live.threads)
   const [over, setOver] = useState<Over>(Over.Nothing())
-  const [query, setQuery] = useState<Option.Option<string>>(Option.none())
   // A swipe or a menu choice on a row that the server refused. The row has nowhere to say it.
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
   const editor = useRef<ComposerEditorHandle>(null)
   const start = useStart()
-  // One place above the composer says both kinds of refusal; a message that was not sent matters
-  // more than a row that moved back, so it is the one shown when there are two.
-  const said = Option.orElse(start.refusal, () => refused)
   const close = () => setOver(Over.Nothing())
   const working =
     LiveState.$is('Ready')(threads) &&
     threads.value.threads.some((thread) => thread.attention === 'Working')
 
+  /** Leaves the drawer for somewhere on the stack. It closes behind the screen that covers it. */
+  const leave = (travel: () => void) => {
+    travel()
+    closeDrawer()
+  }
+
   return (
-    <AboveKeyboard>
-      <Top
-        me={me}
-        working={working}
-        query={query}
-        onQuery={setQuery}
-        onSwitch={() => setOver(Over.Switching())}
-        onSettings={() => go.navigate('Settings')}
-      />
-      <Reconnecting />
-      <View style={{ flex: 1 }}>
-        <Listed
+    <Drawer
+      panel={
+        <Menu
           me={me}
-          state={threads}
-          query={query}
-          onOpen={(thread) => go.navigate('Chat', { id: thread.id })}
+          width={width}
+          refused={refused}
+          onSwitch={() => setOver(Over.Switching())}
+          onFresh={() => {
+            closeDrawer()
+            if (editor.current !== null) editor.current.focus()
+          }}
+          onGo={(place) => leave(() => go.navigate(place))}
+          onProject={(id) => leave(() => go.navigate('Project', { id }))}
+          onOpen={(thread) => leave(() => go.navigate('Chat', { id: thread.id }))}
           onRename={(thread) => setOver(Over.Renaming({ thread }))}
           onRefused={setRefused}
-          starting={start.sending}
         />
-      </View>
-      {Option.isSome(said) && (
-        <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
-          <Notice message={said.value} />
-        </View>
-      )}
-      <Composer
-        ref={editor}
-        value={start.draft}
-        placeholder="Message Vivid"
-        working={false}
-        disabled={start.sending}
-        onChange={start.setDraft}
-        onSend={() => void start.send()}
-        onStop={() => undefined}
-      />
+      }
+    >
+      <AboveKeyboard>
+        <Top mood={working || start.sending ? 'thinking' : 'happy'} />
+        <Reconnecting />
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          contentContainerStyle={[styles.column, { flexGrow: 1, justifyContent: 'flex-end' }]}
+        >
+          <First me={me} />
+        </ScrollView>
+        {Option.isSome(start.refusal) && (
+          <View style={{ paddingHorizontal: 12, paddingBottom: 4 }}>
+            <Notice message={start.refusal.value} />
+          </View>
+        )}
+        <Composer
+          ref={editor}
+          value={start.draft}
+          placeholder="Message Vivid"
+          working={false}
+          disabled={start.sending}
+          onChange={start.setDraft}
+          onSend={() => void start.send()}
+          onStop={() => undefined}
+        />
+      </AboveKeyboard>
       {Over.$is('Switching')(over) && <Switcher me={me} onClose={close} />}
       {Over.$is('Renaming')(over) && <Rename thread={over.thread} onClose={close} />}
-    </AboveKeyboard>
+    </Drawer>
   )
 }
 
 /**
- * Said under the top bar while the phone cannot reach its server. The list below stays, since it
- * is the last thing the server said; this is the note that it may be behind. The client is
- * already trying again, so there is nothing here to press.
+ * The top of Home: Vivid's mark on a round of glass, which opens the drawer. It is the one face
+ * on this screen, and it is thinking while Vivid is at work on anything or a first message is on
+ * its way.
+ */
+function Top({ mood }: { mood: 'happy' | 'thinking' }) {
+  const insets = useSafeAreaInsets()
+  return (
+    <View style={{ paddingTop: insets.top + 6, paddingHorizontal: GUTTER - 4 }}>
+      <Press
+        accessibilityRole="button"
+        accessibilityLabel="Open menu"
+        onPress={openDrawer}
+        containerStyle={{ alignSelf: 'flex-start' }}
+      >
+        <Glass radius={TARGET / 2 + 2}>
+          <View
+            style={{
+              width: TARGET + 4,
+              height: TARGET + 4,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Face size={28} mood={mood} />
+          </View>
+        </Glass>
+      </Press>
+    </View>
+  )
+}
+
+/**
+ * Said under the top bar while the phone cannot reach Vivid. The client is already trying again,
+ * so there is nothing here to press.
  */
 function Reconnecting() {
   const data = useLiveData()
@@ -145,7 +160,7 @@ function Reconnecting() {
       accessibilityLiveRegion="polite"
       style={{ alignItems: 'center', paddingVertical: 6 }}
     >
-      <Label size="label" tone="ink-3">
+      <Label size="label" tone="ink-2">
         Reconnecting…
       </Label>
     </View>
@@ -213,403 +228,6 @@ function useStart() {
       }),
     ),
   }
-}
-
-/** The top of Home: where the Person is working, the way to search, and the way to Settings. */
-function Bar({
-  me,
-  working,
-  onSwitch,
-  onSearch,
-  onSettings,
-}: {
-  me: MeResponse
-  working: boolean
-  onSwitch: () => void
-  onSearch: () => void
-  onSettings: () => void
-}) {
-  const insets = useSafeAreaInsets()
-  const { colors: c } = useTheme()
-  const here = Workspace.match(me.workspace, {
-    Personal: () => 'Vivid',
-    Company: ({ company }) => company.name,
-  })
-  return (
-    <View
-      style={{
-        paddingTop: insets.top,
-        paddingLeft: GUTTER - 8,
-        paddingRight: 6,
-        flexDirection: 'row',
-        alignItems: 'center',
-        minHeight: 52 + insets.top,
-      }}
-    >
-      <Press
-        accessibilityRole="button"
-        accessibilityLabel={`Working in ${here}. Change workspace`}
-        onPress={onSwitch}
-        containerStyle={{ flexShrink: 1 }}
-        style={({ pressed }) => ({
-          minHeight: TARGET,
-          paddingHorizontal: 8,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 10,
-          borderRadius: radius.control,
-          backgroundColor: pressed ? c['wash-pressed'] : 'transparent',
-        })}
-      >
-        <Face size={26} mood={working ? 'thinking' : 'neutral'} />
-        <Label numberOfLines={1} size="headline" style={{ flexShrink: 1 }}>
-          {here}
-        </Label>
-        <ChevronsUpDown pointerEvents="none" size={15} strokeWidth={1.8} color={c['ink-4']} />
-      </Press>
-      <View style={{ flex: 1 }} />
-      <IconButton icon={Search} label="Search threads" onPress={onSearch} />
-      <Press
-        accessibilityRole="button"
-        accessibilityLabel="Settings"
-        onPress={onSettings}
-        style={({ pressed }) => ({
-          width: TARGET,
-          height: TARGET,
-          alignItems: 'center',
-          justifyContent: 'center',
-          opacity: pressed ? 0.7 : 1,
-        })}
-      >
-        <Avatar name={me.person.name} image={pictureOf(me.person)} size={28} />
-      </Press>
-    </View>
-  )
-}
-
-/** The bar while searching: the field has the keyboard, and Cancel puts the lanes back. */
-function SearchBar({
-  text,
-  onChange,
-  onDone,
-}: {
-  text: string
-  onChange: (text: string) => void
-  onDone: () => void
-}) {
-  const insets = useSafeAreaInsets()
-  return (
-    <View
-      style={{
-        paddingTop: insets.top + 4,
-        paddingLeft: GUTTER - 4,
-        paddingRight: 6,
-        paddingBottom: 4,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-      }}
-    >
-      <Field
-        autoFocus
-        accessibilityLabel="Search threads"
-        value={text}
-        placeholder="Search threads"
-        autoCorrect={false}
-        clearButtonMode="while-editing"
-        returnKeyType="search"
-        onChangeText={onChange}
-        style={{ flex: 1, minHeight: TARGET, paddingVertical: 9 }}
-      />
-      <Button kind="ghost" label="Cancel" onPress={onDone} />
-    </View>
-  )
-}
-
-/** The places beside Threads, in the order the web sidebar lists them. */
-const PLACES = [
-  { route: 'Routines', label: 'Routines', icon: Repeat2 },
-  { route: 'Projects', label: 'Projects', icon: FolderKanban },
-  { route: 'Library', label: 'Library', icon: LibraryIcon },
-  { route: 'Skills', label: 'Skills', icon: Sparkles },
-] as const satisfies ReadonlyArray<{
-  route: Exclude<keyof Routes, 'Home' | 'Chat' | 'Settings'>
-  label: string
-  icon: LucideIcon
-}>
-
-/**
- * The way to each place beside Threads: one row of tiles, each a place's mark over its name.
- * Four names do not fit side by side with their marks on a phone, and a name cut to "Routin…"
- * is worse than a smaller one, so the mark sits above the name and every tile is the same width.
- */
-function Places() {
-  const go = useGo()
-  const { colors: c } = useTheme()
-  return (
-    <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: GUTTER - 6, paddingBottom: 6 }}>
-      {PLACES.map(({ route, label, icon: Icon }) => (
-        <Press
-          key={route}
-          accessibilityRole="button"
-          onPress={() => go.navigate(route)}
-          containerStyle={{ flex: 1 }}
-          style={({ pressed }) => ({
-            minHeight: 60,
-            paddingVertical: 10,
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 5,
-            borderRadius: radius.control,
-            borderWidth: HAIRLINE,
-            borderColor: c['line-2'],
-            backgroundColor: pressed ? c['wash-pressed'] : c['surface-2'],
-          })}
-        >
-          <Icon pointerEvents="none" size={18} strokeWidth={1.7} color={c['ink-2']} />
-          <Label numberOfLines={1} size="caption" tone="ink-2">
-            {label}
-          </Label>
-        </Press>
-      ))}
-    </View>
-  )
-}
-
-/** A lane's heading. Only the two attention lanes say how many they hold. */
-function Caption({ label, count }: { label: string; count: Option.Option<number> }) {
-  return (
-    <View
-      style={{
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        gap: 6,
-        paddingHorizontal: GUTTER,
-        paddingTop: 18,
-        paddingBottom: 6,
-      }}
-    >
-      <Label accessibilityRole="header" size="label" tone="ink-3" style={{ fontWeight: '500' }}>
-        {label}
-      </Label>
-      {Option.isSome(count) && (
-        <Label size="label" tone="ink-4" style={{ fontVariant: ['tabular-nums'] }}>
-          {count.value}
-        </Label>
-      )}
-    </View>
-  )
-}
-
-/** The strip across the top: the workspace and the tools, or the search field while searching. */
-function Top({
-  me,
-  working,
-  query,
-  onQuery,
-  onSwitch,
-  onSettings,
-}: {
-  me: MeResponse
-  working: boolean
-  query: Option.Option<string>
-  onQuery: (query: Option.Option<string>) => void
-  onSwitch: () => void
-  onSettings: () => void
-}) {
-  if (Option.isSome(query)) {
-    return (
-      <SearchBar
-        text={query.value}
-        onChange={(next) => onQuery(Option.some(next))}
-        onDone={() => onQuery(Option.none())}
-      />
-    )
-  }
-  return (
-    <Bar
-      me={me}
-      working={working}
-      onSwitch={onSwitch}
-      onSearch={() => onQuery(Option.some(''))}
-      onSettings={onSettings}
-    />
-  )
-}
-
-/** The Threads as they stand: their outline while they load, why they cannot be read, or the list. */
-function Listed({
-  state,
-  ...rest
-}: Omit<ThreadsProps, 'threads'> & {
-  state: LiveState<{ readonly threads: ReadonlyArray<Thread> }>
-}) {
-  if (LiveState.$is('Loading')(state)) {
-    return (
-      <View style={{ paddingHorizontal: GUTTER, paddingTop: 24 }}>
-        <Skeleton rows={5} />
-      </View>
-    )
-  }
-  if (LiveState.$is('Failed')(state)) {
-    return (
-      <View style={{ padding: GUTTER }}>
-        <Notice message={state.failure.message} />
-      </View>
-    )
-  }
-  return <Threads {...rest} threads={state.value.threads} />
-}
-
-interface ThreadsProps {
-  readonly me: MeResponse
-  readonly threads: ReadonlyArray<Thread>
-  readonly query: Option.Option<string>
-  readonly onOpen: (thread: Thread) => void
-  readonly onRename: (thread: Thread) => void
-  /** What came of a row's quick action: a sentence when it was refused, none when it was not. */
-  readonly onRefused: (message: Option.Option<string>) => void
-  /** A new Thread's first words are on their way, which the first screen's face shows. */
-  readonly starting: boolean
-}
-
-/**
- * The list under the bar. While searching it is every Thread that matches, flat. Otherwise it is
- * the lanes: what needs the Person, what Vivid is working on, the rest by day, and what is done
- * on a shelf at the end. With no Threads at all it is the first screen.
- */
-function Threads(props: ThreadsProps) {
-  const { threads, query } = props
-  const now = useNow()
-  if (Option.isSome(query)) {
-    return <Found {...props} found={matching(threads, query.value)} now={now} />
-  }
-  if (threads.length === 0) {
-    return <Welcome me={props.me} starting={props.starting} />
-  }
-  const arrangement = arrange(threads, now)
-  return (
-    <FlatList
-      data={rowsOf(arrangement.lanes)}
-      keyExtractor={rowKey}
-      keyboardShouldPersistTaps="handled"
-      keyboardDismissMode="on-drag"
-      contentContainerStyle={[styles.column, { paddingBottom: 16 }]}
-      ListHeaderComponent={<Places />}
-      ListFooterComponent={
-        arrangement.archived.length === 0 ? null : (
-          <Shelf {...props} done={arrangement.archived} now={now} />
-        )
-      }
-      renderItem={({ item }) =>
-        Row.$match(item, {
-          Heading: ({ label, count }) => <Caption label={label} count={count} />,
-          Entry: ({ thread, variant }) => (
-            <ThreadRow
-              thread={thread}
-              variant={variant}
-              now={now}
-              onOpen={props.onOpen}
-              onRename={props.onRename}
-              onRefused={props.onRefused}
-            />
-          ),
-        })
-      }
-    />
-  )
-}
-
-/**
- * The first screen: no Threads yet, so the places beside Threads at the top and, at the foot,
- * Vivid's greeting. The greeting sits directly above the composer, so the one thing
- * there is to do here (write) is where the thumb already is; on a short screen, or with the
- * keyboard up, the column scrolls instead of being cut.
- */
-function Welcome({ me, starting }: { me: MeResponse; starting: boolean }) {
-  return (
-    <ScrollView
-      keyboardShouldPersistTaps="handled"
-      keyboardDismissMode="on-drag"
-      contentContainerStyle={[styles.column, { flexGrow: 1, justifyContent: 'space-between' }]}
-    >
-      <Places />
-      <First me={me} sending={starting} />
-    </ScrollView>
-  )
-}
-
-/** What a search found, across current and done Threads alike. */
-function Found(props: ThreadsProps & { found: ReadonlyArray<Thread>; now: number }) {
-  return (
-    <FlatList
-      data={props.found}
-      keyExtractor={(thread) => thread.id}
-      keyboardShouldPersistTaps="handled"
-      keyboardDismissMode="on-drag"
-      contentContainerStyle={[styles.column, { paddingBottom: 16 }]}
-      ListEmptyComponent={
-        <Label size="label" tone="ink-3" style={{ paddingHorizontal: GUTTER, paddingTop: 20 }}>
-          No thread matches that.
-        </Label>
-      }
-      renderItem={({ item }) => (
-        <ThreadRow
-          thread={item}
-          variant="line"
-          now={props.now}
-          onOpen={props.onOpen}
-          onRename={props.onRename}
-          onRefused={props.onRefused}
-        />
-      )}
-    />
-  )
-}
-
-/** Threads the Person is done with, kept out of the way behind one row that says how many. */
-function Shelf(props: ThreadsProps & { done: ReadonlyArray<Thread>; now: number }) {
-  const { colors: c } = useTheme()
-  const [open, setOpen] = useState(false)
-  const Chevron = open ? ChevronDown : ChevronRight
-  return (
-    <View style={{ marginTop: 12 }}>
-      <Press
-        accessibilityRole="button"
-        accessibilityState={{ expanded: open }}
-        onPress={() => setOpen((shown) => !shown)}
-        style={({ pressed }) => ({
-          minHeight: 48,
-          paddingHorizontal: GUTTER,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 10,
-          backgroundColor: pressed ? c['wash-pressed'] : 'transparent',
-        })}
-      >
-        <CircleCheck pointerEvents="none" size={17} strokeWidth={1.7} color={c['ink-3']} />
-        <Label tone="ink-2" style={{ flex: 1 }}>
-          Done
-        </Label>
-        <Label size="label" tone="ink-3" style={{ fontVariant: ['tabular-nums'] }}>
-          {props.done.length}
-        </Label>
-        <Chevron pointerEvents="none" size={16} strokeWidth={1.7} color={c['ink-4']} />
-      </Press>
-      {open &&
-        props.done.map((thread) => (
-          <ThreadRow
-            key={thread.id}
-            thread={thread}
-            variant="line"
-            now={props.now}
-            onOpen={props.onOpen}
-            onRename={props.onRename}
-            onRefused={props.onRefused}
-          />
-        ))}
-    </View>
-  )
 }
 
 /** A Thread's title, changed in a sheet. The list shows the new title before the server answers. */

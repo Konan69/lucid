@@ -1,7 +1,7 @@
 import { ThreadAudience, type Thread } from '@vivid/contracts'
 import { Option, Result } from 'effect'
 import { Users } from 'lucide-react-native'
-import { useWindowDimensions, View } from 'react-native'
+import { View } from 'react-native'
 import { commit, warn } from '../../data/haptics'
 import { relativeTime, type Lane } from '../../data/lanes'
 import { useLiveData } from '../../data/live'
@@ -10,7 +10,7 @@ import { ControlPillMenu } from '../../t3/Menu'
 import { ThreadSwipeable } from '../../t3/swipe'
 import { useTheme } from '../../theme'
 import { Faces } from '../../ui/Avatar'
-import { confirmDestructive, Dot, GUTTER, HAIRLINE, Label, Press, radius } from '../../ui/ui'
+import { confirmDestructive, Dot, EDGE, GUTTER, Label, Press, radius } from '../../ui/ui'
 
 /** Who else is in a Thread: faces for named people, a mark for the whole Company. */
 function Audience({ thread }: { thread: Thread }) {
@@ -55,9 +55,10 @@ function CardFace({ thread, pressed }: { thread: Thread; pressed: boolean }) {
         paddingVertical: 12,
         gap: 3,
         borderRadius: radius.card,
-        borderWidth: HAIRLINE,
-        borderColor: c['line-2'],
-        backgroundColor: pressed ? c['surface-3'] : c['surface-2'],
+        borderCurve: 'continuous',
+        borderWidth: EDGE,
+        borderColor: c.border,
+        backgroundColor: pressed ? c['row-hover'] : c['thread-selected'],
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 18 }}>
@@ -69,7 +70,7 @@ function CardFace({ thread, pressed }: { thread: Thread; pressed: boolean }) {
         {thread.title}
       </Label>
       {thread.preview.length > 0 && (
-        <Label numberOfLines={2} size="label" tone="ink-3">
+        <Label numberOfLines={2} size="label" tone="ink-2">
           {thread.preview}
         </Label>
       )}
@@ -84,12 +85,14 @@ function LineFace({ thread, now, pressed }: { thread: Thread; now: number; press
   return (
     <View
       style={{
-        minHeight: 48,
-        paddingHorizontal: GUTTER,
+        minHeight: 46,
+        marginHorizontal: GUTTER - 12,
+        paddingHorizontal: 12,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 12,
-        backgroundColor: pressed ? c['wash-pressed'] : 'transparent',
+        borderRadius: radius.row,
+        backgroundColor: pressed ? c['row-hover'] : 'transparent',
       }}
     >
       <Dot tone={unread ? 'accent' : 'line-4'} size={unread ? 8 : 6} />
@@ -101,7 +104,11 @@ function LineFace({ thread, now, pressed }: { thread: Thread; now: number; press
         {thread.title}
       </Label>
       <Audience thread={thread} />
-      <Label size="caption" tone="ink-3" style={{ fontVariant: ['tabular-nums'] }}>
+      <Label
+        size="caption"
+        tone="drawer-foreground-muted"
+        style={{ fontVariant: ['tabular-nums'] }}
+      >
         {relativeTime(thread.updatedAt, now)}
       </Label>
     </View>
@@ -123,6 +130,7 @@ export function ThreadRow({
   thread,
   variant,
   now,
+  width,
   onOpen,
   onRename,
   onRefused,
@@ -130,6 +138,8 @@ export function ThreadRow({
   thread: Thread
   variant: Lane['variant']
   now: number
+  /** How wide the list is: a full swipe is measured against it, and the drawer is not the screen. */
+  width: number
   onOpen: (thread: Thread) => void
   onRename: (thread: Thread) => void
   /** A sentence when a quick action was refused; none when the next one went through. */
@@ -137,7 +147,6 @@ export function ThreadRow({
 }) {
   const { colors: c } = useTheme()
   const data = useLiveData()
-  const window = useWindowDimensions()
   const shelveLabel = thread.archived ? 'Move back to threads' : 'Mark as done'
 
   /** Follows a quick action to its end and tells the list what came of it. */
@@ -175,10 +184,10 @@ export function ThreadRow({
 
   return (
     <ThreadSwipeable
-      backgroundColor={c['surface-0']}
+      backgroundColor={c.drawer}
       compactActions={variant === 'line'}
       fullSwipeAction="primary"
-      fullSwipeWidth={window.width}
+      fullSwipeWidth={width}
       threadTitle={thread.title}
       onDelete={remove}
       primaryAction={{

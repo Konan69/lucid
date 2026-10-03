@@ -33,6 +33,7 @@ import { Memory } from './screen/settings/Memory'
 import { People } from './screen/settings/People'
 import { ThemeProvider, useTheme } from './theme'
 import { Recover } from './ui/Recover'
+import { pushAnimation } from './ui/stack'
 import { Button, Face, GUTTER, Label } from './ui/ui'
 import { MeProvider, type Routes } from './workspace'
 
@@ -212,8 +213,9 @@ function Stopped({ message }: { message: string }) {
  * own; nothing here animates a screen. Each screen draws its own bar (`ui/Header.tsx`), so the
  * native one is off everywhere.
  *
- * A Person who has asked their phone for less motion gets a cross-fade between screens instead
- * of the platform's slide: the change of place still shows, nothing travels across the glass.
+ * Routes are flat on this one stack, never a nested navigator: one navigation controller is what
+ * lets the platform carry a bar from one screen to the next (T3 Code mobile `src/Stack.tsx`, the
+ * note beside `THREAD_LINKING_PREFIX`). How one screen replaces another is `pushAnimation`.
  */
 function Shell() {
   const { colors: c, dark } = useTheme()
@@ -225,19 +227,19 @@ function Shell() {
         ...base,
         colors: {
           ...base.colors,
-          background: c['surface-0'],
-          card: c['surface-0'],
-          text: c.ink,
-          primary: c.accent,
-          border: c['line-2'],
+          background: c.screen,
+          card: c.screen,
+          text: c.foreground,
+          primary: c.primary,
+          border: c.border,
         },
       }}
     >
       <Stack.Navigator
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: c['surface-0'] },
-          animation: still ? 'fade' : 'default',
+          contentStyle: { backgroundColor: c.screen },
+          animation: pushAnimation(still),
         }}
       >
         <Stack.Screen name="Home" component={Home} />
