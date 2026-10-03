@@ -24,6 +24,7 @@ import { Presence } from './presence.ts'
 import { RunStore } from './runs.ts'
 import { ThreadStore } from './store.ts'
 import { openAttentionThread } from './opening.ts'
+import { openFirstThread } from './arrival.ts'
 
 /**
  * Everything beside the conversation that draws one Thread. The conversation itself is Flue's
@@ -83,6 +84,11 @@ const announce = Effect.fn('Threads.announce')(function* (
 })
 
 export const threadHandlers = {
+  /** First arrival is a signed-in Person's act; scope comes exclusively from authentication. */
+  OpenFirstThread: Effect.fn('Rpc.OpenFirstThread')(function* () {
+    yield* requirePerson()
+    return yield* openFirstThread(yield* requireActor())
+  }),
   /** A standing check opens private follow-up work; the model supplies no ownership fields. */
   OpenThread: Effect.fn('Rpc.OpenThread')(function* (request: typeof OpenThreadRequest.Type) {
     const auth = yield* requireVivid()

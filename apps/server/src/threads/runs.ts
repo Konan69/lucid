@@ -151,6 +151,7 @@ export const automaticallyNotifies = Effect.fn('RunStore.automaticallyNotifies')
   if (row === undefined) return yield* new DatabaseFailure({ message: 'Settled Run not found.' })
   return StoredRunOrigin.match(yield* decodeOrigin(row.origin), {
     Message: () => true,
+    FirstConversation: () => false,
     Routine: () => true,
     Standing: () => false,
     Attention: () => false,
@@ -168,6 +169,7 @@ const encodeOrigin = Schema.encodeSync(StoredRunOrigin)
 const originOf = (origin: StoredRunOrigin, person: PersonSummary) =>
   StoredRunOrigin.match(origin, {
     Message: (): RunOrigin => RunOrigin.cases.Message.make({ person }),
+    FirstConversation: (): RunOrigin => RunOrigin.cases.FirstConversation.make({ person }),
     Routine: ({ routineName }): RunOrigin => RunOrigin.cases.Routine.make({ person, routineName }),
     Standing: ({ routineName }): RunOrigin => RunOrigin.cases.Routine.make({ person, routineName }),
     Attention: ({ routineName }): RunOrigin =>

@@ -24,6 +24,7 @@ import type { DatabaseInfrastructureError } from '../database/client.ts'
  */
 export const DeliveryMessage = Schema.TaggedUnion({
   Said: { body: Schema.String, attachments: Schema.optionalKey(Schema.Array(MessageAttachment)) },
+  FirstConversation: {},
   Signal: {
     type: SignalType,
     body: Schema.String,
@@ -40,6 +41,7 @@ export const StoredRunOrigin = Schema.TaggedUnion({
   // The immutable message fingerprint lives with its reservation, not in Flue-owned history.
   // Older Runs and server-internal text deliveries predate fingerprinted gateway admission.
   Message: { fingerprint: Schema.optionalKey(Schema.String) },
+  FirstConversation: {},
   Routine: { routineName: Schema.String },
   Standing: { routineName: Schema.String },
   Attention: { routineName: Schema.String },
@@ -70,7 +72,9 @@ export interface Delivery {
 
 /** Server producers deliver signals; Person-authored messages use immediate `admit` instead. */
 export interface SignalDelivery extends Delivery {
-  readonly message: typeof DeliveryMessage.cases.Signal.Type
+  readonly message:
+    | typeof DeliveryMessage.cases.Signal.Type
+    | typeof DeliveryMessage.cases.FirstConversation.Type
 }
 
 /** Flue's receipt for a delivery, which the gateway hands back to the client that sent it. */

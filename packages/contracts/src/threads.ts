@@ -117,6 +117,14 @@ export const CreateThreadRequest = Schema.Struct({
 }).annotate({ identifier: 'CreateThreadRequest', title: 'Create Thread request' })
 export interface CreateThreadRequest extends Schema.Schema.Type<typeof CreateThreadRequest> {}
 
+/** Person-level first arrival: only the call that opens the Thread starts its first Run. */
+export const OpenFirstThreadResult = Schema.TaggedUnion({
+  Opened: { thread: ThreadId },
+  Existing: { thread: ThreadId },
+  NotFirst: {},
+})
+export type OpenFirstThreadResult = typeof OpenFirstThreadResult.Type
+
 /** A standing check can open private work using words, never ownership or runtime identifiers. */
 export const OpenThreadRequest = Schema.Struct({
   title: Schema.NonEmptyString.check(Schema.isMaxLength(100)),
@@ -158,6 +166,7 @@ export interface ThreadResponse extends Schema.Schema.Type<typeof ThreadResponse
  */
 export const RunOrigin = Schema.TaggedUnion({
   Message: { person: PersonSummary },
+  FirstConversation: { person: PersonSummary },
   Routine: { person: PersonSummary, routineName: Schema.String },
   /** A decision on an Approval or an answer to an Input request returning to the Thread. */
   Decision: { person: PersonSummary },
@@ -242,7 +251,13 @@ export interface PresenceRequest extends Schema.Schema.Type<typeof PresenceReque
  * The signal types the server delivers into a Thread. Flue keeps them in its own history, so the
  * vocabulary is fixed here once for the server, the runtime and every client that renders them.
  */
-export const SignalType = Schema.Literals(['message', 'schedule', 'approval', 'answer'] as const)
+export const SignalType = Schema.Literals([
+  'message',
+  'schedule',
+  'approval',
+  'answer',
+  'first-conversation',
+] as const)
 export type SignalType = typeof SignalType.Type
 
 /**

@@ -40,5 +40,12 @@ export const flueMessage = (
       body,
       attributes: attribution,
     }),
+    FirstConversation: (): RuntimeMessage => ({
+      kind: 'signal',
+      type: 'first-conversation',
+      tagName: 'first-conversation',
+      body: "This is the Person's first Thread. Nothing has been said yet. Activate the first-conversation skill and follow it.",
+      attributes: attribution,
+    }),
   })
 }
