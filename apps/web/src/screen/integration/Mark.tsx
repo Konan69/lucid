@@ -27,12 +27,37 @@ const fileOf = (name: string) =>
  */
 const logoOf = (name: string) => Option.fromUndefinedOr(LOGOS[`./logos/${fileOf(name)}.svg`])
 
+/** The fills a service without a logo may take: the saturated face colours, the grey left out. */
+const HUES = [
+  'bg-face-blue',
+  'bg-face-violet',
+  'bg-face-magenta',
+  'bg-face-red',
+  'bg-face-orange',
+  'bg-face-green',
+  'bg-face-cyan',
+  'bg-face-yellow',
+] as const
+
+/**
+ * The colour a service without a logo always gets. It is taken from the letters of its name, so
+ * the same service is the same colour on every screen and every visit, and it means nothing
+ * more than "this one": no hue is reserved for a kind of service.
+ */
+const hueOf = (name: string) => {
+  const sum = Array.from(name.trim().toLocaleLowerCase()).reduce(
+    (total, letter) => total + (letter.codePointAt(0) ?? 0),
+    0,
+  )
+  return HUES[sum % HUES.length]
+}
+
 /**
  * A service's logo on a white rounded square, the way an app icon sits on a home screen and the
  * way the reference's tiles show one (`refs/grok-bot-screenshots/02-what-do-you-use-every-day.png`).
  * The square is white in both themes, because the logos are drawn for a white ground. A service
- * with no logo here gets its initial on a square of the theme's own fill: true to its name,
- * never a made-up mark.
+ * with no logo here gets its initial in white on a square of one of the face colours: true to its
+ * name, never a made-up mark, and still a shape of colour beside the real logos in a grid.
  */
 export function Mark({
   service,
@@ -51,8 +76,10 @@ export function Mark({
       aria-hidden
       style={tileStyle}
       className={cn(
-        'inline-flex size-(--mark-size) shrink-0 items-center justify-center overflow-hidden rounded-control text-title font-title text-ink-2 edge',
-        Option.isSome(logo) ? 'bg-white' : 'bg-surface-2',
+        'inline-flex size-(--mark-size) shrink-0 items-center justify-center overflow-hidden rounded-control text-title font-title',
+        // A logo's white square needs the edge to be seen on a light page; a square of colour
+        // is its own edge.
+        Option.isSome(logo) ? 'bg-white edge' : cn('text-ink-on-color', hueOf(service.name)),
         className,
       )}
     >
