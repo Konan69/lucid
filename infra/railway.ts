@@ -11,11 +11,12 @@ import type { DeploymentTarget } from './targets.ts'
  */
 const serviceNames = {
   database: 'vivid-postgres',
+  helix: 'vivid-helix',
   runtime: 'vivid-runtime',
   server: 'vivid-server',
 } as const
 
-const ports = { runtime: 5173, server: 8787 } as const
+const ports = { helix: 8080, runtime: 5173, server: 8787 } as const
 
 /** Private mesh address of a service; never reachable from the public internet. */
 const privateUrl = (name: string, port: number) => `http://${name}.railway.internal:${port}`
@@ -32,8 +33,9 @@ const listenHost = '::'
  * (`VIVID_WEB_DIST`, set in `apps/server/Dockerfile`), so web, `/api` and WebSockets share one
  * origin exactly as they do behind the Vite proxy locally.
  *
- * Helix, Executor and program isolation are not part of this graph yet: the server reports those
- * capabilities as unavailable when their addresses are absent (`docs/19-infrastructure.md`).
+ * Helix gives Vivid its memory. Executor and program isolation are not part of this graph yet: the
+ * server reports those capabilities as unavailable when their addresses are absent
+ * (`docs/19-infrastructure.md`).
  */
 export const railwayResources = Effect.fn('railwayResources')(function* (
   target: DeploymentTarget,
@@ -53,6 +55,25 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     database: 'vivid',
     public: false,
   })
+
+  /**
+   * Helix holds the memory graph on disk. The image and data path are the ones the local stack
+   * runs. The image runs as an unprivileged user and a fresh Railway volume is owned by root, so
+   * `RAILWAY_RUN_UID` makes the data directory writable without changing the image.
+   */
+  const helix = yield* Railway.Service('Helix', {
+    project,
+    name: serviceNames.helix,
+    image: 'ghcr.io/helixdb/helixdb:v0.0.5',
+    port: ports.helix,
+    publicDomain: false,
+    env: {
+      HELIX_DATA_DIR: '/var/lib/helix',
+      HELIX_HTTP_ADDR: `[::]:${ports.helix}`,
+      RAILWAY_RUN_UID: '0',
+    },
+  })
+  yield* Railway.Volume('HelixData', { project, service: helix, mountPath: '/var/lib/helix' })
 
   /** Flue keeps its durable state in PostgreSQL, so the runtime needs no volume of its own. */
   yield* Railway.Service('Runtime', {
@@ -101,6 +122,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       VIVID_RUNTIME_URL: privateUrl(serviceNames.runtime, ports.runtime),
       VIVID_RUNTIME_TOKEN: environment.runtimeToken,
       EXPLABS_API_KEY: environment.modelGatewayKey,
+      VIVID_HELIX_URL: privateUrl(serviceNames.helix, ports.helix),
       /** Where `apps/server/Dockerfile` leaves the built web app; the server serves it itself. */
       VIVID_WEB_DIST: '/app/apps/web/dist',
     },
