@@ -1,8 +1,25 @@
 # Artifacts
 
-**Not built.** Reserved for durable, versioned inputs and outputs linked to their Thread and Run:
-documents Vivid writes, generated files, kept attachments.
+Owns durable Markdown documents and immutable version history within a Thread, as specified by
+`packages/contracts/src/artifacts.ts` and docs/14.
 
-What exists nearby: pictures attached to a message are passed to the model and served back
-(`threads/pictures.ts`) but are not kept as Artifacts, and the `show` tool's cards are drawn from
-the tool call itself. Delete this file when the first real module lands here.
+- `tables.ts`: Thread-owned Artifact summaries and cascading, append-only versions. Titles are
+  unique within a Thread using PostgreSQL `lower(title)`.
+- `store.ts`: Thread access, atomic creation/revision, historical reads, removal and delivery Run
+  attribution. Thread row locks serialize every mutation, including concurrent new titles.
+- `handlers.ts`: RPC identity injection and live subscriptions on the Thread topic.
+- `store.test.ts`: real PostgreSQL behavior, concurrency, attribution and access tests.
+
+Every reader of a Thread may open and revise its documents. Removal additionally requires its
+creator or an admin/owner membership in that Thread's Company; admin status grants no access to
+private Threads. The active workspace does not override Thread access.
+
+Vivid supplies a title and whole Markdown body. Runtime code supplies the delivery turn, and the
+server resolves its Run using the authenticated Thread and Person. Missing deliveries write
+nothing. Reusing a title revises its original document; an identical newest body is a no-op.
+Person revisions use compare-and-swap against `from`, with `ArtifactChanged` for stale editors.
+First versions have no note; later versions retain optional notes and author snapshots.
+
+Actual mutations publish the Thread topic after commit. No existing audit event describes a
+local document revision, so this domain adds no audit record. Removing a Thread cascades through
+its documents and every version. Person-facing Artifact surfaces are still unbuilt.

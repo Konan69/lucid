@@ -11,6 +11,7 @@ import {
   NodePath,
   NodeRuntime,
 } from '@effect/platform-node'
+import { artifactStoreLayer } from './artifacts/store.ts'
 import { gateLayer } from './approvals/gate.ts'
 import { actionRunnerLayer } from './approvals/runner.ts'
 import { approvalStoreLayer } from './approvals/store.ts'
@@ -108,7 +109,7 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     publicPageLayer,
     codeAuthorityLayer,
   ).pipe(Layer.provideMerge(data))
-  const reach = Layer.mergeAll(presenceLayer, notifierLayer, auditLayer).pipe(
+  const reach = Layer.mergeAll(presenceLayer, notifierLayer, auditLayer, artifactStoreLayer).pipe(
     Layer.provideMerge(foundation),
   )
   const recorded = ruleStoreLayer.pipe(Layer.provideMerge(reach))

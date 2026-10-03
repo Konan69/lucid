@@ -2,6 +2,7 @@ import * as Layer from 'effect/Layer'
 import * as RpcSerialization from 'effect/unstable/rpc/RpcSerialization'
 import * as RpcServer from 'effect/unstable/rpc/RpcServer'
 import { VividRpc } from '@vivid/contracts/rpc'
+import { artifactHandlers } from '../artifacts/handlers.ts'
 import { approvalHandlers } from '../approvals/handlers.ts'
 import { auditHandlers } from '../audit/handlers.ts'
 import { rpcAuthMiddlewareLayer } from '../auth/middleware.ts'
@@ -27,6 +28,7 @@ import { threadHandlers } from '../threads/handlers.ts'
  * declared in `packages/contracts/src/rpc.ts` with no handler here does not compile.
  */
 export const rpcHandlersLayer = VividRpc.toLayer({
+  ...artifactHandlers,
   ...companyHandlers,
   ...codeHandlers,
   ...settingsHandlers,

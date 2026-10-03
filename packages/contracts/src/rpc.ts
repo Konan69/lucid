@@ -3,6 +3,18 @@ import * as Rpc from 'effect/unstable/rpc/Rpc'
 import * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import * as RpcMiddleware from 'effect/unstable/rpc/RpcMiddleware'
 import { ApprovalResponse, DecideApprovalRequest } from './approvals.js'
+import {
+  ArtifactChanged,
+  ArtifactDetail,
+  ArtifactListResponse,
+  ArtifactResponse,
+  GetArtifactRequest,
+  ReadDocumentOutcome,
+  ReadDocumentRequest,
+  ReviseArtifactRequest,
+  WriteDocumentOutcome,
+  WriteDocumentRequest,
+} from './artifacts.js'
 import { AuditListResponse } from './audit.js'
 import type { AuthContext } from './auth.js'
 import { CodeOutcome, ReadPageOutcome, ReadPageRequest, RunCodeRequest } from './code.js'
@@ -63,6 +75,7 @@ import {
   Unauthenticated,
 } from './failures.js'
 import {
+  ArtifactId,
   ApprovalId,
   ConnectionId,
   FollowUpId,
@@ -289,6 +302,41 @@ const GetDeliveryScope = Rpc.make('GetDeliveryScope', {
   ...call,
   payload: DeliveryScopeRequest,
   success: DeliveryScope,
+})
+
+// ── Artifacts ──────────────────────────────────────────────────────────────
+const ListArtifacts = Rpc.make('ListArtifacts', {
+  ...call,
+  payload: { threadId: ThreadId },
+  success: ArtifactListResponse,
+})
+const WatchArtifacts = Rpc.make('WatchArtifacts', {
+  ...live,
+  payload: { threadId: ThreadId },
+  success: ArtifactListResponse,
+})
+const GetArtifact = Rpc.make('GetArtifact', {
+  ...call,
+  payload: GetArtifactRequest,
+  success: ArtifactDetail,
+})
+const ReviseArtifact = Rpc.make('ReviseArtifact', {
+  ...call,
+  payload: ReviseArtifactRequest,
+  success: ArtifactResponse,
+  error: Schema.Union([RpcFailure, ArtifactChanged]),
+})
+const RemoveArtifact = Rpc.make('RemoveArtifact', { ...call, payload: { id: ArtifactId } })
+/** The delivery turn is supplied by runtime code, never by the model, within the authenticated Thread. */
+const WriteDocument = Rpc.make('WriteDocument', {
+  ...call,
+  payload: { ...WriteDocumentRequest.fields, turn: Schema.Number },
+  success: WriteDocumentOutcome,
+})
+const ReadDocument = Rpc.make('ReadDocument', {
+  ...call,
+  payload: ReadDocumentRequest,
+  success: ReadDocumentOutcome,
 })
 
 // ── What is waiting on the Person: questions and Approvals ─────────────────
@@ -671,6 +719,13 @@ export const VividRpc = RpcGroup.make(
   StopThread,
   ReportPresence,
   GetDeliveryScope,
+  ListArtifacts,
+  WatchArtifacts,
+  GetArtifact,
+  ReviseArtifact,
+  RemoveArtifact,
+  WriteDocument,
+  ReadDocument,
   GetInbox,
   WatchInbox,
   DecideApproval,

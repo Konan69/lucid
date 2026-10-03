@@ -96,7 +96,7 @@ runs/           ○ the durable work log (not built; records are in threads/) do
 inputs/         ● Input requests: questions a Run cannot answer alone    docs/03
 approvals/      ● the trust loop: gate, record, runner, replay           docs/22
 rules/          ● standing rules that pre-decide actions, and the judge  docs/22
-artifacts/      ○ versioned inputs and outputs of a Run (not built)      docs/14
+artifacts/      ● Thread documents, immutable versions and runtime tools docs/14
 tasks/          ● Tasks, follow-ups, the follow-up scheduler             docs/15
 notifications/  ● what needs a Person's attention                        docs/15
 routines/       ● Routines, Occurrences, triggers, the scheduler         docs/13, 22

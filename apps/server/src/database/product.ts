@@ -4,6 +4,7 @@ import { bigint, integer, pgTable } from 'drizzle-orm/pg-core'
  * The product owner's schema: every table `product-drizzle.config.ts` generates `./product-drizzle`
  * from. It migrates after the identity owner in `schema.ts`.
  */
+export { artifacts, artifactVersions } from '../artifacts/tables.ts'
 export { approvals } from '../approvals/tables.ts'
 export { auditEntries } from '../audit/tables.ts'
 export { computers, machineBindings } from '../computers/tables.ts'
