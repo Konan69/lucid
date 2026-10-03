@@ -42,8 +42,9 @@ const exactFile = Effect.fn('Static.exactFile')(function* (root: string, name: s
 })
 
 /**
- * rc.116 HttpRouter.asHttpEffect supplies HEAD through GET and prefers concrete routes over /*.
- * HttpServerResponse.file delegates streaming, MIME, length and ETag to NodeHttpPlatform.make;
+ * effect/src/unstable/http/HttpRouter.ts:make/asHttpEffect (rc.116) supplies HEAD through GET and
+ * prefers concrete routes over /*. HttpServerResponse.ts:file delegates streaming, MIME, length
+ * and ETag to @effect/platform-node/src/NodeHttpPlatform.ts:make;
  * no custom body buffering or dependency is needed. Reserved namespaces and upgrades cannot
  * fall through to the SPA even when no matching API endpoint exists.
  */
