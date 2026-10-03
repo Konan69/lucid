@@ -1,5 +1,7 @@
 # Design language
 
+2026-10-03: Historical design research and proposals; implemented tokens and components supersede these implementation claims in `packages/design/tokens` and `apps/web/src/ui`, with enforcement in [designlint](designlint.md) and feature evidence in [docs/14](14-product-feature-set-and-grok-bot-parity.md).
+
 Why T3 Code and Open Session feel premium, read from their source, and the rules Vivid keeps.
 
 ## Prominence comes from shape, not color

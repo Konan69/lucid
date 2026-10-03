@@ -1,5 +1,7 @@
 # Main screen
 
+2026-10-03: Historical first-screen proposal; later product direction is in [docs/22](22-one-product.md), and current implemented surfaces superseding this proposal’s status are recorded in [docs/14](14-product-feature-set-and-grok-bot-parity.md).
+
 Status: first proposal, 2026-09-02. A hybrid of Open Session's layout, T3 Code's status-aware
 sidebar, and Grok Bot's one-relationship simplicity. Everything else in the product accumulates in
 [Surface](03-surface.md); this document is only the screen the user lives in.

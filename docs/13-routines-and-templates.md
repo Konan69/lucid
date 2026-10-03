@@ -1,5 +1,7 @@
 # Routines and templates
 
+2026-10-03: Built server-owned Routines with Once, Schedule, Webhook and Integration triggers supersede the demo-only status below; the template gallery and commerce sections remain historical proposals, not current features. Current behavior is in `apps/server/src/routines` and [docs/14](14-product-feature-set-and-grok-bot-parity.md).
+
 **Status:** Feature designed 2 September 2026; UI shipped as a demo. Commerce model is a proposal,
 not an agreement.
 

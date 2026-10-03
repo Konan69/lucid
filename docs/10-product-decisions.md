@@ -1,5 +1,7 @@
 # Product decisions
 
+2026-10-03: Historical 2 September decisions; later decisions live in [docs/22](22-one-product.md), while PostgreSQL and current workspace pins supersede its implementation snapshot in [docs/14](14-product-feature-set-and-grok-bot-parity.md) and `pnpm-workspace.yaml`; open choices remain owner decisions.
+
 **Status:** Canonical product context  
 **Updated:** 2 September 2026
 
@@ -62,7 +64,7 @@ The full model and remaining questions are in [Company and projects](12-company-
 
 ## Content and examples
 
-- Remove Georgiy, Bosch, and references derived from Vivid's past projects.
+- Remove private people, client names, and references derived from earlier projects.
 - Use easy, neutral, everyday examples that explain the product without private history: booking
   dinner, comparing flights, moving an appointment, planning meals, reminders, forms, and email.
 - Reference repositories inform product mechanics and architecture; they should not leak into

@@ -1,5 +1,7 @@
 # State machines in Vivid
 
+2026-10-03: Historical deferred evaluation; relocated server domains and RPC subscriptions supersede its source map, with current behavior in [docs/14](14-product-feature-set-and-grok-bot-parity.md) and domain READMEs; one-off Routines supersede the retired Tasks model and this audit does not authorize adoption.
+
 **Tracking:** [GitHub issue #3](https://github.com/Konan69/vivid/issues/3).
 
 **Status:** Deferred evaluation; revisit before adoption. No implementation authorized by this note.

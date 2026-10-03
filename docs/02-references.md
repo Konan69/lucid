@@ -1,5 +1,7 @@
 # References
 
+2026-10-03: Historical reference inventory; Vivid’s earlier SQLite runtime choice is superseded by PostgreSQL, HelixDB memory, Executor Integrations, and Boat; current implementation evidence is in [docs/14](14-product-feature-set-and-grok-bot-parity.md).
+
 Public and local reference systems used to inform Vivid. Proprietary project names and paths are
 intentionally omitted.
 

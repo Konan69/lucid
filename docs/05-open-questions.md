@@ -1,5 +1,7 @@
 # Open questions
 
+2026-10-03: These are the 2 September questions, retained without deciding them here; later implementation evidence superseding their status is in [docs/14](14-product-feature-set-and-grok-bot-parity.md), with owner decisions listed in the docs audit report.
+
 Undecided as of 2026-09-02.
 
 1. **The first greeting.** What Vivid says on day one, before there is a thread to show. It carries

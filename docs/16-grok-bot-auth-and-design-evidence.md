@@ -1,5 +1,7 @@
 # Grok Bot 0.39: auth and design evidence
 
+2026-10-03: Historical Grok Bot evidence, not Vivid’s auth or UI implementation; Vivid’s Better Auth boundary and current platform state supersede its Vivid mappings in the app READMEs and [docs/14](14-product-feature-set-and-grok-bot-parity.md).
+
 This report treats the reconstruction as evidence, not as an invitation to fill gaps. `PROVENANCE.md` says the immutable release is the product specification and requires an inspectable artifact anchor for each recovered behavior (`~/refs/grok-bot-0.39-reconstructed/PROVENANCE.md:17-29`). The release is Grok Bot 0.39.0, upstream package `sand` (`~/refs/grok-bot-0.39-reconstructed/PROVENANCE.md:3-11`).
 
 ## Auth and identity

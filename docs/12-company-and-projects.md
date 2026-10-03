@@ -1,5 +1,7 @@
 # Company and projects
 
+2026-10-03: Historical agreed model; current Company/Membership and recursive Project behavior superseding the implementation context is in [docs/14](14-product-feature-set-and-grok-bot-parity.md) and `apps/server/src/companies`/`projects`; Teams and inherited-access choices are not settled by this audit.
+
 **Status:** Product model agreed on 2 September 2026
 
 ## Shape

@@ -1,5 +1,7 @@
 # OpenMuse reference: what to borrow
 
+2026-10-03: Historical borrowing plan; built Approvals, Input requests, Run records, Executor-owned Integration credentials, and Boat supersede its Vivid gap claims; current truth is in domain READMEs and [docs/14](14-product-feature-set-and-grok-bot-parity.md), and one-off Routines supersede the retired Tasks model.
+
 OpenMuse (`CopilotKit/OpenMuse`, MIT) is a single-owner personal-assistant template: Hono server,
 CopilotKit runtime over AG-UI, Expo client, PGlite/PostgreSQL, a Playwright browser worker, and an
 optional Docker "computer". This note records the mechanisms worth adapting into Vivid, with exact

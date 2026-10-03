@@ -1,5 +1,7 @@
 # Computer
 
+2026-10-03: The Boat implementation and real-service proof below supersede the earlier Grok Bot mapping; runtime placement, external state sync, egress through a Person’s device and takeover remain planned. Provider prices/specifications record the earlier research, not a fresh quote; current status is in [docs/14](14-product-feature-set-and-grok-bot-parity.md).
+
 ## Thesis
 
 From a public thread, 31 August 2026, answering the question of where an assistant's work should run:

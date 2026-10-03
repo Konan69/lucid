@@ -1,5 +1,7 @@
 # One product: a person's Vivid and a team's Vivid are the same Vivid
 
+2026-10-03: This remains build scope and design intent; measured implementation status is in [docs/14](14-product-feature-set-and-grok-bot-parity.md) and domain READMEs. The extended Boat proof in [docs/04](04-computer.md) supersedes the browser-input refusal claim below; provider input now works, while app viewing and Thread-driven input remain unproven.
+
 **Status:** scope for the build that finishes the product, 1 October 2026. Evidence for every choice
 is in [Reference mining](21-reference-mining.md). Where this document and an older one disagree, this
 one wins until it is revised.

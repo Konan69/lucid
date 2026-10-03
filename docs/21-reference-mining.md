@@ -1,5 +1,7 @@
 # Reference mining: what the category ships, and what Vivid takes
 
+2026-10-03: Historical 1 October reference survey and adaptation intent; later product direction lives in [docs/22](22-one-product.md), and implemented behavior superseding its gap claims is in [docs/14](14-product-feature-set-and-grok-bot-parity.md); one-off Routines supersede the retired Tasks model.
+
 **Mined:** 1 October 2026. **Scope:** every reference saved in the seven weeks to that date, read at
 the source rather than at the headline: the full conversation behind each saved post, the linked
 article, the repository, the shipped strings and the official documentation.

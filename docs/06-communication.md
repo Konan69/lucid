@@ -1,5 +1,7 @@
 # Communication
 
+2026-10-03: Historical Grok Bot communication research and Vivid proposal; current shared Threads supersede only the implementation context, while cross-Person Vivid-to-Vivid remains unbuilt in [docs/14](14-product-feature-set-and-grok-bot-parity.md).
+
 How Grok Bot's bots talk to each other, work in groups, reach other users, fork work, and reach the
 user's own computer. From `~/refs/grok-bot-0.18-reconstructed/source`. This is the substrate for
 Vivid-to-Vivid.
