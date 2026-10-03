@@ -20,6 +20,13 @@ import { changed } from '../live/changes.ts'
 import { libraryFailure } from '../library/failures.ts'
 import { digestBytes, ingestLibraryItem, MAX_LIBRARY_FILE_BYTES } from '../library/ingest.ts'
 import { LibraryStore, type StoredLibraryItem } from '../library/store.ts'
+import {
+  multipartRequest,
+  uploadLimitMessage,
+  uploadLimits,
+  uploadRefusal,
+  UploadTooLarge,
+} from './upload.ts'
 
 const mimeByExtension = new Map([
   ['pdf', 'application/pdf'],
@@ -54,7 +61,14 @@ const decodeItemId = Schema.decodeUnknownEffect(LibraryItemId)
 const upload = Effect.fn('Http.Library.upload')(function* () {
   const actor = yield* authenticatedActor()
   const request = yield* HttpServerRequest.HttpServerRequest
-  const parts = yield* request.multipart
+  yield* multipartRequest(request.headers)
+  const parts = yield* request.multipart.pipe(
+    Effect.provide(uploadLimits),
+    Effect.mapError(uploadRefusal),
+    Effect.tapErrorTag('UploadUnstored', () =>
+      Effect.logError('Library upload could not persist multipart bytes'),
+    ),
+  )
   const files = parts.file
   const file = Array.isArray(files) ? files.find(Multipart.isPersistedFile) : undefined
   if (file === undefined)
@@ -62,9 +76,7 @@ const upload = Effect.fn('Http.Library.upload')(function* () {
   const fileSystem = yield* FileSystem.FileSystem
   const bytes = yield* fileSystem.readFile(file.path)
   if (bytes.byteLength > MAX_LIBRARY_FILE_BYTES)
-    return yield* Effect.fail(
-      new InvalidRequest({ message: 'Library item exceeds the size limit' }),
-    )
+    return yield* Effect.fail(new UploadTooLarge({ exceeded: 'File' }))
   const metadata = yield* decodeUpload({
     name: file.name,
     mimeType: inferMimeType(file.name, file.contentType),
@@ -130,13 +142,14 @@ const content = Effect.fn('Http.Library.content')(function* () {
   return yield* byteResponse(document)
 })
 
+/** Derive the closed failure vocabulary from the routes so upload limit context stays typed. */
+type BytesFailure = Effect.Error<
+  ReturnType<typeof upload> | ReturnType<typeof source> | ReturnType<typeof content>
+>
+
 /** HTTP status mapping preserves authentication, isolation and validation failures. */
-const respond = <
-  A extends HttpServerResponse.HttpServerResponse,
-  E extends { readonly _tag: string },
-  R,
->(
-  operation: Effect.Effect<A, E, R>,
+const respond = <R>(
+  operation: Effect.Effect<HttpServerResponse.HttpServerResponse, BytesFailure, R>,
 ) =>
   operation.pipe(
     Effect.catchTags({
@@ -151,6 +164,28 @@ const respond = <
       InvalidRequest: () =>
         Effect.succeed(
           HttpServerResponse.jsonUnsafe({ error: 'Invalid Library request' }, { status: 400 }),
+        ),
+      UploadTooLarge: (error) =>
+        Effect.succeed(
+          HttpServerResponse.jsonUnsafe(
+            { error: uploadLimitMessage(error) },
+            // A parser limit can leave body bytes unread; never reuse that HTTP connection.
+            { status: 413, headers: { connection: 'close' } },
+          ),
+        ),
+      UploadMalformed: () =>
+        Effect.succeed(
+          HttpServerResponse.jsonUnsafe(
+            { error: 'Vivid could not read this upload.' },
+            { status: 400, headers: { connection: 'close' } },
+          ),
+        ),
+      UploadUnstored: () =>
+        Effect.succeed(
+          HttpServerResponse.jsonUnsafe(
+            { error: 'Vivid could not store this file. Try again.' },
+            { status: 500, headers: { connection: 'close' } },
+          ),
         ),
       NotFound: () =>
         Effect.succeed(
