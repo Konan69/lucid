@@ -28,6 +28,15 @@ import type * as HttpBody from 'effect/unstable/http/HttpBody'
 import { toolMessage } from './message.ts'
 import { retainCatalog } from './catalog.ts'
 import { ConnectionSource } from './address.ts'
+import {
+  encodeGoogleClient,
+  googleApp,
+  googleReturnPath,
+  GoogleState,
+  decodeGoogleState,
+  loadGoogleInstallation,
+  type GoogleInstallation,
+} from './google.ts'
 
 export const ExecutorAppId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorAppId'))
 export const ExecutorAccountId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorAccountId'))
@@ -57,6 +66,12 @@ export const ExecutorReferences = Schema.TaggedUnion({
     label: Schema.NonEmptyString,
   },
   SigningIn: { ...referenceFields, authorization: ExecutorAuthorizationId },
+  /** Google has a registered fixed callback and must persist its exact protocol correlation. */
+  GoogleSigningIn: {
+    ...referenceFields,
+    authorization: ExecutorAuthorizationId,
+    googleState: GoogleState,
+  },
   Authorized: { ...referenceFields, account: ExecutorAccountId },
 })
 export type ExecutorReferences = typeof ExecutorReferences.Type
@@ -67,8 +82,15 @@ export const ExecutorServiceEntry = Schema.Struct({
   description: Schema.String,
   authorization: ServiceAuthorization,
 })
+const SignInReferences = Schema.Union([
+  ExecutorReferences.cases.SigningIn,
+  ExecutorReferences.cases.GoogleSigningIn,
+])
+const isSigningIn = ExecutorReferences.isAnyOf(['SigningIn', 'GoogleSigningIn'])
+const isPending = ExecutorReferences.isAnyOf(['EnteringKey', 'SigningIn', 'GoogleSigningIn'])
+
 export const ExecutorStep = Schema.TaggedUnion({
-  OpenSignIn: { references: ExecutorReferences.cases.SigningIn, address: Schema.String },
+  OpenSignIn: { references: SignInReferences, address: Schema.String },
   EnterKey: {
     references: ExecutorReferences.cases.EnteringKey,
     fields: ServiceAuthorization.cases.Key.fields.fields,
@@ -682,7 +704,7 @@ function referenceIdentity(references: ExecutorReferences) {
 }
 
 /** Compile the narrow foreign response schemas once for this authenticated client. */
-function makeHttp(client: HttpClient.HttpClient) {
+function makeHttp(client: HttpClient.HttpClient, google: Option.Option<GoogleInstallation>) {
   const read = responseReader(client)
   const readApp = read(WireApp)
   const readApps = read(Schema.Array(WireApp))
@@ -696,6 +718,7 @@ function makeHttp(client: HttpClient.HttpClient) {
   const readSignIn = read(WireSignIn)
   const readRemoval = read(Schema.Json)
   return {
+    google,
     readApp,
     readApps,
     readProfile,
@@ -797,17 +820,30 @@ function makeSignIn(
     pending: typeof ExecutorReferences.cases.SigningIn.Type,
     methodName: string,
   ) {
+    const installed = googleApp(http.google, input.service)
+    const redirectUri = Option.isSome(installed)
+      ? new URL(googleReturnPath, input.returnAddress).href
+      : input.returnAddress
+    const submission = {
+      connection: pending.authorization,
+      owner: input.owner,
+      method: methodName,
+      label: input.label,
+      redirectUri,
+    }
+    const body =
+      Option.isSome(installed) && Option.isSome(http.google)
+        ? {
+            ...submission,
+            client: yield* encodeGoogleClient(http.google.value.client).pipe(
+              Effect.mapError(() =>
+                ExecutorResponseInvalid.make({ service: 'connections', tool: null }),
+              ),
+            ),
+          }
+        : submission
     const result = yield* http
-      .readSignIn(
-        post('/v1/account-connections/oauth/start', {
-          connection: pending.authorization,
-          owner: input.owner,
-          method: methodName,
-          label: input.label,
-          redirectUri: input.returnAddress,
-        }),
-        null,
-      )
+      .readSignIn(post('/v1/account-connections/oauth/start', body), null)
       .pipe(
         Effect.catchTags({
           ExecutorSetupRequired: () =>
@@ -831,16 +867,37 @@ function makeSignIn(
             Effect.fail(ExecutorAuthorizationUnavailable.make({ references: pending })),
         }),
       )
-    return WireSignIn.match(result, {
+    return yield* WireSignIn.match(result, {
       redirect: ({ authorizationUrl }) =>
-        ExecutorStep.cases.OpenSignIn.make({ references: pending, address: authorizationUrl }),
-      completed: ({ account }) =>
-        ExecutorStep.cases.Done.make({
-          references: ExecutorReferences.cases.Authorized.make({
-            ...referenceIdentity(pending),
-            account: account.id,
-          }),
+        Effect.gen(function* () {
+          if (Option.isNone(installed))
+            return ExecutorStep.cases.OpenSignIn.make({
+              references: pending,
+              address: authorizationUrl,
+            })
+          const state = yield* decodeGoogleState(
+            new URL(authorizationUrl).searchParams.get('state'),
+          ).pipe(
+            Effect.mapError(() => ExecutorAuthorizationUnavailable.make({ references: pending })),
+          )
+          return ExecutorStep.cases.OpenSignIn.make({
+            references: ExecutorReferences.cases.GoogleSigningIn.make({
+              ...referenceIdentity(pending),
+              authorization: pending.authorization,
+              googleState: state,
+            }),
+            address: authorizationUrl,
+          })
         }),
+      completed: ({ account }) =>
+        Effect.succeed(
+          ExecutorStep.cases.Done.make({
+            references: ExecutorReferences.cases.Authorized.make({
+              ...referenceIdentity(pending),
+              account: account.id,
+            }),
+          }),
+        ),
     })
   })
 }
@@ -887,7 +944,7 @@ function makeAuthorize(
       )
     const [methodName, method] = chosen
     // Pending requests are reusable; reconnects bind the existing account so completion cannot duplicate it.
-    const connection = ExecutorReferences.isAnyOf(['EnteringKey', 'SigningIn'])(references)
+    const connection = isPending(references)
       ? { id: references.authorization }
       : yield* http.readConnection(
           post(
@@ -935,7 +992,7 @@ function makeStatus(http: ExecutorHttp) {
   return Effect.fn('Executor.status')(
     function* (references: ExecutorReferences) {
       let resolved = references
-      if (ExecutorReferences.isAnyOf(['EnteringKey', 'SigningIn'])(references)) {
+      if (isPending(references)) {
         const connection = yield* http.readConnection(
           Effect.succeed(
             HttpClientRequest.get(
@@ -1067,6 +1124,11 @@ function makeInspectSetup(http: ExecutorHttp) {
     requirement: typeof Requirement.Type,
     returnAddress: string,
   ) {
+    if (
+      Option.isSome(http.google) &&
+      http.google.value.apps.some((app) => app.provider === requirement.provider)
+    )
+      return ServiceAuthorization.cases.SignIn.make({})
     const methods = Object.entries(requirement.definition.auth)
     const signIn = methods.find(([, method]) => AuthorizationMethod.guards.oauth2(method))
     const key = methods.find(([, method]) => AuthorizationMethod.guards.secrets(method))
@@ -1425,6 +1487,16 @@ function makeBegin(
     http,
     Effect.fn('Executor.importCatalog')((_input, entry, name) =>
       Effect.gen(function* () {
+        const installed = googleApp(http.google, entry.id)
+        if (Option.isSome(installed))
+          return yield* http.readApp(
+            post('/v1/apps/copies', {
+              from: installed.value.app,
+              owner: 'local',
+              name,
+            }),
+            null,
+          )
         return yield* http.readApp(
           post('/dashboard/api/catalog/import', {
             entry: entry.id,
@@ -1588,7 +1660,7 @@ function makeReauthorize(
     input: typeof BeginInput.Type & { readonly references: ExecutorReferences },
   ) {
     let references = input.references
-    if (ExecutorReferences.isAnyOf(['EnteringKey', 'SigningIn'])(references)) {
+    if (isPending(references)) {
       const pending = yield* http.readConnection(
         Effect.succeed(
           HttpClientRequest.get(
@@ -1699,7 +1771,7 @@ function makeCompleteSignIn(http: ExecutorHttp) {
     references,
     callbackAddress,
   }: typeof SignInInput.Type) {
-    if (!ExecutorReferences.guards.SigningIn(references))
+    if (!isSigningIn(references))
       return yield* Effect.fail(
         ExecutorRejected.make({
           service: 'connections',
@@ -1738,6 +1810,7 @@ function makeRemove(http: ExecutorHttp) {
       Authorized: (value) => Effect.succeed(Option.some(value.account)),
       EnteringKey: resolveRemovalAccount,
       SigningIn: resolveRemovalAccount,
+      GoogleSigningIn: resolveRemovalAccount,
     })
     yield* http.readRemoval(
       Effect.succeed(
@@ -1762,9 +1835,7 @@ function makeRemove(http: ExecutorHttp) {
 /** Cancelling an unfinished request prevents a late callback from recreating a removed Connection. */
 function makeResolveRemovalAccount(http: ExecutorHttp) {
   return Effect.fn('Executor.removalAccount')(function* (
-    references:
-      | typeof ExecutorReferences.cases.EnteringKey.Type
-      | typeof ExecutorReferences.cases.SigningIn.Type,
+    references: typeof ExecutorReferences.cases.EnteringKey.Type | typeof SignInReferences.Type,
   ) {
     const path = `/v1/account-connections/${query(references.authorization)}`
     const connection = yield* http.readConnection(
@@ -1902,8 +1973,9 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
       HttpClientRequest.acceptJson,
     ),
   )
-  const http = makeHttp(client)
-  const catalog = yield* retainCatalog(
+  const google = yield* loadGoogleInstallation()
+  const http = makeHttp(client, google)
+  const remoteCatalog = yield* retainCatalog(
     makeCatalog(http)().pipe(
       Effect.mapError(() =>
         ServiceUnavailable.make({ service: 'connections', message: 'The catalog is unavailable.' }),
@@ -1913,6 +1985,26 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
   const snapshots = yield* Cache.makeWith(makeDiscovery(http), {
     capacity: 1000,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? '5 minutes' : 0),
+  })
+  const catalog = Effect.fn('Executor.installedCatalog')(function* () {
+    const installed = Option.match(google, {
+      onNone: () => [],
+      onSome: (value) =>
+        value.apps.map((app) =>
+          ExecutorServiceEntry.make({
+            id: app.service,
+            name: app.name,
+            description: app.name,
+            authorization: ServiceAuthorization.cases.SignIn.make({}),
+          }),
+        ),
+    })
+    const remote = yield* remoteCatalog().pipe(
+      Effect.catchTag('ServiceUnavailable', (error) =>
+        installed.length > 0 ? Effect.succeed([]) : Effect.fail(error),
+      ),
+    )
+    return [...installed, ...remote.filter((entry) => Option.isNone(googleApp(google, entry.id)))]
   })
   const availability = yield* makeAuthorization(http, catalog)
   const discover = Effect.fn('Executor.discoverCached')((references: ExecutorReferences) =>

@@ -1,9 +1,10 @@
-import { Effect, Option, Redacted, Schema } from 'effect'
+import { Effect, Layer, Option, Redacted, Schema } from 'effect'
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
 import { ConnectionId, ConnectionState } from '@vivid/contracts'
 import { authenticate } from '../auth/session.ts'
 import { ServerConfig } from '../config.ts'
 import { ConnectionStore } from './store.ts'
+import { decodeGoogleState, googleReturnPath } from './google.ts'
 
 const decodeId = Schema.decodeUnknownEffect(ConnectionId)
 
@@ -44,8 +45,41 @@ const callback = Effect.fn('Http.Connections.return')(function* () {
   return HttpServerResponse.redirect(destination.href, { status: 303 })
 })
 
-export const connectionReturnRoutes = HttpRouter.add(
-  'GET',
-  '/api/connections/return/:id',
-  callback(),
+/** Google's exact-match registration requires one fixed callback across Persons and attempts.
+ * Resolve only the authenticated Person's exact saved state, then use the existing completion
+ * path. Multiple state parameters are refused; unknown/expired returns never reveal an id.
+ */
+const googleCallback = Effect.fn('Http.Connections.googleReturn')(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest
+  const config = yield* ServerConfig
+  const address = new URL(request.url, config.PUBLIC_URL)
+  const destination = yield* Effect.gen(function* () {
+    const states = address.searchParams.getAll('state')
+    const state = yield* decodeGoogleState(states.length === 1 ? states[0] : null)
+    const auth = yield* authenticate(new Headers(Object.entries(request.headers)))
+    const actor = {
+      person: auth.person,
+      workspace: auth.workspace,
+      by: 'person' as const,
+      threadId: Option.none(),
+    }
+    const store = yield* ConnectionStore
+    const id = yield* store.googleCallbackId(actor, state)
+    const result = yield* store.callback(actor, id, Redacted.make(address.href))
+    const target = new URL('/settings/connections', config.PUBLIC_URL)
+    target.searchParams.set(ConnectionState.guards.Ready(result) ? 'connected' : 'failed', id)
+    return target
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.logWarning({ tag: error._tag }).pipe(
+        Effect.as(new URL('/settings/connections', config.PUBLIC_URL)),
+      ),
+    ),
+  )
+  return HttpServerResponse.redirect(destination.href, { status: 303 })
+})
+
+export const connectionReturnRoutes = Layer.mergeAll(
+  HttpRouter.add('GET', '/api/connections/return/:id', callback()),
+  HttpRouter.add('GET', googleReturnPath, googleCallback()),
 )

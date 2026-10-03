@@ -39,6 +39,7 @@ import { executorFailure } from './errors.ts'
 import {
   encodeReferences,
   getRecord,
+  googleCallbackId,
   listRecords,
   publicConnection,
   recordChanged,
@@ -363,6 +364,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
   })
   const get = (actor: Actor, id: ConnectionId) => provide(getRecord(actor, id, false))
   const management = makeManagement({ executor, database, provide, get })
+
   return {
     get,
     catalog: catalogServices,
@@ -468,6 +470,35 @@ const serializeResumes = () => {
   return withResume
 }
 
+/** Fixed callbacks and id-addressed callbacks share the same account completion authority. */
+const makeCallbacks = (
+  input: Pick<Parameters<typeof makeManagement>[0], 'executor' | 'provide'>,
+) => {
+  const { executor, provide } = input
+  /** Bind sign-in completion to its initiating Person across workspace switches. */
+  const callback = Effect.fn('Connections.callback')(function* (
+    actor: Actor,
+    id: ConnectionId,
+    callbackAddress: Redacted.Redacted,
+  ) {
+    const row = yield* provide(getRecord(actor, id, true))
+    const managing = yield* provide(rowActor(actor, row))
+    const references = yield* executor
+      .completeSignIn({ references: row.references, callbackAddress })
+      .pipe(Effect.mapError(executorFailure))
+    const connection = yield* provide(finish(managing, row, references))
+    return connection.state
+  })
+
+  return {
+    googleCallbackId: Effect.fn('Connections.resolveGoogleReturn')(
+      (actor: Actor, state: Parameters<typeof googleCallbackId>[1]) =>
+        provide(googleCallbackId(actor, state)),
+    ),
+    callback,
+  }
+}
+
 /** Management shares the Layer's authority and publishes every persisted state change. */
 const makeManagement = (input: {
   readonly executor: ExecutorService
@@ -530,20 +561,7 @@ const makeManagement = (input: {
         .pipe(Effect.mapError(executorFailure))
       return yield* provide(finish(actor, row, references))
     }),
-    /** Bind sign-in completion to its initiating Person across workspace switches. */
-    callback: Effect.fn('Connections.callback')(function* (
-      actor: Actor,
-      id: ConnectionId,
-      callbackAddress: Redacted.Redacted,
-    ) {
-      const row = yield* provide(getRecord(actor, id, true))
-      const managing = yield* provide(rowActor(actor, row))
-      const references = yield* executor
-        .completeSignIn({ references: row.references, callbackAddress })
-        .pipe(Effect.mapError(executorFailure))
-      const connection = yield* provide(finish(managing, row, references))
-      return connection.state
-    }),
+    ...makeCallbacks(input),
     /** Remove provider authority before deleting the scoped product record. */
     remove: Effect.fn('Connections.remove')(function* (actor: Actor, id: ConnectionId) {
       const row = yield* get(actor, id)
