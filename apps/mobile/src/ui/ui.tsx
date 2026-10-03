@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { ReactNode, Ref } from 'react'
 import {
   Alert,
   Platform,
@@ -263,10 +263,11 @@ export function Card({ children, style }: { children: ReactNode; style?: StylePr
 }
 
 /** Somewhere to type. Its text is the reading size, which is also what keeps it legible. */
-export function Field({ style, ...props }: TextInputProps) {
+export function Field({ ref, style, ...props }: TextInputProps & { ref?: Ref<TextInput> }) {
   const { colors: c } = useTheme()
   return (
     <TextInput
+      ref={ref}
       {...props}
       placeholderTextColor={c.placeholder}
       selectionColor={c.primary}

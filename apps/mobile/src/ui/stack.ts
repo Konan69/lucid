@@ -1,5 +1,7 @@
+import { DarkTheme, DefaultTheme, type Theme } from '@react-navigation/native'
 import type { NativeStackNavigationOptions } from '@react-navigation/native-stack'
 import { Platform } from 'react-native'
+import type { Colors } from '../theme'
 import { GLASS_SUPPORTED } from './Glass'
 
 /**
@@ -58,3 +60,23 @@ export const SHEET = {
   // Android's sheet takes its own height; the detents are iOS's.
   sheetAllowedDetents: Platform.OS === 'android' ? undefined : [0.55, 0.92],
 } satisfies NativeStackNavigationOptions
+
+/**
+ * The navigation container's colours, from the theme in force: what the stack paints behind a
+ * screen while it is being pushed, and the ink of any native bar. Both containers (the front
+ * door's and the signed-in app's) read it, so a push never flashes another palette.
+ */
+export const navigationTheme = (c: Colors, dark: boolean): Theme => {
+  const base = dark ? DarkTheme : DefaultTheme
+  return {
+    ...base,
+    colors: {
+      ...base.colors,
+      background: c.screen,
+      card: c.screen,
+      text: c.foreground,
+      primary: c.primary,
+      border: c.border,
+    },
+  }
+}

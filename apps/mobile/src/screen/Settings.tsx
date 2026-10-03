@@ -96,7 +96,8 @@ export function Settings() {
           {(value) => <Preferences settings={value} onZone={() => setOver(Over.Zone())} />}
         </Live>
         <Section title="This phone">
-          <Row title="Server" detail={serverName(data.session.server)} />
+          {/* Where this phone's Vivid is means nothing to a Person; a developer checks it here. */}
+          {__DEV__ && <Row title="Server" detail={serverName(data.session.server)} />}
           <Row
             title="Sign in another device"
             detail="Enter the code it shows, and it signs in as you."

@@ -1,6 +1,6 @@
 import { RegistryContext } from '@effect/atom-react'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
-import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native'
+import { NavigationContainer } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import { workspaceKey } from '@vivid/state'
 import { StatusBar, View } from 'react-native'
@@ -17,7 +17,6 @@ import {
   useLiveData,
   type LiveData,
 } from './data/live'
-import { serverName } from './data/server'
 import { leaveAtom } from './data/signing'
 import { Broken } from './screen/Broken'
 import { Chat } from './screen/Chat'
@@ -33,7 +32,7 @@ import { Memory } from './screen/settings/Memory'
 import { People } from './screen/settings/People'
 import { ThemeProvider, useTheme } from './theme'
 import { Recover } from './ui/Recover'
-import { pushAnimation } from './ui/stack'
+import { navigationTheme, pushAnimation } from './ui/stack'
 import { Button, Face, GUTTER, Label } from './ui/ui'
 import { MeProvider, type Routes } from './workspace'
 
@@ -140,15 +139,12 @@ function useLeave() {
 
 /**
  * The socket is opening. It reconnects by itself for as long as it takes, so this never becomes
- * an error; but a Person who has waited a while is told what to check and given the way out,
- * because the usual reason is a server that is not running or a phone on another network.
+ * an error; but a Person who has waited a while is told what to check and given the way out.
  */
 function Connecting() {
-  const data = useLiveData()
   const leave = useLeave()
   const { colors: c } = useTheme()
   const waited = AsyncResult.isSuccess(useDoor(patienceAtom))
-  const where = serverName(data.session.server)
   return (
     <View
       accessibilityLiveRegion="polite"
@@ -165,15 +161,15 @@ function Connecting() {
       <Label size="headline" style={{ marginTop: 8, textAlign: 'center' }}>
         {waited ? 'Still trying to reach Vivid' : 'Connecting…'}
       </Label>
-      <Label size="label" tone="ink-3" style={{ textAlign: 'center', maxWidth: 300 }}>
-        {waited
-          ? `Nothing has answered at ${where} yet. Check that Vivid is running there and that this phone is on the same network. It will connect by itself when it can.`
-          : where}
-      </Label>
       {waited && (
-        <View style={{ marginTop: 14 }}>
-          <Button label="Sign out and choose a server" onPress={leave} />
-        </View>
+        <>
+          <Label size="label" tone="ink-2" style={{ textAlign: 'center', maxWidth: 300 }}>
+            Check your connection. Vivid opens by itself as soon as it can.
+          </Label>
+          <View style={{ marginTop: 14 }}>
+            <Button label="Sign out" onPress={leave} />
+          </View>
+        </>
       )}
     </View>
   )
@@ -198,7 +194,7 @@ function Stopped({ message }: { message: string }) {
       <Label size="headline" style={{ marginTop: 8, textAlign: 'center' }}>
         Vivid cannot open this account
       </Label>
-      <Label size="label" tone="ink-3" style={{ textAlign: 'center', maxWidth: 300 }}>
+      <Label size="label" tone="ink-2" style={{ textAlign: 'center', maxWidth: 300 }}>
         {message}
       </Label>
       <View style={{ marginTop: 14 }}>
@@ -220,21 +216,8 @@ function Stopped({ message }: { message: string }) {
 function Shell() {
   const { colors: c, dark } = useTheme()
   const still = useReducedMotion()
-  const base = dark ? DarkTheme : DefaultTheme
   return (
-    <NavigationContainer
-      theme={{
-        ...base,
-        colors: {
-          ...base.colors,
-          background: c.screen,
-          card: c.screen,
-          text: c.foreground,
-          primary: c.primary,
-          border: c.border,
-        },
-      }}
-    >
+    <NavigationContainer theme={navigationTheme(c, dark)}>
       <Stack.Navigator
         screenOptions={{
           headerShown: false,
