@@ -1,19 +1,7 @@
 import { SearchResult, type SearchResponse, type Thread } from '@vivid/contracts'
 import { LiveState, liveStateOf } from '@vivid/state'
 import { Array as Arr, Option, Order } from 'effect'
-import {
-  Brain,
-  FileText,
-  FolderKanban,
-  Library as LibraryIcon,
-  Link2,
-  MessageSquare,
-  PanelLeft,
-  Repeat2,
-  Search,
-  SlidersHorizontal,
-  SquarePen,
-} from 'lucide-react'
+import { FileText, Search } from 'lucide-react'
 import { useAtomSet, useAtomValue } from '@effect/atom-react'
 import { useCallback, useState, type ReactNode } from 'react'
 import { shortcut } from '../data/keys'
@@ -22,6 +10,8 @@ import { Route, router } from '../data/route'
 import { sidebar } from '../data/sidebar'
 import { cn } from '../ui/cn'
 import { holdFocus, keepFocusInside } from '../ui/Layer'
+import { Emblem } from './Emblem'
+import { PlaceMark } from './Place'
 
 type Found = SearchResponse['results'][number]
 
@@ -32,21 +22,26 @@ const describe = (result: Found) =>
       key: `thread:${thread.id}`,
       title: thread.title,
       detail: thread.preview,
-      icon: <MessageSquare className="size-4" />,
+      icon: <PlaceMark place="thread" />,
       go: () => router.go(Route.Thread({ id: thread.id })),
     }),
     LibraryItem: ({ item }) => ({
       key: `item:${item.id}`,
       title: item.name,
       detail: 'In the Library',
-      icon: <FileText className="size-4" />,
+      icon: (
+        // A document is a thing in the Library, so it wears the Library's hue with its own glyph.
+        <Emblem hue="violet" size={24}>
+          <FileText />
+        </Emblem>
+      ),
       go: () => router.go(Route.Library()),
     }),
     Routine: ({ routine }) => ({
       key: `routine:${routine.id}`,
       title: routine.name,
       detail: 'Routine',
-      icon: <Repeat2 className="size-4" />,
+      icon: <PlaceMark place="routines" />,
       go: () => router.go(Route.Routines()),
     }),
   })
@@ -69,7 +64,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     title: 'New thread',
     detail: 'Ask Vivid for something',
     words: 'start chat message ask compose',
-    icon: <SquarePen className="size-4" />,
+    icon: <PlaceMark place="compose" />,
     keys: Option.some(shortcut('⇧O')),
     go: () => router.go(Route.New()),
   },
@@ -78,7 +73,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     title: 'Routines',
     detail: 'Work Vivid does on a schedule or when called',
     words: 'schedule recurring cron automatic',
-    icon: <Repeat2 className="size-4" />,
+    icon: <PlaceMark place="routines" />,
     keys: Option.none(),
     go: () => router.go(Route.Routines()),
   },
@@ -87,7 +82,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     title: 'Projects',
     detail: 'Threads kept together',
     words: 'folders groups spaces',
-    icon: <FolderKanban className="size-4" />,
+    icon: <PlaceMark place="projects" />,
     keys: Option.none(),
     go: () => router.go(Route.Projects({ open: Option.none() })),
   },
@@ -96,7 +91,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     title: 'Library',
     detail: 'Documents Vivid can read',
     words: 'files documents uploads pdf',
-    icon: <LibraryIcon className="size-4" />,
+    icon: <PlaceMark place="library" />,
     keys: Option.none(),
     go: () => router.go(Route.Library()),
   },
@@ -105,7 +100,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     title: 'Integrations',
     detail: 'The services Vivid can use',
     words: 'connect integrations accounts gmail slack calendar',
-    icon: <Link2 className="size-4" />,
+    icon: <PlaceMark place="integrations" />,
     keys: Option.none(),
     go: () => router.openSettings(Option.some('connections')),
   },
@@ -114,7 +109,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     title: 'What Vivid knows',
     detail: 'Read, correct or remove what it has kept',
     words: 'memory remember forget brain',
-    icon: <Brain className="size-4" />,
+    icon: <PlaceMark place="memory" />,
     keys: Option.none(),
     go: () => router.openSettings(Option.some('memory')),
   },
@@ -123,7 +118,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     title: 'Settings',
     detail: 'Appearance, time zone, notifications, people, rules',
     words: 'preferences theme dark light appearance account sign out',
-    icon: <SlidersHorizontal className="size-4" />,
+    icon: <PlaceMark place="general" />,
     keys: Option.none(),
     go: () => router.openSettings(Option.some('general')),
   },
@@ -132,7 +127,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     title: 'Hide or show the sidebar',
     detail: 'More room for the thread',
     words: 'toggle panel rail collapse',
-    icon: <PanelLeft className="size-4" />,
+    icon: <PlaceMark place="sidebar" />,
     keys: Option.some(shortcut('B')),
     go: sidebar.toggle,
   },
@@ -161,7 +156,7 @@ const threadItem = (thread: Thread): Item => ({
   key: `recent:${thread.id}`,
   title: thread.title,
   detail: thread.preview,
-  icon: <MessageSquare className="size-4" />,
+  icon: <PlaceMark place="thread" />,
   keys: Option.none(),
   go: () => router.go(Route.Thread({ id: thread.id })),
 })
@@ -320,7 +315,7 @@ export function Palette({ onClose }: { onClose: () => void }) {
             className="min-w-0 flex-1 bg-transparent text-body text-ink outline-none placeholder:text-ink-3"
           />
         </label>
-        <div className="max-h-96 overflow-y-auto p-1">
+        <div className="max-h-112 overflow-y-auto p-1">
           {items.length === 0 && (
             <p className="px-3 py-6 text-center text-label text-ink-3" aria-live="polite">
               {nothingSaid(answer)}
@@ -347,8 +342,32 @@ export function Palette({ onClose }: { onClose: () => void }) {
             </section>
           ))}
         </div>
+        <Foot />
       </div>
     </div>
+  )
+}
+
+/** What the keyboard does here, said once at the foot where a palette always says it. */
+function Foot() {
+  return (
+    <footer className="hidden h-9 items-center gap-4 px-4 text-meta font-meta text-ink-3 hairline-t sm:flex">
+      <Hint keys="↑↓" does="Move" />
+      <Hint keys="↵" does="Open" />
+      <Hint keys=">" does="Actions only" />
+      <span className="flex-1" />
+      <Hint keys="esc" does="Close" />
+    </footer>
+  )
+}
+
+/** One key and what it does, in the palette's foot. */
+function Hint({ keys, does }: { keys: string; does: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <kbd className="rounded-xs bg-surface-2 px-1.5 py-0.5 font-sans text-ink-2">{keys}</kbd>
+      {does}
+    </span>
   )
 }
 
@@ -372,17 +391,21 @@ function Row({
         onMouseEnter={onHover}
         onClick={onChoose}
         className={cn(
-          'flex h-11 w-full cursor-pointer items-center gap-3 rounded-row px-3 text-left transition-colors duration-(--dur-fast)',
+          // The marked row changes at once: it follows the arrow keys, and a fill that eased
+          // from row to row would trail behind them.
+          'flex h-12 w-full cursor-pointer items-center gap-3 rounded-row px-2.5 text-left',
           active ? 'bg-wash-selected' : 'hover:bg-wash-hover',
         )}
       >
-        <span className="shrink-0 text-ink-3">{item.icon}</span>
+        {item.icon}
         <span className="min-w-0 flex-1">
           <span className="block truncate text-label text-ink">{item.title}</span>
           <span className="block truncate text-meta font-meta text-ink-3">{item.detail}</span>
         </span>
         {Option.isSome(item.keys) && (
-          <kbd className="shrink-0 font-sans text-meta text-ink-3">{item.keys.value}</kbd>
+          <kbd className="shrink-0 rounded-xs bg-surface-2 px-1.5 py-0.5 font-sans text-meta text-ink-3 tabular-nums">
+            {item.keys.value}
+          </kbd>
         )}
       </button>
     </li>
