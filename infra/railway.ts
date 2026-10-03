@@ -1,3 +1,4 @@
+import * as Output from 'alchemy/Output'
 import * as Railway from 'alchemy/Railway'
 import * as Effect from 'effect/Effect'
 import type { InfrastructureEnvironment } from './env.ts'
@@ -57,6 +58,20 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
   })
 
   /**
+   * The provider's private URI ends in `sslmode=no-verify`, a node-postgres extension. The server's
+   * native Effect client follows libpq and refuses it (`@effect/sql-pg` `PgConnection.ts`,
+   * "Unrecognized sslmode in URL"), which reached the log only as `DatabaseUnavailable` at launch
+   * while the pre-deploy migration, which runs on node-postgres, passed. `require` is no
+   * alternative: that client verifies the certificate and this image's is self-signed. Railway
+   * already encrypts the private mesh, so every consumer takes the private address without TLS.
+   */
+  const databaseUrl = Output.map(database.connectionUri, (uri) => {
+    const url = new URL(uri)
+    url.searchParams.set('sslmode', 'disable')
+    return url.toString()
+  })
+
+  /**
    * Helix holds the memory graph on disk. The image and data path are the ones the local stack
    * runs. The image runs as an unprivileged user and a fresh Railway volume is owned by root, so
    * `RAILWAY_RUN_UID` makes the data directory writable without changing the image.
@@ -89,7 +104,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     /** Flue migrates its own schema at startup; clear any inherited pre-deploy command. */
     preDeploy: { command: null },
     env: {
-      DATABASE_URL: database.connectionUri,
+      DATABASE_URL: databaseUrl,
       HOST: listenHost,
       PORT: String(ports.runtime),
       EXPLABS_API_KEY: environment.modelGatewayKey,
@@ -122,7 +137,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
      */
     preDeploy: { command: 'node scripts/migrate.mjs' },
     env: {
-      DATABASE_URL: database.connectionUri,
+      DATABASE_URL: databaseUrl,
       AUTH_SECRET: environment.authSecret,
       HOST: listenHost,
       PORT: String(ports.server),
