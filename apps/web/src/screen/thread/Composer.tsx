@@ -79,7 +79,7 @@ export function Composer({
           <BorderBeam active={working} colorVariant="ocean" strength={0.7} theme={shown}>
             {/* The beam reads its corner radius from the one element it wraps. */}
             <div
-              className="rounded-composer bg-surface-3 lift"
+              className="rounded-composer bg-surface-3 lift edge-field"
               // A file dropped anywhere on the composer is attached, the same as picking it.
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => {
