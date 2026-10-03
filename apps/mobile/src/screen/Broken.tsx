@@ -27,11 +27,10 @@ export function Broken() {
         backgroundColor: c['surface-0'],
       }}
     >
-      <Face size={44} mood="neutral" />
-      <Label size="headline" style={{ marginTop: 8, textAlign: 'center' }}>
+      <Label size="headline" style={{ textAlign: 'center' }}>
         This screen could not be shown
       </Label>
-      <Label size="label" tone="ink-3" style={{ textAlign: 'center', maxWidth: 300 }}>
+      <Label size="label" tone="ink-2" style={{ textAlign: 'center', maxWidth: 300 }}>
         Something went wrong while drawing it. Your threads and what you were writing are safe.
       </Label>
       <View style={{ marginTop: 14 }}>

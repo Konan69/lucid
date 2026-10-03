@@ -108,10 +108,7 @@ export function Routines() {
         <Live state={list} loading={<Skeleton rows={4} />}>
           {(value) =>
             value.routines.length === 0 ? (
-              <Empty
-                title="No routines yet"
-                detail="Write an instruction once and Vivid follows it on a schedule, or each time something calls it."
-              >
+              <Empty line="Write an instruction once and Vivid follows it on a schedule.">
                 <Button icon={Plus} label="New routine" onPress={create} />
               </Empty>
             ) : (

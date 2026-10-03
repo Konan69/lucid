@@ -111,12 +111,11 @@ function Gone() {
   return (
     <Screen>
       <Header title="Thread" onBack={go.goBack} />
-      <Empty
-        title="This thread is not here"
-        detail="It may have been deleted, or it is in a space you are not working in right now."
-      >
-        <Button label="Back to threads" onPress={go.goBack} />
-      </Empty>
+      <View style={{ paddingHorizontal: GUTTER }}>
+        <Empty line="This thread is not here. It may have been deleted, or it is in a space you are not working in right now.">
+          <Button label="Back" onPress={go.goBack} />
+        </Empty>
+      </View>
     </Screen>
   )
 }
@@ -604,8 +603,10 @@ function Blank({ ready }: { ready: boolean }) {
     )
   }
   return (
-    <View style={{ flex: 1, justifyContent: 'center' }}>
-      <Empty title="Vivid is ready" detail="What should I take off your plate?" mood="happy" />
+    <View style={{ flex: 1, justifyContent: 'flex-end', paddingHorizontal: 28, paddingBottom: 8 }}>
+      <Label size="title" tone="ink-2" style={{ fontWeight: '400' }}>
+        What should I take off your plate?
+      </Label>
     </View>
   )
 }

@@ -241,8 +241,7 @@ function Contents({
   if (list.folders.length === 0 && list.documents.length === 0) {
     return (
       <Empty
-        title="Nothing here yet"
-        detail={
+        line={
           level.shelf === 'Company'
             ? 'Add a file and Vivid can read it in every member’s threads.'
             : 'Add a file and Vivid can read it in your threads.'

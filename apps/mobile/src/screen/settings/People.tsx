@@ -21,6 +21,7 @@ import {
   Button,
   confirmDestructive,
   Empty,
+  GUTTER,
   Field,
   IconButton,
   Label,
@@ -66,10 +67,9 @@ export function People() {
     return (
       <Screen>
         <Header title="People" onBack={go.goBack} />
-        <Empty
-          title="You are working in your own space"
-          detail="There is nobody to list here. Switch to a company to see who is in it."
-        />
+        <View style={{ paddingHorizontal: GUTTER }}>
+          <Empty line="You are working in your own space. Switch to a company to see who is in it." />
+        </View>
       </Screen>
     )
   }

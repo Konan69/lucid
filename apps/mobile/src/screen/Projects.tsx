@@ -85,10 +85,7 @@ export function Projects() {
           {(value) => {
             const top = projects.projectsIn(value.projects, null)
             return top.length === 0 ? (
-              <Empty
-                title="No projects yet"
-                detail="Make one for anything with more than one thread: a launch, a client, a move."
-              >
+              <Empty line="A project keeps threads that belong together: a launch, a client, a move.">
                 <Button icon={Plus} label="New project" onPress={() => setCreating(true)} />
               </Empty>
             ) : (
@@ -128,10 +125,7 @@ export function Project({ route }: NativeStackScreenProps<Routes, 'Project'>) {
       />
       <ScrollView contentContainerStyle={[styles.page, styles.column]}>
         {gone && (
-          <Empty
-            title="This project is not here"
-            detail="It may be in a space you are not working in right now."
-          />
+          <Empty line="This project is not here. It may be in a space you are not working in right now." />
         )}
         <Live state={list} loading={<Skeleton rows={4} />}>
           {(value) =>

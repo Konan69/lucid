@@ -190,8 +190,7 @@ function Stopped({ message }: { message: string }) {
         backgroundColor: c['surface-0'],
       }}
     >
-      <Face size={44} mood="neutral" />
-      <Label size="headline" style={{ marginTop: 8, textAlign: 'center' }}>
+      <Label size="headline" style={{ textAlign: 'center' }}>
         Vivid cannot open this account
       </Label>
       <Label size="label" tone="ink-2" style={{ textAlign: 'center', maxWidth: 300 }}>

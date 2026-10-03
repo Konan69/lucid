@@ -13,12 +13,10 @@ import {
 } from 'react-native'
 import type { LucideIcon } from 'lucide-react-native'
 import { nativeMetrics as m } from '@vivid/tokens/native'
-import type { FaceMood } from '@vivid/marks'
 import { MOBILE_TYPOGRAPHY } from '../data/typography'
 import { tick } from '../data/haptics'
 import { useTheme } from '../theme'
 import Animated from 'react-native-reanimated'
-import { Face } from './Face'
 import { Press } from './motion/Pressable'
 import { APPEAR, LEAVE, MORPH } from './motion/morph'
 
@@ -323,28 +321,18 @@ export function Notice({ message }: { message: string }) {
   )
 }
 
-/** A screen or list with nothing in it yet: Vivid, one line of what goes here, and the way in. */
-export function Empty({
-  title,
-  detail,
-  mood = 'neutral',
-  children,
-}: {
-  title: string
-  detail: string
-  mood?: FaceMood
-  children?: ReactNode
-}) {
+/**
+ * A screen or list with nothing in it yet: one plain line of what goes here, and the one action
+ * that puts something there. Vivid's face is not here. It is drawn only where Vivid is present
+ * (greeting, thinking, speaking), and an empty list is not Vivid saying anything.
+ */
+export function Empty({ line, children }: { line: string; children?: ReactNode }) {
   return (
-    <View style={{ alignItems: 'center', paddingVertical: 44, paddingHorizontal: 24, gap: 10 }}>
-      <Face size={44} mood={mood} />
-      <Label size="headline" style={{ marginTop: 6, textAlign: 'center' }}>
-        {title}
+    <View style={{ alignItems: 'flex-start', paddingVertical: 28, gap: 16 }}>
+      <Label tone="ink-2" style={{ maxWidth: 340 }}>
+        {line}
       </Label>
-      <Label size="label" tone="ink-3" style={{ textAlign: 'center', maxWidth: 300 }}>
-        {detail}
-      </Label>
-      {children !== undefined && <View style={{ marginTop: 10 }}>{children}</View>}
+      {children}
     </View>
   )
 }
