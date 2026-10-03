@@ -110,7 +110,7 @@ and capacity. That is a company, not a feature. With state sync in place the mac
 so rent it.
 
 **Decision (20 Sep 2026): boat.dev, behind one owned boundary. Native provider built 2 Oct 2026.**
-The provider claims below come from Boat’s docs; authenticated Boat behavior remains unexercised:
+The provider claims below come from Boat’s docs; the real guest proof and its limits follow:
 
 |                 | boat.dev                                                                                    |
 | --------------- | ------------------------------------------------------------------------------------------- |
@@ -134,22 +134,32 @@ local provider's RFB connection. Select Boat with `VIVID_COMPUTER_PROVIDER=boat`
 Redacted API key (`VIVID_BOAT_API_KEY`), size and lifetime through Effect Config. Name the paying
 organization with `VIVID_BOAT_ORG` whenever the key's account belongs to one; leave it unset for an
 account that belongs to none, and Boat bills that account. The key needs these actions:
-`sandbox.create`, `sandbox.read`, `sandbox.update`, `sandbox.stop`, `exec`, `file.read`,
+`sandbox.create`, `sandbox.read`, `sandbox.update`, `sandbox.stop`, `sandbox.resume`, `exec`, `file.read`,
 `file.write`, `desktop`, `snapshot.read`, `snapshot.write` and `account.read`. Boat's
 `full-sandbox` preset leaves out `sandbox.create`, and a key made with it is refused at the first
-machine (`api_key_action_forbidden`), so name the actions:
+machine (`api_key_action_forbidden`), so name the actions. Resume also requires its own
+`sandbox.resume` action; `sandbox.update` does not cover it:
 `boat api-key create <name> --actions sandbox.create,sandbox.read,…`. One durable
 binding and creation intent per Person precedes allocation. Restart recovers the same identity;
 stop waits for disk archival and ensure resumes that snapshot. An unresolved creation intent
 past the replay window fails explicitly rather than buying a second machine.
 
-Vivid uses Boat's shipped desktop, installed Chrome and guest-native Cua Driver. It installs
-no nested desktop image. Browser and desktop actions call the driver's CLI through Boat's
-command API and its daemon socket. Private action JSON is uploaded to a temporary private
-directory and redirected to stdin; full-size PNGs return through the file API. The provider
+Vivid uses Boat's shipped desktop and installed `google-chrome-stable`, with the existing
+guest profile and `--force-renderer-accessibility`. Observed default images vary: one included
+Cua Driver 0.23.2 on the wrong desktop session bus, another omitted the driver entirely.
+The adapter therefore installs the official SHA-256-pinned 0.23.2 binary in the guest's
+persistent home and runs its public daemon in the X11-attested desktop panel's session.
+Only Vivid's guest unit and socket are owned; vendor services are untouched. Cold setup needs
+access to the official GitHub release. Standard permissions and the existing-profile grant
+remain explicit. A new daemon invocation discards cached browser refs and consent sessions.
+No nested desktop image is installed. Browser and desktop actions call the driver's CLI
+through Boat's command API and its private daemon socket. Private action JSON is uploaded to a
+temporary private directory and redirected to stdin; full-size PNGs return through the file API. The provider
 returns the readable browser state and tabs, or a PNG with pointer and focused-window title.
 Chrome attachment goes through the native existing-profile permission gate; a denied or missing
-capability is a failure, never a substitute browser profile.
+capability is a failure, never a substitute browser profile. Tool arguments follow the real
+driver describes; success shapes are decoded at ingress. Exit-zero error JSON retains its
+typed refusal code and discards potentially private detail text before reaching a Person.
 
 Running state distinguishes `screen: Relay` (offline Docker) from `screen: Viewer` (Boat's
 short-lived token-gated streaming page). `GetComputer` issues fresh viewer authority. Clients
@@ -162,10 +172,29 @@ desktop actions; it supports the expanded browser action vocabulary.
 
 Fake HTTP integration tests exercise durable allocation recovery, restart/resume, gated viewer
 issuance, native tools, response decoding, private input transport and uncertain-command handling.
-Runtime tests verify PNG bytes survive the text budget. No call has run against real Boat: the
-opt-in live test still needs an API key and explicit cost opt-in. Real guest tool compatibility,
-Chrome attachment, snapshot/profile retention, viewer embedding and provider timings are
-unexercised. Client support for the new screen union belongs to its own lane.
+They reject undeclared driver arguments with exit-zero `invalid_arguments`, return actual
+0.23.2 desktop/window/action shapes, and require the prepared session for later browser reads.
+Runtime tests verify PNG bytes survive the text budget. On 2026-10-03, the opt-in live test
+passed against a real default Boat machine with a scoped key, isolated PostgreSQL and a
+30-minute lifetime. It created the machine (1.65s), issued a token-gated viewer (0.45s), fetched
+a real PNG and cursor (4.24s), launched/attached Chrome and opened/read Example Domain
+(16.05s), then read again (5.98s). It wrote a file, archived the disk (20.64s), resumed the
+same provider identity (2.85s), recovered the exact file, issued new viewer authority (1.81s)
+and looked again (3.52s). Automatic cleanup requested deletion (0.18s). Total suite wall time
+was 61.95s. Run with `VIVID_TEST_BOAT_LIVE=1`, `VIVID_TEST_DATABASE_URL` and the server-only
+key; cleanup additionally needs `sandbox.delete` and Boat's exact-id delete confirmation header.
+The proof's original key lacked `sandbox.resume`; the successful run used a temporary key
+with that action. A stalled pooled TLS connection was also observed during an earlier run.
+Boat requests now close their HTTP connections, without retrying uncertain commands; private
+guest cleanup and live deletion have independent interruptible deadlines.
+
+Viewer issuance is proven; embedding and interactive viewing in clients are untested here.
+Signed-in cookies/profile retention, browser writes, tab manipulation, desktop mutations and
+provider recovery under concurrent servers are not proven by this live suite. Linux trusted
+browser clicks refused with `browser_input_trust_unavailable` in direct probing; the adapter
+preserves that code rather than substituting synthetic DOM events. Driver mutation receipts
+attest delivery, not the intended effect; fresh state follows every action. Client support for
+the screen union belongs to its own lane. Flue placement and external state sync remain planned.
 
 ## Runtime on the Computer: planned
 

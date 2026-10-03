@@ -24,8 +24,14 @@ const provider = boatMachineLayer.pipe(Layer.provideMerge(dependencies))
 /** Record only operation timings, never viewer authority, screenshots or private guest output. */
 const measured = <A, E, R>(step: string, program: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
+    yield* Effect.sync(() => NodeProcess.stdout.write(`${JSON.stringify({ starting: step })}\n`))
     const [duration, result] = yield* Effect.timed(program)
     yield* Effect.logInfo('Boat live proof', { step, milliseconds: Duration.toMillis(duration) })
+    yield* Effect.sync(() =>
+      NodeProcess.stdout.write(
+        `${JSON.stringify({ step, milliseconds: Duration.toMillis(duration) })}\n`,
+      ),
+    )
     return result
   })
 
@@ -51,15 +57,20 @@ const cleanup = Effect.fn('BoatLive.cleanup')(function* (key: MachineKey) {
           const response = yield* client.execute(
             HttpClientRequest.delete(`https://boat.dev/api/v1/sandboxes/${id}`).pipe(
               HttpClientRequest.bearerToken(apiKey),
+              HttpClientRequest.setHeader('X-Ascii-Confirm-Delete', id),
+              HttpClientRequest.setHeader('Connection', 'close'),
               billed,
             ),
           )
           expect(response.status >= 200 && response.status < 300).toBe(true)
           yield* Effect.logInfo('Boat live machine deleted', { id })
+          yield* Effect.sync(() => NodeProcess.stdout.write(`${JSON.stringify({ deleted: id })}\n`))
         }
         yield* database.run(database.delete(machineBindings).where(eq(machineBindings.key, key)))
       }),
     ).pipe(
+      Effect.timeout('60 seconds'),
+      Effect.interruptible,
       Effect.catch(() =>
         Effect.sync(() =>
           expect.fail('Live Boat deletion failed; reconcile the provider account.'),
@@ -79,6 +90,14 @@ describe.skipIf(!enabled)('Boat native guest live proof', () => {
         const key = MachineKey.make(NodeCrypto.randomUUID())
         yield* cleanup(key)
         yield* measured('create', machine.ensure(key))
+        const saved = yield* bindings()
+        const original = yield* saved.load(key)
+        if (Option.isNone(original) || original.value.providerId === null)
+          expect.fail('The created Computer must have a durable identity')
+        yield* Effect.logInfo('Boat live machine created', { id: original.value.providerId })
+        yield* Effect.sync(() =>
+          NodeProcess.stdout.write(`${JSON.stringify({ created: original.value.providerId })}\n`),
+        )
         const created = yield* measured('viewer', machine.status(key))
         if (!ComputerState.guards.Running(created))
           expect.fail('The created Computer must be running')
@@ -96,9 +115,33 @@ describe.skipIf(!enabled)('Boat native guest live proof', () => {
           }),
         )
         expect(page.title.includes('Example')).toBe(true)
+        const read = yield* measured(
+          'read-again',
+          machine.browse({ key, action: BrowserAction.cases.Read.make({}) }),
+        )
+        expect(read.address).toBe('https://example.com/')
+        expect(read.title).toBe(page.title)
+        const written = yield* measured(
+          'write-marker',
+          machine.exec({
+            key,
+            command: `printf '%s' '${key}' > "$HOME/vivid-live-proof"`,
+            timeoutSeconds: 30,
+          }),
+        )
+        expect(written.exitCode).toBe(0)
         yield* measured('archive', machine.stop(key))
         expect(ComputerState.guards.Stopped(yield* machine.status(key))).toBe(true)
         yield* measured('resume', machine.ensure(key))
+        const restoredBinding = yield* saved.load(key)
+        if (Option.isNone(restoredBinding)) expect.fail('Resume must preserve the binding')
+        expect(restoredBinding.value.providerId).toBe(original.value.providerId)
+        const marker = yield* measured(
+          'read-marker',
+          machine.exec({ key, command: 'cat "$HOME/vivid-live-proof"', timeoutSeconds: 30 }),
+        )
+        expect(marker.exitCode).toBe(0)
+        expect(marker.output).toBe(key)
         const resumed = yield* measured('resumed-viewer', machine.status(key))
         if (!ComputerState.guards.Running(resumed))
           expect.fail('The resumed Computer must be running')

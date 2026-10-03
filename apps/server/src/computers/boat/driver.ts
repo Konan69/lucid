@@ -75,7 +75,7 @@ export const driver = (
         ),
       )
     })
-  /** Nonzero or clipped native output is a refusal, never a made-up successful receipt. */
+  /** Nonzero or clipped native output is a failed receipt, never an invented success. */
   const invoke = Effect.fn('Machine.boat.driver.invoke')(function* (command: string) {
     const result = yield* api.command(id, key, command, 60)
     if (result.exitCode !== 0 || result.timedOut)
