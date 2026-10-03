@@ -25,6 +25,7 @@ import {
   ApprovalId,
   ApprovalState,
   BrowserAction,
+  BrowseTarget,
   DesktopAction,
   DesktopOutcome,
   ComputerState,
@@ -57,6 +58,7 @@ import {
   computerScreenAddress,
 } from './store.ts'
 import * as TestClock from 'effect/testing/TestClock'
+import { Device, deviceLayer } from './device.ts'
 import { computers } from './tables.ts'
 
 /** Test authority records actual seam calls and can lose machines or command receipts deliberately. */
@@ -232,7 +234,10 @@ const dependencies = Layer.mergeAll(
   changesLayer,
   gateLayer,
 )
-const testLayer = computerStoreLayer.pipe(Layer.provideMerge(dependencies))
+const testLayer = computerStoreLayer.pipe(
+  Layer.provideMerge(deviceLayer),
+  Layer.provideMerge(dependencies),
+)
 const request = { command: 'echo hello', summary: 'Read a greeting', timeoutSeconds: 10 }
 
 /** A pending stored command is the same permission receipt for a cold or running Computer. */
@@ -431,7 +436,11 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
       )
       expect(
         (yield* computerHandlers
-          .Browse({ action: BrowserAction.cases.Read.make({}), summary: 'Read' })
+          .Browse({
+            target: BrowseTarget.cases.Vivid.make({}),
+            action: BrowserAction.cases.Read.make({}),
+            summary: 'Read',
+          })
           .pipe(asVivid(first)))._tag,
       ).toBe('Blocked')
       expect(
@@ -708,6 +717,43 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
   )
 
   it.effect(
+    'Person browser never falls back to cloud or dispatches without recovered input enforcement',
+    () =>
+      Effect.gen(function* () {
+        const { first } = yield* fixture()
+        const evidence = yield* ProviderEvidence
+        const personRequest = {
+          target: BrowseTarget.cases.Person.make({}),
+          action: BrowserAction.cases.Read.make({}),
+          summary: 'Read my browser',
+        }
+        expect(
+          (yield* computerHandlers.Browse(personRequest).pipe(asVivid(first), Effect.flip))._tag,
+        ).toBe('NoDeviceConnected')
+        // Acquiring the stream establishes presence even before a consumer waits on its queue.
+        yield* (yield* Device).watch(first.id, SessionId.make(NodeCrypto.randomUUID()))
+        const response = yield* computerHandlers.Browse(personRequest).pipe(asVivid(first))
+        expect(response._tag).toBe('Unavailable')
+        expect(yield* Ref.get(evidence.calls)).toEqual([])
+        expect(yield* Ref.get(evidence.actions)).toEqual([])
+        expect(
+          yield* computerRunner({
+            person: first,
+            target: ActionTarget.cases.Browser.make({
+              action: personRequest.action,
+              target: personRequest.target,
+            }),
+          }),
+        ).toEqual(
+          ActionOutcome.cases.Failed.make({
+            reason:
+              'Your browser control is unavailable until its required input-token enforcement is recovered.',
+          }),
+        )
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect(
     'Blocked and ApprovalRequired never execute; browser policy and lost receipts remain honest',
     () =>
       Effect.gen(function* () {
@@ -723,7 +769,11 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         )
         expect(
           (yield* computerHandlers
-            .Browse({ action: BrowserAction.cases.Read.make({}), summary: 'Read the page' })
+            .Browse({
+              target: BrowseTarget.cases.Vivid.make({}),
+              action: BrowserAction.cases.Read.make({}),
+              summary: 'Read the page',
+            })
             .pipe(asVivid(first)))._tag,
         ).toBe('Blocked')
         const approval = pendingApproval(first)
@@ -734,6 +784,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         expect(
           (yield* computerHandlers
             .Browse({
+              target: BrowseTarget.cases.Vivid.make({}),
               action: BrowserAction.cases.Click.make({ target: 'e1' }),
               summary: 'Click the page',
             })
@@ -857,7 +908,11 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
       yield* store.access(first.id)
       yield* computerHandlers.RunCommand(request).pipe(asVivid(first))
       yield* computerHandlers
-        .Browse({ action: BrowserAction.cases.Read.make({}), summary: 'Read' })
+        .Browse({
+          target: BrowseTarget.cases.Vivid.make({}),
+          action: BrowserAction.cases.Read.make({}),
+          summary: 'Read',
+        })
         .pipe(asVivid(first))
       yield* computerHandlers
         .UseDesktop({ action: DesktopAction.cases.Look.make({}), summary: 'Look' })
@@ -875,7 +930,11 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
       const outcomes = [
         yield* computerHandlers.RunCommand(request).pipe(asVivid(first)),
         yield* computerHandlers
-          .Browse({ action: BrowserAction.cases.Read.make({}), summary: 'Read page' })
+          .Browse({
+            target: BrowseTarget.cases.Vivid.make({}),
+            action: BrowserAction.cases.Read.make({}),
+            summary: 'Read page',
+          })
           .pipe(asVivid(first)),
         yield* computerHandlers
           .UseDesktop({ action: DesktopAction.cases.Look.make({}), summary: 'Look' })

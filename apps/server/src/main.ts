@@ -23,6 +23,7 @@ import { codeCallsLayer } from './code/calls.ts'
 import { codeProcessLayer } from './code/process.ts'
 import { publicPageLayer } from './code/page.ts'
 import { machineLayer } from './computers/provider.ts'
+import { deviceLayer } from './computers/device.ts'
 import { computerStoreLayer } from './computers/store.ts'
 import { loadServerConfig, ServerConfig } from './config.ts'
 import { executorLayer } from './connections/executor.ts'
@@ -106,6 +107,7 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     codeProcessLayer,
     publicPageLayer,
     codeAuthorityLayer,
+    deviceLayer,
   ).pipe(Layer.provideMerge(data))
   const reach = Layer.mergeAll(presenceLayer, notifierLayer, auditLayer, artifactStoreLayer).pipe(
     Layer.provideMerge(foundation),

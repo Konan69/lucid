@@ -5,6 +5,7 @@ import {
   ActionTarget,
   AuditEvent,
   BrowserAction,
+  BrowseTarget,
   ProposedAction,
   RuleScope,
 } from '@vivid/contracts'
@@ -24,6 +25,43 @@ import {
 
 /** Policy is tested with production stores, including the durable Approval raised by the real gate. */
 describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', () => {
+  it.effect(
+    'Person browser writes ask unless a rule allows; action allowance is not a site grant',
+    () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const gate = yield* Gate
+        const action = ProposedAction.make({
+          summary: 'Use my browser',
+          rationale: '',
+          effect: 'write',
+          target: ActionTarget.cases.Browser.make({
+            target: BrowseTarget.cases.Person.make({}),
+            action: BrowserAction.cases.Click.make({ target: 'Send' }),
+          }),
+        })
+        expect(
+          GateDecision.guards.ApprovalRequired(yield* gate.check(test.vivid, action, 'Ordinary')),
+        ).toBe(true)
+        expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toHaveLength(1)
+        yield* (yield* RuleStore).create(test.personal, {
+          action: 'Use my browser',
+          decision: 'Allow',
+          scope: RuleScope.cases.Personal.make({}),
+        })
+        expect(yield* gate.check(test.vivid, action, 'Ordinary')).toEqual(
+          GateDecision.cases.Allowed.make({}),
+        )
+        expect(
+          yield* gate.check(
+            test.vivid,
+            ProposedAction.make({ ...action, effect: 'read' }),
+            'Ordinary',
+          ),
+        ).toEqual(GateDecision.cases.Allowed.make({}))
+      }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
   it.effect(
     'a personal completion failure cannot replace a known Company Never with an Approval',
     () =>

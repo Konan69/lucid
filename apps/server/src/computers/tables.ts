@@ -1,5 +1,5 @@
 import { boolean, jsonb, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core'
-import { epoch, personColumn } from '../database/owner.ts'
+import { epoch, personColumn, threadColumn } from '../database/owner.ts'
 
 /**
  * One row per Person's Computer. A Person has at most one, and it is theirs in every workspace:
@@ -37,4 +37,17 @@ export const machineBindings = pgTable('vivid_machine_bindings', {
   providerId: text('provider_id').unique(),
   observedState: text('observed_state').notNull(),
   since: epoch('since').notNull(),
+})
+
+/** A dispatch is never replayed: its immutable body, device subscription and receipt survive reconnects and restarts. */
+export const deviceRequests = pgTable('vivid_device_requests', {
+  id: text('id').primaryKey(),
+  personId: personColumn().notNull(),
+  sessionId: text('session_id').notNull(),
+  subscriptionId: text('subscription_id').notNull(),
+  threadId: threadColumn('thread_id'),
+  request: jsonb('request').notNull(),
+  expiresAt: epoch('expires_at').notNull(),
+  status: text('status').notNull(),
+  state: jsonb('state').notNull(),
 })

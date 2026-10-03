@@ -1,3 +1,4 @@
+import { deviceLayer } from '../computers/device.ts'
 import * as NodeProcess from 'node:process'
 import { programHost } from './host.ts'
 import { describe, expect, it as standalone, layer } from '@effect/vitest'
@@ -43,7 +44,10 @@ const missingHost = programHost(Option.fromUndefinedOr(NodeProcess.env.XDG_RUNTI
 if (Option.isSome(missingHost)) console.warn(`Skipping supervised programs: ${missingHost.value}`)
 
 const accounts = Layer.mergeAll(connectionTestLayer, trustTestLayer, unavailableMachineLayer)
-const computers = computerStoreLayer.pipe(Layer.provideMerge(accounts))
+const computers = computerStoreLayer.pipe(
+  Layer.provideMerge(deviceLayer),
+  Layer.provideMerge(accounts),
+)
 const dependencies = Layer.mergeAll(codeAuthorityLayer, publicPageLayer).pipe(
   Layer.provideMerge(computers),
 )

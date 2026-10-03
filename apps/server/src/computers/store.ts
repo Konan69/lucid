@@ -20,6 +20,7 @@ import {
   DesktopOutcome,
   type DesktopView,
   type UseDesktopRequest,
+  BrowseTarget,
   BrowseOutcome,
   CommandOutcome,
   ProposedAction,
@@ -44,6 +45,7 @@ import {
   type MachineFailure,
   type MachineScreen,
 } from './machine.ts'
+import { Device } from './device.ts'
 import { computers } from './tables.ts'
 
 export { computerScreenAddress } from './machine.ts'
@@ -882,18 +884,30 @@ export const computerRunCommand = Effect.fn('Computer.runCommand')(function* (
   })
 })
 
-/** Browser actions use the same trust loop and recheck a Person's takeover immediately before execution. */
+const personBrowserUnavailable =
+  'Your browser control is unavailable until its required input-token enforcement is recovered.'
+
+/**
+ * Cloud actions retain their existing Gate. The Person route deliberately fails closed: the
+ * reference browser-service.mjs::ai/ec/tc injects an expected-input token, but its enforcement
+ * receiver is absent from the recovered app/.vite/build/main-DpnWwRdP.js::executeCdpForBrowserUse.
+ * Do not dispatch through this public seam until access grants and that receiver are ported.
+ */
 export const computerBrowse = Effect.fn('Computer.browse')(function* (
   actor: Actor,
   request: BrowseRequest,
 ) {
+  if (BrowseTarget.guards.Person(request.target)) {
+    yield* (yield* Device).requireConnected(actor.person.id)
+    return BrowseOutcome.cases.Unavailable.make({ reason: personBrowserUnavailable })
+  }
   const store = yield* ComputerStore
   const gate = yield* Gate
   const action = ProposedAction.make({
     summary: request.summary,
     rationale: '',
     effect: browserEffect(request.action),
-    target: ActionTarget.cases.Browser.make({ action: request.action }),
+    target: ActionTarget.cases.Browser.make({ action: request.action, target: request.target }),
   })
   const decision = yield* gate.check(actor, action, 'Ordinary')
   return yield* GateDecision.match(decision, {
@@ -985,38 +999,43 @@ export const computerRunner = Effect.fn('Computer.runner')(function* (input: {
   readonly target: ComputerTarget
 }) {
   const store = yield* ComputerStore
-  const result = yield* ActionTarget.match(input.target, {
-    Command: ({ command }) =>
-      store.exec(input.person.id, { command, timeoutSeconds: 30 }).pipe(
-        Effect.map((receipt) =>
-          receipt.exitCode === 0
-            ? ActionOutcome.cases.Succeeded.make({ result: receipt.output.slice(0, 4000) })
-            : ActionOutcome.cases.Failed.make({
-                reason: `The command exited with code ${receipt.exitCode}.`,
-              }),
-        ),
-      ),
-    Browser: ({ action }) =>
-      store
-        .browse(input.person.id, action)
-        .pipe(
+  const result = yield* ActionTarget.match<Effect.Effect<ActionOutcome, ExecutionFailure>>(
+    input.target,
+    {
+      Command: ({ command }) =>
+        store.exec(input.person.id, { command, timeoutSeconds: 30 }).pipe(
           Effect.map((receipt) =>
-            ActionOutcome.cases.Succeeded.make({ result: receipt.outline.slice(0, 4000) }),
+            receipt.exitCode === 0
+              ? ActionOutcome.cases.Succeeded.make({ result: receipt.output.slice(0, 4000) })
+              : ActionOutcome.cases.Failed.make({
+                  reason: `The command exited with code ${receipt.exitCode}.`,
+                }),
           ),
         ),
-    Desktop: ({ action }) =>
-      store.desktop(input.person.id, action).pipe(
-        Effect.map(() =>
-          ActionOutcome.cases.Succeeded.make({
-            result: 'The desktop action completed; look again to verify its outcome.',
-          }),
+      Browser: ({ action, target }) =>
+        BrowseTarget.guards.Person(target)
+          ? Effect.succeed(ActionOutcome.cases.Failed.make({ reason: personBrowserUnavailable }))
+          : store
+              .browse(input.person.id, action)
+              .pipe(
+                Effect.map((receipt) =>
+                  ActionOutcome.cases.Succeeded.make({ result: receipt.outline.slice(0, 4000) }),
+                ),
+              ),
+      Desktop: ({ action }) =>
+        store.desktop(input.person.id, action).pipe(
+          Effect.map(() =>
+            ActionOutcome.cases.Succeeded.make({
+              result: 'The desktop action completed; look again to verify its outcome.',
+            }),
+          ),
         ),
-      ),
-    Connection: () =>
-      Effect.succeed(
-        ActionOutcome.cases.Failed.make({ reason: 'This action does not target the Computer.' }),
-      ),
-  }).pipe(
+      Connection: () =>
+        Effect.succeed(
+          ActionOutcome.cases.Failed.make({ reason: 'This action does not target the Computer.' }),
+        ),
+    },
+  ).pipe(
     Effect.catchTag('MachineExecutionUnknown', () =>
       Effect.succeed(ActionOutcome.cases.Unknown.make({})),
     ),

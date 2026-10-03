@@ -1,5 +1,11 @@
 import * as NodeCrypto from 'node:crypto'
-import { ActionTarget, type PersonId, type ThreadId, type ProposedAction } from '@vivid/contracts'
+import {
+  ActionTarget,
+  BrowseTarget,
+  type PersonId,
+  type ThreadId,
+  type ProposedAction,
+} from '@vivid/contracts'
 import * as Array from 'effect/Array'
 import * as Order from 'effect/Order'
 import * as Schema from 'effect/Schema'
@@ -30,6 +36,9 @@ export const auditAction = (action: ProposedAction) =>
   ActionTarget.match(action.target, {
     Connection: ({ account, tool }) => ({ service: account, tool }),
     Command: () => ({ service: 'Computer', tool: 'command' }),
-    Browser: () => ({ service: 'Computer', tool: 'browser' }),
+    Browser: ({ target }) => ({
+      service: BrowseTarget.guards.Person(target) ? 'Person browser' : 'Computer',
+      tool: 'browser',
+    }),
     Desktop: () => ({ service: 'Computer', tool: 'desktop' }),
   })

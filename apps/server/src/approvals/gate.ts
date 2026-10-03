@@ -87,14 +87,14 @@ export class ActionRunner extends Context.Service<ActionRunner, ActionRunnerServ
 ) {}
 
 import * as Layer from 'effect/Layer'
-import { ActionTarget, AuditEvent } from '@vivid/contracts'
+import { ActionTarget, BrowseTarget, AuditEvent } from '@vivid/contracts'
 import { Audit } from '../audit/record.ts'
 import { RuleStore } from '../rules/store.ts'
 import { BindingJudgment, RuleJudge, judgeBinding } from '../rules/judge.ts'
 import { ApprovalStore } from './store.ts'
 import { auditAction } from './action.ts'
 
-/** Record commands and consequential Connection allowance, while keeping browser steps out of the record. */
+/** Record commands, consequential Connection allowance and use of the Person's own browser. */
 const allow = Effect.fn('Gate.allow')(function* (
   audit: Audit['Service'],
   actor: Actor,
@@ -102,7 +102,8 @@ const allow = Effect.fn('Gate.allow')(function* (
 ) {
   if (
     ActionTarget.guards.Command(action.target) ||
-    (ActionTarget.guards.Connection(action.target) && action.effect !== 'read')
+    (ActionTarget.guards.Connection(action.target) && action.effect !== 'read') ||
+    (ActionTarget.guards.Browser(action.target) && BrowseTarget.guards.Person(action.target.target))
   ) {
     yield* audit.record(
       actor,
@@ -140,13 +141,16 @@ export const gateLayer = Layer.effect(
           return GateDecision.cases.Blocked.make({ rule: never.action })
         }
         const asks = applicable.some((rule) => rule.decision === 'Ask')
-        const connection = ActionTarget.guards.Connection(action.target)
+        const personal =
+          ActionTarget.guards.Connection(action.target) ||
+          (ActionTarget.guards.Browser(action.target) &&
+            BrowseTarget.guards.Person(action.target.target))
         if (
           asks ||
           BindingJudgment.guards.Uncertain(judged) ||
           action.effect === 'destructive' ||
           exposure === 'PersonalInShared' ||
-          (connection && applicable.length === 0)
+          (personal && applicable.length === 0)
         ) {
           return GateDecision.cases.ApprovalRequired.make({
             approval: yield* approvals.raise(actor, action),
