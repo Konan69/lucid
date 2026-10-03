@@ -71,7 +71,7 @@ export function staticRoutes(directory: Option.Option<string>) {
             return HttpServerResponse.empty({ status: 404 })
           const file = Option.getOrElse(yield* exactFile(root, name), () => index)
           // Vite's default asset names include an eight-character content hash. Unversioned files revalidate.
-          const hashed = name.startsWith('/assets/') && /-[\w-]{8,}\.[\w.]+$/u.test(name)
+          const hashed = name.startsWith('/assets/') && /-[\w-]{8}\.[\w.]+$/u.test(name)
           const cache =
             file !== index && hashed ? 'public, max-age=31536000, immutable' : 'no-cache'
           return yield* HttpServerResponse.file(file, { headers: { 'cache-control': cache } })

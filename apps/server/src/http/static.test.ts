@@ -16,6 +16,7 @@ it.effect('serves files and SPA routes while refusing traversal and preserving A
     yield* fs.makeDirectory(path.join(root, 'assets'), { recursive: true })
     yield* fs.writeFileString(path.join(root, 'index.html'), '<html>Vivid</html>')
     yield* fs.writeFileString(path.join(root, 'assets', 'index-1234abcd.js'), 'export default 1')
+    yield* fs.writeFileString(path.join(root, 'assets', 'manual-unversioned.js'), 'manual')
     yield* fs.writeFileString(path.join(directory, 'private.txt'), 'private')
     yield* fs.symlink(path.join(directory, 'private.txt'), path.join(root, 'escape.txt'))
     const routes = Layer.mergeAll(
@@ -30,6 +31,9 @@ it.effect('serves files and SPA routes while refusing traversal and preserving A
     expect(yield* asset.text).toBe('export default 1')
     expect(asset.headers['cache-control']).toBe('public, max-age=31536000, immutable')
     expect(asset.headers['content-type']).toContain('javascript')
+    const unversioned = yield* get('/assets/manual-unversioned.js')
+    expect(yield* unversioned.text).toBe('manual')
+    expect(unversioned.headers['cache-control']).toBe('no-cache')
     for (const url of ['/', '/index.html', '/threads/one', '/assets/missing.js']) {
       const response = yield* get(url)
       expect(yield* response.text).toBe('<html>Vivid</html>')
