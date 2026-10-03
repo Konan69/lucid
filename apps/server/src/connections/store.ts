@@ -48,8 +48,8 @@ import {
   type ConnectionRecord,
 } from './records.ts'
 import { connections } from './tables.ts'
-import { rankServices } from './ranking.ts'
 import { catalogService, serviceLogo } from './logo.ts'
+import { loadCuration } from './curation.ts'
 import { connectionAddressLayer, type ConnectionSource } from './address.ts'
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
@@ -342,14 +342,14 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     return authorizedService(service, authorization)
   })
   /** Search uses only completed availability facts in the adapter's snapshot. A cold sign-in
-   * hint remains optimistic until Begin or Resume supplies a real app definition.
+   * hint remains optimistic until Begin or Resume supplies a real app definition. The decoded
+   * curation is kept for the life of the store: the file cannot change while the server runs.
    */
+  const curated = yield* Effect.cached(loadCuration())
+  /** Which services are shown, in what order and how many, is the checked-in curation's decision. */
   const find = Effect.fn('Connections.findServices')(function* (query: string) {
-    const services = yield* catalogServices()
-    return ServiceCatalog.cases.Ready.make({
-      services: rankServices(services, query),
-      total: services.length,
-    })
+    const search = yield* curated
+    return search(yield* catalogServices(), query)
   })
   /** Offers inspect exactly the chosen service, using the same cached availability as search. */
   const service = Effect.fn('Connections.service')(function* (
