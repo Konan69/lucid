@@ -28,6 +28,7 @@
     "croner": "^10.0.1",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",
+    "mime": "4.1.0",
     "html-to-text": "9.0.5",
     "ipaddr.js": "2.2.0",
     "pg": "catalog:",

@@ -152,6 +152,8 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       VIVID_HELIX_URL: privateUrl(serviceNames.helix, ports.helix),
       /** Where `apps/server/Dockerfile` leaves the built web app; the server serves it itself. */
       VIVID_WEB_DIST: '/app/apps/web/dist',
+      /** Where the same image leaves the mobile app's over-the-air update (`/api/updates`). */
+      VIVID_MOBILE_UPDATES: '/app/apps/mobile/updates',
     },
   })
 

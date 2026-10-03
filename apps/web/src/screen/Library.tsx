@@ -1007,9 +1007,14 @@ function ItemTile({
 
 /** What an item's page says under its status: what Vivid read, or why it could not. */
 const itemText = (item: LibraryItem): string => {
-  if (item.status === 'ready') return item.preview
-  if (item.status === 'processing') return 'Vivid is reading this file.'
-  return item.error === null ? 'Vivid could not read this file.' : item.error
+  switch (item.status) {
+    case 'ready':
+      return item.preview
+    case 'processing':
+      return 'Vivid is reading this file.'
+    case 'failed':
+      return item.error === null ? 'Vivid could not read this file.' : item.error
+  }
 }
 
 /** One item: rename, move, open the original, delete, and ask Vivid about it once it is read. */

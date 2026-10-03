@@ -806,41 +806,47 @@ const learnCandidate = Effect.fn('MemoryAccess.learn')(function* (
     return Option.none<Memory>()
   const destination = yield* writeLocation(actor, candidate.forCompany)
   const { store } = dependencies
-  if (MemoryRelation.guards.new(candidate.relation))
-    return Option.some((yield* rememberAt(store, actor, destination, candidate)).memory)
-  if (MemoryRelation.guards.extends(candidate.relation))
-    return yield* extendCandidate(dependencies, {
-      actor,
-      destination,
-      candidate,
-      id: candidate.relation.id,
-    })
-  if (MemoryRelation.guards.duplicate(candidate.relation)) {
-    const target = yield* readableRecord(dependencies, actor, candidate.relation.id)
-    if (!sameDestination(destination, target))
-      return Option.some((yield* rememberAt(store, actor, destination, candidate)).memory)
-    return Option.some(
-      yield* store.reinforce({
-        partition: target.partition,
-        id: target.memory.id,
-        aliases: candidate.aliases,
+  // Each relation owns its authority check and write. A new relation must supply a handler,
+  // rather than accidentally inheriting the previous fall-through correction operation.
+  return yield* MemoryRelation.match<
+    Effect.Effect<Option.Option<Memory>, MemoryAccessFailure, Database>
+  >(candidate.relation, {
+    new: () =>
+      rememberAt(store, actor, destination, candidate).pipe(
+        Effect.map((saved) => Option.some(saved.memory)),
+      ),
+    extends: ({ id }) => extendCandidate(dependencies, { actor, destination, candidate, id }),
+    duplicate: ({ id }) =>
+      Effect.gen(function* () {
+        const target = yield* readableRecord(dependencies, actor, id)
+        if (!sameDestination(destination, target))
+          return Option.some((yield* rememberAt(store, actor, destination, candidate)).memory)
+        return Option.some(
+          yield* store.reinforce({
+            partition: target.partition,
+            id: target.memory.id,
+            aliases: candidate.aliases,
+          }),
+        )
       }),
-    )
-  }
-  const target = yield* writable(dependencies, actor, candidate.relation.id)
-  if (!sameDestination(destination, target))
-    return yield* Effect.fail(
-      InvalidRequest.make({ message: 'Memory relation crosses its write scope' }),
-    )
-  return Option.some(
-    yield* store.correct({
-      partition: target.partition,
-      id: target.memory.id,
-      content: candidate.content,
-      learnedFrom: summaryOf(actor.person),
-      learnedIn: Option.getOrNull(actor.threadId),
-    }),
-  )
+    updates: ({ id }) =>
+      Effect.gen(function* () {
+        const target = yield* writable(dependencies, actor, id)
+        if (!sameDestination(destination, target))
+          return yield* Effect.fail(
+            InvalidRequest.make({ message: 'Memory relation crosses its write scope' }),
+          )
+        return Option.some(
+          yield* store.correct({
+            partition: target.partition,
+            id: target.memory.id,
+            content: candidate.content,
+            learnedFrom: summaryOf(actor.person),
+            learnedIn: Option.getOrNull(actor.threadId),
+          }),
+        )
+      }),
+  })
 })
 
 /** Brief cache keys include the exact authorized current memories; changing audience, membership, or a statement cannot reuse a wider page. */

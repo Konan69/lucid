@@ -1,5 +1,5 @@
 import type { InvitationId, InvitationPreview } from '@vivid/contracts'
-import { Result } from 'effect'
+import { Effect, Result } from 'effect'
 import { use, useState } from 'react'
 import { change } from '../data/live'
 import { Route, router } from '../data/route'
@@ -25,20 +25,50 @@ const previewOf = (id: InvitationId) => {
 }
 
 /**
+ * Why pressing Join did not join, in the words the Person reads. Each sentence is true of the
+ * failure it is shown for; none is a guess.
+ * - `unconfirmed` is the server's `MailboxUnconfirmed`: the address is the invited one, but it was
+ *   registered with a password and nothing has shown the mailbox is theirs. Vivid has no way to
+ *   send mail yet, so the sentence says that and offers no "send me a link" that could not work.
+ * - `refused` is the invitation itself saying no: `Forbidden` (another address, or no longer
+ *   open), `Conflict` (already used, or already a Member) and `NotFound` (withdrawn since the
+ *   preview). Trying again cannot change any of them.
+ * - `failed` is everything else: the database, the runtime or the connection. The invitation may
+ *   be perfectly good, so the sentence blames nothing about it and says to try again.
+ */
+const REFUSALS = {
+  unconfirmed:
+    'This Vivid cannot confirm the email address of an account with a password yet, so you cannot join with this account.',
+  refused: 'This invitation is for a different email address, or it was already used.',
+  failed: 'Could not join right now. Try again.',
+} as const
+
+/**
  * An invitation to a Company, opened from its link. It says who invited the Person and to what,
  * before anything happens; joining is their choice. An invitation that was used, withdrawn or has
  * run out says so plainly instead of failing when the button is pressed.
  */
 export function Invite({ id }: { id: InvitationId }) {
   const preview = use(previewOf(id))
-  const [refusal, setRefusal] = useState<string | null>(null)
+  const [refusal, setRefusal] = useState<keyof typeof REFUSALS | null>(null)
 
   async function join() {
-    const result = await change((client) => client.AcceptInvitation({ invitationId: id }))
-    if (Result.isFailure(result)) {
-      setRefusal('This invitation is for a different email address, or it was already used.')
-      return
-    }
+    // The invitation's own answers are taken out of the failure channel by tag, inside the
+    // operation, and never guessed from a message. What is left in the channel is then only
+    // infrastructure and the unexpected, which must not be reported as a bad invitation.
+    const result = await change((client) =>
+      client.AcceptInvitation({ invitationId: id }).pipe(
+        Effect.as('joined' as const),
+        Effect.catchTags({
+          MailboxUnconfirmed: () => Effect.succeed('unconfirmed' as const),
+          Forbidden: () => Effect.succeed('refused' as const),
+          Conflict: () => Effect.succeed('refused' as const),
+          NotFound: () => Effect.succeed('refused' as const),
+        }),
+      ),
+    )
+    if (Result.isFailure(result)) return setRefusal('failed')
+    if (result.success !== 'joined') return setRefusal(result.success)
     router.go(Route.New())
   }
 
@@ -74,8 +104,8 @@ export function Invite({ id }: { id: InvitationId }) {
             <p className="text-label text-attention">This invitation is no longer open.</p>
           )}
           {refusal !== null && (
-            <p role="alert" className="text-label text-danger">
-              {refusal}
+            <p role="alert" className="max-w-sm text-label text-danger">
+              {REFUSALS[refusal]}
             </p>
           )}
         </>

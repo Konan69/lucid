@@ -1,14 +1,18 @@
 import * as NodeCrypto from 'node:crypto'
 import * as ByteSize from 'effect/ByteSize'
+import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
+import * as Fiber from 'effect/Fiber'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
+import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import * as Stream from 'effect/Stream'
 import * as Headers from 'effect/unstable/http/Headers'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
+import type * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
 import {
   AttachmentTooLarge,
   Conflict,
@@ -19,12 +23,14 @@ import {
   TooManyAttachments,
   UnsupportedAttachment,
   type PersonId,
+  type SessionId,
 } from '@vivid/contracts'
-import { authenticate } from '../auth/session.ts'
+import { authenticate, sessionWorkspace } from '../auth/session.ts'
 import { Runtime } from '../runtime/client.ts'
 import { Database } from '../database/client.ts'
 import { Changes, Topic } from '../live/changes.ts'
-import { canSee, findThread, requireThread, type StoredThread } from './access.ts'
+import { sessionRanOut, watch } from '../live/query.ts'
+import { requireThread, type StoredThread } from './access.ts'
 import { Conversation, DeliverySpeaker, DeliveryMessage, StoredRunOrigin } from './conversation.ts'
 import { IncomingMessage, messageFingerprint, messagePictures } from './pictures.ts'
 
@@ -60,7 +66,7 @@ const admitted = Effect.fn('Gateway.admitted')(function* () {
   const auth = yield* authenticate(new globalThis.Headers(Object.entries(request.headers)))
   const { threadId } = yield* HttpRouter.schemaPathParams(Params)
   const thread = yield* requireThread(threadId, auth.person.id)
-  return { request, person: auth.person, thread }
+  return { request, person: auth.person, sessionId: auth.sessionId, thread }
 })
 
 /** The refusal for each failure a client can act on. Everything else is "try again". */
@@ -199,37 +205,49 @@ const send = Effect.fn('Gateway.send')(function* () {
 const HOP_HEADERS = ['connection', 'keep-alive', 'transfer-encoding', 'content-length']
 
 /**
- * Completes when the Person can no longer see the Thread. A live read is a connection that stays
- * open for as long as the Thread is on screen; being allowed to open it is not being allowed to
- * keep it. Every time the Thread, the Person or their Company changes, access is asked again, and
- * the first "no" (or a Thread that is gone) ends the stream.
+ * Rechecks both authorities together so the first upstream pull cannot outrun either check.
+ * `watch` subscribes before loading; the readiness receipt is issued only after that first load
+ * succeeds. A removal between the handler's check and body consumption is therefore caught
+ * before a buffered runtime event is exposed. Subsequent removals and silent expiry stop the
+ * open body, and its scope releases the watcher on disconnect or finite-body completion.
  */
-const accessLost = Effect.fn('Gateway.accessLost')(function* (
+const authorizedBody = (
+  response: HttpClientResponse.HttpClientResponse,
   thread: StoredThread,
-  personId: PersonId,
-) {
-  const changes = yield* Changes
-  const topics = [Topic.thread(thread.id), Topic.person(personId)]
-  const moved = yield* changes.subscribe(
-    thread.companyId === null ? topics : [...topics, Topic.company(thread.companyId)],
+  authority: { readonly personId: PersonId; readonly sessionId: SessionId },
+) =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const { personId, sessionId } = authority
+      const topics = [Topic.thread(thread.id), Topic.person(personId)]
+      const ready = yield* Deferred.make<void>()
+      const checked = sessionWorkspace(personId, sessionId).pipe(
+        Effect.andThen(requireThread(thread.id, personId)),
+        Effect.andThen(Deferred.succeed(ready, undefined)),
+        Effect.asVoid,
+      )
+      const removed = watch(
+        thread.companyId === null ? topics : [...topics, Topic.company(thread.companyId)],
+        checked,
+      ).pipe(Stream.runDrain)
+      const ended = yield* Effect.raceFirst(removed, sessionRanOut(personId, sessionId)).pipe(
+        Effect.forkScoped,
+      )
+      // Failure before readiness ends the already-started body without pulling any upstream bytes.
+      const initial = yield* Effect.raceFirst(Deferred.await(ready), Fiber.join(ended)).pipe(
+        Effect.result,
+      )
+      if (Result.isFailure(initial)) return Stream.empty
+      return Stream.interruptWhen(
+        response.stream,
+        Fiber.join(ended).pipe(Effect.catch(() => Effect.void)),
+      )
+    }),
   )
-  const stillSees = findThread(thread.id).pipe(
-    Effect.flatMap((found) =>
-      Option.isNone(found) ? Effect.succeed(false) : canSee(found.value, personId),
-    ),
-    Effect.catch(() => Effect.succeed(false)),
-  )
-  yield* moved.pipe(
-    Stream.mapEffect(() => stillSees),
-    Stream.filter((sees) => !sees),
-    Stream.take(1),
-    Stream.runDrain,
-  )
-})
 
 const read = (suffix: (params: { readonly attachmentId: string }) => string) =>
   Effect.fn('Gateway.read')(function* () {
-    const { request, person, thread } = yield* admitted()
+    const { request, person, sessionId, thread } = yield* admitted()
     const params = yield* HttpRouter.params
     const attachmentId = params.attachmentId
     const runtime = yield* Runtime
@@ -240,14 +258,21 @@ const read = (suffix: (params: { readonly attachmentId: string }) => string) =>
       search: new URL(request.url, 'http://gateway').search,
       accept: Option.getOrElse(Headers.get(request.headers, 'accept'), () => '*/*'),
     })
+    // Headers have not been sent yet: a revocation during the runtime request answers 401/404,
+    // rather than an empty successful history or picture. Runtime.read owns the upstream in the
+    // request scope, so refusing without consuming it still closes the connection.
+    yield* sessionWorkspace(person.id, sessionId)
+    yield* requireThread(thread.id, person.id)
     if (attachmentId !== undefined && response.status !== 200)
       return refuse(404, 'Picture not found')
     const headers =
       attachmentId === undefined
         ? HOP_HEADERS.reduce(Headers.remove, response.headers)
         : yield* pictureHeaders(response.headers)
-    const until = accessLost(thread, person.id).pipe(Effect.scoped, Effect.provideContext(services))
-    return HttpServerResponse.stream(Stream.interruptWhen(response.stream, until), {
+    const body = authorizedBody(response, thread, { personId: person.id, sessionId }).pipe(
+      Stream.provideContext(services),
+    )
+    return HttpServerResponse.stream(body, {
       status: response.status,
       headers,
     })

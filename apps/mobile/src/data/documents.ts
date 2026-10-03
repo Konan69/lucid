@@ -105,14 +105,29 @@ const TOO_LARGE = 'Choose a file smaller than 10 MB.'
 const UNSENT = 'That file did not reach Vivid. Check your connection and try again.'
 
 /**
+ * Whether the system's file picker is open. On Android the picker is another app's screen, so the
+ * phone reports Vivid as in the background while the Person is still in the middle of something
+ * here. A restart into a downloaded update waits for a real backgrounding (`update.ts`).
+ */
+let choosing = false
+export const isChoosing = (): boolean => choosing
+
+/**
  * Asks the Person for one file. Closing the picker without choosing is not a failure: it is
  * nothing chosen.
  */
 export const chooseDocument = Effect.fn('Documents.choose')(function* () {
+  choosing = true
   const picked = yield* Effect.tryPromise({
     try: () => DocumentPicker.getDocumentAsync({ type: [...READABLE], copyToCacheDirectory: true }),
     catch: () => new DocumentUnavailable({ message: UNPICKABLE }),
-  })
+  }).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        choosing = false
+      }),
+    ),
+  )
   const asset = picked.canceled ? undefined : picked.assets[0]
   if (asset === undefined) return Option.none<Chosen>()
   if (asset.size !== undefined && asset.size > LARGEST) {

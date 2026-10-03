@@ -4,6 +4,9 @@
     "slug": "vivid",
     "scheme": "vivid",
     "version": "0.1.0",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,

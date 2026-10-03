@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Layer, Predicate, Result, Schema } from 'effect'
+import { Deferred, Effect, Exit, Layer, Predicate, Result, Schema } from 'effect'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
 import {
@@ -74,6 +74,40 @@ const messages: ReadonlyArray<RuntimeMessage> = [
 
 /** The expected submission vector follows Flue 2.1's frozen protocol, without importing private SDK helpers. */
 describe.skipIf(!testDatabaseConfigured)('Runtime delivery wire boundary', () => {
+  /** A refused body is never pulled, so only the request scope can release its runtime socket. */
+  it.effect('aborts an unconsumed runtime read when its caller scope closes', () =>
+    Effect.gen(function* () {
+      const cancelled = yield* Deferred.make<void>()
+      const http = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request, _url, signal) =>
+          Effect.sync(() => {
+            signal.addEventListener('abort', () => Deferred.doneUnsafe(cancelled, Exit.void), {
+              once: true,
+            })
+            return HttpClientResponse.fromWeb(request, new Response('private buffered content'))
+          }),
+        ),
+      )
+      yield* Effect.gen(function* () {
+        const runtime = yield* Runtime
+        const response = yield* runtime.read({
+          threadId: ThreadId.make('MARK-thread'),
+          suffix: '',
+          search: '?view=updates',
+          accept: 'text/event-stream',
+        })
+        expect(response.status).toBe(200)
+        expect(yield* Deferred.isDone(cancelled)).toBe(false)
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(runtimeLayer.pipe(Layer.provide(Layer.merge(testConfigLayer, http)))),
+      )
+      // Abort dispatch is synchronous at scope close; regression must fail immediately, not hang.
+      expect(yield* Deferred.isDone(cancelled)).toBe(true)
+    }),
+  )
+
   for (const message of messages) {
     it.effect(`forwards ${message.kind} content and scope, and rejects a mismatched receipt`, () =>
       Effect.gen(function* () {

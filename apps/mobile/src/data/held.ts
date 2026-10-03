@@ -67,6 +67,12 @@ export const adopt = custody.adopt
 export const drop = custody.drop
 
 /**
+ * Signs out: out of the app at once, then the server and the store are told side by side
+ * (`makeCustody`).
+ */
+export const leave = custody.leave
+
+/**
  * `adopt` for callers that are not inside an Effect: write a session to it and the registry runs
  * the change. Its value says how the last change went.
  */

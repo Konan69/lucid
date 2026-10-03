@@ -19,7 +19,7 @@ import {
   Service,
   ServiceId,
   ServiceAuthorization,
-  ConnectionTool,
+  DiscoveredTool,
   LibraryFolderId,
   Occurrence,
   OccurrenceId,
@@ -104,16 +104,15 @@ const service = Service.make({
   mark: 'MARK-mark',
   authorization: ServiceAuthorization.cases.None.make({}),
 })
-const tool = ConnectionTool.make({
+const tool = DiscoveredTool.make({
   connectionId: ConnectionId.make(reference),
   account: 'Mail (Work)',
   name: 'read_mail',
   description: 'Read mail',
   effect: 'read',
-  input: {
-    type: 'object',
-    properties: { query: { type: 'string' }, email: { type: 'string' }, id: { type: 'string' } },
-  },
+  call: 'accounts["Mail (Work)"].read_mail',
+  signature:
+    '(input: {email?: string; id?: string; query?: string}, about: {summary: string; rationale: string}) => Promise<{ok: true; output: Json} | {ok: false; reason: string}>',
 })
 
 /** This checks actual model-facing projections, including context, not acceptance by wire schemas. */
@@ -173,9 +172,31 @@ describe('model views', () => {
     expect(context).toContain('review-agreement-2')
     expect(json).toContain('admin@example.test')
     expect(views.tools({ tools: [tool], unconnected: [] }).tools[0]).toHaveProperty(
-      'input',
-      tool.input,
+      'signature',
+      tool.signature,
     )
+  })
+  it('omits rewritten account labels while preserving exact callable names', () => {
+    for (const account of [`Mail ${reference}`, 'Mail https://example.test/picture.png']) {
+      const hidden = DiscoveredTool.make({
+        ...tool,
+        account,
+        call: `accounts[${JSON.stringify(account)}].read_mail`,
+      })
+      const view = views.tools({ tools: [hidden, tool], unconnected: [] })
+      expect(view.tools).toEqual([
+        expect.objectContaining({ account: tool.account, call: tool.call }),
+      ])
+      // The tool that cannot be shown is counted, so the model can say it exists.
+      expect(view.withheld).toBe(1)
+    }
+  })
+
+  it('projects call expressions and signatures without provider schema documents', () => {
+    const result = views.tools({ tools: [tool], unconnected: [] }).tools[0]
+    expect(result).toHaveProperty('call', tool.call)
+    expect(result).toHaveProperty('signature', tool.signature)
+    expect(result).not.toHaveProperty('input')
   })
   it('reports unavailable summaries explicitly while a successful built-in-only catalogue has no saved procedures', () => {
     const unavailable = views.skills([])

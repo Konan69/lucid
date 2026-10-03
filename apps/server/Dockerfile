@@ -30,11 +30,22 @@ COPY apps/web apps/web
 COPY apps/desktop/src/shared apps/desktop/src/shared
 RUN pnpm --filter @vivid/web build
 
+# The mobile app's JavaScript, exported as an over-the-air update beside the web build, so every
+# deploy carries the app that matches its contracts (`apps/server/src/updates`). A stage of its
+# own: React Native's dependencies stay here and only the exported files reach the image below.
+FROM build AS updates
+ENV CI=1
+ENV EXPO_NO_TELEMETRY=1
+RUN pnpm install --frozen-lockfile --filter @vivid/mobile...
+COPY apps/mobile apps/mobile
+RUN pnpm --filter @vivid/mobile run updates /app/apps/mobile/updates
+
 FROM base AS production
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=8787
 ENV VIVID_WEB_DIST=/app/apps/web/dist
+ENV VIVID_MOBILE_UPDATES=/app/apps/mobile/updates
 # pnpm/bin/pnpm.mjs:nativeBinary downloads beside its Corepack wrapper on first use.
 # Carry the warmed cache so the non-root entry needs no download or write to that directory.
 COPY --from=build --chown=node:node /opt/corepack /opt/corepack
@@ -45,6 +56,7 @@ COPY --from=build --chown=node:node /app/node_modules node_modules
 COPY --from=build --chown=node:node /app/packages packages
 COPY --from=build --chown=node:node /app/apps/server apps/server
 COPY --from=build --chown=node:node /app/apps/web/dist apps/web/dist
+COPY --from=updates --chown=node:node /app/apps/mobile/updates apps/mobile/updates
 # Preserve the existing ordered migration entry for deployment pre-start jobs.
 COPY --chown=node:node scripts/migrate.mjs scripts/migrate.mjs
 USER node

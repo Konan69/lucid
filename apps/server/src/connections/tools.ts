@@ -3,6 +3,7 @@ import {
   ActionTarget,
   ConnectionRequestMessage,
   ConnectionTool,
+  DiscoveredTool,
   ConnectionState,
   InvalidRequest,
   NotFound,
@@ -23,14 +24,24 @@ import { requireThread } from '../threads/access.ts'
 import {
   Executor,
   ExecutorCallOutcome,
+  ExecutorTool,
   ExecutorResourceMissing,
   connectionSetupMessage,
   resourceReason,
   ExecutorResumeOutcome,
 } from './executor.ts'
+import { callableTool, discoveredTool } from '../code/signatures.ts'
 import { executorFailure } from './errors.ts'
 import { ConnectionStore } from './store.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
+
+/** Provider schemas stay on this server projection; discovery publishes only rendered signatures. */
+const NamedTool = ExecutorTool.pipe(
+  Schema.fieldsAssign({
+    connectionId: ConnectionTool.fields.connectionId,
+    account: ConnectionTool.fields.account,
+  }),
+)
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
 
@@ -66,7 +77,7 @@ const projectTools = Effect.fn('Connections.projectTools')(function* (
   return tools.flatMap((tool) =>
     row.companyId !== null && tool.effect !== 'read'
       ? []
-      : [ConnectionTool.make({ ...tool, connectionId: row.id, account })],
+      : [NamedTool.make({ ...tool, connectionId: row.id, account })],
   )
 })
 
@@ -125,7 +136,19 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
       new InvalidRequest({ message: 'Tool limit must be a positive number.' }),
     )
   return {
-    tools: rank(groups.flat(), request.query, Math.min(25, Math.floor(limit))),
+    tools: yield* Effect.forEach(
+      rank(groups.flat().filter(callableTool), request.query, Math.min(25, Math.floor(limit))),
+      Effect.fn('Connections.discoveredTool')(function* (tool) {
+        return DiscoveredTool.make({
+          connectionId: tool.connectionId,
+          account: tool.account,
+          name: tool.name,
+          description: tool.description,
+          effect: tool.effect,
+          ...(yield* discoveredTool(tool)),
+        })
+      }),
+    ),
     unconnected: offered.filter(
       (service) => !ServiceAuthorization.guards.SetupRequired(service.authorization),
     ),
@@ -244,13 +267,18 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
     return ToolOutcome.cases.Rejected.make({ message: 'This integration is not available to you.' })
   const row = found.value
   const state = yield* stateOf(row)
-  if (ConnectionState.guards.Failed(state))
-    return ToolOutcome.cases.Rejected.make({ message: state.reason })
-  if (ConnectionState.guards.NeedsAuthorization(state))
-    return ToolOutcome.cases.ConnectionNotReady.make({
-      service: row.service,
-      serviceName: row.serviceName,
-    })
+  const refusal = ConnectionState.match<Option.Option<ToolOutcome>>(state, {
+    Failed: ({ reason }) => Option.some(ToolOutcome.cases.Rejected.make({ message: reason })),
+    NeedsAuthorization: () =>
+      Option.some(
+        ToolOutcome.cases.ConnectionNotReady.make({
+          service: row.service,
+          serviceName: row.serviceName,
+        }),
+      ),
+    Ready: () => Option.none(),
+  })
+  if (Option.isSome(refusal)) return refusal.value
   const tools = yield* store.tools(actor, row).pipe(
     Effect.map(Option.some),
     Effect.catchTags({
@@ -324,10 +352,15 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     const store = yield* ConnectionStore
     const row = yield* store.get(actor, input.target.connectionId)
     const state = yield* stateOf(row)
-    if (ConnectionState.guards.Failed(state))
-      return ActionOutcome.cases.Failed.make({ reason: state.reason })
-    if (ConnectionState.guards.NeedsAuthorization(state))
-      return ActionOutcome.cases.Failed.make({ reason: 'This integration needs authorization.' })
+    const refusal = ConnectionState.match<Option.Option<ActionOutcome>>(state, {
+      Failed: ({ reason }) => Option.some(ActionOutcome.cases.Failed.make({ reason })),
+      NeedsAuthorization: () =>
+        Option.some(
+          ActionOutcome.cases.Failed.make({ reason: 'This integration needs authorization.' }),
+        ),
+      Ready: () => Option.none(),
+    })
+    if (Option.isSome(refusal)) return refusal.value
     // This read precedes dispatch, so losing discovery is a failed, retryable action.
     const discovered = yield* store.tools(actor, row).pipe(
       Effect.catchTag('ServiceUnavailable', () =>

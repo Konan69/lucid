@@ -295,28 +295,31 @@ function ToolCards({
     const card = cardFor(tool.output)
     if (Option.isNone(card)) return null
     const wanted = card.value
-    if (wanted.kind === 'connection') {
-      return (
-        <ConnectionCard
-          key={tool.toolCallId}
-          id={tool.toolCallId}
-          request={wanted.request}
-          authorization={wanted.authorization}
-          current={live}
-          onContinue={onContinue}
-        />
-      )
+    switch (wanted.kind) {
+      case 'connection':
+        return (
+          <ConnectionCard
+            key={tool.toolCallId}
+            id={tool.toolCallId}
+            request={wanted.request}
+            authorization={wanted.authorization}
+            current={live}
+            onContinue={onContinue}
+          />
+        )
+      case 'approval': {
+        const approval = approvalById(context.approvals, wanted.id)
+        return Option.isNone(approval) ? null : (
+          <ApprovalCard key={tool.toolCallId} approval={approval.value} me={context.me} />
+        )
+      }
+      case 'input': {
+        const request = requestById(context.requests, wanted.id)
+        return Option.isNone(request) ? null : (
+          <InputCard key={tool.toolCallId} request={request.value} me={context.me} />
+        )
+      }
     }
-    if (wanted.kind === 'approval') {
-      const approval = approvalById(context.approvals, wanted.id)
-      return Option.isNone(approval) ? null : (
-        <ApprovalCard key={tool.toolCallId} approval={approval.value} me={context.me} />
-      )
-    }
-    const request = requestById(context.requests, wanted.id)
-    return Option.isNone(request) ? null : (
-      <InputCard key={tool.toolCallId} request={request.value} me={context.me} />
-    )
   })
 }
 

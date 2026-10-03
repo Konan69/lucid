@@ -17,6 +17,7 @@ it.effect('keeps local launch defaults and decodes container launch inputs', () 
     )
     expect(local.HOST).toBe('127.0.0.1')
     expect(local.VIVID_WEB_DIST).toEqual(Option.none())
+    expect(local.VIVID_MOBILE_UPDATES).toEqual(Option.none())
     const container = yield* loadServerConfig.pipe(
       Effect.provide(
         ConfigProvider.layer(
@@ -24,11 +25,13 @@ it.effect('keeps local launch defaults and decodes container launch inputs', () 
             ...base,
             HOST: '0.0.0.0',
             VIVID_WEB_DIST: '/app/apps/web/dist',
+            VIVID_MOBILE_UPDATES: '/app/apps/mobile/updates',
           }),
         ),
       ),
     )
     expect(container.HOST).toBe('0.0.0.0')
     expect(container.VIVID_WEB_DIST).toEqual(Option.some('/app/apps/web/dist'))
+    expect(container.VIVID_MOBILE_UPDATES).toEqual(Option.some('/app/apps/mobile/updates'))
   }),
 )

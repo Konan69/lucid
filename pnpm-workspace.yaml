@@ -75,6 +75,7 @@ catalog:
   expo-secure-store: 57.0.4
   expo-sharing: 57.0.21
   expo-system-ui: 57.0.4
+  expo-updates: 57.0.24
   hono: 4.13.8
   konsistent: 1.0.0-beta.9
   lucide-react: 1.47.0

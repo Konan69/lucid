@@ -1,5 +1,5 @@
 import { ComputerState } from '@vivid/contracts'
-import { Clock, Effect, Option, Semaphore } from 'effect'
+import { Clock, Effect, Match, Option, Semaphore } from 'effect'
 import {
   MachineCreationUnresolved,
   MachineState,
@@ -10,6 +10,36 @@ import {
 import { active, observations } from './state.ts'
 import type { Transport } from './transport.ts'
 import type { Bindings } from './bindings.ts'
+import type { MachineRecord } from './protocol.ts'
+
+/** Provider observations have one exhaustive projection; readiness shares the `active` guard. */
+const observedState = (record: MachineRecord, since: number) =>
+  Match.value(record).pipe(
+    Match.when({ state: active }, () => MachineState.cases.Running.make({ since })),
+    Match.when({ state: 'archived' }, ({ snapshotAvailable }) =>
+      snapshotAvailable
+        ? ComputerState.cases.Stopped.make({ since })
+        : ComputerState.cases.Failed.make({
+            since,
+            reason: 'The Computer provider snapshot is unavailable.',
+          }),
+    ),
+    Match.whenOr({ state: 'error' }, { state: 'cancelled' }, () =>
+      ComputerState.cases.Failed.make({
+        since,
+        reason: 'The Computer provider could not start the machine.',
+      }),
+    ),
+    Match.whenOr(
+      { state: 'init' },
+      { state: 'provisioning' },
+      { state: 'provisioned' },
+      { state: 'cloning' },
+      { state: 'archiving' },
+      () => ComputerState.cases.Starting.make({ since }),
+    ),
+    Match.exhaustive,
+  )
 
 /** Persist before provisioning, replay only the original intent, and wait for snapshot archival. */
 export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
@@ -74,25 +104,8 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
       })
     }
     const record = (yield* api.get(row.value.providerId)).sandbox
-    if (active(record.state))
-      return MachineState.cases.Running.make({
-        since: yield* saved.observe(key, row.value, record.state),
-      })
     const since = yield* saved.observe(key, row.value, record.state)
-    if (record.state === 'archived') {
-      if (!record.snapshotAvailable)
-        return ComputerState.cases.Failed.make({
-          since,
-          reason: 'The Computer provider snapshot is unavailable.',
-        })
-      return ComputerState.cases.Stopped.make({ since })
-    }
-    if (record.state === 'error' || record.state === 'cancelled')
-      return ComputerState.cases.Failed.make({
-        since,
-        reason: 'The Computer provider could not start the machine.',
-      })
-    return ComputerState.cases.Starting.make({ since })
+    return observedState(record, since)
   })
   /** Viewer issuance is an explicit Person projection of passive lifecycle facts. */
   const status = Effect.fn('Machine.boat.status')(function* (key: MachineKey) {

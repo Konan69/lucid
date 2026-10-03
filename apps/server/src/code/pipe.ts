@@ -19,11 +19,12 @@ export class FrameReader {
     this.input = input
   }
 
-  /** Header validation precedes allocation, including the stricter limit for final results. */
+  /** Header validation precedes allocation, including the final value, log allowance and frame envelope.
+   * The parent reserves receipts and clips logs only after decoding the worker's final frame. */
   private allocate(limit: number) {
     this.size = this.header.readUInt32BE(1)
     const kind = this.header[0]
-    const maximum = kind === 2 ? Math.min(limit, budgets.result) : limit
+    const maximum = kind === 2 ? Math.min(limit, budgets.result + budgets.logs + 1_024) : limit
     if (kind === undefined || kind > 2 || this.size === 0 || this.size > maximum) return false
     this.body = Buffer.alloc(this.size)
     return true

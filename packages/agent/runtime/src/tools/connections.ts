@@ -24,7 +24,7 @@ export function connectionTools(runTool: RunTool) {
     defineTool({
       name: 'find_tools',
       description:
-        'Find connected tools for a concrete request and integrations that could be connected to help.',
+        'Find Integration tools for a concrete request. Returns call expressions and TypeScript signatures, plus Integrations that could be connected to help. The call expression works inside run_code; here, pass the same account and tool to use_tool. withheld counts matching tools on an account whose name cannot be shown; tell the person to rename that Integration if they need it.',
       input: v.object({ query: text('What you need to do or find.', 200) }),
       /** Account names are assigned by the server before ranking and limiting discovery. */
       run({ data, signal }) {
@@ -82,11 +82,11 @@ function useTool(runTool: RunTool) {
   return defineTool({
     name: 'use_tool',
     description:
-      'Use the exact account and tool names returned by find_tools, following its input schema. If approval is requested, stop and wait.',
+      'Call one Integration tool that find_tools returned, with JSON input matching its signature. If approval is requested, stop and wait.',
     input: v.object({
       account: text('The exact account name returned by find_tools.', 300),
       tool: text('The exact tool name returned by find_tools.', 200),
-      input: v.pipe(v.unknown(), v.description('JSON matching the tool’s input JSON Schema.')),
+      input: v.pipe(v.unknown(), v.description('JSON input matching the tool’s signature.')),
       summary,
       rationale: v.pipe(
         v.string(),

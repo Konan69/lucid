@@ -17,7 +17,7 @@ describe('Program pipes', () => {
       Effect.gen(function* () {
         for (const [kind, size] of [
           [1, budgets.wire + 1],
-          [2, budgets.result + 1],
+          [2, budgets.result + budgets.logs + 1_024 + 1],
         ] as const) {
           const input = new NodeStream.PassThrough()
           const header = Buffer.alloc(5)

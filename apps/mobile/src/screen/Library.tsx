@@ -219,9 +219,14 @@ function LevelScreen({
 
 /** What Vivid has to say about a file: that it is reading it, that it could not, or its size. */
 function noteOf(item: LibraryItem): string {
-  if (item.status === 'processing') return 'Vivid is reading this file.'
-  if (item.status === 'ready') return library.formatBytes(item.size)
-  return item.error === null ? 'Vivid could not read this file.' : item.error
+  switch (item.status) {
+    case 'processing':
+      return 'Vivid is reading this file.'
+    case 'ready':
+      return library.formatBytes(item.size)
+    case 'failed':
+      return item.error === null ? 'Vivid could not read this file.' : item.error
+  }
 }
 
 /** The folders and files at one level. */

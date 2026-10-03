@@ -26,6 +26,21 @@ that graph; local development keeps the Command/Docker graph above. Railway Post
 Helix were reported healthy on 3 October 2026; application deployment still needs the container
 fixes and remote verification described below.
 
+### Deploying to production
+
+`pnpm infra:deploy --yes` needs `RAILWAY_API_TOKEN` for the personal Railway account, and is run
+from a clean checkout of `main` so half-edited files never ship.
+
+Known gap, Alchemy `2.0.0-beta.79`: the Railway provider waits about fifty seconds for a deployment
+(`alchemy/src/Railway/ServiceProvider.ts`, ten tries five seconds apart), and an image build takes
+about three minutes. The command therefore reports `ServiceDeployPending` and exits non-zero while
+the build goes on and succeeds on Railway. Two consequences:
+
+- Judge a deploy by Railway's deployment status and `/health`, not by the command's exit code.
+- A service the tool still records as "replacing" gets one more generated public domain on every
+  run, and the plan caps domains per service. After each deploy, delete every server domain except
+  the first one, which `PUBLIC_URL` uses. Remove this step when the provider waits for the build.
+
 ## Run locally
 
 1. Install dependencies with `pnpm install` using Node 24 or newer and pnpm `12.4.2`.
@@ -99,6 +114,15 @@ or the SPA document. Content-hashed assets cache immutably; the document revalid
 and symlinks outside the static root are refused. Without `VIVID_WEB_DIST`, local startup serves
 no static app; without `HOST`, it retains `127.0.0.1`. The runtime defaults to `PORT=5173` in its
 image; Flue's production Node listener omits a hostname and accepts non-loopback connections.
+
+The same image carries the mobile app's JavaScript as an over-the-air update
+(`VIVID_MOBILE_UPDATES=/app/apps/mobile/updates`, exported by `apps/mobile/scripts/publish.mjs`
+in the image's `updates` stage). The server answers the installed app's update check at
+`/api/updates/manifest` and serves the files at `/api/updates/assets`, speaking the Expo Updates
+protocol itself; no Expo service is involved. A deploy is therefore also the publish: an installed
+app with the same runtime version (`version` in `apps/mobile/app.json`) downloads the new
+JavaScript at its next launch. A change to native code needs a new `version` and a new binary.
+Without `VIVID_MOBILE_UPDATES` the routes do not exist.
 
 Supply the server with `DATABASE_URL`, `AUTH_SECRET`, `VIVID_RUNTIME_URL`,
 `VIVID_RUNTIME_TOKEN`, and the externally reachable `PUBLIC_URL`. Supply the runtime with

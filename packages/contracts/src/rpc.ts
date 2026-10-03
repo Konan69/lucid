@@ -87,6 +87,7 @@ import {
   DatabaseUnavailable,
   Forbidden,
   InvalidRequest,
+  MailboxUnconfirmed,
   NotFound,
   RuntimeUnavailable,
   ServiceUnavailable,
@@ -283,8 +284,12 @@ const PreviewInvitation = Rpc.make('PreviewInvitation', {
   payload: { id: InvitationId },
   success: InvitationPreview,
 })
+/**
+ * Joins the Company an invitation names. `MailboxUnconfirmed` is this call's own refusal: the
+ * invited address is the caller's, but nothing has shown that they receive its mail.
+ */
 const AcceptInvitation = Rpc.make('AcceptInvitation', {
-  ...call,
+  error: Schema.Union([RpcFailure, MailboxUnconfirmed]),
   payload: AcceptMembershipRequest,
   success: MeResponse,
 })

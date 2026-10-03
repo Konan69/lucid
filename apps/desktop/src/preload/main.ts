@@ -40,6 +40,15 @@ class ExternalOpenFailed extends Schema.TaggedError<ExternalOpenFailed>()(
 const decodeOrigin = Schema.decodeUnknownEffect(BridgeRequest.cases.ChooseServer.fields.origin)
 const decodeExternal = Schema.decodeUnknownEffect(BridgeRequest.cases.OpenExternal.fields.url)
 
+/** A response that answers its request. The two failure responses are errors, never answers. */
+type Answer = Exclude<
+  BridgeResponse,
+  { readonly _tag: 'SettingsSaveFailed' | 'ExternalOpenFailed' }
+>
+/** One declared result for every case, so the failures and the answers unify into one Effect. */
+type Outcome = Effect.Effect<Answer, SettingsSaveFailed | ExternalOpenFailed>
+const answered = (answer: Answer): Outcome => Effect.succeed(answer)
+
 /** Only this private adapter can invoke IPC; renderer code never receives arbitrary channels. */
 const invoke = Effect.fn('DesktopPreload.invoke')(function* (request: BridgeRequest) {
   const payload = yield* encodeBridgeRequest(request)
@@ -48,9 +57,18 @@ const invoke = Effect.fn('DesktopPreload.invoke')(function* (request: BridgeRequ
     catch: () => new BridgeTransportFailed({}),
   })
   const decoded = yield* decodeBridgeResponse(response)
-  if (BridgeResponse.guards.SettingsSaveFailed(decoded)) return yield* new SettingsSaveFailed({})
-  if (BridgeResponse.guards.ExternalOpenFailed(decoded)) return yield* new ExternalOpenFailed({})
-  return decoded
+  // Every response is a named case: the two failures leave through the error channel, and a new
+  // response kind fails to typecheck here until it is placed on one side or the other.
+  return yield* BridgeResponse.match(decoded, {
+    SettingsSaveFailed: (): Outcome => Effect.fail(new SettingsSaveFailed({})),
+    ExternalOpenFailed: (): Outcome => Effect.fail(new ExternalOpenFailed({})),
+    AppVersion: answered,
+    Server: answered,
+    ServerChoice: answered,
+    Forgotten: answered,
+    ExternalOpened: answered,
+    Pages: answered,
+  })
 })
 
 /** Get returns truthful first-launch state, with no default server embedded in preload. */

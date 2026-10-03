@@ -1,6 +1,25 @@
 import * as Schema from 'effect/Schema'
 import { ApprovalId } from './identity.js'
 
+/** One timing contract keeps the server deadline, log grace and client timeouts ordered. */
+export const CodeTiming = {
+  seconds: 300,
+  graceMs: 1_000,
+} as const
+/**
+ * The program tool's own timeout, above the server deadline plus the log grace plus the time the
+ * server needs to stop the child. It is the only client-side bound: the runtime's HTTP client already
+ * waits an hour for headers and has no body timeout (`@effect/platform-node` `NodeHttpClient.ts`,
+ * `makeUndici`), so the transport never gives up before this does.
+ */
+export const CodeToolTimeout = CodeTiming.seconds * 1_000 + CodeTiming.graceMs + 10_000
+
+/** Discovery and guest dispatch accept exactly the same account/tool vocabulary. */
+export const CodeToolNames = Schema.Struct({
+  account: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(300)),
+  tool: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
+})
+
 /**
  * A program Vivid writes to do several things in one go.
  *
@@ -58,12 +77,24 @@ export const CodeFailure = Schema.TaggedUnion({
 })
 export type CodeFailure = typeof CodeFailure.Type
 
+/** Printed lines survive success and failure separately from the returned JSON value. */
+export const CodeLogs = Schema.Struct({
+  logs: Schema.Array(Schema.String),
+  logsTruncated: Schema.Boolean,
+})
+export interface CodeLogs extends Schema.Schema.Type<typeof CodeLogs> {}
+
 /**
  * What came of a program. Calls that completed before it stopped stay completed: nothing is rolled
  * back and nothing is run again, so every outcome carries the calls that were made.
  */
 export const CodeOutcome = Schema.TaggedUnion({
-  Completed: { result: Schema.Json, calls: Schema.Array(CodeCall), truncated: Schema.Boolean },
+  Completed: {
+    result: Schema.Json,
+    calls: Schema.Array(CodeCall),
+    truncated: Schema.Boolean,
+    ...CodeLogs.fields,
+  },
   /** One call needs a Person's decision. The program has ended; the approved action runs alone. */
   ApprovalRequired: {
     approvalId: ApprovalId,
@@ -71,7 +102,7 @@ export const CodeOutcome = Schema.TaggedUnion({
     calls: Schema.Array(CodeCall),
   },
   Blocked: { rule: Schema.String, calls: Schema.Array(CodeCall) },
-  Failed: { failure: CodeFailure, calls: Schema.Array(CodeCall) },
+  Failed: { failure: CodeFailure, calls: Schema.Array(CodeCall), ...CodeLogs.fields },
   /** A call that changes something was sent and its answer was lost. Never retried. */
   OutcomeUnknown: { calls: Schema.Array(CodeCall) },
 })

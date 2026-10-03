@@ -71,7 +71,6 @@ const connection = (serviceName: string, state: ConnectionState) =>
 
 describe('shipped procedure catalogue', () => {
   it('uses registered tools and projects no record handles', () => {
-    expect(procedures).toHaveLength(23)
     for (const procedure of procedures) {
       expect(procedure.about).not.toMatch(/the Person|^When\b|`/iu)
       expect(procedure.about.length).toBeLessThanOrEqual(300)
@@ -94,7 +93,7 @@ describe('shipped procedure catalogue', () => {
   })
 
   it('preserves display names, descriptions and wire identities', () => {
-    expect(new Set(manifest.map((entry) => entry.runtimeName)).size).toBe(23)
+    expect(new Set(manifest.map((entry) => entry.runtimeName)).size).toBe(manifest.length)
     for (const procedure of procedures) {
       expect(procedure.runtimeName).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u)
       expect(procedure.runtimeName.length).toBeLessThanOrEqual(64)
@@ -128,7 +127,7 @@ describe('shipped procedure catalogue', () => {
         }),
       })
       const effective = catalogue([saved])
-      expect(effective).toHaveLength(24)
+      expect(effective).toHaveLength(builtins.length + 1)
       expect(effective).toContain(original)
       expect(summary(saved)).toBe(saved.useWhen)
       expect(views.skills(effective)).toEqual(

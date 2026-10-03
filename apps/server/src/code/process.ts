@@ -6,6 +6,7 @@ import {
   CodeCall,
   CodeOutcome,
   CodeFailure,
+  CodeLogs,
   type RunCodeRequest,
   type ThreadId,
   ApprovalId,
@@ -22,6 +23,8 @@ import {
   Schema,
   Semaphore,
 } from 'effect'
+import { CodeTiming } from '@vivid/contracts/code'
+import { boundedLogs, encodedPrefix } from './logs.ts'
 import { budgets, bytes } from './budgets.ts'
 import { prepareWorker } from './source.ts'
 import { checkProgramHost } from './host.ts'
@@ -94,7 +97,8 @@ function command(runtimeDirectory: string, unit: string, source: string) {
     '-p',
     'CPUQuota=100%',
     '-p',
-    `RuntimeMaxSec=${budgets.seconds}`,
+    // Isolation must outlive the parent deadline so it can collect the worker's final receipt.
+    `RuntimeMaxSec=${budgets.seconds + 5}`,
     '-p',
     'KillMode=control-group',
     '-p',
@@ -125,7 +129,7 @@ function command(runtimeDirectory: string, unit: string, source: string) {
     '--chdir',
     '/tmp',
     '/usr/bin/prlimit',
-    '--cpu=30',
+    `--cpu=${budgets.seconds + 5}`,
     '--',
     NodeProcess.execPath,
     // Node 24 defaults to 128 parallel WASM compilation tasks; this cgroup has one CPU.
@@ -218,9 +222,31 @@ const launch = Effect.fn('Code.launchProcess')(function* (
   return { child, unit, env: options.env }
 })
 
+/** Failure keeps every admitted receipt and fits logs into the remaining final-result bytes. */
+function boundedFailure(failure: CodeFailure, calls: readonly CodeCall[], printed: CodeLogs) {
+  const base = CodeOutcome.cases.Failed.make({
+    failure,
+    calls: calls.slice(),
+    logs: [],
+    // false is one byte longer than true; reserve the longest possible encoding.
+    logsTruncated: false,
+  })
+  const available = budgets.result - bytes(JSON.stringify(base)) + 2
+  const logs = boundedLogs(printed.logs, Math.min(budgets.logs, available), printed.logsTruncated)
+  return CodeOutcome.cases.Failed.make({
+    failure,
+    calls: calls.slice(),
+    logs: logs.logs,
+    logsTruncated: logs.logsTruncated,
+  })
+}
+
 /** Parent state is never supplied by the worker. Pending consequential calls are uncertain on loss. */
-class Execution {
+export class Execution {
   readonly calls: CodeCall[] = []
+  readonly finished = Deferred.makeUnsafe<void>()
+  // Until a real final frame arrives, buffered guest output may have been lost.
+  private logs = CodeLogs.make({ logs: [], logsTruncated: true })
   private terminal: Option.Option<CodeOutcome> = Option.none()
   /** Rebuilds the decision's snapshot once the calls that were already running have reported. */
   private decision: Option.Option<() => CodeOutcome> = Option.none()
@@ -241,6 +267,12 @@ class Execution {
   /** Close before waiting for an in-flight receipt; queued work never reaches an authority service. */
   end(message: typeof WorkerMessage.cases.Done.Type | typeof WorkerMessage.cases.Failed.Type) {
     this.ending = Option.some(message)
+    this.logs = boundedLogs(message.logs, budgets.logs, message.logsTruncated)
+    // A deadline latches receipts before cancellation; only its printed-output channel may update.
+    if (Option.isSome(this.terminal) && CodeOutcome.guards.Failed(this.terminal.value)) {
+      const outcome = this.terminal.value
+      this.terminal = Option.some(boundedFailure(outcome.failure, outcome.calls, this.logs))
+    }
   }
 
   /** A deadline is a permanent host latch set before child fibers are interrupted. */
@@ -255,7 +287,7 @@ class Execution {
     if (Option.isSome(this.terminal)) return this.terminal.value
     if (this.calls.some((call) => call.end === 'unknown'))
       return CodeOutcome.cases.OutcomeUnknown.make({ calls: this.calls.slice() })
-    return CodeOutcome.cases.Failed.make({ failure, calls: this.calls.slice() })
+    return boundedFailure(failure, this.calls, this.logs)
   }
 
   /** Reserve bounded queue space before forking; arguments count even if completion cancels the call. */
@@ -340,7 +372,9 @@ class Execution {
     call: typeof WorkerMessage.cases.Call.Type,
     result: CallOutcome,
   ): CallStep {
-    const summary = result.summary.slice(0, 200)
+    // One hundred receipts must fit the final aggregate even for Unicode or escaped summaries.
+    // Bound encoded bytes, not code units; metadata cannot consume the returned value's budget.
+    const summary = encodedPrefix(result.summary, 200)
     return CallOutcome.match<CallStep>(result, {
       Returned: ({ value, end }) => {
         this.calls[index] = CodeCall.make({ kind: call.kind, summary, end })
@@ -390,18 +424,48 @@ class Execution {
     return CallStep.cases.Stop.make({ outcome })
   }
 
-  /** Even a small guest value must fit the final aggregate with all partial-effect receipts. */
+  /** The value and receipts take priority; only logs shrink to fit their remaining UTF-8 budget. */
   completed(result: Schema.Json): CodeOutcome {
     if (Option.isSome(this.terminal)) return this.terminal.value
-    const outcome = CodeOutcome.cases.Completed.make({
+    const base = CodeOutcome.cases.Completed.make({
       result,
       calls: this.calls.slice(),
       truncated: false,
+      logs: [],
+      logsTruncated: false,
     })
-    return bytes(JSON.stringify(outcome)) > budgets.result
-      ? this.failed(CodeFailure.cases.OverLimit.make({ limit: 'result' }))
-      : outcome
+    const available = budgets.result - bytes(JSON.stringify(base)) + 2
+    if (available < 2) return this.failed(CodeFailure.cases.OverLimit.make({ limit: 'result' }))
+    const logs = boundedLogs(
+      this.logs.logs,
+      Math.min(budgets.logs, available),
+      this.logs.logsTruncated,
+    )
+    return CodeOutcome.cases.Completed.make({
+      result,
+      calls: base.calls,
+      truncated: false,
+      logs: logs.logs,
+      logsTruncated: logs.logsTruncated,
+    })
   }
+
+  /** Latch receipts before cancellation and bound final-frame collection; missing output stays marked. */
+  readonly timeout = Effect.fn('Code.collectDeadlineLogs')(function* (
+    this: Execution,
+    cancelled: Effect.Effect<void, PipeFailure>,
+  ) {
+    const failure = CodeFailure.cases.TimedOut.make({ seconds: budgets.seconds })
+    this.terminate(failure)
+    yield* Effect.raceFirst(
+      cancelled.pipe(
+        Effect.andThen(Deferred.await(this.finished)),
+        Effect.catchTag('CodePipeFailure', () => Effect.void),
+      ),
+      Effect.sleep(CodeTiming.graceMs),
+    )
+    return this.failed(failure)
+  })
 }
 
 /** The reader continues during an action, so a Done frame closes queued admission immediately. */
@@ -425,13 +489,18 @@ const readCalls = Effect.fn('Code.readCalls')(function* (
       Effect.tapError(() =>
         Effect.sync(() =>
           state.end(
-            WorkerMessage.cases.Failed.make({ failure: CodeFailure.cases.Unavailable.make({}) }),
+            WorkerMessage.cases.Failed.make({
+              failure: CodeFailure.cases.Unavailable.make({}),
+              logs: [],
+              logsTruncated: true,
+            }),
           ),
         ),
       ),
     )
     if (WorkerMessage.isAnyOf(['Done', 'Failed'])(message)) {
       state.end(message)
+      yield* Deferred.succeed(state.finished, undefined)
       yield* Effect.forEach(running, (fiber) => Fiber.join(fiber), { concurrency: 'unbounded' })
       const decided = state.settled()
       if (Option.isSome(decided)) return decided.value
@@ -448,7 +517,11 @@ const readCalls = Effect.fn('Code.readCalls')(function* (
       Effect.catchTag('CodePipeFailure', (failure) =>
         Effect.gen(function* () {
           state.end(
-            WorkerMessage.cases.Failed.make({ failure: CodeFailure.cases.Unavailable.make({}) }),
+            WorkerMessage.cases.Failed.make({
+              failure: CodeFailure.cases.Unavailable.make({}),
+              logs: [],
+              logsTruncated: true,
+            }),
           )
           yield* Deferred.fail(stopped, failure)
         }),
@@ -518,10 +591,14 @@ const execute = Effect.fn('Code.supervise')(function* (
   dispatch: Dispatch,
 ) {
   const state = new Execution()
+  const child = {
+    current: Option.none<Pick<NodeChildProcess.ChildProcessWithoutNullStreams, 'stdin'>>(),
+  }
   const failed = (failure: CodeFailure) => state.failed(failure)
   const program = Effect.scoped(
     Effect.gen(function* () {
       const launched = yield* launch(runtimeDirectory, source)
+      child.current = Option.some(launched.child)
       yield* writeFrame(
         launched.child.stdin,
         encodeParent(ParentMessage.cases.Start.make({ code: request.code })),
@@ -542,11 +619,17 @@ const execute = Effect.fn('Code.supervise')(function* (
       ),
     ),
   )
-  const deadline = Effect.sleep(`${budgets.seconds} seconds`).pipe(
-    Effect.map(() =>
-      state.terminate(CodeFailure.cases.TimedOut.make({ seconds: budgets.seconds })),
-    ),
-  )
+  const deadline = Effect.fn('Code.deadline')(function* () {
+    yield* Effect.sleep(`${budgets.seconds} seconds`)
+    // Pi's public abort returns buffered output (runtime/host.js/Execution.abort). Grace and
+    // admission share CodeTiming; a missing final frame cannot claim its output was complete.
+    const cancelled = Option.match(child.current, {
+      onNone: () => Effect.void,
+      onSome: (running) =>
+        writeFrame(running.stdin, encodeParent(ParentMessage.cases.Cancel.make({})), 'request'),
+    })
+    return yield* state.timeout(cancelled)
+  })()
   return yield* Effect.raceFirst(program, deadline)
 })
 
@@ -578,11 +661,15 @@ export const codeProcessLayer = Layer.effect(
         const unavailable = CodeOutcome.cases.Failed.make({
           failure: CodeFailure.cases.Unavailable.make({}),
           calls: [],
+          logs: [],
+          logsTruncated: false,
         })
         if (bytes(request.code) > budgets.source)
           return CodeOutcome.cases.Failed.make({
             failure: CodeFailure.cases.Threw.make({ message: 'Program source exceeds 16 KiB.' }),
             calls: [],
+            logs: [],
+            logsTruncated: false,
           })
         if (Option.isNone(runtimeDirectory) || Option.isNone(source) || active.has(boundary))
           return unavailable

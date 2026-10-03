@@ -146,7 +146,7 @@ export const companyHandlers = {
   AcceptInvitation: Effect.fn('Rpc.AcceptInvitation')(function* (request: AcceptMembershipRequest) {
     const auth = yield* requirePerson()
     const store = yield* CompanyStore
-    const joined = yield* store.accept(auth.person, request.invitationId)
+    const joined = yield* store.accept(auth.person.id, request.invitationId)
     const response = yield* enter(auth, Option.some(joined.companyId))
     const actor = yield* requireActor()
     yield* (yield* Audit).record(

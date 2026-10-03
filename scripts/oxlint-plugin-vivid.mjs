@@ -882,6 +882,170 @@ const reactNoDerivedStateEffect = rule(
   }),
 )
 
+// Property and binding names that carry a closed lifecycle vocabulary in Vivid's contracts.
+// `type` and `_tag` are left out on purpose: `type` names open vocabularies such as AST nodes, and
+// raw `_tag` comparisons already belong to anti-slop-effect/no-manual-tag-comparison.
+const stateNamePattern = /^(?:state|status|kind|phase)$|[a-z](?:State|Status|Kind|Phase)$/u
+const terminalStatements = new Set([
+  'BreakStatement',
+  'ContinueStatement',
+  'ReturnStatement',
+  'ThrowStatement',
+])
+
+/**
+ * Names a stable subject (`run`, `this.state`, `thread.run.status`) so two checks can be compared.
+ * Calls and computed members return undefined: their value may differ between two evaluations, so
+ * treating them as one subject would report unrelated predicates.
+ */
+const subjectKey = (node) => {
+  const current = unwrapExpression(node)
+  if (current?.type === 'Identifier') return current.name
+  if (current?.type === 'ThisExpression') return 'this'
+  if (current?.type !== 'MemberExpression' || current.computed) return undefined
+  const owner = subjectKey(current.object)
+  const name = propertyName(current)
+  return owner === undefined || name === undefined ? undefined : `${owner}.${name}`
+}
+
+const stateCheck = (subject, cases) => ({ subject, cases })
+
+/** `Union.guards.Case(value)`, the guard Schema.TaggedUnion generates per case in Effect rc.116. */
+const guardStateCheck = (node) => {
+  const callee = node.callee
+  if (callee?.type !== 'MemberExpression' || propertyName(callee.object) !== 'guards')
+    return undefined
+  const union = subjectKey(callee.object.object)
+  const value = node.arguments.length === 1 ? subjectKey(node.arguments[0]) : undefined
+  const caseName = propertyName(callee)
+  if (union === undefined || value === undefined || caseName === undefined) return undefined
+  return stateCheck(`${union}(${value})`, [caseName])
+}
+
+/** `Union.isAnyOf(['A', 'B'])(value)`: one branch that covers several cases of the same union. */
+const subsetStateCheck = (node) => {
+  const predicate = node.callee
+  if (predicate?.type !== 'CallExpression' || propertyName(predicate.callee) !== 'isAnyOf') {
+    return undefined
+  }
+  const union = subjectKey(predicate.callee.object)
+  const keys = predicate.arguments[0]
+  const value = node.arguments.length === 1 ? subjectKey(node.arguments[0]) : undefined
+  if (union === undefined || value === undefined || keys?.type !== 'ArrayExpression')
+    return undefined
+  if (!keys.elements.every(isStringLiteral)) return undefined
+  return stateCheck(
+    `${union}(${value})`,
+    keys.elements.map((element) => element.value),
+  )
+}
+
+/** `run.status === 'working'`: a string literal compared with a state-named property or binding. */
+const literalStateCheck = (node) => {
+  if (node.operator !== '===' && node.operator !== '==') return undefined
+  const literal = [node.left, node.right].find(isStringLiteral)
+  const other = unwrapExpression(literal === node.left ? node.right : node.left)
+  if (literal === undefined) return undefined
+  const name = other?.type === 'Identifier' ? other.name : propertyName(other)
+  const subject = subjectKey(other)
+  if (name === undefined || subject === undefined || !stateNamePattern.test(name)) return undefined
+  return stateCheck(subject, [literal.value])
+}
+
+/**
+ * Reads one `if` test as a check of a closed state, or undefined when it is anything else.
+ * Only a pure check counts. `a || b` counts when both sides check the same subject; `&&`, negation,
+ * and `!==` never count, because those are refinements and validation, not dispatch.
+ */
+const readStateCheck = (test) => {
+  const node = unwrapExpression(test)
+  if (node?.type === 'CallExpression') return guardStateCheck(node) ?? subsetStateCheck(node)
+  if (node?.type === 'BinaryExpression') return literalStateCheck(node)
+  if (node?.type !== 'LogicalExpression' || node.operator !== '||') return undefined
+  const left = readStateCheck(node.left)
+  const right = readStateCheck(node.right)
+  if (left === undefined || right === undefined || left.subject !== right.subject) return undefined
+  return stateCheck(left.subject, [...left.cases, ...right.cases])
+}
+
+const endsControlFlow = (statement) => {
+  if (statement?.type !== 'BlockStatement') return terminalStatements.has(statement?.type)
+  return terminalStatements.has(statement.body.at(-1)?.type)
+}
+
+/** Sibling statements of an `if` in a block, program, or switch case; empty for a bare `else if`. */
+const siblingStatements = (node) => {
+  const parent = node.parent
+  if (parent?.type === 'SwitchCase') return parent.consequent
+  return Array.isArray(parent?.body) ? parent.body : []
+}
+
+/** The first statement that does anything; `;` alone cannot change the subject. */
+const firstEffectiveStatement = (statements) =>
+  statements.find((statement) => statement.type !== 'EmptyStatement')
+
+/**
+ * The next check that observes the same value as `node`, or undefined.
+ * Two checks are one dispatch only when nothing can run between them:
+ * - `else if`, or a braced `else` whose first statement is the next `if`. A call or assignment
+ *   before that `if` may change the subject, so the `if` after it is a separate observation.
+ * - with no `else`, a branch that ends control flow followed directly by a guard that also ends
+ *   it. Any statement between the two (a reassignment, a call that mutates the subject) breaks the
+ *   run, and the scan never looks past it for a later `if`.
+ */
+const nextObservation = (node) => {
+  const alternate = node.alternate
+  if (alternate?.type === 'IfStatement') return alternate
+  if (alternate?.type === 'BlockStatement') return firstEffectiveStatement(alternate.body)
+  if (alternate !== null && alternate !== undefined) return undefined
+  if (!endsControlFlow(node.consequent)) return undefined
+  const siblings = siblingStatements(node)
+  const next = firstEffectiveStatement(siblings.slice(siblings.indexOf(node) + 1))
+  if (next?.type !== 'IfStatement' || next.alternate || !endsControlFlow(next.consequent)) {
+    return undefined
+  }
+  return next
+}
+
+/**
+ * Collects the `if` statements that continue one dispatch on `subject`, starting at `head`.
+ * The run stops at the first statement that is not a check of the same subject. Function bodies
+ * are never entered, so a nested callback starts its own dispatch on its own bindings.
+ */
+const collectDispatch = (head, subject) => {
+  const branches = []
+  let node = head
+  while (node?.type === 'IfStatement') {
+    const check = readStateCheck(node.test)
+    if (check === undefined || check.subject !== subject) break
+    branches.push([node, check.cases])
+    node = nextObservation(node)
+  }
+  return branches
+}
+
+const preferStateMatch = rule(
+  'Dispatch on a closed state with one exhaustive match instead of repeated if checks.',
+  'These if branches dispatch on one closed state ({{cases}}), so a new case is silently skipped. Use the Schema.TaggedUnion matcher `Union.match(value, { ... })`, `Match.value(value).pipe(..., Match.exhaustive)`, or an exhaustive `switch` on a plain union.',
+  (report) => {
+    // Oxlint visits a parent before its children, so the first branch of a dispatch claims the
+    // rest and the dispatch is reported once at its head.
+    const claimed = new WeakSet()
+    return {
+      IfStatement(node) {
+        if (claimed.has(node)) return
+        const check = readStateCheck(node.test)
+        if (check === undefined) return
+        const branches = collectDispatch(node, check.subject)
+        const cases = new Set(branches.flatMap(([, names]) => names))
+        if (branches.length < 2 || cases.size < 2) return
+        branches.forEach(([branch]) => claimed.add(branch))
+        report(node, { cases: [...cases].join(', ') })
+      },
+    }
+  },
+)
+
 const reactNoInlineContextValue = rule(
   'Keep React context provider values referentially stable.',
   'Do not create an object or array directly in a Context Provider value. Use a stable value owned by the provider.',
@@ -952,6 +1116,7 @@ export default {
     'no-try-catch': noTryCatch,
     'no-undefined-in-union': noUndefinedInUnion,
     'no-unnecessary-die': noUnnecessaryDie,
+    'prefer-state-match': preferStateMatch,
     'namespace-node-imports': namespaceNodeImports,
     'react-no-derived-state-effect': reactNoDerivedStateEffect,
     'react-no-inline-context-value': reactNoInlineContextValue,

@@ -526,25 +526,29 @@ const makeManagement = (input: {
       function* (actor: Actor, id: ConnectionId) {
         const row = yield* get(actor, id)
         yield* mayManage(actor, row)
-        if (row.status === 'ready')
-          return ConnectionStep.cases.Done.make({
-            connection: yield* provide(publicConnection(actor, row)),
-          })
-        if (row.status === 'failed')
-          return yield* Effect.fail(
-            new InvalidRequest({ message: 'Remove this failed integration and connect again.' }),
-          )
-        const service = (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).find(
-          (entry) => entry.id === row.service,
-        )
-        if (
-          service !== undefined &&
-          ServiceAuthorization.guards.SetupRequired(service.authorization)
-        )
-          return yield* Effect.fail(new InvalidRequest({ message: connectionSetupMessage }))
-        const managing = yield* provide(rowActor(actor, row))
-        const retained = yield* provide(retainResumer(managing, row))
-        return yield* provide(resume(managing, retained))
+        switch (row.status) {
+          case 'ready':
+            return ConnectionStep.cases.Done.make({
+              connection: yield* provide(publicConnection(actor, row)),
+            })
+          case 'failed':
+            return yield* Effect.fail(
+              new InvalidRequest({ message: 'Remove this failed integration and connect again.' }),
+            )
+          case 'needs-authorization': {
+            const service = (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).find(
+              (entry) => entry.id === row.service,
+            )
+            if (
+              service !== undefined &&
+              ServiceAuthorization.guards.SetupRequired(service.authorization)
+            )
+              return yield* Effect.fail(new InvalidRequest({ message: connectionSetupMessage }))
+            const managing = yield* provide(rowActor(actor, row))
+            const retained = yield* provide(retainResumer(managing, row))
+            return yield* provide(resume(managing, retained))
+          }
+        }
       },
       (effect, _actor, id) => withResume(effect, id),
     ),

@@ -104,6 +104,20 @@ export type Forgetting = Data.TaggedEnum<{
 }>
 export const Forgetting = Data.taggedEnum<Forgetting>()
 
+/**
+ * How long the server is given to answer one request to end a session, and how many more times
+ * it is asked. Ending a session twice is the same as ending it once (Better Auth's `/sign-out`
+ * answers 200 with or without a live session; `better-auth/dist/api/routes/sign-out.mjs`, 1.7.5),
+ * so asking again is safe. Four requests of eight seconds with 1, 2 and 4 seconds between them is
+ * 39 seconds at most, after which the server is not asked again.
+ *
+ * Running out of time says nothing certain about the session. A request can end it on the server
+ * and lose its answer on the way back, and a request can fail to arrive at all: when no answer
+ * came, the session may still be valid on the server until it expires, or may already be ended.
+ */
+const SERVER_ANSWER = '8 seconds'
+const SERVER_ASKED_AGAIN = 3
+
 /** What taking up and letting go of a session needs from the device it is done on. */
 export interface Keeper<Refusal> {
   /** Puts a session in the device's store, which can refuse. */
@@ -131,11 +145,29 @@ export function makeCustody<Refusal>(keeper: Keeper<Refusal>) {
   const storing = Semaphore.makeUnsafe(1)
 
   /**
+   * Gives one change to the store its turn, and keeps the turn until the store has answered.
+   *
+   * The protected store speaks Promises that cannot be cancelled (`storage.ts`), and an
+   * interrupted or timed-out `Effect.tryPromise` only stops listening: the write it started still
+   * lands, whenever the store gets to it (`tryPromise` in effect 4.0.0-rc.116's
+   * `internal/effect.ts`). A turn given back early would let the next write start, and finish,
+   * before that one, which would then land on top of it: a late "signed out" over the token of a
+   * Person who has since signed in. So a turn is never cut short, by an interruption or by a
+   * clock. Waiting for a turn can still be interrupted; only a change already begun cannot.
+   *
+   * The cost is stated, not hidden: a store that never answers keeps its turn for good, and a
+   * later sign-in waits behind it without ever being shown as signed in. That is the true state
+   * of a device whose store has stopped answering; it is not known to have refused.
+   */
+  const inTurn = <A, E>(change: Effect.Effect<A, E>) =>
+    storing.withPermit(Effect.uninterruptible(change))
+
+  /**
    * Makes a session this device's own, kept before it is shown. A session that is kept replaces
    * whatever the store held, so anything the store had still to forget is forgotten with it.
    */
   const adopt = Effect.fn('Session.adopt')(function* (session: Session) {
-    yield* storing.withPermit(
+    yield* inTurn(
       Effect.gen(function* () {
         yield* keeper.write(session)
         yield* Effect.sync(() => {
@@ -151,7 +183,7 @@ export function makeCustody<Refusal>(keeper: Keeper<Refusal>) {
    * only once it holds the store, so a Person who signed in again in the meantime (which settles
    * the debt) is never signed back out by a late retry writing over their new session.
    */
-  const forgetOnce = storing.withPermit(
+  const forgetOnce = inTurn(
     Effect.gen(function* () {
       const owed = keeper.owed()
       if (Forgetting.$is('Done')(owed)) return
@@ -176,17 +208,65 @@ export function makeCustody<Refusal>(keeper: Keeper<Refusal>) {
   })
 
   /**
+   * Takes the token out of the app, in this turn: every screen and the live socket stop acting as
+   * the Person before anything that can wait or fail is started. What the store has still to be
+   * told is put on record in the same step.
+   */
+  const release = (session: Outside) =>
+    Effect.sync(() => {
+      keeper.show(session)
+      keeper.owe(Forgetting.Underway({ session }))
+    })
+
+  /**
    * Ends this device's authority: the token is out of the app first, and out of the store second.
    * Leaving must not wait on the store. The store is told afterwards, and a refusal is kept
    * (`Forgetting`) and tried again instead of being lost.
    */
   const drop = Effect.fn('Session.drop')(function* (session: Outside) {
-    yield* Effect.sync(() => {
-      keeper.show(session)
-      keeper.owe(Forgetting.Underway({ session }))
-    })
+    yield* release(session)
     yield* forget()
   })
 
-  return { adopt, drop, forget }
+  /**
+   * Signs out: the app first, then the server and the store, each on its own.
+   *
+   * `revoke` is the one request that tells the server, made with the token being given up. It
+   * used to be awaited before anything else, so a server that never answered left the Person
+   * signed in, on every screen and on the live socket, for as long as the request hung. Running
+   * the store first instead would only move the fault: a store that refuses takes half a minute
+   * to give up, and the server would not be told until it had.
+   *
+   * So the app is released in this turn, and the two that remain run side by side. Neither can
+   * stop or delay the other, and neither can fail this. A store that refused is on record as
+   * `Forgetting.Refused`, and until it takes the change it still holds the token. A server that
+   * gave no answer is left as it was before this change, unreported: the session may still be
+   * valid there (`SERVER_ANSWER`).
+   *
+   * The server is asked for a bounded time. The store is not bounded by a clock (`inTurn`), so
+   * this ends when the store has answered or been refused for the last time.
+   */
+  const leave = Effect.fn('Session.leave')(function* <Unanswered>(
+    session: Outside,
+    revoke: Effect.Effect<void, Unanswered>,
+  ) {
+    yield* release(session)
+    yield* Effect.all(
+      [
+        Effect.ignore(
+          revoke.pipe(
+            Effect.timeout(SERVER_ANSWER),
+            Effect.retry({
+              schedule: Schedule.exponential('1 second'),
+              times: SERVER_ASKED_AGAIN,
+            }),
+          ),
+        ),
+        Effect.ignore(forget()),
+      ],
+      { concurrency: 'unbounded', discard: true },
+    )
+  })
+
+  return { adopt, drop, forget, leave }
 }

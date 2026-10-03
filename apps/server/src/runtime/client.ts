@@ -5,6 +5,7 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
+import type * as Scope from 'effect/Scope'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
@@ -87,7 +88,7 @@ export interface RuntimeService {
   /** Forwards a history, updates or attachment read and hands back Flue's response as it comes. */
   readonly read: (
     read: ConversationRead,
-  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, RuntimeUnavailable>
+  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, RuntimeUnavailable, Scope.Scope>
 }
 
 /**
@@ -194,7 +195,10 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
       HttpClientRequest.bearerToken(token),
       HttpClientRequest.setHeader('accept', input.accept),
     )
-    return yield* http
+    // Effect's public scoped client aborts even a response whose body is refused before pulling.
+    // Gateway requests retain this scope through their outgoing body; finite history callers
+    // scope the complete read and decode together, including non-success responses.
+    return yield* HttpClient.withScope(http)
       .execute(request)
       .pipe(Effect.mapError(unavailable('Vivid could not be reached')))
   })

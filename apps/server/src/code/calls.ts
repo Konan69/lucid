@@ -9,6 +9,7 @@ import {
   ToolOutcome,
 } from '@vivid/contracts'
 import { Context, Effect, Layer, Schema } from 'effect'
+import { CodeToolNames } from '@vivid/contracts/code'
 import type { Actor } from '../auth/access.ts'
 import { findTools, resolveTool, useTool } from '../connections/tools.ts'
 import { computerBrowse, computerRunCommand } from '../computers/store.ts'
@@ -20,8 +21,7 @@ import type { WorkerMessage } from './protocol.ts'
 const text = (maximum: number) =>
   Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(maximum))
 const UseNamedTool = Schema.Struct({
-  account: text(300),
-  tool: text(200),
+  ...CodeToolNames.fields,
   input: Schema.Json,
   summary: text(200),
   rationale: Schema.String.check(Schema.isMaxLength(400)),
@@ -40,7 +40,8 @@ function toolView(response: Awaited<Effect.Success<ReturnType<typeof findTools>>
       tool: item.name,
       description: item.description,
       effect: item.effect,
-      input: item.input,
+      call: item.call,
+      signature: item.signature,
     })),
     unconnected: response.unconnected.map((item) => ({
       service: item.name,

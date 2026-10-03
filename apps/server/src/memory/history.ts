@@ -151,6 +151,7 @@ export const conversationContext = Effect.fn('Learning.context')(
   },
   (effect) =>
     effect.pipe(
+      Effect.scoped,
       Effect.timeout('5 seconds'),
       Effect.catch((error) =>
         Effect.logWarning('Memory history unavailable; learning isolated exchange', {

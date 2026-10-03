@@ -62,6 +62,7 @@ import { conversationLayer } from './threads/delivery.ts'
 import { presenceLayer } from './threads/presence.ts'
 import { runStoreLayer } from './threads/runs.ts'
 import { threadStoreLayer } from './threads/store.ts'
+import { updateRoutes } from './updates/routes.ts'
 
 /**
  * Memory is an optional part of an installation. With `VIVID_HELIX_URL` set, Vivid remembers; with
@@ -147,7 +148,12 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     port: config.PORT,
   })
   const application = HttpRouter.serve(
-    Layer.mergeAll(routerLayer, staticRoutes(config.VIVID_WEB_DIST), background),
+    Layer.mergeAll(
+      routerLayer,
+      updateRoutes(config.VIVID_MOBILE_UPDATES, config.PUBLIC_URL),
+      staticRoutes(config.VIVID_WEB_DIST),
+      background,
+    ),
   ).pipe(Layer.provide(schedules), Layer.provide(server))
   return yield* Layer.launch(application)
 })()

@@ -1,4 +1,5 @@
 import { Schema } from 'effect'
+import { InvitationId, PersonId } from './identity.js'
 
 export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
   'Unauthenticated',
@@ -30,6 +31,22 @@ export class Conflict extends Schema.TaggedError<Conflict>()(
     message: Schema.String,
   },
   { title: 'Conflict' },
+) {}
+
+/**
+ * The Person holds the address an invitation was sent to but has not shown that its mailbox is
+ * theirs, so the invitation stays open and no Membership is made. It is a tag of its own because
+ * the Person can act on it (prove the mailbox), which a `Forbidden` invitation for another address
+ * never allows. Both ids are the caller's own: the Person who asked and the invitation they named.
+ */
+export class MailboxUnconfirmed extends Schema.TaggedError<MailboxUnconfirmed>()(
+  'MailboxUnconfirmed',
+  {
+    personId: PersonId,
+    invitationId: InvitationId,
+    message: Schema.String,
+  },
+  { title: 'Mailbox unconfirmed' },
 ) {}
 
 /** Infrastructure failures exposed without leaking driver-specific errors. */

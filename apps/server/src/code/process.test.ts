@@ -2,10 +2,13 @@ import * as NodeProcess from 'node:process'
 import { ConfigProvider, Context, Layer, Logger } from 'effect'
 import { programHost } from './host.ts'
 import { describe, expect, it as standalone, layer } from '@effect/vitest'
-import { ApprovalId, CodeFailure, CodeOutcome, ThreadId } from '@vivid/contracts'
+import { ApprovalId, CodeCall, CodeFailure, CodeOutcome, ThreadId } from '@vivid/contracts'
 import { Deferred, Effect, Fiber, Ref, Option, type Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
-import { CallOutcome, CodeProcess, codeProcessLayer, type Dispatch } from './process.ts'
+import { CallOutcome, CodeProcess, codeProcessLayer, Execution, type Dispatch } from './process.ts'
+import { discoveredTool } from './signatures.ts'
+import { CodeTiming } from '@vivid/contracts/code'
+import { WorkerMessage } from './protocol.ts'
 import { budgets } from './budgets.ts'
 
 const missingHost = programHost(Option.fromUndefinedOr(NodeProcess.env.XDG_RUNTIME_DIR))
@@ -45,6 +48,175 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
           end: 'completed',
         }),
       ),
+    )
+
+    it.effect('dispatches callable accounts once and awaits proxies without thenable calls', () =>
+      Effect.gen(function* () {
+        const frames = yield* Ref.make<Schema.Json[]>([])
+        const dispatch: Dispatch = Effect.fn('Test.accountCall')(function* (call) {
+          expect(call.kind).toBe('use_tool')
+          yield* Ref.update(frames, (items) => items.concat([call.input]))
+          return CallOutcome.cases.Returned.make({
+            value: { ok: true, output: 'sent' },
+            summary: 'Send mail',
+            end: 'completed',
+          })
+        })
+        const outcome = yield* run(
+          'await accounts; await accounts["x"]; if(accounts[Symbol.iterator]!==undefined || accounts["x"][Symbol.iterator]!==undefined) throw new Error("symbol exposed"); return await accounts["Work Gmail"].send_email({to:"Ada"},{summary:"Send mail",rationale:"Reply"});',
+          dispatch,
+        )
+        check(outcome, 'Completed', { result: { ok: true, output: 'sent' } })
+        expect(yield* Ref.get(frames)).toEqual([
+          {
+            account: 'Work Gmail',
+            tool: 'send_email',
+            input: { to: 'Ada' },
+            summary: 'Send mail',
+            rationale: 'Reply',
+          },
+        ])
+      }),
+    )
+
+    it.effect(
+      'round-trips production discovery expressions through the real guest',
+      () =>
+        Effect.gen(function* () {
+          const names = [
+            'quote"',
+            'back\\slash',
+            'has.dot',
+            '__proto__',
+            'constructor',
+            'toString',
+            '123',
+            '日本語',
+            'not-an-identifier',
+            'then',
+            'line\u2028separator',
+            'line\u2029separator',
+          ]
+          const expected: Schema.Json[] = []
+          const expressions: string[] = []
+          for (const account of names) {
+            for (const name of names) {
+              const tool = yield* discoveredTool({
+                account,
+                name,
+                input: {},
+                output: Option.none(),
+              })
+              expected.push({ account, tool: name, input: {}, summary: 'Read', rationale: 'Test' })
+              expressions.push(
+                account === 'then' || name === 'then'
+                  ? `await ${tool.call};`
+                  : `await ${tool.call}(input, {summary, rationale});`,
+              )
+            }
+          }
+          // Keep each batch below source and call budgets; use the public supervised run seam.
+          for (let offset = 0; offset < expressions.length; offset += 40) {
+            const frames = yield* Ref.make<Schema.Json[]>([])
+            const dispatch: Dispatch = Effect.fn('Test.exactDiscoveredCall')(function* (call) {
+              expect(call.kind).toBe('use_tool')
+              yield* Ref.update(frames, (items) => items.concat([call.input]))
+              return CallOutcome.cases.Returned.make({
+                value: null,
+                summary: 'Read',
+                end: 'completed',
+              })
+            })
+            const code =
+              'const input={},summary="Read",rationale="Test";' +
+              expressions.slice(offset, offset + 40).join('') +
+              'return true;'
+            const outcome = yield* run(code, dispatch)
+            expect(outcome).toHaveProperty('result', true)
+            expect(yield* Ref.get(frames)).toEqual(expected.slice(offset, offset + 40))
+          }
+        }),
+      { timeout: 20_000 },
+    )
+
+    it.effect('names summary and rationale when account metadata is omitted', () =>
+      Effect.gen(function* () {
+        const outcome = yield* run('return await accounts.Mail.read({});', reply)
+        expect(outcome).toHaveProperty(
+          'failure.message',
+          expect.stringContaining('summary and rationale'),
+        )
+        expect(outcome.calls).toHaveLength(0)
+      }),
+    )
+
+    it.effect('keeps model source line numbers after the trusted prelude', () =>
+      Effect.gen(function* () {
+        const outcome = yield* run(
+          'const label="model";\ntry {throw new Error(label);} catch(error) {return error.stack;}',
+          reply,
+        )
+        expect(CodeOutcome.guards.Completed(outcome)).toBe(true)
+        expect(outcome).toHaveProperty('result', expect.stringContaining('codemode.js:2'))
+      }),
+    )
+
+    it.effect('keeps ordered printed lines beside success and thrown failures', () =>
+      Effect.gen(function* () {
+        const completed = yield* run(
+          'console.log("first", 1); text("second"); return {answer:42};',
+          reply,
+        )
+        check(completed, 'Completed', {
+          result: { answer: 42 },
+          logs: ['first 1', 'second'],
+          logsTruncated: false,
+        })
+        const failed = yield* run('console.log("before throw"); throw new Error("failed");', reply)
+        check(failed, 'Failed', { logs: ['before throw'], logsTruncated: false })
+        expect(failed).toHaveProperty('failure.message', 'failed')
+      }),
+    )
+
+    it.effect('keeps logs when the 300-second parent deadline cancels a waiting guest', () =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>()
+        const dispatch: Dispatch = Effect.fn('Test.waitingRead')(function* () {
+          yield* Deferred.succeed(entered, undefined)
+          return yield* Effect.never
+        })
+        const running = yield* Effect.forkChild(
+          run('console.log("before timeout"); await tools.find_tools({});', dispatch),
+        )
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust('300 seconds')
+        const outcome = yield* Fiber.join(running)
+        check(outcome, 'Failed', {
+          failure: CodeFailure.cases.TimedOut.make({ seconds: 300 }),
+          logs: ['before timeout'],
+          logsTruncated: false,
+        })
+      }),
+    )
+
+    it.effect(
+      'bounds printed UTF-8 without splitting characters and counts logs in the final aggregate',
+      () =>
+        Effect.gen(function* () {
+          const printed = yield* run('text("😀".repeat(3000)); return 1;', reply)
+          expect(CodeOutcome.guards.Completed(printed)).toBe(true)
+          if (!CodeOutcome.guards.Completed(printed)) return
+          expect(printed.logsTruncated).toBe(true)
+          expect(Buffer.byteLength(JSON.stringify(printed.logs))).toBeLessThanOrEqual(budgets.logs)
+          expect(printed.logs.join('')).not.toContain('�')
+          const aggregate = yield* run(
+            'console.log("x".repeat(7000)); return "y".repeat(30000);',
+            reply,
+          )
+          expect(aggregate).toHaveProperty('result', 'y'.repeat(30000))
+          expect(aggregate).toHaveProperty('logsTruncated', true)
+          expect(Buffer.byteLength(JSON.stringify(aggregate))).toBeLessThanOrEqual(budgets.result)
+        }),
     )
 
     it.effect(
@@ -196,7 +368,7 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
     it.effect('enforces the call budget', () =>
       Effect.gen(function* () {
         check(
-          yield* run('for(let i=0;i<26;i++) await tools.find_tools({query:"x"});', reply),
+          yield* run('for(let i=0;i<101;i++) await tools.find_tools({query:"x"});', reply),
           'Failed',
           { failure: CodeFailure.cases.OverLimit.make({ limit: 'calls' }) },
         )
@@ -211,12 +383,44 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
       }),
     )
 
-    it.effect('accepts exactly 16 KiB source and 25 calls', () =>
+    it.effect('accepts exactly 16 KiB source and 100 calls', () =>
       Effect.gen(function* () {
-        const code = 'for(let i=0;i<25;i++) await tools.find_tools({}); return 1;'
-        const outcome = yield* run(code.padEnd(budgets.source, ' '), reply)
+        const code = 'for(let i=0;i<100;i++) await tools.find_tools({}); return 1;'
+        const unicode: Dispatch = Effect.fn('Test.unicodeReceipt')(() =>
+          Effect.succeed(
+            CallOutcome.cases.Returned.make({
+              value: null,
+              summary: '😀'.repeat(200),
+              end: 'completed',
+            }),
+          ),
+        )
+        const outcome = yield* run(code.padEnd(budgets.source, ' '), unicode)
         expect(outcome).toHaveProperty('result', 1)
         expect(outcome.calls).toHaveLength(budgets.calls)
+      }),
+    )
+
+    it.effect('keeps a completed value beside 100 receipts and clips only logs', () =>
+      Effect.gen(function* () {
+        const unicode: Dispatch = Effect.fn('Test.unicodeLogReceipt')(() =>
+          Effect.succeed(
+            CallOutcome.cases.Returned.make({
+              value: null,
+              summary: '😀'.repeat(200),
+              end: 'completed',
+            }),
+          ),
+        )
+        const outcome = yield* run(
+          'console.log("x".repeat(8000)); for(let i=0;i<100;i++) await tools.find_tools({}); return null;',
+          unicode,
+        )
+        expect(outcome).toHaveProperty('result', null)
+        expect(outcome.calls).toHaveLength(100)
+        expect(outcome.calls.every((call) => call.end === 'completed')).toBe(true)
+        expect(outcome).toHaveProperty('logsTruncated', true)
+        expect(Buffer.byteLength(JSON.stringify(outcome))).toBeLessThanOrEqual(budgets.result)
       }),
     )
 
@@ -240,6 +444,8 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
             result: '',
             calls: [],
             truncated: false,
+            logs: [],
+            logsTruncated: false,
           })
           const size = budgets.result - Buffer.byteLength(JSON.stringify(empty))
           const accepted = yield* run(`return "x".repeat(${size});`, reply)
@@ -369,7 +575,7 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
           run('return await Promise.all([tools.use_tool({}),tools.use_tool({})]);', late),
         )
         yield* Deferred.await(entered)
-        yield* TestClock.adjust('31 seconds')
+        yield* TestClock.adjust('301 seconds')
         yield* Deferred.succeed(release, undefined)
         const outcome = yield* Fiber.join(running)
         expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
@@ -379,52 +585,44 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
       }),
     )
 
-    it.effect('refuses a second active program in the same Thread and a third globally', () =>
+    it.effect('refuses a second active program in one Thread and a fifth globally', () =>
       Effect.gen(function* () {
-        const entered = yield* Deferred.make<void>()
         const release = yield* Deferred.make<void>()
-        const dispatch: Dispatch = Effect.fn('Test.wait')(function* () {
-          yield* Deferred.succeed(entered, undefined)
-          yield* Deferred.await(release)
-          return CallOutcome.cases.Returned.make({ value: true, summary: 'Read', end: 'completed' })
-        })
         const process = yield* CodeProcess
         const input = {
           request: { code: 'return await tools.find_tools({});', summary: 'Read' },
           boundary: ThreadId.make('one-thread'),
         }
-        const first = yield* Effect.forkChild(process.run(input, dispatch))
-        const secondEntered = yield* Deferred.make<void>()
-        const second = yield* Effect.forkChild(
-          process.run(
-            { ...input, boundary: ThreadId.make('second-thread') },
-            Effect.fn('Test.second')(function* (call) {
-              yield* Deferred.succeed(secondEntered, undefined)
-              return yield* dispatch(call)
-            }),
-          ),
-        )
-        yield* Effect.raceFirst(
-          Deferred.await(entered),
-          Fiber.join(first).pipe(Effect.flatMap((outcome) => Effect.die(outcome))),
-        )
-        check(yield* process.run(input, reply), 'Failed', {
-          failure: CodeFailure.cases.Unavailable.make({}),
-        })
-        yield* Effect.raceFirst(
-          Deferred.await(secondEntered),
-          Fiber.join(second).pipe(Effect.flatMap((outcome) => Effect.die(outcome))),
-        )
-        check(
-          yield* process.run({ ...input, boundary: ThreadId.make('third-thread') }, reply),
-          'Failed',
-          {
-            failure: CodeFailure.cases.Unavailable.make({}),
-          },
-        )
+        const fibers: Fiber.Fiber<CodeOutcome>[] = []
+        for (let index = 0; index < budgets.processes; index++) {
+          const entered = yield* Deferred.make<void>()
+          const dispatch: Dispatch = Effect.fn('Test.waitForSlot')(function* () {
+            yield* Deferred.succeed(entered, undefined)
+            yield* Deferred.await(release)
+            return CallOutcome.cases.Returned.make({
+              value: true,
+              summary: 'Read',
+              end: 'completed',
+            })
+          })
+          const fiber = yield* Effect.forkChild(
+            process.run({ ...input, boundary: ThreadId.make(`thread-${index}`) }, dispatch),
+          )
+          fibers.push(fiber)
+          yield* Effect.raceFirst(
+            Deferred.await(entered),
+            Fiber.join(fiber).pipe(Effect.flatMap((outcome) => Effect.die(outcome))),
+          )
+        }
+        for (const boundary of ['thread-0', 'fifth-thread'])
+          check(
+            yield* process.run({ ...input, boundary: ThreadId.make(boundary) }, reply),
+            'Failed',
+            { failure: CodeFailure.cases.Unavailable.make({}) },
+          )
         yield* Deferred.succeed(release, undefined)
-        expect(CodeOutcome.guards.Completed(yield* Fiber.join(first))).toBe(true)
-        expect(CodeOutcome.guards.Completed(yield* Fiber.join(second))).toBe(true)
+        for (const fiber of fibers)
+          expect(CodeOutcome.guards.Completed(yield* Fiber.join(fiber))).toBe(true)
       }),
     )
 
@@ -461,7 +659,7 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
         () =>
           Effect.gen(function* () {
             const running = yield* RunningLoops
-            yield* TestClock.adjust('31 seconds')
+            yield* TestClock.adjust('301 seconds')
             for (const fiber of running.fibers) {
               const outcome = yield* Fiber.join(fiber)
               expect(CodeOutcome.guards.Failed(outcome)).toBe(true)
@@ -496,7 +694,7 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
             run('await tools.use_tool({}); await tools.use_tool({});', dispatch),
           )
           yield* Deferred.await(entered)
-          yield* TestClock.adjust('31 seconds')
+          yield* TestClock.adjust('301 seconds')
           const outcome = yield* Fiber.join(running)
           expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
           expect(outcome.calls.map((call) => call.end)).toEqual(['completed', 'unknown'])
@@ -514,9 +712,9 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
             }),
           ),
         )
-        const exhausted = yield* run('for(let i=0;i<26;i++) await tools.find_tools({});', refused)
+        const exhausted = yield* run('for(let i=0;i<101;i++) await tools.find_tools({});', refused)
         expect(exhausted).toHaveProperty('failure.limit', 'calls')
-        expect(exhausted.calls).toHaveLength(25)
+        expect(exhausted.calls).toHaveLength(100)
       }),
     )
 
@@ -543,11 +741,11 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
           ),
         )
         const aggregate = yield* run(
-          'for(let i=0;i<5;i++) await tools.find_tools({}); return 1;',
+          'for(let i=0;i<17;i++) await tools.find_tools({}); return 1;',
           large,
         )
         expect(aggregate).toHaveProperty('failure.limit', 'data')
-        expect(aggregate.calls).toHaveLength(5)
+        expect(aggregate.calls).toHaveLength(17)
       }),
     )
 
@@ -648,3 +846,44 @@ standalone.effect('logs unavailable isolation once and refuses configured progra
     Effect.provide(Logger.layer([logger])),
   )
 })
+
+/** Exercise the parent deadline state with a missing final frame, without a process or server. */
+standalone.effect('marks logs incomplete when final-frame grace expires', () =>
+  Effect.gen(function* () {
+    const state = new Execution()
+    const running = yield* Effect.forkChild(state.timeout(Effect.void))
+    yield* TestClock.adjust(CodeTiming.graceMs)
+    expect(yield* Fiber.join(running)).toEqual(
+      CodeOutcome.cases.Failed.make({
+        failure: CodeFailure.cases.TimedOut.make({ seconds: budgets.seconds }),
+        calls: [],
+        logs: [],
+        logsTruncated: true,
+      }),
+    )
+  }),
+)
+
+/** The false literal is one byte longer; clipping a near-full failure must reserve that byte. */
+standalone.effect('keeps failed aggregate bytes within the limit when logs nearly fit', () =>
+  Effect.sync(() => {
+    const state = new Execution()
+    state.calls.push(
+      ...Array.from({ length: budgets.calls }, () =>
+        CodeCall.make({ kind: 'find_tools', summary: 'x'.repeat(200), end: 'completed' }),
+      ),
+    )
+    const failure = CodeFailure.cases.Threw.make({ message: 'Failed' })
+    const base = CodeOutcome.cases.Failed.make({
+      failure,
+      calls: state.calls.slice(),
+      logs: [],
+      logsTruncated: false,
+    })
+    const line = 'x'.repeat(budgets.result - Buffer.byteLength(JSON.stringify(base)) - 1)
+    state.end(WorkerMessage.cases.Failed.make({ failure, logs: [line], logsTruncated: false }))
+    const outcome = state.failed(failure)
+    expect(Buffer.byteLength(JSON.stringify(outcome))).toBeLessThanOrEqual(budgets.result)
+    expect(outcome).toHaveProperty('logsTruncated', true)
+  }),
+)

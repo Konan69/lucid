@@ -3,7 +3,7 @@ import * as Atom from 'effect/unstable/reactivity/Atom'
 import { pairingTransport, signIn, signOut, signUp } from './account'
 import { Pairing, pairing } from './device'
 import type { ServerAddress } from './server'
-import { adopt, drop } from './held'
+import { adopt, leave } from './held'
 import { Session, type SignedIn } from './session'
 
 /**
@@ -55,18 +55,25 @@ export const emailAtom = Atom.fn(
 )
 
 /**
- * Signs out. The device forgets its token whether or not the server could be told: a phone that
- * is offline, or whose session the server already ended, must still be able to sign out. A
- * session the server was not told about stops working when it expires.
+ * Signs out. The Person is out of the app in the same turn this is written to: the token leaves
+ * every screen and the live socket before the server or the device's store is asked anything
+ * (`makeCustody`'s `leave`). A phone that is offline, a server that hangs and a store that
+ * refuses must each still be able to sign out, and none of them may hold up the others.
  *
- * It also forgets whether or not the device's store can be written (`makeCustody`): the app is signed
- * out at once, and a store that refused is told again until it takes it.
+ * Nothing is said when the server gave no answer, as before: the request may or may not have
+ * reached it, so that session may still be valid on the server until it expires. A store that
+ * refused still holds the token and is on record separately (`forgettingAtom`), which the
+ * sign-in screen shows. This atom's value carries no outcome, so an earlier sign-out finishing
+ * late has nothing to say over a later one.
+ *
+ * It is `concurrent` because a plain function atom interrupts its last run when it is written to
+ * again (`makeResultFn` in effect 4.0.0-rc.116's `Atom.ts`). A Person who signs back in and out
+ * within the half minute the first sign-out may still be working would otherwise cut off the
+ * request ending their earlier session.
  */
 export const leaveAtom = Atom.keepAlive(
   Atom.fn(
-    Effect.fn('Signing.leave')(function* (session: SignedIn) {
-      yield* Effect.ignore(signOut(session))
-      yield* drop(Session.SignedOut({ server: session.server }))
-    }),
+    (session: SignedIn) => leave(Session.SignedOut({ server: session.server }), signOut(session)),
+    { concurrent: true },
   ),
 )

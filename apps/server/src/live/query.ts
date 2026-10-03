@@ -49,7 +49,8 @@ export const watch = <A, E, R>(
  * single load, so a result is always computed for who the Person is now: a removed Member's next
  * reload is a personal-space result, and a revoked session's next reload fails and ends the
  * stream. The Actor is also a live query of its own on the Person's topic, which is what
- * re-subscribes the inner query to the right Company's changes when the workspace moves.
+ * re-subscribes the inner query to the right Company's changes when the workspace moves. A session
+ * that runs out fails the stream with `Unauthenticated` at that moment (`sessionRanOut`).
  *
  * `also` adds topics beyond the Actor's own, for a query about one Thread.
  */
@@ -72,33 +73,46 @@ export const live = <A, E, R>(
         })),
       )
       const current = Effect.flatMap(actor, load)
+      // Signing out moves the Person's topic, so the Actor reload above already fails on it.
+      // Running out writes nothing and moves no topic, so it needs the timer: without it a
+      // subscription whose data never changes again would outlive its session indefinitely.
       return watch([Topic.person(auth.person.id)], actor).pipe(
         Stream.switchMap((seen) => watch([...topicsOf(seen), ...also], current)),
         Stream.changes,
+        Stream.interruptWhen(sessionRanOut(auth.person.id, auth.sessionId)),
       )
     }),
   )
 
 /**
+ * Fails, with `Unauthenticated`, when a session's time is up. Never succeeds.
+ *
+ * Nothing is written when a session runs out, so no topic moves and a timer waits for the moment
+ * the row names. Using a session extends it, so when the timer fires the row is read again: a
+ * session that was extended waits for its new end, and one that was not fails here. A session that
+ * is already gone when this starts fails on its first read.
+ */
+export const sessionRanOut = (personId: PersonId, sessionId: SessionId) =>
+  Effect.gen(function* () {
+    const expiresAt = yield* sessionExpiry(personId, sessionId)
+    yield* Effect.sleep(expiresAt - (yield* Clock.currentTimeMillis))
+  }).pipe(Effect.forever)
+
+/**
  * Fails, with `Unauthenticated`, the moment a session stops being one. Never succeeds.
  *
  * A subscription that is about the session itself rather than about data (a desktop app listening
- * for work) has nothing to reload, so nothing would ever notice its session ending. Two things end
- * a session and each needs its own watcher:
+ * for work, an open conversation stream) has nothing to reload, so nothing would ever notice its
+ * session ending. Two things end a session and each needs its own watcher:
  *
  * - It is removed: signed out, or revoked from another device. Removing it publishes the Person's
- *   topic (`auth/provider.ts`), and the session is read again on that.
- * - It runs out. Nothing is written when that happens, so a timer waits for the moment the row
- *   names. Using a session extends it, so when the timer fires the row is read again: a session
- *   that was extended waits for its new end, and one that was not fails here.
+ *   topic (`auth/provider.ts`), and the session is read again on that. `watch` subscribes before
+ *   its first read, so a session removed before this started is caught by that first read.
+ * - It runs out, which `sessionRanOut` waits for.
  */
 export const sessionEnded = (personId: PersonId, sessionId: SessionId) => {
   const removed = watch([Topic.person(personId)], sessionWorkspace(personId, sessionId)).pipe(
     Stream.runDrain,
   )
-  const ranOut = Effect.gen(function* () {
-    const expiresAt = yield* sessionExpiry(personId, sessionId)
-    yield* Effect.sleep(expiresAt - (yield* Clock.currentTimeMillis))
-  }).pipe(Effect.forever)
-  return Effect.raceFirst(removed, ranOut)
+  return Effect.raceFirst(removed, sessionRanOut(personId, sessionId))
 }

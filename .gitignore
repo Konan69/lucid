@@ -46,3 +46,4 @@ Thumbs.db
 
 # Alchemy local state and dev logs
 .alchemy/
+.alchemy.*/

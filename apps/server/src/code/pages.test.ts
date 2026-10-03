@@ -2,47 +2,40 @@ import { expect, it } from '@effect/vitest'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { Person, PersonId, ReadPageOutcome, SessionId, Workspace } from '@vivid/contracts'
 import { Deferred, Effect, Fiber, Ref } from 'effect'
+import { budgets } from './budgets.ts'
 import { PageReader } from './page.ts'
 import { readPage } from './pages.ts'
 import { codeHandlers } from './handlers.ts'
 
-/** Saturation is signaled by the reader; no real-time polling or network timeout drives admission. */
-it.effect('bounds public page reads globally and releases capacity after interruption', () =>
+/** Queued Promise.all reads wait for one of eight slots and interruption releases a permit. */
+it.effect('queues page reads beyond global capacity and releases slots after interruption', () =>
   Effect.gen(function* () {
     const entered = yield* Deferred.make<void>()
     const count = yield* Ref.make(0)
     const reader = PageReader.of({
       read: Effect.fn('Test.waitForPage')(function* () {
         const current = yield* Ref.updateAndGet(count, (value) => value + 1)
-        if (current === 4) yield* Deferred.succeed(entered, undefined)
+        if (current === budgets.pages) yield* Deferred.succeed(entered, undefined)
+        if (current > budgets.pages)
+          return ReadPageOutcome.cases.Refused.make({ reason: 'not a readable page' })
         return yield* Effect.never
       }),
     })
-    const fibers = yield* Effect.forEach([1, 2, 3, 4], () =>
+    const fibers = yield* Effect.forEach(Array.from({ length: budgets.pages }), () =>
       readPage({ address: 'https://example.com/' }).pipe(
         Effect.provideService(PageReader, reader),
         Effect.forkChild,
       ),
     )
     yield* Deferred.await(entered)
-    expect(
-      ReadPageOutcome.guards.Refused(
-        yield* readPage({ address: 'https://example.com/' }).pipe(
-          Effect.provideService(PageReader, reader),
-        ),
-      ),
-    ).toBe(true)
-    expect(yield* Ref.get(count)).toBe(4)
-    yield* Effect.forEach(fibers, (fiber) => Fiber.interrupt(fiber))
-    const ready = PageReader.of({
-      read: () =>
-        Effect.succeed(ReadPageOutcome.cases.Refused.make({ reason: 'not a readable page' })),
-    })
-    expect(
-      yield* readPage({ address: 'https://example.com/' }).pipe(
-        Effect.provideService(PageReader, ready),
-      ),
-    ).toHaveProperty('reason', 'not a readable page')
+    const queued = yield* Effect.forkChild(
+      readPage({ address: 'https://example.com/' }).pipe(Effect.provideService(PageReader, reader)),
+      { startImmediately: true },
+    )
+    expect(yield* Ref.get(count)).toBe(budgets.pages)
+    for (const fiber of fibers) yield* Fiber.interrupt(fiber)
+    expect(yield* Fiber.join(queued)).toHaveProperty('reason', 'not a readable page')
+    expect(yield* Ref.get(count)).toBe(budgets.pages + 1)
   }),
 )
 
