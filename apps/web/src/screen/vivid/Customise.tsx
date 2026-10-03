@@ -125,7 +125,7 @@ export function Customise({ onClose }: { onClose: () => void }) {
           tabIndex={-1}
           noValidate
           onSubmit={(event) => void save(event)}
-          className="relative grid max-h-full w-full max-w-3xl animate-rise-in grid-cols-1 overflow-y-auto rounded-dialog bg-surface-3 lift-lg outline-none sm:h-120 sm:grid-cols-5 sm:overflow-hidden"
+          className="relative grid max-h-full w-full max-w-3xl animate-rise-in grid-cols-1 overflow-y-auto rounded-dialog bg-surface-2 lift-lg outline-none sm:h-120 sm:grid-cols-5 sm:overflow-hidden"
         >
           {/* The choices. Below the preview on a narrow window, where the preview must stay in
               view while a colour is picked. */}
@@ -148,7 +148,7 @@ export function Customise({ onClose }: { onClose: () => void }) {
           </div>
 
           {/* The result: the name, Vivid as it will look, and the one action. */}
-          <div className="order-1 flex min-w-0 flex-col gap-4 bg-surface-2 px-8 pt-14 pb-8 hairline-b sm:order-2 sm:col-span-2 sm:border-b-0">
+          <div className="order-1 flex min-w-0 flex-col gap-4 bg-surface-3 px-8 pt-14 pb-8 sm:order-2 sm:col-span-2">
             <NameField
               id={nameId}
               field={field}
@@ -175,7 +175,7 @@ export function Customise({ onClose }: { onClose: () => void }) {
               <button
                 type="submit"
                 disabled={saving || unchanged}
-                className="h-10 w-full cursor-pointer rounded-full bg-accent text-title font-title text-ink-on-accent transition-press duration-(--dur-fast) outline-none hover:bg-accent-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface-2 active:enabled:scale-96 disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex h-10 w-full cursor-pointer items-center justify-center rounded-full bg-accent text-title font-title text-ink-on-accent transition-press duration-(--dur-fast) outline-none hover:bg-accent-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface-3 active:enabled:scale-96 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving ? 'Saving…' : 'Save'}
               </button>
@@ -228,11 +228,11 @@ function Swatches({
             onClick={() => onChoose(option)}
             className={cn(
               'flex aspect-square cursor-pointer items-center justify-center rounded-card transition-press duration-(--dur-fast) outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-96 disabled:cursor-not-allowed disabled:opacity-60',
-              active ? 'bg-surface-2 ring-2 ring-ink ring-inset' : 'hover:bg-wash-hover',
+              active ? 'bg-wash-hover ring-2 ring-ink ring-inset' : 'hover:bg-wash-hover',
             )}
           >
             <span data-face-fixed="swatch" className="pointer-events-none">
-              <Face color={color} size={56} label="" />
+              <Face color={color} size={64} label="" />
             </span>
           </button>
         )
@@ -296,7 +296,7 @@ function NameField({
 function Preview({ color, name }: { color: FaceColor; name: string }) {
   const [mood, setMood] = useState<FaceMood>('neutral')
   return (
-    <div data-face-fixed="preview" className="flex min-h-40 flex-1 items-center justify-center">
+    <div data-face-fixed="preview" className="flex min-h-48 flex-1 items-center justify-center">
       <span
         className="inline-flex rounded-full"
         onPointerEnter={() => setMood('happy')}
@@ -304,7 +304,7 @@ function Preview({ color, name }: { color: FaceColor; name: string }) {
         onPointerDown={() => setMood('thinking')}
         onPointerUp={() => setMood('happy')}
       >
-        <Face color={color} size={160} mood={mood} label={`${name}, as it will look`} />
+        <Face color={color} size={184} mood={mood} label={`${name}, as it will look`} />
       </span>
     </div>
   )
