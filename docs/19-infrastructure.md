@@ -115,6 +115,15 @@ and symlinks outside the static root are refused. Without `VIVID_WEB_DIST`, loca
 no static app; without `HOST`, it retains `127.0.0.1`. The runtime defaults to `PORT=5173` in its
 image; Flue's production Node listener omits a hostname and accepts non-loopback connections.
 
+The same image carries the mobile app's JavaScript as an over-the-air update
+(`VIVID_MOBILE_UPDATES=/app/apps/mobile/updates`, exported by `apps/mobile/scripts/publish.mjs`
+in the image's `updates` stage). The server answers the installed app's update check at
+`/api/updates/manifest` and serves the files at `/api/updates/assets`, speaking the Expo Updates
+protocol itself; no Expo service is involved. A deploy is therefore also the publish: an installed
+app with the same runtime version (`version` in `apps/mobile/app.json`) downloads the new
+JavaScript at its next launch. A change to native code needs a new `version` and a new binary.
+Without `VIVID_MOBILE_UPDATES` the routes do not exist.
+
 Supply the server with `DATABASE_URL`, `AUTH_SECRET`, `VIVID_RUNTIME_URL`,
 `VIVID_RUNTIME_TOKEN`, and the externally reachable `PUBLIC_URL`. Supply the runtime with
 `DATABASE_URL`, `VIVID_SERVER_URL`, the matching `VIVID_RUNTIME_TOKEN`, and `EXPLABS_API_KEY`

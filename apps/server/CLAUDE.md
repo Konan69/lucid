@@ -1,6 +1,6 @@
 # Vivid application server
 
-The server owns all product logic and persistence. Clients use `VividRpc` (`/api/live` over one WebSocket for live queries and writes, `/api/rpc` over HTTP for one-shot callers); plain HTTP is only for Better Auth, the conversation gateway (`/api/vivid/*`), a provider's sign-in return, Routine webhooks, Library bytes, and the Computer's screen.
+The server owns all product logic and persistence. Clients use `VividRpc` (`/api/live` over one WebSocket for live queries and writes, `/api/rpc` over HTTP for one-shot callers); plain HTTP is only for Better Auth, the conversation gateway (`/api/vivid/*`), a provider's sign-in return, Routine webhooks, Library bytes, the Computer's screen, and the mobile app's over-the-air updates (`/api/updates/*`).
 
 ## Layout
 

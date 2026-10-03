@@ -1,6 +1,6 @@
 # Vivid application server
 
-The server owns all product logic and persistence. Clients use `VividRpc` over `/api/live` (WebSocket) or `/api/rpc` (HTTP). Plain HTTP adapters serve Better Auth, the Flue conversation gateway, Integration sign-in returns, Routine webhooks, Library bytes, the Computer screen, and health.
+The server owns all product logic and persistence. Clients use `VividRpc` over `/api/live` (WebSocket) or `/api/rpc` (HTTP). Plain HTTP adapters serve Better Auth, the Flue conversation gateway, Integration sign-in returns, Routine webhooks, Library bytes, the Computer screen, the mobile app's over-the-air updates (`updates/`), and health.
 
 ## Layout
 

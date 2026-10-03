@@ -137,6 +137,7 @@ const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
   ServerConfigService & {
     readonly HOST: string
     readonly VIVID_WEB_DIST: Option.Option<string>
+    readonly VIVID_MOBILE_UPDATES: Option.Option<string>
   },
   ConfigurationError
 > {
@@ -167,6 +168,8 @@ const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
     // Listener and static-root inputs belong to launch; domain test Layers need no HTTP host.
     HOST: Option.getOrElse(yield* optional('HOST', nonEmptyString), () => '127.0.0.1'),
     VIVID_WEB_DIST: yield* optional('VIVID_WEB_DIST', nonEmptyString),
+    // Where `apps/mobile/scripts/publish.mjs` left the mobile app's over-the-air updates.
+    VIVID_MOBILE_UPDATES: yield* optional('VIVID_MOBILE_UPDATES', nonEmptyString),
     PUBLIC_URL: publicUrl,
     GOOGLE_OAUTH: yield* loadGoogleOAuth(),
   }

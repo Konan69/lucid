@@ -43,7 +43,8 @@ const healthRoute = HttpRouter.add(
  * is plain HTTP only where something other than our client is on the other end: Better Auth, the
  * Flue client talking to the conversation gateway, a provider redirecting back after sign-in, an
  * outside service calling a Routine's webhook, a browser moving Library bytes, and the Computer's
- * screen.
+ * screen. The mobile app's update check (`updates/routes.ts`) is plain HTTP too and is added in
+ * `main.ts`, because whether it exists depends on launch configuration.
  */
 export const routerLayer = Layer.mergeAll(
   rpcServerLayer,

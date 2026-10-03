@@ -10,6 +10,7 @@
     "ios": "node scripts/native.mjs ios",
     "web": "expo start --web",
     "build": "expo export --platform all",
+    "updates": "node scripts/publish.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --type-aware src",
     "test": "vitest run"
@@ -39,6 +40,7 @@
     "expo-secure-store": "catalog:",
     "expo-sharing": "catalog:",
     "expo-system-ui": "catalog:",
+    "expo-updates": "catalog:",
     "effect": "catalog:",
     "lucide-react-native": "catalog:",
     "punycode": "^2.3.1",

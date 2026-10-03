@@ -52,6 +52,31 @@ Every conversation uses `/api/vivid/:threadId`; live queries and writes use `/ap
 There is no direct-runtime connection mode. `EXPO_PUBLIC_API_URL` remains in the old example
 environment file but is not read by current code.
 
+### Over-the-air updates
+
+An installed build asks its Vivid for newer JavaScript at launch and after a long absence, and
+restarts into what it downloaded the next time the app is backgrounded (`src/data/update.ts`).
+The server speaks the Expo Updates protocol itself (`apps/server/src/updates`); no Expo service
+or account is involved.
+
+- The build must be given its server: `VIVID_SERVER=https://your-vivid pnpm exec expo prebuild`
+  (or any build that evaluates `app.config.ts`). That sets both the app's address and its update
+  address. A build with no `VIVID_SERVER` has updates off. Development builds load from Metro and
+  never ask.
+- The hosted server image exports the update itself, so deploying the server publishes the app.
+  For a server run by hand, export one and point the server at it:
+
+  ```sh
+  pnpm --filter @vivid/mobile run updates /path/to/updates
+  VIVID_MOBILE_UPDATES=/path/to/updates  # in the server's environment, then restart it
+  ```
+
+- An update only reaches a binary with the same runtime version, which is `version` in
+  `app.json`. JavaScript and assets travel over the air; anything native does not. After adding
+  a native module, changing a config plugin or moving to a new Expo SDK, raise `version` and
+  install a new binary. An update is only taken when it is newer than the JavaScript built into
+  the binary.
+
 ### Windows Android Studio emulator with WSL
 
 Start an AVD in Windows Android Studio. With the application stack running, start Metro:
