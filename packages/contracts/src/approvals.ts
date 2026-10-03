@@ -1,5 +1,5 @@
 import { Schema } from 'effect'
-import { BrowserAction, DesktopAction } from './computers.js'
+import { BrowserAction, DefaultBrowseTarget, DesktopAction } from './computers.js'
 import { ApprovalId, ConnectionId, PersonSummary, RunId, ThreadId } from './identity.js'
 
 /**
@@ -23,7 +23,7 @@ export const ActionTarget = Schema.TaggedUnion({
     input: Schema.Json,
   },
   Command: { command: Schema.String },
-  Browser: { action: BrowserAction },
+  Browser: { action: BrowserAction, target: DefaultBrowseTarget },
   /** One pointer or keyboard action on the Computer's desktop. */
   Desktop: { action: DesktopAction },
 })

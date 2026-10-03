@@ -1,5 +1,5 @@
-import { Schema } from 'effect'
-import { ApprovalId, ComputerId } from './identity.js'
+import { Effect, Schema } from 'effect'
+import { ApprovalId, ComputerId, PersonId } from './identity.js'
 
 /**
  * How a running Computer's screen is watched. `Relay` is a remote-framebuffer socket this server
@@ -89,7 +89,18 @@ export const BrowserAction = Schema.TaggedUnion({
 })
 export type BrowserAction = typeof BrowserAction.Type
 
+/** The model chooses a relationship, never a device or Computer identifier. */
+export const BrowseTarget = Schema.TaggedUnion({ Vivid: {}, Person: {} })
+export type BrowseTarget = typeof BrowseTarget.Type
+
+/** Omitted targets keep existing cloud calls and stored Approvals on Vivid's Computer. */
+export const DefaultBrowseTarget = BrowseTarget.pipe(
+  Schema.withDecodingDefaultKey(Effect.succeed(BrowseTarget.cases.Vivid.make({}))),
+  Schema.withConstructorDefault(Effect.succeed(BrowseTarget.cases.Vivid.make({}))),
+)
+
 export const BrowseRequest = Schema.Struct({
+  target: DefaultBrowseTarget,
   action: BrowserAction,
   summary: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
 })
@@ -113,6 +124,38 @@ export const BrowseResult = Schema.Struct({
   tabs: Schema.Array(BrowserTab),
 }).annotate({ identifier: 'BrowseResult', title: 'Browse result' })
 export interface BrowseResult extends Schema.Schema.Type<typeof BrowseResult> {}
+
+/** An opaque dispatch capability; it never appears in model-visible results. */
+export const DeviceRequestId = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('DeviceRequestId'),
+)
+export type DeviceRequestId = typeof DeviceRequestId.Type
+
+/** A deadline is authority to execute once, not an invitation to replay after reconnect. */
+export const DeviceRequest = Schema.Struct({
+  id: DeviceRequestId,
+  action: BrowserAction,
+  expiresAt: Schema.Number.check(Schema.isFinite()),
+})
+export type DeviceRequest = typeof DeviceRequest.Type
+
+/** Native refusals have closed reasons; provider and Chromium details stay on the device. */
+export const DeviceAnswer = Schema.TaggedUnion({
+  Done: { result: BrowseResult },
+  Refused: { reason: Schema.Literals(['Stopped', 'PageGone', 'NotAllowed', 'Unsupported']) },
+  Failed: {},
+})
+export type DeviceAnswer = typeof DeviceAnswer.Type
+
+export const AnswerDeviceRequest = Schema.Struct({ id: DeviceRequestId, answer: DeviceAnswer })
+export type AnswerDeviceRequest = typeof AnswerDeviceRequest.Type
+
+/** No implicit cloud fallback may expose a different account or its sign-ins. */
+export class NoDeviceConnected extends Schema.TaggedError<NoDeviceConnected>()(
+  'NoDeviceConnected',
+  { personId: PersonId },
+  { title: 'The Person’s desktop app is not connected' },
+) {}
 
 /**
  * A place on the Computer's screen, in the pixels of the picture Vivid was last shown. The

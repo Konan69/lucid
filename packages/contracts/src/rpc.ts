@@ -32,6 +32,9 @@ import {
   SwitchWorkspaceRequest,
 } from './companies.js'
 import {
+  AnswerDeviceRequest,
+  DeviceRequest,
+  NoDeviceConnected,
   BrowseOutcome,
   BrowseRequest,
   DesktopOutcome,
@@ -615,7 +618,18 @@ const RunCommand = Rpc.make('RunCommand', {
   payload: RunCommandRequest,
   success: CommandOutcome,
 })
-const Browse = Rpc.make('Browse', { ...call, payload: BrowseRequest, success: BrowseOutcome })
+const Browse = Rpc.make('Browse', {
+  ...call,
+  payload: BrowseRequest,
+  success: BrowseOutcome,
+  error: Schema.Union([RpcFailure, NoDeviceConnected]),
+})
+/** Subscription lifetime is device presence; disconnected requests are never replayed. */
+const WatchDeviceRequests = Rpc.make('WatchDeviceRequests', { ...live, success: DeviceRequest })
+const AnswerDeviceRequestRpc = Rpc.make('AnswerDeviceRequest', {
+  ...call,
+  payload: AnswerDeviceRequest,
+})
 /** One pointer or keyboard action on the Computer's desktop; the answer is the screen after it. */
 const UseDesktop = Rpc.make('UseDesktop', {
   ...call,
@@ -746,6 +760,8 @@ export const VividRpc = RpcGroup.make(
   HoldComputer,
   RunCommand,
   Browse,
+  WatchDeviceRequests,
+  AnswerDeviceRequestRpc,
   UseDesktop,
   RunCode,
   ReadPage,
