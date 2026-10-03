@@ -36,9 +36,16 @@ const first = Skill.make({
 })
 const second = Skill.make({ ...first, id: SkillId.make('MARK-second'), createdAt: 2, updatedAt: 2 })
 /** Summaries are deliberately in reverse update order; immutable creation time fixes duplicate names. */
-const summaries = [second, first].map(({ id, name, useWhen, createdAt }) =>
-  SkillSummary.make({ id, name, useWhen, createdAt }),
-)
+const summaries = [
+  second,
+  first,
+  {
+    id: SkillId.make('builtin:deep-research'),
+    name: 'Deep research',
+    useWhen: 'When research needs sources',
+    createdAt: 0,
+  },
+].map(({ id, name, useWhen, createdAt }) => SkillSummary.make({ id, name, useWhen, createdAt }))
 
 const context = {
   toolCallId: 'MARK-call',
@@ -126,6 +133,68 @@ describe('procedure catalog discovery', () => {
         expect(yield* Queue.size(tools.requests)).toBe(0)
       }),
     ),
+  )
+
+  it.effect('read_skill refuses native built-ins without fetching their bodies', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const tools = yield* fixture()
+        const respond = Effect.fn('SkillToolsTest.builtin')(function* () {
+          yield* tools.reply(
+            'ListSkillSummaries',
+            Option.none(),
+            Exit.succeed({ skills: summaries }),
+          )
+        })
+        const [result] = yield* Effect.all([tools.read('Deep research'), respond()], {
+          concurrency: 2,
+        })
+        expect(result.output).toEqual({
+          ok: false,
+          message: 'Nothing here is called “Deep research”; list them again.',
+        })
+        expect(JSON.stringify(result.output)).not.toContain('builtin:')
+        expect(yield* Queue.size(tools.requests)).toBe(0)
+      }),
+    ),
+  )
+
+  it.effect(
+    'read_skill keeps a saved built-in display-name override on its authorized RPC path',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const tools = yield* fixture()
+          const override = Skill.make({
+            ...first,
+            name: 'Deep research',
+            instructions: 'Use our reviewed method.',
+          })
+          const respond = Effect.fn('SkillToolsTest.override')(function* () {
+            yield* tools.reply(
+              'ListSkillSummaries',
+              Option.none(),
+              Exit.succeed({ skills: [override] }),
+            )
+            yield* tools.reply(
+              'ReadSkill',
+              Option.some({ id: override.id }),
+              Exit.succeed({ skill: override }),
+            )
+          })
+          const [result] = yield* Effect.all([tools.read('Deep research'), respond()], {
+            concurrency: 2,
+          })
+          expect(result.output).toEqual({
+            name: override.name,
+            useWhen: override.useWhen,
+            instructions: override.instructions,
+            source: 'Saved procedure',
+          })
+          expect(JSON.stringify(result.output)).not.toContain(override.id)
+          expect(yield* Queue.size(tools.requests)).toBe(0)
+        }),
+      ),
   )
 
   it.effect('save_skill refreshes summaries and returns the same stable duplicate name', () =>

@@ -35,7 +35,7 @@ Last brought up to date on 3 October 2026.
 | Memory on HelixDB: remember, recall, forget, correct, and the background pass after a Run                                                       | Live test; remember and recall seen in the app with a real model  |
 | The Computer on Boat: create, viewer, look, open/read a page, click a link, type/replace/clear a field with readback, files, archive and resume | Live test against real Boat                                       |
 | The Library: folders, PDF and text ingest, search, citations                                                                                    | Tests                                                             |
-| Skills: the ones Vivid ships with, and ones a Person teaches                                                                                    | Tests; seen in the app                                            |
+| Skills: 22 native runtime folders, and saved procedures a Person teaches                                                                        | Tests; Flue production build; saved skills seen in the app        |
 | Search palette, notifications, Settings, the Company record                                                                                     | Tests; seen in the app                                            |
 | Desktop app: choose a Vivid, sign up, pages beside a Thread with tabs, the Computer tab, switching Vivid                                        | Run for real                                                      |
 | Pictures attached to a message in a private Thread                                                                                              | Tests                                                             |
@@ -95,6 +95,10 @@ Last brought up to date on 3 October 2026.
 - Adding by address depends on the operator running Executor with public-only egress.
 - Forgetting cannot change or remove a Routine: no tool does it, so Vivid names the Routine and the
   Person changes it (#7).
+- Skills manager installation, enablement, revision history and imported provenance are not built
+  (#12 phase 2). Built-ins mount through Flue’s native catalogue and `activate_skill`; saved
+  Person/Company procedures keep the authorized `read_skill` path because native catalogue
+  snapshots persist in shared Thread history. Saved-name overrides suppress the built-in mount.
 - Ten built-in procedures (3 October 2026) were adapted from a third party's partial snapshot of
   Muse's shipped skill files, not from a source its maker published. The supporting reference
   files those skills point to were not in the snapshot, so only steps stated in the skill bodies

@@ -1,7 +1,8 @@
 import { describe, expect, it } from '@effect/vitest'
-import { PersonId, ThreadId } from '@vivid/contracts'
+import { PersonId, SkillId, ThreadId } from '@vivid/contracts'
 import { Effect, Option } from 'effect'
-import { contextSnapshots, VividContext } from './snapshots.ts'
+import { ContextSkill, contextSnapshots, VividContext } from './snapshots.ts'
+import { builtinNames } from '../../../skills/src/manifest.ts'
 
 const ada = { threadId: ThreadId.make('shared'), personId: PersonId.make('ada') }
 const dami = { threadId: ada.threadId, personId: PersonId.make('dami') }
@@ -62,6 +63,40 @@ describe('response context snapshots', () => {
       expect(snapshots.read(ada)).toEqual(Option.none())
       expect(snapshots.read(privateThread)).toEqual(Option.some(updatedContext))
     }),
+  )
+
+  it.effect(
+    'freezes each Person’s native mount selection without adding private names to the catalogue',
+    () =>
+      Effect.sync(() => {
+        const snapshots = contextSnapshots()
+        const research = ContextSkill.make({
+          id: SkillId.make('builtin:deep-research'),
+          name: 'Deep research',
+          useWhen: 'When sources are needed',
+          createdAt: 0,
+        })
+        const privateSkill = ContextSkill.make({
+          ...research,
+          id: SkillId.make('MARK-private-skill'),
+          name: 'Private due diligence',
+        })
+        snapshots.prepare(ada, VividContext.make({ ...adaContext, skills: [privateSkill] }))
+        snapshots.prepare(dami, VividContext.make({ ...damiContext, skills: [research] }))
+        snapshots.freeze(ada)
+        snapshots.prepare(ada, VividContext.make({ ...adaContext, skills: [research] }))
+        const adaNames = Option.map(snapshots.read(ada), (context) => builtinNames(context.skills))
+        const damiNames = Option.map(snapshots.read(dami), (context) =>
+          builtinNames(context.skills),
+        )
+        expect(adaNames).toEqual(Option.some([]))
+        expect(damiNames).toEqual(Option.some(['deep-research']))
+        expect(JSON.stringify([adaNames, damiNames])).not.toContain(privateSkill.name)
+        snapshots.finish(ada)
+        expect(snapshots.read(dami)).toEqual(
+          Option.some(VividContext.make({ ...damiContext, skills: [research] })),
+        )
+      }),
   )
 
   it.effect('freezes absence so a late preload cannot change instructions during a response', () =>

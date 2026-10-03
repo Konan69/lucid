@@ -1,58 +1,30 @@
 import { Skill, SkillId, SkillOrigin, SkillScope } from '@vivid/contracts'
-import { procedure as connect } from './connect.ts'
-import { procedure as browser } from './browser.ts'
-import { procedure as research } from './research.ts'
-import { procedure as inbox } from './inbox.ts'
-import { procedure as reply } from './reply.ts'
-import { procedure as brief } from './brief.ts'
-import { procedure as schedule } from './schedule.ts'
-import { procedure as meeting } from './meeting.ts'
-import { procedure as outcome } from './outcome.ts'
-import { procedure as watch } from './watch.ts'
-import { procedure as preferences } from './preferences.ts'
-import { procedure as learn } from './learn.ts'
-import { procedure as document } from './document.ts'
-import { procedure as check } from './check.ts'
-import { procedure as wide } from './wide.ts'
-import { procedure as travel } from './travel.ts'
-import { procedure as shopping } from './shopping.ts'
-import { procedure as places } from './places.ts'
-import { procedure as booking } from './booking.ts'
-import { procedure as forgetting } from './forget.ts'
-import { procedure as abilities } from './self.ts'
-import { procedure as images } from './images.ts'
+import { manifest, builtinId } from '../../../../../packages/agent/skills/src/manifest.ts'
+import { readMarkdown } from './markdown.ts'
 
-/** The release date is version evidence, independent of any Person or database row. */
+/** The release date remains stable evidence for the unchanged built-in wire records. */
 const releasedAt = Date.UTC(2026, 9, 2)
-export const procedures = [
-  connect,
-  browser,
-  research,
-  inbox,
-  reply,
-  brief,
-  schedule,
-  meeting,
-  outcome,
-  watch,
-  preferences,
-  learn,
-  document,
-  check,
-  wide,
-  travel,
-  shopping,
-  places,
-  booking,
-  forgetting,
-  abilities,
-  images,
-]
+
+/** SKILL.md is the only source of descriptions and bodies; the manifest owns product metadata. */
+export const procedures = manifest.map((entry) => {
+  const skill = readMarkdown(entry.runtimeName)
+  return {
+    runtimeName: entry.runtimeName,
+    displayName: entry.displayName,
+    about: entry.about,
+    starter: entry.starter,
+    needs: entry.needs,
+    connections: entry.connections,
+    name: entry.displayName,
+    useWhen: skill.description,
+    instructions: skill.instructions,
+  }
+})
 
 /** Deterministic shipped identities are private lookup handles; runtime views project only words. */
 export const builtins = procedures.map((procedure) =>
   Skill.make({
-    id: SkillId.make(`builtin:${procedure.name.toLowerCase().replaceAll(' ', '-')}`),
+    id: SkillId.make(builtinId(procedure.name)),
     about: procedure.about,
     name: procedure.name,
     useWhen: procedure.useWhen,

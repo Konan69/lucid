@@ -1,4 +1,5 @@
 import { Array as Arr, Order, Result, Schema } from 'effect'
+import { isBuiltin } from '../../../skills/src/manifest.ts'
 
 export class NameMissing extends Schema.TaggedError<NameMissing>()(
   'NameMissing',
@@ -81,6 +82,17 @@ export function catalog<A extends { readonly id: string }>(
 ) {
   return numbered(
     Arr.sortWith(items, (item) => item.id, Order.String),
+    label,
+  )
+}
+
+/** Built-ins use Flue activation, so only saved records receive custom display-name suffixes. */
+export function savedInventory<A extends { readonly createdAt: number; readonly id: string }>(
+  items: readonly A[],
+  label: (item: A) => string,
+) {
+  return inventory(
+    items.filter((item) => !isBuiltin(item.id)),
     label,
   )
 }

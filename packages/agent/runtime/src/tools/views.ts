@@ -15,14 +15,14 @@ import {
   type SkillSummary,
 } from '@vivid/contracts'
 import type { ContextSkill } from './snapshots.ts'
-import { catalog, distinct, inventory } from './names.ts'
+import { catalog, distinct, inventory, savedInventory } from './names.ts'
 
 /** Dates cross the model boundary in ISO units; null remains genuine domain absence. */
 const date = (value: number | null) => (value === null ? null : new Date(value).toISOString())
 
-/** Catalog and read resolution share one order and one naming rule. */
+/** Saved context and read resolution share naming; native built-ins never enter this inventory. */
 export function skills(items: readonly ContextSkill[]) {
-  return inventory(items, (item) => modelText(item.name)).map(({ item, name }) =>
+  return savedInventory(items, (item) => modelText(item.name)).map(({ item, name }) =>
     skillSummary(item, name),
   )
 }

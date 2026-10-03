@@ -13,7 +13,7 @@ import { libraryFailure } from '../library/failures.ts'
 import { LibraryStore } from '../library/store.ts'
 import { RoutineStore } from '../routines/store.ts'
 import { ConnectionStore } from '../connections/store.ts'
-import { procedures } from '../skills/builtin/index.ts'
+import { manifest } from '../../../../packages/agent/skills/src/manifest.ts'
 
 const DAY_MS = 86_400_000
 /** Offer connected procedures only when every required service group has a ready account.
@@ -26,7 +26,7 @@ export const procedureSuggestions = (connections: ReadonlyArray<Connection>) => 
         : Result.failVoid,
     ),
   )
-  const connected = procedures.filter(
+  const connected = manifest.filter(
     (procedure) =>
       procedure.connections.length > 0 &&
       procedure.connections.every((group) =>
@@ -34,10 +34,10 @@ export const procedureSuggestions = (connections: ReadonlyArray<Connection>) => 
       ),
   )
   const offered =
-    connected.length > 0 ? connected : procedures.filter((procedure) => procedure.starter)
+    connected.length > 0 ? connected : manifest.filter((procedure) => procedure.starter)
   return offered.slice(0, 4).map((procedure) =>
     Suggestion.make({
-      text: procedure.name,
+      text: procedure.displayName,
       reason: procedure.about,
     }),
   )

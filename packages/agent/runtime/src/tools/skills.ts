@@ -2,7 +2,7 @@ import { defineTool } from '@flue/runtime'
 import { Effect } from 'effect'
 import * as v from 'valibot'
 import { forCompany, text } from './inputs.ts'
-import { inventory, named, NameMissing } from './names.ts'
+import { savedInventory, named, NameMissing } from './names.ts'
 import { Scope, type RunTool } from './scope.ts'
 import * as views from './views.ts'
 
@@ -12,7 +12,7 @@ export function skillTools(runTool: RunTool) {
     defineTool({
       name: 'read_skill',
       description:
-        'Read a built-in or saved procedure by its exact name from context before following its steps.',
+        'Read a saved procedure by its exact name from context before following its steps. Built-ins use activate_skill.',
       input: v.object({ name: text('The procedure name shown in context.', 100) }),
       /** The catalog and view share names, so duplicates never select an arbitrary procedure. */
       run({ data, signal }) {
@@ -20,7 +20,7 @@ export function skillTools(runTool: RunTool) {
           Effect.gen(function* () {
             const { client } = yield* Scope
             const { skills } = yield* client.ListSkillSummaries()
-            const entries = inventory(skills, (item) => views.modelText(item.name))
+            const entries = savedInventory(skills, (item) => views.modelText(item.name))
             const found = yield* Effect.fromResult(named(entries, data.name))
             const response = yield* client.ReadSkill({ id: found.id })
             const entry = entries.find(({ item }) => item.id === found.id)
@@ -55,7 +55,7 @@ export function skillTools(runTool: RunTool) {
             const { client } = yield* Scope
             const response = yield* client.SaveSkill(data)
             const { skills } = yield* client.ListSkillSummaries()
-            const entry = inventory(skills, (item) => views.modelText(item.name)).find(
+            const entry = savedInventory(skills, (item) => views.modelText(item.name)).find(
               ({ item }) => item.id === response.skill.id,
             )
             if (entry === undefined) return yield* Effect.fail(new NameMissing({ name: data.name }))
