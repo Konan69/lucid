@@ -3,6 +3,8 @@ import Svg, { Circle, Defs, RadialGradient, Rect, Stop } from 'react-native-svg'
 import Animated, { cubicBezier, useReducedMotion } from 'react-native-reanimated'
 import { nativeMetrics as m } from '@vivid/tokens/native'
 import { faceGeometry, type FaceMood } from '@vivid/marks'
+import type { Look } from '@vivid/contracts'
+import { facePaintOf, useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
 
 /** The web face's own curve, so the tilt settles the same way on both surfaces. */
@@ -13,16 +15,32 @@ const TILT_CURVE = cubicBezier(0.2, 0, 0, 1)
  * the same source the web face reads, so the two surfaces show one face rather than two similar
  * ones.
  *
- * It is drawn in the theme's primary, with eyes in the ink that theme sets on its primary, so the
- * face belongs to whichever family is in force and its eyes hold their contrast in all of them.
+ * It is drawn as Vivid looks where the Person is working (`data/vivid.ts`): in the theme's primary
+ * until someone chooses a colour, with eyes in the ink that theme sets on its primary; or in the
+ * chosen `face-*` hue. Every face reads that one live value, so a change shows on all of them at
+ * once. `look` draws a face that is not the saved one: a swatch, or the Customise sheet's preview.
+ * The name it is announced by is Vivid's chosen name; `label` replaces it where the face stands
+ * for a choice rather than for Vivid.
  *
  * The tilt between moods is a transition on the style, not an animation started from an effect:
  * a mood is a state, the face is drawn in it, and Reanimated carries the change on the UI thread.
  * It runs once per change of mood and never loops. A Person who has asked their phone for less
  * motion gets the new tilt at once: the mood still shows, nothing turns.
  */
-export function Face({ size = 28, mood = 'neutral' }: { size?: number; mood?: FaceMood }) {
+export function Face({
+  size = 28,
+  mood = 'neutral',
+  look,
+  label,
+}: {
+  size?: number
+  mood?: FaceMood
+  look?: Look
+  label?: string
+}) {
   const { colors: c } = useTheme()
+  const vivid = useAppearance()
+  const paint = facePaintOf(look === undefined ? vivid.look : look, c)
   const still = useReducedMotion()
   // `useId` embeds colons, which are not legal in an SVG fragment identifier.
   const id = useId().replace(/:/g, '')
@@ -41,14 +59,19 @@ export function Face({ size = 28, mood = 'neutral' }: { size?: number; mood?: Fa
         transitionTimingFunction: TILT_CURVE,
       }}
     >
-      <Svg width={size} height={size} accessibilityRole="image" accessibilityLabel="Vivid">
+      <Svg
+        width={size}
+        height={size}
+        accessibilityRole="image"
+        accessibilityLabel={label === undefined ? vivid.name : label}
+      >
         <Defs>
           <RadialGradient id={id} cx="32%" cy="28%" r="55%">
             <Stop offset="0" stopColor={c['ink-on-color']} stopOpacity={0.28} />
             <Stop offset="1" stopColor={c['ink-on-color']} stopOpacity={0} />
           </RadialGradient>
         </Defs>
-        <Circle cx={size / 2} cy={size / 2} r={size / 2} fill={c.accent} />
+        <Circle cx={size / 2} cy={size / 2} r={size / 2} fill={paint.fill} />
         <Circle cx={size / 2} cy={size / 2} r={size / 2} fill={`url(#${id})`} />
 
         <Rect
@@ -57,7 +80,7 @@ export function Face({ size = 28, mood = 'neutral' }: { size?: number; mood?: Fa
           width={eyeWidth}
           height={eyeHeight}
           rx={eyeWidth / 2}
-          fill={c['primary-foreground']}
+          fill={paint.eyes}
           transform={`rotate(-6 ${left + eyeWidth / 2} ${top + eyeHeight / 2})`}
         />
         <Rect
@@ -66,7 +89,7 @@ export function Face({ size = 28, mood = 'neutral' }: { size?: number; mood?: Fa
           width={eyeWidth}
           height={eyeHeight}
           rx={eyeWidth / 2}
-          fill={c['primary-foreground']}
+          fill={paint.eyes}
           transform={`rotate(6 ${left + eyeWidth * 1.5 + eyeGap} ${top + eyeHeight / 2})`}
         />
       </Svg>

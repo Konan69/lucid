@@ -1,4 +1,4 @@
-import { Workspace, type MeResponse, type Thread } from '@vivid/contracts'
+import { mayChangeAppearance, Workspace, type MeResponse, type Thread } from '@vivid/contracts'
 import { projects } from '@vivid/state'
 import { Option } from 'effect'
 import { useRef, useState, type ReactNode } from 'react'
@@ -28,13 +28,16 @@ import { collapseAt, RESTING } from '../../data/collapse'
 import { useKeyboardShowing } from '../../data/keyboard'
 import { LiveState, useLive, useLiveData } from '../../data/live'
 import { MOBILE_TYPOGRAPHY } from '../../data/typography'
+import { useAppearance } from '../../data/vivid'
 import { useTheme } from '../../theme'
 import { Avatar, pictureOf } from '../../ui/Avatar'
+import { Face } from '../../ui/Face'
 import { Glass } from '../../ui/Glass'
 import { APPEAR, LEAVE, MORPH } from '../../ui/motion/morph'
-import { EDGE, GUTTER, IconButton, Label, Notice, Press, radius } from '../../ui/ui'
+import { EDGE, GUTTER, IconButton, Label, Notice, Press, radius, TARGET } from '../../ui/ui'
 import type { ProjectId } from '@vivid/contracts'
 import type { Routes } from '../../workspace'
+import { Customise } from '../vivid/Customise'
 import { Threads } from './Threads'
 
 /** Where the drawer can send the Person that needs nothing said about it: a place, by its name. */
@@ -365,10 +368,14 @@ export function Menu({
   // so a moving list renders nothing.
   const scroll = useRef(RESTING)
   const [expanded, setExpanded] = useState(true)
+  // In a personal space the drawer is headed by Vivid itself, under the name the Person gave it.
+  const vivid = useAppearance()
   const here = Workspace.match(me.workspace, {
-    Personal: () => 'Vivid',
+    Personal: () => vivid.name,
     Company: ({ company }) => company.name,
   })
+  const editable = mayChangeAppearance(me.workspace)
+  const [customising, setCustomising] = useState(false)
 
   function scrolled({ nativeEvent }: NativeSyntheticEvent<NativeScrollEvent>) {
     const furthest = nativeEvent.contentSize.height - nativeEvent.layoutMeasurement.height
@@ -385,14 +392,29 @@ export function Menu({
       enabled={Platform.OS !== 'android' || keyboard}
       style={{ flex: 1, paddingTop: insets.top + 10, paddingLeft: insets.left }}
     >
-      <Label
-        accessibilityRole="header"
-        numberOfLines={1}
-        size="heading"
-        style={{ paddingHorizontal: GUTTER, paddingBottom: 10 }}
+      {/* Vivid's face beside where the Person is. For someone who may change Vivid here it is
+          the way in to the Customise sheet; for a member of a Company it is only a heading. */}
+      <Press
+        accessibilityRole={editable ? 'button' : 'header'}
+        accessibilityLabel={editable ? `${here}. Customise Vivid` : here}
+        disabled={!editable}
+        onPress={() => setCustomising(true)}
+        containerStyle={{ alignSelf: 'flex-start', maxWidth: '100%' }}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          minHeight: TARGET,
+          paddingHorizontal: GUTTER,
+          paddingBottom: 6,
+        }}
       >
-        {here}
-      </Label>
+        <Face size={28} label="" />
+        <Label numberOfLines={1} size="heading" style={{ flexShrink: 1 }}>
+          {here}
+        </Label>
+      </Press>
+      {customising && <Customise onClose={() => setCustomising(false)} />}
       {Option.isSome(refused) && (
         <View style={{ paddingHorizontal: GUTTER - 8, paddingBottom: 8 }}>
           <Notice message={refused.value} />

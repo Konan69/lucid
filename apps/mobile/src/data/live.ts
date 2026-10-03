@@ -25,6 +25,7 @@ import * as Atom from 'effect/unstable/reactivity/Atom'
 import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
 import { door } from './door'
+import { forgetAppearance, vividAtom } from './vivid'
 import { inFront } from './foreground'
 import { liveAddress } from './server'
 import { dropAtom, sessionAtom } from './held'
@@ -122,6 +123,8 @@ function makeSeenThread(
  * for every `Watch…` call the app draws from.
  */
 function makeLiveData(session: SignedIn) {
+  // A new session starts from Vivid as it ships; its own appearance arrives with the socket.
+  forgetAppearance()
   // Whether the phone can reach the server; Home says so when it cannot.
   const link = makeLink()
   const engine = makeLive(
@@ -135,6 +138,8 @@ function makeLiveData(session: SignedIn) {
   const live = {
     me: one((client) => client.WatchMe()),
     settings: one((client) => client.WatchSettings()),
+    /** What Vivid is called and how its face is drawn where the Person is working. */
+    appearance: one((client) => client.WatchAppearance()),
     people: one((client) => client.WatchPeople()),
     threads: one((client) => client.WatchThreads()),
     thread: family(
@@ -203,6 +208,17 @@ function makeLiveData(session: SignedIn) {
   )
 
   const seenThread = makeSeenThread(engine, live.thread)
+
+  // Vivid's name and look are drawn all over the app, so they are held in one device atom every
+  // face and header reads (`data/vivid.ts`). This keeps it current for the life of the session:
+  // the server's answer, an expected change, and the answer for a new workspace all arrive here.
+  engine.registry.subscribe(
+    live.appearance.atom,
+    (result) => {
+      if (AsyncResult.isSuccess(result)) door.set(vividAtom, result.value)
+    },
+    { immediate: true },
+  )
 
   // The Person's theme is theirs on every device; when their settings arrive, this one follows.
   engine.registry.subscribe(
