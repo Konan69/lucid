@@ -86,6 +86,8 @@ docker build -f packages/agent/runtime/Dockerfile -t vivid-runtime .
 Both images use Node 24 and the root manifest's pinned pnpm through Corepack, preserve the
 installed workspace dependency layout, and run as the non-root `node` user. The server runs
 `pnpm --filter @vivid/server start` (tsx); the runtime runs its built `dist/server.mjs`.
+The runtime image bundles Vivid's TypeScript workspace exports into JavaScript for Node;
+third-party dependencies retain Flue's external dependency layout. Local build config is unchanged.
 No credential or application origin is supplied at build time. Container health checks use
 `GET /health` on the configured `PORT`.
 
