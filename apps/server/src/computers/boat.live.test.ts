@@ -80,10 +80,91 @@ const cleanup = Effect.fn('BoatLive.cleanup')(function* (key: MachineKey) {
   )
 })
 
+/** Public pages exercise real input through the same Machine seam used by every client.
+ * Example Domain's current link is obtained from its accessible outline, not guessed. Scroll
+ * makes the multilingual page's link visible in Chrome's default window. The Selenium fixture
+ * is public and requires no sign-in or submission; replacement and clearing read back values. */
+const browserProof = Effect.fn('BoatLive.browser')(function* (
+  machine: Machine['Service'],
+  key: MachineKey,
+) {
+  const page = yield* measured(
+    'open-and-read',
+    machine.browse({
+      key,
+      action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
+    }),
+  )
+  expect(page.address).toBe('https://example.com/')
+  const read = yield* measured(
+    'read-again',
+    machine.browse({ key, action: BrowserAction.cases.Read.make({}) }),
+  )
+  expect(read.title).toContain('Example')
+  const links = Array.from(read.outline.matchAll(/- link "([^"\n]+)"/g), (match) => match[1])
+  const target = links[0]
+  if (links.length !== 1 || target === undefined)
+    expect.fail('Example Domain must expose exactly one link')
+  yield* measured(
+    'scroll-link-into-view',
+    machine.browse({
+      key,
+      action: BrowserAction.cases.Scroll.make({ direction: 'down', notches: 12 }),
+    }),
+  )
+  const clicked = yield* measured(
+    'click-link',
+    machine.browse({ key, action: BrowserAction.cases.Click.make({ target }) }),
+  )
+  expect(clicked.address).not.toBe(read.address)
+  expect(clicked.address).toContain('iana.org')
+  expect(clicked.outline.length).toBeGreaterThan(0)
+  const form = yield* measured(
+    'open-form',
+    machine.browse({
+      key,
+      action: BrowserAction.cases.Open.make({
+        address: 'https://www.selenium.dev/selenium/web/web-form.html',
+      }),
+    }),
+  )
+  expect(form.address).toContain('/web-form.html')
+  const typed = yield* measured(
+    'type-and-read-back',
+    machine.browse({
+      key,
+      action: BrowserAction.cases.Type.make({
+        target: 'Text input',
+        text: 'Vivid browser input proof',
+      }),
+    }),
+  )
+  expect(typed.outline).toContain('textbox "Text input": Vivid browser input proof')
+  const replaced = yield* measured(
+    'replace-and-read-back',
+    machine.browse({
+      key,
+      action: BrowserAction.cases.Type.make({
+        target: 'Text input',
+        text: 'Vivid replacement proof',
+      }),
+    }),
+  )
+  expect(replaced.outline).toContain('textbox "Text input": Vivid replacement proof')
+  expect(replaced.outline).not.toContain('Vivid browser input proof')
+  yield* measured(
+    'clear-and-read-back',
+    machine.browse({
+      key,
+      action: BrowserAction.cases.Type.make({ target: 'Text input', text: '' }),
+    }),
+  )
+})
+
 /** Exercise the owned Machine seam against a real guest, with explicit compute opt-in. */
 describe.skipIf(!enabled)('Boat native guest live proof', () => {
   it.live(
-    'creates, issues a viewer, looks, opens a page, archives and resumes the same machine',
+    'creates, views, clicks a link, types and reads values, archives and resumes the same machine',
     () =>
       Effect.gen(function* () {
         const machine = yield* Machine
@@ -107,20 +188,7 @@ describe.skipIf(!enabled)('Boat native guest live proof', () => {
           machine.desktop({ key, action: DesktopAction.cases.Look.make({}) }),
         )
         expect(view.picture.length > 0 && view.width > 0 && view.height > 0).toBe(true)
-        const page = yield* measured(
-          'open-and-read',
-          machine.browse({
-            key,
-            action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
-          }),
-        )
-        expect(page.title.includes('Example')).toBe(true)
-        const read = yield* measured(
-          'read-again',
-          machine.browse({ key, action: BrowserAction.cases.Read.make({}) }),
-        )
-        expect(read.address).toBe('https://example.com/')
-        expect(read.title).toBe(page.title)
+        yield* browserProof(machine, key)
         const written = yield* measured(
           'write-marker',
           machine.exec({

@@ -321,6 +321,7 @@ export const browse = Effect.fn('Machine.boat.browser')(function* (
   const before = yield* binding(native, window)
   yield* step(native, window, before, yield* resolveTab(before, action, previous))
   const after = yield* binding(native, window)
+  const showing = yield* currentTab(after)
   const page = yield* snapshot(native, after)
   // Cua input receipts attest delivery only. A replacement must independently read back the
   // same uniquely named editable control and exact value, including clearing with empty text.
@@ -349,7 +350,7 @@ export const browse = Effect.fn('Machine.boat.browser')(function* (
     tabs: after.tabs.map((tab) => ({
       title: tab.title,
       address: tab.url,
-      showing: tab.active === true,
+      showing: tab.tab_id === showing.tab_id,
     })),
   })
 })

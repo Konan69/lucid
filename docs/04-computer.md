@@ -133,9 +133,17 @@ fleet scale, not a starting point.
 local provider's RFB connection. Select Boat with `VIVID_COMPUTER_PROVIDER=boat`; configure its
 Redacted API key (`VIVID_BOAT_API_KEY`), size and lifetime through Effect Config. Name the paying
 organization with `VIVID_BOAT_ORG` whenever the key's account belongs to one; leave it unset for an
-account that belongs to none, and Boat bills that account. The key needs these actions:
-`sandbox.create`, `sandbox.read`, `sandbox.update`, `sandbox.stop`, `sandbox.resume`, `exec`, `file.read`,
-`file.write`, `desktop`, `snapshot.read`, `snapshot.write` and `account.read`. Boat's
+account that belongs to none, and Boat bills that account. The owner chose this recommended scope:
+`sandbox.create`, `sandbox.read`, `sandbox.update`, `sandbox.stop`, `sandbox.resume`, `sandbox.fork`,
+`sandbox.delete`, `exec`, `file.read`, `file.write`, `desktop`, `ssh`, `host`, `snapshot.read`,
+`snapshot.write`, `account.read`. It covers machine operations and read-only account diagnostics,
+with no account-changing authority: no `environment.*`, no `account.admin`, no `agent.prompt`,
+and never `*`. Vivid's provider uses `sandbox.create`, `sandbox.read`, `sandbox.stop`,
+`sandbox.resume`, `exec`, `file.read`, `file.write` and `desktop` today. The live proof additionally
+uses `sandbox.delete` for cleanup; operator limits/usage diagnostics use `account.read`.
+`sandbox.update`, `sandbox.fork`, `ssh`, `host`, `snapshot.read` and `snapshot.write` are available
+for machine work but have no direct provider calls today; stop/resume own their disk snapshot
+through their respective actions. Boat's
 `full-sandbox` preset leaves out `sandbox.create`, and a key made with it is refused at the first
 machine (`api_key_action_forbidden`), so name the actions. Resume also requires its own
 `sandbox.resume` action; `sandbox.update` does not cover it:
@@ -160,6 +168,40 @@ Chrome attachment goes through the native existing-profile permission gate; a de
 capability is a failure, never a substitute browser profile. Tool arguments follow the real
 driver describes; success shapes are decoded at ingress. Exit-zero error JSON retains its
 typed refusal code and discards potentially private detail text before reaching a Person.
+The CLI's projected action refusals instead expose `effect: refused` and a route, omitting
+the original code; these also fail explicitly, even through a permissive JSON decoder.
+
+### Browser input on Linux
+
+`browser_input_trust_unavailable` means this driver cannot deliver the requested browser input
+while keeping Chrome in the background. In Cua Driver 0.23.2, Linux standalone Chrome clicks
+are refused because trusted CDP mouse input activates the native window. This is an unconditional
+platform restriction, not a missing permission, launch flag, or preparation step. The
+[version-matched Linux source](https://github.com/trycua/cua/blob/cua-driver-rs-v0.23.2/libs/cua-driver/rust/crates/platform-linux/src/browser_platform.rs)
+defines the restriction. The full refusal text remains in the daemon response's content;
+the CLI projects it to `effect: refused`, route `trusted_input`, and escalation `route_unavailable`.
+
+`browser_prepare` authorizes the existing profile and enables/attests its loopback DevTools
+endpoint. On the real guest it opened Chrome's fixed setup page, toggled remote debugging and
+closed that page, preserving the profile and process. X11 and AT-SPI permissions were healthy;
+Chrome kept its existing user-data directory and exposed port 9222. Preparation enabled page
+inspection and navigation, but the trusted click still refused afterward. Neither driver help
+nor tool descriptions offer a flag to override Linux's background-input restriction.
+
+Vivid therefore sends clicks through the driver's foreground desktop `click` tool, on the same
+browser window the Person can watch. A fresh semantic page read first proves one accessible
+control; a fresh window screenshot and AT-SPI snapshot then supply its enabled web-content
+bounds. Screen bounds become window-local screenshot coordinates, accounting for capture
+scaling. Missing, ambiguous, disabled or off-window targets fail before input. The Person or
+Vivid must scroll an off-window target into view before clicking. Browser chrome with the same
+label cannot become the page target. No DOM events are synthesized, and fresh browser state
+always follows input. A sole tab in an exactly bound window proves selection even during a
+native-title update; multiple tabs still require explicit active-tab proof.
+
+Typing uses `browser_type` with `replace: true`: unlike clicks, this trusted CDP text route
+worked on the real image. Vivid independently reads the exact field value afterward and fails
+an unconfirmed replacement, without retrying input. Clearing may read back as the driver's
+null empty value. Driver delivery receipts alone never establish the intended result.
 
 Running state distinguishes `screen: Relay` (offline Docker) from `screen: Viewer` (Boat's
 short-lived token-gated streaming page). `GetComputer` issues fresh viewer authority. Clients
@@ -188,11 +230,23 @@ with that action. A stalled pooled TLS connection was also observed during an ea
 Boat requests now close their HTTP connections, without retrying uncertain commands; private
 guest cleanup and live deletion have independent interruptible deadlines.
 
+The extended live proof passed on 2026-10-03 with the owner-chosen recommended scope above.
+It opened Example Domain (8.31s), read again (2.75s), scrolled its current “Learn more” link
+into view (4.37s), and clicked through to IANA's Example Domains page (5.74s), asserting the
+URL actually changed. It opened Selenium's public web form (5.27s), typed a known value
+into “Text input” and read it back (4.60s), replaced it and read back the exact replacement
+(5.25s), then cleared and read back the empty value (5.49s). Archive/resume and exact disk-marker
+retention also passed; cleanup accepted deletion (0.14s). Total suite wall time was 68.15s.
+Only one live suite was executed for this extension; a preceding launcher failed before
+finding the checkout or creating a machine. Strict fake tests cover the Linux click refusal,
+scaled fresh-window coordinates, same-label browser chrome, missing bounds, failed text
+replacement, snapshot-bound refs, and selection during native-title lag. Raw describes, full
+refusal content, preparation receipts, doctor/permissions, process/endpoint evidence and a
+visible form screenshot were retained in the ignored review artifacts.
+
 Viewer issuance is proven; embedding and interactive viewing in clients are untested here.
-Signed-in cookies/profile retention, browser writes, tab manipulation, desktop mutations and
-provider recovery under concurrent servers are not proven by this live suite. Linux trusted
-browser clicks refused with `browser_input_trust_unavailable` in direct probing; the adapter
-preserves that code rather than substituting synthetic DOM events. Driver mutation receipts
+Signed-in cookies/profile retention, tab manipulation and provider recovery under concurrent
+servers are not proven by this live suite. Driver mutation receipts
 attest delivery, not the intended effect; fresh state follows every action. Client support for
 the screen union belongs to its own lane. Flue placement and external state sync remain planned.
 

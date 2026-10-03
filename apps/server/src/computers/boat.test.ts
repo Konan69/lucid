@@ -43,6 +43,9 @@ interface EvidenceService {
   readonly grounded: Ref.Ref<boolean>
   readonly missingBounds: Ref.Ref<boolean>
   readonly noType: Ref.Ref<boolean>
+  readonly snapshots: Ref.Ref<number>
+  readonly active: Ref.Ref<boolean | null>
+  readonly extraTab: Ref.Ref<boolean>
   readonly prepared: Ref.Ref<ReadonlySet<string>>
   readonly breakCreate: Ref.Ref<boolean>
   readonly breakCommand: Ref.Ref<boolean>
@@ -70,6 +73,9 @@ const evidenceLayer = Layer.effect(
       grounded: yield* Ref.make(false),
       missingBounds: yield* Ref.make(false),
       noType: yield* Ref.make(false),
+      snapshots: yield* Ref.make(0),
+      active: yield* Ref.make<boolean | null>(true),
+      extraTab: yield* Ref.make(false),
       prepared: yield* Ref.make<ReadonlySet<string>>(new Set()),
       breakCreate: yield* Ref.make(false),
       breakCommand: yield* Ref.make(false),
@@ -225,7 +231,8 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
       if (!(yield* Ref.get(evidence.prepared)).has(session))
         return commandReply('{"status":"refused","refusal":{"code":"consent_required"}}')
       const address = yield* Ref.get(evidence.address)
-      if (Object.hasOwn(args, 'snapshot_format'))
+      if (Object.hasOwn(args, 'snapshot_format')) {
+        const snapshot = yield* Ref.updateAndGet(evidence.snapshots, (count) => count + 1)
         return commandReply(
           JSON.stringify({
             status: 'ok',
@@ -234,10 +241,10 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
             outline: `button "Continue"\ntextbox "Message": ${yield* Ref.get(evidence.text)}`,
             snapshot: { complete: true },
             refs: [
-              { ref: 'p1:0', name: null, value: null, actions: [] },
-              { ref: 'p1:1', name: 'Continue', value: null, actions: ['click'] },
+              { ref: `p${snapshot}:0`, name: null, value: null, actions: [] },
+              { ref: `p${snapshot}:1`, name: 'Continue', value: null, actions: ['click'] },
               {
-                ref: 'p1:2',
+                ref: `p${snapshot}:2`,
                 name: 'Message',
                 value: yield* Ref.get(evidence.text),
                 actions: ['type'],
@@ -245,13 +252,24 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
             ],
           }),
         )
+      }
+      const tabs = [
+        {
+          tab_id: 'fixture-tab',
+          title: 'Example',
+          url: address,
+          active: yield* Ref.get(evidence.active),
+        },
+      ]
+      if (yield* Ref.get(evidence.extraTab))
+        tabs.push({ tab_id: 'other-tab', title: 'Other', url: 'https://example.org', active: null })
       return commandReply(
         JSON.stringify({
           status: 'ok',
           mode: 'bind',
           target_id: 'fixture-target',
           binding_quality: 'exact',
-          tabs: [{ tab_id: 'fixture-tab', title: 'Example', url: address, active: true }],
+          tabs,
         }),
       )
     }
@@ -345,7 +363,7 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
         '{"effect":"refused","route":"trusted_input","escalation":{"reason":"route_unavailable","target":"page"}}',
       )
     case 'browser_type':
-      expect(args.ref).toBe('p1:2')
+      expect(args.ref).toBe(`p${yield* Ref.get(evidence.snapshots)}:2`)
       expect(args.replace).toBe(true)
       expect(args.text).toBe('private-fixture-input')
       if (!(yield* Ref.get(evidence.noType)))
@@ -546,6 +564,31 @@ const fixture = Effect.fn('BoatTest.fixture')(function* () {
 })
 
 describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => {
+  it.effect(
+    'proves the sole tab during native-title lag but refuses ambiguous selection among tabs',
+    () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        yield* machine.ensure(key)
+        yield* machine.browse({
+          key,
+          action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
+        })
+        yield* Ref.set(evidence.active, null)
+        const read = yield* machine.browse({ key, action: BrowserAction.cases.Read.make({}) })
+        expect(read.tabs).toEqual([
+          { title: 'Example', address: 'https://example.com', showing: true },
+        ])
+        yield* Ref.set(evidence.extraTab, true)
+        const ambiguous = yield* machine
+          .browse({ key, action: BrowserAction.cases.Read.make({}) })
+          .pipe(Effect.flip)
+        expect(ambiguous._tag).toBe('BrowserStepFailed')
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
   it.effect(
     'refuses missing click bounds and an unconfirmed text replacement without retrying input',
     () =>
