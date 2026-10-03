@@ -2,7 +2,6 @@ import { useAtom, useAtomRefresh, useAtomValue } from '@effect/atom-react'
 import {
   ConnectionOwnership,
   ConnectionState,
-  ConnectionStep,
   ServiceAuthorization,
   ServiceCatalog,
   Workspace,
@@ -17,8 +16,8 @@ import { useState } from 'react'
 import { change, live, LiveState, services, serviceSearch, useLive } from '../../data/live'
 import { orSay } from '../../data/said'
 import { Button } from '../../ui/Button'
+import { Began, begin, follow } from '../integration/begin'
 import { EnterKey, type Keying } from '../integration/Key'
-import { showSignIn } from '../integration/signin'
 import { Awaiting, Empty, Refusal, Row, Section } from './Parts'
 
 const HOW = (service: Service) =>
@@ -65,47 +64,26 @@ export function Connections({ me }: { me: MeResponse }) {
   const mine = connections.filter((item) => ConnectionOwnership.guards.Personal(item.ownership))
   const shared = connections.filter((item) => ConnectionOwnership.guards.Shared(item.ownership))
 
-  /**
-   * Does what a Connection says comes next: shows the provider's sign-in page in the tab that was
-   * opened for it, asks for the key, or nothing when it is already done.
-   */
-  function follow(step: ConnectionStep, tab: Window | null, name: string) {
-    ConnectionStep.match(step, {
-      // A provider's sign-in page is shown in its own tab; this page hears that it finished
-      // through the live list and needs nothing from that tab.
-      OpenSignIn: ({ address }) => {
-        if (showSignIn(tab, address)) return
-        setRefusal(
+  /** Says what one press came to: the key dialog, or the sentence for what stood in the way. */
+  function settle(began: Began, name: string, verb: 'connected' | 'reconnected') {
+    setRefusal(
+      Began.$match(began, {
+        SigningIn: () => null,
+        Connected: () => null,
+        NeedsKey: () => null,
+        Blocked: () =>
           `${name}’s sign-in page could not be opened. Allow pop-ups for this page, then connect again.`,
-        )
-      },
-      EnterKey: ({ connection, fields }) => {
-        if (tab !== null) tab.close()
-        setKeying({ id: connection.id, name: connection.serviceName, fields })
-      },
-      Done: () => {
-        if (tab !== null) tab.close()
-      },
-    })
+        Refused: () => `${name} could not be ${verb} just now.`,
+      }),
+    )
+    if (Began.$is('NeedsKey')(began)) setKeying(began.keying)
   }
 
   async function connect(service: Service, asShared: boolean) {
+    // A sign-in tab is opened by the click itself, before the server is asked anything.
     const signingIn = ServiceAuthorization.guards.SignIn(service.authorization)
     const tab = signingIn ? window.open('about:blank', '_blank') : null
-    const result = await change((client) =>
-      client.BeginConnection({
-        service: service.id,
-        label: service.name.slice(0, 40),
-        shared: asShared,
-      }),
-    )
-    if (Result.isFailure(result)) {
-      if (tab !== null) tab.close()
-      setRefusal(`${service.name} could not be connected just now.`)
-      return
-    }
-    setRefusal(null)
-    follow(result.success, tab, service.name)
+    settle(await begin(service, tab, asShared), service.name, 'connected')
   }
 
   /**
@@ -118,15 +96,11 @@ export function Connections({ me }: { me: MeResponse }) {
    */
   async function resume(connection: Connection) {
     const result = await change((client) => client.ResumeConnection({ id: connection.id }))
-    if (Result.isFailure(result)) {
-      setRefusal(`${connection.serviceName} could not be reconnected just now.`)
-      return
-    }
-    setRefusal(null)
-    const tab = ConnectionStep.guards.OpenSignIn(result.success)
-      ? window.open('about:blank', '_blank')
-      : null
-    follow(result.success, tab, connection.serviceName)
+    settle(
+      Result.isFailure(result) ? Began.Refused() : follow(result.success, null),
+      connection.serviceName,
+      'reconnected',
+    )
   }
 
   const remove = (connection: Connection) =>
