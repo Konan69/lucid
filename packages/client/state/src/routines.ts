@@ -294,6 +294,7 @@ const onRoutine =
   (id: RoutineId, edit: (routine: Routine) => Routine) =>
   (current: RoutineList): RoutineList => ({
     routines: current.routines.map((routine) => (routine.id === id ? edit(routine) : routine)),
+    templates: current.templates,
   })
 
 /** A Routine paused or resumed. When it next runs is the server's to say, so that is left alone. */
@@ -311,6 +312,7 @@ export const removed =
   (id: RoutineId) =>
   (current: RoutineList): RoutineList => ({
     routines: current.routines.filter((routine) => routine.id !== id),
+    templates: current.templates,
   })
 
 /**
@@ -322,4 +324,4 @@ export const confirmed =
   (current: RoutineList): RoutineList =>
     current.routines.some((candidate) => candidate.id === routine.id)
       ? current
-      : { routines: [routine, ...current.routines] }
+      : { routines: [routine, ...current.routines], templates: current.templates }

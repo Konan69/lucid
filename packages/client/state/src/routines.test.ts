@@ -128,7 +128,7 @@ describe('the editor', () => {
 })
 
 describe('expectations', () => {
-  const list = { routines: [routine('a', {}), routine('b', {})] }
+  const list = { routines: [routine('a', {}), routine('b', {})], templates: [] }
 
   it('pauses one Routine without guessing when it next runs', () => {
     const next = routines.enabledSet(RoutineId.make('a'), false)(list)
