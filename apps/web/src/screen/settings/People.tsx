@@ -16,6 +16,7 @@ import { Button } from '../../ui/Button'
 import { Copy } from '../../ui/Copy'
 import { Dialog, DialogActions, DialogField } from '../../ui/Dialog'
 import { Segmented } from '../../ui/Segmented'
+import { CreateCompany } from '../sidebar/Company'
 import { Awaiting, Empty, Refusal, Row, Section } from './Parts'
 
 const ROLE_NAME = { owner: 'Owner', admin: 'Admin', member: 'Member' } satisfies Record<
@@ -48,19 +49,23 @@ export function People({ me }: { me: MeResponse }) {
   )
 }
 
+/**
+ * Said to a Person working alone: what a Company gives, and the way to make one here. This is one
+ * of the two places a Company is created; the other is the workspace switcher.
+ */
 function NoCompany() {
+  const [creating, setCreating] = useState(false)
   return (
     <Section title="People">
       <div className="flex flex-col items-center gap-3 px-6 py-10 text-center">
         <Building2 className="size-6 text-ink-3" strokeWidth={1.5} />
-        <p className="max-w-sm text-label text-ink-3">
-          You are working in your own space. Create a company to share threads, a library and
-          connections with the people you work with. Everything you have here stays yours.
+        <p className="max-w-sm text-label text-pretty text-ink-3">
+          You are working in your own space. A company gives the people you work with shared
+          threads, a shared Library and shared rules. Everything you have here stays yours.
         </p>
-        <p className="text-meta font-meta text-ink-3">
-          Use the switcher at the top of the sidebar, then “Create a company”.
-        </p>
+        <Button onClick={() => setCreating(true)}>Create a company</Button>
       </div>
+      {creating && <CreateCompany onClose={() => setCreating(false)} />}
     </Section>
   )
 }

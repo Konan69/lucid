@@ -1,7 +1,7 @@
 import type { Thread, ThreadId } from '@vivid/contracts'
 import { ThreadAudience } from '@vivid/contracts'
 import { Data } from 'effect'
-import { Check, CircleCheck, Pencil, Trash2, Undo2, Users } from 'lucide-react'
+import { Check, CircleCheck, FolderInput, Pencil, Trash2, Undo2, Users } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { change, live } from '../../data/live'
 import { Route, router } from '../../data/route'
@@ -14,16 +14,19 @@ import { Dialog, DialogActions } from '../../ui/Dialog'
 import { ContextMenu, MenuDivider, MenuItem, type MenuPoint } from '../../ui/Menu'
 import { byKeyboard, leave } from '../../ui/motion'
 import { StatusLabel } from '../../ui/Status'
+import { MoveThread } from '../project/Move'
 import { CAPTION, FULL, HOVER, ROW } from './rows'
 
 /**
  * What the Person is in the middle of doing to a Thread from the list. It is one thing at a time,
- * so the menu, the title being edited and the question before deleting can never be open together.
+ * so the menu, the title being edited, the Project being chosen and the question before deleting
+ * can never be open together.
  */
 type Doing = Data.TaggedEnum<{
   Nothing: {}
   Choosing: { readonly thread: Thread; readonly at: MenuPoint }
   Renaming: { readonly id: ThreadId }
+  Moving: { readonly thread: Thread }
   Deleting: { readonly thread: Thread }
 }>
 const Doing = Data.taggedEnum<Doing>()
@@ -74,7 +77,7 @@ function band(updatedAt: number, now: number): (typeof BANDS)[number] {
 }
 
 /** When a Thread last moved, as short as it can be said: the time today, the day this week. */
-function relativeTime(updatedAt: number, now: number) {
+export function relativeTime(updatedAt: number, now: number) {
   const days = daysAgo(updatedAt, now)
   const format: Intl.DateTimeFormatOptions =
     days <= 0
@@ -98,9 +101,12 @@ function relativeTime(updatedAt: number, now: number) {
 export function Threads({
   threads,
   active,
+  empty,
 }: {
   threads: ReadonlyArray<Thread>
   active: ThreadId | null
+  /** What to say where the list would be: it differs when the list is one Project's. */
+  empty: string
 }) {
   const [doing, setDoing] = useState<Doing>(Doing.Nothing())
   const [doneOpen, setDoneOpen] = useState(false)
@@ -134,11 +140,7 @@ export function Threads({
   )
 
   if (threads.length === 0) {
-    return (
-      <p className="px-2.5 pt-3 text-label font-meta text-ink-3">
-        Threads you start will appear here.
-      </p>
-    )
+    return <p className="px-2.5 pt-3 text-label font-meta text-pretty text-ink-3">{empty}</p>
   }
 
   return (
@@ -191,6 +193,7 @@ export function Threads({
       {Doing.$is('Choosing')(doing) && (
         <ThreadMenu thread={doing.thread} at={doing.at} onDo={setDoing} />
       )}
+      {Doing.$is('Moving')(doing) && <MoveThread thread={doing.thread} onClose={nothing} />}
       {Doing.$is('Deleting')(doing) && <DeleteThread thread={doing.thread} onClose={nothing} />}
     </>
   )
@@ -409,6 +412,12 @@ function ThreadMenu({
         }}
       >
         {thread.archived ? 'Move back to threads' : 'Mark as done'}
+      </MenuItem>
+      <MenuItem
+        icon={<FolderInput className="size-3.5" />}
+        onSelect={() => onDo(Doing.Moving({ thread }))}
+      >
+        Move to a project…
       </MenuItem>
       <MenuDivider />
       <MenuItem
