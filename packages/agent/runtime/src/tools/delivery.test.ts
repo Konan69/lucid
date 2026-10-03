@@ -46,11 +46,6 @@ describe('delivery authority outside model text', () => {
         attributes: { routine: 'MARK-routine', name: 'Morning review', libraryFolder: marker },
       }),
       DeliveryMessage.cases.Signal.make({
-        type: 'follow-up',
-        body: 'Check the signed agreement.',
-        attributes: { task: 'MARK-task' },
-      }),
-      DeliveryMessage.cases.Signal.make({
         type: 'approval',
         body: 'The Person approved the action.',
         attributes: { approval: marker, outcome: 'approved' },

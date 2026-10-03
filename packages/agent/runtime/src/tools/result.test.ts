@@ -87,13 +87,13 @@ describe('RPC result boundary', () => {
                 message: 'secret-token-and-private-output',
               }),
             ),
-            'create_task',
+            'create_routine',
           )
           yield* settle(Effect.succeed({ output: 'private-successful-output' }), 'read_page')
         }).pipe(Effect.provide(Logger.layer([logger])))
         expect(logs).toHaveLength(1)
         expect(logs[0]).toContain('Warn')
-        expect(logs[0]).toContain('create_task')
+        expect(logs[0]).toContain('create_routine')
         expect(logs[0]).toContain('ServiceUnavailable')
         expect(logs[0]).not.toMatch(/private|secret|read_page/u)
       }),
@@ -157,8 +157,8 @@ describe('RPC result boundary', () => {
 
   it.effect('returns a boolean stop flag for ordinary results so Flue accepts the envelope', () =>
     Effect.gen(function* () {
-      expect(yield* settle(Effect.succeed({ output: { tasks: [] } }), 'test-tool')).toEqual({
-        output: { tasks: [] },
+      expect(yield* settle(Effect.succeed({ output: { routines: [] } }), 'test-tool')).toEqual({
+        output: { routines: [] },
         terminate: false,
       })
     }),

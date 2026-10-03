@@ -8,7 +8,6 @@ import {
   SkillOrigin,
   SkillScope,
 } from '@vivid/contracts'
-import { taskTools } from '../../../../../packages/agent/runtime/src/tools/tasks.ts'
 import { libraryTools } from '../../../../../packages/agent/runtime/src/tools/library.ts'
 import { connectionTools } from '../../../../../packages/agent/runtime/src/tools/connections.ts'
 import { askTools } from '../../../../../packages/agent/runtime/src/tools/ask.ts'
@@ -29,7 +28,6 @@ import { builtins, procedures, summary } from './index.ts'
 const runner: RunTool = () => Promise.resolve({ output: {}, terminate: false })
 const registered = new Set(
   [
-    ...taskTools(runner),
     ...libraryTools(runner),
     ...connectionTools(runner),
     ...askTools(runner),

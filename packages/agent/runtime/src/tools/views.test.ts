@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Predicate, Schema } from 'effect'
 import {
-  Assignee,
-  Author,
-  FollowUp,
-  FollowUpId,
   LibraryItemId,
   Memory,
   MemoryId,
@@ -18,8 +14,6 @@ import {
   SkillId,
   SkillScope,
   SkillOrigin,
-  Task,
-  TaskId,
   ThreadId,
   ConnectionId,
   Service,
@@ -46,7 +40,6 @@ import { libraryTools } from './library.ts'
 import { memoryTools } from './memory.ts'
 import { routineTools } from './routines.ts'
 import { skillTools } from './skills.ts'
-import { taskTools } from './tasks.ts'
 import type { RunTool } from './scope.ts'
 
 const reference = '37e21f26-63ed-4075-aad1-0118929da0ac'
@@ -54,39 +47,6 @@ const person = PersonSummary.make({
   id: PersonId.make('MARK-person'),
   name: 'Ada',
   image: 'https://example.test/MARK-image.png',
-})
-const author = Author.cases.Vivid.make({ onBehalfOf: person })
-const followUp = FollowUp.make({
-  id: FollowUpId.make(reference),
-  taskId: TaskId.make('MARK-task'),
-  at: 1000,
-  note: 'Check signature',
-  repeatEveryMs: 86_400_000,
-  status: 'scheduled',
-  submissionId: 'MARK-submission',
-  firedAt: null,
-  output: null,
-  error: null,
-  createdBy: author,
-  createdAt: 0,
-})
-const task = Task.make({
-  id: TaskId.make(reference),
-  title: 'Signed agreement',
-  detail: 'Collect the signature',
-  status: 'open',
-  priority: 'normal',
-  assignee: Assignee.cases.Member.make({ person }),
-  createdBy: author,
-  threadId: ThreadId.make('MARK-thread'),
-  origin: { kind: 'thread', threadId: ThreadId.make('MARK-thread') },
-  dueAt: 2000,
-  overdueNotifiedAt: null,
-  completedAt: null,
-  createdAt: 0,
-  updatedAt: 0,
-  followUps: [followUp],
-  nextFollowUpAt: 1000,
 })
 const skill = Skill.make({
   id: SkillId.make(reference),
@@ -163,9 +123,6 @@ describe('model views', () => {
       views.skills([skill, skill]),
       views.skill(skill, 'Review agreement (2)'),
       views.skillSummary(skill, 'Review agreement'),
-      views.followUp(followUp),
-      views.task(task, 'Signed agreement'),
-      views.tasks([task, task]),
       views.tools({ tools: [tool], unconnected: [service] }),
       views.memories([
         memory,
@@ -218,14 +175,10 @@ describe('model views', () => {
       'input',
       tool.input,
     )
-    expect(views.task(task, task.title)).toMatchObject({
-      dueAt: '1970-01-01T00:00:02.000Z',
-      followUps: [{ at: '1970-01-01T00:00:01.000Z', repeat: 86_400_000 }],
-    })
   })
   it('keeps contact addresses in Person-authored content, including UUID-shaped mailboxes', () => {
     const detail = `Contact ${reference}@example.test or ada@example.test; internal reference ${reference}.`
-    expect(views.task({ ...task, detail }, task.title).detail).toBe(
+    expect(views.modelText(detail)).toBe(
       `Contact ${reference}@example.test or ada@example.test; internal reference [reference].`,
     )
   })
@@ -310,7 +263,6 @@ it('has no identifier key or UUID validator in any model tool input', () => {
     memoryTools,
     routineTools,
     skillTools,
-    taskTools,
   ]
   for (const factory of groups)
     for (const definition of factory(inspectionOnly))

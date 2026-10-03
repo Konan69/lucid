@@ -12,7 +12,6 @@ import { connectionTools } from '../../tools/connections.ts'
 import { memoryTools } from '../../tools/memory.ts'
 import { routineTools } from '../../tools/routines.ts'
 import { showTools } from '../../tools/show.ts'
-import { taskTools } from '../../tools/tasks.ts'
 import type { RunTool } from '../../tools/scope.ts'
 import { phrases, script } from './script.ts'
 
@@ -28,7 +27,6 @@ const tools = [
   ...memoryTools(unavailable),
   ...routineTools(unavailable),
   ...showTools(),
-  ...taskTools(unavailable),
 ]
 const decodeShown = Schema.decodeUnknownSync(Shown)
 const decodeDesktop = Schema.decodeUnknownSync(UseDesktopRequest)
@@ -190,15 +188,9 @@ describe('Rehearsal scenes', () => {
         expected: 'The table is above.',
       },
       {
-        phrase: 'add a task',
-        output: { task: { title: 'Actual saved task' } },
-        expected: 'I added “Actual saved task”.',
-      },
-      {
         phrase: 'remind me',
         output: { name: 'Reminder', nextRunAt: '2026-10-04T08:00:00Z' },
-        expected:
-          'The reminder is scheduled for 2026-10-04T08:00:00Z; this date-based routine repeats yearly until removed.',
+        expected: 'The reminder is scheduled for 2026-10-04T08:00:00Z as a one-off Routine.',
       },
       {
         phrase: 'remember that',
@@ -367,7 +359,7 @@ describe('Rehearsal scenes', () => {
     const first = script(start)
     expect(first.content).toMatchObject([
       {
-        arguments: { trigger: { kind: 'Schedule', cron: '0 9 4 10 *', timezone: 'Africa/Lagos' } },
+        arguments: { trigger: { kind: 'Once', localAt: '2026-10-04T09:00' } },
       },
     ])
     const rollover = script({
@@ -377,7 +369,7 @@ describe('Rehearsal scenes', () => {
       ],
     })
     expect(rollover.content).toMatchObject([
-      { arguments: { trigger: { cron: '0 9 1 1 *', timezone: 'Pacific/Auckland' } } },
+      { arguments: { trigger: { kind: 'Once', localAt: '2027-01-01T09:00' } } },
     ])
   })
 

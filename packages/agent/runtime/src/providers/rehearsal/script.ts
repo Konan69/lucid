@@ -31,7 +31,6 @@ const Receipt = Schema.fromJsonString(
     account: Schema.optionalKey(Schema.String),
     integrations: Schema.optionalKey(Schema.Array(Schema.Struct({ name: Schema.String }))),
     view: Schema.optionalKey(Schema.Struct({ width: Schema.Number, height: Schema.Number })),
-    task: Schema.optionalKey(Schema.Struct({ title: Schema.String })),
     failure: Schema.optionalKey(CodeFailure),
   }),
 )
@@ -144,14 +143,10 @@ const success = {
     Predicate.isNumber(value.result)
       ? `The sum is ${value.result}.`
       : 'The program returned no numeric sum.',
-  create_task: (value: typeof Receipt.Type) =>
-    value.task === undefined
-      ? 'The saved task is missing from the result.'
-      : `I added “${modelText(value.task.title)}”.`,
   create_routine: (value: typeof Receipt.Type) =>
     value.nextRunAt === undefined || value.nextRunAt === null
       ? 'The routine returned no next run time.'
-      : `The reminder is scheduled for ${modelText(value.nextRunAt)}; this date-based routine repeats yearly until removed.`,
+      : `The reminder is scheduled for ${modelText(value.nextRunAt)} as a one-off Routine.`,
   remember: (value: typeof Receipt.Type) =>
     value.remembered === undefined
       ? 'The memory was not confirmed.'
@@ -200,9 +195,8 @@ function reminder(context: Context): FauxContentBlock[] {
       name: 'Rehearsal reminder',
       prompt: 'Tell me it is time to review the rehearsal results.',
       trigger: {
-        kind: 'Schedule',
-        cron: `0 9 ${tomorrow.getUTCDate()} ${tomorrow.getUTCMonth() + 1} *`,
-        timezone,
+        kind: 'Once',
+        localAt: `${tomorrow.toISOString().slice(0, 10)}T09:00`,
       },
     }),
   ]
@@ -313,7 +307,7 @@ const examples = [
       title: 'Rehearsal facts',
       facts: [
         { label: 'Hours saved', value: '9', change: '+2 this week', tone: 'good' },
-        { label: 'Open tasks', value: '3', change: '+1 this week', tone: 'bad' },
+        { label: 'Upcoming reviews', value: '3', change: '+1 this week', tone: 'bad' },
         { label: 'Reviews', value: '2' },
       ],
     }),
@@ -386,12 +380,6 @@ const examples = [
   toolScene('find google', 'find_integrations', { query: 'google' }),
   toolScene('add exa', 'add_integration', { address: 'https://mcp.exa.ai/mcp', name: 'Exa' }),
   { phrase: 'remind me', steps: [reminder, completion] },
-  toolScene('add a task', 'create_task', {
-    title: 'Review rehearsal results',
-    detail: 'Check every captured result.',
-    assignee: 'me',
-    priority: 'normal',
-  }),
   toolScene('remember that', 'remember', {
     kind: 'preference',
     content: 'Rae prefers reviewing work in the morning.',

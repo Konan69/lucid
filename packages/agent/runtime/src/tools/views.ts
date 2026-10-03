@@ -7,17 +7,14 @@ import {
   type DesktopView,
   type ConnectionRequestMessage,
   type FindToolsResponse,
-  type FollowUp,
   type InputRequest,
   type LibrarySearchResult,
   type Memory,
   type Routine,
   type Skill,
   type SkillSummary,
-  type Task,
 } from '@vivid/contracts'
 import type { ContextSkill } from './snapshots.ts'
-import { assigneeName } from './assignees.ts'
 import { catalog, distinct, inventory } from './names.ts'
 
 /** Dates cross the model boundary in ISO units; null remains genuine domain absence. */
@@ -43,35 +40,6 @@ export function skill(item: Skill, name: string) {
     instructions: modelText(item.instructions),
     source: SkillOrigin.guards.BuiltIn(item.origin) ? 'Built into Vivid' : 'Saved procedure',
   }
-}
-
-/** Follow-ups omit execution bookkeeping and retain the repeat interval in milliseconds. */
-export function followUp(item: FollowUp) {
-  return {
-    at: date(item.at),
-    note: modelText(item.note),
-    repeat: item.repeatEveryMs,
-    status: item.status,
-  }
-}
-
-/** Attribution is a Person's name, never their identity, image, or email. */
-export function task(item: Task, title: string) {
-  return {
-    title: modelText(title),
-    detail: modelText(item.detail),
-    status: item.status,
-    priority: item.priority,
-    assignee: modelText(assigneeName(item.assignee)),
-    dueAt: date(item.dueAt),
-    nextFollowUpAt: date(item.nextFollowUpAt),
-    followUps: item.followUps.filter((entry) => entry.status === 'scheduled').map(followUp),
-  }
-}
-
-/** Assign names before the caller filters status or limits display, matching mutation resolution. */
-export function tasks(items: readonly Task[]) {
-  return inventory(items, (item) => modelText(item.title)).map(({ item, name }) => task(item, name))
 }
 
 /** Discovery exposes usable account names and schema documents, without catalog or Connection references. */
