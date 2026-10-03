@@ -80,6 +80,9 @@ export type SkillId = typeof SkillId.Type
 /** Audit entry identifier. */
 export const AuditEntryId = identifier('AuditEntryId')
 export type AuditEntryId = typeof AuditEntryId.Type
+/** Artifact identifier: one durable thing made in a Thread. */
+export const ArtifactId = identifier('ArtifactId')
+export type ArtifactId = typeof ArtifactId.Type
 /** Computer identifier: one Person's machine. */
 export const ComputerId = identifier('ComputerId')
 export type ComputerId = typeof ComputerId.Type
