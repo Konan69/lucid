@@ -117,10 +117,10 @@ cheap, and prevents duplicate emails and events. P0.
 Task states: `queued, running, waiting_approval, waiting_input, scheduled, paused, succeeded,
 failed, cancelled` (`packages/domain/src/agent.ts:3-12`).
 
-**Vivid mapping.** This is Vivid's **Run**: one bounded attempt to advance a Thread. Vivid's tasks
-already schedule follow-ups (`apps/server/src/tasks/followups.ts`) but have no lease, attempt, or
-crash recovery, and `apps/server/src/runs` is empty. Flue owns the conversation turn; the Run record,
-its lease, and its state are Vivid product state.
+**Vivid mapping.** This is Vivid's **Run**: one bounded attempt to advance a Thread. The
+Routine scheduler (`apps/server/src/routines/scheduler.ts`) claims scheduled Occurrences and
+recovers durable submission receipts, including one-off reminders. Product Run records live in
+`apps/server/src/threads`; Flue owns conversation execution and its durable lifecycle.
 
 **Adapt.**
 

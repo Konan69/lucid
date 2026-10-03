@@ -30,25 +30,11 @@ citation-ready passages with the same filename/page citation shape. Retrieval us
 `websearch_to_tsquery('simple', ...)` and `ts_rank_cd`; it is keyword-based and has no embeddings,
 OCR, or vector store.
 
-Routines use the same database for definitions and run history. On Node, `croner` provides the
-in-process trigger and each fire enters Flue as a durable `schedule` signal. Authenticated
-`/api/routines` routes provide create, edit, pause, delete, and test-run operations. This is a
-single-process demo adapter: production should use a platform scheduler so deploy downtime does not
-drop fires and multiple replicas do not duplicate them.
-
-Tasks, follow-ups, and notifications live in the same PostgreSQL database. The agent mounts
-`create_task`, `update_task`, `list_tasks`, and `schedule_follow_up`. A 20-second in-process ticker
-fires due follow-ups as durable `follow-up` signals into the task's own conversation (`task-<id>`)
-and records overdue work once, chasing it automatically when nothing is already scheduled.
-Authenticated `/api/tasks`, `/api/follow-ups`, and `/api/notifications` routes back the Today
-screen. Same demo caveat as routines: production needs a platform scheduler.
-
-Routine and follow-up runs persist the Flue submission id and reattach with `read(submissionId)`
-after a restart. Dispatch uses each occurrence id as its stable idempotency key, so a crash between
-admission and saving the receipt cannot create a duplicate turn. Mutating task tools are Flue durable
-tools and use deterministic operation ids, making replayed PostgreSQL writes idempotent. Completion
-updates use a running-state predicate and the follow-up result plus notification commit in one
-transaction, so duplicate recovery cannot publish twice.
+The application server owns Routine definitions, Occurrences and scheduling. Runtime tools
+call its schema-derived RPC contract; they own no product persistence or scheduler. Reminders
+and anything to do once at a time use `create_routine` with a Once trigger and a local date-time.
+The server resolves the Person's saved time zone, refuses past times, fires once and retains the
+Thread and Occurrence. Submission receipts recover pending delivery across restarts.
 
 `DATABASE_URL` is required at runtime. Override the model with `VIVID_MODEL`. The old
 `VIVID_RUNTIME_DB` and `VIVID_CONNECTOR_DB` variables are no longer used.

@@ -38,3 +38,8 @@ pnpm --filter @vivid/server dev
 Generate/apply the Drizzle migration from this package with `pnpm db:generate` and
 `pnpm db:migrate`; root `pnpm check:migrations` verifies its SQL/snapshot chain. Better Auth is mounted directly under `/api/auth`; the request/response API is
 declared with Effect HttpApi under `/api`.
+
+One-off Routines resolve a local date-time using the Person's saved time zone. The existing
+Routine scheduler claims the Occurrence, disables the Routine and clears its next time in one
+transaction. The Routine, Thread and Occurrence remain available; pending submission receipts
+recover across restarts. Past times are refused before insertion.

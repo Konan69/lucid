@@ -2,6 +2,9 @@
 
 One person, one Vivid—simple alone and organizational by design.
 
+Reminders and anything to do once at a time are one-off Routines. Vivid resolves the Person's
+local date-time, fires once and retains its Thread and Occurrence.
+
 Vivid is an AI teammate for everyday work: an agent that works alongside a person on their real
 tools. The first screen is already the thread, and nothing has to be configured before the first
 message. It is not a coding tool.
