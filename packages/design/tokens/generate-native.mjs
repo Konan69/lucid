@@ -16,7 +16,7 @@ const light = {
  * laid over the default's in the order the cascade applies them in a browser (root, light, the
  * family, the family's light), so native reads exactly what the web would compute.
  */
-const DEFAULT_FAMILY = 'ember'
+const DEFAULT_FAMILY = 'graphite'
 const families = { [DEFAULT_FAMILY]: { dark: base, light } }
 for (const [, name, lit, block] of css.matchAll(
   /html\[data-palette=["']([\w-]+)["']\](\[data-theme=["']light["']\])?\s*\{([\s\S]*?)\n\}/g,

@@ -164,9 +164,6 @@ function Lanes({ threads, ...props }: ListProps & { threads: ReadonlyArray<Threa
       data={rowsOf(arrangement.lanes)}
       keyExtractor={rowKey}
       ListHeaderComponent={props.header}
-      ListEmptyComponent={
-        arrangement.archived.length === 0 ? <Said>Your threads will be listed here.</Said> : null
-      }
       ListFooterComponent={
         <>
           {arrangement.archived.length > 0 && (

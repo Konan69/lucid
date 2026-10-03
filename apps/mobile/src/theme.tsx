@@ -4,10 +4,10 @@ import { useColorScheme } from 'react-native'
 import { familyAtom, paletteOf, themeAtom } from './data/appearance'
 import { useDoor } from './data/door'
 
-export type Colors = { [K in keyof typeof nativeThemes.ember.dark]: string }
+export type Colors = { [K in keyof typeof nativeThemes.graphite.dark]: string }
 
 const ThemeContext = createContext<{ colors: Colors; dark: boolean }>({
-  colors: nativeThemes.ember.light,
+  colors: nativeThemes.graphite.light,
   dark: false,
 })
 

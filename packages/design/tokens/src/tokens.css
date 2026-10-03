@@ -3,8 +3,8 @@
 
    Sources, and what each one settled:
    - T3 Code mobile  the theme system: a family states one value per role (screen, card, drawer,
-                     border, user bubble, glass, primary…) for dark and for light. Ember, graphite
-                     (T3's default), grove and ocean are its values, unchanged
+                     border, user bubble, glass, primary…) for dark and for light. Graphite (T3's
+                     default), ember, grove and ocean are its values, unchanged
                      (`generated-uniwind-themes.css`, MIT; see `apps/mobile/T3-SOURCE.md`).
    - Open Session    type scale, radius factor
    - Grok Bot        status hue pairs, the ten face colors
@@ -16,57 +16,58 @@
    3. Borders are solid colors a family chooses, not alpha hairlines: an edge has to be seen.
    4. Accent is the active family's primary. It appears on the face, the focus ring, the one
       primary button, "working", and nowhere decorative.
-   5. Ember is the default: Vivid's canvas is warm. Secondary text holds 4.5:1 on the screen and on
+   5. Graphite is the default: a true dark and a clean light, neutral, following the system.
+      Ember, grove and ocean are choices a Person makes in Settings. Secondary text holds 4.5:1 on the screen and on
       a quiet fill in every family; tertiary text holds it on the screen only.
    ───────────────────────────────────────────────────────────── */
 
 :root {
   color-scheme: dark;
 
-  /* ── Theme roles: ember, dark (the default) ─────────────── */
-  --screen: #291e1a;
-  --sheet: rgba(41, 30, 26, 0.98);
-  --card: #291e1a;
-  --grouped-card: #291e1a;
-  --card-alt: #433835;
-  --thread-selected: #5d3f2d;
-  --row-hover: #644330;
-  --composer-surface: rgba(41, 30, 26, 0.9);
-  --composer-border: rgba(102, 76, 63, 0.46);
-  --foreground: #fffaff;
-  --foreground-secondary: #a8a2a2;
-  --foreground-muted: #aca19f;
-  --foreground-tertiary: #968e8f;
-  --border: #664c3f;
-  --focus: #f09a64;
-  --border-subtle: rgba(102, 76, 63, 0.7);
-  --separator: rgba(102, 76, 63, 0.55);
-  --subtle: #432e23;
-  --subtle-strong: #513728;
-  --inline-skill-background: #644330;
-  --primary: #f78a7a;
-  --primary-foreground: #241523;
-  --primary-text: #f78a7a;
-  --input: #291e1a;
-  --input-border: #7a5d4d;
-  --placeholder: #aba3a5;
-  --header: rgba(41, 30, 26, 0.97);
-  --header-border: #6e4934;
-  --glass-surface: rgba(79, 69, 67, 0.74);
-  --glass-fallback: rgba(41, 30, 26, 0.9);
-  --glass-tint: rgba(79, 69, 67, 0.22);
-  --md-code-bg: #362b27;
-  --md-code-text: #fffaff;
-  --user-bubble: #704b34;
-  --user-bubble-foreground: #fffaff;
-  --user-bubble-foreground-muted: rgba(255, 250, 255, 0.78);
+  /* ── Theme roles: graphite, dark (the default) ──────────── */
+  --screen: #0a0a0a;
+  --sheet: rgba(10, 10, 10, 0.98);
+  --card: #111111;
+  --grouped-card: #1a1b1b;
+  --card-alt: #111111;
+  --thread-selected: #1a1b1b;
+  --row-hover: #141414;
+  --composer-surface: rgba(26, 27, 27, 0.9);
+  --composer-border: rgba(25, 25, 25, 0.8);
+  --foreground: #f5f5f5;
+  --foreground-secondary: #838383;
+  --foreground-muted: #838383;
+  --foreground-tertiary: #818181;
+  --border: #191919;
+  --focus: #346bf1;
+  --border-subtle: rgba(25, 25, 25, 0.7);
+  --separator: rgba(25, 25, 25, 0.55);
+  --subtle: #111111;
+  --subtle-strong: #111111;
+  --inline-skill-background: #141414;
+  --primary: #346bf1;
+  --primary-foreground: #ffffff;
+  --primary-text: #4b7cf3;
+  --input: #111111;
+  --input-border: #1e1e1e;
+  --placeholder: #838383;
+  --header: rgba(10, 10, 10, 0.97);
+  --header-border: #191919;
+  --glass-surface: rgba(17, 17, 17, 0.74);
+  --glass-fallback: rgba(26, 27, 27, 0.9);
+  --glass-tint: rgba(17, 17, 17, 0.22);
+  --md-code-bg: #111111;
+  --md-code-text: #f5f5f5;
+  --user-bubble: #161616;
+  --user-bubble-foreground: #f5f5f5;
+  --user-bubble-foreground-muted: rgba(245, 245, 245, 0.78);
   --backdrop: rgba(0, 0, 0, 0.48);
-  --drawer: #39281f;
-  --drawer-foreground-muted: #aca2a1;
-  --drawer-border: #7e716e;
+  --drawer: #000000;
+  --drawer-foreground-muted: #a3a3a3;
+  --drawer-border: #141414;
   --drawer-shadow: rgba(0, 0, 0, 0.32);
-  --chevron: rgba(150, 142, 143, 0.42);
-  --ink-base: 255 250 255;
+  --chevron: rgba(129, 129, 129, 0.42);
+  --ink-base: 245 245 245;
 
   /* ── Vivid's older names, each derived from a role above ── */
   /* The web app and older mobile code read these. They hold no value of their own, so a theme
@@ -192,127 +193,7 @@
 html[data-theme='light'] {
   color-scheme: light;
 
-  /* ember, light */
-  --screen: #f9f7f5;
-  --sheet: rgba(249, 247, 245, 0.98);
-  --card: #f9f7f5;
-  --grouped-card: #f9f7f5;
-  --card-alt: #f1efee;
-  --thread-selected: #e5ccc0;
-  --row-hover: #eee0d9;
-  --composer-surface: rgba(249, 247, 245, 0.94);
-  --composer-border: rgba(221, 210, 206, 0.54);
-  --foreground: #241523;
-  --foreground-secondary: #746a72;
-  --foreground-muted: #74686f;
-  --foreground-tertiary: #766c74;
-  --border: #ddd2ce;
-  --focus: #ae552a;
-  --border-subtle: rgba(221, 210, 206, 0.7);
-  --separator: rgba(221, 210, 206, 0.55);
-  --subtle: #f4ede9;
-  --subtle-strong: #f3eae5;
-  --inline-skill-background: #eee0d9;
-  --primary: #b23535;
-  --primary-foreground: #fffaff;
-  --primary-text: #b23535;
-  --input: #f9f7f5;
-  --input-border: #d4c6c1;
-  --placeholder: #736971;
-  --header: rgba(249, 247, 245, 0.97);
-  --header-border: #eee0d9;
-  --glass-surface: rgba(236, 233, 233, 0.74);
-  --glass-fallback: rgba(249, 247, 245, 0.94);
-  --glass-tint: rgba(236, 233, 233, 0.22);
-  --md-code-bg: #f3f1f0;
-  --md-code-text: #241523;
-  --user-bubble: #ebdad1;
-  --user-bubble-foreground: #241523;
-  --user-bubble-foreground-muted: rgba(36, 21, 35, 0.78);
-  --backdrop: rgba(0, 0, 0, 0.22);
-  --drawer: #f3eae5;
-  --drawer-foreground-muted: #6a5d64;
-  --drawer-border: #dad0ce;
-  --drawer-shadow: rgba(0, 0, 0, 0.12);
-  --chevron: rgba(118, 108, 116, 0.42);
-  --ink-base: 36 21 35;
-
-  --wash-hover: rgb(var(--ink-base) / 0.05);
-  --wash-pressed: rgb(var(--ink-base) / 0.09);
-  --wash-selected: rgb(var(--ink-base) / 0.07);
-
-  --status-working: #0c64c1;
-  --status-working-soft: rgb(12 100 193 / 0.1);
-  --status-attention: var(--accent-ink);
-  --status-attention-soft: var(--accent-soft);
-  /* Amber and green are read as words on light screens, so they hold 4.5:1 there (#c27400 and
-     #009957 were 3.4:1). */
-  --status-approve: #9a5b00;
-  --status-approve-soft: rgb(154 91 0 / 0.12);
-  --status-success: #007a45;
-  --status-success-soft: rgb(0 122 69 / 0.12);
-  --status-danger: #c21d2e;
-  --status-danger-soft: rgb(194 29 46 / 0.1);
-  --status-info: #0c64c1;
-  --status-info-soft: rgb(12 100 193 / 0.1);
-
-  /* In light the page is paper and a control is white, so the hairline is most of the edge. */
-  --smooth-ring-color: rgb(var(--ink-base) / 0.1);
-}
-
-html[data-theme='light'] body {
-  background: var(--surface-0);
-}
-
-/* The other theme families. Each states the same roles as ember; a family is chosen with
-   `data-palette` on the root element and combines with `data-theme` for light. */
-html[data-palette='graphite'] {
-  --screen: #0a0a0a;
-  --sheet: rgba(10, 10, 10, 0.98);
-  --card: #111111;
-  --grouped-card: #1a1b1b;
-  --card-alt: #111111;
-  --thread-selected: #1a1b1b;
-  --row-hover: #141414;
-  --composer-surface: rgba(26, 27, 27, 0.9);
-  --composer-border: rgba(25, 25, 25, 0.8);
-  --foreground: #f5f5f5;
-  --foreground-secondary: #838383;
-  --foreground-muted: #838383;
-  --foreground-tertiary: #818181;
-  --border: #191919;
-  --focus: #346bf1;
-  --border-subtle: rgba(25, 25, 25, 0.7);
-  --separator: rgba(25, 25, 25, 0.55);
-  --subtle: #111111;
-  --subtle-strong: #111111;
-  --inline-skill-background: #141414;
-  --primary: #346bf1;
-  --primary-foreground: #ffffff;
-  --primary-text: #4b7cf3;
-  --input: #111111;
-  --input-border: #1e1e1e;
-  --placeholder: #838383;
-  --header: rgba(10, 10, 10, 0.97);
-  --header-border: #191919;
-  --glass-surface: rgba(17, 17, 17, 0.74);
-  --glass-fallback: rgba(26, 27, 27, 0.9);
-  --glass-tint: rgba(17, 17, 17, 0.22);
-  --md-code-bg: #111111;
-  --md-code-text: #f5f5f5;
-  --user-bubble: #161616;
-  --user-bubble-foreground: #f5f5f5;
-  --user-bubble-foreground-muted: rgba(245, 245, 245, 0.78);
-  --backdrop: rgba(0, 0, 0, 0.48);
-  --drawer: #000000;
-  --drawer-foreground-muted: #a3a3a3;
-  --drawer-border: #141414;
-  --drawer-shadow: rgba(0, 0, 0, 0.32);
-  --chevron: rgba(129, 129, 129, 0.42);
-  --ink-base: 245 245 245;
-}
-
-html[data-palette='graphite'][data-theme='light'] {
+  /* graphite, light */
   --screen: #fcfcfc;
   --sheet: rgba(252, 252, 252, 0.98);
   --card: #ffffff;
@@ -356,6 +237,126 @@ html[data-palette='graphite'][data-theme='light'] {
   --drawer-shadow: rgba(0, 0, 0, 0.12);
   --chevron: rgba(113, 113, 123, 0.42);
   --ink-base: 39 39 42;
+
+  --wash-hover: rgb(var(--ink-base) / 0.05);
+  --wash-pressed: rgb(var(--ink-base) / 0.09);
+  --wash-selected: rgb(var(--ink-base) / 0.07);
+
+  --status-working: #0c64c1;
+  --status-working-soft: rgb(12 100 193 / 0.1);
+  --status-attention: var(--accent-ink);
+  --status-attention-soft: var(--accent-soft);
+  /* Amber and green are read as words on light screens, so they hold 4.5:1 there (#c27400 and
+     #009957 were 3.4:1). */
+  --status-approve: #9a5b00;
+  --status-approve-soft: rgb(154 91 0 / 0.12);
+  --status-success: #007a45;
+  --status-success-soft: rgb(0 122 69 / 0.12);
+  --status-danger: #c21d2e;
+  --status-danger-soft: rgb(194 29 46 / 0.1);
+  --status-info: #0c64c1;
+  --status-info-soft: rgb(12 100 193 / 0.1);
+
+  /* In light the page is paper and a control is white, so the hairline is most of the edge. */
+  --smooth-ring-color: rgb(var(--ink-base) / 0.1);
+}
+
+html[data-theme='light'] body {
+  background: var(--surface-0);
+}
+
+/* The other theme families. Each states the same roles as ember; a family is chosen with
+   `data-palette` on the root element and combines with `data-theme` for light. */
+html[data-palette='ember'] {
+  --screen: #291e1a;
+  --sheet: rgba(41, 30, 26, 0.98);
+  --card: #291e1a;
+  --grouped-card: #291e1a;
+  --card-alt: #433835;
+  --thread-selected: #5d3f2d;
+  --row-hover: #644330;
+  --composer-surface: rgba(41, 30, 26, 0.9);
+  --composer-border: rgba(102, 76, 63, 0.46);
+  --foreground: #fffaff;
+  --foreground-secondary: #a8a2a2;
+  --foreground-muted: #aca19f;
+  --foreground-tertiary: #968e8f;
+  --border: #664c3f;
+  --focus: #f09a64;
+  --border-subtle: rgba(102, 76, 63, 0.7);
+  --separator: rgba(102, 76, 63, 0.55);
+  --subtle: #432e23;
+  --subtle-strong: #513728;
+  --inline-skill-background: #644330;
+  --primary: #f78a7a;
+  --primary-foreground: #241523;
+  --primary-text: #f78a7a;
+  --input: #291e1a;
+  --input-border: #7a5d4d;
+  --placeholder: #aba3a5;
+  --header: rgba(41, 30, 26, 0.97);
+  --header-border: #6e4934;
+  --glass-surface: rgba(79, 69, 67, 0.74);
+  --glass-fallback: rgba(41, 30, 26, 0.9);
+  --glass-tint: rgba(79, 69, 67, 0.22);
+  --md-code-bg: #362b27;
+  --md-code-text: #fffaff;
+  --user-bubble: #704b34;
+  --user-bubble-foreground: #fffaff;
+  --user-bubble-foreground-muted: rgba(255, 250, 255, 0.78);
+  --backdrop: rgba(0, 0, 0, 0.48);
+  --drawer: #39281f;
+  --drawer-foreground-muted: #aca2a1;
+  --drawer-border: #7e716e;
+  --drawer-shadow: rgba(0, 0, 0, 0.32);
+  --chevron: rgba(150, 142, 143, 0.42);
+  --ink-base: 255 250 255;
+}
+
+html[data-palette='ember'][data-theme='light'] {
+  --screen: #f9f7f5;
+  --sheet: rgba(249, 247, 245, 0.98);
+  --card: #f9f7f5;
+  --grouped-card: #f9f7f5;
+  --card-alt: #f1efee;
+  --thread-selected: #e5ccc0;
+  --row-hover: #eee0d9;
+  --composer-surface: rgba(249, 247, 245, 0.94);
+  --composer-border: rgba(221, 210, 206, 0.54);
+  --foreground: #241523;
+  --foreground-secondary: #746a72;
+  --foreground-muted: #74686f;
+  --foreground-tertiary: #766c74;
+  --border: #ddd2ce;
+  --focus: #ae552a;
+  --border-subtle: rgba(221, 210, 206, 0.7);
+  --separator: rgba(221, 210, 206, 0.55);
+  --subtle: #f4ede9;
+  --subtle-strong: #f3eae5;
+  --inline-skill-background: #eee0d9;
+  --primary: #b23535;
+  --primary-foreground: #fffaff;
+  --primary-text: #b23535;
+  --input: #f9f7f5;
+  --input-border: #d4c6c1;
+  --placeholder: #736971;
+  --header: rgba(249, 247, 245, 0.97);
+  --header-border: #eee0d9;
+  --glass-surface: rgba(236, 233, 233, 0.74);
+  --glass-fallback: rgba(249, 247, 245, 0.94);
+  --glass-tint: rgba(236, 233, 233, 0.22);
+  --md-code-bg: #f3f1f0;
+  --md-code-text: #241523;
+  --user-bubble: #ebdad1;
+  --user-bubble-foreground: #241523;
+  --user-bubble-foreground-muted: rgba(36, 21, 35, 0.78);
+  --backdrop: rgba(0, 0, 0, 0.22);
+  --drawer: #f3eae5;
+  --drawer-foreground-muted: #6a5d64;
+  --drawer-border: #dad0ce;
+  --drawer-shadow: rgba(0, 0, 0, 0.12);
+  --chevron: rgba(118, 108, 116, 0.42);
+  --ink-base: 36 21 35;
 }
 
 html[data-palette='grove'] {

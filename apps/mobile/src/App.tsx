@@ -27,7 +27,6 @@ import { Folder, Library } from './screen/Library'
 import { Project, Projects } from './screen/Projects'
 import { Routines } from './screen/Routines'
 import { Settings } from './screen/Settings'
-import { Skills } from './screen/Skills'
 import { Memory } from './screen/settings/Memory'
 import { People } from './screen/settings/People'
 import { ThemeProvider, useTheme } from './theme'
@@ -232,7 +231,6 @@ function Shell() {
         <Stack.Screen name="Folder" component={Folder} />
         <Stack.Screen name="Projects" component={Projects} />
         <Stack.Screen name="Project" component={Project} />
-        <Stack.Screen name="Skills" component={Skills} />
         <Stack.Screen name="Settings" component={Settings} />
         <Stack.Screen name="People" component={People} />
         <Stack.Screen name="Memory" component={Memory} />

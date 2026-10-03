@@ -159,7 +159,6 @@ function makeLiveData(session: SignedIn) {
     connections: one((client) => client.WatchConnections()),
     memory: one((client) => client.WatchMemory()),
     /** What Vivid knows how to do: the procedures it ships with and the ones it was taught. */
-    skills: one((client) => client.WatchSkills()),
     /** Where the Person's Computer stands: off, starting, running and who has the keyboard. */
     computer: one((client) => client.WatchComputer()),
     suggestions: one((client) => client.WatchSuggestions()),

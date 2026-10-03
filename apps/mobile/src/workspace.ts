@@ -18,7 +18,8 @@ import { createContext, useContext } from 'react'
  *   the root, so it is also the first screen: with no Threads yet it is just Vivid and a composer.
  * - `Chat`: one Thread. Only its id travels; its title and everything else are read live.
  * - `Computer`: Vivid's computer, reached from a Thread's bar: where it stands and its controls.
- * - `Routines`, `Projects`, `Library`, `Skills`: the places beside Threads.
+ * - `Routines`, `Library`: the places beside Threads, in the drawer. `Projects` is reached from
+ *   the quiet group under the Threads.
  * - `Folder`, `Project`: one level down inside the Library or a Project. Each level is its own
  *   screen, so going deeper pushes and the back swipe climbs out one level at a time. A folder
  *   carries its name because only the listing it was opened from knows it.
@@ -34,7 +35,6 @@ export type Routes = {
   Folder: { shelf: LibraryShelf; id: LibraryFolderId; name: string }
   Projects: undefined
   Project: { id: ProjectId }
-  Skills: undefined
   Settings: undefined
   People: undefined
   Memory: undefined

@@ -30,7 +30,7 @@ const decodeTheme = Schema.decodeUnknownOption(Theme)
  * light, dark or system (`Theme`) and have nowhere for a family yet, so it does not follow them
  * to another device.
  */
-export const FAMILIES = ['ember', 'graphite', 'grove', 'ocean'] as const satisfies ReadonlyArray<
+export const FAMILIES = ['graphite', 'ember', 'grove', 'ocean'] as const satisfies ReadonlyArray<
   keyof typeof nativeThemes
 >
 export const Family = Schema.Literals(FAMILIES)
@@ -38,14 +38,17 @@ export type Family = typeof Family.Type
 
 /** Each family's name in Settings. A family added to the token file fails to compile here. */
 export const FAMILY_NAME = {
-  ember: 'Ember',
   graphite: 'Graphite',
+  ember: 'Ember',
   grove: 'Grove',
   ocean: 'Ocean',
 } as const satisfies Record<keyof typeof nativeThemes, string>
 
-/** Ember: Vivid's canvas is warm, so a device that has chosen nothing opens in it. */
-const DEFAULT_FAMILY: Family = 'ember'
+/**
+ * Graphite: a true dark and a clean light, following the system. The tinted families are a
+ * choice a Person makes, so a device that has chosen nothing opens neutral.
+ */
+const DEFAULT_FAMILY: Family = 'graphite'
 const FAMILY_KEY = 'vivid-mobile-family'
 const decodeFamily = Schema.decodeUnknownOption(Family)
 
