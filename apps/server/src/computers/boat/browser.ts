@@ -18,6 +18,18 @@ export const Windows = Schema.Struct({
       window_id: Schema.Int,
       app_name: Schema.String,
       title: Schema.String,
+      bounds: Schema.Struct({
+        x: Schema.Int,
+        y: Schema.Int,
+        width: Schema.Int,
+        height: Schema.Int,
+      }),
+      height: Schema.Int,
+      width: Schema.Int,
+      x: Schema.Int,
+      y: Schema.Int,
+      is_on_screen: Schema.Boolean,
+      z_index: Schema.Int,
     }),
   ),
 })
@@ -69,7 +81,11 @@ const chrome = Effect.fn('Machine.boat.browser.chrome')(function* (
   let list = yield* native.call('list_windows', {}, Windows)
   let matches = list.windows.filter((window) => /chrome|chromium/i.test(window.app_name))
   if (matches.length === 0 && mayLaunch) {
-    yield* native.call('launch_app', { name: 'google-chrome-stable' }, Schema.Json)
+    yield* native.call(
+      'launch_app',
+      { name: 'google-chrome-stable', additional_arguments: ['--force-renderer-accessibility'] },
+      Schema.Json,
+    )
     // Launch is dispatched once; only discovery is retried while the native window appears.
     for (let attempt = 0; attempt < 10; attempt++) {
       list = yield* native.call('list_windows', {}, Windows)

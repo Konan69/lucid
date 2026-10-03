@@ -25,6 +25,7 @@ import { argumentsByTool } from './boat/fixture.ts'
 import { ComputerToolRefused } from './boat/refusal.ts'
 import { driver } from './boat/driver.ts'
 import { transport } from './boat/transport.ts'
+import { guestCommand } from './boat/guest.ts'
 
 // Deliberate PNG fixture, not a claim that the guest was exercised.
 const png =
@@ -176,7 +177,36 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
       return commandReply('{"source":"x11","x":0,"y":0}')
     case 'list_windows':
       return commandReply(
-        '{"windows":[{"pid":7,"window_id":9,"app_name":"Google Chrome","title":"Example"}]}',
+        JSON.stringify({
+          windows: [
+            {
+              pid: 7,
+              window_id: 9,
+              app_name: 'Google Chrome',
+              title: 'Example',
+              bounds: { x: 0, y: 0, width: 945, height: 920 },
+              height: 920,
+              width: 945,
+              x: 0,
+              y: 0,
+              is_on_screen: true,
+              z_index: 0,
+            },
+            {
+              pid: 11,
+              window_id: 12,
+              app_name: 'AsciiDesktop',
+              title: 'ascii panel',
+              bounds: { x: 0, y: 0, width: 1920, height: 40 },
+              height: 40,
+              width: 1920,
+              x: 0,
+              y: 0,
+              is_on_screen: true,
+              z_index: 1,
+            },
+          ],
+        }),
       )
     case 'get_browser_state': {
       const address = yield* Ref.get(evidence.address)
@@ -283,6 +313,8 @@ const commands = Effect.fn('BoatTest.commands')(function* (evidence: EvidenceSer
       })
     return commandReply('')
   }
+  if (input.command === guestCommand(11))
+    return commandReply('{"socket":"/run/user/1000/vivid-driver.sock"}')
   if (input.command === 'echo receipt') return commandReply('receipt\n')
   return yield* native(evidence, input.command)
 })
@@ -429,7 +461,12 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         const machine = yield* Machine
         const evidence = yield* Evidence
         yield* machine.ensure(key)
-        const guest = driver(yield* transport(), Protocol.ProviderId.make(id), key)
+        const guest = driver(
+          yield* transport(),
+          Protocol.ProviderId.make(id),
+          key,
+          '/run/ascii-cua/driver.sock',
+        )
         const invalid = yield* guest
           .call('get_desktop_state', { max_image_dimension: 0 }, Schema.Json)
           .pipe(Effect.flip)

@@ -10,6 +10,7 @@ import {
 import { bindings } from './boat/bindings.ts'
 import { transport } from './boat/transport.ts'
 import { driver } from './boat/driver.ts'
+import { browserDriver } from './boat/guest.ts'
 import { desktopStep, look } from './boat/desktop.ts'
 import { browse } from './boat/browser.ts'
 import { lifecycle } from './boat/lifecycle.ts'
@@ -72,7 +73,7 @@ export const boatMachineLayer = Layer.effect(
       desktop: Effect.fn('Machine.boat.desktop')(
         function* (input) {
           const identity = yield* running(input.key)
-          const native = driver(api, identity.id, input.key)
+          const native = driver(api, identity.id, input.key, '/run/ascii-cua/driver.sock')
           yield* desktopStep(native, input.action)
           return yield* look(native, api, { id: identity.id, key: input.key })
         },
@@ -82,7 +83,7 @@ export const boatMachineLayer = Layer.effect(
         function* (input) {
           const identity = yield* running(input.key)
           const result = yield* browse(
-            driver(api, identity.id, input.key),
+            yield* browserDriver(api, identity.id, input.key),
             input.action,
             Option.fromUndefinedOr(tabs.get(input.key)),
           )
