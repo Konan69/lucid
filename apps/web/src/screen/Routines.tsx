@@ -5,6 +5,7 @@ import { Data, Option, Redacted, Result } from 'effect'
 import {
   AlertTriangle,
   ChevronRight,
+  CalendarClock,
   Clock3,
   Link2,
   Pause,
@@ -252,6 +253,7 @@ const TRIGGER_MARK = {
   Schedule: <Clock3 className="size-4" />,
   Webhook: <Webhook className="size-4" />,
   Integration: <Plug className="size-4" />,
+  Once: <CalendarClock className="size-4" />,
 } satisfies Record<RoutineTrigger['_tag'], ReactNode>
 
 /** The mark a row leads with: paused, or how the Routine starts. */

@@ -13,7 +13,7 @@ import { APPROVAL_EFFECT_WORDS, drawn, readShown } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { View } from 'react-native'
-import { Check, ShieldQuestion } from 'lucide-react-native'
+import { ShieldQuestion } from 'lucide-react-native'
 import type { Say } from '../../data/delivery'
 import { commit, confirm, warn } from '../../data/haptics'
 import { useLiveData } from '../../data/live'
@@ -104,7 +104,6 @@ function Drawn({
     Connection: ({ request, authorization }) => (
       <IntegrationCard request={request} authorization={authorization} onContinue={onContinue} />
     ),
-    Tracked: ({ title, waitingOn }) => <TrackedCard title={title} waitingOn={waitingOn} />,
   })
 }
 
@@ -398,52 +397,6 @@ function Answering({ request }: { request: InputRequest }) {
         </View>
       )}
       {refused && <Notice message="That answer did not go through. It may already be answered." />}
-    </View>
-  )
-}
-
-/** A Task Vivid took on, shown where it was agreed. */
-function TrackedCard({ title, waitingOn }: { title: string; waitingOn: Option.Option<string> }) {
-  const { colors: c } = useTheme()
-  return (
-    <View
-      style={{
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: 12,
-        padding: 12,
-        borderRadius: radius.card,
-        borderWidth: HAIRLINE,
-        borderColor: c['line-2'],
-        backgroundColor: c['surface-2'],
-      }}
-    >
-      <View
-        style={{
-          width: 28,
-          height: 28,
-          alignItems: 'center',
-          justifyContent: 'center',
-          // The card's radius less its padding.
-          borderRadius: radius.card - 12,
-          backgroundColor: c['accent-soft'],
-        }}
-      >
-        <Check size={16} strokeWidth={2} color={c['accent-ink']} />
-      </View>
-      <View style={{ flex: 1, minWidth: 0, gap: 1 }}>
-        <Label size="caption" tone="ink-3">
-          Vivid is tracking this
-        </Label>
-        <Label numberOfLines={2} size="footnote">
-          {title}
-        </Label>
-        {Option.isSome(waitingOn) && (
-          <Label size="caption" tone="ink-3">
-            Waiting on {waitingOn.value}
-          </Label>
-        )}
-      </View>
     </View>
   )
 }

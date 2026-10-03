@@ -4,7 +4,6 @@ import {
   Workspace,
   type LibraryShelf,
   type MeResponse,
-  type Task,
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
@@ -40,10 +39,6 @@ export const live = {
     (client, id) => client.WatchThread({ id }),
   ),
   inbox: one((client) => client.WatchInbox()),
-  tasks: family(
-    (status: Task['status'] | 'all') => status,
-    (client, status) => client.WatchTasks(status === 'all' ? {} : { status }),
-  ),
   notifications: one((client) => client.WatchNotifications()),
   routines: one((client) => client.WatchRoutines()),
   projects: one((client) => client.WatchProjects()),

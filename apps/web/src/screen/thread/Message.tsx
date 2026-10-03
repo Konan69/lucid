@@ -42,15 +42,6 @@ const Metadata = Schema.Struct({
 })
 const decodeMetadata = Schema.decodeUnknownOption(Metadata)
 
-const Tracked = Schema.Struct({
-  task: Schema.Struct({
-    title: Schema.String,
-    assignee: Schema.optionalKey(Schema.String),
-    dueAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  }),
-})
-const decodeTracked = Schema.decodeUnknownOption(Tracked)
-
 /** What the Thread carries beside its messages, which the cards and attributions are drawn from. */
 export interface ThreadContext {
   readonly me: PersonId
@@ -386,24 +377,6 @@ const stateOf = (tool: ToolPart): StepState => {
   return known === undefined ? 'running' : known
 }
 
-/** A Task or follow-up Vivid took on, shown where it was agreed. */
-function TrackedCard({ title, assignee }: { title: string; assignee?: string }) {
-  return (
-    <div className="mt-3 flex items-start gap-3 rounded-panel bg-surface-2 px-3.5 py-3 smooth-shadow-ring-xs">
-      <span className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink">
-        <Check className="size-4" strokeWidth={2} />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-meta font-meta text-ink-3">Vivid is tracking this</span>
-        <span className="mt-0.5 block truncate text-label font-title text-ink">{title}</span>
-        {assignee !== undefined && assignee.length > 0 && assignee !== 'you' && (
-          <span className="mt-0.5 block text-meta font-meta text-ink-3">Waiting on {assignee}</span>
-        )}
-      </span>
-    </div>
-  )
-}
-
 const readShown = Schema.decodeUnknownOption(ShowRequest)
 
 /** A step that draws something is not a step to list: the thing drawn is the record of it. */
@@ -431,16 +404,6 @@ function ToolCards({
       )
     }
     if (tool.state !== 'output-available') return null
-    const tracked = tool.toolName === 'create_task' ? decodeTracked(tool.output) : Option.none()
-    if (Option.isSome(tracked)) {
-      return (
-        <TrackedCard
-          key={tool.toolCallId}
-          title={tracked.value.task.title}
-          assignee={tracked.value.task.assignee}
-        />
-      )
-    }
     const card = cardFor(tool.output)
     if (Option.isNone(card)) return null
     const wanted = card.value

@@ -252,7 +252,7 @@ export const stepsSummary = (steps: ReadonlyArray<Step>, working: boolean): stri
  *
  * An Approval and an Input request name a record the Thread's live detail carries; the card is
  * drawn from that record, so it keeps telling the truth after it is settled. A Connection request
- * and a tracked Task carry what they show. A Connection request for an Integration Vivid has
+ * carries what it shows. A Connection request for an Integration Vivid has
  * already begun adding also carries what finishing it takes: a sign-in, or a key.
  */
 export type Card = Data.TaggedEnum<{
@@ -262,7 +262,6 @@ export type Card = Data.TaggedEnum<{
     readonly request: ConnectionRequestMessage
     readonly authorization: Option.Option<Authorization>
   }
-  Tracked: { readonly title: string; readonly waitingOn: Option.Option<string> }
 }>
 export const Card = Data.taggedEnum<Card>()
 
@@ -276,34 +275,12 @@ const decodeConnection = Schema.decodeUnknownOption(ConnectionRequestMessage)
 // The same message with one more field: what comes next for an Integration already begun.
 const decodeAuthorization = Schema.decodeUnknownOption(ConnectionAuthorizationMessage)
 
-/**
- * What `create_task` answers with. The runtime writes the assignee as a name, and as `you` when
- * the Task is the asker's own (`packages/agent/runtime/src/tools/tasks.ts`).
- */
-const decodeTracked = Schema.decodeUnknownOption(
-  Schema.Struct({
-    task: Schema.Struct({ title: Schema.String, assignee: Schema.optionalKey(Schema.String) }),
-  }),
-)
-
-const trackedCard = (tool: ToolPart): Option.Option<Card> =>
-  Option.map(tool.toolName === 'create_task' ? decodeTracked(tool.output) : Option.none(), (out) =>
-    Card.Tracked({
-      title: out.task.title,
-      waitingOn: Option.filter(
-        Option.fromUndefinedOr(out.task.assignee),
-        (assignee) => assignee !== '' && assignee !== 'you',
-      ),
-    }),
-  )
-
 /** Reads a finished tool call for a card. Results that are not cards are simply not cards. */
 export function cardOf(tool: ToolPart): Option.Option<Card> {
   if (tool.state !== 'output-available') return Option.none()
-  return trackedCard(tool).pipe(
-    Option.orElse(() =>
-      Option.map(decodeApproval(tool.output), (out) => Card.Approval({ id: out.approvalId })),
-    ),
+  return Option.map(decodeApproval(tool.output), (out) =>
+    Card.Approval({ id: out.approvalId }),
+  ).pipe(
     Option.orElse(() =>
       Option.map(decodeInput(tool.output), (out) => Card.Input({ id: out.requestId })),
     ),

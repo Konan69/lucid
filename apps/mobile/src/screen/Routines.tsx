@@ -9,7 +9,16 @@ import {
 import { Data, Option, Redacted, Result } from 'effect'
 import { useState } from 'react'
 import { ScrollView, Share as SystemShare, View } from 'react-native'
-import { Clock3, Pause, Play, Plus, Webhook, type LucideIcon, Plug } from 'lucide-react-native'
+import {
+  CalendarClock,
+  Clock3,
+  Pause,
+  Play,
+  Plus,
+  Webhook,
+  type LucideIcon,
+  Plug,
+} from 'lucide-react-native'
 import { routines } from '@vivid/state'
 import { commit, warn } from '../data/haptics'
 import { LiveState, refusalOf, useLive, useLiveData, useLiveValue } from '../data/live'
@@ -157,6 +166,7 @@ const TRIGGER_MARK = {
   Schedule: Clock3,
   Webhook,
   Integration: Plug,
+  Once: CalendarClock,
 } as const satisfies Record<RoutineTrigger['_tag'], LucideIcon>
 
 /** The small tile a Routine's row leads with: paused, or how it starts. */

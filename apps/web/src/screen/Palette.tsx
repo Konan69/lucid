@@ -7,7 +7,6 @@ import {
   FolderKanban,
   Library as LibraryIcon,
   Link2,
-  ListTodo,
   MessageSquare,
   PanelLeft,
   Repeat2,
@@ -36,14 +35,6 @@ const describe = (result: Found) =>
       detail: thread.preview,
       icon: <MessageSquare className="size-4" />,
       go: () => router.go(Route.Thread({ id: thread.id })),
-    }),
-    Task: ({ task }) => ({
-      key: `task:${task.id}`,
-      title: task.title,
-      detail: 'Task',
-      icon: <ListTodo className="size-4" />,
-      // A Task lives in the Thread it reports to; that is where it is read and changed.
-      go: () => router.go(Route.Thread({ id: task.threadId })),
     }),
     LibraryItem: ({ item }) => ({
       key: `item:${item.id}`,

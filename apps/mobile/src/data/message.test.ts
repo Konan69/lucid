@@ -211,18 +211,18 @@ describe('what Vivid did', () => {
   }
 
   it('names each step in the product’s words and says how it stands', () => {
-    const steps = stepsOf([running, tool('create_task', {})])
+    const steps = stepsOf([running, tool('remember', {})])
     expect(steps.map((step) => [step.label, step.standing])).toEqual([
       ['Searching the Library', 'running'],
-      ['Started tracking a task', 'done'],
+      ['Remembered', 'done'],
     ])
   })
 
   it('collapses to one line: what it is doing while it works, what it did once it has', () => {
-    const steps = stepsOf([tool('create_task', {}), running])
+    const steps = stepsOf([tool('remember', {}), running])
     expect(stepsSummary(steps, true)).toBe('Searching the Library…')
     expect(Option.map(currentStepOf(steps, true), (step) => step.id)).toEqual(Option.some('call-1'))
-    expect(stepsSummary(stepsOf([tool('create_task', {})]), false)).toBe('Started tracking a task')
+    expect(stepsSummary(stepsOf([tool('remember', {})]), false)).toBe('Remembered')
   })
 
   it('does not call a step in progress once the reply has ended', () => {
@@ -319,17 +319,6 @@ describe('the card a tool result asks for', () => {
     expect(cardOf(tool('add_integration', { ...request, authorization }))).toEqual(
       Option.some(Card.Connection({ request, authorization: Option.some(authorization) })),
     )
-  })
-
-  it('is a tracked Task, waiting on someone only when it is not the asker’s own', () => {
-    expect(
-      cardOf(tool('create_task', { task: { title: 'Sign the lease', assignee: 'Dami' } })),
-    ).toEqual(
-      Option.some(Card.Tracked({ title: 'Sign the lease', waitingOn: Option.some('Dami') })),
-    )
-    expect(
-      cardOf(tool('create_task', { task: { title: 'Sign the lease', assignee: 'you' } })),
-    ).toEqual(Option.some(Card.Tracked({ title: 'Sign the lease', waitingOn: Option.none() })))
   })
 
   it('is nothing for an ordinary result or a call that has not finished', () => {
