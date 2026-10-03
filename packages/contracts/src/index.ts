@@ -28,6 +28,7 @@ export {
   EmptyResponse,
   Forbidden,
   InvalidRequest,
+  MailboxUnconfirmed,
   NotFound,
   RuntimeErrorResponse,
   RuntimeUnavailable,

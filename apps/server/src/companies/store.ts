@@ -15,6 +15,7 @@ import {
   InvitationId,
   InvitationPreview,
   InvitationStatus,
+  MailboxUnconfirmed,
   Member,
   MembershipId,
   NotFound,
@@ -102,11 +103,15 @@ export interface CompanyStoreService {
     id: InvitationId,
   ) => Effect.Effect<void, CompanyStoreError>
   readonly preview: (id: InvitationId) => Effect.Effect<InvitationPreview, CompanyStoreError>
-  /** Turns an invitation into a Membership for the Person it was sent to. */
+  /**
+   * Turns an invitation into a Membership for the Person it was sent to: the one whose stored
+   * address is the invited one and is verified. The right address not yet verified is
+   * `MailboxUnconfirmed`; any other address, or an invitation that is not open, is `Forbidden`.
+   */
   readonly accept: (
-    person: { readonly id: PersonId; readonly email: string },
+    personId: PersonId,
     id: InvitationId,
-  ) => Effect.Effect<MemberChange, CompanyStoreError>
+  ) => Effect.Effect<MemberChange, CompanyStoreError | MailboxUnconfirmed>
   readonly changeRole: (
     companyId: CompanyId,
     membershipId: MembershipId,
@@ -445,18 +450,54 @@ const memberById = Effect.fn('CompanyStore.memberById')(function* (
   return yield* toMember(row.membership, row.person)
 })
 
+/**
+ * The address a Person holds and whether they have shown the mailbox is theirs, as their row says
+ * now. Read here and never taken from the caller: Better Auth 1.7.5 `api/routes/sign-up.mjs`
+ * creates a password account with `emailVerified: false` and signs it in at once, so a session
+ * proves someone typed an address, not that they receive its mail.
+ */
+const mailboxOf = Effect.fn('CompanyStore.mailboxOf')(function* (
+  database: DatabaseService,
+  personId: PersonId,
+) {
+  const rows = yield* database.run(
+    database
+      .select({ email: personTable.email, verified: personTable.emailVerified })
+      .from(personTable)
+      .where(eq(personTable.id, personId))
+      .limit(1),
+  )
+  const row = rows[0]
+  return row === undefined ? yield* Effect.fail(new NotFound({ message: 'Person not found' })) : row
+})
+
 const makeAccept = (database: DatabaseService) =>
-  Effect.fn('CompanyStore.accept')(function* (
-    person: { readonly id: PersonId; readonly email: string },
-    id: InvitationId,
-  ) {
+  Effect.fn('CompanyStore.accept')(function* (personId: PersonId, id: InvitationId) {
     const { invitation } = yield* invitationById(database, id)
+    const mailbox = yield* mailboxOf(database, personId)
     const now = yield* Clock.currentTimeMillis
     // An invitation is for the address it was sent to. Someone else holding the link learns only
     // what the preview already told them.
-    if (standing(invitation, now) !== 'pending' || invitation.email !== normalized(person.email)) {
+    if (standing(invitation, now) !== 'pending' || invitation.email !== normalized(mailbox.email)) {
       return yield* Effect.fail(
         new Forbidden({ message: 'This invitation is not open for your account' }),
+      )
+    }
+    // The link alone is not the mailbox. Whoever holds it could otherwise register the invited
+    // address before its owner does and take the role. A Google sign-in stores the address as
+    // verified (`oauth2/link-account.mjs`), so that path is open; a password account stays
+    // refused until its address is verified. Better Auth's own organization plugin refuses the
+    // same case with FORBIDDEN (`plugins/organization/routes/crud-invites.mjs`,
+    // `requireEmailVerificationOnInvitation`). Vivid gives it its own tag: this check runs only
+    // after the address matched, so the caller learns nothing the preview did not show, and a
+    // client can say truthfully why joining was refused instead of blaming the address.
+    if (!mailbox.verified) {
+      return yield* Effect.fail(
+        new MailboxUnconfirmed({
+          personId,
+          invitationId: id,
+          message: 'This email address has not been confirmed as yours',
+        }),
       )
     }
     const membershipId = crypto.randomUUID()
@@ -477,7 +518,7 @@ const makeAccept = (database: DatabaseService) =>
           .values({
             id: membershipId,
             companyId: invitation.companyId,
-            userId: person.id,
+            userId: personId,
             role: invitation.role,
           })
           .onConflictDoNothing()
