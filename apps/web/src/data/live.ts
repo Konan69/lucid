@@ -79,16 +79,6 @@ const catalogFor = (query: Atom.Atom<string>) =>
 /** The part of the catalog that matches what is typed in Settings. */
 export const services = catalogFor(serviceSearch)
 
-/** What the Person has typed under "What do you use every day?". Empty asks for the most used. */
-export const everydaySearch = Atom.make('')
-
-/**
- * The catalog for "What do you use every day?", on the first run and in Home's getting-started
- * list. It is its own question, so what someone last typed into the Settings search never
- * decides what a new Person is offered, and the other way round.
- */
-export const everydayServices = catalogFor(everydaySearch)
-
 /** What the Person has typed into "find anything". */
 export const findQuery = Atom.make('')
 

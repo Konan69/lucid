@@ -9,6 +9,8 @@ const SIDE = {
   below: 'top-full mt-1 left-0 origin-top-left',
   'below-end': 'top-full mt-1 right-0 origin-top-right',
   above: 'bottom-full mb-1 left-0 origin-bottom-left',
+  // Over a control it is as wide as: it grows out of the whole control, not out of a corner.
+  over: 'bottom-full mb-2 inset-x-0 origin-bottom',
 } satisfies Record<string, string>
 
 /* A menu is opened many times a day, so it arrives fast (120 ms) and from nearly full size: a
