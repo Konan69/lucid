@@ -1,5 +1,5 @@
 import { Theme } from '@vivid/contracts'
-import { nativeTokens } from '@vivid/tokens/native'
+import { nativeThemes } from '@vivid/tokens/native'
 import { Effect, Option, Schema } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import * as Atom from 'effect/unstable/reactivity/Atom'
@@ -21,6 +21,33 @@ import { keep, recall } from './storage'
 
 const KEY = 'vivid-mobile-theme'
 const decodeTheme = Schema.decodeUnknownOption(Theme)
+
+/**
+ * The theme families a Person can choose between, in the order Settings shows them. The names
+ * and every value come from `@vivid/tokens`; a family added there appears here by itself.
+ *
+ * The family is this device's own choice, kept in its store. The Person's server Settings carry
+ * light, dark or system (`Theme`) and have nowhere for a family yet, so it does not follow them
+ * to another device.
+ */
+export const FAMILIES = ['ember', 'graphite', 'grove', 'ocean'] as const satisfies ReadonlyArray<
+  keyof typeof nativeThemes
+>
+export const Family = Schema.Literals(FAMILIES)
+export type Family = typeof Family.Type
+
+/** Each family's name in Settings. A family added to the token file fails to compile here. */
+export const FAMILY_NAME = {
+  ember: 'Ember',
+  graphite: 'Graphite',
+  grove: 'Grove',
+  ocean: 'Ocean',
+} as const satisfies Record<keyof typeof nativeThemes, string>
+
+/** Ember: Vivid's canvas is warm, so a device that has chosen nothing opens in it. */
+const DEFAULT_FAMILY: Family = 'ember'
+const FAMILY_KEY = 'vivid-mobile-family'
+const decodeFamily = Schema.decodeUnknownOption(Family)
 
 /** What the system says it is showing; it can decline to say, which is read as light. */
 type SystemScheme = ReturnType<typeof Appearance.getColorScheme>
@@ -77,16 +104,48 @@ export const followThemeAtom = Atom.keepAlive(
   ),
 )
 
+/** The family this device last chose, when it kept one. */
+const rememberedFamily = Effect.fn('Appearance.rememberedFamily')(function* () {
+  const kept = yield* recall(FAMILY_KEY).pipe(
+    Effect.catchTag('StorageUnavailable', () => Effect.succeed(Option.none<string>())),
+  )
+  return Option.getOrElse(Option.flatMap(kept, decodeFamily), () => DEFAULT_FAMILY)
+})
+
+const recalledFamily = Atom.keepAlive(Atom.make(rememberedFamily()))
+const chosenFamily = Atom.keepAlive(Atom.make(Option.none<Family>()))
+
+/** The family in force: the one chosen in this run, else the remembered one once it is read. */
+export const familyAtom = Atom.keepAlive(
+  Atom.make((get): Family =>
+    Option.getOrElse(get(chosenFamily), () =>
+      AsyncResult.getOrElse(get(recalledFamily), () => DEFAULT_FAMILY),
+    ),
+  ),
+)
+
+/** Adopts a family from Settings: in force at once, then remembered on this device. */
+export const followFamilyAtom = Atom.keepAlive(
+  Atom.fn(
+    Effect.fn('Appearance.followFamily')(function* (family: Family) {
+      yield* Effect.sync(() => door.set(chosenFamily, Option.some(family)))
+      yield* keep(FAMILY_KEY, family)
+    }),
+  ),
+)
+
 /**
  * Paints the window behind the app in the palette's own surface, so a keyboard sliding away or a
  * screen being pushed never flashes the wrong color at the edges.
  */
 const paintWindow = () => {
   const palette = paletteOf(door.get(themeAtom), Appearance.getColorScheme())
-  void SystemUI.setBackgroundColorAsync(nativeTokens[palette]['surface-0'])
+  void SystemUI.setBackgroundColorAsync(nativeThemes[door.get(familyAtom)][palette].screen)
 }
 
-// The two things that change the palette: the system's own switch (sunset, Control Centre), and
-// the Person's choice. Both are subscriptions for the life of the app.
+// The three things that change the palette: the system's own switch (sunset, Control Centre), the
+// Person's choice of light or dark, and their choice of family. All are subscriptions for the
+// life of the app.
 Appearance.addChangeListener(paintWindow)
 door.subscribe(themeAtom, paintWindow, { immediate: true })
+door.subscribe(familyAtom, paintWindow)

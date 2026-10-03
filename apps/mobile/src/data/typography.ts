@@ -1,22 +1,28 @@
 import { nativeMetrics as m } from '@vivid/tokens/native'
 
-// Vivid web's semantic type scale, with native line-height values.
+/**
+ * The phone's type scale: 11, 12, 13, 14, 16, 18, 21, 26, 30, each with its own line height.
+ *
+ * Ported from T3 Code mobile `global.css` (`--text-3xs` to `--text-3xl` and their line heights).
+ * The steps keep Vivid's names, which say what the text is for and not how large it is.
+ */
 export const MOBILE_TYPOGRAPHY = {
-  micro: { fontSize: m['type-meta'], lineHeight: 14 },
+  micro: { fontSize: 11, lineHeight: 14 },
   caption: { fontSize: 12, lineHeight: 16 },
-  label: { fontSize: m['type-label'], lineHeight: 18 },
-  footnote: { fontWeight: m['weight-title'], fontSize: m['type-title'], lineHeight: 20 },
-  body: { fontSize: m['type-body'], lineHeight: 23 },
-  /** Long-form text read at arm's length: a conversation's words and what a Person types. */
-  reading: { fontSize: 16, lineHeight: 24 },
-  headline: { fontWeight: m['weight-title'], fontSize: m['type-dialog'], lineHeight: 23 },
-  title: { fontWeight: m['weight-title'], fontSize: m['type-section'], lineHeight: 26 },
-  largeTitle: { fontWeight: m['weight-title'], fontSize: m['type-page'], lineHeight: 30 },
-  display: { fontWeight: m['weight-title'], fontSize: m['type-hero'], lineHeight: 35 },
+  label: { fontSize: 13, lineHeight: 17 },
+  footnote: { fontWeight: m['weight-title'], fontSize: 14, lineHeight: 19 },
+  body: { fontSize: 16, lineHeight: 23 },
   /**
-   * The one line a screen opens with: the greeting. The web sets it in its display face at 40;
-   * a phone sets it in the system's own face at the size the platform uses for a large title,
-   * heavier and drawn a little closer together, the way large type wants to be.
+   * Long-form text read at arm's length: a conversation's words and what a Person types. The
+   * same size as `body` on a 24-point line, which is the line the composer's height is built on.
    */
-  opening: { fontWeight: m['weight-strong'], fontSize: 34, lineHeight: 40, letterSpacing: -0.6 },
+  reading: { fontSize: 16, lineHeight: 24 },
+  headline: { fontWeight: m['weight-strong'], fontSize: 18, lineHeight: 23 },
+  /** A screen's own name in its bar: the reference's heavy 18 (`GLASS_HEADER_OPTIONS`). */
+  heading: { fontWeight: '800', fontSize: 18, lineHeight: 23 },
+  title: { fontWeight: m['weight-strong'], fontSize: 21, lineHeight: 28 },
+  largeTitle: { fontWeight: '700', fontSize: 26, lineHeight: 32, letterSpacing: -0.3 },
+  display: { fontWeight: '700', fontSize: 30, lineHeight: 36, letterSpacing: -0.5 },
+  /** The one line a screen opens with: the greeting. The top of the scale, heavy and drawn close. */
+  opening: { fontWeight: '800', fontSize: 30, lineHeight: 36, letterSpacing: -0.6 },
 } as const

@@ -34,7 +34,7 @@ export function Header({
   const insets = useSafeAreaInsets()
   const { colors: c } = useTheme()
   return (
-    <View style={{ paddingTop: insets.top, backgroundColor: c['surface-0'] }}>
+    <View style={{ paddingTop: insets.top, backgroundColor: c.screen }}>
       <View
         style={{
           minHeight: m['topbar-h'] + 4,
@@ -63,7 +63,7 @@ export function Header({
             marginLeft: onBack === undefined || leading !== undefined ? 0 : 2,
           }}
         >
-          <Label accessibilityRole="header" numberOfLines={1} size="headline">
+          <Label accessibilityRole="header" numberOfLines={1} size="heading">
             {title}
           </Label>
           {subtitle !== undefined && (
@@ -101,7 +101,7 @@ export function Screen({ children }: { children: ReactNode }) {
         flex: 1,
         paddingLeft: insets.left,
         paddingRight: insets.right,
-        backgroundColor: c['surface-0'],
+        backgroundColor: c.screen,
       }}
     >
       {children}

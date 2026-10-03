@@ -74,3 +74,10 @@ directory carrying the context:
 | `src/features/layout/workspace-pane-animation.ts` | `src/t3/pane.ts`                              |
 | `src/data/adaptive-navigation.ts`                 | `src/data/navigation.ts`                      |
 | `src/data/layoutMetrics.ts`                       | `src/data/metrics.ts`                         |
+| `generated-uniwind-themes.css` (default, ember, grove, ocean) | `packages/design/tokens/src/tokens.css`  |
+| `global.css` (type scale)                         | `src/data/typography.ts`                      |
+| `src/components/GlassSurface.tsx`, `GlassBackdrop.tsx` | `src/ui/Glass.tsx`                       |
+| `src/native/native-glass.ts`, `src/lib/native-glass-capability.ts` | `src/ui/Glass.tsx` (`GLASS_SUPPORTED`) |
+| `src/Stack.tsx` (header and sheet option sets)    | `src/ui/stack.ts`                             |
+| `src/components/SegmentedControl.tsx`             | `src/ui/ui.tsx` (`Segmented`)                 |
+| layout-transition timings (`SegmentedControl`, `ConnectionEnvironmentRow`, `AndroidAnchoredMenu`) | `src/ui/motion/morph.ts` |

@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { composerColor } from './color.ts'
-import { nativeTokens } from '../../../../../packages/design/tokens/src/native.ts'
+import { nativeThemes } from '../../../../../packages/design/tokens/src/native.ts'
 
 it('writes an opaque color as the hex both native parsers read', () => {
   for (const platform of ['android', 'ios']) {
@@ -21,7 +21,10 @@ it('can write every ink the composer is painted in, in both appearances', () => 
   // The palette is free to change its colors; what must hold is that whatever it holds for the
   // composer's text, placeholder and accent is something the native editor can be handed. It used
   // to pin the palette's own values here, so a change of palette failed a test about hex.
-  for (const palette of [nativeTokens.dark, nativeTokens.light]) {
+  for (const palette of Object.values(nativeThemes).flatMap((family) => [
+    family.dark,
+    family.light,
+  ])) {
     for (const ink of [palette.ink, palette['ink-3'], palette.accent]) {
       for (const platform of ['android', 'ios']) {
         expect(composerColor(ink, platform)).toMatch(/^#(?:[\da-f]{6}|[\da-f]{8})$/u)

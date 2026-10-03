@@ -1,6 +1,7 @@
 import type { PressableProps, StyleProp, ViewStyle } from 'react-native'
 import { Pressable } from 'react-native'
 import Animated, {
+  type LinearTransition,
   ReduceMotion,
   useAnimatedStyle,
   useSharedValue,
@@ -42,18 +43,23 @@ const RISE = {
  *
  * `containerStyle` is the outer box (where it sits in its parent); `style` is the pressable's
  * own look, and may be a function of `pressed` like any `Pressable`.
+ *
+ * `layout` is given only by a control that changes shape (`ui/motion/morph.ts`). It is not on by
+ * default: a layout transition on every pressable would also ease each one into place whenever
+ * the keyboard or a list moved it, which reads as lag.
  */
 export function Press({
   containerStyle,
+  layout,
   onPressIn,
   onPressOut,
   ...props
-}: PressableProps & { containerStyle?: StyleProp<ViewStyle> }) {
+}: PressableProps & { containerStyle?: StyleProp<ViewStyle>; layout?: LinearTransition }) {
   const scale = useSharedValue(1)
   // Reanimated's get/set API is the compiler-safe equivalent of reading and assigning `.value`.
   const sunk = useAnimatedStyle(() => ({ transform: [{ scale: scale.get() }] }))
   return (
-    <Animated.View style={[containerStyle, sunk]}>
+    <Animated.View layout={layout} style={[containerStyle, sunk]}>
       <Pressable
         // A finger that drifts a little while pressing still means the press.
         pressRetentionOffset={12}

@@ -17,8 +17,10 @@ import type { FaceMood } from '@vivid/marks'
 import { MOBILE_TYPOGRAPHY } from '../data/typography'
 import { tick } from '../data/haptics'
 import { useTheme } from '../theme'
+import Animated from 'react-native-reanimated'
 import { Face } from './Face'
 import { Press } from './motion/Pressable'
+import { APPEAR, LEAVE, MORPH } from './motion/morph'
 
 export { Face } from './Face'
 export { Press } from './motion/Pressable'
@@ -26,7 +28,8 @@ export { Press } from './motion/Pressable'
 /**
  * The app's small set of drawn parts. Every screen is built from these and from nothing else, so
  * a control looks and answers the same wherever it appears: a 44-point target, a fill that
- * darkens under a finger, a hairline where structure needs one and never a cast shadow.
+ * darkens under a finger, and a solid border in the theme's own colour where structure needs an
+ * edge. Only floating chrome (`Glass`) casts a shadow.
  */
 
 /** The web's radii, scaled for a screen held in a hand. Rounded once so edges land on pixels. */
@@ -40,8 +43,15 @@ export const radius = {
   panel: scaled('radius-panel'),
 } as const
 
-/** One device pixel: the weight of every structural line in the app. */
+/** One device pixel: the weight of a separator between two rows of the same group. */
 export const HAIRLINE = StyleSheet.hairlineWidth
+
+/**
+ * The weight of a shape's own border: a card, a field, a control. One point in the theme's solid
+ * `border`, as the reference draws them; a hairline in an alpha ink is what made the old screens
+ * read as flat.
+ */
+export const EDGE = 1
 
 /**
  * The fixed-width face, for what must be read character by character: a sign-in code, a command,
@@ -63,6 +73,9 @@ export type Tone =
   | 'ink-4'
   | 'ink-on-accent'
   | 'accent-ink'
+  | 'foreground-tertiary'
+  | 'user-bubble-foreground'
+  | 'drawer-foreground-muted'
   | 'status-danger'
   | 'status-success'
   | 'status-working'
@@ -100,8 +113,8 @@ export function Label({
 export type ButtonKind = 'primary' | 'plain' | 'ghost' | 'danger'
 
 const BUTTON_PAINT = {
-  primary: { fill: 'accent', ink: 'ink-on-accent', line: false },
-  plain: { fill: 'surface-2', ink: 'ink', line: true },
+  primary: { fill: 'primary', ink: 'ink-on-accent', line: false },
+  plain: { fill: 'subtle', ink: 'ink', line: true },
   ghost: { fill: 'transparent', ink: 'ink-2', line: false },
   danger: { fill: 'status-danger-soft', ink: 'status-danger', line: false },
 } as const satisfies Record<ButtonKind, { fill: string; ink: Tone; line: boolean }>
@@ -112,12 +125,19 @@ const presence = (disabled: boolean, pressed: boolean): number => {
   return pressed ? 0.82 : 1
 }
 
-/** A labelled action. The label never wraps: a button that breaks onto two lines reads as broken. */
+/**
+ * A labelled action. The label never wraps: a button that breaks onto two lines reads as broken.
+ *
+ * A button whose label changes while it is on screen ("Continue" to "One moment…") is given
+ * `morph`: its outline eases to the new width and the new words fade in over the old, instead of
+ * the shape snapping. The pattern and its timings are `ui/motion/morph.ts`.
+ */
 export function Button({
   label,
   icon: Icon,
   kind = 'plain',
   disabled = false,
+  morph = false,
   onPress,
   containerStyle,
 }: {
@@ -125,6 +145,7 @@ export function Button({
   icon?: LucideIcon
   kind?: ButtonKind
   disabled?: boolean
+  morph?: boolean
   onPress: () => void
   containerStyle?: StyleProp<ViewStyle>
 }) {
@@ -138,26 +159,38 @@ export function Button({
       disabled={disabled}
       onPress={onPress}
       containerStyle={containerStyle}
+      layout={morph ? MORPH : undefined}
       style={({ pressed }) => ({
-        minHeight: TARGET,
-        paddingHorizontal: 16,
+        minHeight: 48,
+        paddingHorizontal: 20,
         gap: 8,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        borderRadius: radius.control,
+        // A full pill, as the reference's actions are: the one shape that reads as "press me"
+        // against the squarer cards and fields around it.
+        borderRadius: 24,
         backgroundColor: pressed && kind === 'ghost' ? c['wash-pressed'] : fill,
-        borderWidth: paint.line ? HAIRLINE : 0,
-        borderColor: c['line-3'],
+        borderWidth: paint.line ? EDGE : 0,
+        borderColor: c.border,
         opacity: presence(disabled, pressed),
       })}
     >
       {Icon !== undefined && (
         <Icon pointerEvents="none" size={17} strokeWidth={1.8} color={c[paint.ink]} />
       )}
-      <Label size="footnote" tone={paint.ink} numberOfLines={1}>
-        {label}
-      </Label>
+      {morph ? (
+        // Keyed by its words, so a new label is a new view: the old one fades out as this fades in.
+        <Animated.View key={label} entering={APPEAR} exiting={LEAVE}>
+          <Label size="footnote" tone={paint.ink} numberOfLines={1} style={{ fontWeight: '600' }}>
+            {label}
+          </Label>
+        </Animated.View>
+      ) : (
+        <Label size="footnote" tone={paint.ink} numberOfLines={1} style={{ fontWeight: '600' }}>
+          {label}
+        </Label>
+      )}
     </Press>
   )
 }
@@ -202,7 +235,11 @@ export function IconButton({
   )
 }
 
-/** A quiet filled shape that groups what belongs together. Depth is its fill, not a shadow. */
+/**
+ * A bordered shape that groups what belongs together. It is the theme's `grouped-card` inside a
+ * solid border: the edge is what separates it from the page, so it needs no fill of its own and
+ * no shadow.
+ */
 export function Card({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
   const { colors: c } = useTheme()
   return (
@@ -212,9 +249,10 @@ export function Card({ children, style }: { children: ReactNode; style?: StylePr
           padding: 16,
           gap: 10,
           borderRadius: radius.card,
-          backgroundColor: c['surface-2'],
-          borderWidth: HAIRLINE,
-          borderColor: c['line-2'],
+          borderCurve: 'continuous',
+          backgroundColor: c['grouped-card'],
+          borderWidth: EDGE,
+          borderColor: c.border,
         },
         style,
       ]}
@@ -230,18 +268,19 @@ export function Field({ style, ...props }: TextInputProps) {
   return (
     <TextInput
       {...props}
-      placeholderTextColor={c['ink-4']}
-      selectionColor={c.accent}
+      placeholderTextColor={c.placeholder}
+      selectionColor={c.primary}
       style={[
         {
-          minHeight: 48,
-          paddingHorizontal: 14,
-          paddingVertical: 12,
+          minHeight: 52,
+          paddingHorizontal: 16,
+          paddingVertical: 13,
           borderRadius: radius.control,
-          backgroundColor: c['surface-2'],
-          borderWidth: HAIRLINE,
-          borderColor: c['line-2'],
-          color: c.ink,
+          borderCurve: 'continuous',
+          backgroundColor: c.input,
+          borderWidth: EDGE,
+          borderColor: c['input-border'],
+          color: c.foreground,
         },
         MOBILE_TYPOGRAPHY.reading,
         style,
@@ -310,8 +349,13 @@ export function Empty({
 }
 
 /**
- * A choice between a few named things, all visible at once. The chosen one is raised; the rest
- * darken under a finger. Each segment is a radio to assistive technology.
+ * A choice between a few named things, all visible at once. The chosen one sits on a thumb that
+ * slides to it; the rest darken under a finger. Each segment is a radio to assistive technology.
+ *
+ * Ported from T3 Code mobile `src/components/SegmentedControl.tsx`: equal segments in a pill
+ * track, and one absolutely placed thumb whose `start` is the chosen index's share of the width,
+ * moved by a 200 ms ease-out layout transition (`MORPH`). The reference hands Android to a
+ * Material control; Vivid draws the same control on both, since the thumb needs nothing iOS-only.
  */
 export function Segmented<Value extends string>({
   label,
@@ -325,25 +369,37 @@ export function Segmented<Value extends string>({
   onChange: (value: Value) => void
 }) {
   const { colors: c } = useTheme()
-  const fill = (selected: boolean, pressed: boolean) => {
-    if (selected) return c['surface-3']
-    return pressed ? c['wash-pressed'] : 'transparent'
-  }
+  const share = 100 / options.length
+  const at = Math.max(
+    0,
+    options.findIndex((option) => option.value === value),
+  )
   return (
     <View
       accessibilityRole="radiogroup"
       accessibilityLabel={label}
       style={{
         flexDirection: 'row',
-        alignSelf: 'flex-start',
-        padding: 3,
-        // Concentric with the segments inside it: their radius plus the track's padding.
-        borderRadius: radius.row + 3,
-        backgroundColor: c['surface-2'],
-        borderWidth: HAIRLINE,
-        borderColor: c['line-2'],
+        borderRadius: 22,
+        backgroundColor: c.card,
+        borderWidth: EDGE,
+        borderColor: c.border,
+        overflow: 'hidden',
       }}
     >
+      <Animated.View
+        pointerEvents="none"
+        layout={MORPH}
+        style={{
+          position: 'absolute',
+          top: 0,
+          bottom: 0,
+          width: `${share}%`,
+          start: `${at * share}%`,
+          borderRadius: 22,
+          backgroundColor: c['subtle-strong'],
+        }}
+      />
       {options.map((option) => {
         const selected = option.value === value
         return (
@@ -351,24 +407,26 @@ export function Segmented<Value extends string>({
             key={option.value}
             accessibilityRole="radio"
             accessibilityState={{ selected }}
-            // The segment is 38 points tall inside its track; the slop makes the target 44.
-            hitSlop={{ top: 3, bottom: 3 }}
+            containerStyle={{ flex: 1 }}
             onPress={() => {
               if (selected) return
               tick()
               onChange(option.value)
             }}
             style={({ pressed }) => ({
-              minHeight: 38,
-              paddingHorizontal: 14,
+              minHeight: TARGET,
+              paddingHorizontal: 8,
+              alignItems: 'center',
               justifyContent: 'center',
-              borderRadius: radius.row,
-              borderWidth: HAIRLINE,
-              borderColor: selected ? c['line-3'] : 'transparent',
-              backgroundColor: fill(selected, pressed),
+              opacity: pressed && !selected ? 0.6 : 1,
             })}
           >
-            <Label size="label" tone={selected ? 'ink' : 'ink-3'} numberOfLines={1}>
+            <Label
+              size="footnote"
+              tone={selected ? 'ink' : 'ink-3'}
+              numberOfLines={1}
+              style={{ fontWeight: selected ? '600' : '400' }}
+            >
               {option.label}
             </Label>
           </Press>
@@ -395,8 +453,8 @@ export function Chips<Value extends string>({
 }) {
   const { colors: c } = useTheme()
   const fill = (selected: boolean, pressed: boolean) => {
-    if (selected) return c['accent-soft']
-    return pressed ? c['wash-pressed'] : c['surface-2']
+    if (selected) return c['thread-selected']
+    return pressed ? c['wash-pressed'] : c.card
   }
   return (
     <View accessibilityRole="radiogroup" accessibilityLabel={label} style={styles.wrap}>
@@ -416,13 +474,13 @@ export function Chips<Value extends string>({
               minHeight: TARGET,
               paddingHorizontal: 14,
               justifyContent: 'center',
-              borderRadius: radius.control,
-              borderWidth: selected ? 1 : HAIRLINE,
-              borderColor: selected ? c.accent : c['line-2'],
+              borderRadius: TARGET / 2,
+              borderWidth: EDGE,
+              borderColor: selected ? c.primary : c.border,
               backgroundColor: fill(selected, pressed),
             })}
           >
-            <Label size="label" tone={selected ? 'accent-ink' : 'ink-2'}>
+            <Label size="label" tone={selected ? 'ink' : 'ink-2'}>
               {option.label}
             </Label>
           </Press>
