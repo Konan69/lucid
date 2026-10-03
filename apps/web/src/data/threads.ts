@@ -5,6 +5,7 @@ import { Data, Result } from 'effect'
 import { change, live } from './live'
 import { engine } from './runtime'
 import { Route, router } from './route'
+import { scope } from './scope'
 
 /**
  * The words a Thread was started with, from the moment the Person sent them until the
@@ -104,16 +105,20 @@ export const firstWords = {
  * once and reads their own words there from `firstWords`, and the Thread is created and the words
  * sent behind that. Pressing Enter and seeing nothing for the length of a round trip reads as the
  * app not having heard.
+ *
+ * Unless the caller names a Project, the Thread is filed in the one the Person is scoped to
+ * (`scope.filing`): scoping to a Project means new work lands in it.
  */
-export function startThread(message: string, projectId: ProjectId | null = null) {
+export function startThread(message: string, projectId: ProjectId | null = scope.filing()) {
   const id = ThreadId.make(crypto.randomUUID())
   stand(id, FirstWords.Sending({ words: message, projectId }))
   router.go(Route.Thread({ id }))
   void deliver(id, message, projectId)
+  return id
 }
 
 /** Opens an empty Thread, for when the Person wants the page before the words. */
-export async function openThread(projectId: ProjectId | null = null) {
+export async function openThread(projectId: ProjectId | null = scope.filing()) {
   const id = ThreadId.make(crypto.randomUUID())
   const created = await change((client) =>
     client.CreateThread({ id, title: 'New thread', projectId }),

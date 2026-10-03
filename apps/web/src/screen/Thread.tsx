@@ -8,6 +8,7 @@ import { ArrowDown } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
 import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { change, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
+import { onboarding } from '../data/onboarding'
 import { Route, router } from '../data/route'
 import { orSay } from '../data/said'
 import { FirstWords, firstWords } from '../data/threads'
@@ -19,6 +20,7 @@ import type { Picture } from './thread/Attach'
 import { Composer } from './thread/Composer'
 import { isBlank, Message, Said, textOf, type ThreadContext } from './thread/Message'
 import { newestRun, Outcome } from './thread/Outcome'
+import { Opening } from './first/Opening'
 import { Layout } from './thread/Layout'
 import { doingIn } from './thread/Trail'
 
@@ -265,6 +267,9 @@ function Conversation({
     send(text, crypto.randomUUID(), pictures)
 
   const lastSaid = lastWords(visible, me)
+  const opened = useSyncExternalStore(onboarding.subscribe, () =>
+    onboarding.isFirstThread(me.person.id, id),
+  )
   const ended = working ? Option.none() : newestRun(runs)
   return (
     <Layout
@@ -284,7 +289,13 @@ function Conversation({
       {(hero) => (
         <>
           <ConversationMessages
-            hero={hero}
+            hero={
+              <>
+                {hero}
+                {/* The Thread that answered Vivid's opening keeps it above what was written. */}
+                {opened && <Opening me={me} onSay={say} />}
+              </>
+            }
             ready={agent.historyReady}
             empty={visible.length === 0 && FirstWords.$is('Settled')(first)}
             working={working}
