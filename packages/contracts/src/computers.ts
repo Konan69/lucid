@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect'
-import { ApprovalId, ComputerId, PersonId } from './identity.js'
+import { ApprovalId, ComputerId, RunId, ThreadId } from './identity.js'
 
 /**
  * How a running Computer's screen is watched. `Relay` is a remote-framebuffer socket this server
@@ -93,14 +93,17 @@ export type BrowserAction = typeof BrowserAction.Type
 export const BrowseTarget = Schema.TaggedUnion({ Vivid: {}, Person: {} })
 export type BrowseTarget = typeof BrowseTarget.Type
 
-/** Omitted targets keep existing cloud calls and stored Approvals on Vivid's Computer. */
+/**
+ * Stored Approvals written before the target existed decode onto Vivid's Computer. This default
+ * belongs to persisted actions only; a call always names its target.
+ */
 export const DefaultBrowseTarget = BrowseTarget.pipe(
   Schema.withDecodingDefaultKey(Effect.succeed(BrowseTarget.cases.Vivid.make({}))),
   Schema.withConstructorDefault(Effect.succeed(BrowseTarget.cases.Vivid.make({}))),
 )
 
 export const BrowseRequest = Schema.Struct({
-  target: DefaultBrowseTarget,
+  target: BrowseTarget,
   action: BrowserAction,
   summary: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
 })
@@ -125,36 +128,122 @@ export const BrowseResult = Schema.Struct({
 }).annotate({ identifier: 'BrowseResult', title: 'Browse result' })
 export interface BrowseResult extends Schema.Schema.Type<typeof BrowseResult> {}
 
+/**
+ * A Person's own computer, as the desktop app enrolled it. The identifier names the record and
+ * nothing else: it carries no Person, and it is not proof of being that computer.
+ */
+export const DeviceId = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('DeviceId'))
+export type DeviceId = typeof DeviceId.Type
+
+/**
+ * What one installed desktop app calls itself: a random value it creates once and keeps in its own
+ * data directory. Presenting it is how a signed-in session shows it is that app and not a browser
+ * tab or a phone, so the server never sends it back to anyone.
+ *
+ * Adapted from the reference desktop app's installation file
+ * (artifacts/night/reviews/chatgpt-latest.md, section 1, "Local PC used by the dot").
+ */
+export const InstallationId = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('InstallationId'),
+)
+export type InstallationId = typeof InstallationId.Type
+
+/** The computer's host name as its desktop app reported it, cut to what a list can show. */
+export const DeviceName = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(100))
+export type DeviceName = typeof DeviceName.Type
+
+/**
+ * Whether the Person lets Vivid use this computer. Enrolling never grants anything: a computer
+ * waits as `Pending` until its Person allows it, and at most one of a Person's computers is
+ * `Allowed` at a time. `since` is epoch milliseconds for the moment that state began.
+ */
+export const DeviceAccess = Schema.TaggedUnion({
+  Pending: { since: Schema.Number },
+  Allowed: { since: Schema.Number },
+  Revoked: { since: Schema.Number },
+})
+export type DeviceAccess = typeof DeviceAccess.Type
+
+/** Whether the computer's desktop app is listening right now. Never stored: it is the live link. */
+export const DevicePresence = Schema.TaggedUnion({ Connected: {}, Offline: {} })
+export type DevicePresence = typeof DevicePresence.Type
+
+/**
+ * One of a Person's own computers, as every surface lists it.
+ *
+ * Adapted from the reference's list of a Person's computers: a name, whether it is attached and
+ * whether it is connected (artifacts/night/reviews/chatgpt-latest.md, section 4, "Computers list").
+ */
+export const Device = Schema.Struct({
+  id: DeviceId,
+  name: DeviceName,
+  access: DeviceAccess,
+  presence: DevicePresence,
+}).annotate({ identifier: 'Device', title: 'Device' })
+export interface Device extends Schema.Schema.Type<typeof Device> {}
+
+export const DeviceResponse = Schema.Struct({ device: Device })
+export const DeviceListResponse = Schema.Struct({ devices: Schema.Array(Device) })
+
+/** What the desktop app sends once it is signed in. Repeating it changes nothing. */
+export const EnrolDeviceRequest = Schema.Struct({ installation: InstallationId, name: DeviceName })
+export interface EnrolDeviceRequest extends Schema.Schema.Type<typeof EnrolDeviceRequest> {}
+
+/** Names the record and proves the caller is the app that enrolled it. */
+export const WatchDeviceRequestsRequest = Schema.Struct({
+  device: DeviceId,
+  installation: InstallationId,
+})
+export interface WatchDeviceRequestsRequest extends Schema.Schema.Type<
+  typeof WatchDeviceRequestsRequest
+> {}
+
 /** An opaque dispatch capability; it never appears in model-visible results. */
 export const DeviceRequestId = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('DeviceRequestId'),
 )
 export type DeviceRequestId = typeof DeviceRequestId.Type
 
-/** A deadline is authority to execute once, not an invitation to replay after reconnect. */
+/**
+ * One action for the Person's computer. The Thread and the Run say what is driving it, so the
+ * desktop app can show that and stop it; the deadline is authority to act once, not an invitation
+ * to replay after a reconnect.
+ */
 export const DeviceRequest = Schema.Struct({
   id: DeviceRequestId,
+  threadId: ThreadId,
+  runId: RunId,
   action: BrowserAction,
   expiresAt: Schema.Number.check(Schema.isFinite()),
 })
-export type DeviceRequest = typeof DeviceRequest.Type
+export interface DeviceRequest extends Schema.Schema.Type<typeof DeviceRequest> {}
 
-/** Native refusals have closed reasons; provider and Chromium details stay on the device. */
+/** Why the computer would not act. Closed reasons; page and browser details stay on the computer. */
+export const DeviceRefusal = Schema.Literals(['Stopped', 'PageGone', 'NotAllowed', 'Unsupported'])
+export type DeviceRefusal = typeof DeviceRefusal.Type
+
 export const DeviceAnswer = Schema.TaggedUnion({
   Done: { result: BrowseResult },
-  Refused: { reason: Schema.Literals(['Stopped', 'PageGone', 'NotAllowed', 'Unsupported']) },
+  Refused: { reason: DeviceRefusal },
   Failed: {},
 })
 export type DeviceAnswer = typeof DeviceAnswer.Type
 
-export const AnswerDeviceRequest = Schema.Struct({ id: DeviceRequestId, answer: DeviceAnswer })
-export type AnswerDeviceRequest = typeof AnswerDeviceRequest.Type
+export const AnswerDeviceRequest = Schema.Struct({
+  device: DeviceId,
+  id: DeviceRequestId,
+  answer: DeviceAnswer,
+})
+export interface AnswerDeviceRequest extends Schema.Schema.Type<typeof AnswerDeviceRequest> {}
 
-/** No implicit cloud fallback may expose a different account or its sign-ins. */
+/**
+ * The Person has no allowed computer listening. Vivid's own Computer is never used instead: it is
+ * a different machine with different sign-ins.
+ */
 export class NoDeviceConnected extends Schema.TaggedError<NoDeviceConnected>()(
   'NoDeviceConnected',
-  { personId: PersonId },
-  { title: 'The Person’s desktop app is not connected' },
+  {},
+  { title: 'The Person’s computer is not connected' },
 ) {}
 
 /**

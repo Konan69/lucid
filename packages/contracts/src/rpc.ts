@@ -33,8 +33,13 @@ import {
 } from './companies.js'
 import {
   AnswerDeviceRequest,
+  DeviceId,
+  DeviceListResponse,
   DeviceRequest,
+  DeviceResponse,
+  EnrolDeviceRequest,
   NoDeviceConnected,
+  WatchDeviceRequestsRequest,
   BrowseOutcome,
   BrowseRequest,
   DesktopOutcome,
@@ -624,8 +629,35 @@ const Browse = Rpc.make('Browse', {
   success: BrowseOutcome,
   error: Schema.Union([RpcFailure, NoDeviceConnected]),
 })
-/** Subscription lifetime is device presence; disconnected requests are never replayed. */
-const WatchDeviceRequests = Rpc.make('WatchDeviceRequests', { ...live, success: DeviceRequest })
+// ── The Person's own computers ─────────────────────────────────────────────
+/** The desktop app naming itself after sign-in. The same installation always gets the same Device. */
+const EnrolDevice = Rpc.make('EnrolDevice', {
+  ...call,
+  payload: EnrolDeviceRequest,
+  success: DeviceResponse,
+})
+const ListDevices = Rpc.make('ListDevices', { ...call, success: DeviceListResponse })
+/** Lets Vivid use this computer and, in the same step, no other computer of this Person. */
+const AllowDevice = Rpc.make('AllowDevice', {
+  ...call,
+  payload: { id: DeviceId },
+  success: DeviceResponse,
+})
+const RevokeDevice = Rpc.make('RevokeDevice', {
+  ...call,
+  payload: { id: DeviceId },
+  success: DeviceResponse,
+})
+/**
+ * The desktop app listening for work. Holding this open is what makes its Device `Connected`;
+ * only the installation that enrolled an allowed Device may hold it, and nothing sent while it
+ * was closed is sent again.
+ */
+const WatchDeviceRequests = Rpc.make('WatchDeviceRequests', {
+  ...live,
+  payload: WatchDeviceRequestsRequest,
+  success: DeviceRequest,
+})
 const AnswerDeviceRequestRpc = Rpc.make('AnswerDeviceRequest', {
   ...call,
   payload: AnswerDeviceRequest,
@@ -760,6 +792,10 @@ export const VividRpc = RpcGroup.make(
   HoldComputer,
   RunCommand,
   Browse,
+  EnrolDevice,
+  ListDevices,
+  AllowDevice,
+  RevokeDevice,
   WatchDeviceRequests,
   AnswerDeviceRequestRpc,
   UseDesktop,
