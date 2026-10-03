@@ -47,17 +47,22 @@ export function skill(item: Skill, name: string) {
   }
 }
 
-/** Discovery exposes usable account names and callable signatures, without catalog or Connection references. */
+/** The server resolves original labels, never modelText aliases. Omit accounts whose label would
+ * be rewritten; every exposed account stays identical to its call and still resolves on the server.
+ * Rewriting only the call would invent an account; exposing the original would leak a reference.
+ */
 export function tools(response: FindToolsResponse) {
   return {
-    tools: response.tools.map((item) => ({
-      account: modelText(item.account),
-      tool: item.name,
-      description: modelText(item.description),
-      effect: item.effect,
-      call: item.call,
-      signature: item.signature,
-    })),
+    tools: response.tools
+      .filter((item) => modelText(item.account) === item.account)
+      .map((item) => ({
+        account: item.account,
+        tool: item.name,
+        description: modelText(item.description),
+        effect: item.effect,
+        call: item.call,
+        signature: item.signature,
+      })),
     unconnected: catalog(response.unconnected, (item) => modelText(item.name)).map(
       ({ item, name }) => ({
         service: name,

@@ -176,6 +176,19 @@ describe('model views', () => {
       tool.signature,
     )
   })
+  it('omits rewritten account labels while preserving exact callable names', () => {
+    for (const account of [`Mail ${reference}`, 'Mail https://example.test/picture.png']) {
+      const hidden = DiscoveredTool.make({
+        ...tool,
+        account,
+        call: `accounts[${JSON.stringify(account)}].read_mail`,
+      })
+      expect(views.tools({ tools: [hidden, tool], unconnected: [] }).tools).toEqual([
+        expect.objectContaining({ account: tool.account, call: tool.call }),
+      ])
+    }
+  })
+
   it('projects call expressions and signatures without provider schema documents', () => {
     const result = views.tools({ tools: [tool], unconnected: [] }).tools[0]
     expect(result).toHaveProperty('call', tool.call)
