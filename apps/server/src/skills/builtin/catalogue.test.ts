@@ -25,6 +25,8 @@ import {
 import { documentTools } from '../../../../../packages/agent/runtime/src/tools/documents.ts'
 import { showTools } from '../../../../../packages/agent/runtime/src/tools/show.ts'
 import { codeTools } from '../../../../../packages/agent/runtime/src/tools/code.ts'
+import { notifyTools } from '../../../../../packages/agent/runtime/src/tools/notify.ts'
+import { openTools } from '../../../../../packages/agent/runtime/src/tools/open.ts'
 import type { RunTool } from '../../../../../packages/agent/runtime/src/tools/scope.ts'
 import * as views from '../../../../../packages/agent/runtime/src/tools/views.ts'
 import { SavedProcedures } from '../../../../../packages/agent/runtime/src/tools/snapshots.ts'
@@ -47,6 +49,8 @@ const registered = new Set(
     ...codeTools(runner),
     ...documentTools(runner),
     ...showTools(),
+    ...openTools(runner),
+    ...notifyTools(runner),
   ].map((tool) => tool.name),
 )
 
