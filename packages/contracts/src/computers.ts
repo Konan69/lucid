@@ -13,6 +13,16 @@ export const ComputerScreen = Schema.TaggedUnion({
 })
 export type ComputerScreen = typeof ComputerScreen.Type
 
+/** The viewer always rechecks the signed-in Person; no provider URL, token or owner selector
+ * travels in a Thread tool receipt. Flue's enclosing submission supplies its Thread/Run linkage.
+ */
+export const computerScreenAddress = '/api/computer/screen/websockify'
+export const ComputerSession = Schema.Struct({
+  active: Schema.Literal(true),
+  screen: ComputerScreen.cases.Relay,
+})
+export type ComputerSession = typeof ComputerSession.Type
+
 /**
  * Where a Person's Computer stands. A Computer is created the first time it is needed and stopped
  * when idle; its files and sign-ins outlive the machine that held them.
