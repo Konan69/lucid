@@ -10,6 +10,5 @@ export default defineProject({
     name: '@vivid/skills',
     environment: 'node',
     include: ['src/**/*.test.ts'],
-    passWithNoTests: true,
   },
 })
