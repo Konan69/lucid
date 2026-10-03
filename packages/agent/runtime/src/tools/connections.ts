@@ -64,7 +64,10 @@ export function connectionTools(runTool: RunTool) {
               service: service.id,
               reason: data.reason,
             })
-            return { output: views.connectionRequest(response) }
+            // A connect card is the answer for this turn. Flue must settle it rather than
+            // asking the model to keep discovering the same unavailable account. The card's
+            // WatchConnections continuation sends a fresh delivery after authorization.
+            return { output: views.connectionRequest(response), terminate: !response.ready }
           }),
           { signal, tool: 'connect' },
         )
