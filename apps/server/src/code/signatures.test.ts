@@ -25,6 +25,17 @@ describe('Integration signatures', () => {
     expect(tool).not.toHaveProperty('input')
   })
 
+  it('keeps complete declarations inside the model boundary when both schema types are large', () => {
+    const large = { type: 'object', properties: { ['field'.repeat(500)]: { type: 'string' } } }
+    const tool = discoveredTool({ account: 'Mail', name: 'send', input: large, output: large })
+    expect(tool.signature.length).toBeLessThanOrEqual(4000)
+    expect(tool.signature).toContain('input: unknown')
+    expect(tool.signature).toContain('output: { field')
+    expect(tool.signature.endsWith('| {ok: false; reason: string}>')).toBe(true)
+    const missing = discoveredTool({ account: 'Mail', name: 'send', input: large })
+    expect(missing.signature).toContain('output: Json')
+  })
+
   it('confines descriptions to comments and bounds each rendered schema with pi truncation', () => {
     const tool = discoveredTool({
       account: 'Mail',
