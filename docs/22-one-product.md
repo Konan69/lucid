@@ -428,9 +428,10 @@ Each step leaves a product that runs.
 
 ## Not in this build
 
-- **A proven hosted machine.** The Boat provider is written and tested against a stand-in for
-  Boat's API; it has not run against Boat itself, which needs an account key this repository does
-  not hold.
+- **Browser input on the hosted machine.** The Boat provider is proven against real Boat for
+  creating, looking, opening a page, files, archive and resume (3 October 2026). Clicking and
+  typing inside the guest's browser is refused by the guest driver, and the viewer has not been
+  opened inside the app.
 - **Voice.** No calls in this build, and the page loads nothing for them.
 - **Chat channels** (Slack, mail-in). The Thread model above is what they will deliver into.
 - **Ambient participation.** Vivid answers when addressed; it does not join rooms unasked.
