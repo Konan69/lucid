@@ -35,7 +35,7 @@ import { MemoryAccess, memoryAccessLayer, MemoryStore, memoryStoreLayer } from '
 
 const url = process.env['VIVID_TEST_HELIX_URL']
 const enabled =
-  testDatabaseConfigured && url !== undefined && process.env['OPENROUTER_API_KEY'] !== undefined
+  testDatabaseConfigured && url !== undefined && process.env['EXPLABS_API_KEY'] !== undefined
 const adapters = Layer.mergeAll(helixMemoryLayer, embeddingsLayer, memoryExtractionLayer).pipe(
   Layer.provide(NodeHttpClient.layerUndici),
   Layer.provide(

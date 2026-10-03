@@ -50,7 +50,7 @@ describe('Embedding HTTP failures', () => {
         Effect.provide(embeddingsLayer),
         Effect.provide(
           ConfigProvider.layerAdd(
-            ConfigProvider.fromUnknown({ OPENROUTER_API_KEY: 'local-protocol-test' }),
+            ConfigProvider.fromUnknown({ EXPLABS_API_KEY: 'local-protocol-test' }),
             { asPrimary: true },
           ),
         ),
@@ -79,7 +79,7 @@ describe('Embedding HTTP failures', () => {
         Effect.provide(embeddingsLayer),
         Effect.provide(
           ConfigProvider.layerAdd(
-            ConfigProvider.fromUnknown({ OPENROUTER_API_KEY: 'local-protocol-test' }),
+            ConfigProvider.fromUnknown({ EXPLABS_API_KEY: 'local-protocol-test' }),
             { asPrimary: true },
           ),
         ),

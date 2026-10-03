@@ -21,7 +21,7 @@ features, but the fixtures do not define their implementation.
 pnpm install
 pnpm db:up
 cp .env.example .env
-# Add an OpenRouter key, auth secret, and local runtime token to that ignored file.
+# Add an Experiential Labs gateway key, auth secret, and local runtime token to that ignored file.
 pnpm --filter @vivid/agent-runtime dev
 pnpm --filter @vivid/web dev
 ```
@@ -72,5 +72,5 @@ The Library accepts PDF, Markdown, and plain-text files up to 10 MB. Files and r
 are stored in PostgreSQL, readable text is chunked into a `tsvector` column with a GIN index, and
 Vivid can call the read-only `search_library` tool to answer with filename/page citations. This MVP
 uses keyword retrieval and does not include embeddings, OCR, or a vector database. Set
-`DATABASE_URL` alongside `OPENROUTER_API_KEY` and `VIVID_RUNTIME_TOKEN`; runtime state no longer
+`DATABASE_URL` alongside `EXPLABS_API_KEY` and `VIVID_RUNTIME_TOKEN`; runtime state no longer
 needs a `.state/` volume.

@@ -6,8 +6,7 @@ import { describe, expect } from 'vitest'
 import { MemoryExtraction, memoryExtractionLayer } from './extract.js'
 
 const enabled =
-  process.env['VIVID_TEST_HELIX_URL'] !== undefined &&
-  process.env['OPENROUTER_API_KEY'] !== undefined
+  process.env['VIVID_TEST_HELIX_URL'] !== undefined && process.env['EXPLABS_API_KEY'] !== undefined
 /** One real brief generation checks observable preference coverage and the bounded word budget. */
 describe.skipIf(!enabled)('Memory brief generation', () => {
   it.effect(

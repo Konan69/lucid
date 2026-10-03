@@ -85,12 +85,9 @@ export const ruleJudgeLayer = Layer.effect(
     const configuration = yield* Effect.result(
       Effect.gen(function* () {
         const model = yield* Config.NonEmptyString('VIVID_RULES_MODEL').pipe(
-          Config.withDefault('z-ai/glm-5.3-flash'),
+          Config.withDefault('glm-5.3-flash'),
         )
-        const key = yield* Config.schema(
-          Schema.Redacted(Schema.NonEmptyString),
-          'OPENROUTER_API_KEY',
-        )
+        const key = yield* Config.schema(Schema.Redacted(Schema.NonEmptyString), 'EXPLABS_API_KEY')
         return { model, key }
       }),
     )
@@ -103,7 +100,7 @@ export const ruleJudgeLayer = Layer.effect(
           if (Result.isFailure(configuration)) return yield* Effect.fail(new RulesNotJudged({}))
           const { model, key } = configuration.success
           const request = yield* HttpClientRequest.bodyJson(
-            HttpClientRequest.post('https://openrouter.ai/api/v1/chat/completions').pipe(
+            HttpClientRequest.post('https://api.experientiallabs.ai/v1/chat/completions').pipe(
               HttpClientRequest.bearerToken(key),
             ),
             requestBody(model, action, rules),

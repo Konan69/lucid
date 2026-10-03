@@ -24,7 +24,7 @@ import { Runtime } from '../runtime/client.ts'
 
 const url = process.env['VIVID_TEST_HELIX_URL']
 const enabled =
-  testDatabaseConfigured && url !== undefined && process.env['OPENROUTER_API_KEY'] !== undefined
+  testDatabaseConfigured && url !== undefined && process.env['EXPLABS_API_KEY'] !== undefined
 /** Model-backed learning keeps transport diagnostics in the test console; endpoint category and status explain outages without recording exchange text or credentials. */
 const observedClient = Layer.effect(
   HttpClient.HttpClient,

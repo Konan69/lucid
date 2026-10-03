@@ -69,7 +69,7 @@ export default Alchemy.Stack(
         VIVID_MIGRATIONS_HASH: migrations.hash.input,
         DATABASE_URL: databaseUrl,
         PORT: '5173',
-        OPENROUTER_API_KEY: environment.openRouterApiKey,
+        EXPLABS_API_KEY: environment.modelGatewayKey,
         VIVID_RUNTIME_TOKEN: environment.runtimeToken,
         VIVID_SERVER_URL: target.serverUrl,
         VIVID_MODEL: environment.model,

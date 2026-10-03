@@ -202,10 +202,10 @@ const complete = Effect.fn('MemoryExtraction.complete')(function* (
       type: 'json_schema',
       json_schema: { name: input.name, strict: true, schema: input.schema },
     },
-    // OpenRouter documents that reasoning can exhaust max_tokens without returning structured content.
-    // A bounded background pass requests direct structured output.
-    // OpenRouter documents these budgets at docs/guides/best-practices/reasoning-tokens.
-    reasoning: { enabled: false },
+    // Reasoning can use up max_tokens before any structured content is written, so a bounded
+    // background pass asks for as little of it as the gateway allows. The gateway refuses turning
+    // it off on this model ("effort 'none' is not supported"); `low` is its smallest setting.
+    reasoning_effort: 'low',
     temperature: 0,
     max_tokens: 4096,
   }
@@ -302,16 +302,16 @@ export const memoryExtractionLayer = Layer.effect(
   MemoryExtraction,
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient
-    const key = yield* Config.Redacted('OPENROUTER_API_KEY').pipe(
+    const key = yield* Config.Redacted('EXPLABS_API_KEY').pipe(
       Effect.mapError(() =>
         ServiceUnavailable.make({
           service: 'memory',
-          message: 'OPENROUTER_API_KEY is unconfigured',
+          message: 'EXPLABS_API_KEY is unconfigured',
         }),
       ),
     )
     const model = yield* Config.String('VIVID_MEMORY_MODEL').pipe(
-      Config.withDefault('z-ai/glm-5.3-flash'),
+      Config.withDefault('glm-5.3-flash'),
       Effect.mapError(() =>
         ServiceUnavailable.make({ service: 'memory', message: 'VIVID_MEMORY_MODEL is invalid' }),
       ),

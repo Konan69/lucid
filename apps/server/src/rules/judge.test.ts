@@ -73,7 +73,7 @@ const action = ProposedAction.make({
     input: { private: 'PRIVATE_INPUT' },
   }),
 })
-const config = { OPENROUTER_API_KEY: 'test-provider-key' }
+const config = { EXPLABS_API_KEY: 'test-provider-key' }
 const reply = (ids: ReadonlyArray<string>) =>
   JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ids }) } }] })
 const Body = Schema.Struct({
@@ -97,7 +97,7 @@ it.effect(
       const web = yield* HttpClientRequest.toWeb(first)
       const json = yield* Effect.tryPromise(() => web.text())
       const body = yield* decodeBody(json)
-      expect(body.model).toBe('z-ai/glm-5.3-flash')
+      expect(body.model).toBe('glm-5.3-flash')
       const prompt = body.messages.map((message) => message.content).join('\n')
       expect(prompt).toContain(action.summary)
       expect(prompt).toContain(rule.action)
@@ -106,7 +106,7 @@ it.effect(
         'PRIVATE_RATIONALE',
         'PRIVATE_ACCOUNT',
         'PRIVATE_TOOL',
-        config.OPENROUTER_API_KEY,
+        config.EXPLABS_API_KEY,
       ])
         expect(prompt).not.toContain(privateValue)
     }).pipe(Effect.provide(judgeLayer(200, reply([rule.id]), config))),
@@ -163,7 +163,7 @@ const warningCases: ReadonlyArray<{
   readonly warnings: number
 }> = [
   { name: 'missing configuration', provider: {}, status: 200, warnings: 3 },
-  { name: 'empty key', provider: { OPENROUTER_API_KEY: '' }, status: 200, warnings: 3 },
+  { name: 'empty key', provider: { EXPLABS_API_KEY: '' }, status: 200, warnings: 3 },
   { name: 'provider failure', provider: config, status: 429, warnings: 2 },
 ]
 

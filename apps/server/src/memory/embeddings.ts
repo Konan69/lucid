@@ -27,7 +27,7 @@ export const embeddingDimensions = Config.Int('VIVID_EMBEDDING_DIMENSIONS').pipe
   ),
 )
 export const embeddingModel = Config.String('VIVID_EMBEDDING_MODEL').pipe(
-  Config.withDefault('openai/text-embedding-3-small'),
+  Config.withDefault('text-embedding-3-small'),
   Effect.filterOrFail(
     (model) => model.trim().length > 0,
     () => ServiceUnavailable.make({ service: 'memory', message: 'VIVID_EMBEDDING_MODEL is empty' }),
@@ -90,7 +90,7 @@ export const providerResponse = Effect.fn('Memory.providerResponse')(function* (
   input: { readonly key: Redacted.Redacted; readonly path: string; readonly body: Schema.Json },
 ) {
   const request = yield* HttpClientRequest.bodyJson(
-    HttpClientRequest.post(`https://openrouter.ai/api/v1/${input.path}`).pipe(
+    HttpClientRequest.post(`https://api.experientiallabs.ai/v1/${input.path}`).pipe(
       HttpClientRequest.bearerToken(input.key),
     ),
     input.body,
@@ -99,7 +99,7 @@ export const providerResponse = Effect.fn('Memory.providerResponse')(function* (
     Effect.mapError((error) =>
       ServiceUnavailable.make({
         service: 'memory',
-        message: `OpenRouter transport failed (${error.reason._tag})`,
+        message: `Model gateway transport failed (${error.reason._tag})`,
       }),
     ),
   )
@@ -107,14 +107,14 @@ export const providerResponse = Effect.fn('Memory.providerResponse')(function* (
     return yield* Effect.fail(
       MemoryRateLimited.make({
         service: 'memory',
-        message: 'OpenRouter rate limited memory',
+        message: 'The model gateway rate limited memory',
         retryAfter: Option.getOrNull(Headers.get(response.headers, 'retry-after')),
       }),
     )
   }
   if (response.status >= 500) {
     return yield* Effect.fail(
-      ServiceUnavailable.make({ service: 'memory', message: 'OpenRouter is unavailable' }),
+      ServiceUnavailable.make({ service: 'memory', message: 'The model gateway is unavailable' }),
     )
   }
   if (response.status < 200 || response.status >= 300) {
@@ -149,11 +149,11 @@ export const embeddingsLayer = Layer.effect(
   Embeddings,
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient
-    const key = yield* Config.Redacted('OPENROUTER_API_KEY').pipe(
+    const key = yield* Config.Redacted('EXPLABS_API_KEY').pipe(
       Effect.mapError(() =>
         ServiceUnavailable.make({
           service: 'memory',
-          message: 'OPENROUTER_API_KEY is unconfigured',
+          message: 'EXPLABS_API_KEY is unconfigured',
         }),
       ),
     )

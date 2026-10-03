@@ -30,10 +30,10 @@ Use `pnpm infra:destroy` to stop this stack and remove its local Alchemy/Docker 
 Required:
 
 - `AUTH_SECRET` — at least 32 characters because the server validates it.
-- `OPENROUTER_API_KEY`.
+- `EXPLABS_API_KEY`.
 - `VIVID_RUNTIME_TOKEN`.
 
-Optional as one atomic set: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI`. `VIVID_MODEL` is optional and defaults to `openrouter/z-ai/glm-5.3-flash`. AWS credentials are **not** required for local development.
+Optional as one atomic set: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI`. `VIVID_MODEL` is optional and defaults to `explabs/glm-5.3-flash`. AWS credentials are **not** required for local development.
 
 Outputs contain only the web, server, and runtime URLs. Database credentials and application secrets are never outputs.
 

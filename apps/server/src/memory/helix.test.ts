@@ -24,7 +24,7 @@ import {
 } from './helix.js'
 
 const url = process.env['VIVID_TEST_HELIX_URL']
-const enabled = url !== undefined && process.env['OPENROUTER_API_KEY'] !== undefined
+const enabled = url !== undefined && process.env['EXPLABS_API_KEY'] !== undefined
 const configuration = ConfigProvider.layerAdd(
   ConfigProvider.fromUnknown({ VIVID_HELIX_URL: url }),
   { asPrimary: true },
