@@ -9,8 +9,9 @@ import type { ConfigContext, ExpoConfig } from 'expo/config'
  *
  * The same address is where the build asks for newer JavaScript (`updates.url`, answered by
  * `apps/server/src/updates`), so a build with no address also has updates off: there is nobody to
- * ask. `new URL` throws on an address that does not parse, which fails the build instead of
- * shipping a binary that can never update.
+ * ask. The path is added to the address as given, so a Vivid mounted under a path keeps it, as
+ * the app's own reading of the address does (`src/data/server.ts`). `new URL` throws on an address
+ * that does not parse, which fails the build instead of shipping a binary that can never update.
  *
  * `checkAutomatically: 'ON_LOAD'` with `fallbackToCacheTimeout: 0` is the launch behavior of the
  * reference this was ported from (`apps/mobile/app.config.ts` in the T3 Code fork): start at once
@@ -25,7 +26,7 @@ export default ({ config }: ConfigContext): Partial<ExpoConfig> => {
     extra: { ...config.extra, server },
     updates: {
       enabled: true,
-      url: new URL('/api/updates/manifest', server).toString(),
+      url: new URL(`${server.replace(/\/+$/u, '')}/api/updates/manifest`).toString(),
       checkAutomatically: 'ON_LOAD',
       fallbackToCacheTimeout: 0,
     },

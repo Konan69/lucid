@@ -1,4 +1,4 @@
-import { Option } from 'effect'
+import { Option, Schema } from 'effect'
 import type { Catalog, Platform, Release, ReleaseFile } from './release.ts'
 
 /**
@@ -19,18 +19,54 @@ export interface UpdateRequest {
   readonly currentUpdateId: Option.Option<string>
 }
 
+const Entry = Schema.Struct({
+  hash: Schema.String,
+  key: Schema.String,
+  fileExtension: Schema.String,
+  contentType: Schema.String,
+  url: Schema.String,
+})
+
 /**
- * The one part of the multipart answer that carries the decision. The app reads a part by its
- * name: `manifest` is an update to download, `directive` is an instruction instead of one.
+ * The parts a `multipart/mixed` answer is made of, each name tied to the one body it may carry.
+ * The app reads a part by its name: `manifest` is an update to download and comes with
+ * `extensions`; `directive` is an instruction instead of an update and comes alone. The reference
+ * fills `assetRequestHeaders` with a demonstration header; these assets need none.
  */
-export interface UpdatePart {
-  readonly name: 'manifest' | 'directive'
-  readonly body: unknown
-}
+export const UpdatePart = Schema.Union([
+  Schema.Struct({
+    name: Schema.Literal('manifest'),
+    body: Schema.Struct({
+      id: Schema.String,
+      createdAt: Schema.String,
+      runtimeVersion: Schema.String,
+      assets: Schema.Array(Entry),
+      launchAsset: Entry,
+      metadata: Schema.Struct({}),
+      extra: Schema.Struct({ expoClient: Schema.Record(Schema.String, Schema.Json) }),
+    }),
+  }),
+  Schema.Struct({
+    name: Schema.Literal('extensions'),
+    body: Schema.Struct({ assetRequestHeaders: Schema.Struct({}) }),
+  }),
+  Schema.Struct({
+    name: Schema.Literal('directive'),
+    body: Schema.Struct({ type: Schema.Literal('noUpdateAvailable') }),
+  }),
+])
+export type UpdatePart = typeof UpdatePart.Type
+
+/**
+ * The address everything is built on: the server's public URL without a trailing slash, query or
+ * hash. A Vivid mounted under a path (`https://host/vivid`) keeps that path, which is how the app
+ * reads the same address (`apps/mobile/src/data/server.ts:parseServer`).
+ */
+const baseOf = (publicUrl: URL) => `${publicUrl.origin}${publicUrl.pathname.replace(/\/+$/u, '')}`
 
 /** Where the app downloads one file. The file is named by its `key`, never by a path. */
 const assetUrl = (publicUrl: URL, request: UpdateRequest, file: ReleaseFile) => {
-  const url = new URL('/api/updates/assets', publicUrl)
+  const url = new URL(`${baseOf(publicUrl)}/api/updates/assets`)
   url.searchParams.set('asset', file.key)
   url.searchParams.set('runtimeVersion', request.runtimeVersion)
   url.searchParams.set('platform', request.platform)
@@ -54,7 +90,7 @@ const assetEntry = (publicUrl: URL, request: UpdateRequest, file: ReleaseFile) =
  */
 const expoClient = (publicUrl: URL, release: Release) => ({
   ...release.expoConfig,
-  extra: { ...release.expoConfig.extra, server: publicUrl.origin },
+  extra: { ...release.expoConfig.extra, server: baseOf(publicUrl) },
 })
 
 /** The release for a binary and its files for one platform, when both are published. */
@@ -67,8 +103,8 @@ const published = (catalog: Catalog, runtimeVersion: string, platform: Platform)
   )
 
 /**
- * The answer for one request, or None when nothing is published for that binary: an unknown
- * runtime version, or a release exported without the platform asking.
+ * The parts of the answer for one request, or None when nothing is published for that binary: an
+ * unknown runtime version, or a release exported without the platform asking.
  *
  * An app already running the newest release is told so with a `noUpdateAvailable` directive, which
  * exists only from protocol version 1; a version 0 client is sent the manifest again, as the
@@ -78,25 +114,28 @@ export const answerUpdate = (
   catalog: Catalog,
   publicUrl: URL,
   request: UpdateRequest,
-): Option.Option<UpdatePart> =>
+): Option.Option<ReadonlyArray<UpdatePart>> =>
   Option.map(
     published(catalog, request.runtimeVersion, request.platform),
-    ({ release, files }): UpdatePart => {
+    ({ release, files }): ReadonlyArray<UpdatePart> => {
       const current = Option.contains(request.currentUpdateId, release.id)
       if (current && request.protocolVersion === 1)
-        return { name: 'directive', body: { type: 'noUpdateAvailable' } }
-      return {
-        name: 'manifest',
-        body: {
-          id: release.id,
-          createdAt: release.createdAt,
-          runtimeVersion: release.runtimeVersion,
-          assets: files.assets.map((file) => assetEntry(publicUrl, request, file)),
-          launchAsset: assetEntry(publicUrl, request, files.launchAsset),
-          metadata: {},
-          extra: { expoClient: expoClient(publicUrl, release) },
+        return [{ name: 'directive', body: { type: 'noUpdateAvailable' } }]
+      return [
+        {
+          name: 'manifest',
+          body: {
+            id: release.id,
+            createdAt: release.createdAt,
+            runtimeVersion: release.runtimeVersion,
+            assets: files.assets.map((file) => assetEntry(publicUrl, request, file)),
+            launchAsset: assetEntry(publicUrl, request, files.launchAsset),
+            metadata: {},
+            extra: { expoClient: expoClient(publicUrl, release) },
+          },
         },
-      }
+        { name: 'extensions', body: { assetRequestHeaders: {} } },
+      ]
     },
   )
 

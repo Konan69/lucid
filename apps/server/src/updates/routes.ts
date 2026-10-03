@@ -3,7 +3,7 @@ import { Effect, Layer, Option, Schema } from 'effect'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
-import { answerUpdate, findAsset } from './manifest.ts'
+import { answerUpdate, findAsset, type UpdatePart } from './manifest.ts'
 import { loadCatalog, Platform, type Catalog } from './release.ts'
 
 /**
@@ -81,10 +81,7 @@ const readBinary = Effect.fn('Updates.readBinary')(function* () {
  * is found by the `name` in its `Content-Disposition`. The boundary is random so that no JSON body
  * can contain it.
  */
-const multipart = (
-  parts: ReadonlyArray<{ readonly name: string; readonly body: unknown }>,
-  protocolVersion: number,
-) => {
+const multipart = (parts: ReadonlyArray<UpdatePart>, protocolVersion: number) => {
   const boundary = `vivid-${NodeCrypto.randomUUID()}`
   const body = parts
     .map(
@@ -105,11 +102,7 @@ const multipart = (
   })
 }
 
-/**
- * An update is answered with its manifest and an `extensions` part; the reference fills
- * `assetRequestHeaders` with a demonstration header, and these assets need none. A directive is
- * answered alone.
- */
+/** The check itself: read what the binary says about itself and answer with the parts for it. */
 const manifest = Effect.fn('Updates.manifest')(function* (catalog: Catalog, publicUrl: URL) {
   const request = yield* HttpServerRequest.HttpServerRequest
   const version = decodeProtocolVersion(request.headers['expo-protocol-version'] ?? '0')
@@ -118,18 +111,14 @@ const manifest = Effect.fn('Updates.manifest')(function* (catalog: Catalog, publ
   const binary = yield* readBinary()
   if (request.headers['expo-expect-signature'] !== undefined)
     return yield* Effect.fail(new SignatureUnavailable({}))
-  const part = answerUpdate(catalog, publicUrl, {
+  const parts = answerUpdate(catalog, publicUrl, {
     protocolVersion,
     platform: binary.platform,
     runtimeVersion: binary.runtimeVersion,
     currentUpdateId: Option.fromUndefinedOr(request.headers['expo-current-update-id']),
   })
-  if (Option.isNone(part)) return yield* Effect.fail(new UpdateNotPublished(binary))
-  if (part.value.name === 'directive') return multipart([part.value], protocolVersion)
-  return multipart(
-    [part.value, { name: 'extensions', body: { assetRequestHeaders: {} } }],
-    protocolVersion,
-  )
+  if (Option.isNone(parts)) return yield* Effect.fail(new UpdateNotPublished(binary))
+  return multipart(parts.value, protocolVersion)
 })
 
 /**

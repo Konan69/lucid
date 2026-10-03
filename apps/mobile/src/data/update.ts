@@ -47,30 +47,23 @@ export const LOOK_AGAIN_AFTER_MS = 15 * 60 * 1000
 
 /**
  * The three moments that matter, for whoever hears the phone's app state. `idle` has nothing
- * downloaded, `looking` is asking or downloading, `ready` holds an update that the next
- * backgrounding restarts into.
+ * downloaded, `looking` is asking or downloading, `ready` holds an update waiting for the Person
+ * to leave, and `restarting` has asked for the restart and must not ask twice: the native restart
+ * is queued, so a second request tears the app down again after it comes back (the reference's
+ * `installInProgress`).
  */
 export const keepCurrent = (client: UpdateClient) => {
-  let phase: 'idle' | 'looking' | 'ready' = 'idle'
+  let phase: 'idle' | 'looking' | 'ready' | 'restarting' = 'idle'
   let leftAt = Option.none<number>()
 
-  /** A check that fails changes nothing: the app keeps what it runs and the next check asks again. */
-  const look = Effect.fn('Update.look')(function* () {
-    if (phase !== 'idle') return
-    phase = 'looking'
-    const downloaded = yield* client.download.pipe(
-      Effect.catchTag('UpdateStepFailed', () => Effect.succeed(false)),
-    )
-    phase = downloaded ? 'ready' : 'idle'
-  })
-
   /**
-   * A restart that fails gives up the wait instead of retrying on every backgrounding: the
-   * downloaded update still starts at the next cold start, and a later check can arm it again.
+   * Restarts into the downloaded update if the Person is away. A restart that fails gives up the
+   * wait instead of retrying on every backgrounding: the downloaded update still starts at the
+   * next cold start, and a later check can arm it again.
    */
-  const left = Effect.fn('Update.left')(function* (now: number) {
-    leftAt = Option.some(now)
+  const restart = Effect.fn('Update.restart')(function* () {
     if (phase !== 'ready' || !client.away()) return
+    phase = 'restarting'
     yield* client.restart.pipe(
       Effect.catchTag('UpdateStepFailed', () =>
         Effect.sync(() => {
@@ -78,6 +71,26 @@ export const keepCurrent = (client: UpdateClient) => {
         }),
       ),
     )
+  })
+
+  /**
+   * A check that fails changes nothing: the app keeps what it runs and the next check asks again.
+   * A download can finish after the Person has already left, with no further backgrounding to
+   * ride on, so it restarts at once in that case (the reference's `includeCurrent`).
+   */
+  const look = Effect.fn('Update.look')(function* () {
+    if (phase !== 'idle') return
+    phase = 'looking'
+    const downloaded = yield* client.download.pipe(
+      Effect.catchTag('UpdateStepFailed', () => Effect.succeed(false)),
+    )
+    phase = downloaded ? 'ready' : 'idle'
+    yield* restart()
+  })
+
+  const left = Effect.fn('Update.left')(function* (now: number) {
+    leftAt = Option.some(now)
+    yield* restart()
   })
 
   const returned = Effect.fn('Update.returned')(function* (now: number) {

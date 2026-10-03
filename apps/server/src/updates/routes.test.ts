@@ -7,7 +7,8 @@ import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import { updateRoutes } from './routes.ts'
 
-const publicUrl = new URL('https://vivid.example')
+// Mounted under a path with a trailing slash: both must survive into every address handed out.
+const publicUrl = new URL('https://vivid.example/vivid/')
 const bundle = 'hermes bytecode'
 const image = 'png bytes'
 
@@ -105,7 +106,7 @@ it.effect('serves the newest release of a runtime version and the files it names
     // An updated app reads its Vivid's address from here; the exported config's own keys stay.
     expect(manifest.extra.expoClient).toEqual({
       name: 'Vivid',
-      extra: { kept: true, server: 'https://vivid.example' },
+      extra: { kept: true, server: 'https://vivid.example/vivid' },
     })
 
     // Every URL in the manifest downloads bytes that match the hash the app will hold them to.
@@ -115,7 +116,9 @@ it.effect('serves the newest release of a runtime version and the files it names
     ] as const) {
       const url = new URL(entry.url)
       expect(url.origin).toBe(publicUrl.origin)
-      const file = yield* client.get(`${url.pathname}${url.search}`)
+      expect(url.pathname).toBe('/vivid/api/updates/assets')
+      // The proxy that mounts Vivid under `/vivid` strips it before the server sees the request.
+      const file = yield* client.get(`/api/updates/assets${url.search}`)
       expect(file.status).toBe(200)
       expect(file.headers['content-type']).toContain(entry.contentType)
       const downloaded = yield* file.text
