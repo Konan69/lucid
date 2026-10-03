@@ -19,6 +19,7 @@ COPY packages/client/state/package.json packages/client/state/package.json
 COPY packages/design/marks/package.json packages/design/marks/package.json
 COPY packages/design/tokens/package.json packages/design/tokens/package.json
 COPY packages/agent/runtime/package.json packages/agent/runtime/package.json
+COPY packages/agent/skills/package.json packages/agent/skills/package.json
 COPY patches patches
 # Web typechecking imports the desktop bridge types, but needs no Electron binary.
 RUN ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --frozen-lockfile --filter @vivid/workspace --filter @vivid/server... --filter @vivid/web...
