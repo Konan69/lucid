@@ -37,6 +37,10 @@ export const MOTION = {
   press: { duration: '--dur-fast', easing: '--ease-out' },
   /** Something already on screen going to a new place: a row reordered, a list closing up. */
   layout: { duration: '--dur-layout', easing: '--ease-in-out' },
+  /** Rows folding away where they stand, as an answered question closes. Class `motion-fold`. */
+  fold: { duration: '--dur-base', easing: '--ease-out' },
+  /** A progress ring's arc growing to a new count. Class `motion-arc`. */
+  arc: { duration: '--dur-base', easing: '--ease-out' },
   /** The mark under the chosen option of a segmented control going to the next one. */
   slide: { duration: '--dur-base', easing: '--ease-in-out' },
 } as const satisfies Record<string, { duration: `--${string}`; easing: `--${string}` }>

@@ -31,6 +31,7 @@ import { cn } from '../../ui/cn'
 import { Began, begin, follow } from '../integration/begin'
 import { EnterKey, type Keying } from '../integration/Key'
 import { Mark } from '../integration/Mark'
+import { Asked, Question } from './Question'
 
 /**
  * The cards a Thread shows where a plain message will not do: something Vivid wants to do and
@@ -331,97 +332,42 @@ export function ApprovalCard({ approval, me }: { approval: Approval; me: PersonI
 
 /**
  * A question Vivid could not answer alone. The Person it is addressed to picks an option or writes
- * their own answer; once answered, the card says what was said and by whom.
+ * their own answer; once answered, the card closes down to what was said, and by whom when that
+ * was someone else. The card itself is `Question`: this reads the server's record into it.
  */
 export function InputCard({ request, me }: { request: InputRequest; me: PersonId }) {
-  const [own, setOwn] = useState('')
-  const waiting = InputRequestState.guards.Waiting(request.state)
-  const mine = request.askedOf.id === me
-
   function answer(text: string) {
-    const body = text.trim()
-    if (body.length === 0) return
     void orSay(
-      change((client) => client.AnswerInput({ id: request.id, answer: body })),
+      change((client) => client.AnswerInput({ id: request.id, answer: text })),
       'Your answer did not reach Vivid. Try again.',
     )
   }
-
+  // Each standing is said to be an `Asked`, so the three branches agree on the union and not
+  // on whichever one is written first.
+  const asked = InputRequestState.match(request.state, {
+    Waiting: (): Asked =>
+      request.askedOf.id === me
+        ? Asked.Open({ onChoose: (choice) => answer(choice.label), onOwn: answer })
+        : Asked.Resting({ note: `Waiting on ${request.askedOf.name}.` }),
+    Answered: ({ answer: said, answeredBy }): Asked =>
+      Asked.Answered({
+        answer: said,
+        note: answeredBy.id === me ? Option.none() : Option.some(`Answered by ${answeredBy.name}`),
+      }),
+    Withdrawn: (): Asked => Asked.Resting({ note: 'No longer needed.' }),
+  })
   return (
-    <Card className="mt-3 p-4">
-      <div className="flex items-center gap-2 text-meta text-attention">
-        <i className="size-1.5 rounded-full bg-attention" />
-        {waiting ? 'Vivid needs you' : 'Vivid asked'}
-      </div>
-      <h3 className="mt-2 text-title font-title text-ink">{request.question}</h3>
-      {InputRequestState.guards.Waiting(request.state) && mine && (
-        <Answering request={request} own={own} onOwn={setOwn} onAnswer={answer} />
-      )}
-      {InputRequestState.guards.Waiting(request.state) && !mine && (
-        <p className="mt-2 text-label text-ink-3">Waiting on {request.askedOf.name}.</p>
-      )}
-      {InputRequestState.guards.Answered(request.state) && (
-        <p className="mt-2 text-label text-ink-2">
-          <span className="text-ink-3">{request.state.answeredBy.name} said:</span>{' '}
-          {request.state.answer}
-        </p>
-      )}
-      {InputRequestState.guards.Withdrawn(request.state) && (
-        <p className="mt-2 text-label text-ink-3">No longer needed.</p>
-      )}
-    </Card>
-  )
-}
-
-/** The options and the free answer, for the Person the question is addressed to. */
-function Answering({
-  request,
-  own,
-  onOwn,
-  onAnswer,
-}: {
-  request: InputRequest
-  own: string
-  onOwn: (value: string) => void
-  onAnswer: (text: string) => void
-}) {
-  return (
-    <>
-      <ul className="mt-3 flex flex-col gap-1.5">
-        {request.options.map((option) => (
-          <li key={option.label}>
-            <button
-              onClick={() => onAnswer(option.label)}
-              className="flex w-full cursor-pointer flex-col rounded-control bg-surface-2 px-3 py-2.5 text-left ring-line transition-colors duration-(--dur-fast) hover:bg-wash-hover"
-            >
-              <span className="text-label font-title text-ink">{option.label}</span>
-              {option.detail.length > 0 && (
-                <span className="text-label text-ink-3">{option.detail}</span>
-              )}
-            </button>
-          </li>
-        ))}
-      </ul>
-      {request.allowsOwnAnswer && (
-        <form
-          className="mt-2 flex gap-2"
-          onSubmit={(event) => {
-            event.preventDefault()
-            onAnswer(own)
-          }}
-        >
-          <input
-            value={own}
-            onChange={(event) => onOwn(event.currentTarget.value)}
-            placeholder="Or say it your way"
-            className="h-9 min-w-0 flex-1 rounded-control bg-well px-3 text-label text-ink ring-line outline-none placeholder:text-ink-4 focus-visible:ring-2 focus-visible:ring-ring"
-          />
-          <Button type="submit" variant="primary" disabled={own.trim().length === 0}>
-            Answer
-          </Button>
-        </form>
-      )}
-    </>
+    <div className="mt-3">
+      <Question
+        status={Option.some(
+          InputRequestState.guards.Waiting(request.state) ? 'Vivid needs you' : 'Vivid asked',
+        )}
+        title={request.question}
+        choices={request.options}
+        allowsOwn={request.allowsOwnAnswer}
+        asked={asked}
+      />
+    </div>
   )
 }
 

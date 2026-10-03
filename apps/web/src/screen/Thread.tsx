@@ -20,7 +20,7 @@ import type { Picture } from './thread/Attach'
 import { Composer } from './thread/Composer'
 import { isBlank, Message, Said, textOf, type ThreadContext } from './thread/Message'
 import { newestRun, Outcome } from './thread/Outcome'
-import { Opening } from './first/Opening'
+import { Opened } from './first/Opening'
 import { Layout } from './thread/Layout'
 import { doingIn } from './thread/Trail'
 
@@ -293,7 +293,7 @@ function Conversation({
               <>
                 {hero}
                 {/* The Thread that answered Vivid's opening keeps it above what was written. */}
-                {opened && <Opening me={me} onSay={say} />}
+                {opened && <Opened me={me} />}
               </>
             }
             ready={agent.historyReady}

@@ -2,13 +2,12 @@ import type { MeResponse } from '@vivid/contracts'
 import { Workspace } from '@vivid/contracts'
 import { draftPlace, greetingAt, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
-import { useState, useSyncExternalStore } from 'react'
+import { useState } from 'react'
 import { live, useLiveValue } from '../data/live'
 import { onboarding } from '../data/onboarding'
 import { startThread } from '../data/threads'
 import { useAppearance } from '../data/vivid'
 import { Face } from '../ui/Face'
-import { Checklist } from './first/Checklist'
 import { Opening } from './first/Opening'
 import { Composer } from './thread/Composer'
 
@@ -17,12 +16,13 @@ import { Composer } from './thread/Composer'
  *
  * To someone who has never written to Vivid it is laid out as their first Thread, and Vivid has
  * already spoken in it (`Opening`): the conversation fills the page and the composer is at its
- * foot, where it is in every Thread. What they write, or a job they pick, starts the real Thread,
- * which keeps Vivid's opening above it.
+ * foot, where it is in every Thread. What they write, or the answer they press under Vivid's one
+ * question, starts the real Thread, which keeps Vivid's opening above it.
  *
  * To everyone else it is Vivid, a greeting and the composer in the middle of the page, where the
- * eye already is, with what is left of getting started under it until that is done or closed.
- * There are no suggestion cards: four generic ones used to sit here and were filler.
+ * eye already is, and nothing else. What is left of getting started is a small control at the
+ * foot of the sidebar (`sidebar/Started`), not a block here. There are no suggestion cards: four
+ * generic ones used to sit here and were filler.
  */
 export function First({ me }: { me: MeResponse }) {
   const threads = useLiveValue(live.threads)
@@ -51,7 +51,8 @@ function Meeting({ me }: { me: MeResponse }) {
       </div>
       <Composer
         place={placeOf(me)}
-        placeholder="What are you waiting on, or want done?"
+        // Vivid has just asked a question; the message box is where it is answered in other words.
+        placeholder="Type your own answer"
         working={false}
         onSend={begin}
         onStop={() => undefined}
@@ -63,7 +64,6 @@ function Meeting({ me }: { me: MeResponse }) {
 /** Home for someone who has written to Vivid before: the greeting and the composer. */
 function Back({ me }: { me: MeResponse }) {
   const { name } = useAppearance()
-  const over = useSyncExternalStore(onboarding.subscribe, () => onboarding.isOver(me.person.id))
   // Read once: a greeting that changed while someone was looking at it would be a glitch.
   const [hello] = useState(() => greetingAt(new Date().getHours()))
   const first = me.person.name.trim().split(/\s+/u)[0]
@@ -95,12 +95,6 @@ function Back({ me }: { me: MeResponse }) {
             onStop={() => undefined}
           />
         </div>
-
-        {!over && (
-          <div className="px-4 sm:px-6">
-            <Checklist me={me} />
-          </div>
-        )}
       </div>
     </section>
   )
