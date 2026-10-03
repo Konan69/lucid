@@ -9,8 +9,10 @@ import { orSay } from '../../data/said'
 import { Faces } from '../../ui/Avatar'
 import { Button } from '../../ui/Button'
 import { cn } from '../../ui/cn'
+import { Count } from '../../ui/Count'
 import { Dialog, DialogActions } from '../../ui/Dialog'
 import { ContextMenu, MenuDivider, MenuItem, type MenuPoint } from '../../ui/Menu'
+import { byKeyboard, leave } from '../../ui/motion'
 import { StatusLabel } from '../../ui/Status'
 import { CAPTION, FULL, HOVER, ROW } from './rows'
 
@@ -113,7 +115,13 @@ export function Threads({
   )
   const nothing = () => setDoing(Doing.Nothing())
   const row = (thread: Thread, variant: Variant) => (
-    <li key={thread.id} className={variant === 'card' ? 'py-0.5' : undefined}>
+    // `data-moves` names the row for the list's `settling` (see `Sidebar`): when the Thread
+    // changes place, even into another part of the list, the row glides there.
+    <li
+      key={thread.id}
+      data-moves={thread.id}
+      className={variant === 'card' ? 'py-0.5' : undefined}
+    >
       <ThreadRow
         thread={thread}
         variant={variant}
@@ -161,6 +169,7 @@ export function Threads({
         <section>
           <button
             onClick={() => setDoneOpen((value) => !value)}
+            data-moves="done"
             className={cn(ROW, FULL, HOVER, 'mt-2 text-ink-3 hover:text-ink')}
             aria-expanded={doneOpen}
           >
@@ -168,7 +177,9 @@ export function Threads({
               <CircleCheck className="size-4" strokeWidth={1.6} />
             </span>
             <span className="min-w-0 flex-1 text-label">Done</span>
-            <span className="text-meta font-meta text-ink-3 tabular-nums">{done.length}</span>
+            <span className="text-meta font-meta text-ink-3">
+              <Count value={done.length} />
+            </span>
           </button>
           {doneOpen && (
             <ul className="flex flex-col gap-px pb-2">
@@ -308,7 +319,15 @@ function DoneAction({ thread }: { thread: Thread }) {
       data-row-action
       aria-label={`${label}: ${thread.title}`}
       title={label}
-      onClick={() => patchThread(thread.id, { archived: !thread.archived })}
+      onClick={(event) => {
+        const done = () => patchThread(thread.id, { archived: !thread.archived })
+        const row = event.currentTarget.closest('[data-moves]')
+        // The row fades out under the pointer first, then the list closes over it: taken away
+        // in the same frame, the row below would be under the pointer before the eye had let go
+        // of this one. From the keyboard it is done at once.
+        if (row === null || byKeyboard(event)) done()
+        else void leave(row, 'exit').then(done)
+      }}
       className="pointer-events-none absolute top-1.5 right-1.5 z-10 inline-flex size-6 cursor-pointer items-center justify-center rounded-control text-ink-3 opacity-0 transition-opacity duration-(--dur-fast) group-focus-within/thread:pointer-events-auto group-focus-within/thread:opacity-100 group-hover/thread:pointer-events-auto group-hover/thread:opacity-100 hover:bg-wash-hover hover:text-ink active:scale-96"
     >
       {thread.archived ? <Undo2 className="size-3.5" /> : <Check className="size-3.5" />}
@@ -445,13 +464,19 @@ function DeleteThread({ thread, onClose }: { thread: Thread; onClose: () => void
 function Caption({ label, count }: { label: string; count?: number }) {
   return (
     <h3
+      // A caption moves with the rows under it when the list above it grows or closes up.
+      data-moves={`caption:${label}`}
       className={cn(
         'mt-1 flex items-center gap-1.5 px-2.5 text-meta font-title text-ink-3',
         CAPTION,
       )}
     >
       {label}
-      {count !== undefined && <span className="font-meta tabular-nums">{count}</span>}
+      {count !== undefined && (
+        <span className="font-meta">
+          <Count value={count} />
+        </span>
+      )}
     </h3>
   )
 }

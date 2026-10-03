@@ -12,6 +12,7 @@ import { AlarmClock, Check, Copy as CopyIcon, Repeat2 } from 'lucide-react'
 import { useState } from 'react'
 import { Avatar } from '../../ui/Avatar'
 import { cn } from '../../ui/cn'
+import { Alive } from '../../ui/Alive'
 import { Face } from '../../ui/Face'
 import { Markdown } from '../../ui/Markdown'
 import {
@@ -23,7 +24,7 @@ import {
   requestById,
 } from './Cards'
 import { Display } from './Shown'
-import { Doing, Trail, type ToolPart } from './Trail'
+import { Doing, doingIn, Trail, type ToolPart } from './Trail'
 
 const Metadata = Schema.Struct({
   finishedAt: Schema.optionalKey(Schema.Number),
@@ -416,7 +417,7 @@ function FromVivid({
   const making = working && latest
   return (
     <div className="flex gap-3">
-      <Face size={28} className="mt-0.5" mood={moodOf(making, latest)} />
+      <ReplyFace message={message} latest={latest} making={making} />
       <div className="min-w-0 flex-1 text-body text-ink">
         {Option.isSome(forWhom) && (
           <span className="mb-1 block text-meta font-meta text-ink-3">
@@ -436,34 +437,84 @@ function FromVivid({
             </div>
           )}
           {!streaming && text.length > 0 && (
-            <div
-              className={cn(
-                'flex h-6 items-center gap-1.5 text-meta text-ink-3',
-                simple ? 'shrink-0' : 'mt-1',
-              )}
-            >
-              <Stamp message={message} />
-              <CopyWords read={() => text} />
-            </div>
+            <Settled message={message} text={text} beside={simple} latest={latest} />
           )}
         </div>
         {!making && <Trail tools={steps} />}
-        <ToolCards
-          tools={tools}
-          context={context}
-          live={latest && !working}
-          onContinue={onContinue}
-        />
+        {/* A card Vivid produces while it is making this reply rises into place; the cards of a
+            reply that is already finished are simply there. `contents` keeps the wrapper out of
+            the layout. */}
+        <div className={making ? ARRIVING : 'contents'}>
+          <ToolCards
+            tools={tools}
+            context={context}
+            live={latest && !working}
+            onContinue={onContinue}
+          />
+        </div>
       </div>
     </div>
   )
 }
 
+/** The wrapper of a reply's cards while the reply is being made: each card that appears rises in. */
+const ARRIVING = 'contents *:motion-enter'
+
 /**
- * The look on Vivid's face beside a reply: leaning back while it is making it, leaning in on the
- * one it has just finished, level on everything it said before.
+ * The face beside a reply. The newest reply's is alive: it works while the reply is made and is
+ * pleased, then at rest, once it is finished. An older reply is a record, and its face is still.
  */
-const moodOf = (making: boolean, latest: boolean) => {
-  if (making) return 'thinking'
-  return latest ? 'happy' : 'neutral'
+function ReplyFace({
+  message,
+  latest,
+  making,
+}: {
+  message: FlueConversationMessage
+  latest: boolean
+  making: boolean
+}) {
+  if (!latest) return <Face size={28} className="mt-0.5" mood="neutral" />
+  return (
+    <Alive size={28} className="mt-0.5" state={stateOf(making, Option.isSome(doingIn(message)))} />
+  )
+}
+
+/**
+ * What stands under a finished reply: when it was said, and the control that copies it. Under
+ * the newest reply it fades in (`motion-fade`) as the words stop arriving, so the reply is seen
+ * to settle; under older ones it is simply there.
+ */
+function Settled({
+  message,
+  text,
+  beside,
+  latest,
+}: {
+  message: FlueConversationMessage
+  text: string
+  /** Whether it sits beside a short bubble instead of under an open column. */
+  beside: boolean
+  latest: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        'flex h-6 items-center gap-1.5 text-meta text-ink-3',
+        beside ? 'shrink-0' : 'mt-1',
+        latest && 'motion-fade',
+      )}
+    >
+      <Stamp message={message} />
+      <CopyWords read={() => text} />
+    </div>
+  )
+}
+
+/**
+ * What Vivid's face is doing beside its newest reply: working while a step of it runs, thinking
+ * between steps, and done once it is made (pleased for a few seconds, then at rest).
+ */
+const stateOf = (making: boolean, usingTool: boolean) => {
+  if (!making) return 'done'
+  return usingTool ? 'working' : 'thinking'
 }

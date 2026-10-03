@@ -1,4 +1,5 @@
 import { Option } from 'effect'
+import { instantly } from '../ui/motion'
 import { kept } from './kept'
 import { router } from './route'
 
@@ -112,8 +113,10 @@ router.subscribe(() => {
 })
 
 // ⌘B / Ctrl+B toggles the sidebar, the shortcut every editor-shaped app has trained people on.
+// From the keyboard it is there or gone at once: the button slides it, because a hand on the
+// pointer is watching it go, and a hand on the keys is already on to the next thing.
 addEventListener('keydown', (event) => {
   if (event.key.toLocaleLowerCase() !== 'b' || !(event.metaKey || event.ctrlKey)) return
   event.preventDefault()
-  sidebar.toggle()
+  instantly(sidebar.toggle)
 })

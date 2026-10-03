@@ -238,16 +238,19 @@ function Shell({ me }: { me: MeResponse }) {
       )}
       <main className="relative flex min-w-0 flex-1">
         <Suspense fallback={<Splash />}>
-          <Place
-            // A screen holds things that belong to the workspace it was opened in: the folder it
-            // is in, the item it has open, a half-written Routine. Changing workspace starts each
-            // screen again, so nothing of one Company is left on screen under another's name.
-            key={workspaceKey(me.workspace)}
-            route={route}
-            me={me}
-            beside={beside}
-            onTogglePanel={panel.toggle}
-          />
+          {/* A new element for each screen, so its arrival plays; see `screenOf`. */}
+          <div key={screenOf(route)} className="flex min-w-0 flex-1 motion-screen">
+            <Place
+              // A screen holds things that belong to the workspace it was opened in: the folder it
+              // is in, the item it has open, a half-written Routine. Changing workspace starts each
+              // screen again, so nothing of one Company is left on screen under another's name.
+              key={workspaceKey(me.workspace)}
+              route={route}
+              me={me}
+              beside={beside}
+              onTogglePanel={panel.toggle}
+            />
+          </div>
         </Suspense>
         {beside && Route.$is('Thread')(route) && (
           <Suspense fallback={null}>
@@ -273,6 +276,24 @@ function Shell({ me }: { me: MeResponse }) {
 }
 
 const openThread = (id: string) => router.go(Route.Thread({ id: ThreadId.make(id) }))
+
+/**
+ * Which screen a place is, for the moment one screen takes over from another. Going from one
+ * Thread to the next, or from the first screen into the Thread it started, is the same screen
+ * with different words in it and changes at once: it is done a hundred times a day, and the
+ * shortcuts that do it are the keyboard's. Going to Routines, the Library or Projects is a
+ * different screen, and that one arrives (`motion-screen`).
+ */
+const screenOf = (route: Route) =>
+  Route.$match(route, {
+    New: () => 'thread',
+    Thread: () => 'thread',
+    Invite: () => 'thread',
+    Device: () => 'thread',
+    Routines: () => 'routines',
+    Library: () => 'library',
+    Projects: () => 'projects',
+  })
 
 /** The screen the address names. */
 function Place({

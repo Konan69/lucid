@@ -21,8 +21,9 @@ import { Avatar } from '../ui/Avatar'
 import { Button } from '../ui/Button'
 import { cn } from '../ui/cn'
 import { Dialog, DialogActions, DialogField } from '../ui/Dialog'
-import { Face } from '../ui/Face'
+import { Alive } from '../ui/Alive'
 import { Menu, MenuDivider, MenuItem, MenuLabel } from '../ui/Menu'
+import { settling } from '../ui/settle'
 import { sidebar } from '../data/sidebar'
 import { FULL, HOVER, ROW, TOOL } from './sidebar/rows'
 import { ProjectGroup } from './sidebar/Projects'
@@ -153,7 +154,12 @@ export function Sidebar({
           />
         </div>
 
-        <nav className="mt-2 min-h-0 flex-1 scrollbar-hidden overflow-y-auto scroll-fade-y px-2 pb-2">
+        {/* `settling` keeps the list in one piece as Threads arrive, move and are marked done:
+            a row with a new place glides to it and the rows under a gap close up. */}
+        <nav
+          ref={settling}
+          className="mt-2 min-h-0 flex-1 scrollbar-hidden overflow-y-auto scroll-fade-y px-2 pb-2"
+        >
           {Option.isNone(threads) ? (
             <ThreadSkeleton />
           ) : (
@@ -162,10 +168,13 @@ export function Sidebar({
               active={Route.$is('Thread')(route) ? route.id : null}
             />
           )}
-          <ProjectGroup
-            always={Workspace.guards.Company(me.workspace)}
-            open={Route.$is('Projects')(route) ? route.open : Option.none()}
-          />
+          {/* The Projects move down and up with the Threads above them, as one block. */}
+          <div data-moves="projects">
+            <ProjectGroup
+              always={Workspace.guards.Company(me.workspace)}
+              open={Route.$is('Projects')(route) ? route.open : Option.none()}
+            />
+          </div>
         </nav>
 
         <button
@@ -248,7 +257,7 @@ function WorkspaceSwitcher({
     <div className="relative">
       <button onClick={() => setOpen(true)} className={cn(ROW, FULL, HOVER)} aria-haspopup="menu">
         <span className="relative inline-flex size-5.5 items-center justify-center">
-          <Face size={20} mood={working ? 'thinking' : 'neutral'} />
+          <Alive size={20} state={working ? 'thinking' : 'idle'} />
         </span>
         {/* Where the Person is, in the face Vivid speaks in: the one line of the rail with a voice. */}
         <span className="min-w-0 flex-1 truncate font-display text-dialog font-strong text-ink">

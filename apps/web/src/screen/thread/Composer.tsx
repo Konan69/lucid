@@ -2,6 +2,7 @@ import { BorderBeam } from 'border-beam'
 import { ArrowUp, Mic, Paperclip, Square } from 'lucide-react'
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import { draft } from '../../data/drafts'
+import { writing } from '../../data/life'
 import { theme } from '../../data/theme'
 import { IconButton } from '../../ui/Button'
 import { cn } from '../../ui/cn'
@@ -59,6 +60,8 @@ export function Composer({
     const taken = attached.take()
     const body = [words, ...taken.lines].join('\n\n')
     write('')
+    // Sent: the Person has stopped writing, and Vivid's face turns from listening to the work.
+    writing.stopped()
     if (onTyping !== undefined) onTyping(false)
     onSend(body, taken.pictures)
   }
@@ -106,6 +109,9 @@ export function Composer({
                       onTyping(next.length > 0)
                     }
                     write(next)
+                    // Vivid's face listens while the Person writes (`data/life.ts`).
+                    if (next.length > 0) writing.heard()
+                    else writing.stopped()
                   }}
                   onKeyDown={(event) => {
                     // While an input method is composing, Enter picks a candidate; it does not send.
@@ -128,25 +134,7 @@ export function Composer({
                       <Mic className="size-4" />
                     </IconButton>
                   )}
-                  <button
-                    aria-label={working ? 'Stop' : 'Send'}
-                    disabled={!working && empty}
-                    onClick={() => (working ? onStop() : submit())}
-                    className={cn(
-                      // With nothing to send it is a quiet disc, not a faded accent: an accent at 40%
-                      // reads as a broken button, a neutral one reads as "write something first".
-                      'inline-flex size-9 cursor-pointer items-center justify-center rounded-full text-ink-on-accent transition-press duration-(--dur-fast) active:scale-96 disabled:cursor-not-allowed disabled:bg-wash-pressed disabled:text-ink-4',
-                      working
-                        ? 'bg-ink text-surface-0 hover:bg-ink-2'
-                        : 'bg-accent hover:bg-accent-hover',
-                    )}
-                  >
-                    {working ? (
-                      <Square className="size-3.5 fill-current" />
-                    ) : (
-                      <ArrowUp className="size-4" strokeWidth={2.25} />
-                    )}
-                  </button>
+                  <SendOrStop working={working} empty={empty} onStop={onStop} onSend={submit} />
                 </div>
               </div>
             </BorderBeam>
@@ -154,6 +142,42 @@ export function Composer({
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * The one round button of the composer. It sends; while Vivid works it is the way to stop it.
+ * The two marks take turns in the one place: the one going shrinks away as the one coming grows
+ * in (`motion-swap`), so the button is seen to change what it does instead of being swapped for
+ * another.
+ */
+function SendOrStop({
+  working,
+  empty,
+  onStop,
+  onSend,
+}: {
+  working: boolean
+  /** Nothing to send yet. */
+  empty: boolean
+  onStop: () => void
+  onSend: () => void
+}) {
+  return (
+    <button
+      aria-label={working ? 'Stop' : 'Send'}
+      disabled={!working && empty}
+      onClick={() => (working ? onStop() : onSend())}
+      className={cn(
+        // With nothing to send it is a quiet disc, not a faded accent: an accent at 40%
+        // reads as a broken button, a neutral one reads as "write something first".
+        'relative inline-flex size-9 motion-press cursor-pointer items-center justify-center rounded-full text-ink-on-accent disabled:cursor-not-allowed disabled:bg-wash-pressed disabled:text-ink-4',
+        working ? 'bg-ink text-surface-0 hover:bg-ink-2' : 'bg-accent hover:bg-accent-hover',
+      )}
+    >
+      <Square data-shown={working} className="absolute size-3.5 motion-swap fill-current" />
+      <ArrowUp data-shown={!working} className="absolute size-4 motion-swap" strokeWidth={2.25} />
+    </button>
   )
 }
 

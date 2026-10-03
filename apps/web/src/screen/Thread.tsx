@@ -12,7 +12,9 @@ import { Route, router } from '../data/route'
 import { orSay } from '../data/said'
 import { FirstWords, firstWords } from '../data/threads'
 import { Button } from '../ui/Button'
+import { Alive, ranBadly } from '../ui/Alive'
 import { Face } from '../ui/Face'
+import { arriving } from '../ui/settle'
 import type { Picture } from './thread/Attach'
 import { Composer } from './thread/Composer'
 import { isBlank, Message, Said, textOf, type ThreadContext } from './thread/Message'
@@ -167,7 +169,9 @@ function ConversationMessages({
       onRetry={onRetry}
     >
       {visible.map((message, position) => (
-        <li key={message.id} className="animate-rise-in">
+        // `data-arrives`: a Message that lands while the Thread is open rises into place; the
+        // ones already here when it opens do not move (`arriving`, on the list below).
+        <li key={message.id} data-arrives>
           <Message
             message={message}
             context={context}
@@ -271,6 +275,9 @@ function Conversation({
       present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
       working={working}
       doing={working ? Option.flatMap(replyIn(visible), doingIn) : Option.none()}
+      // What Vivid's face answers for: words that did not arrive, a server that cannot be
+      // reached, a Run that ended without an answer.
+      failed={agent.error !== undefined || Option.isSome(unsent) || Option.exists(ended, ranBadly)}
       panelOpen={panelOpen}
       onTogglePanel={onTogglePanel}
     >
@@ -460,7 +467,10 @@ function Messages({
       >
         {/* The gutter is on the scroller, not the column, so the messages and the composer below
           them are exactly the same width at every window size. */}
-        <ol className="mx-auto flex min-h-full w-full max-w-(--thread-max-w) shrink-0 flex-col gap-5 py-5 sm:py-6">
+        <ol
+          ref={arriving}
+          className="mx-auto flex min-h-full w-full max-w-(--thread-max-w) shrink-0 flex-col gap-5 py-5 sm:py-6"
+        >
           {/* Vivid at the top, part of the conversation: it scrolls away with it. */}
           {hero}
           {!ready && empty && (
@@ -484,7 +494,7 @@ function Messages({
               className="flex items-center gap-3 transition-opacity delay-700 duration-(--dur-slow) starting:opacity-0"
               aria-live="polite"
             >
-              <Face size={28} mood="thinking" />
+              <Alive size={28} state="thinking" />
               <span className="flex items-center gap-2">
                 <ThinkingOrb state="breathing" size={20} aria-hidden />
                 <span className="text-label text-ink-3">Thinking…</span>

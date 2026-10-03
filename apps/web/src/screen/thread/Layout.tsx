@@ -8,6 +8,7 @@ import {
 import { Option } from 'effect'
 import { lazy, Suspense, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { split } from '../../data/split'
+import { useFaceState, useLook } from '../../ui/Alive'
 import { cn } from '../../ui/cn'
 import { Header, Hero, STANDING, type Standing } from './Header'
 import { Share } from './Share'
@@ -49,6 +50,7 @@ export function Layout({
   present,
   working,
   doing,
+  failed,
   panelOpen,
   onTogglePanel,
   children,
@@ -61,6 +63,8 @@ export function Layout({
   working: boolean
   /** The step Vivid is on right now, from the Thread's own stream, when it is on one. */
   doing: Option.Option<string>
+  /** Whether the last thing asked of Vivid here did not work. Its face shows it. */
+  failed: boolean
   panelOpen: boolean
   onTogglePanel: () => void
   children: (hero: ReactNode) => ReactNode
@@ -71,9 +75,22 @@ export function Layout({
   const attention = working
     ? 'Working'
     : Option.match(thread, { onNone: () => 'Quiet' as const, onSome: (value) => value.attention })
-  const standing = standingNow(attention, working, doing)
+  // The look on Vivid's face is alive: it follows what Vivid is really doing in this Thread and
+  // holds, then changes, on the face's own clock (`ui/Alive.tsx`). The words and their colour
+  // stay the standing line's.
+  const look = useLook(
+    useFaceState({
+      answering: working,
+      usingTool: Option.isSome(doing),
+      failed,
+      needsPerson: attention === 'NeedsYou',
+    }),
+  )
+  const standing = { ...standingNow(attention, working, doing), mood: look }
   return (
     <section
+      // `data-alive`: every face in the Thread eases its lean from one look to the next.
+      data-alive
       inert={panelOpen && full}
       className="@container/thread relative flex h-full min-w-0 flex-1 flex-col bg-surface-0"
     >
