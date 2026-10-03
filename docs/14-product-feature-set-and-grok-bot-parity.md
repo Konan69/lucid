@@ -74,6 +74,17 @@ Last brought up to date on 3 October 2026.
   owner, a state and a place in a Project, seen by everyone on it. Until then a reminder is a
   one-off Routine.
 - **Billing and usage limits.**
+- **Apps on the Computer and a home screen.** The Computer image carries a browser and the desktop
+  stack only. There is no office suite, no creative or engineering apps, and no launcher showing
+  what is installed (#4).
+- **Files as Artifacts.** Vivid cannot hand a file built on the Computer to the Person as an
+  Artifact, so a document is Markdown through the document tools, never a Word file (#5).
+- **Spreadsheet, presentation and PDF procedures.** The reference procedures build real files and
+  check them by rendering; they wait on the two gaps above (#6).
+- **Parallel workers for wide research.** The same lookup runs over each input in batches inside
+  one Run (#8).
+- **Booking by phone, and a map for places.** Both paths exist in the reference procedures and were
+  left out; Vivid has no calling and no map display (#10).
 
 ## Known limits
 
@@ -82,6 +93,12 @@ Last brought up to date on 3 October 2026.
 - Pictures in a reply load automatically, so a page Vivid read could have it show a picture whose
   address carries Thread content elsewhere. Loading on tap or through the server would close it.
 - Adding by address depends on the operator running Executor with public-only egress.
+- Forgetting cannot change or remove a Routine: no tool does it, so Vivid names the Routine and the
+  Person changes it (#7).
+- Ten built-in procedures (3 October 2026) were adapted from a third party's partial snapshot of
+  Muse's shipped skill files, not from a source its maker published. The supporting reference
+  files those skills point to were not in the snapshot, so only steps stated in the skill bodies
+  were used. Skills the Person already has installed were not surveyed as a source (#9).
 
 ## Grok Bot parity map
 
