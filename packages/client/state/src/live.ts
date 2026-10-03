@@ -250,11 +250,26 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
     // it (a screen, a mounted atom), and is collected once nothing does. A plain Map kept one,
     // with its atoms, for every Thread and folder visited since the page loaded.
     const queries = new Map<string, WeakRef<LiveQuery<Value>>>()
-    // When a query is collected its name is taken out too, unless a newer query already has it.
-    const gone = new FinalizationRegistry<string>((name) => {
+    // Takes a name out once its query has been collected, unless a newer query already has it.
+    const forget = (name: string) => {
       const held = queries.get(name)
       if (held !== undefined && held.deref() === undefined) queries.delete(name)
-    })
+    }
+    // Browsers and Node report a collected query through FinalizationRegistry. Hermes (React
+    // Native) has WeakRef but no FinalizationRegistry, and constructing one there threw
+    // "Property 'FinalizationRegistry' doesn't exist" on the first signed-in render. Without it
+    // the dead names are swept when the next query is made, which bounds the Map the same way.
+    // The installed Effect source makes the same check in `Atom.family`
+    // (effect/src/unstable/reactivity/Atom.ts).
+    const remember: (made: LiveQuery<Value>, name: string) => void =
+      typeof FinalizationRegistry === 'undefined'
+        ? () => {
+            for (const name of queries.keys()) forget(name)
+          }
+        : (
+            (gone) => (made, name) =>
+              gone.register(made, name)
+          )(new FinalizationRegistry<string>(forget))
     const known = (name: string) =>
       Option.flatMap(Option.fromUndefinedOr(queries.get(name)), (held) =>
         Option.fromUndefinedOr(held.deref()),
@@ -264,8 +279,8 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
         const name = key(argument)
         return Option.getOrElse(known(name), () => {
           const made = query((client) => watch(client, argument))
+          remember(made, name)
           queries.set(name, new WeakRef(made))
-          gone.register(made, name)
           return made
         })
       },
