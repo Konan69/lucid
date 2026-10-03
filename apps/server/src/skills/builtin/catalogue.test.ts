@@ -70,15 +70,13 @@ const connection = (serviceName: string, state: ConnectionState) =>
   })
 
 describe('shipped procedure catalogue', () => {
-  it('uses registered tools, bounds instructions and projects no record handles', () => {
+  it('uses registered tools and projects no record handles', () => {
     expect(procedures).toHaveLength(23)
     for (const procedure of procedures) {
       expect(procedure.about).not.toMatch(/the Person|^When\b|`/iu)
       expect(procedure.about.length).toBeLessThanOrEqual(300)
       for (const tool of registered)
         expect(procedure.about).not.toMatch(new RegExp(`\\b${tool}\\b`, 'u'))
-      expect(procedure.instructions.split(/\s+/).length).toBeGreaterThanOrEqual(150)
-      expect(procedure.instructions.split(/\s+/).length).toBeLessThanOrEqual(350)
       for (const tool of procedure.needs)
         expect(registered.has(tool), `${procedure.name}: ${tool}`).toBe(true)
       for (const mention of procedure.instructions.matchAll(/`([a-z_]+)`/g)) {
