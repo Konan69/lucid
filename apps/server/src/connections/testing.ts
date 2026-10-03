@@ -62,6 +62,7 @@ export const writeTool = ExecutorTool.make({
   effect: 'write',
   input: {},
 })
+const fixtureRouteMissing = Schema.TaggedStruct('FixtureRouteMissing', {})
 
 /** Recording authority keeps external behavior deliberate while exercising the production store and SQL. */
 interface ConnectionProbeService {
@@ -545,13 +546,13 @@ export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(fu
     if (reply !== undefined)
       return HttpServerResponse.jsonUnsafe(reply.body, { status: reply.status })
     if (!url.pathname.startsWith(`${hostedPrefix}/`))
-      return HttpServerResponse.jsonUnsafe({ _tag: 'FixtureRouteMissing' }, { status: 404 })
+      return HttpServerResponse.jsonUnsafe(fixtureRouteMissing.make({}), { status: 404 })
     const local = {
       ...received,
       path: `${request.method} ${url.pathname.slice(hostedPrefix.length)}`,
     }
     if (!hostedRoute(local.path))
-      return HttpServerResponse.jsonUnsafe({ _tag: 'FixtureRouteMissing' }, { status: 404 })
+      return HttpServerResponse.jsonUnsafe(fixtureRouteMissing.make({}), { status: 404 })
     const result =
       request.method === 'GET' ? yield* hostedRead(state, local) : yield* hostedWrite(state, local)
     return HttpServerResponse.jsonUnsafe(result)

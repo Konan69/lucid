@@ -7,6 +7,7 @@ import {
   ExecutorAccountId,
   ExecutorAppId,
   ExecutorApprovalUnsupported,
+  ExecutorCallOutcome,
   ExecutorAuthorizationId,
   ExecutorOwnerId,
   ExecutorProfileId,
@@ -15,6 +16,7 @@ import {
   ExecutorResponseInvalid,
   ExecutorSetupRequired,
   ExecutorStep,
+  ExecutorStatus,
   executorLayer,
 } from './executor.ts'
 import { ConnectionSource } from './address.ts'
@@ -72,6 +74,19 @@ const signInRequirement = {
   slot: { provider: 'provider', definition: { auth: { oauth: { type: 'oauth2' } } } },
 }
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json)
+const approvalRequiredReply = Schema.TaggedStruct('ToolApprovalRequired', {
+  app: Schema.String,
+  deployment: Schema.String,
+  tool: Schema.String,
+})
+const profileConflictReply = Schema.TaggedStruct('ProfileConflict', {})
+
+/** Keep indexed fixture reads total after the test has asserted the expected request count. */
+function requestAt<T>(items: readonly T[], index: number): T {
+  const item = items[index]
+  if (item === undefined) throw new Error(`Expected request at index ${index}`)
+  return item
+}
 
 /** Every scenario drives the public Executor service with the production HTTP Layer. Reusing
  * the captured requests proves route, header, account isolation and submission-body semantics.
@@ -185,7 +200,7 @@ describe('Executor hosted transport', () => {
           (request) => request.path === `POST ${hostedPrefix}/apps/import`,
         )
         expect(imports).toHaveLength(1)
-        expect(imports[0]?.body).toEqual({
+        expect(requestAt(imports, 0).body).toEqual({
           source: { kind: 'mcp', url: source.address, name: expect.any(String) },
         })
         expect(requests.some((request) => request.path === `DELETE ${hostedPrefix}/apps/app`)).toBe(
@@ -226,8 +241,8 @@ describe('Executor hosted transport', () => {
           (request) => request.path === `GET ${hostedPrefix}/apps/app/tools`,
         )
         expect(pages).toHaveLength(2)
-        expect(new URLSearchParams(pages[1]?.search).get('cursor')).toBe('next/with+&symbols')
-        expect(new URLSearchParams(pages[1]?.search).get('expectedProfileRevision')).toBe('1')
+        expect(new URLSearchParams(requestAt(pages, 1).search).get('cursor')).toBe('next/with+&symbols')
+        expect(new URLSearchParams(requestAt(pages, 1).search).get('expectedProfileRevision')).toBe('1')
         expect(
           requests.find((request) => request.path === `POST ${hostedPrefix}/apps/app/tools/call`),
         ).toMatchObject({
@@ -268,19 +283,18 @@ describe('Executor hosted transport', () => {
   )
 
   for (const value of [
-    { content: [{ type: 'text', text: 'Done' }], structuredContent: { ok: true }, isError: false },
-    { result: [1, 2, 3] },
-    'plain OpenAPI result',
+    { title: 'structured result', result: { content: [{ type: 'text', text: 'Done' }], structuredContent: { ok: true }, isError: false } },
+    { title: 'array result', result: { result: [1, 2, 3] } },
+    { title: 'plain OpenAPI result', result: 'plain OpenAPI result' },
   ]) {
-    it.effect(`preserves the raw successful result: ${typeof value}`, () =>
+    it.effect(`preserves the raw successful result: ${value.title}`, () =>
       scenario((remote) =>
         Effect.gen(function* () {
-          const result = yield* decodeJson(value)
+          const result = yield* decodeJson(value.result)
           yield* Ref.set(remote.result, result)
-          expect(yield* (yield* Executor).call({ references, tool: 'read', input: {} })).toEqual({
-            _tag: 'Completed',
-            value: result,
-          })
+          expect(yield* (yield* Executor).call({ references, tool: 'read', input: {} })).toEqual(
+            ExecutorCallOutcome.cases.Completed.make({ value: result }),
+          )
         }),
       ),
     )
@@ -296,10 +310,9 @@ describe('Executor hosted transport', () => {
             isError: true,
           })
           const result = yield* (yield* Executor).call({ references, tool: 'read', input: {} })
-          expect(result).toMatchObject({
-            _tag: 'Rejected',
-            message: expect.stringContaining('sensitive diagnostics were removed'),
-          })
+          expect(ExecutorCallOutcome.guards.Rejected(result)).toBe(true)
+          if (ExecutorCallOutcome.guards.Rejected(result))
+            expect(result.message).toContain('sensitive diagnostics were removed')
           expect(JSON.stringify(result)).not.toContain('sensitive-provider-value')
         }),
       ),
@@ -310,12 +323,11 @@ describe('Executor hosted transport', () => {
       Effect.gen(function* () {
         yield* failRoute(remote, 'POST /apps/app/tools/call', {
           status: 409,
-          body: {
-            _tag: 'ToolApprovalRequired',
+          body: approvalRequiredReply.make({
             app: 'app',
             deployment: 'deployment',
             tool: 'read',
-          },
+          }),
         })
         const error = yield* (yield* Executor)
           .call({ references, tool: 'read', input: {} })
@@ -343,7 +355,7 @@ describe('Executor hosted transport', () => {
             yield* executor
               .resume({ references, requestId: ExecutorRequestId.make('old-request'), accept })
               .pipe(Effect.flip),
-          ).toMatchObject({ _tag: 'ExecutorApprovalUnsupported', tool: null })
+          ).toEqual(ExecutorApprovalUnsupported.make({ tool: null }))
           expect(yield* Ref.get(remote.requests)).toEqual(before)
         }),
       ),
@@ -358,18 +370,18 @@ describe('Executor hosted transport', () => {
           yield* Ref.set(remote.accounts, keyRequirement)
           const executor = yield* Executor
           const step = yield* executor.begin(begin)
-          if (!ExecutorStep.guards.EnterKey(step)) return expect.fail('Expected key fields')
+          if (!ExecutorStep.guards.EnterKey(step)) throw new Error('Expected key fields')
           expect(step.fields).toEqual([{ name: 'token', label: 'Access token' }])
           expect(step.references.method).toBe('providerKey')
           const result = yield* executor.complete({
             references: step.references,
             fields: { token: Redacted.make('fixture-key') },
           })
-          expect(result).toMatchObject({
-            _tag: 'Authorized',
-            account: 'account',
-            profile: step.references.profile,
-          })
+          expect(ExecutorReferences.guards.Authorized(result)).toBe(true)
+          if (ExecutorReferences.guards.Authorized(result)) {
+            expect(result.account).toBe('account')
+            expect(result.profile).toBe(step.references.profile)
+          }
           const requests = yield* Ref.get(remote.requests)
           expect(
             requests.find(
@@ -383,7 +395,7 @@ describe('Executor hosted transport', () => {
           ).toMatchObject({
             body: { method: 'providerKey', label: 'Work', fields: { token: 'fixture-key' } },
           })
-          expect(requests.at(-1)?.path).toBe(
+          expect(requestAt(requests, requests.length - 1).path).toBe(
             `POST ${hostedPrefix}/apps/app/profiles/${step.references.profile}/reconcile`,
           )
         }),
@@ -395,10 +407,9 @@ describe('Executor hosted transport', () => {
       Effect.gen(function* () {
         yield* Ref.set(remote.accounts, signInRequirement)
         const step = yield* (yield* Executor).begin(begin)
-        expect(step).toMatchObject({
-          _tag: 'OpenSignIn',
-          address: 'https://provider.example.test/sign-in',
-        })
+        expect(ExecutorStep.guards.OpenSignIn(step)).toBe(true)
+        if (ExecutorStep.guards.OpenSignIn(step))
+          expect(step.address).toBe('https://provider.example.test/sign-in')
         expect(step).not.toHaveProperty('url')
         const requests = yield* Ref.get(remote.requests)
         expect(
@@ -442,7 +453,11 @@ describe('Executor hosted transport', () => {
           references: signingIn,
           callbackAddress: Redacted.make(callback),
         })
-        expect(result).toMatchObject({ _tag: 'Authorized', account: 'account', profile: 'profile' })
+        expect(ExecutorReferences.guards.Authorized(result)).toBe(true)
+        if (ExecutorReferences.guards.Authorized(result)) {
+          expect(result.account).toBe('account')
+          expect(result.profile).toBe('profile')
+        }
         expect(
           (yield* Ref.get(remote.requests)).find(
             (request) =>
@@ -456,7 +471,9 @@ describe('Executor hosted transport', () => {
   it.effect('reads a healthy profile before proving tool readiness', () =>
     scenario((remote) =>
       Effect.gen(function* () {
-        expect(yield* (yield* Executor).status(references)).toEqual({ _tag: 'Ready', references })
+        expect(yield* (yield* Executor).status(references)).toEqual(
+          ExecutorStatus.cases.Ready.make({ references }),
+        )
         const requests = yield* Ref.get(remote.requests)
         expect(
           requests
@@ -485,10 +502,9 @@ describe('Executor hosted transport', () => {
           body: { id: 'profile', status: 'needs-setup', failure: 'accounts' },
         })
         const step = yield* executor.reauthorize({ ...begin, references: authorized })
-        expect(step).toMatchObject({
-          _tag: 'EnterKey',
-          references: { profile: 'profile', app: 'app', authorization: 'authorization' },
-        })
+        expect(ExecutorStep.guards.EnterKey(step)).toBe(true)
+        if (ExecutorStep.guards.EnterKey(step))
+          expect(step.references).toEqual(key)
         const requests = yield* Ref.get(remote.requests)
         expect(
           requests.filter(
@@ -507,7 +523,7 @@ describe('Executor hosted transport', () => {
       Effect.gen(function* () {
         yield* failRoute(remote, 'DELETE /apps/app/profiles/profile', {
           status: 409,
-          body: { _tag: 'ProfileConflict' },
+          body: profileConflictReply.make({}),
         })
         expect(yield* (yield* Executor).remove(authorized).pipe(Effect.flip)).toHaveProperty(
           '_tag',
