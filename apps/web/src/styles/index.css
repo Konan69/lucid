@@ -1,6 +1,8 @@
 @import 'tailwindcss';
 @import '@vivid/tokens/tokens.css';
 @import 'shadow-plugin';
+/* The motion vocabulary: every named entrance, exit and press. See `ui/motion.ts`. */
+@import './motion.css';
 
 /* Workspace measurements the classes below share. The Computer's width is set by `data/split.ts`
    as it is dragged, and its bounds live there too; these are only the fixed ones. */

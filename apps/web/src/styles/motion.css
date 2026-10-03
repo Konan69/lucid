@@ -1,0 +1,192 @@
+/*
+ * Vivid's motion on the web: one vocabulary, used by name.
+ *
+ * `ui/motion.ts` is the record of what each name is for and where its numbers come from. This
+ * file is where the numbers live, so a class and a script-driven animation of the same name can
+ * never disagree: the script reads these custom properties.
+ *
+ * The rules every entry keeps:
+ * - Only `opacity` and the transform longhands (`translate`, `scale`, `rotate`) move. Nothing that
+ *   is laid out or painted is animated, so a frame never waits on layout.
+ * - They are transitions from a starting style, not keyframes: opened twice quickly, or closed
+ *   half-way, they go on from where they are instead of starting again.
+ * - Nothing enters from nothing: a surface starts at 0.96 to 0.97 of its size, a line 6 px low.
+ * - What leaves goes faster than it came: the Person is already looking at what is next.
+ * - Nothing here repeats. A thing moves once and holds.
+ */
+
+:root {
+  /* Not in `@vivid/tokens` yet; they belong beside `--dur-enter` there (see the report). */
+  /* T3 Code mobile `ConnectionEnvironmentRow`: `FadeOut.duration(150)`; Grok Bot's `.15s` set. */
+  --dur-exit: 150ms;
+  /* Grok Bot `DURATIONS.fast`. A menu is closed many times a day, so it goes in a blink. */
+  --dur-pop-exit: 100ms;
+  /* T3 Code mobile `ConnectionEnvironmentRow`: `LinearTransition.duration(250)`; Grok `slow`. */
+  --dur-layout: 250ms;
+  /* Between items of a short list arriving together: inside the 30 to 80 ms that reads as one
+     gesture. Five items are in before the first has settled. */
+  --dur-stagger: 40ms;
+  /* Grok Bot `CROSSFADE_MS` (`GXe=300`): one pose of the face to the next. */
+  --dur-face: 300ms;
+}
+
+/* ── Arriving ──────────────────────────────────────────────── */
+
+/* A line or a card arriving in a column: it rises 6 px into its place as it appears. `--order`
+   staggers a short list (set it to the item's index, and cap it: a long list must not queue). */
+@utility motion-enter {
+  transition:
+    opacity var(--dur-enter) var(--ease-out-expo),
+    translate var(--dur-enter) var(--ease-out-expo);
+  transition-delay: calc(var(--order, 0) * var(--dur-stagger));
+  @starting-style {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+
+/* A whole screen taking the place of another. It moves less than a line does (4 px) because it
+   is larger: the same distance on a big surface reads as a lurch. */
+@utility motion-screen {
+  transition:
+    opacity var(--dur-base) var(--ease-out-expo),
+    translate var(--dur-base) var(--ease-out-expo);
+  @starting-style {
+    opacity: 0;
+    translate: 0 4px;
+  }
+}
+
+/* What only needs to stop appearing from nowhere: a stamp under a finished reply, a note. */
+@utility motion-fade {
+  transition: opacity var(--dur-base) var(--ease-out);
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+/* A menu or a popover: out of the corner nearest what opened it (the caller sets the origin). It
+   is opened many times a day, so it is the fastest entrance here. */
+@utility motion-pop {
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    scale var(--dur-fast) var(--ease-out);
+  @starting-style {
+    opacity: 0;
+    scale: 0.97;
+  }
+}
+
+/* A dialog: from the middle, since nothing on the page opened onto it. Slower than a menu: it
+   is larger, rarer, and asks for a decision. */
+@utility motion-dialog {
+  transition:
+    opacity var(--dur-enter) var(--ease-out-expo),
+    scale var(--dur-enter) var(--ease-out-expo);
+  @starting-style {
+    opacity: 0;
+    scale: 0.96;
+  }
+}
+
+/* A sentence at the foot of the window. It comes up from below and leaves the way it came, so
+   where it went is never in question. `data-leaving` is set for its last moment on screen. */
+@utility motion-toast {
+  transition:
+    opacity var(--dur-layout) var(--ease-out-expo),
+    translate var(--dur-layout) var(--ease-out-expo);
+  @starting-style {
+    opacity: 0;
+    translate: 0 100%;
+  }
+  &[data-leaving] {
+    opacity: 0;
+    translate: 0 50%;
+    transition-duration: var(--dur-exit);
+  }
+}
+
+/* ── Answering the hand ───────────────────────────────────── */
+
+/* Pressed: the control gives a little, at once, and comes back when let go. The colours are in
+   the list so a hover fill eases on the same clock. */
+@utility motion-press {
+  transition-property: color, background-color, box-shadow, scale;
+  transition-duration: var(--dur-fast);
+  transition-timing-function: var(--ease-out);
+  &:active:not(:disabled) {
+    scale: 0.97;
+  }
+}
+
+/* ── Changing in place ────────────────────────────────────── */
+
+/* Two marks that take turns in one place (send and stop): the one going shrinks away as the one
+   coming grows in. Both are always in the document; `data-shown` says whose turn it is. */
+@utility motion-swap {
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    scale var(--dur-fast) var(--ease-out);
+  &[data-shown='false'] {
+    opacity: 0;
+    scale: 0.6;
+  }
+}
+
+/* A number that has just changed: the new value steps up into the old one's place. */
+@utility motion-tick {
+  display: inline-block;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    translate var(--dur-fast) var(--ease-out);
+  @starting-style {
+    opacity: 0;
+    translate: 0 0.35em;
+  }
+}
+
+/* The face moving from one pose to the next: only its lean eases. The eyes close and open at
+   once, as a blink does. */
+@utility motion-face {
+  transition: rotate var(--dur-face) var(--ease-out-expo);
+}
+/* The same, for every face inside a place where Vivid is present (a Thread), so the faces a
+   screen did not draw itself ease too. `.face` is the class `ui/Face.tsx` draws with. */
+[data-alive] .face {
+  transition: rotate var(--dur-face) var(--ease-out-expo);
+}
+
+/* ── Standing still ───────────────────────────────────────── */
+
+/* For one change that must not animate: something done from the keyboard, where a transition
+   would only be a delay. `instantly()` in `ui/motion.ts` sets this around the change. */
+:root[data-motion='off'] *,
+:root[data-motion='off'] *::before,
+:root[data-motion='off'] *::after {
+  transition: none !important;
+}
+
+/*
+ * A Person who asked for less motion keeps what tells them something changed (a fade) and loses
+ * what travels (a rise, a scale, a slide, the face's lean).
+ *
+ * The app's base layer cuts every transition to nothing under this setting, with `!important`.
+ * Among important declarations an earlier cascade layer wins, and `theme` is the layer before
+ * `base`, so this is the one place that rule can be narrowed without editing it.
+ */
+@layer theme {
+  @media (prefers-reduced-motion: reduce) {
+    .motion-enter,
+    .motion-screen,
+    .motion-fade,
+    .motion-pop,
+    .motion-dialog,
+    .motion-toast,
+    .motion-swap,
+    .motion-tick {
+      transition-property: opacity !important;
+      transition-duration: var(--dur-fast) !important;
+      transition-delay: 0ms !important;
+    }
+  }
+}
