@@ -80,7 +80,7 @@ export function About({
           if (event.key === 'Escape') onClose()
         }}
         onScroll={(event) => setCompact(event.currentTarget.scrollTop > COMPACT_AFTER_PX)}
-        className="absolute around-card z-20 origin-top-right overflow-y-auto rounded-panel smooth-shadow-ring-lg glass transition-pop duration-(--dur-fast) ease-out outline-none starting:scale-97 starting:opacity-0"
+        className="absolute around-card z-20 origin-top-right overflow-y-auto rounded-panel lift-lg glass transition-pop duration-(--dur-fast) ease-out outline-none starting:scale-97 starting:opacity-0"
       >
         {/* Zero height, so riding the top costs the content below it nothing and the card never
             shifts as the bar comes and goes. */}
