@@ -229,6 +229,7 @@ function Fieldset({
   onChange: (fields: routines.RoutineFields) => void
 }) {
   const named = routines.SCHEDULE_PRESETS.some((preset) => preset.cron === fields.cron)
+  const fixed = routines.fixedStart(fields)
   return (
     <>
       <Labelled label="Name">
@@ -251,11 +252,11 @@ function Fieldset({
           style={{ minHeight: 120, textAlignVertical: 'top' }}
         />
       </Labelled>
-      {Option.isSome(fields.watching) ? (
+      {Option.isSome(fixed) ? (
+        // Set up by Vivid in conversation (an Integration to watch, or one time); shown as it is.
         <Labelled label="Starts">
           <Label size="label" tone="ink-3">
-            When {fields.watching.value.event} in {fields.watching.value.account}. To watch for
-            something else, ask Vivid.
+            {fixed.value} To change when it starts, ask Vivid.
           </Label>
         </Labelled>
       ) : (

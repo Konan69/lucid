@@ -38,6 +38,22 @@ export const describeCron = (cron: string): string => {
   return preset === undefined ? `Cron ${cron}` : preset.label
 }
 
+/**
+ * How a Routine starts, as a sentence, when Vivid set that up in conversation and the editor does
+ * not change it: watching an Integration, or firing once at a time. None when the start is one a
+ * Person sets in the editor (a schedule or a webhook). An editor that drew its schedule controls
+ * for these would show a time the Routine does not run at.
+ */
+export const fixedStart = (fields: RoutineFields): Option.Option<string> =>
+  Option.orElse(
+    Option.map(fields.watching, (watching) => `When ${watching.event} in ${watching.account}.`),
+    () =>
+      Option.map(
+        fields.once,
+        (once) => `${describeTrigger(RoutineTrigger.cases.Once.make(once))}.`,
+      ),
+  )
+
 /** When a Routine runs, in one phrase. */
 export const describeTrigger = (trigger: RoutineTrigger): string =>
   RoutineTrigger.match(trigger, {

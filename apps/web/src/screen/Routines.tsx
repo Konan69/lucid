@@ -323,6 +323,7 @@ function RoutineFieldset({
   focusName: boolean
   onChange: (fields: routinesData.RoutineFields) => void
 }) {
+  const fixed = routinesData.fixedStart(fields)
   return (
     <>
       <Field label="Name">
@@ -345,14 +346,13 @@ function RoutineFieldset({
           placeholder="Review what moved in the Project and write a short brief."
         />
       </Field>
-      {Option.isSome(fields.watching) ? (
-        // Set up by Vivid in conversation, where it could find the account and the event. It is
-        // shown as it is; to watch for something else, ask Vivid.
+      {Option.isSome(fixed) ? (
+        // Set up by Vivid in conversation: an Integration it found the account and event for, or
+        // one time it worked out from "tomorrow at 9". It is shown as it is; to change it, ask Vivid.
         <div className="flex flex-col items-start gap-1.5">
           <span className="text-label font-title text-ink-2">Starts</span>
           <p className="w-full rounded-card bg-surface-2 px-4 py-3 text-label text-ink-2">
-            When {fields.watching.value.event} in {fields.watching.value.account}.{' '}
-            <span className="text-ink-3">To watch for something else, ask Vivid.</span>
+            {fixed.value} <span className="text-ink-3">To change when it starts, ask Vivid.</span>
           </p>
         </div>
       ) : (
