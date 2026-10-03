@@ -162,7 +162,7 @@ function Notice({
       type="button"
       onClick={onOpen}
       className={cn(
-        'flex w-full cursor-pointer gap-3 rounded-row text-left hover:bg-wash-hover p-2.5',
+        'flex w-full cursor-pointer gap-3 rounded-row p-2.5 text-left hover:bg-wash-hover',
         PRESS,
       )}
     >
