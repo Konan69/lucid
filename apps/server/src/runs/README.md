@@ -1,9 +1,8 @@
 # Runs
 
-**Not built.** This directory reserves the place named in `docs/00-structure.md`.
+**Not built as its own domain.** A Run is one bounded attempt by Vivid to advance a Thread. Its
+record lives with the Thread today: `threads/runs.ts` reserves a turn, records admission and how
+the Run ended, and `runtime/failure.ts` names why a Run failed.
 
-A Run is one bounded attempt by Vivid to advance a Thread. This domain owns its record and the durable work log: requests, responses, tool calls, failures, model and timing.
-
-Defined by: docs/14-product-feature-set-and-grok-bot-parity.md.
-
-Delete this file when the first real module lands here.
+What this directory is reserved for is the durable work log (requests, responses, tool calls,
+model and timing per Run), which does not exist yet. Delete this file when that lands here.

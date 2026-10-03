@@ -1,9 +1,7 @@
 # Evaluations
 
-**Not built.** This directory reserves the place named in `docs/00-structure.md`.
-
-Live behavioural evaluations of Vivid: `.live.test.ts`, one behavioural claim per file, real credentials, an explicit opt-in flag, skipped by default. They assert observable structured behaviour, never prompt wording.
-
-Defined by: AGENTS.md (Files, comments, and tests).
-
-Delete this file when the first real module lands here.
+**Nothing lives here.** Live checks sit beside the code they prove as `.live.test.ts` files
+(`apps/server/src/**`), skipped unless their opt-in flag and real credentials are present. For
+rehearsing the whole product without a provider there is the scripted model,
+`packages/agent/runtime/src/providers/rehearsal.ts` (`VIVID_MODEL=rehearsal/script`). Behavioural
+evaluations of Vivid's judgement, one claim per file, are not built.

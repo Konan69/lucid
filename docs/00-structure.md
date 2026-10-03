@@ -17,8 +17,11 @@ before adding a file. Extend it in the same change that adds a directory.
    in `packages/contracts`; every client is derived. No app hand-writes a path, a response type or
    a copy of a domain type.
 5. **No `utils`, `helpers`, `common`, `shared`, `misc` or `lib` dumping grounds.** Name the thing.
-6. **A scaffolded directory holds one `README.md`** saying what belongs there, which document
-   defines it, and that it is not built. Delete the README when the first real file lands.
+6. **Every domain directory holds one `README.md` that is true.** While a directory is only
+   scaffolded it says what belongs there, which document defines it, and that it is not built.
+   When the first real file lands, the README is rewritten in the same change to say what the
+   domain owns, what each file is for, and the invariants a newcomer must not break. A README that
+   says "not built" beside working code is a defect.
 
 ## Enforcement
 
@@ -49,14 +52,15 @@ packages/
 
   client/             what every app needs to talk to the server
     rpc/      ● derived VividRpc + VividApi clients
-    state/    ◐ one client data layer: cache, live updates, optimistic writes, Thread lanes
+    state/    ● the pure view logic every surface shares (lanes, steps, cards, wording)
 
   agent/              everything that is Vivid-the-model rather than Vivid-the-product
     runtime/  ● Flue: conversation transport, history, model adapter
-    prompts/  ○ Vivid's instructions and their fragments, versioned and testable
-    tools/    ◐ the tools Vivid can call; each one is an RPC call to the server
-    skills/   ○ Agent Skills mounted into a Run
-    evals/    ○ `.live.test.ts` behavioural evaluations, one claim per file
+    runtime/src/tools/      ● the tools Vivid can call; each one is an RPC call to the server
+    runtime/src/providers/  ● the model gateway provider, and the scripted rehearsal model
+    prompts/  ○ nothing here; the instructions live in runtime/src/agents/vivid.ts
+    skills/   ○ nothing here; skills are server records (apps/server/src/skills)
+    evals/    ○ nothing here; live checks are `.live.test.ts` files beside the code
 
   design/             one visual language for three surfaces
     tokens/   ● colour, type, radius, motion values; web CSS + generated native
@@ -65,8 +69,8 @@ packages/
 
   computer/           the Person's machine (docs/04-computer.md)
     state/    ◐ manifest, capture, restore, archive
-    machine/  ○ the MachineProvider boundary and its boat.dev implementation
-    desktop/  ○ viewing and taking over the desktop from a client
+    machine/  ○ nothing here; the provider boundary is built in apps/server/src/computers
+    desktop/  ○ nothing here; viewing is built in the server and the apps, take-over is not built
     device/   ○ the local daemon on the Person's own computer: permissioned exec, copy in and out
 
 infra/        ● Alchemy stack modules        scripts/  ● repository tooling
@@ -84,24 +88,29 @@ rule; `store.ts` holds no HTTP or RPC type.
 main.ts  config.ts
 database/  auth/  http/  rpc/  runtime/          shared infrastructure; never imports a domain
 
-people/         ○ Person profile and preferences                         docs/12
-companies/      ◐ Company, Membership, invitation                        docs/12
-projects/       ◐ recursive work containers, inheritance                 docs/12
-threads/        ◐ Thread index, lifecycle shelves, lanes                 docs/03, 07
-runs/           ○ one bounded attempt; the durable work log              docs/14
-inputs/         ○ Input requests: questions a Run cannot answer alone    docs/03
-approvals/      ○ authorization for one consequential action             docs/14
-artifacts/      ○ versioned inputs and outputs of a Run                  docs/14
-tasks/          ◐ Tasks, follow-ups, the follow-up scheduler             docs/15
-notifications/  ◐ what needs a Person's attention                        docs/15
-routines/       ◐ Routines, Occurrences, templates, the scheduler        docs/13
-library/        ◐ Library items, folders, ingest, search                 docs/03
-connections/    ◐ authorized external accounts, OAuth, provider calls    docs/14
-skills/         ○ procedures Vivid learned; may become Routines          docs/13
-computers/      ○ which machine a Person has; lifecycle; archive keys    docs/04, 18
-rooms/          ○ Vivid-to-Vivid and shared Threads                      docs/06
-settings/       ◐ theme and per-Person settings                          docs/09
-audit/          ○ who did what, for Company admins                       docs/18
+people/         ○ Person profile and preferences (not built)             docs/12
+companies/      ● Company, Membership, invitation                        docs/12, 22
+projects/       ● recursive work containers, inheritance                 docs/12
+threads/        ● Threads, audience, deliveries, Run records, pictures   docs/03, 07, 22
+runs/           ○ the durable work log (not built; records are in threads/) docs/14
+inputs/         ● Input requests: questions a Run cannot answer alone    docs/03
+approvals/      ● the trust loop: gate, record, runner, replay           docs/22
+rules/          ● standing rules that pre-decide actions, and the judge  docs/22
+artifacts/      ○ versioned inputs and outputs of a Run (not built)      docs/14
+tasks/          ● Tasks, follow-ups, the follow-up scheduler             docs/15
+notifications/  ● what needs a Person's attention                        docs/15
+routines/       ● Routines, Occurrences, triggers, the scheduler         docs/13, 22
+library/        ● Library items, folders, ingest, search                 docs/03
+connections/    ● Integrations on Executor: accounts, sign-in, tools     docs/22
+skills/         ● saved procedures and the ones Vivid ships with         docs/13, 22
+memory/         ● memory on HelixDB: extraction, graph, recall, briefs   docs/22
+computers/      ● a machine per Person: Boat and local providers, browser, desktop  docs/04
+code/           ● programs Vivid writes, run in an isolated interpreter   docs/22
+search/         ● the search palette across a workspace                  docs/03
+live/           ● change topics that keep every client current           docs/09
+rooms/          ○ Vivid-to-Vivid across People and Companies (not built) docs/06
+settings/       ● theme and per-Person settings                          docs/09
+audit/          ● the append-only record of consequential actions        docs/22
 ```
 
 Each built domain is `tables.ts` · `store.ts` · `handlers.ts` · `<name>.test.ts`, plus named files

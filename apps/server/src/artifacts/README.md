@@ -1,9 +1,8 @@
 # Artifacts
 
-**Not built.** This directory reserves the place named in `docs/00-structure.md`.
+**Not built.** Reserved for durable, versioned inputs and outputs linked to their Thread and Run:
+documents Vivid writes, generated files, kept attachments.
 
-Durable, versioned inputs and outputs linked to their Thread and Run: chat attachments, generated files, images.
-
-Defined by: docs/14-product-feature-set-and-grok-bot-parity.md.
-
-Delete this file when the first real module lands here.
+What exists nearby: pictures attached to a message are passed to the model and served back
+(`threads/pictures.ts`) but are not kept as Artifacts, and the `show` tool's cards are drawn from
+the tool call itself. Delete this file when the first real module lands here.
