@@ -47,22 +47,25 @@ export function skill(item: Skill, name: string) {
   }
 }
 
-/** The server resolves original labels, never modelText aliases. Omit accounts whose label would
- * be rewritten; every exposed account stays identical to its call and still resolves on the server.
- * Rewriting only the call would invent an account; exposing the original would leak a reference.
+/**
+ * The server resolves an account by its original label, never by a `modelText` alias. An account
+ * whose label would be rewritten (it holds a reference the model must not see) cannot be shown as
+ * written and cannot be called by a rewritten name, so its tools are left out. They are counted in
+ * `withheld`, so the model knows something exists that it cannot reach and can say so, instead of
+ * concluding the Integration has no such tool.
  */
 export function tools(response: FindToolsResponse) {
+  const sayable = response.tools.filter((item) => modelText(item.account) === item.account)
   return {
-    tools: response.tools
-      .filter((item) => modelText(item.account) === item.account)
-      .map((item) => ({
-        account: item.account,
-        tool: item.name,
-        description: modelText(item.description),
-        effect: item.effect,
-        call: item.call,
-        signature: item.signature,
-      })),
+    tools: sayable.map((item) => ({
+      account: item.account,
+      tool: item.name,
+      description: modelText(item.description),
+      effect: item.effect,
+      call: item.call,
+      signature: item.signature,
+    })),
+    withheld: response.tools.length - sayable.length,
     unconnected: catalog(response.unconnected, (item) => modelText(item.name)).map(
       ({ item, name }) => ({
         service: name,

@@ -183,9 +183,12 @@ describe('model views', () => {
         account,
         call: `accounts[${JSON.stringify(account)}].read_mail`,
       })
-      expect(views.tools({ tools: [hidden, tool], unconnected: [] }).tools).toEqual([
+      const view = views.tools({ tools: [hidden, tool], unconnected: [] })
+      expect(view.tools).toEqual([
         expect.objectContaining({ account: tool.account, call: tool.call }),
       ])
+      // The tool that cannot be shown is counted, so the model can say it exists.
+      expect(view.withheld).toBe(1)
     }
   })
 

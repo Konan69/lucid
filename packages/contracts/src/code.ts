@@ -6,9 +6,13 @@ export const CodeTiming = {
   seconds: 300,
   graceMs: 1_000,
 } as const
-/** Deadline < transport timeout < tool timeout; margins include final-frame collection. */
-export const CodeTransportTimeout = CodeTiming.seconds * 1_000 + CodeTiming.graceMs + 5_000
-export const CodeToolTimeout = CodeTransportTimeout + 5_000
+/**
+ * The program tool's own timeout, above the server deadline plus the log grace plus the time the
+ * server needs to stop the child. It is the only client-side bound: the runtime's HTTP client already
+ * waits an hour for headers and has no body timeout (`@effect/platform-node` `NodeHttpClient.ts`,
+ * `makeUndici`), so the transport never gives up before this does.
+ */
+export const CodeToolTimeout = CodeTiming.seconds * 1_000 + CodeTiming.graceMs + 10_000
 
 /** Discovery and guest dispatch accept exactly the same account/tool vocabulary. */
 export const CodeToolNames = Schema.Struct({
