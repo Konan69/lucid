@@ -13,6 +13,7 @@ import {
   ArtifactTitle,
   ArtifactVersion,
   DatabaseFailure,
+  Conflict,
   Forbidden,
   NotFound,
   ReadDocumentOutcome,
@@ -62,7 +63,6 @@ const decodeRole = decodeStored(Role, 'Membership role')
 const decodeRun = decodeStored(Schema.Struct({ id: RunId }), 'document Run')
 type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
 type AccessFailure = NotFound | Forbidden | DatabaseInfrastructureError
-type WriteRequest = WriteDocumentRequest & { readonly turn: number }
 
 /** The document authority serves Person edits and runtime writes through the same immutable history. */
 export interface ArtifactStoreService {
@@ -82,8 +82,8 @@ export interface ArtifactStoreService {
   readonly write: (
     personId: PersonId,
     threadId: ThreadId,
-    request: WriteRequest,
-  ) => Effect.Effect<typeof WriteDocumentOutcome.Type, AccessFailure>
+    request: WriteDocumentRequest,
+  ) => Effect.Effect<typeof WriteDocumentOutcome.Type, AccessFailure | Conflict>
   readonly read: (
     personId: PersonId,
     threadId: ThreadId,
@@ -190,30 +190,40 @@ const create = Effect.fn('Artifacts.create')(function* (
 const named = (threadId: ThreadId, title: string) =>
   and(eq(artifacts.threadId, threadId), sql`lower(${artifacts.title}) = lower(${title})`)
 
-/** Only the authenticated Person's exact delivery Run can author a version, even when another Run is newer. */
+/** Working attribution comes from the Thread alone; joining deliveries must never make us guess a Run. */
+const workingRun = Effect.fn('Artifacts.workingRun')(function* (
+  tx: Transaction,
+  threadId: ThreadId,
+  personId: PersonId,
+) {
+  const working = yield* tx
+    .select({ id: runs.id, personId: runs.personId })
+    .from(runs)
+    .where(and(eq(runs.threadId, threadId), eq(runs.state, 'working')))
+    .limit(2)
+    .for('update')
+  if (working.length > 1)
+    return yield* Effect.fail(new Conflict({ message: 'The Thread has more than one working Run' }))
+  const [run] = working
+  if (run === undefined || run.personId !== personId)
+    return yield* Effect.fail(new NotFound({ message: 'Working Run not found' }))
+  return (yield* decodeRun(run)).id
+})
+
+/** Only the authenticated Thread's working Run can author a version; missing or ambiguous attribution writes nothing. */
 const write = Effect.fn('Artifacts.write')(function* (
   personId: PersonId,
   threadId: ThreadId,
-  request: WriteRequest,
+  request: WriteDocumentRequest,
 ) {
   const database = yield* Database
   const changes = yield* Changes
   const result = yield* database.transaction((tx) =>
     Effect.gen(function* () {
       yield* lock(tx, threadId, personId)
-      const [run] = yield* tx
-        .select({ id: runs.id })
-        .from(runs)
-        .where(
-          and(
-            eq(runs.threadId, threadId),
-            eq(runs.turn, request.turn),
-            eq(runs.personId, personId),
-          ),
-        )
-      if (run === undefined)
-        return yield* Effect.fail(new NotFound({ message: 'Delivery not found' }))
-      const author = ArtifactAuthor.cases.Vivid.make({ runId: (yield* decodeRun(run)).id })
+      const author = ArtifactAuthor.cases.Vivid.make({
+        runId: yield* workingRun(tx, threadId, personId),
+      })
       const [row] = yield* tx.select().from(artifacts).where(named(threadId, request.title))
       if (row === undefined) {
         const artifact = yield* create(tx, threadId, {
@@ -252,6 +262,7 @@ const write = Effect.fn('Artifacts.write')(function* (
     title: result.artifact.title,
     version: result.artifact.version,
     created: result.created,
+    changed: result.changed,
   })
 }, Effect.uninterruptible)
 

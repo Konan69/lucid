@@ -111,12 +111,14 @@ export const WriteDocumentRequest = Schema.Struct({
 })
 export interface WriteDocumentRequest extends Schema.Schema.Type<typeof WriteDocumentRequest> {}
 
-/** What the tool tells Vivid: the document it wrote and which version this made it. */
+/** The saved document and current version, including whether this call added a version. */
 export const WriteDocumentOutcome = Schema.Struct({
   title: ArtifactTitle,
   version: Schema.Number,
   /** Whether this call made the document, as opposed to revising one that was there. */
   created: Schema.Boolean,
+  /** True when this call added a version; an identical newest body leaves this false. */
+  changed: Schema.Boolean,
 })
 
 /** Vivid reading a document of this Thread back, by title, to work on it in a later Run. */

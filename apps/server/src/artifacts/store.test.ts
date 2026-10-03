@@ -120,7 +120,7 @@ const fixture = Effect.fn('Artifacts.test.fixture')(function* () {
 describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
   layer(testLayer)((it) => {
     it.effect(
-      'creates, revises by case-insensitive title, reads history and ignores an identical body',
+      'writes a private Thread with working Run attribution, history and identical-body receipts',
       () =>
         Effect.gen(function* () {
           const { person, threadId, runId } = yield* fixture()
@@ -129,25 +129,27 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
             title: 'Launch plan',
             body: '# Plan\n\nFirst.',
             note: 'Ignored on creation',
-            turn: 1,
           })
-          expect(first).toEqual({ title: 'Launch plan', version: 1, created: true })
+          expect(first).toEqual({ title: 'Launch plan', version: 1, created: true, changed: true })
           const revised = yield* store.write(person.id, threadId, {
             title: 'LAUNCH PLAN',
             body: '# Plan\n\nSecond.',
             note: 'Changed scope',
-            turn: 1,
           })
-          expect(revised).toEqual({ title: 'Launch plan', version: 2, created: false })
+          expect(revised).toEqual({
+            title: 'Launch plan',
+            version: 2,
+            created: false,
+            changed: true,
+          })
           const published = yield* Ref.get(yield* Published)
           expect(
             yield* store.write(person.id, threadId, {
               title: 'launch plan',
               body: '# Plan\n\nSecond.',
               note: 'Do not save',
-              turn: 1,
             }),
-          ).toEqual(revised)
+          ).toEqual({ ...revised, changed: false })
           expect(yield* Ref.get(yield* Published)).toEqual(published)
           const list = yield* store.list(person.id, threadId)
           expect(list).toHaveLength(1)
@@ -179,31 +181,63 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
         }),
     )
 
+    it.effect('attributes writes in a shared Thread to its working Run without a turn', () =>
+      Effect.gen(function* () {
+        const { database, person, member, threadId, runId } = yield* fixture()
+        const store = yield* ArtifactStore
+        yield* database.run(
+          database.update(threads).set({ audience: 'company' }).where(eq(threads.id, threadId)),
+        )
+        yield* database.run(
+          database.update(runs).set({ personId: member.id }).where(eq(runs.id, runId)),
+        )
+        expect(
+          yield* store.write(member.id, threadId, { title: 'Shared plan', body: '# Shared' }),
+        ).toMatchObject({ version: 1, created: true, changed: true })
+        const [artifact] = yield* store.list(person.id, threadId)
+        if (artifact === undefined) return yield* Effect.die('Document missing')
+        expect((yield* store.get(person.id, { id: artifact.id })).shown.madeBy).toEqual(
+          ArtifactAuthor.cases.Vivid.make({ runId }),
+        )
+        expect(yield* store.read(member.id, threadId, { title: 'Shared plan' })).toEqual(
+          ReadDocumentOutcome.cases.Found.make({
+            title: 'Shared plan',
+            version: 1,
+            body: '# Shared',
+          }),
+        )
+        return yield* Effect.void
+      }),
+    )
+
     it.effect(
-      'refuses missing and wrong-Person deliveries without writing, and attributes an older exact turn',
+      'refuses ended, wrong-Person and ambiguous working Runs without saving anything',
       () =>
         Effect.gen(function* () {
           const { database, person, member, threadId, runId } = yield* fixture()
           const store = yield* ArtifactStore
+          const request = { title: 'Not saved', body: 'Never saved' }
           yield* database.run(
             database.update(threads).set({ audience: 'company' }).where(eq(threads.id, threadId)),
           )
-          for (const [personId, turn] of [
-            [person.id, 999],
-            [person.id, 1.5],
-            [member.id, 1],
-          ] as const) {
-            expect(
-              (yield* Effect.flip(
-                store.write(personId, threadId, {
-                  title: 'Missing scope',
-                  body: 'Never saved',
-                  turn,
-                }),
-              ))._tag,
-            ).toBe('NotFound')
-          }
-          expect(yield* store.list(person.id, threadId)).toEqual([])
+          expect((yield* Effect.flip(store.write(member.id, threadId, request)))._tag).toBe(
+            'NotFound',
+          )
+          yield* database.run(
+            database
+              .update(runs)
+              .set({ state: 'completed', finishedAt: 2 })
+              .where(eq(runs.id, runId)),
+          )
+          expect((yield* Effect.flip(store.write(person.id, threadId, request)))._tag).toBe(
+            'NotFound',
+          )
+          yield* database.run(
+            database
+              .update(runs)
+              .set({ state: 'working', finishedAt: null })
+              .where(eq(runs.id, runId)),
+          )
           yield* database.run(
             database.insert(runs).values({
               id: RunId.make(NodeCrypto.randomUUID()),
@@ -215,17 +249,11 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
               startedAt: 2,
             }),
           )
-          yield* store.write(person.id, threadId, {
-            title: 'Exact delivery',
-            body: 'Saved',
-            turn: 1,
-          })
-          const [artifact] = yield* store.list(person.id, threadId)
-          if (artifact === undefined) return yield* Effect.die('Document missing')
-          expect((yield* store.get(person.id, { id: artifact.id })).shown.madeBy).toEqual(
-            ArtifactAuthor.cases.Vivid.make({ runId }),
+          expect((yield* Effect.flip(store.write(person.id, threadId, request)))._tag).toBe(
+            'Conflict',
           )
-          return yield* Effect.void
+          expect(yield* store.list(person.id, threadId)).toEqual([])
+          expect(yield* Ref.get(yield* Published)).not.toContain(Topic.thread(threadId))
         }),
     )
 
@@ -237,8 +265,8 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
           const store = yield* ArtifactStore
           const writes = yield* Effect.all(
             [
-              store.write(person.id, threadId, { title: 'Plan', body: 'First', turn: 1 }),
-              store.write(person.id, threadId, { title: 'PLAN', body: 'Second', turn: 1 }),
+              store.write(person.id, threadId, { title: 'Plan', body: 'First' }),
+              store.write(person.id, threadId, { title: 'PLAN', body: 'Second' }),
             ],
             { concurrency: 2 },
           )
@@ -273,7 +301,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
           )
           yield* Effect.all(
             [1, 2, 3].map(() =>
-              store.write(person.id, threadId, { title: 'plan', body: detail.body, turn: 1 }),
+              store.write(person.id, threadId, { title: 'plan', body: detail.body }),
             ),
             { concurrency: 3 },
           )
@@ -292,7 +320,6 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
           yield* store.write(person.id, threadId, {
             title: 'Private',
             body: 'Private content',
-            turn: 1,
           })
           const [artifact] = yield* store.list(person.id, threadId)
           if (artifact === undefined) return yield* Effect.die('Document missing')
@@ -353,12 +380,12 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
         Effect.gen(function* () {
           const { database, person, threadId } = yield* fixture()
           const store = yield* ArtifactStore
-          yield* store.write(person.id, threadId, { title: 'Remove me', body: 'First', turn: 1 })
+          yield* store.write(person.id, threadId, { title: 'Remove me', body: 'First' })
           const [first] = yield* store.list(person.id, threadId)
           if (first === undefined) return yield* Effect.die('Document missing')
           yield* store.remove(person.id, first.id)
-          yield* store.write(person.id, threadId, { title: 'Cascaded', body: 'First', turn: 1 })
-          yield* store.write(person.id, threadId, { title: 'Cascaded', body: 'Second', turn: 1 })
+          yield* store.write(person.id, threadId, { title: 'Cascaded', body: 'First' })
+          yield* store.write(person.id, threadId, { title: 'Cascaded', body: 'Second' })
           const [second] = yield* store.list(person.id, threadId)
           if (second === undefined) return yield* Effect.die('Document missing')
           yield* database.run(database.delete(threads).where(eq(threads.id, threadId)))

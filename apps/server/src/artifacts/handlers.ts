@@ -45,9 +45,7 @@ export const artifactHandlers = {
   RemoveArtifact: Effect.fn('Rpc.RemoveArtifact')(function* ({ id }: { readonly id: ArtifactId }) {
     return yield* (yield* ArtifactStore).remove((yield* requirePerson()).person.id, id)
   }),
-  WriteDocument: Effect.fn('Rpc.WriteDocument')(function* (
-    request: WriteDocumentRequest & { readonly turn: number },
-  ) {
+  WriteDocument: Effect.fn('Rpc.WriteDocument')(function* (request: WriteDocumentRequest) {
     const auth = yield* requireVivid()
     return yield* (yield* ArtifactStore).write(auth.person.id, auth.threadId, request)
   }),

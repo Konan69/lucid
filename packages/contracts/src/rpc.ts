@@ -327,10 +327,10 @@ const ReviseArtifact = Rpc.make('ReviseArtifact', {
   error: Schema.Union([RpcFailure, ArtifactChanged]),
 })
 const RemoveArtifact = Rpc.make('RemoveArtifact', { ...call, payload: { id: ArtifactId } })
-/** The delivery turn is supplied by runtime code, never by the model, within the authenticated Thread. */
+/** The server attributes a write to the authenticated Thread’s working Run; no model identifier is needed. */
 const WriteDocument = Rpc.make('WriteDocument', {
   ...call,
-  payload: { ...WriteDocumentRequest.fields, turn: Schema.Number },
+  payload: WriteDocumentRequest,
   success: WriteDocumentOutcome,
 })
 const ReadDocument = Rpc.make('ReadDocument', {

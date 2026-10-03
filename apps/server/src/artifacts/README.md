@@ -14,9 +14,12 @@ Every reader of a Thread may open and revise its documents. Removal additionally
 creator or an admin/owner membership in that Thread's Company; admin status grants no access to
 private Threads. The active workspace does not override Thread access.
 
-Vivid supplies a title and whole Markdown body. Runtime code supplies the delivery turn, and the
-server resolves its Run using the authenticated Thread and Person. Missing deliveries write
-nothing. Reusing a title revises its original document; an identical newest body is a no-op.
+Vivid supplies a title and whole Markdown body. The server resolves the working Run from the
+authenticated Thread, checks its acting Person and locks it until the write commits. No delivery
+turn or model identifier is needed. Missing, ended or wrong-Person Runs write nothing. The current
+Run reservation permits same-Person deliveries to join; multiple working Runs refuse the write
+with `Conflict` rather than guessing attribution. Reusing a title revises its original document;
+an identical newest body is a no-op. Write receipts expose `changed` only when a version was added.
 Person revisions use compare-and-swap against `from`, with `ArtifactChanged` for stale editors.
 First versions have no note; later versions retain optional notes and author snapshots.
 
@@ -24,8 +27,6 @@ Actual mutations publish the Thread topic after commit. No existing audit event 
 local document revision, so this domain adds no audit record. Removing a Thread cascades through
 its documents and every version. Person-facing Artifact surfaces are still unbuilt.
 
-Two runtime boundaries remain: plain private user deliveries drop the delivery turn before
-Flue renders, so `write_document` refuses those without an RPC call. Signal deliveries, including
-input answers, retain their turn and work. The generic tool result adapter also limits strings
-to 4,000 characters and marks longer reads truncated; editing a whole long document needs that
-boundary to preserve its full body. Neither gap changes stored bodies or version history.
+Private ordinary messages and shared attributed signals use the same server-side attribution.
+Runtime reads preserve up to 48,000 characters of body. Longer reads include an explicit cut-body
+notice with the full character count; stored bodies and version history remain complete.
