@@ -7,6 +7,8 @@ import {
   Forbidden,
   InvalidRequest,
   NotFound,
+  NoDeviceConnected,
+  PersonId,
   RuntimeUnavailable,
   ServiceUnavailable,
   Unauthenticated,
@@ -71,6 +73,20 @@ describe('output limits', () => {
 })
 
 describe('RPC result boundary', () => {
+  it.effect('reports a missing desktop plainly without exposing its Person identifier', () =>
+    Effect.gen(function* () {
+      const result = yield* settle(
+        Effect.fail(new NoDeviceConnected({ personId: PersonId.make('private-person-identity') })),
+        'browse',
+      )
+      expect(result.output).toEqual({
+        ok: false,
+        message: 'Your desktop app is not connected. Open it to use your browser.',
+      })
+      expect(JSON.stringify(result)).not.toContain('private-person-identity')
+    }),
+  )
+
   it.effect(
     'logs one warning with the tool and tag, without failure payloads or successful results',
     () =>

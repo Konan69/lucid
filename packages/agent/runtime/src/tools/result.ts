@@ -1,3 +1,4 @@
+import type { NoDeviceConnected } from '@vivid/contracts'
 import type { RpcFailure } from '@vivid/contracts/rpc'
 import * as Config from 'effect/Config'
 import * as Cause from 'effect/Cause'
@@ -16,6 +17,7 @@ export interface ToolResult {
 }
 
 export type ToolFailure =
+  | NoDeviceConnected
   | NameMissing
   | NameAmbiguous
   | RpcFailure
@@ -113,6 +115,8 @@ export const settle = Effect.fn('Tools.settle')(function* (
       return warnFailure(tool, tag)
     }),
     Effect.catchTags({
+      NoDeviceConnected: () =>
+        failure('Your desktop app is not connected. Open it to use your browser.'),
       NameMissing: ({ name }) => failure(`Nothing here is called “${name}”; list them again.`),
       NameAmbiguous: ({ name, matches }) =>
         failure(`More than one match for “${name}”: ${matches.join(', ')}; list them again.`),

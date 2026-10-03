@@ -10,6 +10,7 @@ import {
 import { Type } from '@earendil-works/pi-ai'
 import {
   BrowserAction,
+  BrowseTarget,
   RunCommandRequest,
   DesktopOutcome,
   CommandOutcome,
@@ -143,6 +144,7 @@ export function computerDefinitions(runTool: RunTool) {
           Effect.gen(function* () {
             const { client } = yield* Scope
             const outcome = yield* client.Browse({
+              target: BrowseTarget.cases.Vivid.make({}),
               action: browserAction(data.action),
               summary: data.summary,
             })
