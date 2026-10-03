@@ -1,9 +1,10 @@
-import { CodeCallKind, CodeFailure } from '@vivid/contracts/code'
+import { CodeCallKind, CodeFailure, CodeLogs } from '@vivid/contracts/code'
 import * as Schema from 'effect/Schema'
 
 /** IPC contains data and correlation only; Person/Thread/Connection authority stays in the parent. */
 export const ParentMessage = Schema.TaggedUnion({
   Start: { code: Schema.String },
+  Cancel: {},
   Reply: { id: Schema.Int, value: Schema.Json },
 })
 export type ParentMessage = typeof ParentMessage.Type
@@ -15,8 +16,8 @@ export const WorkerMessage = Schema.TaggedUnion({
     kind: CodeCallKind,
     input: Schema.Json,
   },
-  Done: { result: Schema.Json },
-  Failed: { failure: CodeFailure },
+  Done: { result: Schema.Json, ...CodeLogs.fields },
+  Failed: { failure: CodeFailure, ...CodeLogs.fields },
 })
 export type WorkerMessage = typeof WorkerMessage.Type
 

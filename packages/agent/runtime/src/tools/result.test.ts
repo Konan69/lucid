@@ -41,6 +41,28 @@ describe('output limits', () => {
       expect(unrelated.output).not.toHaveProperty('computer')
     }),
   )
+  it.effect(
+    'preserves bounded program values, logs and 100 receipts through the model boundary',
+    () =>
+      Effect.gen(function* () {
+        const output = {
+          ok: true,
+          result: 'x'.repeat(5000),
+          logs: ['y'.repeat(6000)],
+          logsTruncated: false,
+          calls: Array.from({ length: 100 }, () => ({
+            kind: 'find_tools',
+            summary: 'Read tools',
+            end: 'completed',
+          })),
+          truncated: false,
+        }
+        expect((yield* settle(Effect.succeed({ output }), 'run_code')).output).toEqual(output)
+        const ordinary = (yield* settle(Effect.succeed({ output }), 'read_page')).output
+        expect(ordinary).toHaveProperty('result', 'x'.repeat(4000))
+        expect(ordinary).toHaveProperty('calls.length', 25)
+      }),
+  )
   it.effect('caps nested lists and text while marking both the affected record and the root', () =>
     Effect.sync(() => {
       const source = {

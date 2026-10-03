@@ -23,6 +23,8 @@ it.effect('distinguishes unserializable SDK results from oversized JSON results'
       })
       expect(result).toEqual(
         WorkerMessage.cases.Failed.make({
+          logs: [],
+          logsTruncated: false,
           failure: CodeFailure.cases.Threw.make({
             message: 'Program result cannot be serialized as JSON.',
           }),
@@ -38,7 +40,28 @@ it.effect('distinguishes unserializable SDK results from oversized JSON results'
     })
     expect(result).toEqual(
       WorkerMessage.cases.Failed.make({
+        logs: [],
+        logsTruncated: false,
         failure: CodeFailure.cases.OverLimit.make({ limit: 'result' }),
+      }),
+    )
+  }),
+)
+
+/** Failed SDK executions retain output before interpreter timeout without needing a real wall clock. */
+it.effect('keeps printed lines from pi timeout results', () =>
+  Effect.gen(function* () {
+    const message = yield* finish({
+      ok: false,
+      error: { kind: 'timeout', message: 'deadline' },
+      output: [{ type: 'text', text: 'before timeout' }],
+      calls: [],
+    })
+    expect(message).toEqual(
+      WorkerMessage.cases.Failed.make({
+        failure: CodeFailure.cases.TimedOut.make({ seconds: 300 }),
+        logs: ['before timeout'],
+        logsTruncated: false,
       }),
     )
   }),

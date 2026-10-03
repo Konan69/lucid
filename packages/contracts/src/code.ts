@@ -58,12 +58,24 @@ export const CodeFailure = Schema.TaggedUnion({
 })
 export type CodeFailure = typeof CodeFailure.Type
 
+/** Printed lines survive success and failure separately from the returned JSON value. */
+export const CodeLogs = Schema.Struct({
+  logs: Schema.Array(Schema.String),
+  logsTruncated: Schema.Boolean,
+})
+export interface CodeLogs extends Schema.Schema.Type<typeof CodeLogs> {}
+
 /**
  * What came of a program. Calls that completed before it stopped stay completed: nothing is rolled
  * back and nothing is run again, so every outcome carries the calls that were made.
  */
 export const CodeOutcome = Schema.TaggedUnion({
-  Completed: { result: Schema.Json, calls: Schema.Array(CodeCall), truncated: Schema.Boolean },
+  Completed: {
+    result: Schema.Json,
+    calls: Schema.Array(CodeCall),
+    truncated: Schema.Boolean,
+    ...CodeLogs.fields,
+  },
   /** One call needs a Person's decision. The program has ended; the approved action runs alone. */
   ApprovalRequired: {
     approvalId: ApprovalId,
@@ -71,7 +83,7 @@ export const CodeOutcome = Schema.TaggedUnion({
     calls: Schema.Array(CodeCall),
   },
   Blocked: { rule: Schema.String, calls: Schema.Array(CodeCall) },
-  Failed: { failure: CodeFailure, calls: Schema.Array(CodeCall) },
+  Failed: { failure: CodeFailure, calls: Schema.Array(CodeCall), ...CodeLogs.fields },
   /** A call that changes something was sent and its answer was lost. Never retried. */
   OutcomeUnknown: { calls: Schema.Array(CodeCall) },
 })

@@ -123,6 +123,13 @@ function withComputer(output: Schema.Json, tool: string): Schema.Json {
     : output
 }
 
+/** The server bounds programs to 32 KiB, including logs and up to 100 receipts; preserve that result. */
+function modelOutput(output: Schema.Json, tool: string): Schema.Json {
+  if (tool === 'run_code') return output
+  if (tool === 'read_document') return boundDocument(output)
+  return boundOutput(withComputer(output, tool))
+}
+
 /** Only declared product failures are recovered; transport and configuration have fixed safe wording; defects propagate. */
 export const settle = Effect.fn('Tools.settle')(function* (
   program: Effect.Effect<ToolResult, ToolFailure>,
@@ -162,10 +169,7 @@ export const settle = Effect.fn('Tools.settle')(function* (
     }),
   )
   return {
-    output:
-      tool === 'read_document'
-        ? boundDocument(result.output)
-        : boundOutput(withComputer(result.output, tool)),
+    output: modelOutput(result.output, tool),
     terminate: result.terminate === true,
   }
 })

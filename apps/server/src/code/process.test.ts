@@ -84,6 +84,64 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
       }),
     )
 
+    it.effect('keeps ordered printed lines beside success and thrown failures', () =>
+      Effect.gen(function* () {
+        const completed = yield* run(
+          'console.log("first", 1); text("second"); return {answer:42};',
+          reply,
+        )
+        check(completed, 'Completed', {
+          result: { answer: 42 },
+          logs: ['first 1', 'second'],
+          logsTruncated: false,
+        })
+        const failed = yield* run('console.log("before throw"); throw new Error("failed");', reply)
+        check(failed, 'Failed', { logs: ['before throw'], logsTruncated: false })
+        expect(failed).toHaveProperty('failure.message', 'failed')
+      }),
+    )
+
+    it.effect('keeps logs when the 300-second parent deadline cancels a waiting guest', () =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>()
+        const dispatch: Dispatch = Effect.fn('Test.waitingRead')(function* () {
+          yield* Deferred.succeed(entered, undefined)
+          return yield* Effect.never
+        })
+        const running = yield* Effect.forkChild(
+          run('console.log("before timeout"); await tools.find_tools({});', dispatch),
+        )
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust('300 seconds')
+        const outcome = yield* Fiber.join(running)
+        check(outcome, 'Failed', {
+          failure: CodeFailure.cases.TimedOut.make({ seconds: 300 }),
+          logs: ['before timeout'],
+          logsTruncated: false,
+        })
+      }),
+    )
+
+    it.effect(
+      'bounds printed UTF-8 without splitting characters and counts logs in the final aggregate',
+      () =>
+        Effect.gen(function* () {
+          const printed = yield* run('text("😀".repeat(3000)); return 1;', reply)
+          expect(CodeOutcome.guards.Completed(printed)).toBe(true)
+          if (!CodeOutcome.guards.Completed(printed)) return
+          expect(printed.logsTruncated).toBe(true)
+          expect(Buffer.byteLength(JSON.stringify(printed.logs))).toBeLessThanOrEqual(budgets.logs)
+          expect(printed.logs.join('')).not.toContain('�')
+          const aggregate = yield* run(
+            'console.log("x".repeat(7000)); return "y".repeat(30000);',
+            reply,
+          )
+          expect(aggregate).toHaveProperty('failure.limit', 'result')
+          expect(aggregate).toHaveProperty('logs', ['x'.repeat(7000)])
+          expect(Buffer.byteLength(JSON.stringify(aggregate))).toBeLessThanOrEqual(budgets.result)
+        }),
+    )
+
     it.effect(
       'composes dependent and Promise.all reads, filters intermediate records and combines a Computer receipt',
       () =>
@@ -277,6 +335,8 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
             result: '',
             calls: [],
             truncated: false,
+            logs: [],
+            logsTruncated: false,
           })
           const size = budgets.result - Buffer.byteLength(JSON.stringify(empty))
           const accepted = yield* run(`return "x".repeat(${size});`, reply)

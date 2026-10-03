@@ -39,7 +39,9 @@ export function codeOutcome(outcome: CodeOutcome): ToolResult {
     end,
   }))
   return CodeOutcome.match<ToolResult>(outcome, {
-    Completed: ({ result, truncated }) => ({ output: { ok: true, result, calls, truncated } }),
+    Completed: ({ result, truncated, logs, logsTruncated }) => ({
+      output: { ok: true, result, calls, truncated, logs, logsTruncated },
+    }),
     ApprovalRequired: ({ approvalId, summary: purpose }) => ({
       output: { ...views.approval({ approvalId, summary: purpose }), calls },
       terminate: true,
@@ -48,7 +50,9 @@ export function codeOutcome(outcome: CodeOutcome): ToolResult {
       output: { ok: false, rule: views.modelText(rule), calls },
       terminate: true,
     }),
-    Failed: ({ failure }) => ({ output: { ok: false, failure: failureView(failure), calls } }),
+    Failed: ({ failure, logs, logsTruncated }) => ({
+      output: { ok: false, failure: failureView(failure), calls, logs, logsTruncated },
+    }),
     OutcomeUnknown: () => ({
       output: {
         ok: false,

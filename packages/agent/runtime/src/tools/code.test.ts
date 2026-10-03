@@ -29,6 +29,8 @@ describe('Program model tools', () => {
         result: { recordId: reference },
         calls,
         truncated: false,
+        logs: [],
+        logsTruncated: false,
       }),
     )
     expect(completed.output).toEqual({
@@ -36,6 +38,8 @@ describe('Program model tools', () => {
       result: { recordId: reference },
       calls: [{ kind: 'use_tool', summary: 'Read [reference]', end: 'completed' }],
       truncated: false,
+      logs: [],
+      logsTruncated: false,
     })
     const approval = codeOutcome(
       CodeOutcome.cases.ApprovalRequired.make({
@@ -61,6 +65,8 @@ describe('Program model tools', () => {
       CodeOutcome.cases.Failed.make({
         failure: CodeFailure.cases.Threw.make({ message: `Failed ${reference}` }),
         calls,
+        logs: [],
+        logsTruncated: false,
       }),
     )
     expect(JSON.stringify(failed.output)).not.toContain(reference)

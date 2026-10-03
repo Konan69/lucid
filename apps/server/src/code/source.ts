@@ -51,7 +51,7 @@ export const prepareWorker = Effect.fn('Code.prepareWorker')(function* () {
     try: () => {
       const root = new URL('../../../../', import.meta.url)
       const sources = [
-        ...['worker', 'pipe', 'protocol', 'budgets', 'results'].map(
+        ...['worker', 'pipe', 'protocol', 'budgets', 'results', 'logs'].map(
           (name) => [name, new URL(`./${name}.ts`, import.meta.url)] as const,
         ),
         ...['code', 'identity'].map(

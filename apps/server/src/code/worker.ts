@@ -13,6 +13,7 @@ import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import * as Semaphore from 'effect/Semaphore'
 import { budgets } from './budgets.ts'
+import { printed } from './logs.ts'
 import { finish, guestJson } from './results.ts'
 import { FrameReader, writeFrame } from './pipe.ts'
 import {
@@ -40,13 +41,16 @@ function invokeTool(call: Effect.Effect<Schema.Json, PipeFailure>, signal: Abort
 }
 
 /** Pi returns failures as values. Rejections outside its VM are installation failures, never host text. */
-const execute = Effect.fn('Code.executeGuest')((sandbox: CodemodeSandbox, code: string) =>
-  Effect.callback<CodemodeResult, PipeFailure>((resume, signal) => {
-    sandbox.execute(ACCOUNTS + code, { signal, store: {} }).then(
-      (result) => resume(Effect.succeed(result)),
-      () => resume(Effect.fail(new PipeFailure({ reason: 'closed' }))),
-    )
-  }),
+const execute = Effect.fn('Code.executeGuest')(
+  (sandbox: CodemodeSandbox, code: string, deadline: AbortSignal) =>
+    Effect.callback<CodemodeResult, PipeFailure>((resume, signal) => {
+      sandbox
+        .execute(ACCOUNTS + code, { signal: AbortSignal.any([signal, deadline]), store: {} })
+        .then(
+          (result) => resume(Effect.succeed(result)),
+          () => resume(Effect.fail(new PipeFailure({ reason: 'closed' }))),
+        )
+    }),
 )
 
 /** Bounded callback bookkeeping and a permanent quota latch also protect unawaited call storms. */
@@ -55,6 +59,7 @@ class Bridge {
   failure: Option.Option<CodeFailure> = Option.none()
   private next = 0
   private attempts = 0
+  readonly deadline = new AbortController()
 
   private readonly writes: Semaphore.Semaphore
 
@@ -113,6 +118,11 @@ class Bridge {
     const reply = yield* reader
       .read()
       .pipe(Effect.flatMap((text) => decodeParent(text, { onExcessProperty: 'error' })))
+    // Pi's public abort signal preserves buffered output (runtime/host.js/Execution.finish).
+    if (ParentMessage.guards.Cancel(reply)) {
+      this.deadline.abort()
+      return false
+    }
     if (!ParentMessage.guards.Reply(reply))
       return yield* Effect.fail(new PipeFailure({ reason: 'invalid' }))
     const waiting = this.pending.get(reply.id)
@@ -151,11 +161,16 @@ const program = Effect.scoped(
     yield* Effect.addFinalizer(() => close(sandbox))
     // Pipe EOF, including parent death, interrupts pi even when synchronous guest code spins.
     const result = yield* Effect.raceFirst(
-      execute(sandbox, first.code),
+      execute(sandbox, first.code, bridge.deadline.signal),
       Effect.forever(bridge.receive(reader)),
     )
+    const logs = printed(result.output)
     const message = Option.isSome(bridge.failure)
-      ? WorkerMessage.cases.Failed.make({ failure: bridge.failure.value })
+      ? WorkerMessage.cases.Failed.make({
+          failure: bridge.failure.value,
+          logs: logs.logs,
+          logsTruncated: logs.logsTruncated,
+        })
       : yield* finish(result)
     return yield* writes.withPermit(writeFrame(NodeProcess.stdout, encodeWorker(message), 'result'))
   }),

@@ -9,6 +9,7 @@ export const budgets = {
   wire: 263_168,
   data: 1_048_576,
   result: 32_768,
+  logs: 8_192,
   depth: 32,
   processes: 2,
   pages: 4,
