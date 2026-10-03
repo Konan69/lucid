@@ -78,7 +78,10 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
 
     it.effect('keeps model source line numbers after the trusted prelude', () =>
       Effect.gen(function* () {
-        const outcome = yield* run('const label="model";\nreturn new Error(label).stack;', reply)
+        const outcome = yield* run(
+          'const label="model";\ntry {throw new Error(label);} catch(error) {return error.stack;}',
+          reply,
+        )
         expect(CodeOutcome.guards.Completed(outcome)).toBe(true)
         expect(outcome).toHaveProperty('result', expect.stringContaining('codemode.js:2'))
       }),
@@ -309,9 +312,41 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
     it.effect('accepts exactly 16 KiB source and 100 calls', () =>
       Effect.gen(function* () {
         const code = 'for(let i=0;i<100;i++) await tools.find_tools({}); return 1;'
-        const outcome = yield* run(code.padEnd(budgets.source, ' '), reply)
+        const unicode: Dispatch = Effect.fn('Test.unicodeReceipt')(() =>
+          Effect.succeed(
+            CallOutcome.cases.Returned.make({
+              value: null,
+              summary: '😀'.repeat(200),
+              end: 'completed',
+            }),
+          ),
+        )
+        const outcome = yield* run(code.padEnd(budgets.source, ' '), unicode)
         expect(outcome).toHaveProperty('result', 1)
         expect(outcome.calls).toHaveLength(budgets.calls)
+      }),
+    )
+
+    it.effect('fits 100 receipts and clipped logs into a failed aggregate', () =>
+      Effect.gen(function* () {
+        const unicode: Dispatch = Effect.fn('Test.unicodeLogReceipt')(() =>
+          Effect.succeed(
+            CallOutcome.cases.Returned.make({
+              value: null,
+              summary: '😀'.repeat(200),
+              end: 'completed',
+            }),
+          ),
+        )
+        const outcome = yield* run(
+          'console.log("x".repeat(8000)); for(let i=0;i<100;i++) await tools.find_tools({}); return null;',
+          unicode,
+        )
+        expect(outcome).toHaveProperty('failure.limit', 'result')
+        expect(outcome.calls).toHaveLength(100)
+        expect(outcome.calls.every((call) => call.end === 'completed')).toBe(true)
+        expect(outcome).toHaveProperty('logsTruncated', true)
+        expect(Buffer.byteLength(JSON.stringify(outcome))).toBeLessThanOrEqual(budgets.result)
       }),
     )
 

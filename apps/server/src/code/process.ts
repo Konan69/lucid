@@ -23,7 +23,7 @@ import {
   Schema,
   Semaphore,
 } from 'effect'
-import { boundedLogs } from './logs.ts'
+import { boundedLogs, encodedPrefix } from './logs.ts'
 import { budgets, bytes } from './budgets.ts'
 import { prepareWorker } from './source.ts'
 import { checkProgramHost } from './host.ts'
@@ -369,7 +369,9 @@ class Execution {
     call: typeof WorkerMessage.cases.Call.Type,
     result: CallOutcome,
   ): CallStep {
-    const summary = result.summary.slice(0, 200)
+    // One hundred receipts must fit the final aggregate even for Unicode or escaped summaries.
+    // Bound encoded bytes, not code units; metadata cannot consume the returned value's budget.
+    const summary = encodedPrefix(result.summary, 200)
     return CallOutcome.match<CallStep>(result, {
       Returned: ({ value, end }) => {
         this.calls[index] = CodeCall.make({ kind: call.kind, summary, end })
@@ -557,7 +559,9 @@ const execute = Effect.fn('Code.supervise')(function* (
   dispatch: Dispatch,
 ) {
   const state = new Execution()
-  const child = { current: Option.none<NodeChildProcess.ChildProcessWithoutNullStreams>() }
+  const child = {
+    current: Option.none<Pick<NodeChildProcess.ChildProcessWithoutNullStreams, 'stdin'>>(),
+  }
   const failed = (failure: CodeFailure) => state.failed(failure)
   const program = Effect.scoped(
     Effect.gen(function* () {

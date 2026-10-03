@@ -3,7 +3,7 @@ import { CodeLogs } from '@vivid/contracts/code'
 import { budgets, bytes } from './budgets.ts'
 
 /** Keep a UTF-8 prefix on code-point boundaries, including JSON escaping in the printed-line budget. */
-function linePrefix(line: string, maximum: number) {
+export function encodedPrefix(line: string, maximum: number) {
   let used = 0
   let prefix = ''
   for (const character of line) {
@@ -37,7 +37,7 @@ export function boundedLogs(
     const overhead = logs.length === 0 ? 2 : 3
     const remaining = maximum - used - overhead
     if (remaining < 0) return CodeLogs.make({ logs, logsTruncated: true })
-    const line = linePrefix(text, remaining)
+    const line = encodedPrefix(text, remaining)
     logs.push(line)
     used += bytes(JSON.stringify(line)) + overhead - 2
     if (line !== text) return CodeLogs.make({ logs, logsTruncated: true })
