@@ -1,4 +1,17 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, like, lte, sql } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  like,
+  lte,
+  sql,
+  type SQL,
+} from 'drizzle-orm'
+import { standingRoutine } from '@vivid/skills'
 import * as Arr from 'effect/Array'
 import * as Option from 'effect/Option'
 import * as Clock from 'effect/Clock'
@@ -11,6 +24,7 @@ import {
   AuditEvent,
   CreateRoutineRequest,
   DatabaseFailure,
+  Forbidden,
   Occurrence,
   OccurrenceId,
   PatchRoutineRequest,
@@ -94,6 +108,7 @@ const scheduledFailureReason = (failure: ScheduledFailure) =>
 
 type StoreError = DatabaseInfrastructureError | RoutineMissing
 type ChangeError =
+  | Forbidden
   | import('@vivid/contracts').Conflict
   | StoreError
   | InvalidRoutineSchedule
@@ -160,6 +175,28 @@ export class RoutineStore extends Context.Service<RoutineStore, RoutineStoreServ
   'vivid/RoutineStore',
 ) {}
 
+/**
+ * The opt-in standing check follows its Person across workspace switches. One ownership
+ * predicate governs listing and every mutation; another Company member gains no access to it.
+ * Custom Routines retain their existing workspace scope.
+ */
+const ownedRoutine = (actor: Actor): SQL => sql`(
+  ${ownedHere(routines, actor)} or (
+    ${routines.personId} = ${actor.person.id} and
+    ${routines.companyId} is null and
+    ${routines.prompt} = ${standingRoutine.prompt}
+  )
+)`
+
+/** The standing commitment belongs to the Person's explicit choice, including later re-enabling. */
+const requireStandingPerson = Effect.fn('RoutineStore.requireStandingPerson')(function* (
+  actor: Actor,
+  prompt: string,
+) {
+  if (prompt === standingRoutine.prompt && actor.by !== 'person')
+    yield* new Forbidden({ message: 'Only the Person may manage this standing Routine.' })
+})
+
 /** The owner-scoped Routine load is also the authorization check before running or issuing keys. */
 const makeGet = (database: DatabaseService) =>
   Effect.fn('RoutineStore.get')(function* (actor: Actor, id: RoutineId) {
@@ -167,7 +204,7 @@ const makeGet = (database: DatabaseService) =>
       database
         .select()
         .from(routines)
-        .where(and(eq(routines.id, id), ownedHere(routines, actor))),
+        .where(and(eq(routines.id, id), ownedRoutine(actor))),
     )
     const row = rows[0]
     if (row === undefined) return yield* Effect.fail(new RoutineMissing({ id }))
@@ -232,11 +269,7 @@ const routineView = (record: RoutineRecord, history: ReadonlyArray<Occurrence>) 
 const makeList = (database: DatabaseService, view: ReturnType<typeof makeView>) =>
   Effect.fn('RoutineStore.list')(function* (actor: Actor) {
     const rows = yield* database.run(
-      database
-        .select()
-        .from(routines)
-        .where(ownedHere(routines, actor))
-        .orderBy(desc(routines.updatedAt)),
+      database.select().from(routines).where(ownedRoutine(actor)).orderBy(desc(routines.updatedAt)),
     )
     return yield* view(yield* Effect.forEach(rows, decodeRoutine))
   })
@@ -244,6 +277,7 @@ const makeList = (database: DatabaseService, view: ReturnType<typeof makeView>) 
 /** Computes the schedule before writing, so invalid cron cannot leave a partially created Routine. */
 const makeCreate = (database: DatabaseService, watch: IntegrationWatch['Service']) =>
   Effect.fn('RoutineStore.create')(function* (actor: Actor, input: CreateInput) {
+    yield* requireStandingPerson(actor, input.prompt)
     const now = yield* Clock.currentTimeMillis
     yield* requireFuture(input.trigger, now)
     const integration = RoutineTrigger.guards.Integration(input.trigger)
@@ -346,6 +380,7 @@ const makePatch = (
     const now = yield* Clock.currentTimeMillis
     // Authorize before the read-only baseline call; network I/O never runs under a row lock.
     const authorized = yield* makeGet(database)(actor, id)
+    yield* requireStandingPerson(actor, authorized.routine.prompt)
     const selected = input.trigger === undefined ? authorized.routine.trigger : input.trigger
     const rebaseline = input.trigger !== undefined || input.enabled === true
     const prepared =
@@ -357,11 +392,14 @@ const makePatch = (
         const rows = yield* tx
           .select()
           .from(routines)
-          .where(and(eq(routines.id, id), ownedHere(routines, actor)))
+          .where(and(eq(routines.id, id), ownedRoutine(actor)))
           .for('update')
         const row = rows[0]
         if (row === undefined) return yield* Effect.fail(new RoutineMissing({ id }))
         const current = yield* decodeRoutine(row)
+        const prompt = input.prompt === undefined ? current.routine.prompt : input.prompt
+        yield* requireStandingPerson(actor, current.routine.prompt)
+        yield* requireStandingPerson(actor, prompt)
         const { trigger, integration } = patchedTrigger(current, input, prepared)
         const enabled = input.enabled === undefined ? current.routine.enabled : input.enabled
         const next = yield* patchedDue({ current, input, trigger, integration, enabled, now })
@@ -370,7 +408,7 @@ const makePatch = (
           .update(routines)
           .set({
             name: input.name === undefined ? current.routine.name : input.name,
-            prompt: input.prompt === undefined ? current.routine.prompt : input.prompt,
+            prompt,
             ...triggerColumns(trigger),
             webhookKeyHash: RoutineTrigger.guards.Webhook(trigger) ? current.webhookKeyHash : null,
             integration: integration === null ? null : encodeWatch(integration),
@@ -384,7 +422,7 @@ const makePatch = (
             nextExpectedAt: next,
             updatedAt: now,
           })
-          .where(and(eq(routines.id, id), ownedHere(routines, actor)))
+          .where(and(eq(routines.id, id), ownedRoutine(actor)))
           .returning()
         return yield* decodeRoutine(yield* returned(result, 'Routine'))
       }),
@@ -398,7 +436,7 @@ const makeRemove = (database: DatabaseService) =>
     const rows = yield* database.run(
       database
         .delete(routines)
-        .where(and(eq(routines.id, id), ownedHere(routines, actor)))
+        .where(and(eq(routines.id, id), ownedRoutine(actor)))
         .returning({ id: routines.id }),
     )
     if (rows.length === 0) return yield* Effect.fail(new RoutineMissing({ id }))
@@ -422,9 +460,7 @@ const makeIssueWebhook = (
       database
         .update(routines)
         .set({ webhookKeyHash: hashKey(key), updatedAt: now })
-        .where(
-          and(eq(routines.id, id), ownedHere(routines, actor), eq(routines.trigger, 'webhook')),
-        )
+        .where(and(eq(routines.id, id), ownedRoutine(actor), eq(routines.trigger, 'webhook')))
         .returning({ id: routines.id }),
     )
     if (rows.length === 0) return yield* Effect.fail(new RoutineWebhookRequired({ id }))

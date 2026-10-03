@@ -61,6 +61,7 @@ const integrationFailure = <A, R>(
     | NotFound
     | Conflict
     | InvalidRequest
+    | import('@vivid/contracts').Forbidden
     | InvalidRoutineSchedule
     | RoutineTimePassed
     | import('@vivid/contracts').ServiceUnavailable

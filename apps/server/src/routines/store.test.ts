@@ -454,7 +454,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
       'offers a dormant personal standing template, requires a Person to enable it, and uses the existing scheduler',
       () =>
         Effect.gen(function* () {
-          const { owner } = yield* fixture()
+          const { owner, colleague } = yield* fixture()
           const personal: Actor = { ...owner, workspace: Workspace.cases.Personal.make({}) }
           const auth = AuthState.Person({
             person: owner.person,
@@ -496,7 +496,15 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           expect(delivery.origin).toEqual(
             StoredRunOrigin.cases.Standing.make({ routineName: standingRoutine.name }),
           )
-          yield* store.patch(personal, routine.id, { enabled: false })
+          expect((yield* store.list(owner)).map((item) => item.id)).toContain(routine.id)
+          expect(yield* store.list(colleague)).toEqual([])
+          const refused = yield* routineHandlers
+            .PatchRoutine({ id: routine.id, patch: { enabled: true } })
+            .pipe(Effect.provideService(AuthContext, vivid), Effect.flip)
+          expect(refused._tag).toBe('Forbidden')
+          yield* routineHandlers
+            .PatchRoutine({ id: routine.id, patch: { enabled: false } })
+            .pipe(Effect.provideService(AuthContext, auth))
           expect((yield* store.get(personal, routine.id)).routine.enabled).toBe(false)
         }),
     )
