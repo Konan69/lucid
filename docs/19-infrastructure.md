@@ -74,6 +74,44 @@ Outputs contain only web, server, and runtime URLs. Database and application sec
 outputs. Local Alchemy resources create no AWS bill, but real model calls and external services
 may cost money; their charges are separate from local CPU and storage.
 
+## Containers
+
+Build from the repository root, one image at a time:
+
+```sh
+docker build -f apps/server/Dockerfile -t vivid-server .
+docker build -f packages/agent/runtime/Dockerfile -t vivid-runtime .
+```
+
+Both images use Node 24 and the root manifest's pinned pnpm through Corepack, preserve the
+installed workspace dependency layout, and run as the non-root `node` user. The server runs
+`pnpm --filter @vivid/server start` (tsx); the runtime runs its built `dist/server.mjs`.
+No credential or application origin is supplied at build time. Container health checks use
+`GET /health` on the configured `PORT`.
+
+The server image defaults to `HOST=0.0.0.0`, `PORT=8787`, and
+`VIVID_WEB_DIST=/app/apps/web/dist`. It builds and serves the web app on the server's origin:
+API routes, WebSocket upgrades, and health retain priority; other GET/HEAD requests serve files
+or the SPA document. Content-hashed assets cache immutably; the document revalidates. Traversal
+and symlinks outside the static root are refused. Without `VIVID_WEB_DIST`, local startup serves
+no static app; without `HOST`, it retains `127.0.0.1`. The runtime defaults to `PORT=5173` in its
+image; Flue's production Node listener omits a hostname and accepts non-loopback connections.
+
+Supply the server with `DATABASE_URL`, `AUTH_SECRET`, `VIVID_RUNTIME_URL`,
+`VIVID_RUNTIME_TOKEN`, and the externally reachable `PUBLIC_URL`. Supply the runtime with
+`DATABASE_URL`, `VIVID_SERVER_URL`, the matching `VIVID_RUNTIME_TOKEN`, and `EXPLABS_API_KEY`
+for model calls. Optional Google sign-in inputs remain atomic; optional provider, memory,
+Executor, and model settings keep their existing contracts. Apply the auth then product
+migrations before starting the server; Flue migrates its own runtime schema at startup.
+
+Programs require the existing user-systemd/cgroup/bubblewrap/prlimit isolation. Startup probes
+those prerequisites once. An ordinary container lacks them, so program runs return the existing
+typed `CodeFailure.Unavailable`, and startup logs the precise `CodeIsolationUnavailable`
+prerequisite. The server still starts; no alternate sandbox or unisolated program path exists.
+
+These recipes provide packaging, not deployment resources. Alchemy remains the resource owner;
+building an image neither calls Railway nor changes the local development graph.
+
 ## Outside the current stack
 
 - **Remote PostgreSQL and hosting:** topology is undecided and remote targets are disabled.
