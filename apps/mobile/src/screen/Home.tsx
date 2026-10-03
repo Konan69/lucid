@@ -1,4 +1,5 @@
 import { useAtomValue } from '@effect/atom-react'
+import { useAppearance } from '../data/vivid'
 import type { Thread, ThreadId } from '@vivid/contracts'
 import { draftPlace, workspaceKey } from '@vivid/state'
 import { Data, Option, Result } from 'effect'
@@ -43,6 +44,8 @@ const Over = Data.taggedEnum<Over>()
  * typed, which sheet is up, and a row's action the server refused.
  */
 export function Home() {
+  // The name this Person or their Company gave Vivid, live.
+  const vivid = useAppearance()
   const me = useMe()
   const data = useLiveData()
   const go = useGo()
@@ -103,7 +106,7 @@ export function Home() {
         <Composer
           ref={editor}
           value={start.draft}
-          placeholder="Message Vivid"
+          placeholder={`Message ${vivid.name}`}
           working={false}
           disabled={start.sending}
           onChange={start.setDraft}
