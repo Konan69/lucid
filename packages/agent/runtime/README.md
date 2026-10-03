@@ -17,7 +17,7 @@ pnpm dev
 
 Defaults:
 
-- model: `openrouter/z-ai/glm-5.3-flash`
+- model: `explabs/glm-5.3-flash`
 - development port: `5173`
 - PostgreSQL: `DATABASE_URL` (local example uses `127.0.0.1:55433/vivid`)
 
@@ -60,11 +60,11 @@ Build and run one Node 22 process:
 ```sh
 pnpm install --frozen-lockfile
 pnpm --filter @vivid/agent-runtime build
-DATABASE_URL=postgres://... VIVID_RUNTIME_TOKEN=... OPENROUTER_API_KEY=... pnpm --filter @vivid/agent-runtime start
+DATABASE_URL=postgres://... VIVID_RUNTIME_TOKEN=... EXPLABS_API_KEY=... pnpm --filter @vivid/agent-runtime start
 ```
 
 The included `Dockerfile` uses Node 22 and exposes port `5173`; set `DATABASE_URL`,
-`OPENROUTER_API_KEY`, `VIVID_RUNTIME_TOKEN`, and (when needed) the Google OAuth variables at
+`EXPLABS_API_KEY`, `VIVID_RUNTIME_TOKEN`, and (when needed) the Google OAuth variables at
 runtime. The container healthcheck calls unauthenticated `/health`. Run a single replica unless a
 platform scheduler replaces the in-process routine/follow-up tickers. PostgreSQL is the durable
 state that must be backed up; the container filesystem is disposable.
@@ -101,5 +101,8 @@ The Flue agent instance ID maps directly to the product thread ID. The included 
 scheduled dispatch locally; production orchestration, connectors, approvals, tools, and computer
 execution remain outside this cutover.
 
-Flue 2.0.3 predates GLM 5.3 in its bundled model catalog, so the runtime adds that
-single OpenRouter model locally while retaining Flue's built-in OpenRouter transport and auth.
+Models are reached through the Experiential Labs gateway, which speaks OpenAI's Chat Completions.
+`src/providers/explabs.ts` registers it with Flue in one `setProvider` call and declares the
+models Vivid may be pointed at; the key is `EXPLABS_API_KEY`. There is no retry or fallback layer
+of Vivid's own: the gateway fails over between upstream providers and Flue retries transient
+errors.

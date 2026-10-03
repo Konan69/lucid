@@ -6,9 +6,9 @@ import * as Option from 'effect/Option'
 import * as Redacted from 'effect/Redacted'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
-import './providers/openrouter.ts'
 import './providers/rehearsal.ts'
 import { Vivid } from './agents/vivid.ts'
+import { DEFAULT_MODEL } from './providers/explabs.ts'
 import { RuntimeRunRequest, ThreadOrigin } from '@vivid/contracts'
 import { modelDelivery, recordScope } from './delivery.ts'
 import { actingFor, threadOriginOf } from './client.ts'
@@ -80,10 +80,10 @@ const prepareContext = async (context: AppContext) => {
 
 app.get('/health', async (context) => {
   const model = await runResult(
-    Config.String('VIVID_MODEL').pipe(Config.withDefault('openrouter/z-ai/glm-5.3-flash')),
+    Config.String('VIVID_MODEL').pipe(Config.withDefault(DEFAULT_MODEL)),
   )
   return context.json({
-    model: Result.isSuccess(model) ? model.success : 'openrouter/z-ai/glm-5.3-flash',
+    model: Result.isSuccess(model) ? model.success : DEFAULT_MODEL,
     service: 'vivid-agent-runtime',
     status: 'ok',
   })

@@ -14,7 +14,7 @@ function fresh() {
   return faux.provider
 }
 
-// This module is Flue's synchronous provider bootstrap boundary, matching openrouter.ts.
+// Flue registers providers synchronously at import, so the setting is read synchronously here.
 // oxlint-disable-next-line vivid/no-runpromise-in-library
 const model = Effect.runSync(Config.option(Config.String('VIVID_MODEL')))
 if (Option.isSome(model) && model.value.startsWith('rehearsal/')) {

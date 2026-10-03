@@ -10,6 +10,7 @@ import {
 } from '@flue/runtime'
 import * as Option from 'effect/Option'
 import { actingFor, threadOriginOf } from '../client.ts'
+import { DEFAULT_MODEL } from '../providers/explabs.ts'
 import { useVividContext } from '../context.ts'
 import { askTools } from '../tools/ask.ts'
 import { computerTools } from '../tools/computer.ts'
@@ -92,7 +93,7 @@ const KNOWING = [
 ]
 
 export function Vivid({ id }: { id: string }) {
-  const model = process.env.VIVID_MODEL ?? 'openrouter/z-ai/glm-5.3-flash'
+  const model = process.env.VIVID_MODEL ?? DEFAULT_MODEL
   const delivery = useDelivery()
   // Flue 2.1 joins a delivery into a response already in progress and rerenders at its turn
   // boundary, so the tools that follow act for the joined delivery's Person. That is only safe

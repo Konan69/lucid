@@ -41,7 +41,11 @@ schema-derived `VividRpcClient`.
   data. `actingFor` reads exactly that, and every tool call carries the Thread and the Person to
   the server, which checks them again.
 - Product calls use the generated `/api/rpc` contract through `VividRpcClient`.
-- The default model is `openrouter/z-ai/glm-5.3-flash`; `VIVID_MODEL` may select another.
+- The default model is `explabs/glm-5.3-flash`, served by the Experiential Labs gateway
+  (`src/providers/explabs.ts`, key `EXPLABS_API_KEY`). `VIVID_MODEL` may select another model that
+  file declares. A model is declared there, with its limits, before it is named in `VIVID_MODEL`.
+  Do not add a retry, fallback or stream-wrapping layer around the provider: the gateway fails
+  over between upstream providers and Flue retries transient errors.
 - Pictures currently belong only to private Threads, whose deliveries are ordinary Flue user
   messages. Shared Threads use attributed signals; Flue 2.1.0 accepts and persists attachments
   only on user messages. The gateway refuses shared pictures before reserving a Run. Closing
