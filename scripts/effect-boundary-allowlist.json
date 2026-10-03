@@ -1,10 +1,5 @@
 [
   {
-    "file": "packages/agent/runtime/src/providers/failure.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["readModelEvent"]
-  },
-  {
     "file": "packages/agent/runtime/src/db.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["query", "transaction"]
