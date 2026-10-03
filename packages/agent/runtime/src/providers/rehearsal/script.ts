@@ -49,7 +49,7 @@ function display(phrase: string, shown: Shown): Scene {
     phrase,
     steps: [
       (context) => [
-        fauxText('here’s a rehearsal example.'),
+        fauxText('Here’s a rehearsal example.'),
         call(context, 'show', { show: shown }),
       ],
       completion,
@@ -66,7 +66,7 @@ function completion(context: Context): FauxContentBlock[] {
   const results = context.messages
     .slice(latest + 1)
     .filter((message) => message.role === 'toolResult')
-  if (results.length === 0) return [fauxText('i haven’t received a result yet.')]
+  if (results.length === 0) return [fauxText('I haven’t received a result yet.')]
   return [fauxText(results.map(resultWords).join(' '))]
 }
 
@@ -77,16 +77,16 @@ function resultWords(result: ToolResultMessage): string {
     .map((block) => block.text)
     .join('\n')
   const receipt = decodeReceipt(content)
-  if (Option.isNone(receipt)) return 'i couldn’t read the result.'
+  if (Option.isNone(receipt)) return 'I couldn’t read the result.'
   const value = receipt.value
   if (result.isError || value.ok === false || value.added === false) {
     const detail = value.message ?? value.reason
     if (detail !== undefined)
-      return `${result.toolName === 'remember' ? 'i couldn’t save that memory' : 'that didn’t finish'}: ${modelText(detail)}`
-    if (value.failure !== undefined) return `that didn’t finish: ${failureWords(value.failure)}.`
-    return 'that didn’t finish; the tool reported a failure.'
+      return `${result.toolName === 'remember' ? 'I couldn’t save that memory' : 'That didn’t finish'}: ${modelText(detail)}`
+    if (value.failure !== undefined) return `That didn’t finish: ${failureWords(value.failure)}.`
+    return 'That didn’t finish; the tool reported a failure.'
   }
-  if (value.catalog === 'unavailable') return 'the integration catalogue is unavailable right now.'
+  if (value.catalog === 'unavailable') return 'The integration catalogue is unavailable right now.'
   return successWords(result.toolName, value)
 }
 
@@ -94,65 +94,65 @@ function resultWords(result: ToolResultMessage): string {
 function failureWords(failure: CodeFailure): string {
   return CodeFailure.match(failure, {
     Threw: ({ message }) => modelText(message),
-    TimedOut: () => 'the program timed out',
-    OverLimit: () => 'the program exceeded its limits',
-    Unavailable: () => 'the program is unavailable',
+    TimedOut: () => 'The program timed out',
+    OverLimit: () => 'The program exceeded its limits',
+    Unavailable: () => 'The program is unavailable',
   })
 }
 
 /** Each receipt reader owns one tool's affirmative evidence, keeping failure handling shared. */
 const success = {
   show: (value: typeof Receipt.Type) =>
-    value.shown === undefined ? 'the display result is missing.' : `the ${value.shown} is above.`,
+    value.shown === undefined ? 'The display result is missing.' : `The ${value.shown} is above.`,
   read_page: (value: typeof Receipt.Type) =>
     value.title === undefined
-      ? 'the page returned no title.'
-      : `the page is titled “${modelText(value.title)}”.`,
+      ? 'The page returned no title.'
+      : `The page is titled “${modelText(value.title)}”.`,
   run_code: (value: typeof Receipt.Type) =>
     Predicate.isNumber(value.result)
-      ? `the sum is ${value.result}.`
-      : 'the program returned no numeric sum.',
+      ? `The sum is ${value.result}.`
+      : 'The program returned no numeric sum.',
   create_task: (value: typeof Receipt.Type) =>
     value.task === undefined
-      ? 'the saved task is missing from the result.'
-      : `i added “${modelText(value.task.title)}”.`,
+      ? 'The saved task is missing from the result.'
+      : `I added “${modelText(value.task.title)}”.`,
   create_routine: (value: typeof Receipt.Type) =>
     value.nextRunAt === undefined || value.nextRunAt === null
-      ? 'the routine returned no next run time.'
-      : `the reminder is scheduled for ${modelText(value.nextRunAt)}; this date-based routine repeats yearly until removed.`,
+      ? 'The routine returned no next run time.'
+      : `The reminder is scheduled for ${modelText(value.nextRunAt)}; this date-based routine repeats yearly until removed.`,
   remember: (value: typeof Receipt.Type) =>
     value.remembered === undefined
-      ? 'the memory was not confirmed.'
-      : `i remembered: ${modelText(value.remembered)}`,
+      ? 'The memory was not confirmed.'
+      : `I remembered: ${modelText(value.remembered)}`,
   find_integrations: (value: typeof Receipt.Type) =>
     value.integrations === undefined
-      ? 'the search returned no integration list.'
-      : `the search returned ${value.integrations.length} matches${value.integrations.length === 0 ? '.' : `: ${value.integrations.map((entry) => modelText(entry.name)).join(', ')}.`}`,
+      ? 'The search returned no integration list.'
+      : `The search returned ${value.integrations.length} matches${value.integrations.length === 0 ? '.' : `: ${value.integrations.map((entry) => modelText(entry.name)).join(', ')}.`}`,
   add_integration: (value: typeof Receipt.Type) =>
     value.added === true && value.account !== undefined
-      ? `i added the ${modelText(value.account)} integration.`
-      : 'the integration is not confirmed connected.',
+      ? `I added the ${modelText(value.account)} integration.`
+      : 'The integration is not confirmed connected.',
   browse: (value: typeof Receipt.Type) =>
     !Predicate.isObject(value.result)
-      ? 'the browser returned no page result.'
-      : `the browser opened “${modelText(value.result.title)}”; open the computer to see it.`,
+      ? 'The browser returned no page result.'
+      : `The browser opened “${modelText(value.result.title)}”; open the computer to see it.`,
   use_desktop: (value: typeof Receipt.Type) =>
     value.view === undefined
-      ? 'the computer returned no screenshot receipt.'
-      : `the computer returned a ${value.view.width} by ${value.view.height} screenshot.`,
+      ? 'The computer returned no screenshot receipt.'
+      : `The computer returned a ${value.view.width} by ${value.view.height} screenshot.`,
 } satisfies Record<string, (value: typeof Receipt.Type) => string>
 
 /** Tool names come from pi history; unknown names are never treated as known successes. */
 function successWords(name: string, value: typeof Receipt.Type): string {
   const reader = Object.entries(success).find(([tool]) => tool === name)
-  return reader === undefined ? 'the result is above.' : reader[1](value)
+  return reader === undefined ? 'The result is above.' : reader[1](value)
 }
 
 /** Tomorrow is calculated from the Person message's timestamp in the timezone stated by Vivid's context. */
 function reminder(context: Context): FauxContentBlock[] {
   const person = Array.findLast(context.messages, (message) => message.role === 'user')
   if (Option.isNone(person))
-    return [fauxText('send “remind me” to schedule the rehearsal reminder.')]
+    return [fauxText('Send “remind me” to schedule the rehearsal reminder.')]
   const match = /Today is .+ in the (.+) time zone\./u.exec(context.systemPrompt ?? '')
   const timezone = match === null || match[1] === undefined ? 'UTC' : match[1]
   const local = new Intl.DateTimeFormat('en-CA', {
@@ -415,7 +415,7 @@ export function script(context: Context): AssistantMessage {
   const step = scene === undefined ? undefined : scene.steps[count]
   const blocks =
     step === undefined
-      ? [fauxText(`try one of these phrases: ${phrases.join(', ')}.`)]
+      ? [fauxText(`Try one of these phrases: ${phrases.join(', ')}.`)]
       : step(context)
   const stopReason = blocks.some((block) => block.type === 'toolCall') ? 'toolUse' : 'stop'
   return fauxAssistantMessage(structuredClone(blocks), { timestamp, stopReason })

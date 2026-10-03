@@ -68,6 +68,15 @@ function words(message: AssistantMessage) {
     .join('\n')
 }
 
+/** Check each authored sentence, including a second receipt joined into the same reply. */
+function expectCapitalSentences(message: AssistantMessage) {
+  for (const block of message.content.filter((content) => content.type === 'text')) {
+    for (const sentence of block.text.split(/[.!?]\s+/u)) {
+      expect(sentence).toMatch(/^[A-Z]/u)
+    }
+  }
+}
+
 /** Isolated Node processes prove import-time opt-in against Flue's real registry without module mocks or global env changes. */
 function registration(model: Option.Option<string>) {
   const env = { ...process.env }
@@ -94,6 +103,7 @@ describe('Rehearsal scenes', () => {
     it(`${phrase}: real schemas accept every tool input and context advances the step`, () => {
       const start = context(`Please ${phrase.toUpperCase()} for this rehearsal`)
       const first = script(start)
+      expectCapitalSentences(first)
       const calls = first.content.filter((block) => block.type === 'toolCall')
       expect(calls.length).toBe(phrase === 'two things' ? 2 : 1)
       expect(first.stopReason).toBe('toolUse')
@@ -120,6 +130,7 @@ describe('Rehearsal scenes', () => {
         ],
       })
       expect(following.stopReason).toBe('stop')
+      expectCapitalSentences(following)
       expect(following.content.some((block) => block.type === 'toolCall')).toBe(false)
       expect(words(following)).toContain('That part of Vivid is not available right now.')
       expect(words(first) + words(following)).not.toMatch(/\bagent\b|rehearsal:|MARK-/iu)
@@ -139,7 +150,7 @@ describe('Rehearsal scenes', () => {
       ),
     )
     expect(words(script({ ...start, messages: [...start.messages, first, ...outputs] }))).toBe(
-      'the page is titled “A different page title”. the sum is 17.',
+      'The page is titled “A different page title”. The sum is 17.',
     )
     expect(new Set(calls.map((call) => call.id)).size).toBe(2)
   })
@@ -149,58 +160,58 @@ describe('Rehearsal scenes', () => {
       {
         phrase: 'show a table',
         output: { ok: true, shown: 'table' },
-        expected: 'the table is above.',
+        expected: 'The table is above.',
       },
       {
         phrase: 'add a task',
         output: { task: { title: 'Actual saved task' } },
-        expected: 'i added “Actual saved task”.',
+        expected: 'I added “Actual saved task”.',
       },
       {
         phrase: 'remind me',
         output: { name: 'Reminder', nextRunAt: '2026-10-04T08:00:00Z' },
         expected:
-          'the reminder is scheduled for 2026-10-04T08:00:00Z; this date-based routine repeats yearly until removed.',
+          'The reminder is scheduled for 2026-10-04T08:00:00Z; this date-based routine repeats yearly until removed.',
       },
       {
         phrase: 'remember that',
         output: { ok: true, remembered: 'A confirmed preference.' },
-        expected: 'i remembered: A confirmed preference.',
+        expected: 'I remembered: A confirmed preference.',
       },
       {
         phrase: 'find google',
         output: { catalog: 'available', integrations: [{ name: 'Google Calendar' }] },
-        expected: 'the search returned 1 matches: Google Calendar.',
+        expected: 'The search returned 1 matches: Google Calendar.',
       },
       {
         phrase: 'find google',
         output: { catalog: 'unavailable', integrations: [] },
-        expected: 'the integration catalogue is unavailable right now.',
+        expected: 'The integration catalogue is unavailable right now.',
       },
       {
         phrase: 'add exa',
         output: { added: true, account: 'Exa' },
-        expected: 'i added the Exa integration.',
+        expected: 'I added the Exa integration.',
       },
       {
         phrase: 'add exa',
         output: { added: false, reason: 'No integration found.' },
-        expected: 'that didn’t finish: No integration found.',
+        expected: 'That didn’t finish: No integration found.',
       },
       {
         phrase: 'browse example',
         output: { ok: true, result: { title: 'Example Domain' } },
-        expected: 'the browser opened “Example Domain”; open the computer to see it.',
+        expected: 'The browser opened “Example Domain”; open the computer to see it.',
       },
       {
         phrase: 'use the desktop',
         output: { ok: true, view: { width: 1440, height: 900 } },
-        expected: 'the computer returned a 1440 by 900 screenshot.',
+        expected: 'The computer returned a 1440 by 900 screenshot.',
       },
       {
         phrase: 'remember that',
         output: { ok: false, message: 'That part of Vivid is not available right now.' },
-        expected: 'i couldn’t save that memory: That part of Vivid is not available right now.',
+        expected: 'I couldn’t save that memory: That part of Vivid is not available right now.',
       },
     ]
     for (const example of cases) {
@@ -213,6 +224,7 @@ describe('Rehearsal scenes', () => {
         messages: [...start.messages, first, receipt(call, example.output)],
       })
       expect(words(result)).toBe(example.expected)
+      expectCapitalSentences(result)
     }
   })
 
@@ -225,6 +237,19 @@ describe('Rehearsal scenes', () => {
     call.arguments.show = { changed: true }
     script(context('run a program'))
     expect(script(start)).toEqual(expected)
+  })
+
+  it('capitalizes missing-result replies for every scene', () => {
+    for (const phrase of phrases) {
+      const start = context(phrase)
+      const first = script(start)
+      const calls = first.content.filter((block) => block.type === 'toolCall')
+      for (const results of [[], calls.map((call) => receipt(call, {}))]) {
+        const reply = script({ ...start, messages: [...start.messages, first, ...results] })
+        expect(words(reply)).not.toBe('')
+        expectCapitalSentences(reply)
+      }
+    }
   })
 
   it('lists all supported phrases for unknown, empty and picture-only messages', () => {
@@ -242,6 +267,7 @@ describe('Rehearsal scenes', () => {
       },
     ]) {
       const output = script(input)
+      expectCapitalSentences(output)
       expect(output.stopReason).toBe('stop')
       for (const phrase of phrases) expect(words(output)).toContain(phrase)
     }
@@ -306,9 +332,9 @@ describe('Rehearsal scenes', () => {
     for (const [content, expected] of [
       [
         JSON.stringify({ ok: false, failure: CodeFailure.cases.Unavailable.make({}) }),
-        'that didn’t finish: the program is unavailable.',
+        'That didn’t finish: The program is unavailable.',
       ],
-      ['malformed', 'i couldn’t read the result.'],
+      ['malformed', 'I couldn’t read the result.'],
     ] as const) {
       expect(
         words(
@@ -331,7 +357,7 @@ describe('Rehearsal scenes', () => {
       ).toBe(expected)
     }
     expect(words(script({ ...start, messages: [...start.messages, first] }))).toBe(
-      'i haven’t received a result yet.',
+      'I haven’t received a result yet.',
     )
   })
 
