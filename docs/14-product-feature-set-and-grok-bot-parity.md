@@ -35,12 +35,28 @@ Last brought up to date on 3 October 2026.
 | Memory on HelixDB: remember, recall, forget, correct, and the background pass after a Run                                                       | Live test; remember and recall seen in the app with a real model  |
 | The Computer on Boat: create, viewer, look, open/read a page, click a link, type/replace/clear a field with readback, files, archive and resume | Live test against real Boat                                       |
 | The Library: folders, PDF and text ingest, search, citations                                                                                    | Tests                                                             |
-| Skills: 22 native runtime folders, and reusable procedures Vivid saves for itself                                                               | Native catalogue, activation and scoped saved-procedure tests     |
+| Skills: 23 native runtime folders, and reusable procedures Vivid saves for itself                                                               | Native catalogue, activation and scoped saved-procedure tests     |
 | Search palette, notifications, Settings, the Company record                                                                                     | Tests; seen in the app                                            |
 | Desktop app: choose a Vivid, sign up, pages beside a Thread with tabs, the Computer tab, switching Vivid                                        | Run for real                                                      |
 | Pictures attached to a message in a private Thread                                                                                              | Tests                                                             |
 
 ## Built, not yet seen working end to end
+
+- **App push**: session-owned Web Push and Expo targets, owner-scoped setup RPCs, Notification
+  delivery when away, durable send claims, provider timeouts and gone-target removal. Disposable
+  PostgreSQL handler tests and controlled provider HTTP tests pass. Clients still need permission,
+  service-worker/native registration and tap handling; real VAPID/device delivery is unverified.
+- **Attention**: `notify_person`, the opt-in “Watch what needs me” Routine template and its built-in
+  mail/calendar procedure. Standing checks complete silently; actionable findings can open private
+  follow-up Threads through ordinary Run admission. Real-model judgement has not been evaluated.
+
+The push lane's isolated checkout passed 104 distinct focused tests across registration, delivery,
+provider HTTP, model tools, native skill mounting, Routine opt-in and existing Thread/Routine seams.
+The repository gate passed package policy, version lockstep, Effect boundaries and migration
+integrity, then stopped on the existing Tailwind class-order warning at
+`apps/web/src/screen/Notifications.tsx:165`. The frontend owner must correct that order; this lane
+made no frontend changes.
+Server and runtime leaf typechecks passed under the shared compiler lock in the isolated checkout.
 
 - **Artifacts**: Thread-owned Markdown documents, immutable versions, optimistic Person revisions,
   live RPC queries and runtime write/read tools. Private-Thread rehearsal proved writing version 1,
@@ -82,7 +98,7 @@ same disposable database as the stack; the proof never falls back to an applicat
 - **The durable work log** of a Run (requests, responses, tool calls, model and timing).
 - **Vivid-to-Vivid** across People and Companies (`docs/06-communication.md`).
 - **The Person's own computer as a device**, and taking over the Computer to teach a task.
-- **Push notifications**, **voice**, and **messaging channels** (mail in, Slack and the like).
+- **Voice** and **messaging channels** (mail in, Slack and the like); Telegram was cancelled.
 - **To-do lists and project management.** Tasks as Vivid first had them (things Vivid tracked and
   chased) were removed on 3 October 2026. They come back in two different shapes, neither built:
   for a Person, a to-do list that is theirs: things they mean to do, which Vivid can add to, tick
