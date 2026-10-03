@@ -219,7 +219,8 @@ export const stepsOf = (tools: ReadonlyArray<ToolPart>): ReadonlyArray<Step> =>
         id: tool.toolCallId,
         label: described.label,
         detail: Option.fromUndefinedOr(described.detail),
-        standing,
+        // A tool that answered that it could not do it failed, even though the call returned.
+        standing: described.state,
         onComputer: ON_COMPUTER.has(tool.toolName),
       }
     })

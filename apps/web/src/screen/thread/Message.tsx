@@ -300,17 +300,17 @@ const ON_COMPUTER = new Set(['run_command', 'browse', 'use_desktop'])
 function Steps({ tools, live }: { tools: ReadonlyArray<ToolPart>; live: boolean }) {
   const [open, setOpen] = useState(false)
   if (tools.length === 0) return null
-  const steps = tools.map((tool) => ({
-    id: tool.toolCallId,
-    ...describeToolCall(
+  const steps = tools.map((tool) => {
+    const described = describeToolCall(
       tool.toolName,
       readAsked(tool.input),
       // A call still running has no output; it reads as an answer with nothing in it yet.
       readAnswered(tool.state === 'output-available' ? tool.output : {}),
       stateOf(tool),
-    ),
-    failed: tool.state === 'output-error',
-  }))
+    )
+    // A tool that answered that it could not do it failed, even though the call returned.
+    return { id: tool.toolCallId, ...described, failed: described.state === 'failed' }
+  })
   const current = live
     ? // The newest step still in progress is the one Vivid is on.
       tools.reduce<Option.Option<ToolPart>>(

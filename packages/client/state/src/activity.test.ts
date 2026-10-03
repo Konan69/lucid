@@ -11,7 +11,17 @@ describe('a step, in words', () => {
         readAnswered({ results: [{}, {}] }),
         'done',
       ),
-    ).toEqual({ label: 'Searched the Library', detail: '“pricing” · 2 sources' })
+    ).toMatchObject({ label: 'Searched the Library', detail: '“pricing” · 2 sources' })
+  })
+
+  it('reads a tool that answered it could not do it as a failed step', () => {
+    // The call returned, so the conversation marks it done; the tool's own answer says otherwise.
+    expect(
+      describeToolCall('remember', readAsked({}), readAnswered({ ok: false }), 'done'),
+    ).toEqual({ state: 'failed', label: 'Could not remember that' })
+    expect(
+      describeToolCall('remember', readAsked({}), readAnswered({ ok: true }), 'done').state,
+    ).toBe('done')
   })
 
   it('preserves failure wording for an otherwise completed task update', () => {
@@ -22,7 +32,7 @@ describe('a step, in words', () => {
         readAnswered({ task: { title: 'Review PRD', status: 'done' } }),
         'failed',
       ),
-    ).toEqual({ label: 'Could not update the task', detail: 'Review PRD' })
+    ).toMatchObject({ label: 'Could not update the task', detail: 'Review PRD' })
   })
 
   it('says a Task was marked done, and names it from what Vivid asked when nothing came back', () => {
@@ -33,7 +43,7 @@ describe('a step, in words', () => {
         readAnswered({ task: { status: 'done' } }),
         'done',
       ),
-    ).toEqual({ label: 'Marked a task done', detail: 'Signed NDA from Dami' })
+    ).toMatchObject({ label: 'Marked a task done', detail: 'Signed NDA from Dami' })
   })
 
   it('says which account a connection was used through and what for', () => {
@@ -44,7 +54,7 @@ describe('a step, in words', () => {
         readAnswered({ ok: true }),
         'done',
       ),
-    ).toEqual({ label: 'Used an integration', detail: 'Gmail (Work) · Send Dami the NDA' })
+    ).toMatchObject({ label: 'Used an integration', detail: 'Gmail (Work) · Send Dami the NDA' })
   })
 
   it('says what work on the Computer was for, while it is still running', () => {
@@ -55,16 +65,16 @@ describe('a step, in words', () => {
         Option.none(),
         'running',
       ),
-    ).toEqual({ label: 'Working on its computer', detail: 'List the downloads' })
+    ).toMatchObject({ label: 'Working on its computer', detail: 'List the downloads' })
   })
 
   it('gives a tool it has not heard of a true line and nothing made up', () => {
     expect(
       describeToolCall('future_tool', readAsked({ anything: 1 }), Option.none(), 'running'),
-    ).toEqual({ label: 'Working' })
+    ).toMatchObject({ label: 'Working' })
     expect(
       describeToolCall('future_tool', Option.none(), readAnswered('not an object'), 'done'),
-    ).toEqual({ label: 'Did something' })
+    ).toMatchObject({ label: 'Did something' })
   })
 })
 

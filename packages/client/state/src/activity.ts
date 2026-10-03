@@ -37,6 +37,12 @@ type Asked = typeof Asked.Type
 
 /** The fields of a tool's result a step can be described with. */
 const Answered = Schema.Struct({
+  /**
+   * Whether the tool did what was asked. A tool that could not (the Computer refused, a memory
+   * could not be saved) still answers, with `ok: false` and words for Vivid, so the call itself
+   * does not fail. Absent on tools that have no such outcome.
+   */
+  ok: Schema.OptionFromOptionalKey(Schema.Boolean),
   task: Schema.OptionFromOptionalKey(Schema.Struct({ title: text, status: text })),
   followUp: Schema.OptionFromOptionalKey(Schema.Struct({ at: text })),
   results: list,
@@ -55,6 +61,8 @@ export const readAnswered = Schema.decodeUnknownOption(Answered)
 /** Where one step stands: still going, finished, or finished badly. */
 export type ToolState = 'running' | 'failed' | 'done'
 interface ToolCallDescription {
+  /** Where the step really stands, after reading what the tool answered. */
+  readonly state: ToolState
   readonly label: string
   readonly detail?: string
 }
@@ -344,7 +352,22 @@ const NOTHING_ANSWERED: Answered = {
   tools: Option.none(),
   memories: Option.none(),
   routines: Option.none(),
+  ok: Option.none(),
 }
+
+/**
+ * Where a step stands once its answer is read. A call that returned is not thereby a step that
+ * worked: a tool that answered `ok: false` finished badly, and saying "Remembered" or "Used its
+ * browser" above Vivid's own "that did not work" told the Person two different things.
+ */
+const settled = (state: ToolState, answered: Option.Option<Answered>): ToolState =>
+  state === 'done' &&
+  Option.exists(
+    Option.flatMap(answered, (result) => result.ok),
+    (ok) => !ok,
+  )
+    ? 'failed'
+    : state
 
 /** A Task marked done reads as that, not as any other update. */
 const labelOf = (
@@ -370,9 +393,10 @@ export function describeToolCall(
   toolName: string,
   asked: Option.Option<Asked>,
   answered: Option.Option<Answered>,
-  state: ToolState,
+  called: ToolState,
 ): ToolCallDescription {
   const step = Option.getOrElse(Option.fromUndefinedOr(STEP_OF.get(toolName)), () => UNKNOWN)
+  const state = settled(called, answered)
   const label = labelOf(toolName, step, answered, state)
   // A reading that is not there (a call with no input, one still running, JSON this client does
   // not recognise) contributes nothing to the line; the other reading still does.
@@ -382,7 +406,7 @@ export function describeToolCall(
       Option.getOrElse(answered, () => NOTHING_ANSWERED),
     )
     .flatMap((part) => Option.toArray(part))
-  return details.length === 0 ? { label } : { label, detail: details.join(' · ') }
+  return details.length === 0 ? { state, label } : { state, label, detail: details.join(' · ') }
 }
 
 /**
