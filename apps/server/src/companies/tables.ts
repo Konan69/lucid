@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import { index, jsonb, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
+import { DEFAULT_APPEARANCE } from '@vivid/contracts'
 import { personTable } from '../auth/tables.ts'
 
 const id = () => text().primaryKey()
@@ -13,6 +14,13 @@ export const companyTable = pgTable(
     slug: text().notNull(),
     logo: text(),
     metadata: jsonb(),
+    /**
+     * What this Company calls Vivid and how its face is drawn for everyone in it: an `Appearance`
+     * (`packages/contracts/src/appearance.ts`). Better Auth creates Company rows and does not know
+     * these columns, so the database defaults are what a new Company starts with.
+     */
+    vividName: text().notNull().default(DEFAULT_APPEARANCE.name),
+    vividLook: jsonb().notNull().default(DEFAULT_APPEARANCE.look),
     createdAt: createdAt(),
   },
   (table) => [uniqueIndex('company_slug_idx').on(table.slug)],

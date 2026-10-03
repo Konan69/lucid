@@ -2,6 +2,7 @@ import * as Layer from 'effect/Layer'
 import * as RpcSerialization from 'effect/unstable/rpc/RpcSerialization'
 import * as RpcServer from 'effect/unstable/rpc/RpcServer'
 import { VividRpc } from '@vivid/contracts/rpc'
+import { appearanceHandlers } from '../appearance/handlers.ts'
 import { artifactHandlers } from '../artifacts/handlers.ts'
 import { approvalHandlers } from '../approvals/handlers.ts'
 import { auditHandlers } from '../audit/handlers.ts'
@@ -31,6 +32,7 @@ export const rpcHandlersLayer = VividRpc.toLayer({
   ...companyHandlers,
   ...codeHandlers,
   ...settingsHandlers,
+  ...appearanceHandlers,
   ...threadHandlers,
   ...approvalHandlers,
   ...inputHandlers,

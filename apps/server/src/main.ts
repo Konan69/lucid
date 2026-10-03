@@ -17,6 +17,7 @@ import { actionRunnerLayer } from './approvals/runner.ts'
 import { approvalStoreLayer } from './approvals/store.ts'
 import { approvalSweeperLayer } from './approvals/sweeper.ts'
 import { auditLayer } from './audit/record.ts'
+import { appearanceStoreLayer } from './appearance/store.ts'
 import { companyStoreLayer } from './companies/store.ts'
 import { codeAuthorityLayer } from './code/authority.ts'
 import { codeCallsLayer } from './code/calls.ts'
@@ -110,9 +111,13 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     codeAuthorityLayer,
     deviceLayer,
   ).pipe(Layer.provideMerge(data))
-  const reach = Layer.mergeAll(presenceLayer, notifierLayer, auditLayer, artifactStoreLayer).pipe(
-    Layer.provideMerge(foundation),
-  )
+  const reach = Layer.mergeAll(
+    presenceLayer,
+    notifierLayer,
+    auditLayer,
+    artifactStoreLayer,
+    appearanceStoreLayer,
+  ).pipe(Layer.provideMerge(foundation))
   const recorded = ruleStoreLayer.pipe(Layer.provideMerge(reach))
   const knowledge = memoryLayer.pipe(Layer.provideMerge(recorded))
   const conversation = conversationLayer.pipe(Layer.provideMerge(knowledge))
