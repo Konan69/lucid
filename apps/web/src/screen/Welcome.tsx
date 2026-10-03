@@ -92,7 +92,7 @@ export function Welcome({ returnTo }: { returnTo: string }) {
             onSubmit={(event) => {
               void submit(event)
             }}
-            className="flex flex-col gap-3 rounded-panel bg-surface-3 p-6 smooth-shadow-ring-sm"
+            className="flex flex-col gap-3 rounded-panel bg-surface-3 p-6 edge"
           >
             {mode === 'create' && (
               <Field

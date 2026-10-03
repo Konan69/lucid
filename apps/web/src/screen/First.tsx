@@ -2,25 +2,24 @@ import type { MeResponse } from '@vivid/contracts'
 import { Workspace } from '@vivid/contracts'
 import { draftPlace, greetingAt, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
-import { ArrowUpRight } from 'lucide-react'
 import { useState } from 'react'
-import { live, useLiveValue } from '../data/live'
 import { startThread } from '../data/threads'
+import { useAppearance } from '../data/vivid'
 import { Face } from '../ui/Face'
 import { Composer } from './thread/Composer'
 
 /**
- * The first screen: Vivid, and somewhere to write. There is nothing to set up and nothing to
- * choose. Whatever the Person types becomes a Thread; the suggestions are things they could say,
- * drawn from their own Tasks, Routines and Library, and a fresh account gets four that work with
- * nothing connected.
+ * Home: Vivid, a greeting, and somewhere to write. There is nothing to set up and nothing to
+ * choose; whatever the Person types becomes a Thread. There are no suggestion cards under the
+ * composer: four generic ones used to sit there and were filler, the same ones already removed
+ * on the phone.
  *
  * The composer is in the middle of the page, under the greeting, not at its foot: on this screen
  * writing is the only thing there is to do, so it sits where the eye already is. Once there is a
  * Thread the composer is at the bottom, under the conversation, where it belongs.
  */
 export function First({ me }: { me: MeResponse }) {
-  const suggestions = useLiveValue(live.suggestions)
+  const { name } = useAppearance()
   // Read once: a greeting that changed while someone was looking at it would be a glitch.
   const [hello] = useState(() => greetingAt(new Date().getHours()))
   const first = me.person.name.trim().split(/\s+/u)[0]
@@ -48,49 +47,13 @@ export function First({ me }: { me: MeResponse }) {
               workspace: workspaceKey(me.workspace),
               thread: Option.none(),
             })}
+            placeholder={`Message ${name}`}
             working={false}
             onSend={(text) => startThread(text)}
             onStop={() => undefined}
           />
         </div>
-
-        <ul className="grid gap-2 px-4 sm:grid-cols-2 sm:px-6">
-          {Option.match(suggestions, {
-            onNone: () => [],
-            onSome: (value) => value.suggestions,
-          }).map((suggestion, position) => (
-            <li
-              key={suggestion.text}
-              // Each arrives a beat after the one before it, once, as the screen opens.
-              className={STAGGER[position % STAGGER.length]}
-            >
-              <button
-                onClick={() => startThread(suggestion.text)}
-                className="group/try flex size-full cursor-pointer items-start gap-3 rounded-card bg-surface-2 px-4 py-3.5 text-left transition-press duration-(--dur-fast) hover:bg-wash-pressed active:scale-98"
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block text-title font-title text-ink">{suggestion.text}</span>
-                  <span className="mt-1 block text-label font-meta text-ink-3">
-                    {suggestion.reason}
-                  </span>
-                </span>
-                <ArrowUpRight
-                  aria-hidden
-                  className="mt-0.5 size-4 shrink-0 text-ink-4 transition-colors duration-(--dur-fast) group-hover/try:text-accent-ink"
-                />
-              </button>
-            </li>
-          ))}
-        </ul>
       </div>
     </section>
   )
 }
-
-/** The four suggestions rise in one after another; the delays are fixed, so they are classes. */
-const STAGGER = [
-  'animate-rise-in',
-  'animate-rise-in stagger-1',
-  'animate-rise-in stagger-2',
-  'animate-rise-in stagger-3',
-] as const
