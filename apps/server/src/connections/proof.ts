@@ -1,0 +1,153 @@
+import * as NodeCrypto from 'node:crypto'
+import { expect } from '@effect/vitest'
+import { ConnectionId, ServiceId, ServiceUnavailable } from '@vivid/contracts'
+import { Clock, Config, Effect, Layer, Option, Schema } from 'effect'
+import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
+import { Database } from '../database/client.ts'
+import type { ChainFixture } from '../runtime/chains.ts'
+import {
+  Executor,
+  ExecutorAppId,
+  ExecutorOwnerId,
+  ExecutorProfileId,
+  ExecutorReferences,
+  ExecutorCallOutcome,
+  executorLayer,
+} from './executor.ts'
+import { encodeReferences } from './records.ts'
+import { connections } from './tables.ts'
+
+/** Port the retained record mechanism from Executor packages/sdk/test/app-data.test.ts `source`.
+ * Each deployment has its own real SQLite store. Vivid names replace the reference's names, and
+ * mutation outputs omit row handles; polling still uses stable provider ids behind the server.
+ * This service is a real Executor fixture, not evidence of a third-party OAuth connection.
+ */
+const source = `import { query, mutation, defineApp, defineDatabase, table, object, string } from "apps";
+const database = defineDatabase({ records: table({ subject: string() }) });
+export default defineApp({ accounts: {}, database }, async () => ({
+  queries: { records: query({ description: "Read saved proof records in creation order", input: object({}) }, async ({ db }) => db.records.withIndex("by_creation").collect()) },
+  mutations: { save: mutation({ description: "Save a proof record", input: object({ subject: string() }) }, async ({ db }, value) => { await db.records.insert(value); return { saved: true, subject: value.subject }; }) }
+}));`
+
+const Deployment = Schema.Struct({ app: Schema.Struct({ id: ExecutorAppId }) })
+const Profile = Schema.Struct({ id: ExecutorProfileId })
+export const ProofRecords = Schema.Array(
+  Schema.Struct({ id: Schema.String, subject: Schema.String }),
+)
+
+const decodeRecords = Schema.decodeUnknownEffect(ProofRecords)
+const cleanupFailed = () => Effect.sync(() => expect.fail('Executor proof cleanup failed'))
+const successfulRemoval = (response: HttpClientResponse.HttpClientResponse) =>
+  Effect.sync(() => expect(response.status >= 200 && response.status < 300).toBe(true))
+
+/** Management calls decode the deployed host's response, keep its key redacted and refuse
+ * non-success statuses. No app creation, write, tool dispatch or model request is retried.
+ */
+const executorRequest = Effect.fn('ThreadProof.executorRequest')(function* (
+  path: string,
+  body: Schema.Json,
+) {
+  const endpoint = yield* Config.URL('VIVID_EXECUTOR_URL')
+  const key = yield* Config.Redacted('VIVID_EXECUTOR_KEY')
+  const request = yield* HttpClientRequest.bodyJson(
+    HttpClientRequest.post(new URL(path, endpoint)).pipe(HttpClientRequest.bearerToken(key)),
+    body,
+  )
+  const response = yield* (yield* HttpClient.HttpClient)
+    .execute(request)
+    .pipe(
+      Effect.mapError(() =>
+        ServiceUnavailable.make({
+          service: 'connections',
+          message: 'Executor proof management request failed',
+        }),
+      ),
+    )
+  expect(
+    response.status >= 200 && response.status < 300,
+    'Executor management request failed',
+  ).toBe(true)
+  return response
+})
+
+/** Allocate an isolated real service/profile before linking it to this fixture's Person. Cleanup
+ * is installed before deployment; provider resources are removed before the Person cascades.
+ * Only private test rows are inserted; credentials remain exclusively inside Executor.
+ */
+export const proofConnection = Effect.fn('ThreadProof.connection')(function* (
+  fixture: ChainFixture,
+) {
+  const endpoint = yield* Config.URL('VIVID_EXECUTOR_URL')
+  const key = yield* Config.Redacted('VIVID_EXECUTOR_KEY')
+  const http = yield* HttpClient.HttpClient
+  const owner = ExecutorOwnerId.make(`thread-proof-${NodeCrypto.randomUUID()}`)
+  let created = Option.none<typeof ExecutorAppId.Type>()
+  yield* Effect.addFinalizer(() =>
+    Option.match(created, {
+      onNone: () => Effect.void,
+      onSome: (id) =>
+        http
+          .execute(
+            HttpClientRequest.delete(new URL(`/v1/apps/${id}`, endpoint)).pipe(
+              HttpClientRequest.bearerToken(key),
+            ),
+          )
+          .pipe(Effect.tap(successfulRemoval), Effect.asVoid, Effect.catch(cleanupFailed)),
+    }),
+  )
+  const deployed = yield* HttpClientResponse.schemaBodyJson(Deployment)(
+    yield* executorRequest('/v1/apps/deploy', {
+      owner,
+      name: 'Proof Records',
+      files: [{ path: 'index.ts', content: source }],
+    }),
+  )
+  created = Option.some(deployed.app.id)
+  const profile = yield* HttpClientResponse.schemaBodyJson(Profile)(
+    yield* executorRequest(`/v1/apps/${deployed.app.id}/profiles`, {
+      owner,
+      subject: fixture.personId,
+      accounts: {},
+      idempotencyKey: NodeCrypto.randomUUID(),
+    }),
+  )
+  const references = ExecutorReferences.cases.Public.make({
+    app: deployed.app.id,
+    profile: profile.id,
+    owner,
+    service: ServiceId.make('proof-records'),
+  })
+  const context = yield* Layer.build(executorLayer)
+  const executor = yield* Executor.pipe(Effect.provideContext(context))
+  expect((yield* executor.status(references))._tag).toBe('Ready')
+  const tools = yield* executor.tools(references)
+  expect(tools.map((tool) => tool.name)).toEqual(
+    expect.arrayContaining(['queries.records', 'mutations.save']),
+  )
+  const database = yield* Database
+  const now = yield* Clock.currentTimeMillis
+  const id = ConnectionId.make(NodeCrypto.randomUUID())
+  yield* database.run(
+    database.insert(connections).values({
+      id,
+      personId: fixture.personId,
+      companyId: null,
+      service: references.service,
+      serviceName: 'Proof Records',
+      label: 'Proof Records',
+      references: encodeReferences(references),
+      status: 'ready',
+      reason: null,
+      createdAt: now,
+      updatedAt: now,
+    }),
+  )
+  /** Observe real storage through Executor, not Vivid's action receipt or a copied mock value. */
+  const records = Effect.fn('ThreadProof.records')(function* () {
+    const result = yield* executor.call({ references, tool: 'queries.records', input: {} })
+    if (!ExecutorCallOutcome.guards.Completed(result))
+      return yield* Effect.sync(() => expect.fail('Executor record read did not complete'))
+    return yield* decodeRecords(result.value)
+  })
+  return { id, references, executor, records }
+})

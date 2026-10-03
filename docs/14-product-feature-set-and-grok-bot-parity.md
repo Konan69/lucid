@@ -50,16 +50,32 @@ Last brought up to date on 3 October 2026.
   Attribution refuses ambiguous working Runs: the current reservation still permits same-Person
   deliveries to join.
 
-| Capability                                                     | What is missing                                                                                                                                                         |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The Computer panel showing Boat's viewer inside the app        | Never opened in the app against real Boat                                                                                                                               |
-| Browser input from a Thread on Boat                            | Provider live proof covers clicking and verified text replacement; not driven from a Thread                                                                             |
-| The Person's desktop browser                                   | Target/access/control contracts and PostgreSQL device receipts built; native input-token enforcement is unrecovered, Person route fails closed, runtime option withheld |
-| Vivid using the desktop (`use_desktop`) from a Thread          | Proven at the provider; not driven from a Thread on Boat                                                                                                                |
-| Mobile app                                                     | Tests only; never run on a device                                                                                                                                       |
-| Google Integrations                                            | Need an operator sign-in client set up in Executor (`docs/22-one-product.md`)                                                                                           |
-| An Approval raised by a real model's action, approved, and run | Tests only                                                                                                                                                              |
-| Routines firing from a real Integration event                  | Tests only                                                                                                                                                              |
+| Capability                                                     | What is missing                                                                                                                                                                                                                    |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The Computer panel showing Boat's viewer inside the app        | Never opened in the app against real Boat                                                                                                                                                                                          |
+| Browser input from a Thread on Boat                            | `computers/thread.live.test.ts` attempted once; stopped before a model call because the night server selects Docker. Successful tool receipts now include the cookie-bound screen relay; Thread-driven Boat input remains unproved |
+| The Person's desktop browser                                   | Target/access/control contracts and PostgreSQL device receipts built; native input-token enforcement is unrecovered, Person route fails closed, runtime option withheld                                                            |
+| Vivid using the desktop (`use_desktop`) from a Thread          | Included in the same opt-in Computer chain proof; blocked on the Boat server configuration, never reached a model call                                                                                                             |
+| Mobile app                                                     | Tests only; never run on a device                                                                                                                                                                                                  |
+| Google Integrations                                            | Need an operator sign-in client set up in Executor (`docs/22-one-product.md`)                                                                                                                                                      |
+| An Approval raised by a real model's action, approved, and run | `approvals/thread.live.test.ts` attempted once; stopped before a model call because the running stack and supplied disposable proof database differ                                                                                |
+| Routines firing from a real Integration event                  | `routines/thread.live.test.ts` attempted once; the same database isolation preflight blocked it. The fixture uses a real Executor record service; no third-party event proof yet                                                   |
+
+The unconnected mail chain also has `connections/thread.live.test.ts`, skipped by default. Its
+single attempt stopped at the database preflight before a model call; Google setup and consent
+remain operator prerequisites. The `connect` tool now ends an unconnected offer's turn instead
+of leaving the model to keep discovering. Focused runtime tests checked the card receipt,
+termination and Computer session metadata (21 tests passed). No row above was promoted to
+working end to end. Flue `defineTool` still shares Approval card handles with model-visible
+output; strict identifier isolation needs native content/details registration in the runtime
+instruction owner's lane.
+
+Run these proofs serially with the existing stack, from the server package, using
+`pnpm exec vitest run --config src/runtime/vitest.ts` and exactly one of
+`VIVID_LIVE_THREAD_COMPUTER`, `VIVID_LIVE_THREAD_APPROVAL`, `VIVID_LIVE_THREAD_CONNECTION`, or
+`VIVID_LIVE_THREAD_ROUTINE` set to `1`. Each corresponding `thread.live.test.ts` has one scenario;
+no judge or retry loop calls the model. The supplied `VIVID_TEST_DATABASE_URL` must designate the
+same disposable database as the stack; the proof never falls back to an application database.
 
 ## Not built
 
