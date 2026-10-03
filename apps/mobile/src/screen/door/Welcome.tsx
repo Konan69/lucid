@@ -63,16 +63,13 @@ export function Welcome() {
       >
         <Face size={72} mood="happy" />
         <Label accessibilityRole="header" size="opening" style={{ marginTop: 28 }}>
-          Hand it to Vivid.
-        </Label>
-        <Label size="title" tone="ink-2" style={{ marginTop: 8, fontWeight: '400' }}>
-          It does the work and comes back when it is done.
+          Vivid is your personal assistant.
         </Label>
       </View>
       <View style={{ maxWidth: 440, width: '100%', alignSelf: 'center', gap: 10 }}>
         {Option.isSome(ended) && <Notice message={ended.value} />}
         <Unforgotten />
-        <Button kind="primary" label="Continue" onPress={() => go.navigate('Email')} />
+        <Button kind="primary" label="Log in" onPress={() => go.navigate('Email')} />
         {__DEV__ && (
           <Quiet label="Developer: change address" onPress={() => go.navigate('Address')} />
         )}
