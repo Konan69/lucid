@@ -96,6 +96,10 @@ const requests = (
             HttpClientRequest.bearerToken(key),
             billed,
             HttpClientRequest.acceptJson,
+            // The real proof encountered a blackholed pooled TLS socket while fresh Boat CLI
+            // connections worked. Close each HTTP/1 connection through the public protocol:
+            // never retry an uncertain command to repair a transport, or patch the SDK's pool.
+            HttpClientRequest.setHeader('Connection', 'close'),
           ),
         )
         .pipe(Effect.mapError(() => new MachineOperationFailed({ operation: 'transport' })))

@@ -65,7 +65,13 @@ export const driver = (
               `rm -f -- '${path}' '${directory}/picture.png'; rmdir -- '${directory}'`,
               30,
             )
-            .pipe(Effect.catch(() => Effect.logWarning('Computer private step cleanup failed.'))),
+            // Finalizers inherit an uninterruptible region. Bound cleanup independently so a
+            // dropped provider connection cannot hide the original receipt/refusal indefinitely.
+            .pipe(
+              Effect.timeout('45 seconds'),
+              Effect.interruptible,
+              Effect.catch(() => Effect.logWarning('Computer private step cleanup failed.')),
+            ),
         ),
       )
     })
