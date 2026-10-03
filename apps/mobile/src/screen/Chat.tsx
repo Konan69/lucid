@@ -12,8 +12,8 @@ import type { FaceMood } from '@vivid/marks'
 import { draftPlace, standingWords, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
-import { useMemo, useState } from 'react'
-import { FlatList, View } from 'react-native'
+import { useMemo, useRef, useState } from 'react'
+import { FlatList, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { Monitor, Share2, Users } from 'lucide-react-native'
@@ -34,13 +34,17 @@ import {
   Empty,
   Face,
   GUTTER,
+  HAIRLINE,
   IconButton,
   Label,
   Notice,
+  Press,
   Skeleton,
   styles,
+  TARGET,
   type Tone,
 } from '../ui/ui'
+import { useTheme } from '../theme'
 import { useGo, useMe, type Routes } from '../workspace'
 import { Message } from './chat/Message'
 import { Share } from './chat/Share'
@@ -451,42 +455,142 @@ interface MessagesProps {
 }
 
 /**
- * The conversation. The list is inverted, newest at the bottom: the platform then keeps the view
- * on the newest words by itself as they stream in, and holds the Person's place when they have
- * scrolled up to read. No scroll position is managed here and nothing runs per token.
+ * The conversation. A Thread with nothing in it is its outline or its invitation; otherwise the
+ * list (`Transcript`). The two are separate components so the list can hold state of its own.
  */
 function Messages(props: MessagesProps) {
-  const { messages, ready, working } = props
-  if (messages.length === 0 && !working) return <Blank ready={ready} />
+  if (props.messages.length === 0 && !props.working) return <Blank ready={props.ready} />
+  return <Transcript {...props} />
+}
+
+/** How far from the newest words still counts as reading them, in points. */
+const FOLLOWING = 80
+
+/**
+ * The list is inverted, newest at the bottom: the platform then keeps the view on the newest words
+ * by itself as they stream in, and holds the Person's place when they have scrolled up to read.
+ * Nothing runs per token.
+ *
+ * The list sits in a box of its own that clips it. The composer under it is a sibling, not an
+ * overlay, so the list's viewport is exactly what is left above the composer and the keyboard; a
+ * card taller than that scrolls inside it and can never be drawn behind the composer. When the
+ * viewport changes size (the keyboard opening or closing, the composer growing a line) and the
+ * Person is at the newest words, they are put back on them, so the newest card is not left half
+ * above the edge.
+ *
+ * When the Person has scrolled away and words arrive, their place is held and a "Latest messages"
+ * action with the real count of arrivals brings them back. Whether they are away is kept as the
+ * message count at the moment they left; it changes only when they cross the threshold.
+ */
+function Transcript(props: MessagesProps) {
+  const { messages, working } = props
+  const list = useRef<FlatList<FlueConversationMessage>>(null)
+  const [awayAt, setAwayAt] = useState<Option.Option<number>>(Option.none())
   const streaming = messages.some((message) => message.role === 'assistant' && isStreaming(message))
+  const arrived = Option.match(awayAt, {
+    onNone: () => 0,
+    onSome: (seen) => messages.length - seen,
+  })
+
+  function follow(event: NativeSyntheticEvent<NativeScrollEvent>) {
+    const near = event.nativeEvent.contentOffset.y < FOLLOWING
+    setAwayAt((now) => {
+      if (near) return Option.isNone(now) ? now : Option.none()
+      return Option.isSome(now) ? now : Option.some(messages.length)
+    })
+  }
+
+  /** The viewport changed size: stay on the newest words when that is where the Person was. */
+  function resized() {
+    if (Option.isSome(awayAt) || list.current === null) return
+    list.current.scrollToOffset({ offset: 0, animated: false })
+  }
+
+  function latest() {
+    setAwayAt(Option.none())
+    if (list.current !== null) list.current.scrollToOffset({ offset: 0, animated: true })
+  }
+
   return (
-    <FlatList
-      inverted
-      // Newest first is what an inverted list draws at the bottom.
-      data={messages.toReversed()}
-      keyExtractor={(message) => message.id}
-      keyboardShouldPersistTaps="handled"
-      keyboardDismissMode="interactive"
-      contentContainerStyle={[
-        styles.column,
-        { paddingHorizontal: GUTTER - 4, paddingVertical: 16, gap: 22 },
-      ]}
-      // The first thing in an inverted list is the last thing on screen.
-      ListHeaderComponent={
-        <Tail working={working && !streaming} ended={props.ended} trouble={props.trouble} />
-      }
-      renderItem={({ item, index }) => (
-        <Message
-          message={item}
-          around={props.around}
-          detail={props.detail}
-          working={working}
-          latest={index === 0}
-          unsent={props.unsent}
-          onContinue={props.onContinue}
-        />
-      )}
-    />
+    <View style={{ flex: 1, overflow: 'hidden' }} onLayout={resized}>
+      <FlatList
+        ref={list}
+        inverted
+        // Newest first is what an inverted list draws at the bottom.
+        data={messages.toReversed()}
+        keyExtractor={(message) => message.id}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        onScroll={follow}
+        scrollEventThrottle={32}
+        contentContainerStyle={[
+          styles.column,
+          { paddingHorizontal: GUTTER - 4, paddingVertical: 16, gap: 22 },
+        ]}
+        // The first thing in an inverted list is the last thing on screen.
+        ListHeaderComponent={
+          <Tail working={working && !streaming} ended={props.ended} trouble={props.trouble} />
+        }
+        renderItem={({ item, index }) => (
+          <Message
+            message={item}
+            around={props.around}
+            detail={props.detail}
+            working={working}
+            latest={index === 0}
+            unsent={props.unsent}
+            onContinue={props.onContinue}
+          />
+        )}
+      />
+      {arrived > 0 && <LatestButton count={arrived} onPress={latest} />}
+    </View>
+  )
+}
+
+/** The way back to the newest words after reading up, with how many arrived while away. */
+function LatestButton({ count, onPress }: { count: number; onPress: () => void }) {
+  const { colors: c } = useTheme()
+  return (
+    <View
+      pointerEvents="box-none"
+      style={{ position: 'absolute', left: 0, right: 0, bottom: 12, alignItems: 'center' }}
+    >
+      <Press
+        accessibilityRole="button"
+        accessibilityLabel={`Latest messages, ${count} new`}
+        onPress={onPress}
+        style={({ pressed }) => ({
+          minHeight: TARGET,
+          paddingLeft: 16,
+          paddingRight: 8,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          borderRadius: TARGET / 2,
+          borderWidth: HAIRLINE,
+          borderColor: c['line-3'],
+          backgroundColor: pressed ? c['wash-pressed'] : c['surface-3'],
+        })}
+      >
+        <Label size="footnote">Latest messages</Label>
+        <View
+          style={{
+            minWidth: 24,
+            height: 24,
+            paddingHorizontal: 7,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: 12,
+            backgroundColor: c.accent,
+          }}
+        >
+          <Label size="caption" tone="ink-on-accent">
+            {count}
+          </Label>
+        </View>
+      </Press>
+    </View>
   )
 }
 

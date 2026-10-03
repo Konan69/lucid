@@ -69,6 +69,8 @@ export function Composer({
   return (
     <View
       style={{
+        // Opaque, so nothing the list above draws can show through its padding.
+        backgroundColor: c['surface-0'],
         paddingHorizontal: 12,
         paddingTop: 8,
         paddingBottom: keyboard ? 8 : Math.max(insets.bottom, 12),
