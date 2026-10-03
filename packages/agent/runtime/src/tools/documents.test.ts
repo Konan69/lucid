@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { ReadDocumentOutcome, PersonId, ThreadId } from '@vivid/contracts'
+import { ReadDocumentOutcome, NotFound, PersonId, ThreadId } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
 import { Effect, Exit, Fiber, Layer, Option, Predicate, Queue } from 'effect'
 import * as RpcClient from 'effect/unstable/rpc/RpcClient'
@@ -7,17 +7,12 @@ import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/unstable/rpc/RpcMessage'
 import * as v from 'valibot'
 import { documentTools, read, written } from './documents.ts'
+import { settle } from './result.ts'
 import { Scope, toolRunner, type RunTool } from './scope.ts'
 
 const reference = '37e21f26-63ed-4075-aad1-0118929da0ac'
 /** Definition inspection must never perform I/O. */
 const unavailable: RunTool = () => Promise.reject(new Error('Schema inspection cannot execute'))
-const delivery = {
-  kind: 'signal',
-  type: 'message',
-  body: 'Keep a plan',
-  attributes: { turn: '7' },
-} as const
 const context = {
   signal: new AbortController().signal,
   toolCallId: 'document-call',
@@ -46,7 +41,7 @@ const fixture = Effect.fn('Documents.test.fixture')(function* () {
 
 describe('document tools', () => {
   it('bounds complete Markdown, preserves whitespace, and rejects model ownership or turn fields', () => {
-    const [write, reading] = documentTools(unavailable, delivery)
+    const [write, reading] = documentTools(unavailable)
     const valid = { title: 'Plan', body: '# Plan\n\n  keep indentation', note: 'Added a date' }
     expect(v.parse(write.input, valid)).toEqual(valid)
     for (const input of [
@@ -66,16 +61,26 @@ describe('document tools', () => {
   })
 
   it('projects creation, revision, Markdown and Missing titles in human words without references', () => {
-    expect(written({ title: 'Plan', version: 1, created: true })).toMatchObject({
+    expect(written({ title: 'Plan', version: 1, created: true, changed: true })).toMatchObject({
       ok: true,
       title: 'Plan',
       version: 1,
       created: true,
+      changed: true,
+      message: 'Wrote the document.',
     })
-    expect(written({ title: 'Plan', version: 2, created: false })).toMatchObject({
+    expect(written({ title: 'Plan', version: 2, created: false, changed: true })).toMatchObject({
       ok: true,
       version: 2,
       created: false,
+      changed: true,
+      message: 'Revised the document.',
+    })
+    expect(written({ title: 'Plan', version: 2, created: false, changed: false })).toMatchObject({
+      ok: true,
+      version: 2,
+      changed: false,
+      message: 'The document is unchanged.',
     })
     expect(
       read(
@@ -102,80 +107,137 @@ describe('document tools', () => {
     ).not.toContain(reference)
   })
 
-  it.effect(
-    'injects the render delivery turn into WriteDocument and sends only title for ReadDocument',
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const { requests, rpc, runTool } = yield* fixture()
-          const [write, reading] = documentTools(runTool, delivery)
-          const writing = yield* Effect.promise(() =>
-            Promise.resolve(
-              write.run({
-                ...context,
-                data: { title: 'Plan', body: '# Plan', note: 'Changed scope' },
-              }),
-            ),
-          ).pipe(Effect.forkScoped)
-          const request = yield* Queue.take(requests)
-          if (!Predicate.isTagged(request, 'Request'))
-            return yield* Effect.die('Expected RPC request')
-          expect(request.tag).toBe('WriteDocument')
-          expect(request.payload).toEqual({
-            title: 'Plan',
-            body: '# Plan',
-            note: 'Changed scope',
-            turn: 7,
-          })
-          yield* rpc.write({
-            // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Effect RPC envelopes have no constructor in rc.116.
-            _tag: 'Exit',
-            clientId: 0,
-            requestId: request.id,
-            exit: Exit.succeed({ title: 'Plan', version: 2, created: false }),
-          })
-          expect(yield* Fiber.join(writing)).toMatchObject({
-            output: { ok: true, title: 'Plan', version: 2, created: false },
-          })
-          const running = yield* Effect.promise(() =>
-            Promise.resolve(reading.run({ ...context, data: { title: 'Missing' } })),
-          ).pipe(Effect.forkScoped)
-          const readRequest = yield* Queue.take(requests)
-          if (!Predicate.isTagged(readRequest, 'Request'))
-            return yield* Effect.die('Expected RPC request')
-          expect(readRequest.tag).toBe('ReadDocument')
-          expect(readRequest.payload).toEqual({ title: 'Missing' })
-          yield* rpc.write({
-            // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Effect RPC envelopes have no constructor in rc.116.
-            _tag: 'Exit',
-            clientId: 0,
-            requestId: readRequest.id,
-            exit: Exit.succeed(ReadDocumentOutcome.cases.Missing.make({ titles: ['Plan'] })),
-          })
-          expect(yield* Fiber.join(running)).toMatchObject({
-            output: { ok: false, titles: ['Plan'] },
-          })
-          return yield* Effect.void
-        }),
-      ),
-  )
-
-  it.effect('refuses a missing or invalid delivery turn before making an RPC write', () =>
+  it.effect('sends only document fields for WriteDocument and only title for ReadDocument', () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { runTool } = yield* fixture()
-        for (const current of [
-          { kind: 'user', body: 'Write' } as const,
-          { ...delivery, attributes: { turn: 'no' } },
-          { ...delivery, attributes: { turn: '1.5' } },
-        ]) {
-          const [write] = documentTools(runTool, current)
-          const result = yield* Effect.promise(() =>
-            Promise.resolve(write.run({ ...context, data: { title: 'Plan', body: 'No write' } })),
-          )
-          expect(result).toMatchObject({ output: { ok: false } })
-        }
+        const { requests, rpc, runTool } = yield* fixture()
+        const [write, reading] = documentTools(runTool)
+        const writing = yield* Effect.promise(() =>
+          Promise.resolve(
+            write.run({
+              ...context,
+              data: { title: 'Plan', body: '# Plan', note: 'Changed scope' },
+            }),
+          ),
+        ).pipe(Effect.forkScoped)
+        const request = yield* Queue.take(requests)
+        if (!Predicate.isTagged(request, 'Request'))
+          return yield* Effect.die('Expected RPC request')
+        expect(request.tag).toBe('WriteDocument')
+        expect(request.payload).toEqual({
+          title: 'Plan',
+          body: '# Plan',
+          note: 'Changed scope',
+        })
+        yield* rpc.write({
+          // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Effect RPC envelopes have no constructor in rc.116.
+          _tag: 'Exit',
+          clientId: 0,
+          requestId: request.id,
+          exit: Exit.succeed({ title: 'Plan', version: 2, created: false, changed: true }),
+        })
+        expect(yield* Fiber.join(writing)).toMatchObject({
+          output: { ok: true, title: 'Plan', version: 2, created: false, changed: true },
+        })
+        const running = yield* Effect.promise(() =>
+          Promise.resolve(reading.run({ ...context, data: { title: 'Missing' } })),
+        ).pipe(Effect.forkScoped)
+        const readRequest = yield* Queue.take(requests)
+        if (!Predicate.isTagged(readRequest, 'Request'))
+          return yield* Effect.die('Expected RPC request')
+        expect(readRequest.tag).toBe('ReadDocument')
+        expect(readRequest.payload).toEqual({ title: 'Missing' })
+        yield* rpc.write({
+          // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Effect RPC envelopes have no constructor in rc.116.
+          _tag: 'Exit',
+          clientId: 0,
+          requestId: readRequest.id,
+          exit: Exit.succeed(ReadDocumentOutcome.cases.Missing.make({ titles: ['Plan'] })),
+        })
+        expect(yield* Fiber.join(running)).toMatchObject({
+          output: { ok: false, titles: ['Plan'] },
+        })
+        return yield* Effect.void
       }),
     ),
+  )
+
+  it.effect('reports server-side missing working Run through the ordinary safe failure view', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { requests, rpc, runTool } = yield* fixture()
+        const [write] = documentTools(runTool)
+        const writing = yield* Effect.promise(() =>
+          Promise.resolve(write.run({ ...context, data: { title: 'Plan', body: '# Plan' } })),
+        ).pipe(Effect.forkScoped)
+        const request = yield* Queue.take(requests)
+        if (!Predicate.isTagged(request, 'Request'))
+          return yield* Effect.die('Expected RPC request')
+        yield* rpc.write({
+          // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Effect RPC envelopes have no constructor in rc.116.
+          _tag: 'Exit',
+          clientId: 0,
+          requestId: request.id,
+          exit: Exit.fail(new NotFound({ message: 'Working Run not found' })),
+        })
+        expect(yield* Fiber.join(writing)).toMatchObject({
+          output: { ok: false, message: 'It does not exist or the person cannot see it.' },
+        })
+        return yield* Effect.void
+      }),
+    ),
+  )
+
+  it.effect(
+    'preserves document bodies through 48,000 characters while other tools keep their bound',
+    () =>
+      Effect.gen(function* () {
+        for (const length of [4_001, 48_000]) {
+          const output = read(
+            ReadDocumentOutcome.cases.Found.make({
+              title: 'Plan',
+              version: 1,
+              body: 'word '.repeat(Math.ceil(length / 5)).slice(0, length),
+            }),
+          )
+          expect((yield* settle(Effect.succeed({ output }), 'read_document')).output).toEqual(
+            output,
+          )
+        }
+        const output = read(
+          ReadDocumentOutcome.cases.Found.make({
+            title: 'Plan',
+            version: 1,
+            body: 'word '.repeat(9_600),
+          }),
+        )
+        expect((yield* settle(Effect.succeed({ output }), 'read_page')).output).toMatchObject({
+          body: 'word '.repeat(800),
+          truncated: true,
+        })
+      }),
+  )
+
+  it.effect('marks cut document reads with the total character count in plain words', () =>
+    Effect.gen(function* () {
+      for (const length of [48_001, 200_000]) {
+        const output = read(
+          ReadDocumentOutcome.cases.Found.make({
+            title: 'Plan',
+            version: 2,
+            body: 'word '.repeat(Math.ceil(length / 5)).slice(0, length),
+          }),
+        )
+        expect((yield* settle(Effect.succeed({ output }), 'read_document')).output).toEqual({
+          ok: true,
+          title: 'Plan',
+          version: 2,
+          body: 'word '.repeat(9_600),
+          truncated: true,
+          characters: length,
+          message: `This document has ${length} characters in all. Only the first 48,000 characters are shown; this is not the whole document.`,
+        })
+      }
+    }),
   )
 })

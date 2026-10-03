@@ -40,6 +40,11 @@ function bounded(value: Schema.Json): BoundedOutput {
     }
   }
   if (!isObject(value)) return { value, truncated: false }
+  return boundedRecord(value)
+}
+
+/** Records preserve their object shape and flag any nested loss, including document metadata. */
+function boundedRecord(value: Schema.JsonObject) {
   const entries = Object.entries(value).map(([key, entry]) => [key, bounded(entry)] as const)
   const truncated = entries.some(([, entry]) => entry.truncated)
   const result: Record<string, Schema.Json> = Object.fromEntries(
@@ -66,6 +71,21 @@ export function boundOutput(value: Schema.Json): Schema.Json {
     return result.value
   }
   return { value: result.value, truncated: true }
+}
+
+/** Document bodies have their own reading budget; metadata and every other tool retain the ordinary limits. */
+function boundDocument(value: Schema.Json): Schema.Json {
+  if (!isObject(value) || !Predicate.isString(value.body)) return boundOutput(value)
+  const { body, ...metadata } = value
+  const fields = boundedRecord(metadata).value
+  if (body.length <= 48_000) return { ...fields, body }
+  return {
+    ...fields,
+    body: body.slice(0, 48_000),
+    truncated: true,
+    characters: body.length,
+    message: `This document has ${body.length} characters in all. Only the first 48,000 characters are shown; this is not the whole document.`,
+  }
 }
 
 /** Product failures are safe sentences; driver payloads and supplied credentials never escape. */
@@ -113,5 +133,8 @@ export const settle = Effect.fn('Tools.settle')(function* (
       DatabaseFailure: () => failure('Vivid could not read or save that record right now.'),
     }),
   )
-  return { output: boundOutput(result.output), terminate: result.terminate === true }
+  return {
+    output: tool === 'read_document' ? boundDocument(result.output) : boundOutput(result.output),
+    terminate: result.terminate === true,
+  }
 })

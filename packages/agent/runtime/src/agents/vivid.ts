@@ -118,7 +118,7 @@ export function Vivid({ id }: { id: string }) {
     routineTools(runTool),
     computerTools(runTool),
     codeTools(runTool),
-    documentTools(runTool, delivery),
+    documentTools(runTool),
     showTools(),
   ]) {
     for (const tool of tools) useTool(tool)

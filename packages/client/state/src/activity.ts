@@ -44,6 +44,7 @@ const Answered = Schema.Struct({
    */
   ok: Schema.OptionFromOptionalKey(Schema.Boolean),
   created: Schema.OptionFromOptionalKey(Schema.Boolean),
+  changed: Schema.OptionFromOptionalKey(Schema.Boolean),
   task: Schema.OptionFromOptionalKey(Schema.Struct({ title: text, status: text })),
   followUp: Schema.OptionFromOptionalKey(Schema.Struct({ at: text })),
   results: list,
@@ -371,6 +372,7 @@ const NOTHING_ANSWERED: Answered = {
   routines: Option.none(),
   ok: Option.none(),
   created: Option.none(),
+  changed: Option.none(),
 }
 
 /**
@@ -387,7 +389,7 @@ const settled = (state: ToolState, answered: Option.Option<Answered>): ToolState
     ? 'failed'
     : state
 
-/** A Task marked done reads as that, not as any other update. */
+/** Actual receipts distinguish unchanged documents, revisions and completed Tasks. */
 const labelOf = (
   toolName: string,
   step: Step,
@@ -395,6 +397,14 @@ const labelOf = (
   state: ToolState,
 ) => {
   if (state !== 'done') return step.said[state]
+  if (
+    toolName === 'write_document' &&
+    Option.contains(
+      Option.flatMap(answered, (result) => result.changed),
+      false,
+    )
+  )
+    return 'Document unchanged'
   if (
     toolName === 'write_document' &&
     Option.exists(

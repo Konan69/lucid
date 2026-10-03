@@ -1,14 +1,16 @@
-import { defineTool, type DeliveredMessage } from '@flue/runtime'
-import { NotFound, ReadDocumentOutcome, type WriteDocumentOutcome } from '@vivid/contracts'
-import { Effect, Option, Schema } from 'effect'
+import { defineTool } from '@flue/runtime'
+import { ReadDocumentOutcome, type WriteDocumentOutcome } from '@vivid/contracts'
+import { Effect, Schema } from 'effect'
 import * as v from 'valibot'
 import { text } from './inputs.ts'
 import { Scope, type RunTool } from './scope.ts'
 import { modelText } from './views.ts'
 
-const decodeTurn = Schema.decodeUnknownOption(
-  Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThan(0)),
-)
+/** No-op writes confirm the saved body without claiming that a new version exists. */
+function writeWords(outcome: typeof WriteDocumentOutcome.Type) {
+  if (!outcome.changed) return 'The document is unchanged.'
+  return outcome.created ? 'Wrote the document.' : 'Revised the document.'
+}
 
 /** Confirm a durable document in human words; product references and Run identity never reach the model. */
 export function written(outcome: typeof WriteDocumentOutcome.Type) {
@@ -17,7 +19,8 @@ export function written(outcome: typeof WriteDocumentOutcome.Type) {
     title: modelText(outcome.title),
     version: outcome.version,
     created: outcome.created,
-    message: outcome.created ? 'Wrote the document.' : 'The document is saved at this version.',
+    changed: outcome.changed,
+    message: writeWords(outcome),
   }
 }
 
@@ -38,15 +41,8 @@ export function read(outcome: ReadDocumentOutcome) {
   })
 }
 
-/** The render's delivery supplies the turn; absent metadata refuses the write rather than guessing the newest Run. */
-const turnOf = (delivery: DeliveredMessage) =>
-  delivery.kind === 'signal' && delivery.attributes !== undefined
-    ? decodeTurn(delivery.attributes.turn)
-    : Option.none<number>()
-
 /** Documents are server records, using the same scoped client as every other product tool. */
-export function documentTools(runTool: RunTool, delivery: DeliveredMessage) {
-  const turn = turnOf(delivery)
+export function documentTools(runTool: RunTool) {
   return [
     defineTool({
       name: 'write_document',
@@ -60,14 +56,7 @@ export function documentTools(runTool: RunTool, delivery: DeliveredMessage) {
       run({ data, signal }) {
         return runTool(
           Effect.gen(function* () {
-            if (Option.isNone(turn))
-              return yield* Effect.fail(
-                new NotFound({ message: 'The document delivery turn is missing' }),
-              )
-            const outcome = yield* (yield* Scope).client.WriteDocument({
-              ...data,
-              turn: turn.value,
-            })
+            const outcome = yield* (yield* Scope).client.WriteDocument(data)
             return { output: written(outcome) }
           }),
           { signal, tool: 'write_document' },

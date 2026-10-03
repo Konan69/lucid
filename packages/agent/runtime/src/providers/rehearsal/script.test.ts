@@ -22,12 +22,7 @@ const unavailable: RunTool = () =>
 const tools = [
   ...askTools(unavailable),
   ...codeTools(unavailable),
-  ...documentTools(unavailable, {
-    kind: 'signal',
-    type: 'message',
-    body: 'Rehearse',
-    attributes: { turn: '1' },
-  }),
+  ...documentTools(unavailable),
   ...computerDefinitions(unavailable),
   ...connectionTools(unavailable),
   ...memoryTools(unavailable),
@@ -166,13 +161,18 @@ describe('Rehearsal scenes', () => {
     const cases: readonly { phrase: string; output: Schema.Json; expected: string }[] = [
       {
         phrase: 'write a document',
-        output: { ok: true, title: 'Actual plan', version: 1, created: true },
+        output: { ok: true, title: 'Actual plan', version: 1, created: true, changed: true },
         expected: 'I wrote “Actual plan” at version 1.',
       },
       {
         phrase: 'revise the document',
-        output: { ok: true, title: 'Actual plan', version: 2, created: false },
-        expected: 'I saved “Actual plan” at version 2.',
+        output: { ok: true, title: 'Actual plan', version: 2, created: false, changed: true },
+        expected: 'I revised “Actual plan” at version 2.',
+      },
+      {
+        phrase: 'revise the document',
+        output: { ok: true, title: 'Actual plan', version: 2, created: false, changed: false },
+        expected: 'The document “Actual plan” is unchanged at version 2.',
       },
       {
         phrase: 'read the document',

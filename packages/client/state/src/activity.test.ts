@@ -81,10 +81,16 @@ describe('a step, in words', () => {
 describe('document steps', () => {
   it('names writing, revising and failed writes from actual receipts', () => {
     for (const [output, called, label, state] of [
-      [{ ok: true, created: true }, 'done', 'Wrote a document', 'done'],
-      [{ ok: true, created: false }, 'done', 'Revised a document', 'done'],
+      [{ ok: true, created: true, changed: true }, 'done', 'Wrote a document', 'done'],
+      [{ ok: true, created: false, changed: true }, 'done', 'Revised a document', 'done'],
       [{ ok: false, created: false }, 'done', 'Could not write the document', 'failed'],
-      [{ ok: true, created: false }, 'failed', 'Could not write the document', 'failed'],
+      [
+        { ok: true, created: false, changed: true },
+        'failed',
+        'Could not write the document',
+        'failed',
+      ],
+      [{ ok: true, created: false, changed: false }, 'done', 'Document unchanged', 'done'],
       [{}, 'running', 'Writing a document', 'running'],
     ] as const) {
       expect(

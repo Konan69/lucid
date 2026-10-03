@@ -17,6 +17,7 @@ const Receipt = Schema.fromJsonString(
     reason: Schema.optionalKey(Schema.String),
     title: Schema.optionalKey(Schema.String),
     created: Schema.optionalKey(Schema.Boolean),
+    changed: Schema.optionalKey(Schema.Boolean),
     version: Schema.optionalKey(Schema.Number),
     body: Schema.optionalKey(Schema.String),
     shown: Schema.optionalKey(Schema.String),
@@ -103,14 +104,25 @@ function failureWords(failure: CodeFailure): string {
   })
 }
 
+/** Rehearsal confirms only the version changes the actual write receipt reports. */
+function documentWords(value: typeof Receipt.Type) {
+  if (
+    value.title === undefined ||
+    value.version === undefined ||
+    value.created === undefined ||
+    value.changed === undefined
+  )
+    return 'The document was not confirmed.'
+  if (!value.changed)
+    return `The document “${modelText(value.title)}” is unchanged at version ${value.version}.`
+  return `${value.created ? 'I wrote' : 'I revised'} “${modelText(value.title)}” at version ${value.version}.`
+}
+
 /** Each receipt reader owns one tool's affirmative evidence, keeping failure handling shared. */
 const success = {
   show: (value: typeof Receipt.Type) =>
     value.shown === undefined ? 'The display result is missing.' : `The ${value.shown} is above.`,
-  write_document: (value: typeof Receipt.Type) =>
-    value.title === undefined || value.version === undefined || value.created === undefined
-      ? 'The document was not confirmed.'
-      : `${value.created ? 'I wrote' : 'I saved'} “${modelText(value.title)}” at version ${value.version}.`,
+  write_document: (value: typeof Receipt.Type) => documentWords(value),
   read_document: (value: typeof Receipt.Type) =>
     value.title === undefined || value.body === undefined || value.version === undefined
       ? 'The document was not returned.'
