@@ -2,7 +2,7 @@ import { useAtomValue } from '@effect/atom-react'
 import { Workspace, type MeResponse, type Thread, type ThreadId } from '@vivid/contracts'
 import { draftPlace, workspaceKey } from '@vivid/state'
 import { Data, Option, Result } from 'effect'
-import { useRef, useState, type RefObject } from 'react'
+import { useRef, useState } from 'react'
 import { FlatList, ScrollView, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
@@ -20,7 +20,7 @@ import {
 import { draft, useDraft } from '../data/drafts'
 import { useNow } from '../data/foreground'
 import { arrange, matching, Row, rowKey, rowsOf } from '../data/lanes'
-import { LiveState, useLive, useLiveData, useLiveValue } from '../data/live'
+import { LiveState, useLive, useLiveData } from '../data/live'
 import { patchThread, Start, startThread } from '../data/threads'
 import type { ComposerEditorHandle } from '../native/composer/types'
 import { useTheme } from '../theme'
@@ -78,7 +78,7 @@ export function Home() {
   // A swipe or a menu choice on a row that the server refused. The row has nowhere to say it.
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
   const editor = useRef<ComposerEditorHandle>(null)
-  const start = useStart(editor)
+  const start = useStart()
   // One place above the composer says both kinds of refusal; a message that was not sent matters
   // more than a row that moved back, so it is the one shown when there are two.
   const said = Option.orElse(start.refusal, () => refused)
@@ -106,7 +106,6 @@ export function Home() {
           onOpen={(thread) => go.navigate('Chat', { id: thread.id })}
           onRename={(thread) => setOver(Over.Renaming({ thread }))}
           onRefused={setRefused}
-          onSuggest={start.suggest}
           starting={start.sending}
         />
       </View>
@@ -165,7 +164,7 @@ function Reconnecting() {
  * still in the composer after visiting another screen, after the app is closed, and after a send
  * that was refused. Words typed while a send was on its way were not sent, and stay too.
  */
-function useStart(editor: RefObject<ComposerEditorHandle | null>) {
+function useStart() {
   const me = useMe()
   const data = useLiveData()
   const go = useGo()
@@ -213,11 +212,6 @@ function useStart(editor: RefObject<ComposerEditorHandle | null>) {
         NotSaid: ({ message }) => Option.some(message),
       }),
     ),
-    /** Puts a suggestion's words in the composer and the cursor after them. */
-    suggest: (text: string) => {
-      setDraft(text)
-      if (editor.current !== null) editor.current.focus()
-    },
   }
 }
 
@@ -475,7 +469,6 @@ interface ThreadsProps {
   readonly onRename: (thread: Thread) => void
   /** What came of a row's quick action: a sentence when it was refused, none when it was not. */
   readonly onRefused: (message: Option.Option<string>) => void
-  readonly onSuggest: (text: string) => void
   /** A new Thread's first words are on their way, which the first screen's face shows. */
   readonly starting: boolean
 }
@@ -492,7 +485,7 @@ function Threads(props: ThreadsProps) {
     return <Found {...props} found={matching(threads, query.value)} now={now} />
   }
   if (threads.length === 0) {
-    return <Welcome me={props.me} starting={props.starting} onSuggest={props.onSuggest} />
+    return <Welcome me={props.me} starting={props.starting} />
   }
   const arrangement = arrange(threads, now)
   return (
@@ -529,21 +522,11 @@ function Threads(props: ThreadsProps) {
 
 /**
  * The first screen: no Threads yet, so the places beside Threads at the top and, at the foot,
- * Vivid with things to say. The greeting sits directly above the composer, so the one thing
+ * Vivid's greeting. The greeting sits directly above the composer, so the one thing
  * there is to do here (write) is where the thumb already is; on a short screen, or with the
  * keyboard up, the column scrolls instead of being cut.
  */
-function Welcome({
-  me,
-  starting,
-  onSuggest,
-}: {
-  me: MeResponse
-  starting: boolean
-  onSuggest: (text: string) => void
-}) {
-  const data = useLiveData()
-  const suggestions = useLiveValue(data.live.suggestions)
+function Welcome({ me, starting }: { me: MeResponse; starting: boolean }) {
   return (
     <ScrollView
       keyboardShouldPersistTaps="handled"
@@ -551,15 +534,7 @@ function Welcome({
       contentContainerStyle={[styles.column, { flexGrow: 1, justifyContent: 'space-between' }]}
     >
       <Places />
-      <First
-        me={me}
-        sending={starting}
-        suggestions={Option.match(suggestions, {
-          onNone: () => [],
-          onSome: (value) => value.suggestions,
-        })}
-        onChoose={onSuggest}
-      />
+      <First me={me} sending={starting} />
     </ScrollView>
   )
 }

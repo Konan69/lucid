@@ -1,13 +1,11 @@
-import { Workspace, type MeResponse, type Suggestion } from '@vivid/contracts'
+import { Workspace, type MeResponse } from '@vivid/contracts'
 import { greetingAt } from '@vivid/state'
-import { useId, useState } from 'react'
+import { useId } from 'react'
 import { View } from 'react-native'
 import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg'
-import { ArrowDownLeft, ChevronDown } from 'lucide-react-native'
 import { useNow } from '../../data/foreground'
-import { tick } from '../../data/haptics'
 import { useTheme } from '../../theme'
-import { Face, HAIRLINE, Label, Press, radius } from '../../ui/ui'
+import { Face, Label } from '../../ui/ui'
 
 /** The Person's first name, when their name has one to take. */
 const firstName = (me: MeResponse): string => me.person.name.trim().split(/\s+/u, 1).join('')
@@ -19,15 +17,12 @@ const FACE = 64
 const REACH = 40
 
 /**
- * The inset of everything written on this screen. The suggestions and the composer under them
- * are 12 points from the glass with 16 of padding inside, so their words start at 28; the face
- * and the greeting start there too, and the screen reads as one column down to the keyboard.
+ * The inset of everything written on this screen. The composer under it is 12 points from the
+ * glass with 16 of padding inside, so its words start at 28; the face and the greeting start
+ * there too, and the screen reads as one column down to the keyboard.
  */
 const EDGE = 12
 const INSET = 16
-
-/** How many suggestions are shown before "More ideas"; the rest wait behind that row. */
-const VISIBLE = 2
 
 /**
  * The soft light Vivid sits in on the first screen: one radial of its own colour, drawn once.
@@ -58,34 +53,27 @@ function Aura() {
 }
 
 /**
- * What the first screen shows before there is any Thread: Vivid, a greeting for the hour, and
- * things the Person could say. There is nothing to set up and nothing to choose. The suggestions
- * are the server's, drawn from this Person's own Tasks, Routines and Library; choosing one puts
- * its words in the composer, where they can be changed before they are sent.
+ * What the first screen shows before there is any Thread: Vivid and a greeting for the hour.
+ * There is nothing to set up and nothing to choose; the composer is the only thing to do.
+ *
+ * It showed suggestion cards and a "More ideas" row above the composer. The owner removed them
+ * on 3 October 2026: they read as filler between the greeting and the field.
  *
  * The web puts its composer in the middle of the page, under the greeting, because there writing
  * is the only thing to do. On a phone the composer belongs on the keyboard, under the thumb, so
  * this screen comes down to meet it instead: Home sets it at the foot of the screen, directly
- * above the composer, and the greeting, the suggestions and the field are one column.
+ * above the composer, and the greeting and the field are one column.
  *
- * Nothing here moves: the screen is drawn whole. The first two suggestions are shown so they stay
- * clear of the keyboard and the composer; "More ideas" opens the rest in place.
+ * Nothing here moves: the screen is drawn whole.
  */
 export function First({
   me,
-  suggestions,
   sending,
-  onChoose,
 }: {
   me: MeResponse
-  suggestions: ReadonlyArray<Suggestion>
   /** The Person's first words are on their way to Vivid, which is already thinking about them. */
   sending: boolean
-  onChoose: (text: string) => void
 }) {
-  const { colors: c } = useTheme()
-  const [all, setAll] = useState(false)
-  const shown = all ? suggestions : suggestions.slice(0, VISIBLE)
   const name = firstName(me)
   // The hour is the one the app was last brought to the front in, not a ticking clock: a greeting
   // that changed under someone reading it would be a glitch, and one left open overnight should
@@ -107,71 +95,6 @@ export function First({
             Company: ({ company }) => `What should I take off your plate at ${company.name}?`,
           })}
         </Label>
-      </View>
-      <View style={{ marginTop: 26, gap: 8 }}>
-        {shown.map((suggestion) => (
-          <View key={suggestion.text}>
-            <Press
-              accessibilityRole="button"
-              accessibilityHint="Puts this in the message field"
-              onPress={() => {
-                // Felt as well as seen: the words land in the field under the thumb.
-                tick()
-                onChoose(suggestion.text)
-              }}
-              style={({ pressed }) => ({
-                flexDirection: 'row',
-                alignItems: 'flex-start',
-                gap: 12,
-                paddingHorizontal: INSET,
-                paddingVertical: 14,
-                borderRadius: radius.card,
-                borderWidth: HAIRLINE,
-                borderColor: c['line-2'],
-                backgroundColor: pressed ? c['surface-3'] : c['surface-2'],
-              })}
-            >
-              <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
-                <Label size="body" style={{ fontWeight: '500' }}>
-                  {suggestion.text}
-                </Label>
-                <Label size="label" tone="ink-3">
-                  {suggestion.reason}
-                </Label>
-              </View>
-              {/* Points at the field the words go to, the way a phone's own search suggestions
-                  mark "put this in the field" apart from "go". */}
-              <ArrowDownLeft
-                pointerEvents="none"
-                size={16}
-                strokeWidth={1.8}
-                color={c['ink-4']}
-                style={{ marginTop: 3 }}
-              />
-            </Press>
-          </View>
-        ))}
-        {!all && suggestions.length > VISIBLE && (
-          <Press
-            accessibilityRole="button"
-            accessibilityLabel={`More ideas, ${suggestions.length - VISIBLE} more`}
-            onPress={() => setAll(true)}
-            style={({ pressed }) => ({
-              minHeight: 44,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              borderRadius: radius.control,
-              backgroundColor: pressed ? c['wash-pressed'] : 'transparent',
-            })}
-          >
-            <Label size="footnote" tone="ink-2">
-              More ideas
-            </Label>
-            <ChevronDown pointerEvents="none" size={16} strokeWidth={1.8} color={c['ink-3']} />
-          </Press>
-        )}
       </View>
     </View>
   )
