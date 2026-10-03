@@ -5,13 +5,24 @@ import { contextSnapshots, VividContext } from './snapshots.ts'
 
 const ada = { threadId: ThreadId.make('shared'), personId: PersonId.make('ada') }
 const dami = { threadId: ada.threadId, personId: PersonId.make('dami') }
-const adaContext = VividContext.make({ brief: 'Ada’s facts', skills: [], timezone: 'Africa/Lagos' })
+const adaContext = VividContext.make({
+  brief: 'Ada’s facts',
+  skills: [],
+  timezone: 'Africa/Lagos',
+  name: 'Vivid',
+})
 const damiContext = VividContext.make({
   brief: 'Dami’s facts',
   skills: [],
   timezone: 'Europe/Paris',
+  name: 'Juno',
 })
-const updatedContext = VividContext.make({ brief: 'Updated facts', skills: [], timezone: 'UTC' })
+const updatedContext = VividContext.make({
+  brief: 'Updated facts',
+  skills: [],
+  timezone: 'UTC',
+  name: 'Vivid',
+})
 
 describe('response context snapshots', () => {
   it.effect(

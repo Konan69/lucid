@@ -1,6 +1,7 @@
 import { useInstruction, useResponseFinish, useResponseStart } from '@flue/runtime'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
+import { DEFAULT_APPEARANCE, type VividName } from '@vivid/contracts'
 import { asActing, type Acting } from './client.ts'
 import * as views from './tools/views.ts'
 import { boundOutput } from './tools/result.ts'
@@ -8,7 +9,12 @@ import { ContextSkill, contextSnapshots, VividContext } from './tools/snapshots.
 
 export type { VividContext } from './tools/snapshots.ts'
 
-const emptyContext = VividContext.make({ brief: '', skills: [], timezone: '' })
+const emptyContext = VividContext.make({
+  brief: '',
+  skills: [],
+  timezone: '',
+  name: DEFAULT_APPEARANCE.name,
+})
 const snapshots = contextSnapshots()
 
 /** Memory is optional context; declared RPC and transport failures must not prevent a response. */
@@ -45,6 +51,30 @@ const loadTimezone = Effect.fn('Context.loadTimezone')(
   Effect.catch(() => Effect.succeed('')),
 )
 
+/**
+ * What Vivid is called where this Person is working. When it cannot be read Vivid answers under
+ * its own name, which is true of it everywhere, rather than failing the response over a nickname.
+ */
+const loadName = Effect.fn('Context.loadName')(
+  function* (acting: Option.Option<Acting>) {
+    const appearance = yield* asActing(acting, (client) => client.GetAppearance())
+    return appearance.name
+  },
+  Effect.catch(() => Effect.succeed(DEFAULT_APPEARANCE.name)),
+)
+
+/**
+ * The lines that tell the model its name, as plain text and never an identifier. Nothing is said
+ * while the name is still Vivid: the voice already opens with it. A chosen name is at most 24
+ * characters on one line with no backslash (`VividName`), so it cannot carry an instruction.
+ */
+export const namedAs = (name: VividName): ReadonlyArray<string> =>
+  name === DEFAULT_APPEARANCE.name
+    ? []
+    : [
+        `Here you have been given the name ${name}. Answer to it and use it when you say who you are. If someone asks what you are, you are ${name}, their Vivid.`,
+      ]
+
 /** Preload before Flue renders: reads degrade independently and prepare only this Person’s snapshot. */
 export const loadContext = Effect.fn('Context.load')(function* (acting: Option.Option<Acting>) {
   const context = VividContext.make(
@@ -53,8 +83,9 @@ export const loadContext = Effect.fn('Context.load')(function* (acting: Option.O
         brief: loadBrief(acting),
         skills: loadSkills(acting),
         timezone: loadTimezone(acting),
+        name: loadName(acting),
       },
-      { concurrency: 3 },
+      { concurrency: 4 },
     ),
   )
   if (Option.isSome(acting)) snapshots.prepare(acting.value, context)

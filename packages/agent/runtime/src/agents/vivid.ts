@@ -12,7 +12,7 @@ import {
 import * as Option from 'effect/Option'
 import { actingFor, threadOriginOf } from '../client.ts'
 import { DEFAULT_MODEL } from '../providers/explabs.ts'
-import { useVividContext } from '../context.ts'
+import { namedAs, useVividContext } from '../context.ts'
 import { askTools } from '../tools/ask.ts'
 import { computerTools } from '../tools/computer.ts'
 import { documentTools } from '../tools/documents.ts'
@@ -158,6 +158,8 @@ export function Vivid({ id }: { id: string }) {
 
   return [
     ...VOICE,
+    // The name this Person or their Company gave Vivid, as text; nothing while it is still Vivid.
+    ...namedAs(context.name),
     Option.isSome(acting)
       ? `Today is ${today(timezone)} in the ${timezone} time zone. Resolve "Friday" or "tomorrow at 9" against it and pass local date-times (YYYY-MM-DDTHH:mm) to one-off Routine creation. If no time was given, ask what time they want. Never move an explicitly requested past time silently.`
       : 'There is no person behind this message, so you cannot act for anyone. Say that something went wrong and that they should send their message again.',

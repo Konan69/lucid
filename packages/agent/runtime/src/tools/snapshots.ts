@@ -1,4 +1,4 @@
-import { SkillSummary, type PersonId, type ThreadId } from '@vivid/contracts'
+import { SkillSummary, VividName, type PersonId, type ThreadId } from '@vivid/contracts'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import type { Acting } from '../client.ts'
@@ -26,6 +26,8 @@ export const VividContext = Schema.Struct({
   brief: Schema.String,
   skills: Schema.Array(ContextSkill),
   timezone: Schema.String,
+  /** What Vivid is called where this Person is working; "Vivid" until someone renames it. */
+  name: VividName,
 })
 export interface VividContext extends Schema.Schema.Type<typeof VividContext> {}
 
