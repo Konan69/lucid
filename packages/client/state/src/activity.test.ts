@@ -78,6 +78,45 @@ describe('a step, in words', () => {
   })
 })
 
+describe('document steps', () => {
+  it('names writing, revising and failed writes from actual receipts', () => {
+    for (const [output, called, label, state] of [
+      [{ ok: true, created: true }, 'done', 'Wrote a document', 'done'],
+      [{ ok: true, created: false }, 'done', 'Revised a document', 'done'],
+      [{ ok: false, created: false }, 'done', 'Could not write the document', 'failed'],
+      [{ ok: true, created: false }, 'failed', 'Could not write the document', 'failed'],
+      [{}, 'running', 'Writing a document', 'running'],
+    ] as const) {
+      expect(
+        describeToolCall(
+          'write_document',
+          readAsked({ title: 'Launch plan' }),
+          readAnswered(output),
+          called,
+        ),
+      ).toEqual({ state, label, detail: 'Launch plan' })
+    }
+  })
+  it('names reading and missing documents with their requested title', () => {
+    expect(
+      describeToolCall(
+        'read_document',
+        readAsked({ title: 'Launch plan' }),
+        readAnswered({ ok: true }),
+        'done',
+      ),
+    ).toEqual({ state: 'done', label: 'Read a document', detail: 'Launch plan' })
+    expect(
+      describeToolCall(
+        'read_document',
+        readAsked({ title: 'Missing' }),
+        readAnswered({ ok: false }),
+        'done',
+      ),
+    ).toEqual({ state: 'failed', label: 'Could not read the document', detail: 'Missing' })
+  })
+})
+
 describe('the line a reply’s steps collapse to', () => {
   const steps = [
     { id: 'a', label: 'Searched the Library' },

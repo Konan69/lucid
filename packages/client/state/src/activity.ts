@@ -43,6 +43,7 @@ const Answered = Schema.Struct({
    * does not fail. Absent on tools that have no such outcome.
    */
   ok: Schema.OptionFromOptionalKey(Schema.Boolean),
+  created: Schema.OptionFromOptionalKey(Schema.Boolean),
   task: Schema.OptionFromOptionalKey(Schema.Struct({ title: text, status: text })),
   followUp: Schema.OptionFromOptionalKey(Schema.Struct({ at: text })),
   results: list,
@@ -278,6 +279,22 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.summary)],
   },
+  write_document: {
+    said: {
+      running: 'Writing a document',
+      done: 'Wrote a document',
+      failed: 'Could not write the document',
+    },
+    detail: (asked) => [said(asked.title)],
+  },
+  read_document: {
+    said: {
+      running: 'Reading a document',
+      done: 'Read a document',
+      failed: 'Could not read the document',
+    },
+    detail: (asked) => [said(asked.title)],
+  },
   read_page: {
     said: {
       running: 'Reading a page',
@@ -353,6 +370,7 @@ const NOTHING_ANSWERED: Answered = {
   memories: Option.none(),
   routines: Option.none(),
   ok: Option.none(),
+  created: Option.none(),
 }
 
 /**
@@ -375,15 +393,26 @@ const labelOf = (
   step: Step,
   answered: Option.Option<Answered>,
   state: ToolState,
-) =>
-  toolName === 'update_task' &&
-  state === 'done' &&
-  Option.exists(
-    Option.flatMap(answered, (result) => result.task),
-    (task) => Option.contains(task.status, 'done'),
+) => {
+  if (state !== 'done') return step.said[state]
+  if (
+    toolName === 'write_document' &&
+    Option.exists(
+      Option.flatMap(answered, (result) => result.created),
+      (created) => !created,
+    )
   )
-    ? 'Marked a task done'
-    : step.said[state]
+    return 'Revised a document'
+  if (
+    toolName === 'update_task' &&
+    Option.exists(
+      Option.flatMap(answered, (result) => result.task),
+      (task) => Option.contains(task.status, 'done'),
+    )
+  )
+    return 'Marked a task done'
+  return step.said[state]
+}
 
 /**
  * One step, in words. `asked` and `answered` are the tool call's own input and output as read by

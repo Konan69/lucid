@@ -16,6 +16,9 @@ const Receipt = Schema.fromJsonString(
     message: Schema.optionalKey(Schema.String),
     reason: Schema.optionalKey(Schema.String),
     title: Schema.optionalKey(Schema.String),
+    created: Schema.optionalKey(Schema.Boolean),
+    version: Schema.optionalKey(Schema.Number),
+    body: Schema.optionalKey(Schema.String),
     shown: Schema.optionalKey(Schema.String),
     result: Schema.optionalKey(
       Schema.Union([Schema.Number, Schema.Struct({ title: Schema.String })]),
@@ -104,6 +107,14 @@ function failureWords(failure: CodeFailure): string {
 const success = {
   show: (value: typeof Receipt.Type) =>
     value.shown === undefined ? 'The display result is missing.' : `The ${value.shown} is above.`,
+  write_document: (value: typeof Receipt.Type) =>
+    value.title === undefined || value.version === undefined || value.created === undefined
+      ? 'The document was not confirmed.'
+      : `${value.created ? 'I wrote' : 'I saved'} “${modelText(value.title)}” at version ${value.version}.`,
+  read_document: (value: typeof Receipt.Type) =>
+    value.title === undefined || value.body === undefined || value.version === undefined
+      ? 'The document was not returned.'
+      : `I read “${modelText(value.title)}” at version ${value.version}.`,
   read_page: (value: typeof Receipt.Type) =>
     value.title === undefined
       ? 'The page returned no title.'
@@ -336,6 +347,16 @@ const examples = [
       ],
     }),
   ),
+  toolScene('write a document', 'write_document', {
+    title: 'Rehearsal plan',
+    body: '# Rehearsal plan\n\n1. Review the results.\n2. Choose the next step.',
+  }),
+  toolScene('revise the document', 'write_document', {
+    title: 'Rehearsal plan',
+    body: '# Rehearsal plan\n\n1. Review the results.\n2. Ask for a review.\n3. Choose the next step.',
+    note: 'Added a review before choosing the next step.',
+  }),
+  toolScene('read the document', 'read_document', { title: 'Rehearsal plan' }),
   toolScene('read example', 'read_page', { address: 'https://example.com' }),
   toolScene('run a program', 'run_code', {
     code: 'const numbers = [2, 3, 4]; return numbers.reduce((sum, number) => sum + number, 0);',

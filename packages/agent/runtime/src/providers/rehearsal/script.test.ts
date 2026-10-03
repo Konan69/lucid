@@ -5,6 +5,7 @@ import * as NodeChildProcess from 'node:child_process'
 import { Option, Schema } from 'effect'
 import * as v from 'valibot'
 import { askTools } from '../../tools/ask.ts'
+import { documentTools } from '../../tools/documents.ts'
 import { codeTools } from '../../tools/code.ts'
 import { computerDefinitions } from '../../tools/computer.ts'
 import { connectionTools } from '../../tools/connections.ts'
@@ -21,6 +22,12 @@ const unavailable: RunTool = () =>
 const tools = [
   ...askTools(unavailable),
   ...codeTools(unavailable),
+  ...documentTools(unavailable, {
+    kind: 'signal',
+    type: 'message',
+    body: 'Rehearse',
+    attributes: { turn: '1' },
+  }),
   ...computerDefinitions(unavailable),
   ...connectionTools(unavailable),
   ...memoryTools(unavailable),
@@ -157,6 +164,26 @@ describe('Rehearsal scenes', () => {
 
   it('reports receipt-backed outcomes for displays, records, integrations and the Computer', () => {
     const cases: readonly { phrase: string; output: Schema.Json; expected: string }[] = [
+      {
+        phrase: 'write a document',
+        output: { ok: true, title: 'Actual plan', version: 1, created: true },
+        expected: 'I wrote “Actual plan” at version 1.',
+      },
+      {
+        phrase: 'revise the document',
+        output: { ok: true, title: 'Actual plan', version: 2, created: false },
+        expected: 'I saved “Actual plan” at version 2.',
+      },
+      {
+        phrase: 'read the document',
+        output: { ok: true, title: 'Actual plan', version: 2, body: '# Revised' },
+        expected: 'I read “Actual plan” at version 2.',
+      },
+      {
+        phrase: 'read the document',
+        output: { ok: false, titles: ['Other'], message: 'No document has that title.' },
+        expected: 'That didn’t finish: No document has that title.',
+      },
       {
         phrase: 'show a table',
         output: { ok: true, shown: 'table' },

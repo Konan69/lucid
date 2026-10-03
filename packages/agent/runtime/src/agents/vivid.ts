@@ -14,6 +14,7 @@ import { DEFAULT_MODEL } from '../providers/explabs.ts'
 import { useVividContext } from '../context.ts'
 import { askTools } from '../tools/ask.ts'
 import { computerTools } from '../tools/computer.ts'
+import { documentTools } from '../tools/documents.ts'
 import { codeTools } from '../tools/code.ts'
 import { connectionTools } from '../tools/connections.ts'
 import { libraryTools } from '../tools/library.ts'
@@ -117,6 +118,7 @@ export function Vivid({ id }: { id: string }) {
     routineTools(runTool),
     computerTools(runTool),
     codeTools(runTool),
+    documentTools(runTool, delivery),
     showTools(),
   ]) {
     for (const tool of tools) useTool(tool)
@@ -138,6 +140,7 @@ export function Vivid({ id }: { id: string }) {
     ...TOOLS,
     connectionTools.instructions,
     showTools.instructions,
+    documentTools.instructions,
     ...FOLLOWING_THROUGH,
     ...KNOWING,
   ].join('\n')

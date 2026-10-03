@@ -43,6 +43,10 @@ Last brought up to date on 3 October 2026.
 
 ## Built, not yet seen working end to end
 
+- **Artifacts**: Thread-owned Markdown documents, immutable versions, optimistic Person revisions,
+  live RPC queries and runtime write/read tools. Missing: web, mobile and desktop lists, readers,
+  revision history, editing and removal surfaces; these still need an end-to-end rehearsal.
+
 | Capability                                                     | What is missing                                                               |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | The Computer panel showing Boat's viewer inside the app        | Never opened in the app against real Boat                                     |
@@ -55,7 +59,6 @@ Last brought up to date on 3 October 2026.
 
 ## Not built
 
-- **Artifacts**: durable, versioned documents and files linked to their Thread and Run.
 - **The durable work log** of a Run (requests, responses, tool calls, model and timing).
 - **Vivid-to-Vivid** across People and Companies (`docs/06-communication.md`).
 - **The Person's own computer as a device**, and taking over the Computer to teach a task.
@@ -81,6 +84,6 @@ Last brought up to date on 3 October 2026.
 | Reusable skills                              | Working                                                                               |
 | Scheduled and event-triggered routines       | Working in tests; events by polling                                                   |
 | Multiple agents collaborating                | Not built                                                                             |
-| Files, links, images and richer input        | Pictures and the Library working; Artifacts not built                                 |
+| Files, links, images and richer input        | Pictures and the Library working; Artifact backend built, surfaces missing            |
 | Activity transcript and action visibility    | Step lines and the Company record working; the per-Run work log not built             |
 | Sharing and organization controls            | Working                                                                               |
