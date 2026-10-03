@@ -233,7 +233,7 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
     it.effect('enforces the call budget', () =>
       Effect.gen(function* () {
         check(
-          yield* run('for(let i=0;i<26;i++) await tools.find_tools({query:"x"});', reply),
+          yield* run('for(let i=0;i<101;i++) await tools.find_tools({query:"x"});', reply),
           'Failed',
           { failure: CodeFailure.cases.OverLimit.make({ limit: 'calls' }) },
         )
@@ -248,9 +248,9 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
       }),
     )
 
-    it.effect('accepts exactly 16 KiB source and 25 calls', () =>
+    it.effect('accepts exactly 16 KiB source and 100 calls', () =>
       Effect.gen(function* () {
-        const code = 'for(let i=0;i<25;i++) await tools.find_tools({}); return 1;'
+        const code = 'for(let i=0;i<100;i++) await tools.find_tools({}); return 1;'
         const outcome = yield* run(code.padEnd(budgets.source, ' '), reply)
         expect(outcome).toHaveProperty('result', 1)
         expect(outcome.calls).toHaveLength(budgets.calls)
@@ -406,7 +406,7 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
           run('return await Promise.all([tools.use_tool({}),tools.use_tool({})]);', late),
         )
         yield* Deferred.await(entered)
-        yield* TestClock.adjust('31 seconds')
+        yield* TestClock.adjust('301 seconds')
         yield* Deferred.succeed(release, undefined)
         const outcome = yield* Fiber.join(running)
         expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
@@ -498,7 +498,7 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
         () =>
           Effect.gen(function* () {
             const running = yield* RunningLoops
-            yield* TestClock.adjust('31 seconds')
+            yield* TestClock.adjust('301 seconds')
             for (const fiber of running.fibers) {
               const outcome = yield* Fiber.join(fiber)
               expect(CodeOutcome.guards.Failed(outcome)).toBe(true)
@@ -533,7 +533,7 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
             run('await tools.use_tool({}); await tools.use_tool({});', dispatch),
           )
           yield* Deferred.await(entered)
-          yield* TestClock.adjust('31 seconds')
+          yield* TestClock.adjust('301 seconds')
           const outcome = yield* Fiber.join(running)
           expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
           expect(outcome.calls.map((call) => call.end)).toEqual(['completed', 'unknown'])
@@ -551,9 +551,9 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
             }),
           ),
         )
-        const exhausted = yield* run('for(let i=0;i<26;i++) await tools.find_tools({});', refused)
+        const exhausted = yield* run('for(let i=0;i<101;i++) await tools.find_tools({});', refused)
         expect(exhausted).toHaveProperty('failure.limit', 'calls')
-        expect(exhausted.calls).toHaveLength(25)
+        expect(exhausted.calls).toHaveLength(100)
       }),
     )
 

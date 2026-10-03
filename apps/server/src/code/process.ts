@@ -94,7 +94,8 @@ function command(runtimeDirectory: string, unit: string, source: string) {
     '-p',
     'CPUQuota=100%',
     '-p',
-    `RuntimeMaxSec=${budgets.seconds}`,
+    // Isolation must outlive the parent deadline so it can collect the worker's final receipt.
+    `RuntimeMaxSec=${budgets.seconds + 5}`,
     '-p',
     'KillMode=control-group',
     '-p',
@@ -125,7 +126,7 @@ function command(runtimeDirectory: string, unit: string, source: string) {
     '--chdir',
     '/tmp',
     '/usr/bin/prlimit',
-    '--cpu=30',
+    `--cpu=${budgets.seconds + 5}`,
     '--',
     NodeProcess.execPath,
     // Node 24 defaults to 128 parallel WASM compilation tasks; this cgroup has one CPU.

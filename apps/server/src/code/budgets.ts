@@ -1,10 +1,10 @@
 /** Server-owned limits; programs cannot extend them with pragmas or tool arguments. */
 export const budgets = {
   source: 16_384,
-  seconds: 30,
+  seconds: 300,
   heap: 64 * 1024 * 1024,
   child: 256 * 1024 * 1024,
-  calls: 25,
+  calls: 100,
   frame: 262_144,
   wire: 263_168,
   data: 1_048_576,
