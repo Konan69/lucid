@@ -8,18 +8,19 @@ import { warnFailure, type ToolResult } from './result.ts'
 import * as views from './views.ts'
 
 /** These are the entire guest API, with human account names and no Vivid ownership arguments. */
-const PROGRAM = `Run a short JavaScript async function body (top-level await and return work). Return JSON. No imports, network, filesystem, process or persistent state. Limits: 16 KiB source, 300 seconds total, 100 calls, 256 KiB per call/result, 1 MiB data, 32 KiB final result. Approval, a blocking rule or an unknown action ends the program; calls already started finish and completed calls stay completed. Never replay it to resume.
+const PROGRAM = `Run a JavaScript async function body (top-level await and return work). Return JSON; lines printed with console.log are returned too. No imports, network, filesystem, process or persistent state. Limits: 16 KiB source, 300 seconds total, 100 calls, 256 KiB per call/result, 1 MiB data, 32 KiB final result. Approval, a blocking rule or an unknown action ends the program; calls already started finish and completed calls stay completed. Never replay it to resume.
 The callable API (TypeScript declarations describe JavaScript inputs):
 type Json = null | boolean | number | string | Json[] | {[key: string]: Json};
 declare const tools: {
-find_tools(input: {query: string, limit?: number}): Promise<{tools: {account: string, tool: string, description: string, effect: "read" | "write" | "destructive", input: Json}[], unconnected: {service: string, description: string}[]}>;
+find_tools(input: {query: string, limit?: number}): Promise<{tools: {account: string, tool: string, description: string, effect: "read" | "write" | "destructive", call: string, signature: string}[], unconnected: {service: string, description: string}[]}>;
 use_tool(input: {account: string, tool: string, input: Json, summary: string, rationale: string}): Promise<{ok: true, output: Json} | {ok: false, reason: string}>;
 run_command(input: {command: string, summary: string, timeoutSeconds?: number}): Promise<{ok: true, result: {exitCode: number, output: string, truncated: boolean}} | {ok: false, reason: string}>;
 browse(input: {action: BrowserAction, summary: string}): Promise<{ok: true, result: {title: string, outline: string, truncated: boolean}} | {ok: false, reason: string}>;
 read_page(input: {address: string}): Promise<{ok: true, address: string, title: string, text: string, truncated: boolean} | {ok: false, reason: string}>;
 };
+declare const accounts: {[account: string]: {[tool: string]: (input: Json, about: {summary: string, rationale: string}) => Promise<{ok: true, output: Json} | {ok: false, reason: string}>}};
 BrowserAction is defined by this JSON Schema: ${JSON.stringify(Schema.toJsonSchemaDocument(BrowserAction).schema)}
-Calls started together run together: use Promise.all for independent calls and pass one call's result into the next for dependent ones. Use only account/tool names and input schemas found by find_tools. Provider record identifiers remain usable data. Do not catch an approval to continue or retry an unknown action.`
+Find first: find_tools returns each tool's call expression and its TypeScript signature. Call a tool exactly as its call says, for example await accounts["Work Gmail"].send_email({to, subject, body}, {summary, rationale}). Calls started together run together: use Promise.all for independent calls and pass one call's result into the next for dependent ones. Use only accounts and tools that find_tools returned. Provider record identifiers remain usable data. Do not catch an approval to continue or retry an unknown action.`
 
 /** Error metadata is Vivid's; provider records in successful results retain their usable identifiers. */
 function failureView(failure: CodeFailure): Schema.Json {
