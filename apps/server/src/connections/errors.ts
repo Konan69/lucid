@@ -26,7 +26,10 @@ export const executorFailure = Match.type<ExecutorFailure>().pipe(
     ExecutorResourceMissing: ({ resource }) =>
       new InvalidRequest({ message: resourceReason(resource) }),
     ExecutorAuthorizationUnavailable: unavailable,
-    ExecutorCopyRetained: unavailable,
+    ExecutorApprovalUnsupported: () =>
+      new InvalidRequest({
+        message: 'This Integration action needs an approval Vivid cannot give yet.',
+      }),
     ExecutorTransportFailure: unavailable,
     ExecutorResponseInvalid: unavailable,
     ExecutorExecutionUncertain: unavailable,
