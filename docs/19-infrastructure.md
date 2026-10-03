@@ -20,10 +20,11 @@ PostgreSQL uses database/user/password `vivid` and the named volume
 URL. `scripts/migrate.mjs` applies the server's auth then product chains; Flue `2.2.2` migrates
 its own PostgreSQL storage when the runtime starts.
 
-`preview` and `production` are validated target names but fail with `RemoteDeploymentDisabled`
-before resources or credentials are acquired. Their metadata declares an external database URL
-for future use; neither is runnable. Nothing is deployed. There are no Neon, Railway, or
-Cloudflare resources.
+`preview` remains disabled. `production` selects `infra/railway.ts`: PostgreSQL 18, persistent
+HelixDB, the private Flue runtime, and the public application server. `pnpm infra:deploy` selects
+that graph; local development keeps the Command/Docker graph above. Railway PostgreSQL and
+Helix were reported healthy on 3 October 2026; application deployment still needs the container
+fixes and remote verification described below.
 
 ## Run locally
 
@@ -114,12 +115,28 @@ prerequisite. The server still starts; no alternate sandbox or unisolated progra
 These recipes provide packaging, not deployment resources. Alchemy remains the resource owner;
 building an image neither calls Railway nor changes the local development graph.
 
+Railway uploads the repository root through Alchemy's filtered context packer, selecting each
+checked-in Dockerfile. It does not bundle an application through `main` or `extraFiles`.
+Both Services pin `startCommand` to the image's `CMD`; the offline verifier rejects drift.
+The runtime build also rejects external Vivid workspace imports or TypeScript file imports in
+its output, and prints `Vivid workspace bundle verified for bare Node`. A deployed image must
+contain that build step; an older upload of the ordinary Flue build externalizes workspace
+TypeScript sources and fails under bare Node.
+
+Server and Runtime remain independent nodes, using literal private addresses rather than each
+other's resource outputs. Alchemy reconciles them concurrently and collects sibling failures;
+Runtime health cannot prevent Server's build or migrations. Server's pre-deploy command runs
+auth then product migrations inside its image; Runtime has no pre-deploy command. An empty
+Metal scheduling log does not establish a migration or application failure: obtain the Server
+deployment's detailed builder/platform error separately. Redeploy this graph with
+`pnpm infra:deploy`; Dockerfile fixes land only in a new uploaded image.
+
 ## Outside the current stack
 
-- **Remote PostgreSQL and hosting:** topology is undecided and remote targets are disabled.
 - **Computer:** the server provisions through Boat's API or an explicit local Docker adapter;
   Alchemy does not declare a Computer resource.
-- **HelixDB and Executor:** externally configured services, not Alchemy resources today.
+- **Executor:** externally configured; it is not an Alchemy resource today. Railway provisions
+  HelixDB separately from the local graph.
 - **Desktop:** distributed client software, not a cloud resource.
 - **Artifact object storage:** Library bytes and Markdown Artifact versions stay in PostgreSQL.
 
