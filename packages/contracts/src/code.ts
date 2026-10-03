@@ -1,6 +1,21 @@
 import * as Schema from 'effect/Schema'
 import { ApprovalId } from './identity.js'
 
+/** One timing contract keeps the server deadline, log grace and client timeouts ordered. */
+export const CodeTiming = {
+  seconds: 300,
+  graceMs: 1_000,
+} as const
+/** Deadline < transport timeout < tool timeout; margins include final-frame collection. */
+export const CodeTransportTimeout = CodeTiming.seconds * 1_000 + CodeTiming.graceMs + 5_000
+export const CodeToolTimeout = CodeTransportTimeout + 5_000
+
+/** Discovery and guest dispatch accept exactly the same account/tool vocabulary. */
+export const CodeToolNames = Schema.Struct({
+  account: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(300)),
+  tool: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
+})
+
 /**
  * A program Vivid writes to do several things in one go.
  *

@@ -7,6 +7,9 @@ import * as ManagedRuntime from 'effect/ManagedRuntime'
 import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
 import { NodeHttpClient } from '@effect/platform-node'
+import { Agent } from '@effect/platform-node/Undici'
+import * as Context from 'effect/Context'
+import { CodeTransportTimeout } from '@vivid/contracts/code'
 import { VividRpcClient } from '@vivid/client-runtime'
 import { ThreadOrigin, type PersonId, type ThreadId } from '@vivid/contracts'
 import { cachedAuthority } from './delivery.ts'
@@ -53,6 +56,43 @@ const httpRuntime = ManagedRuntime.make(
 )
 const httpLayer = Layer.effectContext(httpRuntime.contextEffect)
 
+/**
+ * Undici 8.10.2 lib/dispatcher/client.js:316–317 defaults both timeouts to 300,000 ms.
+ * Effect rc.116 NodeHttpClient.ts/makeUndici overrides those with one hour / no body timeout.
+ * RunCode uses a scoped Agent with its public compose interceptor to override those defaults:
+ * deadline < transport timeout < tool timeout, including log-collection grace and margin.
+ * Other RPCs retain their existing process-owned dispatcher; no global settings change.
+ */
+const programHttpLayer = Layer.unwrap(
+  Effect.gen(function* () {
+    const dispatcher = yield* Effect.acquireRelease(
+      Effect.sync(
+        () =>
+          new Agent({
+            headersTimeout: CodeTransportTimeout,
+            bodyTimeout: CodeTransportTimeout,
+          }),
+      ),
+      (agent) => Effect.promise(() => agent.destroy()),
+    )
+    // makeUndici explicitly sets timeout options, so Agent defaults alone cannot enforce our budget.
+    const programDispatcher = dispatcher.compose(
+      (dispatch) => (options, handler) =>
+        dispatch(
+          {
+            ...options,
+            headersTimeout: CodeTransportTimeout,
+            bodyTimeout: CodeTransportTimeout,
+          },
+          handler,
+        ),
+    )
+    return NodeHttpClient.layerUndiciNoDispatcher.pipe(
+      Layer.provide(Layer.succeed(NodeHttpClient.Dispatcher, programDispatcher)),
+    )
+  }),
+)
+
 /** A bare runtime credential is permitted only for the restart scope lookup. */
 export const runtimeClientLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -74,14 +114,25 @@ export const actingLayer = (acting: Acting) => {
     Effect.gen(function* () {
       const serverUrl = yield* Config.URL('VIVID_SERVER_URL')
       const token = yield* Config.Redacted('VIVID_RUNTIME_TOKEN')
-      return VividRpcClient.layer({
+      const options = {
         url: new URL('/api/rpc', serverUrl).href,
         headers: {
           authorization: `Bearer ${Redacted.value(token)}`,
           [runtimeHeaders.thread]: acting.threadId,
           [runtimeHeaders.actor]: acting.personId,
         },
-      }).pipe(Layer.provide(httpLayer))
+      }
+      return Layer.effect(
+        VividRpcClient,
+        Effect.gen(function* () {
+          const ordinary = yield* VividRpcClient
+          const program = Context.get(
+            yield* Layer.build(VividRpcClient.layer(options).pipe(Layer.provide(programHttpLayer))),
+            VividRpcClient,
+          )
+          return VividRpcClient.of({ ...ordinary, RunCode: program.RunCode.bind(program) })
+        }),
+      ).pipe(Layer.provide(VividRpcClient.layer(options).pipe(Layer.provide(httpLayer))))
     }),
   )
 }

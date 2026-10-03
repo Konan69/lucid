@@ -1,18 +1,21 @@
+import { CodeTiming } from '@vivid/contracts/code'
+
 /** Server-owned limits; programs cannot extend them with pragmas or tool arguments. */
 export const budgets = {
   source: 16_384,
-  seconds: 300,
+  seconds: CodeTiming.seconds,
   heap: 64 * 1024 * 1024,
   child: 256 * 1024 * 1024,
   calls: 100,
   frame: 262_144,
   wire: 263_168,
-  data: 1_048_576,
+  data: 4_194_304,
   result: 32_768,
   logs: 8_192,
   depth: 32,
-  processes: 2,
-  pages: 4,
+  // Four children × 256 MiB = 1 GiB maximum aggregate child memory.
+  processes: 4,
+  pages: 8,
   pageBytes: 524_288,
   pageText: 24_576,
   pageSeconds: 10,
