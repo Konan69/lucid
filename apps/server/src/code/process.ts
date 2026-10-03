@@ -211,6 +211,10 @@ const launch = Effect.fn('Code.launchProcess')(function* (
 class Execution {
   readonly calls: CodeCall[] = []
   private terminal: Option.Option<CodeOutcome> = Option.none()
+  /** Rebuilds the decision's snapshot once the calls that were already running have reported. */
+  private decision: Option.Option<() => CodeOutcome> = Option.none()
+  /** Calls dispatched and not yet returned. A decision waits for these; it never interrupts them. */
+  private flying = 0
   private data = 0
   private next = 1
   private reserved = 0
@@ -259,7 +263,35 @@ class Execution {
     return Option.none()
   }
 
-  /** Only dispatched calls receive effect receipts. The lane checks admission immediately beforehand. */
+  /** True while a dispatched call has not returned. */
+  get busy() {
+    return this.flying > 0
+  }
+
+  /** A policy decision is waiting for the calls that were already running. */
+  get decided() {
+    return Option.isSome(this.decision)
+  }
+
+  /**
+   * The decision with every receipt as it finally stands. A call that was running beside the one
+   * that asked has its real outcome here, not the provisional `unknown` it had when the decision
+   * was taken.
+   */
+  settled(): Option.Option<CodeOutcome> {
+    return Option.map(this.decision, (make) => {
+      const outcome = make()
+      this.terminal = Option.some(outcome)
+      return outcome
+    })
+  }
+
+  /**
+   * Only dispatched calls receive effect receipts. Calls from one program run at the same time, as
+   * in pi code mode (`@earendil-works/pi-codemode` 1.0.0 `runtime/host.js`, `handleCall`: each call
+   * is started when its message arrives and tracked by id, with no queue). Admission is checked
+   * immediately before dispatch.
+   */
   readonly call = Effect.fn('Code.dispatchFrame')(function* (
     this: Execution,
     call: typeof WorkerMessage.cases.Call.Type,
@@ -273,7 +305,8 @@ class Execution {
         end: call.kind === 'find_tools' || call.kind === 'read_page' ? 'refused' : 'unknown',
       }),
     )
-    const result = yield* dispatch(call)
+    this.flying++
+    const result = yield* dispatch(call).pipe(Effect.ensuring(Effect.sync(() => this.flying--)))
     const summary = result.summary.slice(0, 200)
     return CallOutcome.match<CallStep>(result, {
       Returned: ({ value, end }) => {
@@ -315,7 +348,9 @@ class Execution {
   /** This synchronous transition precedes pipe replies and prevents catch/finally from admitting work. */
   private latch(make: () => CodeOutcome, index: number, receipt: CodeCall) {
     this.calls[index] = receipt
-    const outcome = make()
+    // The first decision is the one reported; a sibling that also asks keeps its own receipt.
+    if (Option.isNone(this.decision)) this.decision = Option.some(make)
+    const outcome = Option.getOrElse(this.terminal, make)
     this.terminal = Option.some(outcome)
     return CallStep.cases.Stop.make({ outcome })
   }
@@ -344,7 +379,8 @@ const readCalls = Effect.fn('Code.readCalls')(function* (
   },
 ) {
   const reader = new FrameReader(child.stdout)
-  const lane = yield* Semaphore.make(1)
+  // Calls overlap, so their replies can finish together; one writer keeps each frame whole.
+  const writes = yield* Semaphore.make(1)
   const running: Fiber.Fiber<void, PipeFailure>[] = []
   const { state, stopped } = execution
   while (true) {
@@ -368,7 +404,7 @@ const readCalls = Effect.fn('Code.readCalls')(function* (
     }
     const refused = state.reserve(message)
     if (Option.isSome(refused)) return refused.value
-    const call = runCall(child, message, execution).pipe(
+    const call = runCall(child, message, { ...execution, writes }).pipe(
       Effect.catchTag('CodePipeFailure', (failure) =>
         Effect.gen(function* () {
           state.end(
@@ -378,11 +414,16 @@ const readCalls = Effect.fn('Code.readCalls')(function* (
         }),
       ),
     )
-    running.push(yield* Effect.forkChild(lane.withPermit(call), { startImmediately: true }))
+    running.push(yield* Effect.forkChild(call, { startImmediately: true }))
   }
 })
 
-/** Acquiring the permit precedes admission and live authority refresh; replies cease once the guest ends. */
+/**
+ * Admission precedes dispatch and live authority refresh; replies cease once the guest ends. When a
+ * call brings a decision (an Approval, a block, an unknown outcome), the program stops being
+ * answered at once, but calls already running are left to finish and the decision is reported only
+ * when the last of them has returned. Interrupting them would turn a real result into "unknown".
+ */
 const runCall = Effect.fn('Code.runCall')(function* (
   child: Pick<NodeChildProcess.ChildProcessWithoutNullStreams, 'stdin' | 'stdout'>,
   message: typeof WorkerMessage.cases.Call.Type,
@@ -390,18 +431,28 @@ const runCall = Effect.fn('Code.runCall')(function* (
     readonly state: Execution
     readonly dispatch: Dispatch
     readonly stopped: Deferred.Deferred<CodeOutcome, PipeFailure>
+    readonly writes: Semaphore.Semaphore
   },
 ) {
-  const { state, dispatch, stopped } = execution
+  const { state, dispatch, stopped, writes } = execution
   if (!state.accepting) return yield* Effect.void
   const step = yield* state.call(message, dispatch)
+  if (state.decided) {
+    if (state.busy) return yield* Effect.void
+    return yield* Option.match(state.settled(), {
+      onNone: () => Effect.void,
+      onSome: (outcome) => Deferred.succeed(stopped, outcome).pipe(Effect.asVoid),
+    })
+  }
   if (CallStep.guards.Stop(step))
     return yield* Deferred.succeed(stopped, step.outcome).pipe(Effect.asVoid)
   if (!state.accepting) return yield* Effect.void
-  return yield* writeFrame(
-    child.stdin,
-    encodeParent(ParentMessage.cases.Reply.make({ id: message.id, value: step.value })),
-    'request',
+  return yield* writes.withPermit(
+    writeFrame(
+      child.stdin,
+      encodeParent(ParentMessage.cases.Reply.make({ id: message.id, value: step.value })),
+      'request',
+    ),
   )
 })
 

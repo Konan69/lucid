@@ -19,7 +19,7 @@ browse(input: {action: BrowserAction, summary: string}): Promise<{ok: true, resu
 read_page(input: {address: string}): Promise<{ok: true, address: string, title: string, text: string, truncated: boolean} | {ok: false, reason: string}>;
 };
 BrowserAction is defined by this JSON Schema: ${JSON.stringify(Schema.toJsonSchemaDocument(BrowserAction).schema)}
-Use only account/tool names and input schemas found by find_tools. Provider record identifiers remain usable data. Do not catch an approval to continue or retry an unknown action.`
+Calls started together run together: use Promise.all for independent calls and pass one call's result into the next for dependent ones. Use only account/tool names and input schemas found by find_tools. Provider record identifiers remain usable data. Do not catch an approval to continue or retry an unknown action.`
 
 /** Error metadata is Vivid's; provider records in successful results retain their usable identifiers. */
 function failureView(failure: CodeFailure): Schema.Json {
