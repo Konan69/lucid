@@ -1,6 +1,20 @@
 import { Schema } from 'effect'
 import { LibraryFolderId, OccurrenceId, RoutineId, ThreadId } from './identity.js'
 
+/**
+ * What starts a Routine. A schedule fires on a cron expression in a time zone. A webhook fires
+ * when an outside service calls the Routine's address with its key. An Integration is addressed
+ * by its Person-visible account label; the Connection binding remains private on the server.
+ */
+export const RoutineTrigger = Schema.TaggedUnion({
+  /** One delivery at epoch milliseconds; timezone preserves how the instant is said back. */
+  Once: { at: Schema.Number, timezone: Schema.String },
+  Schedule: { cron: Schema.String, timezone: Schema.String },
+  Webhook: {},
+  Integration: { account: Schema.String, event: Schema.String, filter: Schema.Json },
+})
+export type RoutineTrigger = typeof RoutineTrigger.Type
+
 /** Closed Routine occurrence lifecycle values encoded by the current HTTP protocol. */
 export const OccurrenceStatus = Schema.Literals(['running', 'succeeded', 'failed'] as const)
 
@@ -8,7 +22,7 @@ export const OccurrenceStatus = Schema.Literals(['running', 'succeeded', 'failed
 export const Occurrence = Schema.Struct({
   id: OccurrenceId,
   routineId: RoutineId,
-  conversationId: ThreadId,
+  threadId: ThreadId,
   submissionId: Schema.NullOr(Schema.String),
   status: OccurrenceStatus,
   startedAt: Schema.Number,
@@ -24,8 +38,7 @@ export const Routine = Schema.Struct({
   id: RoutineId,
   name: Schema.String,
   prompt: Schema.String,
-  cron: Schema.String,
-  timezone: Schema.String,
+  trigger: RoutineTrigger,
   libraryFolderId: Schema.NullOr(LibraryFolderId),
   enabled: Schema.Boolean,
   nextExpectedAt: Schema.NullOr(Schema.Number),
@@ -41,16 +54,20 @@ export interface Routine extends Schema.Schema.Type<typeof Routine> {}
 export const CreateRoutineRequest = Schema.Struct({
   name: Schema.String,
   prompt: Schema.String,
-  cron: Schema.String,
-  timezone: Schema.String,
+  trigger: RoutineTrigger,
   libraryFolderId: Schema.optionalKey(Schema.NullOr(LibraryFolderId)),
+})
+/** Runtime creation accepts wall-clock words; the server resolves the acting Person's zone. */
+export const CreateOnceRoutineRequest = Schema.Struct({
+  name: CreateRoutineRequest.fields.name,
+  prompt: CreateRoutineRequest.fields.prompt,
+  localAt: Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/u)),
 })
 /** Input accepted while updating a Routine. */
 export const PatchRoutineRequest = Schema.Struct({
   name: Schema.optionalKey(Schema.String),
   prompt: Schema.optionalKey(Schema.String),
-  cron: Schema.optionalKey(Schema.String),
-  timezone: Schema.optionalKey(Schema.String),
+  trigger: Schema.optionalKey(RoutineTrigger),
   libraryFolderId: Schema.optionalKey(Schema.NullOr(LibraryFolderId)),
   enabled: Schema.optionalKey(Schema.Boolean),
 })
@@ -62,3 +79,25 @@ export const RoutineListResponse = Schema.Struct({ routines: Schema.Array(Routin
 export const RoutineResponse = Schema.Struct({ routine: Routine })
 /** Accepted Routine occurrence response. */
 export const OccurrenceResponse = Schema.Struct({ run: Occurrence })
+
+/** Provider event discovery is readable configuration, never a Connection reference. */
+export const FindEventsRequest = Schema.Struct({ account: Schema.String })
+export const FindEventsResponse = Schema.Struct({
+  events: Schema.Array(
+    Schema.Struct({
+      event: Schema.String,
+      description: Schema.String,
+      filter: Schema.Json,
+    }),
+  ),
+})
+
+/**
+ * The address and key an outside service uses to start a webhook Routine. Shown once to its owner
+ * when asked for; the key is the only thing that authorizes the call.
+ */
+export const RoutineWebhook = Schema.Struct({
+  address: Schema.String,
+  key: Schema.Redacted(Schema.String),
+})
+export interface RoutineWebhook extends Schema.Schema.Type<typeof RoutineWebhook> {}

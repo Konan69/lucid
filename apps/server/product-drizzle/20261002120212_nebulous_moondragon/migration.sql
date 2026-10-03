@@ -1,0 +1,1 @@
+ALTER TABLE "vivid_skills" ALTER COLUMN "about" SET NOT NULL;

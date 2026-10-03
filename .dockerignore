@@ -1,0 +1,33 @@
+# Dependencies and generated output must come from the Linux build stages.
+**/node_modules
+**/dist
+**/.cache
+**/.turbo
+**/coverage
+**/*.tsbuildinfo
+**/.expo
+apps/mobile/android
+apps/mobile/ios
+apps/desktop/release
+apps/desktop/out
+**/build
+
+# Local authority, credentials, research and mutable state never enter an image.
+.git
+.alchemy
+.agents
+.claude
+.pi
+**/.pi
+**/.state
+**/.env*
+**/.npmrc
+**/*.local
+**/*.pem
+**/*.key
+artifacts
+refs
+docs/prds
+CONTEXT.md
+.vscode
+.idea

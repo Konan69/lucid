@@ -1,5 +1,7 @@
 # Platform architecture
 
+2026-10-03: Historical 2 September architecture; PostgreSQL, server-owned product domains, Flue 2.2.2/pi 0.87.1, HelixDB, Executor, and Boat supersede its SQLite and package sketches; current truth is in [docs/14](14-product-feature-set-and-grok-bot-parity.md), [Infrastructure](19-infrastructure.md), and domain READMEs.
+
 **Status:** Direction for implementation  
 **Updated:** 2 September 2026
 

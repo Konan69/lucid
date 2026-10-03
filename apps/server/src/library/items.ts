@@ -6,6 +6,7 @@ import { itemWrites } from './writes.ts'
 export const itemOperations = (
   database: LibraryDatabase,
   decodeItem: DecodeItem,
+  getFolder: LibraryStoreService['getFolder'],
 ): Pick<
   LibraryStoreService,
   | 'listItems'
@@ -20,6 +21,6 @@ export const itemOperations = (
   | 'removeItem'
 > => {
   const reads = itemReads(database, decodeItem)
-  const writes = itemWrites(database, decodeItem, reads.getItem)
+  const writes = itemWrites(database, decodeItem, { reads, getFolder })
   return { ...reads, ...writes }
 }

@@ -30,6 +30,7 @@
     "infra:dev": "VIVID_DEPLOY_TARGET=local ALCHEMY_TELEMETRY_DISABLED=1 alchemy dev --stage local",
     "infra:verify": "node scripts/infra-verify.mjs",
     "infra:destroy": "VIVID_DEPLOY_TARGET=local ALCHEMY_TELEMETRY_DISABLED=1 alchemy destroy --stage local --yes",
+    "infra:deploy": "VIVID_DEPLOY_TARGET=production ALCHEMY_TELEMETRY_DISABLED=1 alchemy deploy --stage production",
     "structure": "konsistent"
   },
   "devDependencies": {
@@ -39,6 +40,7 @@
     "@shadcn/lint": "0.1.1",
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
+    "@alchemy.run/frontend-frameworks": "catalog:",
     "alchemy": "catalog:",
     "effect": "catalog:",
     "husky": "9.1.7",

@@ -1,5 +1,7 @@
 # Grok Bot: machine infrastructure and product surface
 
+2026-10-03: Historical Grok Bot evidence and Vivid mappings; Boat’s real-service proof supersedes the implementation context, while current Computer behavior and limits live in [docs/04](04-computer.md) and [docs/14](14-product-feature-set-and-grok-bot-parity.md); reference unknowns remain unknown.
+
 **Evidence scope.** This is an artifact map of Grok Bot 0.30/0.39, not a product
 review. `SandBoxService.proto` is treated as the machine wire spine; the 0.39
 Electron main and renderer are used to distinguish calls from merely declared

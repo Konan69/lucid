@@ -1,86 +1,123 @@
 # Product feature set and Grok Bot parity
 
-This is the collaboration-facing product map for the initial Vivid build. “Parity” below is a
-directional product target, not a claim that Vivid and Grok Bot are equivalent.
+What Vivid can do today, how each claim was checked, and what is not built. "Parity" is a
+directional product target, not a claim that Vivid and Grok Bot are equivalent. Keep this page
+true: change a row in the same change that changes the fact, and write how it was checked.
 
-## Available now
+Last brought up to date on 3 October 2026.
 
-| Capability                        | State           | Notes                                                                                                                                                                                                                                                                  |
-| --------------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Named AI teammate                 | Working         | Vivid is the persistent product identity.                                                                                                                                                                                                                              |
-| Live conversation                 | Working         | The web app streams real Flue responses from GLM 5.3 Flash through OpenRouter.                                                                                                                                                                                         |
-| Rich responses                    | Working         | Assistant output renders safe Markdown with GFM lists, tables, links, blockquotes, and code.                                                                                                                                                                           |
-| Durable thread history            | Working         | Each product thread ID maps to a Flue conversation stored in local SQLite.                                                                                                                                                                                             |
-| Send while working                | Working         | Flue admits new user messages while a response is active and processes them in order.                                                                                                                                                                                  |
-| Stop a response                   | Working         | The composer can abort the active response.                                                                                                                                                                                                                            |
-| Connection recovery               | Working         | The conversation exposes loading, retry, and error states.                                                                                                                                                                                                             |
-| Conversation list and creation    | Working locally | The sidebar creates/selects real durable Flue conversations; their title index is stored alongside Flue state in SQLite.                                                                                                                                               |
-| Scheduled routines                | Working locally | SQLite stores definitions and run history; a Node cron trigger dispatches durable schedule signals into Flue with pause, test-run, edit, and delete controls.                                                                                                          |
-| Document Library and RAG          | Working locally | Real nested folders and PDF/Markdown/text uploads are stored in SQLite; FTS5 retrieval is exposed to Vivid as a read-only tool with filename/page citations.                                                                                                           |
-| Tasks and follow-ups              | Working locally | Vivid creates and updates tasks from conversation; scheduled follow-ups wake it into the task's conversation; overdue work is chased once automatically; in-app notifications and the Today screen surface it. See [Tasks and follow-ups](15-tasks-and-follow-ups.md). |
-| Response provenance               | Working         | Model, timing, usage, and tool-call count are attached to agent responses.                                                                                                                                                                                             |
-| Protected browser-to-runtime path | Working locally | Vite proxies the runtime API and adds the bearer token outside the browser bundle. Production needs an equivalent server-side gateway.                                                                                                                                 |
+## How a row is checked
 
-## Visible but not implemented
+- **Seen in the app with a real model**: a Person's message in the web app, answered by the model
+  through the gateway, with the tools Vivid actually called read from the Thread.
+- **Live test**: a `.live.test.ts` run against the real service (Executor, HelixDB, Boat, the
+  model gateway), skipped unless its suite-specific test configuration and credentials are present.
+- **Rehearsed**: driven in the app with the scripted model (`VIVID_MODEL=rehearsal/script`), which
+  calls the real tools with fixed inputs. It proves the tools, the cards and the plumbing, and
+  says nothing about the model's judgement.
+- **Tests**: checked-in unit and integration suites; persistence checks use disposable PostgreSQL.
+- **Run for real**: launched and driven as a Person would, with captures.
 
-These surfaces are product fixtures. They demonstrate the intended experience but are not runtime
-contracts and should not be mistaken for finished backend behavior.
+## Working
 
-| Capability                      | Current state    | Backend work needed                                                                                                                       |
-| ------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Thread lifecycle                | Working locally  | Creation, navigation, rename, archive/restore, and delete use the SQLite-backed product index; user ownership remains outside the demo.   |
-| Work log                        | Working locally  | The active conversation derives requests, responses, model/timing/usage metadata, failures, and tool calls from its real Flue transcript. |
-| Computer panel                  | Fixture data     | A separately supplied execution boundary and artifact model are still required.                                                           |
-| Tool-call presentation          | Partial          | Library retrieval is mounted; broader tools, policies, approvals, and results are not.                                                    |
-| Chat attachments                | Control only     | Library upload works, but chat message parts do not yet ingest attachments.                                                               |
-| People, companies, and projects | Product fixtures | CRUD APIs, authorization, persistence, and search.                                                                                        |
+| Capability                                                                                                                                      | How it was checked                                                |
+| ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Vivid answers in a Thread, streaming, with send-while-working and stop                                                                          | Seen in the app with a real model                                 |
+| Personal space and Companies in one product: Memberships, roles, shared and private Threads, attributed messages, presence                      | Tests; seen in the app                                            |
+| Reading a web page (`read_page`), refused for anything not on the public internet                                                               | Seen in the app with a real model                                 |
+| Programs Vivid writes (`run_code`), in an interpreter with no network, a cleared environment and hard memory, CPU and time limits               | Seen in the app with a real model; tests against the real sandbox |
+| Cards in a Thread (`show`): table, charts, steps, options, comparison, links, facts, draft, schedule, form, pictures                            | Rehearsed for every kind; charts seen with a real model           |
+| Questions Vivid cannot answer alone (Input requests), answered from a card                                                                      | Seen in the app with a real model                                 |
+| Routines once at a time, on a schedule, by webhook, and on an Integration's events (by polling)                                                 | Tests                                                             |
+| The trust loop: allowed, needs an Approval, or blocked by a rule; the approved action runs later from the stored copy                           | Tests                                                             |
+| Integrations on Executor: the catalogue, signing in or entering a key, finding and using tools                                                  | Live test for the catalogue and reads; seen in the app for search |
+| Adding an Integration by address: an MCP server, or an OpenAPI document Executor can import                                                     | Live test                                                         |
+| Memory on HelixDB: remember, recall, forget, correct, and the background pass after a Run                                                       | Live test; remember and recall seen in the app with a real model  |
+| The Computer on Boat: create, viewer, look, open/read a page, click a link, type/replace/clear a field with readback, files, archive and resume | Live test against real Boat                                       |
+| The Library: folders, PDF and text ingest, search, citations                                                                                    | Tests                                                             |
+| Skills: 22 native runtime folders, and reusable procedures Vivid saves for itself                                                               | Native catalogue, activation and scoped saved-procedure tests     |
+| Search palette, notifications, Settings, the Company record                                                                                     | Tests; seen in the app                                            |
+| Desktop app: choose a Vivid, sign up, pages beside a Thread with tabs, the Computer tab, switching Vivid                                        | Run for real                                                      |
+| Pictures attached to a message in a private Thread                                                                                              | Tests                                                             |
 
-## Grok Bot product parity map
+## Built, not yet seen working end to end
 
-The comparison uses xAI's current first-party descriptions of Grok Bot: a persistent agent with a
-cloud computer, connectors, approvals, reusable skills, scheduled or event-driven routines, and
-multi-bot collaboration.
+- **Artifacts**: Thread-owned Markdown documents, immutable versions, optimistic Person revisions,
+  live RPC queries and runtime write/read tools. Private-Thread rehearsal proved writing version 1,
+  revising to version 2, reading it and leaving an identical rewrite unchanged. Runtime reads keep
+  up to 48,000 body characters and explicitly identify longer, cut documents with their full count.
+  Missing: web, mobile and desktop lists, readers, revision history, editing and removal surfaces.
+  Attribution refuses ambiguous working Runs: the current reservation still permits same-Person
+  deliveries to join.
 
-| Grok Bot capability                          | Vivid today        | Target boundary                                                                                                                                |
-| -------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Persistent conversation and background state | Partial            | SQLite conversation history works; durable jobs and cross-thread memory do not.                                                                |
-| Browser, terminal, and filesystem computer   | UI fixture         | Proprietary execution subsystem, supplied separately.                                                                                          |
-| Connectors and MCP services                  | Not implemented    | Proprietary connector layer, supplied separately.                                                                                              |
-| Approval before sensitive actions            | Not implemented    | Policy and approval protocol spanning product backend and runtime.                                                                             |
-| Reusable skills                              | Research only      | Versioned skill definitions, mounting, permissions, and product management.                                                                    |
-| Scheduled and event-triggered routines       | Partial            | Cron routines and run history work locally; provider events, catch-up, retry policy, notifications, and production scheduler ownership remain. |
-| Multiple agents collaborating in parallel    | Not implemented    | Delegation protocol, shared context, ownership, and activity presentation.                                                                     |
-| Files, links, images, and richer input       | Partial            | Library PDF/text ingestion works; chat attachments, links, images, OCR, and persisted generated artifacts remain.                              |
-| Activity transcript and action visibility    | UI fixture         | Normalized runtime events and durable work log.                                                                                                |
-| Sharing and organization controls            | Product model only | Authentication, roles, tenancy, audit, and sharing APIs.                                                                                       |
+| Capability                                                     | What is missing                                                                                                                                                         |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The Computer panel showing Boat's viewer inside the app        | Never opened in the app against real Boat                                                                                                                               |
+| Browser input from a Thread on Boat                            | Provider live proof covers clicking and verified text replacement; not driven from a Thread                                                                             |
+| The Person's desktop browser                                   | Target/access/control contracts and PostgreSQL device receipts built; native input-token enforcement is unrecovered, Person route fails closed, runtime option withheld |
+| Vivid using the desktop (`use_desktop`) from a Thread          | Proven at the provider; not driven from a Thread on Boat                                                                                                                |
+| Mobile app                                                     | Tests only; never run on a device                                                                                                                                       |
+| Google Integrations                                            | Need an operator sign-in client set up in Executor (`docs/22-one-product.md`)                                                                                           |
+| An Approval raised by a real model's action, approved, and run | Tests only                                                                                                                                                              |
+| Routines firing from a real Integration event                  | Tests only                                                                                                                                                              |
 
-## Recommended initial build order
+## Not built
 
-1. **Done:** stabilize the live conversation slice and add real thread lifecycle controls.
-2. **Done for the demo:** add recurring routines with next-run time, run history, missed-run visibility, retry, and pause controls.
-3. **Done for current runtime data:** connect the work log to real Flue transcript and response metadata.
-4. **Done for read-only retrieval:** add one harmless tool end to end; `search_library` needs no approval because it only reads local documents.
-5. **Done locally:** tasks, follow-ups, and notifications, so Vivid holds work and chases it without a connector.
-6. Add one connector behind a narrow interface without moving connector credentials into the web app.
-7. Connect the computer panel to the separately supplied execution and artifact boundary.
+- **The durable work log** of a Run (requests, responses, tool calls, model and timing).
+- **Vivid-to-Vivid** across People and Companies (`docs/06-communication.md`).
+- **The Person's own computer as a device**, and taking over the Computer to teach a task.
+- **Push notifications**, **voice**, and **messaging channels** (mail in, Slack and the like).
+- **To-do lists and project management.** Tasks as Vivid first had them (things Vivid tracked and
+  chased) were removed on 3 October 2026. They come back in two different shapes, neither built:
+  for a Person, a to-do list that is theirs: things they mean to do, which Vivid can add to, tick
+  off and remind about; for a Company or team, product and project management: work that has an
+  owner, a state and a place in a Project, seen by everyone on it. Until then a reminder is a
+  one-off Routine.
+- **Billing and usage limits.**
+- **Apps on the Computer and a home screen.** The Computer image carries a browser and the desktop
+  stack only. There is no office suite, no creative or engineering apps, and no launcher showing
+  what is installed (#4).
+- **Files as Artifacts.** Vivid cannot hand a file built on the Computer to the Person as an
+  Artifact, so a document is Markdown through the document tools, never a Word file (#5).
+- **Spreadsheet, presentation and PDF procedures.** The reference procedures build real files and
+  check them by rendering; they wait on the two gaps above (#6).
+- **Parallel workers for wide research.** The same lookup runs over each input in batches inside
+  one Run (#8).
+- **Booking by phone, and a map for places.** Both paths exist in the reference procedures and were
+  left out; Vivid has no calling and no map display (#10).
 
-The first vertical slice should prove the complete trust boundary before broadening capability. A
-feature is complete only when its product state, authorization, failure behavior, persistence, and
-observability are all represented.
+## Known limits
 
-## Collaboration boundary
+- An empty completion from the model is not caught: Vivid has no retry layer of its own, the
+  gateway fails over between providers and Flue retries transient errors.
+- Pictures in a reply load automatically, so a page Vivid read could have it show a picture whose
+  address carries Thread content elsewhere. Loading on tap or through the server would close it.
+- Adding by address depends on the operator running Executor with public-only egress.
+- Forgetting cannot change or remove a Routine: no tool does it, so Vivid names the Routine and the
+  Person changes it (#7).
+- Installation, revision history and imported provenance persistence remain outside #12 phase 1.
+  All 22 built-ins always mount through Flue’s native catalogue and `activate_skill`. Vivid saves
+  and reuses verified procedures itself; People never see, name, edit or manage skills. Built-in
+  names are reserved and saved procedures never replace them. Saved Person/Company procedures
+  keep the authorized `read_skill` path because native catalogue snapshots persist in shared Thread
+  history. Unavailable saved summaries are explicit in model context and leave built-ins mounted.
+- Ten built-in procedures (3 October 2026) were adapted from a third party's partial snapshot of
+  Muse's shipped skill files, not from a source its maker published. The supporting reference
+  files those skills point to were not in the snapshot, so only steps stated in the skill bodies
+  were used. External skill collections were not surveyed as a source (#9).
 
-Engineers may work across the web app, ordinary backend APIs, auth, product entities, shared
-contracts, SQLite-backed conversation transport, the included Flue model adapter, and the included
-single-process demo scheduler. Do not add the production scheduler, connector implementations,
-tool implementations, computer transport, credential handling, reconstructed material, research
-notes, or legacy PRDs to this repository.
+## Grok Bot parity map
 
-## Sources
-
-- [Grok Bot overview](https://docs.x.ai/grok-bot/overview)
-- [Bots and persistent computers](https://docs.x.ai/grok-bot/bots)
-- [Chat and collaboration](https://docs.x.ai/grok-bot/chat-and-collaboration)
-- [Skills, routines, and automations](https://docs.x.ai/grok-bot/skills-routines-and-automations)
-- [Approvals, security, and privacy](https://docs.x.ai/grok-bot/approvals-security-and-privacy)
-- [Grok Bot FAQ](https://docs.x.ai/grok-bot/faq)
+| Grok Bot capability                          | Vivid today                                                                                                                    |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Persistent conversation and background state | Working                                                                                                                        |
+| Browser, terminal and filesystem computer    | Working at the Boat provider, including browser input; app viewer and Thread-driven input unproven                             |
+| The Person's own browser                     | Preparatory server channel tested with a fake device; native control and scoped access are blocked, no model tool option ships |
+| Connectors and MCP services                  | Working through Executor; add by address working                                                                               |
+| Approval before sensitive actions            | Working in tests; not yet seen with a real model                                                                               |
+| Reusable skills                              | Working                                                                                                                        |
+| Scheduled and event-triggered routines       | Working in tests; events by polling                                                                                            |
+| Multiple agents collaborating                | Not built                                                                                                                      |
+| Files, links, images and richer input        | Pictures and the Library working; Artifact backend built, surfaces missing                                                     |
+| Activity transcript and action visibility    | Step lines and the Company record working; the per-Run work log not built                                                      |
+| Sharing and organization controls            | Working                                                                                                                        |

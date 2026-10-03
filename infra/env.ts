@@ -16,7 +16,7 @@ export class InfrastructureEnvironmentError extends Schema.TaggedError<Infrastru
 export interface InfrastructureEnvironment {
   readonly authSecret: Redacted.Redacted
   readonly runtimeToken: Redacted.Redacted
-  readonly openRouterApiKey: Redacted.Redacted
+  readonly modelGatewayKey: Redacted.Redacted
   readonly model: string
   readonly googleClientId: Option.Option<string>
   readonly googleClientSecret: Option.Option<Redacted.Redacted>
@@ -43,9 +43,9 @@ export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnviro
   function* () {
     const authSecret = yield* requiredSecret('AUTH_SECRET')
     const runtimeToken = yield* requiredSecret('VIVID_RUNTIME_TOKEN')
-    const openRouterApiKey = yield* requiredSecret('OPENROUTER_API_KEY')
+    const modelGatewayKey = yield* requiredSecret('EXPLABS_API_KEY')
     const model = yield* Config.String('VIVID_MODEL').pipe(
-      Config.withDefault('openrouter/z-ai/glm-5.3-flash'),
+      Config.withDefault('explabs/glm-5.3-flash'),
       Effect.mapError(() => environmentError('VIVID_MODEL')),
     )
     const googleClientId = yield* optionalString('GOOGLE_CLIENT_ID')
@@ -69,7 +69,7 @@ export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnviro
     return {
       authSecret,
       runtimeToken,
-      openRouterApiKey,
+      modelGatewayKey,
       model,
       googleClientId,
       googleClientSecret,

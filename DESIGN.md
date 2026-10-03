@@ -29,7 +29,8 @@ don't have, the tokens change first, then the component.
   light. A token never swaps tier between themes — the same stack must read
   raised in both.
 - **Ink is alpha.** `ink`/`ink-2`/`ink-3`/`ink-4` are one base color at
-  100/62/42/28%. Text, icons, and borders all derive from it. No grays.
+  falling alpha. Text, icons, and borders all derive from it. No grays. Words
+  that must be read stop at `ink-3`; `ink-4` is for marks and placeholders.
 - **Hairlines are alpha ink** at 6–30%. Lines separate structure; shadows
   create depth. Never both on one element.
 - **Accent is Vivid's color** (`#7c6cff`). It appears on the face, the focus
@@ -41,16 +42,16 @@ don't have, the tokens change first, then the component.
 
 ## Elevation
 
-One `box-shadow` carries a specular top edge, cast layers, and a fading
-hairline ring. Tiers: `xs` (control in the page) → `sm` (compact floating) →
-`md` (menus) → `lg` (dialogs) → `soft` (large cards over content). Never add a
-border or ring to an element that already carries a shadow tier.
+Elevation is `shadow-plugin`'s `smooth-shadow-ring-*`: one `box-shadow` whose last layer is the
+hairline, coloured by `--smooth-ring-color` in the tokens. There are two tiers and nothing between.
 
-In **dark**, a cast shadow has nothing to fall on — the `--edge` inset hairline
-of light is what says "raised". In **light**, the page is white and the
-sidebar is `#f6f6f6`; depth comes from the surface step plus
-`--content-edge-shadow` on the content column, which **light only** (black ink
-on near-black lands as a smudge, so dark drops it).
+- **In the page** (cards, rows, fields, the sidebar's cards): `smooth-shadow-ring-xs`. A hairline
+  and the faintest ambient. Nothing is cast: a card in a list is not floating and must not look it.
+- **Over the page** (the composer, menus, dialogs, the palette): `smooth-shadow-ring-md` or `-lg`.
+
+Never add a border or ring to an element that already carries a shadow tier, never write a
+`box-shadow` by hand, and never raise a card's tier on hover: hover is a fill. The sidebar and the
+content column are separated by one hairline, not by a shadow.
 
 Glass (`backdrop-filter`) is for what floats over live content: tooltips,
 popups. Panels and sidebars are opaque.

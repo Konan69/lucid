@@ -1,9 +1,5 @@
 # Desktop
 
-**Not built.** This directory reserves the place named in `docs/00-structure.md`.
-
-Viewing and taking over the Computer's desktop from a client: the short-lived desktop address, the hand-off when a Person teaches a task, and the hand-back.
-
-Defined by: docs/04-computer.md, docs/18-grok-bot-machine-and-product-surface.md.
-
-Delete this file when the first real module lands here.
+**Nothing lives here.** Viewing the Computer's desktop is built in the server
+(`apps/server/src/computers/screen.ts` for the local relay; Boat issues its own viewer address)
+and in each app's Computer screen. Taking over to teach a task, and the hand-back, are not built.

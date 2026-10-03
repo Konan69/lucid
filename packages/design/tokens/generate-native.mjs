@@ -10,6 +10,21 @@ const light = {
   ...base,
   ...declarations(css.match(/html\[data-theme=["']light["']\]\s*\{([\s\S]*?)\n\}/)[1]),
 }
+/**
+ * The theme families. `:root` and its light block are the default family; every other family is a
+ * `html[data-palette='name']` block and its `[data-theme='light']` twin. A family's variables are
+ * laid over the default's in the order the cascade applies them in a browser (root, light, the
+ * family, the family's light), so native reads exactly what the web would compute.
+ */
+const DEFAULT_FAMILY = 'graphite'
+const families = { [DEFAULT_FAMILY]: { dark: base, light } }
+for (const [, name, lit, block] of css.matchAll(
+  /html\[data-palette=["']([\w-]+)["']\](\[data-theme=["']light["']\])?\s*\{([\s\S]*?)\n\}/g,
+)) {
+  const family = (families[name] ??= {})
+  if (lit === undefined) family.dark = { ...base, ...declarations(block) }
+  else family.light = { ...light, ...family.dark, ...light, ...declarations(block) }
+}
 function resolve(key, vars) {
   return vars[key].replace(/var\((--[\w-]+)\)/g, (_, name) => resolve(name, vars))
 }
@@ -17,7 +32,9 @@ function native(vars) {
   const result = {}
   for (const key of Object.keys(vars)) {
     if (
-      !/^--(surface-|ink$|ink-|line-|wash-|accent|status-|face-|scrim)/.test(key) ||
+      !/^--(surface-|ink$|ink-|line-|wash-|accent|status-|face-|scrim|screen|sheet|card|grouped-card|thread-selected|row-hover|composer-|foreground|border|focus|separator|subtle|inline-skill-|primary|input|placeholder|header|glass-|md-code-|user-bubble|backdrop|drawer|chevron)/.test(
+        key,
+      ) ||
       key === '--ink-base'
     )
       continue
@@ -43,8 +60,17 @@ for (const [key, value] of Object.entries(base)) {
 }
 metrics['phone-radius-factor'] = Number(css.match(/:root\s*\{\s*--rf:\s*([\d.]+);/)[1])
 const output =
-  '// Generated from tokens.css by generate-native.mjs. Do not hand edit.\nexport const nativeTokens = ' +
-  JSON.stringify({ dark: native(base), light: native(light) }, null, 2) +
+  '// Generated from tokens.css by generate-native.mjs. Do not hand edit.\nexport const nativeThemes = ' +
+  JSON.stringify(
+    Object.fromEntries(
+      Object.entries(families).map(([name, family]) => [
+        name,
+        { dark: native(family.dark), light: native(family.light) },
+      ]),
+    ),
+    null,
+    2,
+  ) +
   ' as const;\n\nexport const nativeMetrics = ' +
   JSON.stringify(metrics, null, 2) +
   ' as const;\n'

@@ -1,5 +1,7 @@
 # Backend stack reference: Effect 4 + Better Auth + Drizzle + Alchemy
 
+2026-10-03: Historical versioned research; `pnpm-workspace.yaml`, separate server auth/product migration chains, and `VividRpc` supersede the pin and API recommendations here; current implementation is documented in the server README, [Infrastructure](19-infrastructure.md), and [docs/14](14-product-feature-set-and-grok-bot-parity.md).
+
 **Audit basis:** installed packages and source under `~/agency/vivid`, the local Effect checkout, `effect-solutions list/show`, and the linked published documentation. This is a versioned research snapshot, not an implementation. Every source below was checked without installing or changing dependencies.
 
 ## Decisions for the implementation lane
@@ -29,7 +31,7 @@ The `apps/server` importer in the lockfile propagates these exact pins, includin
 - The checked-out `~/effect-smol` is **Effect `4.0.0-beta.84`**, not rc.112: `~/effect-smol/packages/effect/package.json:1-5`. Its Schema and migration docs still say `TaggedErrorClass` (`~/effect-smol/packages/effect/src/Schema.ts:12437-12633`; `~/effect-smol/migration/schema.md:28-34`). The installed rc.112 source exports `Schema.TaggedError` at line 15207 and has zero `TaggedErrorClass` occurrences: `~/agency/vivid/node_modules/.pnpm/effect@4.0.0-rc.112/node_modules/effect/src/Schema.ts:15192-15217`. **Do not use the checkout's old name.**
 - `effect-solutions show error-handling` also emitted examples using `Schema.TaggedErrorClass`; the installed rc.112 `AGENTS.md` and `ai-docs` use `Schema.TaggedError`: `~/agency/vivid/node_modules/.pnpm/effect@4.0.0-rc.112/node_modules/effect/AGENTS.md` and `~/agency/vivid/node_modules/.pnpm/effect@4.0.0-rc.112/node_modules/effect/ai-docs/src/01_effect/04_errors/01_error-handling.ts:1-25`. Treat the CLI guidance as stale for this rc.
 - The installed Alchemy Better Auth README says “every SQL layer” migrates automatically, but its `Drizzle` implementation has no `migrate` member and explicitly says schema management is external: `~/agency/vivid/apps/server/node_modules/@alchemy.run/better-auth/README.md:263-275`; `~/agency/vivid/apps/server/node_modules/@alchemy.run/better-auth/src/Drizzle.ts:33-57`. The specific Drizzle exception wins.
-- Better Auth's current adapter docs say `npx auth@latest generate`, while the installed Alchemy wrapper comments say `npx @better-auth/cli generate`: [adapter docs](https://better-auth.com/docs/adapters/drizzle); `~/agency/vivid/apps/server/node_modules/@alchemy.run/better-auth/src/Drizzle.ts:13-18`. No Better Auth CLI package is a direct server dependency here. **Verify the chosen CLI in the implementation lane; this document does not claim the two commands are interchangeable.**
+- Better Auth's current adapter docs say `pnpm dlx auth@latest generate`, while the installed Alchemy wrapper comments say `pnpm dlx @better-auth/cli generate`: [adapter docs](https://better-auth.com/docs/adapters/drizzle); `~/agency/vivid/apps/server/node_modules/@alchemy.run/better-auth/src/Drizzle.ts:13-18`. No Better Auth CLI package is a direct server dependency here. **Verify the chosen CLI in the implementation lane; this document does not claim the two commands are interchangeable.**
 
 ## Effect 4 HTTP
 
@@ -309,9 +311,9 @@ The installed rc-era Kit type says `dialect` is mandatory, `schema` can be a glo
 Recommended flow:
 
 ```text
-npx auth@latest generate                 # generate Better Auth/organization Drizzle schema
-pnpm drizzle-kit generate --config drizzle.config.ts
-pnpm drizzle-kit migrate --config drizzle.config.ts
+pnpm dlx auth@latest generate                 # generate Better Auth/organization Drizzle schema
+pnpm exec drizzle-kit generate --config drizzle.config.ts
+pnpm exec drizzle-kit migrate --config drizzle.config.ts
 ```
 
 The first command follows Better Auth's current adapter docs; the Alchemy wrapper's alternate CLI spelling is flagged above. `drizzle-kit generate` creates SQL from the TypeScript schema; `migrate` applies it and records rows in the configured migrations table/schema: [Better Auth installation](https://better-auth.com/docs/installation), [Drizzle Kit config → migrations](https://orm.drizzle.team/docs/drizzle-config-file).

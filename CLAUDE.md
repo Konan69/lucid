@@ -145,11 +145,13 @@ Product copy says **Vivid**, never “agent” or “automation.” Those are im
 - **Routine**: a reusable commitment for Vivid to act on a trigger; an **Occurrence** is one invocation and may start a Run.
 - **Library item**: reusable knowledge or a learned procedure. A procedure may become a Routine, but storing it does not schedule it.
 - **Artifact**: a durable, versioned input or output linked to its Thread and Run.
-- **Connection**: an authorized relationship with an external account or service; credential values never enter model context.
+- **Connection**: an authorized relationship with an external account or service; credential values never enter model context. People see it as an **Integration**: that is the word in every string a Person or the model reads, while code, contracts and tests keep `Connection`.
 
 Use these terms in code, contracts, tests, and copy. Do not create synonyms for established concepts.
 
 **Borrowed code takes Vivid's names.** Any function, type, module, file, table, environment variable, event, or concept adapted from another project — a reference implementation, an SDK example, or one of our own earlier products — is renamed to this document's vocabulary and file conventions before it lands. The source's names never survive: no `box`, `sand`, `agent`, `bot`, `pod`, or another product's prefixes in identifiers, paths, logs, comments, or copy. Name the thing for what it is in Vivid (`Computer`, `Person`, `Thread`, `Run`, `Artifact`), and record where the design came from in the JSDoc, not in the identifier.
+
+**A reference implementation is a guide to follow, not inspiration.** When an inspected reference already solves the problem — source on disk or a decompiled binary — port it, or adapt it where Vivid differs: keep its mechanism, platform APIs, process layout, protocol methods and message shapes, ordering, limits, timeouts, and failure behavior. Do not redesign it from scratch, simplify it away, or substitute a mechanism recalled from memory. Before claiming the reference lacks something, search it; absence must be checked, not assumed. Cite the reference file and symbol or address in the JSDoc. Where Vivid's architecture, domain model, or the naming rule above requires a change, adapt and state the change and its reason beside the code. Where the reference cannot be inspected or a claim about it is unproved, say so; never fill the gap with a guess.
 
 ## Agent skills
 
@@ -164,3 +166,7 @@ The product references are under `docs/`, numbered in reading order: `docs/01-pr
 ### Coding standards
 
 `CODING_STANDARDS.md` is the review index. The vendored `coding-standards`, `effect`, `effect-service-design`, `react-useeffect`, `better-auth-best-practices`, `drizzle`, `drizzle-migrations`, `tdd`, `diagnose`, and `turborepo` skills provide task-specific detail. Root instructions win on conflict; package-level instructions such as `packages/agent/runtime/AGENTS.md` narrow their owned surface.
+
+## Design stack
+
+UI work follows the design stack in `AGENTS.md` ("Design stack (UI work)"): load the named skills in order (direction, polish, motion, review), render every state, and get a criticised second pass before committing.

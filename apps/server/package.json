@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --type-aware src",
@@ -15,27 +15,34 @@
     "db:migrate:product": "drizzle-kit migrate --config product-drizzle.config.ts"
   },
   "dependencies": {
+    "@alchemy.run/better-auth": "catalog:",
+    "@earendil-works/pi-codemode": "1.0.0",
     "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
+    "@flue/sdk": "catalog:",
+    "@helix-db/helix-db": "3.0.4",
     "@vivid/contracts": "workspace:*",
-    "better-auth": "catalog:",
-    "@alchemy.run/better-auth": "catalog:",
+    "@vivid/skills": "workspace:*",
     "alchemy": "catalog:",
+    "better-auth": "catalog:",
+    "croner": "^10.0.1",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",
+    "html-to-text": "9.0.5",
+    "ipaddr.js": "2.2.0",
     "pg": "catalog:",
-    "croner": "^10.0.1",
     "unpdf": "^1.8.1"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@vivid/client-runtime": "workspace:*",
+    "@types/html-to-text": "9.0.4",
     "@types/node": "catalog:",
     "@types/pg": "catalog:",
-    "drizzle-kit": "catalog:",
     "@typescript/native": "catalog:",
+    "@vivid/client-runtime": "workspace:*",
+    "drizzle-kit": "catalog:",
+    "tsx": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "tsx": "catalog:"
+    "vitest": "catalog:"
   }
 }

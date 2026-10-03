@@ -1,7 +1,7 @@
 import { and, desc, eq } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
-import type { LibraryFolderId, LibraryItem, LibraryItemId } from '@vivid/contracts'
+import type { LibraryItem, LibraryItemId } from '@vivid/contracts'
 import type {
   DecodeItem,
   LibraryDatabase,
@@ -9,6 +9,8 @@ import type {
   StoredLibraryItem,
 } from './store.ts'
 import { libraryDocuments } from './tables.ts'
+import { readableScope, shelfScope } from './access.ts'
+import type { Actor } from '../auth/access.ts'
 
 /** Builds item reads, keeping absence explicit at the store boundary. */
 export const itemReads = (
@@ -18,39 +20,46 @@ export const itemReads = (
   LibraryStoreService,
   'listItems' | 'getItem' | 'getStoredItem' | 'getStoredItemByName' | 'getItemByDigest'
 > => {
-  const listItems = Effect.fn('LibraryStore.listItems')(function* (
-    folderId: Option.Option<LibraryFolderId>,
-  ) {
-    const rows = yield* Option.match(folderId, {
-      onNone: () =>
-        database.run(
-          database.select().from(libraryDocuments).orderBy(desc(libraryDocuments.createdAt)),
-        ),
-      onSome: (id) =>
-        database.run(
-          database
-            .select()
-            .from(libraryDocuments)
-            .where(eq(libraryDocuments.folderId, id))
-            .orderBy(desc(libraryDocuments.createdAt)),
-        ),
-    })
-    return yield* Effect.forEach(rows, decodeItem, { concurrency: 1 })
-  })
+  /** Selected-shelf filtering happens before rows leave PostgreSQL. */
+  const listItems: LibraryStoreService['listItems'] = Effect.fn('LibraryStore.listItems')(
+    function* (actor, query) {
+      const selected = yield* shelfScope(libraryDocuments, actor, query.shelf)
+      const readable = yield* readableScope(database, libraryDocuments, actor)
+      const scope = and(selected, readable)
+      const folder =
+        query.folderId === undefined ? undefined : eq(libraryDocuments.folderId, query.folderId)
+      const rows = yield* database.run(
+        database
+          .select()
+          .from(libraryDocuments)
+          .where(and(scope, folder))
+          .orderBy(desc(libraryDocuments.createdAt)),
+      )
+      return yield* Effect.forEach(rows, decodeItem, { concurrency: 1 })
+    },
+  )
 
-  const getRow = Effect.fn('LibraryStore.getRow')(function* (id: LibraryItemId) {
+  /** Every id lookup is scoped before returning either metadata or bytes. */
+  const getRow = Effect.fn('LibraryStore.getRow')(function* (actor: Actor, id: LibraryItemId) {
+    const scope = yield* readableScope(database, libraryDocuments, actor)
     const rows = yield* database.run(
-      database.select().from(libraryDocuments).where(eq(libraryDocuments.id, id)).limit(1),
+      database
+        .select()
+        .from(libraryDocuments)
+        .where(and(eq(libraryDocuments.id, id), scope))
+        .limit(1),
     )
     return Option.fromNullishOr(rows[0])
   })
 
-  const getItem = Effect.fn('LibraryStore.getItem')(function* (id: LibraryItemId) {
-    const row = yield* getRow(id)
+  /** Absence remains explicit so every transport reports hidden and missing rows identically. */
+  const getItem = Effect.fn('LibraryStore.getItem')(function* (actor: Actor, id: LibraryItemId) {
+    const row = yield* getRow(actor, id)
     if (Option.isNone(row)) return Option.none<LibraryItem>()
     return Option.some(yield* decodeItem(row.value))
   })
 
+  /** Bytes extend decoded public metadata only after the parent has passed its shelf check. */
   const stored = Effect.fn('LibraryStore.stored')(function* (
     row: typeof libraryDocuments.$inferSelect,
   ) {
@@ -68,25 +77,33 @@ export const itemReads = (
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
       folderId: item.folderId,
+      shelf: item.shelf,
       bytes: new Uint8Array(row.bytes),
       extractedText: row.extractedText,
     } satisfies StoredLibraryItem
   })
 
-  const getStoredItem = Effect.fn('LibraryStore.getStoredItem')(function* (id: LibraryItemId) {
-    const row = yield* getRow(id)
+  /** Downloads and ingestion share the id lookup's ownership predicate. */
+  const getStoredItem = Effect.fn('LibraryStore.getStoredItem')(function* (
+    actor: Actor,
+    id: LibraryItemId,
+  ) {
+    const row = yield* getRow(actor, id)
     if (Option.isNone(row)) return Option.none<StoredLibraryItem>()
     return Option.some(yield* stored(row.value))
   })
 
+  /** Legacy source-name requests select the newest readable ready file, never a global match. */
   const getStoredItemByName = Effect.fn('LibraryStore.getStoredItemByName')(function* (
+    actor: Actor,
     name: string,
   ) {
+    const scope = yield* readableScope(database, libraryDocuments, actor)
     const rows = yield* database.run(
       database
         .select()
         .from(libraryDocuments)
-        .where(and(eq(libraryDocuments.name, name), eq(libraryDocuments.status, 'ready')))
+        .where(and(eq(libraryDocuments.name, name), eq(libraryDocuments.status, 'ready'), scope))
         .orderBy(desc(libraryDocuments.updatedAt))
         .limit(1),
     )
@@ -95,9 +112,19 @@ export const itemReads = (
     return Option.some(yield* stored(row))
   })
 
-  const getItemByDigest = Effect.fn('LibraryStore.getItemByDigest')(function* (sha256: string) {
+  /** Deduplication covers the requested shelf alone, preserving independent Mine/Company copies. */
+  const getItemByDigest: LibraryStoreService['getItemByDigest'] = Effect.fn(
+    'LibraryStore.getItemByDigest',
+  )(function* (actor, shelf, sha256) {
+    const selected = yield* shelfScope(libraryDocuments, actor, shelf)
+    const readable = yield* readableScope(database, libraryDocuments, actor)
+    const scope = and(selected, readable)
     const rows = yield* database.run(
-      database.select().from(libraryDocuments).where(eq(libraryDocuments.sha256, sha256)).limit(1),
+      database
+        .select()
+        .from(libraryDocuments)
+        .where(and(eq(libraryDocuments.sha256, sha256), scope))
+        .limit(1),
     )
     const row = rows[0]
     if (row === undefined) return Option.none<LibraryItem>()

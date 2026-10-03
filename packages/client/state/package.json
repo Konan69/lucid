@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
     "effect": "catalog:"
   },

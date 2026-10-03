@@ -1,0 +1,75 @@
+import { Option, Result } from 'effect'
+
+/**
+ * Things the app has to tell the Person that have no place of their own on screen.
+ *
+ * Most refusals are said where they happened: under the field, in the dialog. A quick action has
+ * no such place. Renaming a Thread in the sidebar, stopping Vivid, removing a Connection: each
+ * shows its result at once and is taken back if the server refuses, and a title that silently
+ * jumps back, or a Stop that seems to do nothing, reads as the app not working. Those say one
+ * sentence here, at the foot of the window, for a few seconds.
+ */
+
+export interface Saying {
+  readonly id: number
+  readonly words: string
+  /** The caller's identity for deduplicating this sentence, when it has one. */
+  readonly key: Option.Option<string>
+  /** Where the sentence leads, when it leads somewhere: "Open" on something that finished. */
+  readonly action: Option.Option<{ readonly label: string; readonly go: () => void }>
+}
+
+/** Long enough to read one sentence twice; short enough not to sit over the composer. */
+const SAID_FOR_MS = 6000
+
+let sayings: ReadonlyArray<Saying> = []
+let count = 0
+const listeners = new Set<() => void>()
+
+const set = (next: ReadonlyArray<Saying>) => {
+  sayings = next
+  for (const listener of listeners) listener()
+}
+
+export const said = {
+  subscribe: (listener: () => void) => {
+    listeners.add(listener)
+    return () => {
+      listeners.delete(listener)
+    }
+  },
+  all: () => sayings,
+  dismiss: (id: number) => set(sayings.filter((saying) => saying.id !== id)),
+}
+
+/** Says one sentence, with somewhere to go from it; a caller key deduplicates the same event. */
+export function sayWith(words: string, action: Saying['action'], key?: string) {
+  const identity = Option.fromNullishOr(key)
+  if (
+    Option.isSome(identity) &&
+    sayings.some((saying) => Option.isSome(saying.key) && saying.key.value === identity.value)
+  ) {
+    return
+  }
+  count += 1
+  const id = count
+  // The newest three are kept: more than that is a wall, and the oldest was the first read.
+  set([...sayings, { id, words, action, key: identity }].slice(-3))
+  setTimeout(() => said.dismiss(id), SAID_FOR_MS)
+}
+
+/** Says one sentence. */
+export const say = (words: string) => sayWith(words, Option.none())
+
+/**
+ * Follows a change whose refusal has nowhere on screen to be said, and says it. The result is
+ * handed on, so a caller that also needs it can still have it.
+ */
+export async function orSay<Value, Failure>(
+  made: Promise<Result.Result<Value, Failure>>,
+  words: string,
+) {
+  const result = await made
+  if (Result.isFailure(result)) say(words)
+  return result
+}

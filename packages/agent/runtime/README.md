@@ -1,81 +1,82 @@
-# Vivid agent runtime
+# Vivid runtime
 
-Shareable Flue Node runtime for the initial Vivid conversation experience and demo routines.
-Production scheduler orchestration, connectors, tool execution, and computer-control code are
-intentionally not part of this package.
+Flue `2.2.2` on Node, with pi `0.87.1`. This package owns conversation transport, durable
+conversation history, the model adapter, and runtime lifecycle. Product records, schedulers,
+authorization, and provider execution belong to `apps/server`. Runtime tools call that server
+through the schema-derived `VividRpcClient`; they do not own product tables or credentials.
 
 ## Run
 
-Requires Node 22.19 or newer and a provider API key matching `VIVID_MODEL`.
-Local secrets belong in the ignored `.env` file.
+From the repository root, use the Alchemy stack:
 
 ```sh
-cp .env.example .env
 pnpm install
-pnpm dev
+pnpm infra:dev
 ```
 
-Defaults:
+Supply the application credentials described in the root README before starting Alchemy.
+The workspace requires Node 24 or newer and pnpm `12.4.2`; this package's own engine floor is
+Node `22.19.0`. For an independently started runtime, supply these variables:
 
-- model: `openrouter/z-ai/glm-5.3-flash`
-- development port: `5173`
-- PostgreSQL: `DATABASE_URL` (local example uses `127.0.0.1:55433/vivid`)
-
-Flue's durable conversation stream and Vivid's application tables are stored in PostgreSQL. Flue
-runs its idempotent `migrate()` at startup; the runtime's versioned application migration creates
-the `vivid_*` tables. No `.state/` volume is needed. The Library has real nested folders and accepts
-multi-file PDF, Markdown, and plain-text uploads up to 10 MB each. Text is extracted, chunked, and
-indexed with PostgreSQL `tsvector` plus a GIN index. The read-only `search_library` Flue tool returns
-citation-ready passages with the same filename/page citation shape. Retrieval uses PostgreSQL
-`websearch_to_tsquery('simple', ...)` and `ts_rank_cd`; it is keyword-based and has no embeddings,
-OCR, or vector store.
-
-Routines use the same database for definitions and run history. On Node, `croner` provides the
-in-process trigger and each fire enters Flue as a durable `schedule` signal. Authenticated
-`/api/routines` routes provide create, edit, pause, delete, and test-run operations. This is a
-single-process demo adapter: production should use a platform scheduler so deploy downtime does not
-drop fires and multiple replicas do not duplicate them.
-
-Tasks, follow-ups, and notifications live in the same PostgreSQL database. The agent mounts
-`create_task`, `update_task`, `list_tasks`, and `schedule_follow_up`. A 20-second in-process ticker
-fires due follow-ups as durable `follow-up` signals into the task's own conversation (`task-<id>`)
-and records overdue work once, chasing it automatically when nothing is already scheduled.
-Authenticated `/api/tasks`, `/api/follow-ups`, and `/api/notifications` routes back the Today
-screen. Same demo caveat as routines: production needs a platform scheduler.
-
-Routine and follow-up runs persist the Flue submission id and reattach with `read(submissionId)`
-after a restart. Dispatch uses each occurrence id as its stable idempotency key, so a crash between
-admission and saving the receipt cannot create a duplicate turn. Mutating task tools are Flue durable
-tools and use deterministic operation ids, making replayed PostgreSQL writes idempotent. Completion
-updates use a running-state predicate and the follow-up result plus notification commit in one
-transaction, so duplicate recovery cannot publish twice.
-
-`DATABASE_URL` is required at runtime. Override the model with `VIVID_MODEL`. The old
-`VIVID_RUNTIME_DB` and `VIVID_CONNECTOR_DB` variables are no longer used.
-
-## Deployment
-
-Build and run one Node 22 process:
+| Variable              | Purpose                                                        |
+| --------------------- | -------------------------------------------------------------- |
+| `DATABASE_URL`        | PostgreSQL connection for Flue storage.                        |
+| `VIVID_RUNTIME_TOKEN` | Authority shared only with the application server.             |
+| `VIVID_SERVER_URL`    | Application-server origin for runtime tool calls.              |
+| `EXPLABS_API_KEY`     | Experiential Labs model gateway key.                           |
+| `VIVID_MODEL`         | Optional model selection; defaults to `explabs/glm-5.3-flash`. |
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm --filter @vivid/agent-runtime build
-DATABASE_URL=postgres://... VIVID_RUNTIME_TOKEN=... OPENROUTER_API_KEY=... pnpm --filter @vivid/agent-runtime start
+pnpm --filter @vivid/agent-runtime dev
 ```
 
-The included `Dockerfile` uses Node 22 and exposes port `5173`; set `DATABASE_URL`,
-`OPENROUTER_API_KEY`, `VIVID_RUNTIME_TOKEN`, and (when needed) the Google OAuth variables at
-runtime. The container healthcheck calls unauthenticated `/health`. Run a single replica unless a
-platform scheduler replaces the in-process routine/follow-up tickers. PostgreSQL is the durable
-state that must be backed up; the container filesystem is disposable.
+Development uses port `5173`. `src/db.ts` supplies `@flue/postgres`; Flue runs its own
+idempotent migration at startup. The runtime has no application migration chain and needs no
+`.state/` volume. The older package `.env.example` includes obsolete product-storage and
+Google-Integration guidance; use the variables above and the server's configuration instead.
 
-**Credential warning:** Google OAuth access and refresh tokens are currently stored in plaintext in
-`vivid_credentials`. Encrypting them requires a deliberate key-management decision. See the TODO at
-the storage code site; this cutover does not encrypt them.
+## Server boundary
+
+People use the application server's authenticated `/api/vivid/:threadId` gateway. The server
+checks Thread access and records the Run before forwarding a typed delivery to
+`/agents/vivid/:threadId`. Browsers, phones, and desktop renderers never receive the runtime token.
+`src/app.ts` also serves an unauthenticated `/health` response.
+
+The server owns the Library, Routines, Skills, Input requests, Approvals, Artifacts, and memory.
+Integrations run through Executor; the Computer's Boat adapter is server-owned and was proven
+against real Boat on 3 October 2026. See the domain READMEs and
+[current feature status](../../../docs/14-product-feature-set-and-grok-bot-parity.md) for evidence
+and remaining limits.
+
+## Models and rehearsal
+
+`src/providers/explabs.ts` registers the Experiential Labs gateway with one `setProvider` call.
+Models must be declared there before selecting `explabs/<id>` through `VIVID_MODEL`. Vivid has
+no model retry or fallback layer of its own: the gateway fails over upstreams and Flue handles
+transient retries. Whole responses have `maxAttempts: 1` to avoid replaying completed tools.
+
+`VIVID_MODEL=rehearsal/script` opts into the deterministic rehearsal provider. It calls real
+tools with fixed inputs and reports real receipts; it proves plumbing, not model judgement.
+The reminder scene schedules tomorrow at 09:00 through the real one-off Routine tool. The server
+resolves its local date-time in the Person's saved zone; it fires once and retains its Thread and
+Occurrence. Checked-in scheduler tests cover restart recovery and refusing past times.
+
+## Build and deployment limits
+
+```sh
+pnpm --filter @vivid/agent-runtime build
+pnpm --filter @vivid/agent-runtime start
+```
+
+The build produces `dist/server.mjs`. The checked-in Dockerfile uses Node 22 and exposes port
+`5173`, with a `/health` check. It has not been established as a working whole-workspace image:
+its Node version is below the workspace floor and its staged manifests omit the runtime's
+`@vivid/client-runtime` dependency. Packaging needs an infrastructure review before deployment.
+Remote deployment is disabled. PostgreSQL holds the durable conversation state.
 
 ## Flue documentation
 
-The installed CLI includes all 95 version-matched documentation pages:
+Run these from this package:
 
 ```sh
 pnpm docs
@@ -83,23 +84,5 @@ pnpm exec flue docs search skills
 pnpm exec flue docs read guide/skills
 ```
 
-The current upstream Flue repository and official example skills may be kept locally under the
-root repo's ignored `refs/` directory. They are research inputs, not collaboration deliverables.
-
-## Probe
-
-```sh
-curl http://127.0.0.1:5173/health
-
-curl -X POST http://127.0.0.1:5173/agents/vivid/demo-thread \
-  -H 'Authorization: Bearer local-dev-token' \
-  -H 'Content-Type: application/json' \
-  -d '{"kind":"user","body":"Say hello in one sentence."}'
-```
-
-The Flue agent instance ID maps directly to the product thread ID. The included cron adapter proves
-scheduled dispatch locally; production orchestration, connectors, approvals, tools, and computer
-execution remain outside this cutover.
-
-Flue 2.0.3 predates GLM 5.3 in its bundled model catalog, so the runtime adds that
-single OpenRouter model locally while retaining Flue's built-in OpenRouter transport and auth.
+The CLI bundles version-matched documentation. Optional reference checkouts under the root
+repository's ignored `refs/` directory are research inputs.

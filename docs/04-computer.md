@@ -1,5 +1,7 @@
 # Computer
 
+2026-10-03: The Boat implementation and real-service proof below supersede the earlier Grok Bot mapping; runtime placement, external state sync, egress through a Person’s device and takeover remain planned. Provider prices/specifications record the earlier research, not a fresh quote; current status is in [docs/14](14-product-feature-set-and-grok-bot-parity.md).
+
 ## Thesis
 
 From a public thread, 31 August 2026, answering the question of where an assistant's work should run:
@@ -109,8 +111,8 @@ Running Firecracker ourselves means owning hosts, snapshot storage, networking, 
 and capacity. That is a company, not a feature. With state sync in place the machine is a commodity,
 so rent it.
 
-**Decision (20 Sep 2026): boat.dev, behind one owned boundary.** From its own site and docs, not yet
-exercised by us:
+**Decision (20 Sep 2026): boat.dev, behind one owned boundary. Native provider built 2 Oct 2026.**
+The provider claims below come from Boat’s docs; the real guest proof and its limits follow:
 
 |                 | boat.dev                                                                                    |
 | --------------- | ------------------------------------------------------------------------------------------- |
@@ -129,14 +131,132 @@ processes do not survive a stop. State sync makes all three tolerable: a stop is
 survivable, and the provider is replaceable. Self-run Firecracker is a later cost optimisation at
 fleet scale, not a starting point.
 
-The boundary is one `Context.Service` — create, ensure, stop, exec, copy in and out, desktop URL —
-with the provider behind a Layer. Nothing above it may know which provider is in use. None of the
-provider claims above have been exercised by us yet; the first task is a spike that proves create,
-desktop, stop, resume and a full state round trip on boat.dev.
+`Machine` is the owned `Context.Service`: ensure, status, stop, exec, browse, desktop, and the
+local provider's RFB connection. Select Boat with `VIVID_COMPUTER_PROVIDER=boat`; configure its
+Redacted API key (`VIVID_BOAT_API_KEY`), size and lifetime through Effect Config. Name the paying
+organization with `VIVID_BOAT_ORG` whenever the key's account belongs to one; leave it unset for an
+account that belongs to none, and Boat bills that account. The owner chose this recommended scope:
+`sandbox.create`, `sandbox.read`, `sandbox.update`, `sandbox.stop`, `sandbox.resume`, `sandbox.fork`,
+`sandbox.delete`, `exec`, `file.read`, `file.write`, `desktop`, `ssh`, `host`, `snapshot.read`,
+`snapshot.write`, `account.read`. It covers machine operations and read-only account diagnostics,
+with no account-changing authority: no `environment.*`, no `account.admin`, no `agent.prompt`,
+and never `*`. Vivid's provider uses `sandbox.create`, `sandbox.read`, `sandbox.stop`,
+`sandbox.resume`, `exec`, `file.read`, `file.write` and `desktop` today. The live proof additionally
+uses `sandbox.delete` for cleanup; operator limits/usage diagnostics use `account.read`.
+`sandbox.update`, `sandbox.fork`, `ssh`, `host`, `snapshot.read` and `snapshot.write` are available
+for machine work but have no direct provider calls today; stop/resume own their disk snapshot
+through their respective actions. Boat's
+`full-sandbox` preset leaves out `sandbox.create`, and a key made with it is refused at the first
+machine (`api_key_action_forbidden`), so name the actions. Resume also requires its own
+`sandbox.resume` action; `sandbox.update` does not cover it:
+`boat api-key create <name> --actions sandbox.create,sandbox.read,…`. One durable
+binding and creation intent per Person precedes allocation. Restart recovers the same identity;
+stop waits for disk archival and ensure resumes that snapshot. An unresolved creation intent
+past the replay window fails explicitly rather than buying a second machine.
 
-## Planned: one integrated computer, with the browser inside it
+Vivid uses Boat's shipped desktop and installed `google-chrome-stable`, with the existing
+guest profile and `--force-renderer-accessibility`. Observed default images vary: one included
+Cua Driver 0.23.2 on the wrong desktop session bus, another omitted the driver entirely.
+The adapter therefore installs the official SHA-256-pinned 0.23.2 binary in the guest's
+persistent home and runs its public daemon in the X11-attested desktop panel's session.
+Only Vivid's guest unit and socket are owned; vendor services are untouched. Cold setup needs
+access to the official GitHub release. Standard permissions and the existing-profile grant
+remain explicit. A new daemon invocation discards cached browser refs and consent sessions.
+No nested desktop image is installed. Browser and desktop actions call the driver's CLI
+through Boat's command API and its private daemon socket. Private action JSON is uploaded to a
+temporary private directory and redirected to stdin; full-size PNGs return through the file API. The provider
+returns the readable browser state and tabs, or a PNG with pointer and focused-window title.
+Chrome attachment goes through the native existing-profile permission gate; a denied or missing
+capability is a failure, never a substitute browser profile. Tool arguments follow the real
+driver describes; success shapes are decoded at ingress. Exit-zero error JSON retains its
+typed refusal code and discards potentially private detail text before reaching a Person.
+The CLI's projected action refusals instead expose `effect: refused` and a route, omitting
+the original code; these also fail explicitly, even through a permissive JSON decoder.
 
-**Status: planned, not built. Recorded here so the shape is settled before anything is written.**
+### Browser input on Linux
+
+`browser_input_trust_unavailable` means this driver cannot deliver the requested browser input
+while keeping Chrome in the background. In Cua Driver 0.23.2, Linux standalone Chrome clicks
+are refused because trusted CDP mouse input activates the native window. This is an unconditional
+platform restriction, not a missing permission, launch flag, or preparation step. The
+[version-matched Linux source](https://github.com/trycua/cua/blob/cua-driver-rs-v0.23.2/libs/cua-driver/rust/crates/platform-linux/src/browser_platform.rs)
+defines the restriction. The full refusal text remains in the daemon response's content;
+the CLI projects it to `effect: refused`, route `trusted_input`, and escalation `route_unavailable`.
+
+`browser_prepare` authorizes the existing profile and enables/attests its loopback DevTools
+endpoint. On the real guest it opened Chrome's fixed setup page, toggled remote debugging and
+closed that page, preserving the profile and process. X11 and AT-SPI permissions were healthy;
+Chrome kept its existing user-data directory and exposed port 9222. Preparation enabled page
+inspection and navigation, but the trusted click still refused afterward. Neither driver help
+nor tool descriptions offer a flag to override Linux's background-input restriction.
+
+Vivid therefore sends clicks through the driver's foreground desktop `click` tool, on the same
+browser window the Person can watch. A fresh semantic page read first proves one accessible
+control; a fresh window screenshot and AT-SPI snapshot then supply its enabled web-content
+bounds. Screen bounds become window-local screenshot coordinates, accounting for capture
+scaling. Missing, ambiguous, disabled or off-window targets fail before input. The Person or
+Vivid must scroll an off-window target into view before clicking. Browser chrome with the same
+label cannot become the page target. No DOM events are synthesized, and fresh browser state
+always follows input. A sole tab in an exactly bound window proves selection even during a
+native-title update; multiple tabs still require explicit active-tab proof.
+
+Typing uses `browser_type` with `replace: true`: unlike clicks, this trusted CDP text route
+worked on the real image. Vivid independently reads the exact field value afterward and fails
+an unconfirmed replacement, without retrying input. Clearing may read back as the driver's
+null empty value. Driver delivery receipts alone never establish the intended result.
+
+Running state distinguishes `screen: Relay` (offline Docker) from `screen: Viewer` (Boat's
+short-lived token-gated streaming page). `GetComputer` issues fresh viewer authority. Clients
+must refresh it before expiry and use a sandboxed frame. The API key remains server-only.
+Desktop actions use the same Gate and takeover recheck as browser actions: Look, Move, Scroll
+and Wait are reads; Click, Drag, Type and Press follow the existing write policy. The runtime's
+`use_desktop` returns real image content through Flue's public sandbox-tool API, alongside
+bounded human-readable metadata. Docker remains an offline stand-in and explicitly refuses
+desktop actions; it supports the expanded browser action vocabulary.
+
+Fake HTTP integration tests exercise durable allocation recovery, restart/resume, gated viewer
+issuance, native tools, response decoding, private input transport and uncertain-command handling.
+They reject undeclared driver arguments with exit-zero `invalid_arguments`, return actual
+0.23.2 desktop/window/action shapes, and require the prepared session for later browser reads.
+Runtime tests verify PNG bytes survive the text budget. On 2026-10-03, the opt-in live test
+passed against a real default Boat machine with a scoped key, isolated PostgreSQL and a
+30-minute lifetime. It created the machine (1.65s), issued a token-gated viewer (0.45s), fetched
+a real PNG and cursor (4.24s), launched/attached Chrome and opened/read Example Domain
+(16.05s), then read again (5.98s). It wrote a file, archived the disk (20.64s), resumed the
+same provider identity (2.85s), recovered the exact file, issued new viewer authority (1.81s)
+and looked again (3.52s). Automatic cleanup requested deletion (0.18s). Total suite wall time
+was 61.95s. Run with `VIVID_TEST_BOAT_LIVE=1`, `VIVID_TEST_DATABASE_URL` and the server-only
+key; cleanup additionally needs `sandbox.delete` and Boat's exact-id delete confirmation header.
+The proof's original key lacked `sandbox.resume`; the successful run used a temporary key
+with that action. A stalled pooled TLS connection was also observed during an earlier run.
+Boat requests now close their HTTP connections, without retrying uncertain commands; private
+guest cleanup and live deletion have independent interruptible deadlines.
+
+The extended live proof passed on 2026-10-03 with the owner-chosen recommended scope above.
+It opened Example Domain (8.31s), read again (2.75s), scrolled its current “Learn more” link
+into view (4.37s), and clicked through to IANA's Example Domains page (5.74s), asserting the
+URL actually changed. It opened Selenium's public web form (5.27s), typed a known value
+into “Text input” and read it back (4.60s), replaced it and read back the exact replacement
+(5.25s), then cleared and read back the empty value (5.49s). Archive/resume and exact disk-marker
+retention also passed; cleanup accepted deletion (0.14s). Total suite wall time was 68.15s.
+Only one live suite was executed for this extension; a preceding launcher failed before
+finding the checkout or creating a machine. Strict fake tests cover the Linux click refusal,
+scaled fresh-window coordinates, same-label browser chrome, missing bounds, failed text
+replacement, snapshot-bound refs, and selection during native-title lag. Raw describes, full
+refusal content, preparation receipts, doctor/permissions, process/endpoint evidence and a
+visible form screenshot were retained in the ignored review artifacts.
+
+Viewer issuance is proven; embedding and interactive viewing in clients are untested here.
+Signed-in cookies/profile retention, tab manipulation and provider recovery under concurrent
+servers are not proven by this live suite. Driver mutation receipts
+attest delivery, not the intended effect; fresh state follows every action. Client support for
+the screen union belongs to its own lane. Flue placement and external state sync remain planned.
+
+## Runtime on the Computer: planned
+
+**Status: native browser and desktop backend built; runtime placement and external state sync planned.**
+The browser and desktop now share Boat’s shipped guest. Running Vivid’s Flue runtime inside that
+guest remains a separate step. The intended shape follows.
 
 The Computer is not a harness the agent calls out to. It is the machine the agent already lives on
 — `CONTEXT.md`: "the persistent private machine Vivid operates: filesystem, processes, browser
@@ -174,3 +294,29 @@ sessions, reachable for human takeover.
 `docs/09-platform-architecture.md` sets the sequence and it still holds: run one real agent loop,
 prove durability across a restart, _then_ give it the real machine. The Computer lands on a backend
 whose auth and scoping are already verified — not beside one.
+
+## The Person's own browser
+
+The Person target means the retained pages in their signed-in desktop app, not the rest of their
+computer. Existing requests still default to Vivid's cloud Computer. A Person target never falls
+back to that Computer. Without a live device subscription it fails `NoDeviceConnected`.
+
+Shared target/device contracts and the server's authenticated request/receipt channel are built.
+Real PostgreSQL tests with a fake device prove selected-subscription delivery, receipt authority,
+expiry and uncertain disconnects without replay. This added server/desktop hop is a forced
+deviation from the reference's local model loop; its answer deadline is separate from native budgets.
+
+The native port is blocked. The recovered browser service creates target tokens and sends them
+with CDP input, but the corresponding enforcement receiver and Person-input attribution are not
+recovered. The exploratory Electron proof opened/read a page, then its CDP click answered Stopped.
+The guessed matcher/driver was removed. The public Person route fails closed even with a live
+subscriber; neither `on: 'yours'` nor expanded runtime abilities ship.
+
+`packages/contracts/src/browsers.ts` reserves access-request scopes, control status and Run Stop.
+These are not implemented grants or working Stop handlers. App/site access remains separate from
+an action Approval. Setup/execute, native budgets, grant persistence and Run stop markers still
+need their reference ports. Existing `pages.stop(tab)` stops loading only.
+
+Reference: browser `browser-service.mjs::ai/ec/tc/JA/Rs/wB/mJ/Dne/a7e`, main
+`executeCdpForBrowserUse/Yte/turnEnded`, and Windows `helper_transport.js::request/D/F/U`.
+The missing input-token receiver must be recovered before desktop control can ship.

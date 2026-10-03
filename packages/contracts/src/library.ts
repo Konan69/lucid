@@ -1,6 +1,14 @@
 import { Schema } from 'effect'
 import { LibraryFolderId, LibraryItemId } from './identity.js'
 
+/**
+ * Which shelf something is on. `Mine` is the Person's own and follows them into every workspace.
+ * `Company` is the shelf every Member reads and Vivid searches in every Member's Threads. A
+ * personal space has only `Mine`.
+ */
+export const LibraryShelf = Schema.Literals(['Mine', 'Company'] as const)
+export type LibraryShelf = typeof LibraryShelf.Type
+
 /** Closed Library processing lifecycle values encoded by the current HTTP protocol. */
 export const LibraryItemStatus = Schema.Literals(['processing', 'ready', 'failed'] as const)
 
@@ -18,6 +26,7 @@ export const LibraryItem = Schema.Struct({
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
   folderId: Schema.NullOr(LibraryFolderId),
+  shelf: LibraryShelf,
 }).annotate({ identifier: 'LibraryItem', title: 'Library item' })
 /** Decoded Library item. */
 export interface LibraryItem extends Schema.Schema.Type<typeof LibraryItem> {}
@@ -30,6 +39,7 @@ export const LibraryFolder = Schema.Struct({
   createdAt: Schema.Number,
   updatedAt: Schema.Number,
   itemCount: Schema.Number,
+  shelf: LibraryShelf,
 }).annotate({ identifier: 'LibraryFolder', title: 'Library folder' })
 /** Decoded Library folder. */
 export interface LibraryFolder extends Schema.Schema.Type<typeof LibraryFolder> {}
@@ -44,7 +54,10 @@ export const LibrarySearchResult = Schema.Struct({
   score: Schema.Number,
 })
 /** Optional folder filter for Library list routes. */
-export const LibraryListQuery = Schema.Struct({ folderId: Schema.optionalKey(LibraryFolderId) })
+export const LibraryListQuery = Schema.Struct({
+  shelf: LibraryShelf,
+  folderId: Schema.optionalKey(LibraryFolderId),
+})
 /** Source-name query for Library content lookup. */
 export const LibrarySourceQuery = Schema.Struct({ name: Schema.String })
 /** Library item path parameters. */
@@ -68,6 +81,7 @@ export const LibraryUploadMetadata = Schema.Struct({
   mimeType: Schema.Literals(['application/pdf', 'text/markdown', 'text/plain'] as const),
   size: Schema.Number,
   folderId: Schema.NullOr(LibraryFolderId),
+  shelf: LibraryShelf,
 })
 /** Library upload response. */
 export const LibraryUploadResponse = Schema.Struct({
@@ -85,6 +99,7 @@ export const LibrarySearchResponse = Schema.Struct({ results: Schema.Array(Libra
 /** Library folder creation request. */
 export const CreateLibraryFolderRequest = Schema.Struct({
   name: Schema.String,
+  shelf: LibraryShelf,
   parentId: Schema.optionalKey(Schema.NullOr(LibraryFolderId)),
 })
 /** Library folder patch request. */

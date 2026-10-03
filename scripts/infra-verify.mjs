@@ -24,7 +24,7 @@ const Target = Schema.Struct({
   key: Schema.Literals(['local', 'preview', 'production']),
   runnable: Schema.Boolean,
   destroyOnTeardown: Schema.Boolean,
-  database: Schema.Literals(['docker', 'required']),
+  database: Schema.Literals(['docker', 'railway', 'required']),
   stackName: Schema.String,
   stage: Schema.String,
   postgresImageId: Schema.String,
@@ -44,12 +44,15 @@ const PackageDocument = Schema.Struct({
   scripts: Schema.Struct({
     'infra:dev': Schema.String,
     'infra:destroy': Schema.String,
-    'infra:deploy': Schema.optionalKey(Schema.String),
+    'infra:deploy': Schema.String,
     'infra:preview': Schema.optionalKey(Schema.String),
   }),
 })
 const decodeTargetDocument = Schema.decodeUnknownSync(Schema.fromJsonString(TargetDocument))
 const decodePackageDocument = Schema.decodeUnknownSync(Schema.fromJsonString(PackageDocument))
+const decodeContainerCommand = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Array(Schema.String)),
+)
 const source = (root, relativePath) =>
   NodeFS.readFileSync(NodePath.join(root, relativePath), 'utf8')
 
@@ -78,9 +81,9 @@ export const validateTargets = (targets) => {
   assert.equal(targets.local.runnable, true, 'local must be runnable')
   assert.equal(targets.local.database, 'docker', 'local must own Docker PostgreSQL')
   assert.equal(targets.preview.runnable, false, 'preview remote deployment must be disabled')
-  assert.equal(targets.production.runnable, false, 'production remote deployment must be disabled')
+  assert.equal(targets.production.runnable, true, 'production must be runnable on Railway')
   assert.equal(targets.preview.database, 'required', 'preview must require DATABASE_URL')
-  assert.equal(targets.production.database, 'required', 'production must require DATABASE_URL')
+  assert.equal(targets.production.database, 'railway', 'production must own Railway PostgreSQL')
   assert.equal(targets.production.destroyOnTeardown, false, 'production teardown must be protected')
 
   for (const property of physicalNameKeys) {
@@ -124,9 +127,12 @@ const assertEnvironmentWiring = (root, stackSource) => {
   const runtimeExample = source(root, 'packages/agent/runtime/.env.example')
   for (const match of runtimeExample.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)) runtimeNames.add(match[1])
 
+  // A name is wired when either graph sets it: the local process graph or the Railway graph.
+  // `VIVID_WEB_DIST` exists only where the server serves the built web app, which is hosted only.
+  const wiringSource = `${stackSource}\n${source(root, 'infra/railway.ts')}`
   for (const name of new Set([...serverNames, ...runtimeNames])) {
     assert.match(
-      stackSource,
+      wiringSource,
       new RegExp(`\\b${name}\\s*:`),
       `${name} is read by an app but not wired by Alchemy`,
     )
@@ -155,10 +161,11 @@ const assertPackagePolicy = (packageDocument) => {
     /VIVID_DEPLOY_TARGET=local/,
     'infra:destroy must be local-only',
   )
-  assert.equal(
+  // A hosted deploy creates billed resources, so the script must name its target explicitly.
+  assert.match(
     packageDocument.scripts['infra:deploy'],
-    undefined,
-    'remote deploy script must not exist',
+    /VIVID_DEPLOY_TARGET=production .*alchemy deploy --stage production/,
+    'infra:deploy must deploy only the production target',
   )
   assert.equal(
     packageDocument.scripts['infra:preview'],
@@ -170,8 +177,15 @@ const assertPackagePolicy = (packageDocument) => {
 const assertStackPolicy = (stackSource, infrastructureSources) => {
   assert.doesNotMatch(
     infrastructureSources,
-    /alchemy\/(Cloudflare|Railway|Neon)/,
+    /alchemy\/(Cloudflare|Neon)/,
     'removed cloud providers must not be imported',
+  )
+  // Railway is the one hosted provider. It may be loaded only for a Railway target, so
+  // `alchemy dev` on the local target never needs a Railway credential.
+  assert.match(
+    stackSource,
+    /deployTarget\.database === 'railway' \? railwayStack\(\) : localStack\(\)/,
+    'Railway providers must load only for a Railway target',
   )
   assert.doesNotMatch(stackSource, /Alchemy\.remote\s*\(/, 'local stack must not opt into live AWS')
   assert.doesNotMatch(
@@ -249,6 +263,37 @@ const assertMigrationPolicy = (migrationSource) => {
   assert.doesNotMatch(migrationSource, /\bgenerate\b/, 'startup must never generate migrations')
 }
 
+/**
+ * Railway startCommand overrides image CMD. Verify their parity so the offline image proof
+ * exercises the deployed entry, and require the root context that installs workspace packages.
+ * Alchemy's context source uploads these Dockerfiles; it does not bundle the runtime itself.
+ */
+const assertContainerPolicy = (root) => {
+  const railwaySource = source(root, 'infra/railway.ts')
+  for (const [name, dockerfilePath] of [
+    ['Runtime', 'packages/agent/runtime/Dockerfile'],
+    ['Server', 'apps/server/Dockerfile'],
+  ]) {
+    const declaration = railwaySource.match(
+      new RegExp(`Railway\\.Service\\('${name}', \\{([\\s\\S]*?)^  \\}\\)`, 'm'),
+    )
+    assert.notEqual(declaration, null, `${name} must declare a Railway Service`)
+    const block = declaration[1]
+    assert.ok(block.includes("context: '.'"), `${name} must upload the workspace root`)
+    assert.ok(
+      block.includes(`dockerfilePath: '${dockerfilePath}'`),
+      `${name} must select its checked-in Dockerfile`,
+    )
+    const entry = source(root, dockerfilePath).match(/^CMD (\[.*\])$/m)
+    assert.notEqual(entry, null, `${name} Dockerfile must declare its production command`)
+    const command = decodeContainerCommand(entry[1]).join(' ')
+    assert.ok(
+      block.includes(`startCommand: '${command}'`),
+      `${name} Railway startCommand must match image CMD`,
+    )
+  }
+}
+
 const assertRepositoryPolicy = (root) => {
   assert.equal(
     NodeFS.existsSync(NodePath.join(root, 'apps/web/wrangler.jsonc')),
@@ -289,6 +334,7 @@ export const verifyInfrastructure = ({ root = defaultRoot } = {}) => {
   assertDatabasePolicy(databaseSource)
   assertEnvironmentWiring(root, stackSource)
   assertMigrationPolicy(source(root, 'scripts/migrate.mjs'))
+  assertContainerPolicy(root)
   assertRepositoryPolicy(root)
   return { targets: targetKeys.length, serverEnvironmentVariables: 7, result: 'ok' }
 }

@@ -1,4 +1,12 @@
 import { build } from 'esbuild'
+import * as NodeFSP from 'node:fs/promises'
+import * as NodePath from 'node:path'
+import * as NodeURL from 'node:url'
+
+const desktopDirectory = NodeURL.fileURLToPath(new URL('..', import.meta.url))
+const rendererDirectory = NodePath.resolve(desktopDirectory, '../web/dist')
+// Fail before replacing staged assets when the renderer has not been built.
+await NodeFSP.access(NodePath.join(rendererDirectory, 'index.html'))
 
 /**
  * Bundle main and preload as CommonJS because Electron loads both directly. The preload stays one
@@ -20,6 +28,11 @@ await build({
   entryPoints: ['src/main/main.ts'],
   outfile: 'dist/main/main.cjs',
 })
+
+// Packaging consumes this snapshot, so later web-lane builds cannot change a bundle mid-package.
+await NodeFSP.rm('dist/renderer', { recursive: true, force: true })
+await NodeFSP.cp(rendererDirectory, 'dist/renderer', { recursive: true })
+await NodeFSP.copyFile('../../packages/design/tokens/src/tokens.css', 'dist/tokens.css')
 
 await build({
   ...shared,

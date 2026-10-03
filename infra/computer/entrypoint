@@ -1,0 +1,60 @@
+#!/bin/bash
+set -euo pipefail
+
+# No desktop/browser process starts until the provider has installed the namespace firewall.
+mkdir -p /tmp/vivid "$HOME/.config/chromium"
+mkfifo /tmp/vivid/network
+read -r -n 5 < /tmp/vivid/network
+rm /tmp/vivid/network
+
+# Stopped containers cannot own these profile locks; all browser data remains in the home volume.
+rm -f "$HOME/.config/chromium/SingletonLock" "$HOME/.config/chromium/SingletonSocket" \
+  "$HOME/.config/chromium/SingletonCookie" "$HOME/.config/chromium/DevToolsActivePort"
+mkfifo /tmp/vivid/display
+Xvfb :99 -screen 0 1280x800x24 -nolisten tcp -displayfd 3 3>/tmp/vivid/display &
+display_pid=$!
+read -r < /tmp/vivid/display
+rm /tmp/vivid/display
+openbox --sm-disable &
+window_pid=$!
+x11vnc -display :99 -localhost -rfbport 5900 -forever -shared -nopw &
+vnc_pid=$!
+PYTHONPATH=/opt/vivid websockify \
+  --auth-plugin screen.ScreenAuth --auth-source /tmp/vivid/authorization 6080 127.0.0.1:5900 &
+screen_pid=$!
+# Container seccomp, namespaces, dropped capabilities and read-only root are the local isolation.
+# Chromium's setuid sandbox cannot escalate under no-new-privileges; no host CDP port is published.
+# Chromium BackgroundModeManager's keep-alive switch preserves CDP when the Person closes the last window.
+# The driver can then create a page; explicit CDP Browser.close still flushes the profile and exits.
+chromium --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run \
+  --no-default-browser-check --disable-background-networking --disable-quic --keep-alive-for-test \
+  --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 \
+  --user-data-dir="$HOME/.config/chromium" --window-size=1280,800 about:blank 2>/tmp/vivid/browser.log &
+browser_pid=$!
+
+# Signal only child PIDs captured above, and let Chromium flush cookies before the container exits.
+shutdown() {
+  kill -TERM "$screen_pid" "$vnc_pid" "$window_pid" "$display_pid" 2>/dev/null || true
+  wait "$screen_pid" "$vnc_pid" "$window_pid" "$display_pid" 2>/dev/null || true
+}
+# CDP close, then waiting for the captured browser PID, is the profile persistence receipt.
+stop() {
+  trap - EXIT
+  if ! timeout --kill-after=2s 10s node /opt/vivid/shutdown.mjs; then
+    kill -TERM "$browser_pid" 2>/dev/null || true
+    shutdown
+    exit 1
+  fi
+  if ! wait "$browser_pid"; then
+    shutdown
+    exit 1
+  fi
+  shutdown
+  exit 0
+}
+trap stop TERM INT
+trap shutdown EXIT
+wait -n "$browser_pid" "$screen_pid" "$vnc_pid" "$window_pid" "$display_pid"
+
+# Losing any desktop component is a failure, even when that component exits successfully.
+exit 1

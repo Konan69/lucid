@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "invitation_pending_idx" ON "invitation" ("companyId","email") WHERE "status" = 'pending';

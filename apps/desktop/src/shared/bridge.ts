@@ -1,8 +1,16 @@
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
+import { ServerAddress, ServerSettings, ServerChoice } from './settings.ts'
+import {
+  BrowserState,
+  PagesRequest,
+  PagesResponse,
+  PageDownloadRefused,
+  type VividPagesBridge,
+} from './pages.ts'
 
 /** The one renderer global exposed by the sandboxed preload. */
-export const BRIDGE_NAMESPACE = 'vividDesktop'
+export const BRIDGE_NAMESPACE = 'vivid'
 /** Main and preload use one invoke channel so the tagged request union is the channel allowlist. */
 export const BRIDGE_INVOKE_CHANNEL = 'vivid:desktop:invoke'
 /** Main and preload use one event channel so every event is decoded by the same closed union. */
@@ -36,23 +44,51 @@ export const ColorSchemeState = Schema.Struct({
 })
 export interface ColorSchemeState extends Schema.Schema.Type<typeof ColorSchemeState> {}
 
-/** Every renderer-to-main request is a closed, schema-decoded variant. */
+/** Only browser-safe destinations may be handed to the operating system. */
+export const ExternalUrl = Schema.String.check(
+  Schema.makeFilter(
+    (value) => {
+      if (!URL.canParse(value)) return false
+      const url = new URL(value)
+      return (
+        (url.protocol === 'http:' || url.protocol === 'https:') &&
+        url.username === '' &&
+        url.password === ''
+      )
+    },
+    { message: 'Expected an HTTP(S) external URL' },
+  ),
+)
+
+/** Every renderer-to-main capability and argument is schema-decoded in main. */
 export const BridgeRequest = Schema.TaggedUnion({
-  GetAppInfo: {},
-  GetColorSchemeState: {},
+  GetAppVersion: {},
+  GetServer: {},
+  ChooseServer: { origin: ServerAddress },
+  ForgetServer: {},
+  OpenExternal: { url: ExternalUrl },
+  Pages: { request: PagesRequest },
 })
 export type BridgeRequest = typeof BridgeRequest.Type
 
-/** Every invoke result names the request it answers, preventing response-shape confusion. */
+/** Results name the operation they answer; persistence failure is never reported as Chosen. */
 export const BridgeResponse = Schema.TaggedUnion({
-  AppInfo: { value: AppInfo },
-  ColorSchemeState: { value: ColorSchemeState },
+  AppVersion: { value: NonEmptyString },
+  Server: { value: ServerSettings },
+  ServerChoice: { value: ServerChoice },
+  Forgotten: {},
+  ExternalOpened: {},
+  SettingsSaveFailed: {},
+  ExternalOpenFailed: {},
+  Pages: { value: PagesResponse },
 })
 export type BridgeResponse = typeof BridgeResponse.Type
 
 /** Push messages use a separate closed union because they have no pending request. */
 export const BridgeEvent = Schema.TaggedUnion({
   ColorSchemeChanged: { value: ColorSchemeState },
+  PagesChanged: { value: BrowserState },
+  PageDownloadRefused: { value: PageDownloadRefused },
 })
 export type BridgeEvent = typeof BridgeEvent.Type
 
@@ -65,7 +101,7 @@ export class InvalidBridgeMessage extends Schema.TaggedError<InvalidBridgeMessag
   { title: 'Invalid desktop bridge message' },
 ) {}
 
-const decodeRequest = Schema.decodeUnknownEffect(BridgeRequest)
+const decodeRequest = Schema.decodeUnknownEffect(BridgeRequest, { onExcessProperty: 'error' })
 const decodeResponse = Schema.decodeUnknownEffect(BridgeResponse)
 const decodeEventResult = Schema.decodeUnknownResult(BridgeEvent)
 const encodeRequest = Schema.encodeEffect(BridgeRequest)
@@ -102,9 +138,41 @@ export const encodeBridgeResponse = (response: BridgeResponse) =>
 /** Encode a trusted event before sending it to the isolated renderer. */
 export const encodeBridgeEvent = (event: BridgeEvent) => encodeEvent(event)
 
-/** The only API made visible to renderer JavaScript. */
+/** The local chooser and web shell import this type without Electron or filesystem authority. */
 export interface VividDesktopBridge {
-  readonly getAppInfo: () => Promise<AppInfo>
-  readonly getColorSchemeState: () => Promise<ColorSchemeState>
-  readonly onColorSchemeChanged: (listener: (state: ColorSchemeState) => void) => () => void
+  readonly pages: VividPagesBridge
+  readonly server: {
+    readonly get: () => Promise<ServerSettings>
+    readonly choose: (origin: string) => Promise<ServerChoice>
+    readonly forget: () => Promise<void>
+  }
+  readonly getAppVersion: () => Promise<string>
+  readonly openExternal: (url: string) => Promise<void>
 }
+
+export { ServerSettings, ServerChoice } from './settings.ts'
+export {
+  BrowserState,
+  Page,
+  ShowingTab,
+  PageLoadFailure,
+  PageFavicon,
+  Tab,
+  PageInput,
+  PageRectangle,
+  PagePlacement,
+  PageDownloadRefused,
+  PageMissing,
+  PageAddressRefused,
+  PageUnavailable,
+  PageLimitReached,
+  PagePositionInvalid,
+  PageReopenEmpty,
+  PageStorageClearFailed,
+  PageCacheClearFailed,
+  type VividPagesBridge,
+  type PageOption,
+} from './pages.ts'
+
+/** Selected app documents get page authority; chooser-only server settings remain separate. */
+export type VividAppBridge = Pick<VividDesktopBridge, 'getAppVersion' | 'pages'>

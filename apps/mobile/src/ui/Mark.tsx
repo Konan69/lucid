@@ -85,7 +85,7 @@ export function ServiceMark({ service, size = 24 }: { service: string; size?: nu
           ))}
         </Svg>
       ) : (
-        <Plug size={size} color={c['ink-2']} />
+        <Plug size={size} color={c['foreground-secondary']} />
       )}
     </View>
   )

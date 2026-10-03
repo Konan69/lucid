@@ -1,11 +1,12 @@
 import * as NodePath from 'node:path'
+import * as NodeURL from 'node:url'
 import * as NodeProcess from 'node:process'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
-import { app, protocol, screen, type BrowserWindow } from 'electron'
+import { app, protocol, screen, session, type BrowserWindow, type Session } from 'electron'
 import { registerBridge } from './bridge.ts'
-import { loadDevelopmentRendererUrl } from './config.ts'
+import { Browser } from './browser.ts'
 import {
   parseVividUrl,
   VIVID_PROTOCOL,
@@ -24,9 +25,23 @@ import {
 import { ColorSchemeController } from './theme.ts'
 import { loadThemeSurfaces } from './tokens.ts'
 import { RendererSource, createMainWindow, loadRenderer, openExternalUrl } from './window.ts'
-import { AppInfo, type DesktopPlatform } from '../shared/bridge.ts'
+import {
+  AppInfo,
+  BRIDGE_EVENT_CHANNEL,
+  BridgeEvent,
+  encodeBridgeEvent,
+  type DesktopPlatform,
+} from '../shared/bridge.ts'
+import { PageUnavailable } from '../shared/pages.ts'
+import { DesktopSettings, settingsLayer } from './settings.ts'
+import { registerAppProxy } from './proxy.ts'
+import { secureSession } from './session.ts'
+import { isAllowedBridgeRequest } from './security.ts'
+import { ServerSettings } from '../shared/settings.ts'
 
 const PLACEMENT_FILE = 'window-placement.json'
+// The workspace package name is scoped; native application identity and userData must use Vivid.
+app.setName('Vivid')
 const knownPlatform = Schema.decodeUnknownOption(
   Schema.Literals(['darwin', 'win32', 'linux'] as const),
 )
@@ -95,16 +110,6 @@ function themeTokensPath(): string {
     : NodePath.resolve(__dirname, '../../../../packages/design/tokens/src/tokens.css')
 }
 
-/** Build the renderer source without exposing a service origin to renderer JavaScript. */
-const rendererSource = Effect.fn('DesktopMain.rendererSource')(function* () {
-  if (app.isPackaged) {
-    return RendererSource.cases.Packaged.make({
-      file: NodePath.join(NodeProcess.resourcesPath, 'web', 'dist', 'index.html'),
-    })
-  }
-  return RendererSource.cases.Development.make({ url: yield* loadDevelopmentRendererUrl() })
-})
-
 /** Validate runtime-owned strings before publishing them through the bridge. */
 const appInfo = Effect.fn('DesktopMain.appInfo')(function* () {
   const appVersion = yield* decodeNonEmptyString(app.getVersion()).pipe(
@@ -128,6 +133,31 @@ function runNonFatal(program: Effect.Effect<void, object>, message: string): voi
   )
 }
 
+/** Page events target only their owning app window; guests never receive a bridge event channel. */
+function createBrowser(window: BrowserWindow, pagesSession: Session): Browser {
+  return new Browser({
+    window,
+    session: pagesSession,
+    run: (program) => {
+      void Effect.runPromise(program)
+    },
+    publish: (value) => {
+      if (!window.webContents.isDestroyed())
+        window.webContents.send(
+          BRIDGE_EVENT_CHANNEL,
+          encodeBridgeEvent(BridgeEvent.cases.PagesChanged.make({ value })),
+        )
+    },
+    downloadRefused: (value) => {
+      if (!window.webContents.isDestroyed())
+        window.webContents.send(
+          BRIDGE_EVENT_CHANNEL,
+          encodeBridgeEvent(BridgeEvent.cases.PageDownloadRefused.make({ value })),
+        )
+    },
+  })
+}
+
 /**
  * Finish startup after Electron is ready: decode configuration and disk state, construct one window,
  * and install bridge handlers. Placement failure is deliberately recoverable because geometry is a
@@ -135,10 +165,29 @@ function runNonFatal(program: Effect.Effect<void, object>, message: string): voi
  */
 const boot = Effect.fn('DesktopMain.boot')(function* () {
   registerProtocolClient()
-  installApplicationMenu(platform)
 
   const surfaces = yield* loadThemeSurfaces(themeTokensPath())
-  const renderer = yield* rendererSource()
+  const settings = yield* DesktopSettings
+  let serverSettings = yield* settings.get
+  const root = app.isPackaged
+    ? NodePath.join(NodeProcess.resourcesPath, 'web', 'dist')
+    : NodePath.resolve(__dirname, '../renderer')
+  const chooserPath = NodePath.join(root, 'chooser.html')
+  const chooserUrl = NodeURL.pathToFileURL(chooserPath).href
+  const desktopSession = session.fromPartition('persist:vivid')
+  /** Protocol, navigation, permissions, and IPC follow the same durable selection. */
+  const renderer = (): RendererSource =>
+    ServerSettings.match<RendererSource>(serverSettings, {
+      NoServer: () => RendererSource.cases.Chooser.make({ path: chooserPath }),
+      Server: ({ origin }) => RendererSource.cases.Server.make({ origin }),
+    })
+  secureSession(desktopSession, () => serverSettings)
+  registerAppProxy({
+    root,
+    session: desktopSession,
+    server: () => serverSettings,
+    run: (program) => Effect.runPromise(program),
+  })
   const information = yield* appInfo()
   const placementPath = NodePath.join(app.getPath('userData'), PLACEMENT_FILE)
   const storedPlacement = Option.getOrElse(
@@ -151,20 +200,58 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
     () => defaultWindowPlacement,
   )
   const colorScheme = new ColorSchemeController(surfaces)
+  let browser = Option.none<Browser>()
+  const pagesSession = session.fromPartition('persist:vivid-pages')
 
-  registerBridge(
-    {
-      getAppInfo: () => information,
-      getColorSchemeState: () => colorScheme.getState(),
-    },
-    { run: (program) => Effect.runPromise(program) },
+  /** A different server, or none: every page closes and the window loads what that means. */
+  const serverChanged = (value: ServerSettings): void => {
+    Option.map(browser, (available) => available.reset())
+    serverSettings = value
+    // Complete invoke before replacing the document that owns its pending Promise.
+    setImmediate(() =>
+      Option.map(mainWindow, (window) =>
+        runNonFatal(loadRenderer(window, renderer()), 'desktop: renderer failed to load'),
+      ),
+    )
+  }
+
+  // The menu is the one place a Person can leave a server: the app's own document is deliberately
+  // refused that request over the bridge, so before this the only way was to delete a settings file.
+  installApplicationMenu(platform, () =>
+    runNonFatal(
+      settings.forget.pipe(Effect.map(serverChanged)),
+      'desktop: the server could not be forgotten',
+    ),
   )
+
+  registerBridge({
+    handlers: {
+      pages: (request) =>
+        Option.match(browser, {
+          onNone: () => Effect.fail(new PageUnavailable({})),
+          onSome: (available) => available.handle(request),
+        }),
+      getAppVersion: () => information.appVersion,
+      settings,
+      openExternal: openExternalUrl,
+      onServerChanged: serverChanged,
+    },
+    runtime: { run: (program) => Effect.runPromise(program) },
+    isTrustedSender: (id, url, request) =>
+      Option.exists(
+        mainWindow,
+        (window) =>
+          window.webContents.id === id &&
+          isAllowedBridgeRequest(url, serverSettings, chooserUrl, request),
+      ),
+  })
 
   const createWindow = (): void => {
     const window = createMainWindow({
       platform,
       colorScheme,
       renderer,
+      session: desktopSession,
       placement,
       onExternalUrl: (url) =>
         runNonFatal(openExternalUrl(url), 'desktop: failed to open external URL'),
@@ -182,10 +269,12 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
       },
     })
     mainWindow = Option.some(window)
+    browser = Option.some(createBrowser(window, pagesSession))
     window.on('closed', () => {
       mainWindow = Option.none()
+      browser = Option.none()
     })
-    runNonFatal(loadRenderer(window, renderer), 'desktop: renderer failed to load')
+    runNonFatal(loadRenderer(window, renderer()), 'desktop: renderer failed to load')
   }
 
   createWindowAction = Option.some(createWindow)
@@ -225,7 +314,11 @@ if (!hasSingleInstanceLock) {
     try: () => app.whenReady(),
     catch: () => new DesktopRuntimeInvalid({ field: 'readiness' }),
   }).pipe(
-    Effect.flatMap(() => boot()),
+    Effect.flatMap(() =>
+      boot().pipe(
+        Effect.provide(settingsLayer(NodePath.join(app.getPath('userData'), 'settings.json'))),
+      ),
+    ),
     Effect.matchEffect({
       onFailure: () =>
         Effect.sync(() => {

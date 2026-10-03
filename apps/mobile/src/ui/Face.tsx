@@ -1,43 +1,46 @@
-import { useEffect, useId } from 'react'
+import { useId } from 'react'
 import Svg, { Circle, Defs, RadialGradient, Rect, Stop } from 'react-native-svg'
-import Animated, {
-  Easing,
-  ReduceMotion,
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-} from 'react-native-reanimated'
+import Animated, { cubicBezier, useReducedMotion } from 'react-native-reanimated'
 import { nativeMetrics as m } from '@vivid/tokens/native'
 import { faceGeometry, type FaceMood } from '@vivid/marks'
 import { useTheme } from '../theme'
 
+/** The web face's own curve, so the tilt settles the same way on both surfaces. */
+const TILT_CURVE = cubicBezier(0.2, 0, 0, 1)
+
 /**
- * Vivid's face, drawn as real SVG so Reanimated can carry the tilt between moods on the UI thread.
- * The proportions and the tilt angles come from `@vivid/marks`, the same source the web face
- * reads, so the two surfaces show one face rather than two similar ones.
+ * Vivid's face, drawn as real SVG. The proportions and the tilt angles come from `@vivid/marks`,
+ * the same source the web face reads, so the two surfaces show one face rather than two similar
+ * ones.
+ *
+ * It is drawn in the theme's primary, with eyes in the ink that theme sets on its primary, so the
+ * face belongs to whichever family is in force and its eyes hold their contrast in all of them.
+ *
+ * The tilt between moods is a transition on the style, not an animation started from an effect:
+ * a mood is a state, the face is drawn in it, and Reanimated carries the change on the UI thread.
+ * It runs once per change of mood and never loops. A Person who has asked their phone for less
+ * motion gets the new tilt at once: the mood still shows, nothing turns.
  */
 export function Face({ size = 28, mood = 'neutral' }: { size?: number; mood?: FaceMood }) {
   const { colors: c } = useTheme()
+  const still = useReducedMotion()
   // `useId` embeds colons, which are not legal in an SVG fragment identifier.
   const id = useId().replace(/:/g, '')
   const geometry = faceGeometry(size, mood)
   const { eyeWidth, eyeHeight, eyeGap } = geometry
   const left = (size - eyeWidth * 2 - eyeGap) / 2
   const top = size * geometry.eyeTopFraction
-  const rotation = useSharedValue(geometry.tiltDegrees)
-  useEffect(() => {
-    // Reanimated exposes `set` specifically so compiler-enabled React can update shared values.
-    rotation.set(
-      withTiming(geometry.tiltDegrees, {
-        duration: m['dur-base'],
-        easing: Easing.bezier(0.2, 0, 0, 1),
-        reduceMotion: ReduceMotion.System,
-      }),
-    )
-  }, [geometry.tiltDegrees, rotation])
-  const motion = useAnimatedStyle(() => ({ transform: [{ rotate: `${rotation.get()}deg` }] }))
   return (
-    <Animated.View style={[{ width: size, height: size }, motion]}>
+    <Animated.View
+      style={{
+        width: size,
+        height: size,
+        transform: [{ rotate: `${geometry.tiltDegrees}deg` }],
+        transitionProperty: 'transform',
+        transitionDuration: still ? 0 : m['dur-base'],
+        transitionTimingFunction: TILT_CURVE,
+      }}
+    >
       <Svg width={size} height={size} accessibilityRole="image" accessibilityLabel="Vivid">
         <Defs>
           <RadialGradient id={id} cx="32%" cy="28%" r="55%">
@@ -54,7 +57,7 @@ export function Face({ size = 28, mood = 'neutral' }: { size?: number; mood?: Fa
           width={eyeWidth}
           height={eyeHeight}
           rx={eyeWidth / 2}
-          fill={c['face-eye']}
+          fill={c['primary-foreground']}
           transform={`rotate(-6 ${left + eyeWidth / 2} ${top + eyeHeight / 2})`}
         />
         <Rect
@@ -63,7 +66,7 @@ export function Face({ size = 28, mood = 'neutral' }: { size?: number; mood?: Fa
           width={eyeWidth}
           height={eyeHeight}
           rx={eyeWidth / 2}
-          fill={c['face-eye']}
+          fill={c['primary-foreground']}
           transform={`rotate(6 ${left + eyeWidth * 1.5 + eyeGap} ${top + eyeHeight / 2})`}
         />
       </Svg>

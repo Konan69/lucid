@@ -2,37 +2,37 @@
 
 One person, one Vivid—simple alone and organizational by design.
 
-Vivid is an AI teammate for everyday work: an agent that works alongside a person on their real
-tools. The first screen is already the thread, and nothing has to be configured before the first
-message. It is not a coding tool.
+Reminders and anything to do once at a time are one-off Routines. Vivid resolves the Person's
+local date-time, fires once and retains its Thread and Occurrence.
 
-This repository is the collaboration-ready product slice. It contains the frontend, application
-backend shell, shared product contracts, mock data, design system, visible behavior, and the small
-Flue runtime adapter needed to power conversations and demo scheduled routines.
-
-The proprietary execution layer is not included: production scheduler ownership and recovery,
-connector and tool-call implementations, computer control, credential handling, and the research
-or reconstructed sources behind those systems. Product screens may show fixture states for these
-features, but the fixtures do not define their implementation.
+Vivid is an AI teammate for everyday work, reached through a Thread. This repository holds the
+whole product: web, mobile, desktop, application server, Flue runtime, shared contracts, tests,
+and design documents. Backend product logic lives in `apps/server`, organized by domain.
 
 ## Start
 
+Requires Node 24 or newer, pnpm `12.4.2`, and Docker for local PostgreSQL. Set `AUTH_SECRET`,
+`EXPLABS_API_KEY`, and `VIVID_RUNTIME_TOKEN` in the environment before starting the stack.
+`AUTH_SECRET` needs at least 32 characters, 12 distinct characters, and 3 character classes.
+See [Infrastructure](docs/19-infrastructure.md) for configuration and current setup limits.
+
 ```sh
 pnpm install
-pnpm db:up
-cp .env.example .env
-# Add an OpenRouter key, auth secret, and local runtime token to that ignored file.
-pnpm --filter @vivid/agent-runtime dev
-pnpm --filter @vivid/web dev
+pnpm infra:verify
+pnpm infra:dev
 ```
 
-The shared local database is `postgres://vivid:vivid@127.0.0.1:55433/vivid`. Infrastructure is local-first and nothing is deployed. Alchemy is the source of truth for the intended AWS deployment when that work begins.
+Alchemy provisions PostgreSQL 18 on port `55433`, applies the server's auth migrations then
+product migrations, and starts the runtime (`5173`), server (`8787`), and web (`5178`). Flue
+migrates its own PostgreSQL storage at runtime startup. Nothing is deployed; remote targets are
+disabled. Keep the real local database and Alchemy state read/copy only during tests and audits.
+Tests that need persistence require a disposable database through `VIVID_TEST_DATABASE_URL`.
 
-The separate iOS/Android app lives in [apps/mobile](apps/mobile/README.md). Run it
-with `pnpm --filter @vivid/mobile dev`; its README covers phone connections and
-the current feature coverage.
+The separate [mobile app](apps/mobile/README.md) uses Expo; the [desktop app](apps/desktop/README.md)
+is an Electron shell around the web renderer. Both connect to the same application server.
 
-The repository requires pnpm `12.4.2`, pinned by `packageManager` and `engines.pnpm`. Project settings, catalogs, build-script approvals, overrides, and patches live in `pnpm-workspace.yaml`.
+Workspace settings, dependency catalogs, overrides, build approvals, and patches live in
+`pnpm-workspace.yaml`; `packageManager` and `engines.pnpm` pin pnpm.
 
 Useful checks:
 
@@ -41,36 +41,44 @@ pnpm check:package-manager
 pnpm check:versions
 pnpm audit:effect-boundaries
 pnpm check:migrations
+pnpm structure
 pnpm lint
-pnpm typecheck
-pnpm build
+pnpm format
 ```
+
+For code changes, `.husky/pre-push` runs the integrated gates, including serialized typecheck
+and tests. Avoid concurrent TypeScript graphs or a typecheck alongside a build.
+
+## Runtime and persistence
+
+Flue `2.2.2` with pi `0.87.1` owns conversation transport, history, and runtime lifecycle.
+Product metadata, authorization, Routines, Library, and other product records belong to the
+server. Tools in `packages/agent/runtime/src/tools` call the server's schema-derived `VividRpc`
+contract. Shared clients live in `packages/client/rpc`, and shared view logic in
+`packages/client/state`.
+
+Models use the Experiential Labs gateway (`EXPLABS_API_KEY`,
+`packages/agent/runtime/src/providers/explabs.ts`). The default is `explabs/glm-5.3-flash`.
+Vivid has no model retry or fallback layer of its own; the gateway fails over upstreams and
+Flue handles transient retries.
+
+PostgreSQL stores product records and Flue state. Memory uses HelixDB; Integrations use Executor;
+the Computer uses Boat, proven against real Boat on 3 October 2026. These external adapters
+require their own configuration; Alchemy does not provision those services today. Code and
+contracts call an authorized service relationship a `Connection`; every Person-facing string
+calls it an **Integration**.
+
+The Library accepts PDF, Markdown, and plain-text files up to 10 MiB each. The server stores
+bytes and nested folders in PostgreSQL and indexes extracted passages with `tsvector` and a GIN
+index. `search_library` returns filename/page citations. Library retrieval is keyword-based,
+without OCR or embeddings; HelixDB memory is a separate system.
 
 ## Documents
 
-1. [Principle](docs/01-principle.md). The rules every screen has to justify itself against.
-2. [Surface](docs/03-surface.md). The user-visible onboarding and conversation behavior.
-3. [Main screen](docs/07-main-screen.md). The screen the user lives in: sidebar, thread, and on-demand panel.
-4. [Design language](docs/08-design-language.md). The visual rules and interaction character.
-5. [Design-system lint](docs/designlint.md). Web component contracts, Tailwind rule ownership, and warning ratchets.
-6. [Company and projects](docs/12-company-and-projects.md). The organization and project model visible in the demo.
-7. [Feature set and Grok Bot parity](docs/14-product-feature-set-and-grok-bot-parity.md). What works now, what is a fixture, and the product parity target.
-
-## Collaboration boundary
-
-This is a full-stack collaboration boundary, not a frontend-only one. Work may include the web app,
-authentication, people and companies, projects, threads, messages, library data, ordinary HTTP APIs,
-persistence, tests, and shared product contracts.
-
-The included `packages/agent/runtime` owns the shareable Flue conversation transport, PostgreSQL
-persistence, model adapter, local document Library, and a single-process cron adapter for the demo.
-The application backend may submit work through this explicit boundary and consume status or results,
-but it must not absorb the production scheduling engine, connectors, tool calls, computer transport,
-or credential handling. Those integrations will be supplied separately.
-
-The Library accepts PDF, Markdown, and plain-text files up to 10 MB. Files and real nested folders
-are stored in PostgreSQL, readable text is chunked into a `tsvector` column with a GIN index, and
-Vivid can call the read-only `search_library` tool to answer with filename/page citations. This MVP
-uses keyword retrieval and does not include embeddings, OCR, or a vector database. Set
-`DATABASE_URL` alongside `OPENROUTER_API_KEY` and `VIVID_RUNTIME_TOKEN`; runtime state no longer
-needs a `.state/` volume.
+1. [Structure](docs/00-structure.md). Ownership and file placement.
+2. [Principle](docs/01-principle.md) and [Surface](docs/03-surface.md). Product direction and its history.
+3. [Main screen](docs/07-main-screen.md) and [Design language](docs/08-design-language.md). Design proposals and references.
+4. [Design-system lint](docs/designlint.md). Executable contracts and warning ratchets.
+5. [Company and projects](docs/12-company-and-projects.md). The agreed model and open decisions.
+6. [Current feature status](docs/14-product-feature-set-and-grok-bot-parity.md). What works, how it was checked, and what is missing.
+7. [One product](docs/22-one-product.md). Current product direction; domain READMEs explain implemented boundaries.

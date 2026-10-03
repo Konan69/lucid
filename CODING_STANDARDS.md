@@ -2,6 +2,8 @@
 
 `AGENTS.md` is authoritative. The vendored `coding-standards`, `effect`, and `effect-service-design` skills provide the detailed guidance; this file is the short review index for Vivid's pinned Effect `4.0.0-rc.116` code.
 
+Examples below illustrate the standard; they do not declare existing RPC routes or domain variants.
+
 ## Model boundaries first
 
 Define a schema-backed domain value before orchestration. Decode unknown input once at its real boundary. Branded identifiers prevent mixing identities; tagged variants replace optional bags and boolean state machines.
@@ -12,9 +14,13 @@ import * as Schema from 'effect/Schema'
 export const ThreadId = Schema.String.pipe(Schema.brand('ThreadId'))
 export type ThreadId = typeof ThreadId.Type
 
-export class ThreadNotFound extends Schema.TaggedError<ThreadNotFound>()('ThreadNotFound', {
-  threadId: ThreadId,
-}) {}
+export class ThreadNotFound extends Schema.TaggedError<ThreadNotFound>()(
+  'ThreadNotFound',
+  {
+    threadId: ThreadId,
+  },
+  { title: 'Thread not found' },
+) {}
 ```
 
 Do not replace the contract with a cast:
@@ -91,19 +97,31 @@ Different recovery paths require different error tags, not one stringly catch-al
 
 ```ts
 // Bad: callers must parse a free-form code to decide what to do.
-class OperationFailed extends Schema.TaggedError<OperationFailed>()('OperationFailed', {
-  code: Schema.String,
-  message: Schema.String,
-}) {}
+class OperationFailed extends Schema.TaggedError<OperationFailed>()(
+  'OperationFailed',
+  {
+    code: Schema.String,
+    message: Schema.String,
+  },
+  { title: 'Operation failed' },
+) {}
 
 // Good: handling is exhaustive and carries the identity that failed.
-class ThreadNotFound extends Schema.TaggedError<ThreadNotFound>()('ThreadNotFound', {
-  threadId: ThreadId,
-}) {}
-class ThreadAccessDenied extends Schema.TaggedError<ThreadAccessDenied>()('ThreadAccessDenied', {
-  threadId: ThreadId,
-  personId: PersonId,
-}) {}
+class ThreadNotFound extends Schema.TaggedError<ThreadNotFound>()(
+  'ThreadNotFound',
+  {
+    threadId: ThreadId,
+  },
+  { title: 'Thread not found' },
+) {}
+class ThreadAccessDenied extends Schema.TaggedError<ThreadAccessDenied>()(
+  'ThreadAccessDenied',
+  {
+    threadId: ThreadId,
+    personId: PersonId,
+  },
+  { title: 'Thread access denied' },
+) {}
 ```
 
 ## Services own capabilities
@@ -151,10 +169,10 @@ const thread = {
 }
 
 // Good: the variant states exactly which boundary value is being built.
-const thread =
-  input._tag === 'CompanyThread'
-    ? CompanyThread.make({ id, companyId: input.companyId, title: input.title })
-    : PersonalThread.make({ id, personId: input.personId, title: input.title })
+const thread = ThreadScope.match(input, {
+  CompanyThread: ({ companyId, title }) => CompanyThread.make({ id, companyId, title }),
+  PersonalThread: ({ personId, title }) => PersonalThread.make({ id, personId, title }),
+})
 ```
 
 ## Validate both sides of HTTP
@@ -166,8 +184,15 @@ const thread =
 const thread = await request<Thread>(`/api/threads/${id}`)
 
 // Good: trust begins at the shared parser.
-const payload = yield * Effect.tryPromise(() => response.json())
-const thread = yield * Schema.decodeUnknownEffect(ThreadResponse)(payload)
+const decodeThreadResponse = Schema.decodeUnknownEffect(ThreadResponse) // compile once at module scope
+// Inside the owning Effect program; ResponseReadFailure is the adapter's tagged error.
+const payload =
+  yield *
+  Effect.tryPromise({
+    try: () => response.json(),
+    catch: () => new ResponseReadFailure({}),
+  })
+const thread = yield * decodeThreadResponse(payload)
 ```
 
 ## Configuration and secrets
@@ -176,7 +201,7 @@ Follow `apps/server/src/config.ts`: load environment through `Config.schema`, co
 
 ## Drizzle
 
-Drizzle TypeScript schemas are authoritative. Change the schema, run the package's `db:generate`, review the SQL, then migrate. Never hand-edit schema migrations or snapshots. Keep database-driver failures behind a service boundary like `apps/server/src/database.ts`, where SQL failures become `DatabaseUnavailable`, `DatabaseConstraintViolation`, or `DatabaseFailure`.
+Drizzle TypeScript schemas are authoritative. Change the schema, run the server's `db:generate` (auth) or `db:generate:product` (product), review the SQL, then migrate. Root `pnpm db:migrate` applies auth before product tables; Flue migrates its own storage at startup. Never hand-edit schema migrations or snapshots. Keep database-driver failures behind a service boundary like `apps/server/src/database/client.ts`, where SQL failures become `DatabaseUnavailable`, `DatabaseConstraintViolation`, or `DatabaseFailure`.
 
 ## React owns events, not synchronization effects
 

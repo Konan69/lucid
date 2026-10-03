@@ -64,19 +64,19 @@ Keep code simple by making the model honest. If a function needs many optional i
 
 ## Boundaries and persistence
 
-Shared wire contracts live in `packages/contracts`; the clients derived from them live in `packages/client/rpc`. Design transport-neutral APIs for web, mobile, and future desktop clients. Do not put browser-only assumptions into contracts or make app components issue ad hoc untyped requests.
+Shared wire contracts and `VividRpc` live in `packages/contracts`; the RPC clients derived from them live in `packages/client/rpc`. Plain HTTP adapters live in `apps/server/src/http` and their owning domains; there is no `VividApi` declaration today. Design transport-neutral APIs for web, mobile, and desktop clients. Do not put browser-only assumptions into contracts or make app components issue ad hoc untyped requests.
 
 A TypeScript annotation does not make a network boundary safe. `response.json()` and generic `request<T>()` casts are unknown input, not proof. Validate route params, search, headers, and bodies at every server boundary; validate response payloads at the consumer with the same Effect schema from `packages/contracts`.
 
 Flue owns conversation/turn transport, durable conversation history, model interaction, and its runtime lifecycle. Vivid app code owns product metadata such as Thread titles and indexes, Company/Membership scope, Routines, navigation, and product records. Do not mirror library-owned state into app tables or app-owned metadata into Flue state. Read `packages/agent/runtime/AGENTS.md` before changing that boundary.
 
-Edit the Drizzle TypeScript schema first, run the owning package's `db:generate`, and review generated SQL before migration. Never hand-write schema SQL, use `push` for a shared or remote database, or edit a snapshot manually. The migration order is the server's auth tables, then the server's product tables (`apps/server/product-drizzle.config.ts`); root `pnpm db:migrate` preserves it. Read both Drizzle skills before reading or changing schemas, queries, config, or migrations.
+Edit the Drizzle TypeScript schema first, run `pnpm --filter @vivid/server db:generate` for auth or `pnpm --filter @vivid/server db:generate:product` for product tables, and review generated SQL before migration. Never hand-write schema SQL, use `push` for a shared or remote database, or edit a snapshot manually. The migration order is the server's auth tables, then the server's product tables (`apps/server/product-drizzle.config.ts`); root `pnpm db:migrate` preserves it. Read both Drizzle skills before reading or changing schemas, queries, config, or migrations.
 
 Alchemy `2.0.0-beta.79` peers on the pinned Drizzle RC. Workspace overrides hold Effect `4.0.0-rc.116` and Drizzle `1.0.0-rc.5-ab785fc` in lockstep. Do not relax them without validating Alchemy, Better Auth, and every migration owner together.
 
 ## Hit every surface
 
-A feature is incomplete when it works only on the path first tested. Check web, mobile, and the future desktop surface. Check every applicable entry point: its Thread, Today, Settings, and notifications. Put shared client behavior in `packages/client/rpc` and shared wire contracts in `packages/contracts`; do not reimplement them per surface.
+A feature is incomplete when it works only on the path first tested. Check web, mobile, and desktop. Check every applicable entry point: its Thread, Thread list, Settings, and notifications. Put shared client behavior in `packages/client/rpc` and shared wire contracts in `packages/contracts`; do not reimplement them per surface.
 
 ## Web and mobile UI
 
@@ -145,11 +145,13 @@ Product copy says **Vivid**, never “agent” or “automation.” Those are im
 - **Routine**: a reusable commitment for Vivid to act on a trigger; an **Occurrence** is one invocation and may start a Run.
 - **Library item**: reusable knowledge or a learned procedure. A procedure may become a Routine, but storing it does not schedule it.
 - **Artifact**: a durable, versioned input or output linked to its Thread and Run.
-- **Connection**: an authorized relationship with an external account or service; credential values never enter model context.
+- **Connection**: an authorized relationship with an external account or service; credential values never enter model context. Code, contracts, and tests use `Connection`; every string a Person reads uses **Integration**.
 
 Use these terms in code, contracts, tests, and copy. Do not create synonyms for established concepts.
 
 **Borrowed code takes Vivid's names.** Any function, type, module, file, table, environment variable, event, or concept adapted from another project — a reference implementation, an SDK example, or one of our own earlier products — is renamed to this document's vocabulary and file conventions before it lands. The source's names never survive: no `box`, `sand`, `agent`, `bot`, `pod`, or another product's prefixes in identifiers, paths, logs, comments, or copy. Name the thing for what it is in Vivid (`Computer`, `Person`, `Thread`, `Run`, `Artifact`), and record where the design came from in the JSDoc, not in the identifier.
+
+**A reference implementation is a guide to follow, not inspiration.** When an inspected reference already solves the problem — source on disk or a decompiled binary — port it, or adapt it where Vivid differs: keep its mechanism, platform APIs, process layout, protocol methods and message shapes, ordering, limits, timeouts, and failure behavior. Do not redesign it from scratch, simplify it away, or substitute a mechanism recalled from memory. Before claiming the reference lacks something, search it; absence must be checked, not assumed. Cite the reference file and symbol or address in the JSDoc. Where Vivid's architecture, domain model, or the naming rule above requires a change, adapt and state the change and its reason beside the code. Where the reference cannot be inspected or a claim about it is unproved, say so; never fill the gap with a guess.
 
 ## Agent skills
 
@@ -160,6 +162,23 @@ Issues live in this repository's GitHub Issues (`Konan69/vivid`). Use the reposi
 ### Domain docs
 
 The product references are under `docs/`, numbered in reading order: `docs/01-principle.md` and `docs/03-surface.md` define the product, `docs/04-computer.md` the Computer, `docs/09-platform-architecture.md` and `docs/17-backend-stack-reference.md` the platform, and the rest a feature each. This checkout has no tracked `CONTEXT.md` or ADR directory; create either only through an explicit domain-modeling task.
+
+### Design stack (UI work)
+
+Every UI change follows this order. The skills live in `.agents/skills/<name>/SKILL.md`. Four of them are marked user-invoked and refuse the Skill tool (`prototype`, `pick-ui-library`, `interface-review`, `review-animations`): read the file and follow it. Emil Kowalski's skills answer only "I'm ready…" when started without a task, so always hand them the task.
+
+1. **Shape.** When the form is undecided, `prototype` builds 3 real variants behind a picker instead of debating. `pick-ui-library` before adding any UI dependency (toasts, menus, drag and drop, virtualization, charts), `better-icons` to find icons.
+2. **Build the static craft**, each skill owning one dimension: `better-layout` (grouping, alignment, growth and clipping), `better-typography` (scale, wrapping, tabular numbers, truncation), `better-colors` (role tokens, measured contrast), `better-ui` (concentric radius, shadows versus borders, icon weight, press feedback), `better-accessibility` (native elements, focus, keyboard, hit areas, reduced motion), `better-writing` (every user-facing string).
+3. **Motion.** `animate` decides first whether something should move at all (keyboard and 100+/day actions never animate), then tool, properties, curve, duration, interruption and exit. `animation-vocabulary` names an effect. `apple-design` for anything a finger drags (springs, velocity handoff, rubber-banding, translucent materials). `emil-design-eng` is the bar the result is held to.
+4. **Review before it ships.** Render every state and look at it; a green typecheck is not a design review. Then: `break-ui` (worst-case data behind a dev-only toggle), `better-interface` (the cross-discipline review of a screen, one ranked table and a Block/Approve verdict), `interface-review` when the subject is a diff or PR, `review-animations` on any motion. `fixing-motion-performance` when it stutters; `improve-animations` and `find-animation-opportunities` audit an existing surface.
+
+When two skills give different numbers, the project's own tokens win. Without a token: Emil Kowalski's values decide motion (strong ease-out `cubic-bezier(0.23, 1, 0.32, 1)`, UI under 300ms, never `ease-in`, entrances from `scale(0.95)`, 30–80ms stagger), and the `better-*` skills decide everything static.
+
+A first pass is never the final pass: the reviewer sends back specific faults (hierarchy, spacing, contrast, copy, unclear actions) and the designer revises before the change is committed. Verification renders off-screen (headless browser, simulator snapshot, off-screen window); it never opens windows on the owner's display. If nothing can render the UI, say its looks are unreviewed.
+
+Dropped on purpose, do not reintroduce: `impeccable`, `taste-skill`, `soft-skill`, `redesign-skill` (landing-page aesthetics that fight product UI: banned fonts, 700–800ms scroll reveals, `transition-all`), `make-interfaces-feel-better` and `baseline-ui` (duplicated by `better-ui`), `fixing-accessibility` (superseded by `better-accessibility`), `12-principles-of-animation` and `to-spring-or-not-to-spring` (they require `ease-in` exits, which the motion bar forbids), and the third-party `motion` reference (its examples break the motion rules; use `animate` and motion.dev).
+
+Vivid specifics: `animation-gallery` holds the named motion patterns for React web and Expo and is the first stop once an effect is named; `animate-expo` replaces `animate` for React Native, and `mobile-native` covers the web app on a phone. The product docs under `docs/` and the existing components stay the source of truth for what Vivid looks like; these skills raise the craft inside that system. Vivid still tracks a `motion` skill from before this stack; treat it as an API lookup only, since its examples break the motion rules above.
 
 ### Coding standards
 

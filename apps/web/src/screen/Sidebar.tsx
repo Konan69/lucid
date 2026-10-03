@@ -1,669 +1,401 @@
+import type { CompanyMembership, MeResponse } from '@vivid/contracts'
+import { SwitchWorkspaceRequest, Workspace } from '@vivid/contracts'
+import { Option, Result } from 'effect'
 import {
-  Archive,
-  ArchiveRestore,
-  Pin,
-  Pencil,
-  Plus,
-  Search,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  PanelLeft,
-  Repeat2,
-  Library,
-  ListFilter,
-  AlarmClock,
+  Bell,
+  Building2,
   Check,
+  ChevronsUpDown,
   FolderKanban,
-  Trash2,
+  Library,
+  PanelLeft,
+  Plug,
+  Plus,
+  Repeat2,
+  Search,
+  Settings as SettingsIcon,
+  Sparkles,
+  SquarePen,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { doneCount, conversations, type Conversation } from '../data/fixtures'
-import { countProjects, projects, type Project } from '../data/projects'
-import type { RuntimeConversation } from '@vivid/state'
-
-/* T3's sidebar rule: every thread row carries its project. Here, the
-   conversation's project name sits beside the title, quiet but present. */
-const projectByConversation = new Map<string, Project>(
-  projects.flatMap((p) => p.conversations.map((title): [string, Project] => [title, p])),
-)
-function ProjectMark({ title }: { title: string }) {
-  const project = projectByConversation.get(title)
-  return project ? <ProjectChip name={project.name} /> : null
-}
-
-function ProjectChip({ name }: { name: string }) {
-  return (
-    <span className="inline-flex max-w-rail-label min-w-0 shrink-0 items-center gap-1 text-meta font-meta text-ink-4">
-      <i className="size-1.5 shrink-0 rounded-full bg-ink-4/60" aria-hidden />
-      <span className="truncate">{name}</span>
-    </span>
-  )
-}
+import { useState, type ReactNode } from 'react'
+import { change, live, useLiveValue } from '../data/live'
+import { Route, router } from '../data/route'
 import { Avatar } from '../ui/Avatar'
+import { Button } from '../ui/Button'
 import { cn } from '../ui/cn'
+import { Dialog, DialogActions, DialogField } from '../ui/Dialog'
 import { Face } from '../ui/Face'
-import { StatusDot, StatusLabel } from '../ui/Status'
-import { ServiceMarks } from '../ui/Marks'
+import { Menu, MenuDivider, MenuItem, MenuLabel } from '../ui/Menu'
+import { sidebar } from '../data/sidebar'
+import { FULL, HOVER, ROW, TOOL } from './sidebar/rows'
+import { Threads, ThreadSkeleton } from './sidebar/Threads'
 
-/* ── Row geometry (Open Session's three heights) ──────────────
-   36  a full line: rows and headings that lead with a mark. Navigates → hover fill.
-   32  the tool rows, only.
-   28  a caption: no mark, no fill. Ink brightens on hover.
-   78  a card: T3's variant for a conversation that matters.                 */
-const FULL = 'h-(--row-h)'
-const TOOL = 'h-(--tool-row-h)'
-const CAPTION = 'h-(--caption-h)'
-const HOVER = 'hover:bg-wash-hover'
-const ROW =
-  'group/row relative flex w-full items-center gap-2.5 rounded-row px-2.5 text-left outline-none select-none transition-colors duration-(--dur-fast)'
-
-import { laneConversations, type Lane } from '@vivid/state'
-
-export function Sidebar({
-  activeId,
-  runtimeConversations,
-  onArchive,
-  onDelete,
-  onRename,
-  onSelect,
-  onOpenSettings,
-  workingCount,
-}: {
-  activeId: string | null
-  runtimeConversations: RuntimeConversation[]
-  onArchive: (id: string, archived: boolean) => void
-  onDelete: (id: string) => void
-  onRename: (id: string, title: string) => void
-  onSelect: (id: string) => void
-  onOpenSettings: () => void
-  workingCount: number
-}) {
-  const demoConversations = conversations.filter((conversation) =>
-    ['t2', 't4', 't5'].includes(conversation.id),
-  )
-  const { lanes } = laneConversations(demoConversations)
-  const [doneOpen, setDoneOpen] = useState(false)
-  const [archivedOpen, setArchivedOpen] = useState(false)
-  const [renameTarget, setRenameTarget] = useState<RuntimeConversation | null>(null)
-  const activeConversations = runtimeConversations.filter((conversation) => !conversation.archived)
-  const archivedConversations = runtimeConversations.filter((conversation) => conversation.archived)
+/**
+ * The sidebar's right edge, which is dragged to make it wider or narrower. The width follows the
+ * pointer directly (the pointer is captured, and the show/hide transition is switched off while
+ * dragging, or the edge would trail the hand), is remembered when let go, and goes back to the
+ * usual width on a double-click. From the keyboard the arrow keys move it a step at a time.
+ */
+function Edge() {
   return (
-    <aside className="hidden h-full w-(--sidebar-w) shrink-0 flex-col bg-surface-1 hairline-r md:flex">
-      <SidebarHeader workingCount={workingCount} onSelect={onSelect} />
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize the sidebar"
+      title="Drag to resize. Double-click to reset."
+      tabIndex={0}
+      onPointerDown={(event) => {
+        event.currentTarget.setPointerCapture(event.pointerId)
+        document.documentElement.dataset.resizing = 'sidebar'
+      }}
+      onPointerMove={(event) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) sidebar.widen(event.clientX)
+      }}
+      onPointerUp={(event) => {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+        delete document.documentElement.dataset.resizing
+        sidebar.keepWidth()
+      }}
+      onDoubleClick={sidebar.usualWidth}
+      onKeyDown={(event) => {
+        if (event.key === 'ArrowLeft') sidebar.nudge(-16)
+        if (event.key === 'ArrowRight') sidebar.nudge(16)
+      }}
+      className="absolute inset-y-0 right-0 z-10 hidden w-1.5 cursor-col-resize transition-colors duration-(--dur-fast) outline-none hover:bg-wash-pressed focus-visible:bg-accent-soft md:block"
+    />
+  )
+}
 
-      {/* Band header: a heading with controls. Full line, no fill. */}
-      <div className="mt-3 flex h-(--row-h) shrink-0 items-center gap-1 pr-2 pl-4.5">
-        <span className="flex-1 text-label text-ink">Conversations</span>
+/**
+ * The rail: where the Person is working, the four places beside Threads, and every Thread they can
+ * see, ordered by what needs them. It reads live data and owns none: a Thread moves between lanes
+ * because the server says its attention changed, not because something here remembered to move it.
+ */
+export function Sidebar({
+  me,
+  route,
+  open,
+  onHide,
+  onSearch,
+  onNotifications,
+  unread,
+}: {
+  me: MeResponse
+  route: Route
+  /** Hidden by width rather than unmounted, so collapsing and returning both animate. */
+  open: boolean
+  onHide: () => void
+  onSearch: () => void
+  onNotifications: () => void
+  unread: number
+}) {
+  const [creatingCompany, setCreatingCompany] = useState(false)
+  const threads = useLiveValue(live.threads)
+  const working = Option.match(threads, {
+    onNone: () => false,
+    onSome: (value) => value.threads.some((thread) => thread.attention === 'Working'),
+  })
+
+  return (
+    <aside
+      inert={!open}
+      // Narrow: a drawer over the page that slides by its own width. Wide: a column beside the
+      // page that gives up its width. One element, so its contents and their state are the same
+      // sidebar either way.
+      className={cn(
+        'fixed inset-y-0 left-0 z-40 flex h-full w-(--sidebar-w) shrink-0 flex-col overflow-hidden bg-surface-1 transition-pop duration-(--dur-base) ease-out in-data-resizing:transition-none md:relative md:z-auto md:translate-x-0 md:transition-width',
+        open ? 'translate-x-0 hairline-r' : '-translate-x-full md:w-0',
+      )}
+    >
+      <Edge />
+      {/* The inner column keeps its full width while the aside narrows, so nothing reflows. */}
+      <div className="flex h-full w-(--sidebar-w) shrink-0 flex-col">
+        <div className="flex h-(--topbar-h) shrink-0 items-center px-2">
+          <RailButton label="Hide sidebar (⌘B)" onClick={onHide}>
+            <PanelLeft className="size-4" />
+          </RailButton>
+          <span className="flex-1" />
+          <RailButton label="Search (⌘K)" onClick={onSearch}>
+            <Search className="size-4" />
+          </RailButton>
+          <RailButton label="Notifications" onClick={onNotifications}>
+            <Bell className="size-4" />
+            {unread > 0 && (
+              <i className="absolute top-1.5 right-1.5 size-2 rounded-full bg-accent ring-2 ring-surface-1" />
+            )}
+          </RailButton>
+        </div>
+
+        <div className="px-2">
+          <WorkspaceSwitcher
+            me={me}
+            working={working}
+            onCreateCompany={() => setCreatingCompany(true)}
+          />
+          <ToolRow
+            icon={<SquarePen className="size-4" strokeWidth={1.6} />}
+            label="New thread"
+            active={Route.$is('New')(route)}
+            onClick={() => router.go(Route.New())}
+          />
+          <ToolRow
+            icon={<Repeat2 className="size-4" strokeWidth={1.6} />}
+            label="Routines"
+            active={Route.$is('Routines')(route)}
+            onClick={() => router.go(Route.Routines())}
+          />
+          <ToolRow
+            icon={<FolderKanban className="size-4" strokeWidth={1.6} />}
+            label="Projects"
+            active={Route.$is('Projects')(route)}
+            onClick={() => router.go(Route.Projects())}
+          />
+          <ToolRow
+            icon={<Library className="size-4" strokeWidth={1.6} />}
+            label="Library"
+            active={Route.$is('Library')(route)}
+            onClick={() => router.go(Route.Library())}
+          />
+          <ToolRow
+            icon={<Sparkles className="size-4" strokeWidth={1.6} />}
+            label="Skills"
+            active={Route.$is('Skills')(route)}
+            onClick={() => router.go(Route.Skills())}
+          />
+          <ToolRow
+            icon={<Plug className="size-4" strokeWidth={1.6} />}
+            label="Integrations"
+            active={false}
+            onClick={() => router.openSettings(Option.some('connections'))}
+          />
+        </div>
+
+        <nav className="mt-2 min-h-0 flex-1 scrollbar-hidden overflow-y-auto scroll-fade-y px-2 pb-2">
+          {Option.isNone(threads) ? (
+            <ThreadSkeleton />
+          ) : (
+            <Threads
+              threads={threads.value.threads}
+              active={Route.$is('Thread')(route) ? route.id : null}
+            />
+          )}
+        </nav>
+
         <button
-          aria-label="Filter"
-          className="inline-flex size-7 items-center justify-center rounded-control text-ink-3 hover:text-ink"
+          onClick={() => router.openSettings(Option.some('general'))}
+          className={cn(ROW, FULL, HOVER, 'm-2 mt-0 w-auto')}
         >
-          <ListFilter className="size-4" />
-        </button>
-        <button
-          aria-label="New conversation"
-          onClick={() => onSelect('new')}
-          className="inline-flex size-7 items-center justify-center rounded-control text-ink-3 hover:text-ink"
-        >
-          <Plus className="size-4" />
+          <Avatar name={me.person.name} image={me.person.image ?? null} size={22} />
+          <span className="min-w-0 flex-1 truncate text-label text-ink-2 group-hover/row:text-ink">
+            {me.person.name}
+          </span>
+          <SettingsIcon className="size-4 text-ink-4 group-hover/row:text-ink-2" />
         </button>
       </div>
 
-      <nav className="min-h-0 flex-1 overflow-y-auto scroll-fade-y px-2 pb-2">
-        <section>
-          <ul className="flex flex-col gap-1 pt-1">
-            {activeConversations.map((conversation) => (
-              <li key={conversation.id}>
-                <RuntimeRow
-                  conversation={conversation}
-                  active={conversation.id === activeId}
-                  onArchive={() => onArchive(conversation.id, true)}
-                  onDelete={() => onDelete(conversation.id)}
-                  onRename={() => setRenameTarget(conversation)}
-                  onSelect={() => onSelect(conversation.id)}
-                />
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        <DemoLanes lanes={lanes} activeId={activeId} onSelect={onSelect} />
-
-        <DoneSection open={doneOpen} onToggle={() => setDoneOpen((v) => !v)} />
-
-        <button
-          onClick={() => setArchivedOpen((open) => !open)}
-          className={cn(ROW, FULL, HOVER, 'mt-2 text-ink-3 hover:text-ink')}
-        >
-          <span className="inline-flex size-5.5 items-center justify-center">
-            <Archive className="size-4" />
-          </span>
-          <span className="min-w-0 flex-1 text-label">Archived</span>
-          {archivedConversations.length > 0 && (
-            <span className="text-meta font-meta text-ink-4">{archivedConversations.length}</span>
-          )}
-        </button>
-        {archivedOpen && (
-          <ul className="flex flex-col gap-1 pb-2">
-            {archivedConversations.length === 0 ? (
-              <li className="px-2.5 py-2 text-meta text-ink-4">No archived conversations</li>
-            ) : (
-              archivedConversations.map((conversation) => (
-                <li key={conversation.id}>
-                  <RuntimeRow
-                    conversation={conversation}
-                    active={conversation.id === activeId}
-                    onArchive={() => onArchive(conversation.id, false)}
-                    onDelete={() => onDelete(conversation.id)}
-                    onRename={() => setRenameTarget(conversation)}
-                    onSelect={() => onSelect(conversation.id)}
-                  />
-                </li>
-              ))
-            )}
-          </ul>
-        )}
-      </nav>
-
-      <button onClick={onOpenSettings} className={cn(ROW, FULL, HOVER, 'm-2 mt-0 w-auto')}>
-        <Avatar name="You" size={22} />
-        <span className="min-w-0 flex-1 truncate text-label text-ink-2">You</span>
-        <span className="text-meta font-meta text-ink-4">Personal</span>
-      </button>
-      {renameTarget && (
-        <RenameDialog
-          conversation={renameTarget}
-          onCancel={() => setRenameTarget(null)}
-          onSave={(title) => {
-            onRename(renameTarget.id, title)
-            setRenameTarget(null)
-          }}
-        />
-      )}
+      {creatingCompany && <CreateCompany onClose={() => setCreatingCompany(false)} />}
     </aside>
   )
 }
 
-/** Keeps the navigation strip and product entry points independent from conversation state. */
-function SidebarHeader({
-  workingCount,
-  onSelect,
-}: {
-  workingCount: number
-  onSelect: (id: string) => void
-}) {
-  return (
-    <>
-      {/* Nav strip */}
-      <div className="flex h-(--topbar-h) shrink-0 items-center px-2">
-        <button
-          aria-label="Hide sidebar"
-          className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-        >
-          <PanelLeft className="size-4" />
-        </button>
-        <span className="flex-1" />
-        <button
-          aria-label="Back"
-          className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-        >
-          <ChevronLeft className="size-4" />
-        </button>
-        <button
-          aria-label="Forward"
-          className="inline-flex size-8 items-center justify-center rounded-control text-ink-4"
-        >
-          <ChevronRight className="size-4" />
-        </button>
-        <button
-          aria-label="Search"
-          className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-        >
-          <Search className="size-4" />
-        </button>
-      </div>
-
-      <div className="px-2">
-        <button className={cn(ROW, FULL, HOVER)}>
-          <span className="relative inline-flex size-5.5 items-center justify-center">
-            <Face size={20} mood={workingCount > 0 ? 'thinking' : 'neutral'} />
-            <i
-              className="absolute -right-px -bottom-px size-2 rounded-full bg-success ring-2 ring-surface-1"
-              aria-label="Online"
-            />
-          </span>
-          <span className="min-w-0 flex-1 truncate text-title text-ink">Vivid</span>
-          <ChevronDown className="size-4 text-ink-3" />
-        </button>
-
-        {/* Product entry points, phrased in the user's language. */}
-        <ToolRow
-          icon={<Repeat2 className="size-4" strokeWidth={1.6} />}
-          label="Routines"
-          onClick={() => onSelect('routines')}
-        />
-        <ToolRow
-          icon={<FolderKanban className="size-4" strokeWidth={1.6} />}
-          label="Projects"
-          onClick={() => onSelect('projects')}
-        >
-          <span className="text-meta font-meta text-ink-4">{countProjects(projects)}</span>
-        </ToolRow>
-        <ToolRow
-          icon={<Library className="size-4" strokeWidth={1.6} />}
-          label="Library"
-          onClick={() => onSelect('library')}
-        />
-      </div>
-    </>
-  )
-}
-
-/** Renders fixture conversation lanes without mixing them into runtime conversation controls. */
-function DemoLanes({
-  lanes,
-  activeId,
-  onSelect,
-}: {
-  lanes: Array<Lane & { items: Conversation[] }>
-  activeId: string | null
-  onSelect: (id: string) => void
-}) {
-  return lanes.map((lane) => (
-    <section key={lane.key}>
-      <Caption label={lane.label} count={lane.count ? lane.items.length : undefined} />
-      <ul className="flex flex-col gap-px">
-        {lane.items.map((t) => (
-          <li key={t.id} className={lane.variant === 'card' ? 'py-0.5' : undefined}>
-            {lane.variant === 'card' ? (
-              <CardRow
-                conversation={t}
-                active={t.id === activeId}
-                onSelect={() => onSelect(`demo:${t.id}`)}
-              />
-            ) : (
-              <SlimRow
-                conversation={t}
-                active={t.id === activeId}
-                onSelect={() => onSelect(`demo:${t.id}`)}
-              />
-            )}
-          </li>
-        ))}
-      </ul>
-    </section>
-  ))
-}
-
-/** Owns the disclosure for settled demo conversations while preserving its existing copy. */
-function DoneSection({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  return (
-    <section>
-      <button
-        onClick={onToggle}
-        className={cn(
-          'mt-2 flex w-full items-center gap-1.5 px-2.5 text-meta font-title text-ink-4 hover:text-ink-2',
-          CAPTION,
-        )}
-      >
-        <Check className="size-3.5" />
-        Done <span className="font-meta">{doneCount}</span>
-      </button>
-      {open && (
-        <p className="px-2.5 pb-2 text-meta font-meta text-ink-4">
-          Conversations you've settled. They keep their history.
-        </p>
-      )}
-    </section>
-  )
-}
-
-function RenameDialog({
-  conversation,
-  onCancel,
-  onSave,
-}: {
-  conversation: RuntimeConversation
-  onCancel: () => void
-  onSave: (title: string) => void
-}) {
-  const [title, setTitle] = useState(conversation.title)
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onCancel()
-      }}
-    >
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          onSave(title)
-        }}
-        className="w-full max-w-sm rounded-panel bg-surface-1 p-4 smooth-shadow-ring-lg"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="rename-conversation-title"
-      >
-        <h2 id="rename-conversation-title" className="text-dialog font-title text-ink">
-          Rename conversation
-        </h2>
-        <input
-          autoFocus
-          required
-          maxLength={120}
-          value={title}
-          onChange={(event) => setTitle(event.currentTarget.value)}
-          className="mt-3 h-10 w-full rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs outline-none focus:smooth-shadow-ring-sm"
-        />
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="h-9 rounded-control px-3 text-label text-ink-3 hover:bg-wash-hover"
-          >
-            Cancel
-          </button>
-          <button
-            disabled={!title.trim()}
-            className="h-9 rounded-control bg-accent px-4 text-label font-title text-ink-on-accent disabled:opacity-50"
-          >
-            Rename
-          </button>
-        </div>
-      </form>
-    </div>
-  )
-}
-
-function RuntimeRow({
-  conversation,
-  active,
-  onSelect,
-  onArchive,
-  onDelete,
-  onRename,
-}: {
-  conversation: RuntimeConversation
-  active: boolean
-  onSelect: () => void
-  onArchive: () => void
-  onDelete: () => void
-  onRename: () => void
-}) {
-  return (
-    <div className="group/runtime relative">
-      <button
-        onClick={onSelect}
-        aria-current={active ? 'page' : undefined}
-        className={cn(
-          'relative block h-(--card-row-h) w-full rounded-card px-2.5 py-2 text-left transition-surface duration-(--dur-fast) outline-none select-none',
-          active
-            ? 'bg-surface-3 smooth-shadow-ring-sm'
-            : 'bg-surface-2 smooth-shadow-ring-xs hover:bg-wash-hover hover:smooth-shadow-ring-sm',
-        )}
-      >
-        <span className="flex h-5 items-center gap-1.5">
-          <Face size={16} mood="neutral" />
-          <span className="flex-1" />
-          <time className="text-meta font-meta text-ink-4 tabular-nums transition-opacity group-focus-within/runtime:opacity-0 group-hover/runtime:opacity-0">
-            {relativeTime(conversation.updatedAt)}
-          </time>
-        </span>
-        <span className="mt-0.5 block truncate text-title text-ink/90">{conversation.title}</span>
-        <span className="mt-0.5 block truncate text-label font-meta text-ink-3">
-          {conversation.preview}
-        </span>
-      </button>
-      <span className="pointer-events-none absolute top-1.5 right-2 flex items-center gap-0.5 opacity-0 transition-opacity group-focus-within/runtime:pointer-events-auto group-focus-within/runtime:opacity-100 group-hover/runtime:pointer-events-auto group-hover/runtime:opacity-100">
-        <button
-          aria-label={`Rename ${conversation.title}`}
-          onClick={onRename}
-          className="inline-flex size-6 items-center justify-center rounded-xs text-ink-3 hover:bg-wash-pressed hover:text-ink"
-        >
-          <Pencil className="size-3.5" />
-        </button>
-        <button
-          aria-label={`${conversation.archived ? 'Restore' : 'Archive'} ${conversation.title}`}
-          onClick={onArchive}
-          className="inline-flex size-6 items-center justify-center rounded-xs text-ink-3 hover:bg-wash-pressed hover:text-ink"
-        >
-          {conversation.archived ? (
-            <ArchiveRestore className="size-3.5" />
-          ) : (
-            <Archive className="size-3.5" />
-          )}
-        </button>
-        <button
-          aria-label={`Delete ${conversation.title}`}
-          onClick={onDelete}
-          className="inline-flex size-6 items-center justify-center rounded-xs text-ink-3 hover:bg-danger-soft hover:text-danger"
-        >
-          <Trash2 className="size-3.5" />
-        </button>
-      </span>
-    </div>
-  )
-}
-
-function relativeTime(updatedAt: number) {
-  const today = new Date()
-  const updated = new Date(updatedAt)
-  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
-  const startOfUpdated = new Date(
-    updated.getFullYear(),
-    updated.getMonth(),
-    updated.getDate(),
-  ).getTime()
-  const days = Math.round((startOfToday - startOfUpdated) / 86_400_000)
-  if (days === 0)
-    return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(
-      updated,
-    )
-  if (days === 1) return 'Yesterday'
-  if (days > 1 && days < 7)
-    return new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(updated)
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(updated)
-}
-
-function ToolRow({
-  icon,
+function RailButton({
   label,
-  children,
   onClick,
+  children,
 }: {
-  icon: React.ReactNode
   label: string
-  children?: React.ReactNode
-  onClick?: () => void
+  onClick: () => void
+  children: ReactNode
 }) {
   return (
-    <button onClick={onClick} className={cn(ROW, TOOL, HOVER, 'text-ink-2 hover:text-ink')}>
-      <span className="inline-flex size-5.5 items-center justify-center text-ink-3 group-hover/row:text-ink">
-        {icon}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-label">{label}</span>
+    <button
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className="relative inline-flex size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"
+    >
       {children}
     </button>
   )
 }
 
-function Caption({ label, count }: { label: string; count?: number }) {
+/**
+ * Where the Person is working, and the way to somewhere else. Their own space is always first.
+ * A Company appears only because they made one or were invited to one; the last entry is the only
+ * place in the product a Company is created, and it asks for nothing but a name.
+ */
+function WorkspaceSwitcher({
+  me,
+  working,
+  onCreateCompany,
+}: {
+  me: MeResponse
+  working: boolean
+  onCreateCompany: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const here = Workspace.match(me.workspace, {
+    Personal: () => 'Vivid',
+    Company: ({ company }) => company.name,
+  })
+  const inCompany = Workspace.guards.Company(me.workspace)
+  const activeCompany = Workspace.guards.Company(me.workspace) ? me.workspace.company.id : null
+
+  async function enter(to: 'personal' | CompanyMembership) {
+    setOpen(false)
+    const switched = await change((client) =>
+      client.SwitchWorkspace({
+        to:
+          to === 'personal'
+            ? SwitchWorkspaceRequest.cases.Personal.make({})
+            : SwitchWorkspaceRequest.cases.Company.make({ companyId: to.company.id }),
+      }),
+    )
+    // Only once the server has moved the Person: a Thread started a moment too early would be
+    // made in the space they were leaving. A refused switch leaves them exactly where they were.
+    // The list of Threads is then a different list, so the address must not point into the old one.
+    if (Result.isSuccess(switched)) router.go(Route.New())
+  }
+
   return (
-    <h3
-      className={cn(
-        'mt-1 flex items-center gap-1.5 px-2.5 text-meta font-title text-ink-3',
-        CAPTION,
-      )}
-    >
-      {label}
-      {count !== undefined && <span className="font-meta text-ink-4">{count}</span>}
-    </h3>
+    <div className="relative">
+      <button onClick={() => setOpen(true)} className={cn(ROW, FULL, HOVER)} aria-haspopup="menu">
+        <span className="relative inline-flex size-5.5 items-center justify-center">
+          <Face size={20} mood={working ? 'thinking' : 'neutral'} />
+        </span>
+        {/* Where the Person is, in the face Vivid speaks in: the one line of the rail with a voice. */}
+        <span className="min-w-0 flex-1 truncate font-display text-dialog font-strong text-ink">
+          {here}
+        </span>
+        <ChevronsUpDown className="size-3.5 text-ink-4 group-hover/row:text-ink-2" />
+      </button>
+      <Menu open={open} onClose={() => setOpen(false)} className="w-64">
+        <MenuLabel>Your space</MenuLabel>
+        <MenuItem
+          icon={<Avatar name={me.person.name} image={me.person.image ?? null} size={16} />}
+          hint={inCompany ? undefined : <Check className="size-3.5 text-ink-2" />}
+          selected={!inCompany}
+          onSelect={() => void enter('personal')}
+        >
+          {me.person.name}
+        </MenuItem>
+        {me.companies.length > 0 && <MenuLabel>Companies</MenuLabel>}
+        {me.companies.map((membership) => (
+          <MenuItem
+            key={membership.company.id}
+            icon={<Building2 className="size-4" strokeWidth={1.6} />}
+            hint={
+              membership.company.id === activeCompany ? (
+                <Check className="size-3.5 text-ink-2" />
+              ) : undefined
+            }
+            selected={membership.company.id === activeCompany}
+            onSelect={() => void enter(membership)}
+          >
+            {membership.company.name}
+          </MenuItem>
+        ))}
+        <MenuDivider />
+        <MenuItem
+          icon={<Plus className="size-4" />}
+          onSelect={() => {
+            setOpen(false)
+            onCreateCompany()
+          }}
+        >
+          Create a company
+        </MenuItem>
+      </Menu>
+    </div>
   )
 }
 
-/* ── Recede rule (T3): in-flight and read-ready rows fade as a whole; the
-      status label keeps its hue. Prominence is for rows that need a human. ── */
-function recedes(t: Conversation, active: boolean) {
-  const inFlight = t.status === 'working' || t.status === 'attention' || t.status === 'approve'
-  return (t.status === 'ready' || inFlight) && !t.unread && !active
+function CreateCompany({ onClose }: { onClose: () => void }) {
+  const [name, setName] = useState('')
+  const [refusal, setRefusal] = useState<string | null>(null)
+  // One Company per press: a second Enter while the first is on its way must not make a second.
+  const [creating, setCreating] = useState(false)
+
+  async function create() {
+    if (creating) return
+    setCreating(true)
+    const result = await change((client) => client.CreateCompany({ name: name.trim() }))
+    if (Result.isFailure(result)) {
+      setCreating(false)
+      setRefusal('The company could not be created. Try again.')
+      return
+    }
+    onClose()
+    router.go(Route.New())
+  }
+
+  return (
+    <Dialog
+      title="Create a company"
+      description="A shared space for you and the people you work with. Your own threads, notes and connections stay yours."
+      onClose={onClose}
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault()
+          void create()
+        }}
+      >
+        <DialogField
+          label="Company name"
+          value={name}
+          onChange={setName}
+          placeholder="Acme"
+          maxLength={80}
+        />
+        {refusal !== null && (
+          <p role="alert" className="mt-2 text-label text-danger">
+            {refusal}
+          </p>
+        )}
+        <DialogActions>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" disabled={creating || name.trim().length === 0}>
+            {creating ? 'Creating…' : 'Create company'}
+          </Button>
+        </DialogActions>
+      </form>
+    </Dialog>
+  )
 }
 
-function SlimRow({
-  conversation: t,
+function ToolRow({
+  icon,
+  label,
   active,
-  onSelect,
-  snoozed,
+  onClick,
 }: {
-  conversation: Conversation
+  icon: ReactNode
+  label: string
   active: boolean
-  onSelect: () => void
-  snoozed?: boolean
+  onClick: () => void
 }) {
-  const quiet = recedes(t, active)
   return (
     <button
-      onClick={onSelect}
+      onClick={onClick}
       aria-current={active ? 'page' : undefined}
       className={cn(
         ROW,
-        FULL,
-        active ? 'bg-wash-selected' : HOVER,
-        quiet && 'opacity-75 hover:opacity-100',
+        TOOL,
+        active ? 'bg-wash-selected text-ink' : cn(HOVER, 'text-ink-2 hover:text-ink'),
       )}
     >
-      <span className="inline-flex size-5.5 shrink-0 items-center justify-center">
-        <StatusDot status={t.status} />
-      </span>
       <span
         className={cn(
-          'min-w-0 flex-1 truncate text-label',
-          t.unread
-            ? 'font-strong text-ink'
-            : active
-              ? 'text-ink'
-              : 'text-ink-2 group-hover/row:text-ink',
+          'inline-flex size-5.5 items-center justify-center',
+          active ? 'text-ink' : 'text-ink-3 group-hover/row:text-ink',
         )}
       >
-        {t.title}
+        {icon}
       </span>
-      <ProjectMark title={t.title} />
-      {/* Status slot: status at rest, actions on hover. Same width, nothing shifts. */}
-      <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
-        <span className="flex items-center gap-1 text-meta font-meta text-ink-4 tabular-nums transition-opacity group-focus-within/row:opacity-0 group-hover/row:opacity-0">
-          {snoozed ? (
-            <span className="text-working">{t.snoozeUntil}</span>
-          ) : t.status !== 'ready' ? (
-            <StatusLabel status={t.status} />
-          ) : (
-            t.time
-          )}
-        </span>
-        <RowActions />
-      </span>
+      <span className="min-w-0 flex-1 truncate text-label">{label}</span>
     </button>
-  )
-}
-
-function CardRow({
-  conversation: t,
-  active,
-  onSelect,
-}: {
-  conversation: Conversation
-  active: boolean
-  onSelect: () => void
-}) {
-  const quiet = recedes(t, active)
-  return (
-    <button
-      onClick={onSelect}
-      aria-current={active ? 'page' : undefined}
-      className={cn(
-        'group/row relative block h-(--card-row-h) w-full rounded-card px-2.5 py-2 text-left transition-colors duration-(--dur-fast) outline-none select-none',
-        active
-          ? 'bg-surface-3 smooth-shadow-ring-sm'
-          : 'bg-surface-2 smooth-shadow-ring-xs hover:bg-wash-hover hover:smooth-shadow-ring-sm',
-        quiet && 'opacity-80 hover:opacity-100',
-      )}
-    >
-      {/* Line 1: context + status slot */}
-      <span className="flex h-5 items-center gap-1.5">
-        <ServiceMarks services={t.tools ?? []} size={14} />
-        <span className="flex-1" />
-        {t.pinned && <Pin className="size-3 shrink-0 text-ink-4" aria-label="Pinned" />}
-        <span className="relative ml-auto flex h-5 min-w-8 shrink-0 items-center justify-end">
-          <span className="flex items-center gap-1 transition-opacity group-focus-within/row:opacity-0 group-hover/row:opacity-0">
-            {t.status === 'ready' ? (
-              <span className="text-meta font-meta text-ink-4 tabular-nums">{t.time}</span>
-            ) : (
-              <StatusLabel status={t.status}>
-                {t.status === 'working' && t.startedAt !== undefined && (
-                  <Ticking startedAt={t.startedAt} />
-                )}
-              </StatusLabel>
-            )}
-          </span>
-          <RowActions />
-        </span>
-      </span>
-      {/* Line 2: title, with the project it lives in, T3-style */}
-      <span className="mt-0.5 flex min-w-0 items-center gap-1.5">
-        <span
-          className={cn(
-            'min-w-0 shrink truncate text-title',
-            t.unread ? 'font-strong text-ink' : 'text-ink/90',
-          )}
-        >
-          {t.title}
-        </span>
-        <ProjectMark title={t.title} />
-      </span>
-      {/* Line 3: the last thing said */}
-      <span className="mt-0.5 block truncate text-label font-meta text-ink-3">{t.preview}</span>
-    </button>
-  )
-}
-
-function RowActions() {
-  return (
-    <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center gap-0.5 opacity-0 transition-opacity group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100 group-hover/row:pointer-events-auto group-hover/row:opacity-100">
-      <i
-        title="Pin"
-        className="inline-flex size-6 items-center justify-center rounded-xs text-ink-3 hover:bg-wash-pressed hover:text-ink"
-      >
-        <Pin className="size-3.5" />
-      </i>
-      <i
-        title="Snooze"
-        className="inline-flex size-6 items-center justify-center rounded-xs text-ink-3 hover:bg-wash-pressed hover:text-ink"
-      >
-        <AlarmClock className="size-3.5" />
-      </i>
-      <i
-        title="Done"
-        className="inline-flex size-6 items-center justify-center rounded-xs text-ink-3 hover:bg-wash-pressed hover:text-ink"
-      >
-        <Check className="size-3.5" />
-      </i>
-    </span>
-  )
-}
-
-/** T3's WorkingDuration: mono, tabular, ticking once a second. */
-function Ticking({ startedAt }: { startedAt: number }) {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [])
-  const s = Math.max(0, Math.floor((now - startedAt) / 1000))
-  const m = Math.floor(s / 60)
-  return (
-    <span className="ml-0.5 font-mono font-meta text-ink-3">
-      {m > 0 ? `${m}m ${String(s % 60).padStart(2, '0')}s` : `${s}s`}
-    </span>
   )
 }

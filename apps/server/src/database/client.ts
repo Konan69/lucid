@@ -106,7 +106,8 @@ export const databaseLayer = Layer.unwrap(
           mapDriverErrors(raw.transaction((tx) => operation(tx)))
         return database
       }),
-    ).pipe(Layer.provide(postgresLayer))
+      // The PostgreSQL client is handed on as well: the change bus listens on it (`live/changes.ts`).
+    ).pipe(Layer.provideMerge(postgresLayer))
   }),
 )
 
@@ -120,6 +121,24 @@ export const returned = <Row>(rows: ReadonlyArray<Row>, subject: string) => {
   return row === undefined
     ? Effect.fail(new DatabaseFailure({ message: `${subject} was not returned by the database` }))
     : Effect.succeed(row)
+}
+
+/**
+ * Builds the decoder for one kind of stored record. Rows are unknown input at this boundary: a
+ * column may hold a value an older version wrote, so every read is decoded once here and a row
+ * that does not fit is a database fault, never a value handed on half-typed.
+ */
+export const decodeStored = <A>(schema: Schema.ConstraintDecoder<A>, subject: string) => {
+  const decode = Schema.decodeUnknownEffect(schema)
+  // This function is the parser the rule asks for: a stored row or JSON column is unknown input
+  // by nature, and nothing downstream of here ever sees it undecoded.
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters
+  return (value: unknown) =>
+    decode(value).pipe(
+      Effect.mapError(
+        () => new DatabaseFailure({ message: `Database returned an invalid ${subject}` }),
+      ),
+    )
 }
 
 /**

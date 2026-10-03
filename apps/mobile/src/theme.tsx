@@ -1,33 +1,31 @@
-import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react'
-import { Appearance, Platform, useColorScheme } from 'react-native'
-import { nativeTokens } from '@vivid/tokens/native'
-import * as SystemUI from 'expo-system-ui'
-export type ThemePreference = 'system' | 'light' | 'dark'
-type Colors = { [K in keyof typeof nativeTokens.dark]: string }
+import { nativeThemes } from '@vivid/tokens/native'
+import { createContext, useContext, useMemo, type ReactNode } from 'react'
+import { useColorScheme } from 'react-native'
+import { familyAtom, paletteOf, themeAtom } from './data/appearance'
+import { useDoor } from './data/door'
+
+export type Colors = { [K in keyof typeof nativeThemes.graphite.dark]: string }
+
 const ThemeContext = createContext<{ colors: Colors; dark: boolean }>({
-  colors: nativeTokens.light,
+  colors: nativeThemes.graphite.light,
   dark: false,
 })
-export function ThemeProvider({
-  preference,
-  children,
-}: {
-  preference: ThemePreference
-  children: ReactNode
-}) {
-  useEffect(() => {
-    if (Platform.OS !== 'web')
-      Appearance.setColorScheme(preference === 'system' ? 'unspecified' : preference)
-  }, [preference])
-  const system = useColorScheme()
-  const mode = preference === 'system' ? (system === 'dark' ? 'dark' : 'light') : preference
-  useEffect(() => {
-    void SystemUI.setBackgroundColorAsync(nativeTokens[mode]['surface-0'])
-  }, [mode])
+
+/**
+ * Hands every component the palette in force. It reads three things and owns none: the Person's
+ * choice of light or dark (`themeAtom`), their theme family (`familyAtom`) and what the system is
+ * showing (`useColorScheme`, which React
+ * Native keeps current). Telling the system about a choice and painting the window behind the app
+ * happen where the choice changes, in `data/appearance.ts`.
+ */
+export function ThemeProvider({ children }: { children: ReactNode }) {
+  const palette = paletteOf(useDoor(themeAtom), useColorScheme())
+  const family = useDoor(familyAtom)
   const contextValue = useMemo(
-    () => ({ colors: nativeTokens[mode], dark: mode === 'dark' }),
-    [mode],
+    () => ({ colors: nativeThemes[family][palette], dark: palette === 'dark' }),
+    [family, palette],
   )
   return <ThemeContext.Provider value={contextValue}>{children}</ThemeContext.Provider>
 }
+
 export const useTheme = () => useContext(ThemeContext)

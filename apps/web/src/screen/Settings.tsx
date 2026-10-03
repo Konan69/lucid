@@ -1,317 +1,166 @@
+import { Workspace, type MeResponse } from '@vivid/contracts'
+import { Option } from 'effect'
 import {
-  Check,
-  CircleUserRound,
-  Info,
-  Monitor,
-  Settings2,
+  Brain,
+  Link2,
+  MonitorSmartphone,
+  ScrollText,
   ShieldCheck,
+  SlidersHorizontal,
+  Users,
   X,
-  Plug,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { Avatar } from '../ui/Avatar'
+import type { ReactNode } from 'react'
+import { router, type SettingsSection } from '../data/route'
+import { IconButton } from '../ui/Button'
 import { cn } from '../ui/cn'
-import { Connectors } from './Connectors'
+import { Connections } from './settings/Connections'
+import { Devices } from './settings/Devices'
+import { General } from './settings/General'
+import { Memory } from './settings/Memory'
+import { People } from './settings/People'
+import { Record } from './settings/Record'
+import { Rules } from './settings/Rules'
+import { holdFocus, keepFocusInside } from '../ui/Layer'
 
-export type ThemePreference = 'system' | 'light' | 'dark'
-type Section = 'general' | 'connectors' | 'computer' | 'privacy' | 'about'
+interface Entry {
+  readonly id: SettingsSection
+  readonly label: string
+  readonly icon: ReactNode
+}
 
-const SECTION_LABELS = {
-  general: 'General',
-  connectors: 'Connectors',
-  computer: 'Computer',
-  privacy: 'Privacy',
-  about: 'About',
-} satisfies Record<Section, string>
-
-const NAV: Array<{ id: Section; label: string; icon: React.ReactNode }> = [
-  { id: 'general', label: 'General', icon: <Settings2 className="size-4" /> },
-  { id: 'connectors', label: 'Connectors', icon: <Plug className="size-4" /> },
-  { id: 'computer', label: 'Computer', icon: <Monitor className="size-4" /> },
-  { id: 'privacy', label: 'Privacy', icon: <ShieldCheck className="size-4" /> },
-  { id: 'about', label: 'About', icon: <Info className="size-4" /> },
+const YOURS: ReadonlyArray<Entry> = [
+  { id: 'general', label: 'General', icon: <SlidersHorizontal className="size-4" /> },
+  { id: 'memory', label: 'What Vivid knows', icon: <Brain className="size-4" /> },
+  { id: 'devices', label: 'Devices', icon: <MonitorSmartphone className="size-4" /> },
+]
+const SHARED: ReadonlyArray<Entry> = [
+  { id: 'people', label: 'People', icon: <Users className="size-4" /> },
+  { id: 'connections', label: 'Integrations', icon: <Link2 className="size-4" /> },
+  { id: 'rules', label: 'Rules', icon: <ShieldCheck className="size-4" /> },
+  { id: 'record', label: 'Record', icon: <ScrollText className="size-4" /> },
 ]
 
+const TITLE = {
+  general: 'General',
+  devices: 'Devices',
+  people: 'People',
+  connections: 'Integrations',
+  rules: 'Rules',
+  memory: 'What Vivid knows',
+  record: 'Record',
+} satisfies Record<SettingsSection, string>
+
+/**
+ * Settings, over whatever the Person was doing. The left column is in two groups because there
+ * are two kinds of setting: what is the Person's own and follows them everywhere, and what belongs
+ * to the workspace they are in. The open section is in the address, so it can be linked to.
+ */
 export function Settings({
-  theme,
-  onThemeChange,
-  onClose,
-  initialSection = 'general',
+  me,
+  section,
+  deviceCode,
 }: {
-  initialSection?: Section
-  theme: ThemePreference
-  onThemeChange: (theme: ThemePreference) => void
-  onClose: () => void
+  me: MeResponse
+  section: SettingsSection
+  deviceCode: string
 }) {
-  const [section, setSection] = useState<Section>(initialSection)
-
-  useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', closeOnEscape)
-    return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [onClose])
-
+  const close = () => router.openSettings(Option.none())
+  const place = Workspace.match(me.workspace, {
+    Personal: () => 'Your space',
+    Company: ({ company }) => company.name,
+  })
   return (
     <div
-      className="fixed inset-0 z-60 flex items-center justify-center bg-scrim p-0 sm:p-6"
       role="presentation"
+      // Narrow: Settings is the whole screen, the way a phone shows it. Wide: a panel over the page.
+      className="fixed inset-0 z-40 flex animate-fade-in items-center justify-center bg-scrim backdrop-blur-scrim sm:p-4"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
+        if (event.target === event.currentTarget) close()
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') close()
+        keepFocusInside(event)
       }}
     >
-      <section
-        aria-label="Settings"
-        aria-modal="true"
+      <div
+        ref={holdFocus}
         role="dialog"
-        className="flex size-full max-h-180 max-w-260 animate-fade-in overflow-hidden bg-surface-0 smooth-shadow-ring-lg sm:rounded-panel"
+        aria-modal="true"
+        aria-label="Settings"
+        tabIndex={-1}
+        // Wide: sections down the left, the chosen one beside them. Narrow: there is no room for
+        // a column, so the sections become one scrolling strip above the content.
+        className="flex size-full max-w-4xl animate-rise-in flex-col overflow-hidden bg-surface-1 outline-none sm:max-h-160 sm:flex-row sm:rounded-panel sm:smooth-shadow-ring-lg"
       >
-        <aside className="hidden w-56 shrink-0 flex-col bg-surface-1 p-3 hairline-r sm:flex">
-          <div className="mb-2 flex h-10 items-center px-3 text-title font-title text-ink">
-            Settings
-          </div>
-          <SettingsNav section={section} onChange={setSection} />
-        </aside>
-
-        <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex h-14 shrink-0 items-center gap-2 px-4 sm:px-7">
-            <h1 className="min-w-0 flex-1 truncate text-section font-title text-ink">
-              {SECTION_LABELS[section]}
-            </h1>
-            <button
-              onClick={onClose}
-              aria-label="Close settings"
-              className="inline-flex size-8 items-center justify-center rounded-control text-ink-3 hover:bg-wash-hover hover:text-ink"
-            >
+        {/* The strip fades at its far edge and ends in spare room, so a section cut off there
+            reads as "there is more this way" and the last one can still be scrolled clear. */}
+        <nav className="flex shrink-0 scrollbar-hidden gap-0.5 overflow-x-auto bg-surface-1 scroll-fade-end p-2 pr-10 hairline-b sm:w-52 sm:flex-col sm:overflow-x-visible sm:scroll-fade-none sm:pr-2 sm:hairline-r">
+          <Group label="You" entries={YOURS} current={section} />
+          <Group label={place} entries={SHARED} current={section} />
+        </nav>
+        <div className="flex min-w-0 flex-1 flex-col bg-surface-0">
+          <header className="flex h-(--topbar-h) shrink-0 items-center px-5">
+            <h2 className="flex-1 text-title font-title text-ink">{TITLE[section]}</h2>
+            <IconButton label="Close" onClick={close}>
               <X className="size-4" />
-            </button>
+            </IconButton>
           </header>
-
-          <div className="flex gap-1 overflow-x-auto px-3 pb-2 sm:hidden">
-            {NAV.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => setSection(item.id)}
-                className={cn(
-                  'flex h-8 shrink-0 items-center gap-1.5 rounded-control px-3 text-label',
-                  section === item.id ? 'bg-wash-selected text-ink' : 'text-ink-3',
-                )}
-              >
-                {item.icon}
-                {item.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 sm:px-7">
-            {section === 'general' && (
-              <GeneralSettings theme={theme} onThemeChange={onThemeChange} />
-            )}
-            {section === 'connectors' && <Connectors embedded />}
-            {section === 'computer' && <ComputerSettings />}
-            {section === 'privacy' && <PrivacySettings />}
-            {section === 'about' && <AboutSettings />}
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6">
+            {section === 'general' && <General me={me} />}
+            {section === 'devices' && <Devices initialCode={deviceCode} />}
+            {section === 'people' && <People me={me} />}
+            {section === 'connections' && <Connections me={me} />}
+            {section === 'rules' && <Rules me={me} />}
+            {section === 'memory' && <Memory />}
+            {section === 'record' && <Record />}
           </div>
         </div>
-      </section>
+      </div>
     </div>
   )
 }
 
-function SettingsNav({
-  section,
-  onChange,
+/**
+ * Brings the open section's tab into view. On a narrow screen the sections are one scrolling
+ * strip, and a section opened from a link (or the last one in the row) would otherwise be chosen
+ * and out of sight. Wide, every section is already visible and this moves nothing.
+ */
+const reveal = (tab: HTMLButtonElement | null) => {
+  if (tab !== null) tab.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+}
+
+function Group({
+  label,
+  entries,
+  current,
 }: {
-  section: Section
-  onChange: (section: Section) => void
+  label: string
+  entries: ReadonlyArray<Entry>
+  current: SettingsSection
 }) {
   return (
-    <nav className="flex flex-col gap-1">
-      {NAV.map((item) => (
+    <>
+      <p className="hidden truncate px-2.5 pt-3 pb-1 text-meta font-meta text-ink-3 sm:block">
+        {label}
+      </p>
+      {entries.map((entry) => (
         <button
-          key={item.id}
-          onClick={() => onChange(item.id)}
+          key={entry.id}
+          onClick={() => router.openSettings(Option.some(entry.id))}
+          aria-current={entry.id === current ? 'page' : undefined}
+          ref={entry.id === current ? reveal : undefined}
           className={cn(
-            'flex h-10 items-center gap-3 rounded-control px-3 text-label transition-colors',
-            section === item.id
+            'flex h-8 shrink-0 cursor-pointer items-center gap-2.5 rounded-row px-2.5 text-left text-label whitespace-nowrap transition-colors duration-(--dur-fast) sm:w-full',
+            entry.id === current
               ? 'bg-wash-selected text-ink'
               : 'text-ink-2 hover:bg-wash-hover hover:text-ink',
           )}
         >
-          <span className="text-ink-3">{item.icon}</span>
-          {item.label}
+          <span className="text-ink-3">{entry.icon}</span>
+          {entry.label}
         </button>
       ))}
-    </nav>
-  )
-}
-
-function GeneralSettings({
-  theme,
-  onThemeChange,
-}: {
-  theme: ThemePreference
-  onThemeChange: (theme: ThemePreference) => void
-}) {
-  return (
-    <div className="mx-auto max-w-3xl space-y-7 pt-3">
-      <SettingsGroup label="Account">
-        <div className="flex min-h-20 items-center gap-3 px-4 py-3">
-          <Avatar name="You" size={42} />
-          <span className="min-w-0 flex-1">
-            <span className="block text-title font-title text-ink">You</span>
-            <span className="block text-label font-meta text-ink-3">Personal workspace</span>
-          </span>
-          <CircleUserRound className="size-4 text-ink-4" />
-        </div>
-      </SettingsGroup>
-
-      <SettingsGroup label="Appearance">
-        <SettingRow label="Theme">
-          <select
-            aria-label="Theme"
-            value={theme}
-            onChange={(event) => {
-              const value = event.currentTarget.value
-              if (value === 'system' || value === 'light' || value === 'dark') onThemeChange(value)
-            }}
-            className="h-8 rounded-control bg-surface-3 px-3 text-label text-ink ring-line outline-none focus:ring-2 focus:ring-ring"
-          >
-            <option value="system">Follow system</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-        </SettingRow>
-        <SettingRow label="Language">
-          <span className="text-label text-ink-3">Follow system</span>
-        </SettingRow>
-      </SettingsGroup>
-
-      <SettingsGroup label="Vivid">
-        <SettingRow label="Timezone">
-          <span className="text-label text-ink-3">Auto-detect · Africa/Lagos</span>
-        </SettingRow>
-        <SettingRow
-          label="Ask before acting"
-          note="Vivid checks with you before sending, buying, or changing anything important."
-        >
-          <Toggle checked />
-        </SettingRow>
-      </SettingsGroup>
-    </div>
-  )
-}
-
-function ComputerSettings() {
-  return (
-    <div className="mx-auto max-w-3xl space-y-7 pt-3">
-      <SettingsGroup label="Vivid's computer">
-        <SettingRow
-          label="Status"
-          note="A private computer that stays ready between conversations."
-        >
-          <span className="inline-flex items-center gap-1.5 text-label text-success">
-            <i className="size-1.5 rounded-full bg-success" />
-            Ready
-          </span>
-        </SettingRow>
-        <SettingRow label="Open links in">
-          <span className="text-label text-ink-3">Vivid's browser</span>
-        </SettingRow>
-      </SettingsGroup>
-    </div>
-  )
-}
-
-function PrivacySettings() {
-  return (
-    <div className="mx-auto max-w-3xl space-y-7 pt-3">
-      <SettingsGroup label="Permissions">
-        <SettingRow
-          label="Ask before acting"
-          note="Require approval for actions with an outside effect."
-        >
-          <Toggle checked />
-        </SettingRow>
-        <SettingRow
-          label="Remember approvals"
-          note="Reuse permissions you marked as always allowed."
-        >
-          <Toggle checked={false} />
-        </SettingRow>
-      </SettingsGroup>
-    </div>
-  )
-}
-
-function AboutSettings() {
-  return (
-    <div className="mx-auto max-w-3xl space-y-7 pt-3">
-      <SettingsGroup label="Vivid">
-        <SettingRow label="Version">
-          <span className="text-label font-meta text-ink-3">Prototype 0.1</span>
-        </SettingRow>
-        <SettingRow label="Built for">
-          <span className="text-label text-ink-3">Everyday work</span>
-        </SettingRow>
-      </SettingsGroup>
-    </div>
-  )
-}
-
-function SettingsGroup({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <section>
-      <h2 className="mb-2 px-1 text-label font-meta text-ink-3">{label}</h2>
-      <div className="divide-y divide-line-2 overflow-hidden rounded-panel bg-surface-2 ring-line">
-        {children}
-      </div>
-    </section>
-  )
-}
-
-function SettingRow({
-  label,
-  note,
-  children,
-}: {
-  label: React.ReactNode
-  note?: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="flex min-h-14 items-center gap-4 px-4 py-3">
-      <span className="min-w-0 flex-1">
-        <span className="block text-label font-title text-ink">{label}</span>
-        {note && (
-          <span className="mt-0.5 block max-w-xl text-meta leading-(--leading-body) font-meta text-ink-3">
-            {note}
-          </span>
-        )}
-      </span>
-      <span className="shrink-0">{children}</span>
-    </div>
-  )
-}
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange?: (v: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => {
-        if (onChange) onChange(!checked)
-      }}
-      className={cn(
-        'inline-flex h-6 w-10 items-center rounded-full p-0.5',
-        checked ? 'justify-end bg-accent' : 'justify-start bg-line-4',
-      )}
-    >
-      <i className="flex size-5 items-center justify-center rounded-full bg-ink-on-accent smooth-shadow-xs">
-        {checked && <Check className="size-3 text-accent" />}
-      </i>
-    </button>
+    </>
   )
 }

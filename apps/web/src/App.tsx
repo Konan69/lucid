@@ -1,553 +1,308 @@
-/// <reference lib="es2023.array" />
-
-import { Option, Schema } from 'effect'
-import {
-  useEffect,
-  useState,
-  useSyncExternalStore,
-  type Dispatch,
-  type SetStateAction,
-} from 'react'
-import { EmptyState } from './screen/Empty'
-import { Library, type LibraryDocument } from './screen/Library'
-import { Routines } from './screen/Routines'
-import { Projects } from './screen/Projects'
-import { Panel } from './screen/Panel'
+import { useAtomValue } from '@effect/atom-react'
+import { workspaceKey } from '@vivid/state'
+import { ThreadId, type MeResponse, type Thread as ThreadRecord } from '@vivid/contracts'
+import { Array as Arr, Option, Order } from 'effect'
+import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
+import { PanelLeft } from 'lucide-react'
+import { lazy, Suspense, useSyncExternalStore } from 'react'
+import { live, LiveState, useLive, useLiveValue } from './data/live'
+import { panel } from './data/panel'
+import { Route, router } from './data/route'
+import { engine, link } from './data/runtime'
+import { sidebar } from './data/sidebar'
+import { theme } from './data/theme'
+import { startThread } from './data/threads'
+import { First } from './screen/First'
+import { Invite } from './screen/Invite'
+import { Notifications } from './screen/Notifications'
+import { Palette } from './screen/Palette'
 import { Sidebar } from './screen/Sidebar'
-import { Settings, type ThemePreference } from './screen/Settings'
-import { Conversation, DemoConversation } from './screen/Conversation'
-import { Tokens } from './screen/Tokens'
-import { plainPreview, titleFromMessage, type RuntimeConversation } from '@vivid/state'
+import { Thread } from './screen/Thread'
+import { Welcome } from './screen/Welcome'
+import { Face } from './ui/Face'
+import { Sayings } from './ui/Sayings'
 
-type View = 'conversation' | 'demo' | 'empty' | 'tokens' | 'library' | 'projects' | 'routines'
+// The screens a Person may not open in a session, each in its own file on the wire: the Thread
+// is what loads first, and the Computer's screen client alone is a third of everything else.
+// Each is fetched when it is first drawn, and all of them are fetched once the first screen is
+// up and the browser is idle, so opening one later does not wait on the network.
+const screens = {
+  Computer: () => import('./screen/Computer'),
+  Library: () => import('./screen/Library'),
+  Projects: () => import('./screen/Projects'),
+  Routines: () => import('./screen/Routines'),
+  Settings: () => import('./screen/Settings'),
+  Skills: () => import('./screen/Skills'),
+}
+const Computer = lazy(async () => ({ default: (await screens.Computer()).Computer }))
+const Library = lazy(async () => ({ default: (await screens.Library()).Library }))
+const Projects = lazy(async () => ({ default: (await screens.Projects()).Projects }))
+const Routines = lazy(async () => ({ default: (await screens.Routines()).Routines }))
+const Settings = lazy(async () => ({ default: (await screens.Settings()).Settings }))
+const Skills = lazy(async () => ({ default: (await screens.Skills()).Skills }))
+
+const warm = () => {
+  for (const load of Object.values(screens)) void load()
+}
+if ('requestIdleCallback' in globalThis) requestIdleCallback(warm)
+else setTimeout(warm, 2000)
+
+/** What floats over the app. One at a time, because each takes the keyboard. */
+type Overlay = 'none' | 'palette' | 'notifications'
+
+const overlayListeners = new Set<() => void>()
+let overlay: Overlay = 'none'
+const setOverlay = (next: Overlay) => {
+  overlay = next
+  for (const listener of overlayListeners) listener()
+}
+const subscribeOverlay = (listener: () => void) => {
+  overlayListeners.add(listener)
+  return () => {
+    overlayListeners.delete(listener)
+  }
+}
+
+/** The Threads still in play, newest first: the order ⌘⇧[ and ⌘⇧] walk through. */
+const inPlay = () => {
+  const result = engine.registry.get(live.threads.atom)
+  return AsyncResult.isSuccess(result)
+    ? Arr.sort(
+        result.value.threads.filter((thread) => !thread.archived),
+        Order.mapInput(Order.flip(Order.Number), (thread: ThreadRecord) => thread.updatedAt),
+      )
+    : []
+}
+
+/** Goes to the Thread before or after the one on screen; from anywhere else, to the newest. */
+const step = (by: -1 | 1) => {
+  const threads = inPlay()
+  const here = router.route()
+  const at = Route.$is('Thread')(here) ? threads.findIndex((thread) => thread.id === here.id) : -1
+  const next = Option.fromUndefinedOr(
+    threads[at === -1 ? 0 : Math.min(Math.max(at + by, 0), threads.length - 1)],
+  )
+  if (Option.isSome(next)) router.go(Route.Thread({ id: next.value.id }))
+}
+
+/** Whether a modal is open: Settings, a confirmation, the palette. */
+const inDialog = () => document.querySelector('[aria-modal="true"]') !== null
 
 /**
- * Which sidebar row is highlighted. The demo view highlights its own fixture, the empty view
- * highlights nothing, and every other view keeps the open conversation highlighted.
+ * Whether going somewhere else now would throw away something being written. The shortcuts that
+ * change the screen stand down inside a dialog and while the keyboard is in a field of an editor
+ * (a Routine, a Library item, a rule): leaving unmounts it with whatever was typed. The Thread's
+ * own composer is the exception, because what is typed there is kept for its place.
  */
-function sidebarSelection(input: {
-  view: View
-  activeDemoId: string
-  activeId: string | null
-}): string | null {
-  if (input.view === 'demo') return input.activeDemoId
-  return input.view === 'empty' ? null : input.activeId
+const leavingWouldLose = (event: KeyboardEvent) => {
+  if (inDialog()) return true
+  const target = event.target
+  if (!(target instanceof HTMLElement)) return false
+  const editing = target.isContentEditable || target.matches('input, textarea, select')
+  return editing && target.closest('[data-keeps-draft]') === null
 }
 
-const RuntimeConversationSchema = Schema.Struct({
-  id: Schema.String,
-  title: Schema.String,
-  preview: Schema.String,
-  updatedAt: Schema.Number,
-  archived: Schema.Boolean,
+// The shortcuts that work from anywhere. They are module-level listeners, like the sidebar's ⌘B,
+// so they exist for the life of the page and not for the life of a component.
+//   ⌘K          find anything, do anything
+//   ⌘⇧O         new thread
+//   ⌘⇧[  ⌘⇧]    the thread before, the thread after
+/** ⌘K: opens the palette over the app, and always closes it. */
+const togglePalette = (event: KeyboardEvent) => {
+  // Over a dialog that is already open (Settings, a confirmation) the palette would be a second
+  // modal on top of the first; it only opens over the app itself.
+  if (overlay !== 'palette' && inDialog()) return
+  event.preventDefault()
+  setOverlay(overlay === 'palette' ? 'none' : 'palette')
+}
+
+/** ⌘⇧O and ⌘⇧[ ]: the shortcuts that change the screen, which stand down over unsaved writing. */
+const goElsewhere = (event: KeyboardEvent) => {
+  if (leavingWouldLose(event)) return
+  if (event.key.toLocaleLowerCase() === 'o') {
+    event.preventDefault()
+    setOverlay('none')
+    router.go(Route.New())
+    return
+  }
+  // By position on the keyboard, not by character: with Shift held the key reads "{" or "}".
+  if (event.code === 'BracketLeft' || event.code === 'BracketRight') {
+    event.preventDefault()
+    step(event.code === 'BracketLeft' ? -1 : 1)
+  }
+}
+
+addEventListener('keydown', (event) => {
+  if (!(event.metaKey || event.ctrlKey)) return
+  // Not while an input method is composing, and not for a key something else already used.
+  if (event.defaultPrevented || event.isComposing) return
+  if (event.shiftKey) goElsewhere(event)
+  else if (event.key.toLocaleLowerCase() === 'k') togglePalette(event)
 })
-const RuntimeConversationListSchema = Schema.Struct({
-  conversations: Schema.Array(RuntimeConversationSchema),
-})
-const RuntimeConversationListJsonSchema = Schema.fromJsonString(RuntimeConversationListSchema)
-const LegacyRuntimeConversationSchema = Schema.Struct({
-  id: Schema.String,
-  title: Schema.String,
-  preview: Schema.String,
-  updatedAt: Schema.Number,
-})
-const LegacyRuntimeConversationListSchema = Schema.Array(LegacyRuntimeConversationSchema)
-const LegacyRuntimeConversationListJsonSchema = Schema.fromJsonString(
-  LegacyRuntimeConversationListSchema,
-)
-const RuntimeConversationResponseSchema = Schema.Struct({ conversation: RuntimeConversationSchema })
-const RuntimeConversationResponseJsonSchema = Schema.fromJsonString(
-  RuntimeConversationResponseSchema,
-)
-const decodeRuntimeConversationList = Schema.decodeUnknownSync(RuntimeConversationListJsonSchema)
-const decodeLegacyRuntimeConversationList = Schema.decodeUnknownOption(
-  LegacyRuntimeConversationListJsonSchema,
-)
-const decodeRuntimeConversationResponse = Schema.decodeUnknownSync(
-  RuntimeConversationResponseJsonSchema,
-)
 
-/** Returns the first non-archived conversation without weakening the missing-state contract. */
-function firstActiveConversationId(conversations: readonly RuntimeConversation[]): string | null {
-  const conversation = conversations.find((thread) => !thread.archived)
-  return conversation === undefined ? null : conversation.id
-}
-
-function subscribeToSystemTheme(onChange: () => void) {
-  const query = window.matchMedia('(prefers-color-scheme: dark)')
-  query.addEventListener('change', onChange)
-  return () => query.removeEventListener('change', onChange)
-}
-
-function getSystemTheme(): 'dark' | 'light' {
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-}
-
-function initialTheme(): ThemePreference {
-  const saved = localStorage.getItem('vivid-theme')
-  return saved === 'light' || saved === 'dark' || saved === 'system' ? saved : 'system'
-}
-
-async function saveRuntimeThread(thread: RuntimeConversation) {
-  const response = await fetch(`/api/conversations/${encodeURIComponent(thread.id)}`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(thread),
-  })
-  if (!response.ok) throw new Error(`Could not save conversation (${response.status})`)
-}
-
-/** Preserves the original query-fragment precedence while keeping routing out of the component. */
-function initialView(search: string): View {
-  if (search.includes('tokens')) return 'tokens'
-  if (search.includes('empty')) return 'empty'
-  if (search.includes('library')) return 'library'
-  if (search.includes('projects')) return 'projects'
-  if (search.includes('routines')) return 'routines'
-  return 'conversation'
-}
-
-/** Rebuilds the legacy record explicitly so migration does not rely on per-item object spreading. */
-function activeLegacyConversation(
-  thread: typeof LegacyRuntimeConversationSchema.Type,
-): RuntimeConversation {
-  return {
-    id: thread.id,
-    title: thread.title,
-    preview: thread.preview,
-    updatedAt: thread.updatedAt,
-    archived: false,
-  }
-}
-
-/** Hydrates runtime conversations once and ignores a response after the application unmounts. */
-function useRuntimeThreadHydration(
-  setRuntimeThreads: Dispatch<SetStateAction<RuntimeConversation[]>>,
-  setActiveId: Dispatch<SetStateAction<string | null>>,
-  setThreadsReady: Dispatch<SetStateAction<boolean>>,
-) {
-  useEffect(() => {
-    let cancelled = false
-
-    async function loadThreads() {
-      const response = await fetch('/api/conversations')
-      if (!response.ok) throw new Error(`Could not load conversations (${response.status})`)
-      const payload = await response.text()
-      const body = decodeRuntimeConversationList(payload)
-      let conversations: RuntimeConversation[] = [...body.conversations]
-
-      if (conversations.length === 0) {
-        const legacy = localStorage.getItem('vivid-runtime-conversations')
-        const decoded =
-          legacy === null ? Option.some([]) : decodeLegacyRuntimeConversationList(legacy)
-        const parsed = Option.isSome(decoded) ? decoded.value.map(activeLegacyConversation) : []
-        if (parsed.length > 0) {
-          // Migration is best-effort because the current runtime list remains authoritative. All
-          // legacy writes must land before that index can replace the empty runtime response.
-          const writes = await Promise.allSettled(parsed.map(saveRuntimeThread))
-          if (writes.every((write) => write.status === 'fulfilled')) {
-            conversations = parsed.toSorted((left, right) => right.updatedAt - left.updatedAt)
-          }
-        }
-      }
-
-      localStorage.removeItem('vivid-runtime-conversations')
-      if (!cancelled) {
-        setRuntimeThreads(conversations)
-        setActiveId((current) => current ?? firstActiveConversationId(conversations))
-        setThreadsReady(true)
-      }
-    }
-
-    void loadThreads().catch(() => {
-      if (!cancelled) setThreadsReady(true)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [setActiveId, setRuntimeThreads, setThreadsReady])
-}
-
-/** Creates the shared runtime record shape for both blank and Library-started conversations. */
-function makeRuntimeConversation(title: string, preview: string): RuntimeConversation {
-  return {
-    id: crypto.randomUUID(),
-    title,
-    preview,
-    updatedAt: Date.now(),
-    archived: false,
-  }
-}
-
-/** Applies a server-authoritative conversation patch and restores recency ordering. */
-async function patchRuntimeThread(
-  id: string,
-  patch: Partial<Pick<RuntimeConversation, 'archived' | 'title'>>,
-  setRuntimeThreads: Dispatch<SetStateAction<RuntimeConversation[]>>,
-) {
-  const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(patch),
-  })
-  if (!response.ok) throw new Error(`Could not update conversation (${response.status})`)
-  const payload = await response.text()
-  const { conversation } = decodeRuntimeConversationResponse(payload)
-  setRuntimeThreads((current) =>
-    current
-      .map((thread) => (thread.id === id ? conversation : thread))
-      .toSorted((left, right) => right.updatedAt - left.updatedAt),
-  )
-}
-
-/** Owns conversation mutations so the application component only coordinates stable UI state. */
-function createAppActions({
-  runtimeThreads,
-  activeId,
-  setRuntimeThreads,
-  setConversationDrafts,
-  setActiveId,
-  setView,
-  setPanel,
-}: {
-  runtimeThreads: RuntimeConversation[]
-  activeId: string | null
-  setRuntimeThreads: Dispatch<SetStateAction<RuntimeConversation[]>>
-  setConversationDrafts: Dispatch<SetStateAction<Record<string, string>>>
-  setActiveId: Dispatch<SetStateAction<string | null>>
-  setView: Dispatch<SetStateAction<View>>
-  setPanel: Dispatch<SetStateAction<'screen' | 'log' | null>>
-}) {
-  function activateConversation(thread: RuntimeConversation) {
-    setRuntimeThreads((current) => [thread, ...current])
-    setActiveId(thread.id)
-    setView('conversation')
-    setPanel(null)
-    void saveRuntimeThread(thread)
-  }
-
-  function createConversation() {
-    activateConversation(makeRuntimeConversation('New conversation', 'No messages yet'))
-  }
-
-  function askAboutLibrary(document: LibraryDocument) {
-    const thread = makeRuntimeConversation(
-      `Ask about ${document.name}`.slice(0, 120),
-      `Ready to search ${document.name}`,
-    )
-    setConversationDrafts((current) => ({
-      ...current,
-      [thread.id]: `Search the Library and answer a question about “${document.name}”: `,
-    }))
-    activateConversation(thread)
-  }
-
-  /**
-   * A suggestion on the first screen opens a Thread with itself already in the composer, so the
-   * Person edits one sentence rather than facing an empty box. The draft is seeded rather than
-   * sent: the suggestion is a starting point, not a message they wrote.
-   */
-  function askSuggestion(suggestion: string) {
-    const thread = makeRuntimeConversation(titleFromMessage(suggestion), plainPreview(suggestion))
-    setConversationDrafts((current) => ({ ...current, [thread.id]: suggestion }))
-    activateConversation(thread)
-  }
-
-  function recordMessage(id: string, message: string) {
-    const current = runtimeThreads.find((thread) => thread.id === id)
-    if (!current) return
-    const changed = {
-      ...current,
-      title: current.title === 'New conversation' ? titleFromMessage(message) : current.title,
-      preview: plainPreview(message),
-      updatedAt: Date.now(),
-    }
-    setRuntimeThreads((threads) => [changed, ...threads.filter((thread) => thread.id !== id)])
-    void saveRuntimeThread(changed)
-  }
-
-  function openRuntimeConversation(thread: RuntimeConversation) {
-    setRuntimeThreads((current) =>
-      [thread, ...current.filter((item) => item.id !== thread.id)].toSorted(
-        (left, right) => right.updatedAt - left.updatedAt,
-      ),
-    )
-    setActiveId(thread.id)
-    setView('conversation')
-    setPanel(null)
-  }
-
-  function renameConversation(id: string, title: string) {
-    const current = runtimeThreads.find((thread) => thread.id === id)
-    if (!current) return
-    const normalized = title.trim()
-    if (!normalized || normalized === current.title) return
-    void patchRuntimeThread(id, { title: normalized }, setRuntimeThreads)
-  }
-
-  function archiveConversation(id: string, archived: boolean) {
-    void patchRuntimeThread(id, { archived }, setRuntimeThreads)
-    if (archived && activeId === id) {
-      setActiveId(firstActiveConversationId(runtimeThreads.filter((thread) => thread.id !== id)))
-    }
-  }
-
-  async function removeConversation(id: string) {
-    const current = runtimeThreads.find((thread) => thread.id === id)
-    if (!current || !window.confirm(`Delete “${current.title}”?`)) return
-    const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    })
-    if (!response.ok) return
-    const remaining = runtimeThreads.filter((thread) => thread.id !== id)
-    setRuntimeThreads(remaining)
-    if (activeId === id) setActiveId(firstActiveConversationId(remaining))
-  }
-
-  return {
-    archiveConversation,
-    askAboutLibrary,
-    askSuggestion,
-    createConversation,
-    openRuntimeConversation,
-    recordMessage,
-    removeConversation,
-    renameConversation,
-  }
-}
-
+/**
+ * The app. Who is signed in decides everything else, and that is one live query: while it is on
+ * its way there is a quiet splash, when there is nobody there is the welcome, and when there is
+ * someone there is the shell around wherever the address says they are.
+ */
 export default function App() {
-  const [view, setView] = useState<View>(() => initialView(location.search))
-  const [runtimeThreads, setRuntimeThreads] = useState<RuntimeConversation[]>([])
-  const [conversationDrafts, setConversationDrafts] = useState<Record<string, string>>({})
-  const [activeId, setActiveId] = useState<string | null>(null)
-  const [threadsReady, setThreadsReady] = useState(false)
-  const [activeDemoId, setActiveDemoId] = useState('t5')
-  const [panel, setPanel] = useState<'screen' | 'log' | null>(null)
-  const connectorSettingsRequested =
-    new URLSearchParams(location.search).has('connectors') ||
-    new URLSearchParams(location.search).get('settings') === 'connectors'
-  const [settingsOpen, setSettingsOpen] = useState(connectorSettingsRequested)
-  const [theme, setTheme] = useState<ThemePreference>(initialTheme)
-  const systemTheme = useSyncExternalStore(subscribeToSystemTheme, getSystemTheme, () => 'light')
-  const resolvedTheme = theme === 'system' ? systemTheme : theme
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = resolvedTheme
-    localStorage.setItem('vivid-theme', theme)
-  }, [resolvedTheme, theme])
-
-  useRuntimeThreadHydration(setRuntimeThreads, setActiveId, setThreadsReady)
-
-  const actions = createAppActions({
-    runtimeThreads,
-    activeId,
-    setRuntimeThreads,
-    setConversationDrafts,
-    setActiveId,
-    setView,
-    setPanel,
+  const me = useLive(live.me)
+  const reach = useAtomValue(link.atom)
+  return LiveState.$match(me, {
+    Loading: () => <Splash unreachable={reach === 'lost'} />,
+    Failed: () => <Welcome returnTo={`${location.pathname}${location.search}`} />,
+    Ready: ({ value }) => (
+      <>
+        <Shell me={value} />
+        {reach === 'lost' && <Reconnecting />}
+        <Sayings />
+      </>
+    ),
   })
-
-  const activeThread = runtimeThreads.find((thread) => thread.id === activeId)
-  const activeTitle = activeThread === undefined ? 'Conversation' : activeThread.title
-
-  return (
-    <div className="flex size-full">
-      <AppSidebar
-        view={view}
-        activeId={activeId}
-        activeDemoId={activeDemoId}
-        runtimeThreads={runtimeThreads}
-        onArchive={actions.archiveConversation}
-        onDelete={actions.removeConversation}
-        onRename={actions.renameConversation}
-        onCreate={actions.createConversation}
-        onView={setView}
-        onActiveId={setActiveId}
-        onActiveDemoId={setActiveDemoId}
-        onOpenSettings={() => setSettingsOpen(true)}
-      />
-      <AppWorkspace
-        view={view}
-        activeId={activeId}
-        activeTitle={activeTitle}
-        activeDemoId={activeDemoId}
-        runtimeDrafts={conversationDrafts}
-        threadsReady={threadsReady}
-        panel={panel}
-        onAskAboutLibrary={actions.askAboutLibrary}
-        onAskSuggestion={actions.askSuggestion}
-        onOpenRuntimeConversation={actions.openRuntimeConversation}
-        onRecordMessage={actions.recordMessage}
-        onDraftsChange={setConversationDrafts}
-        onPanelChange={setPanel}
-      />
-      <AppSettings
-        open={settingsOpen}
-        connectorSettingsRequested={connectorSettingsRequested}
-        theme={theme}
-        onThemeChange={setTheme}
-        onClose={() => setSettingsOpen(false)}
-      />
-    </div>
-  )
 }
 
-/** Keeps sidebar routing decisions separate from the application state and workspace rendering. */
-function AppSidebar({
-  view,
-  activeId,
-  activeDemoId,
-  runtimeThreads,
-  onArchive,
-  onDelete,
-  onRename,
-  onCreate,
-  onView,
-  onActiveId,
-  onActiveDemoId,
-  onOpenSettings,
-}: {
-  view: View
-  activeId: string | null
-  activeDemoId: string
-  runtimeThreads: RuntimeConversation[]
-  onArchive: (id: string, archived: boolean) => void
-  onDelete: (id: string) => Promise<void>
-  onRename: (id: string, title: string) => void
-  onCreate: () => void
-  onView: Dispatch<SetStateAction<View>>
-  onActiveId: Dispatch<SetStateAction<string | null>>
-  onActiveDemoId: Dispatch<SetStateAction<string>>
-  onOpenSettings: () => void
-}) {
-  if (view === 'tokens') return null
-  const sidebarActiveId = sidebarSelection({ view, activeDemoId, activeId })
-
-  function select(id: string) {
-    if (id === 'new') onCreate()
-    else if (id === 'library') onView('library')
-    else if (id === 'projects') onView('projects')
-    else if (id === 'routines') onView('routines')
-    else if (id.startsWith('demo:')) {
-      onActiveDemoId(id.slice(5))
-      onView('demo')
-    } else {
-      onActiveId(id)
-      onView('conversation')
-    }
-  }
-
+/**
+ * The first moment of the page. A server that cannot be reached used to look exactly like this
+ * for as long as it lasted; now it says so, under the face, and keeps trying.
+ */
+function Splash({ unreachable = false }: { unreachable?: boolean }) {
   return (
-    <Sidebar
-      activeId={sidebarActiveId}
-      runtimeConversations={runtimeThreads}
-      onArchive={onArchive}
-      onDelete={(id) => {
-        void onDelete(id)
-      }}
-      onRename={onRename}
-      onSelect={select}
-      onOpenSettings={onOpenSettings}
-      workingCount={0}
-    />
-  )
-}
-
-/** Renders the selected workspace without making the root component own screen branches. */
-function AppWorkspace({
-  view,
-  activeId,
-  activeTitle,
-  activeDemoId,
-  runtimeDrafts,
-  threadsReady,
-  panel,
-  onAskAboutLibrary,
-  onAskSuggestion,
-  onOpenRuntimeConversation,
-  onRecordMessage,
-  onDraftsChange,
-  onPanelChange,
-}: {
-  view: View
-  activeId: string | null
-  activeTitle: string
-  activeDemoId: string
-  runtimeDrafts: Record<string, string>
-  threadsReady: boolean
-  panel: 'screen' | 'log' | null
-  onAskAboutLibrary: (document: LibraryDocument) => void
-  onAskSuggestion: (suggestion: string) => void
-  onOpenRuntimeConversation: (thread: RuntimeConversation) => void
-  onRecordMessage: (id: string, message: string) => void
-  onDraftsChange: Dispatch<SetStateAction<Record<string, string>>>
-  onPanelChange: Dispatch<SetStateAction<'screen' | 'log' | null>>
-}) {
-  return (
-    <main className="flex min-w-0 flex-1">
-      {view === 'tokens' && <Tokens />}
-      {view === 'empty' && <EmptyState onAsk={onAskSuggestion} />}
-      {view === 'library' && <Library onAsk={onAskAboutLibrary} />}
-      {view === 'projects' && <Projects />}
-      {view === 'routines' && <Routines onOpenConversation={onOpenRuntimeConversation} />}
-      {view === 'demo' && <DemoConversation conversationId={activeDemoId} />}
-      {view === 'conversation' &&
-        (activeId ? (
-          <Conversation
-            conversationId={activeId}
-            title={activeTitle}
-            initialDraft={runtimeDrafts[activeId]}
-            onMessageSent={(message) => {
-              onRecordMessage(activeId ?? 't1', message)
-              onDraftsChange((current) => {
-                const next = { ...current }
-                delete next[activeId]
-                return next
-              })
-            }}
-            panelOpen={panel !== null}
-            onOpenPanel={(k) => onPanelChange((cur) => (cur === k ? null : k))}
-          />
-        ) : threadsReady ? (
-          <EmptyState onAsk={onAskSuggestion} />
-        ) : (
-          <div className="flex flex-1 items-center justify-center text-label text-ink-4">
-            Loading conversations…
-          </div>
-        ))}
-      {view === 'conversation' && panel && (
-        <Panel kind={panel} conversationId={activeId} onClose={() => onPanelChange(null)} />
+    <main
+      className="flex size-full flex-col items-center justify-center gap-4 bg-surface-1"
+      aria-busy
+    >
+      <Face size={40} mood="thinking" />
+      {unreachable && (
+        <p role="status" className="animate-fade-in text-label text-ink-3">
+          Can’t reach Vivid. Trying again…
+        </p>
       )}
     </main>
   )
 }
 
-/** Owns the settings overlay's URL cleanup while preserving its conditional mount behavior. */
-function AppSettings({
-  open,
-  connectorSettingsRequested,
-  theme,
-  onThemeChange,
-  onClose,
-}: {
-  open: boolean
-  connectorSettingsRequested: boolean
-  theme: ThemePreference
-  onThemeChange: Dispatch<SetStateAction<ThemePreference>>
-  onClose: () => void
-}) {
-  if (!open) return null
+/**
+ * Said over the app while its connection is down. What is on screen stays, since it is the last
+ * thing the server said, and this is the note that it may be behind. It waits a second before it
+ * shows: most drops are over before anyone could read it, and a pill that flashes on every one
+ * of them would be noise.
+ */
+function Reconnecting() {
   return (
-    <Settings
-      initialSection={connectorSettingsRequested ? 'connectors' : 'general'}
-      theme={theme}
-      onThemeChange={onThemeChange}
-      onClose={() => {
-        onClose()
-        if (connectorSettingsRequested) history.replaceState(null, '', location.pathname)
-      }}
-    />
+    <p
+      role="status"
+      className="pointer-events-none fixed top-3 left-1/2 z-50 -translate-x-1/2 rounded-full px-3 py-1 text-meta text-ink-2 smooth-shadow-ring-sm glass transition-opacity delay-1000 duration-(--dur-base) starting:opacity-0"
+    >
+      Reconnecting…
+    </p>
   )
+}
+
+function Shell({ me }: { me: MeResponse }) {
+  const route = useSyncExternalStore(router.subscribe, router.route)
+  const section = useSyncExternalStore(router.subscribe, router.settings)
+  const sidebarOpen = useSyncExternalStore(sidebar.subscribe, sidebar.isOpen)
+  const floating = useSyncExternalStore(subscribeOverlay, () => overlay)
+  const beside = useSyncExternalStore(panel.subscribe, panel.isOpen)
+  const notices = useLiveValue(live.notifications)
+  const settings = useLiveValue(live.settings)
+  // The Person's theme is theirs on every device; when their settings arrive, this device follows.
+  if (Option.isSome(settings)) theme.set(settings.value.theme)
+
+  return (
+    <div className="group/shell relative flex size-full" data-rail={sidebarOpen ? 'open' : 'shut'}>
+      <Sidebar
+        me={me}
+        route={route}
+        open={sidebarOpen}
+        onHide={sidebar.toggle}
+        onSearch={() => setOverlay('palette')}
+        onNotifications={() => setOverlay('notifications')}
+        unread={Option.match(notices, { onNone: () => 0, onSome: (value) => value.unreadCount })}
+      />
+      {sidebarOpen ? (
+        // Under the drawer on a narrow window: the rest of the page, dimmed, closes it.
+        <button
+          aria-label="Close sidebar"
+          tabIndex={-1}
+          onClick={sidebar.hide}
+          className="fixed inset-0 z-30 animate-fade-in cursor-default bg-scrim md:hidden"
+        />
+      ) : (
+        <button
+          aria-label="Show sidebar"
+          title="Show sidebar (⌘B)"
+          onClick={sidebar.show}
+          className="absolute top-2 left-2 z-30 inline-flex size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"
+        >
+          <PanelLeft className="size-4" />
+        </button>
+      )}
+      <main className="relative flex min-w-0 flex-1">
+        <Suspense fallback={<Splash />}>
+          <Place
+            // A screen holds things that belong to the workspace it was opened in: the folder it
+            // is in, the item it has open, a half-written Routine. Changing workspace starts each
+            // screen again, so nothing of one Company is left on screen under another's name.
+            key={workspaceKey(me.workspace)}
+            route={route}
+            me={me}
+            beside={beside}
+            onTogglePanel={panel.toggle}
+          />
+        </Suspense>
+        {beside && Route.$is('Thread')(route) && (
+          <Suspense fallback={null}>
+            <Computer onClose={panel.hide} />
+          </Suspense>
+        )}
+      </main>
+      {Option.isSome(section) && (
+        <Suspense fallback={null}>
+          <Settings
+            // What is half-typed in Settings belongs to the workspace it was opened in.
+            key={workspaceKey(me.workspace)}
+            me={me}
+            section={section.value}
+            deviceCode={Route.$is('Device')(route) ? Option.getOrElse(route.code, () => '') : ''}
+          />
+        </Suspense>
+      )}
+      {floating === 'palette' && <Palette onClose={() => setOverlay('none')} />}
+      {floating === 'notifications' && <Notifications onClose={() => setOverlay('none')} />}
+    </div>
+  )
+}
+
+const openThread = (id: string) => router.go(Route.Thread({ id: ThreadId.make(id) }))
+
+/** The screen the address names. */
+function Place({
+  route,
+  me,
+  beside,
+  onTogglePanel,
+}: {
+  route: Route
+  me: MeResponse
+  beside: boolean
+  onTogglePanel: () => void
+}) {
+  return Route.$match(route, {
+    New: () => <First me={me} />,
+    Thread: ({ id }) => <Thread id={id} me={me} panelOpen={beside} onTogglePanel={onTogglePanel} />,
+    Routines: () => <Routines onOpenConversation={(thread) => openThread(thread.id)} />,
+    Library: () => (
+      <Library
+        onAsk={(document) =>
+          startThread(`Read “${document.name}” in the Library and tell me what matters in it.`)
+        }
+      />
+    ),
+    Projects: () => <Projects onOpenThread={(id) => router.go(Route.Thread({ id }))} />,
+    Skills: () => <Skills />,
+    Invite: ({ id }) => <Invite id={id} />,
+    // A device waiting to be signed in is approved in Settings, with its code already filled in.
+    Device: () => <First me={me} />,
+  })
 }

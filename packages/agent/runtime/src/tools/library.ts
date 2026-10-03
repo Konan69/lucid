@@ -1,49 +1,55 @@
 import { defineTool } from '@flue/runtime'
-import * as Effect from 'effect/Effect'
+import { LibrarySearchRequest } from '@vivid/contracts'
+import { Effect, Option } from 'effect'
 import * as v from 'valibot'
-import { VividRpcClient } from '@vivid/client-runtime'
-import { LibraryFolderId } from '@vivid/contracts'
-import { runServerRpc } from '../client.ts'
+import { text } from './inputs.ts'
+import { Scope, type RunTool } from './scope.ts'
+import * as views from './views.ts'
 
-export const searchLibraryTool = defineTool({
-  name: 'search_library',
-  description:
-    "Search the user's uploaded Library documents for relevant passages. Use this before answering questions that may depend on those documents. When trusted routine instructions supply a folder id, pass it unchanged to scope retrieval to that folder and its descendants. Returns read-only excerpts with filename and page citations; cite the supplied sources in the answer.",
-  input: v.object({
-    query: v.pipe(v.string(), v.minLength(2), v.maxLength(500)),
-    limit: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(10))),
-    folderId: v.optional(v.pipe(v.string(), v.uuid())),
-  }),
-  async run({ data }) {
-    const request =
-      data.folderId === undefined
-        ? { query: data.query, limit: data.limit ?? 6 }
-        : {
-            query: data.query,
-            limit: data.limit ?? 6,
-            folderId: LibraryFolderId.make(data.folderId),
-          }
-    const response = await Effect.runPromise(
-      runServerRpc(
-        Effect.gen(function* () {
-          const client = yield* VividRpcClient
-          return yield* client.SearchLibrary(request)
-        }),
-      ),
-    )
-    const results = response.results.map((result) => {
-      const citation =
-        result.page === null ? `[${result.filename}]` : `[${result.filename}, p.${result.page}]`
-      return {
-        chunkId: result.chunkId,
-        documentId: result.documentId,
-        filename: result.filename,
-        page: result.page,
-        text: result.text,
-        score: result.score,
-        citation,
-      }
-    })
-    return { output: { query: data.query, results } }
-  },
-})
+/** Search is read-only; a Routine's folder authority comes exclusively from the server's delivery. */
+export function libraryTools(runTool: RunTool) {
+  return [
+    defineTool({
+      name: 'search_library',
+      description:
+        'Search the Library before answering from documents and cite returned passages. A Routine automatically searches its Library folder and descendants.',
+      input: v.object({
+        query: v.pipe(text('The question or passage to search for.', 500), v.minLength(2)),
+        limit: v.optional(
+          v.pipe(
+            v.number(),
+            v.integer(),
+            v.minValue(1),
+            v.maxValue(10),
+            v.description('Maximum passages to return.'),
+          ),
+          6,
+        ),
+      }),
+      /** Folder absence means ordinary Library search, never a model-selected folder. */
+      run({ data, signal }) {
+        return runTool(
+          Effect.gen(function* () {
+            const scope = yield* Scope
+            const request = searchRequest(data, scope.folder)
+            const response = yield* scope.client.SearchLibrary(request)
+            return { output: { results: views.passages(response.results) } }
+          }),
+          { signal, tool: 'search_library' },
+        )
+      },
+    }),
+  ] as const
+}
+
+/** Both request variants preserve genuine absence and are constructed against the wire contract. */
+export function searchRequest(
+  data: { query: string; limit: number },
+  folder: Scope['Service']['folder'],
+) {
+  return Option.match(folder, {
+    onNone: () => LibrarySearchRequest.make({ query: data.query, limit: data.limit }),
+    onSome: (folderId) =>
+      LibrarySearchRequest.make({ query: data.query, limit: data.limit, folderId }),
+  })
+}

@@ -1,5 +1,4 @@
 import { createAgentRouter } from '@flue/runtime/routing'
-import { init } from '@flue/runtime'
 import { Hono } from 'hono'
 import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
@@ -7,9 +6,13 @@ import * as Option from 'effect/Option'
 import * as Redacted from 'effect/Redacted'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
-import { RuntimeRunRequest, RuntimeRunResponse } from '@vivid/contracts'
-import './providers/openrouter.ts'
+import './providers/rehearsal.ts'
 import { Vivid } from './agents/vivid.ts'
+import { DEFAULT_MODEL } from './providers/explabs.ts'
+import { RuntimeRunRequest, ThreadOrigin } from '@vivid/contracts'
+import { modelDelivery, recordScope } from './delivery.ts'
+import { actingFor, threadOriginOf } from './client.ts'
+import { loadContext } from './context.ts'
 
 const app = new Hono()
 
@@ -17,11 +20,11 @@ type AppContext = Parameters<Parameters<typeof app.use>[1]>[0]
 
 const runResult = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(Effect.result(effect))
 
-const runtimeRunRequestDecoder = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(RuntimeRunRequest),
-)
-
-/** The runtime token protects Flue transport and the server-only Run admission endpoint. */
+/**
+ * The runtime token protects every Flue route. The application server is the only holder: no
+ * browser, phone or desktop app talks to this process; they talk to the server's gateway, which
+ * checks who they are and whether they may see the Thread before it forwards anything here.
+ */
 const requireRuntimeToken = async (context: AppContext, next: () => Promise<void>) => {
   const configured = await runResult(Config.option(Config.Redacted('VIVID_RUNTIME_TOKEN')))
   if (Result.isFailure(configured) || Option.isNone(configured.success)) {
@@ -35,51 +38,59 @@ const requireRuntimeToken = async (context: AppContext, next: () => Promise<void
   return next()
 }
 
+/** Scope and creator initial data are server transport metadata; neither enters Flue's delivery attributes. */
+const Incoming = Schema.fromJsonString(
+  Schema.Struct({
+    ...RuntimeRunRequest.fields,
+    turn: RuntimeRunRequest.fields.turn.check(Schema.isInt(), Schema.isGreaterThan(0)),
+    initialData: ThreadOrigin,
+  }),
+)
+const decodeIncoming = Schema.decodeUnknownOption(Incoming)
+const flueRouter = createAgentRouter(Vivid)
+
+/** Cache authority before the synchronous render, then send a freshly constructed, id-free delivery to Flue. */
+const prepareContext = async (context: AppContext) => {
+  const incoming = decodeIncoming(await context.req.raw.text())
+  if (Option.isNone(incoming)) return context.json({ error: 'Invalid runtime delivery' }, 400)
+  const delivery = incoming.value
+  if (delivery.threadId !== context.req.param('id'))
+    return context.json({ error: 'Wrong Thread' }, 400)
+  recordScope(delivery.threadId, delivery.turn, delivery.scope)
+  const message = modelDelivery(delivery)
+  await runResult(
+    loadContext(actingFor(delivery.threadId, message, threadOriginOf(delivery.initialData))),
+  )
+  const url = new URL(context.req.url)
+  url.pathname = `/${encodeURIComponent(delivery.threadId)}`
+  return flueRouter.fetch(
+    new Request(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal: context.req.raw.signal,
+      body: JSON.stringify({
+        ...message,
+        initialData: delivery.initialData,
+        idempotencyKey: delivery.idempotencyKey,
+      }),
+    }),
+    context.env,
+  )
+}
+
 app.get('/health', async (context) => {
   const model = await runResult(
-    Config.String('VIVID_MODEL').pipe(Config.withDefault('openrouter/z-ai/glm-5.3-flash')),
+    Config.String('VIVID_MODEL').pipe(Config.withDefault(DEFAULT_MODEL)),
   )
   return context.json({
-    model: Result.isSuccess(model) ? model.success : 'openrouter/z-ai/glm-5.3-flash',
+    model: Result.isSuccess(model) ? model.success : DEFAULT_MODEL,
     service: 'vivid-agent-runtime',
     status: 'ok',
   })
 })
 
 app.use('/agents/vivid/*', requireRuntimeToken)
-app.use('/internal/runs', requireRuntimeToken)
-
-/** Accepts one Run for Flue; product state remains exclusively in the application server. */
-const acceptRun = Effect.fn('Runtime.acceptRun')(function* (context: AppContext) {
-  const body = yield* Effect.tryPromise({
-    try: () => context.req.text(),
-    catch: () => new Error('Run request body could not be read'),
-  })
-  const request = yield* runtimeRunRequestDecoder(body)
-  const runtime = init(Vivid, { id: request.threadId })
-  const receipt = yield* Effect.tryPromise({
-    try: () =>
-      runtime.dispatch({
-        idempotencyKey: request.idempotencyKey,
-        message: {
-          kind: 'signal',
-          type: request.type,
-          body: request.body,
-          attributes: request.attributes,
-        },
-      }),
-    catch: () => new Error('Flue did not accept the Run'),
-  })
-  return RuntimeRunResponse.make({ submissionId: receipt.submissionId })
-})
-
-app.post('/internal/runs', async (context) => {
-  const result = await runResult(acceptRun(context))
-  return Result.isSuccess(result)
-    ? context.json(result.success, 202)
-    : context.json({ error: 'Run was not accepted' }, 503)
-})
-
-app.route('/agents/vivid', createAgentRouter(Vivid))
+app.post('/agents/vivid/:id', prepareContext)
+app.route('/agents/vivid', flueRouter)
 
 export default app

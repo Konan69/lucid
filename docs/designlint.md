@@ -30,25 +30,27 @@ The component-definition directory turns `no-restyle`, `no-arbitrary-values`, an
 
 ## Current ratchets
 
-Counts were measured against the current web source without modifying components. Warning values are ceilings; lower them when findings disappear.
+Baselines below are the executable ceilings in `.husky/pre-push`, checked on 3 October 2026.
+They are not fresh measurements of source findings. Rule levels come from `.oxlintrc.json`;
+lower a ceiling when findings disappear.
 
 | Rule                                                | Level | Baseline |
 | --------------------------------------------------- | ----- | -------: |
 | `shadcn/no-restyle`                                 | error |        0 |
-| `shadcn/no-raw-colors`                              | warn  |       32 |
-| `shadcn/no-arbitrary-values`                        | warn  |       51 |
-| `shadcn/no-inline-styles`                           | warn  |       27 |
-| `shadcn/no-unknown-classes`                         | warn  |        3 |
+| `shadcn/no-raw-colors`                              | warn  |        0 |
+| `shadcn/no-arbitrary-values`                        | warn  |        0 |
+| `shadcn/no-inline-styles`                           | warn  |        0 |
+| `shadcn/no-unknown-classes`                         | warn  |        0 |
 | `shadcn/require-static-classes`                     | error |        0 |
 | `tailwindcss/no-duplicate-classes`                  | error |        0 |
-| `tailwindcss/no-conflicting-classes`                | warn  |        6 |
+| `tailwindcss/no-conflicting-classes`                | warn  |        0 |
 | `tailwindcss/no-deprecated-classes`                 | error |        0 |
 | `tailwindcss/no-unnecessary-whitespace`             | error |        0 |
 | `tailwindcss/no-dark-without-light`                 | error |        0 |
 | `tailwindcss/no-contradicting-variants`             | error |        0 |
-| `tailwindcss/enforce-canonical`                     | warn  |        3 |
-| `tailwindcss/enforce-sort-order`                    | warn  |       60 |
-| `tailwindcss/enforce-shorthand`                     | warn  |       10 |
+| `tailwindcss/enforce-canonical`                     | warn  |        0 |
+| `tailwindcss/enforce-sort-order`                    | warn  |        0 |
+| `tailwindcss/enforce-shorthand`                     | warn  |        0 |
 | `tailwindcss/enforce-consistent-important-position` | error |        0 |
 | `tailwindcss/enforce-negative-arbitrary-values`     | error |        0 |
 | `tailwindcss/enforce-consistent-variable-syntax`    | error |        0 |

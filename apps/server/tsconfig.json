@@ -7,5 +7,5 @@
     "allowImportingTsExtensions": true,
     "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo"
   },
-  "include": ["src"]
+  "include": ["src", "tests"]
 }

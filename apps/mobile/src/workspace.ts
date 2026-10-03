@@ -1,80 +1,70 @@
+import type {
+  LibraryFolderId,
+  LibraryShelf,
+  MeResponse,
+  ProjectId,
+  Role,
+  ThreadId,
+} from '@vivid/contracts'
+import { useNavigation } from '@react-navigation/native'
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
 import { createContext, useContext } from 'react'
-import { useWindowDimensions } from 'react-native'
-import { useNavigation, type NavigationProp } from '@react-navigation/native'
-import type { Api, Connection } from './data/api'
-import type { ThemePreference } from './theme'
-import { deriveLayout } from './data/layout'
-import { resolveThreadSelectionNavigationAction } from './data/navigation'
+
+/**
+ * Where a signed-in Person can be in the app. Every place is a screen on one native stack, so
+ * going somewhere pushes it and the system's back swipe returns.
+ *
+ * - `Home`: every Thread the Person can see, and somewhere to write to start a new one. It is
+ *   the root, so it is also the first screen: with no Threads yet it is just Vivid and a composer.
+ * - `Chat`: one Thread. Only its id travels; its title and everything else are read live.
+ * - `Computer`: Vivid's computer, reached from a Thread's bar: where it stands and its controls.
+ * - `Routines`, `Library`: the places beside Threads, in the drawer. `Projects` is reached from
+ *   the quiet group under the Threads.
+ * - `Folder`, `Project`: one level down inside the Library or a Project. Each level is its own
+ *   screen, so going deeper pushes and the back swipe climbs out one level at a time. A folder
+ *   carries its name because only the listing it was opened from knows it.
+ * - `Settings`: the Person's own settings; `People` is who is in the Company they are working in,
+ *   and `Memory` is what Vivid has kept about the Person, for them to correct or remove.
+ */
 export type Routes = {
   Home: undefined
-  Chat: { id: string; title: string; draft?: string; sendOnOpen?: boolean }
-  Today: undefined
+  Chat: { id: ThreadId }
+  Computer: undefined
   Routines: undefined
   Library: undefined
+  Folder: { shelf: LibraryShelf; id: LibraryFolderId; name: string }
   Projects: undefined
-  Connectors: undefined
+  Project: { id: ProjectId }
   Settings: undefined
-}
-export type Preferences = Connection & {
-  theme: ThemePreference
-  pinnedThreads?: string[]
-  settledThreads?: string[]
-}
-type WorkspaceValue = {
-  api: Api
-  preferences: Preferences
-  savePreferences: (next: Preferences) => Promise<void>
-  createThread: (draft?: string) => Promise<{ id: string; title: string; draft?: string }>
-}
-export const WorkspaceContext = createContext<WorkspaceValue | null>(null)
-export function useWorkspace() {
-  const workspace = useContext(WorkspaceContext)
-  if (workspace === null) throw new Error('Workspace context is unavailable.')
-  return workspace
-}
-export const SidebarContext = createContext({
-  open: () => {},
-  close: () => {},
-  activeThread: '',
-  activeRoute: 'Home',
-})
-export const useSidebar = () => useContext(SidebarContext)
-export type ThreadActivity = 'ready' | 'working' | 'attention' | 'approve' | 'failed' | 'done'
-export const ActivityContext = createContext<{
-  activity: Record<string, ThreadActivity>
-  report: (id: string, status?: ThreadActivity) => void
-}>({ activity: {}, report: () => {} })
-export const useThreadActivity = () => useContext(ActivityContext)
-/**
- * The web-style pathname of the current native route, recorded so a Thread opened from the
- * sidebar can return to where the Person was. Home is the root and a Chat is its Thread's path.
- */
-function pathnameOf(route: keyof Routes, id: string): string {
-  if (route === 'Home') return '/'
-  return route === 'Chat' ? `/threads/vivid/${id}` : `/${route}`
+  People: undefined
+  Memory: undefined
 }
 
-export function useOpenThread() {
-  const sidebar = useSidebar()
-  const navigation = useNavigation<NavigationProp<Routes>>()
-  const dimensions = useWindowDimensions()
-  return (id: string, title: string, draft?: string) => {
-    sidebar.close()
-    const current = navigation.getState().routes.at(-1)
-    let pathname = '/'
-    if (current !== undefined) {
-      pathname = pathnameOf(current.name, id)
-    }
-    const action = resolveThreadSelectionNavigationAction({
-      usesSplitView: deriveLayout(dimensions).usesSplitView,
-      pathname,
-    })
-    if (action === 'set-params') navigation.navigate('Chat', { id, title, draft })
-    else if (action === 'replace')
-      navigation.reset({
-        index: 1,
-        routes: [{ name: 'Home' }, { name: 'Chat', params: { id, title, draft } }],
-      })
-    else navigation.navigate('Chat', { id, title, draft })
-  }
+/**
+ * The signed-in Person and where they are working, for every screen inside the shell. The shell
+ * is drawn only once `live.me` has answered, so a screen never has to handle not knowing who is
+ * signed in. `null` is the value outside the shell, where no such screen is drawn.
+ */
+const MeContext = createContext<MeResponse | null>(null)
+
+export const MeProvider = MeContext.Provider
+
+export function useMe(): MeResponse {
+  const me = useContext(MeContext)
+  if (me === null) throw new Error('This screen is drawn outside the signed-in shell.')
+  return me
 }
+
+/**
+ * The stack every screen is on, typed by where it can go. `navigate` goes to a place; `push` is
+ * for going a level deeper into the same kind of place (a Project inside a Project), which
+ * `navigate` would treat as already being there.
+ */
+export const useGo = () => useNavigation<NativeStackNavigationProp<Routes>>()
+
+/** A Membership's role as it is written on screen. A new role fails to compile here. */
+export const ROLE_NAME = {
+  owner: 'Owner',
+  admin: 'Admin',
+  member: 'Member',
+} as const satisfies Record<Role, string>

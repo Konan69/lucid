@@ -5,7 +5,11 @@ import * as Schema from 'effect/Schema'
 export const DeployTargetName = Schema.Literals(['local', 'preview', 'production'] as const)
 export type DeployTargetName = typeof DeployTargetName.Type
 
-const DatabaseMode = Schema.Literals(['docker', 'required'] as const)
+/**
+ * Who owns PostgreSQL for a target: the local Docker container, Railway's managed service, or an
+ * operator-supplied `DATABASE_URL` for a target that is not runnable yet.
+ */
+const DatabaseMode = Schema.Literals(['docker', 'railway', 'required'] as const)
 
 const DeploymentTargetSchema = Schema.Struct({
   key: DeployTargetName,
@@ -81,8 +85,8 @@ export const deploymentTargetsJson = String.raw`{
   },
   "production": {
     "key": "production",
-    "runnable": false,
-    "database": "required",
+    "runnable": true,
+    "database": "railway",
     "destroyOnTeardown": false,
     "stackName": "vivid-production",
     "stage": "production",

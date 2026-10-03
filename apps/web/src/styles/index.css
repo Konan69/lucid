@@ -2,6 +2,62 @@
 @import '@vivid/tokens/tokens.css';
 @import 'shadow-plugin';
 
+/* Workspace measurements the classes below share. The Computer's width is set by `data/split.ts`
+   as it is dragged, and its bounds live there too; these are only the fixed ones. */
+:root {
+  --computer-w: 600px;
+  --page-strip-h: 52px;
+  --page-tab-w: 236px;
+  --page-tab-min-w: 90px;
+  --page-nav-w: 98px;
+  --around-w: 300px;
+  --around-reserve-w: 312px;
+}
+
+/* The Computer beside the Thread: as wide as the divider was left, or the whole page in full view. */
+@utility computer-workspace {
+  position: relative;
+  width: var(--computer-w);
+  &[data-full='true'] {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    z-index: 30;
+  }
+}
+/* The divider's line, centred in its wider hit area so the hairline stays one pixel. */
+@utility computer-edge {
+  &::after {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    left: 50%;
+    width: 1px;
+    background: var(--line-2);
+  }
+}
+/* Above this width the card has room beside a readable column, so the conversation steps aside
+   for it; below, the card floats over the conversation instead. */
+@utility around-space {
+  @container thread (min-width: 1096px) {
+    margin-right: var(--around-reserve-w);
+  }
+}
+/* The layer that closes the card on a click elsewhere, only where the card floats (the same width
+   as `around-space`, so the two never disagree about which mode it is in). */
+@utility around-scrim {
+  display: none;
+  @container thread (max-width: 1095px) {
+    display: block;
+  }
+}
+@utility around-card {
+  width: min(var(--around-w), calc(100% - 24px));
+  top: calc(var(--topbar-h) + 4px);
+  right: 12px;
+  max-height: calc(100% - var(--topbar-h) - 16px);
+}
+
 @layer base {
   html,
   body,
@@ -53,11 +109,14 @@
     scrollbar-width: thin;
     scrollbar-color: var(--line-3) transparent;
   }
+  /* Less motion, not none: things still change, they stop travelling and stop repeating. A pulse
+     cut to 0.01 ms would still loop forever, so repetition is ended as well. */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
     *::after {
       animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
     }
   }
@@ -80,12 +139,18 @@
   box-shadow: 0 0 0 1px var(--line-2);
 }
 
-/* Elevation comes from `shadow-plugin` (`smooth-shadow-*`, `smooth-shadow-ring-*`): the ring is the
-   final shadow layer and follows `color-scheme`, so never add a border or `ring-line` beside it. */
+/* Elevation comes from `shadow-plugin`, and there are two tiers of it.
+   - In the page (cards, rows, fields, the sidebar's cards): `smooth-shadow-ring-xs`. A hairline and
+     the faintest ambient, nothing cast. A card in a list is not floating and must not look it.
+   - Over the page (the composer, menus, dialogs, the palette): `smooth-shadow-ring-md` or `-lg`.
+   The ring is the last shadow layer and reads `--smooth-ring-color` from the tokens, so never add a
+   border or `ring-line` beside it, and never raise a card's tier on hover: hover is a fill. */
 
 /* ── Glass: for what floats over live content ─────────────── */
+/* 92%: enough of the page comes through to say "this floats", not enough to read through it. At
+   78% the rows under an open menu were legible between its own rows. */
 @utility glass {
-  background: color-mix(in srgb, var(--surface-3) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-3) 92%, transparent);
   -webkit-backdrop-filter: blur(20px) saturate(1.6);
   backdrop-filter: blur(20px) saturate(1.6);
   @supports not (backdrop-filter: blur(1px)) {
@@ -94,6 +159,10 @@
 }
 
 /* ── Scroll fades ──────────────────────────────────────────── */
+/* Scrolls without a visible track, for panes whose edge fade already signals overflow. */
+@utility scrollbar-hidden {
+  scrollbar-width: none;
+}
 @utility scroll-fade-y {
   mask-image: linear-gradient(
     to bottom,
@@ -103,15 +172,50 @@
     transparent
   );
 }
+/* For a row that scrolls sideways: only the far edge fades, since the near edge is where reading
+   starts. Pair it with end padding so the last item can be scrolled out from under the fade. */
+@utility scroll-fade-end {
+  mask-image: linear-gradient(to right, black calc(100% - 40px), transparent);
+}
+/* For a column that scrolls up out of view under a bar: only the top edge fades. */
+@utility scroll-fade-top {
+  mask-image: linear-gradient(to bottom, transparent, black 24px);
+}
+@utility scroll-fade-none {
+  mask-image: none;
+}
 
 /* ── Grain: a whisper of texture so large flat chrome isn't dead ── */
 @utility grain {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0.035 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-/* ── Content edge: the pane's left edge shadow, set by the shell when the rail floats ── */
-@utility content-edge {
-  box-shadow: var(--content-edge-shadow, none);
+/* ── Stagger: a short list arriving one item after another, once. The delay is on the
+      animation, which Tailwind's `delay-*` (a transition delay) does not reach. ── */
+@utility stagger-1 {
+  animation-delay: 60ms;
+}
+@utility stagger-2 {
+  animation-delay: 120ms;
+}
+@utility stagger-3 {
+  animation-delay: 180ms;
+}
+
+/* ── Picture edge: a hairline that gives every image the same depth whatever is in it. Pure
+      black in light and pure white in dark, never a tinted neutral, which reads as dirt. ── */
+@utility picture-edge {
+  outline: 1px solid oklch(0 0 0 / 0.1);
+  outline-offset: -1px;
+  :where(html:not([data-theme='light'])) & {
+    outline-color: oklch(1 0 0 / 0.1);
+  }
+}
+
+/* ── Aura: the soft light Vivid sits in on the first screen. One radial of its own colour,
+      painted once; it does not move. ── */
+@utility aura {
+  background: radial-gradient(closest-side, var(--accent-soft), transparent);
 }
 
 /* ── Face: sized by --face-size; eye geometry is computed once in Face.tsx ── */
@@ -151,6 +255,15 @@
     color-mix(in srgb, var(--dock-icon-color) 80%, transparent)
   );
   box-shadow: 0 2px 6px rgb(0 0 0 / 0.4);
+}
+
+/* ── Display grids: as many columns as fit the card, not the window, so a Computer split beside
+      the Thread does not squeeze three columns into a narrow card. ── */
+@utility grid-cols-facts {
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+}
+@utility grid-cols-pictures {
+  grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
 }
 
 /* ── Follow-up form: two flexible fields and a hugging action ── */

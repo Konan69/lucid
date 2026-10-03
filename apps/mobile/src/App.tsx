@@ -1,402 +1,240 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import * as Schema from 'effect/Schema'
-import {
-  BackHandler,
-  Keyboard,
-  Platform,
-  Pressable,
-  StatusBar,
-  View,
-  useWindowDimensions,
-} from 'react-native'
-import { SafeAreaProvider } from 'react-native-safe-area-context'
-import { GestureHandlerRootView } from 'react-native-gesture-handler'
-import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native'
+import { RegistryContext } from '@effect/atom-react'
+import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
+import { NavigationContainer } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
-import * as SecureStore from 'expo-secure-store'
-import { randomUUID } from 'expo-crypto'
-import { fetch as expoFetch } from 'expo/fetch'
-import { ThreadId } from '@vivid/contracts'
-import { createApi } from './data/api'
-import { deriveLayout, type Layout } from './data/layout'
+import { workspaceKey } from '@vivid/state'
+import { StatusBar, View } from 'react-native'
+import { GestureHandlerRootView } from 'react-native-gesture-handler'
+import { useReducedMotion } from 'react-native-reanimated'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
+import { door, patienceAtom, useDoor } from './data/door'
 import {
-  ActivityContext,
-  type ThreadActivity,
-  SidebarContext,
-  WorkspaceContext,
-  type Preferences,
-  type Routes,
-} from './workspace'
-import { ThemeProvider, useTheme } from './theme'
-import { Home } from './screen/Home'
-import { Welcome } from './screen/Welcome'
+  Entry,
+  entryAtom,
+  LiveDataProvider,
+  LiveState,
+  useLive,
+  useLiveData,
+  type LiveData,
+} from './data/live'
+import { leaveAtom } from './data/signing'
+import { Broken } from './screen/Broken'
 import { Chat } from './screen/Chat'
+import { Computer } from './screen/Computer'
+import { Door } from './screen/Door'
+import { Home } from './screen/Home'
+import { Folder, Library } from './screen/Library'
+import { Project, Projects } from './screen/Projects'
 import { Routines } from './screen/Routines'
-import { Library } from './screen/Library'
-import { Projects, Connectors, Settings } from './screen/Workspace'
+import { Settings } from './screen/Settings'
+import { Memory } from './screen/settings/Memory'
+import { People } from './screen/settings/People'
+import { ThemeProvider, useTheme } from './theme'
+import { Recover } from './ui/Recover'
+import { navigationTheme, pushAnimation } from './ui/stack'
+import { Button, Face, GUTTER, Label } from './ui/ui'
+import { MeProvider, type Routes } from './workspace'
 
-import Animated, {
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated'
-import { WORKSPACE_PANE_TIMING } from './t3/pane'
-import { nativeMetrics as m } from '@vivid/tokens/native'
-
-const SavedPreferencesSchema = Schema.Struct({
-  url: Schema.String,
-  token: Schema.String,
-  theme: Schema.Literals(['light', 'dark', 'system'] as const),
-  pinnedThreads: Schema.optional(Schema.Array(Schema.String)),
-  settledThreads: Schema.optional(Schema.Array(Schema.String)),
-})
-const decodeSavedPreferencesJson = Schema.decodeUnknownSync(
-  Schema.fromJsonString(SavedPreferencesSchema),
-)
-function decodeSavedPreferences(value: string) {
-  return decodeSavedPreferencesJson(value)
-}
-const defaultPreferences: Preferences = {
-  url:
-    globalThis.process.env.EXPO_PUBLIC_API_URL ??
-    (Platform.OS === 'android' ? 'http://10.0.2.2:5178' : 'http://localhost:5178'),
-  token: '',
-  theme: 'system',
-}
 const Stack = createNativeStackNavigator<Routes>()
 
-type ShellContentProps = {
-  readonly colors: ReturnType<typeof useTheme>['colors']
-  readonly dark: boolean
-  readonly layout: Layout
-  readonly drawerOpen: boolean
-  readonly drawerVisible: boolean
-  readonly drawerWidth: number
-  readonly close: () => void
-  readonly paneStyle: ReturnType<typeof useAnimatedStyle>
-  readonly scrimStyle: ReturnType<typeof useAnimatedStyle>
-}
-
-/** Renders the compact overlay drawer while the shell retains animation ownership. */
-function CompactDrawer({
-  colors: c,
-  drawerOpen,
-  drawerVisible,
-  drawerWidth,
-  close,
-  paneStyle,
-  scrimStyle,
-}: Omit<ShellContentProps, 'dark' | 'layout'>) {
-  return (
-    <>
-      {(drawerOpen || drawerVisible) && (
-        <Animated.View
-          style={[{ position: 'absolute', inset: 0, backgroundColor: c.scrim }, scrimStyle]}
-        >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Close sidebar"
-            onPress={close}
-            style={{ flex: 1 }}
-          />
-        </Animated.View>
-      )}
-      <Animated.View
-        collapsable={false}
-        pointerEvents={drawerOpen ? 'auto' : 'none'}
-        accessibilityElementsHidden={!drawerOpen}
-        importantForAccessibility={drawerOpen ? 'auto' : 'no-hide-descendants'}
-        style={[
-          {
-            position: 'absolute',
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: drawerWidth,
-            backgroundColor: c['surface-1'],
-            borderRightWidth: 0.5,
-            borderRightColor: c['line-3'],
-            display: drawerOpen || drawerVisible ? 'flex' : 'none',
-          },
-          paneStyle,
-        ]}
-      >
-        <Home embedded />
-      </Animated.View>
-    </>
-  )
-}
-
-/** Renders the responsive workspace panes without owning shell state or navigation policy. */
-function ShellContent({
-  colors: c,
-  dark,
-  layout,
-  drawerOpen,
-  drawerVisible,
-  drawerWidth,
-  close,
-  paneStyle,
-  scrimStyle,
-}: ShellContentProps) {
-  return (
-    <>
-      <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
-      <View
-        style={{
-          flex: 1,
-          flexDirection: 'row',
-          backgroundColor: c['surface-1'],
-          overflow: 'hidden',
-        }}
-      >
-        {layout.usesSplitView && layout.listPaneWidth !== null && (
-          <View style={{ width: layout.listPaneWidth }}>
-            <Home embedded />
-          </View>
-        )}
-        <View
-          collapsable={false}
-          style={{ flex: 1, minWidth: 0 }}
-          accessibilityElementsHidden={!layout.usesSplitView && drawerOpen}
-          importantForAccessibility={
-            !layout.usesSplitView && drawerOpen ? 'no-hide-descendants' : 'auto'
-          }
-        >
-          <Stack.Navigator
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: c['surface-0'] },
-            }}
-          >
-            <Stack.Screen name="Home" component={Welcome} />
-            <Stack.Screen name="Chat" component={Chat} />
-            <Stack.Screen name="Routines" component={Routines} />
-            <Stack.Screen name="Library" component={Library} />
-            <Stack.Screen name="Projects" component={Projects} />
-            <Stack.Screen name="Connectors" component={Connectors} />
-            <Stack.Screen name="Settings" component={Settings} />
-          </Stack.Navigator>
-        </View>
-        {!layout.usesSplitView && (
-          <CompactDrawer
-            colors={c}
-            drawerOpen={drawerOpen}
-            drawerVisible={drawerVisible}
-            drawerWidth={drawerWidth}
-            close={close}
-            paneStyle={paneStyle}
-            scrimStyle={scrimStyle}
-          />
-        )}
-      </View>
-    </>
-  )
-}
-
-function Shell() {
-  const { colors: c, dark } = useTheme()
-  const dimensions = useWindowDimensions()
-  const layout = deriveLayout(dimensions)
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [drawerVisible, setDrawerVisible] = useState(false)
-  const [previousLayoutVariant, setPreviousLayoutVariant] = useState(layout.variant)
-  const progress = useSharedValue(0)
-  const drawerWidth = Math.min(dimensions.width - 48, m['sidebar-w'] * 1.15)
-  const [activeThread, setActiveThread] = useState('')
-  const [activeRoute, setActiveRoute] = useState('Home')
-  const [activity, setActivity] = useState<Record<string, ThreadActivity>>({})
-  const report = useCallback((id: string, status?: ThreadActivity) => {
-    setActivity((current) => {
-      if (current[id] === status) return current
-      const next = { ...current }
-      if (status) next[id] = status
-      else delete next[id]
-      return next
-    })
-  }, [])
-  // A layout-mode change owns a fresh compact drawer state; split mode renders its own sidebar.
-  if (previousLayoutVariant !== layout.variant) {
-    setPreviousLayoutVariant(layout.variant)
-    setDrawerOpen(false)
-    setDrawerVisible(false)
-  }
-  const setDrawer = useCallback(
-    (open: boolean) => {
-      if (open) {
-        Keyboard.dismiss()
-        setDrawerVisible(true)
-      }
-      setDrawerOpen(open)
-      progress.set(
-        withTiming(open ? 1 : 0, WORKSPACE_PANE_TIMING, (finished) => {
-          if (finished && !open) runOnJS(setDrawerVisible)(false)
-        }),
-      )
-    },
-    [progress],
-  )
-  const close = useCallback(() => setDrawer(false), [setDrawer])
-  const open = useCallback(() => setDrawer(true), [setDrawer])
-  useEffect(() => {
-    if (!drawerOpen) return () => {}
-    const listener = BackHandler.addEventListener('hardwareBackPress', () => {
-      close()
-      return true
-    })
-    return () => listener.remove()
-  }, [drawerOpen, close])
-  useEffect(() => {
-    if (layout.usesSplitView) progress.set(0)
-  }, [layout.usesSplitView, progress])
-  const paneStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: (progress.get() - 1) * drawerWidth }],
-    opacity: Math.min(1, (progress.get() * drawerWidth) / 80),
-  }))
-  const scrimStyle = useAnimatedStyle(() => ({ opacity: progress.get() }))
-  const activityContextValue = useMemo(() => ({ activity, report }), [activity, report])
-  const sidebarContextValue = useMemo(
-    () => ({ open, close, activeThread, activeRoute }),
-    [open, close, activeThread, activeRoute],
-  )
-  const theme = {
-    ...(dark ? DarkTheme : DefaultTheme),
-    colors: {
-      ...(dark ? DarkTheme : DefaultTheme).colors,
-      background: c['surface-0'],
-      card: c['surface-0'],
-      text: c.ink,
-      primary: c.accent,
-      border: c['line-2'],
-    },
-  }
-  return (
-    <NavigationContainer
-      theme={theme}
-      onStateChange={(state) => {
-        if (state === undefined) return
-        const route = state.routes[state.index]
-        const nextRoute = route === undefined ? 'Home' : route.name
-        // SAFETY: React Navigation supplies Chat route params whenever the route name is Chat.
-        const nextThread =
-          route !== undefined && route.name === 'Chat' ? (route.params as Routes['Chat']).id : ''
-        setActiveRoute(nextRoute)
-        setActiveThread(nextThread)
-        // A title/stream update must not dismiss a sidebar the user is reading.
-        if (nextRoute !== activeRoute || nextThread !== activeThread) close()
-      }}
-    >
-      <ActivityContext.Provider value={activityContextValue}>
-        <SidebarContext.Provider value={sidebarContextValue}>
-          <ShellContent
-            colors={c}
-            dark={dark}
-            layout={layout}
-            drawerOpen={drawerOpen}
-            drawerVisible={drawerVisible}
-            drawerWidth={drawerWidth}
-            close={close}
-            paneStyle={paneStyle}
-            scrimStyle={scrimStyle}
-          />
-        </SidebarContext.Provider>
-      </ActivityContext.Provider>
-    </NavigationContainer>
-  )
-}
-
+/**
+ * The app. Three facts decide what is on screen, each read from one atom and none copied into
+ * component state: whether this device has a session (`entryAtom`), whether that session's
+ * server has answered who the Person is (`live.me`), and then wherever the stack says they are.
+ */
 export default function App() {
-  const [preferences, setPreferences] = useState(defaultPreferences)
-  const [ready, setReady] = useState(false)
-  useEffect(() => {
-    let cancelled = false
-    const savedPreferences =
-      Platform.OS === 'web'
-        ? Promise.resolve(localStorage.getItem('vivid-mobile'))
-        : SecureStore.getItemAsync('vivid-mobile')
-
-    // Preferences arrive from an external store. The asynchronous continuation prevents stale
-    // storage reads from updating an App instance that has already unmounted.
-    void savedPreferences
-      .then((saved) => {
-        if (!saved || cancelled) return
-        const parsed = decodeSavedPreferences(saved)
-        const { url, token, theme, pinnedThreads = [], settledThreads = [] } = parsed
-        setPreferences({
-          url,
-          token,
-          theme,
-          pinnedThreads: [...pinnedThreads],
-          settledThreads: [...settledThreads],
-        })
-      })
-      .catch(() => {
-        /* An invalid preference file falls back to the initial connection. */
-      })
-      .finally(() => {
-        if (!cancelled) setReady(true)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-  const api = useMemo(
-    () =>
-      createApi(
-        { url: preferences.url, token: preferences.token },
-        // SAFETY: expo/fetch exposes the Fetch API signature expected by the Flue and API clients.
-        expoFetch.bind(globalThis) as typeof fetch,
-      ),
-    [preferences.url, preferences.token],
-  )
-  const savePreferences = useCallback(async (next: Preferences) => {
-    // Preview does not persist credentials in browser storage.
-    if (Platform.OS === 'web')
-      localStorage.setItem('vivid-mobile', JSON.stringify({ ...next, token: '' }))
-    else await SecureStore.setItemAsync('vivid-mobile', JSON.stringify(next))
-    setPreferences(next)
-  }, [])
-  const createThread = useCallback(
-    async (draft?: string) => {
-      const thread = {
-        id: randomUUID(),
-        title: 'New conversation',
-        preview: '',
-        updatedAt: Date.now(),
-        archived: false,
-      }
-      await api.run(
-        api.rpc((client) =>
-          client.PutThread({
-            id: ThreadId.make(thread.id),
-            thread: {
-              title: thread.title,
-              preview: thread.preview,
-              updatedAt: thread.updatedAt,
-              archived: thread.archived,
-            },
-          }),
-        ),
-      )
-      return { id: thread.id, title: thread.title, draft }
-    },
-    [api],
-  )
-  const workspaceContextValue = useMemo(
-    () => ({ api, preferences, savePreferences, createThread }),
-    [api, preferences, savePreferences, createThread],
-  )
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <ThemeProvider preference={preferences.theme}>
-          <WorkspaceContext.Provider value={workspaceContextValue}>
-            {ready && <Shell />}
-          </WorkspaceContext.Provider>
+        <ThemeProvider>
+          <Bar />
+          {/* The last line of defence: whatever fails to draw, there is still a screen with a way
+              on. It sits inside the palette, which the fallback is painted in, and outside the
+              session, so trying again builds the signed-in tree afresh from its atoms. */}
+          <Recover from="app" fallback={<Broken />}>
+            <Root />
+          </Recover>
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
+  )
+}
+
+/** The status bar's ink follows the palette, on every screen including the door. */
+function Bar() {
+  const { dark } = useTheme()
+  return <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
+}
+
+function Root() {
+  const entry = useDoor(entryAtom)
+  return Entry.$match(entry, {
+    Opening: () => <Quiet mood="neutral" />,
+    Door: ({ session }) => <Door session={session} />,
+    In: ({ data }) => <SignedIn data={data} />,
+  })
+}
+
+/**
+ * Everything drawn for one session, inside that session's own Atom registry. The registry is
+ * the session's, so signing out disposes every query a screen was reading and a different
+ * Person's data can never be drawn from a warm cache.
+ */
+function SignedIn({ data }: { data: LiveData }) {
+  return (
+    <RegistryContext.Provider value={data.registry}>
+      <LiveDataProvider value={data}>
+        <Session />
+      </LiveDataProvider>
+    </RegistryContext.Provider>
+  )
+}
+
+/** Who is signed in is one live query; the shell is drawn only once it has answered. */
+function Session() {
+  const data = useLiveData()
+  const me = useLive(data.live.me)
+  return LiveState.$match(me, {
+    Loading: () => <Connecting />,
+    // A session the server no longer accepts is handled in the data (`live.ts`), which puts the
+    // door back. What is left here is a server that knows the Person and still says no.
+    Failed: ({ failure }) => <Stopped message={failure.message} />,
+    Ready: ({ value }) => (
+      <MeProvider value={value}>
+        {/* One stack for each workspace. Screens stay mounted under whatever covers them, so a
+            Library item sheet opened in one Company used to stay up, with that Company's item and
+            its actions, after the Person moved to another (from the switcher, or from another
+            device). Keying the stack by where they are working ends every screen, sheet, editor
+            and half-finished action of the old workspace and starts the new one at Home. */}
+        <Shell key={workspaceKey(value.workspace)} />
+      </MeProvider>
+    ),
+  })
+}
+
+/** Vivid alone on the palette's ground: what is shown while there is nothing truthful to say yet. */
+function Quiet({ mood }: { mood: 'neutral' | 'thinking' }) {
+  const { colors: c } = useTheme()
+  return (
+    <View
+      accessibilityLabel="Opening Vivid"
+      style={{
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: c.screen,
+      }}
+    >
+      <Face size={44} mood={mood} />
+    </View>
+  )
+}
+
+/** Ends this device's session, whether or not the server can be told. */
+function useLeave() {
+  const data = useLiveData()
+  return () => door.set(leaveAtom, data.session)
+}
+
+/**
+ * The socket is opening. It reconnects by itself for as long as it takes, so this never becomes
+ * an error; but a Person who has waited a while is told what to check and given the way out.
+ */
+function Connecting() {
+  const leave = useLeave()
+  const { colors: c } = useTheme()
+  const waited = AsyncResult.isSuccess(useDoor(patienceAtom))
+  return (
+    <View
+      accessibilityLiveRegion="polite"
+      style={{
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        paddingHorizontal: GUTTER + 12,
+        backgroundColor: c.screen,
+      }}
+    >
+      <Face size={44} mood="thinking" />
+      <Label size="headline" style={{ marginTop: 8, textAlign: 'center' }}>
+        {waited ? 'Still trying to reach Vivid' : 'Connecting…'}
+      </Label>
+      {waited && (
+        <>
+          <Label size="label" tone="ink-2" style={{ textAlign: 'center', maxWidth: 300 }}>
+            Check your connection. Vivid opens by itself as soon as it can.
+          </Label>
+          <View style={{ marginTop: 14 }}>
+            <Button label="Sign out" onPress={leave} />
+          </View>
+        </>
+      )}
+    </View>
+  )
+}
+
+/** The server answered and will not show this Person anything. Its own sentence, and the way out. */
+function Stopped({ message }: { message: string }) {
+  const leave = useLeave()
+  const { colors: c } = useTheme()
+  return (
+    <View
+      style={{
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        paddingHorizontal: GUTTER + 12,
+        backgroundColor: c.screen,
+      }}
+    >
+      <Label size="headline" style={{ textAlign: 'center' }}>
+        Vivid cannot open this account
+      </Label>
+      <Label size="label" tone="ink-2" style={{ textAlign: 'center', maxWidth: 300 }}>
+        {message}
+      </Label>
+      <View style={{ marginTop: 14 }}>
+        <Button label="Sign out" onPress={leave} />
+      </View>
+    </View>
+  )
+}
+
+/**
+ * The signed-in app: one native stack. Pushing, popping and the back swipe are the platform's
+ * own; nothing here animates a screen. Each screen draws its own bar (`ui/Header.tsx`), so the
+ * native one is off everywhere.
+ *
+ * Routes are flat on this one stack, never a nested navigator: one navigation controller is what
+ * lets the platform carry a bar from one screen to the next (T3 Code mobile `src/Stack.tsx`, the
+ * note beside `THREAD_LINKING_PREFIX`). How one screen replaces another is `pushAnimation`.
+ */
+function Shell() {
+  const { colors: c, dark } = useTheme()
+  const still = useReducedMotion()
+  return (
+    <NavigationContainer theme={navigationTheme(c, dark)}>
+      <Stack.Navigator
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: c.screen },
+          animation: pushAnimation(still),
+        }}
+      >
+        <Stack.Screen name="Home" component={Home} />
+        <Stack.Screen name="Chat" component={Chat} />
+        <Stack.Screen name="Computer" component={Computer} />
+        <Stack.Screen name="Routines" component={Routines} />
+        <Stack.Screen name="Library" component={Library} />
+        <Stack.Screen name="Folder" component={Folder} />
+        <Stack.Screen name="Projects" component={Projects} />
+        <Stack.Screen name="Project" component={Project} />
+        <Stack.Screen name="Settings" component={Settings} />
+        <Stack.Screen name="People" component={People} />
+        <Stack.Screen name="Memory" component={Memory} />
+      </Stack.Navigator>
+    </NavigationContainer>
   )
 }

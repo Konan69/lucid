@@ -7,19 +7,19 @@ export const projectTable = pgTable(
   'project',
   {
     id: text().primaryKey(),
-    companyId: text()
-      .notNull()
-      .references(() => companyTable.id, { onDelete: 'cascade' }),
+    /** Null for a Project in its creator's personal space. */
+    companyId: text().references(() => companyTable.id, { onDelete: 'cascade' }),
     name: text().notNull(),
     parentProjectId: text().references((): AnyPgColumn => projectTable.id, { onDelete: 'cascade' }),
     createdBy: text()
       .notNull()
-      .references(() => personTable.id, { onDelete: 'restrict' }),
+      .references(() => personTable.id, { onDelete: 'cascade' }),
     createdAt: timestamp({ withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (table) => [
     index('project_company_idx').on(table.companyId),
     index('project_parent_idx').on(table.parentProjectId),
     index('project_company_parent_idx').on(table.companyId, table.parentProjectId),
+    index('project_creator_idx').on(table.createdBy),
   ],
 )

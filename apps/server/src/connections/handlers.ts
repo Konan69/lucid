@@ -1,35 +1,101 @@
-import * as Effect from 'effect/Effect'
-import { ConnectionDeletionResponse, ConnectionListResponse, Forbidden } from '@vivid/contracts'
-import { AuthContext, AuthState } from '@vivid/contracts/api'
-import { invalidRequest } from '../rpc/failures.ts'
+import { Effect } from 'effect'
+import type {
+  AddIntegrationRequest,
+  FindIntegrationsRequest,
+  TestIntegrationRequest,
+  BeginConnectionRequest,
+  CompleteConnectionRequest,
+  ConnectionId,
+  FindServicesRequest,
+  FindToolsRequest,
+  OfferConnectionRequest,
+  UseToolRequest,
+} from '@vivid/contracts'
+import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
+import { live } from '../live/query.ts'
 import { ConnectionStore } from './store.ts'
+import { addIntegration, findIntegrations, testIntegration } from './integrations.ts'
+import { findTools, offerConnection, resolveTool, useTool } from './tools.ts'
+export { connectionRunner, runConnection } from './tools.ts'
 
+/** Both inventory calls share the persisted Connection loader. */
+const load = Effect.fn('Connections.load')(function* (actor: Actor) {
+  return yield* (yield* ConnectionStore).list(actor)
+})
+
+/** Authentication belongs at transport ingress; account rules stay in the owned domain. */
 export const connectionHandlers = {
+  /** Discovery uses the same live Person/Company scope as every Connection read. */
+  FindIntegrations: Effect.fn('Rpc.FindIntegrations')(function* (request: FindIntegrationsRequest) {
+    return yield* findIntegrations(yield* requireActor(), request)
+  }),
+  /** Runtime authorization starts here; credential completion remains Person-only. */
+  AddIntegration: Effect.fn('Rpc.AddIntegration')(function* (request: AddIntegrationRequest) {
+    yield* requireVivid()
+    return yield* addIntegration(yield* requireActor(), request)
+  }),
+  /** A read test is still an external account action and requires the ordinary Gate. */
+  TestIntegration: Effect.fn('Rpc.TestIntegration')(function* (request: TestIntegrationRequest) {
+    yield* requireVivid()
+    return yield* testIntegration(yield* requireActor(), request)
+  }),
   ListConnections: Effect.fn('Rpc.ListConnections')(function* () {
-    const store = yield* ConnectionStore
-    return ConnectionListResponse.make({
-      connectors: yield* store.list().pipe(Effect.mapError(invalidRequest)),
-    })
+    return yield* load(yield* requireActor())
   }),
-  DeleteConnection: Effect.fn('Rpc.DeleteConnection')(function* ({ id }) {
-    const store = yield* ConnectionStore
-    const deleted = yield* store.remove(id).pipe(Effect.mapError(invalidRequest))
-    return ConnectionDeletionResponse.make({ success: true, deleted })
+  WatchConnections: () => live(load),
+  /** The public catalog has no workspace scope; searching still requires a signed-in Person. */
+  FindServices: Effect.fn('Rpc.FindServices')(function* (request: FindServicesRequest) {
+    yield* requirePerson()
+    return yield* (yield* ConnectionStore).find(request.query)
   }),
-  ExecuteConnectionTool: Effect.fn('Rpc.ExecuteConnectionTool')(function* ({
-    connector,
-    tool,
-    input,
+  /** Connecting an account always requires a signed-in Person. */
+  BeginConnection: Effect.fn('Rpc.BeginConnection')(function* (request: BeginConnectionRequest) {
+    yield* requirePerson()
+    return yield* (yield* ConnectionStore).begin(yield* requireActor(), request)
+  }),
+  /** Reopening authorization uses the same management authority as removal. */
+  ResumeConnection: Effect.fn('Rpc.ResumeConnection')(function* ({
+    id,
+  }: {
+    readonly id: ConnectionId
   }) {
-    // Only Vivid's runtime acts through a Connection. A Person's session manages Connections but
-    // never drives a provider action directly, so a browser cannot send mail by calling this RPC.
-    const auth = yield* AuthContext
-    if (!AuthState.$is('Runtime')(auth)) {
-      return yield* new Forbidden({ message: 'Connection actions run only for Vivid' })
-    }
-    const store = yield* ConnectionStore
-    return {
-      output: yield* store.execute(connector, tool, input).pipe(Effect.mapError(invalidRequest)),
-    }
+    yield* requirePerson()
+    return yield* (yield* ConnectionStore).resume(yield* requireActor(), id)
+  }),
+  /** Key entry stays on the Person-only boundary and never enters Thread context. */
+  CompleteConnection: Effect.fn('Rpc.CompleteConnection')(function* (
+    request: CompleteConnectionRequest,
+  ) {
+    yield* requirePerson()
+    return { connection: yield* (yield* ConnectionStore).complete(yield* requireActor(), request) }
+  }),
+  /** Vivid cannot revoke an account on its own. */
+  RemoveConnection: Effect.fn('Rpc.RemoveConnection')(function* ({
+    id,
+  }: {
+    readonly id: ConnectionId
+  }) {
+    yield* requirePerson()
+    yield* (yield* ConnectionStore).remove(yield* requireActor(), id)
+  }),
+  FindTools: Effect.fn('Rpc.FindTools')(function* (request: FindToolsRequest) {
+    return yield* findTools(yield* requireActor(), request)
+  }),
+  /** Exact resolution uses discovery's acting Person and account vocabulary. */
+  ResolveTool: Effect.fn('Rpc.ResolveTool')(function* (request: {
+    readonly account: string
+    readonly tool: string
+  }) {
+    return yield* resolveTool(yield* requireActor(), request)
+  }),
+  /** Only a Run proposes tool actions to the gate. */
+  UseTool: Effect.fn('Rpc.UseTool')(function* (request: UseToolRequest) {
+    yield* requireVivid()
+    return yield* useTool(yield* requireActor(), request)
+  }),
+  /** Connection requests are contributions made by Vivid in a Run. */
+  OfferConnection: Effect.fn('Rpc.OfferConnection')(function* (request: OfferConnectionRequest) {
+    yield* requireVivid()
+    return yield* offerConnection(yield* requireActor(), request)
   }),
 }

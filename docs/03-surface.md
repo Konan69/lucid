@@ -1,5 +1,7 @@
 # Surface
 
+2026-10-03: Historical surface proposal, superseded for implementation status by [docs/14](14-product-feature-set-and-grok-bot-parity.md) and for later product direction by [docs/22](22-one-product.md); this is not a claim that the proposed onboarding or voice controls ship.
+
 What the user sees. This document describes visible behavior only; implementation and runtime
 mechanics are outside its scope.
 

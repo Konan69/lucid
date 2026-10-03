@@ -1,5 +1,7 @@
 # Principle
 
+2026-10-03: Historical principle from 2 September; later product direction is in [docs/22](22-one-product.md), and built behavior superseding the original status claim is recorded in [docs/14](14-product-feature-set-and-grok-bot-parity.md).
+
 Status: stated by Vivid, 2026-09-02. Not yet tested against a build.
 
 ## The rule

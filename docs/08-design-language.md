@@ -1,5 +1,7 @@
 # Design language
 
+2026-10-03: Historical design research and proposals; implemented tokens and components supersede these implementation claims in `packages/design/tokens` and `apps/web/src/ui`, with enforcement in [designlint](designlint.md) and feature evidence in [docs/14](14-product-feature-set-and-grok-bot-parity.md).
+
 Why T3 Code and Open Session feel premium, read from their source, and the rules Vivid keeps.
 
 ## Prominence comes from shape, not color
@@ -48,8 +50,9 @@ T3: Pinned, then Active, then a Snoozed shelf with a wake countdown and an amber
 you visit, then a Settled shelf, collapsed, with "Show 10 more". Settling is how a thread leaves
 your attention without being deleted. Un-settling returns it to the top with its timestamps intact.
 
-**Vivid:** Needs you, Working, Pinned, then days, then Snoozed and Done shelves. Done is T3's
-Settled. Archive is the only destructive-feeling action and it is one level below.
+**Vivid:** Needs you, Working, then days, then a Done shelf. Done is T3's Settled. A row shows its
+time at rest and one quiet check on hover that marks it done; double-click renames in place; the
+rest (rename, done, delete) is in the right-click menu. A row never grows a strip of buttons.
 
 ## One box-shadow does elevation and edge
 
@@ -62,7 +65,9 @@ that already carries a ring.
 In dark, a cast shadow has nothing to fall on, so a lifted plate carries a specular top edge
 instead: one inset hairline of light. That is what says "raised" on a near-black page.
 
-**Vivid:** shadow tiers xs, sm, md, lg, soft, each with a ring variant. Edge highlight in dark.
+**Vivid:** two tiers from `shadow-plugin`. In the page, `smooth-shadow-ring-xs`: a hairline, nothing
+cast. Over the page (composer, menus, dialogs), `smooth-shadow-ring-md` or `-lg`. Hover is a fill,
+never a lift.
 
 ## Type has weight
 

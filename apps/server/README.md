@@ -1,13 +1,14 @@
 # `@vivid/server`
 
-The server keeps Better Auth's generated identity tables in PostgreSQL. Its Company, Membership,
+The server owns product logic and persistence, alongside Better Auth's generated identity tables in PostgreSQL. Its Company, Membership,
 and invitation concepts use Better Auth's organization-plugin backend, but are configured with the
 physical model names `company` and `membership`. That mapping is internal to the auth boundary;
 the contracts and HTTP routes use only the Vivid glossary terms.
 
-Browser clients use Better Auth's HttpOnly session cookie. Electron and Expo clients use the bearer
-plugin with a token they store in their platform credential store. The device-authorization plugin
-is enabled for desktop/mobile sign-in when a device flow is preferable; it is not used by browsers.
+Browser clients and the Electron web renderer use Better Auth's HttpOnly session cookie. Expo
+uses a bearer session token kept in SecureStore on native devices. The device-authorization
+plugin supports pairing; mobile implements the code exchange. The desktop shell currently uses
+the bundled web sign-in, not a separate bearer-token flow.
 
 ## Configuration
 
@@ -19,13 +20,16 @@ never the supplied value.
 | ---------------------- | -------- | ------------------------------------------------------------------------------ |
 | `DATABASE_URL`         | Yes      | Must parse as a PostgreSQL URL with a host (`postgres://` or `postgresql://`). |
 | `AUTH_SECRET`          | Yes      | At least 32 characters, 12 distinct characters, and 3 character classes.       |
+| `VIVID_RUNTIME_URL`    | Yes      | Absolute runtime URL; used only by the server.                                 |
+| `VIVID_RUNTIME_TOKEN`  | Yes      | Runtime authority, kept redacted and never sent to clients.                    |
 | `PORT`                 | No       | Integer from 1 through 65535; defaults to `8787`.                              |
 | `PUBLIC_URL`           | No       | If supplied, must be an absolute URL; defaults to `http://localhost:3000`.     |
-| `GOOGLE_CLIENT_ID`     | No       | Optional, but must be paired with `GOOGLE_CLIENT_SECRET`.                      |
-| `GOOGLE_CLIENT_SECRET` | No       | Optional, but must be paired with `GOOGLE_CLIENT_ID`; kept redacted.           |
+| `GOOGLE_CLIENT_ID`     | No       | All three Google OAuth variables must be supplied together or omitted.         |
+| `GOOGLE_CLIENT_SECRET` | No       | Part of the atomic Google OAuth set; kept redacted.                            |
 | `GOOGLE_REDIRECT_URI`  | No       | Required when Google OAuth is enabled and must be an absolute URL.             |
 
-Copy `.env.example` for a local starting point. Local PostgreSQL is
+Supply configuration in the process environment. The server's `dev` script does not load an
+`.env` file. `.env.example` illustrates values but omits the required runtime URL and token. Local PostgreSQL is
 `postgres://vivid:vivid@127.0.0.1:55433/vivid`. Do not put secret values in logs, traces, health
 responses, or error messages.
 
@@ -35,6 +39,31 @@ responses, or error messages.
 pnpm --filter @vivid/server dev
 ```
 
-Generate/apply the Drizzle migration from this package with `pnpm db:generate` and
-`pnpm db:migrate`; root `pnpm check:migrations` verifies its SQL/snapshot chain. Better Auth is mounted directly under `/api/auth`; the request/response API is
-declared with Effect HttpApi under `/api`.
+Generate auth migrations with `pnpm --filter @vivid/server db:generate`, and product migrations
+with `pnpm --filter @vivid/server db:generate:product`. Review generated SQL before applying it.
+Root `pnpm db:migrate` applies auth then product migrations; `pnpm check:migrations` validates
+both chains. Tests use only a disposable database through `VIVID_TEST_DATABASE_URL`.
+
+`VividRpc` in `packages/contracts/src/rpc.ts` declares product calls: `/api/live` carries JSON
+RPC over WebSocket, and `/api/rpc` carries NDJSON RPC over HTTP. `http/router.ts` composes the
+plain HTTP adapters for Better Auth, the conversation gateway, Integration sign-in returns,
+Routine webhooks, Library bytes, the Computer screen, and health. Better Auth's organization
+mutation routes are closed; Company changes go through the audited product RPCs.
+
+## External capabilities
+
+Integrations use Executor (`VIVID_EXECUTOR_URL` and `VIVID_EXECUTOR_KEY`), with account references
+stored in PostgreSQL and credentials held by Executor. Memory uses HelixDB when
+`VIVID_HELIX_URL` is set; when it is absent, memory calls report unavailable and nothing is learned.
+The Computer provider is selected by `VIVID_COMPUTER_PROVIDER` (`boat` or `docker`); no selection
+means unavailable. Boat was proven against the real service on 3 October 2026. Check the owning
+adapter files and [current status](../../docs/14-product-feature-set-and-grok-bot-parity.md) for
+configuration and limits. Models use the Experiential Labs gateway; Vivid adds no model retry layer.
+
+Google OAuth above is for account sign-in. Google Integrations need their own operator sign-in
+client in Executor; these application credentials do not configure it.
+
+One-off Routines resolve a local date-time using the Person's saved time zone. The existing
+Routine scheduler claims the Occurrence, disables the Routine and clears its next time in one
+transaction. The Routine, Thread and Occurrence remain available; pending submission receipts
+recover across restarts. Past times are refused before insertion.
