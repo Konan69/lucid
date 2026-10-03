@@ -24,7 +24,7 @@ const Target = Schema.Struct({
   key: Schema.Literals(['local', 'preview', 'production']),
   runnable: Schema.Boolean,
   destroyOnTeardown: Schema.Boolean,
-  database: Schema.Literals(['docker', 'required']),
+  database: Schema.Literals(['docker', 'railway', 'required']),
   stackName: Schema.String,
   stage: Schema.String,
   postgresImageId: Schema.String,
@@ -44,7 +44,7 @@ const PackageDocument = Schema.Struct({
   scripts: Schema.Struct({
     'infra:dev': Schema.String,
     'infra:destroy': Schema.String,
-    'infra:deploy': Schema.optionalKey(Schema.String),
+    'infra:deploy': Schema.String,
     'infra:preview': Schema.optionalKey(Schema.String),
   }),
 })
@@ -78,9 +78,9 @@ export const validateTargets = (targets) => {
   assert.equal(targets.local.runnable, true, 'local must be runnable')
   assert.equal(targets.local.database, 'docker', 'local must own Docker PostgreSQL')
   assert.equal(targets.preview.runnable, false, 'preview remote deployment must be disabled')
-  assert.equal(targets.production.runnable, false, 'production remote deployment must be disabled')
+  assert.equal(targets.production.runnable, true, 'production must be runnable on Railway')
   assert.equal(targets.preview.database, 'required', 'preview must require DATABASE_URL')
-  assert.equal(targets.production.database, 'required', 'production must require DATABASE_URL')
+  assert.equal(targets.production.database, 'railway', 'production must own Railway PostgreSQL')
   assert.equal(targets.production.destroyOnTeardown, false, 'production teardown must be protected')
 
   for (const property of physicalNameKeys) {
@@ -124,9 +124,12 @@ const assertEnvironmentWiring = (root, stackSource) => {
   const runtimeExample = source(root, 'packages/agent/runtime/.env.example')
   for (const match of runtimeExample.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)) runtimeNames.add(match[1])
 
+  // A name is wired when either graph sets it: the local process graph or the Railway graph.
+  // `VIVID_WEB_DIST` exists only where the server serves the built web app, which is hosted only.
+  const wiringSource = `${stackSource}\n${source(root, 'infra/railway.ts')}`
   for (const name of new Set([...serverNames, ...runtimeNames])) {
     assert.match(
-      stackSource,
+      wiringSource,
       new RegExp(`\\b${name}\\s*:`),
       `${name} is read by an app but not wired by Alchemy`,
     )
@@ -155,10 +158,11 @@ const assertPackagePolicy = (packageDocument) => {
     /VIVID_DEPLOY_TARGET=local/,
     'infra:destroy must be local-only',
   )
-  assert.equal(
+  // A hosted deploy creates billed resources, so the script must name its target explicitly.
+  assert.match(
     packageDocument.scripts['infra:deploy'],
-    undefined,
-    'remote deploy script must not exist',
+    /VIVID_DEPLOY_TARGET=production .*alchemy deploy --stage production/,
+    'infra:deploy must deploy only the production target',
   )
   assert.equal(
     packageDocument.scripts['infra:preview'],
@@ -170,8 +174,15 @@ const assertPackagePolicy = (packageDocument) => {
 const assertStackPolicy = (stackSource, infrastructureSources) => {
   assert.doesNotMatch(
     infrastructureSources,
-    /alchemy\/(Cloudflare|Railway|Neon)/,
+    /alchemy\/(Cloudflare|Neon)/,
     'removed cloud providers must not be imported',
+  )
+  // Railway is the one hosted provider. It may be loaded only for a Railway target, so
+  // `alchemy dev` on the local target never needs a Railway credential.
+  assert.match(
+    stackSource,
+    /deployTarget\.database === 'railway' \? railwayStack\(\) : localStack\(\)/,
+    'Railway providers must load only for a Railway target',
   )
   assert.doesNotMatch(stackSource, /Alchemy\.remote\s*\(/, 'local stack must not opt into live AWS')
   assert.doesNotMatch(
