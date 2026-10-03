@@ -1,13 +1,12 @@
 import { Workspace, type MeResponse, type Suggestion } from '@vivid/contracts'
 import { greetingAt } from '@vivid/state'
-import { useId } from 'react'
+import { useId, useState } from 'react'
 import { View } from 'react-native'
 import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg'
-import { ArrowDownLeft } from 'lucide-react-native'
+import { ArrowDownLeft, ChevronDown } from 'lucide-react-native'
 import { useNow } from '../../data/foreground'
 import { tick } from '../../data/haptics'
 import { useTheme } from '../../theme'
-import { Rise } from '../../ui/motion/Rise'
 import { Face, HAIRLINE, Label, Press, radius } from '../../ui/ui'
 
 /** The Person's first name, when their name has one to take. */
@@ -26,6 +25,9 @@ const REACH = 40
  */
 const EDGE = 12
 const INSET = 16
+
+/** How many suggestions are shown before "More ideas"; the rest wait behind that row. */
+const VISIBLE = 2
 
 /**
  * The soft light Vivid sits in on the first screen: one radial of its own colour, drawn once.
@@ -66,8 +68,8 @@ function Aura() {
  * this screen comes down to meet it instead: Home sets it at the foot of the screen, directly
  * above the composer, and the greeting, the suggestions and the field are one column.
  *
- * It arrives in the order it is read (the greeting, then each suggestion a beat after the one
- * before), once, when the screen opens. That is `Rise`; nothing here moves afterwards.
+ * Nothing here moves: the screen is drawn whole. The first two suggestions are shown so they stay
+ * clear of the keyboard and the composer; "More ideas" opens the rest in place.
  */
 export function First({
   me,
@@ -82,6 +84,8 @@ export function First({
   onChoose: (text: string) => void
 }) {
   const { colors: c } = useTheme()
+  const [all, setAll] = useState(false)
+  const shown = all ? suggestions : suggestions.slice(0, VISIBLE)
   const name = firstName(me)
   // The hour is the one the app was last brought to the front in, not a ticking clock: a greeting
   // that changed under someone reading it would be a glitch, and one left open overnight should
@@ -89,7 +93,7 @@ export function First({
   const hello = greetingAt(new Date(useNow()).getHours())
   return (
     <View style={{ paddingHorizontal: EDGE, paddingTop: 32, paddingBottom: 4 }}>
-      <Rise place={0} style={{ paddingHorizontal: INSET }}>
+      <View style={{ paddingHorizontal: INSET }}>
         <View style={{ width: FACE, height: FACE }}>
           <Aura />
           <Face size={FACE} mood={sending ? 'thinking' : 'happy'} />
@@ -103,10 +107,10 @@ export function First({
             Company: ({ company }) => `What should I take off your plate at ${company.name}?`,
           })}
         </Label>
-      </Rise>
+      </View>
       <View style={{ marginTop: 26, gap: 8 }}>
-        {suggestions.map((suggestion, position) => (
-          <Rise key={suggestion.text} place={position + 1}>
+        {shown.map((suggestion) => (
+          <View key={suggestion.text}>
             <Press
               accessibilityRole="button"
               accessibilityHint="Puts this in the message field"
@@ -145,8 +149,29 @@ export function First({
                 style={{ marginTop: 3 }}
               />
             </Press>
-          </Rise>
+          </View>
         ))}
+        {!all && suggestions.length > VISIBLE && (
+          <Press
+            accessibilityRole="button"
+            accessibilityLabel={`More ideas, ${suggestions.length - VISIBLE} more`}
+            onPress={() => setAll(true)}
+            style={({ pressed }) => ({
+              minHeight: 44,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              borderRadius: radius.control,
+              backgroundColor: pressed ? c['wash-pressed'] : 'transparent',
+            })}
+          >
+            <Label size="footnote" tone="ink-2">
+              More ideas
+            </Label>
+            <ChevronDown pointerEvents="none" size={16} strokeWidth={1.8} color={c['ink-3']} />
+          </Press>
+        )}
       </View>
     </View>
   )
