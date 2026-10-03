@@ -1,4 +1,5 @@
-import { Array as Arr, Result, Schema } from 'effect'
+import { Array as Arr } from 'effect'
+import { SkillId } from '@vivid/contracts'
 
 /** Display names and suggestion dependencies are shared by the server and runtime. Descriptions
  * and procedure bodies live only in SKILL.md; adding a name also extends the mount-map key type. */
@@ -266,6 +267,7 @@ const definitions = [
       'recall',
       'list_routines',
       'search_library',
+      'activate_skill',
       'read_skill',
     ],
     connections: [],
@@ -281,34 +283,23 @@ const definitions = [
 ] as const
 
 export type BuiltinRuntimeName = (typeof definitions)[number]['runtimeName']
-const RuntimeName = Schema.Literals(definitions.map((entry) => entry.runtimeName))
-const ManifestEntry = Schema.Struct({
-  runtimeName: RuntimeName,
-  displayName: Schema.NonEmptyString,
-  about: Schema.NonEmptyString.check(Schema.isMaxLength(300)),
-  starter: Schema.Boolean,
-  needs: Schema.Array(Schema.NonEmptyString),
-  connections: Schema.Array(Schema.Array(Schema.NonEmptyString)),
-})
-const decodeManifest = Schema.decodeUnknownSync(Schema.Array(ManifestEntry))
 
-/** Shipped declarations are decoded once at startup; malformed releases fail before serving work. */
-export const manifest = decodeManifest(definitions)
+/** Authored metadata is trusted, literal-typed source; only loaded Markdown needs ingress parsing. */
+export const manifest = definitions
 
-/** Preserve existing wire identities, including their original display-name normalization. */
+/** Retain existing wire identities with the contract's branded SkillId constructor. */
 export const builtinId = (displayName: string) =>
-  `builtin:${displayName.toLowerCase().replaceAll(' ', '-')}`
+  SkillId.make(`builtin:${displayName.toLowerCase().replaceAll(' ', '-')}`)
 
-const identities = new Set(manifest.map((entry) => builtinId(entry.displayName)))
+const identities = new Set<SkillId>(manifest.map((entry) => builtinId(entry.displayName)))
 
-/** Summary contracts have no scope field; only the shipped manifest can identify built-in handles. */
-export const isBuiltin = (id: string) => identities.has(id)
+/** Only the release manifest identifies built-in handles; saved names never determine scope. */
+export const isBuiltin = (id: SkillId) => identities.has(id)
 
-/** Server summaries already apply authorized saved-name precedence. Mount only their built-ins;
- * an absent preload must not accidentally mount a built-in that a saved procedure overrides. */
-export function builtinNames(summaries: readonly { readonly id: string }[]) {
-  const visible = new Set(summaries.map((summary) => summary.id))
-  return Arr.filterMap(manifest, (entry) =>
-    visible.has(builtinId(entry.displayName)) ? Result.succeed(entry.runtimeName) : Result.failVoid,
+/** Both historical display names and native names belong permanently to the shipped catalogue. */
+export const builtinNamed = (name: string) =>
+  Arr.findFirst(manifest, (entry) =>
+    [entry.runtimeName, entry.displayName].some(
+      (reserved) => reserved.toLowerCase() === name.trim().toLowerCase(),
+    ),
   )
-}

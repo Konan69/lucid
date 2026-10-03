@@ -31,7 +31,7 @@ import {
   ConnectionRequestMessage,
 } from '@vivid/contracts'
 import { contextInstruction } from '../context.ts'
-import { VividContext } from './snapshots.ts'
+import { SavedProcedures, VividContext } from './snapshots.ts'
 import * as views from './views.ts'
 import { askTools } from './ask.ts'
 import { computerDefinitions } from './computer.ts'
@@ -121,7 +121,7 @@ describe('model views', () => {
   it('projects every ordinary view without any fixture reference or UUID', () => {
     const output = [
       views.skills([skill, skill]),
-      views.skill(skill, 'Review agreement (2)'),
+      views.skill(skill, 'review-agreement-2'),
       views.skillSummary(skill, 'Review agreement'),
       views.tools({ tools: [tool], unconnected: [service] }),
       views.memories([
@@ -169,13 +169,26 @@ describe('model views', () => {
       }),
     )
     expect(context).not.toMatch(/MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|"id"/iu)
-    expect(context).toContain('Review agreement (2)')
+    expect(context).toContain('review-agreement-2')
     expect(json).toContain('admin@example.test')
     expect(views.tools({ tools: [tool], unconnected: [] }).tools[0]).toHaveProperty(
       'input',
       tool.input,
     )
   })
+  it('reports unavailable summaries explicitly while a successful built-in-only catalogue has no saved procedures', () => {
+    const unavailable = views.skills([])
+    expect(SavedProcedures.guards.Unavailable(unavailable)).toBe(true)
+    expect(JSON.stringify(unavailable)).toContain('Saved procedures are unavailable right now')
+    const builtin = {
+      id: SkillId.make('builtin:deep-research'),
+      name: 'Deep research',
+      useWhen: 'When research needs sources',
+      createdAt: 0,
+    }
+    expect(views.skills([builtin])).toEqual(SavedProcedures.cases.Available.make({ skills: [] }))
+  })
+
   it('keeps contact addresses in Person-authored content, including UUID-shaped mailboxes', () => {
     const detail = `Contact ${reference}@example.test or ada@example.test; internal reference ${reference}.`
     expect(views.modelText(detail)).toBe(

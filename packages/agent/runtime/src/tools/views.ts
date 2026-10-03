@@ -1,6 +1,5 @@
 import {
   MemoryScope,
-  SkillOrigin,
   RoutineTrigger,
   type BrowseResult,
   type CommandResult,
@@ -14,31 +13,37 @@ import {
   type Skill,
   type SkillSummary,
 } from '@vivid/contracts'
-import type { ContextSkill } from './snapshots.ts'
+import { SavedProcedures, type ContextSkill } from './snapshots.ts'
 import { catalog, distinct, inventory, savedInventory } from './names.ts'
 
 /** Dates cross the model boundary in ISO units; null remains genuine domain absence. */
 const date = (value: number | null) => (value === null ? null : new Date(value).toISOString())
 
 /** Saved context and read resolution share naming; native built-ins never enter this inventory. */
-export function skills(items: readonly ContextSkill[]) {
-  return savedInventory(items, (item) => modelText(item.name)).map(({ item, name }) =>
-    skillSummary(item, name),
-  )
+export function skills(items: readonly ContextSkill[]): SavedProcedures {
+  if (items.length === 0)
+    return SavedProcedures.cases.Unavailable.make({
+      message: 'Saved procedures are unavailable right now; continue with the built-in skills.',
+    })
+  return SavedProcedures.cases.Available.make({
+    skills: savedInventory(items, (item) => modelText(item.name)).map(({ item, name }) =>
+      skillSummary(item, name),
+    ),
+  })
 }
 
-/** Saving and catalog views share exactly the same human-facing procedure summary. */
+/** Saving and context views share the same internal runtime procedure summary. */
 export function skillSummary(item: SkillSummary, name: string) {
   return { name: modelText(name), useWhen: modelText(item.useWhen) }
 }
 
-/** Reading a procedure exposes only its human-facing instructions. */
+/** Reading a saved procedure exposes its instructions and runtime name, never storage identity. */
 export function skill(item: Skill, name: string) {
   return {
     name: modelText(name),
     useWhen: modelText(item.useWhen),
     instructions: modelText(item.instructions),
-    source: SkillOrigin.guards.BuiltIn(item.origin) ? 'Built into Vivid' : 'Saved procedure',
+    source: 'Saved procedure',
   }
 }
 

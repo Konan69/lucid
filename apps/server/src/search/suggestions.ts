@@ -13,7 +13,7 @@ import { libraryFailure } from '../library/failures.ts'
 import { LibraryStore } from '../library/store.ts'
 import { RoutineStore } from '../routines/store.ts'
 import { ConnectionStore } from '../connections/store.ts'
-import { manifest } from '../../../../packages/agent/skills/src/manifest.ts'
+import { manifest } from '@vivid/skills'
 
 const DAY_MS = 86_400_000
 /** Offer connected procedures only when every required service group has a ready account.

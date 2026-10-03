@@ -1,5 +1,6 @@
-import { Array as Arr, Order, Result, Schema } from 'effect'
-import { isBuiltin } from '../../../skills/src/manifest.ts'
+import { Array as Arr, Order, Option, Result, Schema } from 'effect'
+import { builtinNamed, isBuiltin } from '@vivid/skills'
+import { type SkillId } from '@vivid/contracts'
 
 export class NameMissing extends Schema.TaggedError<NameMissing>()(
   'NameMissing',
@@ -86,13 +87,44 @@ export function catalog<A extends { readonly id: string }>(
   )
 }
 
-/** Built-ins use Flue activation, so only saved records receive custom display-name suffixes. */
-export function savedInventory<A extends { readonly createdAt: number; readonly id: string }>(
+/** Historical saved display names project to lowercase runtime labels. An old collision remains
+ * readable under a saved suffix, never under a built-in's permanently reserved runtime name.
+ * Preserve legacy punctuation and non-Latin text: these RPC labels are not native folder names. */
+function savedName(label: string) {
+  const runtime = label.trim().toLowerCase().replace(/\s+/gu, '-')
+  return Option.isSome(builtinNamed(runtime)) ? `${runtime}-saved` : runtime
+}
+
+/** Reserve literal runtime labels before numbering duplicates, including generated -2 labels.
+ * This order matches reads and saves and prevents a legacy display name from shadowing a native skill. */
+function distinctSaved(labels: readonly string[]) {
+  const bases = labels.map(savedName)
+  const reserved = new Set(bases)
+  const used = new Set<string>()
+  return bases.map((base) => {
+    let name = base
+    let occurrence = 2
+    if (used.has(name)) {
+      do {
+        name = `${base}-${occurrence++}`
+      } while (reserved.has(name) || used.has(name))
+    }
+    used.add(name)
+    return name
+  })
+}
+
+/** Built-in handles never enter saved context; ordering and runtime labels are shared by read/save. */
+export function savedInventory<A extends { readonly createdAt: number; readonly id: SkillId }>(
   items: readonly A[],
   label: (item: A) => string,
 ) {
-  return inventory(
+  const saved = Arr.sort(
     items.filter((item) => !isBuiltin(item.id)),
-    label,
+    Order.combine(
+      Order.mapInput(Order.Number, (item: A) => item.createdAt),
+      Order.mapInput(Order.String, (item: A) => item.id),
+    ),
   )
+  return Arr.zip(saved, distinctSaved(saved.map(label))).map(([item, name]) => ({ item, name }))
 }

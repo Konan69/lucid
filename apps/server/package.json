@@ -22,6 +22,7 @@
     "@flue/sdk": "catalog:",
     "@helix-db/helix-db": "3.0.4",
     "@vivid/contracts": "workspace:*",
+    "@vivid/skills": "workspace:*",
     "alchemy": "catalog:",
     "better-auth": "catalog:",
     "croner": "^10.0.1",

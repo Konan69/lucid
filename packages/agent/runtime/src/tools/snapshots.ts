@@ -7,6 +7,21 @@ import type { Acting } from '../client.ts'
 export const ContextSkill = SkillSummary
 export interface ContextSkill extends Schema.Schema.Type<typeof ContextSkill> {}
 
+/** A successful server catalogue always includes all shipped skills, even with no saved rows.
+ * Its empty fallback therefore means summaries are unavailable/unprepared, not an empty saved set.
+ * The tagged projection preserves that distinction without changing response-preload ownership. */
+export const SavedProcedures = Schema.TaggedUnion({
+  Available: {
+    skills: Schema.Array(Schema.Struct({ name: Schema.String, useWhen: Schema.String })),
+  },
+  Unavailable: {
+    message: Schema.Literal(
+      'Saved procedures are unavailable right now; continue with the built-in skills.',
+    ),
+  },
+})
+export type SavedProcedures = typeof SavedProcedures.Type
+
 export const VividContext = Schema.Struct({
   brief: Schema.String,
   skills: Schema.Array(ContextSkill),

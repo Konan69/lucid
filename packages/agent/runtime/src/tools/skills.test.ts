@@ -14,11 +14,14 @@ import { Effect, Exit, Layer, Option, Predicate, Queue, Schema } from 'effect'
 import * as RpcClient from 'effect/unstable/rpc/RpcClient'
 import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/unstable/rpc/RpcMessage'
-import { skillTools } from './skills.ts'
+import { BuiltinSkillActivationRequired, BuiltinSkillNameReserved, skillTools } from './skills.ts'
 import { Scope, toolRunner } from './scope.ts'
 
+const encodeActivation = Schema.encodeSync(BuiltinSkillActivationRequired)
+const encodeReserved = Schema.encodeSync(BuiltinSkillNameReserved)
+
 const saveRequest = {
-  name: 'Review',
+  name: 'review',
   about: 'Reviews your agreement before you sign.',
   useWhen: 'Before signing',
   instructions: 'Read the agreement.',
@@ -98,10 +101,10 @@ const fixture = Effect.fn('SkillToolsTest.fixture')(function* () {
       Effect.promise(() => Promise.resolve(read.run({ ...context, data: { name } }))).pipe(
         Effect.flatMap(decodeOutput),
       ),
-    save: () =>
-      Effect.promise(() => Promise.resolve(save.run({ ...context, data: saveRequest }))).pipe(
-        Effect.flatMap(decodeOutput),
-      ),
+    save: (name: string) =>
+      Effect.promise(() =>
+        Promise.resolve(save.run({ ...context, data: { ...saveRequest, name } })),
+      ).pipe(Effect.flatMap(decodeOutput)),
   }
 })
 
@@ -123,11 +126,11 @@ describe('procedure catalog discovery', () => {
             Exit.succeed({ skill: second }),
           )
         })
-        const [result] = yield* Effect.all([tools.read('Review (2)'), respond()], {
+        const [result] = yield* Effect.all([tools.read('review-2'), respond()], {
           concurrency: 2,
         })
         expect(result.output).toMatchObject({
-          name: 'Review (2)',
+          name: 'review-2',
           instructions: saveRequest.instructions,
         })
         expect(yield* Queue.size(tools.requests)).toBe(0)
@@ -135,63 +138,86 @@ describe('procedure catalog discovery', () => {
     ),
   )
 
-  it.effect('read_skill refuses native built-ins without fetching their bodies', () =>
+  it.effect(
+    'read_skill redirects either built-in name form to native activation without an RPC',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const tools = yield* fixture()
+          for (const name of ['Deep research', 'deep-research', ' DEEP RESEARCH ']) {
+            const result = yield* tools.read(name)
+            expect(result.output).toEqual({
+              ok: false,
+              error: encodeActivation(
+                new BuiltinSkillActivationRequired({
+                  runtimeName: 'deep-research',
+                  tool: 'activate_skill',
+                }),
+              ),
+              message: 'Use activate_skill with deep-research.',
+            })
+          }
+          expect(yield* Queue.size(tools.requests)).toBe(0)
+        }),
+      ),
+  )
+
+  it.effect('save_skill refuses runtime and display names before any write', () =>
     Effect.scoped(
       Effect.gen(function* () {
         const tools = yield* fixture()
-        const respond = Effect.fn('SkillToolsTest.builtin')(function* () {
-          yield* tools.reply(
-            'ListSkillSummaries',
-            Option.none(),
-            Exit.succeed({ skills: summaries }),
-          )
-        })
-        const [result] = yield* Effect.all([tools.read('Deep research'), respond()], {
-          concurrency: 2,
-        })
-        expect(result.output).toEqual({
-          ok: false,
-          message: 'Nothing here is called “Deep research”; list them again.',
-        })
-        expect(JSON.stringify(result.output)).not.toContain('builtin:')
+        for (const name of ['deep-research', 'Deep research', ' DEEP RESEARCH ']) {
+          const result = yield* tools.save(name)
+          expect(result.output).toMatchObject({
+            ok: false,
+            error: encodeReserved(
+              new BuiltinSkillNameReserved({
+                runtimeName: 'deep-research',
+                message: 'that name belongs to a built-in skill; choose another name',
+              }),
+            ),
+            message: 'that name belongs to a built-in skill; choose another name',
+          })
+          expect(JSON.stringify(result.output)).not.toContain('builtin:')
+        }
         expect(yield* Queue.size(tools.requests)).toBe(0)
       }),
     ),
   )
 
   it.effect(
-    'read_skill keeps a saved built-in display-name override on its authorized RPC path',
+    'read_skill keeps a legacy collision readable only under a distinct saved runtime name',
     () =>
       Effect.scoped(
         Effect.gen(function* () {
           const tools = yield* fixture()
-          const override = Skill.make({
+          const legacy = Skill.make({
             ...first,
             name: 'Deep research',
             instructions: 'Use our reviewed method.',
           })
-          const respond = Effect.fn('SkillToolsTest.override')(function* () {
+          const respond = Effect.fn('SkillToolsTest.legacy')(function* () {
             yield* tools.reply(
               'ListSkillSummaries',
               Option.none(),
-              Exit.succeed({ skills: [override] }),
+              Exit.succeed({ skills: [legacy] }),
             )
             yield* tools.reply(
               'ReadSkill',
-              Option.some({ id: override.id }),
-              Exit.succeed({ skill: override }),
+              Option.some({ id: legacy.id }),
+              Exit.succeed({ skill: legacy }),
             )
           })
-          const [result] = yield* Effect.all([tools.read('Deep research'), respond()], {
+          const [result] = yield* Effect.all([tools.read('deep-research-saved'), respond()], {
             concurrency: 2,
           })
           expect(result.output).toEqual({
-            name: override.name,
-            useWhen: override.useWhen,
-            instructions: override.instructions,
+            name: 'deep-research-saved',
+            useWhen: legacy.useWhen,
+            instructions: legacy.instructions,
             source: 'Saved procedure',
           })
-          expect(JSON.stringify(result.output)).not.toContain(override.id)
+          expect(JSON.stringify(result.output)).not.toContain(legacy.id)
           expect(yield* Queue.size(tools.requests)).toBe(0)
         }),
       ),
@@ -209,8 +235,10 @@ describe('procedure catalog discovery', () => {
             Exit.succeed({ skills: summaries }),
           )
         })
-        const [result] = yield* Effect.all([tools.save(), respond()], { concurrency: 2 })
-        expect(result.output).toEqual({ name: 'Review (2)', useWhen: saveRequest.useWhen })
+        const [result] = yield* Effect.all([tools.save(saveRequest.name), respond()], {
+          concurrency: 2,
+        })
+        expect(result.output).toEqual({ name: 'review-2', useWhen: saveRequest.useWhen })
         expect(yield* Queue.size(tools.requests)).toBe(0)
       }),
     ),

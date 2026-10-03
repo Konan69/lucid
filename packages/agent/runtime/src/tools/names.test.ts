@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Result } from 'effect'
-import { distinct, inventory, named, NameAmbiguous, NameMissing } from './names.ts'
+import { SkillId } from '@vivid/contracts'
+import { distinct, inventory, named, NameAmbiguous, NameMissing, savedInventory } from './names.ts'
 
 /** Returned names must round-trip to the same records, including case variants and literal suffixes. */
 describe('human names', () => {
@@ -40,5 +41,25 @@ describe('human names', () => {
     expect(named(entries, ' DRAFT ')).toEqual(
       Result.fail(new NameAmbiguous({ name: 'DRAFT', matches: ['Draft', 'draft'] })),
     )
+  })
+
+  it('keeps saved runtime labels distinct from built-ins and literal suffixes without losing legacy text', () => {
+    const items = [
+      'Deep research',
+      'deep-research-saved',
+      'DEEP RESEARCH',
+      'Réviser le contrat',
+      '审查',
+    ].map((name, index) => ({ id: SkillId.make(`MARK-${index}`), createdAt: index, name }))
+    const entries = savedInventory(items, (item) => item.name)
+    expect(entries.map((entry) => entry.name)).toEqual([
+      'deep-research-saved',
+      'deep-research-saved-2',
+      'deep-research-saved-3',
+      'réviser-le-contrat',
+      '审查',
+    ])
+    for (const entry of entries)
+      expect(named(entries, entry.name)).toEqual(Result.succeed(entry.item))
   })
 })

@@ -24,6 +24,7 @@
     "@flue/postgres": "catalog:",
     "@flue/runtime": "catalog:",
     "@vivid/contracts": "workspace:*",
+    "@vivid/skills": "workspace:*",
     "@vivid/client-runtime": "workspace:*",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",
