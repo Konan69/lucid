@@ -24,10 +24,7 @@ import '../styles/vivid.css'
  * The last answer is remembered on this device, the way the theme is, so a reload draws Vivid as
  * the Person left it instead of flashing the stock face while the socket connects.
  *
- * The colour reaches the faces through the document, not through each component: the chosen hue
- * is written on `<html>` and `styles/vivid.css` recolours every Vivid face under it. The face is
- * drawn in dozens of places owned by different screens; the document already carries the theme
- * this way, and a face colour is the same kind of fact.
+ * `ui/Face.tsx` reads it for every face that is not given a colour or an outline of its own.
  */
 
 const KEY = 'vivid-appearance'
@@ -49,33 +46,22 @@ export const faceColorOf = (look: Look): FaceColor =>
     Hue: ({ hue }) => hue,
   })
 
-const apply = () => {
-  const root = document.documentElement
-  Look.match(shown.look, {
-    // No attribute at all: every face keeps the theme's accent, as it is styled.
-    Accent: () => {
-      delete root.dataset.vividHue
-    },
-    Hue: ({ hue }) => {
-      root.dataset.vividHue = hue
-    },
-  })
-}
-apply()
-
 const adopt = (next: Appearance) => {
-  if (next.name === shown.name && faceColorOf(next.look) === faceColorOf(shown.look)) return
+  if (
+    next.name === shown.name &&
+    next.outline === shown.outline &&
+    faceColorOf(next.look) === faceColorOf(shown.look)
+  )
+    return
   shown = next
   kept.write(KEY, encodeKept(next))
-  apply()
   for (const listener of listeners) listener()
 }
 
 /** The live query. An expected change (`saveAppearance`) flows through it like a server result. */
 export const appearance = engine.query((client) => client.WatchAppearance())
 
-// Held open for the life of the page, so the document is recoloured even on a screen that draws
-// no component of this module. It answers again when the Person changes workspace (`data/live`
+// Held open for the life of the page, so every face has the answer before it is first drawn. It answers again when the Person changes workspace (`data/live`
 // reopens every query), which is how a Company's Vivid replaces the Person's own.
 engine.registry.subscribe(
   appearance.atom,

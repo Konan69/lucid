@@ -1,15 +1,23 @@
-import { Appearance, FaceHue, Look, VIVID_NAME_MAX, VividName, Workspace } from '@vivid/contracts'
+import {
+  Appearance,
+  FaceHue,
+  FaceOutline,
+  Look,
+  VIVID_NAME_MAX,
+  VividName,
+  Workspace,
+} from '@vivid/contracts'
 import type { FaceMood } from '@vivid/marks'
 import { Option, Schema } from 'effect'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Pressable, ScrollView, View } from 'react-native'
 import { commit, tick } from '../../data/haptics'
 import { refusalOf, useLiveData, useLiveValue } from '../../data/live'
-import { saveAppearance, useAppearance } from '../../data/vivid'
+import { facePaintOf, saveAppearance, useAppearance } from '../../data/vivid'
 import { useTheme } from '../../theme'
 import { Face } from '../../ui/Face'
 import { Sheet } from '../../ui/Sheet'
-import { Button, EDGE, Field, GUTTER, Label, Notice, Press } from '../../ui/ui'
+import { Button, EDGE, Field, GUTTER, Label, Notice, Press, radius } from '../../ui/ui'
 
 /** Every look there is to choose, in the order they are shown: the theme's own colour first. */
 const LOOKS: ReadonlyArray<Look> = [
@@ -33,24 +41,31 @@ const lookName = (look: Look) =>
 
 const decodeName = Schema.decodeUnknownOption(VividName)
 
-/** A swatch: the face at 56 inside a 68 target, so the ring of the chosen one has room. */
-const SWATCH = 68
-const SWATCH_FACE = 56
+/** What an outline is called to someone who cannot see it. */
+const outlineName = (outline: FaceOutline) =>
+  `${outline.charAt(0).toUpperCase()}${outline.slice(1)}`
+
+/** A colour: a 30 dot inside a 48 target, so the ring of the chosen one has room. */
+const DOT_TARGET = 48
+const DOT = 30
+/** A shape: the face at 44 inside a 64 tile. */
+const TILE = 64
+const TILE_FACE = 44
 const PREVIEW = 148
 
 /**
- * The sheet where Vivid is given a name and a colour, on a phone.
+ * The sheet where Vivid is given a name, a colour and a shape, on a phone.
  *
- * The same choice as the web's Customise sheet (`apps/web/src/screen/vivid/Customise.tsx`),
- * which is adapted from ChatGPT's "Customize your dot", laid out for one hand instead of ported:
- * one column with the preview and the name at the top, the colours in a row that scrolls
- * sideways (the reference's `artwork-row`, without its arrow buttons: a finger scrolls a row),
- * and Save in the sheet's footer, in the thumb's reach and above the keyboard. It is the system's
- * own sheet, so it slides and swipes away as every other one does.
+ * The same choices as the web's Customise sheet (`apps/web/src/screen/vivid/Customise.tsx`), laid
+ * out for one hand instead of ported. The order is Grok Bot's "Create your first Bot" step (the
+ * screenshot `refs/grok-bot-screenshots/03-create-your-first-bot.png`): the face large, a row of
+ * plain colour dots with the chosen one ringed, a row of the eight shapes drawn in the chosen
+ * colour with the chosen one in a ringed tile, then the name. Both rows scroll sideways under a
+ * finger. Save is in the sheet's footer, in the thumb's reach and above the keyboard, and it is
+ * the system's own sheet, so it slides and swipes away as every other one does.
  *
- * Kept from the reference: the 24-character one-line name with no backslash, Done on the keyboard
- * saving, a colour selecting on tap, and the draft staying up with a message when the save does
- * not land. Its characters and pets are not here, for the reason given in the web sheet.
+ * Kept from ChatGPT's "Customize your dot": the 24-character one-line name with no backslash,
+ * Done on the keyboard saving, and the draft staying up with a message when the save fails.
  *
  * Saving is optimistic: the moment Save is pressed every face and name behind the sheet changes
  * (`saveAppearance`), and the sheet closes when the server has taken it.
@@ -61,19 +76,21 @@ export function Customise({ onClose }: { onClose: () => void }) {
   const me = useLiveValue(data.live.me)
   const [name, setName] = useState<string>(saved.name)
   const [look, setLook] = useState(saved.look)
+  const [outline, setOutline] = useState(saved.outline)
   const [busy, setBusy] = useState(false)
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
   const text = name.trim()
-  const unchanged = text === saved.name && keyOf(look) === keyOf(saved.look)
+  const unchanged =
+    text === saved.name && outline === saved.outline && keyOf(look) === keyOf(saved.look)
   // Everyone in a Company shares one Vivid, so the person changing it is told whose it is.
   const detail = Option.match(
     Option.map(me, (value) => value.workspace),
     {
-      onNone: () => 'A name and a colour, shown wherever Vivid is.',
+      onNone: () => 'A name, a colour and a shape, shown wherever Vivid is.',
       onSome: (workspace) =>
         Workspace.match(workspace, {
-          Personal: () => 'A name and a colour, shown wherever Vivid is.',
-          Company: ({ company }) => `Everyone in ${company.name} sees this name and colour.`,
+          Personal: () => 'A name, a colour and a shape, shown wherever Vivid is.',
+          Company: ({ company }) => `Everyone in ${company.name} sees this name and look.`,
         }),
     },
   )
@@ -89,7 +106,7 @@ export function Customise({ onClose }: { onClose: () => void }) {
     setRefused(Option.none())
     commit()
     const refusal = refusalOf(
-      await saveAppearance(data, new Appearance({ name: valid.value, look })),
+      await saveAppearance(data, new Appearance({ name: valid.value, look, outline })),
     )
     setBusy(false)
     if (Option.isNone(refusal)) onClose()
@@ -111,7 +128,24 @@ export function Customise({ onClose }: { onClose: () => void }) {
         />
       }
     >
-      <Preview look={look} name={text.length > 0 ? text : 'Vivid'} />
+      <Preview look={look} outline={outline} name={text.length > 0 ? text : 'Vivid'} />
+      <Colours
+        chosen={look}
+        disabled={busy}
+        onChoose={(next) => {
+          tick()
+          setLook(next)
+        }}
+      />
+      <Outlines
+        chosen={outline}
+        look={look}
+        disabled={busy}
+        onChoose={(next) => {
+          tick()
+          setOutline(next)
+        }}
+      />
       <Field
         value={name}
         accessibilityLabel="Name"
@@ -128,14 +162,6 @@ export function Customise({ onClose }: { onClose: () => void }) {
         style={{ textAlign: 'center' }}
       />
       {Option.isSome(refused) && <Notice message={refused.value} />}
-      <Swatches
-        chosen={look}
-        disabled={busy}
-        onChoose={(next) => {
-          tick()
-          setLook(next)
-        }}
-      />
     </Sheet>
   )
 }
@@ -145,7 +171,7 @@ export function Customise({ onClose }: { onClose: () => void }) {
  * The tilt is the face's own transition (`ui/Face.tsx`), once per change, and still under
  * reduced motion.
  */
-function Preview({ look, name }: { look: Look; name: string }) {
+function Preview({ look, outline, name }: { look: Look; outline: FaceOutline; name: string }) {
   const [mood, setMood] = useState<FaceMood>('neutral')
   return (
     <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 4 }}>
@@ -154,18 +180,42 @@ function Preview({ look, name }: { look: Look; name: string }) {
         onPressIn={() => setMood('happy')}
         onPressOut={() => setMood('neutral')}
       >
-        <Face size={PREVIEW} mood={mood} look={look} label={`${name}, as it will look`} />
+        <Face
+          size={PREVIEW}
+          mood={mood}
+          look={look}
+          outline={outline}
+          label={`${name}, as it will look`}
+        />
       </Pressable>
     </View>
   )
 }
 
+/** A row of choices that scrolls sideways and bleeds to the sheet's edges, under its heading. */
+function ChoiceRow({ heading, children }: { heading: string; children: ReactNode }) {
+  return (
+    <View style={{ gap: 8 }}>
+      <Label size="label" tone="ink-2" accessibilityRole="header">
+        {heading}
+      </Label>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ marginHorizontal: -GUTTER }}
+        contentContainerStyle={{ paddingHorizontal: GUTTER - 6, gap: 4 }}
+      >
+        {children}
+      </ScrollView>
+    </View>
+  )
+}
+
 /**
- * The colours, as faces, in one row that scrolls sideways. The row bleeds to the sheet's edges so
- * a swatch slides under them instead of stopping short at the gutter, and the chosen one is said
- * by a ring as well as by `selected`, not by colour alone.
+ * The colours, as plain dots (Grok Bot's row). The chosen one is said by a ring as well as by
+ * `selected`, not by colour alone.
  */
-function Swatches({
+function Colours({
   chosen,
   disabled,
   onChoose,
@@ -176,41 +226,83 @@ function Swatches({
 }) {
   const { colors: c } = useTheme()
   return (
-    <View style={{ gap: 8 }}>
-      <Label size="label" tone="ink-2" accessibilityRole="header">
-        Colours
-      </Label>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={{ marginHorizontal: -GUTTER }}
-        contentContainerStyle={{ paddingHorizontal: GUTTER - 6, gap: 4 }}
-      >
-        {LOOKS.map((option) => {
-          const active = keyOf(option) === keyOf(chosen)
-          return (
-            <Press
-              key={keyOf(option)}
-              accessibilityRole="button"
-              accessibilityLabel={lookName(option)}
-              accessibilityState={{ selected: active, disabled }}
-              disabled={disabled}
-              onPress={() => onChoose(option)}
+    <ChoiceRow heading="Colour">
+      {LOOKS.map((option) => {
+        const active = keyOf(option) === keyOf(chosen)
+        return (
+          <Press
+            key={keyOf(option)}
+            accessibilityRole="button"
+            accessibilityLabel={lookName(option)}
+            accessibilityState={{ selected: active, disabled }}
+            disabled={disabled}
+            onPress={() => onChoose(option)}
+            style={{
+              width: DOT_TARGET,
+              height: DOT_TARGET,
+              borderRadius: DOT_TARGET / 2,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderWidth: EDGE * 2,
+              borderColor: active ? c.primary : 'transparent',
+            }}
+          >
+            <View
               style={{
-                width: SWATCH,
-                height: SWATCH,
-                borderRadius: SWATCH / 2,
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderWidth: EDGE * 2,
-                borderColor: active ? c.foreground : 'transparent',
+                width: DOT,
+                height: DOT,
+                borderRadius: DOT / 2,
+                backgroundColor: facePaintOf(option, c).fill,
               }}
-            >
-              <Face size={SWATCH_FACE} look={option} label="" />
-            </Press>
-          )
-        })}
-      </ScrollView>
-    </View>
+            />
+          </Press>
+        )
+      })}
+    </ChoiceRow>
+  )
+}
+
+/** The eight shapes, each drawn as Vivid's face in the colour that is chosen. */
+function Outlines({
+  chosen,
+  look,
+  disabled,
+  onChoose,
+}: {
+  chosen: FaceOutline
+  look: Look
+  disabled: boolean
+  onChoose: (outline: FaceOutline) => void
+}) {
+  const { colors: c } = useTheme()
+  return (
+    <ChoiceRow heading="Shape">
+      {FaceOutline.literals.map((option) => {
+        const active = option === chosen
+        return (
+          <Press
+            key={option}
+            accessibilityRole="button"
+            accessibilityLabel={outlineName(option)}
+            accessibilityState={{ selected: active, disabled }}
+            disabled={disabled}
+            onPress={() => onChoose(option)}
+            style={{
+              width: TILE,
+              height: TILE,
+              borderRadius: radius.control,
+              borderCurve: 'continuous',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderWidth: EDGE * 2,
+              borderColor: active ? c.primary : 'transparent',
+              backgroundColor: active ? c.subtle : 'transparent',
+            }}
+          >
+            <Face size={TILE_FACE} look={look} outline={option} label="" />
+          </Press>
+        )
+      })}
+    </ChoiceRow>
   )
 }

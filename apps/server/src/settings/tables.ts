@@ -18,5 +18,6 @@ export const settingsTable = pgTable('settings', {
    */
   vividName: text().notNull().default(DEFAULT_APPEARANCE.name),
   vividLook: jsonb().notNull().default(DEFAULT_APPEARANCE.look),
+  vividOutline: text().notNull().default(DEFAULT_APPEARANCE.outline),
   updatedAt: timestamp({ withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 })

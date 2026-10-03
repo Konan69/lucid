@@ -21,6 +21,7 @@ export const companyTable = pgTable(
      */
     vividName: text().notNull().default(DEFAULT_APPEARANCE.name),
     vividLook: jsonb().notNull().default(DEFAULT_APPEARANCE.look),
+    vividOutline: text().notNull().default(DEFAULT_APPEARANCE.outline),
     createdAt: createdAt(),
   },
   (table) => [uniqueIndex('company_slug_idx').on(table.slug)],

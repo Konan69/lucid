@@ -1,9 +1,9 @@
 import { useId } from 'react'
-import Svg, { Circle, Defs, RadialGradient, Rect, Stop } from 'react-native-svg'
+import Svg, { Defs, Path, RadialGradient, Rect, Stop } from 'react-native-svg'
 import Animated, { cubicBezier, useReducedMotion } from 'react-native-reanimated'
 import { nativeMetrics as m } from '@vivid/tokens/native'
-import { faceGeometry, type FaceMood } from '@vivid/marks'
-import type { Look } from '@vivid/contracts'
+import { FACE_OUTLINE_PATHS, faceGeometry, type FaceMood } from '@vivid/marks'
+import type { FaceOutline, Look } from '@vivid/contracts'
 import { facePaintOf, useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
 
@@ -18,7 +18,7 @@ const TILT_CURVE = cubicBezier(0.2, 0, 0, 1)
  * It is drawn as Vivid looks where the Person is working (`data/vivid.ts`): in the theme's primary
  * until someone chooses a colour, with eyes in the ink that theme sets on its primary; or in the
  * chosen `face-*` hue. Every face reads that one live value, so a change shows on all of them at
- * once. `look` draws a face that is not the saved one: a swatch, or the Customise sheet's preview.
+ * once. `look` and `outline` draw a face that is not the saved one: a swatch, or the Customise sheet's preview.
  * The name it is announced by is Vivid's chosen name; `label` replaces it where the face stands
  * for a choice rather than for Vivid.
  *
@@ -31,11 +31,13 @@ export function Face({
   size = 28,
   mood = 'neutral',
   look,
+  outline,
   label,
 }: {
   size?: number
   mood?: FaceMood
   look?: Look
+  outline?: FaceOutline
   label?: string
 }) {
   const { colors: c } = useTheme()
@@ -44,7 +46,10 @@ export function Face({
   const still = useReducedMotion()
   // `useId` embeds colons, which are not legal in an SVG fragment identifier.
   const id = useId().replace(/:/g, '')
-  const geometry = faceGeometry(size, mood)
+  // The silhouette is one path in a 100 box (`@vivid/marks`), the same one the web masks with.
+  const drawn = FACE_OUTLINE_PATHS[outline === undefined ? vivid.outline : outline]
+  const scale = `scale(${size / 100})`
+  const geometry = faceGeometry(size, mood, outline === undefined ? vivid.outline : outline)
   const { eyeWidth, eyeHeight, eyeGap } = geometry
   const left = (size - eyeWidth * 2 - eyeGap) / 2
   const top = size * geometry.eyeTopFraction
@@ -71,8 +76,8 @@ export function Face({
             <Stop offset="1" stopColor={c['ink-on-color']} stopOpacity={0} />
           </RadialGradient>
         </Defs>
-        <Circle cx={size / 2} cy={size / 2} r={size / 2} fill={paint.fill} />
-        <Circle cx={size / 2} cy={size / 2} r={size / 2} fill={`url(#${id})`} />
+        <Path d={drawn} transform={scale} fill={paint.fill} />
+        <Path d={drawn} transform={scale} fill={`url(#${id})`} />
 
         <Rect
           x={left}

@@ -34,7 +34,11 @@ const signedIn = (actor: { readonly person: Person; readonly workspace: Workspac
     }),
   )
 
-const teal = new Appearance({ name: 'Juno', look: Look.cases.Hue.make({ hue: 'cyan' }) })
+const teal = new Appearance({
+  name: 'Juno',
+  look: Look.cases.Hue.make({ hue: 'cyan' }),
+  outline: 'hexagon',
+})
 
 /** Whose Vivid a workspace shows, and who may change it. */
 describe.skipIf(!testDatabaseConfigured)('Vivid appearance', () => {

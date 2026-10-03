@@ -53,12 +53,16 @@ export class AppearanceStore extends Context.Service<AppearanceStore, Appearance
 // looser rule, so both are decoded on every read like any other stored record.
 const decodeAppearance = decodeStored(Appearance, 'Appearance')
 
-const stored = (row: { readonly vividName: string; readonly vividLook: unknown }) =>
-  decodeAppearance({ name: row.vividName, look: row.vividLook })
+const stored = (row: {
+  readonly vividName: string
+  readonly vividLook: unknown
+  readonly vividOutline: string
+}) => decodeAppearance({ name: row.vividName, look: row.vividLook, outline: row.vividOutline })
 
 const columns = (table: typeof settingsTable | typeof companyTable) => ({
   vividName: table.vividName,
   vividLook: table.vividLook,
+  vividOutline: table.vividOutline,
 })
 
 const makeAppearanceStore = Effect.fn('AppearanceStore.make')(function* () {
@@ -106,7 +110,12 @@ const makeAppearanceStore = Effect.fn('AppearanceStore.make')(function* () {
     const rows = yield* database.run(
       database
         .update(settingsTable)
-        .set({ vividName: appearance.name, vividLook: appearance.look, updatedAt: new Date(now) })
+        .set({
+          vividName: appearance.name,
+          vividLook: appearance.look,
+          vividOutline: appearance.outline,
+          updatedAt: new Date(now),
+        })
         .where(eq(settingsTable.personId, personId))
         .returning(columns(settingsTable)),
     )
@@ -120,7 +129,11 @@ const makeAppearanceStore = Effect.fn('AppearanceStore.make')(function* () {
     const rows = yield* database.run(
       database
         .update(companyTable)
-        .set({ vividName: appearance.name, vividLook: appearance.look })
+        .set({
+          vividName: appearance.name,
+          vividLook: appearance.look,
+          vividOutline: appearance.outline,
+        })
         .where(eq(companyTable.id, companyId))
         .returning(columns(companyTable)),
     )

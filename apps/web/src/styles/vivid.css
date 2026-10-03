@@ -1,55 +1,22 @@
 /*
- * Vivid's chosen face colour, applied from the document.
- *
- * `data/vivid.ts` writes the chosen hue on <html> as `data-vivid-hue`; with no attribute the face
- * keeps the theme's accent, as `ui/Face.tsx` styles it. Each rule below repaints the faces that
- * are drawn in the accent (that is, Vivid's own) in the chosen `face-*` token. A face that names
- * its colour (a swatch in the Customise sheet) is not drawn with `bg-accent` and is left alone,
- * and anything inside `[data-face-fixed]` is exempt: the sheet's preview shows the draft, not
- * what is saved.
- *
- * These are unlayered on purpose, so they win over the `bg-accent` utility without `!important`.
- * The hue names are the `FaceHue` literals of `packages/contracts/src/appearance.ts`.
+ * The face's outline. `ui/Face.tsx` sets `--face-mask` to the chosen silhouette (a path from
+ * `@vivid/marks`, stretched to the face's box) or to `none` for a disc. Unlayered, so it applies
+ * beside the `face` utility without touching the shared stylesheet.
  */
-[data-vivid-hue='brown'] .face.bg-accent:not([data-face-fixed] *) {
-  background-color: var(--face-brown);
-}
-[data-vivid-hue='red'] .face.bg-accent:not([data-face-fixed] *) {
-  background-color: var(--face-red);
-}
-[data-vivid-hue='orange'] .face.bg-accent:not([data-face-fixed] *) {
-  background-color: var(--face-orange);
-}
-[data-vivid-hue='yellow'] .face.bg-accent:not([data-face-fixed] *) {
-  background-color: var(--face-yellow);
-}
-[data-vivid-hue='green'] .face.bg-accent:not([data-face-fixed] *) {
-  background-color: var(--face-green);
-}
-[data-vivid-hue='cyan'] .face.bg-accent:not([data-face-fixed] *) {
-  background-color: var(--face-cyan);
-}
-[data-vivid-hue='blue'] .face.bg-accent:not([data-face-fixed] *) {
-  background-color: var(--face-blue);
-}
-[data-vivid-hue='violet'] .face.bg-accent:not([data-face-fixed] *) {
-  background-color: var(--face-violet);
-}
-[data-vivid-hue='magenta'] .face.bg-accent:not([data-face-fixed] *) {
-  background-color: var(--face-magenta);
-}
-[data-vivid-hue='gray'] .face.bg-accent:not([data-face-fixed] *) {
-  background-color: var(--face-gray);
+.face {
+  mask-image: var(--face-mask, none);
+  mask-size: 100% 100%;
+  mask-repeat: no-repeat;
 }
 
 /*
- * The Customise sheet's preview and swatches. The shared face snaps between moods and colours,
+ * The Customise sheet's preview. The shared face snaps between moods and colours,
  * which is right in a header; here the change is the thing being looked at, so the tilt and the
  * colour ease across. One transition per change, nothing loops, and a Person who asked for less
  * motion gets the new state at once.
  */
 @media (prefers-reduced-motion: no-preference) {
-  [data-face-fixed='preview'] .face {
+  [data-vivid-preview] .face {
     transition:
       rotate var(--dur-base) var(--ease-out),
       background-color var(--dur-base) var(--ease-out);

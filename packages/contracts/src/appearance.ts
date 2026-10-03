@@ -21,7 +21,7 @@ export const FaceHue = Schema.Literals([
 export type FaceHue = typeof FaceHue.Type
 
 /**
- * How Vivid's face is drawn.
+ * The colour Vivid's face is drawn in.
  *
  * `Accent` is the face nobody has changed: it takes the accent of whichever theme is in force, so
  * it moves with the theme. `Hue` is a colour somebody chose, and it stays that colour in every
@@ -31,13 +31,32 @@ export type FaceHue = typeof FaceHue.Type
  * The reference this was adapted from (ChatGPT's "Customize your dot", `chooser-state` in the
  * decompiled webview) stores the same split as `color: 'authored'` against a named tint. Its
  * characters and pets are not cases here: they are drawn by a renderer and an account service
- * Vivid does not have, so a case for them would have nothing to show.
+ * Vivid does not have. The outline is `FaceOutline`, below.
  */
 export const Look = Schema.TaggedUnion({
   Accent: {},
   Hue: { hue: FaceHue },
 })
 export type Look = typeof Look.Type
+
+/**
+ * The outline Vivid's face is drawn in. Every colour takes every outline and the eyes and moods
+ * are the same in all of them, so this is a plain choice beside the colour, not a case of it.
+ * The eight are Grok Bot's "Create your first Bot" row; the drawings live in `@vivid/marks`
+ * (`FACE_OUTLINE_PATHS`), which each client indexes with this type, so an outline named here and not
+ * drawn there fails that client's typecheck.
+ */
+export const FaceOutline = Schema.Literals([
+  'circle',
+  'blob',
+  'square',
+  'pill',
+  'triangle',
+  'hexagon',
+  'cloud',
+  'drop',
+] as const)
+export type FaceOutline = typeof FaceOutline.Type
 
 /** The longest name Vivid can be given. The reference's nickname field allows the same. */
 export const VIVID_NAME_MAX = 24
@@ -66,14 +85,16 @@ export class Appearance extends Schema.Class<Appearance>('Appearance')(
   {
     name: VividName,
     look: Look,
+    outline: FaceOutline,
   },
   { title: 'Appearance' },
 ) {}
 
-/** Vivid as it is before anyone changes it: named Vivid, in the theme's accent. */
+/** Vivid as it is before anyone changes it: named Vivid, a disc in the theme's accent. */
 export const DEFAULT_APPEARANCE = new Appearance({
   name: 'Vivid',
   look: Look.cases.Accent.make({}),
+  outline: 'circle',
 })
 
 /**

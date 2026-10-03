@@ -1,6 +1,7 @@
 import {
   Appearance,
   FaceHue,
+  FaceOutline,
   Look,
   VIVID_NAME_MAX,
   VividName,
@@ -14,7 +15,7 @@ import { live, useLiveValue } from '../../data/live'
 import { faceColorOf, saveAppearance, useAppearance } from '../../data/vivid'
 import { IconButton } from '../../ui/Button'
 import { cn } from '../../ui/cn'
-import { Face, type FaceColor, type FaceMood } from '../../ui/Face'
+import { Face, FACE_COLOR_CLASS, type FaceColor, type FaceMood } from '../../ui/Face'
 import { holdFocus, keepFocusInside, Layer } from '../../ui/Layer'
 
 /** Every look there is to choose, in the order they are shown: the theme's own colour first. */
@@ -22,6 +23,10 @@ const LOOKS: ReadonlyArray<Look> = [
   Look.cases.Accent.make({}),
   ...FaceHue.literals.map((hue) => Look.cases.Hue.make({ hue })),
 ]
+
+/** What an outline is called to someone who cannot see it. */
+const outlineName = (outline: FaceOutline) =>
+  `${outline.charAt(0).toUpperCase()}${outline.slice(1)}`
 
 /** What a look is called to someone who cannot see it. */
 const lookName = (look: Look) =>
@@ -48,22 +53,25 @@ const FAULT_WORDS = {
 } satisfies Record<Exclude<Fault, 'none'>, string>
 
 /**
- * The sheet where Vivid is given a name and a colour.
+ * The sheet where Vivid is given a name, a colour and a shape.
  *
- * Adapted from ChatGPT's "Customize your dot" (the decompiled webview's `editor-placeholder`,
- * `appearance-picker-button` and `aeon-appearance-picker` modules): two panes in a 3:2 grid, the
- * choices on the left and, on a quieter surface to the right, a large name field, a large live
- * preview and one wide Save. Kept from it: the 24-character one-line name with no backslash,
- * Enter in the name saving, a swatch previewing in the big face while the pointer or the keyboard
- * is on it and selecting on click, `aria-pressed` swatches, and the draft staying up with an
- * inline message when the save fails.
+ * Two references, adapted. The frame is ChatGPT's "Customize your dot" (the decompiled webview's
+ * `editor-placeholder`, `appearance-picker-button` and `aeon-appearance-picker` modules): two
+ * panes in a 3:2 grid, the choices on the left and, on a raised surface to the right, a large
+ * name field, a large live preview and one wide Save. Kept from it: the 24-character one-line
+ * name with no backslash, Enter in the name saving, a choice previewing in the big face while
+ * the pointer or the keyboard is on it and selecting on click, `aria-pressed` choices, and the
+ * draft staying up with an inline message when the save fails.
  *
- * Changed, and why: the reference has three scrolling rows (colours, characters, pets). Its
- * characters and pets are drawn by a renderer and an account service Vivid does not have, so
- * there is one group here and it is laid out as the reference's own grid variant
- * (`grid grid-cols-3 md:grid-cols-4`) instead of a single scrolling row with arrows: eleven
- * colours fit in view, and a lone row would leave the pane empty beneath it. Each swatch draws
- * Vivid's face in that colour, where the reference shows a plain tinted ring.
+ * The choices are Grok Bot's "Create your first Bot" step (the screenshot
+ * `refs/grok-bot-screenshots/03-create-your-first-bot.png`): a row of plain colour dots with
+ * the chosen one ringed, then a row of eight face outlines drawn in the chosen colour with the
+ * chosen one in a ringed tile. The outlines stand where ChatGPT has "Characters". Its pets are
+ * left out: they are drawn by a renderer and an account service Vivid does not have.
+ *
+ * Changed, and why: the groups wrap in view instead of scrolling sideways with arrow buttons,
+ * because eleven dots and eight outlines fit the pane; and the first colour is the theme's own
+ * accent, which is Vivid's default and moves with the theme.
  *
  * Saving is optimistic: the moment Save is pressed every face and name in the app behind the
  * sheet changes (`saveAppearance`), and the sheet closes when the server has taken it.
@@ -73,17 +81,20 @@ export function Customise({ onClose }: { onClose: () => void }) {
   const me = useLiveValue(live.me)
   const [name, setName] = useState<string>(saved.name)
   const [look, setLook] = useState(saved.look)
-  // The swatch under the pointer or the keyboard, shown in the preview without being chosen.
-  const [tried, setTried] = useState<Option.Option<Look>>(Option.none())
+  const [outline, setOutline] = useState(saved.outline)
+  // The choice under the pointer or the keyboard, shown in the preview without being chosen.
+  const [triedLook, setTriedLook] = useState<Option.Option<Look>>(Option.none())
+  const [triedOutline, setTriedOutline] = useState<Option.Option<FaceOutline>>(Option.none())
   const [fault, setFault] = useState<Fault>('none')
   const [saving, setSaving] = useState(false)
   const field = useRef<HTMLInputElement>(null)
   const nameId = useId()
   const faultId = useId()
 
-  const chosen = faceColorOf(look)
-  const unchanged = name.trim() === saved.name && chosen === faceColorOf(saved.look)
-  const shared = Option.flatMap(me, companyOf)
+  const unchanged =
+    name.trim() === saved.name &&
+    outline === saved.outline &&
+    faceColorOf(look) === faceColorOf(saved.look)
 
   async function save(event: FormEvent) {
     event.preventDefault()
@@ -95,7 +106,7 @@ export function Customise({ onClose }: { onClose: () => void }) {
     }
     setFault('none')
     setSaving(true)
-    const result = await saveAppearance(new Appearance({ name: valid.value, look }))
+    const result = await saveAppearance(new Appearance({ name: valid.value, look, outline }))
     setSaving(false)
     if (Result.isFailure(result)) setFault('unsaved')
     else onClose()
@@ -129,22 +140,24 @@ export function Customise({ onClose }: { onClose: () => void }) {
         >
           {/* The choices. Below the preview on a narrow window, where the preview must stay in
               view while a colour is picked. */}
-          <div className="order-2 flex min-h-0 min-w-0 flex-col gap-4 p-6 sm:order-1 sm:col-span-3 sm:overflow-y-auto">
+          <div className="order-2 flex min-h-0 min-w-0 flex-col gap-5 p-6 sm:order-1 sm:col-span-3 sm:overflow-y-auto">
             <div>
               <h2 className="text-dialog font-title text-ink">Customise Vivid</h2>
               <p className="mt-1 text-label text-pretty text-ink-3">
-                {Option.match(shared, {
-                  onNone: () => 'A name and a colour, shown wherever Vivid is.',
-                  onSome: (company) => `Everyone in ${company} sees this name and colour.`,
+                {Option.match(Option.flatMap(me, companyOf), {
+                  onNone: () => 'A name, a colour and a shape, shown wherever Vivid is.',
+                  onSome: (company) => `Everyone in ${company} sees this name and look.`,
                 })}
               </p>
             </div>
-            <section aria-labelledby={`${nameId}-colours`} className="flex flex-col gap-2">
-              <h3 id={`${nameId}-colours`} className="text-label text-ink-3">
-                Colours
-              </h3>
-              <Swatches chosen={chosen} disabled={saving} onTry={setTried} onChoose={setLook} />
-            </section>
+            <Colours chosen={look} disabled={saving} onTry={setTriedLook} onChoose={setLook} />
+            <Outlines
+              chosen={outline}
+              color={faceColorOf(look)}
+              disabled={saving}
+              onTry={setTriedOutline}
+              onChoose={setOutline}
+            />
           </div>
 
           {/* The result: the name, Vivid as it will look, and the one action. */}
@@ -161,25 +174,16 @@ export function Customise({ onClose }: { onClose: () => void }) {
               }}
             />
             <Preview
-              color={faceColorOf(Option.getOrElse(tried, () => look))}
+              color={faceColorOf(Option.getOrElse(triedLook, () => look))}
+              outline={Option.getOrElse(triedOutline, () => outline)}
               name={name.trim().length > 0 ? name.trim() : 'Vivid'}
             />
-            <div className="flex flex-col gap-3">
-              {fault !== 'none' && (
-                <p id={faultId} role="alert" className="text-center text-label text-danger">
-                  {FAULT_WORDS[fault]}
-                </p>
-              )}
-              {/* The reference's one wide action. `Button` has no full-width pill, so this is the
-                  primary variant's own colours on a native button, not a restyled component. */}
-              <button
-                type="submit"
-                disabled={saving || unchanged}
-                className="flex h-10 w-full cursor-pointer items-center justify-center rounded-full bg-accent text-title font-title text-ink-on-accent transition-press duration-(--dur-fast) outline-none hover:bg-accent-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface-3 active:enabled:scale-96 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {saving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
+            <Finish
+              fault={fault}
+              faultId={faultId}
+              disabled={saving || unchanged}
+              saving={saving}
+            />
           </div>
 
           <div className="absolute top-3 right-3">
@@ -193,51 +197,105 @@ export function Customise({ onClose }: { onClose: () => void }) {
   )
 }
 
+/** What the two groups of choices share: a toggle that tries itself in the preview on the way. */
+const CHOICE =
+  'flex cursor-pointer items-center justify-center transition-press duration-(--dur-fast) outline-none focus-visible:ring-2 focus-visible:ring-ring active:enabled:scale-96 disabled:cursor-not-allowed disabled:opacity-60'
+
+/** The chosen one sits on a raised fill with the accent edge; the rest take an edge on hover. */
+const chosenOr = (active: boolean) =>
+  active ? 'bg-surface-3 edge edge-accent' : 'hover:bg-surface-3 hover:edge'
+
 /**
- * The colours, as faces. Each is a toggle (`aria-pressed`), reached with Tab like the reference's
- * swatches; resting the pointer or the keyboard on one tries it in the preview without choosing.
+ * The colours, as plain dots (Grok Bot's row). Each is a toggle (`aria-pressed`) reached with Tab;
+ * resting the pointer or the keyboard on one tries it in the preview without choosing it.
  */
-function Swatches({
+function Colours({
   chosen,
   disabled,
   onTry,
   onChoose,
 }: {
-  chosen: FaceColor
+  chosen: Look
   disabled: boolean
   onTry: (look: Option.Option<Look>) => void
   onChoose: (look: Look) => void
 }) {
+  const headingId = useId()
   return (
-    <div role="group" className="-mx-2 grid grid-cols-4 gap-1">
-      {LOOKS.map((option) => {
-        const color = faceColorOf(option)
-        const active = color === chosen
-        return (
+    <section aria-labelledby={headingId} className="flex flex-col gap-2">
+      <h3 id={headingId} className="text-label text-ink-3">
+        Colour
+      </h3>
+      <div role="group" aria-labelledby={headingId} className="-mx-1 flex flex-wrap gap-0.5">
+        {LOOKS.map((option) => {
+          const color = faceColorOf(option)
+          return (
+            <button
+              key={color}
+              type="button"
+              aria-label={lookName(option)}
+              aria-pressed={color === faceColorOf(chosen)}
+              title={lookName(option)}
+              disabled={disabled}
+              onPointerEnter={() => onTry(Option.some(option))}
+              onPointerLeave={() => onTry(Option.none())}
+              onFocus={() => onTry(Option.some(option))}
+              onBlur={() => onTry(Option.none())}
+              onClick={() => onChoose(option)}
+              className={cn(CHOICE, 'size-9 rounded-full', chosenOr(color === faceColorOf(chosen)))}
+            >
+              <span className={cn('size-6 rounded-full', FACE_COLOR_CLASS[color])} />
+            </button>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+/** The eight outlines, each drawn as Vivid's face in the colour that is chosen. */
+function Outlines({
+  chosen,
+  color,
+  disabled,
+  onTry,
+  onChoose,
+}: {
+  chosen: FaceOutline
+  color: FaceColor
+  disabled: boolean
+  onTry: (outline: Option.Option<FaceOutline>) => void
+  onChoose: (outline: FaceOutline) => void
+}) {
+  const headingId = useId()
+  return (
+    <section aria-labelledby={headingId} className="flex flex-col gap-2">
+      <h3 id={headingId} className="text-label text-ink-3">
+        Shape
+      </h3>
+      <div role="group" aria-labelledby={headingId} className="-mx-1 grid grid-cols-4 gap-1">
+        {FaceOutline.literals.map((option) => (
           <button
-            key={color}
+            key={option}
             type="button"
-            aria-label={lookName(option)}
-            aria-pressed={active}
-            title={lookName(option)}
+            aria-label={outlineName(option)}
+            aria-pressed={option === chosen}
+            title={outlineName(option)}
             disabled={disabled}
             onPointerEnter={() => onTry(Option.some(option))}
             onPointerLeave={() => onTry(Option.none())}
             onFocus={() => onTry(Option.some(option))}
             onBlur={() => onTry(Option.none())}
             onClick={() => onChoose(option)}
-            className={cn(
-              'flex aspect-square cursor-pointer items-center justify-center rounded-card transition-press duration-(--dur-fast) outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-96 disabled:cursor-not-allowed disabled:opacity-60',
-              active ? 'bg-wash-hover ring-2 ring-ink ring-inset' : 'hover:bg-wash-hover',
-            )}
+            className={cn(CHOICE, 'h-20 rounded-card', chosenOr(option === chosen))}
           >
-            <span data-face-fixed="swatch" className="pointer-events-none">
-              <Face color={color} size={64} label="" />
+            <span className="pointer-events-none">
+              <Face color={color} outline={option} size={48} label="" />
             </span>
           </button>
-        )
-      })}
-    </div>
+        ))}
+      </div>
+    </section>
   )
 }
 
@@ -293,19 +351,65 @@ function NameField({
  * leans away while pressed, which are the face's own moods (`@vivid/marks`); the tilt and the
  * colour ease across in `styles/vivid.css`, once per change, and not at all under reduced motion.
  */
-function Preview({ color, name }: { color: FaceColor; name: string }) {
+function Preview({
+  color,
+  outline,
+  name,
+}: {
+  color: FaceColor
+  outline: FaceOutline
+  name: string
+}) {
   const [mood, setMood] = useState<FaceMood>('neutral')
   return (
-    <div data-face-fixed="preview" className="flex min-h-48 flex-1 items-center justify-center">
+    <div data-vivid-preview className="flex min-h-48 flex-1 items-center justify-center">
       <span
-        className="inline-flex rounded-full"
+        className="inline-flex"
         onPointerEnter={() => setMood('happy')}
         onPointerLeave={() => setMood('neutral')}
         onPointerDown={() => setMood('thinking')}
         onPointerUp={() => setMood('happy')}
       >
-        <Face color={color} size={184} mood={mood} label={`${name}, as it will look`} />
+        <Face
+          color={color}
+          outline={outline}
+          size={184}
+          mood={mood}
+          label={`${name}, as it will look`}
+        />
       </span>
+    </div>
+  )
+}
+
+/** The end of the sheet: why it is still open, when it is, and the one wide action. */
+function Finish({
+  fault,
+  faultId,
+  disabled,
+  saving,
+}: {
+  fault: Fault
+  faultId: string
+  disabled: boolean
+  saving: boolean
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      {fault !== 'none' && (
+        <p id={faultId} role="alert" className="text-center text-label text-danger">
+          {FAULT_WORDS[fault]}
+        </p>
+      )}
+      {/* The reference's one wide action. `Button` has no full-width pill, so this is the
+          primary variant's own colours on a native button, not a restyled component. */}
+      <button
+        type="submit"
+        disabled={disabled}
+        className="flex h-10 w-full cursor-pointer items-center justify-center rounded-full bg-accent text-title font-title text-ink-on-accent transition-press duration-(--dur-fast) outline-none hover:bg-accent-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface-3 active:enabled:scale-96 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {saving ? 'Saving…' : 'Save'}
+      </button>
     </div>
   )
 }
