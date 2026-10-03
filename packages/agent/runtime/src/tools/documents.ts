@@ -32,6 +32,7 @@ export function read(outcome: ReadDocumentOutcome) {
       title: modelText(title),
       version,
       body: modelText(body),
+      characters: body.length,
     }),
     Missing: ({ titles }) => ({
       ok: false,

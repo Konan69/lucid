@@ -266,6 +266,34 @@ describe('Rehearsal scenes', () => {
     expect(script(start)).toEqual(expected)
   })
 
+  it('keeps document scenes and their receipts anchored to the Person across Flue instruction markers', () => {
+    const marker = {
+      role: 'user',
+      content: '<signal type="instructions">\nSystem instructions updated.\n</signal>',
+      timestamp,
+    } as const
+    for (const phrase of ['write a document', 'revise the document', 'read the document']) {
+      const start = context(phrase)
+      const first = script({ ...start, messages: [...start.messages, marker] })
+      const call = first.content.find((block) => block.type === 'toolCall')
+      if (call === undefined) throw new Error('Expected document call')
+      expect(call.name).toBe(phrase === 'read the document' ? 'read_document' : 'write_document')
+      const result = receipt(
+        call,
+        phrase === 'read the document'
+          ? { ok: true, title: 'Plan', version: 2, body: '# Plan' }
+          : { ok: true, title: 'Plan', version: 2, created: false, changed: true },
+      )
+      const completed = script({
+        ...start,
+        messages: [...start.messages, marker, first, result, marker],
+      })
+      expect(words(completed)).toContain('“Plan” at version 2.')
+      expect(completed.stopReason).toBe('stop')
+      expect(completed.content.some((block) => block.type === 'toolCall')).toBe(false)
+    }
+  })
+
   it('capitalizes missing-result replies for every scene', () => {
     for (const phrase of phrases) {
       const start = context(phrase)

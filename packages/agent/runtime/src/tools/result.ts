@@ -79,12 +79,13 @@ function boundDocument(value: Schema.Json): Schema.Json {
   const { body, ...metadata } = value
   const fields = boundedRecord(metadata).value
   if (body.length <= 48_000) return { ...fields, body }
+  const characters = Predicate.isNumber(fields.characters) ? fields.characters : body.length
   return {
     ...fields,
     body: body.slice(0, 48_000),
     truncated: true,
-    characters: body.length,
-    message: `This document has ${body.length} characters in all. Only the first 48,000 characters are shown; this is not the whole document.`,
+    characters,
+    message: `This document has ${characters} characters in all. Only the first 48,000 characters are shown; this is not the whole document.`,
   }
 }
 

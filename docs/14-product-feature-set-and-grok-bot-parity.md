@@ -44,10 +44,12 @@ Last brought up to date on 3 October 2026.
 ## Built, not yet seen working end to end
 
 - **Artifacts**: Thread-owned Markdown documents, immutable versions, optimistic Person revisions,
-  live RPC queries and runtime write/read tools. Missing: web, mobile and desktop lists, readers,
-  revision history, editing and removal surfaces; private user delivery turn preservation and
-  full-body runtime reads beyond the generic 4,000-character cap. Browser writing and reading work
-  for input-answer deliveries; ordinary private-message writes refuse the missing turn.
+  live RPC queries and runtime write/read tools. Private-Thread rehearsal proved writing version 1,
+  revising to version 2, reading it and leaving an identical rewrite unchanged. Runtime reads keep
+  up to 48,000 body characters and explicitly identify longer, cut documents with their full count.
+  Missing: web, mobile and desktop lists, readers, revision history, editing and removal surfaces.
+  Attribution refuses ambiguous working Runs: the current reservation still permits same-Person
+  deliveries to join.
 
 | Capability                                                     | What is missing                                                               |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------- |

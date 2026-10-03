@@ -90,7 +90,7 @@ describe('document tools', () => {
           body: '# Plan\n\nNext step.',
         }),
       ),
-    ).toEqual({ ok: true, title: 'Plan', version: 2, body: '# Plan\n\nNext step.' })
+    ).toEqual({ ok: true, title: 'Plan', version: 2, body: '# Plan\n\nNext step.', characters: 18 })
     expect(
       read(ReadDocumentOutcome.cases.Missing.make({ titles: ['Plan', 'Report'] })),
     ).toMatchObject({ ok: false, titles: ['Plan', 'Report'] })
@@ -215,6 +215,23 @@ describe('document tools', () => {
           body: 'word '.repeat(800),
           truncated: true,
         })
+      }),
+  )
+
+  it.effect(
+    'reports the stored body’s full count when references in a long read are redacted',
+    () =>
+      Effect.gen(function* () {
+        const body = `${reference}\n${'word '.repeat(9_601)}`
+        const output = read(
+          ReadDocumentOutcome.cases.Found.make({ title: 'Plan', version: 1, body }),
+        )
+        const result = (yield* settle(Effect.succeed({ output }), 'read_document')).output
+        expect(result).toMatchObject({ truncated: true, characters: body.length })
+        expect(JSON.stringify(result)).toContain(
+          `This document has ${body.length} characters in all.`,
+        )
+        expect(JSON.stringify(result)).not.toContain(reference)
       }),
   )
 
