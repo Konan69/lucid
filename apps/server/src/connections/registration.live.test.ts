@@ -20,10 +20,12 @@ import { Database } from '../database/client.ts'
 
 const executorUrl = NodeProcess.env['VIVID_TEST_EXECUTOR_URL']
 const executorKey = NodeProcess.env['VIVID_TEST_EXECUTOR_KEY']
+const executorOrganization = NodeProcess.env['VIVID_TEST_EXECUTOR_ORGANIZATION']
 const enabled =
   NodeProcess.env['VIVID_LIVE_INTEGRATIONS'] === '1' &&
   executorUrl !== undefined &&
   executorKey !== undefined &&
+  executorOrganization !== undefined &&
   NodeProcess.env['VIVID_TEST_DATABASE_URL'] !== undefined
 const liveExecutor = executorLayer.pipe(
   Layer.provide(NodeHttpClient.layerUndici),
@@ -32,6 +34,7 @@ const liveExecutor = executorLayer.pipe(
       ConfigProvider.fromUnknown({
         VIVID_EXECUTOR_URL: executorUrl,
         VIVID_EXECUTOR_KEY: executorKey,
+        VIVID_EXECUTOR_ORGANIZATION: executorOrganization,
         // The test explicitly supplies local sources; production's URL policy is tested separately.
         VIVID_EXECUTOR_PUBLIC_ONLY: true,
       }),
@@ -43,20 +46,6 @@ const Request = Schema.Struct({
   method: Schema.String,
 })
 const decodeRequest = Schema.decodeUnknownEffect(Request)
-
-/** URL imports carry an absolute API base so this fixture tests the provider call too. */
-const specification = (address: string) => {
-  return {
-    openapi: '3.0.3',
-    info: { title: 'Fixture', version: '1' },
-    servers: [{ url: `${address}/api` }],
-    paths: {
-      '/health': {
-        get: { operationId: 'health', responses: { '200': { description: 'Healthy' } } },
-      },
-    },
-  }
-}
 
 /** A real MCP endpoint requires a Bearer token for initialization, discovery and invocation.
  * It records only whether the correct header arrived; the credential itself is never retained.
@@ -74,11 +63,6 @@ const upstream = Effect.fn('IntegrationLive.upstream')(function* (secret: string
   const called = yield* Ref.make(0)
   const handler = Effect.fn('IntegrationLive.request')(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
-    if (request.url === '/spec') return HttpServerResponse.jsonUnsafe(specification(address))
-    if (request.url === '/api/health') {
-      yield* Ref.update(called, (count) => count + 1)
-      return HttpServerResponse.jsonUnsafe({ ok: true })
-    }
     if (request.headers.authorization !== `Bearer ${secret}`)
       return HttpServerResponse.empty({ status: 401, headers: { 'www-authenticate': 'Bearer' } })
     if (request.method === 'GET') return HttpServerResponse.empty({ status: 405 })
@@ -128,7 +112,8 @@ const upstream = Effect.fn('IntegrationLive.upstream')(function* (secret: string
  * deliberate test-only authority Layer; no production URL exception or live app database is used.
  */
 describe.skipIf(!enabled)('Executor integration registration', () => {
-  for (const kind of ['Mcp', 'OpenApi'] as const) {
+  // Hosted CustomAppInput supports MCP only (packages/catalog/src/contracts/imports.ts).
+  for (const kind of ['Mcp'] as const) {
     it.effect(
       `imports ${kind}, tests one read, and keeps the key out of views and audit rows`,
       () =>
@@ -152,14 +137,10 @@ describe.skipIf(!enabled)('Executor integration registration', () => {
           const address = ConnectionAddress.of({
             inspect: Effect.fn('IntegrationLive.source')(() =>
               Effect.succeed(
-                kind === 'Mcp'
-                  ? ConnectionSource.cases.Mcp.make({
-                      address: `${remote.address}/mcp`,
-                      authorization: 'apiKey',
-                    })
-                  : ConnectionSource.cases.OpenApi.make({
-                      address: `${remote.address}/spec`,
-                    }),
+                ConnectionSource.cases.Mcp.make({
+                  address: `${remote.address}/mcp`,
+                  authorization: 'apiKey',
+                }),
               ),
             ),
           })
