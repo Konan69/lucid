@@ -105,6 +105,53 @@ describe("a Project's Threads", () => {
   })
 })
 
+describe('scoping to a Project', () => {
+  const move = project('move', null, {})
+  const floor = project('floor', 'move', {})
+  const audit = project('audit', null, {})
+  const all = [move, floor, audit]
+  const threads = [
+    thread('in', 'move', { attention: 'NeedsYou' }),
+    thread('deeper', 'floor', { attention: 'NeedsYou' }),
+    thread('done', 'move', { attention: 'NeedsYou', archived: true }),
+    thread('elsewhere', 'audit', {}),
+    thread('unfiled', null, {}),
+  ]
+
+  it('lets every Thread through with no scope', () => {
+    expect(projects.scopedTo(threads, all, Option.none())).toBe(threads)
+  })
+
+  it('keeps the Threads of the Project and of the Projects inside it', () => {
+    const scoped = projects.scopedTo(threads, all, Option.some(move.id))
+    expect(scoped.map((each) => each.id)).toEqual(['in', 'deeper', 'done'])
+  })
+
+  it('counts only open Threads filed directly in the Project as needing the Person', () => {
+    expect(projects.needingYou(threads, move.id)).toBe(1)
+    expect(projects.needingYou(threads, audit.id)).toBe(0)
+  })
+
+  it('gathers a circular chain once', () => {
+    const first = project('first', 'second', {})
+    const second = project('second', 'first', {})
+    expect([...projects.within([first, second], first.id)]).toEqual(['first', 'second'])
+  })
+
+  it('gives a Project the same colour every time, from the colours a mark can wear', () => {
+    expect(projects.hueOf(move.id)).toBe(projects.hueOf(ProjectId.make('move')))
+    expect(projects.HUES).toContain(projects.hueOf(audit.id))
+  })
+
+  it('names each person in the Threads once', () => {
+    const grace = { id: PersonId.make('grace'), name: 'Grace', image: null }
+    const shared = thread('shared', 'move', {
+      audience: ThreadAudience.cases.People.make({ participants: [grace] }),
+    })
+    expect(projects.peopleIn([shared, shared]).map((each) => each.name)).toEqual(['Ada', 'Grace'])
+  })
+})
+
 describe('confirmed', () => {
   it('adds a Project the server just returned once, however the two answers are ordered', () => {
     const list = new ProjectListResponse({ projects: [project('a', null, {})] })

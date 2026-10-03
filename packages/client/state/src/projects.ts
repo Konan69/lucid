@@ -1,5 +1,7 @@
 import {
   ProjectListResponse,
+  ThreadAudience,
+  type PersonSummary,
   type Project,
   type ProjectId,
   type Thread,
@@ -19,7 +21,7 @@ import { Array as Arr, Option, Order } from 'effect'
 export type { Project }
 
 /** Projects by name, whatever its case, so the shelf does not reshuffle each time a Thread moves. */
-const byName: Order.Order<Project> = Order.mapInput(Order.String, (project: Project) =>
+const nameOrder: Order.Order<Project> = Order.mapInput(Order.String, (project: Project) =>
   project.name.toLocaleLowerCase(),
 )
 
@@ -36,7 +38,7 @@ export const projectsIn = (
 ): ReadonlyArray<Project> =>
   Arr.sort(
     projects.filter((project) => project.parentProjectId === parentId),
-    byName,
+    nameOrder,
   )
 
 /** One Project by id, when the Person can still see it. */
@@ -103,3 +105,93 @@ export const confirmed =
     current.projects.some((candidate) => candidate.id === project.id)
       ? current
       : new ProjectListResponse({ projects: [project, ...current.projects] })
+
+/**
+ * The colours a Project's mark can wear: Vivid's face hues, in the order they are dealt. Violet
+ * and gray are left out: the product's look has no violet, and gray is what "no Project" reads as.
+ */
+export const HUES = [
+  'blue',
+  'green',
+  'orange',
+  'magenta',
+  'cyan',
+  'yellow',
+  'red',
+  'brown',
+] as const
+export type Hue = (typeof HUES)[number]
+
+/**
+ * The colour a Project's mark wears. The server keeps no colour for a Project, so the mark takes
+ * one from the Project's id: the same Project is the same colour on every device and for every
+ * Person, and it never changes when the Project is renamed. When a Project carries a colour of
+ * its own, this is the one function to replace.
+ */
+export const hueOf = (id: ProjectId): Hue => {
+  let sum = 0
+  for (const letter of id) sum = (sum * 31 + letter.charCodeAt(0)) % 9973
+  const at = sum % HUES.length
+  return HUES.reduce<Hue>((chosen, hue, index) => (index === at ? hue : chosen), HUES[0])
+}
+
+/**
+ * A Project and every Project inside it, at any depth. Scoping to a Project is scoping to the
+ * work under it, so a Thread filed in a Project inside it still belongs. A circular chain cannot
+ * loop: a Project already gathered is not gathered again.
+ */
+export const within = (projects: ReadonlyArray<Project>, id: ProjectId): ReadonlySet<ProjectId> => {
+  const gathered = new Set<ProjectId>([id])
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const project of projects) {
+      const parent = project.parentProjectId
+      if (parent !== null && gathered.has(parent) && !gathered.has(project.id)) {
+        gathered.add(project.id)
+        grew = true
+      }
+    }
+  }
+  return gathered
+}
+
+/**
+ * The Threads a scope lets through: every Thread with no scope, or the ones filed in the scoped
+ * Project and the Projects inside it. Done Threads stay in, so the list's own "Done" still works.
+ */
+export const scopedTo = (
+  threads: ReadonlyArray<Thread>,
+  projects: ReadonlyArray<Project>,
+  scope: Option.Option<ProjectId>,
+): ReadonlyArray<Thread> =>
+  Option.match(scope, {
+    onNone: () => threads,
+    onSome: (id) => {
+      const inside = within(projects, id)
+      return threads.filter((thread) => thread.projectId !== null && inside.has(thread.projectId))
+    },
+  })
+
+/** How many Threads filed directly in a Project are waiting on the Person. */
+export const needingYou = (threads: ReadonlyArray<Thread>, projectId: ProjectId): number =>
+  threads.filter(
+    (thread) =>
+      thread.projectId === projectId && !thread.archived && thread.attention === 'NeedsYou',
+  ).length
+
+/** The people in a Project's Threads, each once, in the order they are first met. */
+export const peopleIn = (threads: ReadonlyArray<Thread>): ReadonlyArray<PersonSummary> => {
+  const met = new Map<string, PersonSummary>()
+  for (const thread of threads) {
+    const named = ThreadAudience.guards.People(thread.audience) ? thread.audience.participants : []
+    for (const person of [thread.createdBy, ...named]) {
+      if (!met.has(person.id)) met.set(person.id, person)
+    }
+  }
+  return [...met.values()]
+}
+
+/** Every Project by name, whatever its depth: the order of a list a name is looked up in. */
+export const byName = (projects: ReadonlyArray<Project>): ReadonlyArray<Project> =>
+  Arr.sort(projects, nameOrder)
