@@ -65,22 +65,22 @@ source; see [DESIGN-SOURCES.md](./DESIGN-SOURCES.md) and
 The left column above is T3's own path. Vivid keeps the code under one-word filenames, with the
 directory carrying the context:
 
-| T3 path                                           | Vivid path                                    |
-| ------------------------------------------------- | --------------------------------------------- |
-| `src/native/T3ComposerEditor*.tsx`, `.types.ts`   | `src/native/composer/Editor*.tsx`, `types.ts` |
-| `src/native/composerEditorRevision.ts`            | `src/native/composer/revision.ts`             |
-| `src/features/home/thread-swipe-actions.tsx`      | `src/t3/swipe.tsx`                            |
-| `src/ui/ControlPillMenu.tsx`                      | `src/t3/Menu.tsx`                             |
-| `src/features/layout/workspace-pane-animation.ts` | `src/t3/pane.ts`                              |
-| `src/data/adaptive-navigation.ts`                 | `src/data/navigation.ts`                      |
-| `src/data/layoutMetrics.ts`                       | `src/data/metrics.ts`                         |
-| `generated-uniwind-themes.css` (default, ember, grove, ocean) | `packages/design/tokens/src/tokens.css`  |
-| `global.css` (type scale)                         | `src/data/typography.ts`                      |
-| `src/components/GlassSurface.tsx`, `GlassBackdrop.tsx` | `src/ui/Glass.tsx`                       |
-| `src/native/native-glass.ts`, `src/lib/native-glass-capability.ts` | `src/ui/Glass.tsx` (`GLASS_SUPPORTED`) |
-| `src/Stack.tsx` (header and sheet option sets)    | `src/ui/stack.ts`                             |
-| `src/components/SegmentedControl.tsx`             | `src/ui/ui.tsx` (`Segmented`)                 |
-| layout-transition timings (`SegmentedControl`, `ConnectionEnvironmentRow`, `AndroidAnchoredMenu`) | `src/ui/motion/morph.ts` |
-| `src/features/home/material-fab-scroll.ts`        | `src/data/collapse.ts`                        |
-| `src/components/MaterialFloatingActionButton.android.tsx` (behaviour) | `src/screen/home/Menu.tsx` (`Fresh`) |
-| `src/features/threads/ThreadNavigationSidebar.tsx` (drawer tokens) | `src/ui/Drawer.tsx`            |
+| T3 path                                                                                           | Vivid path                                    |
+| ------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `src/native/T3ComposerEditor*.tsx`, `.types.ts`                                                   | `src/native/composer/Editor*.tsx`, `types.ts` |
+| `src/native/composerEditorRevision.ts`                                                            | `src/native/composer/revision.ts`             |
+| `src/features/home/thread-swipe-actions.tsx`                                                      | `src/t3/swipe.tsx`                            |
+| `src/ui/ControlPillMenu.tsx`                                                                      | `src/t3/Menu.tsx`                             |
+| `src/features/layout/workspace-pane-animation.ts`                                                 | `src/t3/pane.ts`                              |
+| `src/data/adaptive-navigation.ts`                                                                 | `src/data/navigation.ts`                      |
+| `src/data/layoutMetrics.ts`                                                                       | `src/data/metrics.ts`                         |
+| `generated-uniwind-themes.css` (default, ember, grove, ocean)                                     | `packages/design/tokens/src/tokens.css`       |
+| `global.css` (type scale)                                                                         | `src/data/typography.ts`                      |
+| `src/components/GlassSurface.tsx`, `GlassBackdrop.tsx`                                            | `src/ui/Glass.tsx`                            |
+| `src/native/native-glass.ts`, `src/lib/native-glass-capability.ts`                                | `src/ui/Glass.tsx` (`GLASS_SUPPORTED`)        |
+| `src/Stack.tsx` (header and sheet option sets)                                                    | `src/ui/stack.ts`                             |
+| `src/components/SegmentedControl.tsx`                                                             | `src/ui/ui.tsx` (`Segmented`)                 |
+| layout-transition timings (`SegmentedControl`, `ConnectionEnvironmentRow`, `AndroidAnchoredMenu`) | `src/ui/motion/morph.ts`                      |
+| `src/features/home/material-fab-scroll.ts`                                                        | `src/data/collapse.ts`                        |
+| `src/components/MaterialFloatingActionButton.android.tsx` (behaviour)                             | `src/screen/home/Menu.tsx` (`Fresh`)          |
+| `src/features/threads/ThreadNavigationSidebar.tsx` (drawer tokens)                                | `src/ui/Drawer.tsx`                           |

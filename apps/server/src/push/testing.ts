@@ -114,27 +114,23 @@ export const fixture = Effect.fn('PushTest.fixture')(function* () {
   const sessionId = SessionId.make(NodeCrypto.randomUUID())
   const now = yield* Clock.currentTimeMillis
   yield* database.run(
-    database
-      .insert(sessionTable)
-      .values({
-        id: sessionId,
-        userId: person.id,
-        token: NodeCrypto.randomUUID(),
-        expiresAt: new Date(now + 86_400_000),
-      }),
+    database.insert(sessionTable).values({
+      id: sessionId,
+      userId: person.id,
+      token: NodeCrypto.randomUUID(),
+      expiresAt: new Date(now + 86_400_000),
+    }),
   )
   const threadId = ThreadId.make(NodeCrypto.randomUUID())
   yield* database.run(
-    database
-      .insert(threads)
-      .values({
-        id: threadId,
-        personId: person.id,
-        title: 'Waiting reply',
-        companyId: null,
-        audience: 'private',
-        updatedAt: now,
-      }),
+    database.insert(threads).values({
+      id: threadId,
+      personId: person.id,
+      title: 'Waiting reply',
+      companyId: null,
+      audience: 'private',
+      updatedAt: now,
+    }),
   )
   const auth = AuthState.Person({ person, sessionId, workspace: Workspace.cases.Personal.make({}) })
   const destination = PushDestination.cases.Phone.make({

@@ -1,4 +1,11 @@
-import { Service, ServiceAuthorization, ServiceCatalog, ServiceCuration, ServiceId, ServiceUnavailable } from '@vivid/contracts'
+import {
+  Service,
+  ServiceAuthorization,
+  ServiceCatalog,
+  ServiceCuration,
+  ServiceId,
+  ServiceUnavailable,
+} from '@vivid/contracts'
 import { Array as Arr, Effect, Match, Order, Schema } from 'effect'
 import data from './curation.json' with { type: 'json' }
 
@@ -19,17 +26,28 @@ const CurationEntry = Schema.Struct({
 export const CurationDocument = Schema.Struct({
   version: Schema.Literal(1),
   worksNowRule: Schema.NonEmptyString,
-  catalog: Schema.Array(CatalogIdentity).check(Schema.isMinLength(1), Schema.makeFilter((entries) => new Set(entries.map((entry) => entry.id)).size === entries.length)),
+  catalog: Schema.Array(CatalogIdentity).check(
+    Schema.isMinLength(1),
+    Schema.makeFilter(
+      (entries) => new Set(entries.map((entry) => entry.id)).size === entries.length,
+    ),
+  ),
   priority: Schema.Array(ServiceId).check(Schema.isUnique()),
-  entries: Schema.Array(CurationEntry).check(Schema.isMinLength(1), Schema.makeFilter((entries) => new Set(entries.map((entry) => entry.id)).size === entries.length)),
+  entries: Schema.Array(CurationEntry).check(
+    Schema.isMinLength(1),
+    Schema.makeFilter(
+      (entries) => new Set(entries.map((entry) => entry.id)).size === entries.length,
+    ),
+  ),
 })
 const decodeCuration = Schema.decodeUnknownEffect(CurationDocument)
 
 /** The checked-in judgements failed to decode; the page says so instead of listing everything. */
-const missingCuration = () => ServiceUnavailable.make({
-  service: 'connections',
-  message: 'The integration catalogue needs a curation update.',
-})
+const missingCuration = () =>
+  ServiceUnavailable.make({
+    service: 'connections',
+    message: 'The integration catalogue needs a curation update.',
+  })
 
 /** Compare both identity and name: renaming an upstream entry can invalidate its judgement. */
 export function coversCatalog(
@@ -44,23 +62,32 @@ export function coversCatalog(
 }
 
 /** Startup decodes once, before requests; malformed data never becomes an empty catalogue. */
-export const loadCuration = Effect.fn('Connections.loadCuration')(function* () {
-  const document = yield* decodeCuration(data)
-  if (!coversCatalog(document, document.catalog) || document.entries.length !== document.catalog.length) {
-    return yield* Effect.fail(missingCuration())
-  }
-  return curatedSearch(document)
-}, Effect.mapError(() => missingCuration()))
+export const loadCuration = Effect.fn('Connections.loadCuration')(
+  function* () {
+    const document = yield* decodeCuration(data)
+    if (
+      !coversCatalog(document, document.catalog) ||
+      document.entries.length !== document.catalog.length
+    ) {
+      return yield* Effect.fail(missingCuration())
+    }
+    return curatedSearch(document)
+  },
+  Effect.mapError(() => missingCuration()),
+)
 
 /** Keep curation off Begin/Resume: Executor remains the authority for actual account setup. */
 function decorate(service: Service, entry: typeof CurationEntry.Type) {
-  const worksNow = entry.worksNow && !ServiceAuthorization.guards.SetupRequired(service.authorization)
+  const worksNow =
+    entry.worksNow && !ServiceAuthorization.guards.SetupRequired(service.authorization)
   return Service.make({
     id: service.id,
     name: service.name,
     description: service.description,
     mark: service.mark,
-    authorization: worksNow ? service.authorization : ServiceAuthorization.cases.SetupRequired.make({}),
+    authorization: worksNow
+      ? service.authorization
+      : ServiceAuthorization.cases.SetupRequired.make({}),
     curation: { kind: entry.kind, auth: entry.auth, worksNow },
   })
 }
@@ -104,16 +131,23 @@ export function curatedSearch(document: typeof CurationDocument.Type) {
     const entry = entries.get(service.id)
     if (entry === undefined) return { service, tier: 'Niche', place: last }
     const listed = places.get(entry.id)
-    return { service: decorate(service, entry), tier: entry.tier, place: listed === undefined ? last : listed }
+    return {
+      service: decorate(service, entry),
+      tier: entry.tier,
+      place: listed === undefined ? last : listed,
+    }
   }
   return (services: readonly Service[], query: string) => {
     const normalized = query.trim().toLowerCase()
     const placed = services.map(place)
-    const ordered = Arr.sort(placed.filter((entry) => visible(entry, normalized)), Order.combineAll([
-      Order.mapInput(Order.Number, (entry: Placed) => tierRank(entry.tier)),
-      Order.mapInput(Order.Number, (entry: Placed) => relevance(entry.service.name, normalized)),
-      Order.mapInput(Order.Number, (entry: Placed) => entry.place),
-    ]))
+    const ordered = Arr.sort(
+      placed.filter((entry) => visible(entry, normalized)),
+      Order.combineAll([
+        Order.mapInput(Order.Number, (entry: Placed) => tierRank(entry.tier)),
+        Order.mapInput(Order.Number, (entry: Placed) => relevance(entry.service.name, normalized)),
+        Order.mapInput(Order.Number, (entry: Placed) => entry.place),
+      ]),
+    )
     return ServiceCatalog.cases.Ready.make({
       services: ordered.slice(0, 24).map(({ service }) => service),
       total: placed.filter(({ tier }) => tier !== 'Hide').length,

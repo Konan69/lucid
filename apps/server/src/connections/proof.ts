@@ -53,16 +53,14 @@ const executorRequest = Effect.fn('ThreadProof.executorRequest')(function* (
     HttpClientRequest.post(new URL(path, endpoint)).pipe(HttpClientRequest.bearerToken(key)),
     body,
   )
-  const response = yield* (yield* HttpClient.HttpClient)
-    .execute(request)
-    .pipe(
-      Effect.mapError(() =>
-        ServiceUnavailable.make({
-          service: 'connections',
-          message: 'Executor proof management request failed',
-        }),
-      ),
-    )
+  const response = yield* (yield* HttpClient.HttpClient).execute(request).pipe(
+    Effect.mapError(() =>
+      ServiceUnavailable.make({
+        service: 'connections',
+        message: 'Executor proof management request failed',
+      }),
+    ),
+  )
   expect(
     response.status >= 200 && response.status < 300,
     'Executor management request failed',

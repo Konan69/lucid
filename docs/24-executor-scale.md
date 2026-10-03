@@ -30,11 +30,11 @@ to that repository: `SH` is `apps/hosted/self-host`, `H` is `apps/hosted/server`
 
 One SDK and app runtime, shipped three ways.
 
-| Shape     | Tenancy                                             | State                                                | Instances           |
-| --------- | --------------------------------------------------- | ---------------------------------------------------- | ------------------- |
-| Local     | none; the caller names the owner on each call       | files on one machine                                 | one process         |
-| Self-host | exactly one organization                            | one volume: embedded Postgres, Git, builds, app data | one container       |
-| Cloud     | many organizations; free to 3 members, then per seat | external Postgres, object store, Durable Objects    | scales horizontally |
+| Shape     | Tenancy                                              | State                                                | Instances           |
+| --------- | ---------------------------------------------------- | ---------------------------------------------------- | ------------------- |
+| Local     | none; the caller names the owner on each call        | files on one machine                                 | one process         |
+| Self-host | exactly one organization                             | one volume: embedded Postgres, Git, builds, app data | one container       |
+| Cloud     | many organizations; free to 3 members, then per seat | external Postgres, object store, Durable Objects     | scales horizontally |
 
 Self-host and Cloud serve the same HTTP API under `/api/organizations/{organization}`. Local serves a
 different one (`/v1/...`, `/dashboard/api/...`), which is what Vivid's adapter spoke until now.
@@ -57,14 +57,14 @@ the worker constructs PGlite explicitly (`SH/native/main.go:86`).
 
 ## How Vivid's model maps onto it
 
-| Vivid                                   | Executor                                              |
-| --------------------------------------- | ----------------------------------------------------- |
-| Connection owner: `Personal(person)`    | one organization for that Person                      |
-| Connection owner: `Shared(company)`     | one organization for that Company                     |
-| Vivid's server                          | a service principal that may act for any organization |
-| Connection                              | one profile plus the account it selects, on one app   |
-| The acting Person                       | attribution on the call; never an Executor member     |
-| Integration (catalogue entry)           | app                                                   |
+| Vivid                                | Executor                                              |
+| ------------------------------------ | ----------------------------------------------------- |
+| Connection owner: `Personal(person)` | one organization for that Person                      |
+| Connection owner: `Shared(company)`  | one organization for that Company                     |
+| Vivid's server                       | a service principal that may act for any organization |
+| Connection                           | one profile plus the account it selects, on one app   |
+| The acting Person                    | attribution on the call; never an Executor member     |
+| Integration (catalogue entry)        | app                                                   |
 
 A Person's Integrations are theirs. They connect Gmail once and it works wherever they work: in
 their own space and inside any Company they belong to, because the Connection is owned by the Person,
@@ -86,14 +86,14 @@ account selection" as later work; this is the same idea done on Vivid's side.
 
 ## Stages
 
-| Stage | What changes                                                                 | Size | Needed now               |
-| ----- | ---------------------------------------------------------------------------- | ---- | ------------------------ |
-| A     | Self-host image built from our fork, on Railway, with a volume               | S    | yes                      |
-| A′    | Vivid's adapter rewritten to the hosted API                                  | M    | yes                      |
-| B     | Product and auth database on our PostgreSQL through `DATABASE_URL`           | M    | soon                     |
-| C     | Many organizations, provisioned and used through a service key               | M    | soon                     |
-| D     | Stateless API with more than one replica                                     | L    | no, beyond today's size  |
-| E     | App runner as its own scaled service                                         | M-L  | no, beyond today's size  |
+| Stage | What changes                                                       | Size | Needed now              |
+| ----- | ------------------------------------------------------------------ | ---- | ----------------------- |
+| A     | Self-host image built from our fork, on Railway, with a volume     | S    | yes                     |
+| A′    | Vivid's adapter rewritten to the hosted API                        | M    | yes                     |
+| B     | Product and auth database on our PostgreSQL through `DATABASE_URL` | M    | soon                    |
+| C     | Many organizations, provisioned and used through a service key     | M    | soon                    |
+| D     | Stateless API with more than one replica                           | L    | no, beyond today's size |
+| E     | App runner as its own scaled service                               | M-L  | no, beyond today's size |
 
 **A. Our image on Railway.** No source change. An image service, a volume at `/app/data`, a public
 domain (browser sign-in for an account lands on Executor's origin), health check `/health` with a
