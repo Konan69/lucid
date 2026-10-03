@@ -64,11 +64,22 @@ export function Mark({
   size = 32,
   className,
 }: {
-  service: { readonly name: string }
+  /**
+   * `mark` is the address of the service's logo image when the server knows one (it sends
+   * `https://integrations.sh/logo/<domain>`, the same logo service Executor's own pages use). A
+   * caller that only has a name passes no mark and gets the bundled logo for that exact name.
+   */
+  service: { readonly name: string; readonly mark?: string | null }
   size?: number
   className?: string
 }) {
-  const logo = logoOf(service.name)
+  // The server's logo address wins: it is the service's own artwork at twice the drawn size, so it
+  // stays sharp on dense screens. The bundled logo covers callers that only know a name.
+  const sent = Option.map(
+    Option.fromNullishOr(service.mark),
+    (address) => `${address}?sz=${size * 2}`,
+  )
+  const logo = Option.orElse(sent, () => logoOf(service.name))
   // SAFETY: React forwards this validated CSS custom property to the element.
   const tileStyle = { '--mark-size': `${size}px` } as React.CSSProperties
   return (
