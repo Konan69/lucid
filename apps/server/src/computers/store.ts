@@ -578,10 +578,17 @@ const requireReady = Effect.fn('ComputerStore.requireReady')(function* (
 ) {
   const computer = yield* state.inspect(person)
   if (computer.heldByPerson) return yield* Effect.fail(new ComputerHeld({ person }))
-  if (MachineState.guards.Unavailable(computer.state))
-    return yield* Effect.fail(new ComputerProviderUnavailable({ person }))
-  if (MachineState.guards.Failed(computer.state))
-    return yield* Effect.fail(new ComputerStartFailed({ person, reason: computer.state.reason }))
+  const refusal = MachineState.match<
+    Option.Option<ComputerProviderUnavailable | ComputerStartFailed>
+  >(computer.state, {
+    Unavailable: () => Option.some(new ComputerProviderUnavailable({ person })),
+    Failed: ({ reason }) => Option.some(new ComputerStartFailed({ person, reason })),
+    Absent: () => Option.none(),
+    Starting: () => Option.none(),
+    Running: () => Option.none(),
+    Stopped: () => Option.none(),
+  })
+  if (Option.isSome(refusal)) return yield* Effect.fail(refusal.value)
   const ready = accessTo(computer, computerMachineKey(person))
   if (ComputerAccess.guards.Unavailable(ready))
     return yield* Effect.fail(new ComputerNotReady({ reason: ready.reason }))

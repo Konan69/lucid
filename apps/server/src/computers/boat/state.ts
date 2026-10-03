@@ -1,17 +1,18 @@
 import { ComputerState } from '@vivid/contracts'
-import { Cache, Clock, Effect, Exit, Option } from 'effect'
+import { Cache, Clock, Effect, Exit, Option, Schema } from 'effect'
 import {
   MachineNotRunning,
   MachineOperationFailed,
   MachineResponseInvalid,
   type MachineKey,
 } from '../machine.ts'
-import type { MachineRecord, ProviderId } from './protocol.ts'
+import type { ProviderId } from './protocol.ts'
+import { State } from './protocol.ts'
 import type { Transport } from './transport.ts'
 import type { Bindings } from './bindings.ts'
 const screen = ComputerState.cases.Running.fields.screen
-export const active = (state: MachineRecord['state']) =>
-  state === 'ready' || state === 'idle' || state === 'running'
+/** The usable subset is declared once, constrained by the decoded provider vocabulary. */
+export const active = Schema.is(State.pick(['ready', 'idle', 'running']))
 
 /** Observe existing provider identity; viewer tokens are ephemeral and never enter persistence. */
 export const observations = Effect.fn('Machine.boat.observations')(function* (

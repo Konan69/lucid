@@ -69,11 +69,17 @@ export type MarkFigure =
  * holds the invariant that no mark contains two figures with the same key.
  */
 export function figureKey(figure: MarkFigure): string {
-  if (figure.kind === 'rect') {
-    return `rect:${figure.x},${figure.y},${figure.width},${figure.height}`
+  // Every kind is named, so a new figure variant fails lint and typecheck here until it has a key.
+  switch (figure.kind) {
+    case 'rect':
+      return `rect:${figure.x},${figure.y},${figure.width},${figure.height}`
+    case 'path':
+      return `path:${figure.d}`
+    case 'circle':
+      return `circle:${figure.cx},${figure.cy},${figure.r}`
+    case 'ring':
+      return `ring:${figure.cx},${figure.cy},${figure.r}`
+    case 'glyph':
+      return `glyph:${figure.x},${figure.y},${figure.text}`
   }
-  if (figure.kind === 'path') return `path:${figure.d}`
-  if (figure.kind === 'circle') return `circle:${figure.cx},${figure.cy},${figure.r}`
-  if (figure.kind === 'ring') return `ring:${figure.cx},${figure.cy},${figure.r}`
-  return `glyph:${figure.x},${figure.y},${figure.text}`
 }

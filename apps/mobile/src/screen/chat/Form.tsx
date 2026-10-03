@@ -109,23 +109,32 @@ const asked = (field: FieldKind): string => {
 
 /** The control for one kind of field; every kind brings up the keyboard or picker made for it. */
 function Control({ field, value, onChange }: ControlProps) {
-  if (field.kind === 'choice') return <Choice field={field} value={value} onChange={onChange} />
-  if (field.kind === 'date') return <DateField field={field} value={value} onChange={onChange} />
-  const long = field.kind === 'long text'
-  return (
-    <Field
-      accessibilityLabel={field.label}
-      value={value}
-      placeholder={field.example}
-      multiline={long}
-      // A number may carry a decimal point, which the plain number pad does not have.
-      keyboardType={field.kind === 'number' ? 'decimal-pad' : 'default'}
-      returnKeyType={long ? 'default' : 'done'}
-      textAlignVertical={long ? 'top' : 'center'}
-      onChangeText={onChange}
-      style={{ minHeight: long ? 120 : 52 }}
-    />
-  )
+  switch (field.kind) {
+    case 'choice':
+      return <Choice field={field} value={value} onChange={onChange} />
+    case 'date':
+      return <DateField field={field} value={value} onChange={onChange} />
+    // The typed kinds share one text field and differ only in its size and keyboard.
+    case 'text':
+    case 'long text':
+    case 'number': {
+      const long = field.kind === 'long text'
+      return (
+        <Field
+          accessibilityLabel={field.label}
+          value={value}
+          placeholder={field.example}
+          multiline={long}
+          // A number may carry a decimal point, which the plain number pad does not have.
+          keyboardType={field.kind === 'number' ? 'decimal-pad' : 'default'}
+          returnKeyType={long ? 'default' : 'done'}
+          textAlignVertical={long ? 'top' : 'center'}
+          onChangeText={onChange}
+          style={{ minHeight: long ? 120 : 52 }}
+        />
+      )
+    }
+  }
 }
 
 const PICKER = {

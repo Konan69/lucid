@@ -10,55 +10,59 @@ import { cn } from './cn'
 /**
  * Draws one shared figure with the DOM's SVG elements. The geometry itself lives in `@vivid/marks`
  * so the native app draws the identical artwork through `react-native-svg`; this file is only the
- * web half of that pair. The last branch is unguarded on purpose: adding a figure variant then
- * fails to typecheck here rather than silently rendering nothing.
+ * web half of that pair. Every kind is a named case: adding a figure variant then fails lint and
+ * typecheck here rather than silently rendering nothing.
  */
 function Figure({ figure }: { figure: MarkFigure }) {
-  if (figure.kind === 'rect') {
-    return (
-      <rect
-        x={figure.x}
-        y={figure.y}
-        width={figure.width}
-        height={figure.height}
-        rx={figure.radius}
-        fill={figure.fill}
-      />
-    )
+  switch (figure.kind) {
+    case 'rect':
+      return (
+        <rect
+          x={figure.x}
+          y={figure.y}
+          width={figure.width}
+          height={figure.height}
+          rx={figure.radius}
+          fill={figure.fill}
+        />
+      )
+    case 'path':
+      return (
+        <path
+          d={figure.d}
+          fill={figure.fill}
+          opacity={figure.opacity}
+          transform={figure.transform}
+        />
+      )
+    case 'circle':
+      return <circle cx={figure.cx} cy={figure.cy} r={figure.r} fill={figure.fill} />
+    case 'ring':
+      return (
+        <circle
+          cx={figure.cx}
+          cy={figure.cy}
+          r={figure.r}
+          fill={figure.fill}
+          stroke={figure.stroke}
+          strokeWidth={figure.strokeWidth}
+        />
+      )
+    case 'glyph':
+      return (
+        <text
+          x={figure.x}
+          y={figure.y}
+          textAnchor="middle"
+          fontFamily="system-ui, sans-serif"
+          fontSize={figure.fontSize}
+          fontWeight={figure.fontWeight}
+          fill={figure.fill}
+        >
+          {figure.text}
+        </text>
+      )
   }
-  if (figure.kind === 'path') {
-    return (
-      <path d={figure.d} fill={figure.fill} opacity={figure.opacity} transform={figure.transform} />
-    )
-  }
-  if (figure.kind === 'circle') {
-    return <circle cx={figure.cx} cy={figure.cy} r={figure.r} fill={figure.fill} />
-  }
-  if (figure.kind === 'ring') {
-    return (
-      <circle
-        cx={figure.cx}
-        cy={figure.cy}
-        r={figure.r}
-        fill={figure.fill}
-        stroke={figure.stroke}
-        strokeWidth={figure.strokeWidth}
-      />
-    )
-  }
-  return (
-    <text
-      x={figure.x}
-      y={figure.y}
-      textAnchor="middle"
-      fontFamily="system-ui, sans-serif"
-      fontSize={figure.fontSize}
-      fontWeight={figure.fontWeight}
-      fill={figure.fill}
-    >
-      {figure.text}
-    </text>
-  )
 }
 
 /**

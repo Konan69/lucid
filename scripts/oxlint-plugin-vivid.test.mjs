@@ -10,7 +10,7 @@ import * as Schema from 'effect/Schema'
 
 const assert = NodeAssert
 const { execFileSync } = NodeChildProcess
-const { mkdtempSync, rmSync, writeFileSync } = NodeFS
+const { mkdtempSync, readFileSync, rmSync, writeFileSync } = NodeFS
 const { tmpdir } = NodeOS
 const path = NodePath
 const test = NodeTest.default
@@ -156,6 +156,11 @@ const cases = [
     'drizzle.config.ts',
   ],
   [
+    'prefer-state-match',
+    "if (run.status === 'queued') { start() } else if (run.status === 'working') { wait() }",
+    "if (run.status === 'queued') { start() }",
+  ],
+  [
     'react-no-derived-state-effect',
     'useEffect(() => { setValue(input) }, [input])',
     'const value = derive(input)',
@@ -287,6 +292,89 @@ for (const [ruleName, invalid, valid, filename] of cases) {
       assert.equal(ruleDiagnostics(ruleName, lint(ruleName, callback)).length, 0)
     }
 
+    if (ruleName === 'prefer-state-match') {
+      const count = (source) => ruleDiagnostics(ruleName, lint(ruleName, source)).length
+      const dispatches = [
+        // Generated Schema.TaggedUnion guards on one union and value.
+        'if (RunState.guards.Queued(run)) { start() } else if (RunState.guards.Working(run)) { wait() }',
+        // A braced else whose first statement is the next check; `;` and later work change nothing.
+        "if (phase === 'draft') { edit() } else { ; if (phase === 'sent') { archive() } log() }",
+        // Contiguous return guards, with a harmless empty statement between them.
+        "function label(state) { if (state === 'a') return 1;; if (state === 'b') return 2; return 3 }",
+        // A subset predicate is one branch; a second branch makes it a dispatch.
+        "if (RunState.isAnyOf(['Queued', 'Working'])(run)) { wait() } else if (RunState.guards.Failed(run)) { retry() }",
+        // Sequential return guards.
+        "function label(run) { if (run.status === 'queued') return 'Queued'; if (run.status === 'working') return 'Working'; return 'Done' }",
+        // One finding per dispatch, however many branches it has.
+        "if (item.kind === 'file' || item.kind === 'folder') { open() } else if (item.kind === 'link') { visit() } else if (item.kind === 'note') { read() }",
+      ]
+      for (const source of dispatches) assert.equal(count(source), 1, source)
+
+      const legitimate = [
+        // A single refinement, positive or negative.
+        'if (RunState.guards.Failed(run)) { retry() }',
+        "if (run.status !== 'working') return; if (run.status !== 'queued') return",
+        // Unrelated predicates in the same chain.
+        "if (run.status === 'queued') { start() } else if (run.attempts > 3) { stop() }",
+        "if (run.status === 'queued' && run.ready) { start() } else if (run.status === 'working' && run.stale) { stop() }",
+        // Different subjects, and the same case asked twice.
+        "if (run.status === 'queued') { start() } else if (other.status === 'working') { wait() }",
+        'if (RunState.guards.Queued(run)) { start() } else if (RunState.guards.Working(other)) { wait() }',
+        "if (run.status === 'queued') return 1; if (run.status === 'queued') return 2",
+        // Sequential checks that fall through are independent steps, not a dispatch.
+        "if (run.status === 'queued') { start() } if (run.status === 'working') { wait() }",
+        // Open vocabularies and unstable subjects.
+        "if (node.type === 'A') { a() } else if (node.type === 'B') { b() }",
+        "if (read().status === 'queued') { start() } else if (read().status === 'working') { wait() }",
+        // The subject is reassigned or mutated between the checks: two observations, not one.
+        "function f(state) { if (state === 'a') return 1; state = 'b'; if (state === 'b') return 2 }",
+        "function f(run) { if (run.status === 'queued') return 1; run.status = 'working'; if (run.status === 'working') return 2 }",
+        'function f(run) { if (RunState.guards.Queued(run)) return 1; run = advance(run); if (RunState.guards.Working(run)) return 2 }',
+        // An intervening call may change the subject, in a guard run and in a braced else.
+        "function f(run) { if (run.status === 'queued') return 1; refresh(run); if (run.status === 'working') return 2 }",
+        "function f(run) { if (run.status === 'queued') return 1; const next = load(); if (run.status === 'working') return next }",
+        "if (phase === 'draft') { edit() } else { log(); if (phase === 'sent') { archive() } }",
+        "if (phase === 'draft') { edit() } else { phase = next(); if (phase === 'sent') { archive() } }",
+        // A declaration before the inner check runs code, so the braced else is not one dispatch.
+        "if (phase === 'draft') { edit() } else { const next = load(); if (phase === 'sent') { archive(next) } }",
+        // A first branch that mutates and falls through is followed by a fresh observation.
+        "function f(run) { if (run.status === 'queued') { advance(run) } if (run.status === 'working') return 2 }",
+        // A branch that only sometimes ends control flow lets its own work reach the next check.
+        "function f(run) { if (run.status === 'queued') { if (retry(run)) return 1 } if (run.status === 'working') return 2 }",
+        // A loop or a nested block between two guards may run anything.
+        "function f(run) { if (run.status === 'queued') return 1; while (step(run)) {} if (run.status === 'working') return 2 }",
+        "function f(run) { if (run.status === 'queued') return 1; { refresh(run) } if (run.status === 'working') return 2 }",
+        // A guard with an else is its own statement, not the next guard of a run.
+        "function f(run) { if (run.status === 'queued') return 1; if (run.status === 'working') { wait() } else { refresh(run) } }",
+        // The scan stops at an unrelated guard; it never skips ahead to a later check.
+        "function f(run) { if (run.status === 'queued') return 1; if (stale()) return 0; if (run.status === 'working') return 2 }",
+        // An alias is a different binding, and may hold an older value.
+        "function f(run) { const status = run.status; if (run.status === 'queued') return 1; if (status === 'working') return 2 }",
+        // The same parameter name in two functions is two values.
+        "function a(state) { if (state === 'a') return 1; return 0 } function b(state) { if (state === 'b') return 2; return 0 }",
+        "function f(kind, items) { if (kind === 'a') return items.map((kind) => { if (kind === 'b') return 1; return 0 }); return [] }",
+        // A nested function starts its own scope.
+        "if (run.status === 'queued') { start() } else { later(() => { if (run.status === 'working') { wait() } }) }",
+      ]
+      for (const source of legitimate) assert.equal(count(source), 0, source)
+
+      const nested =
+        "const outer = () => { const inner = () => { if (kind === 'a') return 1; if (kind === 'b') return 2; return 3 }; if (kind === 'a') return inner(); return 0 }"
+      assert.equal(count(nested), 1)
+      // A callback's own dispatch is still reported, once, and never merged with the outer check.
+      const callback =
+        "function f(kind, items) { if (kind === 'a') return items.map((kind) => { if (kind === 'b') return 1; if (kind === 'c') return 2; return 0 }); if (kind === 'd') return [] }"
+      const callbackFindings = ruleDiagnostics(ruleName, lint(ruleName, callback))
+      assert.equal(callbackFindings.length, 2)
+      assert.ok(callbackFindings.some((entry) => /\(a, d\)/u.test(entry.message)))
+      assert.ok(callbackFindings.some((entry) => /\(b, c\)/u.test(entry.message)))
+      const [finding] = ruleDiagnostics(ruleName, lint(ruleName, dispatches[0]))
+      assert.ok(finding)
+      assert.match(finding.message, /Queued, Working/u)
+      assert.match(finding.message, /Union\.match\(value/u)
+      assert.doesNotMatch(finding.message, /\$match/u)
+    }
+
     if (ruleName === 'no-direct-process-env') {
       const agentBoundary = "'use agent'; const model = process.env.VIVID_MODEL"
       assert.equal(ruleDiagnostics(ruleName, lint(ruleName, agentBoundary, 'agent.ts')).length, 0)
@@ -314,3 +402,95 @@ for (const [ruleName, invalid, valid, filename] of cases) {
     }
   })
 }
+
+const exhaustiveRule = 'typescript/switch-exhaustiveness-check'
+const exhaustiveFixtures = path.join(scriptsDirectory, '__fixtures__', 'exhaustive')
+const RootConfigSchema = Schema.Struct({
+  rules: Schema.Struct({
+    [exhaustiveRule]: Schema.Tuple([
+      Schema.Literal('error'),
+      Schema.Struct({ considerDefaultExhaustiveForUnions: Schema.Boolean }),
+    ]),
+    'vivid/prefer-state-match': Schema.Literal('error'),
+  }),
+})
+const decodeRootConfig = Schema.decodeUnknownSync(Schema.fromJsonString(RootConfigSchema))
+const ExhaustiveOutputSchema = Schema.Struct({
+  diagnostics: Schema.Array(
+    Schema.Struct({ code: Schema.String, message: Schema.String, filename: Schema.String }),
+  ),
+})
+const decodeExhaustiveOutput = Schema.decodeUnknownSync(
+  Schema.fromJsonString(ExhaustiveOutputSchema),
+)
+
+/**
+ * Runs the native type-aware rule over the checked-in fixtures and returns the fixture file names
+ * it reports. The rule needs real types, so this is the one test that starts tsgolint; the fixture
+ * project is four files with no imports outside its directory. `--no-ignore` is required because
+ * the root config ignores `scripts/__fixtures__`, which holds deliberately wrong code.
+ */
+function exhaustiveFindings(setting) {
+  const directory = mkdtempSync(path.join(tmpdir(), 'vivid-exhaustive-'))
+  try {
+    const configPath = path.join(directory, 'oxlint.json')
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        plugins: ['typescript'],
+        categories: { correctness: 'off' },
+        rules: { [exhaustiveRule]: setting },
+      }),
+    )
+    const run = () => {
+      try {
+        return execFileSync(
+          oxlint,
+          [
+            '--type-aware',
+            '--tsconfig',
+            path.join(exhaustiveFixtures, 'tsconfig.json'),
+            '--config',
+            configPath,
+            '--format',
+            'json',
+            '--no-ignore',
+            exhaustiveFixtures,
+          ],
+          { cwd: repositoryRoot, encoding: 'utf8' },
+        )
+      } catch (cause) {
+        const failure = decodeProcessFailure(cause)
+        if (Result.isFailure(failure)) throw cause
+        return failure.success.stdout
+      }
+    }
+    return decodeExhaustiveOutput(run())
+      .diagnostics.filter((entry) => entry.code === 'typescript(switch-exhaustiveness-check)')
+      .map((entry) => `${path.basename(entry.filename)}: ${entry.message}`)
+      .toSorted()
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+}
+
+void test('the root config makes a switch name every union member, default or not', () => {
+  // The setting under test is the one the repository ships, read from the root config, so this
+  // fails if someone relaxes the option or turns either state rule down from `error`.
+  const root = decodeRootConfig(readFileSync(path.join(repositoryRoot, '.oxlintrc.json'), 'utf8'))
+  const setting = root.rules[exhaustiveRule]
+  assert.equal(setting[1].considerDefaultExhaustiveForUnions, false)
+
+  // `complete.ts` names all three members and is clean. `missing.ts` omits `done`. `defaulted.ts`
+  // hides `done` behind a `default`, the shape a later-added member would also fall into.
+  assert.deepEqual(exhaustiveFindings(setting), [
+    'defaulted.ts: Switch is not exhaustive. Cases not matched: "done"',
+    'missing.ts: Switch is not exhaustive. Cases not matched: "done"',
+  ])
+
+  // Control: with the rule's own default option a `default` excuses the missing member, so the
+  // `defaulted.ts` finding above comes from the repository's option and not from the rule alone.
+  assert.deepEqual(exhaustiveFindings(['error', { considerDefaultExhaustiveForUnions: true }]), [
+    'missing.ts: Switch is not exhaustive. Cases not matched: "done"',
+  ])
+})

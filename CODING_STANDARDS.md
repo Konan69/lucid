@@ -58,6 +58,8 @@ const label = RunState.match({
 })
 ```
 
+Branch on a closed state once, exhaustively. Use the union's `match` for a `Schema.TaggedUnion`, `Match.value(...).pipe(..., Match.exhaustive)` for other values, or a `switch` for a plain literal union. `typescript/switch-exhaustiveness-check` fails a `switch` that misses a member, and a `default` does not excuse it. Repeated `if` checks of the same state (`Union.guards.Case(value)`, `Union.isAnyOf([...])(value)`, or `value.status === 'literal'`, in an `else if` chain or a run of return guards) skip a new case silently; `vivid/prefer-state-match` finds them. A single guard that refines one case is fine.
+
 Do not rebuild the same state with optional fields and ad hoc comparisons:
 
 ```ts

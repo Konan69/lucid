@@ -134,18 +134,26 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
       return yield* Effect.fail(new NotFound({ message: 'Integration not found' }))
     const { row, account } = selected
     const state = yield* stateOf(row)
-    if (ConnectionState.guards.Failed(state))
-      return TestIntegrationOutcome.cases.NotTested.make({
-        account,
-        tools: [],
-        reason: 'integration failed',
-      })
-    if (ConnectionState.guards.NeedsAuthorization(state))
-      return TestIntegrationOutcome.cases.NotTested.make({
-        account,
-        tools: [],
-        reason: 'needs sign-in',
-      })
+    const refusal = ConnectionState.match<Option.Option<TestIntegrationOutcome>>(state, {
+      Failed: () =>
+        Option.some(
+          TestIntegrationOutcome.cases.NotTested.make({
+            account,
+            tools: [],
+            reason: 'integration failed',
+          }),
+        ),
+      NeedsAuthorization: () =>
+        Option.some(
+          TestIntegrationOutcome.cases.NotTested.make({
+            account,
+            tools: [],
+            reason: 'needs sign-in',
+          }),
+        ),
+      Ready: () => Option.none(),
+    })
+    if (Option.isSome(refusal)) return refusal.value
     const tools = yield* store.tools(actor, row)
     const visible = tools.filter((tool) => row.companyId === null || tool.effect === 'read')
     const names = visible.map((tool) => tool.name)

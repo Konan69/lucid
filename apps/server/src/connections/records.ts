@@ -105,12 +105,16 @@ export const googleCallbackId = Effect.fn('Connections.googleCallbackId')(functi
 
 /** Stored failure reasons are required only for failed state; invalid legacy rows fail explicitly. */
 export const stateOf = (row: ConnectionRecord) => {
-  if (row.status === 'ready') return Effect.succeed(ConnectionState.cases.Ready.make({}))
-  if (row.status === 'needs-authorization')
-    return Effect.succeed(ConnectionState.cases.NeedsAuthorization.make({}))
-  if (row.reason === null)
-    return Effect.fail(new DatabaseFailure({ message: 'Failed integration has no reason' }))
-  return Effect.succeed(ConnectionState.cases.Failed.make({ reason: row.reason }))
+  switch (row.status) {
+    case 'ready':
+      return Effect.succeed(ConnectionState.cases.Ready.make({}))
+    case 'needs-authorization':
+      return Effect.succeed(ConnectionState.cases.NeedsAuthorization.make({}))
+    case 'failed':
+      if (row.reason === null)
+        return Effect.fail(new DatabaseFailure({ message: 'Failed integration has no reason' }))
+      return Effect.succeed(ConnectionState.cases.Failed.make({ reason: row.reason }))
+  }
 }
 
 /** Personal ownership always refers to the acting owner, never to a Company's administrator. */

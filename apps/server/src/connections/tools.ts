@@ -244,13 +244,18 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
     return ToolOutcome.cases.Rejected.make({ message: 'This integration is not available to you.' })
   const row = found.value
   const state = yield* stateOf(row)
-  if (ConnectionState.guards.Failed(state))
-    return ToolOutcome.cases.Rejected.make({ message: state.reason })
-  if (ConnectionState.guards.NeedsAuthorization(state))
-    return ToolOutcome.cases.ConnectionNotReady.make({
-      service: row.service,
-      serviceName: row.serviceName,
-    })
+  const refusal = ConnectionState.match<Option.Option<ToolOutcome>>(state, {
+    Failed: ({ reason }) => Option.some(ToolOutcome.cases.Rejected.make({ message: reason })),
+    NeedsAuthorization: () =>
+      Option.some(
+        ToolOutcome.cases.ConnectionNotReady.make({
+          service: row.service,
+          serviceName: row.serviceName,
+        }),
+      ),
+    Ready: () => Option.none(),
+  })
+  if (Option.isSome(refusal)) return refusal.value
   const tools = yield* store.tools(actor, row).pipe(
     Effect.map(Option.some),
     Effect.catchTags({
@@ -324,10 +329,15 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     const store = yield* ConnectionStore
     const row = yield* store.get(actor, input.target.connectionId)
     const state = yield* stateOf(row)
-    if (ConnectionState.guards.Failed(state))
-      return ActionOutcome.cases.Failed.make({ reason: state.reason })
-    if (ConnectionState.guards.NeedsAuthorization(state))
-      return ActionOutcome.cases.Failed.make({ reason: 'This integration needs authorization.' })
+    const refusal = ConnectionState.match<Option.Option<ActionOutcome>>(state, {
+      Failed: ({ reason }) => Option.some(ActionOutcome.cases.Failed.make({ reason })),
+      NeedsAuthorization: () =>
+        Option.some(
+          ActionOutcome.cases.Failed.make({ reason: 'This integration needs authorization.' }),
+        ),
+      Ready: () => Option.none(),
+    })
+    if (Option.isSome(refusal)) return refusal.value
     // This read precedes dispatch, so losing discovery is a failed, retryable action.
     const discovered = yield* store.tools(actor, row).pipe(
       Effect.catchTag('ServiceUnavailable', () =>

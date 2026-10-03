@@ -220,49 +220,46 @@ const RESTING = {
   },
 } as const
 
+/** A computer that is not running and did not fail: what it says, and the one thing to do about it. */
+const resting = (state: { readonly _tag: keyof typeof RESTING }) => {
+  const note = RESTING[state._tag]
+  return <Note title={note.title} detail={note.detail} action={note.action} busy={note.busy} />
+}
+
 function Screen({ computer }: { computer: ComputerRecord }) {
-  const state = computer.state
-  if (ComputerState.guards.Running(state)) {
-    // The machine's provider decides how its screen is watched: relayed through this server as a
-    // remote-framebuffer socket, or in the provider's own viewer page for this Person's machine.
-    if (ComputerScreen.guards.Relay(state.screen)) {
-      return (
+  // Every state is a named case, so a new one fails to typecheck here until it says what it shows.
+  return ComputerState.match(computer.state, {
+    Running: (state) =>
+      // The machine's provider decides how its screen is watched: relayed through this server as a
+      // remote-framebuffer socket, or in the provider's own viewer page for this Person's machine.
+      ComputerScreen.guards.Relay(state.screen) ? (
         <Display
           // Taking over or handing back changes who may type, so the screen reconnects with it.
           key={computer.heldByPerson ? 'held' : 'watching'}
           address={state.screen.address}
           control={computer.heldByPerson}
         />
-      )
-    }
-    return (
-      <Viewer
-        // A new machine start has a new viewer; the one on screen is not carried over.
-        key={state.since}
-        address={state.screen.address}
-        expiresAt={state.screen.expiresAt}
-        control={computer.heldByPerson}
-      />
-    )
-  }
-  if (ComputerState.guards.Failed(state)) {
-    return (
+      ) : (
+        <Viewer
+          // A new machine start has a new viewer; the one on screen is not carried over.
+          key={state.since}
+          address={state.screen.address}
+          expiresAt={state.screen.expiresAt}
+          control={computer.heldByPerson}
+        />
+      ),
+    Failed: (state) => (
       <Note
         title="It did not start"
         detail={state.reason}
         action={<Button onClick={start}>Try again</Button>}
       />
-    )
-  }
-  const resting = RESTING[state._tag]
-  return (
-    <Note
-      title={resting.title}
-      detail={resting.detail}
-      action={resting.action}
-      busy={resting.busy}
-    />
-  )
+    ),
+    Absent: resting,
+    Starting: resting,
+    Stopped: resting,
+    Unavailable: resting,
+  })
 }
 
 /** How long before a viewer's permission runs out a fresh one is asked for. */

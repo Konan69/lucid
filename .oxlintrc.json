@@ -105,6 +105,10 @@
     "react/jsx-no-constructed-context-values": "off",
     "react/react-in-jsx-scope": "off",
     "typescript/no-unsafe-type-assertion": "off",
+    "typescript/switch-exhaustiveness-check": [
+      "error",
+      { "considerDefaultExhaustiveForUnions": false }
+    ],
     "unicorn/consistent-function-scoping": "off",
     "anti-slop/no-chained-type-assertions": "warn",
     "anti-slop/no-conditional-empty-object-spread": "warn",
@@ -157,6 +161,7 @@
     "vivid/no-try-catch": "warn",
     "vivid/no-undefined-in-union": "warn",
     "vivid/no-unnecessary-die": "error",
+    "vivid/prefer-state-match": "error",
     "vivid/namespace-node-imports": "warn",
     "vivid/require-named-effect-fn": "warn",
     "vivid/require-schema-class-identifier": "error",

@@ -39,17 +39,20 @@ export function Display({
   live: boolean
   onSay: (words: string) => void
 }) {
-  if (ShownKind.guards.Table(shown)) return <TableShown table={shown} />
-  if (ShownKind.guards.Chart(shown)) return <ChartShown chart={shown} />
-  if (ShownKind.guards.Steps(shown)) return <StepsShown plan={shown} />
-  if (ShownKind.guards.Options(shown)) return <OptionsShown ask={shown} live={live} onSay={onSay} />
-  if (ShownKind.guards.Comparison(shown)) return <ComparisonShown comparison={shown} />
-  if (ShownKind.guards.Links(shown)) return <LinksShown list={shown} />
-  if (ShownKind.guards.Facts(shown)) return <FactsShown board={shown} />
-  if (ShownKind.guards.Draft(shown)) return <DraftShown draft={shown} live={live} onSay={onSay} />
-  if (ShownKind.guards.Schedule(shown)) return <ScheduleShown schedule={shown} />
-  if (ShownKind.guards.Form(shown)) return <FormShown form={shown} live={live} onSay={onSay} />
-  return <PicturesShown gallery={shown} />
+  // Every kind is a named case, so a new kind fails to typecheck here until it has a display.
+  return ShownKind.match(shown, {
+    Table: (table) => <TableShown table={table} />,
+    Chart: (chart) => <ChartShown chart={chart} />,
+    Steps: (plan) => <StepsShown plan={plan} />,
+    Options: (ask) => <OptionsShown ask={ask} live={live} onSay={onSay} />,
+    Comparison: (comparison) => <ComparisonShown comparison={comparison} />,
+    Links: (list) => <LinksShown list={list} />,
+    Facts: (board) => <FactsShown board={board} />,
+    Draft: (draft) => <DraftShown draft={draft} live={live} onSay={onSay} />,
+    Schedule: (schedule) => <ScheduleShown schedule={schedule} />,
+    Form: (form) => <FormShown form={form} live={live} onSay={onSay} />,
+    Pictures: (gallery) => <PicturesShown gallery={gallery} />,
+  })
 }
 
 type Kind<Tag extends ShownKind['_tag']> = Extract<ShownKind, { readonly _tag: Tag }>
@@ -546,35 +549,39 @@ function FormShown({
 
 /** One field of a form, as the control its kind calls for. Its name is its label. */
 function Field({ field, disabled }: { field: Kind<'Form'>['fields'][number]; disabled: boolean }) {
-  if (field.kind === 'long text') {
-    return (
-      <textarea
-        name={field.label}
-        rows={3}
-        disabled={disabled}
-        placeholder={field.example}
-        className={cn(FIELD, 'resize-y')}
-      />
-    )
+  switch (field.kind) {
+    case 'long text':
+      return (
+        <textarea
+          name={field.label}
+          rows={3}
+          disabled={disabled}
+          placeholder={field.example}
+          className={cn(FIELD, 'resize-y')}
+        />
+      )
+    case 'choice':
+      return (
+        <select name={field.label} disabled={disabled} className={cn(FIELD, 'cursor-pointer')}>
+          {field.choices.map((choice) => (
+            <option key={choice}>{choice}</option>
+          ))}
+        </select>
+      )
+    // These kinds are also the names of the browser's own input types.
+    case 'text':
+    case 'number':
+    case 'date':
+      return (
+        <input
+          name={field.label}
+          type={field.kind}
+          disabled={disabled}
+          placeholder={field.example}
+          className={FIELD}
+        />
+      )
   }
-  if (field.kind === 'choice') {
-    return (
-      <select name={field.label} disabled={disabled} className={cn(FIELD, 'cursor-pointer')}>
-        {field.choices.map((choice) => (
-          <option key={choice}>{choice}</option>
-        ))}
-      </select>
-    )
-  }
-  return (
-    <input
-      name={field.label}
-      type={field.kind}
-      disabled={disabled}
-      placeholder={field.example}
-      className={FIELD}
-    />
-  )
 }
 
 function PicturesShown({ gallery }: { gallery: Kind<'Pictures'> }) {
