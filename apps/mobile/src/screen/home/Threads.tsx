@@ -16,6 +16,8 @@ export interface ThreadActions {
   readonly width: number
   readonly onOpen: (thread: Thread) => void
   readonly onRename: (thread: Thread) => void
+  /** Files a Thread in a Project; none where the Person has no Project to file it in. */
+  readonly onFile: Option.Option<(thread: Thread) => void>
   /** What came of a row's quick action: a sentence when it was refused, none when it was not. */
   readonly onRefused: (message: Option.Option<string>) => void
 }

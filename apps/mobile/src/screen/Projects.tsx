@@ -76,7 +76,6 @@ export function Projects() {
     <Screen>
       <Header
         title="Projects"
-        subtitle="Threads that belong together."
         onBack={go.goBack}
         trailing={<IconButton icon={Plus} label="New project" onPress={() => setCreating(true)} />}
       />

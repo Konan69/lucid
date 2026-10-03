@@ -273,6 +273,7 @@ export function Menu({
   onProject,
   onOpen,
   onRename,
+  onFile,
   onRefused,
 }: {
   me: MeResponse
@@ -286,12 +287,16 @@ export function Menu({
   onProject: (id: ProjectId) => void
   onOpen: (thread: Thread) => void
   onRename: (thread: Thread) => void
+  onFile: (thread: Thread) => void
   onRefused: (message: Option.Option<string>) => void
 }) {
   const data = useLiveData()
   const insets = useSafeAreaInsets()
   const { colors: c } = useTheme()
   const threads = useLive(data.live.threads)
+  const filed = useLive(data.live.projects)
+  // "Add to a project" is offered only to a Person who has one. Nobody else sees the word.
+  const hasProjects = LiveState.$is('Ready')(filed) && filed.value.projects.length > 0
   const [query, setQuery] = useState('')
   // The scroll position is tracked in a ref: only the moment the button changes shape is state,
   // so a moving list renders nothing.
@@ -320,6 +325,7 @@ export function Menu({
           width={width}
           onOpen={onOpen}
           onRename={onRename}
+          onFile={hasProjects ? Option.some(onFile) : Option.none()}
           onRefused={onRefused}
           onScroll={scrolled}
           header={

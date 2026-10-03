@@ -17,6 +17,7 @@ import { AboveKeyboard } from '../ui/Keyboard'
 import { NameSheet } from '../ui/Sheet'
 import { Face, GUTTER, Label, Notice, Press, styles, TARGET } from '../ui/ui'
 import { useGo, useMe } from '../workspace'
+import { Filing } from './home/Filing'
 import { First } from './home/First'
 import { Menu } from './home/Menu'
 import { Switcher } from './home/Switcher'
@@ -29,6 +30,7 @@ type Over = Data.TaggedEnum<{
   Nothing: {}
   Switching: {}
   Renaming: { readonly thread: Thread }
+  Filing: { readonly thread: Thread }
 }>
 const Over = Data.taggedEnum<Over>()
 
@@ -78,6 +80,7 @@ export function Home() {
           onProject={(id) => leave(() => go.navigate('Project', { id }))}
           onOpen={(thread) => leave(() => go.navigate('Chat', { id: thread.id }))}
           onRename={(thread) => setOver(Over.Renaming({ thread }))}
+          onFile={(thread) => setOver(Over.Filing({ thread }))}
           onRefused={setRefused}
         />
       }
@@ -110,6 +113,7 @@ export function Home() {
       </AboveKeyboard>
       {Over.$is('Switching')(over) && <Switcher me={me} onClose={close} />}
       {Over.$is('Renaming')(over) && <Rename thread={over.thread} onClose={close} />}
+      {Over.$is('Filing')(over) && <Filing thread={over.thread} onClose={close} />}
     </Drawer>
   )
 }

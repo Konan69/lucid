@@ -117,7 +117,11 @@ export async function startThread(
 export const patchThread = (
   data: LiveData,
   id: ThreadId,
-  patch: { readonly title?: string; readonly archived?: boolean },
+  patch: {
+    readonly title?: string
+    readonly archived?: boolean
+    readonly projectId?: ProjectId | null
+  },
 ) =>
   data.change(
     (client) => client.PatchThread({ id, patch }),

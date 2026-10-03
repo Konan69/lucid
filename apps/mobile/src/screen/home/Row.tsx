@@ -133,6 +133,7 @@ export function ThreadRow({
   width,
   onOpen,
   onRename,
+  onFile,
   onRefused,
 }: {
   thread: Thread
@@ -142,6 +143,8 @@ export function ThreadRow({
   width: number
   onOpen: (thread: Thread) => void
   onRename: (thread: Thread) => void
+  /** Files the Thread in a Project. The menu offers it only where there is one to file it in. */
+  onFile: Option.Option<(thread: Thread) => void>
   /** A sentence when a quick action was refused; none when the next one went through. */
   onRefused: (message: Option.Option<string>) => void
 }) {
@@ -176,8 +179,13 @@ export function ThreadRow({
       },
     })
   // What the long-press menu can do, by the id the native menu reports back when one is chosen.
+  const filing = Option.match(onFile, {
+    onNone: () => [],
+    onSome: () => [{ id: 'file', title: 'Add to a project' }],
+  })
   const chosen = new Map([
     ['rename', () => onRename(thread)],
+    ['file', () => Option.map(onFile, (file) => file(thread))],
     ['shelve', shelve],
     ['remove', remove],
   ])
@@ -203,6 +211,7 @@ export function ThreadRow({
           title={thread.title}
           actions={[
             { id: 'rename', title: 'Rename' },
+            ...filing,
             { id: 'shelve', title: shelveLabel },
             { id: 'remove', title: 'Delete…', attributes: { destructive: true } },
           ]}
