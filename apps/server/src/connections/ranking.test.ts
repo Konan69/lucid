@@ -49,6 +49,90 @@ it.effect('returns the catalog head for whitespace and bounds every search to 24
 )
 
 it.effect(
+  'puts common services first for empty searches and preserves the remaining catalog order',
+  () =>
+    Effect.sync(() => {
+      const catalog = services([
+        'Box',
+        'Airtable',
+        'Notion',
+        'Slack',
+        'Outlook',
+        'Microsoft 365',
+        'Google Drive',
+        'Google Calendar',
+        'Gmail',
+        'Google Workspace',
+        'Other',
+      ])
+      expect(rankServices(catalog, ' \t ').map((service) => service.name)).toEqual([
+        'Google Workspace',
+        'Gmail',
+        'Google Calendar',
+        'Google Drive',
+        'Microsoft 365',
+        'Outlook',
+        'Slack',
+        'Notion',
+        'Box',
+        'Airtable',
+        'Other',
+      ])
+      expect(rankServices(catalog, 'o').map((service) => service.name)).toEqual([
+        'Outlook',
+        'Other',
+        'Box',
+        'Notion',
+        'Microsoft 365',
+        'Google Drive',
+        'Google Calendar',
+        'Google Workspace',
+      ])
+    }),
+)
+
+it.effect('recognizes exact common-service names without promoting lookalikes', () =>
+  Effect.sync(() => {
+    const catalog = services([
+      'Box',
+      'Google Workspace Helper',
+      'NOTION',
+      'Drive',
+      'Microsoft Outlook',
+    ])
+    expect(rankServices(catalog, '').map((service) => service.name)).toEqual([
+      'Drive',
+      'Microsoft Outlook',
+      'NOTION',
+      'Box',
+      'Google Workspace Helper',
+    ])
+  }),
+)
+
+it.effect('keeps common services ahead of the rest even when operator setup is required', () =>
+  Effect.sync(() => {
+    const catalog = services(['Box', 'Gmail', 'Google Workspace', 'Gmail'])
+    const firstGmail = catalog[1]
+    if (firstGmail === undefined) expect.fail('Expected Gmail fixture')
+    const entries = catalog.map((entry) =>
+      entry === firstGmail
+        ? Service.make({
+            ...entry,
+            authorization: ServiceAuthorization.cases.SetupRequired.make({}),
+          })
+        : entry,
+    )
+    expect(rankServices(entries, '').map((entry) => entry.id)).toEqual([
+      'service-2',
+      'service-3',
+      firstGmail.id,
+      'service-0',
+    ])
+  }),
+)
+
+it.effect(
   'puts setup-required services last within each name rank and throughout the empty query',
   () =>
     Effect.sync(() => {

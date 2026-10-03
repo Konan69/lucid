@@ -49,6 +49,7 @@ import {
 } from './records.ts'
 import { connections } from './tables.ts'
 import { rankServices } from './ranking.ts'
+import { catalogService, serviceLogo } from './logo.ts'
 import { connectionAddressLayer, type ConnectionSource } from './address.ts'
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
@@ -321,9 +322,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     >,
   ) => effect.pipe(Effect.provide(dependencies))
   const catalogServices = Effect.fn('Connections.catalog')(function* () {
-    return (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).map((entry) =>
-      Service.make({ ...entry, mark: null }),
-    )
+    return (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).map(catalogService)
   })
   /** Inspect the selected candidate without retaining any account or credential. */
   const inspectService = Effect.fn('Connections.inspectService')(function* (service: Service) {
@@ -417,7 +416,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
         id: ServiceId.make(`url:${source.address}`),
         name: request.name,
         description: '',
-        mark: null,
+        mark: serviceLogo(source.address),
         authorization: ServiceAuthorization.cases.None.make({}),
       })
       const start: ExecutorService['begin'] = Effect.fn('Connections.import')((input) =>

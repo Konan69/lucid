@@ -59,7 +59,7 @@ export const Service = Schema.Struct({
   id: ServiceId,
   name: Schema.String,
   description: Schema.String,
-  /** The key of a mark in `@vivid/marks`, or of nothing when the catalog has no mark for it. */
+  /** The address of the service's logo image, or null when no registrable domain is available. */
   mark: Schema.NullOr(Schema.String),
   authorization: ServiceAuthorization,
 }).annotate({ identifier: 'Service', title: 'Integration' })

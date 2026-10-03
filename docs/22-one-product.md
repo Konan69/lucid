@@ -192,8 +192,12 @@ JSON file with **client.clientId**, **client.clientSecret**, and **apps**, whose
 **service**, **name**, **app**, and **provider**. Both client fields are decoded as `Redacted`;
 configuration errors never include the supplied values. The app/provider identities must come
 from successful native Executor deployments, never a guessed catalog name. Installed services
-remain available to `FindServices` when the public catalog feed is unavailable. An absent
-installation does not advertise Google as ready.
+remain available to `FindServices` when the public catalog feed is unavailable. The Executor
+transport must retain each catalog entry's **domain**: service **mark** is the logo image
+address `https://integrations.sh/logo/<registrable domain>`, without a size parameter. Missing
+or nonregistrable domains produce no logo. Empty searches list Google Workspace, Gmail,
+Calendar, Drive, Microsoft 365, Outlook, Slack and Notion first; typed searches retain name
+relevance ranking. An absent installation does not advertise Google as ready.
 
 Operator steps:
 
