@@ -32,7 +32,7 @@ describe('a step, in words', () => {
         readAnswered({ ok: true }),
         'done',
       ),
-    ).toMatchObject({ label: 'Used an integration', detail: 'Gmail (Work) · Send Dami the NDA' })
+    ).toMatchObject({ label: 'Used Gmail (Work)', detail: 'Send Dami the NDA' })
   })
 
   it('says what work on the Computer was for, while it is still running', () => {
