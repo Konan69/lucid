@@ -30,6 +30,7 @@ import { executorLayer } from './connections/executor.ts'
 import { connectionStoreLayer } from './connections/store.ts'
 import { databaseLayer } from './database/client.ts'
 import { routerLayer } from './http/router.ts'
+import { staticRoutes } from './http/static.ts'
 import { inputStoreLayer } from './inputs/store.ts'
 import { libraryStoreLayer } from './library/store.ts'
 import { changesLayer } from './live/changes.ts'
@@ -128,13 +129,12 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
   const background = Layer.mergeAll(routineSchedulerLayer, approvalSweeperLayer)
 
   const server = NodeHttpServer.layer(() => NodeHttp.createServer(), {
-    host: '127.0.0.1',
+    host: config.HOST,
     port: config.PORT,
   })
-  const application = HttpRouter.serve(Layer.merge(routerLayer, background)).pipe(
-    Layer.provide(schedules),
-    Layer.provide(server),
-  )
+  const application = HttpRouter.serve(
+    Layer.mergeAll(routerLayer, staticRoutes(config.VIVID_WEB_DIST), background),
+  ).pipe(Layer.provide(schedules), Layer.provide(server))
   return yield* Layer.launch(application)
 })()
 

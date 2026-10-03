@@ -134,7 +134,10 @@ const loadGoogleOAuth = Effect.fn('ServerConfig.loadGoogleOAuth')(function* () {
 })
 
 const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
-  ServerConfigService,
+  ServerConfigService & {
+    readonly HOST: string
+    readonly VIVID_WEB_DIST: Option.Option<string>
+  },
   ConfigurationError
 > {
   const loadedAuthSecret = yield* required('AUTH_SECRET', authSecret).pipe(
@@ -161,6 +164,9 @@ const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
     RUNTIME_URL: yield* required('VIVID_RUNTIME_URL', Schema.URLFromString),
     RUNTIME_TOKEN: yield* required('VIVID_RUNTIME_TOKEN', secret),
     PORT: port,
+    // Listener and static-root inputs belong to launch; domain test Layers need no HTTP host.
+    HOST: Option.getOrElse(yield* optional('HOST', nonEmptyString), () => '127.0.0.1'),
+    VIVID_WEB_DIST: yield* optional('VIVID_WEB_DIST', nonEmptyString),
     PUBLIC_URL: publicUrl,
     GOOGLE_OAUTH: yield* loadGoogleOAuth(),
   }
