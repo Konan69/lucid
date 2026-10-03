@@ -7,7 +7,8 @@
  *
  * The rules every entry keeps:
  * - Only `opacity` and the transform longhands (`translate`, `scale`, `rotate`) move. Nothing that
- *   is laid out or painted is animated, so a frame never waits on layout.
+ *   is laid out or painted is animated, so a frame never waits on layout. `motion-fold` is the one
+ *   exception, and says why.
  * - They are transitions from a starting style, not keyframes: opened twice quickly, or closed
  *   half-way, they go on from where they are instead of starting again.
  * - Nothing enters from nothing: a surface starts at 0.96 to 0.97 of its size, a line 6 px low.
@@ -145,6 +146,35 @@
   }
 }
 
+/* Rows folding away where they stand: the answers a Person did not choose, once a question is
+   answered. This is the one entry that animates layout, because what is under the rows has to
+   come up to meet the one that stays, and a transform would leave a hole where they were. It is
+   a grid row going from `1fr` to `0fr`, so nothing is measured; it happens once per question, on
+   a card a few rows tall. The folded thing stays in the document (`data-folded`), so it must be
+   made `inert` by whoever folds it. */
+@utility motion-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+  & > * {
+    min-height: 0;
+    overflow: hidden;
+  }
+  &[data-folded] {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
+/* A progress ring's arc going to its new length when the count changes. A stroke's dash is
+   painted, not laid out, and the ring is 16 px: it moves once per step taken and holds. Under
+   reduced motion the app's base layer cuts it to nothing, and the arc is simply longer. */
+@utility motion-arc {
+  transition: stroke-dasharray var(--dur-base) var(--ease-out);
+}
+
 /* The face moving from one pose to the next: only its lean eases. The eyes close and open at
    once, as a blink does. */
 @utility motion-face {
@@ -183,7 +213,8 @@
     .motion-dialog,
     .motion-toast,
     .motion-swap,
-    .motion-tick {
+    .motion-tick,
+    .motion-fold {
       transition-property: opacity !important;
       transition-duration: var(--dur-fast) !important;
       transition-delay: 0ms !important;

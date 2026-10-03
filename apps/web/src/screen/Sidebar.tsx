@@ -29,6 +29,7 @@ import { ScopeChip } from './project/Chip'
 import { FULL, HOVER, ROW, TOOL } from './sidebar/rows'
 import { CreateCompany } from './sidebar/Company'
 import { ProjectGroup } from './sidebar/Projects'
+import { Started } from './sidebar/Started'
 import { Threads, ThreadSkeleton } from './sidebar/Threads'
 
 /**
@@ -70,7 +71,7 @@ function Edge() {
 /**
  * The rail: where the Person is working, the way to start a Thread, the two places beside Threads
  * (Routines and the Library), every Thread they can see ordered by what needs them, and the Person
- * with their Settings at the foot. Projects are a group of rows above the Threads, each a piece of
+ * with their Settings at the foot, under what is left of getting started while any of it is. Projects are a group of rows above the Threads, each a piece of
  * work with its own colour; choosing one narrows the Threads under it to that Project, and the
  * chip beside the workspace's name says so and leads back to everything. Integrations is reached
  * from Settings or when Vivid offers one in a Thread, and what Vivid knows how to do is Vivid's
@@ -108,10 +109,12 @@ export function Sidebar({
       inert={!open}
       // Narrow: a drawer over the page that slides by its own width. Wide: a column beside the
       // page that gives up its width. One element, so its contents and their state are the same
-      // sidebar either way.
+      // sidebar either way. Shown, it has no translation at all (`none`, not zero): any other
+      // value makes the aside the box that `fixed` things inside it are placed in, and the layer
+      // under an open menu, which a click anywhere else closes, would cover only the sidebar.
       className={cn(
-        'fixed inset-y-0 left-0 z-40 flex h-full w-(--sidebar-w) shrink-0 flex-col overflow-hidden bg-surface-1 transition-pop duration-(--dur-base) ease-out in-data-resizing:transition-none md:relative md:z-auto md:translate-x-0 md:transition-width',
-        open ? 'translate-x-0 hairline-r' : '-translate-x-full md:w-0',
+        'fixed inset-y-0 left-0 z-40 flex h-full w-(--sidebar-w) shrink-0 flex-col overflow-hidden bg-surface-1 transition-pop duration-(--dur-base) ease-out in-data-resizing:transition-none md:relative md:z-auto md:translate-none md:transition-width',
+        open ? 'translate-none hairline-r' : '-translate-x-full md:w-0',
       )}
     >
       <Edge />
@@ -169,6 +172,7 @@ export function Sidebar({
           <Work route={route} scoped={scoped} />
         </nav>
 
+        <Started me={me} />
         <button
           onClick={() => router.openSettings(Option.some('general'))}
           className={cn(ROW, FULL, HOVER, 'm-2 mt-0 w-auto')}

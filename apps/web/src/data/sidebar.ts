@@ -98,6 +98,13 @@ export const sidebar = {
   toggle: () => set(!sidebar.isOpen()),
   show: () => set(true),
   hide: () => set(false),
+  /**
+   * Puts the drawer away once something in it has been chosen. A column beside the page stays:
+   * hiding that is a preference, and choosing something in it is not asking for it to go.
+   */
+  tuck: () => {
+    if (!wide.matches && drawn) set(false)
+  },
 }
 
 // Crossing the width changes which of the two it is, so whoever draws it must look again.
@@ -108,9 +115,7 @@ wide.addEventListener('change', () => {
 })
 
 // A drawer has done its job once the Person has chosen where to go.
-router.subscribe(() => {
-  if (!wide.matches && drawn) set(false)
-})
+router.subscribe(sidebar.tuck)
 
 // ⌘B / Ctrl+B toggles the sidebar, the shortcut every editor-shaped app has trained people on.
 // From the keyboard it is there or gone at once: the button slides it, because a hand on the

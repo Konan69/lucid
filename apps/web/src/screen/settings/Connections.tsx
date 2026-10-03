@@ -196,16 +196,6 @@ export function Connections({ me }: { me: MeResponse }) {
  * is close to invisible.
  */
 function Find({ query, onQuery }: { query: string; onQuery: (query: string) => void }) {
-  const found = liveStateOf(useAtomValue(services))
-  // The catalog says how many services it holds; the field says so once that is known.
-  const total =
-    LiveState.$is('Ready')(found) && ServiceCatalog.guards.Ready(found.value)
-      ? Option.some(found.value.total)
-      : Option.none()
-  const placeholder = Option.match(total, {
-    onNone: () => 'Search integrations',
-    onSome: (count) => `Search ${count.toLocaleString()} integrations`,
-  })
   return (
     <label className="flex h-11 cursor-text items-center gap-2.5 rounded-full bg-surface-3 px-4 edge edge-field focus-within:edge-accent">
       <Search aria-hidden className="size-4 shrink-0 text-ink-3" />
@@ -216,7 +206,8 @@ function Find({ query, onQuery }: { query: string; onQuery: (query: string) => v
         // a longer name is never a request the server refuses.
         maxLength={80}
         aria-label="Search integrations"
-        placeholder={placeholder}
+        // How many the catalog holds is never said: a number that size is noise to a Person.
+        placeholder="Search integrations"
         className="min-w-0 flex-1 bg-transparent text-body text-ink outline-none placeholder:text-ink-3"
       />
     </label>

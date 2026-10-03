@@ -251,14 +251,113 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
       { timeout: 10_000 },
     )
 
-    it.effect('late completion after the deadline cannot admit queued effects', () =>
+    it.effect('runs the calls of one Promise.all at the same time', () =>
+      Effect.gen(function* () {
+        const entered = yield* Ref.make(0)
+        const both = yield* Deferred.make<void>()
+        // Each call returns only after the other has started. One-at-a-time dispatch would never
+        // let the second start, so completion proves the two overlapped.
+        const together: Dispatch = Effect.fn('Test.together')(function* () {
+          const count = yield* Ref.updateAndGet(entered, (value) => value + 1)
+          if (count === 2) yield* Deferred.succeed(both, undefined)
+          yield* Deferred.await(both)
+          return CallOutcome.cases.Returned.make({
+            value: count,
+            summary: 'Read a record',
+            end: 'completed',
+          })
+        })
+        const outcome = yield* run(
+          'return (await Promise.all([tools.use_tool({}),tools.use_tool({})])).length;',
+          together,
+        )
+        check(outcome, 'Completed', {
+          result: 2,
+          calls: [{ end: 'completed' }, { end: 'completed' }],
+        })
+      }),
+    )
+
+    it.effect('lets a call that was already running finish before an Approval is reported', () =>
+      Effect.gen(function* () {
+        const order = yield* Ref.make(0)
+        const secondRunning = yield* Deferred.make<void>()
+        const asked = yield* Deferred.make<void>()
+        const dispatch: Dispatch = Effect.fn('Test.askBesideWork')(function* () {
+          const position = yield* Ref.updateAndGet(order, (value) => value + 1)
+          if (position === 1) {
+            yield* Deferred.await(secondRunning)
+            yield* Deferred.succeed(asked, undefined)
+            return CallOutcome.cases.ApprovalRequired.make({
+              approvalId: ApprovalId.make('approval-test'),
+              summary: 'Send the message',
+            })
+          }
+          yield* Deferred.succeed(secondRunning, undefined)
+          // Held by the test clock, which moves only after the first call has asked.
+          yield* Effect.sleep('1 second')
+          return CallOutcome.cases.Returned.make({
+            value: true,
+            summary: 'Filed the note',
+            end: 'completed',
+          })
+        })
+        const running = yield* Effect.forkChild(
+          run('return await Promise.all([tools.use_tool({}),tools.use_tool({})]);', dispatch),
+        )
+        yield* Deferred.await(asked)
+        yield* TestClock.adjust('1 second')
+        const outcome = yield* Fiber.join(running)
+        // The sibling's receipt is its real result, not the provisional unknown it had when the
+        // first call asked.
+        check(outcome, 'ApprovalRequired', {
+          approvalId: 'approval-test',
+          calls: [{ end: 'needs approval' }, { end: 'completed' }],
+        })
+      }),
+    )
+
+    it.effect('reports an Approval when the last running call is interrupted', () =>
+      Effect.gen(function* () {
+        const order = yield* Ref.make(0)
+        const secondRunning = yield* Deferred.make<void>()
+        const asked = yield* Deferred.make<void>()
+        const dispatch: Dispatch = Effect.fn('Test.askBesideLoss')(function* () {
+          const position = yield* Ref.updateAndGet(order, (value) => value + 1)
+          if (position === 1) {
+            yield* Deferred.await(secondRunning)
+            yield* Deferred.succeed(asked, undefined)
+            return CallOutcome.cases.ApprovalRequired.make({
+              approvalId: ApprovalId.make('approval-test'),
+              summary: 'Send the message',
+            })
+          }
+          yield* Deferred.succeed(secondRunning, undefined)
+          yield* Effect.sleep('1 second')
+          return yield* Effect.interrupt
+        })
+        const running = yield* Effect.forkChild(
+          run('return await Promise.all([tools.use_tool({}),tools.use_tool({})]);', dispatch),
+        )
+        yield* Deferred.await(asked)
+        yield* TestClock.adjust('1 second')
+        // The lost call keeps its honest unknown receipt, and the decision still arrives at once
+        // instead of waiting for the deadline.
+        check(yield* Fiber.join(running), 'ApprovalRequired', {
+          approvalId: 'approval-test',
+          calls: [{ end: 'needs approval' }, { end: 'unknown' }],
+        })
+      }),
+    )
+
+    it.effect('a deadline leaves every running call unknown and admits nothing after it', () =>
       Effect.gen(function* () {
         const entered = yield* Deferred.make<void>()
         const release = yield* Deferred.make<void>()
         const count = yield* Ref.make(0)
         const late: Dispatch = Effect.fn('Test.lateReceipt')(function* () {
-          yield* Ref.update(count, (value) => value + 1)
-          yield* Deferred.succeed(entered, undefined)
+          const position = yield* Ref.updateAndGet(count, (value) => value + 1)
+          if (position === 2) yield* Deferred.succeed(entered, undefined)
           yield* Deferred.await(release).pipe(Effect.uninterruptible)
           return CallOutcome.cases.Returned.make({
             value: true,
@@ -274,9 +373,9 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
         yield* Deferred.succeed(release, undefined)
         const outcome = yield* Fiber.join(running)
         expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
-        expect(yield* Ref.get(count)).toBe(1)
-        expect(outcome.calls).toHaveLength(1)
-        expect(outcome.calls[0]).toHaveProperty('end', 'unknown')
+        // Both calls of the Promise.all were already running when the deadline passed.
+        expect(yield* Ref.get(count)).toBe(2)
+        expect(outcome.calls.map((call) => call.end)).toEqual(['unknown', 'unknown'])
       }),
     )
 

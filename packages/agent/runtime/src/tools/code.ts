@@ -8,7 +8,7 @@ import { warnFailure, type ToolResult } from './result.ts'
 import * as views from './views.ts'
 
 /** These are the entire guest API, with human account names and no Vivid ownership arguments. */
-const PROGRAM = `Run a short JavaScript async function body (top-level await and return work). Return JSON. No imports, network, filesystem, process or persistent state. Limits: 16 KiB source, 30 seconds total, 25 calls, 256 KiB per call/result, 1 MiB data, 32 KiB final result. Calls are serialized. Approval, a blocking rule or an unknown action ends the program; completed calls stay completed. Never replay it to resume.
+const PROGRAM = `Run a short JavaScript async function body (top-level await and return work). Return JSON. No imports, network, filesystem, process or persistent state. Limits: 16 KiB source, 30 seconds total, 25 calls, 256 KiB per call/result, 1 MiB data, 32 KiB final result. Approval, a blocking rule or an unknown action ends the program; calls already started finish and completed calls stay completed. Never replay it to resume.
 The callable API (TypeScript declarations describe JavaScript inputs):
 type Json = null | boolean | number | string | Json[] | {[key: string]: Json};
 declare const tools: {
@@ -19,7 +19,7 @@ browse(input: {action: BrowserAction, summary: string}): Promise<{ok: true, resu
 read_page(input: {address: string}): Promise<{ok: true, address: string, title: string, text: string, truncated: boolean} | {ok: false, reason: string}>;
 };
 BrowserAction is defined by this JSON Schema: ${JSON.stringify(Schema.toJsonSchemaDocument(BrowserAction).schema)}
-Use only account/tool names and input schemas found by find_tools. Provider record identifiers remain usable data. Do not catch an approval to continue or retry an unknown action.`
+Calls started together run together: use Promise.all for independent calls and pass one call's result into the next for dependent ones. Use only account/tool names and input schemas found by find_tools. Provider record identifiers remain usable data. Do not catch an approval to continue or retry an unknown action.`
 
 /** Error metadata is Vivid's; provider records in successful results retain their usable identifiers. */
 function failureView(failure: CodeFailure): Schema.Json {
