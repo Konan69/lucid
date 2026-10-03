@@ -137,6 +137,7 @@ import {
 } from './routines.js'
 import { CreateRuleRequest, RuleListResponse, RuleResponse } from './rules.js'
 import { SearchRequest, SearchResponse, SuggestionListResponse } from './search.js'
+import { Appearance } from './appearance.js'
 import { PatchSettingsRequest, Settings } from './settings.js'
 import {
   SkillReadOnly,
@@ -225,6 +226,18 @@ const PatchSettings = Rpc.make('PatchSettings', {
   ...call,
   payload: PatchSettingsRequest,
   success: Settings,
+})
+/**
+ * What Vivid is called and how it looks where the caller is working. Vivid reads it too, to know
+ * the name the Person it acts for gave it.
+ */
+const GetAppearance = Rpc.make('GetAppearance', { ...call, success: Appearance })
+const WatchAppearance = Rpc.make('WatchAppearance', { ...live, success: Appearance })
+/** The Person's own choice in a personal space; an owner's or admin's in a Company. */
+const SetAppearance = Rpc.make('SetAppearance', {
+  ...call,
+  payload: Appearance,
+  success: Appearance,
 })
 
 // ── People in a Company ────────────────────────────────────────────────────
@@ -692,6 +705,9 @@ export const VividRpc = RpcGroup.make(
   GetSettings,
   WatchSettings,
   PatchSettings,
+  GetAppearance,
+  WatchAppearance,
+  SetAppearance,
   ListPeople,
   WatchPeople,
   InviteMember,
