@@ -234,8 +234,10 @@ function CardFace({ thread, active, onDo }: RowProps) {
       onDoubleClick={() => onDo(Doing.Renaming({ id: thread.id }))}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'relative block h-(--card-row-h) w-full cursor-pointer rounded-card px-2.5 py-2 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) select-none focus-visible:-outline-offset-2',
-        active ? 'bg-surface-3' : 'bg-surface-2 hover:bg-wash-hover',
+        'relative block h-(--card-row-h) w-full cursor-pointer rounded-card px-2.5 py-2 text-left edge transition-surface duration-(--dur-fast) select-none focus-visible:-outline-offset-2',
+        // On the sidebar a card at rest is an outline; the chosen one is the raised fill. A resting
+        // fill would be the sidebar's own colour, and a hover wash over nothing is still visible.
+        active ? 'bg-surface-3' : 'hover:bg-wash-hover',
       )}
     >
       <span className="flex h-5 items-center gap-1.5">
@@ -355,7 +357,7 @@ function RenameField({
         if (event.key === 'Escape') finish(null)
       }}
       className={cn(
-        'absolute rounded-xs bg-surface-3 px-1 text-ink smooth-shadow-ring-xs outline-none smooth-ring-accent',
+        'absolute rounded-xs bg-surface-3 px-1 text-ink edge outline-none edge-accent',
         FIELD_PLACE[variant],
       )}
     />

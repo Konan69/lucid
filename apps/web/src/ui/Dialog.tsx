@@ -45,7 +45,7 @@ export function Dialog({
           className={cn(
             // Never taller than the window: a long form scrolls inside the panel, so its actions
             // cannot end up below the fold where the page itself does not scroll.
-            'max-h-full w-full animate-rise-in overflow-y-auto rounded-panel bg-surface-3 p-5 smooth-shadow-ring-lg outline-none',
+            'max-h-full w-full animate-rise-in overflow-y-auto rounded-dialog bg-surface-3 p-6 lift-lg outline-none',
             WIDTH[width],
           )}
         >
@@ -53,7 +53,7 @@ export function Dialog({
           {description !== undefined && (
             <p className="mt-1 text-label font-meta text-ink-3">{description}</p>
           )}
-          <div className="mt-4">{children}</div>
+          <div className="mt-5">{children}</div>
         </div>
       </div>
     </Layer>
@@ -62,7 +62,7 @@ export function Dialog({
 
 /** The row of actions that closes a dialog: the way out on the left of the thing it does. */
 export function DialogActions({ children }: { children: ReactNode }) {
-  return <div className="mt-5 flex justify-end gap-2">{children}</div>
+  return <div className="mt-6 flex justify-end gap-2">{children}</div>
 }
 
 /** The single text field most dialogs are made of. */
@@ -91,7 +91,7 @@ export function DialogField({
         maxLength={maxLength}
         placeholder={placeholder}
         onChange={(event) => onChange(event.currentTarget.value)}
-        className="h-9 rounded-control bg-well px-3 text-body text-ink ring-line outline-none placeholder:text-ink-4 focus-visible:ring-2 focus-visible:ring-ring"
+        className="h-10 rounded-control bg-well px-3 text-body text-ink edge outline-none edge-field placeholder:text-ink-3 focus-visible:edge-accent"
       />
     </label>
   )

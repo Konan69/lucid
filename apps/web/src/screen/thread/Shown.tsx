@@ -66,7 +66,7 @@ function Frame({
   children: ReactNode
 }) {
   return (
-    <section className="mt-3 min-w-0 overflow-hidden rounded-card bg-surface-3 smooth-shadow-ring-xs">
+    <section className="mt-3 min-w-0 overflow-hidden rounded-card bg-surface-3 edge">
       {title !== undefined && (
         <h3 className="px-4 pt-3.5 pb-2 text-title font-title text-balance text-ink">{title}</h3>
       )}

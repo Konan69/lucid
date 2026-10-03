@@ -23,7 +23,7 @@ export function Section({
         </div>
         {action}
       </div>
-      <div className="divide-y divide-line-1 overflow-hidden rounded-card bg-surface-3 smooth-shadow-ring-xs">
+      <div className="divide-y divide-line-1 overflow-hidden rounded-card bg-surface-3 edge">
         {children}
       </div>
     </section>
@@ -86,7 +86,7 @@ export function Awaiting<Value>({ state }: { state: LiveState<Value> }) {
           <i className="h-3 w-24 rounded-full bg-wash-hover" />
           <i className="h-3 w-64 rounded-full bg-wash-hover" />
         </div>
-        <div className="divide-y divide-line-1 rounded-card bg-surface-3 smooth-shadow-ring-xs">
+        <div className="divide-y divide-line-1 rounded-card bg-surface-3 edge">
           {['w-40', 'w-56', 'w-32'].map((width) => (
             <div key={width} className="flex h-14 items-center px-4">
               <i className={`h-3 rounded-full bg-wash-hover ${width}`} />

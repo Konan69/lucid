@@ -6,9 +6,13 @@ import type {
 } from 'react'
 import { cn } from './cn'
 
-/** The surface every form control shares: a raised well whose ring deepens when it has focus. */
+/**
+ * The surface every form control shares: a well, sunk below whatever it sits on, held by an edge
+ * one step stronger than a card's and turned to the accent while it has focus. The placeholder is
+ * words, so it takes a text ink that holds 4.5:1, not the mark ink.
+ */
 const CONTROL =
-  'w-full rounded-control bg-surface-2 px-3 text-label text-ink smooth-shadow-ring-xs outline-none placeholder:text-ink-4 focus:smooth-ring-accent disabled:cursor-not-allowed disabled:opacity-50'
+  'w-full rounded-control bg-well px-3 text-label text-ink edge edge-field outline-none placeholder:text-ink-3 focus:edge-accent disabled:cursor-not-allowed disabled:opacity-50'
 
 /** A labelled form control. The label wraps the control, so clicking the words focuses it. */
 export function Field({

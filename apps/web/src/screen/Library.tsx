@@ -647,7 +647,7 @@ function ShelfLevel({
       {Option.isSome(query) && (
         <form
           onSubmit={onSearch}
-          className="flex items-center gap-2 rounded-control bg-surface-2 px-3 smooth-shadow-ring-xs"
+          className="flex items-center gap-2 rounded-control bg-surface-2 px-3 edge"
         >
           <Search className="size-4 text-ink-4" />
           <input
@@ -692,7 +692,7 @@ function NothingHere({
   onUpload: (files: ReadonlyArray<File>) => void
 }) {
   return (
-    <div className="flex flex-col items-center rounded-card bg-surface-2 px-6 py-10 text-center smooth-shadow-ring-xs">
+    <div className="flex flex-col items-center px-6 py-16 text-center">
       <FileText className="size-5 text-ink-4" />
       <p className="mt-2 mb-4 max-w-sm text-label text-ink-3">
         {company
@@ -712,7 +712,7 @@ const READABLE = '.pdf,.md,.markdown,.txt,application/pdf,text/markdown,text/pla
 
 const PICKER_LOOK = {
   icon: 'size-8 justify-center text-ink-3 hover:text-ink has-focus-visible:text-ink',
-  button: 'h-8 gap-2 bg-surface-3 px-3 text-label font-title text-ink smooth-shadow-ring-xs',
+  button: 'h-8 gap-2 bg-surface-3 px-3 text-label font-title text-ink edge',
 } satisfies Record<string, string>
 
 /**
@@ -826,7 +826,7 @@ function Level({
               <button
                 type="button"
                 onClick={() => onOpenFolder(folder)}
-                className="flex w-full cursor-pointer items-center gap-2.5 rounded-card bg-surface-2 px-3 py-2.5 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) hover:bg-wash-hover"
+                className="flex w-full cursor-pointer items-center gap-2.5 rounded-card bg-surface-2 px-3 py-2.5 text-left edge transition-surface duration-(--dur-fast) hover:bg-wash-hover"
               >
                 <Folder className="size-5 shrink-0 text-ink-3" strokeWidth={1.7} />
                 <span className="min-w-0 flex-1 truncate text-label text-ink">{folder.name}</span>
@@ -870,9 +870,7 @@ function LevelRow({
       <span
         className={cn(
           'inline-flex size-8 shrink-0 items-center justify-center rounded-control',
-          accent
-            ? 'bg-accent-soft text-accent-ink'
-            : 'bg-surface-2 text-ink-3 smooth-shadow-ring-xs',
+          accent ? 'bg-accent-soft text-accent-ink' : 'bg-surface-2 text-ink-3 edge',
         )}
       >
         {mark}
@@ -889,7 +887,7 @@ function ItemTile({ item, onOpen }: { item: LibraryItem; onOpen: () => void }) {
     <button
       type="button"
       onClick={onOpen}
-      className="flex w-full cursor-pointer flex-col overflow-hidden rounded-card bg-surface-2 p-3 text-left smooth-shadow-ring-xs transition-press duration-(--dur-fast) hover:bg-surface-3 active:scale-98"
+      className="flex w-full cursor-pointer flex-col overflow-hidden rounded-card bg-surface-2 p-3 text-left edge transition-press duration-(--dur-fast) hover:bg-surface-3 active:scale-98"
     >
       <span className="flex items-center gap-2">
         <FileText className="size-4 shrink-0 text-ink-3" strokeWidth={1.6} />
@@ -898,7 +896,7 @@ function ItemTile({ item, onOpen }: { item: LibraryItem; onOpen: () => void }) {
       <span className="relative mt-3 block aspect-4/3 overflow-hidden rounded-control bg-surface-1 ring-line">
         <span
           aria-hidden
-          className="absolute inset-x-7 inset-y-3 flex flex-col gap-1.5 rounded-sm bg-surface-3 p-2.5 smooth-shadow-ring-xs"
+          className="absolute inset-x-7 inset-y-3 flex flex-col gap-1.5 rounded-sm bg-surface-3 p-2.5 edge"
         >
           <i className="h-2 w-1/2 rounded-full bg-line-3" />
           <i className="mt-1 h-1 w-full rounded-full bg-line-1" />
@@ -939,7 +937,7 @@ function ItemDetail({
   return (
     <div>
       <div className="flex items-center gap-3">
-        <span className="inline-flex size-9 items-center justify-center rounded-control bg-surface-2 text-ink-3 smooth-shadow-ring-xs">
+        <span className="inline-flex size-9 items-center justify-center rounded-control bg-surface-2 text-ink-3 edge">
           <FileText className="size-4.5" />
         </span>
         <div className="min-w-0 flex-1">
@@ -968,7 +966,7 @@ function ItemDetail({
           <Trash2 className="size-4" />
         </IconButton>
       </div>
-      <div className="mt-5 rounded-card bg-surface-2 p-5 smooth-shadow-ring-xs">
+      <div className="mt-5 rounded-card bg-surface-2 p-5 edge">
         <span className={cn('inline-flex items-center gap-1 text-meta font-meta', status.tone)}>
           {status.mark}
           {status.label}
@@ -1008,7 +1006,7 @@ function SearchResults({
             onClick={() => onOpen(result)}
             className="flex w-full cursor-pointer items-start gap-3 rounded-row px-2.5 py-3 text-left transition-colors duration-(--dur-fast) hover:bg-wash-hover"
           >
-            <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-surface-2 text-ink-3 smooth-shadow-ring-xs">
+            <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-surface-2 text-ink-3 edge">
               <FileText className="size-4" />
             </span>
             <span className="min-w-0 flex-1">
@@ -1062,7 +1060,7 @@ function Uploads({
         return (
           <li
             key={row.id}
-            className="flex items-center gap-3 rounded-row bg-surface-2 px-3 py-2 smooth-shadow-ring-xs"
+            className="flex items-center gap-3 rounded-row bg-surface-2 px-3 py-2 edge"
           >
             <FileText className="size-4 shrink-0 text-ink-3" />
             <span className="min-w-0 flex-1">

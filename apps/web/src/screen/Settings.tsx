@@ -91,7 +91,7 @@ export function Settings({
         tabIndex={-1}
         // Wide: sections down the left, the chosen one beside them. Narrow: there is no room for
         // a column, so the sections become one scrolling strip above the content.
-        className="flex size-full max-w-4xl animate-rise-in flex-col overflow-hidden bg-surface-1 outline-none sm:max-h-160 sm:flex-row sm:rounded-panel sm:smooth-shadow-ring-lg"
+        className="flex size-full max-w-4xl animate-rise-in flex-col overflow-hidden bg-surface-1 outline-none sm:max-h-160 sm:flex-row sm:rounded-dialog sm:lift-lg"
       >
         {/* The strip fades at its far edge and ends in spare room, so a section cut off there
             reads as "there is more this way" and the last one can still be scrolled clear. */}

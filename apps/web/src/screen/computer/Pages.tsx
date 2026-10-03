@@ -26,7 +26,7 @@ import { ContextMenu, MenuDivider, MenuItem, type MenuPoint } from '../../ui/Men
  */
 const TAB =
   'group/tab relative flex h-8 min-w-(--page-tab-min-w) max-w-(--page-tab-w) flex-1 basis-(--page-tab-w) items-center gap-2 rounded-row pr-1.5 pl-2.5 text-title transition-press duration-(--dur-fast)'
-const SELECTED = 'bg-surface-3 text-ink smooth-shadow-ring-xs'
+const SELECTED = 'bg-surface-3 text-ink edge'
 const RESTING = 'text-ink-3 hover:bg-wash-hover hover:text-ink focus-within:bg-wash-hover'
 
 /** What a page is called when its document has no title: where it is. */

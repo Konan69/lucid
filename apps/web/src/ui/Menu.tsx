@@ -14,12 +14,13 @@ const SIDE = {
    scale from 0.97 with opacity, never from nothing. It is a transition from a starting style, so
    there is no keyframe to restart if it is opened twice quickly. */
 const PLATE =
-  'z-50 min-w-56 overflow-y-auto rounded-panel outline-none smooth-shadow-ring-lg transition-pop duration-(--dur-fast) ease-out glass starting:scale-97 starting:opacity-0'
+  'z-50 min-w-56 overflow-y-auto rounded-card outline-none lift transition-pop duration-(--dur-fast) ease-out glass starting:scale-97 starting:opacity-0'
 
 /* A list of choices is inset from the plate's edge and stops growing at a screenful; a panel
    (something with its own headings and rows) lays itself out edge to edge. */
 const FILL = {
-  list: 'max-h-96 p-1',
+  // 8px of padding around 8px rows makes the plate's 16px corner concentric with theirs.
+  list: 'max-h-96 p-2',
   panel: 'max-h-[min(36rem,80vh)]',
 } as const
 

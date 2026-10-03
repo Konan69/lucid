@@ -12,6 +12,9 @@
   --page-nav-w: 98px;
   --around-w: 300px;
   --around-reserve-w: 312px;
+  /* The primary button under the pointer: its own colour, a step toward the ink. Stated here and
+     not in the tokens because native cannot read `color-mix`, and a phone has no hover. */
+  --accent-hover: color-mix(in srgb, var(--primary) 88%, var(--foreground));
 }
 
 /* The Computer beside the Thread: as wide as the divider was left, or the whole page in full view. */
@@ -135,24 +138,55 @@
 @utility hairline-l {
   box-shadow: inset 1px 0 0 var(--line-2);
 }
+/* The older name for `edge`, kept for the surfaces still written with it. It closes a layer, so it
+   takes the layer's edge colour; the quieter `--line-2` is for rules inside one (the hairlines). */
 @utility ring-line {
-  box-shadow: 0 0 0 1px var(--line-2);
+  box-shadow: 0 0 0 1px var(--line-3);
 }
 
-/* Elevation comes from `shadow-plugin`, and there are two tiers of it.
-   - In the page (cards, rows, fields, the sidebar's cards): `smooth-shadow-ring-xs`. A hairline and
-     the faintest ambient, nothing cast. A card in a list is not floating and must not look it.
-   - Over the page (the composer, menus, dialogs, the palette): `smooth-shadow-ring-md` or `-lg`.
-   The ring is the last shadow layer and reads `--smooth-ring-color` from the tokens, so never add a
-   border or `ring-line` beside it, and never raise a card's tier on hover: hover is a fill. */
+/* ── Layers ────────────────────────────────────────────────── */
+/* Three fills and an edge make a layer; a shadow only says "this floats".
+   - page      `bg-surface-0`. The canvas a Thread is read on.
+   - surface   `bg-surface-1` (chrome: the sidebar, Settings) or `bg-surface-2` (a quiet fill in the
+               page: a card in a list, a row, a track). One step off the page.
+   - raised    `bg-surface-3`. A control, a card on a surface, and everything that floats.
+   - well      `bg-well`. Sunk: a field, code, Vivid's screen.
+   In the page a layer takes `edge` and nothing else: a card in a list is not floating and must not
+   look it, and hover is a fill, never a deeper shadow. Over the page it takes `lift` (a menu, a
+   popover, the composer, a toast) or `lift-lg` (a dialog, the palette, Settings): the same edge and
+   one soft shadow from the tokens. The edge is the first box-shadow layer, so it never moves layout
+   and never needs a border beside it. `--edge-color` is how a state recolours it. */
+@utility edge {
+  box-shadow: 0 0 0 1px var(--edge-color, var(--line-3));
+}
+@utility lift {
+  box-shadow:
+    0 0 0 1px var(--edge-color, var(--line-3)),
+    var(--shadow-float);
+}
+@utility lift-lg {
+  box-shadow:
+    0 0 0 1px var(--edge-color, var(--line-3)),
+    var(--shadow-modal);
+}
+/* A field's edge: one step stronger than a card's, because it is the whole affordance. */
+@utility edge-field {
+  --edge-color: var(--line-4);
+}
+/* The edge of the thing that has focus, or is chosen. */
+@utility edge-accent {
+  --edge-color: var(--accent);
+}
 
 /* ── Glass: for what floats over live content ─────────────── */
 /* 92%: enough of the page comes through to say "this floats", not enough to read through it. At
    78% the rows under an open menu were legible between its own rows. */
 @utility glass {
   background: color-mix(in srgb, var(--surface-3) 92%, transparent);
-  -webkit-backdrop-filter: blur(20px) saturate(1.6);
-  backdrop-filter: blur(20px) saturate(1.6);
+  /* No saturation boost: the chrome is neutral, and a boosted backdrop tinted it with whatever
+     colour happened to be underneath. */
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
   @supports not (backdrop-filter: blur(1px)) {
     background: var(--surface-3);
   }

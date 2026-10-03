@@ -390,7 +390,7 @@ function StartsOn({
       {fields.kind === 'Schedule' ? (
         <ScheduleFields fields={fields} zone={zone} onChange={onChange} />
       ) : (
-        <p className="rounded-card bg-surface-2 px-4 py-3 text-label text-ink-3 smooth-shadow-ring-xs">
+        <p className="rounded-card bg-surface-2 px-4 py-3 text-label text-ink-3 edge">
           Vivid starts this Routine each time an outside service calls its address with its key, and
           reads whatever the service sends. You get the address and the key once the Routine is
           saved.
@@ -784,7 +784,7 @@ function OccurrenceRow({
 }) {
   if (Option.isNone(thread)) {
     return (
-      <div className="rounded-row bg-surface-2 px-3 py-2.5 smooth-shadow-ring-xs">
+      <div className="rounded-row bg-surface-2 px-3 py-2.5 edge">
         <OccurrenceSummary occurrence={occurrence} trailing={null} />
       </div>
     )
@@ -794,7 +794,7 @@ function OccurrenceRow({
       type="button"
       title="Open Thread"
       onClick={() => onOpenConversation(thread.value)}
-      className="group/run w-full cursor-pointer rounded-row bg-surface-2 px-3 py-2.5 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) hover:bg-wash-hover"
+      className="group/run w-full cursor-pointer rounded-row bg-surface-2 px-3 py-2.5 text-left edge transition-surface duration-(--dur-fast) hover:bg-wash-hover"
     >
       <OccurrenceSummary
         occurrence={occurrence}

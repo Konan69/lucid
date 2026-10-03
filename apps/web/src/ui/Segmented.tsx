@@ -37,9 +37,9 @@ export function Segmented<Value extends string>({
           aria-label={option.name}
           onClick={() => onChange(option.value)}
           className={cn(
-            'inline-flex h-7 min-w-7 cursor-pointer items-center justify-center gap-1.5 rounded-sm px-2 text-label transition-colors duration-(--dur-fast)',
+            'inline-flex h-7 min-w-7 cursor-pointer items-center justify-center gap-1.5 rounded-row px-2 text-label transition-colors duration-(--dur-fast)',
             option.value === value
-              ? 'bg-surface-3 text-ink smooth-shadow-ring-xs'
+              ? 'bg-surface-3 text-ink edge'
               : 'text-ink-3 hover:bg-wash-hover hover:text-ink',
           )}
         >

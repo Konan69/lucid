@@ -17,7 +17,7 @@ export function Sayings() {
         <li
           key={saying.id}
           role="status"
-          className="pointer-events-auto flex max-w-md items-center gap-2 rounded-panel py-1.5 pr-1.5 pl-3.5 text-label text-ink smooth-shadow-ring-lg glass transition-pop duration-(--dur-base) ease-out starting:translate-y-2 starting:opacity-0"
+          className="pointer-events-auto flex max-w-md items-center gap-2 rounded-panel py-1.5 pr-1.5 pl-3.5 text-label text-ink lift glass transition-pop duration-(--dur-base) ease-out starting:translate-y-2 starting:opacity-0"
         >
           <span className="min-w-0 flex-1 text-pretty">{saying.words}</span>
           {Option.isSome(saying.action) && (

@@ -499,7 +499,7 @@ function Messages({
               scroller.current.scrollTo({ top: 0, behavior: STILL.matches ? 'auto' : 'smooth' })
             }
           }}
-          className="absolute bottom-3 left-1/2 z-10 inline-flex size-8 -translate-x-1/2 cursor-pointer items-center justify-center rounded-full text-ink-2 smooth-shadow-ring-sm glass transition-pop duration-(--dur-base) ease-out hover:text-ink active:scale-96 starting:translate-y-1 starting:opacity-0"
+          className="absolute bottom-3 left-1/2 z-10 inline-flex size-8 -translate-x-1/2 cursor-pointer items-center justify-center rounded-full text-ink-2 lift glass transition-pop duration-(--dur-base) ease-out hover:text-ink active:scale-96 starting:translate-y-1 starting:opacity-0"
         >
           <ArrowDown className="size-4" />
         </button>

@@ -79,7 +79,7 @@ export function Composer({
           <BorderBeam active={working} colorVariant="ocean" strength={0.7} theme={shown}>
             {/* The beam reads its corner radius from the one element it wraps. */}
             <div
-              className="rounded-composer bg-surface-3 smooth-shadow-ring-sm"
+              className="rounded-composer bg-surface-3 lift"
               // A file dropped anywhere on the composer is attached, the same as picking it.
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => {
@@ -130,7 +130,7 @@ export function Composer({
                     'inline-flex size-9 cursor-pointer items-center justify-center rounded-full text-ink-on-accent transition-press duration-(--dur-fast) active:scale-96 disabled:cursor-not-allowed disabled:bg-wash-pressed disabled:text-ink-4',
                     working
                       ? 'bg-ink text-surface-0 hover:bg-ink-2'
-                      : 'bg-accent smooth-shadow-xs hover:bg-accent-hover',
+                      : 'bg-accent hover:bg-accent-hover',
                   )}
                 >
                   {working ? (
