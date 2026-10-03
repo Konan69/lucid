@@ -55,8 +55,9 @@ export const AnswerBrowserAccessRequest = Schema.Struct({
 })
 
 /**
- * Typed presentation of Yte's pending/resolved/timeout/disconnected outcomes. A missing request
- * or a choice outside request.scopes must be rejected by the future handler, not treated as consent.
+ * Typed presentation of Yte's pending/resolved/timeout/disconnected outcomes. The future handler
+ * must bind the answer to a live request, apply D's app refusal or mJ's site scope policy, and
+ * publish the resulting scope. Selecting always is not evidence that a global grant was stored.
  */
 export const BrowserAccessState = Schema.TaggedUnion({
   Pending: { request: BrowserAccessRequest },

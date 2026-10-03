@@ -50,15 +50,16 @@ Last brought up to date on 3 October 2026.
   Attribution refuses ambiguous working Runs: the current reservation still permits same-Person
   deliveries to join.
 
-| Capability                                                     | What is missing                                                                             |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| The Computer panel showing Boat's viewer inside the app        | Never opened in the app against real Boat                                                   |
-| Browser input from a Thread on Boat                            | Provider live proof covers clicking and verified text replacement; not driven from a Thread |
-| Vivid using the desktop (`use_desktop`) from a Thread          | Proven at the provider; not driven from a Thread on Boat                                    |
-| Mobile app                                                     | Tests only; never run on a device                                                           |
-| Google Integrations                                            | Need an operator sign-in client set up in Executor (`docs/22-one-product.md`)               |
-| An Approval raised by a real model's action, approved, and run | Tests only                                                                                  |
-| Routines firing from a real Integration event                  | Tests only                                                                                  |
+| Capability                                                     | What is missing                                                                                                                                                         |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The Computer panel showing Boat's viewer inside the app        | Never opened in the app against real Boat                                                                                                                               |
+| Browser input from a Thread on Boat                            | Provider live proof covers clicking and verified text replacement; not driven from a Thread                                                                             |
+| The Person's desktop browser                                   | Target/access/control contracts and PostgreSQL device receipts built; native input-token enforcement is unrecovered, Person route fails closed, runtime option withheld |
+| Vivid using the desktop (`use_desktop`) from a Thread          | Proven at the provider; not driven from a Thread on Boat                                                                                                                |
+| Mobile app                                                     | Tests only; never run on a device                                                                                                                                       |
+| Google Integrations                                            | Need an operator sign-in client set up in Executor (`docs/22-one-product.md`)                                                                                           |
+| An Approval raised by a real model's action, approved, and run | Tests only                                                                                                                                                              |
+| Routines firing from a real Integration event                  | Tests only                                                                                                                                                              |
 
 ## Not built
 
@@ -84,15 +85,16 @@ Last brought up to date on 3 October 2026.
 
 ## Grok Bot parity map
 
-| Grok Bot capability                          | Vivid today                                                                                        |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Persistent conversation and background state | Working                                                                                            |
-| Browser, terminal and filesystem computer    | Working at the Boat provider, including browser input; app viewer and Thread-driven input unproven |
-| Connectors and MCP services                  | Working through Executor; add by address working                                                   |
-| Approval before sensitive actions            | Working in tests; not yet seen with a real model                                                   |
-| Reusable skills                              | Working                                                                                            |
-| Scheduled and event-triggered routines       | Working in tests; events by polling                                                                |
-| Multiple agents collaborating                | Not built                                                                                          |
-| Files, links, images and richer input        | Pictures and the Library working; Artifact backend built, surfaces missing                         |
-| Activity transcript and action visibility    | Step lines and the Company record working; the per-Run work log not built                          |
-| Sharing and organization controls            | Working                                                                                            |
+| Grok Bot capability                          | Vivid today                                                                                                                    |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Persistent conversation and background state | Working                                                                                                                        |
+| Browser, terminal and filesystem computer    | Working at the Boat provider, including browser input; app viewer and Thread-driven input unproven                             |
+| The Person's own browser                     | Preparatory server channel tested with a fake device; native control and scoped access are blocked, no model tool option ships |
+| Connectors and MCP services                  | Working through Executor; add by address working                                                                               |
+| Approval before sensitive actions            | Working in tests; not yet seen with a real model                                                                               |
+| Reusable skills                              | Working                                                                                                                        |
+| Scheduled and event-triggered routines       | Working in tests; events by polling                                                                                            |
+| Multiple agents collaborating                | Not built                                                                                                                      |
+| Files, links, images and richer input        | Pictures and the Library working; Artifact backend built, surfaces missing                                                     |
+| Activity transcript and action visibility    | Step lines and the Company record working; the per-Run work log not built                                                      |
+| Sharing and organization controls            | Working                                                                                                                        |

@@ -294,3 +294,29 @@ sessions, reachable for human takeover.
 `docs/09-platform-architecture.md` sets the sequence and it still holds: run one real agent loop,
 prove durability across a restart, _then_ give it the real machine. The Computer lands on a backend
 whose auth and scoping are already verified — not beside one.
+
+## The Person's own browser
+
+The Person target means the retained pages in their signed-in desktop app, not the rest of their
+computer. Existing requests still default to Vivid's cloud Computer. A Person target never falls
+back to that Computer. Without a live device subscription it fails `NoDeviceConnected`.
+
+Shared target/device contracts and the server's authenticated request/receipt channel are built.
+Real PostgreSQL tests with a fake device prove selected-subscription delivery, receipt authority,
+expiry and uncertain disconnects without replay. This added server/desktop hop is a forced
+deviation from the reference's local model loop; its answer deadline is separate from native budgets.
+
+The native port is blocked. The recovered browser service creates target tokens and sends them
+with CDP input, but the corresponding enforcement receiver and Person-input attribution are not
+recovered. The exploratory Electron proof opened/read a page, then its CDP click answered Stopped.
+The guessed matcher/driver was removed. The public Person route fails closed even with a live
+subscriber; neither `on: 'yours'` nor expanded runtime abilities ship.
+
+`packages/contracts/src/browsers.ts` reserves access-request scopes, control status and Run Stop.
+These are not implemented grants or working Stop handlers. App/site access remains separate from
+an action Approval. Setup/execute, native budgets, grant persistence and Run stop markers still
+need their reference ports. Existing `pages.stop(tab)` stops loading only.
+
+Reference: browser `browser-service.mjs::ai/ec/tc/JA/Rs/wB/mJ/Dne/a7e`, main
+`executeCdpForBrowserUse/Yte/turnEnded`, and Windows `helper_transport.js::request/D/F/U`.
+The missing input-token receiver must be recovered before desktop control can ship.

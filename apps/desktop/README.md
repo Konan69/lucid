@@ -188,6 +188,24 @@ Media, clipboard reads and every other permission are denied, including on the c
 
 ## Verify
 
+### The Person's own browser: blocked port
+
+The server has target/device contracts and a PostgreSQL request/receipt channel, tested with a
+fake device. The desktop is not connected to that channel yet. No control driver or `on: 'yours'`
+runtime option ships. `packages/contracts/src/browsers.ts` reserves separate access requests with
+offered scopes, control state and Run Stop for the future surfaces; no frontend was changed.
+
+The recovered browser service injects an expected target token with CDP input, but its enforcement
+receiver and attribution of Person input are missing from the decompile. The exploratory native
+proof opened/read a retained page, then refused its own CDP click as Stopped. Its guessed matcher
+and driver were removed rather than substitute behaviour for the reference. Existing page Stop
+still means stop loading. Recover the native token receiver before adding control or advertising it.
+
+Reference: `browser-service.mjs::ai/ec/tc`, locator fill/press-sequentially handlers and
+`app/.vite/build/main-DpnWwRdP.js::executeCdpForBrowserUse/sendDebuggerCommand`.
+
+### Existing desktop checks
+
 ```sh
 pnpm --filter @vivid/desktop typecheck
 pnpm exec oxlint --type-aware apps/desktop/src/main apps/desktop/src/preload apps/desktop/src/shared
