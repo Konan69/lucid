@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, eq, gt } from 'drizzle-orm'
+import { and, eq, lte, gt, ne } from 'drizzle-orm'
 import {
   Clock,
   Context,
@@ -15,53 +15,112 @@ import {
 } from 'effect'
 import {
   BrowseOutcome,
+  DatabaseFailure,
+  Device,
+  DeviceAccess,
   DeviceAnswer,
+  DeviceId,
+  DeviceName,
+  DevicePresence,
   DeviceRequest,
   DeviceRequestId,
   Forbidden,
   NoDeviceConnected,
+  NotFound,
   type AnswerDeviceRequest,
   type BrowserAction,
+  type EnrolDeviceRequest,
+  type InstallationId,
   type PersonId,
   type SessionId,
   type ThreadId,
 } from '@vivid/contracts'
-import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
-import { deviceRequests } from './tables.ts'
+import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
+import { actingRun, type NoActingRun } from '../threads/runs.ts'
+import { DeviceReceipt, DeviceSubscriptionId, receiptOf } from './receipt.ts'
+import { deviceRequests, devices } from './tables.ts'
 
-/** Durable state never returns to dispatchable; unanswered dispatches remain uncertain after restart. */
-export const DeviceReceipt = Schema.TaggedUnion({
-  Dispatched: {},
-  Answered: { answer: DeviceAnswer },
-  OutcomeUnknown: {},
-})
-const encodeRequest = Schema.encodeSync(DeviceRequest)
-const encodeReceipt = Schema.encodeSync(DeviceReceipt)
-const SubscriptionId = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('DeviceSubscriptionId'),
-)
+/**
+ * How long one request may take from the moment a Run asks, in milliseconds. It covers everything:
+ * waiting for an earlier request to finish, the trip to the computer and the action itself. It is
+ * Vivid's own budget for a request that crosses the network; the reference keeps its model loop
+ * on the same machine and so has no such hop
+ * (artifacts/night/reviews/chatgpt-latest.md, section 2, "Routing").
+ */
+const REQUEST_BUDGET_MILLIS = 30_000
 
+/**
+ * How long a request waits for the computer to finish an earlier one before giving up. Shorter
+ * than the budget so a request that does get its turn still has time to be carried out.
+ */
+const TURN_WAIT_MILLIS = 10_000
+
+/** The Person's computer is still carrying out an earlier request, and this one stopped waiting. */
+export class DeviceBusy extends Schema.TaggedError<DeviceBusy>()(
+  'DeviceBusy',
+  { device: DeviceId },
+  { title: 'The Person’s computer is busy with an earlier request' },
+) {}
+
+/** One desktop app listening: the session that opened it, where its requests go, and its end. */
 interface Subscription {
-  readonly id: typeof SubscriptionId.Type
+  readonly id: DeviceSubscriptionId
+  readonly device: DeviceId
   readonly sessionId: SessionId
   readonly requests: Queue.Queue<DeviceRequest>
   readonly closed: Deferred.Deferred<void>
 }
+
+/** A request that was sent and is waiting, with the link it went out on. */
 interface Pending {
   readonly subscription: Subscription
   readonly answer: Deferred.Deferred<DeviceAnswer>
 }
-interface DeviceService {
-  readonly requireConnected: (personId: PersonId) => Effect.Effect<void, NoDeviceConnected>
-  readonly watch: (
+
+export interface DeviceService {
+  /** Records this installation as one of the Person's computers. Repeating it returns the same one. */
+  readonly enrol: (
     personId: PersonId,
-    sessionId: SessionId,
-  ) => Effect.Effect<Stream.Stream<DeviceRequest>, never, Scope.Scope>
+    request: EnrolDeviceRequest,
+  ) => Effect.Effect<Device, DatabaseInfrastructureError>
+  /** The Person's computers, oldest first, each with its access and whether it is listening. */
+  readonly list: (
+    personId: PersonId,
+  ) => Effect.Effect<ReadonlyArray<Device>, DatabaseInfrastructureError>
+  /** Lets Vivid use this computer and, in the same write, no other computer of this Person. */
+  readonly allow: (
+    personId: PersonId,
+    id: DeviceId,
+  ) => Effect.Effect<Device, NotFound | DatabaseInfrastructureError>
+  /** Takes access away and ends the computer's link at once. */
+  readonly revoke: (
+    personId: PersonId,
+    id: DeviceId,
+  ) => Effect.Effect<Device, NotFound | DatabaseInfrastructureError>
+  /** Whether the Person has an allowed computer listening right now. */
+  readonly requireConnected: (
+    personId: PersonId,
+  ) => Effect.Effect<void, NoDeviceConnected | DatabaseInfrastructureError>
+  /** The requests for one computer, for as long as the caller's scope lives. */
+  readonly watch: (input: {
+    readonly personId: PersonId
+    readonly sessionId: SessionId
+    readonly device: DeviceId
+    readonly installation: InstallationId
+  }) => Effect.Effect<
+    Stream.Stream<DeviceRequest>,
+    NotFound | Forbidden | DatabaseInfrastructureError,
+    Scope.Scope
+  >
+  /** Sends one action to the Person's computer for the Run working in this Thread. */
   readonly browse: (input: {
     readonly personId: PersonId
-    readonly threadId: Option.Option<ThreadId>
+    readonly threadId: ThreadId
     readonly action: BrowserAction
-  }) => Effect.Effect<BrowseOutcome, NoDeviceConnected | DatabaseInfrastructureError>
+  }) => Effect.Effect<
+    BrowseOutcome,
+    NoDeviceConnected | NoActingRun | DeviceBusy | DatabaseInfrastructureError
+  >
   readonly answer: (
     personId: PersonId,
     sessionId: SessionId,
@@ -70,85 +129,298 @@ interface DeviceService {
 }
 
 /**
- * Vivid-only deviation: Codex's model loop and helper are local (helper_transport.js::H.request).
- * Vivid's model Run is on the server, so this minimal authenticated subscription carries a request
- * and its receipt. It does not implement native access grants or replace the reference dispatcher.
+ * A Person's own computers, and the link Vivid reaches the allowed one through.
+ *
+ * The model is the reference desktop app's: the app on a Person's PC registers that PC, the PC
+ * appears in a list with a name, an access state and whether it is connected, the Person grants
+ * and takes away access explicitly, granting one computer drops the others, and the PC dials out
+ * so nothing has to reach into it (artifacts/night/reviews/chatgpt-latest.md, section 1, "Local PC
+ * used by the dot", and section 4, "Computers list" and "Attach/detach").
+ *
+ * What is Vivid's own: a Run lives on the server, so a request crosses the network and needs a
+ * deadline and a ledger; and a Thread can be shared, so a request is tied to the Run that asked
+ * and refused unless that Run is acting for the computer's own Person.
+ *
+ * Who is listening is kept in this process. That is right for one server and wrong behind more
+ * than one, where a request could arrive at an instance the computer is not connected to.
  */
-export class Device extends Context.Service<Device, DeviceService>()('vivid/Device') {}
+export class DeviceRegistry extends Context.Service<DeviceRegistry, DeviceService>()(
+  'vivid/DeviceRegistry',
+) {}
 
-/** Native refusals are final receipts; unknown is reserved for delivery whose answer was lost. */
-const outcome = (answer: DeviceAnswer): BrowseOutcome =>
+type DatabaseService = Database['Service']
+type DeviceRow = typeof devices.$inferSelect
+
+const decodeStoredDevice = decodeStored(
+  Schema.Struct({ id: DeviceId, name: DeviceName, access: DeviceAccess }),
+  'Device',
+)
+const decodeReceipt = decodeStored(DeviceReceipt, 'Device receipt')
+const encodeReceipt = Schema.encodeSync(DeviceReceipt)
+
+/** The two columns an access state is stored in. The only place the union becomes columns. */
+const accessColumns = (access: DeviceAccess) => ({
+  access: access._tag,
+  accessSince: access.since,
+})
+
+/** What the Run is told. Words for the model: they name the Person's computer and nothing inside it. */
+const outcomeOf = (answer: DeviceAnswer): BrowseOutcome =>
   DeviceAnswer.match<BrowseOutcome>(answer, {
     Done: ({ result }) => BrowseOutcome.cases.Completed.make({ result }),
     Refused: ({ reason }) =>
       BrowseOutcome.cases.Unavailable.make({
-        reason: `Your browser refused this action: ${reason}.`,
+        reason: `The Person’s computer refused this action: ${reason}.`,
       }),
     Failed: () =>
       BrowseOutcome.cases.Unavailable.make({
-        reason: 'Your browser could not complete this action.',
+        reason: 'The Person’s computer could not complete this action.',
       }),
   })
 
-/** Subscription lifetime is the only presence signal; no device identifier is supplied by callers. */
-const makePresence = (subscriptions: Map<PersonId, Set<Subscription>>) => {
-  /** A queue belongs to one subscription, never a Person-wide broadcast that could drive two devices. */
-  const subscribe = Effect.fn('Device.subscribe')(function* (
-    personId: PersonId,
-    sessionId: SessionId,
-  ) {
+/**
+ * Who is listening. One link per Device: a second link for the same Device takes over and the
+ * first one ends, so a connection that died without saying so cannot shadow the app that came
+ * back, and a request never has two places it might go.
+ */
+const makePresence = (links: Map<DeviceId, Subscription>) => {
+  /** Ending a link is one signal. Its stream stops and every request waiting on it settles. */
+  const close = (subscription: Subscription) => Deferred.succeed(subscription.closed, undefined)
+
+  const open = Effect.fn('Device.open')(function* (device: DeviceId, sessionId: SessionId) {
     const subscription: Subscription = {
-      id: SubscriptionId.make(NodeCrypto.randomUUID()),
+      id: DeviceSubscriptionId.make(NodeCrypto.randomUUID()),
+      device,
       sessionId,
       requests: yield* Queue.unbounded<DeviceRequest>(),
       closed: yield* Deferred.make<void>(),
     }
-    const current = subscriptions.get(personId)
-    if (current === undefined) subscriptions.set(personId, new Set([subscription]))
-    else current.add(subscription)
+    const replaced = links.get(device)
+    links.set(device, subscription)
+    if (replaced !== undefined) yield* close(replaced)
     return subscription
   })
 
-  /** Disconnect immediately ends presence and settles in-flight callers as uncertain; nothing is requeued. */
-  const release = Effect.fn('Device.release')(function* (
-    personId: PersonId,
-    subscription: Subscription,
-  ) {
-    const current = subscriptions.get(personId)
-    if (current !== undefined) {
-      current.delete(subscription)
-      if (current.size === 0) subscriptions.delete(personId)
-    }
-    yield* Deferred.succeed(subscription.closed, undefined)
-    yield* Queue.shutdown(subscription.requests)
+  /** The caller went away. A link that was already replaced must not remove its successor. */
+  const release = Effect.fn('Device.release')(function* (subscription: Subscription) {
+    if (links.get(subscription.device) === subscription) links.delete(subscription.device)
+    yield* close(subscription)
   })
 
-  return { subscribe, release }
+  /** Access was taken away: whoever is listening for this Device stops now. */
+  const end = Effect.fn('Device.end')(function* (device: DeviceId) {
+    const subscription = links.get(device)
+    if (subscription === undefined) return
+    links.delete(device)
+    yield* close(subscription)
+  })
+
+  const presenceOf = (device: DeviceId): DevicePresence =>
+    links.has(device)
+      ? DevicePresence.cases.Connected.make({})
+      : DevicePresence.cases.Offline.make({})
+
+  return { open, release, end, presenceOf }
 }
 
-/** Persistence conditionally claims an answer once and never makes a dispatched row eligible again. */
-const makeLedger = (database: Database['Service'], pending: Map<DeviceRequestId, Pending>) => {
-  /** Cleanup covers timeout, disconnect and tool cancellation; a failed write leaves Dispatched, never replayable. */
-  const retire = Effect.fn('Device.retire')(function* (id: DeviceRequestId) {
-    pending.delete(id)
-    yield* database
-      .run(
-        database
-          .update(deviceRequests)
-          .set({
-            state: encodeReceipt(DeviceReceipt.cases.OutcomeUnknown.make({})),
-            status: 'unknown',
-          })
-          .where(and(eq(deviceRequests.id, id), eq(deviceRequests.status, 'dispatched'))),
-      )
-      .pipe(
-        Effect.catch(() =>
-          Effect.logError('Device outcome could not be persisted; dispatch remains uncertain.'),
-        ),
-      )
+type Presence = ReturnType<typeof makePresence>
+
+/** The record of a Person's computers and who may be used: enrolling, listing, allowing, revoking. */
+const makeRegistry = (database: DatabaseService, presence: Presence) => {
+  const toDevice = Effect.fn('Device.toDevice')(function* (row: DeviceRow) {
+    const stored = yield* decodeStoredDevice({
+      id: row.id,
+      name: row.name,
+      access: { _tag: row.access, since: row.accessSince },
+    })
+    return Device.make({
+      id: stored.id,
+      name: stored.name,
+      access: stored.access,
+      presence: presence.presenceOf(stored.id),
+    })
   })
 
-  /** A copied capability is insufficient: answers require the selected live subscription's signed-in session. */
+  const owned = (personId: PersonId, id: DeviceId) =>
+    and(eq(devices.id, id), eq(devices.personId, personId))
+
+  const find = Effect.fn('Device.find')(function* (personId: PersonId, id: DeviceId) {
+    const [row] = yield* database.run(database.select().from(devices).where(owned(personId, id)))
+    // Another Person's computer and one that does not exist are the same answer on purpose.
+    if (row === undefined) return yield* new NotFound({ message: 'Computer not found' })
+    return row
+  })
+
+  /**
+   * One installation is one Device for a Person. The insert does nothing when it already exists,
+   * so a desktop app may enrol every time it starts; the access a Person already decided and a
+   * name they may have changed are left alone.
+   */
+  const enrol = Effect.fn('Device.enrol')(function* (
+    personId: PersonId,
+    request: EnrolDeviceRequest,
+  ) {
+    const now = yield* Clock.currentTimeMillis
+    yield* database.run(
+      database
+        .insert(devices)
+        .values({
+          id: DeviceId.make(NodeCrypto.randomUUID()),
+          personId,
+          installationId: request.installation,
+          name: request.name,
+          ...accessColumns(DeviceAccess.cases.Pending.make({ since: now })),
+          enrolledAt: now,
+        })
+        .onConflictDoNothing({ target: [devices.personId, devices.installationId] }),
+    )
+    const [row] = yield* database.run(
+      database
+        .select()
+        .from(devices)
+        .where(
+          and(eq(devices.personId, personId), eq(devices.installationId, request.installation)),
+        ),
+    )
+    if (row === undefined)
+      return yield* new DatabaseFailure({ message: 'Enrolled computer not found' })
+    return yield* toDevice(row)
+  })
+
+  const list = Effect.fn('Device.list')(function* (personId: PersonId) {
+    const rows = yield* database.run(
+      database
+        .select()
+        .from(devices)
+        .where(eq(devices.personId, personId))
+        .orderBy(devices.enrolledAt, devices.id),
+    )
+    return yield* Effect.forEach(rows, toDevice)
+  })
+
+  /**
+   * Allowing one computer revokes the Person's others in the same transaction, the reference's
+   * connect-and-replace (artifacts/night/reviews/chatgpt-latest.md, section 4, "Attach/detach").
+   * The Person's rows are locked first so two allows at once cannot both think they were last;
+   * the partial unique index on the table refuses the result if they somehow did.
+   */
+  const allow = Effect.fn('Device.allow')(function* (personId: PersonId, id: DeviceId) {
+    const now = yield* Clock.currentTimeMillis
+    const replaced = yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        yield* tx
+          .select({ id: devices.id })
+          .from(devices)
+          .where(eq(devices.personId, personId))
+          .for('update')
+        const [target] = yield* tx
+          .select({ access: devices.access })
+          .from(devices)
+          .where(owned(personId, id))
+        if (target === undefined) return yield* new NotFound({ message: 'Computer not found' })
+        const others = yield* tx
+          .update(devices)
+          .set(accessColumns(DeviceAccess.cases.Revoked.make({ since: now })))
+          .where(
+            and(eq(devices.personId, personId), eq(devices.access, 'Allowed'), ne(devices.id, id)),
+          )
+          .returning({ id: devices.id })
+        // Allowing what is already allowed keeps the moment it was first allowed.
+        if (target.access !== 'Allowed')
+          yield* tx
+            .update(devices)
+            .set(accessColumns(DeviceAccess.cases.Allowed.make({ since: now })))
+            .where(owned(personId, id))
+        return others
+      }),
+    )
+    yield* Effect.forEach(replaced, (other) => presence.end(other.id), { discard: true })
+    return yield* toDevice(yield* find(personId, id))
+  })
+
+  /** The write comes first and the link ends after it, so a link can never outlive its access. */
+  const revoke = Effect.fn('Device.revoke')(function* (personId: PersonId, id: DeviceId) {
+    const now = yield* Clock.currentTimeMillis
+    yield* database.run(
+      database
+        .update(devices)
+        .set(accessColumns(DeviceAccess.cases.Revoked.make({ since: now })))
+        .where(and(owned(personId, id), ne(devices.access, 'Revoked'))),
+    )
+    const row = yield* find(personId, id)
+    yield* presence.end(id)
+    return yield* toDevice(row)
+  })
+
+  /** The computer Vivid may use for this Person right now: the allowed one, when it is listening. */
+  const allowed = Effect.fn('Device.allowed')(function* (personId: PersonId) {
+    const [row] = yield* database.run(
+      database
+        .select({ id: devices.id })
+        .from(devices)
+        .where(and(eq(devices.personId, personId), eq(devices.access, 'Allowed'))),
+    )
+    return Option.fromUndefinedOr(row)
+  })
+
+  return { enrol, list, allow, revoke, allowed }
+}
+
+type Registry = ReturnType<typeof makeRegistry>
+
+/**
+ * Only the installation that enrolled a Device may listen for it, and only while it is allowed.
+ * A browser tab or a phone signed in as the same Person can list and allow computers, but has no
+ * installation to present, so it can never receive what is meant for the computer.
+ */
+const makeWatch = (database: DatabaseService, presence: Presence): DeviceService['watch'] => {
+  const admit = Effect.fn('Device.admit')(function* (input: Parameters<DeviceService['watch']>[0]) {
+    const [row] = yield* database.run(
+      database
+        .select({ access: devices.access })
+        .from(devices)
+        .where(
+          and(
+            eq(devices.id, input.device),
+            eq(devices.personId, input.personId),
+            eq(devices.installationId, input.installation),
+          ),
+        ),
+    )
+    if (row === undefined) return yield* new NotFound({ message: 'Computer not found' })
+    if (row.access !== 'Allowed')
+      return yield* new Forbidden({ message: 'This computer has not been allowed' })
+    return undefined
+  })
+
+  return Effect.fn('Device.watch')(function* (input) {
+    // Checked before the link opens, so a caller with no right to listen cannot displace the
+    // computer that has one.
+    yield* admit(input)
+    const subscription = yield* Effect.acquireRelease(
+      presence.open(input.device, input.sessionId),
+      presence.release,
+    )
+    // Checked again now that the link is registered: a revoke that committed in between has
+    // either been seen here, or will find this link and end it.
+    yield* admit(input)
+    return Stream.fromQueue(subscription.requests).pipe(
+      Stream.interruptWhen(Deferred.await(subscription.closed)),
+    )
+  })
+}
+
+/** The durable side of a dispatch: one row per request, moved once from `Dispatched` to its end. */
+const makeLedger = (database: DatabaseService, pending: Map<DeviceRequestId, Pending>) => {
+  const open = (id: DeviceRequestId) =>
+    and(eq(deviceRequests.id, id), eq(deviceRequests.status, 'Dispatched'))
+
+  /**
+   * An answer is accepted only from the live link the request went out on, held by the session
+   * that opened it, before the deadline, and once. The row is written before the waiting Run is
+   * woken, and the two steps cannot be separated by the caller hanging up: a row that says
+   * answered always has its answer delivered.
+   */
   const answer = Effect.fn('Device.answer')(function* (
     personId: PersonId,
     sessionId: SessionId,
@@ -157,117 +429,266 @@ const makeLedger = (database: Database['Service'], pending: Map<DeviceRequestId,
     const ticket = pending.get(input.id)
     if (
       ticket === undefined ||
+      ticket.subscription.device !== input.device ||
       ticket.subscription.sessionId !== sessionId ||
       (yield* Deferred.isDone(ticket.subscription.closed))
     )
-      return yield* new Forbidden({
-        message: 'This device request is no longer awaiting your answer',
-      })
+      return yield* new Forbidden({ message: 'This request is no longer waiting for an answer' })
     const now = yield* Clock.currentTimeMillis
-    const written = yield* database.run(
+    return yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const written = yield* database.run(
+          database
+            .update(deviceRequests)
+            .set({ receipt: encodeReceipt(receiptOf(input.answer)) })
+            .where(
+              and(
+                open(input.id),
+                eq(deviceRequests.personId, personId),
+                eq(deviceRequests.sessionId, sessionId),
+                eq(deviceRequests.subscriptionId, ticket.subscription.id),
+                gt(deviceRequests.expiresAt, now),
+              ),
+            )
+            .returning({ id: deviceRequests.id }),
+        )
+        if (written.length !== 1)
+          return yield* new Forbidden({
+            message: 'This request has expired or was already answered',
+          })
+        yield* Deferred.succeed(ticket.answer, input.answer)
+        return undefined
+      }),
+    )
+  })
+
+  /**
+   * Closes a request nobody answered in time, then reads the row once and reports what it says.
+   * An answer can commit in the instant the deadline passes; when it has, the row is the truth
+   * and the caller is given that answer, so the ledger and the Run never tell different stories.
+   */
+  const settle = Effect.fn('Device.settle')(function* (id: DeviceRequestId, ticket: Pending) {
+    yield* database.run(
       database
         .update(deviceRequests)
-        .set({
-          status: 'answered',
-          state: encodeReceipt(DeviceReceipt.cases.Answered.make({ answer: input.answer })),
-        })
-        .where(
-          and(
-            eq(deviceRequests.id, input.id),
-            eq(deviceRequests.personId, personId),
-            eq(deviceRequests.sessionId, sessionId),
-            eq(deviceRequests.subscriptionId, ticket.subscription.id),
-            eq(deviceRequests.status, 'dispatched'),
-            gt(deviceRequests.expiresAt, now),
-          ),
-        )
-        .returning({ id: deviceRequests.id }),
+        .set({ receipt: encodeReceipt(DeviceReceipt.cases.OutcomeUnknown.make({})) })
+        .where(open(id)),
     )
-    if (written.length !== 1)
-      return yield* new Forbidden({
-        message: 'This device request has expired or was already answered',
-      })
-    yield* Deferred.succeed(ticket.answer, input.answer)
-    return undefined
+    const [row] = yield* database.run(
+      database
+        .select({ receipt: deviceRequests.receipt })
+        .from(deviceRequests)
+        .where(eq(deviceRequests.id, id)),
+    )
+    if (row === undefined)
+      return yield* new DatabaseFailure({ message: 'Device request not found' })
+    const receipt = yield* decodeReceipt(row.receipt)
+    if (DeviceReceipt.isAnyOf(['Done', 'Refused', 'Failed'])(receipt))
+      return outcomeOf(yield* Deferred.await(ticket.answer))
+    return BrowseOutcome.cases.OutcomeUnknown.make({})
   })
-  return { retire, answer }
+
+  /**
+   * Requests whose deadline has passed and that still say `Dispatched` were abandoned: the server
+   * stopped while they were waiting. No answer can be accepted for them any more, so saying
+   * `OutcomeUnknown` is true whichever process sent them.
+   */
+  const reconcile = Effect.fn('Device.reconcile')(function* () {
+    const now = yield* Clock.currentTimeMillis
+    yield* database.run(
+      database
+        .update(deviceRequests)
+        .set({ receipt: encodeReceipt(DeviceReceipt.cases.OutcomeUnknown.make({})) })
+        .where(and(eq(deviceRequests.status, 'Dispatched'), lte(deviceRequests.expiresAt, now))),
+    )
+  })
+
+  return { answer, settle, reconcile }
 }
 
-/** The deadline is not renewed by reconnect. Persist before publishing and persist answers before waking callers. */
-export const deviceLayer = Layer.effect(
-  Device,
-  Effect.gen(function* () {
-    const database = yield* Database
-    const subscriptions = new Map<PersonId, Set<Subscription>>()
-    const pending = new Map<DeviceRequestId, Pending>()
-    const permit = yield* Semaphore.make(1)
+type Ledger = ReturnType<typeof makeLedger>
 
-    const presence = makePresence(subscriptions)
-    const ledger = makeLedger(database, pending)
-    /** Presence is a live subscription, not a durable device registration or the cloud Computer. */
-    const requireConnected = Effect.fn('Device.requireConnected')(function* (personId: PersonId) {
-      const connected = subscriptions.get(personId)
-      if (connected === undefined || connected.size === 0)
-        return yield* new NoDeviceConnected({ personId })
-      return undefined
+/**
+ * Waits its turn on one computer, for a bounded time. The wait is the only part that may be cut
+ * short here; once the turn is taken it is always given back, whatever happens to the work.
+ */
+const inTurn = <A, E>(turn: Semaphore.Semaphore, device: DeviceId, work: Effect.Effect<A, E>) =>
+  Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const taken = yield* restore(turn.take(1)).pipe(Effect.timeoutOption(TURN_WAIT_MILLIS))
+      if (Option.isNone(taken)) return yield* new DeviceBusy({ device })
+      return yield* restore(work).pipe(Effect.ensuring(turn.release(1)))
+    }),
+  )
+
+interface Dispatch {
+  readonly request: DeviceRequest
+  readonly personId: PersonId
+  readonly subscription: Subscription
+}
+
+/** Sends one request down a live link and waits for its answer, its deadline or the link's end. */
+const makeSend = (
+  database: DatabaseService,
+  ledger: Ledger,
+  pending: Map<DeviceRequestId, Pending>,
+) => {
+  /** Hands the request to the link, then waits for whichever comes first: answer, end, deadline. */
+  const awaitAnswer = Effect.fn('Device.awaitAnswer')(function* (
+    request: DeviceRequest,
+    ticket: Pending,
+  ) {
+    const { subscription } = ticket
+    // A link that ended while the row was being written is never sent to, and its replacement
+    // is never handed a request it did not open with.
+    if (!(yield* Deferred.isDone(subscription.closed)))
+      yield* Queue.offer(subscription.requests, request)
+    const remaining = Math.max(0, request.expiresAt - (yield* Clock.currentTimeMillis))
+    const answered = yield* Deferred.await(ticket.answer).pipe(
+      Effect.map(Option.some),
+      Effect.raceFirst(
+        Deferred.await(subscription.closed).pipe(Effect.as(Option.none<DeviceAnswer>())),
+      ),
+      Effect.timeoutOption(remaining),
+    )
+    return yield* Option.match(Option.flatten(answered), {
+      onNone: () => ledger.settle(request.id, ticket),
+      onSome: (answer) => Effect.succeed(outcomeOf(answer)),
     })
-    /** One global permit bounds server dispatch load; native serialization is a separate, blocked port. */
-    const browse = Effect.fn('Device.browse')(
-      function* (input: Parameters<DeviceService['browse']>[0]) {
-        const available = subscriptions.get(input.personId)
-        const subscription = available === undefined ? undefined : available.values().next().value
-        if (subscription === undefined)
-          return yield* new NoDeviceConnected({ personId: input.personId })
-        const now = yield* Clock.currentTimeMillis
+  })
+
+  return Effect.fn('Device.send')(function* ({ request, personId, subscription }: Dispatch) {
+    const ticket: Pending = { subscription, answer: yield* Deferred.make<DeviceAnswer>() }
+    // The row is written before anything is sent: a request the computer saw always has a record.
+    yield* database.run(
+      database.insert(deviceRequests).values({
+        id: request.id,
+        deviceId: subscription.device,
+        personId,
+        sessionId: subscription.sessionId,
+        subscriptionId: subscription.id,
+        threadId: request.threadId,
+        runId: request.runId,
+        action: request.action._tag,
+        receipt: encodeReceipt(DeviceReceipt.cases.Dispatched.make({})),
+        dispatchedAt: yield* Clock.currentTimeMillis,
+        expiresAt: request.expiresAt,
+      }),
+    )
+    pending.set(request.id, ticket)
+    return yield* awaitAnswer(request, ticket).pipe(
+      // A Run that is stopped mid-request has nobody left to tell. The row is still closed here;
+      // if that write fails it stays `Dispatched` until its deadline, and `reconcile` closes it.
+      Effect.onInterrupt(() =>
+        ledger.settle(request.id, ticket).pipe(
+          Effect.asVoid,
+          Effect.catch((failure) =>
+            Effect.logError('A stopped device request could not be closed', failure._tag),
+          ),
+        ),
+      ),
+      Effect.ensuring(Effect.sync(() => pending.delete(request.id))),
+    )
+  })
+}
+
+interface Dispatcher {
+  readonly database: DatabaseService
+  readonly registry: Registry
+  readonly links: Map<DeviceId, Subscription>
+  readonly send: ReturnType<typeof makeSend>
+}
+
+/**
+ * The whole path of one action: which Run is asking, which computer it may use, its turn, the
+ * request itself.
+ *
+ * Each Device has its own turn, so one Person's slow computer never delays another Person's. The
+ * deadline is fixed before the turn is waited for: time spent queueing is time the request no
+ * longer has.
+ */
+const makeBrowse = ({ database, registry, links, send }: Dispatcher): DeviceService['browse'] => {
+  const turns = new Map<DeviceId, Semaphore.Semaphore>()
+  const turnOf = (device: DeviceId) => {
+    const existing = turns.get(device)
+    if (existing !== undefined) return existing
+    const created = Semaphore.makeUnsafe(1)
+    turns.set(device, created)
+    return created
+  }
+
+  return Effect.fn('Device.browse')(function* (input) {
+    // The shared-Thread rule. `personId` is whose computer would be used; the Run working in the
+    // Thread must be acting for that same Person, by the Run's own record.
+    const runId = yield* actingRun(input.threadId, input.personId).pipe(
+      Effect.provideService(Database, database),
+    )
+    const device = yield* registry.allowed(input.personId)
+    if (Option.isNone(device)) return yield* new NoDeviceConnected({})
+    const id = device.value.id
+    const expiresAt = (yield* Clock.currentTimeMillis) + REQUEST_BUDGET_MILLIS
+    return yield* inTurn(
+      turnOf(id),
+      id,
+      Effect.gen(function* () {
+        // Read after the turn is taken: the link that was there when the wait began may be gone.
+        const subscription = links.get(id)
+        if (subscription === undefined) return yield* new NoDeviceConnected({})
         const request = DeviceRequest.make({
           id: DeviceRequestId.make(NodeCrypto.randomUUID()),
+          threadId: input.threadId,
+          runId,
           action: input.action,
-          // Vivid-only hop deadline, not the reference's 10-second native request budget.
-          expiresAt: now + 30_000,
+          expiresAt,
         })
-        const answer = yield* Deferred.make<DeviceAnswer>()
-        yield* database.run(
-          database.insert(deviceRequests).values({
-            id: request.id,
-            personId: input.personId,
-            sessionId: subscription.sessionId,
-            subscriptionId: subscription.id,
-            threadId: Option.getOrNull(input.threadId),
-            request: encodeRequest(request),
-            expiresAt: request.expiresAt,
-            status: 'dispatched',
-            state: encodeReceipt(DeviceReceipt.cases.Dispatched.make({})),
-          }),
-        )
-        return yield* Effect.gen(function* () {
-          pending.set(request.id, { subscription, answer })
-          // A departure during INSERT cannot grant a replacement subscription the old request.
-          if (yield* Deferred.isDone(subscription.closed))
-            return BrowseOutcome.cases.OutcomeUnknown.make({})
-          yield* Queue.offer(subscription.requests, request)
-          const received = yield* Deferred.await(answer).pipe(
-            Effect.map(Option.some),
-            Effect.raceFirst(
-              Deferred.await(subscription.closed).pipe(Effect.as(Option.none<DeviceAnswer>())),
-            ),
-            Effect.timeoutOption(Math.max(0, request.expiresAt - (yield* Clock.currentTimeMillis))),
-          )
-          return Option.match(Option.flatten(received), {
-            onNone: () => BrowseOutcome.cases.OutcomeUnknown.make({}),
-            onSome: outcome,
-          })
-        }).pipe(Effect.ensuring(ledger.retire(request.id)))
-      },
-      (effect) => permit.withPermit(effect),
+        return yield* send({ request, personId: input.personId, subscription })
+      }),
+    )
+  })
+}
+
+export const deviceLayer = Layer.effect(
+  DeviceRegistry,
+  Effect.gen(function* () {
+    const database = yield* Database
+    const links = new Map<DeviceId, Subscription>()
+    const pending = new Map<DeviceRequestId, Pending>()
+    const presence = makePresence(links)
+    const registry = makeRegistry(database, presence)
+    const ledger = makeLedger(database, pending)
+
+    // Once now, for what a previous process left behind and whose deadline has passed; once more
+    // when every deadline that process could have issued has passed too.
+    yield* ledger.reconcile()
+    yield* Effect.sleep(REQUEST_BUDGET_MILLIS).pipe(
+      Effect.andThen(ledger.reconcile()),
+      Effect.catch((failure) =>
+        Effect.logError('Abandoned device requests could not be closed', failure._tag),
+      ),
+      Effect.forkScoped,
     )
 
-    const watch = Effect.fn('Device.watch')(function* (personId: PersonId, sessionId: SessionId) {
-      const subscription = yield* Effect.acquireRelease(
-        presence.subscribe(personId, sessionId),
-        (current) => presence.release(personId, current),
-      )
-      return Stream.fromQueue(subscription.requests)
+    const requireConnected = Effect.fn('Device.requireConnected')(function* (personId: PersonId) {
+      const device = yield* registry.allowed(personId)
+      if (Option.isNone(device) || !links.has(device.value.id))
+        return yield* new NoDeviceConnected({})
+      return undefined
     })
-    return Device.of({ browse, answer: ledger.answer, watch, requireConnected })
+
+    return DeviceRegistry.of({
+      enrol: registry.enrol,
+      list: registry.list,
+      allow: registry.allow,
+      revoke: registry.revoke,
+      requireConnected,
+      watch: makeWatch(database, presence),
+      answer: ledger.answer,
+      browse: makeBrowse({
+        database,
+        registry,
+        links,
+        send: makeSend(database, ledger, pending),
+      }),
+    })
   }),
 )

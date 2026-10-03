@@ -26,6 +26,7 @@ import {
   ApprovalState,
   BrowserAction,
   BrowseTarget,
+  InstallationId,
   DesktopAction,
   DesktopOutcome,
   ComputerState,
@@ -58,7 +59,7 @@ import {
   computerScreenAddress,
 } from './store.ts'
 import * as TestClock from 'effect/testing/TestClock'
-import { Device, deviceLayer } from './device.ts'
+import { DeviceRegistry, deviceLayer } from './device.ts'
 import { computers } from './tables.ts'
 
 /** Test authority records actual seam calls and can lose machines or command receipts deliberately. */
@@ -717,7 +718,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
   )
 
   it.effect(
-    'Person browser never falls back to cloud or dispatches without recovered input enforcement',
+    'the Person’s computer is never replaced by Vivid’s Computer and nothing is sent to it yet',
     () =>
       Effect.gen(function* () {
         const { first } = yield* fixture()
@@ -730,8 +731,17 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         expect(
           (yield* computerHandlers.Browse(personRequest).pipe(asVivid(first), Effect.flip))._tag,
         ).toBe('NoDeviceConnected')
-        // Acquiring the stream establishes presence even before a consumer waits on its queue.
-        yield* (yield* Device).watch(first.id, SessionId.make(NodeCrypto.randomUUID()))
+        // An allowed computer that is listening: acquiring the stream is what establishes presence.
+        const registry = yield* DeviceRegistry
+        const installation = InstallationId.make(NodeCrypto.randomUUID())
+        const device = yield* registry.enrol(first.id, { installation, name: 'Test computer' })
+        yield* registry.allow(first.id, device.id)
+        yield* registry.watch({
+          personId: first.id,
+          sessionId: SessionId.make(NodeCrypto.randomUUID()),
+          device: device.id,
+          installation,
+        })
         const response = yield* computerHandlers.Browse(personRequest).pipe(asVivid(first))
         expect(response._tag).toBe('Unavailable')
         expect(yield* Ref.get(evidence.calls)).toEqual([])
@@ -746,8 +756,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           }),
         ).toEqual(
           ActionOutcome.cases.Failed.make({
-            reason:
-              'Your browser control is unavailable until its required input-token enforcement is recovered.',
+            reason: 'The Person’s computer cannot be used for browsing yet.',
           }),
         )
       }).pipe(Effect.scoped, Effect.provide(testLayer)),

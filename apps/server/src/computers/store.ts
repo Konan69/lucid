@@ -45,7 +45,7 @@ import {
   type MachineFailure,
   type MachineScreen,
 } from './machine.ts'
-import { Device } from './device.ts'
+import { DeviceRegistry } from './device.ts'
 import { computers } from './tables.ts'
 
 export { computerScreenAddress } from './machine.ts'
@@ -884,21 +884,21 @@ export const computerRunCommand = Effect.fn('Computer.runCommand')(function* (
   })
 })
 
-const personBrowserUnavailable =
-  'Your browser control is unavailable until its required input-token enforcement is recovered.'
+const personBrowserUnavailable = 'The Person’s computer cannot be used for browsing yet.'
 
 /**
- * Cloud actions retain their existing Gate. The Person route deliberately fails closed: the
- * reference browser-service.mjs::ai/ec/tc injects an expected-input token, but its enforcement
- * receiver is absent from the recovered app/.vite/build/main-DpnWwRdP.js::executeCdpForBrowserUse.
- * Do not dispatch through this public seam until access grants and that receiver are ported.
+ * Actions on Vivid's Computer go through the Gate as before. Actions on the Person's computer
+ * are refused here, before anything is sent: the desktop app enrols and listens, but it has
+ * nothing yet that carries an action out in the Person's browser. Opening this is a decision of
+ * its own, to be made with the allow screen and the desktop's own safeguards, not a side effect
+ * of the link existing.
  */
 export const computerBrowse = Effect.fn('Computer.browse')(function* (
   actor: Actor,
   request: BrowseRequest,
 ) {
   if (BrowseTarget.guards.Person(request.target)) {
-    yield* (yield* Device).requireConnected(actor.person.id)
+    yield* (yield* DeviceRegistry).requireConnected(actor.person.id)
     return BrowseOutcome.cases.Unavailable.make({ reason: personBrowserUnavailable })
   }
   const store = yield* ComputerStore
