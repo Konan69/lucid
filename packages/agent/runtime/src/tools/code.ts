@@ -8,7 +8,7 @@ import { warnFailure, type ToolResult } from './result.ts'
 import * as views from './views.ts'
 
 /** These are the entire guest API, with human account names and no Vivid ownership arguments. */
-const PROGRAM = `Run a short JavaScript async function body (top-level await and return work). Return JSON. No imports, network, filesystem, process or persistent state. Limits: 16 KiB source, 30 seconds total, 25 calls, 256 KiB per call/result, 1 MiB data, 32 KiB final result. Calls are serialized. Approval, a blocking rule or an unknown action ends the program; completed calls stay completed. Never replay it to resume.
+const PROGRAM = `Run a short JavaScript async function body (top-level await and return work). Return JSON. No imports, network, filesystem, process or persistent state. Limits: 16 KiB source, 30 seconds total, 25 calls, 256 KiB per call/result, 1 MiB data, 32 KiB final result. Approval, a blocking rule or an unknown action ends the program; calls already started finish and completed calls stay completed. Never replay it to resume.
 The callable API (TypeScript declarations describe JavaScript inputs):
 type Json = null | boolean | number | string | Json[] | {[key: string]: Json};
 declare const tools: {
