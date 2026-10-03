@@ -10,6 +10,7 @@ import { Option } from 'effect'
 import { ChevronDown, ListTree, Lock, MonitorSmartphone, Share2, Users } from 'lucide-react'
 import { Faces } from '../../ui/Avatar'
 import { Button, IconButton } from '../../ui/Button'
+import { useAppearance } from '../../data/vivid'
 import { cn } from '../../ui/cn'
 import { Face, type FaceMood } from '../../ui/Face'
 import { BAR } from '../bar'
@@ -27,6 +28,13 @@ export const STANDING = {
   ThreadRecord['attention'],
   { words: string; mood: FaceMood; tone: string }
 >
+
+/** How Vivid stands in a Thread's bar: the words, the look on its face, the colour of the line. */
+export interface Standing {
+  readonly words: string
+  readonly mood: FaceMood
+  readonly tone: string
+}
 
 /**
  * The top of a Thread. Vivid is in it, not just named by it: its face, the Thread's title, and a
@@ -48,7 +56,7 @@ export function Header({
   thread: Option.Option<ThreadRecord>
   /** What a Thread still on its way to the server will be called: its first words. */
   arriving: Option.Option<string>
-  standing: (typeof STANDING)[ThreadRecord['attention']]
+  standing: Standing
   about: boolean
   onAbout: () => void
   present: ThreadDetail['present']
@@ -139,6 +147,8 @@ function AudienceIcon({ audience }: { audience: ThreadAudience }) {
  * with the first messages, and while the card around Vivid is open the card owns the identity.
  */
 export function Hero({ mood, onOpen }: { mood: FaceMood; onOpen: () => void }) {
+  // The name this Person or their Company gave Vivid, live.
+  const { name } = useAppearance()
   return (
     <li className="pt-4 pb-8 text-center">
       <button
@@ -149,7 +159,7 @@ export function Hero({ mood, onOpen }: { mood: FaceMood; onOpen: () => void }) {
       >
         <Face size={56} mood={mood} />
         <span className="flex h-6 items-center gap-0.5 rounded-full pr-1.5 pl-2.5 text-title text-ink-2 ring-line transition-press duration-(--dur-fast) group-hover/hero:bg-wash-hover group-hover/hero:text-ink group-focus-visible/hero:bg-wash-hover">
-          Vivid
+          {name}
           <ChevronDown className="size-3.5 text-ink-3" />
         </span>
       </button>

@@ -1,0 +1,113 @@
+import { Appearance, DEFAULT_APPEARANCE, Look, Workspace, type MeResponse } from '@vivid/contracts'
+import { Option, Schema } from 'effect'
+import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
+import { useSyncExternalStore } from 'react'
+import type { FaceColor } from '../ui/Face'
+import { change } from './app'
+import { kept } from './kept'
+import { engine } from './runtime'
+import '../styles/vivid.css'
+
+/**
+ * What Vivid is called and how its face is drawn, live, for the whole app.
+ *
+ * There is one source: the `WatchAppearance` query, held open for as long as the page is. Every
+ * screen that names Vivid or draws its face reads it from here, so a change (made on this device,
+ * on another one, or by a Company admin) shows everywhere at the same moment.
+ *
+ * The last answer is remembered on this device, the way the theme is, so a reload draws Vivid as
+ * the Person left it instead of flashing the stock face while the socket connects.
+ *
+ * The colour reaches the faces through the document, not through each component: the chosen hue
+ * is written on `<html>` and `styles/vivid.css` recolours every Vivid face under it. The face is
+ * drawn in dozens of places owned by different screens; the document already carries the theme
+ * this way, and a face colour is the same kind of fact.
+ */
+
+const KEY = 'vivid-appearance'
+const AppearanceJson = Schema.fromJsonString(Appearance)
+const decodeKept = Schema.decodeUnknownOption(AppearanceJson)
+const encodeKept = Schema.encodeSync(AppearanceJson)
+
+/** What this browser last saw, when it kept something it still understands. */
+const remembered = (): Appearance =>
+  Option.getOrElse(Option.flatMap(kept.read(KEY), decodeKept), () => DEFAULT_APPEARANCE)
+
+let shown = remembered()
+const listeners = new Set<() => void>()
+
+/** The colour a look draws the face in. A hue the web face cannot draw fails to typecheck here. */
+export const faceColorOf = (look: Look): FaceColor =>
+  Look.match(look, {
+    Accent: () => 'accent' as const,
+    Hue: ({ hue }) => hue,
+  })
+
+const apply = () => {
+  const root = document.documentElement
+  Look.match(shown.look, {
+    // No attribute at all: every face keeps the theme's accent, as it is styled.
+    Accent: () => {
+      delete root.dataset.vividHue
+    },
+    Hue: ({ hue }) => {
+      root.dataset.vividHue = hue
+    },
+  })
+}
+apply()
+
+const adopt = (next: Appearance) => {
+  if (next.name === shown.name && faceColorOf(next.look) === faceColorOf(shown.look)) return
+  shown = next
+  kept.write(KEY, encodeKept(next))
+  apply()
+  for (const listener of listeners) listener()
+}
+
+/** The live query. An expected change (`saveAppearance`) flows through it like a server result. */
+export const appearance = engine.query((client) => client.WatchAppearance())
+
+// Held open for the life of the page, so the document is recoloured even on a screen that draws
+// no component of this module. It answers again when the Person changes workspace (`data/live`
+// reopens every query), which is how a Company's Vivid replaces the Person's own.
+engine.registry.subscribe(
+  appearance.atom,
+  (result) => {
+    if (AsyncResult.isSuccess(result)) adopt(result.value)
+  },
+  { immediate: true },
+)
+
+const subscribe = (listener: () => void) => {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+/** Vivid's name and look as they are now. Re-renders only when one of them changes. */
+export function useAppearance(): Appearance {
+  return useSyncExternalStore(subscribe, () => shown)
+}
+
+/**
+ * Whether this Person may change Vivid here: always in their own space, and in a Company only as
+ * its owner or an admin, because everyone in a Company shares one Vivid. The server enforces the
+ * same rule; this decides whether the way in is offered at all.
+ */
+export const mayCustomise = (me: MeResponse): boolean =>
+  Workspace.match(me.workspace, {
+    Personal: () => true,
+    Company: ({ role }) => role === 'owner' || role === 'admin',
+  })
+
+/**
+ * Saves a new appearance and shows it at once: the expectation recolours and renames Vivid on
+ * every surface before the server has answered, and is taken back if the server refuses.
+ */
+export const saveAppearance = (next: Appearance) =>
+  change(
+    (client) => client.SetAppearance(next),
+    () => appearance.expect(() => next),
+  )

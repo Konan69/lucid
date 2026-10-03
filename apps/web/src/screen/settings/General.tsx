@@ -6,9 +6,12 @@ import { reload, signOut } from '../../data/account'
 import { change, live, LiveState, useLive } from '../../data/live'
 import { run } from '../../data/app'
 import { theme } from '../../data/theme'
+import { mayCustomise, useAppearance } from '../../data/vivid'
 import { Avatar } from '../../ui/Avatar'
 import { Button } from '../../ui/Button'
+import { Face } from '../../ui/Face'
 import { Segmented } from '../../ui/Segmented'
+import { Customise } from '../vivid/Customise'
 import { Awaiting, Refusal, Row, Section } from './Parts'
 
 const THEMES = [
@@ -63,12 +66,44 @@ export function General({ me }: { me: MeResponse }) {
           </p>
         )}
       </Section>
+      <VividSection me={me} />
       {LiveState.$is('Ready')(settings) ? (
         <Preferences settings={settings.value} />
       ) : (
         <Awaiting state={settings} />
       )}
     </>
+  )
+}
+
+/**
+ * Vivid as it is here: its face, its name, and the way to change them. In a Company only an owner
+ * or admin is offered the change, because everyone there shares one Vivid; a member is told so.
+ */
+function VividSection({ me }: { me: MeResponse }) {
+  const { name } = useAppearance()
+  const [customising, setCustomising] = useState(false)
+  const editable = mayCustomise(me)
+  return (
+    <Section title="Vivid">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <Face size={40} label="" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-title font-title text-ink">{name}</span>
+          <span className="block text-label text-pretty text-ink-3">
+            {editable
+              ? 'Its name and colour, wherever it appears.'
+              : 'An owner or admin of this Company chooses its name and colour.'}
+          </span>
+        </span>
+        {editable && (
+          <Button aria-haspopup="dialog" onClick={() => setCustomising(true)}>
+            Customise
+          </Button>
+        )}
+      </div>
+      {customising && <Customise onClose={() => setCustomising(false)} />}
+    </Section>
   )
 }
 
