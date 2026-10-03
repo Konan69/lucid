@@ -32,7 +32,7 @@ import {
  * The server budgets first.code, and every generated function uses the ordinary metered bridge.
  */
 const ACCOUNTS =
-  'const accounts=new Proxy({}, {get(_target,account){if(account==="then"||String(account)!==account)return undefined;return new Proxy({}, {get(_target,tool){if(tool==="then"||String(tool)!==tool)return undefined;return (input,about)=>tools.use_tool({account,tool,input,summary:about.summary,rationale:about.rationale});}});}});'
+  'const accounts=new Proxy({}, {get(_target,account){if(account==="then"||String(account)!==account)return undefined;return new Proxy({}, {get(_target,tool){if(tool==="then"||String(tool)!==tool)return undefined;return (input,about)=>{if(about===undefined||about===null)throw new Error("Integration calls require a second argument with summary and rationale.");return tools.use_tool({account,tool,input,summary:about.summary,rationale:about.rationale});};}});}});'
 
 /** The only Promise adapter is pi's public callback API; tools themselves never run in this child. */
 function invokeTool(call: Effect.Effect<Schema.Json, PipeFailure>, signal: AbortSignal) {

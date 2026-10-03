@@ -112,8 +112,10 @@ export const ExecutorTool = Schema.Struct({
   name: Schema.NonEmptyString,
   description: Schema.String,
   input: Schema.Json,
-  // Discovery mapping keeps an explicit undefined when the provider declares no output schema.
-  output: Schema.optional(Schema.Json),
+  // An omitted provider schema is genuine absence; schema constructors normalize it to None.
+  output: Schema.Option(Schema.Json).pipe(
+    Schema.withConstructorDefault(Effect.succeed(Option.none())),
+  ),
   effect: ActionEffect,
 })
 export const ExecutorCallOutcome = Schema.TaggedUnion({
@@ -786,7 +788,7 @@ function makeDiscovery(http: ExecutorHttp) {
             name: tool.name,
             description: tool.description,
             input: tool.inputSchema,
-            output: tool.outputSchema,
+            output: Option.fromUndefinedOr(tool.outputSchema),
             effect: classifyTool(tool),
           }),
         )

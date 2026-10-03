@@ -30,7 +30,7 @@ import {
   resourceReason,
   ExecutorResumeOutcome,
 } from './executor.ts'
-import { discoveredTool } from '../code/signatures.ts'
+import { callableTool, discoveredTool } from '../code/signatures.ts'
 import { executorFailure } from './errors.ts'
 import { ConnectionStore } from './store.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
@@ -136,14 +136,17 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
       new InvalidRequest({ message: 'Tool limit must be a positive number.' }),
     )
   return {
-    tools: rank(groups.flat(), request.query, Math.min(25, Math.floor(limit))).map((tool) =>
-      DiscoveredTool.make({
-        connectionId: tool.connectionId,
-        account: tool.account,
-        name: tool.name,
-        description: tool.description,
-        effect: tool.effect,
-        ...discoveredTool(tool),
+    tools: yield* Effect.forEach(
+      rank(groups.flat().filter(callableTool), request.query, Math.min(25, Math.floor(limit))),
+      Effect.fn('Connections.discoveredTool')(function* (tool) {
+        return DiscoveredTool.make({
+          connectionId: tool.connectionId,
+          account: tool.account,
+          name: tool.name,
+          description: tool.description,
+          effect: tool.effect,
+          ...(yield* discoveredTool(tool)),
+        })
       }),
     ),
     unconnected: offered.filter(
