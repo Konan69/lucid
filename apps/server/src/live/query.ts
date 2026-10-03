@@ -1,10 +1,11 @@
+import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Stream from 'effect/Stream'
-import { Forbidden } from '@vivid/contracts'
+import { Forbidden, type PersonId, type SessionId } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import type { Actor } from '../auth/access.ts'
-import { sessionWorkspace } from '../auth/session.ts'
+import { sessionExpiry, sessionWorkspace } from '../auth/session.ts'
 import { Changes, Topic, topicsOf } from './changes.ts'
 
 /**
@@ -77,3 +78,27 @@ export const live = <A, E, R>(
       )
     }),
   )
+
+/**
+ * Fails, with `Unauthenticated`, the moment a session stops being one. Never succeeds.
+ *
+ * A subscription that is about the session itself rather than about data (a desktop app listening
+ * for work) has nothing to reload, so nothing would ever notice its session ending. Two things end
+ * a session and each needs its own watcher:
+ *
+ * - It is removed: signed out, or revoked from another device. Removing it publishes the Person's
+ *   topic (`auth/provider.ts`), and the session is read again on that.
+ * - It runs out. Nothing is written when that happens, so a timer waits for the moment the row
+ *   names. Using a session extends it, so when the timer fires the row is read again: a session
+ *   that was extended waits for its new end, and one that was not fails here.
+ */
+export const sessionEnded = (personId: PersonId, sessionId: SessionId) => {
+  const removed = watch([Topic.person(personId)], sessionWorkspace(personId, sessionId)).pipe(
+    Stream.runDrain,
+  )
+  const ranOut = Effect.gen(function* () {
+    const expiresAt = yield* sessionExpiry(personId, sessionId)
+    yield* Effect.sleep(expiresAt - (yield* Clock.currentTimeMillis))
+  }).pipe(Effect.forever)
+  return Effect.raceFirst(removed, ranOut)
+}

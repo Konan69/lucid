@@ -33,5 +33,10 @@
     "file": "apps/server/src/code/worker.ts",
     "classification": "third-party-adapter",
     "symbols": ["invokeTool"]
+  },
+  {
+    "file": "apps/server/src/auth/provider.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["makeOptions", "sessionRemoved"]
   }
 ]

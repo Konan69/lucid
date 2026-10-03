@@ -80,10 +80,10 @@ export const authenticate = Effect.fn('Auth.authenticate')(function* (headers: H
 })
 
 /**
- * Where a session is working right now. Read fresh each time it is asked: switching workspace and
- * being removed from a Company both take effect on open live queries without a reconnect.
+ * A session's row, while it is still a session. One that was signed out has no row and one that
+ * has run out has a past `expiresAt`; both are no session at all, and both fail the same way.
  */
-export const sessionWorkspace = Effect.fn('Auth.sessionWorkspace')(function* (
+const liveSession = Effect.fn('Auth.liveSession')(function* (
   personId: PersonId,
   sessionId: SessionId,
 ) {
@@ -97,12 +97,35 @@ export const sessionWorkspace = Effect.fn('Auth.sessionWorkspace')(function* (
   )
   const row = sessions[0]
   const now = yield* Clock.currentTimeMillis
-  // A session that was signed out or has run out is no session at all. This is asked again every
-  // time an open live query reloads, so signing out elsewhere ends what an old tab can still see.
   if (row === undefined || row.expiresAt.getTime() <= now) {
     return yield* Effect.fail(new Unauthenticated({ message: 'Authentication required' }))
   }
+  return row
+})
+
+/**
+ * Where a session is working right now. Read fresh each time it is asked: switching workspace and
+ * being removed from a Company both take effect on open live queries without a reconnect, and
+ * signing out elsewhere ends what an old tab can still see.
+ */
+export const sessionWorkspace = Effect.fn('Auth.sessionWorkspace')(function* (
+  personId: PersonId,
+  sessionId: SessionId,
+) {
+  const row = yield* liveSession(personId, sessionId)
   return yield* workspaceIn(personId, Option.fromNullOr(row.activeCompanyId))
+})
+
+/**
+ * Epoch milliseconds at which a session runs out, as its row says now. The answer can move later:
+ * using a session extends it, so a caller that waits for this moment asks again when it arrives
+ * instead of treating the first answer as final.
+ */
+export const sessionExpiry = Effect.fn('Auth.sessionExpiry')(function* (
+  personId: PersonId,
+  sessionId: SessionId,
+) {
+  return (yield* liveSession(personId, sessionId)).expiresAt.getTime()
 })
 
 /**

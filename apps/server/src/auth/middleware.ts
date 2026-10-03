@@ -8,6 +8,7 @@ import { AuthContext, AuthState, runtimeHeaders } from '@vivid/contracts/auth'
 import { RpcAuthMiddleware } from '@vivid/contracts/rpc'
 import { ServerConfig } from '../config.ts'
 import { Database } from '../database/client.ts'
+import type { Changes } from '../live/changes.ts'
 import { authenticate, authenticateVivid } from './session.ts'
 
 /**
@@ -24,7 +25,7 @@ import { authenticate, authenticateVivid } from './session.ts'
 export const rpcAuthMiddlewareLayer = Layer.effect(
   RpcAuthMiddleware,
   Effect.gen(function* () {
-    const services = yield* Effect.context<Database | ServerConfig>()
+    const services = yield* Effect.context<Database | ServerConfig | Changes>()
     const config = Context.get(services, ServerConfig)
     const runtimeAuthorization = `Bearer ${Redacted.value(config.RUNTIME_TOKEN)}`
     const identify = Effect.fn('Auth.identify')(function* (headers: Headers.Headers) {
