@@ -26,6 +26,21 @@ that graph; local development keeps the Command/Docker graph above. Railway Post
 Helix were reported healthy on 3 October 2026; application deployment still needs the container
 fixes and remote verification described below.
 
+### Deploying to production
+
+`pnpm infra:deploy --yes` needs `RAILWAY_API_TOKEN` for the personal Railway account, and is run
+from a clean checkout of `main` so half-edited files never ship.
+
+Known gap, Alchemy `2.0.0-beta.79`: the Railway provider waits about fifty seconds for a deployment
+(`alchemy/src/Railway/ServiceProvider.ts`, ten tries five seconds apart), and an image build takes
+about three minutes. The command therefore reports `ServiceDeployPending` and exits non-zero while
+the build goes on and succeeds on Railway. Two consequences:
+
+- Judge a deploy by Railway's deployment status and `/health`, not by the command's exit code.
+- A service the tool still records as "replacing" gets one more generated public domain on every
+  run, and the plan caps domains per service. After each deploy, delete every server domain except
+  the first one, which `PUBLIC_URL` uses. Remove this step when the provider waits for the build.
+
 ## Run locally
 
 1. Install dependencies with `pnpm install` using Node 24 or newer and pnpm `12.4.2`.
