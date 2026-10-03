@@ -2,66 +2,67 @@ import type { MeResponse } from '@vivid/contracts'
 import { Workspace } from '@vivid/contracts'
 import { draftPlace, greetingAt, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
-import { useState } from 'react'
-import { live, useLiveValue } from '../data/live'
-import { onboarding } from '../data/onboarding'
+import { useState, useSyncExternalStore } from 'react'
+import { Arrival, arrival } from '../data/arrival'
+import { live, LiveState, useLive } from '../data/live'
+import { Route, router } from '../data/route'
 import { startThread } from '../data/threads'
 import { useAppearance } from '../data/vivid'
 import { Face } from '../ui/Face'
-import { Opening } from './first/Opening'
 import { Composer } from './thread/Composer'
 
 /**
  * Home: a Thread that does not exist yet. Whatever the Person types becomes one.
  *
- * To someone who has never written to Vivid it is laid out as their first Thread, and Vivid has
- * already spoken in it (`Opening`): the conversation fills the page and the composer is at its
- * foot, where it is in every Thread. What they write, or the answer they press under Vivid's one
- * question, starts the real Thread, which keeps Vivid's opening above it.
+ * It is Vivid, a greeting and the composer in the middle of the page, where the eye already is,
+ * and nothing else. What is left of getting started is a small control at the foot of the sidebar
+ * (`sidebar/Started`), not a block here. There are no suggestion cards: four generic ones used to
+ * sit here and were filler.
  *
- * To everyone else it is Vivid, a greeting and the composer in the middle of the page, where the
- * eye already is, and nothing else. What is left of getting started is a small control at the
- * foot of the sidebar (`sidebar/Started`), not a block here. There are no suggestion cards: four
- * generic ones used to sit here and were filler.
+ * Home draws nothing of Vivid's own. Someone Vivid has not met is not greeted here: the server
+ * opens their first Thread and Vivid speaks first in it, for real (`data/arrival`), and they are
+ * taken there. Home used to draw an opening and a question itself, which Vivid's model never saw
+ * and so asked again in the Thread.
+ *
+ * Until it is known which of the two this Person is, Home is only Vivid's face (`Waiting`): while
+ * the Thread list has not arrived, and while an empty list is having its first Thread opened. The
+ * greeting used to show for that moment and then be taken away. If the first Thread cannot be
+ * opened, or this Person has Threads somewhere else already, Home is the greeting and the
+ * composer and they can simply type.
  */
 export function First({ me }: { me: MeResponse }) {
-  const threads = useLiveValue(live.threads)
-  // New means no Thread yet. Until the list has arrived nobody is treated as new, so someone
-  // coming back is never introduced to Vivid again for the blink before their Threads load.
-  const isNew = Option.exists(threads, (value) => value.threads.length === 0)
-  return isNew ? <Meeting me={me} /> : <Back me={me} />
+  const threads = useLive(live.threads)
+  const route = useSyncExternalStore(router.subscribe, router.route)
+  const standing = useSyncExternalStore(arrival.subscribe, arrival.standing)
+  const waiting = LiveState.$match(threads, {
+    Loading: () => true,
+    // A list that could not be read is not a reason to keep someone from typing.
+    Failed: () => false,
+    // Only on Home itself: this screen also stands behind a device approval, where nothing is
+    // asked of the server and so nothing is being waited for.
+    Ready: ({ value }) =>
+      value.threads.length === 0 && Route.$is('New')(route) && !Arrival.$is('Settled')(standing),
+  })
+  return waiting ? <Waiting /> : <Back me={me} />
+}
+
+/** Home before it is known what to show: Vivid's face alone, as the app is while it loads. */
+function Waiting() {
+  return (
+    <section
+      className="flex h-full min-w-0 flex-1 flex-col items-center justify-center bg-surface-0"
+      aria-busy
+    >
+      <Face size={40} mood="thinking" />
+    </section>
+  )
 }
 
 /** Where a new Thread's unsent words are kept for this Person in this workspace. */
 const placeOf = (me: MeResponse) =>
   draftPlace(me.person.id, { workspace: workspaceKey(me.workspace), thread: Option.none() })
 
-/** Home for someone Vivid has not met: their first Thread, with Vivid's opening already in it. */
-function Meeting({ me }: { me: MeResponse }) {
-  /** Starts the Thread that answers the opening, and remembers it as the one that did. */
-  const begin = (words: string) => onboarding.began(me.person.id, startThread(words))
-  return (
-    <section className="flex h-full min-w-0 flex-1 flex-col bg-surface-0">
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 sm:px-6">
-        {/* The same column, gutter and gap as a Thread's messages, so nothing moves when the
-            first words turn this into one. */}
-        <ol className="mx-auto flex w-full max-w-(--thread-max-w) flex-1 flex-col justify-end gap-5 py-6">
-          <Opening me={me} onSay={begin} />
-        </ol>
-      </div>
-      <Composer
-        place={placeOf(me)}
-        // Vivid has just asked a question; the message box is where it is answered in other words.
-        placeholder="Type your own answer"
-        working={false}
-        onSend={begin}
-        onStop={() => undefined}
-      />
-    </section>
-  )
-}
-
-/** Home for someone who has written to Vivid before: the greeting and the composer. */
+/** Home as it is once it is known what to show: the greeting and the composer. */
 function Back({ me }: { me: MeResponse }) {
   const { name } = useAppearance()
   // Read once: a greeting that changed while someone was looking at it would be a glitch.

@@ -7,8 +7,8 @@ import { Option, Schema } from 'effect'
 import { ArrowDown } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
 import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { arrival } from '../data/arrival'
 import { change, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
-import { onboarding } from '../data/onboarding'
 import { Route, router } from '../data/route'
 import { orSay } from '../data/said'
 import { FirstWords, firstWords } from '../data/threads'
@@ -20,7 +20,6 @@ import type { Picture } from './thread/Attach'
 import { Composer } from './thread/Composer'
 import { isBlank, Message, Said, textOf, type ThreadContext } from './thread/Message'
 import { newestRun, Outcome } from './thread/Outcome'
-import { Opened } from './first/Opening'
 import { Layout } from './thread/Layout'
 import { doingIn } from './thread/Trail'
 
@@ -230,7 +229,13 @@ function Conversation({
   const thread = Option.map(detail, (value) => value.thread)
   const shared = Option.exists(thread, (value) => !ThreadAudience.guards.Private(value.audience))
   const runs = Option.match(detail, { onNone: () => [], onSome: (value) => value.runs })
+  // The Thread the server just opened for Vivid to speak first in already has a Run going. Until
+  // the Thread's own record arrives to say so, that is known from having opened it, so the page
+  // shows Vivid thinking from its first frame and never an empty Thread.
+  const opening =
+    useSyncExternalStore(arrival.subscribe, () => arrival.isOpened(id)) && Option.isNone(thread)
   const working =
+    opening ||
     agent.status === 'submitted' ||
     agent.status === 'streaming' ||
     FirstWords.$is('Sending')(first) ||
@@ -267,9 +272,6 @@ function Conversation({
     send(text, crypto.randomUUID(), pictures)
 
   const lastSaid = lastWords(visible, me)
-  const opened = useSyncExternalStore(onboarding.subscribe, () =>
-    onboarding.isFirstThread(me.person.id, id),
-  )
   const ended = working ? Option.none() : newestRun(runs)
   return (
     <Layout
@@ -289,13 +291,7 @@ function Conversation({
       {(hero) => (
         <>
           <ConversationMessages
-            hero={
-              <>
-                {hero}
-                {/* The Thread that answered Vivid's opening keeps it above what was written. */}
-                {opened && <Opened me={me} />}
-              </>
-            }
+            hero={hero}
             ready={agent.historyReady}
             empty={visible.length === 0 && FirstWords.$is('Settled')(first)}
             working={working}
@@ -484,7 +480,8 @@ function Messages({
         >
           {/* Vivid at the top, part of the conversation: it scrolls away with it. */}
           {hero}
-          {!ready && empty && (
+          {/* Not while Vivid is working: the waiting row below is the truer thing to show. */}
+          {!ready && empty && !working && (
             <li className="py-12 text-center text-label text-ink-3" aria-busy>
               Opening the thread…
             </li>

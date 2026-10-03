@@ -12,8 +12,6 @@ import { kept } from './kept'
  */
 const listeners = new Set<() => void>()
 const nameOf = (person: PersonId) => `vivid-onboarding:${person}`
-const firstOf = (person: PersonId) => `vivid-first-thread:${person}`
-const answerOf = (person: PersonId) => `vivid-first-answer:${person}`
 const tell = () => {
   for (const listener of listeners) listener()
 }
@@ -25,27 +23,6 @@ export const onboarding = {
       listeners.delete(listener)
     }
   },
-  /**
-   * The Thread this Person started from Vivid's opening, which goes on showing that opening above
-   * what they wrote. A Thread has no creation time to find the first one by, so the one that
-   * answered the opening is remembered here.
-   */
-  isFirstThread: (person: PersonId, thread: string) =>
-    Option.contains(kept.read(firstOf(person)), thread),
-  /** Remembers the Thread that answered the opening. Only the first one is ever remembered. */
-  began: (person: PersonId, thread: string) => {
-    if (Option.isSome(kept.read(firstOf(person)))) return
-    kept.write(firstOf(person), thread)
-    tell()
-  },
-  /**
-   * The row this Person pressed under the opening's question, so the first Thread can go on
-   * showing the question as answered. Absent when they wrote their own words instead. Kept here
-   * for the same reason as the Thread: the opening is drawn by this app, not stored by the server.
-   */
-  answer: (person: PersonId) => kept.read(answerOf(person)),
-  /** Remembers the row pressed under the opening's question. */
-  answered: (person: PersonId, label: string) => kept.write(answerOf(person), label),
   /** Whether the list is over for this Person on this device. */
   isOver: (person: PersonId) => Option.isSome(kept.read(nameOf(person))),
   /**

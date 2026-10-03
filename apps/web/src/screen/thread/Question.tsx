@@ -35,8 +35,7 @@ const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
 /**
  * A question from Vivid, and the ways to answer it. Every question a Person answers by pressing
- * goes through this one piece: a real Input request in a Thread (`InputCard`) and the scripted
- * one in Vivid's opening (`first/Opening`), so the two cannot drift apart. It is presentational:
+ * goes through this one piece, a real Input request in a Thread (`InputCard`). It is presentational:
  * it is told the title, the choices and where the question stands, and owns nothing but the
  * words being typed, so the phone app can mirror it from the same description.
  *
