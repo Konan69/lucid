@@ -45,7 +45,9 @@ Last brought up to date on 3 October 2026.
 
 - **Artifacts**: Thread-owned Markdown documents, immutable versions, optimistic Person revisions,
   live RPC queries and runtime write/read tools. Missing: web, mobile and desktop lists, readers,
-  revision history, editing and removal surfaces; these still need an end-to-end rehearsal.
+  revision history, editing and removal surfaces; private user delivery turn preservation and
+  full-body runtime reads beyond the generic 4,000-character cap. Browser writing and reading work
+  for input-answer deliveries; ordinary private-message writes refuse the missing turn.
 
 | Capability                                                     | What is missing                                                               |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------- |

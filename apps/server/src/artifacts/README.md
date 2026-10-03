@@ -23,3 +23,9 @@ First versions have no note; later versions retain optional notes and author sna
 Actual mutations publish the Thread topic after commit. No existing audit event describes a
 local document revision, so this domain adds no audit record. Removing a Thread cascades through
 its documents and every version. Person-facing Artifact surfaces are still unbuilt.
+
+Two runtime boundaries remain: plain private user deliveries drop the delivery turn before
+Flue renders, so `write_document` refuses those without an RPC call. Signal deliveries, including
+input answers, retain their turn and work. The generic tool result adapter also limits strings
+to 4,000 characters and marks longer reads truncated; editing a whole long document needs that
+boundary to preserve its full body. Neither gap changes stored bodies or version history.
