@@ -117,6 +117,12 @@ export const CreateThreadRequest = Schema.Struct({
 }).annotate({ identifier: 'CreateThreadRequest', title: 'Create Thread request' })
 export interface CreateThreadRequest extends Schema.Schema.Type<typeof CreateThreadRequest> {}
 
+/** A standing check can open private work using words, never ownership or runtime identifiers. */
+export const OpenThreadRequest = Schema.Struct({
+  title: Schema.NonEmptyString.check(Schema.isMaxLength(100)),
+  context: Schema.NonEmptyString.check(Schema.isMaxLength(4000)),
+})
+
 /** Partial Thread fields a participant may change. */
 export const PatchThreadRequest = Schema.Struct({
   title: Schema.optionalKey(Schema.String),

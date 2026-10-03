@@ -41,6 +41,8 @@ export const StoredRunOrigin = Schema.TaggedUnion({
   // Older Runs and server-internal text deliveries predate fingerprinted gateway admission.
   Message: { fingerprint: Schema.optionalKey(Schema.String) },
   Routine: { routineName: Schema.String },
+  Standing: { routineName: Schema.String },
+  Attention: { routineName: Schema.String },
   Decision: {},
 })
 export type StoredRunOrigin = typeof StoredRunOrigin.Type

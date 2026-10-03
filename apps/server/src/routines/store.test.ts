@@ -47,6 +47,7 @@ import { ThreadStore, threadStoreLayer } from '../threads/store.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { notifications } from '../notifications/tables.ts'
 import { notifierLayer } from '../notifications/notifier.ts'
+import { unavailablePushLayer } from '../push/delivery.ts'
 import { SettingsStore, settingsStoreLayer } from '../settings/store.ts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { RoutineInvocation, RoutineThreadUnavailable } from './attempts.ts'
@@ -244,6 +245,7 @@ const storesLayer = Layer.mergeAll(
   Layer.provide(testConfigLayer),
 )
 const authoritiesLayer = Layer.mergeAll(recordedConversationLayer, notifierLayer).pipe(
+  Layer.provide(unavailablePushLayer),
   Layer.provideMerge(storesLayer),
 )
 const testLayer = routineSchedulerServiceLayer.pipe(Layer.provideMerge(authoritiesLayer))

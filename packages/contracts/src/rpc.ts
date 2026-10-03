@@ -16,6 +16,16 @@ import {
   WriteDocumentRequest,
 } from './artifacts.js'
 import { AuditListResponse } from './audit.js'
+import {
+  NotifyPersonOutcome,
+  NotifyPersonRequest,
+  PushUnavailable,
+  PushKeyResponse,
+  PushTargetId,
+  PushTargetListResponse,
+  PushTargetResponse,
+  RegisterPushTargetRequest,
+} from './push.js'
 import type { AuthContext } from './auth.js'
 import { CodeOutcome, ReadPageOutcome, ReadPageRequest, RunCodeRequest } from './code.js'
 import {
@@ -149,6 +159,7 @@ import {
 } from './skills.js'
 import {
   CreateThreadRequest,
+  OpenThreadRequest,
   Inbox,
   PatchThreadRequest,
   PresenceRequest,
@@ -194,6 +205,7 @@ export const RpcFailure = Schema.Union([
   DatabaseConstraintViolation,
   DatabaseUnavailable,
   DatabaseFailure,
+  PushUnavailable,
 ])
 export type RpcFailure = typeof RpcFailure.Type
 
@@ -205,6 +217,22 @@ export class RpcAuthMiddleware extends RpcMiddleware.Service<
 
 const call = { error: RpcFailure } as const
 const live = { error: RpcFailure, stream: true } as const
+
+/** Push registration is session-scoped; NotifyPerson is runtime-only at the handler boundary. */
+const RegisterPushTarget = Rpc.make('RegisterPushTarget', {
+  ...call,
+  payload: RegisterPushTargetRequest,
+  success: PushTargetResponse,
+})
+const ListPushTargets = Rpc.make('ListPushTargets', { ...call, success: PushTargetListResponse })
+const WatchPushTargets = Rpc.make('WatchPushTargets', { ...live, success: PushTargetListResponse })
+const RemovePushTarget = Rpc.make('RemovePushTarget', { ...call, payload: { id: PushTargetId } })
+const GetPushKey = Rpc.make('GetPushKey', { ...call, success: PushKeyResponse })
+const NotifyPerson = Rpc.make('NotifyPerson', {
+  ...call,
+  payload: NotifyPersonRequest,
+  success: NotifyPersonOutcome,
+})
 
 // ── The signed-in Person and where they are working ────────────────────────
 const Me = Rpc.make('Me', { ...call, success: MeResponse })
@@ -285,6 +313,11 @@ const CreateThread = Rpc.make('CreateThread', {
   ...call,
   payload: CreateThreadRequest,
   success: ThreadResponse,
+})
+const OpenThread = Rpc.make('OpenThread', {
+  ...call,
+  payload: OpenThreadRequest,
+  success: Schema.Struct({ title: Schema.String }),
 })
 const PatchThread = Rpc.make('PatchThread', {
   ...call,
@@ -722,6 +755,7 @@ export const VividRpc = RpcGroup.make(
   GetThread,
   WatchThread,
   CreateThread,
+  OpenThread,
   PatchThread,
   ShareThread,
   DeleteThread,
@@ -749,6 +783,12 @@ export const VividRpc = RpcGroup.make(
   ListAudit,
   WatchAudit,
   ListNotifications,
+  RegisterPushTarget,
+  ListPushTargets,
+  WatchPushTargets,
+  RemovePushTarget,
+  GetPushKey,
+  NotifyPerson,
   WatchNotifications,
   ReadNotifications,
   FindEvents,

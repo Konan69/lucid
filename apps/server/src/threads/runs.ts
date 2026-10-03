@@ -138,6 +138,25 @@ type DatabaseService = Database['Service']
 const decodeReceipt = decodeStored(Admitted, 'Run admission receipt')
 const encodeReceipt = Schema.encodeSync(Admitted)
 const decodeOrigin = decodeStored(StoredRunOrigin, 'Run origin')
+
+/** Standing checks choose attention through notify_person; completing a quiet check stays quiet. */
+export const automaticallyNotifies = Effect.fn('RunStore.automaticallyNotifies')(function* (
+  id: RunId,
+) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database.select({ origin: runs.origin }).from(runs).where(eq(runs.id, id)),
+  )
+  const row = rows[0]
+  if (row === undefined) return yield* new DatabaseFailure({ message: 'Settled Run not found.' })
+  return StoredRunOrigin.match(yield* decodeOrigin(row.origin), {
+    Message: () => true,
+    Routine: () => true,
+    Standing: () => false,
+    Attention: () => false,
+    Decision: () => true,
+  })
+})
 const decodeEnding = decodeStored(
   Schema.Literals(['completed', 'failed', 'stopped', 'unknown']),
   'Run state',
@@ -150,6 +169,9 @@ const originOf = (origin: StoredRunOrigin, person: PersonSummary) =>
   StoredRunOrigin.match(origin, {
     Message: (): RunOrigin => RunOrigin.cases.Message.make({ person }),
     Routine: ({ routineName }): RunOrigin => RunOrigin.cases.Routine.make({ person, routineName }),
+    Standing: ({ routineName }): RunOrigin => RunOrigin.cases.Routine.make({ person, routineName }),
+    Attention: ({ routineName }): RunOrigin =>
+      RunOrigin.cases.Routine.make({ person, routineName }),
     Decision: (): RunOrigin => RunOrigin.cases.Decision.make({ person }),
   })
 

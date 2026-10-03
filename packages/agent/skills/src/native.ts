@@ -1,4 +1,5 @@
 import type { SkillReference } from '@flue/runtime'
+import watchWhatNeedsMe from '../watch-what-needs-me/SKILL.md'
 import { manifest, type BuiltinRuntimeName } from './manifest.ts'
 import connectAService from '../connect-a-service/SKILL.md'
 import workInASignedInBrowser from '../work-in-a-signed-in-browser/SKILL.md'
@@ -25,6 +26,7 @@ import findPictures from '../find-pictures/SKILL.md'
 
 /** Static imports let Flue validate and bundle each folder. Total key coverage follows the manifest. */
 export const nativeSkills = {
+  'watch-what-needs-me': watchWhatNeedsMe,
   'connect-a-service': connectAService,
   'work-in-a-signed-in-browser': workInASignedInBrowser,
   'deep-research': deepResearch,

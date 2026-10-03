@@ -74,7 +74,10 @@ export const PatchRoutineRequest = Schema.Struct({
 /** Routine path parameters. */
 export const RoutineParams = Schema.Struct({ id: RoutineId })
 /** Routine list response. */
-export const RoutineListResponse = Schema.Struct({ routines: Schema.Array(Routine) })
+export const RoutineListResponse = Schema.Struct({
+  routines: Schema.Array(Routine),
+  templates: Schema.Array(CreateRoutineRequest),
+})
 /** Single Routine response. */
 export const RoutineResponse = Schema.Struct({ routine: Routine })
 /** Accepted Routine occurrence response. */

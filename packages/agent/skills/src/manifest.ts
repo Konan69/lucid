@@ -1,9 +1,33 @@
 import { Array as Arr } from 'effect'
 import { SkillId } from '@vivid/contracts'
 
+/** One opt-in standing procedure uses the existing cron scheduler; its working instructions live in SKILL.md. */
+export const standingRoutine = {
+  name: 'Watch what needs me',
+  prompt:
+    'Activate watch-what-needs-me and follow it. This is an authorised standing check. Notify only through notify_person when something needs the Person; otherwise finish silently.',
+  cron: '*/30 * * * *',
+} as const
+
 /** Display names and suggestion dependencies are shared by the server and runtime. Descriptions
  * and procedure bodies live only in SKILL.md; adding a name also extends the mount-map key type. */
 const definitions = [
+  {
+    runtimeName: 'watch-what-needs-me',
+    displayName: standingRoutine.name,
+    about: 'Looks at connected mail, calendar and open work and tells you only what needs you.',
+    starter: false,
+    needs: [
+      'find_integrations',
+      'find_tools',
+      'use_tool',
+      'recall',
+      'remember',
+      'open_thread',
+      'notify_person',
+    ],
+    connections: [],
+  },
   {
     runtimeName: 'connect-a-service',
     displayName: 'Connect a service',

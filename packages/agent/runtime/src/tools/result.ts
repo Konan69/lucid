@@ -119,7 +119,7 @@ const session = Schema.encodeSync(ComputerSession)(
  */
 function withComputer(output: Schema.Json, tool: string): Schema.Json {
   return computerTools.has(tool) && isObject(output) && output.ok === true
-    ? { ...output, computer: session }
+    ? Object.fromEntries([...Object.entries(output), ['computer', session]])
     : output
 }
 
@@ -153,6 +153,7 @@ export const settle = Effect.fn('Tools.settle')(function* (
         failure('The request conflicts with the current state; check it before trying again.'),
       InvalidRequest: () => failure('The request is invalid; check the supplied details.'),
       ServiceUnavailable: () => failure('That part of Vivid is not available right now.'),
+      PushUnavailable: () => failure('Push notifications are not configured on this Vivid server.'),
       RuntimeUnavailable: () => failure('Vivid cannot start that work right now.'),
       DatabaseUnavailable: () => failure('Vivid cannot reach its saved records right now.'),
       DatabaseConstraintViolation: () =>

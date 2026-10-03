@@ -61,7 +61,8 @@ import {
 import { conversationLayer } from './delivery.ts'
 import { gatewayRoutes } from './gateway.ts'
 import { Presence } from './presence.ts'
-import { RunStore, runStoreLayer, TurnReservation } from './runs.ts'
+import { RunStore, runStoreLayer, TurnReservation, automaticallyNotifies } from './runs.ts'
+import { openAttentionThread } from './opening.ts'
 import { threadStoreLayer } from './store.ts'
 import { threads } from './tables.ts'
 
@@ -328,6 +329,61 @@ const signals = [
 ] as const
 
 describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
+  it.effect(
+    'a standing finding opens one private Thread and Run through normal admission; a child cannot fan out',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const test = yield* harness()
+          const source = yield* test.conversation.admit({
+            threadId: test.threadId,
+            personId: test.ada,
+            speaker: DeliverySpeaker.cases.Vivid.make({}),
+            idempotencyKey: NodeCrypto.randomUUID(),
+            libraryFolder: null,
+            origin: StoredRunOrigin.cases.Standing.make({ routineName: 'Watch what needs me' }),
+            message: DeliveryMessage.cases.Signal.make({
+              type: 'schedule',
+              body: 'Check mail and calendar.',
+              attributes: { name: 'Watch what needs me' },
+            }),
+          })
+          const input = {
+            personId: test.ada,
+            threadId: test.threadId,
+            request: {
+              title: 'Calendar clash',
+              context: 'Two confirmed meetings overlap tomorrow at 10:00. Choose which to move.',
+            },
+          }
+          const open = openAttentionThread(input).pipe(
+            Effect.provide(test.services),
+            Effect.provideService(Conversation, test.conversation),
+          )
+          expect(yield* open).toEqual({ title: 'Calendar clash' })
+          yield* open
+          const database = yield* Database
+          const created = yield* database.run(
+            database.select().from(threads).where(eq(threads.personId, test.ada)),
+          )
+          const child = created.find((thread) => thread.title === input.request.title)
+          if (child === undefined) expect.fail('Expected private finding Thread')
+          expect(child).toMatchObject({ companyId: null, audience: 'private' })
+          const childRuns = yield* (yield* RunStore).list(child.id)
+          expect(childRuns).toHaveLength(1)
+          const childRun = childRuns[0]
+          if (childRun === undefined) expect.fail('Expected admitted finding Run')
+          expect(yield* automaticallyNotifies(source.runId)).toBe(false)
+          expect(yield* automaticallyNotifies(childRun.id)).toBe(false)
+          const refused = yield* openAttentionThread({ ...input, threadId: child.id }).pipe(
+            Effect.provide(test.services),
+            Effect.provideService(Conversation, test.conversation),
+            Effect.result,
+          )
+          expect(Result.isFailure(refused) && refused.failure._tag).toBe('Forbidden')
+        }),
+      ).pipe(Effect.provide(databaseLayer)),
+  )
   it.effect('failed Flue admission ends the Run with Delivery and does not block Ben', () =>
     Effect.gen(function* () {
       const test = yield* harness()

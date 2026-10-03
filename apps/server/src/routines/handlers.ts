@@ -6,6 +6,8 @@ import {
   OccurrenceResponse,
   RoutineListResponse,
   RoutineResponse,
+  RoutineTrigger,
+  Workspace,
   type RoutineId,
   type FindEventsRequest,
   type CreateRoutineRequest,
@@ -13,7 +15,9 @@ import {
   type PatchRoutineRequest,
   type RoutineParams,
 } from '@vivid/contracts'
-import { requireActor, type Actor } from '../auth/access.ts'
+import { requireActor, requirePerson, type Actor } from '../auth/access.ts'
+import { standingRoutine } from '@vivid/skills'
+import { Option } from 'effect'
 import { changed } from '../live/changes.ts'
 import { live } from '../live/query.ts'
 import { THREAD_OPENING_FAILURE } from './attempts.ts'
@@ -30,7 +34,20 @@ const invalidSchedule = (error: InvalidRoutineSchedule) =>
 
 /** List and Watch use one owner-scoped loader, including when the live workspace changes. */
 const loadRoutines = Effect.fn('Rpc.loadRoutines')(function* (actor: Actor) {
-  return RoutineListResponse.make({ routines: yield* (yield* RoutineStore).list(actor) })
+  const settings = yield* (yield* SettingsStore).get(actor.person.id)
+  return RoutineListResponse.make({
+    routines: yield* (yield* RoutineStore).list(actor),
+    templates: [
+      {
+        name: standingRoutine.name,
+        prompt: standingRoutine.prompt,
+        trigger: RoutineTrigger.cases.Schedule.make({
+          cron: standingRoutine.cron,
+          timezone: settings.timezone,
+        }),
+      },
+    ],
+  })
 })
 
 /** Resolves the store's concealed absence into the shared transport failure. */
@@ -75,7 +92,18 @@ const integrationFailure = <A, R>(
 const createRoutine = Effect.fn('Rpc.CreateRoutine')(function* (
   request: typeof CreateRoutineRequest.Type,
 ) {
-  const actor = yield* requireActor()
+  let actor = yield* requireActor()
+  // The built-in watch is always a personal commitment and needs an explicit signed-in action.
+  // The model may run its procedure later, but cannot silently opt its Person into standing checks.
+  if (request.prompt === standingRoutine.prompt) {
+    const auth = yield* requirePerson()
+    actor = {
+      person: auth.person,
+      workspace: Workspace.cases.Personal.make({}),
+      by: 'person',
+      threadId: Option.none(),
+    }
+  }
   const routine = yield* integrationFailure(
     concealMissing((yield* RoutineStore).create(actor, request)),
   ).pipe(

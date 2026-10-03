@@ -89,7 +89,7 @@ describe('native built-in mounts', () => {
   })
 
   it.live(
-    'renders Vivid with all 22 skills even without prepared summaries, then activates natively',
+    'renders Vivid with all built-in skills even without prepared summaries, then activates natively',
     () =>
       Effect.scoped(
         Effect.gen(function* () {

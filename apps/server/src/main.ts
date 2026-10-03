@@ -47,6 +47,10 @@ import {
 import { notifierLayer } from './notifications/notifier.ts'
 import { notificationStoreLayer } from './notifications/store.ts'
 import { projectStoreLayer } from './projects/store.ts'
+import { pushConfigLayer } from './push/config.ts'
+import { pushAdapterLayer } from './push/adapter.ts'
+import { pushLayer, pushReceiptsLayer } from './push/delivery.ts'
+import { pushTargetsLayer } from './push/targets.ts'
 import { routineSchedulerLayer, routineSchedulerServiceLayer } from './routines/scheduler.ts'
 import { routineStoreLayer } from './routines/store.ts'
 import { ruleJudgeLayer } from './rules/judge.ts'
@@ -111,13 +115,18 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     codeAuthorityLayer,
     deviceLayer,
   ).pipe(Layer.provideMerge(data))
+  const pushConfiguration = Layer.mergeAll(presenceLayer, pushConfigLayer).pipe(
+    Layer.provideMerge(foundation),
+  )
+  const pushFoundation = pushAdapterLayer.pipe(Layer.provideMerge(pushConfiguration))
+  const targets = pushTargetsLayer.pipe(Layer.provideMerge(pushFoundation))
+  const delivery = pushLayer.pipe(Layer.provideMerge(targets))
   const reach = Layer.mergeAll(
-    presenceLayer,
     notifierLayer,
     auditLayer,
     artifactStoreLayer,
     appearanceStoreLayer,
-  ).pipe(Layer.provideMerge(foundation))
+  ).pipe(Layer.provideMerge(delivery))
   const recorded = ruleStoreLayer.pipe(Layer.provideMerge(reach))
   const knowledge = memoryLayer.pipe(Layer.provideMerge(recorded))
   const conversation = conversationLayer.pipe(Layer.provideMerge(knowledge))
@@ -131,7 +140,7 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
   const decisions = gateLayer.pipe(Layer.provideMerge(trust))
   const work = Layer.mergeAll(routineStoreLayer, codeCallsLayer).pipe(Layer.provideMerge(decisions))
   const schedules = routineSchedulerServiceLayer.pipe(Layer.provideMerge(work))
-  const background = Layer.mergeAll(routineSchedulerLayer, approvalSweeperLayer)
+  const background = Layer.mergeAll(routineSchedulerLayer, approvalSweeperLayer, pushReceiptsLayer)
 
   const server = NodeHttpServer.layer(() => NodeHttp.createServer(), {
     host: config.HOST,
