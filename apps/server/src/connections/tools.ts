@@ -3,6 +3,7 @@ import {
   ActionTarget,
   ConnectionRequestMessage,
   ConnectionTool,
+  DiscoveredTool,
   ConnectionState,
   InvalidRequest,
   NotFound,
@@ -23,14 +24,24 @@ import { requireThread } from '../threads/access.ts'
 import {
   Executor,
   ExecutorCallOutcome,
+  ExecutorTool,
   ExecutorResourceMissing,
   connectionSetupMessage,
   resourceReason,
   ExecutorResumeOutcome,
 } from './executor.ts'
+import { discoveredTool } from '../code/signatures.ts'
 import { executorFailure } from './errors.ts'
 import { ConnectionStore } from './store.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
+
+/** Provider schemas stay on this server projection; discovery publishes only rendered signatures. */
+const NamedTool = ExecutorTool.pipe(
+  Schema.fieldsAssign({
+    connectionId: ConnectionTool.fields.connectionId,
+    account: ConnectionTool.fields.account,
+  }),
+)
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
 
@@ -66,7 +77,7 @@ const projectTools = Effect.fn('Connections.projectTools')(function* (
   return tools.flatMap((tool) =>
     row.companyId !== null && tool.effect !== 'read'
       ? []
-      : [ConnectionTool.make({ ...tool, connectionId: row.id, account })],
+      : [NamedTool.make({ ...tool, connectionId: row.id, account })],
   )
 })
 
@@ -125,7 +136,16 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
       new InvalidRequest({ message: 'Tool limit must be a positive number.' }),
     )
   return {
-    tools: rank(groups.flat(), request.query, Math.min(25, Math.floor(limit))),
+    tools: rank(groups.flat(), request.query, Math.min(25, Math.floor(limit))).map((tool) =>
+      DiscoveredTool.make({
+        connectionId: tool.connectionId,
+        account: tool.account,
+        name: tool.name,
+        description: tool.description,
+        effect: tool.effect,
+        ...discoveredTool(tool),
+      }),
+    ),
     unconnected: offered.filter(
       (service) => !ServiceAuthorization.guards.SetupRequired(service.authorization),
     ),

@@ -24,7 +24,7 @@ export function connectionTools(runTool: RunTool) {
     defineTool({
       name: 'find_tools',
       description:
-        'Find connected tools for a concrete request and integrations that could be connected to help.',
+        'Find Integration tools for a concrete request. Returns call expressions and TypeScript signatures, plus Integrations that could be connected to help.',
       input: v.object({ query: text('What you need to do or find.', 200) }),
       /** Account names are assigned by the server before ranking and limiting discovery. */
       run({ data, signal }) {

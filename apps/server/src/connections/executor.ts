@@ -112,6 +112,7 @@ export const ExecutorTool = Schema.Struct({
   name: Schema.NonEmptyString,
   description: Schema.String,
   input: Schema.Json,
+  output: Schema.optionalKey(Schema.Json),
   effect: ActionEffect,
 })
 export const ExecutorCallOutcome = Schema.TaggedUnion({
@@ -377,6 +378,7 @@ const WireTool = Schema.Struct({
   name: Schema.NonEmptyString,
   description: Schema.String,
   inputSchema: Schema.Json,
+  outputSchema: Schema.optionalKey(Schema.Json),
   readOnly: Schema.optionalKey(Schema.Boolean),
   annotations: Schema.optionalKey(
     Schema.Struct({
@@ -783,6 +785,7 @@ function makeDiscovery(http: ExecutorHttp) {
             name: tool.name,
             description: tool.description,
             input: tool.inputSchema,
+            output: tool.outputSchema,
             effect: classifyTool(tool),
           }),
         )

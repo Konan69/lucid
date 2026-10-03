@@ -47,7 +47,7 @@ export function skill(item: Skill, name: string) {
   }
 }
 
-/** Discovery exposes usable account names and schema documents, without catalog or Connection references. */
+/** Discovery exposes usable account names and callable signatures, without catalog or Connection references. */
 export function tools(response: FindToolsResponse) {
   return {
     tools: response.tools.map((item) => ({
@@ -55,10 +55,8 @@ export function tools(response: FindToolsResponse) {
       tool: item.name,
       description: modelText(item.description),
       effect: item.effect,
-      // Provider JSON Schema is a contract, not a record: dropping an id/email property breaks
-      // required inputs. Full provider name resolution needs service-specific contracts; this
-      // runtime owns only Vivid record resolution and cannot truthfully invent that translation.
-      input: item.input,
+      call: item.call,
+      signature: item.signature,
     })),
     unconnected: catalog(response.unconnected, (item) => modelText(item.name)).map(
       ({ item, name }) => ({

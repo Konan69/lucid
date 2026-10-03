@@ -40,7 +40,8 @@ function toolView(response: Awaited<Effect.Success<ReturnType<typeof findTools>>
       tool: item.name,
       description: item.description,
       effect: item.effect,
-      input: item.input,
+      call: item.call,
+      signature: item.signature,
     })),
     unconnected: response.unconnected.map((item) => ({
       service: item.name,

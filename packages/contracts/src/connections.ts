@@ -175,8 +175,20 @@ export const FindToolsRequest = Schema.Struct({
 })
 export interface FindToolsRequest extends Schema.Schema.Type<typeof FindToolsRequest> {}
 
+/** Discovery publishes callable documentation, while resolution keeps its input contract separate. */
+export const DiscoveredTool = Schema.Struct({
+  connectionId: ConnectionId,
+  account: Schema.String,
+  name: Schema.String,
+  description: Schema.String,
+  effect: ActionEffect,
+  call: Schema.String,
+  signature: Schema.String,
+})
+export interface DiscoveredTool extends Schema.Schema.Type<typeof DiscoveredTool> {}
+
 export const FindToolsResponse = Schema.Struct({
-  tools: Schema.Array(ConnectionTool),
+  tools: Schema.Array(DiscoveredTool),
   /** Services that would answer the query if they were connected, so Vivid can offer them. */
   unconnected: Schema.Array(Service),
 })
