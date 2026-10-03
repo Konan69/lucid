@@ -434,4 +434,8 @@ Each step leaves a product that runs.
 - **Voice.** No calls in this build, and the page loads nothing for them.
 - **Chat channels** (Slack, mail-in). The Thread model above is what they will deliver into.
 - **Ambient participation.** Vivid answers when addressed; it does not join rooms unasked.
+- **To-do lists and project management.** Decided 3 October 2026: Tasks, as work Vivid tracked
+  and followed up, are deleted. They will be designed again as two things. A Person gets a to-do
+  list of their own. A Company or team gets product and project management: owned work with a
+  state, inside a Project. Nothing of either is built; a reminder is a one-off Routine.
 - **Billing and usage limits.**

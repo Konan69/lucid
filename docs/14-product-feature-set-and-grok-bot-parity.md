@@ -66,6 +66,12 @@ Last brought up to date on 3 October 2026.
 - **Vivid-to-Vivid** across People and Companies (`docs/06-communication.md`).
 - **The Person's own computer as a device**, and taking over the Computer to teach a task.
 - **Push notifications**, **voice**, and **messaging channels** (mail in, Slack and the like).
+- **To-do lists and project management.** Tasks as Vivid first had them (things Vivid tracked and
+  chased) were removed on 3 October 2026. They come back in two different shapes, neither built:
+  for a Person, a to-do list that is theirs: things they mean to do, which Vivid can add to, tick
+  off and remind about; for a Company or team, product and project management: work that has an
+  owner, a state and a place in a Project, seen by everyone on it. Until then a reminder is a
+  one-off Routine.
 - **Billing and usage limits.**
 
 ## Known limits
