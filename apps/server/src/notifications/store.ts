@@ -10,7 +10,7 @@ import {
 } from '@vivid/contracts'
 import { ownedHere, type Actor } from '../auth/access.ts'
 import { Database, decodeStored, returned } from '../database/client.ts'
-import { notifications } from '../tasks/tables.ts'
+import { notifications } from '../notifications/tables.ts'
 
 const decodeNotification = decodeStored(Notification, 'notification')
 

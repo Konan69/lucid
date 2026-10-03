@@ -2,8 +2,6 @@ import { describe, expect, it } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import {
-  Assignee,
-  Author,
   Company,
   CompanyId,
   LibraryFolder,
@@ -20,8 +18,6 @@ import {
   RoutineTrigger,
   SearchResult,
   SessionId,
-  Task,
-  TaskId,
   Thread,
   ThreadAudience,
   ThreadId,
@@ -31,7 +27,6 @@ import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import type { Actor } from '../auth/access.ts'
 import { LibraryStore } from '../library/store.ts'
 import { RoutineStore } from '../routines/store.ts'
-import { TaskStore } from '../tasks/store.ts'
 import { ThreadStore } from '../threads/store.ts'
 import { searchHandlers } from './handlers.ts'
 import { ConnectionStore } from '../connections/store.ts'
@@ -41,7 +36,6 @@ const person = new Person({
   name: 'Ada',
   email: 'ada@example.test',
 })
-const owner = PersonSummary.make({ id: person.id, name: person.name, image: null })
 const teammate = PersonSummary.make({
   id: PersonId.make('search-teammate'),
   name: 'Bayo',
@@ -67,27 +61,6 @@ const thread = (id: string, title: string, preview: string, updatedAt: number) =
     audience: ThreadAudience.cases.Company.make({}),
     projectId: null,
     attention: 'Quiet',
-  })
-
-/** Complete wire fixtures keep the test focused on ranking rather than persistence. */
-const task = (id: string, title: string, detail: string, dueAt: number | null) =>
-  Task.make({
-    id: TaskId.make(id),
-    title,
-    detail,
-    dueAt,
-    status: 'open',
-    priority: 'normal',
-    assignee: Assignee.cases.Nobody.make({}),
-    origin: { kind: 'manual' },
-    createdBy: Author.cases.Person.make({ person: owner }),
-    threadId: ThreadId.make('task-thread'),
-    overdueNotifiedAt: null,
-    completedAt: null,
-    createdAt: now,
-    updatedAt: now,
-    followUps: [],
-    nextFollowUpAt: null,
   })
 
 /** Only names are searchable for Library documents; preview text must not introduce a match. */
@@ -141,14 +114,12 @@ const routine = (id: string, name: string, prompt: string, runs: ReadonlyArray<O
 
 interface VisibleData {
   readonly threads: ReadonlyArray<Thread>
-  readonly tasks: ReadonlyArray<Task>
   readonly routines: ReadonlyArray<Routine>
   readonly items: ReadonlyArray<LibraryItem>
   readonly workspace: Workspace
 }
 const empty: VisibleData = {
   threads: [],
-  tasks: [],
   routines: [],
   items: [],
   workspace: Workspace.cases.Personal.make({}),
@@ -173,13 +144,6 @@ const visibleLayer = (data: VisibleData) =>
         expect(actor.person.id).toBe(person.id)
         expect(actor.workspace).toEqual(data.workspace)
         return yield* Effect.succeed(data.threads)
-      }),
-    }),
-    Layer.mock(TaskStore, {
-      list: Effect.fn('SearchTest.tasks')(function* (actor, query) {
-        expect(actor.person.id).toBe(person.id)
-        expect(query).toEqual({})
-        return yield* Effect.succeed([...data.tasks])
       }),
     }),
     Layer.mock(RoutineStore, {
@@ -213,7 +177,6 @@ const visibleLayer = (data: VisibleData) =>
 /** Exhaustive result projection makes mixed-domain ordering assertions readable. */
 const resultId = SearchResult.match({
   Thread: ({ thread: value }): string => value.id,
-  Task: ({ task: value }): string => value.id,
   Routine: ({ routine: value }): string => value.id,
   LibraryItem: ({ item: value }): string => value.id,
 })
@@ -230,7 +193,6 @@ describe('Search', () => {
             thread('title', 'Annual report', '', now - 3),
             thread('partial', 'Annual', 'No matching body', now),
           ],
-          tasks: [task('task', 'Annual report', 'Budget', null)],
           routines: [routine('routine', 'Review', 'Annual report', [])],
           items: [
             item('mine', 'Annual report', now - 1, 'Mine'),
@@ -240,14 +202,7 @@ describe('Search', () => {
         const { results } = yield* searchHandlers
           .Search({ query: '  ANNUAL\tReport  ' })
           .pipe(Effect.provide(visibleLayer(data)))
-        expect(results.map(resultId)).toEqual([
-          'task',
-          'mine',
-          'shared',
-          'title',
-          'body',
-          'routine',
-        ])
+        expect(results.map(resultId)).toEqual(['mine', 'shared', 'title', 'body', 'routine'])
         const privateText = yield* searchHandlers
           .Search({ query: 'unsearchable' })
           .pipe(Effect.provide(visibleLayer(data)))
@@ -288,7 +243,6 @@ describe('Search', () => {
           list: Effect.fn('SearchTest.connections')(() => Effect.succeed({ connections: [] })),
         }),
         Layer.mock(ThreadStore, { list: () => Effect.succeed(threads) }),
-        Layer.mock(TaskStore, {}),
         Layer.mock(RoutineStore, {}),
         Layer.mock(LibraryStore, {}),
       )
@@ -313,102 +267,71 @@ describe('Search', () => {
 })
 
 describe('Suggestions', () => {
-  it.effect(
-    'prefers overdue Tasks, then upcoming work, new personal documents and failed Routines',
-    () =>
-      Effect.gen(function* () {
-        yield* TestClock.setTime(now)
-        const data: VisibleData = {
-          ...empty,
-          tasks: [
-            task('due', 'Prepare slides', '', now + day),
-            task('late', 'Review proposal', '', now - day),
-          ],
-          items: [
-            item('new', 'Your notes', now, 'Mine'),
-            item('old', 'Old notes', now - 2 * day, 'Mine'),
-          ],
-          routines: [
-            routine('review', 'Morning brief', '', [
-              occurrence('latest', 'failed', now),
-              occurrence('older', 'succeeded', now - day),
-            ]),
-          ],
-        }
-        const { suggestions } = yield* searchHandlers
-          .ListSuggestions()
-          .pipe(Effect.provide(visibleLayer(data)))
-        expect(suggestions.map((suggestion) => suggestion.text)).toEqual([
-          'Chase Review proposal',
-          'Work on Prepare slides',
-          'Summarise Your notes',
-          'Look at why Morning brief failed',
-        ])
-        expect(suggestions[0]).toEqual({
-          text: 'Chase Review proposal',
-          reason: 'Overdue since 2026-09-30',
-        })
-      }),
+  it.effect('offers new personal documents before failed Routines', () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now)
+      const data: VisibleData = {
+        ...empty,
+        items: [
+          item('new', 'Your notes', now, 'Mine'),
+          item('old', 'Old notes', now - 2 * day, 'Mine'),
+        ],
+        routines: [
+          routine('review', 'Morning brief', '', [
+            occurrence('latest', 'failed', now),
+            occurrence('older', 'succeeded', now - day),
+          ]),
+        ],
+      }
+      const { suggestions } = yield* searchHandlers
+        .ListSuggestions()
+        .pipe(Effect.provide(visibleLayer(data)))
+      expect(suggestions).toEqual([
+        { text: 'Summarise Your notes', reason: 'Added in the last day' },
+        { text: 'Look at why Morning brief failed', reason: 'Your last run failed' },
+      ])
+    }),
   )
-
-  it.effect(
-    'excludes completed, distant and other people’s Tasks, shared documents and recovered Routines',
-    () =>
-      Effect.gen(function* () {
-        yield* TestClock.setTime(now)
-        const otherTask = Task.make({
-          ...task('others', 'Other work', '', now - day),
-          createdBy: Author.cases.Person.make({ person: teammate }),
-        })
-        const data: VisibleData = {
-          ...empty,
-          workspace: Workspace.cases.Company.make({ company, role: 'member' }),
-          tasks: [
-            otherTask,
-            Task.make({ ...task('done', 'Finished work', '', now - day), status: 'done' }),
-            task('later', 'Later work', '', now + 3 * day),
-          ],
-          items: [item('shared', 'Company notes', now, 'Company')],
-          routines: [
-            routine('review', 'Recovered', '', [
-              occurrence('old', 'failed', now - day),
-              occurrence('new', 'succeeded', now),
-            ]),
-          ],
-        }
-        const { suggestions } = yield* searchHandlers
-          .ListSuggestions()
-          .pipe(Effect.provide(visibleLayer(data)))
-        expect(suggestions.map((suggestion) => suggestion.text)).toEqual([
-          'Connect a service',
-          'Watch a useful signal',
-          'Remember and correct preferences',
-          'Learn how we do this',
-        ])
-      }),
+  it.effect('excludes shared documents and recovered Routines and offers starters', () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now)
+      const data: VisibleData = {
+        ...empty,
+        workspace: Workspace.cases.Company.make({ company, role: 'member' }),
+        items: [item('shared', 'Company notes', now, 'Company')],
+        routines: [
+          routine('review', 'Recovered', '', [
+            occurrence('old', 'failed', now - day),
+            occurrence('new', 'succeeded', now),
+          ]),
+        ],
+      }
+      const { suggestions } = yield* searchHandlers
+        .ListSuggestions()
+        .pipe(Effect.provide(visibleLayer(data)))
+      expect(suggestions.map((suggestion) => suggestion.text)).toEqual([
+        'Connect a service',
+        'Watch a useful signal',
+        'Remember and correct preferences',
+        'Learn how we do this',
+      ])
+    }),
   )
-
-  it.effect(
-    'includes work assigned to this Person even when another Person created it, with a four-message limit',
-    () =>
-      Effect.gen(function* () {
-        yield* TestClock.setTime(now)
-        const tasks = Array.from({ length: 6 }, (_, index) =>
-          Task.make({
-            ...task(`assigned-${index}`, `Assigned ${index}`, '', now - (index + 1) * day),
-            createdBy: Author.cases.Vivid.make({ onBehalfOf: teammate }),
-            assignee: Assignee.cases.Member.make({ person: owner }),
-          }),
-        )
-        const { suggestions } = yield* searchHandlers
-          .ListSuggestions()
-          .pipe(Effect.provide(visibleLayer({ ...empty, tasks })))
-        expect(suggestions.map((suggestion) => suggestion.text)).toEqual([
-          'Chase Assigned 5',
-          'Chase Assigned 4',
-          'Chase Assigned 3',
-          'Chase Assigned 2',
-        ])
-      }),
+  it.effect('limits recent personal document suggestions to four, newest first', () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now)
+      const items = Array.from({ length: 6 }, (_, index) =>
+        item(`notes-${index}`, `Notes ${index}`, now - index, 'Mine'),
+      )
+      const { suggestions } = yield* searchHandlers
+        .ListSuggestions()
+        .pipe(Effect.provide(visibleLayer({ ...empty, items })))
+      expect(suggestions.map((suggestion) => suggestion.text)).toEqual([
+        'Summarise Notes 0',
+        'Summarise Notes 1',
+        'Summarise Notes 2',
+        'Summarise Notes 3',
+      ])
+    }),
   )
 })

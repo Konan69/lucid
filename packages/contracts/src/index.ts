@@ -16,7 +16,6 @@ export * from './settings.js'
 export * from './artifacts.js'
 export * from './shown.js'
 export * from './skills.js'
-export * from './tasks.js'
 export * from './threads.js'
 export {
   ApiError,

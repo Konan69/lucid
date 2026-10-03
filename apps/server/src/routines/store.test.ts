@@ -44,7 +44,7 @@ import { submissionId } from '../runtime/identity.ts'
 import { RunStore, runStoreLayer, TurnReservation } from '../threads/runs.ts'
 import { ThreadStore, threadStoreLayer } from '../threads/store.ts'
 import { runs, threads } from '../threads/tables.ts'
-import { notifications } from '../tasks/tables.ts'
+import { notifications } from '../notifications/tables.ts'
 import { notifierLayer } from '../notifications/notifier.ts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { RoutineInvocation, RoutineThreadUnavailable } from './attempts.ts'
@@ -1818,7 +1818,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         expect(yield* store.pendingEvents()).toHaveLength(0)
         const visible = yield* returned(yield* store.list(owner), 'Routine')
         expect((yield* returned(visible.runs, 'Occurrence')).error).toBe(
-          'Its Integration trigger changed before delivery',
+          'Its Routine trigger changed before delivery',
         )
         expect(yield* Ref.get(yield* Deliveries)).toHaveLength(0)
       }),

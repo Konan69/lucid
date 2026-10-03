@@ -24,28 +24,6 @@ describe('a step, in words', () => {
     ).toBe('done')
   })
 
-  it('preserves failure wording for an otherwise completed task update', () => {
-    expect(
-      describeToolCall(
-        'update_task',
-        Option.none(),
-        readAnswered({ task: { title: 'Review PRD', status: 'done' } }),
-        'failed',
-      ),
-    ).toMatchObject({ label: 'Could not update the task', detail: 'Review PRD' })
-  })
-
-  it('says a Task was marked done, and names it from what Vivid asked when nothing came back', () => {
-    expect(
-      describeToolCall(
-        'update_task',
-        readAsked({ task: 'Signed NDA from Dami' }),
-        readAnswered({ task: { status: 'done' } }),
-        'done',
-      ),
-    ).toMatchObject({ label: 'Marked a task done', detail: 'Signed NDA from Dami' })
-  })
-
   it('says which account a connection was used through and what for', () => {
     expect(
       describeToolCall(
@@ -127,7 +105,7 @@ describe('the line a reply’s steps collapse to', () => {
   const steps = [
     { id: 'a', label: 'Searched the Library' },
     { id: 'b', label: 'Using its browser' },
-    { id: 'c', label: 'Started tracking a task' },
+    { id: 'c', label: 'Set up a routine' },
   ]
 
   it('says what Vivid is doing right now while it is on a step', () => {

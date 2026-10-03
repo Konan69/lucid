@@ -8,7 +8,7 @@ not an agreement.
 ```text
 Routine
 ├── Name and one-line summary
-├── Trigger (schedule or event)
+├── Trigger (once, schedule, webhook or Integration event)
 ├── Actions (ordered, each one bounded)
 └── Origin
     ├── Written from scratch ("New routine")
@@ -30,12 +30,25 @@ Template detail
 
 ## What a routine is
 
-A routine is a named, repeatable instruction set: one trigger and a short ordered list of bounded
+A Routine is a named instruction set for one-off or repeated work: one trigger and a short ordered list of bounded
 actions. Routines are the output of the automation moments in conversations — when Vivid offers to
 repeat something, the thing it offers is a routine ("Vivid set up a routine · Every Monday at 8am").
 
 Routines are plain and inspectable. A person can read every action before and after installing.
 No code, no flow editor, no implementation nouns.
+
+## One-off reminders
+
+A reminder or anything to do once at a time is a one-off Routine. Its Once trigger stores an
+instant in epoch milliseconds and the Person's time zone for saying it back. The runtime sends a
+local date-time; the server resolves it using the Person's saved time zone and refuses times in
+the past, invalid dates and ambiguous daylight-saving times.
+
+The existing scheduler claims one durable Occurrence and disables the Routine with no next time.
+If admission is interrupted, replay uses the same receipt and delivery key. It cannot schedule a
+second Occurrence across a restart. The Routine, its Occurrence and its Thread remain afterward.
+An explicit pause or trigger change withdraws unadmitted work. Recurring checks require a Schedule
+trigger; a one-off does not silently repeat.
 
 ## Integration events (backend)
 

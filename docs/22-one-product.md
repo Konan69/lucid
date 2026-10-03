@@ -40,12 +40,11 @@ Company ── Membership(role: owner | admin | member) ── Person      (crea
 
 A workspace holds:
    ├── Thread            audience: Private | People(participants) | Company
-   │     ├── Run         one admitted delivery; startedBy: Person | Routine | FollowUp
+   │     ├── Run         one admitted delivery; startedBy: Person | Routine | Decision
    │     ├── InputRequest   a question a Run could not answer alone
    │     └── Approval       authorization for one exact action, addressed to one Person
    ├── Project           a work container; a Thread may be filed in one
-   ├── Task              belongs to a Thread; assignee: Member | Outsider(name) | Nobody
-   ├── Routine           owned by a Person; trigger: Schedule | Webhook
+   ├── Routine           owned by a Person; trigger: Once | Schedule | Webhook | Integration
    ├── Library           folders and items; shelf: Mine | Company
    ├── Connection        ownership: Personal(person) | Shared(company); backed by Executor
    ├── Rule              scope: Personal(person) | Company; decision: Allow | Ask | Never
@@ -69,7 +68,6 @@ for, their workspace, and whether a Person or Vivid is calling) and supplies the
 query is scoped with. Thread reach is decided in `threads/access.ts`. No handler re-derives either.
 
 - **Thread:** the creator, the listed participants, or every Member when the audience is Company.
-- **Task:** anyone who can see its Thread, plus its creator and its assignee.
 - **Library:** the owner for Personal scope; every Member for Company scope.
 - **Routine:** its owner only. Its results land in a Thread, which has its own audience.
 - **Connection use:** the owner for Personal; every Member, read actions only, for Shared.
@@ -88,7 +86,7 @@ A Run has exactly one acting Person. The application server is the only path to 
   `<message person="…" from="Ada Obi">`. Flue renders it to the model as a user turn, keeps the
   attribution in its own durable history, and exposes it to tools through `useDelivery()`. Clients
   render it as that Person's Message.
-- A Routine Occurrence or a follow-up is delivered as a signal that names its owner.
+- A Routine Occurrence is delivered as a signal that names its owner.
 
 The runtime passes the Thread and the acting Person on every product call. The server re-checks that
 Person's live Membership and Thread access on each call; a removed Member's Run stops being able to
@@ -139,7 +137,7 @@ handle on a record.
   delivery's turn number. Tools receive the scope through a Layer; the model cannot read it or
   change it. After a restart the runtime asks the server for the scope of a turn, with its own
   credential and for no Person.
-- **Things are named, not numbered.** A Task is its title, a skill its name, a Connection its
+- **Things are named, not numbered.** A Routine is its name, a skill its name, a Connection its
   account ("Gmail (Work)"), a memory its words. What the model was shown is what it can say back,
   and code resolves the name to the record under the acting Person's access. Two things with the
   same name are told apart in the list, in a stable order.
@@ -336,23 +334,24 @@ client polls.
 The surface rule in [Principle](01-principle.md) holds: a Thread list, a Thread, a settings gear.
 
 - **First run.** Sign up, then the Thread, in the Person's own space. Nothing else is asked.
-  Suggestions on the empty screen come from that Person's own Tasks, Routines and Library.
+  Suggestions on the empty screen come from that Person's own Routines and Library.
 - **Workspaces.** The switcher at the top of the sidebar lists the personal space and every Company
   the Person belongs to, and ends with **Create a company**: a name, and that is all. An invitation
   link shows who invited them and to what before they accept.
 - **Sidebar.** Vivid, then Routines, Projects, Library, Skills and Integrations, then Threads
   grouped by attention:
   **Needs you**, **Working**, then by day. A shared Thread shows the faces of the people in it. A
-  search palette (⌘K) finds Threads, Messages, Library items, Tasks and Routines.
+  search palette (⌘K) finds Threads, Messages, Library items and Routines.
 - **Thread.** The header carries Vivid's face, the title, a line saying how Vivid is doing ("Here
   with you", "Working on it…", "Waiting for you"), and **Share**: add people by name, or share
   with the whole Company. A button opens what is around Vivid: its computers, its integrations and
   what it lately did here. In a shared Thread each Message shows who sent it, and Vivid shows who it is answering.
   Cards in the Thread: a question to answer, an action to approve, a service to connect, a draft to
-  send, a Routine created, a Task created, a result to open.
-- **Tasks.** There is no separate page of Tasks. What Vivid is tracking shows where it was agreed,
-  as a card in its Thread, and anything that needs the Person reaches them as a notification and
-  as a Thread under **Needs you**.
+  send, a Routine created, a result to open.
+- **Reminders.** Anything to do once at a time is a one-off Routine. Its Occurrence reports in
+  its private Thread, and the Routine disables itself after firing. Commitments stay in the Thread
+  where they were agreed; anything needing the Person reaches them through notifications and
+  **Needs you**.
 - **Library.** Two shelves: **Mine** and the Company's.
 - **Skills.** What Vivid knows how to do: a starter set that ships with it, and what the Person or
   their Company has taught it. Trying one starts a Thread and asks for it in words.
@@ -419,7 +418,7 @@ Each step leaves a product that runs.
 4. **The trust loop.** Input requests, Approvals, rules, the audit record, and their cards.
 5. **Connections on Executor.** The adapter, ownership, `find_tools` and `use_tool`, the connect card.
 6. **Memory on HelixDB.** The store, the background pass, the brief, recall, the settings view.
-7. **Scoped work.** Tasks with Member assignees, personal Routines with a webhook trigger, the two
+7. **Scoped work.** Personal Routines with one-off, schedule, webhook and Integration triggers, the two
    Library shelves, Projects from real data, skills.
 8. **The Computer.** A machine per Person behind a provider boundary, with commands and a browser
    that pass through the trust loop.

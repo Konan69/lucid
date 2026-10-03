@@ -103,7 +103,6 @@ const originOf = (origin: StoredRunOrigin, person: PersonSummary) =>
   StoredRunOrigin.match(origin, {
     Message: (): RunOrigin => RunOrigin.cases.Message.make({ person }),
     Routine: ({ routineName }): RunOrigin => RunOrigin.cases.Routine.make({ person, routineName }),
-    FollowUp: ({ taskTitle }): RunOrigin => RunOrigin.cases.FollowUp.make({ person, taskTitle }),
     Decision: (): RunOrigin => RunOrigin.cases.Decision.make({ person }),
   })
 
@@ -172,7 +171,7 @@ const sameAuthority = Effect.fn('RunStore.sameAuthority')(function* (
  * rerenders joined deliveries with their authority and has no queue-only dispatch, so checking
  * before calling Flue is mandatory. The working-Person check and turn reservation share the
  * parent Thread lock: simultaneous different-Person deliveries cannot both pass an idle check.
- * Same-Person follow-ups still join. An admitted replay returns its original receipt before Busy;
+ * Same-Person Routine deliveries still join. An admitted replay returns its original receipt before Busy;
  * unadmitted reservations remain subject to the current working authority.
  */
 const makeStart = (database: DatabaseService): RunStoreService['start'] =>

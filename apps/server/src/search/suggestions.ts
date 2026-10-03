@@ -2,21 +2,16 @@ import { Array as Arr, Order, Result } from 'effect'
 import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
 import {
-  Author,
   ConnectionState,
   type Connection,
-  Assignee,
   Suggestion,
   type LibraryItem,
-  type PersonId,
   type Routine,
-  type Task,
 } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
 import { libraryFailure } from '../library/failures.ts'
 import { LibraryStore } from '../library/store.ts'
 import { RoutineStore } from '../routines/store.ts'
-import { TaskStore } from '../tasks/store.ts'
 import { ConnectionStore } from '../connections/store.ts'
 import { procedures } from '../skills/builtin/index.ts'
 
@@ -46,35 +41,6 @@ export const procedureSuggestions = (connections: ReadonlyArray<Connection>) => 
       reason: procedure.about,
     }),
   )
-}
-
-/** Visible Tasks can include shared work; the empty screen only offers work owned by or assigned to this Person. */
-const personalTask = (task: Task, personId: PersonId) => {
-  const creator = Author.match(task.createdBy, {
-    Person: ({ person }) => person.id,
-    Vivid: ({ onBehalfOf }) => onBehalfOf.id,
-  })
-  return (
-    creator === personId ||
-    (Assignee.guards.Member(task.assignee) && task.assignee.person.id === personId)
-  )
-}
-
-/** Due timestamps remain epoch milliseconds; days are displayed consistently in UTC. */
-const taskSuggestions = (tasks: ReadonlyArray<Task>, now: number) => {
-  const due = Arr.filterMap(tasks, (task) => {
-    if (task.status !== 'open' || task.dueAt === null || task.dueAt > now + 2 * DAY_MS)
-      return Result.failVoid
-    return Result.succeed({ task, due: task.dueAt })
-  })
-  return Arr.sort(due, (left: (typeof due)[number], right: (typeof due)[number]) =>
-    Order.Number(left.due, right.due),
-  ).map(({ task, due: at }) => {
-    const day = new Date(at).toISOString().slice(0, 10)
-    if (at < now)
-      return Suggestion.make({ text: `Chase ${task.title}`, reason: `Overdue since ${day}` })
-    return Suggestion.make({ text: `Work on ${task.title}`, reason: `Due ${day}` })
-  })
 }
 
 /** Recently added documents precede failed Routines but never include the shared Company shelf. */
@@ -107,24 +73,18 @@ const routineSuggestions = (routines: ReadonlyArray<Routine>) => {
 /** Fixed rules offer at most four useful next messages, with starters only when no work qualifies. */
 export const suggest = (
   data: {
-    readonly tasks: ReadonlyArray<Task>
     readonly items: ReadonlyArray<LibraryItem>
     readonly routines: ReadonlyArray<Routine>
   },
   now: number,
   starters: ReadonlyArray<Suggestion>,
 ): ReadonlyArray<Suggestion> => {
-  const suggestions = [
-    ...taskSuggestions(data.tasks, now),
-    ...librarySuggestions(data.items, now),
-    ...routineSuggestions(data.routines),
-  ]
+  const suggestions = [...librarySuggestions(data.items, now), ...routineSuggestions(data.routines)]
   return suggestions.length === 0 ? starters : suggestions.slice(0, 4)
 }
 
-/** Store authority supplies visibility; the additional Task filter keeps suggestions personal. */
+/** Each domain store supplies only the acting Person’s authorized records. */
 export const loadSuggestions = Effect.fn('Suggestions.load')(function* (actor: Actor) {
-  const tasks = yield* (yield* TaskStore).list(actor, {})
   const library = yield* (yield* LibraryStore)
     .list(actor, { shelf: 'Mine' })
     .pipe(Effect.mapError(libraryFailure))
@@ -133,7 +93,6 @@ export const loadSuggestions = Effect.fn('Suggestions.load')(function* (actor: A
   const { connections } = yield* (yield* ConnectionStore).list(actor)
   const suggestions = suggest(
     {
-      tasks: tasks.filter((task) => personalTask(task, actor.person.id)),
       items: library.documents,
       routines,
     },

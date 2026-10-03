@@ -26,8 +26,6 @@ const Asked = Schema.Struct({
   name: text,
   content: text,
   title: text,
-  /** `update_task` and `schedule_follow_up` name the Task by its title. */
-  task: text,
   question: text,
   /** `forget` says what to forget; `correct` says what is true now. */
   what: text,
@@ -45,10 +43,7 @@ const Answered = Schema.Struct({
   ok: Schema.OptionFromOptionalKey(Schema.Boolean),
   created: Schema.OptionFromOptionalKey(Schema.Boolean),
   changed: Schema.OptionFromOptionalKey(Schema.Boolean),
-  task: Schema.OptionFromOptionalKey(Schema.Struct({ title: text, status: text })),
-  followUp: Schema.OptionFromOptionalKey(Schema.Struct({ at: text })),
   results: list,
-  tasks: list,
   tools: list,
   memories: list,
   routines: list,
@@ -85,26 +80,6 @@ const quoted = (value: Option.Option<string>) => Option.map(said(value), (words)
 const counted = (items: Option.Option<ReadonlyArray<unknown>>, one: string, many: string) =>
   Option.map(items, (all) => (all.length === 1 ? `1 ${one}` : `${all.length} ${many}`))
 
-const followUpTime = new Intl.DateTimeFormat(undefined, {
-  weekday: 'short',
-  hour: 'numeric',
-  minute: '2-digit',
-})
-
-/** When a follow-up was set for, as a person would say it. */
-const followUpAt = (answered: Answered) =>
-  Option.map(
-    Option.flatMap(answered.followUp, (followUp) => said(followUp.at)),
-    (at) => followUpTime.format(Date.parse(at)),
-  )
-
-/** The Task a step was about: the one the server returned, or the one Vivid named. */
-const taskOf = (asked: Asked, answered: Answered) =>
-  Option.orElse(
-    Option.flatMap(answered.task, (task) => said(task.title)),
-    () => Option.orElse(said(asked.title), () => said(asked.task)),
-  )
-
 const nothing = (): ReadonlyArray<Option.Option<string>> => []
 
 const STEPS = {
@@ -118,41 +93,6 @@ const STEPS = {
       quoted(asked.query),
       counted(answered.results, 'source', 'sources'),
     ],
-  },
-  create_task: {
-    said: {
-      running: 'Starting to track a task',
-      done: 'Started tracking a task',
-      failed: 'Could not start tracking',
-    },
-    detail: (asked, answered) => [
-      taskOf(asked, answered),
-      Option.map(followUpAt(answered), (at) => `follow-up ${at}`),
-    ],
-  },
-  update_task: {
-    said: {
-      running: 'Updating a task',
-      done: 'Updated a task',
-      failed: 'Could not update the task',
-    },
-    detail: (asked, answered) => [taskOf(asked, answered)],
-  },
-  list_tasks: {
-    said: {
-      running: 'Checking the task list',
-      done: 'Checked the task list',
-      failed: 'Could not read the task list',
-    },
-    detail: (_asked, answered) => [Option.map(answered.tasks, (tasks) => `${tasks.length} open`)],
-  },
-  schedule_follow_up: {
-    said: {
-      running: 'Scheduling a follow-up',
-      done: 'Scheduled a follow-up',
-      failed: 'Could not schedule the follow-up',
-    },
-    detail: (asked, answered) => [taskOf(asked, answered), followUpAt(answered)],
   },
   find_tools: {
     said: {
@@ -356,17 +296,13 @@ const NOTHING_ASKED: Asked = {
   name: Option.none(),
   content: Option.none(),
   title: Option.none(),
-  task: Option.none(),
   question: Option.none(),
   what: Option.none(),
   now: Option.none(),
 }
 
 const NOTHING_ANSWERED: Answered = {
-  task: Option.none(),
-  followUp: Option.none(),
   results: Option.none(),
-  tasks: Option.none(),
   tools: Option.none(),
   memories: Option.none(),
   routines: Option.none(),
@@ -389,7 +325,7 @@ const settled = (state: ToolState, answered: Option.Option<Answered>): ToolState
     ? 'failed'
     : state
 
-/** Actual receipts distinguish unchanged documents, revisions and completed Tasks. */
+/** Actual receipts distinguish unchanged documents and revisions. */
 const labelOf = (
   toolName: string,
   step: Step,
@@ -413,14 +349,6 @@ const labelOf = (
     )
   )
     return 'Revised a document'
-  if (
-    toolName === 'update_task' &&
-    Option.exists(
-      Option.flatMap(answered, (result) => result.task),
-      (task) => Option.contains(task.status, 'done'),
-    )
-  )
-    return 'Marked a task done'
   return step.said[state]
 }
 

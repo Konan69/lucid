@@ -119,7 +119,6 @@ export const companyHandlers = {
         kind: 'invited',
         title: `Join ${company.name}`,
         body: `${auth.person.name} invited you to ${company.name}. invitation:${invitation.id}`,
-        taskId: null,
         threadId: null,
       })
     }

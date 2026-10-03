@@ -51,8 +51,6 @@ import { ruleStoreLayer } from './rules/store.ts'
 import { runtimeLayer } from './runtime/client.ts'
 import { settingsStoreLayer } from './settings/store.ts'
 import { skillStoreLayer } from './skills/store.ts'
-import { followUpSchedulerLayer, followUpsLayer } from './tasks/followups.ts'
-import { taskStoreLayer } from './tasks/store.ts'
 import { conversationLayer } from './threads/delivery.ts'
 import { presenceLayer } from './threads/presence.ts'
 import { runStoreLayer } from './threads/runs.ts'
@@ -123,17 +121,9 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     Layer.provideMerge(accounts),
   )
   const decisions = gateLayer.pipe(Layer.provideMerge(trust))
-  const work = Layer.mergeAll(taskStoreLayer, routineStoreLayer, codeCallsLayer).pipe(
-    Layer.provideMerge(decisions),
-  )
-  const schedules = Layer.mergeAll(followUpsLayer, routineSchedulerServiceLayer).pipe(
-    Layer.provideMerge(work),
-  )
-  const background = Layer.mergeAll(
-    followUpSchedulerLayer,
-    routineSchedulerLayer,
-    approvalSweeperLayer,
-  )
+  const work = Layer.mergeAll(routineStoreLayer, codeCallsLayer).pipe(Layer.provideMerge(decisions))
+  const schedules = routineSchedulerServiceLayer.pipe(Layer.provideMerge(work))
+  const background = Layer.mergeAll(routineSchedulerLayer, approvalSweeperLayer)
 
   const server = NodeHttpServer.layer(() => NodeHttp.createServer(), {
     host: '127.0.0.1',

@@ -187,7 +187,6 @@ const ask = Effect.fn('Inputs.ask')(function* (actor: Actor, request: AskInputRe
     kind: 'needs-you',
     title: 'Vivid has a question',
     body: request.question,
-    taskId: null,
     threadId,
   })
   return input

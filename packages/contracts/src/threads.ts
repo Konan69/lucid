@@ -147,13 +147,12 @@ export const ThreadResponse = Schema.Struct({ thread: Thread })
 export interface ThreadResponse extends Schema.Schema.Type<typeof ThreadResponse> {}
 
 /**
- * What started a Run. A Person's Message, a Routine that came due, or a follow-up Vivid scheduled.
+ * What started a Run. A Person's Message, a Routine that came due, or a returning decision.
  * Each names the Person on whose behalf Vivid acts for the length of the Run.
  */
 export const RunOrigin = Schema.TaggedUnion({
   Message: { person: PersonSummary },
   Routine: { person: PersonSummary, routineName: Schema.String },
-  FollowUp: { person: PersonSummary, taskTitle: Schema.String },
   /** A decision on an Approval or an answer to an Input request returning to the Thread. */
   Decision: { person: PersonSummary },
 })
@@ -237,13 +236,7 @@ export interface PresenceRequest extends Schema.Schema.Type<typeof PresenceReque
  * The signal types the server delivers into a Thread. Flue keeps them in its own history, so the
  * vocabulary is fixed here once for the server, the runtime and every client that renders them.
  */
-export const SignalType = Schema.Literals([
-  'message',
-  'schedule',
-  'follow-up',
-  'approval',
-  'answer',
-] as const)
+export const SignalType = Schema.Literals(['message', 'schedule', 'approval', 'answer'] as const)
 export type SignalType = typeof SignalType.Type
 
 /**

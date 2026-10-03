@@ -61,7 +61,7 @@ export interface ThreadStoreService {
   ) => Effect.Effect<Thread, ThreadStoreError>
   /**
    * The private Thread with this id, owned by this Person in this workspace, created if it does not
-   * exist. For the Threads the server itself opens: a Routine's, a Task's.
+   * exist. For the Threads the server itself opens: a Routine's.
    */
   readonly ensure: (input: {
     readonly id: ThreadId
@@ -162,7 +162,7 @@ const makeEnsure = (database: DatabaseService) =>
       database.select().from(threads).where(eq(threads.id, input.id)).limit(1),
     )
     const stored = yield* decodeThread(yield* returned(rows, 'Thread'))
-    // The id is predictable (`routine-<id>`, `task-<id>`), so a row already being there proves
+    // The id is predictable (`routine-<id>`), so a row already being there proves
     // nothing about whose it is. Only this Person's Thread in this workspace is handed back;
     // sharing changes audience, not ownership. Never deliver a Routine into a Thread
     // someone else created to receive it.
@@ -214,7 +214,7 @@ const makeMarkRead = (database: DatabaseService) =>
 const idTaken = () => Effect.fail(new Conflict({ message: 'That Thread id is taken' }))
 
 /** Ids the server mints for the Threads it opens itself. A client may not claim one. */
-const RESERVED = /^(?:routine|task)-/u
+const RESERVED = /^routine-/u
 
 const makeCreate = (database: DatabaseService) =>
   Effect.fn('ThreadStore.create')(function* (actor: Actor, request: CreateThreadRequest) {
@@ -346,12 +346,12 @@ const makeShare = (database: DatabaseService) =>
         new InvalidRequest({ message: 'A Thread in your own space has nobody to be shared with' }),
       )
     }
-    // A Routine's or a Task's own Thread is where Vivid reports to one Person. Sharing it would
+    // A Routine's own Thread is where Vivid reports to one Person. Sharing it would
     // put that Person's Routine in front of other people and stop the server from opening it.
     if (RESERVED.test(thread.id)) {
       return yield* Effect.fail(
         new InvalidRequest({
-          message: 'This thread belongs to a routine or a task and stays private',
+          message: 'This thread belongs to a Routine and stays private',
         }),
       )
     }

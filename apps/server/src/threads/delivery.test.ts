@@ -323,7 +323,6 @@ const said = (threadId: ThreadId, personId: PersonId): Delivery => ({
 /** Each producer keeps its actual origin while the common delivery seam handles contention. */
 const signals = [
   { type: 'schedule', origin: StoredRunOrigin.cases.Routine.make({ routineName: 'Review' }) },
-  { type: 'follow-up', origin: StoredRunOrigin.cases.FollowUp.make({ taskTitle: 'Review' }) },
   { type: 'approval', origin: StoredRunOrigin.cases.Decision.make({}) },
   { type: 'answer', origin: StoredRunOrigin.cases.Decision.make({}) },
 ] as const
@@ -367,7 +366,7 @@ describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
     }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
   )
 
-  it.effect('allows Ada’s own follow-up to join and holds Ben until both joined Runs settle', () =>
+  it.effect('allows Ada’s own Routine to join and holds Ben until both joined Runs settle', () =>
     Effect.gen(function* () {
       const test = yield* harness()
       const first = yield* test.conversation.admit(said(test.threadId, test.ada))

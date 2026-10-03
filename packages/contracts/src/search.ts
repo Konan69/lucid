@@ -1,13 +1,11 @@
 import { Schema } from 'effect'
 import { LibraryItem } from './library.js'
 import { Routine } from './routines.js'
-import { Task } from './tasks.js'
 import { Thread } from './threads.js'
 
 /** One thing the search palette can open. */
 export const SearchResult = Schema.TaggedUnion({
   Thread: { thread: Thread },
-  Task: { task: Task },
   LibraryItem: { item: LibraryItem },
   Routine: { routine: Routine },
 })
@@ -23,8 +21,7 @@ export const SearchResponse = Schema.Struct({ results: Schema.Array(SearchResult
 export interface SearchResponse extends Schema.Schema.Type<typeof SearchResponse> {}
 
 /**
- * A sentence the empty screen offers, taken from the Person's own work: a Task that is due, a
- * Routine that ran, a document they added. Choosing one puts it in the composer.
+ * A sentence the empty screen offers, taken from the Person's own work: a Routine that ran, a document they added. Choosing one puts it in the composer.
  */
 export const Suggestion = Schema.Struct({
   text: Schema.String,

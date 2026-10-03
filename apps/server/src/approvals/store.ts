@@ -465,7 +465,6 @@ const raise = Effect.fn('Approvals.raise')(function* (actor: Actor, action: Prop
       title: 'Vivid needs your approval',
       body: action.summary,
       threadId,
-      taskId: null,
     })
   }
   return approval

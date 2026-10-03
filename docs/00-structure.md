@@ -6,7 +6,7 @@ before adding a file. Extend it in the same change that adds a directory.
 ## Rules
 
 1. **One word per file and per directory.** The directory carries the context:
-   `agent/runtime`, never `agent-runtime`; `tasks/store.ts`, never `task-store.ts`. Components are
+   `agent/runtime`, never `agent-runtime`; `routines/store.ts`, never `routine-store.ts`. Components are
    one PascalCase word (`connector/Card.tsx`). Allowed suffixes: `.test.ts(x)`, `.live.test.ts`,
    `.server.ts`, the React Native platform suffixes, and tool configs that a tool names for us.
 2. **Group what changes together.** A group directory (`agent/`, `design/`, `client/`) exists
@@ -97,8 +97,7 @@ inputs/         ● Input requests: questions a Run cannot answer alone    docs/
 approvals/      ● the trust loop: gate, record, runner, replay           docs/22
 rules/          ● standing rules that pre-decide actions, and the judge  docs/22
 artifacts/      ● Thread documents, immutable versions and runtime tools docs/14
-tasks/          ● Tasks, follow-ups, the follow-up scheduler             docs/15
-notifications/  ● what needs a Person's attention                        docs/15
+notifications/  ● what needs a Person's attention                        docs/22
 routines/       ● Routines, Occurrences, triggers, the scheduler         docs/13, 22
 library/        ● Library items, folders, ingest, search                 docs/03
 connections/    ● Integrations on Executor: accounts, sign-in, tools     docs/22
@@ -114,7 +113,7 @@ audit/          ● the append-only record of consequential actions        docs/
 ```
 
 Each built domain is `tables.ts` · `store.ts` · `handlers.ts` · `<name>.test.ts`, plus named files
-for real sub-concerns (`tasks/followups.ts`, `routines/scheduler.ts`, `library/ingest.ts`).
+for real sub-concerns (`routines/scheduler.ts`, `library/ingest.ts`).
 
 ## Apps
 

@@ -65,7 +65,6 @@ const announceShare = Effect.fn('Threads.announceShare')(function* (
         kind: 'shared',
         title: thread.title,
         body: `${sharer} shared a Thread with you.`,
-        taskId: null,
         threadId: thread.id,
       }),
     { discard: true },

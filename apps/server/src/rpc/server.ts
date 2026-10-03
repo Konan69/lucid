@@ -20,7 +20,6 @@ import { ruleHandlers } from '../rules/handlers.ts'
 import { searchHandlers } from '../search/handlers.ts'
 import { settingsHandlers } from '../settings/handlers.ts'
 import { skillHandlers } from '../skills/handlers.ts'
-import { taskHandlers } from '../tasks/handlers.ts'
 import { threadHandlers } from '../threads/handlers.ts'
 
 /**
@@ -37,7 +36,6 @@ export const rpcHandlersLayer = VividRpc.toLayer({
   ...inputHandlers,
   ...ruleHandlers,
   ...auditHandlers,
-  ...taskHandlers,
   ...notificationHandlers,
   ...routineHandlers,
   ...projectHandlers,

@@ -1,11 +1,5 @@
 import { Array as Arr, Order, Schema } from 'effect'
-import {
-  SearchResult,
-  type Thread,
-  type Task,
-  type Routine,
-  type LibraryItem,
-} from '@vivid/contracts'
+import { SearchResult, type Thread, type Routine, type LibraryItem } from '@vivid/contracts'
 
 const Candidate = Schema.Struct({
   result: SearchResult,
@@ -22,14 +16,6 @@ export const threadCandidate = (thread: Thread): Candidate =>
     title: thread.title,
     text: [thread.title, thread.preview],
     updatedAt: thread.updatedAt,
-  })
-/** Task detail may supply a query term, but title hits rank higher. */
-export const taskCandidate = (task: Task): Candidate =>
-  Candidate.make({
-    result: SearchResult.cases.Task.make({ task }),
-    title: task.title,
-    text: [task.title, task.detail],
-    updatedAt: task.updatedAt,
   })
 /** A Routine's prompt is searchable beside its name. */
 export const routineCandidate = (routine: Routine): Candidate =>

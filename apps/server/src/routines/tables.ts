@@ -3,7 +3,8 @@ import { companyColumn, epoch, personColumn } from '../database/owner.ts'
 
 /**
  * A Routine is one Person's commitment: `person_id` is who Vivid acts for each time it runs, in the
- * workspace `company_id` names. `trigger` is `schedule` (then `cron` and `timezone` are set) or
+ * workspace `company_id` names. A `once` trigger retains `once_at` and `timezone` after its
+ * single claim disables it and clears `next_expected_at`. `trigger` is `schedule` (then `cron` and `timezone` are set) or
  * `webhook` (then `webhook_key_hash` holds the SHA-256 of the key that may call it; the key itself
  * is shown once and never stored). An Integration keeps a typed private Watch/cursor in JSONB;
  * revision checks arbitrate competing observations and pause intent retains one delivery key.

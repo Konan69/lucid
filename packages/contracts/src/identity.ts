@@ -28,14 +28,6 @@ export type ThreadId = typeof ThreadId.Type
 /** Run identifier. It is Flue's submission id, so a Message can be joined to the Run that carried it. */
 export const RunId = identifier('RunId')
 export type RunId = typeof RunId.Type
-/** Durable Task identifier. */
-export const TaskId = identifier('TaskId')
-/** Decoded Task identifier. */
-export type TaskId = typeof TaskId.Type
-/** Durable follow-up identifier. */
-export const FollowUpId = identifier('FollowUpId')
-/** Decoded follow-up identifier. */
-export type FollowUpId = typeof FollowUpId.Type
 /** Durable notification identifier. */
 export const NotificationId = identifier('NotificationId')
 /** Decoded notification identifier. */

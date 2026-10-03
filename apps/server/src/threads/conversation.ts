@@ -19,7 +19,7 @@ import type { DatabaseInfrastructureError } from '../database/client.ts'
  * What is being put in front of Vivid.
  *
  * `Said` is a Person writing in the Thread. `Signal` is everything else the server delivers: a
- * Routine coming due, a follow-up, the outcome of an Approval, the answer to a question. Its
+ * Routine coming due, the outcome of an Approval, the answer to a question. Its
  * `type` is one of the fixed `SignalType`s every client knows how to draw.
  */
 export const DeliveryMessage = Schema.TaggedUnion({
@@ -41,7 +41,6 @@ export const StoredRunOrigin = Schema.TaggedUnion({
   // Older Runs and server-internal text deliveries predate fingerprinted gateway admission.
   Message: { fingerprint: Schema.optionalKey(Schema.String) },
   Routine: { routineName: Schema.String },
-  FollowUp: { taskTitle: Schema.String },
   Decision: {},
 })
 export type StoredRunOrigin = typeof StoredRunOrigin.Type
@@ -84,7 +83,7 @@ export interface Admitted extends Schema.Schema.Type<typeof Admitted> {}
 
 export interface ConversationService {
   /**
-   * Delivers a server signal and records its Run. Routines, follow-ups, Approval outcomes and
+   * Delivers a server signal and records its Run. Routines, Approval outcomes and
    * answers share the admission policy used by Person messages, so every Run records whose
    * authority it carries. Busy returns a typed Conflict immediately; producers retain their
    * durable receipt and retry its original key on their own schedule.

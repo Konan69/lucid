@@ -1,20 +1,14 @@
 import { Schema } from 'effect'
-import { NotificationId, TaskId, ThreadId } from './identity.js'
+import { NotificationId, ThreadId } from './identity.js'
 
 /** Closed notification variants encoded by the current HTTP protocol. */
 export const NotificationKind = Schema.Literals([
-  'tracked',
-  'overdue',
-  'follow-up',
-  'follow-up-failed',
   /** Vivid finished a Run in a Thread this Person was not looking at. */
   'finished',
   /** A question or an Approval is waiting for this Person. */
   'needs-you',
   /** Someone shared a Thread with this Person. */
   'shared',
-  /** A Task was assigned to this Person. */
-  'assigned',
   /** This Person was invited to a Company. */
   'invited',
 ] as const)
@@ -25,7 +19,6 @@ export const Notification = Schema.Struct({
   kind: NotificationKind,
   title: Schema.String,
   body: Schema.String,
-  taskId: Schema.NullOr(TaskId),
   threadId: Schema.NullOr(ThreadId),
   createdAt: Schema.Number,
   readAt: Schema.NullOr(Schema.Number),

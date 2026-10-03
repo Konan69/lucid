@@ -135,7 +135,6 @@ const openingFailed = Effect.fn('RoutineScheduler.openingFailed')(function* (
       kind: 'needs-you',
       title: record.routine.name,
       body: THREAD_OPENING_FAILURE,
-      taskId: null,
       threadId: null,
     })
   }

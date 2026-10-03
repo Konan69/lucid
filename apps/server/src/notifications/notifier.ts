@@ -3,11 +3,11 @@ import * as Effect from 'effect/Effect'
 import * as Clock from 'effect/Clock'
 import * as Layer from 'effect/Layer'
 import { eq } from 'drizzle-orm'
-import type { CompanyId, NotificationKind, PersonId, TaskId, ThreadId } from '@vivid/contracts'
+import type { CompanyId, NotificationKind, PersonId, ThreadId } from '@vivid/contracts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { settingsTable } from '../settings/tables.ts'
-import { notifications } from '../tasks/tables.ts'
+import { notifications } from '../notifications/tables.ts'
 
 /** One thing a Person should be told about. `companyId` is the workspace it happened in. */
 export interface Notice {
@@ -16,7 +16,6 @@ export interface Notice {
   readonly kind: typeof NotificationKind.Type
   readonly title: string
   readonly body: string
-  readonly taskId: TaskId | null
   readonly threadId: ThreadId | null
 }
 
@@ -58,7 +57,6 @@ export const notifierLayer = Layer.effect(
           kind: notice.kind,
           title: notice.title,
           body: notice.body,
-          taskId: notice.taskId,
           conversationId: notice.threadId,
           createdAt: now,
           readAt: null,

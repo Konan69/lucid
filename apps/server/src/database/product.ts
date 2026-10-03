@@ -14,7 +14,7 @@ export { libraryChunks, libraryDocuments, libraryFolders } from '../library/tabl
 export { occurrences, routines } from '../routines/tables.ts'
 export { rules } from '../rules/tables.ts'
 export { skills } from '../skills/tables.ts'
-export { followUps, notifications, tasks } from '../tasks/tables.ts'
+export { notifications } from '../notifications/tables.ts'
 export { runs, threadParticipants, threadReads, threads } from '../threads/tables.ts'
 
 /** Compatibility marker retained exactly because existing databases already contain this table. */

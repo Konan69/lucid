@@ -78,7 +78,6 @@ import {
   ArtifactId,
   ApprovalId,
   ConnectionId,
-  FollowUpId,
   InvitationId,
   LibraryFolderId,
   LibraryItemId,
@@ -87,7 +86,6 @@ import {
   RoutineId,
   RuleId,
   SkillId,
-  TaskId,
   ThreadId,
 } from './identity.js'
 import { AnswerInputRequest, AskInputRequest, InputRequestResponse } from './inputs.js'
@@ -140,17 +138,6 @@ import {
   SkillResponse,
   SkillSummaryListResponse,
 } from './skills.js'
-import {
-  CreateTaskRequest,
-  FollowUpInput,
-  FollowUpResponse,
-  NudgeTaskRequest,
-  PatchFollowUpRequest,
-  PatchTaskRequest,
-  TaskListQuery,
-  TaskListResponse,
-  TaskResponse,
-} from './tasks.js'
 import {
   CreateThreadRequest,
   Inbox,
@@ -373,51 +360,6 @@ const CreateRule = Rpc.make('CreateRule', {
 const DeleteRule = Rpc.make('DeleteRule', { ...call, payload: { id: RuleId } })
 const ListAudit = Rpc.make('ListAudit', { ...call, success: AuditListResponse })
 const WatchAudit = Rpc.make('WatchAudit', { ...live, success: AuditListResponse })
-
-// ── Tasks and follow-ups ───────────────────────────────────────────────────
-const ListTasks = Rpc.make('ListTasks', {
-  ...call,
-  payload: TaskListQuery,
-  success: TaskListResponse,
-})
-const WatchTasks = Rpc.make('WatchTasks', {
-  ...live,
-  payload: TaskListQuery,
-  success: TaskListResponse,
-})
-const CreateTask = Rpc.make('CreateTask', {
-  ...call,
-  payload: CreateTaskRequest,
-  success: TaskResponse,
-})
-const PatchTask = Rpc.make('PatchTask', {
-  ...call,
-  payload: { id: TaskId, patch: PatchTaskRequest },
-  success: TaskResponse,
-})
-const DeleteTask = Rpc.make('DeleteTask', { ...call, payload: { id: TaskId } })
-/** Ask Vivid to chase a Task now, outside its scheduled follow-ups. */
-const NudgeTask = Rpc.make('NudgeTask', {
-  ...call,
-  payload: { id: TaskId, nudge: NudgeTaskRequest },
-  success: TaskResponse,
-})
-const AddFollowUp = Rpc.make('AddFollowUp', {
-  ...call,
-  payload: { taskId: TaskId, followUp: FollowUpInput },
-  success: FollowUpResponse,
-})
-const PatchFollowUp = Rpc.make('PatchFollowUp', {
-  ...call,
-  payload: { id: FollowUpId, patch: PatchFollowUpRequest },
-  success: FollowUpResponse,
-})
-const DeleteFollowUp = Rpc.make('DeleteFollowUp', { ...call, payload: { id: FollowUpId } })
-const RunFollowUp = Rpc.make('RunFollowUp', {
-  ...call,
-  payload: { id: FollowUpId },
-  success: FollowUpResponse,
-})
 
 // ── Notifications ──────────────────────────────────────────────────────────
 const ListNotifications = Rpc.make('ListNotifications', {
@@ -744,16 +686,6 @@ export const VividRpc = RpcGroup.make(
   DeleteRule,
   ListAudit,
   WatchAudit,
-  ListTasks,
-  WatchTasks,
-  CreateTask,
-  PatchTask,
-  DeleteTask,
-  NudgeTask,
-  AddFollowUp,
-  PatchFollowUp,
-  DeleteFollowUp,
-  RunFollowUp,
   ListNotifications,
   WatchNotifications,
   ReadNotifications,
