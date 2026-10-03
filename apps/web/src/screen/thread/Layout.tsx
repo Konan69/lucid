@@ -9,8 +9,26 @@ import { Option } from 'effect'
 import { lazy, Suspense, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { split } from '../../data/split'
 import { cn } from '../../ui/cn'
-import { Header, Hero, STANDING } from './Header'
+import { Header, Hero, STANDING, type Standing } from './Header'
 import { Share } from './Share'
+
+/**
+ * How Vivid stands in the bar. At rest it is the Thread's own standing line. While it works the
+ * line is what the stream says it is doing ("Using Gmail (Work)…"), and "Thinking…" between
+ * steps: the bar never says only that work is happening when it can say which work.
+ */
+const standingNow = (
+  attention: ThreadRecord['attention'],
+  working: boolean,
+  doing: Option.Option<string>,
+): Standing => {
+  const resting = STANDING[attention]
+  if (!working) return resting
+  return {
+    ...resting,
+    words: Option.match(doing, { onNone: () => 'Thinking…', onSome: (step) => `${step}…` }),
+  }
+}
 
 const About = lazy(async () => ({ default: (await import('./About')).About }))
 
@@ -30,6 +48,7 @@ export function Layout({
   arriving,
   present,
   working,
+  doing,
   panelOpen,
   onTogglePanel,
   children,
@@ -40,6 +59,8 @@ export function Layout({
   arriving: Option.Option<string>
   present: ThreadDetail['present']
   working: boolean
+  /** The step Vivid is on right now, from the Thread's own stream, when it is on one. */
+  doing: Option.Option<string>
   panelOpen: boolean
   onTogglePanel: () => void
   children: (hero: ReactNode) => ReactNode
@@ -50,7 +71,7 @@ export function Layout({
   const attention = working
     ? 'Working'
     : Option.match(thread, { onNone: () => 'Quiet' as const, onSome: (value) => value.attention })
-  const standing = STANDING[attention]
+  const standing = standingNow(attention, working, doing)
   return (
     <section
       inert={panelOpen && full}
