@@ -98,6 +98,22 @@ export const driver = (
       }),
     )
   }
+  /** Capture the exact window alongside its AT-SPI bounds without embedding PNG in command
+   * output. Cua records any screenshot resize ratio for subsequent window-local pixel input;
+   * the caller validates this capture's dimensions before dispatch. Private PNG is finalized. */
+  const window = <A>(args: Schema.JsonObject, schema: Schema.ConstraintDecoder<A>) => {
+    const decode = decodeTool('get_window_state', schema)
+    return input(
+      'get_window_state',
+      args,
+      Effect.fn('Machine.boat.driver.window')(function* (directory, path) {
+        const stdout = yield* invoke(
+          `${location.binary} call 'get_window_state' --socket '${location.socket}' --screenshot-out-file '${directory}/picture.png' < '${path}'`,
+        )
+        return yield* decode(stdout)
+      }),
+    )
+  }
   /** Keep full-size PNG out of command stdout: the CLI writes it and Boat's file API reads it.
    * Metadata and file bodies are independently decoded before desktop coordinates are accepted. */
   const capture = Effect.fn('Machine.boat.driver.capture')(() =>
@@ -131,6 +147,6 @@ export const driver = (
       }),
     ),
   )
-  return { call, capture }
+  return { call, capture, window }
 }
 export type Driver = ReturnType<typeof driver>

@@ -22,7 +22,7 @@ import * as TestClock from 'effect/testing/TestClock'
 import { machineBindings } from './tables.ts'
 import * as Protocol from './boat/protocol.ts'
 import { argumentsByTool } from './boat/fixture.ts'
-import { ComputerToolRefused } from './boat/refusal.ts'
+import { ComputerActionRefused, ComputerToolRefused } from './boat/refusal.ts'
 import { driver } from './boat/driver.ts'
 import { transport } from './boat/transport.ts'
 import { guestCommand } from './boat/guest.ts'
@@ -39,6 +39,10 @@ interface EvidenceService {
   readonly files: Ref.Ref<ReadonlyMap<string, string>>
   readonly calls: Ref.Ref<ReadonlyArray<string>>
   readonly address: Ref.Ref<string>
+  readonly text: Ref.Ref<string>
+  readonly grounded: Ref.Ref<boolean>
+  readonly missingBounds: Ref.Ref<boolean>
+  readonly noType: Ref.Ref<boolean>
   readonly prepared: Ref.Ref<ReadonlySet<string>>
   readonly breakCreate: Ref.Ref<boolean>
   readonly breakCommand: Ref.Ref<boolean>
@@ -62,6 +66,10 @@ const evidenceLayer = Layer.effect(
       files: yield* Ref.make<ReadonlyMap<string, string>>(new Map()),
       calls: yield* Ref.make<ReadonlyArray<string>>([]),
       address: yield* Ref.make('https://example.com'),
+      text: yield* Ref.make(''),
+      grounded: yield* Ref.make(false),
+      missingBounds: yield* Ref.make(false),
+      noType: yield* Ref.make(false),
       prepared: yield* Ref.make<ReadonlySet<string>>(new Set()),
       breakCreate: yield* Ref.make(false),
       breakCommand: yield* Ref.make(false),
@@ -223,12 +231,17 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
             status: 'ok',
             mode: 'snapshot',
             page: { url: address, title: 'Example' },
-            outline: 'button "Continue"\ntextbox "Message"',
+            outline: `button "Continue"\ntextbox "Message": ${yield* Ref.get(evidence.text)}`,
             snapshot: { complete: true },
             refs: [
-              { ref: 'p1:0', name: null, actions: [] },
-              { ref: 'p1:1', name: 'Continue', actions: ['click'] },
-              { ref: 'p1:2', name: 'Message', actions: ['type'] },
+              { ref: 'p1:0', name: null, value: null, actions: [] },
+              { ref: 'p1:1', name: 'Continue', value: null, actions: ['click'] },
+              {
+                ref: 'p1:2',
+                name: 'Message',
+                value: yield* Ref.get(evidence.text),
+                actions: ['type'],
+              },
             ],
           }),
         )
@@ -255,11 +268,64 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
         }),
       )
     }
-    case 'get_window_state':
+    case 'get_window_state': {
+      if (args.query !== undefined) {
+        expect(args.pid).toBe(7)
+        expect(args.window_id).toBe(9)
+        expect(args.query).toBe('Continue')
+        const destination = /--screenshot-out-file '([^']+)'/.exec(command)
+        if (destination === null || destination[1] === undefined) return rejected(400)
+        const picture = destination[1]
+        yield* Ref.update(evidence.files, (files) => new Map(files).set(picture, png))
+        yield* Ref.set(evidence.grounded, true)
+        const frame = (yield* Ref.get(evidence.missingBounds))
+          ? undefined
+          : { x: 220, y: 140, w: 80, h: 30 }
+        return commandReply(
+          JSON.stringify({
+            pid: 7,
+            window_id: 9,
+            screenshot_width: 473,
+            screenshot_height: 460,
+            screenshot_mime_type: 'image/png',
+            elements: [
+              { role: 'frame', depth: 0, frame: { x: 100, y: 50, w: 945, h: 920 } },
+              {
+                role: 'link',
+                depth: 2,
+                label: 'Continue',
+                enabled: true,
+                in_web_content: true,
+                frame,
+              },
+              // Browser chrome can share a label; it must never receive the page click.
+              {
+                role: 'push button',
+                depth: 1,
+                label: 'Continue',
+                enabled: true,
+                frame: { x: 100, y: 60, w: 30, h: 30 },
+              },
+            ],
+          }),
+        )
+      }
       return commandReply(
         '{"elements":[{"role":"page tab","label":"Example","element_token":"fixture-token"}]}',
       )
-    case 'click':
+    }
+    case 'click': {
+      if (args.window_id !== undefined && args.x !== undefined) {
+        expect(yield* Ref.getAndSet(evidence.grounded, false)).toBe(true)
+        expect(args.x).toBe((160 * 473) / 945)
+        expect(args.y).toBe((105 * 460) / 920)
+        expect(args.delivery_mode).toBe('foreground')
+        yield* Ref.set(evidence.address, 'https://example.com/continued')
+      }
+      return commandReply(
+        '{"effect":"unverifiable","route":"global_input","delivery":{"mode":"foreground"}}',
+      )
+    }
     case 'move_cursor':
     case 'drag':
     case 'scroll':
@@ -274,15 +340,16 @@ const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService
         '{"active":false,"bundle_id":null,"name":"google-chrome-stable","pid":7,"running":true,"windows":[]}',
       )
     case 'browser_click':
-      expect(args.ref).toBe('p1:1')
       expect(args.input_route).toBe('trusted')
       return commandReply(
-        '{"effect":"unverifiable","route":"trusted_input","delivery":{"mode":"background"}}',
+        '{"effect":"refused","route":"trusted_input","escalation":{"reason":"route_unavailable","target":"page"}}',
       )
     case 'browser_type':
       expect(args.ref).toBe('p1:2')
       expect(args.replace).toBe(true)
       expect(args.text).toBe('private-fixture-input')
+      if (!(yield* Ref.get(evidence.noType)))
+        yield* Ref.set(evidence.text, yield* decodeAddress(args.text))
       return commandReply(
         '{"effect":"unverifiable","route":"trusted_input","delivery":{"mode":"background"}}',
       )
@@ -480,6 +547,48 @@ const fixture = Effect.fn('BoatTest.fixture')(function* () {
 
 describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => {
   it.effect(
+    'refuses missing click bounds and an unconfirmed text replacement without retrying input',
+    () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        yield* machine.ensure(key)
+        yield* machine.browse({
+          key,
+          action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
+        })
+        yield* Ref.set(evidence.missingBounds, true)
+        const beforeClick = (yield* Ref.get(evidence.calls)).filter(
+          (tool) => tool === 'click',
+        ).length
+        const refused = yield* machine
+          .browse({ key, action: BrowserAction.cases.Click.make({ target: 'Continue' }) })
+          .pipe(Effect.flip)
+        expect(refused._tag).toBe('BrowserStepFailed')
+        expect((yield* Ref.get(evidence.calls)).filter((tool) => tool === 'click').length).toBe(
+          beforeClick,
+        )
+        expect((yield* Ref.get(evidence.files)).size).toBe(0)
+        yield* Ref.set(evidence.noType, true)
+        const unchanged = yield* machine
+          .browse({
+            key,
+            action: BrowserAction.cases.Type.make({
+              target: 'Message',
+              text: 'private-fixture-input',
+            }),
+          })
+          .pipe(Effect.flip)
+        expect(unchanged._tag).toBe('BrowserStepFailed')
+        expect(
+          (yield* Ref.get(evidence.calls)).filter((tool) => tool === 'browser_type').length,
+        ).toBe(1)
+        expect((yield* Ref.get(evidence.files)).size).toBe(0)
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect(
     'preserves exit-zero refusal codes and cleans private inputs, even for JSON success decoders',
     () =>
       Effect.gen(function* () {
@@ -497,6 +606,20 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         expect(invalid instanceof ComputerToolRefused).toBe(true)
         if (invalid instanceof ComputerToolRefused) expect(invalid.code).toBe('invalid_arguments')
         expect(JSON.stringify(invalid).includes('private-fixture-input')).toBe(false)
+        expect((yield* Ref.get(evidence.files)).size).toBe(0)
+        const inputRefused = yield* guest
+          .call(
+            'browser_click',
+            {
+              target_id: 'fixture-target',
+              tab_id: 'fixture-tab',
+              input_route: 'trusted',
+              ref: 'p1:1',
+            },
+            Schema.Json,
+          )
+          .pipe(Effect.flip)
+        expect(inputRefused instanceof ComputerActionRefused).toBe(true)
         expect((yield* Ref.get(evidence.files)).size).toBe(0)
         yield* Ref.set(evidence.refuseBrowser, true)
         const refused = yield* machine
@@ -552,17 +675,19 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         expect(page.address).toBe('https://example.com/proof')
         expect(page.outline).toContain('Continue')
         expect(page.tabs).toEqual([{ title: 'Example', address: page.address, showing: true }])
-        yield* machine.browse({
+        const clicked = yield* machine.browse({
           key,
           action: BrowserAction.cases.Click.make({ target: 'Continue' }),
         })
-        yield* machine.browse({
+        expect(clicked.address).toBe('https://example.com/continued')
+        const typed = yield* machine.browse({
           key,
           action: BrowserAction.cases.Type.make({
             target: 'Message',
             text: 'private-fixture-input',
           }),
         })
+        expect(typed.outline).toContain('private-fixture-input')
         expect(
           (yield* Ref.get(evidence.commands)).some((value) =>
             value.includes('private-fixture-input'),

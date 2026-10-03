@@ -9,6 +9,7 @@ import {
 import { validateAddress, validateKey } from '../browser.ts'
 import type { Driver } from './driver.ts'
 import { ActionReceipt, NavigationReceipt } from './receipt.ts'
+import { click } from './pointer.ts'
 
 /** Exact browser bindings and semantic state, from Cua core/src/browser/tools.rs.
  * References remain inside this adapter; the model names controls from their accessible labels. */
@@ -59,6 +60,7 @@ export const Page = Schema.Struct({
     Schema.Struct({
       ref: Schema.String,
       name: Schema.NullOr(Schema.String),
+      value: Schema.NullOr(Schema.String),
       actions: Schema.Array(Schema.String),
     }),
   ),
@@ -131,8 +133,12 @@ const binding = Effect.fn('Machine.boat.browser.bind')((native: Driver, window: 
   native.call('get_browser_state', window, BrowserBinding),
 )
 
-/** Active must be proven uniquely; the driver explicitly uses null when titles cannot disambiguate. */
+/** Tabs are restricted to the exactly-bound native window (Cua engine.rs). Its sole tab is
+ * necessarily current even while navigation changes the title before X11 catches up. Multiple
+ * tabs still require one explicit selection proof; ambiguous native titles stay refused. */
 const currentTab = Effect.fn('Machine.boat.browser.active')(function* (bound: BrowserBinding) {
+  const sole = bound.tabs[0]
+  if (bound.tabs.length === 1 && sole !== undefined && sole.active !== false) return sole
   const showing = bound.tabs.filter((tab) => tab.active === true)
   const current = showing[0]
   if (showing.length !== 1 || current === undefined)
@@ -238,8 +244,8 @@ const step = Effect.fn('Machine.boat.browser.step')(function* (
     Read: () => Effect.void,
     Screenshot: () => native.capture().pipe(Effect.asVoid),
     Click: Effect.fn('Machine.boat.browser.click')(function* ({ target }) {
-      const ref = yield* targetRef(native, bound, target, 'click')
-      yield* native.call('browser_click', { ...ref, input_route: 'trusted' }, ActionReceipt)
+      yield* targetRef(native, bound, target, 'click')
+      yield* click(native, window, target)
     }),
     Type: Effect.fn('Machine.boat.browser.type')(function* ({ target, text }) {
       const ref = yield* targetRef(native, bound, target, 'type')
@@ -316,6 +322,23 @@ export const browse = Effect.fn('Machine.boat.browser')(function* (
   yield* step(native, window, before, yield* resolveTab(before, action, previous))
   const after = yield* binding(native, window)
   const page = yield* snapshot(native, after)
+  // Cua input receipts attest delivery only. A replacement must independently read back the
+  // same uniquely named editable control and exact value, including clearing with empty text.
+  if (BrowserAction.guards.Type(action)) {
+    const fields = page.refs.filter(
+      (ref) =>
+        ref.name !== null &&
+        ref.name.toLocaleLowerCase() === action.target.toLocaleLowerCase() &&
+        ref.actions.includes('type'),
+    )
+    const field = fields[0]
+    if (
+      fields.length !== 1 ||
+      field === undefined ||
+      (field.value !== action.text && !(action.text === '' && field.value === null))
+    )
+      return yield* Effect.fail(new BrowserStepFailed())
+  }
   // semantic.rs render_outline contains roles, words and states; refs remain separate and private.
   const outline = page.outline.slice(0, 32768)
   return BrowseResult.make({
