@@ -10,7 +10,7 @@ API contracts. The health probe verifies service identity, not version compatibi
 ## Build
 
 ```sh
-flock /tmp/vivid-tsc.lock pnpm --filter @vivid/web build
+pnpm --filter @vivid/web build
 pnpm --filter @vivid/desktop build
 pnpm --filter @vivid/desktop dist --dir
 ```
@@ -31,8 +31,10 @@ The address to enter is the one people open Vivid at in a browser, which is the 
 `PUBLIC_URL`. The app serves its interface at that origin and names it as the origin of every
 request it forwards, because Chromium adds `Origin` only after the app has taken the request, and
 the server accepts sign-in from that one origin. In development that is the web dev server
-(`http://localhost:5178`), which forwards `/api` and `/health`; the server's own port answers the
-health check but refuses sign-in, since it is not the origin the server was told to trust.
+(port `5178`), which forwards `/api` and `/health`. The chosen origin must match the server's
+configured `PUBLIC_URL` for sign-in. The checked-in Alchemy stack currently sets `PUBLIC_URL`
+to the server origin on `8787`, rather than the web proxy origin; that setup mismatch needs an
+infrastructure decision. A health check alone does not prove sign-in will succeed.
 
 `settings.json` in Electron's user data directory stores version 2 and the tagged server state.
 Writes use an exclusive temporary file, fsync and atomic rename before updating memory. Damaged
@@ -153,15 +155,16 @@ Typed text uses HTTPS for bare addresses and DuckDuckGo for search text. Localho
 aliases, credentials, and non-HTTP(S) schemes are refused. Load failures retain Chromium's error
 description in `failed` until the next navigation; main supplies no substitute error page.
 
-## Signing in by code
+## Signing in
 
-After choosing a server, desktop sign-in uses the server's existing device-authorization flow.
-The desktop sign-in UI requests a device code through `/api/auth/device/code`, displays the short
-code and opens the returned verification link in the system browser. Sign in to that same server
-and approve the code in **Settings → Devices** (`/device`). The desktop UI exchanges the waiting
-device code through `/api/auth/device/token`, respecting the server's interval and expiry. No
-password is passed through preload. Device sign-in UI and token handling belong to the renderer;
-this shell provides server selection in the chooser and native external browsing for navigation.
+After choosing a server, the bundled web renderer uses the same email/password sign-in and
+account creation as the browser. Chromium's cookie-aware application session carries Better
+Auth's HttpOnly session cookie through the selected-origin proxy. Main and preload do not
+handle passwords or store a separate bearer token.
+
+The server supports device authorization and the web Settings → Devices page approves codes,
+but the desktop renderer does not currently request or exchange its own device code. That is
+implemented by mobile. Adding a desktop code flow would require renderer work.
 
 ## Security
 
@@ -186,7 +189,7 @@ Media, clipboard reads and every other permission are denied, including on the c
 ## Verify
 
 ```sh
-flock /tmp/vivid-tsc.lock pnpm --filter @vivid/desktop typecheck
+pnpm --filter @vivid/desktop typecheck
 pnpm exec oxlint --type-aware apps/desktop/src/main apps/desktop/src/preload apps/desktop/src/shared
 pnpm --filter @vivid/desktop test
 ```

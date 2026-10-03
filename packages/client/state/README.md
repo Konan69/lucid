@@ -1,8 +1,9 @@
 # Client state
 
-The pure view logic every surface shares, so web, mobile and desktop decide the same things the
-same way and each only draws. No JSX, no requests, no platform API: every module is a function
-over contract values, with tests beside it.
+Shared view logic and live state, so web, mobile and desktop decide the same things the same way
+and each only draws. No JSX or platform API. Most modules are pure functions over contract values;
+`live.ts` owns the shared live cache, scoped RPC subscriptions, resubscription, and optimistic
+writes through the supplied client. Tests sit beside the behavior they prove.
 
 - `threads.ts`, `lanes.ts`: how Threads are grouped and what a Thread's standing line says.
 - `steps.ts`, `activity.ts`: turning tool calls into the step lines and activity a Person reads.
@@ -14,5 +15,5 @@ over contract values, with tests beside it.
 - `drafts.ts`, `link.ts`, `signin.ts`, `when.ts`, `live.ts`: unsent text, links, sign-in pages,
   times as a Person reads them, and live-state helpers.
 
-The data layer itself (cache, live updates, optimistic writes) is `packages/client/rpc` plus each
-app's `data/` directory.
+`packages/client/rpc` supplies schema-derived HTTP and WebSocket clients. Each app's `data/`
+directory wires its queries and mutations to this package's live registry and optimistic-write lifecycle.

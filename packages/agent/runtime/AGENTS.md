@@ -36,10 +36,11 @@ schema-derived `VividRpcClient`.
 - The application server is the only caller. It holds the runtime token and forwards a Person's
   message, or delivers a signal, to `/agents/vivid/:threadId` after checking who they are and that
   they may see the Thread. Nothing else reaches Flue.
-- Every delivery says who it is for: a signal carries `person` and `from` attributes; a plain user
-  turn happens only in a private Thread, whose creator is recorded as the conversation's initial
-  data. `actingFor` reads exactly that, and every tool call carries the Thread and the Person to
-  the server, which checks them again.
+- Delivery authority arrives as typed server metadata, outside the model-visible message. A signal
+  carries a speaker name and turn number; `delivery.ts` caches its acting scope and recovers an
+  evicted scope from the persisted Run. A plain user turn happens only in a private Thread, whose
+  creator is recorded as initial data. `actingFor` reads prepared authority; tools resolve it
+  before calling the server with the Thread and Person, whose access is checked again.
 - Product calls use the generated `/api/rpc` contract through `VividRpcClient`.
 - The default model is `explabs/glm-5.3-flash`, served by the Experiential Labs gateway
   (`src/providers/explabs.ts`, key `EXPLABS_API_KEY`). `VIVID_MODEL` may select another model that
@@ -47,7 +48,7 @@ schema-derived `VividRpcClient`.
   Do not add a retry, fallback or stream-wrapping layer around the provider: the gateway fails
   over between upstream providers and Flue retries transient errors.
 - Pictures currently belong only to private Threads, whose deliveries are ordinary Flue user
-  messages. Shared Threads use attributed signals; Flue 2.1.0 accepts and persists attachments
+  messages. Shared Threads use attributed signals; Flue 2.2.2 accepts and persists attachments
   only on user messages. The gateway refuses shared pictures before reserving a Run. Closing
   this gap requires Flue to support signal attachments through validation, durable storage,
   conversation projection and model input, while preserving signal attribution.

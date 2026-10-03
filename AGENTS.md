@@ -64,19 +64,19 @@ Keep code simple by making the model honest. If a function needs many optional i
 
 ## Boundaries and persistence
 
-Shared wire contracts live in `packages/contracts`; the clients derived from them live in `packages/client/rpc`. Design transport-neutral APIs for web, mobile, and future desktop clients. Do not put browser-only assumptions into contracts or make app components issue ad hoc untyped requests.
+Shared wire contracts and `VividRpc` live in `packages/contracts`; the RPC clients derived from them live in `packages/client/rpc`. Plain HTTP adapters live in `apps/server/src/http` and their owning domains; there is no `VividApi` declaration today. Design transport-neutral APIs for web, mobile, and desktop clients. Do not put browser-only assumptions into contracts or make app components issue ad hoc untyped requests.
 
 A TypeScript annotation does not make a network boundary safe. `response.json()` and generic `request<T>()` casts are unknown input, not proof. Validate route params, search, headers, and bodies at every server boundary; validate response payloads at the consumer with the same Effect schema from `packages/contracts`.
 
 Flue owns conversation/turn transport, durable conversation history, model interaction, and its runtime lifecycle. Vivid app code owns product metadata such as Thread titles and indexes, Company/Membership scope, Routines, navigation, and product records. Do not mirror library-owned state into app tables or app-owned metadata into Flue state. Read `packages/agent/runtime/AGENTS.md` before changing that boundary.
 
-Edit the Drizzle TypeScript schema first, run the owning package's `db:generate`, and review generated SQL before migration. Never hand-write schema SQL, use `push` for a shared or remote database, or edit a snapshot manually. The migration order is the server's auth tables, then the server's product tables (`apps/server/product-drizzle.config.ts`); root `pnpm db:migrate` preserves it. Read both Drizzle skills before reading or changing schemas, queries, config, or migrations.
+Edit the Drizzle TypeScript schema first, run `pnpm --filter @vivid/server db:generate` for auth or `pnpm --filter @vivid/server db:generate:product` for product tables, and review generated SQL before migration. Never hand-write schema SQL, use `push` for a shared or remote database, or edit a snapshot manually. The migration order is the server's auth tables, then the server's product tables (`apps/server/product-drizzle.config.ts`); root `pnpm db:migrate` preserves it. Read both Drizzle skills before reading or changing schemas, queries, config, or migrations.
 
 Alchemy `2.0.0-beta.79` peers on the pinned Drizzle RC. Workspace overrides hold Effect `4.0.0-rc.116` and Drizzle `1.0.0-rc.5-ab785fc` in lockstep. Do not relax them without validating Alchemy, Better Auth, and every migration owner together.
 
 ## Hit every surface
 
-A feature is incomplete when it works only on the path first tested. Check web, mobile, and the future desktop surface. Check every applicable entry point: its Thread, Today, Settings, and notifications. Put shared client behavior in `packages/client/rpc` and shared wire contracts in `packages/contracts`; do not reimplement them per surface.
+A feature is incomplete when it works only on the path first tested. Check web, mobile, and desktop. Check every applicable entry point: its Thread, Thread list, Settings, and notifications. Put shared client behavior in `packages/client/rpc` and shared wire contracts in `packages/contracts`; do not reimplement them per surface.
 
 ## Web and mobile UI
 
@@ -145,7 +145,7 @@ Product copy says **Vivid**, never “agent” or “automation.” Those are im
 - **Routine**: a reusable commitment for Vivid to act on a trigger; an **Occurrence** is one invocation and may start a Run.
 - **Library item**: reusable knowledge or a learned procedure. A procedure may become a Routine, but storing it does not schedule it.
 - **Artifact**: a durable, versioned input or output linked to its Thread and Run.
-- **Connection**: an authorized relationship with an external account or service; credential values never enter model context.
+- **Connection**: an authorized relationship with an external account or service; credential values never enter model context. Code, contracts, and tests use `Connection`; every string a Person reads uses **Integration**.
 
 Use these terms in code, contracts, tests, and copy. Do not create synonyms for established concepts.
 

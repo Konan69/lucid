@@ -1,50 +1,66 @@
 # Vivid mobile
 
-A separate React Native application for iOS and Android, built with Expo.
-Phone screens use native stack navigation; tablets retain a conversation sidebar.
-The app uses Vivid web’s design tokens, icons, greeting and product hierarchy.
-Its sidebar contains workspace tools, grouped conversation cards, filter/new
-controls, Done/Archived and You/Personal. Native pane motion and row interactions
-use the T3 implementation. Search, pin, settle, archive, rename and swipe actions
-are available. Starter prompts fill
-the composer for editing; they do not send automatically.
-Actual T3 implementations and adaptations are listed in [T3-SOURCE.md](./T3-SOURCE.md).
+A separate React Native application for iOS and Android, built with Expo `57.0.24` and React
+Native `0.86.3`. Native stack screens use the same contracts, RPC client, and product state as
+web and desktop. Current routes are declared in `src/workspace.ts`; historical source mappings
+remain in [T3-SOURCE.md](./T3-SOURCE.md).
 
 ## Run
 
-From the repository root:
+Start the local application stack from the repository root, with the credentials described in
+the root README supplied in the environment:
 
 ```sh
 pnpm install
-pnpm --filter @vivid/agent-runtime dev
-# In another terminal: the existing development gateway keeps the runtime token server-side.
-pnpm --filter @vivid/web dev --host 0.0.0.0
-# In another terminal:
+pnpm infra:dev
+```
+
+In another terminal:
+
+```sh
 pnpm --filter @vivid/mobile dev
 ```
 
-Build the native app. The local Kotlin/Swift composer requires a development
-build; Expo Go cannot load it:
+The local Kotlin/Swift composer needs a development build; Expo Go cannot load it:
 
 ```sh
 pnpm --filter @vivid/mobile android
 pnpm --filter @vivid/mobile ios  # macOS + Xcode required
 ```
 
-These commands generate missing native projects from the pinned SDK 56 template.
-They require Android SDK/JDK or Xcode and connect to the selected device.
+`android` and `ios` generate missing native projects using the SDK 57 bare template selected in
+`apps/mobile/scripts/native.mjs`, then run Expo's native build. They require Android SDK/JDK or Xcode.
+No physical-device validation is claimed; [current status](../../docs/14-product-feature-set-and-grok-bot-parity.md)
+records mobile as tested in suites, not run on a device. Older validation notes describe their
+own dated builds.
+
+### Server and sign-in
+
+On first launch, enter the reachable application origin, for example
+`http://YOUR_COMPUTER_LAN_IP:5178` for a locally exposed Vite proxy. A physical phone's
+`localhost` is the phone; an Android emulator can reach its host using `10.0.2.2`. Neither
+address is selected automatically. The Alchemy stack binds services to loopback; LAN/WSL use
+requires a separately exposed proxy or port forwarding.
+
+Sign in with email/password, create an account, or pair with a code approved by a signed-in
+browser at `/device`. Native session tokens are saved in Expo SecureStore and sent as bearer
+authority on HTTP requests and the live WebSocket. Browser preview keeps tokens in memory and
+persists only the server address, so reloading signs it out. This is a Person's session token;
+the runtime token stays on the application server.
+
+Every conversation uses `/api/vivid/:threadId`; live queries and writes use `/api/live`.
+There is no direct-runtime connection mode. `EXPO_PUBLIC_API_URL` remains in the old example
+environment file but is not read by current code.
 
 ### Windows Android Studio emulator with WSL
 
-Start the AVD from Windows Android Studio's Device Manager. Run the runtime and
-gateway above in WSL, then start Metro for the installed development build:
+Start an AVD in Windows Android Studio. With the application stack running, start Metro:
 
 ```sh
 pnpm --filter @vivid/mobile exec expo start --dev-client --port 8085 --max-workers 2
 ```
 
-In another terminal, use the serial reported by `adb devices` (the verified
-`Vivid_Android_Studio` instance uses `emulator-5556`):
+Use the serial from `adb devices` in these commands (`emulator-5556` is an example):
 
 ```sh
 adb -s emulator-5556 reverse tcp:8085 tcp:8085
@@ -54,76 +70,47 @@ adb -s emulator-5556 shell am start -n work.vivid.mobile/.MainActivity \
   -d 'exp+vivid://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8085'
 ```
 
-For this WSL/Windows setup, save `http://127.0.0.1:5178` as the Server address
-in mobile Settings: the reverse mapping forwards that address to the gateway.
-
-Repeat the reverse commands after restarting ADB or the emulator. If the app
-remains blank after a disconnected bundle download, force-stop it with
-`adb -s emulator-5556 shell am force-stop work.vivid.mobile`, then run the launch
-command again. Metro must stay running for this development build.
-
-The Windows emulator avoids the WSLg `WARN:COPY_MODE` display path. This machine's
-AVD was verified using host GPU rendering and WHPX acceleration. See
-[VALIDATION.md](./VALIDATION.md) for the tested build and remaining checks.
-
-In mobile Settings, set **Server address** to `http://YOUR_COMPUTER_LAN_IP:5178`.
-Leave the access token empty when using the web development gateway. `localhost`
-on a physical phone refers to the phone. Android defaults to the emulator host
-alias `10.0.2.2`; physical phones need the LAN address. The computer and phone must have network
-access to each other; WSL users may need host port forwarding.
-
-For a direct runtime connection, enter its reachable base address and runtime
-token in Settings. A token selects the `/agents/vivid/:id` route; the gateway uses
-`/api/vivid/:id`. Native tokens are saved with Expo SecureStore, never baked into
-the application bundle. Browser preview keeps a manually entered token in memory
-only. This is the existing local demo authentication model, not production user auth.
-
-Optional: copy `.env.example` to `.env` and set `EXPO_PUBLIC_API_URL` to prefill the
-server address. Never put a runtime token in an `EXPO_PUBLIC_*` variable.
-
-The React Native web preview is useful for inspecting the same components:
-
-```sh
-pnpm --filter @vivid/mobile web
-```
+Enter `http://127.0.0.1:5178` as the app's server address. Repeat the reverse mappings after
+restarting ADB or the emulator; Metro must stay running for the development build. These are
+setup instructions, not proof that the current native app has been validated.
 
 ## Feature coverage
 
-| Area          | Mobile behavior                                                                                                                                                                                                |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Conversations | Grouped list, search, filter, create, rename, pin/unpin, mark done/reopen, archive, restore, delete; durable history, streaming Markdown, tool results, stop, reconnect on foreground.                         |
-| Activity      | Work log from the actual transcript; Library citations open authenticated originals.                                                                                                                           |
-| Tasks         | Conversation tracking and follow-ups remain. Today is removed from navigation; its task screen implementation is retained but not exposed.                                                                     |
-| Routines      | Create/edit, schedule presets/custom cron, timezone, pause/resume/delete, run now, missed runs, run history, retry and opening run conversations. Template ideas share the web fixtures.                       |
-| Library       | Native file picker for PDF/text/Markdown, 10 MB limit, indexing/error states, nested folders, rename/move/delete, passage search, original document sharing, ask-about draft.                                  |
-| Projects      | Shared sample projects, covers, members, nested projects and conversation titles. Same fixture boundary as web.                                                                                                |
-| Connectors    | Contextual Connect cards in conversation; management under Settings. Server status, browser authorization, foreground refresh, Continue after connection, and disconnect. Requires server OAuth configuration. |
-| Settings      | Shared light/dark colors, system theme, server connection, secure native token storage.                                                                                                                        |
+This table describes code present today, not native end-to-end proof.
 
-Pins and settled conversations are device-local. Working status reflects the
-active native stream; remote background activity is not exposed by the index API.
+| Area                    | Implemented surface                                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Threads                 | Create, rename, archive/restore, delete, title search, attention lanes, durable history, streaming, stop, foreground reconnection, saved drafts. |
+| Shared work             | Personal and Company spaces, Memberships, shared/private Threads, attributed deliveries, People and invitations.                                 |
+| Questions and Approvals | Thread cards use shared server contracts for answers and decisions.                                                                              |
+| Routines                | Live definitions and Occurrences, creation/editing, pause/resume, delete, run now and run history.                                               |
+| Library                 | File picker for PDF/text/Markdown, 10 MiB limit, folders, indexing status, search, authenticated original sharing.                               |
+| Projects                | Persisted recursive Projects and their Threads, read through the same live RPCs as web.                                                          |
+| Integrations            | Thread request cards and Settings management; Executor handles sign-in or key entry. Code calls these `Connection`.                              |
+| Skills and memory       | Skills list and memory Settings read shared server records; memory requires HelixDB configuration.                                               |
+| Computer                | Server-backed state and viewer screen; Boat provider proof does not establish mobile viewer or input behavior.                                   |
+| Settings                | System/light/dark theme, server selection, session handling, Company People and memory.                                                          |
 
-Computer control remains a preview. Chat attachments, voice, native push
-notifications, production authentication, and project persistence are not added.
-Follow-ups and routines still depend on the existing server staying online.
-Dates use native OS date/time pickers on iOS and Android; the browser preview
-uses a text fallback. Preset routine and repeat choices are tap controls. There is no offline mutation queue.
+There is no offline mutation queue. Voice and native push notifications are not built. Mobile
+chat's composer has no picture-send path yet; Library upload is separate. Browser/desktop
+conversations and server-owned background work are shared rather than replaced by phone-local
+execution.
 
 ## Validate
 
+Run checks serially:
+
 ```sh
-pnpm --filter @vivid/mobile typecheck
 pnpm --filter @vivid/mobile test
 pnpm --filter @vivid/mobile exec expo install --check
 pnpm --filter @vivid/mobile build
 pnpm --filter @vivid/tokens typecheck
 ```
 
-`build` exports Android/iOS Hermes bundles and the web preview; it is not an APK
-or signed iOS archive. An Android build can also be produced with `expo run:android`; an iOS build
-requires macOS/Xcode. A successful JavaScript export does not validate native
-keyboard, picker, sharing, SecureStore or OS lifecycle behavior.
+`build` exports Android/iOS Hermes bundles and the web preview; it is not an APK or signed iOS
+archive. For code changes, the final repository gate runs serialized typecheck. JavaScript
+export alone does not validate native keyboard, sharing, SecureStore, or lifecycle behavior.
 
-After editing the shared CSS colors or metrics, run
-`pnpm --filter @vivid/tokens generate:native`. Its build/typecheck rejects
-stale generated native tokens. See [DESIGN-SOURCES.md](./DESIGN-SOURCES.md) for the source mapping.
+The React Native web preview is available with `pnpm --filter @vivid/mobile web`.
+The token package's build/typecheck rejects stale generated native tokens; design changes and
+`generate:native` belong to the UI owner. See [DESIGN-SOURCES.md](./DESIGN-SOURCES.md).
