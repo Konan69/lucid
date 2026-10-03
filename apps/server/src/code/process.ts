@@ -10,7 +10,18 @@ import {
   type ThreadId,
   ApprovalId,
 } from '@vivid/contracts'
-import { Config, Context, Deferred, Effect, Fiber, Layer, Option, Schema, Semaphore } from 'effect'
+import {
+  Config,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Schema,
+  Semaphore,
+} from 'effect'
 import { budgets, bytes } from './budgets.ts'
 import { prepareWorker } from './source.ts'
 import { checkProgramHost } from './host.ts'
@@ -263,11 +274,6 @@ class Execution {
     return Option.none()
   }
 
-  /** True while a dispatched call has not returned. */
-  get busy() {
-    return this.flying > 0
-  }
-
   /** A policy decision is waiting for the calls that were already running. */
   get decided() {
     return Option.isSome(this.decision)
@@ -296,6 +302,7 @@ class Execution {
     this: Execution,
     call: typeof WorkerMessage.cases.Call.Type,
     dispatch: Dispatch,
+    stopped: Deferred.Deferred<CodeOutcome, PipeFailure>,
   ) {
     const index = this.calls.length
     this.calls.push(
@@ -306,7 +313,33 @@ class Execution {
       }),
     )
     this.flying++
-    const result = yield* dispatch(call).pipe(Effect.ensuring(Effect.sync(() => this.flying--)))
+    const landing = { step: Option.none<CallStep>() }
+    // The finalizer runs however the dispatch ends, and without a yield inside it: the receipt, any
+    // decision and the in-flight count change together, so a sibling can never snapshot this call
+    // as unknown after it has really finished. An interrupted dispatch keeps its provisional
+    // receipt and still counts as landed, so a waiting decision is never left unreported.
+    yield* dispatch(call).pipe(
+      Effect.onExit((exit) =>
+        Effect.suspend(() => {
+          if (Exit.isSuccess(exit)) landing.step = Option.some(this.land(index, call, exit.value))
+          this.flying--
+          if (this.flying > 0) return Effect.void
+          return Option.match(this.settled(), {
+            onNone: () => Effect.void,
+            onSome: (outcome) => Deferred.succeed(stopped, outcome).pipe(Effect.asVoid),
+          })
+        }),
+      ),
+    )
+    return landing.step
+  })
+
+  /** Records what one finished call did. Synchronous: it is one step of the landing transition. */
+  private land(
+    index: number,
+    call: typeof WorkerMessage.cases.Call.Type,
+    result: CallOutcome,
+  ): CallStep {
     const summary = result.summary.slice(0, 200)
     return CallOutcome.match<CallStep>(result, {
       Returned: ({ value, end }) => {
@@ -343,13 +376,15 @@ class Execution {
           CodeCall.make({ kind: call.kind, summary, end: 'unknown' }),
         ),
     })
-  })
+  }
 
   /** This synchronous transition precedes pipe replies and prevents catch/finally from admitting work. */
   private latch(make: () => CodeOutcome, index: number, receipt: CodeCall) {
     this.calls[index] = receipt
-    // The first decision is the one reported; a sibling that also asks keeps its own receipt.
-    if (Option.isNone(this.decision)) this.decision = Option.some(make)
+    // The first decision is the one reported; a sibling that also asks keeps its own receipt. A
+    // deadline or a limit that already ended the program is not replaced by a later decision.
+    if (Option.isNone(this.decision) && Option.isNone(this.terminal))
+      this.decision = Option.some(make)
     const outcome = Option.getOrElse(this.terminal, make)
     this.terminal = Option.some(outcome)
     return CallStep.cases.Stop.make({ outcome })
@@ -398,12 +433,17 @@ const readCalls = Effect.fn('Code.readCalls')(function* (
     if (WorkerMessage.isAnyOf(['Done', 'Failed'])(message)) {
       state.end(message)
       yield* Effect.forEach(running, (fiber) => Fiber.join(fiber), { concurrency: 'unbounded' })
+      const decided = state.settled()
+      if (Option.isSome(decided)) return decided.value
       return WorkerMessage.guards.Done(message)
         ? state.completed(message.result)
         : state.failed(message.failure)
     }
     const refused = state.reserve(message)
-    if (Option.isSome(refused)) return refused.value
+    // After a decision nothing new is admitted, but returning here would interrupt the calls that
+    // are still running. Wait for the decision instead; the last of them reports it.
+    if (Option.isSome(refused))
+      return state.decided ? yield* Deferred.await(stopped) : refused.value
     const call = runCall(child, message, { ...execution, writes }).pipe(
       Effect.catchTag('CodePipeFailure', (failure) =>
         Effect.gen(function* () {
@@ -436,22 +476,23 @@ const runCall = Effect.fn('Code.runCall')(function* (
 ) {
   const { state, dispatch, stopped, writes } = execution
   if (!state.accepting) return yield* Effect.void
-  const step = yield* state.call(message, dispatch)
-  if (state.decided) {
-    if (state.busy) return yield* Effect.void
-    return yield* Option.match(state.settled(), {
-      onNone: () => Effect.void,
-      onSome: (outcome) => Deferred.succeed(stopped, outcome).pipe(Effect.asVoid),
-    })
-  }
+  const landed = yield* state.call(message, dispatch, stopped)
+  // A decision is reported by the landing of the last running call, not from here.
+  if (state.decided || Option.isNone(landed)) return yield* Effect.void
+  const step = landed.value
   if (CallStep.guards.Stop(step))
     return yield* Deferred.succeed(stopped, step.outcome).pipe(Effect.asVoid)
-  if (!state.accepting) return yield* Effect.void
+  // Admission is checked again inside the permit: a reply that waited behind another frame must
+  // not reach the program after a decision has closed it.
   return yield* writes.withPermit(
-    writeFrame(
-      child.stdin,
-      encodeParent(ParentMessage.cases.Reply.make({ id: message.id, value: step.value })),
-      'request',
+    Effect.suspend(() =>
+      state.accepting
+        ? writeFrame(
+            child.stdin,
+            encodeParent(ParentMessage.cases.Reply.make({ id: message.id, value: step.value })),
+            'request',
+          )
+        : Effect.void,
     ),
   )
 })
