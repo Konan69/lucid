@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, eq, lte, gt, ne } from 'drizzle-orm'
+import { and, eq, lte, gt, ne, sql } from 'drizzle-orm'
 import {
   Clock,
   Context,
@@ -647,6 +647,61 @@ const makeBrowse = ({ database, registry, links, send }: Dispatcher): DeviceServ
   })
 }
 
+/**
+ * The database does not have the tables this code was written for: product migrations have not
+ * been applied to it. `missing` names what was looked for and not found.
+ */
+export class ProductMigrationsBehind extends Schema.TaggedError<ProductMigrationsBehind>()(
+  'ProductMigrationsBehind',
+  { missing: Schema.Literals(['vivid_devices', 'vivid_device_requests.receipt']) },
+  { title: 'Product migrations have not been applied to this database' },
+) {}
+
+const decodeCatalog = decodeStored(
+  Schema.Struct({
+    rows: Schema.Tuple([Schema.Struct({ devices: Schema.Boolean, receipt: Schema.Boolean })]),
+  }),
+  'device catalog answer',
+)
+
+/**
+ * Asks PostgreSQL's catalog whether the Device tables are the ones this code writes to, before the
+ * first write. A server started against a database that is a migration behind would otherwise
+ * stop with nothing but "Database operation failed", because the driver's reason is deliberately
+ * not carried past the database adapter.
+ *
+ * Launch fails on this, with this error, rather than running without Devices. A schema behind its
+ * code is wrong for every domain at once, so a server that came up anyway would only move the
+ * same failure to a Person's first call; and a Device service that might not be there would have
+ * to be modelled as absent everywhere it is used, for a state that is a deployment mistake.
+ */
+const requireLedger = Effect.fn('Device.requireLedger')(function* (database: DatabaseService) {
+  const catalog = yield* decodeCatalog(
+    yield* database.run(
+      database.execute(sql`
+        SELECT to_regclass('public.vivid_devices') IS NOT NULL AS devices,
+          EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'vivid_device_requests'
+              AND column_name = 'receipt'
+          ) AS receipt
+      `),
+    ),
+  )
+  const [found] = catalog.rows
+  if (!found.devices) return yield* behind('vivid_devices')
+  if (!found.receipt) return yield* behind('vivid_device_requests.receipt')
+  return undefined
+})
+
+/** Says it in the log as well as in the failure: launch output is where an operator looks first. */
+const behind = Effect.fn('Device.behind')(function* (missing: ProductMigrationsBehind['missing']) {
+  yield* Effect.logError(
+    `Product migrations are behind this server: ${missing} is missing. Apply them with \`pnpm db:migrate\` and start again.`,
+  )
+  return yield* new ProductMigrationsBehind({ missing })
+})
+
 export const deviceLayer = Layer.effect(
   DeviceRegistry,
   Effect.gen(function* () {
@@ -657,6 +712,9 @@ export const deviceLayer = Layer.effect(
     const registry = makeRegistry(database, presence)
     const ledger = makeLedger(database, pending)
 
+    // The first thing this service does is write to its ledger, so it is also the first thing
+    // to meet a database whose migrations are behind. That is said by name before anything runs.
+    yield* requireLedger(database)
     // Once now, for what a previous process left behind and whose deadline has passed; once more
     // when every deadline that process could have issued has passed too.
     yield* ledger.reconcile()
