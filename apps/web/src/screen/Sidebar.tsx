@@ -6,15 +6,12 @@ import {
   Building2,
   Check,
   ChevronsUpDown,
-  FolderKanban,
   Library,
   PanelLeft,
-  Plug,
   Plus,
   Repeat2,
   Search,
   Settings as SettingsIcon,
-  Sparkles,
   SquarePen,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
@@ -28,6 +25,7 @@ import { Face } from '../ui/Face'
 import { Menu, MenuDivider, MenuItem, MenuLabel } from '../ui/Menu'
 import { sidebar } from '../data/sidebar'
 import { FULL, HOVER, ROW, TOOL } from './sidebar/rows'
+import { ProjectGroup } from './sidebar/Projects'
 import { Threads, ThreadSkeleton } from './sidebar/Threads'
 
 /**
@@ -67,8 +65,11 @@ function Edge() {
 }
 
 /**
- * The rail: where the Person is working, the four places beside Threads, and every Thread they can
- * see, ordered by what needs them. It reads live data and owns none: a Thread moves between lanes
+ * The rail: where the Person is working, the way to start a Thread, the two places beside Threads
+ * (Routines and the Library), every Thread they can see ordered by what needs them, and the Person
+ * with their Settings at the foot. Nothing else is first-class: Projects is a quiet group under the
+ * Threads, Integrations is reached from Settings or when Vivid offers one in a Thread, and what
+ * Vivid knows how to do is Vivid's business, not a place. It reads live data and owns none: a Thread moves between lanes
  * because the server says its attention changed, not because something here remembered to move it.
  */
 export function Sidebar({
@@ -145,28 +146,10 @@ export function Sidebar({
             onClick={() => router.go(Route.Routines())}
           />
           <ToolRow
-            icon={<FolderKanban className="size-4" strokeWidth={1.6} />}
-            label="Projects"
-            active={Route.$is('Projects')(route)}
-            onClick={() => router.go(Route.Projects())}
-          />
-          <ToolRow
             icon={<Library className="size-4" strokeWidth={1.6} />}
             label="Library"
             active={Route.$is('Library')(route)}
             onClick={() => router.go(Route.Library())}
-          />
-          <ToolRow
-            icon={<Sparkles className="size-4" strokeWidth={1.6} />}
-            label="Skills"
-            active={Route.$is('Skills')(route)}
-            onClick={() => router.go(Route.Skills())}
-          />
-          <ToolRow
-            icon={<Plug className="size-4" strokeWidth={1.6} />}
-            label="Integrations"
-            active={false}
-            onClick={() => router.openSettings(Option.some('connections'))}
           />
         </div>
 
@@ -179,6 +162,10 @@ export function Sidebar({
               active={Route.$is('Thread')(route) ? route.id : null}
             />
           )}
+          <ProjectGroup
+            always={Workspace.guards.Company(me.workspace)}
+            open={Route.$is('Projects')(route) ? route.open : Option.none()}
+          />
         </nav>
 
         <button

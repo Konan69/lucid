@@ -50,7 +50,6 @@ export const live = {
   rules: one((client) => client.WatchRules()),
   audit: one((client) => client.WatchAudit()),
   memory: one((client) => client.WatchMemory()),
-  skills: one((client) => client.WatchSkills()),
   computer: one((client) => client.WatchComputer()),
   suggestions: one((client) => client.WatchSuggestions()),
 }

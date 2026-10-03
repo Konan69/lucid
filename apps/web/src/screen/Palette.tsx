@@ -13,7 +13,6 @@ import {
   Search,
   SlidersHorizontal,
   SquarePen,
-  Sparkles,
 } from 'lucide-react'
 import { useAtomSet, useAtomValue } from '@effect/atom-react'
 import { useCallback, useState, type ReactNode } from 'react'
@@ -90,7 +89,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     words: 'folders groups spaces',
     icon: <FolderKanban className="size-4" />,
     keys: Option.none(),
-    go: () => router.go(Route.Projects()),
+    go: () => router.go(Route.Projects({ open: Option.none() })),
   },
   {
     key: 'do:library',
@@ -100,15 +99,6 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     icon: <LibraryIcon className="size-4" />,
     keys: Option.none(),
     go: () => router.go(Route.Library()),
-  },
-  {
-    key: 'do:skills',
-    title: 'Skills',
-    detail: 'What Vivid knows how to do',
-    words: 'skills procedures how to learn teach built in',
-    icon: <Sparkles className="size-4" />,
-    keys: Option.none(),
-    go: () => router.go(Route.Skills()),
   },
   {
     key: 'do:connections',
@@ -292,7 +282,7 @@ export function Palette({ onClose }: { onClose: () => void }) {
         aria-modal="true"
         aria-label="Search and actions"
         tabIndex={-1}
-        className="w-full max-w-xl overflow-hidden rounded-panel bg-surface-1 smooth-shadow-ring-lg outline-none"
+        className="w-full max-w-xl overflow-hidden rounded-dialog bg-surface-3 lift-lg outline-none"
       >
         <label className="flex h-12 items-center gap-2.5 px-4 hairline-b">
           <Search className="size-4 text-ink-3" />

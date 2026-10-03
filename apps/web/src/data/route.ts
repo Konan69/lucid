@@ -1,4 +1,4 @@
-import { InvitationId, ThreadId } from '@vivid/contracts'
+import { InvitationId, ProjectId, ThreadId } from '@vivid/contracts'
 import { Data, Option, Schema } from 'effect'
 
 /**
@@ -8,7 +8,9 @@ import { Data, Option, Schema } from 'effect'
  *
  * - `New`: the first screen, a Thread that does not exist yet.
  * - `Thread`: one Thread.
- * - `Routines`, `Library`, `Projects`, `Skills`: the places beside Threads.
+ * - `Routines`, `Library`: the places beside Threads.
+ * - `Projects`: the shelf of Projects, or one Project open on it. The open one rides in the path
+ *   so the sidebar's group can link straight to a Project.
  * - `Invite`: an invitation to a Company, shown before it is accepted.
  * - `Device`: approving a phone or desktop app that is asking to sign in as this Person.
  */
@@ -17,8 +19,7 @@ export type Route = Data.TaggedEnum<{
   Thread: { readonly id: ThreadId }
   Routines: {}
   Library: {}
-  Projects: {}
-  Skills: {}
+  Projects: { readonly open: Option.Option<ProjectId> }
   Invite: { readonly id: InvitationId }
   Device: { readonly code: Option.Option<string> }
 }>
@@ -41,8 +42,7 @@ const decodeSection = Schema.decodeUnknownOption(SettingsSection)
 const PLACES = new Map<string, Route>([
   ['routines', Route.Routines()],
   ['library', Route.Library()],
-  ['projects', Route.Projects()],
-  ['skills', Route.Skills()],
+  ['projects', Route.Projects({ open: Option.none() })],
 ])
 
 /**
@@ -62,6 +62,9 @@ export function parseRoute(pathname: string, search: string): Route {
   if (first === 'invite' && Option.isSome(named)) {
     return Route.Invite({ id: InvitationId.make(named.value) })
   }
+  if (first === 'projects' && Option.isSome(named)) {
+    return Route.Projects({ open: Option.some(ProjectId.make(named.value)) })
+  }
   if (first === 'device') {
     return Route.Device({
       code: Option.fromNullOr(new URLSearchParams(search).get('user_code')),
@@ -77,8 +80,11 @@ export const pathOf = (route: Route): string =>
     Thread: ({ id }) => `/t/${encodeURIComponent(id)}`,
     Routines: () => '/routines',
     Library: () => '/library',
-    Projects: () => '/projects',
-    Skills: () => '/skills',
+    Projects: ({ open }) =>
+      Option.match(open, {
+        onNone: () => '/projects',
+        onSome: (id) => `/projects/${encodeURIComponent(id)}`,
+      }),
     Invite: ({ id }) => `/invite/${encodeURIComponent(id)}`,
     Device: () => '/device',
   })

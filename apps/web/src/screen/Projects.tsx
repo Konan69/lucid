@@ -27,11 +27,20 @@ interface NewProject {
  * Projects: where work is filed. The shelf shows the top-level Projects; a Project's page shows
  * the Threads filed in it and the Projects inside it.
  *
- * Everything drawn comes from `live.projects` and `live.threads`. `onOpenThread` opens one of a
- * Project's Threads; until the shell passes it, those Threads are listed but are not links.
+ * Everything drawn comes from `live.projects` and `live.threads`. Which Project is open belongs to
+ * the address (`open`, changed through `onOpen`), so the sidebar can link to one and the back
+ * button leaves it. `onOpenThread` opens one of a Project's Threads; until the shell passes it,
+ * those Threads are listed but are not links.
  */
-export function Projects({ onOpenThread }: { onOpenThread?: (id: ThreadId) => void }) {
-  const [openId, setOpenId] = useState<Option.Option<ProjectId>>(Option.none())
+export function Projects({
+  open: openId,
+  onOpen: setOpenId,
+  onOpenThread,
+}: {
+  open: Option.Option<ProjectId>
+  onOpen: (open: Option.Option<ProjectId>) => void
+  onOpenThread?: (id: ThreadId) => void
+}) {
   const [creating, setCreating] = useState<Option.Option<NewProject>>(Option.none())
   const state = useLive(live.projects)
 
@@ -162,7 +171,7 @@ function ProjectShelf({
       }
     >
       {top.length === 0 ? (
-        <div className="mt-3 flex flex-col items-center rounded-card bg-surface-2 px-6 py-10 text-center smooth-shadow-ring-xs">
+        <div className="mt-3 flex flex-col items-center px-6 py-16 text-center">
           <FolderKanban className="size-5 text-ink-4" />
           <p className="mt-2 mb-4 max-w-sm text-label text-ink-3">
             No Projects yet. A Project keeps the Threads about one piece of work together.
@@ -208,7 +217,7 @@ function ProjectCard({
     <button
       type="button"
       onClick={onOpen}
-      className="group/card flex size-full cursor-pointer flex-col rounded-card bg-surface-2 p-4 text-left smooth-shadow-ring-xs transition-press duration-(--dur-fast) hover:bg-wash-hover"
+      className="group/card flex size-full cursor-pointer flex-col rounded-card bg-surface-2 p-4 text-left edge transition-press duration-(--dur-fast) hover:bg-wash-hover"
     >
       <span className="flex items-center gap-2.5">
         <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink">

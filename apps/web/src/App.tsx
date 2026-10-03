@@ -32,14 +32,12 @@ const screens = {
   Projects: () => import('./screen/Projects'),
   Routines: () => import('./screen/Routines'),
   Settings: () => import('./screen/Settings'),
-  Skills: () => import('./screen/Skills'),
 }
 const Computer = lazy(async () => ({ default: (await screens.Computer()).Computer }))
 const Library = lazy(async () => ({ default: (await screens.Library()).Library }))
 const Projects = lazy(async () => ({ default: (await screens.Projects()).Projects }))
 const Routines = lazy(async () => ({ default: (await screens.Routines()).Routines }))
 const Settings = lazy(async () => ({ default: (await screens.Settings()).Settings }))
-const Skills = lazy(async () => ({ default: (await screens.Skills()).Skills }))
 
 const warm = () => {
   for (const load of Object.values(screens)) void load()
@@ -191,7 +189,7 @@ function Reconnecting() {
   return (
     <p
       role="status"
-      className="pointer-events-none fixed top-3 left-1/2 z-50 -translate-x-1/2 rounded-full px-3 py-1 text-meta text-ink-2 smooth-shadow-ring-sm glass transition-opacity delay-1000 duration-(--dur-base) starting:opacity-0"
+      className="pointer-events-none fixed top-3 left-1/2 z-50 -translate-x-1/2 rounded-full px-3 py-1 text-meta text-ink-2 lift glass transition-opacity delay-1000 duration-(--dur-base) starting:opacity-0"
     >
       Reconnecting…
     </p>
@@ -299,8 +297,13 @@ function Place({
         }
       />
     ),
-    Projects: () => <Projects onOpenThread={(id) => router.go(Route.Thread({ id }))} />,
-    Skills: () => <Skills />,
+    Projects: ({ open }) => (
+      <Projects
+        open={open}
+        onOpen={(next) => router.go(Route.Projects({ open: next }))}
+        onOpenThread={(id) => router.go(Route.Thread({ id }))}
+      />
+    ),
     Invite: ({ id }) => <Invite id={id} />,
     // A device waiting to be signed in is approved in Settings, with its code already filled in.
     Device: () => <First me={me} />,
