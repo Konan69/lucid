@@ -502,7 +502,7 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
 /** A missing runtime is diagnosed once during construction, independent of how many requests arrive. */
 standalone.effect('logs absent program configuration once and refuses each request', () => {
   const messages: string[] = []
-  const logger = Logger.make((entry) => messages.push(String(entry.message)))
+  const logger = Logger.make((entry) => messages.push(Logger.formatSimple.log(entry)))
   return Effect.gen(function* () {
     const process = yield* CodeProcess
     for (let index = 0; index < 2; index++) {
@@ -523,25 +523,26 @@ standalone.effect('logs absent program configuration once and refuses each reque
   )
 })
 
-/** An invalid launch environment exercises the real supervisor defect boundary without starting a child. */
-standalone.effect('logs a launch defect before returning Unavailable', () => {
+/** A configured but unusable host is rejected during construction, before assets or guests launch. */
+standalone.effect('logs unavailable isolation once and refuses configured program runs', () => {
   const messages: string[] = []
   const logger = Logger.make((entry) => messages.push(Logger.formatSimple.log(entry)))
   return Effect.gen(function* () {
-    const result = yield* (yield* CodeProcess).run(
-      {
-        request: { code: 'return 1;', summary: 'Read' },
-        boundary: ThreadId.make(crypto.randomUUID()),
-      },
-      () => Effect.die('Launch must not dispatch'),
-    )
-    check(result, 'Failed', { failure: CodeFailure.cases.Unavailable.make({}) })
+    const process = yield* CodeProcess
+    for (let index = 0; index < 2; index++) {
+      const result = yield* process.run(
+        {
+          request: { code: 'return 1;', summary: 'Read' },
+          boundary: ThreadId.make(crypto.randomUUID()),
+        },
+        () => Effect.die('Launch must not dispatch'),
+      )
+      check(result, 'Failed', { failure: CodeFailure.cases.Unavailable.make({}) })
+    }
     expect(
-      messages.some(
-        (message) =>
-          message.includes('Program supervision failed') && message.includes('null bytes'),
-      ),
-    ).toBe(true)
+      messages.filter((message) => message.includes('Programs are unavailable on this host')),
+    ).toHaveLength(1)
+    expect(messages.some((message) => message.includes('CodeIsolationUnavailable'))).toBe(true)
   }).pipe(
     Effect.provide(codeProcessLayer),
     Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ XDG_RUNTIME_DIR: '\0' }))),

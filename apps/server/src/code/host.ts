@@ -1,9 +1,16 @@
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
 import * as NodeProcess from 'node:process'
-import { Option } from 'effect'
+import { Effect, Option, Schema } from 'effect'
 
-/** Test admission probes the actual host primitives; absence is a stated skip, not a larger timeout. */
+/** Missing isolation is a host capability failure, never permission to run an unisolated guest. */
+export class CodeIsolationUnavailable extends Schema.TaggedError<CodeIsolationUnavailable>()(
+  'CodeIsolationUnavailable',
+  { reason: Schema.String },
+  { title: 'Programs cannot run on this host: isolation is unavailable' },
+) {}
+
+/** Probe the existing sandbox's prerequisites, shared by startup and real-supervisor test admission. */
 export function programHost(runtime: Option.Option<string>): Option.Option<string> {
   if (Option.isNone(runtime)) return Option.some('XDG_RUNTIME_DIR is absent')
   if (!NodeProcess.execPath.startsWith('/usr/'))
@@ -53,3 +60,17 @@ export function programHost(runtime: Option.Option<string>): Option.Option<strin
   )
   return sandbox.status === 0 ? Option.none() : Option.some('bubblewrap namespaces are unavailable')
 }
+
+/** Startup invokes the bounded host probe once, before preparing any trusted worker assets. */
+export const checkProgramHost = Effect.fn('Code.checkHost')(function* (
+  runtime: Option.Option<string>,
+) {
+  const missing = yield* Effect.try({
+    try: () => programHost(runtime),
+    catch: () =>
+      new CodeIsolationUnavailable({ reason: 'Host isolation prerequisites cannot be inspected' }),
+  })
+  if (Option.isSome(missing))
+    return yield* Effect.fail(new CodeIsolationUnavailable({ reason: missing.value }))
+  return yield* Effect.void
+})

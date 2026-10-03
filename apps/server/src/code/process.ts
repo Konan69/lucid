@@ -13,6 +13,7 @@ import {
 import { Config, Context, Deferred, Effect, Fiber, Layer, Option, Schema, Semaphore } from 'effect'
 import { budgets, bytes } from './budgets.ts'
 import { prepareWorker } from './source.ts'
+import { checkProgramHost } from './host.ts'
 import { FrameReader, writeFrame } from './pipe.ts'
 import {
   decodeWorker,
@@ -462,18 +463,22 @@ export const codeProcessLayer = Layer.effect(
   CodeProcess,
   Effect.gen(function* () {
     const runtimeDirectory = yield* Config.option(Config.String('XDG_RUNTIME_DIR'))
-    if (Option.isNone(runtimeDirectory))
-      yield* Effect.logError('Programs are unavailable: XDG_RUNTIME_DIR is not configured')
-    const source = Option.isNone(runtimeDirectory)
-      ? Option.none<string>()
-      : yield* prepareWorker().pipe(
-          Effect.map(Option.some),
-          Effect.catchTag('CodeAssetsUnavailable', (error) =>
-            Effect.logError('Program worker assets could not be prepared', error).pipe(
-              Effect.as(Option.none<string>()),
-            ),
-          ),
-        )
+    const source = yield* checkProgramHost(runtimeDirectory).pipe(
+      Effect.andThen(prepareWorker()),
+      Effect.map(Option.some),
+      // The shared CodeFailure.Unavailable is the model-visible host capability refusal.
+      // Contracts are unchanged; the precise tagged prerequisite error stays in startup diagnostics.
+      Effect.catchTag('CodeIsolationUnavailable', (error) =>
+        Effect.logError('Programs are unavailable on this host', error.reason, error).pipe(
+          Effect.as(Option.none<string>()),
+        ),
+      ),
+      Effect.catchTag('CodeAssetsUnavailable', (error) =>
+        Effect.logError('Program worker assets could not be prepared', error).pipe(
+          Effect.as(Option.none<string>()),
+        ),
+      ),
+    )
     const capacity = yield* Semaphore.make(budgets.processes)
     const active = new Set<ThreadId>()
     return CodeProcess.of({
