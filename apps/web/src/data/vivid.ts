@@ -1,4 +1,10 @@
-import { Appearance, DEFAULT_APPEARANCE, Look, Workspace, type MeResponse } from '@vivid/contracts'
+import {
+  Appearance,
+  DEFAULT_APPEARANCE,
+  Look,
+  mayChangeAppearance,
+  type MeResponse,
+} from '@vivid/contracts'
 import { Option, Schema } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import { useSyncExternalStore } from 'react'
@@ -91,16 +97,8 @@ export function useAppearance(): Appearance {
   return useSyncExternalStore(subscribe, () => shown)
 }
 
-/**
- * Whether this Person may change Vivid here: always in their own space, and in a Company only as
- * its owner or an admin, because everyone in a Company shares one Vivid. The server enforces the
- * same rule; this decides whether the way in is offered at all.
- */
-export const mayCustomise = (me: MeResponse): boolean =>
-  Workspace.match(me.workspace, {
-    Personal: () => true,
-    Company: ({ role }) => role === 'owner' || role === 'admin',
-  })
+/** Whether this Person may change Vivid where they are working (`mayChangeAppearance`). */
+export const mayCustomise = (me: MeResponse): boolean => mayChangeAppearance(me.workspace)
 
 /**
  * Saves a new appearance and shows it at once: the expectation recolours and renames Vivid on

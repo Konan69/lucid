@@ -1,4 +1,5 @@
 import { Schema } from 'effect'
+import { Workspace } from './companies.js'
 
 /**
  * The fixed colours Vivid's face can be drawn in. They are the `face-*` hues of the design tokens
@@ -74,3 +75,15 @@ export const DEFAULT_APPEARANCE = new Appearance({
   name: 'Vivid',
   look: Look.cases.Accent.make({}),
 })
+
+/**
+ * Whether someone working in this workspace may change Vivid there: always in their own space,
+ * and in a Company only as its owner or an admin, because everyone in a Company shares one Vivid.
+ * The server enforces this on `SetAppearance`; a client uses it to decide whether to offer the
+ * way in at all.
+ */
+export const mayChangeAppearance = (workspace: Workspace): boolean =>
+  Workspace.match(workspace, {
+    Personal: () => true,
+    Company: ({ role }) => role === 'owner' || role === 'admin',
+  })
