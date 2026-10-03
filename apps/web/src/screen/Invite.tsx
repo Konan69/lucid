@@ -121,7 +121,7 @@ function Boundary({
   note?: string
 }) {
   return (
-    <section className="rounded-card bg-surface-3 p-4 smooth-shadow-ring-xs">
+    <section className="rounded-card bg-surface-3 p-4 edge">
       <h2 className="text-label font-title text-ink">{title}</h2>
       <ul className="mt-2 flex flex-col gap-1.5 text-label text-ink-2">
         {lines.map((line) => (

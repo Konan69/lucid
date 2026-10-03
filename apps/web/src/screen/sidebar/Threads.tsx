@@ -1,7 +1,7 @@
 import type { Thread, ThreadId } from '@vivid/contracts'
 import { ThreadAudience } from '@vivid/contracts'
 import { Data } from 'effect'
-import { Check, CircleCheck, Pencil, Trash2, Undo2, Users } from 'lucide-react'
+import { Check, CircleCheck, FolderInput, Pencil, Trash2, Undo2, Users } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { change, live } from '../../data/live'
 import { Route, router } from '../../data/route'
@@ -9,19 +9,24 @@ import { orSay } from '../../data/said'
 import { Faces } from '../../ui/Avatar'
 import { Button } from '../../ui/Button'
 import { cn } from '../../ui/cn'
+import { Count } from '../../ui/Count'
 import { Dialog, DialogActions } from '../../ui/Dialog'
 import { ContextMenu, MenuDivider, MenuItem, type MenuPoint } from '../../ui/Menu'
+import { byKeyboard, leave } from '../../ui/motion'
 import { StatusLabel } from '../../ui/Status'
+import { MoveThread } from '../project/Move'
 import { CAPTION, FULL, HOVER, ROW } from './rows'
 
 /**
  * What the Person is in the middle of doing to a Thread from the list. It is one thing at a time,
- * so the menu, the title being edited and the question before deleting can never be open together.
+ * so the menu, the title being edited, the Project being chosen and the question before deleting
+ * can never be open together.
  */
 type Doing = Data.TaggedEnum<{
   Nothing: {}
   Choosing: { readonly thread: Thread; readonly at: MenuPoint }
   Renaming: { readonly id: ThreadId }
+  Moving: { readonly thread: Thread }
   Deleting: { readonly thread: Thread }
 }>
 const Doing = Data.taggedEnum<Doing>()
@@ -72,7 +77,7 @@ function band(updatedAt: number, now: number): (typeof BANDS)[number] {
 }
 
 /** When a Thread last moved, as short as it can be said: the time today, the day this week. */
-function relativeTime(updatedAt: number, now: number) {
+export function relativeTime(updatedAt: number, now: number) {
   const days = daysAgo(updatedAt, now)
   const format: Intl.DateTimeFormatOptions =
     days <= 0
@@ -96,9 +101,12 @@ function relativeTime(updatedAt: number, now: number) {
 export function Threads({
   threads,
   active,
+  empty,
 }: {
   threads: ReadonlyArray<Thread>
   active: ThreadId | null
+  /** What to say where the list would be: it differs when the list is one Project's. */
+  empty: string
 }) {
   const [doing, setDoing] = useState<Doing>(Doing.Nothing())
   const [doneOpen, setDoneOpen] = useState(false)
@@ -113,7 +121,13 @@ export function Threads({
   )
   const nothing = () => setDoing(Doing.Nothing())
   const row = (thread: Thread, variant: Variant) => (
-    <li key={thread.id} className={variant === 'card' ? 'py-0.5' : undefined}>
+    // `data-moves` names the row for the list's `settling` (see `Sidebar`): when the Thread
+    // changes place, even into another part of the list, the row glides there.
+    <li
+      key={thread.id}
+      data-moves={thread.id}
+      className={variant === 'card' ? 'py-0.5' : undefined}
+    >
       <ThreadRow
         thread={thread}
         variant={variant}
@@ -126,11 +140,7 @@ export function Threads({
   )
 
   if (threads.length === 0) {
-    return (
-      <p className="px-2.5 pt-3 text-label font-meta text-ink-3">
-        Threads you start will appear here.
-      </p>
-    )
+    return <p className="px-2.5 pt-3 text-label font-meta text-pretty text-ink-3">{empty}</p>
   }
 
   return (
@@ -161,6 +171,7 @@ export function Threads({
         <section>
           <button
             onClick={() => setDoneOpen((value) => !value)}
+            data-moves="done"
             className={cn(ROW, FULL, HOVER, 'mt-2 text-ink-3 hover:text-ink')}
             aria-expanded={doneOpen}
           >
@@ -168,7 +179,9 @@ export function Threads({
               <CircleCheck className="size-4" strokeWidth={1.6} />
             </span>
             <span className="min-w-0 flex-1 text-label">Done</span>
-            <span className="text-meta font-meta text-ink-3 tabular-nums">{done.length}</span>
+            <span className="text-meta font-meta text-ink-3">
+              <Count value={done.length} />
+            </span>
           </button>
           {doneOpen && (
             <ul className="flex flex-col gap-px pb-2">
@@ -180,6 +193,7 @@ export function Threads({
       {Doing.$is('Choosing')(doing) && (
         <ThreadMenu thread={doing.thread} at={doing.at} onDo={setDoing} />
       )}
+      {Doing.$is('Moving')(doing) && <MoveThread thread={doing.thread} onClose={nothing} />}
       {Doing.$is('Deleting')(doing) && <DeleteThread thread={doing.thread} onClose={nothing} />}
     </>
   )
@@ -234,8 +248,10 @@ function CardFace({ thread, active, onDo }: RowProps) {
       onDoubleClick={() => onDo(Doing.Renaming({ id: thread.id }))}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'relative block h-(--card-row-h) w-full cursor-pointer rounded-card px-2.5 py-2 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) select-none focus-visible:-outline-offset-2',
-        active ? 'bg-surface-3' : 'bg-surface-2 hover:bg-wash-hover',
+        'relative block h-(--card-row-h) w-full cursor-pointer rounded-card px-2.5 py-2 text-left edge transition-surface duration-(--dur-fast) select-none focus-visible:-outline-offset-2',
+        // On the sidebar a card at rest is an outline; the chosen one is the raised fill. A resting
+        // fill would be the sidebar's own colour, and a hover wash over nothing is still visible.
+        active ? 'bg-surface-3' : 'hover:bg-wash-hover',
       )}
     >
       <span className="flex h-5 items-center gap-1.5">
@@ -306,7 +322,15 @@ function DoneAction({ thread }: { thread: Thread }) {
       data-row-action
       aria-label={`${label}: ${thread.title}`}
       title={label}
-      onClick={() => patchThread(thread.id, { archived: !thread.archived })}
+      onClick={(event) => {
+        const done = () => patchThread(thread.id, { archived: !thread.archived })
+        const row = event.currentTarget.closest('[data-moves]')
+        // The row fades out under the pointer first, then the list closes over it: taken away
+        // in the same frame, the row below would be under the pointer before the eye had let go
+        // of this one. From the keyboard it is done at once.
+        if (row === null || byKeyboard(event)) done()
+        else void leave(row, 'exit').then(done)
+      }}
       className="pointer-events-none absolute top-1.5 right-1.5 z-10 inline-flex size-6 cursor-pointer items-center justify-center rounded-control text-ink-3 opacity-0 transition-opacity duration-(--dur-fast) group-focus-within/thread:pointer-events-auto group-focus-within/thread:opacity-100 group-hover/thread:pointer-events-auto group-hover/thread:opacity-100 hover:bg-wash-hover hover:text-ink active:scale-96"
     >
       {thread.archived ? <Undo2 className="size-3.5" /> : <Check className="size-3.5" />}
@@ -355,7 +379,7 @@ function RenameField({
         if (event.key === 'Escape') finish(null)
       }}
       className={cn(
-        'absolute rounded-xs bg-surface-3 px-1 text-ink smooth-shadow-ring-xs outline-none smooth-ring-accent',
+        'absolute rounded-xs bg-surface-3 px-1 text-ink edge outline-none edge-accent',
         FIELD_PLACE[variant],
       )}
     />
@@ -388,6 +412,12 @@ function ThreadMenu({
         }}
       >
         {thread.archived ? 'Move back to threads' : 'Mark as done'}
+      </MenuItem>
+      <MenuItem
+        icon={<FolderInput className="size-3.5" />}
+        onSelect={() => onDo(Doing.Moving({ thread }))}
+      >
+        Move to a project…
       </MenuItem>
       <MenuDivider />
       <MenuItem
@@ -443,13 +473,19 @@ function DeleteThread({ thread, onClose }: { thread: Thread; onClose: () => void
 function Caption({ label, count }: { label: string; count?: number }) {
   return (
     <h3
+      // A caption moves with the rows under it when the list above it grows or closes up.
+      data-moves={`caption:${label}`}
       className={cn(
         'mt-1 flex items-center gap-1.5 px-2.5 text-meta font-title text-ink-3',
         CAPTION,
       )}
     >
       {label}
-      {count !== undefined && <span className="font-meta tabular-nums">{count}</span>}
+      {count !== undefined && (
+        <span className="font-meta">
+          <Count value={count} />
+        </span>
+      )}
     </h3>
   )
 }

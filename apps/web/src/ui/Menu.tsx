@@ -1,6 +1,7 @@
-import type { KeyboardEvent, ReactNode } from 'react'
+import { useCallback, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { cn } from './cn'
 import { holdFocus, Layer } from './Layer'
+import { leave } from './motion'
 
 /* Where a menu hangs, and the corner it grows from: the one nearest what opened it, so it reads
    as coming out of its trigger and not as arriving from the middle of nowhere. */
@@ -11,15 +12,36 @@ const SIDE = {
 } satisfies Record<string, string>
 
 /* A menu is opened many times a day, so it arrives fast (120 ms) and from nearly full size: a
-   scale from 0.97 with opacity, never from nothing. It is a transition from a starting style, so
-   there is no keyframe to restart if it is opened twice quickly. */
-const PLATE =
-  'z-50 min-w-56 overflow-y-auto rounded-panel outline-none smooth-shadow-ring-lg transition-pop duration-(--dur-fast) ease-out glass starting:scale-97 starting:opacity-0'
+   scale from 0.97 with opacity, never from nothing (`motion-pop`). It is a transition from a
+   starting style, so there is no keyframe to restart if it is opened twice quickly. */
+const PLATE = 'z-50 min-w-56 motion-pop overflow-y-auto rounded-card outline-none lift glass'
+
+/**
+ * A menu's plate, and the way to send it away. Sent away by a click elsewhere it goes out the
+ * way it came, faster, and only then is its owner told to close it. A choice made in it does
+ * not come through here: the owner closes the menu at once, because what was chosen is already
+ * happening and that is the answer the Person is looking for.
+ */
+function usePlate(onClose: () => void) {
+  const plate = useRef<HTMLDivElement | null>(null)
+  // One function for the life of the menu: a new one each render would have React let go of the
+  // keyboard and take it again every time.
+  const hold = useCallback((node: HTMLDivElement | null) => {
+    plate.current = node
+    return holdFocus(node)
+  }, [])
+  const dismiss = () => {
+    if (plate.current === null) onClose()
+    else void leave(plate.current, 'popExit').then(onClose)
+  }
+  return { hold, dismiss }
+}
 
 /* A list of choices is inset from the plate's edge and stops growing at a screenful; a panel
    (something with its own headings and rows) lays itself out edge to edge. */
 const FILL = {
-  list: 'max-h-96 p-1',
+  // 8px of padding around 8px rows makes the plate's 16px corner concentric with theirs.
+  list: 'max-h-96 p-2',
   panel: 'max-h-[min(36rem,80vh)]',
 } as const
 
@@ -81,14 +103,33 @@ export function Menu({
 }) {
   if (!open) return null
   return (
+    <Plate onClose={onClose} className={cn('absolute', FILL[fill], SIDE[side], className)}>
+      {children}
+    </Plate>
+  )
+}
+
+/** The plate of an open menu and the layer under it. It exists only while the menu is open. */
+function Plate({
+  onClose,
+  className,
+  children,
+}: {
+  onClose: () => void
+  className: string
+  children: ReactNode
+}) {
+  const { hold, dismiss } = usePlate(onClose)
+  return (
     <>
-      <Backdrop onClose={onClose} />
+      <Backdrop onClose={dismiss} />
       <div
-        ref={holdFocus}
+        ref={hold}
         role="menu"
         tabIndex={-1}
+        // Escape is the keyboard, and the keyboard is answered at once: no exit is played.
         onKeyDown={(event) => steer(event, onClose)}
-        className={cn('absolute', PLATE, FILL[fill], SIDE[side], className)}
+        className={cn(PLATE, className)}
       >
         {children}
       </div>
@@ -125,6 +166,7 @@ export function ContextMenu({
   onClose: () => void
   children: ReactNode
 }) {
+  const { hold, dismiss } = usePlate(onClose)
   const leftward = at.x > window.innerWidth / 2
   const upward = at.y > window.innerHeight / 2
   // SAFETY: React forwards these CSS custom properties to the element; the classes below name
@@ -135,9 +177,9 @@ export function ContextMenu({
   } as React.CSSProperties
   return (
     <Layer>
-      <Backdrop onClose={onClose} />
+      <Backdrop onClose={dismiss} />
       <div
-        ref={holdFocus}
+        ref={hold}
         role="menu"
         tabIndex={-1}
         onKeyDown={(event) => steer(event, onClose)}

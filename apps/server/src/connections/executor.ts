@@ -1,3 +1,4 @@
+import * as NodeCrypto from 'node:crypto'
 import {
   ActionEffect,
   ConnectionId,
@@ -28,11 +29,20 @@ import type * as HttpBody from 'effect/unstable/http/HttpBody'
 import { toolMessage } from './message.ts'
 import { retainCatalog } from './catalog.ts'
 import { ConnectionSource } from './address.ts'
+import {
+  encodeGoogleClient,
+  googleApp,
+  GoogleState,
+  decodeGoogleState,
+  loadGoogleInstallation,
+  type GoogleInstallation,
+} from './google.ts'
 
 export const ExecutorAppId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorAppId'))
 export const ExecutorAccountId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorAccountId'))
 export const ExecutorDeploymentId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorDeploymentId'))
 export const ExecutorProfileId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorProfileId'))
+const ExecutorOrganizationId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorOrganizationId'))
 const ExecutorProviderId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorProviderId'))
 export const connectionSetupMessage = 'This integration is not set up on this Vivid yet.'
 export const ExecutorOwnerId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorOwnerId'))
@@ -57,6 +67,12 @@ export const ExecutorReferences = Schema.TaggedUnion({
     label: Schema.NonEmptyString,
   },
   SigningIn: { ...referenceFields, authorization: ExecutorAuthorizationId },
+  /** Google has a registered fixed callback and must persist its exact protocol correlation. */
+  GoogleSigningIn: {
+    ...referenceFields,
+    authorization: ExecutorAuthorizationId,
+    googleState: GoogleState,
+  },
   Authorized: { ...referenceFields, account: ExecutorAccountId },
 })
 export type ExecutorReferences = typeof ExecutorReferences.Type
@@ -67,8 +83,15 @@ export const ExecutorServiceEntry = Schema.Struct({
   description: Schema.String,
   authorization: ServiceAuthorization,
 })
+const SignInReferences = Schema.Union([
+  ExecutorReferences.cases.SigningIn,
+  ExecutorReferences.cases.GoogleSigningIn,
+])
+const isSigningIn = ExecutorReferences.isAnyOf(['SigningIn', 'GoogleSigningIn'])
+const isPending = ExecutorReferences.isAnyOf(['EnteringKey', 'SigningIn', 'GoogleSigningIn'])
+
 export const ExecutorStep = Schema.TaggedUnion({
-  OpenSignIn: { references: ExecutorReferences.cases.SigningIn, address: Schema.String },
+  OpenSignIn: { references: SignInReferences, address: Schema.String },
   EnterKey: {
     references: ExecutorReferences.cases.EnteringKey,
     fields: ServiceAuthorization.cases.Key.fields.fields,
@@ -190,16 +213,13 @@ export class ExecutorResourceMissing extends Schema.TaggedError<ExecutorResource
 export function resourceReason(resource: ExecutorResourceMissing['resource']) {
   return `The saved ${resource.toLowerCase()} no longer exists.`
 }
-/** A failed compensation retains enough opaque identity for cleanup or a convergent begin retry. */
-export class ExecutorCopyRetained extends Schema.TaggedError<ExecutorCopyRetained>()(
-  'ExecutorCopyRetained',
-  {
-    references: Schema.TaggedUnion({
-      Located: { service: ServiceId, app: ExecutorAppId, owner: ExecutorOwnerId },
-      Named: { service: ServiceId, name: Schema.String, owner: ExecutorOwnerId },
-    }),
-  },
-  { title: 'Connection copy retained' },
+/** Hosted approval responses have no resumable request; Vivid must refuse without inventing one.
+ * Resume has no tool in its public input, so its unavailable tool context is explicitly null.
+ */
+export class ExecutorApprovalUnsupported extends Schema.TaggedError<ExecutorApprovalUnsupported>()(
+  'ExecutorApprovalUnsupported',
+  { tool: Schema.NullOr(Schema.String) },
+  { title: 'Integration approval unsupported' },
 ) {}
 
 export type ExecutorFailure =
@@ -216,7 +236,7 @@ export type ExecutorFailure =
   | ExecutorSignInRequired
   | ExecutorAuthorizationUnavailable
   | ExecutorResourceMissing
-  | ExecutorCopyRetained
+  | ExecutorApprovalUnsupported
 
 const BeginInput = Schema.Struct({
   connectionId: ConnectionId,
@@ -245,9 +265,11 @@ const SignInInput = Schema.Struct({
   callbackAddress: Schema.Redacted(Schema.String),
 })
 
-/** Owner is Executor's storage/filter identity, not permission. Subject independently attributes a
- * profile to the acting Person. The caller supplies both; this adapter never chooses their mapping.
- * See the SDK profile contract and the ownership evidence in findings-executor section 4.
+/** Owner and subject remain caller inputs for the later owner-to-organization mapping, but are
+ * never sent to Executor. HostedProfiles in apps/hosted/server/src/contracts/profiles.ts
+ * derives both from authenticated membership.
+ * Until tenancy moves there, Vivid isolates Connections by sending only their saved app/profile/
+ * account references; it never discovers an account by name or selects one from inventory.
  */
 export interface ExecutorService {
   /** Installation absence is stable and must not start background network workers. */
@@ -310,8 +332,10 @@ const Requirement = Schema.Struct({
 })
 const WireApp = Schema.Struct({
   id: ExecutorAppId,
+  name: Schema.NonEmptyString,
   requirements: Schema.Struct({ accounts: Schema.Record(Schema.String, Requirement) }),
 })
+const WireInventory = Schema.Struct({ apps: Schema.Array(WireApp) })
 const WireSetup = Schema.Struct({
   mode: Schema.Literals(['automatic', 'saved', 'client-required']),
 })
@@ -341,6 +365,7 @@ const WireProfile = Schema.Struct({
 const WireConnection = Schema.Struct({
   id: ExecutorAuthorizationId,
   reconnectAccount: Schema.NullOr(WireAccount),
+  target: Schema.NullOr(Schema.Struct({ app: ExecutorAppId, profile: ExecutorProfileId })),
   state: Schema.Union([
     Schema.Struct({ status: Schema.Literal('pending') }),
     Schema.Struct({ status: Schema.Literal('cancelled') }),
@@ -361,6 +386,7 @@ const WireTool = Schema.Struct({
   ),
 })
 const WireTools = Schema.Struct({
+  profile: ExecutorProfileId,
   items: Schema.Array(WireTool),
   deployment: ExecutorDeploymentId,
   profileRevision: Schema.Int,
@@ -368,7 +394,7 @@ const WireTools = Schema.Struct({
 })
 const WireCatalogEntry = Schema.Struct({
   id: ServiceId,
-  kind: Schema.Literals(['openapi', 'mcp', 'graphql', 'cli']),
+  kind: Schema.Literals(['app', 'openapi', 'mcp', 'graphql', 'cli']),
   name: Schema.String,
   description: Schema.String,
   connectUrl: Schema.optionalKey(Schema.String),
@@ -377,62 +403,31 @@ const WireCatalogEntry = Schema.Struct({
 })
 const WireCatalog = Schema.Array(Schema.Unknown)
 const decodeCatalogEntry = Schema.decodeUnknownEffect(WireCatalogEntry)
-/** Executor's custom import API takes a checked URL for both MCP and OpenAPI.
- * Schema-backed cases keep the HTTP request total without widening it to arbitrary JSON.
+/** packages/catalog/src/contracts/imports.ts CustomAppInput accepts only MCP name and URL.
+ * Method detection belongs to Executor; the hosted contract has neither auth nor OpenAPI input.
  */
-const WireImportSource = Schema.Union([
-  Schema.Struct({
-    kind: Schema.tag('mcp'),
-    name: Schema.String,
-    url: Schema.String,
-    auth: Schema.Union([
-      Schema.Struct({
-        type: Schema.Literal('apiKey'),
-        header: Schema.Literal('Authorization'),
-        prefix: Schema.Literal('Bearer '),
-      }),
-      Schema.Struct({ type: Schema.Literal('auto') }),
-    ]),
-  }),
-  Schema.Struct({ kind: Schema.tag('openapi'), name: Schema.String, url: Schema.String }),
-]).pipe(Schema.toTaggedUnion('kind'))
-const WireCompleted = Schema.Struct({
-  status: Schema.Literal('completed'),
-  value: Schema.Json,
-  toolError: Schema.optionalKey(Schema.Literal(true)),
+const WireImportSource = Schema.Struct({
+  kind: Schema.tag('mcp'),
+  name: Schema.NonEmptyString,
+  url: Schema.NonEmptyString,
 })
-const WireCall = Schema.Union([
-  WireCompleted,
-  Schema.Struct({
-    status: Schema.Literal('approval-required'),
-    requestId: ExecutorRequestId,
-    expiresAt: Schema.Number,
-  }),
-]).pipe(Schema.toTaggedUnion('status'))
-const WireResume = Schema.Union([
-  WireCompleted,
-  Schema.Struct({ status: Schema.Literal('denied') }),
-  Schema.Struct({ status: Schema.Literal('cancelled') }),
-  Schema.Struct({
-    status: Schema.Literal('failed'),
-    reason: Schema.Literals(['expired', 'context-changed', 'execution-failed']),
-  }),
-  Schema.Struct({ status: Schema.Literal('already-consumed') }),
-]).pipe(Schema.toTaggedUnion('status'))
+// HostedTools.call returns arbitrary Json, including plain OpenAPI values. The MCP isError
+// discriminator changes only the product outcome, never the preserved successful payload.
+const isToolError = Schema.is(Schema.Struct({ isError: Schema.Literal(true) }))
 const WireSignIn = Schema.Union([
-  Schema.Struct({ status: Schema.Literal('redirect'), authorizationUrl: Schema.String }),
+  Schema.Struct({
+    status: Schema.Literal('redirect'),
+    authorizationUrl: Schema.URLFromString,
+    redirectUri: Schema.URLFromString,
+  }),
   Schema.Struct({ status: Schema.Literal('completed'), account: WireAccount }),
 ]).pipe(Schema.toTaggedUnion('status'))
 const KeySubmission = Schema.Struct({
-  connection: ExecutorAuthorizationId,
-  owner: ExecutorOwnerId,
   method: Schema.String,
   label: Schema.String,
   fields: Schema.Record(Schema.String, Schema.RedactedFromValue(Schema.String)),
 })
 const SignInSubmission = Schema.Struct({
-  connection: ExecutorAuthorizationId,
-  owner: ExecutorOwnerId,
   callbackUrl: Schema.RedactedFromValue(Schema.String),
 })
 const encodeKey = Schema.encodeEffect(KeySubmission)
@@ -447,6 +442,7 @@ const FailureMode = Schema.TaggedUnion({
   Uncertain: {},
   Rejected: { message: Schema.String },
   SetupRequired: {},
+  ApprovalUnsupported: {},
 })
 const notReady = FailureMode.cases.NotReady.make({})
 const conflict = FailureMode.cases.Conflict.make({})
@@ -460,7 +456,13 @@ const failureModes = {
   AppNotDeployed: notReady,
   DeploymentNotFound: FailureMode.cases.Missing.make({ resource: 'Deployment' }),
   AccountNotFound: FailureMode.cases.Missing.make({ resource: 'Account' }),
+  // No selected account requires authorization; never select another account implicitly.
   AccountRequired: notReady,
+  // packages/sdk/src/contracts/oauth.ts OAuthRenewalFailed preserves the grant on renewal failure. Reject the dispatch so a
+  // retry/setup repair is possible without falsely asking the Person to replace credentials.
+  OAuthRenewalFailed: FailureMode.cases.Rejected.make({
+    message: 'This Integration could not renew access. Retry or review its sign-in setup.',
+  }),
   AccountSelectionInvalid: notReady,
   OAuthReconnectRequired: notReady,
   ProfileNotFound: FailureMode.cases.Missing.make({ resource: 'Profile' }),
@@ -473,6 +475,11 @@ const failureModes = {
   CredentialsError: denied,
   DashboardForbidden: denied,
   DashboardUnauthorized: denied,
+  // Hosted principal/membership refusal is installation authority, not a Person's tool input.
+  Unauthorized: denied,
+  Forbidden: denied,
+  OrganizationForbidden: denied,
+  AuthenticationUnavailable: denied,
   ProfileConflict: conflict,
   AppNameTaken: conflict,
   AppSlugTaken: conflict,
@@ -496,8 +503,22 @@ const failureModes = {
   ToolPolicyFailed: FailureMode.cases.Rejected.make({
     message: 'The tool policy could not decide; the tool did not run.',
   }),
-  ToolApprovalRequired: FailureMode.cases.Rejected.make({
-    message: 'This tool requires a supported approval request.',
+  ToolApprovalRequired: FailureMode.cases.ApprovalUnsupported.make({}),
+  // A kind mismatch proves dispatch was refused; discovery must determine the current kind.
+  ToolKindMismatch: FailureMode.cases.Rejected.make({
+    message: 'This Integration tool changed; discover its tools again.',
+  }),
+  // Provider evaluation and listing timeouts precede invocation. Rejection lets discovery retry
+  // without presenting them as missing credentials or replaying an uncertain external action.
+  AppProviderFailed: FailureMode.cases.Rejected.make({
+    message: 'This Integration could not prepare its tools. Review its setup.',
+  }),
+  ToolListingTimedOut: FailureMode.cases.Rejected.make({
+    message: 'This Integration took too long to list its tools. Retry discovery.',
+  }),
+  // Build resource exhaustion is setup rejection, with the same recovery as a failed build.
+  BuildMemoryExceeded: FailureMode.cases.Rejected.make({
+    message: 'This Integration could not be built within the available memory.',
   }),
   ToolElicitationFailed: uncertain,
   RequestInvalid: FailureMode.cases.Rejected.make({
@@ -513,6 +534,7 @@ const failureModes = {
   OAuthSetupFailed: FailureMode.cases.Rejected.make({
     message: 'The integration could not prepare sign-in. Review its OAuth configuration.',
   }),
+  // Callback exchange failed before a usable account exists; restart or correct sign-in.
   OAuthCompletionFailed: FailureMode.cases.Rejected.make({
     message: 'Sign-in did not complete. Review the callback or start a new authorization.',
   }),
@@ -543,6 +565,7 @@ function translateFailure(tag: typeof knownFailureTag.Type, tool: string | null)
   const context = { service: 'connections' as const, tool }
   return FailureMode.match(failureModes[tag], {
     NotReady: (): ExecutorFailure => ExecutorNotReady.make(context),
+    ApprovalUnsupported: (): ExecutorFailure => ExecutorApprovalUnsupported.make({ tool }),
     SetupRequired: (): ExecutorFailure => ExecutorSetupRequired.make(context),
     Missing: ({ resource }): ExecutorFailure =>
       ExecutorResourceMissing.make({ ...context, resource }),
@@ -574,26 +597,29 @@ function responseReader(client: HttpClient.HttpClient) {
         if (response.status === 401) {
           return yield* Effect.fail(ExecutorAccessDenied.make(context))
         }
-        if (response.status >= 500)
-          return yield* Effect.fail(ExecutorExecutionUncertain.make(context))
-        const body = yield* response.json.pipe(
-          Effect.mapError(() => ExecutorResponseInvalid.make(context)),
-        )
+        // Hosted discovery failures use 502/504 with precise tags. Decode those before the
+        // generic 5xx classification; an unrecognized server failure remains outcome-uncertain.
+        const invalid = () =>
+          response.status >= 500
+            ? ExecutorExecutionUncertain.make(context)
+            : ExecutorResponseInvalid.make(context)
+        const body = yield* response.json.pipe(Effect.mapError(invalid))
         if (response.status >= 200 && response.status < 300) {
           return yield* decode(body).pipe(
             Effect.mapError(() => ExecutorResponseInvalid.make(context)),
           )
         }
-        const failure = yield* decodeFailure(body).pipe(
-          Effect.mapError(() => ExecutorResponseInvalid.make(context)),
-        )
-        if (!isKnownFailureTag(failure._tag))
+        const failure = yield* decodeFailure(body).pipe(Effect.mapError(invalid))
+        if (!isKnownFailureTag(failure._tag)) {
+          if (response.status >= 500)
+            return yield* Effect.fail(ExecutorExecutionUncertain.make(context))
           return yield* Effect.fail(
             ExecutorRejected.make({
               ...context,
               message: 'The integration refused this request before running the tool.',
             }),
           )
+        }
         return yield* Effect.fail(translateFailure(failure._tag, tool))
       },
       (effect, _request, tool) =>
@@ -610,12 +636,12 @@ function responseReader(client: HttpClient.HttpClient) {
 
 /** Supported catalogue entries remain discoverable even when this installation cannot authorize them.
  * Missing or unknown auth requires operator setup; it never means unauthenticated access.
- * Unsupported GraphQL/CLI imports remain excluded.
+ * Hosted CatalogImport quick-add supports app/MCP only; OpenAPI/GraphQL/CLI remain excluded.
  * These are method hints; cached setup inspection selects a usable method before a service is
  * offered or a Connection begins. Mixed imports retain both methods during inspection.
  */
 function catalogEntry(entry: typeof WireCatalogEntry.Type) {
-  if (!['mcp', 'openapi'].includes(entry.kind) || entry.connectUrl === undefined) return []
+  if (entry.kind !== 'app' && (entry.kind !== 'mcp' || entry.connectUrl === undefined)) return []
   const authorization =
     entry.auth === undefined
       ? ServiceAuthorization.cases.SetupRequired.make({})
@@ -638,7 +664,7 @@ function catalogEntry(entry: typeof WireCatalogEntry.Type) {
 /** HostedTool.readOnly and annotations.readOnlyHint carry queries and imported MCP read hints;
  * the OpenAPI adapter derives readOnly from GET, HEAD, and OPTIONS (SDK apps openapi implementation).
  * annotations.destructiveHint carries imported MCP destructive hints. Destructive wins. Approval callbacks and raw HTTP methods are NOT
- * exposed by GET /v1/tools, so they cannot establish read safety; undeclared/conflicting hints
+ * exposed by HostedTools.list, so they cannot establish read safety; undeclared/conflicting hints
  * conservatively mean write. Names such as "read_*" never establish safety.
  */
 function classifyTool(tool: typeof WireTool.Type) {
@@ -654,17 +680,17 @@ function classifyTool(tool: typeof WireTool.Type) {
 }
 
 /** A completed semantic error is actionable, not a successful tool value. */
-function completedCall(result: typeof WireCompleted.Type) {
-  if (result.toolError === true)
-    return ExecutorCallOutcome.cases.Rejected.make({ message: toolMessage(result.value) })
-  return ExecutorCallOutcome.cases.Completed.make({ value: result.value })
+function completedCall(value: Schema.Json) {
+  if (isToolError(value))
+    return ExecutorCallOutcome.cases.Rejected.make({ message: toolMessage(value) })
+  return ExecutorCallOutcome.cases.Completed.make({ value })
 }
 
-/** Reconciliation, discovery and invocation have no Executor owner predicate. Their tenancy
- * boundary is Vivid's scoped Connection lookup; resume additionally checks the stored owner.
+/** Hosted paths keep app/profile opaque and explicit; the authenticated organization is prefixed
+ * once at client acquisition (apps/hosted/server/src/contracts/profiles.ts HostedProfiles HostedProfiles).
  */
 const target = (references: ExecutorReferences) =>
-  `/v1/apps/${encodeURIComponent(references.app)}/profiles/${encodeURIComponent(references.profile)}`
+  `/apps/${encodeURIComponent(references.app)}/profiles/${encodeURIComponent(references.profile)}`
 /** Centralized encoding leaves foreign identifiers opaque rather than interpreting their prefixes. */
 const query = (value: string) => encodeURIComponent(value)
 /** Body encoding happens before dispatch and contains no diagnostic/logging of secret fields. */
@@ -682,29 +708,28 @@ function referenceIdentity(references: ExecutorReferences) {
 }
 
 /** Compile the narrow foreign response schemas once for this authenticated client. */
-function makeHttp(client: HttpClient.HttpClient) {
+function makeHttp(client: HttpClient.HttpClient, google: Option.Option<GoogleInstallation>) {
   const read = responseReader(client)
   const readApp = read(WireApp)
-  const readApps = read(Schema.Array(WireApp))
+  const readInventory = read(WireInventory)
   const readProfile = read(WireProfile)
   const readConnection = read(WireConnection)
   const readAccount = read(WireAccount)
   const readCatalog = read(WireCatalog)
   const readTools = read(WireTools)
-  const readCall = read(WireCall)
-  const readResume = read(WireResume)
+  const readCall = read(Schema.Json)
   const readSignIn = read(WireSignIn)
   const readRemoval = read(Schema.Json)
   return {
+    google,
     readApp,
-    readApps,
+    readInventory,
     readProfile,
     readConnection,
     readAccount,
     readCatalog,
     readTools,
     readCall,
-    readResume,
     readSignIn,
     readRemoval,
     readSetup: read(WireSetup),
@@ -734,10 +759,9 @@ function makeDiscovery(http: ExecutorHttp) {
     const seen = new Set<string>()
     do {
       const base = Option.match(snapshot, {
-        onNone: () =>
-          `/v1/tools?app=${query(references.app)}&profile=${query(references.profile)}&limit=2000`,
+        onNone: () => `/apps/${query(references.app)}/tools?profile=${query(references.profile)}`,
         onSome: ({ deployment, revision }) =>
-          `/v1/tools?app=${query(references.app)}&profile=${query(references.profile)}&deployment=${query(deployment)}&expectedProfileRevision=${revision}&limit=2000`,
+          `/apps/${query(references.app)}/tools?profile=${query(references.profile)}&deployment=${query(deployment)}&expectedProfileRevision=${revision}`,
       })
       const address = Option.match(cursor, {
         onNone: () => base,
@@ -745,9 +769,10 @@ function makeDiscovery(http: ExecutorHttp) {
       })
       const page = yield* http.readTools(Effect.succeed(HttpClientRequest.get(address)), null)
       if (
-        Option.isSome(snapshot) &&
-        (snapshot.value.deployment !== page.deployment ||
-          snapshot.value.revision !== page.profileRevision)
+        page.profile !== references.profile ||
+        (Option.isSome(snapshot) &&
+          (snapshot.value.deployment !== page.deployment ||
+            snapshot.value.revision !== page.profileRevision))
       ) {
         return yield* Effect.fail(ExecutorConflict.make({ service: 'connections', tool: null }))
       }
@@ -786,7 +811,7 @@ function makeTools(discover: ReturnType<typeof makeDiscovery>) {
 }
 
 /** Starting OAuth may allocate protocol state before responding. Retain its targeted request on
- * refusal or transport loss so management can resolve or cancel it instead of losing its identity.
+ * refusal or transport loss so management can resolve it instead of losing its identity.
  */
 function makeSignIn(
   http: ExecutorHttp,
@@ -797,17 +822,21 @@ function makeSignIn(
     pending: typeof ExecutorReferences.cases.SigningIn.Type,
     methodName: string,
   ) {
+    const installed = googleApp(http.google, input.service)
+    const submission = { method: methodName, label: input.label }
+    const body =
+      Option.isSome(installed) && Option.isSome(http.google)
+        ? {
+            ...submission,
+            client: yield* encodeGoogleClient(http.google.value.client).pipe(
+              Effect.mapError(() =>
+                ExecutorResponseInvalid.make({ service: 'connections', tool: null }),
+              ),
+            ),
+          }
+        : submission
     const result = yield* http
-      .readSignIn(
-        post('/v1/account-connections/oauth/start', {
-          connection: pending.authorization,
-          owner: input.owner,
-          method: methodName,
-          label: input.label,
-          redirectUri: input.returnAddress,
-        }),
-        null,
-      )
+      .readSignIn(post(`/connections/${query(pending.authorization)}/oauth/start`, body), null)
       .pipe(
         Effect.catchTags({
           ExecutorSetupRequired: () =>
@@ -831,16 +860,43 @@ function makeSignIn(
             Effect.fail(ExecutorAuthorizationUnavailable.make({ references: pending })),
         }),
       )
-    return WireSignIn.match(result, {
-      redirect: ({ authorizationUrl }) =>
-        ExecutorStep.cases.OpenSignIn.make({ references: pending, address: authorizationUrl }),
-      completed: ({ account }) =>
-        ExecutorStep.cases.Done.make({
-          references: ExecutorReferences.cases.Authorized.make({
-            ...referenceIdentity(pending),
-            account: account.id,
-          }),
+    return yield* WireSignIn.match(result, {
+      redirect: ({ authorizationUrl, redirectUri }) =>
+        Effect.gen(function* () {
+          // HostedAccounts.startOAuth binds deployment-wide redirectUri and ignores per-request
+          // overrides. Refuse mismatches before handing the Person an unusable provider URL.
+          if (redirectUri.href !== input.returnAddress) {
+            yield* recordSetupRequired(input.service)
+            return yield* Effect.fail(
+              ExecutorSetupRequired.make({ service: 'connections', tool: null }),
+            )
+          }
+          if (Option.isNone(installed))
+            return ExecutorStep.cases.OpenSignIn.make({
+              references: pending,
+              address: authorizationUrl.href,
+            })
+          const state = yield* decodeGoogleState(authorizationUrl.searchParams.get('state')).pipe(
+            Effect.mapError(() => ExecutorAuthorizationUnavailable.make({ references: pending })),
+          )
+          return ExecutorStep.cases.OpenSignIn.make({
+            references: ExecutorReferences.cases.GoogleSigningIn.make({
+              ...referenceIdentity(pending),
+              authorization: pending.authorization,
+              googleState: state,
+            }),
+            address: authorizationUrl.href,
+          })
         }),
+      completed: ({ account }) =>
+        Effect.succeed(
+          ExecutorStep.cases.Done.make({
+            references: ExecutorReferences.cases.Authorized.make({
+              ...referenceIdentity(pending),
+              account: account.id,
+            }),
+          }),
+        ),
     })
   })
 }
@@ -886,23 +942,20 @@ function makeAuthorize(
         }),
       )
     const [methodName, method] = chosen
-    // Pending requests are reusable; reconnects bind the existing account so completion cannot duplicate it.
-    const connection = ExecutorReferences.isAnyOf(['EnteringKey', 'SigningIn'])(references)
+    // HostedAccounts reconnects the exact saved account. New Connections target the exact
+    // app/profile slot; neither lists or chooses another account. See HostedAccounts in
+    // apps/hosted/server/src/contracts/accounts.ts.
+    const connection = isPending(references)
       ? { id: references.authorization }
       : yield* http.readConnection(
-          post(
-            '/v1/account-connections',
-            ExecutorReferences.guards.Authorized(references)
-              ? {
-                  owner: input.owner,
-                  target: { app: app.id, profile: references.profile, requirement },
-                  account: references.account,
-                }
-              : {
-                  owner: input.owner,
-                  target: { app: app.id, profile: references.profile, requirement },
-                },
-          ),
+          ExecutorReferences.guards.Authorized(references)
+            ? Effect.succeed(
+                HttpClientRequest.post(`/accounts/${query(references.account)}/connections`),
+              )
+            : post(`/apps/${query(references.app)}/connections`, {
+                requirement,
+                profile: references.profile,
+              }),
           null,
         )
     return yield* AuthorizationMethod.match(method, {
@@ -935,13 +988,9 @@ function makeStatus(http: ExecutorHttp) {
   return Effect.fn('Executor.status')(
     function* (references: ExecutorReferences) {
       let resolved = references
-      if (ExecutorReferences.isAnyOf(['EnteringKey', 'SigningIn'])(references)) {
+      if (isPending(references)) {
         const connection = yield* http.readConnection(
-          Effect.succeed(
-            HttpClientRequest.get(
-              `/v1/account-connections/${query(references.authorization)}?owner=${query(references.owner)}`,
-            ),
-          ),
+          Effect.succeed(HttpClientRequest.get(`/connections/${query(references.authorization)}`)),
           null,
         )
         const state = connection.state
@@ -954,20 +1003,30 @@ function makeStatus(http: ExecutorHttp) {
           account: state.account.id,
         })
       }
-      const profile = yield* reconcile(resolved)
+      // HostedProfiles.get reads the saved selection without scheduling setup work on every
+      // healthy status check. Reconcile only a profile that has not reached ready yet.
+      const saved = yield* http.readProfile(
+        Effect.succeed(HttpClientRequest.get(target(resolved))),
+        null,
+      )
+      const profile = saved.status === 'ready' ? saved : yield* reconcile(resolved)
       if (profile.status !== 'ready') {
         if (profile.failure === 'accounts')
           return ExecutorStatus.cases.NeedsAuthorization.make({ references: resolved })
         return ExecutorStatus.cases.Failed.make({ reason: `Service setup is ${profile.status}` })
       }
-      yield* http.readTools(
+      const page = yield* http.readTools(
         Effect.succeed(
           HttpClientRequest.get(
-            `/v1/tools?app=${query(resolved.app)}&profile=${query(resolved.profile)}&limit=1`,
+            `/apps/${query(resolved.app)}/tools?profile=${query(resolved.profile)}`,
           ),
         ),
         null,
       )
+      if (page.profile !== resolved.profile)
+        return yield* Effect.fail(
+          ExecutorResponseInvalid.make({ service: 'connections', tool: null }),
+        )
       return ExecutorStatus.cases.Ready.make({ references: resolved })
     },
     (effect, references) =>
@@ -1002,10 +1061,7 @@ function makeCatalog(http: ExecutorHttp) {
   const knownKind = Schema.is(WireCatalogEntry.fields.kind)
   const decodeIdentity = Schema.decodeUnknownOption(Schema.Struct({ id: ServiceId }))
   return Effect.fn('Executor.catalog')(function* () {
-    const entries = yield* http.readCatalog(
-      Effect.succeed(HttpClientRequest.get('/dashboard/api/catalog?limit=2000')),
-      null,
-    )
+    const entries = yield* http.readCatalog(Effect.succeed(HttpClientRequest.get('/catalog')), null)
     const rejected: Option.Option<{ readonly id: ServiceId }>[] = []
     const decoded = yield* Effect.forEach(
       entries,
@@ -1063,21 +1119,22 @@ function keyFields(fields: typeof AuthorizationMethod.cases.secrets.fields.field
  * sign-in is unavailable; automatic/saved sign-in retains priority for mixed services.
  */
 function makeInspectSetup(http: ExecutorHttp) {
-  return Effect.fn('Executor.inspectSetup')(function* (
-    requirement: typeof Requirement.Type,
-    returnAddress: string,
-  ) {
+  return Effect.fn('Executor.inspectSetup')(function* (requirement: typeof Requirement.Type) {
+    if (
+      Option.isSome(http.google) &&
+      http.google.value.apps.some((app) => app.provider === requirement.provider)
+    )
+      return ServiceAuthorization.cases.SignIn.make({})
     const methods = Object.entries(requirement.definition.auth)
     const signIn = methods.find(([, method]) => AuthorizationMethod.guards.oauth2(method))
     const key = methods.find(([, method]) => AuthorizationMethod.guards.secrets(method))
     if (signIn !== undefined) {
       const setup = yield* http.readSetup(
-        post('/v1/account-connections/oauth/setup', {
-          owner: 'local',
-          provider: requirement.provider,
-          method: signIn[0],
-          redirectUri: returnAddress,
-        }),
+        Effect.succeed(
+          HttpClientRequest.get(
+            `/providers/${query(requirement.provider)}/oauth/${query(signIn[0])}/setup`,
+          ),
+        ),
         null,
       )
       if (setup.mode !== 'client-required') return ServiceAuthorization.cases.SignIn.make({})
@@ -1165,7 +1222,7 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
       const definition = HashMap.get(yield* Ref.get(definitions), input.service)
       if (Option.isNone(definition)) return entry.authorization
       const authorization = yield* permits.withPermits(1)(
-        inspect(definition.value, input.returnAddress).pipe(
+        inspect(definition.value).pipe(
           Effect.timeout('5 seconds'),
           Effect.catchTag('TimeoutError', () =>
             Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
@@ -1209,7 +1266,7 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
           service: input.service,
           returnAddress: input.returnAddress,
         })
-      const authorization = yield* inspect(requirement, input.returnAddress).pipe(
+      const authorization = yield* inspect(requirement).pipe(
         Effect.timeout('5 seconds'),
         Effect.catchTag('TimeoutError', () =>
           Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
@@ -1240,203 +1297,46 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
   }
 })
 
-/** A failed copy response is not proof of refusal. Recover its exact opaque identity; if the
- * inventory is also unavailable, retain the owner/name predicate for a later convergent retry.
+/** packages/sdk/src/contracts/apps.ts AppName is bounded at 120 characters. Hash the Integration
+ * identity so arbitrary URL lengths share a stable name across Connections without truncation.
  */
-function makeRecoverCopy(http: ExecutorHttp) {
-  return Effect.fn('Executor.recoverCopy')(function* (
-    input: typeof BeginInput.Type,
-    name: string,
-    error: ExecutorFailure,
-  ) {
-    const retained = yield* http
-      .readApps(
-        Effect.succeed(
-          HttpClientRequest.get(`/v1/apps?owner=${query(input.owner)}&name=${query(name)}`),
-        ),
-        null,
-      )
-      .pipe(
-        Effect.mapError(() =>
-          ExecutorCopyRetained.make({
-            references: ExecutorCopyRetained.fields.references.cases.Named.make({
-              service: input.service,
-              owner: input.owner,
-              name,
-            }),
-          }),
-        ),
-      )
-    const app = retained[0]
-    if (app !== undefined) return app
-    return yield* Effect.fail(error)
-  })
+function integrationAppName(service: ServiceId) {
+  return `Vivid Integration ${NodeCrypto.createHash('sha256').update(service).digest('hex')}`
 }
 
-/** Deterministic names recover a copied app after a lost copy response. Exact owner/name lookup
- * is essential: the installation client itself may list resources belonging to every owner.
+/** Organization inventory is only used to locate shared app code, never to select an account.
+ * HostedApps.install/import in apps/hosted/server/src/contracts/apps.ts are create-only.
+ * Serialize local provisioning so concurrent Begins share one app; a lost response is recovered by the same deterministic name on the next Begin.
  */
-type AppImporter = (
-  input: typeof BeginInput.Type,
-  entry: typeof ExecutorServiceEntry.Type,
-  name: string,
-) => Effect.Effect<typeof WireApp.Type, ExecutorFailure>
-
-/** The import operation varies; owner copying, recovery and cleanup remain one workflow. */
-function makeCopy(http: ExecutorHttp, importApp: AppImporter) {
-  const recover = makeRecoverCopy(http)
-  return Effect.fn('Executor.copy')(function* (
-    input: typeof BeginInput.Type,
-    entry: typeof ExecutorServiceEntry.Type,
-  ) {
-    const name = `Vivid Connection ${input.connectionId}`
-    const existing = yield* http.readApps(
-      Effect.succeed(
-        HttpClientRequest.get(`/v1/apps?owner=${query(input.owner)}&name=${query(name)}`),
-      ),
-      null,
-    )
-    const previous = existing[0]
-    const templateName = `Vivid template ${input.connectionId}`
-    const templates = yield* http
-      .readApps(
-        Effect.succeed(HttpClientRequest.get(`/v1/apps?owner=local&name=${query(templateName)}`)),
+function makeInstall(http: ExecutorHttp, permit: Semaphore.Semaphore) {
+  return Effect.fn('Executor.install')(
+    function* (
+      service: ServiceId,
+      install: (name: string) => Effect.Effect<typeof WireApp.Type, ExecutorFailure>,
+    ) {
+      const name = integrationAppName(service)
+      const inventory = yield* http.readInventory(
+        Effect.succeed(HttpClientRequest.get('/inventory')),
         null,
       )
-      .pipe(
-        Effect.mapError((error) =>
-          previous === undefined
-            ? error
-            : ExecutorCopyRetained.make({
-                references: ExecutorCopyRetained.fields.references.cases.Located.make({
-                  service: input.service,
-                  app: previous.id,
-                  owner: input.owner,
-                }),
-              }),
-        ),
-      )
-    const template = templates[0]
-    if (previous !== undefined) {
-      if (template !== undefined)
-        yield* http
-          .readRemoval(
-            Effect.succeed(
-              HttpClientRequest.make('DELETE')(`/v1/apps/${query(template.id)}?owner=local`),
-            ),
-            null,
-          )
-          .pipe(
-            Effect.mapError(() =>
-              ExecutorCopyRetained.make({
-                references: ExecutorCopyRetained.fields.references.cases.Located.make({
-                  service: input.service,
-                  app: previous.id,
-                  owner: input.owner,
-                }),
-              }),
-            ),
-          )
-      return previous
-    }
-    const imported =
-      template === undefined ? yield* importApp(input, entry, templateName) : template
-    const app = yield* http
-      .readApp(
-        post('/v1/apps/copies', {
-          from: imported.id,
-          owner: input.owner,
-          name,
-        }),
-        null,
-      )
-      .pipe(Effect.catch((error) => recover(input, name, error)))
-    // Cleanup failures carry the copy identity; the same Connection id recovers it on retry.
-    yield* http
-      .readRemoval(
-        Effect.succeed(
-          HttpClientRequest.make('DELETE')(`/v1/apps/${query(imported.id)}?owner=local`),
-        ),
-        null,
-      )
-      .pipe(
-        Effect.mapError(() =>
-          ExecutorCopyRetained.make({
-            references: ExecutorCopyRetained.fields.references.cases.Located.make({
-              service: input.service,
-              app: app.id,
-              owner: input.owner,
-            }),
-          }),
-        ),
-      )
-    return app
-  })
+      const existing = inventory.apps.find((app) => app.name === name)
+      if (existing !== undefined) return existing
+      return yield* install(name)
+    },
+    (effect) => permit.withPermits(1)(effect),
+  )
 }
 
-const isSignInRequired = Schema.is(ExecutorSignInRequired)
-const isAuthorizationUnavailable = Schema.is(ExecutorAuthorizationUnavailable)
 const isSetupRequired = Schema.is(ExecutorSetupRequired)
 
-/** A setup failure cannot strand an unreferenced owner copy. If compensation also fails, retain
- * its opaque identity in a typed error instead of pretending cleanup succeeded.
- */
-function makeCompensation(http: ExecutorHttp) {
-  return Effect.fn('Executor.compensate')(function* (
-    input: typeof BeginInput.Type,
-    app: typeof WireApp.Type,
-    error: ExecutorFailure,
-  ) {
-    if (isSignInRequired(error)) return yield* Effect.fail(error)
-    if (isAuthorizationUnavailable(error)) {
-      yield* makeRemove(http)(error.references)
-      return yield* Effect.fail(error)
-    }
-    yield* http
-      .readRemoval(
-        Effect.succeed(
-          HttpClientRequest.make('DELETE')(`/v1/apps/${query(app.id)}?owner=${query(input.owner)}`),
-        ),
-        null,
-      )
-      .pipe(
-        Effect.mapError(() =>
-          ExecutorCopyRetained.make({
-            references: ExecutorCopyRetained.fields.references.cases.Located.make({
-              service: input.service,
-              app: app.id,
-              owner: input.owner,
-            }),
-          }),
-        ),
-      )
-    return yield* Effect.fail(error)
-  })
-}
-
-/** Profile creation uses the caller's Connection id as its idempotency key. Post-copy failures
- * either preserve a pending authorization or remove the copy before reporting the failure.
+/** HostedApps.install deploys the catalog entry directly into the organization. Shared code is
+ * retained on setup failure: deleting it would break every other Connection's profile.
  */
 function makeBegin(
   http: ExecutorHttp,
   availability: Effect.Success<ReturnType<typeof makeAuthorization>>,
+  install: ReturnType<typeof makeInstall>,
 ) {
-  const copy = makeCopy(
-    http,
-    Effect.fn('Executor.importCatalog')((_input, entry, name) =>
-      Effect.gen(function* () {
-        return yield* http.readApp(
-          post('/dashboard/api/catalog/import', {
-            entry: entry.id,
-            name,
-            mcpAuth: yield* importAuthorization(entry.authorization),
-          }),
-          null,
-        )
-      }),
-    ),
-  )
-  const compensate = makeCompensation(http)
   const configure = makeConfigure(http, availability)
   const begin = Effect.fn('Executor.begin')(function* (input: typeof BeginInput.Type) {
     const entry = (yield* availability.catalog()).find(
@@ -1447,47 +1347,42 @@ function makeBegin(
         ExecutorRejected.make({
           service: 'connections',
           tool: null,
-          message: 'Choose a supported integration from the current catalog.',
+          message: 'Choose a supported Integration from the current catalog.',
         }),
       )
-    if (ServiceAuthorization.guards.SetupRequired(entry.authorization))
+    // Hosted CatalogEntry omits auth. Explicit Begin installs first, then its real requirements
+    // establish authorization; absent catalog hints never grant unauthenticated access.
+    const app = yield* install(input.service, (name) =>
+      http.readApp(post('/apps/install', { entry: entry.id, name }), null),
+    )
+    const authorization =
+      Object.keys(app.requirements.accounts).length === 0
+        ? ServiceAuthorization.cases.None.make({})
+        : yield* availability.inspectApp(input, app)
+    if (ServiceAuthorization.guards.SetupRequired(authorization))
       return yield* Effect.fail(ExecutorSetupRequired.make({ service: 'connections', tool: null }))
-    const app = yield* copy(input, entry)
-    return yield* Effect.gen(function* () {
-      if (Object.keys(app.requirements.accounts).length === 0)
-        return yield* configure(input, app, entry)
-      const selected = yield* availability.inspectApp(input, app)
-      if (ServiceAuthorization.guards.SetupRequired(selected))
-        return yield* Effect.fail(
-          ExecutorSetupRequired.make({ service: 'connections', tool: null }),
-        )
-      return yield* configure(
-        input,
-        app,
-        ExecutorServiceEntry.make({ ...entry, authorization: selected }),
-      )
-    }).pipe(Effect.catch((error) => compensate(input, app, error)))
+    return yield* configure(input, app, ExecutorServiceEntry.make({ ...entry, authorization }))
   })
-  const add = makeAdd(http, availability, configure)
-  return { begin, add }
+  return { begin, add: makeAdd(http, availability, configure, install) }
 }
 
-/** Catalogue and URL imports share profile creation, reconciliation and authorization. */
+/** HostedProfiles.create uses ConnectionId as its idempotency key. Each Connection holds its
+ * own account selection on shared code; membership supplies owner and subject on the host.
+ */
 function makeConfigure(
   http: ExecutorHttp,
   availability: Effect.Success<ReturnType<typeof makeAuthorization>>,
 ) {
   const reconcile = makeReconcile(http)
   const authorize = makeAuthorize(http, availability.recordSetupRequired)
-  return Effect.fn('Executor.configureCopy')(function* (
+  return Effect.fn('Executor.configureProfile')(function* (
     input: typeof BeginInput.Type,
     app: typeof WireApp.Type,
     entry: typeof ExecutorServiceEntry.Type,
   ) {
     const profile = yield* http.readProfile(
-      post(`/v1/apps/${query(app.id)}/profiles`, {
-        owner: input.owner,
-        subject: input.subject,
+      post(`/apps/${query(app.id)}/profiles`, {
+        name: input.label,
         accounts: {},
         idempotencyKey: input.connectionId,
       }),
@@ -1509,73 +1404,52 @@ function makeConfigure(
   })
 }
 
-/** CustomAppInput carries configuration only; credentials enter through account completion. */
+/** HostedApps.importCustom accepts the existing checked URL source contract. The organization
+ * keeps one shared app; credentials still enter solely through the targeted Connection flow.
+ */
 function makeAdd(
   http: ExecutorHttp,
   availability: Effect.Success<ReturnType<typeof makeAuthorization>>,
   configure: ReturnType<typeof makeConfigure>,
+  install: ReturnType<typeof makeInstall>,
 ) {
-  const compensate = makeCompensation(http)
-  /** Executor's CustomAppInput retains configuration, never credentials. The temporary local app
-   * is copied to the caller's storage owner and removed before authorization is offered.
-   */
   return Effect.fn('Executor.add')(function* (
     input: typeof BeginInput.Type & { readonly source: ConnectionSource },
   ) {
-    const entry = ExecutorServiceEntry.make({
-      id: input.service,
-      name: input.label,
-      description: '',
-      authorization: ServiceAuthorization.cases.None.make({}),
-    })
-    const copy = makeCopy(
-      http,
-      Effect.fn('Executor.importAddress')((_input, _entry, name) => {
-        const source = ConnectionSource.match<typeof WireImportSource.Type>(input.source, {
-          Mcp: ({ address, authorization }) =>
-            WireImportSource.cases.mcp.make({
-              name,
-              url: address,
-              auth:
-                authorization === 'apiKey'
-                  ? { type: 'apiKey', header: 'Authorization', prefix: 'Bearer ' }
-                  : { type: 'auto' },
-            }),
-          // Vivid checks every DNS answer and redirect, including docs-to-spec discovery, before
-          // handing off the final spec URL. Executor resolves it again: this remaining gap relies
-          // on its own public-only egress with EXECUTOR_URL_ALLOW_LOOPBACK_HTTP=false (set by the
-          // night stack), and no private-origin exceptions. This Executor accepts URLs, not bytes.
-          OpenApi: ({ address }) => WireImportSource.cases.openapi.make({ name, url: address }),
-        })
-        return http.readApp(post('/dashboard/api/apps/import', { source }), null)
-      }),
-    )
-    const app = yield* copy(input, entry)
-    return yield* Effect.gen(function* () {
-      const authorization =
-        Object.keys(app.requirements.accounts).length === 0
-          ? ServiceAuthorization.cases.None.make({})
-          : yield* availability.inspectApp(input, app)
-      if (ServiceAuthorization.guards.SetupRequired(authorization))
-        return yield* Effect.fail(
-          ExecutorSetupRequired.make({ service: 'connections', tool: null }),
-        )
-      return yield* configure(
-        input,
-        app,
-        ExecutorServiceEntry.make({
-          id: input.service,
-          name: input.label,
-          description: '',
-          authorization,
+    if (ConnectionSource.guards.OpenApi(input.source))
+      return yield* Effect.fail(
+        ExecutorRejected.make({
+          service: 'connections',
+          tool: null,
+          message: 'This Integration installation supports MCP addresses only.',
         }),
       )
-    }).pipe(Effect.catch((error) => compensate(input, app, error)))
+    const app = yield* install(input.service, (name) => {
+      // Executor resolves the inspected URL again; production requires public-only egress.
+      const source = WireImportSource.make({ name, url: input.source.address })
+      return http.readApp(post('/apps/import', { source }), null)
+    })
+    const authorization =
+      Object.keys(app.requirements.accounts).length === 0
+        ? ServiceAuthorization.cases.None.make({})
+        : yield* availability.inspectApp(input, app)
+    if (ServiceAuthorization.guards.SetupRequired(authorization))
+      return yield* Effect.fail(ExecutorSetupRequired.make({ service: 'connections', tool: null }))
+    return yield* configure(
+      input,
+      app,
+      ExecutorServiceEntry.make({
+        id: input.service,
+        name: input.label,
+        description: '',
+        authorization,
+      }),
+    )
   })
 }
 
-/** Read the saved target first. Closed pending requests are cancelled before replacement;
- * completed requests resolve to their existing account and reconnect through that same identity.
+/** Read the saved request before renewal. HostedAccounts has no cancel route: closed requests
+ * stay closed and unfinished ones expire. Completed requests retain their exact account identity.
  */
 function makeReauthorize(
   http: ExecutorHttp,
@@ -1583,18 +1457,13 @@ function makeReauthorize(
 ) {
   const authorize = makeAuthorize(http, availability.recordSetupRequired)
   const status = makeStatus(http)
-  const cancel = makeResolveRemovalAccount(http)
   return Effect.fn('Executor.reauthorize')(function* (
     input: typeof BeginInput.Type & { readonly references: ExecutorReferences },
   ) {
     let references = input.references
-    if (ExecutorReferences.isAnyOf(['EnteringKey', 'SigningIn'])(references)) {
+    if (isPending(references)) {
       const pending = yield* http.readConnection(
-        Effect.succeed(
-          HttpClientRequest.get(
-            `/v1/account-connections/${query(references.authorization)}?owner=${query(references.owner)}`,
-          ),
-        ),
+        Effect.succeed(HttpClientRequest.get(`/connections/${query(references.authorization)}`)),
         null,
       )
       if (WireConnection.fields.state.guards.completed(pending.state)) {
@@ -1603,7 +1472,6 @@ function makeReauthorize(
           account: pending.state.account.id,
         })
       } else if (!WireConnection.fields.state.guards.pending(pending.state)) {
-        yield* cancel(references)
         references =
           pending.reconnectAccount === null
             ? ExecutorReferences.cases.Public.make(referenceIdentity(references))
@@ -1629,32 +1497,13 @@ function makeReauthorize(
         )
     }
     const app = yield* http.readApp(
-      Effect.succeed(
-        HttpClientRequest.get(`/v1/apps/${query(references.app)}?owner=${query(references.owner)}`),
-      ),
+      Effect.succeed(HttpClientRequest.get(`/apps/${query(references.app)}`)),
       null,
     )
     const selected = yield* availability.inspectApp(input, app)
     if (ServiceAuthorization.guards.SetupRequired(selected))
       return yield* Effect.fail(ExecutorSetupRequired.make({ service: 'connections', tool: null }))
     return yield* authorize(input, app, references, selected)
-  })
-}
-
-/** Unavailable choices fail before import rather than becoming an invented import method. */
-function importAuthorization(authorization: ServiceAuthorization) {
-  return ServiceAuthorization.match<Effect.Effect<string, ExecutorRejected>>(authorization, {
-    SignIn: () => Effect.succeed('auto'),
-    Key: () => Effect.succeed('apiKey'),
-    None: () => Effect.succeed('none'),
-    SetupRequired: () =>
-      Effect.fail(
-        ExecutorRejected.make({
-          service: 'connections',
-          tool: null,
-          message: connectionSetupMessage,
-        }),
-      ),
   })
 }
 
@@ -1674,15 +1523,16 @@ function makeComplete(http: ExecutorHttp) {
         }),
       )
     const body = yield* encodeKey({
-      connection: references.authorization,
-      owner: references.owner,
       method: references.method,
       label: references.label,
       fields,
     }).pipe(
       Effect.mapError(() => ExecutorResponseInvalid.make({ service: 'connections', tool: null })),
     )
-    const account = yield* http.readAccount(post('/v1/account-connections/submit', body), null)
+    const account = yield* http.readAccount(
+      post(`/connections/${query(references.authorization)}/submit`, body),
+      null,
+    )
     const resolved = ExecutorReferences.cases.Authorized.make({
       ...referenceIdentity(references),
       account: account.id,
@@ -1699,7 +1549,7 @@ function makeCompleteSignIn(http: ExecutorHttp) {
     references,
     callbackAddress,
   }: typeof SignInInput.Type) {
-    if (!ExecutorReferences.guards.SigningIn(references))
+    if (!isSigningIn(references))
       return yield* Effect.fail(
         ExecutorRejected.make({
           service: 'connections',
@@ -1708,14 +1558,12 @@ function makeCompleteSignIn(http: ExecutorHttp) {
         }),
       )
     const body = yield* encodeSignIn({
-      connection: references.authorization,
-      owner: references.owner,
       callbackUrl: callbackAddress,
     }).pipe(
       Effect.mapError(() => ExecutorResponseInvalid.make({ service: 'connections', tool: null })),
     )
     const account = yield* http.readAccount(
-      post('/v1/account-connections/oauth/complete', body),
+      post(`/connections/${query(references.authorization)}/oauth/complete`, body),
       null,
     )
     const resolved = ExecutorReferences.cases.Authorized.make({
@@ -1727,8 +1575,8 @@ function makeCompleteSignIn(http: ExecutorHttp) {
   })
 }
 
-/** Resolve completed pending requests before removing the profile/app, then its dedicated account.
- * Other live account users are protected by Executor's resource conflict errors.
+/** Remove only the Connection's profile, then its dedicated account. Hosted app code is shared
+ * and must remain. Executor's active-resource conflicts protect other live account users.
  */
 function makeRemove(http: ExecutorHttp) {
   const resolveRemovalAccount = makeResolveRemovalAccount(http)
@@ -1738,39 +1586,29 @@ function makeRemove(http: ExecutorHttp) {
       Authorized: (value) => Effect.succeed(Option.some(value.account)),
       EnteringKey: resolveRemovalAccount,
       SigningIn: resolveRemovalAccount,
+      GoogleSigningIn: resolveRemovalAccount,
     })
     yield* http.readRemoval(
-      Effect.succeed(
-        HttpClientRequest.make('DELETE')(
-          `/v1/apps/${query(references.app)}?owner=${query(references.owner)}`,
-        ),
-      ),
+      Effect.succeed(HttpClientRequest.make('DELETE')(target(references))),
       null,
     )
     if (Option.isSome(account))
       yield* http.readRemoval(
-        Effect.succeed(
-          HttpClientRequest.make('DELETE')(
-            `/v1/accounts/${query(account.value)}?owner=${query(references.owner)}`,
-          ),
-        ),
+        Effect.succeed(HttpClientRequest.make('DELETE')(`/accounts/${query(account.value)}`)),
         null,
       )
   })
 }
 
-/** Cancelling an unfinished request prevents a late callback from recreating a removed Connection. */
+/** HostedAccounts has no cancellation route. Read the saved request to release a completed
+ * account; pending requests expire and a removed target profile cannot be completed afterward.
+ */
 function makeResolveRemovalAccount(http: ExecutorHttp) {
   return Effect.fn('Executor.removalAccount')(function* (
-    references:
-      | typeof ExecutorReferences.cases.EnteringKey.Type
-      | typeof ExecutorReferences.cases.SigningIn.Type,
+    references: typeof ExecutorReferences.cases.EnteringKey.Type | typeof SignInReferences.Type,
   ) {
-    const path = `/v1/account-connections/${query(references.authorization)}`
-    const connection = yield* http.readConnection(
-      Effect.succeed(HttpClientRequest.post(`${path}/cancel?owner=${query(references.owner)}`)),
-      null,
-    )
+    const path = `/connections/${query(references.authorization)}`
+    const connection = yield* http.readConnection(Effect.succeed(HttpClientRequest.get(path)), null)
     return WireConnection.fields.state.match(connection.state, {
       completed: ({ account }) => Option.some(account.id),
       pending: () => Option.none(),
@@ -1809,8 +1647,7 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
         })
       return yield* http
         .readCall(
-          post('/v1/tools/call', {
-            app: references.app,
+          post(`/apps/${query(references.app)}/tools/call`, {
             profile: references.profile,
             deployment: catalog.deployment,
             expectedProfileRevision: catalog.revision,
@@ -1820,13 +1657,7 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
           tool,
         )
         .pipe(
-          Effect.map((result) =>
-            WireCall.match(result, {
-              completed: completedCall,
-              'approval-required': ({ requestId, expiresAt }) =>
-                ExecutorCallOutcome.cases.ApprovalRequired.make({ requestId, expiresAt }),
-            }),
-          ),
+          Effect.map(completedCall),
           Effect.catchTags({
             ExecutorTransportFailure: () =>
               Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
@@ -1848,41 +1679,12 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
   )
 }
 
-/** Consent resumes only the saved invocation. Lost execution results are never replayed. */
-function makeResume(http: ExecutorHttp) {
-  return Effect.fn('Executor.resume')(
-    function* ({ references, requestId, accept }: typeof ResumeInput.Type) {
-      const response = accept
-        ? { action: 'accept', content: {} }
-        : { action: 'decline', content: {} }
-      const result = yield* http.readResume(
-        post('/v1/tools/resume', { owner: references.owner, requestId, response }),
-        null,
-      )
-      return WireResume.match(result, {
-        completed: ({ value, toolError }) =>
-          toolError === true
-            ? ExecutorResumeOutcome.cases.Failed.make({ reason: toolMessage(value) })
-            : ExecutorResumeOutcome.cases.Completed.make({ value }),
-        denied: () => ExecutorResumeOutcome.cases.Denied.make({}),
-        cancelled: () => ExecutorResumeOutcome.cases.Denied.make({}),
-        failed: ({ reason }) => ExecutorResumeOutcome.cases.Failed.make({ reason }),
-        'already-consumed': () => ExecutorResumeOutcome.cases.AlreadyConsumed.make({}),
-      })
-    },
-    (effect) =>
-      effect.pipe(
-        Effect.catchTags({
-          ExecutorTransportFailure: () =>
-            Effect.succeed(ExecutorResumeOutcome.cases.OutcomeUnknown.make({})),
-          ExecutorExecutionUncertain: () =>
-            Effect.succeed(ExecutorResumeOutcome.cases.OutcomeUnknown.make({})),
-          ExecutorResponseInvalid: () =>
-            Effect.succeed(ExecutorResumeOutcome.cases.OutcomeUnknown.make({})),
-          ExecutorRejected: ({ message }) =>
-            Effect.succeed(ExecutorResumeOutcome.cases.Failed.make({ reason: message })),
-        }),
-      ),
+/** HostedTools has neither approval IDs nor a resume route. Fail locally for every saved
+ * local-API approval, including decline; no fabricated request or network retry is safe.
+ */
+function makeResume() {
+  return Effect.fn('Executor.resume')((_input: typeof ResumeInput.Type) =>
+    Effect.fail(ExecutorApprovalUnsupported.make({ tool: null })),
   )
 }
 
@@ -1890,6 +1692,7 @@ function makeResume(http: ExecutorHttp) {
 const makeConfigured = Effect.fn('Executor.configure')(function* (
   url: string,
   key: Redacted.Redacted,
+  organization: typeof ExecutorOrganizationId.Type,
 ) {
   const publicOnly = yield* Config.Boolean('VIVID_EXECUTOR_PUBLIC_ONLY').pipe(
     Config.withDefault(false),
@@ -1897,13 +1700,16 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
   const transport = yield* HttpClient.HttpClient
   const client = HttpClient.mapRequest(transport, (request) =>
     request.pipe(
-      HttpClientRequest.prependUrl(url),
+      HttpClientRequest.prependUrl(
+        `${url.replace(/\/$/u, '')}/api/organizations/${query(organization)}`,
+      ),
       HttpClientRequest.bearerToken(key),
       HttpClientRequest.acceptJson,
     ),
   )
-  const http = makeHttp(client)
-  const catalog = yield* retainCatalog(
+  const google = yield* loadGoogleInstallation()
+  const http = makeHttp(client, google)
+  const remoteCatalog = yield* retainCatalog(
     makeCatalog(http)().pipe(
       Effect.mapError(() =>
         ServiceUnavailable.make({ service: 'connections', message: 'The catalog is unavailable.' }),
@@ -1914,6 +1720,26 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
     capacity: 1000,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? '5 minutes' : 0),
   })
+  const catalog = Effect.fn('Executor.installedCatalog')(function* () {
+    const installed = Option.match(google, {
+      onNone: () => [],
+      onSome: (value) =>
+        value.apps.map((app) =>
+          ExecutorServiceEntry.make({
+            id: app.service,
+            name: app.name,
+            description: app.name,
+            authorization: ServiceAuthorization.cases.SignIn.make({}),
+          }),
+        ),
+    })
+    const remote = yield* remoteCatalog().pipe(
+      Effect.catchTag('ServiceUnavailable', (error) =>
+        installed.length > 0 ? Effect.succeed([]) : Effect.fail(error),
+      ),
+    )
+    return [...installed, ...remote.filter((entry) => Option.isNone(googleApp(google, entry.id)))]
+  })
   const availability = yield* makeAuthorization(http, catalog)
   const discover = Effect.fn('Executor.discoverCached')((references: ExecutorReferences) =>
     Cache.get(snapshots, references),
@@ -1922,7 +1748,8 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
   const completeSignIn = makeCompleteSignIn(http)
   const remove = makeRemove(http)
   const call = makeCall(http, discover)
-  const registration = makeBegin(http, availability)
+  const install = makeInstall(http, yield* Semaphore.make(1))
+  const registration = makeBegin(http, availability, install)
   return Executor.of({
     configured: true,
     catalog: availability.catalog,
@@ -1969,7 +1796,7 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
         Effect.tapError(() => Cache.invalidate(snapshots, input.references)),
       ),
     ),
-    resume: makeResume(http),
+    resume: makeResume(),
   })
 })
 
@@ -2005,6 +1832,7 @@ export const executorLayer = Layer.effect(
         resume: Effect.fn('Executor.resume')(() => unavailable),
       })
     }
-    return yield* makeConfigured(url.value, key.value)
+    const organization = yield* Config.schema(ExecutorOrganizationId, 'VIVID_EXECUTOR_ORGANIZATION')
+    return yield* makeConfigured(url.value, key.value, organization)
   }),
 )

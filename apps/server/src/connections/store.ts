@@ -39,6 +39,7 @@ import { executorFailure } from './errors.ts'
 import {
   encodeReferences,
   getRecord,
+  googleCallbackId,
   listRecords,
   publicConnection,
   recordChanged,
@@ -47,7 +48,8 @@ import {
   type ConnectionRecord,
 } from './records.ts'
 import { connections } from './tables.ts'
-import { rankServices } from './ranking.ts'
+import { catalogService, serviceLogo } from './logo.ts'
+import { loadCuration } from './curation.ts'
 import { connectionAddressLayer, type ConnectionSource } from './address.ts'
 
 const isResourceMissing = Schema.is(ExecutorResourceMissing)
@@ -320,9 +322,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     >,
   ) => effect.pipe(Effect.provide(dependencies))
   const catalogServices = Effect.fn('Connections.catalog')(function* () {
-    return (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).map((entry) =>
-      Service.make({ ...entry, mark: null }),
-    )
+    return (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).map(catalogService)
   })
   /** Inspect the selected candidate without retaining any account or credential. */
   const inspectService = Effect.fn('Connections.inspectService')(function* (service: Service) {
@@ -342,14 +342,14 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     return authorizedService(service, authorization)
   })
   /** Search uses only completed availability facts in the adapter's snapshot. A cold sign-in
-   * hint remains optimistic until Begin or Resume supplies a real app definition.
+   * hint remains optimistic until Begin or Resume supplies a real app definition. The decoded
+   * curation is kept for the life of the store: the file cannot change while the server runs.
    */
+  const curated = yield* Effect.cached(loadCuration())
+  /** Which services are shown, in what order and how many, is the checked-in curation's decision. */
   const find = Effect.fn('Connections.findServices')(function* (query: string) {
-    const services = yield* catalogServices()
-    return ServiceCatalog.cases.Ready.make({
-      services: rankServices(services, query),
-      total: services.length,
-    })
+    const search = yield* curated
+    return search(yield* catalogServices(), query)
   })
   /** Offers inspect exactly the chosen service, using the same cached availability as search. */
   const service = Effect.fn('Connections.service')(function* (
@@ -363,6 +363,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
   })
   const get = (actor: Actor, id: ConnectionId) => provide(getRecord(actor, id, false))
   const management = makeManagement({ executor, database, provide, get })
+
   return {
     get,
     catalog: catalogServices,
@@ -415,7 +416,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
         id: ServiceId.make(`url:${source.address}`),
         name: request.name,
         description: '',
-        mark: null,
+        mark: serviceLogo(source.address),
         authorization: ServiceAuthorization.cases.None.make({}),
       })
       const start: ExecutorService['begin'] = Effect.fn('Connections.import')((input) =>
@@ -466,6 +467,35 @@ const serializeResumes = () => {
       }),
     )
   return withResume
+}
+
+/** Fixed callbacks and id-addressed callbacks share the same account completion authority. */
+const makeCallbacks = (
+  input: Pick<Parameters<typeof makeManagement>[0], 'executor' | 'provide'>,
+) => {
+  const { executor, provide } = input
+  /** Bind sign-in completion to its initiating Person across workspace switches. */
+  const callback = Effect.fn('Connections.callback')(function* (
+    actor: Actor,
+    id: ConnectionId,
+    callbackAddress: Redacted.Redacted,
+  ) {
+    const row = yield* provide(getRecord(actor, id, true))
+    const managing = yield* provide(rowActor(actor, row))
+    const references = yield* executor
+      .completeSignIn({ references: row.references, callbackAddress })
+      .pipe(Effect.mapError(executorFailure))
+    const connection = yield* provide(finish(managing, row, references))
+    return connection.state
+  })
+
+  return {
+    googleCallbackId: Effect.fn('Connections.resolveGoogleReturn')(
+      (actor: Actor, state: Parameters<typeof googleCallbackId>[1]) =>
+        provide(googleCallbackId(actor, state)),
+    ),
+    callback,
+  }
 }
 
 /** Management shares the Layer's authority and publishes every persisted state change. */
@@ -530,20 +560,7 @@ const makeManagement = (input: {
         .pipe(Effect.mapError(executorFailure))
       return yield* provide(finish(actor, row, references))
     }),
-    /** Bind sign-in completion to its initiating Person across workspace switches. */
-    callback: Effect.fn('Connections.callback')(function* (
-      actor: Actor,
-      id: ConnectionId,
-      callbackAddress: Redacted.Redacted,
-    ) {
-      const row = yield* provide(getRecord(actor, id, true))
-      const managing = yield* provide(rowActor(actor, row))
-      const references = yield* executor
-        .completeSignIn({ references: row.references, callbackAddress })
-        .pipe(Effect.mapError(executorFailure))
-      const connection = yield* provide(finish(managing, row, references))
-      return connection.state
-    }),
+    ...makeCallbacks(input),
     /** Remove provider authority before deleting the scoped product record. */
     remove: Effect.fn('Connections.remove')(function* (actor: Actor, id: ConnectionId) {
       const row = yield* get(actor, id)

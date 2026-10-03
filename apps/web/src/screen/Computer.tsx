@@ -149,7 +149,7 @@ const glass = (computer: ComputerRecord) =>
     Absent: () => 'Not started yet',
     Starting: () => 'Starting up…',
     Running: () =>
-      computer.heldByPerson ? 'You have the keyboard' : 'Vivid has the keyboard · you are watching',
+      computer.heldByPerson ? 'You have control' : 'Vivid has control · you are watching',
     Stopped: () => 'Turned off · files and sign-ins kept',
     Failed: () => 'Did not start',
     Unavailable: () => 'Not set up here',
@@ -165,12 +165,13 @@ const stop = () =>
     change((client) => client.StopComputer()),
     'The computer could not be turned off. Try again.',
   )
-const hold = (held: boolean) =>
+/** Takes the keyboard and pointer from Vivid, or hands them back; the panel and the Thread's small picture both use it. */
+export const hold = (held: boolean) =>
   void orSay(
     change((client) => client.HoldComputer({ held })),
     held
-      ? 'Vivid still has the keyboard: taking over did not go through. Try again.'
-      : 'You still have the keyboard: handing back did not go through. Try again.',
+      ? 'Vivid still has control: taking over did not go through. Try again.'
+      : 'You still have control: handing back did not go through. Try again.',
   )
 
 /** Taking the keyboard and pointer, or handing them back. Only a running computer has them. */
@@ -277,7 +278,7 @@ const RENEW_BEFORE_MS = 60_000
  * page. While the Person is only watching, nothing they do reaches it, so looking at the screen
  * can never fight with what Vivid is doing on it.
  */
-function Viewer({
+export function Viewer({
   address,
   expiresAt,
   control,
@@ -339,7 +340,7 @@ interface Sight {
 }
 
 /** What happened to the connection: it opened, it closed, or the Person asked for it again. */
-type Heard = 'opened' | 'closed' | 'asked'
+export type Heard = 'opened' | 'closed' | 'asked'
 
 /**
  * A screen that was showing and dropped (the server restarted, the network blinked) is reached
@@ -398,7 +399,7 @@ function Display({ address, control }: { address: string; control: boolean }) {
  * unmounts, which closes the socket. While the Person is only watching, the canvas sends no keys
  * or pointer events, so looking at the screen can never fight with what Vivid is doing on it.
  */
-function Glass({
+export function Glass({
   address,
   control,
   onHeard,

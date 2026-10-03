@@ -31,13 +31,16 @@
     "html-to-text": "9.0.5",
     "ipaddr.js": "2.2.0",
     "pg": "catalog:",
-    "unpdf": "^1.8.1"
+    "tldts": "7.4.13",
+    "unpdf": "^1.8.1",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/html-to-text": "9.0.4",
     "@types/node": "catalog:",
     "@types/pg": "catalog:",
+    "@types/web-push": "^3.6.4",
     "@typescript/native": "catalog:",
     "@vivid/client-runtime": "workspace:*",
     "drizzle-kit": "catalog:",

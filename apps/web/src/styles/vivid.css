@@ -1,0 +1,24 @@
+/*
+ * The face's outline. `ui/Face.tsx` sets `--face-mask` to the chosen silhouette (a path from
+ * `@vivid/marks`, stretched to the face's box) or to `none` for a disc. Unlayered, so it applies
+ * beside the `face` utility without touching the shared stylesheet.
+ */
+.face {
+  mask-image: var(--face-mask, none);
+  mask-size: 100% 100%;
+  mask-repeat: no-repeat;
+}
+
+/*
+ * The Customise sheet's preview. The shared face snaps between moods and colours,
+ * which is right in a header; here the change is the thing being looked at, so the tilt and the
+ * colour ease across. One transition per change, nothing loops, and a Person who asked for less
+ * motion gets the new state at once.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  [data-vivid-preview] .face {
+    transition:
+      rotate var(--dur-base) var(--ease-out),
+      background-color var(--dur-base) var(--ease-out);
+  }
+}

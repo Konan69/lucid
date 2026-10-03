@@ -26,7 +26,8 @@ function Here({ active }: { active: boolean }) {
 /**
  * Where the Person is working, and the way to somewhere else. Their own space is always first.
  * A Company appears only because they made one or were invited to one. The last entry is the
- * only place in the app a Company is created, and it asks for nothing but a name.
+ * one place in the app a Company is created: it says in a line what a Company gives, and then
+ * asks for nothing but a name.
  *
  * Switching is one call. Every list on every screen is a live query scoped by the server to the
  * workspace the session is in, so nothing here has to tell them to change.
@@ -49,7 +50,7 @@ export function Switcher({ me, onClose }: { me: MeResponse; onClose: () => void 
     return (
       <NameSheet
         title="Create a company"
-        detail="A shared space for you and the people you work with. Your own threads, notes and integrations stay yours."
+        detail="Shared threads, a shared Library and shared rules for the people you work with. Your own threads, notes and integrations stay yours."
         label="Company name"
         initial=""
         placeholder="Acme"
@@ -102,7 +103,7 @@ export function Switcher({ me, onClose }: { me: MeResponse; onClose: () => void 
         <Row
           leading={<Plus size={22} strokeWidth={1.6} color={c['ink-2']} />}
           title="Create a company"
-          detail="It only needs a name."
+          detail="Shared threads, a shared Library and shared rules."
           onPress={() => setCreating(true)}
         />
       </Section>

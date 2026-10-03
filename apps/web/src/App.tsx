@@ -32,14 +32,12 @@ const screens = {
   Projects: () => import('./screen/Projects'),
   Routines: () => import('./screen/Routines'),
   Settings: () => import('./screen/Settings'),
-  Skills: () => import('./screen/Skills'),
 }
 const Computer = lazy(async () => ({ default: (await screens.Computer()).Computer }))
 const Library = lazy(async () => ({ default: (await screens.Library()).Library }))
 const Projects = lazy(async () => ({ default: (await screens.Projects()).Projects }))
 const Routines = lazy(async () => ({ default: (await screens.Routines()).Routines }))
 const Settings = lazy(async () => ({ default: (await screens.Settings()).Settings }))
-const Skills = lazy(async () => ({ default: (await screens.Skills()).Skills }))
 
 const warm = () => {
   for (const load of Object.values(screens)) void load()
@@ -191,7 +189,7 @@ function Reconnecting() {
   return (
     <p
       role="status"
-      className="pointer-events-none fixed top-3 left-1/2 z-50 -translate-x-1/2 rounded-full px-3 py-1 text-meta text-ink-2 smooth-shadow-ring-sm glass transition-opacity delay-1000 duration-(--dur-base) starting:opacity-0"
+      className="pointer-events-none fixed top-3 left-1/2 z-50 -translate-x-1/2 rounded-full px-3 py-1 text-meta text-ink-2 lift glass transition-opacity delay-1000 duration-(--dur-base) starting:opacity-0"
     >
       Reconnecting…
     </p>
@@ -240,16 +238,19 @@ function Shell({ me }: { me: MeResponse }) {
       )}
       <main className="relative flex min-w-0 flex-1">
         <Suspense fallback={<Splash />}>
-          <Place
-            // A screen holds things that belong to the workspace it was opened in: the folder it
-            // is in, the item it has open, a half-written Routine. Changing workspace starts each
-            // screen again, so nothing of one Company is left on screen under another's name.
-            key={workspaceKey(me.workspace)}
-            route={route}
-            me={me}
-            beside={beside}
-            onTogglePanel={panel.toggle}
-          />
+          {/* A new element for each screen, so its arrival plays; see `screenOf`. */}
+          <div key={screenOf(route)} className="flex min-w-0 flex-1 motion-screen">
+            <Place
+              // A screen holds things that belong to the workspace it was opened in: the folder it
+              // is in, the item it has open, a half-written Routine. Changing workspace starts each
+              // screen again, so nothing of one Company is left on screen under another's name.
+              key={workspaceKey(me.workspace)}
+              route={route}
+              me={me}
+              beside={beside}
+              onTogglePanel={panel.toggle}
+            />
+          </div>
         </Suspense>
         {beside && Route.$is('Thread')(route) && (
           <Suspense fallback={null}>
@@ -276,6 +277,24 @@ function Shell({ me }: { me: MeResponse }) {
 
 const openThread = (id: string) => router.go(Route.Thread({ id: ThreadId.make(id) }))
 
+/**
+ * Which screen a place is, for the moment one screen takes over from another. Going from one
+ * Thread to the next, or from the first screen into the Thread it started, is the same screen
+ * with different words in it and changes at once: it is done a hundred times a day, and the
+ * shortcuts that do it are the keyboard's. Going to Routines, the Library or Projects is a
+ * different screen, and that one arrives (`motion-screen`).
+ */
+const screenOf = (route: Route) =>
+  Route.$match(route, {
+    New: () => 'thread',
+    Thread: () => 'thread',
+    Invite: () => 'thread',
+    Device: () => 'thread',
+    Routines: () => 'routines',
+    Library: () => 'library',
+    Projects: () => 'projects',
+  })
+
 /** The screen the address names. */
 function Place({
   route,
@@ -299,8 +318,13 @@ function Place({
         }
       />
     ),
-    Projects: () => <Projects onOpenThread={(id) => router.go(Route.Thread({ id }))} />,
-    Skills: () => <Skills />,
+    Projects: ({ open }) => (
+      <Projects
+        open={open}
+        onOpen={(next) => router.go(Route.Projects({ open: next }))}
+        onOpenThread={(id) => router.go(Route.Thread({ id }))}
+      />
+    ),
     Invite: ({ id }) => <Invite id={id} />,
     // A device waiting to be signed in is approved in Settings, with its code already filled in.
     Device: () => <First me={me} />,

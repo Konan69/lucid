@@ -25,6 +25,7 @@ import {
   StoredRunOrigin,
 } from '../threads/conversation.ts'
 import { ThreadStore } from '../threads/store.ts'
+import { standingRoutine } from '@vivid/skills'
 import {
   identifyAttempt,
   OccurrenceClaim,
@@ -205,7 +206,10 @@ const makeSubmit = (services: SubmissionServices) =>
           body: bodyOf(record, payload),
           attributes: deliveryAttributes(record),
         }),
-        origin: StoredRunOrigin.cases.Routine.make({ routineName: routine.name }),
+        origin:
+          routine.prompt === standingRoutine.prompt
+            ? StoredRunOrigin.cases.Standing.make({ routineName: routine.name })
+            : StoredRunOrigin.cases.Routine.make({ routineName: routine.name }),
         idempotencyKey: attempt.deliveryKey,
       })
       .pipe(

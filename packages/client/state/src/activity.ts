@@ -67,6 +67,11 @@ interface ToolCallDescription {
 /** How one kind of step reads in each state, and the detail that sets one call apart. */
 interface Step {
   readonly said: Record<ToolState, string>
+  /**
+   * The same three lines with the call's own subject in them, when the call names one: "Using
+   * Gmail (Work)" says more than "Using an integration". Absent on steps with no such subject.
+   */
+  readonly named?: (asked: Asked) => Option.Option<Record<ToolState, string>>
   readonly detail: (asked: Asked, answered: Answered) => ReadonlyArray<Option.Option<string>>
 }
 
@@ -111,12 +116,19 @@ const STEPS = {
       done: 'Used an integration',
       failed: 'The integration did not do it',
     },
-    detail: (asked) => [said(asked.account), said(asked.summary)],
+    // The account is the subject of the line, so the detail is only what was done with it.
+    named: (asked) =>
+      Option.map(said(asked.account), (account) => ({
+        running: `Using ${account}`,
+        done: `Used ${account}`,
+        failed: `${account} did not do it`,
+      })),
+    detail: (asked) => [said(asked.summary)],
   },
   connect: {
     said: {
-      running: 'Asking to connect a service',
-      done: 'Asked to connect a service',
+      running: 'Asking for an integration',
+      done: 'Asked for an integration',
       failed: 'Could not offer the integration',
     },
     detail: (asked) => [said(asked.service)],
@@ -206,7 +218,7 @@ const STEPS = {
   },
   use_desktop: {
     said: {
-      running: 'Using its computer',
+      running: 'Looking on its computer',
       done: 'Used its computer',
       failed: 'The computer did not do it',
     },
@@ -214,8 +226,8 @@ const STEPS = {
   },
   run_code: {
     said: {
-      running: 'Running a program',
-      done: 'Ran a program',
+      running: 'Writing a program',
+      done: 'Wrote and ran a program',
       failed: 'The program did not finish',
     },
     detail: (asked) => [said(asked.summary)],
@@ -238,7 +250,7 @@ const STEPS = {
   },
   read_page: {
     said: {
-      running: 'Reading a page',
+      running: 'Opening the page',
       done: 'Read a page',
       failed: 'Could not read the page',
     },
@@ -333,6 +345,11 @@ const labelOf = (
   state: ToolState,
 ) => {
   if (state !== 'done') return step.said[state]
+  return doneLabelOf(toolName, step, answered)
+}
+
+/** What a finished step is called; a document's receipt says whether anything changed. */
+const doneLabelOf = (toolName: string, step: Step, answered: Option.Option<Answered>) => {
   if (
     toolName === 'write_document' &&
     Option.contains(
@@ -349,7 +366,7 @@ const labelOf = (
     )
   )
     return 'Revised a document'
-  return step.said[state]
+  return step.said.done
 }
 
 /**
@@ -362,14 +379,20 @@ export function describeToolCall(
   answered: Option.Option<Answered>,
   called: ToolState,
 ): ToolCallDescription {
-  const step = Option.getOrElse(Option.fromUndefinedOr(STEP_OF.get(toolName)), () => UNKNOWN)
+  const known = Option.getOrElse(Option.fromUndefinedOr(STEP_OF.get(toolName)), () => UNKNOWN)
+  const read = Option.getOrElse(asked, () => NOTHING_ASKED)
+  // A call that names its subject is said with it; the detail function is the step's own.
+  const step: Step =
+    known.named === undefined
+      ? known
+      : { ...known, said: Option.getOrElse(known.named(read), () => known.said) }
   const state = settled(called, answered)
   const label = labelOf(toolName, step, answered, state)
   // A reading that is not there (a call with no input, one still running, JSON this client does
   // not recognise) contributes nothing to the line; the other reading still does.
   const details = step
     .detail(
-      Option.getOrElse(asked, () => NOTHING_ASKED),
+      read,
       Option.getOrElse(answered, () => NOTHING_ANSWERED),
     )
     .flatMap((part) => Option.toArray(part))

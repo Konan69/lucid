@@ -30,6 +30,8 @@ export interface PresenceService {
   readonly here: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<PresenceEntry>>
   /** Whether this Person has the Thread open, so they are not notified about what they can see. */
   readonly watching: (threadId: ThreadId, personId: PersonId) => Effect.Effect<boolean>
+  /** Any current Thread heartbeat means the Person is present in the app. */
+  readonly present: (personId: PersonId) => Effect.Effect<boolean>
 }
 
 /**
@@ -76,6 +78,15 @@ const makePresence = Effect.fn('Presence.make')(function* () {
     },
   )
 
+  /** Reuses the existing heartbeat clock; another open Thread still counts as being in the app. */
+  const presentPerson = Effect.fn('Presence.present')(function* (personId: PersonId) {
+    const now = yield* Clock.currentTimeMillis
+    for (const threadId of threads.keys()) {
+      if (present(threadId, now).some((seen) => seen.person.id === personId)) return true
+    }
+    return false
+  })
+
   /** Drops everyone who went quiet and names the Threads whose audience just changed. */
   const sweep = Effect.fn('Presence.sweep')(function* () {
     const now = yield* Clock.currentTimeMillis
@@ -91,7 +102,7 @@ const makePresence = Effect.fn('Presence.make')(function* () {
 
   yield* sweep().pipe(Effect.repeat(Schedule.spaced(SWEEP_EVERY)), Effect.forkScoped)
 
-  return Presence.of({ report, here, watching })
+  return Presence.of({ report, here, watching, present: presentPerson })
 })
 
 export const presenceLayer = Layer.effect(Presence, makePresence())

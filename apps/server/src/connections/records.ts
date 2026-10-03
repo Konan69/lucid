@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, or } from 'drizzle-orm'
+import { and, desc, eq, isNull, or, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import { Clock, Effect, Schema } from 'effect'
 import {
@@ -19,6 +19,7 @@ import { Database, decodeStored, returned } from '../database/client.ts'
 import { changed, Topic } from '../live/changes.ts'
 import { ExecutorReferences } from './executor.ts'
 import { connections } from './tables.ts'
+import { GoogleState } from './google.ts'
 
 const rowSchema = createSelectSchema(connections, {
   id: ConnectionId,
@@ -29,6 +30,7 @@ const rowSchema = createSelectSchema(connections, {
   status: Schema.Literals(['ready', 'needs-authorization', 'failed']),
 })
 export type ConnectionRecord = typeof rowSchema.Type
+const decodeConnectionId = Schema.decodeUnknownEffect(ConnectionId)
 const decodeRow = decodeStored(rowSchema, 'Connection')
 export const encodeReferences = Schema.encodeSync(ExecutorReferences)
 
@@ -69,6 +71,36 @@ export const getRecord = Effect.fn('Connections.getRecord')(function* (
   if (row === undefined)
     return yield* Effect.fail(new NotFound({ message: 'Integration not found' }))
   return yield* decodeRow(row)
+})
+
+/** A stable Google callback resolves exactly its stored OAuth state and initiating Person.
+ * SQL parameters keep state out of diagnostics; pending state alone grants no callback authority.
+ * Executor independently verifies that state, its request id, PKCE, and the exact redirect URI.
+ */
+export const googleCallbackId = Effect.fn('Connections.googleCallbackId')(function* (
+  actor: Actor,
+  state: typeof GoogleState.Type,
+) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .select({ id: connections.id })
+      .from(connections)
+      .where(
+        and(
+          eq(connections.personId, actor.person.id),
+          eq(connections.status, 'needs-authorization'),
+          sql`${connections.references}->>'googleState' = ${state}`,
+        ),
+      )
+      .limit(2),
+  )
+  const row = rows[0]
+  if (rows.length !== 1 || row === undefined)
+    return yield* Effect.fail(new NotFound({ message: 'Integration sign-in not found' }))
+  return yield* decodeConnectionId(row.id).pipe(
+    Effect.mapError(() => new DatabaseFailure({ message: 'Invalid integration identity' })),
+  )
 })
 
 /** Stored failure reasons are required only for failed state; invalid legacy rows fail explicitly. */

@@ -1,5 +1,11 @@
+import * as NodeHttp from 'node:http'
+import { NodeHttpServer } from '@effect/platform-node'
+import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
+import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
+import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
+import * as NetAddress from 'effect/unstable/net/NetAddress'
 import { eq, inArray } from 'drizzle-orm'
-import { Clock, Context, Effect, Layer, Option, Ref } from 'effect'
+import { Clock, ConfigProvider, Context, Effect, Layer, Option, Ref, Schema } from 'effect'
 import {
   Approval,
   ApprovalId,
@@ -26,6 +32,7 @@ import { Gate, GateDecision, type GateExposure } from '../approvals/gate.ts'
 import { silentChangesLayer } from '../live/changes.ts'
 import { threads } from '../threads/tables.ts'
 import {
+  executorLayer,
   type ExecutorService,
   Executor,
   ExecutorAppId,
@@ -55,6 +62,7 @@ export const writeTool = ExecutorTool.make({
   effect: 'write',
   input: {},
 })
+const fixtureRouteMissing = Schema.TaggedStruct('FixtureRouteMissing', {})
 
 /** Recording authority keeps external behavior deliberate while exercising the production store and SQL. */
 interface ConnectionProbeService {
@@ -335,3 +343,261 @@ export const toolRequest = (connectionId: ConnectionId, tool: string) => ({
   summary: 'Read the records',
   rationale: 'Answer the question',
 })
+
+const HostedInstall = Schema.Struct({ name: Schema.NonEmptyString })
+const HostedImport = Schema.Struct({ source: HostedInstall })
+const HostedProfileInput = Schema.Struct({ idempotencyKey: Schema.NonEmptyString })
+const decodeHostedInstall = Schema.decodeUnknownEffect(HostedInstall)
+const decodeHostedImport = Schema.decodeUnknownEffect(HostedImport)
+const decodeHostedProfileInput = Schema.decodeUnknownEffect(HostedProfileInput)
+const decodeHostedJson = Schema.decodeUnknownEffect(Schema.Json)
+
+export const hostedOrganization = 'test-organization'
+export const hostedPrefix = `/api/organizations/${hostedOrganization}`
+export const hostedService = ServiceId.make('test/service')
+export const hostedReturnAddress = 'https://vivid.example.test/api/connections/return'
+const hostedProfile = { id: 'profile', status: 'ready', failure: null }
+export const hostedTools = [
+  { name: 'read', description: 'Read records', inputSchema: {}, readOnly: true },
+]
+
+interface HostedRequest {
+  readonly path: string
+  readonly search: string
+  readonly body: Schema.Json
+  readonly headers: Readonly<Record<string, string>>
+}
+interface HostedReply {
+  readonly status: number
+  readonly body: Schema.Json
+}
+interface HostedState {
+  readonly requests: Ref.Ref<readonly HostedRequest[]>
+  readonly replies: Ref.Ref<ReadonlyMap<string, HostedReply>>
+  readonly apps: Ref.Ref<readonly { readonly id: string; readonly name: string }[]>
+  readonly profiles: Ref.Ref<ReadonlyMap<string, string>>
+  readonly accounts: Ref.Ref<Schema.Json>
+  readonly catalog: Ref.Ref<readonly Schema.Json[]>
+  readonly paginated: Ref.Ref<boolean>
+  readonly redirectUri: Ref.Ref<string>
+  readonly result: Ref.Ref<Schema.Json>
+}
+
+/** The remote app's provider declaration drives Vivid's form and OAuth method selection. */
+const hostedApp = Effect.fn('Executor.HostedTest.app')(function* (
+  state: HostedState,
+  name: string,
+) {
+  return { id: 'app', name, requirements: { accounts: yield* Ref.get(state.accounts) } }
+})
+
+/** Simulate create-only app installation plus ConnectionId profile deduplication on the remote
+ * side. Tests observe the real Executor Layer's requests rather than a fake Executor service.
+ */
+const hostedWrite = Effect.fn('Executor.HostedTest.write')(function* (
+  state: HostedState,
+  request: HostedRequest,
+) {
+  if (request.path === 'POST /apps/install' || request.path === 'POST /apps/import') {
+    const { name } =
+      request.path === 'POST /apps/install'
+        ? yield* decodeHostedInstall(request.body)
+        : (yield* decodeHostedImport(request.body)).source
+    yield* Ref.update(state.apps, (apps) => [...apps, { id: 'app', name }])
+    return yield* hostedApp(state, name)
+  }
+  if (request.path === 'POST /apps/app/profiles') {
+    const { idempotencyKey } = yield* decodeHostedProfileInput(request.body)
+    const id = yield* Ref.modify(state.profiles, (profiles) => {
+      const existing = profiles.get(idempotencyKey)
+      if (existing !== undefined) return [existing, profiles]
+      const created = `profile-${idempotencyKey}`
+      return [created, new Map([...profiles, [idempotencyKey, created]])]
+    })
+    return { ...hostedProfile, id }
+  }
+  if (request.path === 'POST /apps/app/connections')
+    return {
+      id: 'authorization',
+      reconnectAccount: null,
+      target: { app: 'app', profile: 'profile' },
+      state: { status: 'pending' },
+      url: 'https://executor.example.test/form',
+    }
+  if (request.path === 'POST /accounts/account/connections')
+    return {
+      id: 'authorization',
+      reconnectAccount: { id: 'account' },
+      target: null,
+      state: { status: 'pending' },
+    }
+  if (
+    request.path === 'POST /connections/authorization/submit' ||
+    request.path === 'POST /connections/authorization/oauth/complete'
+  )
+    return { id: 'account' }
+  if (request.path === 'POST /connections/authorization/oauth/start')
+    return {
+      status: 'redirect',
+      authorizationUrl: 'https://provider.example.test/sign-in',
+      redirectUri: yield* Ref.get(state.redirectUri),
+      expiresAt: '2026-10-04T00:00:00Z',
+    }
+  if (request.path === 'POST /apps/app/tools/call') return yield* Ref.get(state.result)
+  return hostedProfile
+})
+
+/** Both pages carry the same profile/deployment snapshot; the cursor intentionally needs URL
+ * encoding so a broken query builder cannot accidentally turn it into another search parameter.
+ */
+const hostedRead = Effect.fn('Executor.HostedTest.read')(function* (
+  state: HostedState,
+  request: HostedRequest,
+) {
+  if (request.path === 'GET /catalog') return yield* Ref.get(state.catalog)
+  if (request.path === 'GET /inventory') {
+    const apps = yield* Effect.forEach(yield* Ref.get(state.apps), (app) =>
+      hostedApp(state, app.name),
+    )
+    return { apps, accounts: [{ id: 'unrelated-account', label: 'Same label' }] }
+  }
+  if (request.path === 'GET /apps/app') {
+    const app = (yield* Ref.get(state.apps))[0]
+    if (app === undefined) return yield* Effect.die('Hosted fixture app was not installed')
+    return yield* hostedApp(state, app.name)
+  }
+  if (request.path === 'GET /apps/app/tools') {
+    const search = new URLSearchParams(request.search)
+    const profile = search.get('profile')
+    const page = {
+      profile,
+      profileRevision: 1,
+      deployment: 'deployment',
+      items: hostedTools,
+      routers: [],
+    }
+    if (!(yield* Ref.get(state.paginated))) return page
+    if (search.has('cursor'))
+      return {
+        ...page,
+        items: [{ name: 'write', description: 'Write records', inputSchema: {}, readOnly: false }],
+      }
+    return { ...page, next: 'next/with+&symbols' }
+  }
+  if (request.path.startsWith('GET /providers/'))
+    return { mode: 'automatic', grant: 'authorization_code', scopes: [] }
+  if (request.path === 'GET /connections/authorization')
+    return {
+      id: 'authorization',
+      reconnectAccount: null,
+      target: { app: 'app', profile: 'profile' },
+      state: { status: 'pending' },
+    }
+  return hostedProfile
+})
+
+/** This scoped HTTP fixture reuses the old transport suite's loopback-server mechanism. No
+ * production process, Executor instance, credentials, or database is involved. Unknown routes
+ * fail explicitly, so forgotten local endpoints cannot pass using a permissive response.
+ */
+export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(function* () {
+  const state: HostedState = {
+    requests: yield* Ref.make<readonly HostedRequest[]>([]),
+    replies: yield* Ref.make<ReadonlyMap<string, HostedReply>>(new Map()),
+    apps: yield* Ref.make<readonly { readonly id: string; readonly name: string }[]>([]),
+    profiles: yield* Ref.make<ReadonlyMap<string, string>>(new Map()),
+    accounts: yield* Ref.make<Schema.Json>({}),
+    catalog: yield* Ref.make<readonly Schema.Json[]>([
+      {
+        id: hostedService,
+        kind: 'mcp',
+        name: 'Test Integration',
+        description: 'Test service',
+        connectUrl: 'https://example.test',
+      },
+    ]),
+    paginated: yield* Ref.make(false),
+    redirectUri: yield* Ref.make(hostedReturnAddress),
+    result: yield* Ref.make<Schema.Json>({
+      content: [{ type: 'text', text: 'Done' }],
+      structuredContent: { ok: true },
+      isError: false,
+    }),
+  }
+  const server = yield* NodeHttpServer.make(() => NodeHttp.createServer(), {
+    host: '127.0.0.1',
+    port: 0,
+  })
+  const handler = Effect.fn('Executor.HostedTest.request')(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest
+    const url = new URL(request.url, 'http://fixture.test')
+    const body =
+      request.headers['content-type'] === 'application/json'
+        ? yield* request.json.pipe(Effect.flatMap(decodeHostedJson))
+        : null
+    const received = {
+      path: `${request.method} ${url.pathname}`,
+      search: url.search,
+      body,
+      headers: request.headers,
+    }
+    yield* Ref.update(state.requests, (items) => [...items, received])
+    const reply = (yield* Ref.get(state.replies)).get(received.path)
+    if (reply !== undefined)
+      return HttpServerResponse.jsonUnsafe(reply.body, { status: reply.status })
+    if (!url.pathname.startsWith(`${hostedPrefix}/`))
+      return HttpServerResponse.jsonUnsafe(fixtureRouteMissing.make({}), { status: 404 })
+    const local = {
+      ...received,
+      path: `${request.method} ${url.pathname.slice(hostedPrefix.length)}`,
+    }
+    if (!hostedRoute(local.path))
+      return HttpServerResponse.jsonUnsafe(fixtureRouteMissing.make({}), { status: 404 })
+    const result =
+      request.method === 'GET' ? yield* hostedRead(state, local) : yield* hostedWrite(state, local)
+    return HttpServerResponse.jsonUnsafe(result)
+  })
+  yield* server.serve(handler())
+  if (!NetAddress.isInetAddress(server.address)) return yield* Effect.die('Expected TCP fixture')
+  const url = yield* Effect.fromResult(NetAddress.toUrl(server.address))
+  const configured = executorLayer.pipe(
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromUnknown({
+          VIVID_EXECUTOR_URL: url.href.replace(/\/$/u, ''),
+          VIVID_EXECUTOR_KEY: 'isolated-test-key',
+          VIVID_EXECUTOR_ORGANIZATION: hostedOrganization,
+          VIVID_EXECUTOR_PUBLIC_ONLY: true,
+        }),
+      ),
+    ),
+  )
+  return { ...state, configured }
+})
+
+/** Profile IDs are dynamic because the remote host, rather than Vivid, allocates them. */
+function hostedRoute(path: string) {
+  return (
+    [
+      'GET /catalog',
+      'GET /inventory',
+      'GET /apps/app',
+      'GET /apps/app/tools',
+      'GET /providers/provider/oauth/oauth/setup',
+      'GET /connections/authorization',
+      'POST /apps/install',
+      'POST /apps/import',
+      'POST /apps/app/profiles',
+      'POST /apps/app/connections',
+      'POST /accounts/account/connections',
+      'POST /connections/authorization/submit',
+      'POST /connections/authorization/oauth/start',
+      'POST /connections/authorization/oauth/complete',
+      'POST /apps/app/tools/call',
+      'DELETE /accounts/account',
+    ].includes(path) ||
+    /^(?:GET|DELETE) \/apps\/app\/profiles\/[^/]+$/u.test(path) ||
+    /^POST \/apps\/app\/profiles\/[^/]+\/reconcile$/u.test(path)
+  )
+}

@@ -1,4 +1,11 @@
-import { Workspace, type MeResponse, type Thread } from '@vivid/contracts'
+import {
+  mayChangeAppearance,
+  Workspace,
+  type MeResponse,
+  type Project,
+  type ProjectId,
+  type Thread,
+} from '@vivid/contracts'
 import { projects } from '@vivid/state'
 import { Option } from 'effect'
 import { useRef, useState, type ReactNode } from 'react'
@@ -13,9 +20,8 @@ import {
 import Animated from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
-  ChevronDown,
-  ChevronRight,
   ChevronsUpDown,
+  Plus,
   Library as LibraryIcon,
   Repeat2,
   Search,
@@ -28,13 +34,19 @@ import { collapseAt, RESTING } from '../../data/collapse'
 import { useKeyboardShowing } from '../../data/keyboard'
 import { LiveState, useLive, useLiveData } from '../../data/live'
 import { MOBILE_TYPOGRAPHY } from '../../data/typography'
+import { useAppearance } from '../../data/vivid'
 import { useTheme } from '../../theme'
 import { Avatar, pictureOf } from '../../ui/Avatar'
+import { Face } from '../../ui/Face'
 import { Glass } from '../../ui/Glass'
 import { APPEAR, LEAVE, MORPH } from '../../ui/motion/morph'
-import { EDGE, GUTTER, IconButton, Label, Notice, Press, radius } from '../../ui/ui'
-import type { ProjectId } from '@vivid/contracts'
+import { EDGE, GUTTER, IconButton, Label, Notice, Press, radius, TARGET } from '../../ui/ui'
 import type { Routes } from '../../workspace'
+import { ScopeChip } from '../project/Chip'
+import { CreateProject } from '../project/Create'
+import { Mark } from '../project/Mark'
+import { scope, useScope } from '../project/scope'
+import { Customise } from '../vivid/Customise'
 import { Threads } from './Threads'
 
 /** Where the drawer can send the Person that needs nothing said about it: a place, by its name. */
@@ -43,8 +55,8 @@ export type Place = {
 }[keyof Routes]
 
 /**
- * The places beside Threads. Projects is not one of them: a Person who has never made a Project
- * has no use for the word, so it appears only as the quiet group under their Threads (`Filed`).
+ * The places beside Threads. Projects is not one of them: a Project is work, not a place, so
+ * Projects are a group of rows above the Threads (`Group`), each with its own colour.
  * Skills is not one either: a Person never manages skills. Vivid saves and reuses its own
  * procedures, so there is no Skills screen on any surface.
  */
@@ -60,7 +72,9 @@ function Line({
   label,
   accessibilityLabel,
   trailing,
-  expanded,
+  selected = false,
+  tone = 'ink',
+  iconColor,
   onPress,
 }: {
   icon?: LucideIcon
@@ -69,7 +83,11 @@ function Line({
   label: string
   accessibilityLabel?: string
   trailing?: ReactNode
-  expanded?: boolean
+  /** The row the drawer is scoped to: it keeps the pressed fill while it is the one chosen. */
+  selected?: boolean
+  /** A quieter ink, for a row that is a way to make something and not a thing itself. */
+  tone?: 'ink' | 'ink-3'
+  iconColor?: string
   onPress: () => void
 }) {
   const { colors: c } = useTheme()
@@ -77,7 +95,7 @@ function Line({
     <Press
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      accessibilityState={expanded === undefined ? undefined : { expanded }}
+      accessibilityState={{ selected }}
       onPress={onPress}
       style={({ pressed }) => ({
         minHeight: 46,
@@ -87,14 +105,19 @@ function Line({
         alignItems: 'center',
         gap: 12,
         borderRadius: radius.row,
-        backgroundColor: pressed ? c['row-hover'] : 'transparent',
+        backgroundColor: pressed || selected ? c['row-hover'] : 'transparent',
       })}
     >
       {Icon !== undefined && (
-        <Icon pointerEvents="none" size={19} strokeWidth={1.7} color={c.foreground} />
+        <Icon
+          pointerEvents="none"
+          size={19}
+          strokeWidth={1.7}
+          color={iconColor === undefined ? c.foreground : iconColor}
+        />
       )}
       {leading}
-      <Label numberOfLines={1} style={{ flex: 1 }}>
+      <Label numberOfLines={1} tone={tone} style={{ flex: 1 }}>
         {label}
       </Label>
       {trailing}
@@ -102,45 +125,98 @@ function Line({
   )
 }
 
+/** More Projects than this and the drawer would be all Projects; the rest are one row away. */
+const SHOWN = 6
+
 /**
- * Projects, for a Person who has any or who works in a Company: one collapsed line under their
- * Threads that opens to the Project names. Nobody else sees the word here. "All projects" is the
- * way to the Projects screen, where one is made.
+ * Projects, above the Threads: each one a row with its own colour and, when any of its Threads
+ * is waiting on the Person, how many. Tapping one scopes the drawer to it and opens its page.
+ * The group ends with the quiet way to make another; with no Projects it is that one row and
+ * nothing else, with no heading over a list of nothing.
+ *
+ * The grouping is T3 Code mobile's drawer, which lists Threads under their project
+ * (`features/threads/ThreadNavigationSidebar.tsx`), and ChatGPT's "Projects" group above the
+ * recent conversations. Vivid's Threads are ordered by what needs the Person, so here the
+ * Projects are a group of their own above that order instead of headings inside it.
  */
-function Filed({
-  me,
-  onGo,
+function Group({
+  all,
+  threads,
+  scoped,
   onProject,
+  onAll,
+  onCreate,
 }: {
-  me: MeResponse
-  onGo: (place: Place) => void
+  all: ReadonlyArray<Project>
+  /** Every Thread the Person can see, unscoped: a Project's count does not depend on the scope. */
+  threads: ReadonlyArray<Thread>
+  scoped: Option.Option<ProjectId>
   onProject: (id: ProjectId) => void
+  onAll: () => void
+  onCreate: () => void
 }) {
-  const data = useLiveData()
   const { colors: c } = useTheme()
-  const list = useLive(data.live.projects)
-  const [open, setOpen] = useState(false)
-  if (!LiveState.$is('Ready')(list)) return null
-  const top = projects.projectsIn(list.value.projects, null)
-  if (top.length === 0 && !Workspace.guards.Company(me.workspace)) return null
-  const Chevron = open ? ChevronDown : ChevronRight
+  const top = projects.projectsIn(all, null)
+  const shown = top.slice(0, SHOWN)
+  const more = top.length - shown.length
   return (
-    <Animated.View layout={MORPH} style={{ marginTop: 12 }}>
-      <Line
-        label="Projects"
-        expanded={open}
-        onPress={() => setOpen((shown) => !shown)}
-        trailing={<Chevron pointerEvents="none" size={16} strokeWidth={1.7} color={c.chevron} />}
-      />
-      {open && (
-        <Animated.View entering={APPEAR} exiting={LEAVE} style={{ paddingLeft: 12 }}>
-          {top.map((project) => (
-            <Line key={project.id} label={project.name} onPress={() => onProject(project.id)} />
-          ))}
-          <Line label="All projects" onPress={() => onGo('Projects')} />
-        </Animated.View>
+    <View style={{ paddingTop: 10 }}>
+      {top.length > 0 && (
+        <Label
+          accessibilityRole="header"
+          size="caption"
+          tone="drawer-foreground-muted"
+          style={{ fontWeight: '600', paddingHorizontal: GUTTER, paddingTop: 8, paddingBottom: 6 }}
+        >
+          Projects
+        </Label>
       )}
-    </Animated.View>
+      {shown.map((project) => {
+        const needing = projects.needingYou(threads, project.id)
+        return (
+          <Line
+            key={project.id}
+            leading={
+              <View style={{ width: 19, alignItems: 'center' }}>
+                <Mark id={project.id} />
+              </View>
+            }
+            label={project.name}
+            accessibilityLabel={
+              needing > 0 ? `${project.name}. ${needing} waiting for you` : project.name
+            }
+            selected={Option.contains(scoped, project.id)}
+            trailing={
+              needing > 0 ? (
+                <Label
+                  size="label"
+                  tone="status-attention"
+                  style={{ fontWeight: '600', fontVariant: ['tabular-nums'] }}
+                >
+                  {needing}
+                </Label>
+              ) : undefined
+            }
+            onPress={() => onProject(project.id)}
+          />
+        )
+      })}
+      {more > 0 && (
+        <Line
+          leading={<View style={{ width: 19 }} />}
+          label={`${more} more`}
+          tone="ink-3"
+          onPress={onAll}
+        />
+      )}
+      <Line
+        icon={Plus}
+        label="New project"
+        tone="ink-3"
+        iconColor={c['foreground-secondary']}
+        onPress={onCreate}
+      />
+    </View>
   )
 }
 
@@ -317,8 +393,134 @@ function Foot({
 }
 
 /**
- * The drawer's contents, laid out for a thumb. The top is a title and nothing else: where the
- * Person is working. Everything pressed is from the middle down: the places, the Threads, then
+ * The drawer's Threads as they are listed: the scoped Project's when there is a scope, every
+ * Thread otherwise. While either answer is still on its way the Threads' own state stands.
+ */
+function scopedThreads(
+  threads: LiveState<{ readonly threads: ReadonlyArray<Thread> }>,
+  filed: LiveState<{ readonly projects: ReadonlyArray<Project> }>,
+  scoped: Option.Option<ProjectId>,
+): LiveState<{ readonly threads: ReadonlyArray<Thread> }> {
+  if (!LiveState.$is('Ready')(threads) || !LiveState.$is('Ready')(filed)) return threads
+  return LiveState.Ready({
+    value: { threads: projects.scopedTo(threads.value.threads, filed.value.projects, scoped) },
+  })
+}
+
+/**
+ * The top of the drawer: Vivid's face beside where the Person is, and the scope beside that
+ * while there is one. For someone who may change Vivid here the face and name are the way in to
+ * the Customise sheet; for a member of a Company they are only a heading.
+ */
+function Head({
+  me,
+  here,
+  scoped,
+  onProject,
+}: {
+  me: MeResponse
+  here: string
+  scoped: Option.Option<Project>
+  onProject: (id: ProjectId) => void
+}) {
+  const editable = mayChangeAppearance(me.workspace)
+  const [customising, setCustomising] = useState(false)
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        paddingRight: GUTTER - 4,
+        paddingBottom: 6,
+      }}
+    >
+      <Press
+        accessibilityRole={editable ? 'button' : 'header'}
+        accessibilityLabel={editable ? `${here}. Customise Vivid` : here}
+        disabled={!editable}
+        onPress={() => setCustomising(true)}
+        // The name gives way to the chip: where the Person is narrowed to is the newer fact.
+        containerStyle={{ flexShrink: 1, minWidth: 96 }}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          minHeight: TARGET,
+          paddingLeft: GUTTER,
+        }}
+      >
+        <Face size={28} label="" />
+        <Label numberOfLines={1} size="heading" style={{ flexShrink: 1 }}>
+          {here}
+        </Label>
+      </Press>
+      {/* Pushed to the trailing edge, so the name and the scope read as two separate facts. */}
+      <View style={{ flex: 1 }} />
+      {Option.isSome(scoped) && (
+        <Animated.View entering={APPEAR} exiting={LEAVE} style={{ flexShrink: 1 }}>
+          <ScopeChip project={scoped.value} onOpen={() => onProject(scoped.value.id)} />
+        </Animated.View>
+      )}
+      {customising && <Customise onClose={() => setCustomising(false)} />}
+    </View>
+  )
+}
+
+/**
+ * What scrolls above the Threads: the places beside them, then the Projects. It owns the sheet
+ * that names a new Project, since that is asked for from here.
+ */
+function Beside({
+  all,
+  threads,
+  scoped,
+  onGo,
+  onProject,
+}: {
+  all: LiveState<{ readonly projects: ReadonlyArray<Project> }>
+  threads: LiveState<{ readonly threads: ReadonlyArray<Thread> }>
+  scoped: Option.Option<ProjectId>
+  onGo: (place: Place) => void
+  onProject: (id: ProjectId) => void
+}) {
+  const [creating, setCreating] = useState(false)
+  /** Going to a Project is scoping to it: the drawer narrows and its page opens. */
+  const openProject = (id: ProjectId) => {
+    scope.enter(id)
+    onProject(id)
+  }
+  return (
+    <View style={{ paddingBottom: 4 }}>
+      {PLACES.map(({ route, label, icon }) => (
+        <Line key={route} icon={icon} label={label} onPress={() => onGo(route)} />
+      ))}
+      {/* Drawn once the Projects are known: a group that arrived late would push every Thread
+          down under the Person's thumb. */}
+      {LiveState.$is('Ready')(all) && (
+        <Group
+          all={all.value.projects}
+          threads={LiveState.$is('Ready')(threads) ? threads.value.threads : []}
+          scoped={scoped}
+          onProject={openProject}
+          onAll={() => onGo('Projects')}
+          onCreate={() => setCreating(true)}
+        />
+      )}
+      {creating && (
+        <CreateProject
+          inside={null}
+          onMade={(project) => openProject(project.id)}
+          onClose={() => setCreating(false)}
+        />
+      )}
+    </View>
+  )
+}
+
+/**
+ * The drawer's contents, laid out for a thumb. The top is a title: where the Person is working, and
+ * the Project they have narrowed to while there is one. Everything pressed is from the middle down: the places, the Threads, then
  * search and "New thread" floating over the foot of the list, and under them the Person, which
  * is the way to another workspace, beside the way to Settings.
  *
@@ -358,15 +560,18 @@ export function Menu({
   const keyboard = useKeyboardShowing()
   const threads = useLive(data.live.threads)
   const filed = useLive(data.live.projects)
-  // "Add to a project" is offered only to a Person who has one. Nobody else sees the word.
-  const hasProjects = LiveState.$is('Ready')(filed) && filed.value.projects.length > 0
+  const scoped = useScope()
+  const scopedId = Option.map(scoped, (project) => project.id)
+  const listed = scopedThreads(threads, filed, scopedId)
   const [query, setQuery] = useState<Option.Option<string>>(Option.none())
   // The scroll position is tracked in a ref: only the moment the button changes shape is state,
   // so a moving list renders nothing.
   const scroll = useRef(RESTING)
   const [expanded, setExpanded] = useState(true)
+  // In a personal space the drawer is headed by Vivid itself, under the name the Person gave it.
+  const vivid = useAppearance()
   const here = Workspace.match(me.workspace, {
-    Personal: () => 'Vivid',
+    Personal: () => vivid.name,
     Company: ({ company }) => company.name,
   })
 
@@ -385,14 +590,7 @@ export function Menu({
       enabled={Platform.OS !== 'android' || keyboard}
       style={{ flex: 1, paddingTop: insets.top + 10, paddingLeft: insets.left }}
     >
-      <Label
-        accessibilityRole="header"
-        numberOfLines={1}
-        size="heading"
-        style={{ paddingHorizontal: GUTTER, paddingBottom: 10 }}
-      >
-        {here}
-      </Label>
+      <Head me={me} here={here} scoped={scoped} onProject={onProject} />
       {Option.isSome(refused) && (
         <View style={{ paddingHorizontal: GUTTER - 8, paddingBottom: 8 }}>
           <Notice message={refused.value} />
@@ -400,22 +598,27 @@ export function Menu({
       )}
       <View style={{ flex: 1 }}>
         <Threads
-          state={threads}
+          state={listed}
           query={Option.getOrElse(query, () => '')}
           width={width}
           onOpen={onOpen}
           onRename={onRename}
-          onFile={hasProjects ? Option.some(onFile) : Option.none()}
+          onFile={Option.some(onFile)}
           onRefused={onRefused}
           onScroll={scrolled}
           header={
-            <View style={{ paddingBottom: 4 }}>
-              {PLACES.map(({ route, label, icon }) => (
-                <Line key={route} icon={icon} label={label} onPress={() => onGo(route)} />
-              ))}
-            </View>
+            <Beside
+              all={filed}
+              threads={threads}
+              scoped={scopedId}
+              onGo={onGo}
+              onProject={onProject}
+            />
           }
-          footer={<Filed me={me} onGo={onGo} onProject={onProject} />}
+          empty={Option.match(scoped, {
+            onNone: () => Option.none<string>(),
+            onSome: (project) => Option.some(`No threads in ${project.name} yet.`),
+          })}
         />
         <View
           pointerEvents="box-none"

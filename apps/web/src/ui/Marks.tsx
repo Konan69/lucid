@@ -87,7 +87,7 @@ export function ServiceMarks({
           <span
             key={service}
             title={mark.label}
-            className="inline-flex size-(--tool-size) shrink-0 items-center justify-center overflow-hidden rounded-[4px] smooth-shadow-ring-xs"
+            className="inline-flex size-(--tool-size) shrink-0 items-center justify-center overflow-hidden rounded-[4px] edge"
             style={markStyle}
           >
             <svg viewBox={MARK_VIEW_BOX} className="size-full" aria-hidden>

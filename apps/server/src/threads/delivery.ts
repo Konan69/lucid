@@ -30,7 +30,13 @@ import {
 import { serializeAdmissions } from './admissions.ts'
 import { flueMessage } from './message.ts'
 import { Presence } from './presence.ts'
-import { RunStore, RunEnding, TurnReservation, type WorkingRun } from './runs.ts'
+import {
+  RunStore,
+  RunEnding,
+  TurnReservation,
+  automaticallyNotifies,
+  type WorkingRun,
+} from './runs.ts'
 import { ThreadStore } from './store.ts'
 
 /** What the delivery says, for the Thread's preview. Only a Person's own words are shown there. */
@@ -111,7 +117,10 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
     yield* changes.publish(
       audienceTopics(thread.value, yield* threads.participants(thread.value.id)),
     )
-    yield* announce(thread.value, run.person.id, settlement)
+    const quiet =
+      Settlement.guards.Completed(settlement) &&
+      !(yield* automaticallyNotifies(run.id).pipe(Effect.provideService(Database, database)))
+    if (!quiet) yield* announce(thread.value, run.person.id, settlement)
     if (Option.isSome(reply) && Option.isSome(run.said)) {
       yield* learning.afterRun({
         thread: thread.value,

@@ -7,8 +7,7 @@ import {
   ConnectionAuthorizationMessage,
   ConnectionRequestMessage,
   ConnectionState,
-  ConnectionStep,
-  type ConnectionId,
+  type Connection,
   InputRequestId,
   InputRequestState,
   type Approval,
@@ -17,18 +16,21 @@ import {
 } from '@vivid/contracts'
 import { Option, Predicate, Result, Schema } from 'effect'
 import { APPROVAL_EFFECT_WORDS, browserStep, desktopStep } from '@vivid/state'
+import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import { Check, Globe, Link2, MousePointer2, ShieldQuestion, Terminal, X } from 'lucide-react'
 import { BorderBeam } from 'border-beam'
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import { change, live, useLiveValue } from '../../data/live'
 import { router } from '../../data/route'
-import { orSay, say } from '../../data/said'
+import { engine } from '../../data/runtime'
+import { orSay } from '../../data/said'
 import { theme } from '../../data/theme'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { cn } from '../../ui/cn'
+import { Began, begin, follow } from '../integration/begin'
 import { EnterKey, type Keying } from '../integration/Key'
-import { showSignIn } from '../integration/signin'
+import { Mark } from '../integration/Mark'
 
 /**
  * The cards a Thread shows where a plain message will not do: something Vivid wants to do and
@@ -185,6 +187,16 @@ function Exactly({ target }: { target: ActionTarget }) {
 
 const SETTLED = 'inline-flex items-center gap-1.5 text-label'
 
+/**
+ * The edge of a card that has a beam. The beam clips whatever it wraps to its own box, and a
+ * card's edge is a shadow that falls just outside that box, so inside a beam the card lost its
+ * edge and sat on the light page as white on near-white. The edge is drawn here, outside the
+ * beam, at the card's own radius.
+ */
+function Edged({ children }: { children: ReactNode }) {
+  return <div className="mt-3 rounded-card edge">{children}</div>
+}
+
 /** How an Approval that is no longer waiting ended, in a sentence. */
 function ApprovalOutcome({ state }: { state: ApprovalState }) {
   return ApprovalState.match(state, {
@@ -248,69 +260,72 @@ export function ApprovalCard({ approval, me }: { approval: Approval; me: PersonI
   return (
     // A request waiting on this Person is the one thing in the Thread that needs them, so its
     // edge breathes until they answer. Settled, or someone else's to answer, it is a plain card.
-    <BorderBeam
-      active={pending && mine}
-      size="pulse-inner"
-      colorVariant="mono"
-      strength={0.6}
-      theme={shown}
-      className="mt-3"
-    >
-      <Card className="p-4">
-        <div className="flex items-center gap-2 text-meta text-approve">
-          <ShieldQuestion className="size-3.5" />
-          <span className="flex-1">{pending ? 'Vivid is asking first' : 'Vivid asked first'}</span>
-          <span
-            className={cn(
-              'rounded-full px-2 py-0.5 font-title',
-              EFFECT[approval.action.effect].tone,
-            )}
-          >
-            {EFFECT[approval.action.effect].words}
-          </span>
-        </div>
-        <h3 className="mt-2 text-title font-title text-ink">{approval.action.summary}</h3>
-        {approval.action.rationale.length > 0 && (
-          <p className="mt-1 text-label text-ink-3">{approval.action.rationale}</p>
-        )}
-        <Exactly target={approval.action.target} />
-        {pending && mine && (
-          <p className="mt-2 text-meta font-meta text-ink-3">
-            Your answer applies only to what is shown above.
-          </p>
-        )}
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          {!pending && <ApprovalOutcome state={approval.state} />}
-          {pending && !mine && (
-            <span className="text-label text-ink-3">Waiting on {approval.askedOf.name}.</span>
+    <Edged>
+      <BorderBeam
+        active={pending && mine}
+        size="pulse-inner"
+        colorVariant="mono"
+        strength={0.6}
+        theme={shown}
+      >
+        <Card className="p-4">
+          <div className="flex items-center gap-2 text-meta text-approve">
+            <ShieldQuestion className="size-3.5" />
+            <span className="flex-1">
+              {pending ? 'Vivid is asking first' : 'Vivid asked first'}
+            </span>
+            <span
+              className={cn(
+                'rounded-full px-2 py-0.5 font-title',
+                EFFECT[approval.action.effect].tone,
+              )}
+            >
+              {EFFECT[approval.action.effect].words}
+            </span>
+          </div>
+          <h3 className="mt-2 text-title font-title text-ink">{approval.action.summary}</h3>
+          {approval.action.rationale.length > 0 && (
+            <p className="mt-1 text-label text-ink-3">{approval.action.rationale}</p>
           )}
+          <Exactly target={approval.action.target} />
           {pending && mine && (
-            <>
-              <Button
-                variant="primary"
-                onClick={() => void decide(ApprovalDecision.cases.AllowOnce.make({}))}
-              >
-                Allow once
-              </Button>
-              <Button onClick={() => void decide(ApprovalDecision.cases.AlwaysAllow.make({}))}>
-                Always allow
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => void decide(ApprovalDecision.cases.Deny.make({}))}
-              >
-                Don’t
-              </Button>
-            </>
+            <p className="mt-2 text-meta font-meta text-ink-3">
+              Your answer applies only to what is shown above.
+            </p>
           )}
-        </div>
-        {refusal !== null && (
-          <p role="alert" className="mt-2 text-label text-danger">
-            {refusal}
-          </p>
-        )}
-      </Card>
-    </BorderBeam>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {!pending && <ApprovalOutcome state={approval.state} />}
+            {pending && !mine && (
+              <span className="text-label text-ink-3">Waiting on {approval.askedOf.name}.</span>
+            )}
+            {pending && mine && (
+              <>
+                <Button
+                  variant="primary"
+                  onClick={() => void decide(ApprovalDecision.cases.AllowOnce.make({}))}
+                >
+                  Allow once
+                </Button>
+                <Button onClick={() => void decide(ApprovalDecision.cases.AlwaysAllow.make({}))}>
+                  Always allow
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => void decide(ApprovalDecision.cases.Deny.make({}))}
+                >
+                  Don’t
+                </Button>
+              </>
+            )}
+          </div>
+          {refusal !== null && (
+            <p role="alert" className="mt-2 text-label text-danger">
+              {refusal}
+            </p>
+          )}
+        </Card>
+      </BorderBeam>
+    </Edged>
   )
 }
 
@@ -410,147 +425,233 @@ function Answering({
   )
 }
 
+/** How long a card keeps listening for its service after a press before it stops, in ms. */
+const LISTEN_MS = 10 * 60_000
+
+// The cards that are listening for their service, so pressing twice does not carry on twice.
+const listening = new Set<string>()
+
 /**
- * Vivid needs a service to go on. The card says why in Vivid's own words and finishes the job
- * where the Person already is: a sign-in opens in its own tab, a key is typed into a dialog that
- * sends it straight to the integration (never into the Thread, never to Vivid). Whether it is
- * connected is read live, so the card turns to "Carry on" by itself.
+ * Carries the Thread on by itself once the service is connected. It is started by the press on
+ * the card, not by rendering it: only a Person who just asked to connect wants Vivid to go on
+ * the moment the sign-in finishes, and a card read again tomorrow must not speak for them. It
+ * listens to the same live list of Connections the card draws from, and gives up after ten
+ * minutes, when "Carry on" on the card is still there to press.
+ */
+function carryOnOnceReady(
+  key: string,
+  ready: (connections: ReadonlyArray<Connection>) => boolean,
+  go: () => void,
+) {
+  if (listening.has(key)) return
+  listening.add(key)
+  const stop = () => {
+    listening.delete(key)
+    clearTimeout(timer)
+    unsubscribe()
+  }
+  const unsubscribe = engine.registry.subscribe(live.connections.atom, (result) => {
+    if (!AsyncResult.isSuccess(result) || !ready(result.value.connections)) return
+    stop()
+    go()
+  })
+  const timer = setTimeout(stop, LISTEN_MS)
+}
+
+/** Where a press on the card left things, until the live list says the service is connected. */
+type Pressed = 'not-yet' | 'starting' | 'waiting' | 'blocked' | 'refused'
+
+/** What the card says under the reason for each of those, when it says anything. */
+const AFTER_PRESS = {
+  'not-yet': Option.none(),
+  starting: Option.none(),
+  waiting: Option.some('Finish in the tab that opened. Vivid carries on by itself.'),
+  blocked: Option.some(
+    'The sign-in page could not open. Allow pop-ups for this page and try again.',
+  ),
+  refused: Option.some('That did not start. It may not be available on this server yet.'),
+} satisfies Record<Pressed, Option.Option<string>>
+
+/**
+ * Vivid needs a service to go on. One card says which service, why in Vivid's own words, and has
+ * one thing to press. The press starts the same flow Settings uses, right here: a sign-in opens
+ * in its own tab, a key is typed into a dialog that sends it straight to the Integration (never
+ * into the Thread, never to Vivid). Whether it is connected is read live, so the card settles by
+ * itself, and Vivid carries on without being told.
  */
 export function ConnectionCard({
+  id,
   request,
   authorization,
+  current,
   onContinue,
 }: {
+  /** The tool call this card stands for, which names its one "carry on". */
+  id: string
   request: ConnectionRequestMessage
   authorization: Option.Option<ConnectionAuthorizationValue>
+  /** Whether this is the newest thing in the Thread and Vivid has stopped to wait for it. */
+  current: boolean
   onContinue: (message: string) => void
 }) {
   const connections = useLiveValue(live.connections)
   const [keying, setKeying] = useState<Option.Option<Keying>>(Option.none())
-  const ready =
-    request.ready ||
-    Option.match(connections, {
-      onNone: () => false,
-      onSome: (value) =>
-        value.connections.some(
-          (connection) =>
-            ConnectionState.guards.Ready(connection.state) &&
-            // The integration Vivid started is this one exactly; a service offered from the
-            // catalogue is satisfied by any ready account on it.
-            Option.match(authorization, {
-              onNone: () => connection.service === request.service,
-              onSome: (next) => connection.id === next.connectionId,
-            }),
-        ),
+  const [pressed, setPressed] = useState<Pressed>('not-yet')
+  const shown = useSyncExternalStore(theme.subscribe, theme.shown)
+  const list = Option.match(connections, { onNone: () => [], onSome: (value) => value.connections })
+  /** The Integration Vivid started is this one exactly; one offered from the catalogue is satisfied by any ready account on that service. */
+  const isThis = (connection: Connection) =>
+    Option.match(authorization, {
+      onNone: () => connection.service === request.service,
+      onSome: (next) => connection.id === next.connectionId,
     })
+  const readyIn = (all: ReadonlyArray<Connection>) =>
+    all.some((connection) => ConnectionState.guards.Ready(connection.state) && isThis(connection))
+  const ready = request.ready || readyIn(list)
+  const carryOn = () => onContinue(`${request.serviceName} is connected. Carry on.`)
+
+  /** One press: resume what was begun, or begin it, then listen for it to be connected. */
+  async function connect() {
+    // An Integration that was begun and left unfinished is picked up, not begun a second time.
+    const begun = Option.match(authorization, {
+      onNone: () => Option.map(Option.fromUndefinedOr(list.find(isThis)), (found) => found.id),
+      onSome: (next) => Option.some(next.connectionId),
+    })
+    // A sign-in tab is opened by the click itself when a sign-in is known to be coming.
+    const tab = Option.exists(authorization, ConnectionAuthorization.guards.OpenSignIn)
+      ? window.open('about:blank', '_blank')
+      : null
+    // Beginning can take the server many seconds; the button says so from the press.
+    setPressed('starting')
+    const began = await Option.match(begun, {
+      onNone: () => begin({ id: request.service, name: request.serviceName }, tab, false),
+      onSome: async (connectionId) => {
+        const step = await change((client) => client.ResumeConnection({ id: connectionId }))
+        if (Result.isSuccess(step)) return follow(step.success, tab)
+        if (tab !== null) tab.close()
+        return Began.Refused()
+      },
+    })
+    setPressed(
+      Began.$match(began, {
+        SigningIn: (): Pressed => 'waiting',
+        NeedsKey: (): Pressed => 'not-yet',
+        Connected: (): Pressed => 'not-yet',
+        Blocked: (): Pressed => 'blocked',
+        Refused: (): Pressed => 'refused',
+      }),
+    )
+    if (Began.$is('NeedsKey')(began)) setKeying(Option.some(began.keying))
+    if (!Began.$is('Blocked')(began) && !Began.$is('Refused')(began)) {
+      carryOnOnceReady(id, readyIn, carryOn)
+    }
+  }
+
+  const after = AFTER_PRESS[pressed]
   return (
-    <Card className="mt-3 flex items-center gap-3 p-3">
-      <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink">
-        <Link2 className="size-5" strokeWidth={1.6} />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-label font-title text-ink">{request.serviceName}</span>
-        <span className="block text-label text-ink-3">{request.reason}</span>
-      </span>
-      {ready ? (
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => onContinue(`${request.serviceName} is connected. Carry on.`)}
-        >
-          Carry on
-        </Button>
-      ) : (
-        <Finish
-          name={request.serviceName}
-          authorization={authorization}
-          onKey={(next) => setKeying(Option.some(next))}
-        />
-      )}
-      {Option.isSome(keying) && (
-        <EnterKey keying={keying.value} onClose={() => setKeying(Option.none())} />
-      )}
-    </Card>
+    // While it is the thing the Thread is waiting on, its edge breathes like an Approval's.
+    <Edged>
+      <BorderBeam
+        active={current && !ready}
+        size="pulse-inner"
+        colorVariant="mono"
+        strength={0.6}
+        theme={shown}
+      >
+        <Card className="flex flex-wrap items-center gap-3 p-4">
+          <Mark service={{ name: request.serviceName }} size={40} />
+          <div className="min-w-48 flex-1">
+            <h3 className="text-title font-title text-ink">
+              {ready ? `${request.serviceName} is connected` : `Connect ${request.serviceName}`}
+            </h3>
+            <p className="mt-0.5 text-label text-pretty text-ink-3">{request.reason}</p>
+            {!ready && Option.isSome(after) && (
+              <p
+                role={pressed === 'waiting' ? 'status' : 'alert'}
+                className={cn(
+                  'mt-1.5 text-label text-pretty',
+                  pressed === 'waiting' ? 'text-working' : 'text-danger',
+                )}
+              >
+                {after.value}
+              </p>
+            )}
+          </div>
+          <ConnectionAction
+            name={request.serviceName}
+            ready={ready}
+            current={current}
+            pressed={pressed}
+            onConnect={() => void connect()}
+            onCarryOn={carryOn}
+          />
+          {Option.isSome(keying) && (
+            <EnterKey keying={keying.value} onClose={() => setKeying(Option.none())} />
+          )}
+        </Card>
+      </BorderBeam>
+    </Edged>
   )
 }
 
-/** The one thing left to do to connect it: sign in, give it a key, or pick it in Settings. */
-function Finish({
+/** What the card's button says at each point; it is the same button and the same press. */
+const CONNECT_WORDS = {
+  'not-yet': 'Connect',
+  starting: 'Connecting…',
+  waiting: 'Open it again',
+  blocked: 'Connect',
+  refused: 'Connect',
+} satisfies Record<Pressed, string>
+
+/** The one thing to press on the card, or the settled fact when there is nothing left to press. */
+function ConnectionAction({
   name,
-  authorization,
-  onKey,
+  ready,
+  current,
+  pressed,
+  onConnect,
+  onCarryOn,
 }: {
   name: string
-  authorization: Option.Option<ConnectionAuthorizationValue>
-  onKey: (keying: Keying) => void
+  ready: boolean
+  current: boolean
+  pressed: Pressed
+  onConnect: () => void
+  onCarryOn: () => void
 }) {
-  if (Option.isNone(authorization)) {
+  if (ready && current) {
+    // Reached when the service was connected somewhere else (Settings, another device), where no
+    // press here was listening for it.
     return (
-      <Button size="sm" onClick={() => router.openSettings(Option.some('connections'))}>
-        Connect
+      <Button variant="primary" size="sm" onClick={onCarryOn}>
+        Carry on
       </Button>
     )
   }
-  return finishButton(name, authorization.value, onKey)
-}
-
-/** Projects authorization state into the button that advances that integration. */
-function finishButton(
-  name: string,
-  authorization: ConnectionAuthorizationValue,
-  onKey: (keying: Keying) => void,
-) {
-  return ConnectionAuthorization.match(authorization, {
-    OpenSignIn: ({ connectionId }) => <SignInButton name={name} connectionId={connectionId} />,
-    EnterKey: ({ connectionId, fields }) => (
-      <EnterKeyButton connectionId={connectionId} name={name} fields={fields} onKey={onKey} />
-    ),
-  })
-}
-
-/**
- * Signs in to the service in a tab of its own. The tab is opened by the click itself, which is
- * the only moment a browser allows it, and is empty until the server says where the sign-in is.
- * The address is asked for here, by the Person pressing the button, and never travels in the
- * Thread: a sign-in link that anyone in a shared Thread could open would bind their account to
- * this Person's integration.
- */
-function SignInButton({ name, connectionId }: { name: string; connectionId: ConnectionId }) {
-  async function open() {
-    const tab = window.open('about:blank', '_blank')
-    const step = await change((client) => client.ResumeConnection({ id: connectionId }))
-    if (
-      Result.isSuccess(step) &&
-      ConnectionStep.guards.OpenSignIn(step.success) &&
-      showSignIn(tab, step.success.address)
-    ) {
-      return
-    }
-    if (tab !== null) tab.close()
-    say(`${name}’s sign-in page could not be opened. Allow pop-ups for this page and try again.`)
+  if (ready) {
+    return (
+      <span className={cn(SETTLED, 'text-success')}>
+        <Check className="size-3.5" />
+        Connected
+      </span>
+    )
+  }
+  if (pressed === 'refused') {
+    return (
+      <Button size="sm" onClick={() => router.openSettings(Option.some('connections'))}>
+        Open Integrations
+      </Button>
+    )
   }
   return (
-    <Button size="sm" variant="primary" onClick={() => void open()}>
-      Sign in
-    </Button>
-  )
-}
-
-/** Opens the key dialog with the fields required by the authorization record. */
-function EnterKeyButton({
-  connectionId,
-  name,
-  fields,
-  onKey,
-}: {
-  connectionId: Keying['id']
-  name: string
-  fields: Keying['fields']
-  onKey: (keying: Keying) => void
-}) {
-  return (
-    <Button size="sm" variant="primary" onClick={() => onKey({ id: connectionId, name, fields })}>
-      Enter key
+    <Button
+      size="sm"
+      variant="primary"
+      aria-label={`Connect ${name}`}
+      disabled={pressed === 'starting'}
+      onClick={onConnect}
+    >
+      {CONNECT_WORDS[pressed]}
     </Button>
   )
 }

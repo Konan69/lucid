@@ -6,22 +6,13 @@ import {
   type PersonId,
   type Run,
 } from '@vivid/contracts'
-import {
-  describeToolCall,
-  makeFullWhen,
-  makeWhen,
-  readAnswered,
-  readAsked,
-  speakerOfTurn,
-  thisReader,
-} from '@vivid/state'
+import { makeFullWhen, makeWhen, speakerOfTurn, thisReader } from '@vivid/state'
 import { Option, Schema } from 'effect'
-import { AlarmClock, Check, ChevronRight, Copy as CopyIcon, Monitor, Repeat2 } from 'lucide-react'
-import { ThinkingOrb } from 'thinking-orbs'
-import { panel } from '../../data/panel'
+import { AlarmClock, Check, Copy as CopyIcon, Repeat2 } from 'lucide-react'
 import { useState } from 'react'
 import { Avatar } from '../../ui/Avatar'
 import { cn } from '../../ui/cn'
+import { Alive } from '../../ui/Alive'
 import { Face } from '../../ui/Face'
 import { Markdown } from '../../ui/Markdown'
 import {
@@ -33,8 +24,7 @@ import {
   requestById,
 } from './Cards'
 import { Display } from './Shown'
-
-type ToolPart = Extract<FlueConversationMessage['parts'][number], { type: 'dynamic-tool' }>
+import { Doing, doingIn, Trail, type ToolPart } from './Trail'
 
 const Metadata = Schema.Struct({
   finishedAt: Schema.optionalKey(Schema.Number),
@@ -275,108 +265,6 @@ function Signal({
   )
 }
 
-type StepState = 'running' | 'done' | 'failed'
-
-const TOOL_STATE = new Map<string, StepState>([
-  ['input-streaming', 'running'],
-  ['input-available', 'running'],
-  ['output-available', 'done'],
-  ['output-error', 'failed'],
-])
-
-/** The steps that happen on Vivid's computer, where there is something to watch. */
-const ON_COMPUTER = new Set(['run_command', 'browse', 'use_desktop'])
-
-/** What Vivid did while answering, collapsed to one line that opens into each step. */
-function Steps({ tools, live }: { tools: ReadonlyArray<ToolPart>; live: boolean }) {
-  const [open, setOpen] = useState(false)
-  if (tools.length === 0) return null
-  const steps = tools.map((tool) => {
-    const described = describeToolCall(
-      tool.toolName,
-      readAsked(tool.input),
-      // A call still running has no output; it reads as an answer with nothing in it yet.
-      readAnswered(tool.state === 'output-available' ? tool.output : {}),
-      stateOf(tool),
-    )
-    // A tool that answered that it could not do it failed, even though the call returned.
-    return { id: tool.toolCallId, ...described, failed: described.state === 'failed' }
-  })
-  const current = live
-    ? // The newest step still in progress is the one Vivid is on.
-      tools.reduce<Option.Option<ToolPart>>(
-        (latest, tool) => (stateOf(tool) === 'running' ? Option.some(tool) : latest),
-        Option.none(),
-      )
-    : Option.none()
-  const running = Option.isSome(current)
-  return (
-    <div className="mb-2">
-      <button
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-        className="-ml-1 inline-flex cursor-pointer items-center gap-1.5 rounded-row px-1 py-0.5 text-label text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"
-      >
-        <ChevronRight
-          className={cn('size-3.5 transition-transform duration-(--dur-fast)', open && 'rotate-90')}
-        />
-        {running && <ThinkingOrb state="working" size={20} aria-hidden />}
-        {summaryOf(
-          steps,
-          Option.map(current, (tool) => tool.toolCallId),
-        )}
-      </button>
-      {Option.exists(current, (tool) => ON_COMPUTER.has(tool.toolName)) && (
-        // While Vivid is on its computer, the way to see it do the work is one press away.
-        <button
-          onClick={panel.show}
-          className="ml-1.5 inline-flex cursor-pointer items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-meta font-title text-accent-ink transition-colors duration-(--dur-fast) hover:bg-wash-pressed"
-        >
-          <Monitor className="size-3" />
-          Watch
-        </button>
-      )}
-      {open && (
-        <ol className="mt-1 ml-1.5 flex flex-col gap-1 border-l border-line-2 pl-4 text-label text-ink-2">
-          {steps.map((step) => (
-            <li key={step.id} className={cn(step.failed && 'text-danger')}>
-              {step.label}
-              {step.detail !== undefined && <span className="text-ink-3"> · {step.detail}</span>}
-            </li>
-          ))}
-        </ol>
-      )}
-    </div>
-  )
-}
-
-/**
- * The one line the steps collapse to. While Vivid is working it is what it is doing right now
- * ("Searching the Library…"), not the word "Working". Afterwards it is what was done: the step
- * itself when there was one, the first and a count when there were more.
- */
-function summaryOf(
-  steps: ReadonlyArray<{ readonly id: string; readonly label: string }>,
-  current: Option.Option<string>,
-) {
-  const doing = Option.flatMap(current, (id) =>
-    Option.fromUndefinedOr(steps.find((step) => step.id === id)),
-  )
-  if (Option.isSome(doing)) return `${doing.value.label}…`
-  const [first, ...rest] = steps
-  if (first === undefined) return ''
-  if (rest.length === 0) return first.label
-  return rest.length === 1
-    ? `${first.label} and one more thing`
-    : `${first.label} and ${rest.length} more things`
-}
-
-/** A tool call's standing. A state this client does not know yet is still in progress. */
-const stateOf = (tool: ToolPart): StepState => {
-  const known = TOOL_STATE.get(tool.state)
-  return known === undefined ? 'running' : known
-}
-
 const readShown = Schema.decodeUnknownOption(ShowRequest)
 
 /** A step that draws something is not a step to list: the thing drawn is the record of it. */
@@ -411,8 +299,10 @@ function ToolCards({
       return (
         <ConnectionCard
           key={tool.toolCallId}
+          id={tool.toolCallId}
           request={wanted.request}
           authorization={wanted.authorization}
+          current={live}
           onContinue={onContinue}
         />
       )
@@ -493,6 +383,12 @@ function CopyWords({ read }: { read: () => string }) {
   )
 }
 
+/** When a reply was finished, when Vivid said so. */
+function Stamp({ message }: { message: FlueConversationMessage }) {
+  const time = timeOf(message)
+  return Option.isNone(time) ? null : <time title={time.value.full}>{time.value.said}</time>
+}
+
 /**
  * Vivid's reply. A few plain words sit in a bubble beside its face, shaped like the other
  * people's in a shared Thread (soft, with the corner nearest the face squared); steps, displays and
@@ -513,20 +409,22 @@ function FromVivid({
 }) {
   const text = textOf(message)
   const tools = message.parts.filter((part) => part.type === 'dynamic-tool')
-  const time = timeOf(message)
   const forWhom = answering(message, context)
   const streaming = message.parts.some((part) => 'state' in part && part.state === 'streaming')
   const simple = simpleWords(text, tools)
+  const steps = tools.filter((tool) => !drawn(tool))
+  // Only the newest reply can still be in the making; an older one's steps are its record.
+  const making = working && latest
   return (
     <div className="flex gap-3">
-      <Face size={28} className="mt-0.5" mood={streaming ? 'thinking' : 'neutral'} />
+      <ReplyFace message={message} latest={latest} making={making} />
       <div className="min-w-0 flex-1 text-body text-ink">
         {Option.isSome(forWhom) && (
           <span className="mb-1 block text-meta font-meta text-ink-3">
             Answering {forWhom.value}
           </span>
         )}
-        <Steps tools={tools.filter((tool) => !drawn(tool))} live={working} />
+        {making && <Doing tools={steps} wordless={text.length === 0} />}
         <div className={cn(simple && 'flex items-end gap-2')}>
           {text.length > 0 && (
             <div
@@ -539,24 +437,84 @@ function FromVivid({
             </div>
           )}
           {!streaming && text.length > 0 && (
-            <div
-              className={cn(
-                'flex h-6 items-center gap-1.5 text-meta text-ink-3',
-                simple ? 'shrink-0' : 'mt-1',
-              )}
-            >
-              {Option.isSome(time) && <time title={time.value.full}>{time.value.said}</time>}
-              <CopyWords read={() => text} />
-            </div>
+            <Settled message={message} text={text} beside={simple} latest={latest} />
           )}
         </div>
-        <ToolCards
-          tools={tools}
-          context={context}
-          live={latest && !working}
-          onContinue={onContinue}
-        />
+        {!making && <Trail tools={steps} />}
+        {/* A card Vivid produces while it is making this reply rises into place; the cards of a
+            reply that is already finished are simply there. `contents` keeps the wrapper out of
+            the layout. */}
+        <div className={making ? ARRIVING : 'contents'}>
+          <ToolCards
+            tools={tools}
+            context={context}
+            live={latest && !working}
+            onContinue={onContinue}
+          />
+        </div>
       </div>
     </div>
   )
+}
+
+/** The wrapper of a reply's cards while the reply is being made: each card that appears rises in. */
+const ARRIVING = 'contents *:motion-enter'
+
+/**
+ * The face beside a reply. The newest reply's is alive: it works while the reply is made and is
+ * pleased, then at rest, once it is finished. An older reply is a record, and its face is still.
+ */
+function ReplyFace({
+  message,
+  latest,
+  making,
+}: {
+  message: FlueConversationMessage
+  latest: boolean
+  making: boolean
+}) {
+  if (!latest) return <Face size={28} className="mt-0.5" mood="neutral" />
+  return (
+    <Alive size={28} className="mt-0.5" state={stateOf(making, Option.isSome(doingIn(message)))} />
+  )
+}
+
+/**
+ * What stands under a finished reply: when it was said, and the control that copies it. Under
+ * the newest reply it fades in (`motion-fade`) as the words stop arriving, so the reply is seen
+ * to settle; under older ones it is simply there.
+ */
+function Settled({
+  message,
+  text,
+  beside,
+  latest,
+}: {
+  message: FlueConversationMessage
+  text: string
+  /** Whether it sits beside a short bubble instead of under an open column. */
+  beside: boolean
+  latest: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        'flex h-6 items-center gap-1.5 text-meta text-ink-3',
+        beside ? 'shrink-0' : 'mt-1',
+        latest && 'motion-fade',
+      )}
+    >
+      <Stamp message={message} />
+      <CopyWords read={() => text} />
+    </div>
+  )
+}
+
+/**
+ * What Vivid's face is doing beside its newest reply: working while a step of it runs, thinking
+ * between steps, and done once it is made (pleased for a few seconds, then at rest).
+ */
+const stateOf = (making: boolean, usingTool: boolean) => {
+  if (!making) return 'done'
+  return usingTool ? 'working' : 'thinking'
 }

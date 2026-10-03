@@ -35,12 +35,28 @@ Last brought up to date on 3 October 2026.
 | Memory on HelixDB: remember, recall, forget, correct, and the background pass after a Run                                                       | Live test; remember and recall seen in the app with a real model  |
 | The Computer on Boat: create, viewer, look, open/read a page, click a link, type/replace/clear a field with readback, files, archive and resume | Live test against real Boat                                       |
 | The Library: folders, PDF and text ingest, search, citations                                                                                    | Tests                                                             |
-| Skills: 22 native runtime folders, and reusable procedures Vivid saves for itself                                                               | Native catalogue, activation and scoped saved-procedure tests     |
+| Skills: 23 native runtime folders, and reusable procedures Vivid saves for itself                                                               | Native catalogue, activation and scoped saved-procedure tests     |
 | Search palette, notifications, Settings, the Company record                                                                                     | Tests; seen in the app                                            |
 | Desktop app: choose a Vivid, sign up, pages beside a Thread with tabs, the Computer tab, switching Vivid                                        | Run for real                                                      |
 | Pictures attached to a message in a private Thread                                                                                              | Tests                                                             |
 
 ## Built, not yet seen working end to end
+
+- **App push**: session-owned Web Push and Expo targets, owner-scoped setup RPCs, Notification
+  delivery when away, durable send claims, provider timeouts and gone-target removal. Disposable
+  PostgreSQL handler tests and controlled provider HTTP tests pass. Clients still need permission,
+  service-worker/native registration and tap handling; real VAPID/device delivery is unverified.
+- **Attention**: `notify_person`, the opt-in “Watch what needs me” Routine template and its built-in
+  mail/calendar procedure. Standing checks complete silently; actionable findings can open private
+  follow-up Threads through ordinary Run admission. Real-model judgement has not been evaluated.
+
+The push lane's isolated checkout passed 104 distinct focused tests across registration, delivery,
+provider HTTP, model tools, native skill mounting, Routine opt-in and existing Thread/Routine seams.
+The repository gate passed package policy, version lockstep, Effect boundaries and migration
+integrity, then stopped on the existing Tailwind class-order warning at
+`apps/web/src/screen/Notifications.tsx:165`. The frontend owner must correct that order; this lane
+made no frontend changes.
+Server and runtime leaf typechecks passed under the shared compiler lock in the isolated checkout.
 
 - **Artifacts**: Thread-owned Markdown documents, immutable versions, optimistic Person revisions,
   live RPC queries and runtime write/read tools. Private-Thread rehearsal proved writing version 1,
@@ -50,23 +66,39 @@ Last brought up to date on 3 October 2026.
   Attribution refuses ambiguous working Runs: the current reservation still permits same-Person
   deliveries to join.
 
-| Capability                                                     | What is missing                                                                                                                                                         |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The Computer panel showing Boat's viewer inside the app        | Never opened in the app against real Boat                                                                                                                               |
-| Browser input from a Thread on Boat                            | Provider live proof covers clicking and verified text replacement; not driven from a Thread                                                                             |
-| The Person's desktop browser                                   | Target/access/control contracts and PostgreSQL device receipts built; native input-token enforcement is unrecovered, Person route fails closed, runtime option withheld |
-| Vivid using the desktop (`use_desktop`) from a Thread          | Proven at the provider; not driven from a Thread on Boat                                                                                                                |
-| Mobile app                                                     | Tests only; never run on a device                                                                                                                                       |
-| Google Integrations                                            | Need an operator sign-in client set up in Executor (`docs/22-one-product.md`)                                                                                           |
-| An Approval raised by a real model's action, approved, and run | Tests only                                                                                                                                                              |
-| Routines firing from a real Integration event                  | Tests only                                                                                                                                                              |
+| Capability                                                     | What is missing                                                                                                                                                                                                                    |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The Computer panel showing Boat's viewer inside the app        | Never opened in the app against real Boat                                                                                                                                                                                          |
+| Browser input from a Thread on Boat                            | `computers/thread.live.test.ts` attempted once; stopped before a model call because the night server selects Docker. Successful tool receipts now include the cookie-bound screen relay; Thread-driven Boat input remains unproved |
+| The Person's desktop browser                                   | Target/access/control contracts and PostgreSQL device receipts built; native input-token enforcement is unrecovered, Person route fails closed, runtime option withheld                                                            |
+| Vivid using the desktop (`use_desktop`) from a Thread          | Included in the same opt-in Computer chain proof; blocked on the Boat server configuration, never reached a model call                                                                                                             |
+| Mobile app                                                     | Tests only; never run on a device                                                                                                                                                                                                  |
+| Google Integrations                                            | Need an operator sign-in client set up in Executor (`docs/22-one-product.md`)                                                                                                                                                      |
+| An Approval raised by a real model's action, approved, and run | `approvals/thread.live.test.ts` attempted once; stopped before a model call because the running stack and supplied disposable proof database differ                                                                                |
+| Routines firing from a real Integration event                  | `routines/thread.live.test.ts` attempted once; the same database isolation preflight blocked it. The fixture uses a real Executor record service; no third-party event proof yet                                                   |
+
+The unconnected mail chain also has `connections/thread.live.test.ts`, skipped by default. Its
+single attempt stopped at the database preflight before a model call; Google setup and consent
+remain operator prerequisites. The `connect` tool now ends an unconnected offer's turn instead
+of leaving the model to keep discovering. Focused runtime tests checked the card receipt,
+termination and Computer session metadata (21 tests passed). No row above was promoted to
+working end to end. Flue `defineTool` still shares Approval card handles with model-visible
+output; strict identifier isolation needs native content/details registration in the runtime
+instruction owner's lane.
+
+Run these proofs serially with the existing stack, from the server package, using
+`pnpm exec vitest run --config src/runtime/vitest.ts` and exactly one of
+`VIVID_LIVE_THREAD_COMPUTER`, `VIVID_LIVE_THREAD_APPROVAL`, `VIVID_LIVE_THREAD_CONNECTION`, or
+`VIVID_LIVE_THREAD_ROUTINE` set to `1`. Each corresponding `thread.live.test.ts` has one scenario;
+no judge or retry loop calls the model. The supplied `VIVID_TEST_DATABASE_URL` must designate the
+same disposable database as the stack; the proof never falls back to an application database.
 
 ## Not built
 
 - **The durable work log** of a Run (requests, responses, tool calls, model and timing).
 - **Vivid-to-Vivid** across People and Companies (`docs/06-communication.md`).
 - **The Person's own computer as a device**, and taking over the Computer to teach a task.
-- **Push notifications**, **voice**, and **messaging channels** (mail in, Slack and the like).
+- **Voice** and **messaging channels** (mail in, Slack and the like); Telegram was cancelled.
 - **To-do lists and project management.** Tasks as Vivid first had them (things Vivid tracked and
   chased) were removed on 3 October 2026. They come back in two different shapes, neither built:
   for a Person, a to-do list that is theirs: things they mean to do, which Vivid can add to, tick

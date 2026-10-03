@@ -3,6 +3,7 @@ import {
   Settings as SettingsRecord,
   Workspace,
   type Theme,
+  mayChangeAppearance,
 } from '@vivid/contracts'
 import { Data, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
@@ -13,7 +14,9 @@ import { warn } from '../data/haptics'
 import { refusalOf, useLive, useLiveData, useLiveValue, type LiveData } from '../data/live'
 import { connectionsAddress, recordAddress, rulesAddress, serverName } from '../data/server'
 import { leaveAtom } from '../data/signing'
+import { useAppearance } from '../data/vivid'
 import { Avatar, pictureOf } from '../ui/Avatar'
+import { Face } from '../ui/Face'
 import { Header, Screen } from '../ui/Header'
 import { Row, Section } from '../ui/List'
 import { Live } from '../ui/Live'
@@ -22,6 +25,7 @@ import { confirmDestructive, Label, Notice, Segmented, Skeleton, styles } from '
 import { useGo, useMe } from '../workspace'
 import { useTheme } from '../theme'
 import { Devices } from './settings/Devices'
+import { Customise } from './vivid/Customise'
 import { Themes } from './settings/Themes'
 
 const THEMES = [
@@ -45,7 +49,7 @@ const IN_BROWSER = [
 ] as const
 
 /** What is open over Settings. One thing at a time. */
-type Over = Data.TaggedEnum<{ Nothing: {}; Zone: {}; Devices: {} }>
+type Over = Data.TaggedEnum<{ Nothing: {}; Zone: {}; Devices: {}; Customise: {} }>
 const Over = Data.taggedEnum<Over>()
 
 /**
@@ -89,6 +93,7 @@ export function Settings() {
             onPress={() => go.navigate('Memory')}
           />
         </Section>
+        <VividRow workspace={me.workspace} onCustomise={() => setOver(Over.Customise())} />
         <Live state={settings} loading={<Skeleton rows={3} />}>
           {(value) => <Preferences settings={value} onZone={() => setOver(Over.Zone())} />}
         </Live>
@@ -108,7 +113,33 @@ export function Settings() {
       </ScrollView>
       {Over.$is('Devices')(over) && <Devices onClose={close} />}
       {Over.$is('Zone')(over) && <Zone onClose={close} />}
+      {Over.$is('Customise')(over) && <Customise onClose={close} />}
     </Screen>
+  )
+}
+
+/**
+ * Vivid as it is here: its face, its name, and the way to change them. In a Company only an owner
+ * or admin is offered the change, because everyone there shares one Vivid; a member is told so
+ * and the row is not a button.
+ */
+function VividRow({ workspace, onCustomise }: { workspace: Workspace; onCustomise: () => void }) {
+  const { name } = useAppearance()
+  const editable = mayChangeAppearance(workspace)
+  return (
+    <Section title="Vivid">
+      <Row
+        leading={<Face size={40} label="" />}
+        title={name}
+        detail={
+          editable
+            ? 'Its name and colour, wherever it appears.'
+            : 'An owner or admin of this Company chooses its name and colour.'
+        }
+        wrap
+        onPress={editable ? onCustomise : undefined}
+      />
+    </Section>
   )
 }
 

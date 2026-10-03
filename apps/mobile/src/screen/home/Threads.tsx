@@ -26,8 +26,8 @@ interface ListProps extends ThreadActions {
   readonly query: string
   /** Drawn above the first lane and scrolled with it: the places beside Threads. */
   readonly header: ReactElement
-  /** Drawn after the last Thread: the quiet Projects group. */
-  readonly footer: ReactElement
+  /** Said under the header when a scope leaves nothing to list; none when nothing is scoped. */
+  readonly empty: Option.Option<string>
   readonly onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void
 }
 
@@ -164,13 +164,16 @@ function Lanes({ threads, ...props }: ListProps & { threads: ReadonlyArray<Threa
       data={rowsOf(arrangement.lanes)}
       keyExtractor={rowKey}
       ListHeaderComponent={props.header}
+      // A scope with no Threads says so; with no scope the header alone is the empty drawer.
+      ListEmptyComponent={
+        Option.isSome(props.empty) && arrangement.archived.length === 0 ? (
+          <Said>{props.empty.value}</Said>
+        ) : null
+      }
       ListFooterComponent={
-        <>
-          {arrangement.archived.length > 0 && (
-            <Shelf {...props} done={arrangement.archived} now={now} />
-          )}
-          {props.footer}
-        </>
+        arrangement.archived.length > 0 ? (
+          <Shelf {...props} done={arrangement.archived} now={now} />
+        ) : null
       }
       renderItem={({ item }) =>
         Row.$match(item, {

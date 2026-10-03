@@ -481,7 +481,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           }),
         })
         const found = yield* Effect.gen(function* () {
-          return yield* (yield* ConnectionStore).find('')
+          return yield* (yield* ConnectionStore).find('records')
         }).pipe(
           Effect.provide(connectionStoreLayer, { local: true }),
           Effect.provideService(Executor, inspection),

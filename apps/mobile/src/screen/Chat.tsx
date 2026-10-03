@@ -44,6 +44,7 @@ import {
   TARGET,
   type Tone,
 } from '../ui/ui'
+import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
 import { useGo, useMe, type Routes } from '../workspace'
 import { Message } from './chat/Message'
@@ -299,6 +300,8 @@ function useSend(
  * doubt included, belongs to that one Thread and to nothing opened after it.
  */
 function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<ThreadDetail> }) {
+  // The name this Person or their Company gave Vivid, live.
+  const vivid = useAppearance()
   const me = useMe()
   const data = useLiveData()
   const client = useMemo(() => conversation(data.session, id), [data.session, id])
@@ -407,7 +410,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
       )}
       <Composer
         value={typed}
-        placeholder={shared ? 'Message everyone and Vivid' : 'Message Vivid'}
+        placeholder={shared ? `Message everyone and ${vivid.name}` : `Message ${vivid.name}`}
         working={working}
         disabled={false}
         onChange={type}

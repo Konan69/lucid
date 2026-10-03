@@ -17,10 +17,19 @@ export interface Saying {
   readonly key: Option.Option<string>
   /** Where the sentence leads, when it leads somewhere: "Open" on something that finished. */
   readonly action: Option.Option<{ readonly label: string; readonly go: () => void }>
+  /** On its way out: still drawn, for the moment it takes to leave the way it came. */
+  readonly leaving: boolean
 }
 
 /** Long enough to read one sentence twice; short enough not to sit over the composer. */
 const SAID_FOR_MS = 6000
+
+/**
+ * How long a sentence stays in the document after it is sent away, so it can be seen to go. It
+ * is a little over the exit it covers (`--dur-exit`, 150 ms in `styles/motion.css`): the timer
+ * must not take the sentence out before its last frame.
+ */
+const LEAVING_FOR_MS = 180
 
 let sayings: ReadonlyArray<Saying> = []
 let count = 0
@@ -39,7 +48,15 @@ export const said = {
     }
   },
   all: () => sayings,
-  dismiss: (id: number) => set(sayings.filter((saying) => saying.id !== id)),
+  /**
+   * Sends a sentence away. It is marked as leaving at once, which is what the Person sees
+   * answer their click, and taken out when it has gone. Dismissed twice, it still goes once.
+   */
+  dismiss: (id: number) => {
+    if (!sayings.some((saying) => saying.id === id && !saying.leaving)) return
+    set(sayings.map((saying) => (saying.id === id ? { ...saying, leaving: true } : saying)))
+    setTimeout(() => set(sayings.filter((saying) => saying.id !== id)), LEAVING_FOR_MS)
+  },
 }
 
 /** Says one sentence, with somewhere to go from it; a caller key deduplicates the same event. */
@@ -54,7 +71,7 @@ export function sayWith(words: string, action: Saying['action'], key?: string) {
   count += 1
   const id = count
   // The newest three are kept: more than that is a wall, and the oldest was the first read.
-  set([...sayings, { id, words, action, key: identity }].slice(-3))
+  set([...sayings, { id, words, action, key: identity, leaving: false }].slice(-3))
   setTimeout(() => said.dismiss(id), SAID_FOR_MS)
 }
 

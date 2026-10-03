@@ -18,6 +18,7 @@ import type { Say } from '../../data/delivery'
 import { commit, confirm, warn } from '../../data/haptics'
 import { useLiveData } from '../../data/live'
 import { Card, cardOf, type ToolPart } from '../../data/message'
+import { useAppearance } from '../../data/vivid'
 import { useTheme } from '../../theme'
 import { Button, Dot, EDGE, Field, Label, Notice, Press, radius, styles } from '../../ui/ui'
 import { IntegrationCard } from '../integration/Card'
@@ -223,6 +224,8 @@ function ApprovalOutcome({ state }: { state: ApprovalState }) {
  * buttons are. The phone answers a yes and a no differently in the hand as well as on screen.
  */
 function ApprovalCard({ approval, me }: { approval: Approval; me: PersonId }) {
+  // The name this Person or their Company gave Vivid, live.
+  const vivid = useAppearance()
   const data = useLiveData()
   const { colors: c } = useTheme()
   const [refused, setRefused] = useState(false)
@@ -242,7 +245,7 @@ function ApprovalCard({ approval, me }: { approval: Approval; me: PersonId }) {
   return (
     <Shell
       icon={<ShieldQuestion size={14} strokeWidth={1.8} color={c['status-approve']} />}
-      kind={pending ? 'Vivid is asking first' : 'Vivid asked first'}
+      kind={pending ? `${vivid.name} is asking first` : `${vivid.name} asked first`}
       tone="status-approve"
       trailing={<EffectChip effect={approval.action.effect} />}
     >
@@ -319,11 +322,17 @@ function Standing({ request, mine }: { request: InputRequest; mine: boolean }) {
  * writes their own answer; once answered, the card says what was said and by whom.
  */
 function InputCard({ request, me }: { request: InputRequest; me: PersonId }) {
+  // The name this Person or their Company gave Vivid, live.
+  const vivid = useAppearance()
   const mine = request.askedOf.id === me
   return (
     <Shell
       icon={<Dot tone="status-attention" size={6} />}
-      kind={InputRequestState.guards.Waiting(request.state) ? 'Vivid needs you' : 'Vivid asked'}
+      kind={
+        InputRequestState.guards.Waiting(request.state)
+          ? `${vivid.name} needs you`
+          : `${vivid.name} asked`
+      }
       tone="status-attention"
     >
       <Label size="footnote" style={{ fontSize: 15 }}>

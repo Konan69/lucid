@@ -1,11 +1,16 @@
-import type { NoDeviceConnected } from '@vivid/contracts'
+import {
+  ComputerScreen,
+  ComputerSession,
+  computerScreenAddress,
+  type NoDeviceConnected,
+} from '@vivid/contracts'
 import type { RpcFailure } from '@vivid/contracts/rpc'
 import * as Config from 'effect/Config'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Predicate from 'effect/Predicate'
-import type * as Schema from 'effect/Schema'
+import * as Schema from 'effect/Schema'
 import type * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
 import { modelText } from './views.ts'
 import type { NameMissing, NameAmbiguous } from './names.ts'
@@ -100,6 +105,24 @@ function failure(message: string) {
 export const warnFailure = (tool: string, tag: string) =>
   Effect.logWarning(`Tool failed tool=${tool} tag=${tag}`)
 
+const computerTools = new Set(['browse', 'run_command', 'use_desktop'])
+const session = Schema.encodeSync(ComputerSession)(
+  ComputerSession.make({
+    active: true,
+    screen: ComputerScreen.cases.Relay.make({ address: computerScreenAddress }),
+  }),
+)
+
+/** Only a successful Computer operation proves an active session. Flue's enclosing submission
+ * identifies the Thread/Run; the receipt adds no owner handle or provider authority. The relay
+ * checks the viewer's own cookie again, including when this receipt is read in a shared Thread.
+ */
+function withComputer(output: Schema.Json, tool: string): Schema.Json {
+  return computerTools.has(tool) && isObject(output) && output.ok === true
+    ? Object.fromEntries([...Object.entries(output), ['computer', session]])
+    : output
+}
+
 /** Only declared product failures are recovered; transport and configuration have fixed safe wording; defects propagate. */
 export const settle = Effect.fn('Tools.settle')(function* (
   program: Effect.Effect<ToolResult, ToolFailure>,
@@ -130,6 +153,7 @@ export const settle = Effect.fn('Tools.settle')(function* (
         failure('The request conflicts with the current state; check it before trying again.'),
       InvalidRequest: () => failure('The request is invalid; check the supplied details.'),
       ServiceUnavailable: () => failure('That part of Vivid is not available right now.'),
+      PushUnavailable: () => failure('Push notifications are not configured on this Vivid server.'),
       RuntimeUnavailable: () => failure('Vivid cannot start that work right now.'),
       DatabaseUnavailable: () => failure('Vivid cannot reach its saved records right now.'),
       DatabaseConstraintViolation: () =>
@@ -138,7 +162,10 @@ export const settle = Effect.fn('Tools.settle')(function* (
     }),
   )
   return {
-    output: tool === 'read_document' ? boundDocument(result.output) : boundOutput(result.output),
+    output:
+      tool === 'read_document'
+        ? boundDocument(result.output)
+        : boundOutput(withComputer(result.output, tool)),
     terminate: result.terminate === true,
   }
 })

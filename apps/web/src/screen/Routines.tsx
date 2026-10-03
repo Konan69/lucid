@@ -13,8 +13,8 @@ import {
   Plus,
   RotateCcw,
   Trash2,
+  Repeat2,
   Webhook,
-  Plug,
 } from 'lucide-react'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { change, live, LiveState, useLive, useLiveValue } from '../data/live'
@@ -30,9 +30,13 @@ import { Notice } from '../ui/Notice'
 import { Segmented } from '../ui/Segmented'
 import { Skeleton } from '../ui/Skeleton'
 import { BAR } from './bar'
+import { Emblem, type Hue } from './Emblem'
+import { Mark } from './integration/Mark'
+import { ENTER, PRESS, stagger } from './motion'
 
 type Routine = routinesData.Routine
 type Occurrence = routinesData.Occurrence
+type RoutineFields = routinesData.RoutineFields
 
 /**
  * What the screen is showing: the list, the form for a new Routine, or one Routine. Only this is
@@ -40,7 +44,8 @@ type Occurrence = routinesData.Occurrence
  */
 type View = Data.TaggedEnum<{
   Overview: {}
-  Creating: {}
+  /** The form opens on `start`: empty, or one of the list's suggestions already written out. */
+  Creating: { readonly start: RoutineFields }
   Detail: { readonly id: RoutineId }
 }>
 const View = Data.taggedEnum<View>()
@@ -151,12 +156,13 @@ function RoutinesBody({
     Overview: () => (
       <RoutinesOverview
         state={routines}
-        onCreate={() => onView(View.Creating())}
+        onCreate={(start) => onView(View.Creating({ start }))}
         onSelect={(routine) => onView(View.Detail({ id: routine.id }))}
       />
     ),
-    Creating: () => (
+    Creating: ({ start }) => (
       <NewRoutine
+        start={start}
         onCancel={() => onView(View.Overview())}
         onCreated={(routine) => onView(View.Detail({ id: routine.id }))}
         onRefused={onRefused}
@@ -181,57 +187,145 @@ function RoutinesBody({
 // ── The list ─────────────────────────────────────────────────────────────────
 
 /** The Person's Routines: a skeleton while loading, one sentence when there are none, else rows. */
+/**
+ * A Routine a new Person is likely to want, written out so starting one is a press and an edit,
+ * not a blank form. The pattern is Grok Bot's "Suggestions" (job cards with the service's logo
+ * in them, `refs/grok-bot-screenshots/03-create-your-first-bot.png`). The schedules are the
+ * editor's own presets, so the form opens on a choice it can show.
+ */
+const STARTERS = [
+  {
+    name: 'Morning brief',
+    prompt: 'Tell me what is on my calendar today and which emails need an answer.',
+    cron: '0 9 * * 1-5',
+    uses: ['Google Calendar', 'Gmail'],
+  },
+  {
+    name: 'Inbox watch',
+    prompt: 'Check my inbox and tell me only about what needs me today.',
+    cron: '0 * * * *',
+    uses: ['Gmail'],
+  },
+  {
+    name: 'Week ahead',
+    prompt: 'Write up what is coming this week: meetings, deadlines and what is still open.',
+    cron: '0 9 * * 1',
+    uses: ['Google Calendar', 'Notion'],
+  },
+] as const
+
 function RoutinesOverview({
   state,
   onCreate,
   onSelect,
 }: {
   state: RoutinesState
-  onCreate: () => void
+  /** Opens the form, on the fields given: empty ones, or a suggestion's. */
+  onCreate: (start: RoutineFields) => void
   onSelect: (routine: Routine) => void
 }) {
+  const blank = () => onCreate(routinesData.emptyFields())
+  // "Tomorrow at 9" is said against the moment the list was opened, read once: a render must
+  // not read the clock, and a list left open past midnight is corrected by its next opening.
+  const [opened] = useState(() => Date.now())
   return (
-    <div>
-      <p className="px-0.5 text-label text-ink-3">What Vivid repeats, so you don&apos;t have to.</p>
-      <div className="mt-4">
-        <Live state={state} loading={<Skeleton of="row" count={3} />}>
-          {({ routines }) =>
-            routines.length === 0 ? (
-              <div className="flex flex-col items-center px-6 py-16 text-center">
-                <Clock3 className="size-5 text-ink-4" />
-                <p className="mt-3 text-title font-title text-ink">No routines yet</p>
-                <p className="mt-1 mb-5 max-w-sm text-label text-pretty text-ink-3">
-                  Write an instruction once and Vivid follows it on a schedule, or each time
-                  something calls it.
-                </p>
-                <Button icon={<Plus className="size-3.5" />} onClick={onCreate}>
-                  New routine
-                </Button>
-              </div>
-            ) : (
-              <>
-                <ul className="flex flex-col gap-px">
-                  {routines.map((routine) => (
-                    <li key={routine.id}>
-                      <RoutineRow routine={routine} onOpen={() => onSelect(routine)} />
-                    </li>
-                  ))}
-                </ul>
-                <button
-                  type="button"
-                  onClick={onCreate}
-                  className="mt-1 flex w-full cursor-pointer items-center gap-2.5 rounded-row p-2.5 text-left text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"
-                >
-                  <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-surface-2">
-                    <Plus className="size-4" />
+    <Live state={state} loading={<Skeleton of="row" count={3} />}>
+      {({ routines }) =>
+        routines.length === 0 ? (
+          <NoRoutines onCreate={onCreate} />
+        ) : (
+          <>
+            <div className="flex items-center gap-2 px-0.5 pb-1">
+              <p className="flex-1 text-label text-ink-3 tabular-nums">
+                {routines.filter((routine) => routine.enabled).length} of {routines.length} on
+              </p>
+              <Button size="sm" icon={<Plus className="size-3.5" />} onClick={blank}>
+                New routine
+              </Button>
+            </div>
+            <ul className="flex flex-col gap-2">
+              {routines.map((routine, place) => (
+                <li key={routine.id}>
+                  <RoutineRow
+                    routine={routine}
+                    place={place}
+                    now={opened}
+                    onOpen={() => onSelect(routine)}
+                  />
+                </li>
+              ))}
+            </ul>
+          </>
+        )
+      }
+    </Live>
+  )
+}
+
+/**
+ * The list before there is anything in it: what a Routine is, in the place's own colour, and
+ * three written-out ones to start from. Each suggestion shows the services it would read, as
+ * their real logos, so a Person sees what it acts on before pressing it.
+ */
+function NoRoutines({ onCreate }: { onCreate: (start: RoutineFields) => void }) {
+  return (
+    <div className="flex flex-col items-center px-2 pt-10 text-center">
+      <Emblem hue="orange" size={44}>
+        <Repeat2 />
+      </Emblem>
+      <p className="mt-4 text-section font-title text-ink">No routines yet</p>
+      <p className="mt-1 max-w-sm text-label text-pretty text-ink-3">
+        Write an instruction once and Vivid follows it on a schedule, or each time something calls
+        it.
+      </p>
+      <Button
+        className="mt-5"
+        variant="primary"
+        icon={<Plus className="size-3.5" />}
+        onClick={() => onCreate(routinesData.emptyFields())}
+      >
+        New routine
+      </Button>
+      <p className="mt-10 mb-2.5 self-start px-0.5 text-label font-title text-ink">
+        Start from one
+      </p>
+      <ul className="grid w-full gap-2.5 text-left sm:grid-cols-3">
+        {STARTERS.map((starter, place) => (
+          <li key={starter.name}>
+            <button
+              type="button"
+              onClick={() =>
+                onCreate({
+                  ...routinesData.emptyFields(),
+                  name: starter.name,
+                  prompt: starter.prompt,
+                  cron: starter.cron,
+                })
+              }
+              className={cn(
+                'flex size-full cursor-pointer flex-col gap-2.5 rounded-card bg-surface-3 p-3.5 text-left edge outline-none hover:bg-surface-2 focus-visible:edge-accent',
+                PRESS,
+                ENTER,
+                stagger(place),
+              )}
+            >
+              <span className="flex -space-x-1.5">
+                {starter.uses.map((name) => (
+                  <span key={name} className="rounded-control ring-2 ring-surface-3">
+                    <Mark service={{ name }} size={28} />
                   </span>
-                  <span className="text-title">New routine</span>
-                </button>
-              </>
-            )
-          }
-        </Live>
-      </div>
+                ))}
+              </span>
+              <span className="text-title font-title text-ink">{starter.name}</span>
+              <span className="text-label text-pretty text-ink-3">{starter.prompt}</span>
+              <span className="mt-auto inline-flex items-center gap-1.5 pt-1 text-meta font-meta text-ink-3">
+                <Clock3 aria-hidden className="size-3.5" />
+                {routinesData.describeCron(starter.cron)}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
@@ -248,58 +342,115 @@ function routineSummary(routine: Routine): string {
   return routinesData.describeTrigger(routine.trigger)
 }
 
-/** The mark for each way a Routine starts; a new kind of trigger fails to compile here. */
-const TRIGGER_MARK = {
-  Schedule: <Clock3 className="size-4" />,
-  Webhook: <Webhook className="size-4" />,
-  Integration: <Plug className="size-4" />,
-  Once: <CalendarClock className="size-4" />,
-} satisfies Record<RoutineTrigger['_tag'], ReactNode>
+const DAY = 24 * 60 * 60 * 1000
+const clock = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' })
+const monthDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
 
-/** The mark a row leads with: paused, or how the Routine starts. */
-function RoutineMark({ routine }: { routine: Routine }) {
-  return routine.enabled ? TRIGGER_MARK[routine.trigger._tag] : <Pause className="size-4" />
+/** The start of the day a moment falls in, in the browser's own zone. */
+const dayOf = (moment: number) => new Date(moment).setHours(0, 0, 0, 0)
+
+/**
+ * When a Routine next runs, the way a person would say it: "Today at 4:30 PM", "Tomorrow at
+ * 9:00 AM", "Friday at 9:00 AM", and a date only once it is more than a week away.
+ */
+function nextInWords(at: number, now: number): string {
+  const days = Math.round((dayOf(at) - dayOf(now)) / DAY)
+  const time = clock.format(at)
+  if (days <= 0) return `Today at ${time}`
+  if (days === 1) return `Tomorrow at ${time}`
+  if (days < 7) return `${weekday.format(at)} at ${time}`
+  return `${monthDay.format(at)} at ${time}`
 }
 
-/** One Routine in the list. The whole row opens it. */
-function RoutineRow({ routine, onOpen }: { routine: Routine; onOpen: () => void }) {
+/** The glyph and hue for each way a Routine starts on its own; a new trigger fails to compile here. */
+const TRIGGER_MARK = {
+  Schedule: { hue: 'orange', icon: <Clock3 /> },
+  Webhook: { hue: 'violet', icon: <Webhook /> },
+  Once: { hue: 'yellow', icon: <CalendarClock /> },
+} as const satisfies Record<
+  Exclude<RoutineTrigger['_tag'], 'Integration'>,
+  { hue: Hue; icon: ReactNode }
+>
+
+/**
+ * What a row leads with, which is what the Routine acts on: the real logo of the service it
+ * watches, or a clock, a calendar day or a webhook on the trigger's own colour. A paused Routine
+ * keeps its glyph and loses its colour, so the list still says what it is while saying it is off.
+ */
+function RoutineMark({ routine }: { routine: Routine }) {
+  const { trigger } = routine
+  if (RoutineTrigger.guards.Integration(trigger)) {
+    return (
+      <span className={cn(!routine.enabled && 'opacity-50 grayscale')}>
+        <Mark service={{ name: trigger.account }} size={36} />
+      </span>
+    )
+  }
+  const mark = TRIGGER_MARK[trigger._tag]
+  return (
+    <Emblem hue={routine.enabled ? mark.hue : 'gray'} size={36}>
+      {routine.enabled ? mark.icon : <Pause />}
+    </Emblem>
+  )
+}
+
+/** How a Routine stands right now, as the colour of its dot and one or two words. */
+function standingOf(routine: Routine, running: boolean) {
+  if (running) return { dot: 'animate-status-pulse bg-working', words: 'Running now' }
+  if (!routine.enabled) return { dot: 'bg-ink-4', words: 'Paused' }
+  return { dot: 'bg-success', words: 'On' }
+}
+
+/** One Routine in the list, as a card. The whole card opens it. */
+function RoutineRow({
+  routine,
+  place,
+  now,
+  onOpen,
+}: {
+  routine: Routine
+  /** Its place in the list, which is how long it waits before it arrives. */
+  place: number
+  /** The moment "today" and "tomorrow" are counted from. */
+  now: number
+  onOpen: () => void
+}) {
   const troubled = Option.contains(latestStatus(routine), 'failed') || routine.lastMissedAt !== null
   const running = Option.contains(latestStatus(routine), 'running')
+  const standing = standingOf(routine, running)
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="flex w-full cursor-pointer items-center gap-2.5 rounded-row p-2.5 text-left transition-colors duration-(--dur-fast) hover:bg-wash-hover"
-    >
-      <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-ink">
-        <RoutineMark routine={routine} />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-title text-ink">{routine.name}</span>
-        <span
-          className={cn(
-            'block truncate text-meta font-meta',
-            troubled ? 'text-danger' : 'text-ink-3',
-          )}
-        >
-          {running ? 'Running now' : routineSummary(routine)}
-        </span>
-      </span>
-      {routine.enabled && routine.nextRunAt !== null && (
-        <span className="hidden text-right text-meta font-meta text-ink-3 sm:block">
-          Next
-          <br />
-          {formatTime(routine.nextRunAt)}
-        </span>
+      className={cn(
+        'flex w-full cursor-pointer items-center gap-3 rounded-card bg-surface-3 p-3 text-left edge outline-none hover:bg-surface-2 focus-visible:edge-accent',
+        PRESS,
+        ENTER,
+        stagger(place),
       )}
-      <i
-        className={cn(
-          'size-1.5 shrink-0 rounded-full',
-          running && 'animate-status-pulse bg-working',
-          !running && (routine.enabled ? 'bg-success' : 'bg-ink-4'),
+    >
+      <RoutineMark routine={routine} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-title font-title text-ink">{routine.name}</span>
+        <span className={cn('block truncate text-label', troubled ? 'text-danger' : 'text-ink-3')}>
+          {routineSummary(routine)}
+        </span>
+      </span>
+      <span className="hidden shrink-0 flex-col items-end gap-0.5 sm:flex">
+        <span className="inline-flex items-center gap-1.5 text-label text-ink-2">
+          <i aria-hidden className={cn('size-1.5 rounded-full', standing.dot)} />
+          {standing.words}
+        </span>
+        {routine.enabled && routine.nextRunAt !== null && (
+          <time className="text-meta font-meta text-ink-3 tabular-nums">
+            Runs {nextInWords(routine.nextRunAt, now)}
+          </time>
         )}
-        aria-hidden
-      />
+      </span>
+      {/* Narrow: there is no room for the words, so the dot alone says how it stands. */}
+      <i aria-hidden className={cn('size-1.5 shrink-0 rounded-full sm:hidden', standing.dot)} />
+      <ChevronRight aria-hidden className="size-4 shrink-0 text-ink-4" />
     </button>
   )
 }
@@ -390,7 +541,7 @@ function StartsOn({
       {fields.kind === 'Schedule' ? (
         <ScheduleFields fields={fields} zone={zone} onChange={onChange} />
       ) : (
-        <p className="rounded-card bg-surface-2 px-4 py-3 text-label text-ink-3 smooth-shadow-ring-xs">
+        <p className="rounded-card bg-surface-2 px-4 py-3 text-label text-ink-3 edge">
           Vivid starts this Routine each time an outside service calls its address with its key, and
           reads whatever the service sends. You get the address and the key once the Routine is
           saved.
@@ -451,16 +602,19 @@ function ScheduleFields({
 
 /** The form for a new Routine. It waits for the server, which is what gives a Routine its id. */
 function NewRoutine({
+  start,
   onCancel,
   onCreated,
   onRefused,
 }: {
+  /** What the form opens with. It is read once: after that the form is the Person's. */
+  start: RoutineFields
   onCancel: () => void
   onCreated: (routine: Routine) => void
   onRefused: (message: Option.Option<string>) => void
 }) {
   const zone = useZone()
-  const [fields, setFields] = useState(routinesData.emptyFields)
+  const [fields, setFields] = useState(start)
   const [saving, setSaving] = useState(false)
 
   async function create(event: FormEvent) {
@@ -784,7 +938,7 @@ function OccurrenceRow({
 }) {
   if (Option.isNone(thread)) {
     return (
-      <div className="rounded-row bg-surface-2 px-3 py-2.5 smooth-shadow-ring-xs">
+      <div className="rounded-row bg-surface-2 px-3 py-2.5 edge">
         <OccurrenceSummary occurrence={occurrence} trailing={null} />
       </div>
     )
@@ -794,7 +948,7 @@ function OccurrenceRow({
       type="button"
       title="Open Thread"
       onClick={() => onOpenConversation(thread.value)}
-      className="group/run w-full cursor-pointer rounded-row bg-surface-2 px-3 py-2.5 text-left smooth-shadow-ring-xs transition-surface duration-(--dur-fast) hover:bg-wash-hover"
+      className="group/run w-full cursor-pointer rounded-row bg-surface-2 px-3 py-2.5 text-left edge transition-surface duration-(--dur-fast) hover:bg-wash-hover"
     >
       <OccurrenceSummary
         occurrence={occurrence}

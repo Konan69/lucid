@@ -6,6 +6,58 @@ How Grok Bot's bots talk to each other, work in groups, reach other users, fork 
 user's own computer. From `~/refs/grok-bot-0.18-reconstructed/source`. This is the substrate for
 Vivid-to-Vivid.
 
+## Reaching the Person through Vivid
+
+Vivid delivers its existing recipient-owned Notifications through its own app's push targets:
+Web Push with VAPID for browsers (including a supporting desktop browser), and Expo push for
+phones. Telegram is cancelled. A target belongs to one Person and one signed-in session; sign-out
+deletes it through the session foreign key, and expired sessions are pruned. Existing Thread
+heartbeats decide whether the Person is present anywhere in the app. Thread access is checked
+again before quoting a Notification. Approval and Input decisions remain in the app.
+
+Clients use the generated RPC client with their signed-in session:
+
+- Web: call `GetPushKey()` → `{ publicKey }`, obtain permission and a service-worker subscription
+  with that VAPID key, then `RegisterPushTarget({ destination: { _tag: "Browser", endpoint,
+keys: { p256dh, auth } } })`. Use the subscription's unpadded base64url keys. Supported endpoint
+  hosts are Google's FCM, Mozilla's push service, Apple's Web Push and Windows notification hosts;
+  arbitrary endpoints are refused to prevent server-side requests to private addresses.
+- Phone: obtain the app's Expo push token with the correct Expo project, then
+  `RegisterPushTarget({ destination: { _tag: "Phone", token } })`. Basic Expo sends need no secret;
+  the adapter follows the [Expo v2 API](https://docs.expo.dev/push-notifications/sending-notifications/).
+- Registration returns `{ target: { id, destination, createdAt } }` (milliseconds).
+  `ListPushTargets()` / `WatchPushTargets()` return `{ targets }` across that Person's live sessions.
+  `RemovePushTarget({ id })` removes one. Supply no Person, Company or session identifier.
+- A browser worker receives `{ notificationId, title, body, threadId }`; Expo delivers the same
+  object in `data`, with `title` and `body` also at the notification level. Display the notification,
+  then open `threadId` on a tap (or the notification list when null), checking current app access.
+  Browser permission, service worker, click handling and native token/tap registration belong to
+  the client owners and are not implemented by this backend lane.
+
+Set `VIVID_PUSH_VAPID_PUBLIC`, `VIVID_PUSH_VAPID_PRIVATE` and `VIVID_PUSH_SUBJECT` (an HTTPS URL
+or `mailto:` contact). Missing or invalid configuration returns `PushUnavailable` from setup RPCs;
+the server still starts and keeps in-app Notifications. Private keys and target credentials never
+enter model context. Apply the generated product migration before restarting the server; restart
+the runtime to mount the new tools and built-in skill. No new webhook or scheduler is needed.
+
+The durable ledger commits one claim per Notification and target before contacting the provider,
+stores only a payload hash and length, and never repeats an uncertain or interrupted claim.
+This prevents duplicates across retries and restarts; a crash in that gap can lose a push, while
+the Notification remains in the app. Provider acceptance does not prove device display. Gone
+subscriptions are removed; a scoped worker also reads Expo's late device receipts.
+
+`notify_person` creates a Notification and reports accepted, failed and uncertain target counts,
+or explains presence, missing targets or unavailable push. “Watch what needs me” is an opt-in
+built-in procedure, exposed in `ListRoutines` / `WatchRoutines` as `templates`: pass its complete
+template to `CreateRoutine` from a signed-in Person to enable it, then use ordinary Routine
+enable/disable RPCs. This personal commitment remains visible and manageable by its Person across
+workspace switches; Vivid cannot silently enable or re-enable it. It checks every 30 minutes through the existing scheduler, judges connected
+mail/calendar and remembered commitments, and acts alone only on small reversible work. A
+standing check can use `open_thread` to admit private follow-up work; that Run holds the evidence
+and calls `notify_person` there. Quiet checks and follow-up completion do not emit generic
+finished notifications. No quiet hours, caps or digest controls were added. Real-device push and
+the model's attention judgement remain unverified.
+
 ## Direct messages between bots
 
 One tool, `SendToAgent`, with a target id, text, optional images, and a priority flag.

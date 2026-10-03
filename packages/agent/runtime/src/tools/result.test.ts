@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import {
+  ComputerScreen,
   Conflict,
   DatabaseConstraintViolation,
   DatabaseFailure,
@@ -17,6 +18,29 @@ import { RpcClientDefect, RpcClientError } from 'effect/unstable/rpc/RpcClientEr
 import { boundOutput, settle } from './result.ts'
 
 describe('output limits', () => {
+  it.effect('publishes the scoped viewer receipt only after successful Computer work', () =>
+    Effect.gen(function* () {
+      const completed = yield* settle(
+        Effect.succeed({ output: { ok: true, result: { outline: 'Received!' } } }),
+        'browse',
+      )
+      expect(completed.output).toEqual({
+        ok: true,
+        result: { outline: 'Received!' },
+        computer: {
+          active: true,
+          screen: ComputerScreen.cases.Relay.make({ address: '/api/computer/screen/websockify' }),
+        },
+      })
+      const refused = yield* settle(
+        Effect.succeed({ output: { ok: false, message: 'Unavailable' } }),
+        'browse',
+      )
+      expect(refused.output).not.toHaveProperty('computer')
+      const unrelated = yield* settle(Effect.succeed({ output: { ok: true } }), 'read_page')
+      expect(unrelated.output).not.toHaveProperty('computer')
+    }),
+  )
   it.effect('caps nested lists and text while marking both the affected record and the root', () =>
     Effect.sync(() => {
       const source = {

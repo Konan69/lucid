@@ -10,15 +10,18 @@ import { makeWhen, thisReader } from '@vivid/state'
 import { Option } from 'effect'
 import { ChevronRight, Laptop, Monitor, Plug, Plus } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { live, LiveState, useLive } from '../../data/live'
+import { live, LiveState, useLive, useLiveValue } from '../../data/live'
 import { pages } from '../../data/pages'
 import { router } from '../../data/route'
 import { engine } from '../../data/runtime'
+import { mayCustomise, useAppearance } from '../../data/vivid'
+import { Button } from '../../ui/Button'
 import { cn } from '../../ui/cn'
 import { Face, type FaceMood } from '../../ui/Face'
 import { holdFocus } from '../../ui/Layer'
 import { Skeleton } from '../../ui/Skeleton'
 import { auditSentence } from '../settings/Record'
+import { Customise } from '../vivid/Customise'
 
 /** How far the identity must scroll away before the 48-high bar takes its place. */
 const COMPACT_AFTER_PX = 56
@@ -52,6 +55,11 @@ export function About({
 }) {
   // Past the identity, a compact bar rides the top of the scrolling card.
   const [compact, setCompact] = useState(false)
+  // Vivid's own name here, live: the Person's choice, or their Company's.
+  const { name } = useAppearance()
+  // The way in to the Customise sheet is offered only to someone who may change this Vivid.
+  const editable = Option.exists(useLiveValue(live.me), mayCustomise)
+  const [customising, setCustomising] = useState(false)
   return (
     <>
       {/* Only where the card floats. Where it sits beside the conversation, clicking the
@@ -66,13 +74,13 @@ export function About({
       <aside
         ref={holdFocus}
         role="dialog"
-        aria-label="Vivid"
+        aria-label={name}
         tabIndex={-1}
         onKeyDown={(event) => {
           if (event.key === 'Escape') onClose()
         }}
         onScroll={(event) => setCompact(event.currentTarget.scrollTop > COMPACT_AFTER_PX)}
-        className="absolute around-card z-20 origin-top-right overflow-y-auto rounded-panel smooth-shadow-ring-lg glass transition-pop duration-(--dur-fast) ease-out outline-none starting:scale-97 starting:opacity-0"
+        className="absolute around-card z-20 origin-top-right overflow-y-auto rounded-panel lift-lg glass transition-pop duration-(--dur-fast) ease-out outline-none starting:scale-97 starting:opacity-0"
       >
         {/* Zero height, so riding the top costs the content below it nothing and the card never
             shifts as the bar comes and goes. */}
@@ -84,15 +92,25 @@ export function About({
             )}
           >
             <Face size={28} mood={mood} />
-            <p className="font-display text-title font-strong text-ink">Vivid</p>
+            <p className="truncate font-display text-title font-strong text-ink">{name}</p>
           </div>
         </div>
         <div className="flex items-center gap-3.5 px-4 pt-5 pb-4">
           <Face size={64} mood={mood} />
-          <div className="min-w-0">
-            <p className="font-display text-section font-strong text-ink">Vivid</p>
+          <div className="min-w-0 flex-1">
+            <p className="truncate font-display text-section font-strong text-ink">{name}</p>
             <p className="text-title font-meta text-ink-3">{standing}</p>
           </div>
+          {editable && (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-haspopup="dialog"
+              onClick={() => setCustomising(true)}
+            >
+              Customise
+            </Button>
+          )}
         </div>
         <Around
           thread={thread}
@@ -104,6 +122,7 @@ export function About({
           onClose={onClose}
         />
       </aside>
+      {customising && <Customise onClose={() => setCustomising(false)} />}
     </>
   )
 }

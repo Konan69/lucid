@@ -10,6 +10,7 @@ import {
   TestIntegrationOutcome,
   ConnectionId,
   ConnectionTool,
+  ServiceAuthorization,
   PersonId,
   ThreadId,
   ToolOutcome,
@@ -44,6 +45,63 @@ const fixture = Effect.fn('ConnectionToolsTest.fixture')(function* () {
 
 /** Exercise the real Flue callback, generated client and projection; control only the RPC transport. */
 describe('connected tool execution', () => {
+  it.effect('ends an unconnected offer and keeps the secure card in the Thread result', () =>
+    Effect.gen(function* () {
+      const { requests, rpc, tools } = yield* fixture()
+      const [, , connect] = tools
+      const call = yield* Effect.promise(() =>
+        Promise.resolve(
+          connect.run({
+            data: { service: 'Mail', reason: 'Read your latest mail' },
+            signal: new AbortController().signal,
+            toolCallId: 'MARK-call',
+            log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
+          }),
+        ),
+      ).pipe(Effect.forkScoped)
+      const discovery = yield* Queue.take(requests)
+      if (!Predicate.isTagged(discovery, 'Request')) expect.fail('Expected discovery')
+      expect(discovery.tag).toBe('FindTools')
+      yield* rpc.write({
+        // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK wire envelopes have no schema constructor.
+        _tag: 'Exit',
+        clientId: 0,
+        requestId: discovery.id,
+        exit: Exit.succeed({
+          tools: [],
+          unconnected: [
+            {
+              id: ServiceId.make('mail'),
+              name: 'Mail',
+              description: 'Your mail',
+              mark: null,
+              authorization: ServiceAuthorization.cases.None.make({}),
+            },
+          ],
+        }),
+      })
+      const offer = yield* Queue.take(requests)
+      if (!Predicate.isTagged(offer, 'Request')) expect.fail('Expected offer')
+      expect(offer.tag).toBe('OfferConnection')
+      yield* rpc.write({
+        // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK wire envelopes have no schema constructor.
+        _tag: 'Exit',
+        clientId: 0,
+        requestId: offer.id,
+        exit: Exit.succeed({
+          kind: 'connection-request',
+          service: ServiceId.make('mail'),
+          serviceName: 'Mail',
+          reason: 'Read your latest mail',
+          ready: false,
+        }),
+      })
+      expect(yield* Fiber.join(call)).toMatchObject({
+        terminate: true,
+        output: { kind: 'connection-request', service: 'mail', ready: false },
+      })
+    }).pipe(Effect.scoped),
+  )
   it.effect(
     'registers a personal integration through the real runtime RPC seam using names only',
     () =>

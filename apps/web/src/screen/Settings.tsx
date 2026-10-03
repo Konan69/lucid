@@ -1,19 +1,11 @@
 import { Workspace, type MeResponse } from '@vivid/contracts'
 import { Option } from 'effect'
-import {
-  Brain,
-  Link2,
-  MonitorSmartphone,
-  ScrollText,
-  ShieldCheck,
-  SlidersHorizontal,
-  Users,
-  X,
-} from 'lucide-react'
-import type { ReactNode } from 'react'
+import { X } from 'lucide-react'
 import { router, type SettingsSection } from '../data/route'
 import { IconButton } from '../ui/Button'
 import { cn } from '../ui/cn'
+import { PlaceMark, type Place } from './Place'
+import { PRESS } from './motion'
 import { Connections } from './settings/Connections'
 import { Devices } from './settings/Devices'
 import { General } from './settings/General'
@@ -26,19 +18,20 @@ import { holdFocus, keepFocusInside } from '../ui/Layer'
 interface Entry {
   readonly id: SettingsSection
   readonly label: string
-  readonly icon: ReactNode
+  /** The place this section is, which is where its colour and glyph come from. */
+  readonly place: Place
 }
 
 const YOURS: ReadonlyArray<Entry> = [
-  { id: 'general', label: 'General', icon: <SlidersHorizontal className="size-4" /> },
-  { id: 'memory', label: 'What Vivid knows', icon: <Brain className="size-4" /> },
-  { id: 'devices', label: 'Devices', icon: <MonitorSmartphone className="size-4" /> },
+  { id: 'general', label: 'General', place: 'general' },
+  { id: 'memory', label: 'What Vivid knows', place: 'memory' },
+  { id: 'devices', label: 'Devices', place: 'devices' },
 ]
 const SHARED: ReadonlyArray<Entry> = [
-  { id: 'people', label: 'People', icon: <Users className="size-4" /> },
-  { id: 'connections', label: 'Integrations', icon: <Link2 className="size-4" /> },
-  { id: 'rules', label: 'Rules', icon: <ShieldCheck className="size-4" /> },
-  { id: 'record', label: 'Record', icon: <ScrollText className="size-4" /> },
+  { id: 'people', label: 'People', place: 'people' },
+  { id: 'connections', label: 'Integrations', place: 'integrations' },
+  { id: 'rules', label: 'Rules', place: 'rules' },
+  { id: 'record', label: 'Record', place: 'record' },
 ]
 
 const TITLE = {
@@ -90,8 +83,10 @@ export function Settings({
         aria-label="Settings"
         tabIndex={-1}
         // Wide: sections down the left, the chosen one beside them. Narrow: there is no room for
-        // a column, so the sections become one scrolling strip above the content.
-        className="flex size-full max-w-4xl animate-rise-in flex-col overflow-hidden bg-surface-1 outline-none sm:max-h-160 sm:flex-row sm:rounded-panel sm:smooth-shadow-ring-lg"
+        // a column, so the sections become one scrolling strip above the content. It is as large
+        // as a desktop window allows (1024 by 760), because Integrations is a grid of tiles and
+        // a short panel showed one row of them; a smaller window still clamps it to itself.
+        className="flex size-full max-w-5xl animate-rise-in flex-col overflow-hidden bg-surface-1 outline-none sm:max-h-190 sm:flex-row sm:rounded-dialog sm:lift-lg"
       >
         {/* The strip fades at its far edge and ends in spare room, so a section cut off there
             reads as "there is more this way" and the last one can still be scrolled clear. */}
@@ -151,13 +146,14 @@ function Group({
           aria-current={entry.id === current ? 'page' : undefined}
           ref={entry.id === current ? reveal : undefined}
           className={cn(
-            'flex h-8 shrink-0 cursor-pointer items-center gap-2.5 rounded-row px-2.5 text-left text-label whitespace-nowrap transition-colors duration-(--dur-fast) sm:w-full',
+            'flex h-9 shrink-0 cursor-pointer items-center gap-2.5 rounded-row px-2 text-left text-label whitespace-nowrap sm:w-full',
+            PRESS,
             entry.id === current
-              ? 'bg-wash-selected text-ink'
+              ? 'bg-wash-selected font-title text-ink'
               : 'text-ink-2 hover:bg-wash-hover hover:text-ink',
           )}
         >
-          <span className="text-ink-3">{entry.icon}</span>
+          <PlaceMark place={entry.place} size={22} />
           {entry.label}
         </button>
       ))}

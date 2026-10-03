@@ -1,4 +1,5 @@
 import { useAtomValue } from '@effect/atom-react'
+import { useAppearance } from '../data/vivid'
 import type { Thread, ThreadId } from '@vivid/contracts'
 import { draftPlace, workspaceKey } from '@vivid/state'
 import { Data, Option, Result } from 'effect'
@@ -21,6 +22,7 @@ import { Filing } from './home/Filing'
 import { First } from './home/First'
 import { Menu } from './home/Menu'
 import { Switcher } from './home/Switcher'
+import { useScope } from './project/scope'
 
 /**
  * What is open over Home. It is one thing at a time, so the workspace sheet and a Thread being
@@ -43,6 +45,8 @@ const Over = Data.taggedEnum<Over>()
  * typed, which sheet is up, and a row's action the server refused.
  */
 export function Home() {
+  // The name this Person or their Company gave Vivid, live.
+  const vivid = useAppearance()
   const me = useMe()
   const data = useLiveData()
   const go = useGo()
@@ -103,7 +107,7 @@ export function Home() {
         <Composer
           ref={editor}
           value={start.draft}
-          placeholder="Message Vivid"
+          placeholder={`Message ${vivid.name}`}
           working={false}
           disabled={start.sending}
           onChange={start.setDraft}
@@ -192,6 +196,7 @@ function useStart() {
     thread: Option.none(),
   })
   const typed = useDraft(place)
+  const scoped = useScope()
   const setDraft = (text: string) => draft.keep(place, text)
   const [sending, setSending] = useState(false)
   const [last, setLast] = useState<Option.Option<Start>>(Option.none())
@@ -205,7 +210,9 @@ function useStart() {
     const message = typed.trim()
     if (message.length === 0 || sending) return
     setSending(true)
-    const outcome = await startThread(data, { message, projectId: null, resume })
+    // A Thread started while the drawer is scoped to a Project is filed in that Project.
+    const projectId = Option.getOrNull(Option.map(scoped, (project) => project.id))
+    const outcome = await startThread(data, { message, projectId, resume })
     setSending(false)
     if (Start.$is('Started')(outcome)) {
       // Only the words that were sent leave the composer. It stays usable while the send is on

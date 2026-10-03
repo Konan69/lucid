@@ -8,16 +8,21 @@ import { ArrowDown } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
 import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { change, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
+import { onboarding } from '../data/onboarding'
 import { Route, router } from '../data/route'
 import { orSay } from '../data/said'
 import { FirstWords, firstWords } from '../data/threads'
 import { Button } from '../ui/Button'
+import { Alive, ranBadly } from '../ui/Alive'
 import { Face } from '../ui/Face'
+import { arriving } from '../ui/settle'
 import type { Picture } from './thread/Attach'
 import { Composer } from './thread/Composer'
 import { isBlank, Message, Said, textOf, type ThreadContext } from './thread/Message'
 import { newestRun, Outcome } from './thread/Outcome'
+import { Opening } from './first/Opening'
 import { Layout } from './thread/Layout'
+import { doingIn } from './thread/Trail'
 
 /**
  * One Thread: the conversation with Vivid, and everything live around it.
@@ -73,10 +78,17 @@ function Gone() {
   )
 }
 
-/** Whether Vivid's words in this message are still arriving. */
-const isStreaming = (message: { role: string; parts: ReadonlyArray<object> }) =>
-  message.role === 'assistant' &&
-  message.parts.some((part) => 'state' in part && part.state === 'streaming')
+/** The reply Vivid is on: the newest message, when it is Vivid's. */
+const replyIn = (visible: ReadonlyArray<FlueConversationMessage>) =>
+  Option.filter(Option.fromUndefinedOr(visible.at(-1)), (message) => message.role === 'assistant')
+
+/**
+ * Whether the waiting row is needed: Vivid is working and has not begun a reply. Once a reply
+ * exists it carries its own signs of life (its steps, "Putting it together…", its words), so the
+ * row is only for the moment before, when the one true thing to say is that Vivid is thinking.
+ */
+const isWaiting = (working: boolean, visible: ReadonlyArray<FlueConversationMessage>) =>
+  working && Option.isNone(replyIn(visible))
 
 /** Stops Vivid in this Thread, and says so when the server did not take it. */
 const stop = (id: ThreadId) =>
@@ -114,7 +126,7 @@ function ConversationMessages({
   ready,
   empty,
   working,
-  streaming,
+  waiting,
   failure,
   onRetry,
   visible,
@@ -133,7 +145,7 @@ function ConversationMessages({
   ready: boolean
   empty: boolean
   working: boolean
-  streaming: boolean
+  waiting: boolean
   failure: string | null
   onRetry: () => void
   visible: ReadonlyArray<FlueConversationMessage>
@@ -153,13 +165,15 @@ function ConversationMessages({
       ready={ready}
       empty={empty}
       working={working}
-      streaming={streaming}
+      waiting={waiting}
       // Transport details stay in the log; the Person gets a clear reason and a retry action.
       failure={failure}
       onRetry={onRetry}
     >
       {visible.map((message, position) => (
-        <li key={message.id} className="animate-rise-in">
+        // `data-arrives`: a Message that lands while the Thread is open rises into place; the
+        // ones already here when it opens do not move (`arriving`, on the list below).
+        <li key={message.id} data-arrives>
           <Message
             message={message}
             context={context}
@@ -253,6 +267,9 @@ function Conversation({
     send(text, crypto.randomUUID(), pictures)
 
   const lastSaid = lastWords(visible, me)
+  const opened = useSyncExternalStore(onboarding.subscribe, () =>
+    onboarding.isFirstThread(me.person.id, id),
+  )
   const ended = working ? Option.none() : newestRun(runs)
   return (
     <Layout
@@ -262,17 +279,27 @@ function Conversation({
       arriving={arrivingTitle(first)}
       present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
       working={working}
+      doing={working ? Option.flatMap(replyIn(visible), doingIn) : Option.none()}
+      // What Vivid's face answers for: words that did not arrive, a server that cannot be
+      // reached, a Run that ended without an answer.
+      failed={agent.error !== undefined || Option.isSome(unsent) || Option.exists(ended, ranBadly)}
       panelOpen={panelOpen}
       onTogglePanel={onTogglePanel}
     >
       {(hero) => (
         <>
           <ConversationMessages
-            hero={hero}
+            hero={
+              <>
+                {hero}
+                {/* The Thread that answered Vivid's opening keeps it above what was written. */}
+                {opened && <Opening me={me} onSay={say} />}
+              </>
+            }
             ready={agent.historyReady}
             empty={visible.length === 0 && FirstWords.$is('Settled')(first)}
             working={working}
-            streaming={visible.some(isStreaming)}
+            waiting={isWaiting(working, visible)}
             failure={agent.error === undefined ? null : 'Vivid can’t be reached right now.'}
             onRetry={() => agent.refresh()}
             visible={visible}
@@ -419,7 +446,7 @@ function Messages({
   ready,
   empty,
   working,
-  streaming,
+  waiting,
   failure,
   onRetry,
   children,
@@ -430,7 +457,7 @@ function Messages({
   /** Nothing has been said here yet, by anyone. */
   empty: boolean
   working: boolean
-  streaming: boolean
+  waiting: boolean
   failure: string | null
   onRetry: () => void
   children: React.ReactNode
@@ -451,12 +478,15 @@ function Messages({
       >
         {/* The gutter is on the scroller, not the column, so the messages and the composer below
           them are exactly the same width at every window size. */}
-        <ol className="mx-auto flex min-h-full w-full max-w-(--thread-max-w) shrink-0 flex-col gap-5 py-5 sm:py-6">
+        <ol
+          ref={arriving}
+          className="mx-auto flex min-h-full w-full max-w-(--thread-max-w) shrink-0 flex-col gap-5 py-5 sm:py-6"
+        >
           {/* Vivid at the top, part of the conversation: it scrolls away with it. */}
           {hero}
           {!ready && empty && (
             <li className="py-12 text-center text-label text-ink-3" aria-busy>
-              Opening…
+              Opening the thread…
             </li>
           )}
           {ready && empty && !working && (
@@ -466,15 +496,20 @@ function Messages({
             </li>
           )}
           {children}
-          {working && !streaming && (
+          {waiting && (
             // It arrives late on purpose: an answer that starts within a second never shows it,
-            // and one that takes longer has something alive to look at.
+            // and one that takes longer has something alive to look at. It stands where the
+            // reply will be, with Vivid's face, so the answer takes its place instead of
+            // appearing somewhere else.
             <li
-              className="flex items-center gap-2.5 transition-opacity delay-700 duration-(--dur-slow) starting:opacity-0"
+              className="flex items-center gap-3 transition-opacity delay-700 duration-(--dur-slow) starting:opacity-0"
               aria-live="polite"
             >
-              <ThinkingOrb state="breathing" size={20} aria-hidden />
-              <p className="text-body text-ink-3">Thinking…</p>
+              <Alive size={28} state="thinking" />
+              <span className="flex items-center gap-2">
+                <ThinkingOrb state="breathing" size={20} aria-hidden />
+                <span className="text-label text-ink-3">Thinking…</span>
+              </span>
             </li>
           )}
           {failure !== null && (
@@ -499,7 +534,7 @@ function Messages({
               scroller.current.scrollTo({ top: 0, behavior: STILL.matches ? 'auto' : 'smooth' })
             }
           }}
-          className="absolute bottom-3 left-1/2 z-10 inline-flex size-8 -translate-x-1/2 cursor-pointer items-center justify-center rounded-full text-ink-2 smooth-shadow-ring-sm glass transition-pop duration-(--dur-base) ease-out hover:text-ink active:scale-96 starting:translate-y-1 starting:opacity-0"
+          className="absolute bottom-3 left-1/2 z-10 inline-flex size-8 -translate-x-1/2 cursor-pointer items-center justify-center rounded-full text-ink-2 lift glass transition-pop duration-(--dur-base) ease-out hover:text-ink active:scale-96 starting:translate-y-1 starting:opacity-0"
         >
           <ArrowDown className="size-4" />
         </button>

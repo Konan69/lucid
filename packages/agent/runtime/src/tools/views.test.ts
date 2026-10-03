@@ -166,6 +166,7 @@ describe('model views', () => {
         brief: `Review before signing. Legacy note: ${reference}.`,
         skills: [skill, skill],
         timezone: 'Africa/Lagos',
+        name: 'Vivid',
       }),
     )
     expect(context).not.toMatch(/MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|"id"/iu)

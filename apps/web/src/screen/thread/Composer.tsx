@@ -2,6 +2,7 @@ import { BorderBeam } from 'border-beam'
 import { ArrowUp, Mic, Paperclip, Square } from 'lucide-react'
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import { draft } from '../../data/drafts'
+import { writing } from '../../data/life'
 import { theme } from '../../data/theme'
 import { IconButton } from '../../ui/Button'
 import { cn } from '../../ui/cn'
@@ -59,6 +60,8 @@ export function Composer({
     const taken = attached.take()
     const body = [words, ...taken.lines].join('\n\n')
     write('')
+    // Sent: the Person has stopped writing, and Vivid's face turns from listening to the work.
+    writing.stopped()
     if (onTyping !== undefined) onTyping(false)
     onSend(body, taken.pictures)
   }
@@ -76,75 +79,105 @@ export function Composer({
               write next is the place that says something is happening. It fades in over the
               library's own 0.6 s, so a reply that starts at once never shows it. The beam clips
               what it wraps, which is why whatever is anchored above sits outside it. */}
-          <BorderBeam active={working} colorVariant="ocean" strength={0.7} theme={shown}>
-            {/* The beam reads its corner radius from the one element it wraps. */}
-            <div
-              className="rounded-composer bg-surface-3 smooth-shadow-ring-sm"
-              // A file dropped anywhere on the composer is attached, the same as picking it.
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => {
-                event.preventDefault()
-                attached.add(Array.from(event.dataTransfer.files))
-              }}
-            >
-              <Attached files={attached.files} onRemove={attached.remove} />
-              <textarea
-                // What is typed here is kept for its place, so leaving by a shortcut loses nothing.
-                data-keeps-draft
-                rows={1}
-                aria-label={placeholder}
-                placeholder={placeholder}
-                value={message}
-                onChange={(event) => {
-                  const next = event.target.value
-                  // Only the edges are reported: starting to type and clearing the field.
-                  if (onTyping !== undefined && (next.length === 0) !== (message.length === 0)) {
-                    onTyping(next.length > 0)
-                  }
-                  write(next)
+          {/* The edge and the lift are drawn by this wrapper, outside the beam: both are shadows
+              that fall outside the box, and the beam clipped them away, which left the composer
+              a white box on a white page with no edge at all. */}
+          <div className="rounded-composer lift edge-field">
+            <BorderBeam active={working} colorVariant="ocean" strength={0.7} theme={shown}>
+              {/* The beam reads its corner radius from the one element it wraps. */}
+              <div
+                className="rounded-composer bg-surface-3"
+                // A file dropped anywhere on the composer is attached, the same as picking it.
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault()
+                  attached.add(Array.from(event.dataTransfer.files))
                 }}
-                onKeyDown={(event) => {
-                  // While an input method is composing, Enter picks a candidate; it does not send.
-                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                    event.preventDefault()
-                    submit()
-                  }
-                }}
-                className="block field-sizing-content max-h-60 min-h-14 w-full resize-none bg-transparent px-5 pt-4 pb-1 text-body text-ink outline-none placeholder:text-ink-3"
-              />
-              <div className="flex items-center gap-1 px-3 pb-3">
-                <Pick accept={attachable(pictures)} onPick={attached.add} />
-                <span className="flex-1" />
-                {onTalk !== undefined && (
-                  <IconButton label="Talk to Vivid" onClick={onTalk}>
-                    <Mic className="size-4" />
-                  </IconButton>
-                )}
-                <button
-                  aria-label={working ? 'Stop' : 'Send'}
-                  disabled={!working && empty}
-                  onClick={() => (working ? onStop() : submit())}
-                  className={cn(
-                    // With nothing to send it is a quiet disc, not a faded accent: an accent at 40%
-                    // reads as a broken button, a neutral one reads as "write something first".
-                    'inline-flex size-9 cursor-pointer items-center justify-center rounded-full text-ink-on-accent transition-press duration-(--dur-fast) active:scale-96 disabled:cursor-not-allowed disabled:bg-wash-pressed disabled:text-ink-4',
-                    working
-                      ? 'bg-ink text-surface-0 hover:bg-ink-2'
-                      : 'bg-accent smooth-shadow-xs hover:bg-accent-hover',
+              >
+                <Attached files={attached.files} onRemove={attached.remove} />
+                <textarea
+                  // What is typed here is kept for its place, so leaving by a shortcut loses nothing.
+                  data-keeps-draft
+                  rows={1}
+                  aria-label={placeholder}
+                  placeholder={placeholder}
+                  value={message}
+                  onChange={(event) => {
+                    const next = event.target.value
+                    // Only the edges are reported: starting to type and clearing the field.
+                    if (onTyping !== undefined && (next.length === 0) !== (message.length === 0)) {
+                      onTyping(next.length > 0)
+                    }
+                    write(next)
+                    // Vivid's face listens while the Person writes (`data/life.ts`).
+                    if (next.length > 0) writing.heard()
+                    else writing.stopped()
+                  }}
+                  onKeyDown={(event) => {
+                    // While an input method is composing, Enter picks a candidate; it does not send.
+                    if (
+                      event.key === 'Enter' &&
+                      !event.shiftKey &&
+                      !event.nativeEvent.isComposing
+                    ) {
+                      event.preventDefault()
+                      submit()
+                    }
+                  }}
+                  className="block field-sizing-content max-h-60 min-h-14 w-full resize-none bg-transparent px-5 pt-4 pb-1 text-body text-ink outline-none placeholder:text-ink-3"
+                />
+                <div className="flex items-center gap-1 px-3 pb-3">
+                  <Pick accept={attachable(pictures)} onPick={attached.add} />
+                  <span className="flex-1" />
+                  {onTalk !== undefined && (
+                    <IconButton label="Talk to Vivid" onClick={onTalk}>
+                      <Mic className="size-4" />
+                    </IconButton>
                   )}
-                >
-                  {working ? (
-                    <Square className="size-3.5 fill-current" />
-                  ) : (
-                    <ArrowUp className="size-4" strokeWidth={2.25} />
-                  )}
-                </button>
+                  <SendOrStop working={working} empty={empty} onStop={onStop} onSend={submit} />
+                </div>
               </div>
-            </div>
-          </BorderBeam>
+            </BorderBeam>
+          </div>
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * The one round button of the composer. It sends; while Vivid works it is the way to stop it.
+ * The two marks take turns in the one place: the one going shrinks away as the one coming grows
+ * in (`motion-swap`), so the button is seen to change what it does instead of being swapped for
+ * another.
+ */
+function SendOrStop({
+  working,
+  empty,
+  onStop,
+  onSend,
+}: {
+  working: boolean
+  /** Nothing to send yet. */
+  empty: boolean
+  onStop: () => void
+  onSend: () => void
+}) {
+  return (
+    <button
+      aria-label={working ? 'Stop' : 'Send'}
+      disabled={!working && empty}
+      onClick={() => (working ? onStop() : onSend())}
+      className={cn(
+        // With nothing to send it is a quiet disc, not a faded accent: an accent at 40%
+        // reads as a broken button, a neutral one reads as "write something first".
+        'relative inline-flex size-9 motion-press cursor-pointer items-center justify-center rounded-full text-ink-on-accent disabled:cursor-not-allowed disabled:bg-wash-pressed disabled:text-ink-4',
+        working ? 'bg-ink text-surface-0 hover:bg-ink-2' : 'bg-accent hover:bg-accent-hover',
+      )}
+    >
+      <Square data-shown={working} className="absolute size-3.5 motion-swap fill-current" />
+      <ArrowUp data-shown={!working} className="absolute size-4 motion-swap" strokeWidth={2.25} />
+    </button>
   )
 }
 

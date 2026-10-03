@@ -40,17 +40,19 @@ import { Database, returned } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { auditEntries } from '../audit/tables.ts'
-import { Conversation, type Delivery } from '../threads/conversation.ts'
+import { Conversation, StoredRunOrigin, type Delivery } from '../threads/conversation.ts'
 import { submissionId } from '../runtime/identity.ts'
 import { RunStore, runStoreLayer, TurnReservation } from '../threads/runs.ts'
 import { ThreadStore, threadStoreLayer } from '../threads/store.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { notifications } from '../notifications/tables.ts'
 import { notifierLayer } from '../notifications/notifier.ts'
+import { unavailablePushLayer } from '../push/delivery.ts'
 import { SettingsStore, settingsStoreLayer } from '../settings/store.ts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { RoutineInvocation, RoutineThreadUnavailable } from './attempts.ts'
 import { routineHandlers } from './handlers.ts'
+import { standingRoutine } from '@vivid/skills'
 import { occurrences, routines } from './tables.ts'
 import {
   RoutineStore,
@@ -244,6 +246,7 @@ const storesLayer = Layer.mergeAll(
   Layer.provide(testConfigLayer),
 )
 const authoritiesLayer = Layer.mergeAll(recordedConversationLayer, notifierLayer).pipe(
+  Layer.provide(unavailablePushLayer),
   Layer.provideMerge(storesLayer),
 )
 const testLayer = routineSchedulerServiceLayer.pipe(Layer.provideMerge(authoritiesLayer))
@@ -447,6 +450,64 @@ const integrationFixture = Effect.fn('Test.Routines.integrationFixture')(functio
 /** Integration tests are gated only by the isolated test database setting. */
 describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
   layer(testLayer)((it) => {
+    it.effect(
+      'offers a dormant personal standing template, requires a Person to enable it, and uses the existing scheduler',
+      () =>
+        Effect.gen(function* () {
+          const { owner, colleague } = yield* fixture()
+          const personal: Actor = { ...owner, workspace: Workspace.cases.Personal.make({}) }
+          const auth = AuthState.Person({
+            person: owner.person,
+            workspace: owner.workspace,
+            sessionId: SessionId.make(NodeCrypto.randomUUID()),
+          })
+          yield* (yield* SettingsStore).patch(owner.person.id, { timezone: 'Africa/Lagos' })
+          const offered = yield* routineHandlers
+            .ListRoutines()
+            .pipe(Effect.provideService(AuthContext, auth))
+          expect(offered.routines).toEqual([])
+          const template = yield* returned(offered.templates, 'standing template')
+          expect(template).toMatchObject({
+            name: standingRoutine.name,
+            trigger: RoutineTrigger.cases.Schedule.make({
+              cron: standingRoutine.cron,
+              timezone: 'Africa/Lagos',
+            }),
+          })
+          const vivid = AuthState.Vivid({
+            person: owner.person,
+            workspace: owner.workspace,
+            threadId: ThreadId.make(NodeCrypto.randomUUID()),
+          })
+          const denied = yield* routineHandlers
+            .CreateRoutine(template)
+            .pipe(Effect.provideService(AuthContext, vivid), Effect.flip)
+          expect(denied._tag).toBe('Forbidden')
+          const store = yield* RoutineStore
+          expect(yield* store.list(personal)).toEqual([])
+          const { routine } = yield* routineHandlers
+            .CreateRoutine(template)
+            .pipe(Effect.provideService(AuthContext, auth))
+          expect(routine.enabled).toBe(true)
+          expect((yield* store.get(personal, routine.id)).companyId).toBe(null)
+          yield* (yield* RoutineScheduler).run(personal, routine.id)
+          const [delivery] = yield* Ref.get(yield* Deliveries)
+          if (delivery === undefined) expect.fail('Expected the standing Run delivery')
+          expect(delivery.origin).toEqual(
+            StoredRunOrigin.cases.Standing.make({ routineName: standingRoutine.name }),
+          )
+          expect((yield* store.list(owner)).map((item) => item.id)).toContain(routine.id)
+          expect(yield* store.list(colleague)).toEqual([])
+          const refused = yield* routineHandlers
+            .PatchRoutine({ id: routine.id, patch: { enabled: true } })
+            .pipe(Effect.provideService(AuthContext, vivid), Effect.flip)
+          expect(refused._tag).toBe('Forbidden')
+          yield* routineHandlers
+            .PatchRoutine({ id: routine.id, patch: { enabled: false } })
+            .pipe(Effect.provideService(AuthContext, auth))
+          expect((yield* store.get(personal, routine.id)).routine.enabled).toBe(false)
+        }),
+    )
     it.effect('fires a one-off once and keeps its Thread and receipt across a restart', () =>
       Effect.gen(function* () {
         const { owner } = yield* fixture()
