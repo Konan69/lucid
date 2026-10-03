@@ -14,10 +14,13 @@ import {
   ExternalLink,
   FileInput,
   FileText,
+  FileType,
   Folder,
   FolderInput,
   FolderPlus,
+  Hash,
   LayoutGrid,
+  LibraryBig,
   MessageSquareText,
   Pencil,
   Rows3,
@@ -40,6 +43,8 @@ import { Notice } from '../ui/Notice'
 import { Segmented } from '../ui/Segmented'
 import { Skeleton } from '../ui/Skeleton'
 import { BAR } from './bar'
+import { Emblem, type Hue } from './Emblem'
+import { ENTER, PRESS, stagger } from './motion'
 
 /** The shell imports this name for the item it asks Vivid about. */
 export type LibraryDocument = LibraryItem
@@ -692,17 +697,29 @@ function NothingHere({
   onUpload: (files: ReadonlyArray<File>) => void
 }) {
   return (
-    <div className="flex flex-col items-center px-6 py-16 text-center">
-      <FileText className="size-5 text-ink-4" />
-      <p className="mt-2 mb-4 max-w-sm text-label text-ink-3">
+    <div className="flex flex-col items-center px-6 pt-10 pb-16 text-center">
+      <Emblem hue="violet" size={44}>
+        <LibraryBig />
+      </Emblem>
+      <p className="mt-4 text-section font-title text-ink">Nothing here yet</p>
+      <p className="mt-1 mb-5 max-w-sm text-label text-pretty text-ink-3">
         {company
-          ? 'Nothing here yet. Add a file and Vivid can read it in every Member’s Threads.'
-          : 'Nothing here yet. Add a file and Vivid can read it in your Threads.'}
+          ? 'Add a file and Vivid can read it in every Member’s Threads.'
+          : 'Add a file and Vivid can read it in your Threads.'}
       </p>
       <FilePicker label="Upload files" look="button" onFiles={onUpload}>
         <Upload className="size-3.5" />
         Upload files
       </FilePicker>
+      {/* What can be added, as the marks the files will wear once they are here. */}
+      <ul className="mt-6 flex items-center gap-4 text-meta font-meta text-ink-3">
+        {(['pdf', 'markdown', 'text'] as const).map((kind) => (
+          <li key={kind} className="inline-flex items-center gap-1.5">
+            <KindMark kind={kind} size={20} />
+            {KIND[kind].label}
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
@@ -771,11 +788,46 @@ const ITEM_STATUS = {
 /** The line beside an item: its size once Vivid has read it, otherwise where it stands. */
 const itemNote = (item: LibraryItem): string =>
   item.status === 'ready'
-    ? `${libraryData.formatBytes(item.size)} · ${item.chunkCount} passages`
+    ? `${libraryData.formatBytes(item.size)} · ${item.chunkCount} ${item.chunkCount === 1 ? 'passage' : 'passages'}`
     : ITEM_STATUS[item.status].label
 
 const folderNote = (folder: LibraryFolder): string =>
   `${folder.itemCount} ${folder.itemCount === 1 ? 'item' : 'items'}`
+
+/**
+ * The kinds of file the Library holds, each with the name, hue and glyph it is known by. They
+ * are the three kinds the picker accepts (`READABLE`); a file's kind is how a Person recognises
+ * it in a grid before reading its name, so each has a colour of its own from the face hues.
+ */
+const KIND = {
+  pdf: { label: 'PDF', hue: 'red', icon: <FileText /> },
+  markdown: { label: 'Markdown', hue: 'blue', icon: <Hash /> },
+  text: { label: 'Text', hue: 'gray', icon: <FileType /> },
+} as const satisfies Record<string, { label: string; hue: Hue; icon: ReactNode }>
+type Kind = keyof typeof KIND
+
+/** What kind of file an item is, from the type it was uploaded as. Anything else reads as text. */
+const kindOf = (item: LibraryItem): Kind => {
+  if (item.mimeType === 'application/pdf') return 'pdf'
+  if (item.mimeType === 'text/markdown' || /\.(md|markdown)$/iu.test(item.name)) return 'markdown'
+  return 'text'
+}
+
+/** A file kind's mark: its glyph in white on its hue. */
+function KindMark({ kind, size }: { kind: Kind; size: number }) {
+  return (
+    <Emblem hue={KIND[kind].hue} size={size}>
+      {KIND[kind].icon}
+    </Emblem>
+  )
+}
+
+/** A folder's mark: a filled folder in the Library's own violet, the one hue this place has. */
+function FolderMark({ className }: { className: string }) {
+  return (
+    <Folder aria-hidden className={cn('shrink-0 fill-face-violet text-face-violet', className)} />
+  )
+}
 
 /** The folders and items of one level, as tiles or as rows. */
 function Level({
@@ -795,8 +847,7 @@ function Level({
         {level.folders.map((folder) => (
           <li key={folder.id}>
             <LevelRow
-              mark={<Folder className="size-4.5" />}
-              accent
+              mark={<FolderMark className="size-7" />}
               name={folder.name}
               note={folderNote(folder)}
               onOpen={() => onOpenFolder(folder)}
@@ -806,8 +857,7 @@ function Level({
         {level.documents.map((item) => (
           <li key={item.id}>
             <LevelRow
-              mark={<FileText className="size-4.5" />}
-              accent={false}
+              mark={<KindMark kind={kindOf(item)} size={28} />}
               name={item.name}
               note={itemNote(item)}
               onOpen={() => onOpenItem(item)}
@@ -820,26 +870,33 @@ function Level({
   return (
     <div className="flex flex-col gap-4">
       {level.folders.length > 0 && (
-        <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {level.folders.map((folder) => (
+        <ul className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+          {level.folders.map((folder, place) => (
             <li key={folder.id}>
               <button
                 type="button"
                 onClick={() => onOpenFolder(folder)}
-                className="flex w-full cursor-pointer items-center gap-2.5 rounded-card bg-surface-2 px-3 py-2.5 text-left edge transition-surface duration-(--dur-fast) hover:bg-wash-hover"
+                className={cn(
+                  'flex w-full cursor-pointer items-center gap-2.5 rounded-card bg-surface-3 px-3 py-2.5 text-left edge outline-none hover:bg-surface-2 focus-visible:edge-accent',
+                  PRESS,
+                  ENTER,
+                  stagger(place),
+                )}
               >
-                <Folder className="size-5 shrink-0 text-ink-3" strokeWidth={1.7} />
-                <span className="min-w-0 flex-1 truncate text-label text-ink">{folder.name}</span>
-                <span className="text-meta font-meta text-ink-3">{folderNote(folder)}</span>
+                <FolderMark className="size-6" />
+                <span className="min-w-0 flex-1 truncate text-title text-ink">{folder.name}</span>
+                <span className="text-meta font-meta text-ink-3 tabular-nums">
+                  {folderNote(folder)}
+                </span>
               </button>
             </li>
           ))}
         </ul>
       )}
-      <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-        {level.documents.map((item) => (
+      <ul className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+        {level.documents.map((item, place) => (
           <li key={item.id}>
-            <ItemTile item={item} onOpen={() => onOpenItem(item)} />
+            <ItemTile item={item} place={place} onOpen={() => onOpenItem(item)} />
           </li>
         ))}
       </ul>
@@ -850,13 +907,11 @@ function Level({
 /** One folder or item in the list view. */
 function LevelRow({
   mark,
-  accent,
   name,
   note,
   onOpen,
 }: {
   mark: ReactNode
-  accent: boolean
   name: string
   note: string
   onOpen: () => void
@@ -865,47 +920,85 @@ function LevelRow({
     <button
       type="button"
       onClick={onOpen}
-      className="flex w-full cursor-pointer items-center gap-3 rounded-row px-2.5 py-2 text-left transition-colors duration-(--dur-fast) hover:bg-wash-hover"
+      className={cn(
+        'flex w-full cursor-pointer items-center gap-3 rounded-row px-2.5 py-2 text-left hover:bg-wash-hover',
+        PRESS,
+      )}
     >
-      <span
-        className={cn(
-          'inline-flex size-8 shrink-0 items-center justify-center rounded-control',
-          accent ? 'bg-accent-soft text-accent-ink' : 'bg-surface-2 text-ink-3 edge',
-        )}
-      >
-        {mark}
-      </span>
+      {mark}
       <span className="min-w-0 flex-1 truncate text-title text-ink">{name}</span>
-      <span className="text-meta font-meta text-ink-3">{note}</span>
+      <span className="text-meta font-meta text-ink-3 tabular-nums">{note}</span>
     </button>
   )
 }
 
-/** One item in the grid: its name, where it stands, and a drawn page standing in for a preview. */
-function ItemTile({ item, onOpen }: { item: LibraryItem; onOpen: () => void }) {
+/**
+ * The sheet in an item's tile. Once Vivid has read the file it is the file's own first lines,
+ * small, the way a document's thumbnail shows its first page; before that, or when it could not
+ * be read, it is the outline of a page, since there are no words to show yet.
+ */
+function Sheet({ item }: { item: LibraryItem }) {
+  const read = item.status === 'ready' && item.preview.trim().length > 0
+  return (
+    <span className="relative block aspect-4/3 overflow-hidden rounded-control bg-surface-2">
+      <span
+        aria-hidden
+        className="absolute inset-x-5 top-3 -bottom-2 flex flex-col gap-1.5 overflow-hidden rounded-t-sm bg-surface-3 px-3 pt-3 edge"
+      >
+        {read ? (
+          <span className="line-clamp-6 text-meta wrap-break-word whitespace-pre-line text-ink-3">
+            {item.preview}
+          </span>
+        ) : (
+          <>
+            <i className="h-2 w-1/2 rounded-full bg-line-3" />
+            <i className="mt-1 h-1 w-full rounded-full bg-line-2" />
+            <i className="h-1 w-11/12 rounded-full bg-line-2" />
+            <i className="h-1 w-4/5 rounded-full bg-line-2" />
+          </>
+        )}
+      </span>
+    </span>
+  )
+}
+
+/** One item in the grid: its first page, then its kind, its name and where it stands. */
+function ItemTile({
+  item,
+  place,
+  onOpen,
+}: {
+  item: LibraryItem
+  /** Its place in the grid, which is how long it waits before it arrives. */
+  place: number
+  onOpen: () => void
+}) {
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="flex w-full cursor-pointer flex-col overflow-hidden rounded-card bg-surface-2 p-3 text-left edge transition-press duration-(--dur-fast) hover:bg-surface-3 active:scale-98"
+      className={cn(
+        'flex w-full cursor-pointer flex-col overflow-hidden rounded-card bg-surface-3 p-2 text-left edge outline-none hover:bg-surface-2 focus-visible:edge-accent',
+        PRESS,
+        ENTER,
+        stagger(place),
+      )}
     >
-      <span className="flex items-center gap-2">
-        <FileText className="size-4 shrink-0 text-ink-3" strokeWidth={1.6} />
-        <span className="min-w-0 flex-1 truncate text-label text-ink">{item.name}</span>
-      </span>
-      <span className="relative mt-3 block aspect-4/3 overflow-hidden rounded-control bg-surface-1 ring-line">
-        <span
-          aria-hidden
-          className="absolute inset-x-7 inset-y-3 flex flex-col gap-1.5 rounded-sm bg-surface-3 p-2.5 edge"
-        >
-          <i className="h-2 w-1/2 rounded-full bg-line-3" />
-          <i className="mt-1 h-1 w-full rounded-full bg-line-1" />
-          <i className="h-1 w-11/12 rounded-full bg-line-1" />
-          <i className="h-1 w-4/5 rounded-full bg-line-1" />
-          <i className="mt-auto h-1 w-2/3 rounded-full bg-line-1" />
+      <Sheet item={item} />
+      <span className="flex items-center gap-2.5 px-1 pt-2.5 pb-1">
+        <KindMark kind={kindOf(item)} size={28} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-title text-ink">{item.name}</span>
+          <span
+            className={cn(
+              'block truncate text-meta font-meta tabular-nums',
+              item.status === 'failed' ? 'text-danger' : 'text-ink-3',
+            )}
+          >
+            {itemNote(item)}
+          </span>
         </span>
       </span>
-      <span className="mt-2 truncate text-meta font-meta text-ink-3">{itemNote(item)}</span>
     </button>
   )
 }
