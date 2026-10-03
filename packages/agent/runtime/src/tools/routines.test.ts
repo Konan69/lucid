@@ -146,6 +146,45 @@ describe('Integration Routine tools', () => {
       ),
   )
 
+  it.effect('one-off creation sends local words to server timezone resolution', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const tools = yield* fixture()
+        const name = 'Check the report'
+        const prompt = 'Remind me to check the report.'
+        const at = Date.UTC(2026, 9, 4, 8)
+        const routine = Routine.make({
+          id: RoutineId.make('PRIVATE-routine'),
+          name,
+          prompt,
+          trigger: RoutineTrigger.cases.Once.make({ at, timezone: 'Africa/Lagos' }),
+          libraryFolderId: null,
+          enabled: true,
+          nextExpectedAt: at,
+          lastMissedAt: null,
+          createdAt: 0,
+          updatedAt: 0,
+          nextRunAt: at,
+          runs: [],
+        })
+        const [result] = yield* Effect.all(
+          [
+            tools.create({ name, prompt, trigger: { kind: 'Once', localAt: '2026-10-04T09:00' } }),
+            tools.reply(
+              'CreateOnceRoutine',
+              { name, prompt, localAt: '2026-10-04T09:00' },
+              Exit.succeed({ routine }),
+            ),
+          ],
+          { concurrency: 2 },
+        )
+        expect(result.output).toMatchObject({ name, nextRunAt: '2026-10-04T08:00:00.000Z' })
+        expect(JSON.stringify(result)).not.toContain('PRIVATE-')
+        expect(JSON.stringify(result)).not.toContain(String(at))
+      }),
+    ),
+  )
+
   it.effect('scheduled creation retains the explicit cron and timezone path', () =>
     Effect.scoped(
       Effect.gen(function* () {

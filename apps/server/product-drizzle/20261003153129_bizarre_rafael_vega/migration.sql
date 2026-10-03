@@ -1,0 +1,1 @@
+ALTER TABLE "vivid_routines" ADD COLUMN "once_at" bigint;

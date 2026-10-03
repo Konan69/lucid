@@ -39,6 +39,23 @@ describe('the editor', () => {
     )
   })
 
+  it('describes and preserves a one-off when its metadata changes', () => {
+    const trigger = RoutineTrigger.cases.Once.make({
+      at: Date.UTC(2026, 9, 4, 8),
+      timezone: 'Africa/Lagos',
+    })
+    const current = routine('Reminder', { trigger })
+    expect(routines.describeTrigger(trigger)).toBe('Once, on 4 Oct 2026 at 09:00')
+    const fields = routines.fieldsOf(current)
+    expect(routines.triggerOf(fields, 'UTC')).toEqual(trigger)
+    expect(routines.fieldsDiffer(current, fields, 'UTC')).toBe(false)
+    expect(routines.fieldsComplete(fields, 'UTC')).toBe(true)
+    const typed = { ...fields, name: 'Check the report' }
+    const edits = routines.editsIn(current, typed)
+    expect(routines.triggerOf(routines.editing(current, edits), 'UTC')).toEqual(trigger)
+    expect(routines.unsaved(edits, typed)).toEqual(routines.noEdits)
+  })
+
   it("starts a new schedule in the Person's own zone until they write another", () => {
     const fields = routines.emptyFields()
     expect(routines.triggerOf(fields, 'Africa/Lagos')).toEqual(

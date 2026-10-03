@@ -8,9 +8,13 @@ import * as views from './views.ts'
 
 /** This paragraph is also model-visible in create_routine's description, without an agent edit. */
 export const instructions =
-  'When a Person describes a recurring reaction, offer “when this happens, I’ll do that”. Use find_events with the Integration’s account name to discover what can be watched, then create_routine with that account, the event description and its filter. Explain the actual delivery cadence and stop if the Integration cannot support the event. Background work follows the same approval rules as work asked for in a Thread.'
+  'A reminder or anything to do once at a time is a one-off Routine. Use a Once trigger with a local date-time in the Person’s time zone; never supply epoch numbers or identifiers. When a Person describes a recurring reaction, offer “when this happens, I’ll do that”. Use find_events with the Integration’s account name to discover what can be watched, then create_routine with that account, the event description and its filter. Explain the actual delivery cadence and stop if the Integration cannot support the event. Background work follows the same approval rules as work asked for in a Thread.'
 
 const triggerInput = v.variant('kind', [
+  v.object({
+    kind: v.literal('Once'),
+    localAt: text('Local date and time in the Person’s time zone, YYYY-MM-DDTHH:mm.', 16),
+  }),
   v.object({
     kind: v.literal('Schedule'),
     cron: text('The cron schedule.', 200),
@@ -27,7 +31,7 @@ const decodeJson = Schema.decodeUnknownEffect(Schema.Json)
 
 /** The model supplies names and provider data; server authority resolves the private Connection. */
 const triggerOf = Effect.fn('RoutineTools.triggerOf')(function* (
-  input: v.InferOutput<typeof triggerInput>,
+  input: Exclude<v.InferOutput<typeof triggerInput>, { kind: 'Once' }>,
 ) {
   if (input.kind === 'Schedule')
     return RoutineTrigger.cases.Schedule.make({ cron: input.cron, timezone: input.timezone })
@@ -46,10 +50,10 @@ export function routineTools(runTool: RunTool) {
   return [
     defineTool({
       name: 'create_routine',
-      description: `Create a Routine for recurring work. ${instructions}`,
+      description: `Create a Routine for one-off or recurring work. ${instructions}`,
       input: v.object({
-        name: text('A short name for the recurring work.', 200),
-        prompt: text('What Vivid should do each time.', 4000),
+        name: text('A short name for the work.', 200),
+        prompt: text('What Vivid should do when it runs.', 4000),
         trigger: triggerInput,
       }),
       /** Storage references and past receipts never enter the model result. */
@@ -57,11 +61,18 @@ export function routineTools(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            const response = yield* client.CreateRoutine({
-              name: data.name,
-              prompt: data.prompt,
-              trigger: yield* triggerOf(data.trigger),
-            })
+            const response =
+              data.trigger.kind === 'Once'
+                ? yield* client.CreateOnceRoutine({
+                    name: data.name,
+                    prompt: data.prompt,
+                    localAt: data.trigger.localAt,
+                  })
+                : yield* client.CreateRoutine({
+                    name: data.name,
+                    prompt: data.prompt,
+                    trigger: yield* triggerOf(data.trigger),
+                  })
             return { output: views.routine(response.routine, response.routine.name) }
           }),
           { signal, tool: 'create_routine' },

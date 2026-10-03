@@ -9,6 +9,7 @@ import {
   type RoutineId,
   type FindEventsRequest,
   type CreateRoutineRequest,
+  type CreateOnceRoutineRequest,
   type PatchRoutineRequest,
   type RoutineParams,
 } from '@vivid/contracts'
@@ -18,7 +19,8 @@ import { live } from '../live/query.ts'
 import { THREAD_OPENING_FAILURE } from './attempts.ts'
 import { RoutineScheduler } from './scheduler.ts'
 import { RoutineStore, type RoutineMissing } from './store.ts'
-import type { InvalidRoutineSchedule } from './timing.ts'
+import { resolveLocal, type RoutineTimePassed, type InvalidRoutineSchedule } from './timing.ts'
+import { SettingsStore } from '../settings/store.ts'
 
 /** Internal validation failures become the fixed public RPC errors without exposing ownership. */
 const missing = () => new NotFound({ message: 'Routine not found' })
@@ -43,6 +45,7 @@ const integrationFailure = <A, R>(
     | Conflict
     | InvalidRequest
     | InvalidRoutineSchedule
+    | RoutineTimePassed
     | import('@vivid/contracts').ServiceUnavailable
     | import('../database/client.ts').DatabaseInfrastructureError
     | import('./watch.ts').WatchFailure,
@@ -68,6 +71,23 @@ const integrationFailure = <A, R>(
     }),
   )
 
+/** Both creation entry points use the same trigger validation and publication ordering. */
+const createRoutine = Effect.fn('Rpc.CreateRoutine')(function* (
+  request: typeof CreateRoutineRequest.Type,
+) {
+  const actor = yield* requireActor()
+  const routine = yield* integrationFailure(
+    concealMissing((yield* RoutineStore).create(actor, request)),
+  ).pipe(
+    Effect.catchTag('InvalidRoutineSchedule', (error) => Effect.fail(invalidSchedule(error))),
+    Effect.catchTag('RoutineTimePassed', () =>
+      Effect.fail(new InvalidRequest({ message: 'A one-off Routine must be in the future.' })),
+    ),
+  )
+  yield* changed(actor)
+  return RoutineResponse.make({ routine })
+})
+
 export const routineHandlers = {
   /** Discovery resolves account names under exactly the same acting Person as creation. */
   FindEvents: Effect.fn('Rpc.FindEvents')(function* (request: typeof FindEventsRequest.Type) {
@@ -79,18 +99,22 @@ export const routineHandlers = {
   }),
   /** Live reads reuse the loader and follow the signed-in Person’s current workspace. */
   WatchRoutines: () => live(loadRoutines),
-  /** The store validates the trigger and schedules atomically with the creation. */
-  CreateRoutine: Effect.fn('Rpc.CreateRoutine')(function* (
-    request: typeof CreateRoutineRequest.Type,
+  /** Creation validates and persists the trigger before publishing. */
+  CreateRoutine: createRoutine,
+  /** Wall-clock input is resolved with server-owned Settings, never a model-supplied epoch or zone. */
+  CreateOnceRoutine: Effect.fn('Rpc.CreateOnceRoutine')(function* (
+    request: typeof CreateOnceRoutineRequest.Type,
   ) {
     const actor = yield* requireActor()
-    const routine = yield* integrationFailure(
-      concealMissing((yield* RoutineStore).create(actor, request)),
-    ).pipe(
+    const settings = yield* (yield* SettingsStore).get(actor.person.id)
+    const trigger = yield* resolveLocal(request.localAt, settings.timezone).pipe(
       Effect.catchTag('InvalidRoutineSchedule', (error) => Effect.fail(invalidSchedule(error))),
     )
-    yield* changed(actor)
-    return RoutineResponse.make({ routine })
+    return yield* createRoutine({
+      name: request.name,
+      prompt: request.prompt,
+      trigger,
+    })
   }),
   /** Owner authorization and concurrent partial update semantics belong to persistence. */
   PatchRoutine: Effect.fn('Rpc.PatchRoutine')(function* ({
@@ -105,6 +129,9 @@ export const routineHandlers = {
       concealMissing((yield* RoutineStore).patch(actor, id, patch)),
     ).pipe(
       Effect.catchTag('InvalidRoutineSchedule', (error) => Effect.fail(invalidSchedule(error))),
+      Effect.catchTag('RoutineTimePassed', () =>
+        Effect.fail(new InvalidRequest({ message: 'A one-off Routine must be in the future.' })),
+      ),
     )
     yield* changed(actor)
     return RoutineResponse.make({ routine })

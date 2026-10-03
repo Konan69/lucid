@@ -41,6 +41,7 @@ const scheduleTrigger = Effect.fn('RoutineStore.scheduleTrigger')(function* (
   row: typeof RoutineRow.Type,
 ) {
   if (
+    row.onceAt !== null ||
     row.cron === null ||
     row.timezone === null ||
     row.webhookKeyHash !== null ||
@@ -54,6 +55,7 @@ const integrationTrigger = Effect.fn('RoutineStore.integrationTrigger')(function
   row: typeof RoutineRow.Type,
 ) {
   if (
+    row.onceAt !== null ||
     row.integration === null ||
     row.cron !== null ||
     row.timezone !== null ||
@@ -63,12 +65,27 @@ const integrationTrigger = Effect.fn('RoutineStore.integrationTrigger')(function
   return row.integration.trigger
 })
 
+/** A consumed one-off retains its instant after its next due time has been cleared. */
+const onceTrigger = Effect.fn('RoutineStore.onceTrigger')(function* (row: typeof RoutineRow.Type) {
+  if (
+    row.onceAt === null ||
+    row.timezone === null ||
+    row.cron !== null ||
+    row.webhookKeyHash !== null ||
+    row.integration !== null
+  )
+    return yield* Effect.fail(new DatabaseFailure({ message: 'Routine trigger columns disagree' }))
+  return RoutineTrigger.cases.Once.make({ at: row.onceAt, timezone: row.timezone })
+})
+
 /** Rejects contradictory storage rather than guessing a trigger from nullable columns. */
 const triggerOf = Effect.fn('RoutineStore.triggerOf')(function* (row: typeof RoutineRow.Type) {
+  if (row.trigger === 'once') return yield* onceTrigger(row)
   if (row.trigger === 'schedule') return yield* scheduleTrigger(row)
   if (row.trigger === 'integration') return yield* integrationTrigger(row)
   if (
     row.trigger === 'webhook' &&
+    row.onceAt === null &&
     row.cron === null &&
     row.timezone === null &&
     row.integration === null &&
@@ -146,7 +163,8 @@ export const decodeOccurrence = Effect.fn('RoutineStore.decodeOccurrence')(funct
 })
 
 interface TriggerColumns {
-  readonly trigger: 'schedule' | 'webhook' | 'integration'
+  readonly trigger: 'once' | 'schedule' | 'webhook' | 'integration'
+  readonly onceAt: number | null
   readonly cron: string | null
   readonly timezone: string | null
 }
@@ -154,14 +172,27 @@ interface TriggerColumns {
 /** Each trigger writes a complete column set, clearing authority when switching to a schedule. */
 export const triggerColumns = (trigger: RoutineTrigger) =>
   RoutineTrigger.match(trigger, {
+    Once: ({ at, timezone }): TriggerColumns => ({
+      trigger: 'once',
+      onceAt: at,
+      cron: null,
+      timezone,
+    }),
     Schedule: ({ cron, timezone }): TriggerColumns => ({
+      onceAt: null,
       trigger: 'schedule',
       cron,
       timezone,
     }),
-    Integration: (): TriggerColumns => ({ trigger: 'integration', cron: null, timezone: null }),
+    Integration: (): TriggerColumns => ({
+      trigger: 'integration',
+      onceAt: null,
+      cron: null,
+      timezone: null,
+    }),
     Webhook: (): TriggerColumns => ({
       trigger: 'webhook',
+      onceAt: null,
       cron: null,
       timezone: null,
     }),

@@ -60,7 +60,7 @@ import {
 import { IntegrationNotice, IntegrationStopReason } from './integration.ts'
 import { RoutineScheduler, routineSchedulerServiceLayer } from './scheduler.ts'
 import { routineWebhookRoutes } from './webhook.ts'
-import { InvalidRoutineSchedule } from './timing.ts'
+import { InvalidRoutineSchedule, RoutineTimePassed } from './timing.ts'
 import { hashKey } from './keys.ts'
 import {
   IntegrationWatch,
@@ -440,6 +440,105 @@ const integrationFixture = Effect.fn('Test.Routines.integrationFixture')(functio
 /** Integration tests are gated only by the isolated test database setting. */
 describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
   layer(testLayer)((it) => {
+    it.effect('fires a one-off once and keeps its Thread and receipt across a restart', () =>
+      Effect.gen(function* () {
+        const { owner } = yield* fixture()
+        const store = yield* RoutineStore
+        const scheduler = yield* RoutineScheduler
+        const now = yield* Clock.currentTimeMillis
+        const routine = yield* store.create(owner, {
+          name: 'Reminder',
+          prompt: 'Remind me to check the report.',
+          trigger: RoutineTrigger.cases.Once.make({ at: now + 60_000, timezone: 'Africa/Lagos' }),
+        })
+        expect(routine.nextExpectedAt).toBe(now + 60_000)
+        yield* scheduler.runDue()
+        expect((yield* store.get(owner, routine.id)).routine.runs).toHaveLength(0)
+        yield* TestClock.adjust('1 minute')
+        yield* scheduler.runDue()
+        const fired = yield* store.list(owner)
+        const result = yield* returned(
+          fired.filter((item) => item.id === routine.id),
+          'One-off',
+        )
+        expect(result).toMatchObject({ enabled: false, nextExpectedAt: null, nextRunAt: null })
+        expect(result.runs).toHaveLength(1)
+        const occurrence = yield* returned(result.runs, 'Occurrence')
+        expect((yield* (yield* ThreadStore).list(owner)).map((thread) => thread.id)).toContain(
+          occurrence.threadId,
+        )
+        yield* scheduler.runDue().pipe(Effect.provide(Layer.fresh(routineSchedulerServiceLayer)))
+        yield* TestClock.adjust('1 day')
+        yield* scheduler.runDue()
+        expect(
+          (yield* returned(
+            (yield* store.list(owner)).filter((item) => item.id === routine.id),
+            'One-off',
+          )).runs,
+        ).toHaveLength(1)
+        expect(
+          (yield* Ref.get(yield* Deliveries)).filter(
+            (delivery) => delivery.threadId === `routine-${routine.id}`,
+          ),
+        ).toHaveLength(1)
+        expect(
+          yield* Effect.flip(store.patch(owner, routine.id, { enabled: true })),
+        ).toBeInstanceOf(RoutineTimePassed)
+      }),
+    )
+
+    it.effect('refuses expired one-offs before inserting any Routine', () =>
+      Effect.gen(function* () {
+        const { owner } = yield* fixture()
+        const store = yield* RoutineStore
+        const now = yield* Clock.currentTimeMillis
+        for (const at of [now - 1, now]) {
+          expect(
+            yield* Effect.flip(
+              store.create(owner, {
+                name: 'Expired reminder',
+                prompt: 'Do it once.',
+                trigger: RoutineTrigger.cases.Once.make({ at, timezone: 'UTC' }),
+              }),
+            ),
+          ).toBeInstanceOf(RoutineTimePassed)
+        }
+        expect(yield* store.list(owner)).toEqual([])
+      }),
+    )
+
+    it.effect('recovers a claimed one-off after restart without scheduling a second receipt', () =>
+      Effect.gen(function* () {
+        const { owner } = yield* fixture()
+        const store = yield* RoutineStore
+        const now = yield* Clock.currentTimeMillis
+        const routine = yield* store.create(owner, {
+          name: 'Recover reminder',
+          prompt: 'Check once.',
+          trigger: RoutineTrigger.cases.Once.make({ at: now + 1000, timezone: 'UTC' }),
+        })
+        yield* TestClock.adjust('1 second')
+        const claimed = yield* store.claimDue()
+        expect(claimed.filter(({ record }) => record.routine.id === routine.id)).toHaveLength(1)
+        yield* (yield* RoutineScheduler)
+          .runDue()
+          .pipe(Effect.provide(Layer.fresh(routineSchedulerServiceLayer)))
+        yield* (yield* RoutineScheduler).runDue()
+        const result = yield* returned(
+          (yield* store.list(owner)).filter((item) => item.id === routine.id),
+          'One-off',
+        )
+        expect(result).toMatchObject({ enabled: false, nextExpectedAt: null })
+        expect(result.runs).toHaveLength(1)
+        expect(result.runs[0]).toMatchObject({ status: 'running' })
+        expect(
+          (yield* Ref.get(yield* Deliveries)).filter(
+            (delivery) => delivery.threadId === `routine-${routine.id}`,
+          ),
+        ).toHaveLength(1)
+      }),
+    )
+
     it.effect('conceals and refuses another Person’s Routine, including Company admins', () =>
       Effect.gen(function* () {
         const { owner, colleague, outside } = yield* fixture()

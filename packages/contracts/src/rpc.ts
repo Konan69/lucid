@@ -120,6 +120,7 @@ import {
 import { CreateProjectRequest, Project, ProjectListResponse } from './projects.js'
 import {
   CreateRoutineRequest,
+  CreateOnceRoutineRequest,
   FindEventsRequest,
   FindEventsResponse,
   OccurrenceResponse,
@@ -446,6 +447,11 @@ const CreateRoutine = Rpc.make('CreateRoutine', {
   payload: CreateRoutineRequest,
   success: RoutineResponse,
 })
+const CreateOnceRoutine = Rpc.make('CreateOnceRoutine', {
+  ...call,
+  payload: CreateOnceRoutineRequest,
+  success: RoutineResponse,
+})
 const PatchRoutine = Rpc.make('PatchRoutine', {
   ...call,
   payload: { id: RoutineId, patch: PatchRoutineRequest },
@@ -755,6 +761,7 @@ export const VividRpc = RpcGroup.make(
   ListRoutines,
   WatchRoutines,
   CreateRoutine,
+  CreateOnceRoutine,
   PatchRoutine,
   DeleteRoutine,
   RunRoutine,

@@ -41,6 +41,17 @@ export const describeCron = (cron: string): string => {
 /** When a Routine runs, in one phrase. */
 export const describeTrigger = (trigger: RoutineTrigger): string =>
   RoutineTrigger.match(trigger, {
+    Once: ({ at, timezone }) => {
+      const date = new Intl.DateTimeFormat('en-GB', {
+        timeZone: timezone,
+        dateStyle: 'medium',
+      }).format(at)
+      const time = new Intl.DateTimeFormat('en-GB', {
+        timeZone: timezone,
+        timeStyle: 'short',
+      }).format(at)
+      return `Once, on ${date} at ${time}`
+    },
     Schedule: ({ cron, timezone }) => `${describeCron(cron)} · ${timezone}`,
     Webhook: () => 'When something calls it',
     Integration: ({ account, event }) => `When ${event} in ${account}`,
@@ -71,10 +82,15 @@ export interface RoutineFields {
    * kind and schedule above are not.
    */
   readonly watching: Option.Option<Watching>
+  /** Conversation-created one-offs retain their instant while metadata is edited. */
+  readonly once: Option.Option<OneOff>
 }
 
 /** An Integration trigger as it is: the account, what happens there, and which of it counts. */
 export type Watching = Omit<typeof RoutineTrigger.cases.Integration.Type, '_tag'>
+
+/** One-off timing remains intact until the editor explicitly supports editing it. */
+export type OneOff = Omit<typeof RoutineTrigger.cases.Once.Type, '_tag'>
 
 /** The editor's starting values for a new Routine. */
 export const emptyFields = (): RoutineFields => ({
@@ -84,11 +100,21 @@ export const emptyFields = (): RoutineFields => ({
   cron: DEFAULT_CRON,
   timezone: Option.none(),
   watching: Option.none(),
+  once: Option.none(),
 })
 
 /** The editor's starting values for a Routine that already exists. */
 export const fieldsOf = (routine: Routine): RoutineFields =>
   RoutineTrigger.match(routine.trigger, {
+    Once: ({ at, timezone }): RoutineFields => ({
+      name: routine.name,
+      prompt: routine.prompt,
+      kind: 'Schedule',
+      cron: DEFAULT_CRON,
+      timezone: Option.some(timezone),
+      watching: Option.none(),
+      once: Option.some({ at, timezone }),
+    }),
     Schedule: ({ cron, timezone }): RoutineFields => ({
       name: routine.name,
       prompt: routine.prompt,
@@ -96,6 +122,7 @@ export const fieldsOf = (routine: Routine): RoutineFields =>
       cron,
       timezone: Option.some(timezone),
       watching: Option.none(),
+      once: Option.none(),
     }),
     Webhook: (): RoutineFields => ({
       name: routine.name,
@@ -104,6 +131,7 @@ export const fieldsOf = (routine: Routine): RoutineFields =>
       cron: DEFAULT_CRON,
       timezone: Option.none(),
       watching: Option.none(),
+      once: Option.none(),
     }),
     Integration: ({ account, event, filter }): RoutineFields => ({
       name: routine.name,
@@ -112,6 +140,7 @@ export const fieldsOf = (routine: Routine): RoutineFields =>
       cron: DEFAULT_CRON,
       timezone: Option.none(),
       watching: Option.some({ account, event, filter }),
+      once: Option.none(),
     }),
   })
 
@@ -149,6 +178,7 @@ export const editing = (routine: Routine, edits: RoutineEdits): RoutineFields =>
     cron: trigger.cron,
     timezone: trigger.timezone,
     watching: saved.watching,
+    once: saved.once,
   }
 }
 
@@ -187,20 +217,26 @@ export const unsaved = (edits: RoutineEdits, submitted: RoutineFields): RoutineE
 
 /** The trigger the editor describes. `zone` is the Person's own, used until they write another. */
 export const triggerOf = (fields: RoutineFields, zone: string): RoutineTrigger =>
-  Option.match(fields.watching, {
-    onSome: (watching) => RoutineTrigger.cases.Integration.make(watching),
+  Option.match(fields.once, {
+    onSome: (once) => RoutineTrigger.cases.Once.make(once),
     onNone: () =>
-      fields.kind === 'Webhook'
-        ? RoutineTrigger.cases.Webhook.make({})
-        : RoutineTrigger.cases.Schedule.make({
-            cron: fields.cron.trim(),
-            timezone: Option.getOrElse(fields.timezone, () => zone).trim(),
-          }),
+      Option.match(fields.watching, {
+        onSome: (watching) => RoutineTrigger.cases.Integration.make(watching),
+        onNone: () =>
+          fields.kind === 'Webhook'
+            ? RoutineTrigger.cases.Webhook.make({})
+            : RoutineTrigger.cases.Schedule.make({
+                cron: fields.cron.trim(),
+                timezone: Option.getOrElse(fields.timezone, () => zone).trim(),
+              }),
+      }),
   })
 
 /** Whether two triggers start a Routine the same way. */
 const sameTrigger = (left: RoutineTrigger, right: RoutineTrigger): boolean =>
   RoutineTrigger.match(left, {
+    Once: ({ at, timezone }) =>
+      RoutineTrigger.guards.Once(right) && right.at === at && right.timezone === timezone,
     Webhook: () => RoutineTrigger.guards.Webhook(right),
     Schedule: ({ cron, timezone }) =>
       RoutineTrigger.guards.Schedule(right) && right.cron === cron && right.timezone === timezone,
@@ -222,6 +258,7 @@ export const fieldsComplete = (fields: RoutineFields, zone: string): boolean =>
   fields.name.trim() !== '' &&
   fields.prompt.trim() !== '' &&
   RoutineTrigger.match(triggerOf(fields, zone), {
+    Once: ({ at, timezone }) => Number.isFinite(at) && timezone !== '',
     Webhook: () => true,
     Schedule: ({ cron, timezone }) => cron !== '' && timezone !== '',
     Integration: () => true,

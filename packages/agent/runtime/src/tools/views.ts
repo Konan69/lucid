@@ -156,6 +156,8 @@ export function routine(item: Routine, name: string) {
     name: modelText(name),
     prompt: modelText(item.prompt),
     schedule: RoutineTrigger.match<{ cron: string; timezone: string } | string>(item.trigger, {
+      Once: ({ at, timezone }) =>
+        `once on ${new Intl.DateTimeFormat('en-GB', { timeZone: timezone, dateStyle: 'medium', timeStyle: 'short' }).format(at)} · ${timezone}`,
       Schedule: ({ cron, timezone }) => ({ cron, timezone }),
       Webhook: () => 'when called',
       Integration: ({ account, event }) => `when ${event} happens in ${account}`,

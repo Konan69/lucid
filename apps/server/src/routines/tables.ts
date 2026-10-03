@@ -14,6 +14,7 @@ export const routines = pgTable('vivid_routines', {
   prompt: text('prompt').notNull(),
   trigger: text('trigger').notNull().default('schedule'),
   cron: text('cron'),
+  onceAt: epoch('once_at'),
   timezone: text('timezone'),
   webhookKeyHash: text('webhook_key_hash'),
   integration: jsonb('integration'),

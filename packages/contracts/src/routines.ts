@@ -7,6 +7,8 @@ import { LibraryFolderId, OccurrenceId, RoutineId, ThreadId } from './identity.j
  * by its Person-visible account label; the Connection binding remains private on the server.
  */
 export const RoutineTrigger = Schema.TaggedUnion({
+  /** One delivery at epoch milliseconds; timezone preserves how the instant is said back. */
+  Once: { at: Schema.Number, timezone: Schema.String },
   Schedule: { cron: Schema.String, timezone: Schema.String },
   Webhook: {},
   Integration: { account: Schema.String, event: Schema.String, filter: Schema.Json },
@@ -54,6 +56,12 @@ export const CreateRoutineRequest = Schema.Struct({
   prompt: Schema.String,
   trigger: RoutineTrigger,
   libraryFolderId: Schema.optionalKey(Schema.NullOr(LibraryFolderId)),
+})
+/** Runtime creation accepts wall-clock words; the server resolves the acting Person's zone. */
+export const CreateOnceRoutineRequest = Schema.Struct({
+  name: CreateRoutineRequest.fields.name,
+  prompt: CreateRoutineRequest.fields.prompt,
+  localAt: Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/u)),
 })
 /** Input accepted while updating a Routine. */
 export const PatchRoutineRequest = Schema.Struct({

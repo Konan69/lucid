@@ -44,7 +44,12 @@ import { runs } from '../threads/tables.ts'
 import { hashKey, issueKey, matchesKey } from './keys.ts'
 import { decodeOccurrence, decodeRoutine, triggerColumns, type RoutineRecord } from './records.ts'
 import { occurrences, routines } from './tables.ts'
-import { nextExpectedAt, type InvalidRoutineSchedule } from './timing.ts'
+import {
+  nextExpectedAt,
+  requireFuture,
+  type RoutineTimePassed,
+  type InvalidRoutineSchedule,
+} from './timing.ts'
 import { IntegrationWatch, Watch, type WatchError } from './watch.ts'
 import { integrationPollingLayer } from '../connections/watch.ts'
 import { integrationOperations } from './integration.ts'
@@ -92,6 +97,7 @@ type ChangeError =
   | import('@vivid/contracts').Conflict
   | StoreError
   | InvalidRoutineSchedule
+  | RoutineTimePassed
   | WatchError
   | import('@vivid/contracts').InvalidRequest
   | import('@vivid/contracts').ServiceUnavailable
@@ -239,6 +245,7 @@ const makeList = (database: DatabaseService, view: ReturnType<typeof makeView>) 
 const makeCreate = (database: DatabaseService, watch: IntegrationWatch['Service']) =>
   Effect.fn('RoutineStore.create')(function* (actor: Actor, input: CreateInput) {
     const now = yield* Clock.currentTimeMillis
+    yield* requireFuture(input.trigger, now)
     const integration = RoutineTrigger.guards.Integration(input.trigger)
       ? yield* watch.prepare(actor, input.trigger)
       : null
@@ -293,9 +300,37 @@ const patchedDue = Effect.fn('RoutineStore.patchedDue')(function* (change: {
 }) {
   if (change.input.trigger === undefined && change.input.enabled === undefined)
     return change.current.routine.nextExpectedAt
+  if (change.enabled) yield* requireFuture(change.trigger, change.now)
   if (change.integration === null)
     return yield* nextExpectedAt(change.trigger, change.enabled, change.now)
   return change.enabled ? change.now + change.integration.intervalMillis : null
+})
+
+/** Trigger edits and explicit pauses withdraw receipts that have not reached Conversation. */
+const withdrawPending = Effect.fn('RoutineStore.withdrawPending')(function* (
+  tx: Pick<DatabaseService, 'update'>,
+  current: RoutineRecord,
+  input: PatchInput,
+  now: number,
+) {
+  if (input.trigger !== undefined || input.enabled === false)
+    yield* tx
+      .update(occurrences)
+      .set({
+        status: 'failed',
+        error:
+          input.enabled === false
+            ? 'Its Routine was disabled before delivery'
+            : 'Its Routine trigger changed before delivery',
+        finishedAt: now,
+      })
+      .where(
+        and(
+          eq(occurrences.routineId, current.routine.id),
+          isNull(occurrences.submissionId),
+          eq(occurrences.status, 'not-admitted'),
+        ),
+      )
 })
 
 /** Row locking preserves concurrent partial updates and key rotation while a trigger is changed. */
@@ -327,23 +362,7 @@ const makePatch = (
         const { trigger, integration } = patchedTrigger(current, input, prepared)
         const enabled = input.enabled === undefined ? current.routine.enabled : input.enabled
         const next = yield* patchedDue({ current, input, trigger, integration, enabled, now })
-        // A changed trigger must not admit queued content from the previous Integration binding.
-        if (input.trigger !== undefined)
-          yield* tx
-            .update(occurrences)
-            .set({
-              status: 'failed',
-              error: 'Its Integration trigger changed before delivery',
-              finishedAt: now,
-            })
-            .where(
-              and(
-                eq(occurrences.routineId, id),
-                isNotNull(occurrences.providerEvent),
-                isNull(occurrences.submissionId),
-                eq(occurrences.status, 'not-admitted'),
-              ),
-            )
+        yield* withdrawPending(tx, current, input, now)
         const result = yield* tx
           .update(routines)
           .set({
@@ -539,7 +558,7 @@ const replayScheduled = Effect.fn('RoutineStore.replayScheduled')(function* (
   const topics: Topic[] = []
   for (const row of pending) {
     const record = yield* decodeRoutine(row.routine)
-    if (!record.routine.enabled) {
+    if (!record.routine.enabled && !RoutineTrigger.guards.Once(record.routine.trigger)) {
       yield* retireScheduled(tx, row.occurrence, ScheduledFailure.cases.Disabled.make({}), now)
       continue
     }
@@ -577,7 +596,7 @@ const makeClaimDue = (database: DatabaseService, changes: Changes['Service']) =>
           .from(routines)
           .where(
             and(
-              eq(routines.trigger, 'schedule'),
+              inArray(routines.trigger, ['schedule', 'once']),
               eq(routines.enabled, true),
               isNotNull(routines.nextExpectedAt),
               lte(routines.nextExpectedAt, now),
@@ -590,7 +609,8 @@ const makeClaimDue = (database: DatabaseService, changes: Changes['Service']) =>
           if (row.nextExpectedAt === null)
             return yield* new DatabaseFailure({ message: 'Due Routine has no tick timestamp' })
           const attempt = scheduledAttempt(record.routine.id, row.nextExpectedAt)
-          const next = yield* nextExpectedAt(record.routine.trigger, true, now)
+          const enabled = !RoutineTrigger.guards.Once(record.routine.trigger)
+          const next = yield* nextExpectedAt(record.routine.trigger, enabled, now)
           const inserted = yield* tx
             .insert(occurrences)
             .values({
@@ -608,7 +628,7 @@ const makeClaimDue = (database: DatabaseService, changes: Changes['Service']) =>
             .returning()
           yield* tx
             .update(routines)
-            .set({ nextExpectedAt: next })
+            .set({ enabled, nextExpectedAt: next, updatedAt: now })
             .where(eq(routines.id, record.routine.id))
           if (!(yield* memberPresent(tx, record))) {
             const occurrence = yield* returned(inserted, 'Scheduled receipt')
