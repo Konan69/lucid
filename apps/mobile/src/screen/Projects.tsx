@@ -1,76 +1,71 @@
-import { ThreadId, type ProjectId, type Thread } from '@vivid/contracts'
+import { ThreadId, type Thread } from '@vivid/contracts'
 import { Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useState } from 'react'
 import { ScrollView, View } from 'react-native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import { FolderKanban, Plus, SquarePen } from 'lucide-react-native'
+import { Plus, SquarePen } from 'lucide-react-native'
 import { projects } from '@vivid/state'
 import { useNow } from '../data/foreground'
 import { commit } from '../data/haptics'
 import { relativeTime } from '../data/lanes'
 import { LiveState, useLive, useLiveData, useLiveValue } from '../data/live'
 import { UNTITLED } from '../data/threads'
-import { useTheme } from '../theme'
+import { Avatar } from '../ui/Avatar'
 import { Header, Screen } from '../ui/Header'
 import { Row, Section } from '../ui/List'
 import { Live } from '../ui/Live'
-import { NameSheet } from '../ui/Sheet'
-import { Button, Dot, Empty, IconButton, Label, Notice, Skeleton, styles } from '../ui/ui'
+import { Button, Empty, IconButton, Label, Notice, Skeleton, styles } from '../ui/ui'
 import { useGo, type Routes } from '../workspace'
+import { CreateProject } from './project/Create'
+import { Mark } from './project/Mark'
+import { scope } from './project/scope'
 
 /** A Project as the server describes it; the screen below is also called `Project`. */
 type ProjectRecord = projects.Project
 
-/** A Project's row: its name, how many Threads are filed in it, and that it goes somewhere. */
-function ProjectRow({ project }: { project: ProjectRecord }) {
+/** A Project's row: its colour, its name, what is in it, and how many Threads wait on the Person. */
+function ProjectRow({ project, needing }: { project: ProjectRecord; needing: number }) {
   const go = useGo()
-  const { colors: c } = useTheme()
   return (
     <Row
-      leading={<FolderKanban size={20} strokeWidth={1.6} color={c['foreground-secondary']} />}
+      leading={<Mark id={project.id} />}
       title={project.name}
-      detail={projects.countThreads(project.threadCount)}
-      onPress={() => go.push('Project', { id: project.id })}
-    />
-  )
-}
-
-/**
- * Asks for a new Project's name. `parent` is the Project it will sit inside, or nothing for the
- * top level. The Project the server returns is shown at once, as a change already accepted, so
- * the list does not wait on the live query's next result.
- */
-function Create({ parent, onClose }: { parent: ProjectId | null; onClose: () => void }) {
-  const data = useLiveData()
-  return (
-    <NameSheet
-      title="New project"
-      detail="A place to file threads that belong together."
-      label="Name"
-      initial=""
-      placeholder="Office move"
-      action="Create project"
-      maxLength={80}
-      onClose={onClose}
-      onSave={async (name) => {
-        const result = await data.change((client) =>
-          client.CreateProject({ name, parentProjectId: parent }),
-        )
-        if (Result.isFailure(result)) return Option.some(result.failure.message)
-        commit()
-        data.live.projects.expect(projects.confirmed(result.success))(true)
-        return Option.none()
+      detail={projects.countThreads(project.threadCount).toLowerCase()}
+      trailing={
+        needing > 0 ? (
+          <Label
+            size="label"
+            tone="status-attention"
+            accessibilityLabel={`${needing} waiting for you`}
+            style={{ fontWeight: '600', fontVariant: ['tabular-nums'] }}
+          >
+            {needing}
+          </Label>
+        ) : undefined
+      }
+      onPress={() => {
+        // Going to a Project is scoping to it, wherever it is opened from.
+        scope.enter(project.id)
+        go.push('Project', { id: project.id })
       }}
     />
   )
 }
 
-/** Projects: where work is filed. The top level; each Project opens as its own screen. */
+/**
+ * Every top-level Project, by name. It is reached from the drawer when there are more Projects
+ * than its group shows; with none it is one sentence and the way to make the first.
+ */
 export function Projects() {
   const data = useLiveData()
   const go = useGo()
   const list = useLive(data.live.projects)
+  const threads = useLiveValue(data.live.threads)
+  const mine = Option.match(threads, {
+    onNone: (): ReadonlyArray<Thread> => [],
+    onSome: (value) => value.threads,
+  })
   const [creating, setCreating] = useState(false)
   return (
     <Screen>
@@ -84,28 +79,44 @@ export function Projects() {
           {(value) => {
             const top = projects.projectsIn(value.projects, null)
             return top.length === 0 ? (
-              <Empty line="A project keeps threads that belong together: a launch, a client, a move.">
+              <Empty line="A project keeps the threads about one piece of work together.">
                 <Button icon={Plus} label="New project" onPress={() => setCreating(true)} />
               </Empty>
             ) : (
               <Section title="All projects">
                 {top.map((project) => (
-                  <ProjectRow key={project.id} project={project} />
+                  <ProjectRow
+                    key={project.id}
+                    project={project}
+                    needing={projects.needingYou(mine, project.id)}
+                  />
                 ))}
               </Section>
             )
           }}
         </Live>
       </ScrollView>
-      {creating && <Create parent={null} onClose={() => setCreating(false)} />}
+      {creating && (
+        <CreateProject
+          inside={null}
+          onMade={(project) => {
+            scope.enter(project.id)
+            go.push('Project', { id: project.id })
+          }}
+          onClose={() => setCreating(false)}
+        />
+      )}
     </Screen>
   )
 }
 
 /**
- * One Project: the Projects inside it and the Threads filed in it. Both are read live, so a
- * Thread someone else files here appears without a refresh. A Project the Person can no longer
- * see says so instead of drawing an empty page under a stale name.
+ * One Project's page: which one it is (its colour and name), what is known about it, then its
+ * Threads with their live state, the Projects inside it and, in a Company, the people in its
+ * Threads. All of it is read live, so a Thread someone else files here appears without a
+ * refresh. It says nothing the server does not: a Project has no purpose line, no "where it
+ * stands", no next step and no files of its own yet, so none is drawn. A Project the Person can
+ * no longer see says so instead of drawing an empty page under a stale name.
  */
 export function Project({ route }: NativeStackScreenProps<Routes, 'Project'>) {
   const data = useLiveData()
@@ -118,10 +129,8 @@ export function Project({ route }: NativeStackScreenProps<Routes, 'Project'>) {
   const gone = LiveState.$is('Ready')(list) && Option.isNone(project)
   return (
     <Screen>
-      <Header
-        title={Option.match(project, { onNone: () => 'Project', onSome: (value) => value.name })}
-        onBack={go.goBack}
-      />
+      {/* The bar is only the way back: the Project's name is the page's own first line. */}
+      <Header title="" onBack={go.goBack} />
       <ScrollView contentContainerStyle={[styles.page, styles.column]}>
         {gone && (
           <Empty line="This project is not here. It may be in a space you are not working in right now." />
@@ -136,67 +145,44 @@ export function Project({ route }: NativeStackScreenProps<Routes, 'Project'>) {
   )
 }
 
-/** What is in a Project: a way to start a Thread here, the Projects inside, and its Threads. */
-function Inside({ project, all }: { project: ProjectRecord; all: ReadonlyArray<ProjectRecord> }) {
-  const data = useLiveData()
-  const go = useGo()
-  const threads = useLiveValue(data.live.threads)
-  const [creating, setCreating] = useState(false)
-  const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
-  const inside = projects.projectsIn(all, project.id)
-  const filed = Option.match(threads, {
-    onNone: (): ReadonlyArray<Thread> => [],
-    onSome: (value) => projects.threadsIn(value, project.id),
-  })
-  const hidden = projects.hiddenThreads(project, filed)
-
-  /** Opens an empty Thread filed here; its first message gives it its name. */
-  async function begin() {
-    commit()
-    const id = ThreadId.make(randomUUID())
-    const result = await data.change((client) =>
-      client.CreateThread({ id, title: UNTITLED, projectId: project.id }),
+/** What a Thread's row says at its end: that it is waiting or being worked on, or when it moved. */
+function Standing({ thread, now }: { thread: Thread; now: number }) {
+  if (thread.attention === 'NeedsYou') {
+    return (
+      <Label size="caption" tone="status-attention" style={{ fontWeight: '600' }}>
+        Needs you
+      </Label>
     )
-    if (Result.isFailure(result)) {
-      setRefused(Option.some(result.failure.message))
-      return
-    }
-    go.navigate('Chat', { id })
   }
-
+  if (thread.attention === 'Working') {
+    return (
+      <Label size="caption" tone="status-working" style={{ fontWeight: '600' }}>
+        Working
+      </Label>
+    )
+  }
   return (
-    <>
-      {Option.isSome(refused) && <Notice message={refused.value} />}
-      <View style={styles.wrap}>
-        <Button
-          kind="primary"
-          icon={SquarePen}
-          label="New thread here"
-          onPress={() => void begin()}
-        />
-        <Button icon={Plus} label="Project inside" onPress={() => setCreating(true)} />
-      </View>
-      {inside.length > 0 && (
-        <Section title="Projects inside">
-          {inside.map((child) => (
-            <ProjectRow key={child.id} project={child} />
-          ))}
-        </Section>
-      )}
-      <Filed threads={filed} hidden={hidden} />
-      {creating && <Create parent={project.id} onClose={() => setCreating(false)} />}
-    </>
+    <Label size="caption" tone="ink-2" style={{ fontVariant: ['tabular-nums'] }}>
+      {relativeTime(thread.updatedAt, now)}
+    </Label>
   )
 }
 
 /** The Threads filed in a Project that this Person can open, and a count of the ones they cannot. */
-function Filed({ threads, hidden }: { threads: ReadonlyArray<Thread>; hidden: number }) {
+function Filed({
+  threads,
+  hidden,
+  now,
+}: {
+  threads: ReadonlyArray<Thread>
+  hidden: number
+  now: number
+}) {
   const go = useGo()
-  const now = useNow()
   if (threads.length === 0 && hidden === 0) {
     return (
       <Label size="label" tone="ink-2">
-        No threads are filed here yet.
+        No threads here yet. Start one and it is filed in this project.
       </Label>
     )
   }
@@ -207,14 +193,9 @@ function Filed({ threads, hidden }: { threads: ReadonlyArray<Thread>; hidden: nu
           {threads.map((thread) => (
             <Row
               key={thread.id}
-              leading={<Dot tone={thread.attention === 'Unread' ? 'accent' : 'line-4'} />}
               title={thread.title}
               detail={thread.preview.length > 0 ? thread.preview : undefined}
-              trailing={
-                <Label size="caption" tone="ink-2" style={{ fontVariant: ['tabular-nums'] }}>
-                  {relativeTime(thread.updatedAt, now)}
-                </Label>
-              }
+              trailing={<Standing thread={thread} now={now} />}
               onPress={() => go.navigate('Chat', { id: thread.id })}
             />
           ))}
@@ -222,9 +203,107 @@ function Filed({ threads, hidden }: { threads: ReadonlyArray<Thread>; hidden: nu
       )}
       {hidden > 0 && (
         <Label size="caption" tone="ink-2" style={{ paddingHorizontal: 4 }}>
-          {`${projects.countThreads(hidden)} here ${hidden === 1 ? 'is' : 'are'} private to other people.`}
+          {hidden === 1
+            ? '1 more thread here is not shared with you.'
+            : `${hidden} more threads here are not shared with you.`}
         </Label>
       )}
     </View>
+  )
+}
+
+/** Everything on a Project's page under the bar. */
+function Inside({ project, all }: { project: ProjectRecord; all: ReadonlyArray<ProjectRecord> }) {
+  const data = useLiveData()
+  const go = useGo()
+  const now = useNow()
+  const threads = useLiveValue(data.live.threads)
+  const [creating, setCreating] = useState(false)
+  const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
+  const inside = projects.projectsIn(all, project.id)
+  const mine = Option.match(threads, {
+    onNone: (): ReadonlyArray<Thread> => [],
+    onSome: (value) => value.threads,
+  })
+  const filed = projects.threadsIn({ threads: mine }, project.id)
+  const hidden = projects.hiddenThreads(project, filed)
+  const needing = projects.needingYou(mine, project.id)
+  const people = project.companyId === null ? [] : projects.peopleIn(filed)
+
+  /** Opens an empty Thread filed here; its first message gives it its name. */
+  async function begin() {
+    commit()
+    scope.enter(project.id)
+    const id = ThreadId.make(randomUUID())
+    const result = await data.change((client) =>
+      client.CreateThread({ id, title: UNTITLED, projectId: project.id }),
+    )
+    if (Result.isFailure(result)) {
+      setRefused(Option.some('Unable to start a thread here. Check your connection and try again.'))
+      return
+    }
+    go.navigate('Chat', { id })
+  }
+
+  return (
+    <>
+      <View style={{ gap: 6 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <Mark id={project.id} size={16} />
+          <Label accessibilityRole="header" size="title" style={{ flex: 1 }}>
+            {project.name}
+          </Label>
+        </View>
+        <Label size="label" tone="ink-2">
+          {projects.countThreads(project.threadCount).toLowerCase()}
+          {needing > 0 && (
+            <Label size="label" tone="status-attention" style={{ fontWeight: '600' }}>
+              {` · ${needing} ${needing === 1 ? 'needs' : 'need'} you`}
+            </Label>
+          )}
+          {` · moved ${relativeTime(project.updatedAt, now)}`}
+        </Label>
+      </View>
+      {Option.isSome(refused) && <Notice message={refused.value} />}
+      <View style={styles.wrap}>
+        <Button kind="primary" icon={SquarePen} label="New thread" onPress={() => void begin()} />
+        <Button icon={Plus} label="Project inside" onPress={() => setCreating(true)} />
+      </View>
+      <Filed threads={filed} hidden={hidden} now={now} />
+      {inside.length > 0 && (
+        <Section title="Inside this project">
+          {inside.map((child) => (
+            <ProjectRow
+              key={child.id}
+              project={child}
+              needing={projects.needingYou(mine, child.id)}
+            />
+          ))}
+        </Section>
+      )}
+      {people.length > 0 && (
+        // A Project has no members of its own on the server, so this is the people the Person
+        // can see in its Threads, and it is titled as that.
+        <Section title="People in these threads">
+          {people.map((person) => (
+            <Row
+              key={person.id}
+              leading={<Avatar name={person.name} image={person.image} size={28} />}
+              title={person.name}
+            />
+          ))}
+        </Section>
+      )}
+      {creating && (
+        <CreateProject
+          inside={project.id}
+          onMade={(made) => {
+            scope.enter(made.id)
+            go.push('Project', { id: made.id })
+          }}
+          onClose={() => setCreating(false)}
+        />
+      )}
+    </>
   )
 }

@@ -181,7 +181,7 @@ export function ThreadRow({
   // What the long-press menu can do, by the id the native menu reports back when one is chosen.
   const filing = Option.match(onFile, {
     onNone: () => [],
-    onSome: () => [{ id: 'file', title: 'Add to a project' }],
+    onSome: () => [{ id: 'file', title: 'Move to a project' }],
   })
   const chosen = new Map([
     ['rename', () => onRename(thread)],
