@@ -167,6 +167,9 @@ catalogs:
     '@alchemy.run/better-auth':
       specifier: 2.0.0-beta.79
       version: 2.0.0-beta.79
+    '@alchemy.run/frontend-frameworks':
+      specifier: 2.0.0-beta.79
+      version: 2.0.0-beta.79
     '@earendil-works/pi-ai':
       specifier: 0.87.1
       version: 0.87.1
@@ -245,6 +248,12 @@ catalogs:
     expo:
       specifier: 57.0.24
       version: 57.0.24
+    expo-blur:
+      specifier: 57.0.3
+      version: 57.0.3
+    expo-constants:
+      specifier: 57.0.19
+      version: 57.0.19
     expo-crypto:
       specifier: 57.0.3
       version: 57.0.3
@@ -257,6 +266,9 @@ catalogs:
     expo-file-system:
       specifier: 57.0.7
       version: 57.0.7
+    expo-glass-effect:
+      specifier: 57.0.3
+      version: 57.0.3
     expo-haptics:
       specifier: 57.0.3
       version: 57.0.3
@@ -339,6 +351,9 @@ importers:
 
   .:
     devDependencies:
+      '@alchemy.run/frontend-frameworks':
+        specifier: 'catalog:'
+        version: 2.0.0-beta.79(@types/node@24.13.6)(@vitejs/plugin-react@6.1.1(@rolldown/plugin-babel@0.2.3(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(rolldown@1.2.7)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(babel-plugin-react-compiler@1.0.0)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(effect@4.0.0-rc.116)(hono@4.13.8)(redis@6.2.1(@opentelemetry/api@1.9.0))(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
       '@effect/language-service':
         specifier: 0.87.2
         version: 0.87.2
@@ -359,7 +374,7 @@ importers:
         version: typescript@7.0.2
       alchemy:
         specifier: 'catalog:'
-        version: 2.0.0-beta.79(@effect/platform-node@4.0.0-rc.116(effect@4.0.0-rc.116)(redis@6.2.1(@opentelemetry/api@1.9.0)))(@effect/sql-pg@4.0.0-rc.116(effect@4.0.0-rc.116))(@types/node@24.13.6)(@types/react@19.2.18)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260919.1)(@effect/sql-d1@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-pg@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-sqlite-do@4.0.0-rc.116(effect@4.0.0-rc.116))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.0-rc.116)(pg@8.23.0)(typebox@1.3.7)(valibot@1.4.2(typescript@6.0.3))(zod@4.5.4))(effect@4.0.0-rc.116)(pg@8.23.0)(react-devtools-core@6.1.5)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(ws@8.21.3)
+        version: 2.0.0-beta.79(7e93cb1522e381c9922f162ce5b60636)
       effect:
         specifier: 4.0.0-rc.116
         version: 4.0.0-rc.116
@@ -469,6 +484,12 @@ importers:
       expo:
         specifier: 'catalog:'
         version: 57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3)
+      expo-blur:
+        specifier: 'catalog:'
+        version: 57.0.3(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
+      expo-constants:
+        specifier: 'catalog:'
+        version: 57.0.19(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(supports-color@8.1.1)
       expo-crypto:
         specifier: 'catalog:'
         version: 57.0.3(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3))
@@ -481,6 +502,9 @@ importers:
       expo-file-system:
         specifier: 'catalog:'
         version: 57.0.7(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))
+      expo-glass-effect:
+        specifier: 'catalog:'
+        version: 57.0.3(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
       expo-haptics:
         specifier: 'catalog:'
         version: 57.0.3(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3))
@@ -556,7 +580,7 @@ importers:
     dependencies:
       '@alchemy.run/better-auth':
         specifier: 'catalog:'
-        version: 2.0.0-beta.79(f12848b827da66f22052e1b4bfe1fb93)
+        version: 2.0.0-beta.79(768a87e82eed78507e48f49c40b0dd00)
       '@earendil-works/pi-codemode':
         specifier: 1.0.0
         version: 1.0.0
@@ -580,7 +604,7 @@ importers:
         version: link:../../packages/agent/skills
       alchemy:
         specifier: 'catalog:'
-        version: 2.0.0-beta.79(@effect/platform-node@4.0.0-rc.116(effect@4.0.0-rc.116)(redis@6.2.1(@opentelemetry/api@1.9.0)))(@effect/sql-pg@4.0.0-rc.116(effect@4.0.0-rc.116))(@types/node@24.13.6)(@types/react@19.2.18)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260919.1)(@effect/sql-d1@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-pg@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-sqlite-do@4.0.0-rc.116(effect@4.0.0-rc.116))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.0-rc.116)(pg@8.23.0)(typebox@1.3.7)(valibot@1.4.2(typescript@6.0.3))(zod@4.5.4))(effect@4.0.0-rc.116)(pg@8.23.0)(react-devtools-core@6.1.5)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(ws@8.21.3)
+        version: 2.0.0-beta.79(1c17036bc4317fe9cbca6a5050c6c8b3)
       better-auth:
         specifier: 'catalog:'
         version: 1.7.5(@opentelemetry/api@1.9.0)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260919.1)(@effect/sql-d1@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-pg@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-sqlite-do@4.0.0-rc.116(effect@4.0.0-rc.116))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.0-rc.116)(pg@8.23.0)(typebox@1.3.7)(valibot@1.4.2(typescript@6.0.3))(zod@4.5.4))(pg@8.23.0)(react-dom@19.2.6(react@19.3.0))(react@19.3.0)(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))
@@ -775,10 +799,10 @@ importers:
         version: 4.0.0-rc.116(effect@4.0.0-rc.116)(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))
       '@flue/cli':
         specifier: 'catalog:'
-        version: 2.2.2(@babel/plugin-transform-runtime@7.29.7(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20260919.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(@types/node@24.13.6)(esbuild@0.28.2)(hono@4.13.8)(jiti@2.7.0)(react@19.3.0)(rolldown@1.2.7)(supports-color@8.1.1)(terser@5.51.2)(tsx@4.23.13)(typescript@6.0.3)(ws@8.21.3)(yaml@2.9.0)(zod@4.5.4)
+        version: 2.2.2(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20260919.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(@types/node@24.13.6)(esbuild@0.28.2)(hono@4.13.8)(jiti@2.7.0)(react@19.3.0)(rolldown@1.2.7)(supports-color@8.1.1)(terser@5.51.2)(tsx@4.23.13)(typescript@6.0.3)(ws@8.21.3)(yaml@2.9.0)(zod@4.5.4)
       '@flue/vite':
         specifier: 'catalog:'
-        version: 2.2.2(@babel/plugin-transform-runtime@7.29.7(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20260919.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(hono@4.13.8)(react@19.3.0)(rolldown@1.2.7)(supports-color@8.1.1)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(ws@8.21.3)(zod@4.5.4)
+        version: 2.2.2(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20260919.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(hono@4.13.8)(react@19.3.0)(rolldown@1.2.7)(supports-color@8.1.1)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(ws@8.21.3)(zod@4.5.4)
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.6
@@ -818,7 +842,7 @@ importers:
         version: 4.0.0-rc.116(effect@4.0.0-rc.116)(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))
       '@flue/vite':
         specifier: 'catalog:'
-        version: 2.2.2(@babel/plugin-transform-runtime@7.29.7(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20260919.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(hono@4.13.8)(react@19.3.0)(rolldown@1.2.7)(supports-color@8.1.1)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(ws@8.21.3)(zod@4.5.4)
+        version: 2.2.2(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20260919.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(hono@4.13.8)(react@19.3.0)(rolldown@1.2.7)(supports-color@8.1.1)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(ws@8.21.3)(zod@4.5.4)
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.6
@@ -994,6 +1018,45 @@ packages:
     resolution: {integrity: sha512-Wd7DiDUhEep3APW3pix7gEHG0zZwzmE3y+twv5oiFKX8rBLhKOFCRluZ3xyx1ivIw1VpTFyE2PGLvJWwscX/Vw==}
     peerDependencies:
       effect: 4.0.0-rc.116
+
+  '@alchemy.run/frontend-frameworks@2.0.0-beta.79':
+    resolution: {integrity: sha512-9ytjDgA5u/IgiB7nVUDkevtdKmiYhIhJiolvMgSspWRzTrlSM5HQf5bq3W8lkrno4daBgEcZD3x0BzaR93kZdA==}
+    peerDependencies:
+      '@effect/platform-bun': '>=4.0.0-rc.115 || >=4.0.0'
+      '@octanejs/vite-plugin': '>=0.1.22'
+      '@opennextjs/cloudflare': 1.20.1
+      '@sveltejs/kit': '>=3.0.0-next.9'
+      '@vitejs/plugin-react': ^6.0.2
+      astro: ^7.0.0
+      effect: 4.0.0-rc.116
+      hono: ^4.12.14
+      nuxt: '>=4.5.0'
+      vite: ^7.0.0 || ^8.0.0
+      vocs: 2.8.2
+      waku: 1.0.0-beta.7
+    peerDependenciesMeta:
+      '@effect/platform-bun':
+        optional: true
+      '@octanejs/vite-plugin':
+        optional: true
+      '@opennextjs/cloudflare':
+        optional: true
+      '@sveltejs/kit':
+        optional: true
+      '@vitejs/plugin-react':
+        optional: true
+      astro:
+        optional: true
+      hono:
+        optional: true
+      nuxt:
+        optional: true
+      vite:
+        optional: true
+      vocs:
+        optional: true
+      waku:
+        optional: true
 
   '@alchemy.run/node-utils@2.0.0-beta.79':
     resolution: {integrity: sha512-2Qi3L+GBcNayAaOCo2dBTUTBszTOV2hFgX6rZkl73p//D8XFz/h6bb/Ka4NxBe+bfV7rp9JSZC6ZBBg2d+CJZw==}
@@ -5360,6 +5423,13 @@ packages:
       react: '*'
       react-native: '*'
 
+  expo-blur@57.0.3:
+    resolution: {integrity: sha512-uyBeJwxIuXzWXXNrnRub5pcF8VzQsiOz0VBTWDpMG2UztmaFyfAz6pI/GCwRtWpHhiOpLoJj79WLdg1GMB+9cg==}
+    peerDependencies:
+      expo: '*'
+      react: '*'
+      react-native: '*'
+
   expo-constants@57.0.19:
     resolution: {integrity: sha512-3eK1kZRwCdMizQLlM/PPlPwjaPnB5qKvdRDMBMnB1ZxmvWJBf9TB4uEO4DMMfIPaFUxYFs29dsR5fPr1gh3FTQ==}
     peerDependencies:
@@ -5406,6 +5476,13 @@ packages:
 
   expo-font@57.0.4:
     resolution: {integrity: sha512-7WOMC2oA6xCfOm8bbofqWn2bIqyWFm7YLEnpc/gA1MJH0Ll0TfT/3+CqRkoW2eNRWMS8sxrz5WukUmSvmNquHA==}
+    peerDependencies:
+      expo: '*'
+      react: '*'
+      react-native: '*'
+
+  expo-glass-effect@57.0.3:
+    resolution: {integrity: sha512-aTh2J5eCxf+rSRMBJTnP8Ib5/k8DYFVDuEX1xqesN9F9aqTXocwMv/aQRVBNUs/iogDWhHIJz2pN97IsrrTcoA==}
     peerDependencies:
       expo: '*'
       react: '*'
@@ -8280,9 +8357,9 @@ packages:
 
 snapshots:
 
-  '@alchemy.run/better-auth@2.0.0-beta.79(f12848b827da66f22052e1b4bfe1fb93)':
+  '@alchemy.run/better-auth@2.0.0-beta.79(768a87e82eed78507e48f49c40b0dd00)':
     dependencies:
-      alchemy: 2.0.0-beta.79(@effect/platform-node@4.0.0-rc.116(effect@4.0.0-rc.116)(redis@6.2.1(@opentelemetry/api@1.9.0)))(@effect/sql-pg@4.0.0-rc.116(effect@4.0.0-rc.116))(@types/node@24.13.6)(@types/react@19.2.18)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260919.1)(@effect/sql-d1@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-pg@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-sqlite-do@4.0.0-rc.116(effect@4.0.0-rc.116))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.0-rc.116)(pg@8.23.0)(typebox@1.3.7)(valibot@1.4.2(typescript@6.0.3))(zod@4.5.4))(effect@4.0.0-rc.116)(pg@8.23.0)(react-devtools-core@6.1.5)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(ws@8.21.3)
+      alchemy: 2.0.0-beta.79(1c17036bc4317fe9cbca6a5050c6c8b3)
       better-auth: 1.7.5(@opentelemetry/api@1.9.0)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260919.1)(@effect/sql-d1@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-pg@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-sqlite-do@4.0.0-rc.116(effect@4.0.0-rc.116))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.0-rc.116)(pg@8.23.0)(typebox@1.3.7)(valibot@1.4.2(typescript@6.0.3))(zod@4.5.4))(pg@8.23.0)(react-dom@19.2.6(react@19.3.0))(react@19.3.0)(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))
       effect: 4.0.0-rc.116
     optionalDependencies:
@@ -8318,6 +8395,27 @@ snapshots:
   '@alchemy.run/floci@2.0.0-beta.79(effect@4.0.0-rc.116)':
     dependencies:
       effect: 4.0.0-rc.116
+
+  '@alchemy.run/frontend-frameworks@2.0.0-beta.79(@types/node@24.13.6)(@vitejs/plugin-react@6.1.1(@rolldown/plugin-babel@0.2.3(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(rolldown@1.2.7)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(babel-plugin-react-compiler@1.0.0)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(effect@4.0.0-rc.116)(hono@4.13.8)(redis@6.2.1(@opentelemetry/api@1.9.0))(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))':
+    dependencies:
+      '@alchemy.run/cloudflare-runtime': 2.0.0-beta.79(@distilled.cloud/cloudflare@1.0.0-rc.12(effect@4.0.0-rc.116))(@effect/platform-node@4.0.0-rc.116(effect@4.0.0-rc.116)(redis@6.2.1(@opentelemetry/api@1.9.0)))(@types/node@24.13.6)(effect@4.0.0-rc.116)(rolldown@1.2.5)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
+      '@distilled.cloud/cloudflare': 1.0.0-rc.12(effect@4.0.0-rc.116)
+      '@effect/platform-node': 4.0.0-rc.116(effect@4.0.0-rc.116)(redis@6.2.1(@opentelemetry/api@1.9.0))
+      effect: 4.0.0-rc.116
+      esbuild: 0.28.2
+      rolldown: 1.2.5
+      tinyglobby: 0.2.17
+    optionalDependencies:
+      '@vitejs/plugin-react': 6.1.1(@rolldown/plugin-babel@0.2.3(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(rolldown@1.2.7)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(babel-plugin-react-compiler@1.0.0)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
+      hono: 4.13.8
+      vite: 8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)
+    transitivePeerDependencies:
+      - '@types/node'
+      - bufferutil
+      - proxy-agent
+      - redis
+      - typescript
+      - utf-8-validate
 
   '@alchemy.run/node-utils@2.0.0-beta.79':
     dependencies:
@@ -8628,12 +8726,13 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@babel/helper-create-class-features-plugin@8.0.1':
+  '@babel/helper-create-class-features-plugin@8.0.1(@babel/core@7.29.7(supports-color@8.1.1))':
     dependencies:
+      '@babel/core': 7.29.7(supports-color@8.1.1)
       '@babel/helper-annotate-as-pure': 8.0.0
       '@babel/helper-member-expression-to-functions': 8.0.0
       '@babel/helper-optimise-call-expression': 8.0.0
-      '@babel/helper-replace-supers': 8.0.1
+      '@babel/helper-replace-supers': 8.0.1(@babel/core@7.29.7(supports-color@8.1.1))
       '@babel/helper-skip-transparent-expression-wrappers': 8.0.0
       '@babel/traverse': 8.0.4
       semver: 7.8.5
@@ -8698,7 +8797,9 @@ snapshots:
 
   '@babel/helper-plugin-utils@7.29.7': {}
 
-  '@babel/helper-plugin-utils@8.0.1': {}
+  '@babel/helper-plugin-utils@8.0.1(@babel/core@7.29.7(supports-color@8.1.1))':
+    dependencies:
+      '@babel/core': 7.29.7(supports-color@8.1.1)
 
   '@babel/helper-remap-async-to-generator@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)':
     dependencies:
@@ -8718,8 +8819,9 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@babel/helper-replace-supers@8.0.1':
+  '@babel/helper-replace-supers@8.0.1(@babel/core@7.29.7(supports-color@8.1.1))':
     dependencies:
+      '@babel/core': 7.29.7(supports-color@8.1.1)
       '@babel/helper-member-expression-to-functions': 8.0.0
       '@babel/helper-optimise-call-expression': 8.0.0
       '@babel/traverse': 8.0.4
@@ -8776,11 +8878,12 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@babel/plugin-proposal-decorators@8.0.2':
+  '@babel/plugin-proposal-decorators@8.0.2(@babel/core@7.29.7(supports-color@8.1.1))':
     dependencies:
-      '@babel/helper-create-class-features-plugin': 8.0.1
-      '@babel/helper-plugin-utils': 8.0.1
-      '@babel/plugin-syntax-decorators': 8.0.1
+      '@babel/core': 7.29.7(supports-color@8.1.1)
+      '@babel/helper-create-class-features-plugin': 8.0.1(@babel/core@7.29.7(supports-color@8.1.1))
+      '@babel/helper-plugin-utils': 8.0.1(@babel/core@7.29.7(supports-color@8.1.1))
+      '@babel/plugin-syntax-decorators': 8.0.1(@babel/core@7.29.7(supports-color@8.1.1))
 
   '@babel/plugin-proposal-export-default-from@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))':
     dependencies:
@@ -8792,9 +8895,10 @@ snapshots:
       '@babel/core': 7.29.7(supports-color@8.1.1)
       '@babel/helper-plugin-utils': 7.29.7
 
-  '@babel/plugin-syntax-decorators@8.0.1':
+  '@babel/plugin-syntax-decorators@8.0.1(@babel/core@7.29.7(supports-color@8.1.1))':
     dependencies:
-      '@babel/helper-plugin-utils': 8.0.1
+      '@babel/core': 7.29.7(supports-color@8.1.1)
+      '@babel/helper-plugin-utils': 8.0.1(@babel/core@7.29.7(supports-color@8.1.1))
 
   '@babel/plugin-syntax-dynamic-import@7.8.3(@babel/core@7.29.7(supports-color@8.1.1))':
     dependencies:
@@ -10009,10 +10113,10 @@ snapshots:
       chalk: 4.1.2
       js-yaml: 4.3.2
 
-  '@flue/cli@2.2.2(@babel/plugin-transform-runtime@7.29.7(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20260919.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(@types/node@24.13.6)(esbuild@0.28.2)(hono@4.13.8)(jiti@2.7.0)(react@19.3.0)(rolldown@1.2.7)(supports-color@8.1.1)(terser@5.51.2)(tsx@4.23.13)(typescript@6.0.3)(ws@8.21.3)(yaml@2.9.0)(zod@4.5.4)':
+  '@flue/cli@2.2.2(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20260919.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(@types/node@24.13.6)(esbuild@0.28.2)(hono@4.13.8)(jiti@2.7.0)(react@19.3.0)(rolldown@1.2.7)(supports-color@8.1.1)(terser@5.51.2)(tsx@4.23.13)(typescript@6.0.3)(ws@8.21.3)(yaml@2.9.0)(zod@4.5.4)':
     dependencies:
       '@flue/runtime': 2.2.2(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)
-      '@flue/vite': 2.2.2(@babel/plugin-transform-runtime@7.29.7(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20260919.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(hono@4.13.8)(react@19.3.0)(rolldown@1.2.7)(supports-color@8.1.1)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(ws@8.21.3)(zod@4.5.4)
+      '@flue/vite': 2.2.2(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20260919.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(hono@4.13.8)(react@19.3.0)(rolldown@1.2.7)(supports-color@8.1.1)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(ws@8.21.3)(zod@4.5.4)
       '@vercel/detect-agent': 1.2.5
       cac: 7.0.0
       minisearch: 7.2.0
@@ -10102,11 +10206,11 @@ snapshots:
     dependencies:
       '@durable-streams/client': 0.2.6
 
-  '@flue/vite@2.2.2(@babel/plugin-transform-runtime@7.29.7(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20260919.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(hono@4.13.8)(react@19.3.0)(rolldown@1.2.7)(supports-color@8.1.1)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(ws@8.21.3)(zod@4.5.4)':
+  '@flue/vite@2.2.2(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20260919.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(hono@4.13.8)(react@19.3.0)(rolldown@1.2.7)(supports-color@8.1.1)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(ws@8.21.3)(zod@4.5.4)':
     dependencies:
       '@flue/runtime': 2.2.2(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(supports-color@8.1.1)(typescript@6.0.3)(ws@8.21.3)(zod@4.5.4)
       '@hono/node-server': 2.1.1(hono@4.13.8)
-      agents: 0.20.1(@babel/plugin-transform-runtime@7.29.7(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20260919.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(react@19.3.0)(rolldown@1.2.7)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(zod@4.5.4)
+      agents: 0.20.1(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20260919.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(react@19.3.0)(rolldown@1.2.7)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(zod@4.5.4)
       magic-string: 1.2.3
       tinyglobby: 0.2.17
       ulidx: 2.4.1
@@ -11586,9 +11690,9 @@ snapshots:
 
   agent-cli-detector@0.1.7: {}
 
-  agents@0.20.1(@babel/plugin-transform-runtime@7.29.7(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20260919.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(react@19.3.0)(rolldown@1.2.7)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(zod@4.5.4):
+  agents@0.20.1(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(@cloudflare/workers-types@5.20260919.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(react@19.3.0)(rolldown@1.2.7)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(zod@4.5.4):
     dependencies:
-      '@babel/plugin-proposal-decorators': 8.0.2
+      '@babel/plugin-proposal-decorators': 8.0.2(@babel/core@7.29.7(supports-color@8.1.1))
       '@cfworker/json-schema': 4.1.1
       '@modelcontextprotocol/client': 2.0.0
       '@modelcontextprotocol/sdk': 1.30.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(zod@4.5.4)
@@ -11624,7 +11728,7 @@ snapshots:
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
-  alchemy@2.0.0-beta.79(@effect/platform-node@4.0.0-rc.116(effect@4.0.0-rc.116)(redis@6.2.1(@opentelemetry/api@1.9.0)))(@effect/sql-pg@4.0.0-rc.116(effect@4.0.0-rc.116))(@types/node@24.13.6)(@types/react@19.2.18)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260919.1)(@effect/sql-d1@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-pg@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-sqlite-do@4.0.0-rc.116(effect@4.0.0-rc.116))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.0-rc.116)(pg@8.23.0)(typebox@1.3.7)(valibot@1.4.2(typescript@6.0.3))(zod@4.5.4))(effect@4.0.0-rc.116)(pg@8.23.0)(react-devtools-core@6.1.5)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(ws@8.21.3):
+  alchemy@2.0.0-beta.79(1c17036bc4317fe9cbca6a5050c6c8b3):
     dependencies:
       '@alchemy.run/cloudflare-runtime': 2.0.0-beta.79(@distilled.cloud/cloudflare@1.0.0-rc.12(effect@4.0.0-rc.116))(@effect/platform-node@4.0.0-rc.116(effect@4.0.0-rc.116)(redis@6.2.1(@opentelemetry/api@1.9.0)))(@types/node@24.13.6)(effect@4.0.0-rc.116)(rolldown@1.2.5)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
       '@alchemy.run/floci': 2.0.0-beta.79(effect@4.0.0-rc.116)
@@ -11662,10 +11766,67 @@ snapshots:
       undici: 7.29.1
       yaml: 2.9.0
     optionalDependencies:
+      '@alchemy.run/frontend-frameworks': 2.0.0-beta.79(@types/node@24.13.6)(@vitejs/plugin-react@6.1.1(@rolldown/plugin-babel@0.2.3(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(rolldown@1.2.7)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(babel-plugin-react-compiler@1.0.0)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(effect@4.0.0-rc.116)(hono@4.13.8)(redis@6.2.1(@opentelemetry/api@1.9.0))(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
       '@effect/platform-node': 4.0.0-rc.116(effect@4.0.0-rc.116)(redis@6.2.1(@opentelemetry/api@1.9.0))
       '@effect/sql-pg': 4.0.0-rc.116(effect@4.0.0-rc.116)
       drizzle-kit: 1.0.0-rc.5-ab785fc
       drizzle-orm: 1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260919.1)(@effect/sql-d1@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-pg@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-sqlite-do@4.0.0-rc.116(effect@4.0.0-rc.116))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.0-rc.116)(pg@8.23.0)(typebox@1.3.7)(valibot@1.4.2(typescript@6.0.3))(zod@4.5.4)
+      pg: 8.23.0
+      vite: 8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)
+      ws: 8.21.3
+    transitivePeerDependencies:
+      - '@types/node'
+      - '@types/react'
+      - bufferutil
+      - proxy-agent
+      - react-devtools-core
+      - typescript
+      - utf-8-validate
+      - vitest
+
+  alchemy@2.0.0-beta.79(7e93cb1522e381c9922f162ce5b60636):
+    dependencies:
+      '@alchemy.run/cloudflare-runtime': 2.0.0-beta.79(@distilled.cloud/cloudflare@1.0.0-rc.12(effect@4.0.0-rc.116))(@effect/platform-node@4.0.0-rc.116(effect@4.0.0-rc.116)(redis@6.2.1(@opentelemetry/api@1.9.0)))(@types/node@24.13.6)(effect@4.0.0-rc.116)(rolldown@1.2.5)(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
+      '@alchemy.run/floci': 2.0.0-beta.79(effect@4.0.0-rc.116)
+      '@alchemy.run/node-utils': 2.0.0-beta.79
+      '@alchemy.run/sigil': 0.0.0-alpha.11(@types/react@19.2.18)(react-devtools-core@6.1.5)
+      '@aws-sdk/credential-providers': 3.1127.0
+      '@distilled.cloud/aws': 1.0.0-rc.12(effect@4.0.0-rc.116)
+      '@distilled.cloud/axiom': 1.0.0-rc.12(effect@4.0.0-rc.116)
+      '@distilled.cloud/cloudflare': 1.0.0-rc.12(effect@4.0.0-rc.116)
+      '@distilled.cloud/core': 1.0.0-rc.12(effect@4.0.0-rc.116)
+      '@distilled.cloud/fly-io': 1.0.0-rc.12(effect@4.0.0-rc.116)
+      '@distilled.cloud/hetzner': 1.0.0-rc.12(effect@4.0.0-rc.116)
+      '@distilled.cloud/neon': 1.0.0-rc.12(effect@4.0.0-rc.116)
+      '@distilled.cloud/planetscale': 1.0.0-rc.12(effect@4.0.0-rc.116)
+      '@distilled.cloud/prisma': 1.0.0-rc.12(effect@4.0.0-rc.116)
+      '@distilled.cloud/railway': 1.0.0-rc.12(effect@4.0.0-rc.116)
+      '@distilled.cloud/stripe': 1.0.0-rc.12(effect@4.0.0-rc.116)
+      '@effect/sql-d1': 4.0.0-rc.116(effect@4.0.0-rc.116)
+      '@effect/sql-sqlite-do': 4.0.0-rc.116(effect@4.0.0-rc.116)
+      '@effect/vitest': 4.0.0-rc.116(effect@4.0.0-rc.116)(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))
+      '@libsql/client': 0.17.4
+      '@octokit/rest': 22.0.1
+      '@octokit/webhooks': 14.2.0
+      '@prisma/dev': 0.20.0(typescript@6.0.3)
+      '@types/aws-lambda': 8.10.163
+      aws4fetch: 1.0.20
+      capnweb: 0.12.0
+      effect: 4.0.0-rc.116
+      fflate: 0.8.3
+      libsodium-wrappers: 0.8.4
+      pathe: 2.0.3
+      picomatch: 4.0.7
+      rolldown: 1.2.5
+      tinyglobby: 0.2.17
+      undici: 7.29.1
+      yaml: 2.9.0
+    optionalDependencies:
+      '@alchemy.run/frontend-frameworks': 2.0.0-beta.79(@types/node@24.13.6)(@vitejs/plugin-react@6.1.1(@rolldown/plugin-babel@0.2.3(@babel/core@7.29.7(supports-color@8.1.1))(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@babel/runtime@7.29.7)(rolldown@1.2.7)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(babel-plugin-react-compiler@1.0.0)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))(effect@4.0.0-rc.116)(hono@4.13.8)(redis@6.2.1(@opentelemetry/api@1.9.0))(typescript@6.0.3)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
+      '@effect/platform-node': 4.0.0-rc.116(effect@4.0.0-rc.116)(redis@6.2.1(@opentelemetry/api@1.9.0))
+      '@effect/sql-pg': 4.0.0-rc.116(effect@4.0.0-rc.116)
+      drizzle-kit: 1.0.0-rc.5-ab785fc
+      drizzle-orm: 1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260919.1)(@effect/sql-d1@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-pg@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-sqlite-do@4.0.0-rc.116(effect@4.0.0-rc.116))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.0-rc.116)(pg@8.23.0)(typebox@1.3.27)(valibot@1.5.0(typescript@6.0.3))(zod@4.5.4)
       pg: 8.23.0
       vite: 8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)
       ws: 8.21.3
@@ -12434,6 +12595,23 @@ snapshots:
       get-tsconfig: 4.14.3
       jiti: 2.7.0
 
+  drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260919.1)(@effect/sql-d1@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-pg@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-sqlite-do@4.0.0-rc.116(effect@4.0.0-rc.116))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.0-rc.116)(pg@8.23.0)(typebox@1.3.27)(valibot@1.5.0(typescript@6.0.3))(zod@4.5.4):
+    optionalDependencies:
+      '@cloudflare/workers-types': 5.20260919.1
+      '@effect/sql-d1': 4.0.0-rc.116(effect@4.0.0-rc.116)
+      '@effect/sql-pg': 4.0.0-rc.116(effect@4.0.0-rc.116)
+      '@effect/sql-sqlite-do': 4.0.0-rc.116(effect@4.0.0-rc.116)
+      '@electric-sql/pglite': 0.3.15
+      '@libsql/client': 0.17.4
+      '@opentelemetry/api': 1.9.0
+      '@types/pg': 8.23.1
+      effect: 4.0.0-rc.116
+      pg: 8.23.0
+      typebox: 1.3.27
+      valibot: 1.5.0(typescript@6.0.3)
+      zod: 4.5.4
+    optional: true
+
   drizzle-orm@1.0.0-rc.5-ab785fc(@cloudflare/workers-types@5.20260919.1)(@effect/sql-d1@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-pg@4.0.0-rc.116(effect@4.0.0-rc.116))(@effect/sql-sqlite-do@4.0.0-rc.116(effect@4.0.0-rc.116))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.23.1)(effect@4.0.0-rc.116)(pg@8.23.0)(typebox@1.3.7)(valibot@1.4.2(typescript@6.0.3))(zod@4.5.4):
     optionalDependencies:
       '@cloudflare/workers-types': 5.20260919.1
@@ -12701,6 +12879,12 @@ snapshots:
       - supports-color
       - typescript
 
+  expo-blur@57.0.3(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3):
+    dependencies:
+      expo: 57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3)
+      react: 19.2.3
+      react-native: 0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1)
+
   expo-constants@57.0.19(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(supports-color@8.1.1):
     dependencies:
       '@expo/env': 2.4.3(supports-color@8.1.1)
@@ -12755,6 +12939,12 @@ snapshots:
     dependencies:
       expo: 57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3)
       fontfaceobserver: 2.3.0
+      react: 19.2.3
+      react-native: 0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1)
+
+  expo-glass-effect@57.0.3(expo@57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3):
+    dependencies:
+      expo: 57.0.24(@babel/core@7.29.7(supports-color@8.1.1))(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3)
       react: 19.2.3
       react-native: 0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1)
 

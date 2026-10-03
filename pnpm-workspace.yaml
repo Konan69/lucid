@@ -32,6 +32,7 @@ pmOnFail: error
 # catalog: so Effect/Drizzle/Flue/native TypeScript cannot drift by package.
 catalog:
   '@alchemy.run/better-auth': 2.0.0-beta.79
+  '@alchemy.run/frontend-frameworks': 2.0.0-beta.79
   '@earendil-works/pi-ai': 0.87.1
   '@effect/atom-react': 4.0.0-rc.116
   '@effect/platform-node': 4.0.0-rc.116
@@ -63,10 +64,13 @@ catalog:
   electron-builder-squirrel-windows: 26.15.3
   esbuild: 0.28.2
   expo: 57.0.24
+  expo-blur: 57.0.3
+  expo-constants: 57.0.19
   expo-crypto: 57.0.3
   expo-dev-client: 57.0.19
   expo-document-picker: 57.0.2
   expo-file-system: 57.0.7
+  expo-glass-effect: 57.0.3
   expo-haptics: 57.0.3
   expo-secure-store: 57.0.4
   expo-sharing: 57.0.21

@@ -40,6 +40,7 @@
     "@shadcn/lint": "0.1.1",
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
+    "@alchemy.run/frontend-frameworks": "catalog:",
     "alchemy": "catalog:",
     "effect": "catalog:",
     "husky": "9.1.7",
