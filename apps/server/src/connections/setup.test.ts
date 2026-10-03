@@ -11,15 +11,14 @@ import * as NetAddress from 'effect/unstable/net/NetAddress'
 import { Executor, executorLayer, connectionSetupMessage } from './executor.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { connectionHandlers } from './handlers.ts'
-import { connectionTestLayer, fixture } from './testing.ts'
+import { connectionTestLayer, fixture, hostedOrganization, hostedPrefix } from './testing.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 
 const calendar = {
   id: 'curated/google-calendar',
-  kind: 'openapi',
+  kind: 'app',
   name: 'Google Calendar',
   description: 'Manage Google calendars',
-  connectUrl: 'https://integrations.sh/specs/google/google-calendar.json',
 }
 
 /** Only catalogue HTTP is simulated: decoding, retained availability and connection guards
@@ -32,8 +31,8 @@ const remote = Effect.fn('ConnectionsSetupTest.remote')(function* () {
   })
   const handler = Effect.fn('ConnectionsSetupTest.http')(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
-    yield* Ref.update(requests, (items) => [...items, request.url])
-    if (request.url.startsWith('/dashboard/api/catalog?'))
+    yield* Ref.update(requests, (items) => [...items, `${request.method} ${request.url}`])
+    if (request.method === 'GET' && request.url === `${hostedPrefix}/catalog`)
       return HttpServerResponse.jsonUnsafe([
         calendar,
         { ...calendar, id: 'curated/google-gmail', name: 'Gmail', description: 'Gmail REST API' },
@@ -66,6 +65,7 @@ const remote = Effect.fn('ConnectionsSetupTest.remote')(function* () {
         ConfigProvider.fromUnknown({
           VIVID_EXECUTOR_URL: url.href.replace(/\/$/u, ''),
           VIVID_EXECUTOR_KEY: 'isolated-test-key',
+          VIVID_EXECUTOR_ORGANIZATION: hostedOrganization,
         }),
       ),
     ),
@@ -88,7 +88,7 @@ it.effect('lists missing and unknown authentication as setup required through Ex
       ])
       expect(entries[4]).toHaveProperty('authorization._tag', 'None')
       expect(
-        (yield* Ref.get(http.requests)).every((path) => path.startsWith('/dashboard/api/catalog?')),
+        (yield* Ref.get(http.requests)).every((path) => path === `GET ${hostedPrefix}/catalog`),
       ).toBe(true)
     }).pipe(Effect.provide(http.configured))
   }).pipe(Effect.scoped),
@@ -127,7 +127,7 @@ describe.skipIf(!testDatabaseConfigured)('setup-required public discovery', () =
           expect(error.message).toBe(connectionSetupMessage)
           expect(
             (yield* Ref.get(http.requests)).every((path) =>
-              path.startsWith('/dashboard/api/catalog?'),
+              path === `GET ${hostedPrefix}/catalog`,
             ),
           ).toBe(true)
         }).pipe(Effect.provide(store, { local: true }), Effect.provideService(AuthContext, auth))
