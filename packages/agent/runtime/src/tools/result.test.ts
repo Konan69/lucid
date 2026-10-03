@@ -8,7 +8,6 @@ import {
   InvalidRequest,
   NotFound,
   NoDeviceConnected,
-  PersonId,
   RuntimeUnavailable,
   ServiceUnavailable,
   Unauthenticated,
@@ -73,17 +72,13 @@ describe('output limits', () => {
 })
 
 describe('RPC result boundary', () => {
-  it.effect('reports a missing desktop plainly without exposing its Person identifier', () =>
+  it.effect('tells the model the Person’s computer is not connected', () =>
     Effect.gen(function* () {
-      const result = yield* settle(
-        Effect.fail(new NoDeviceConnected({ personId: PersonId.make('private-person-identity') })),
-        'browse',
-      )
+      const result = yield* settle(Effect.fail(new NoDeviceConnected({})), 'browse')
       expect(result.output).toEqual({
         ok: false,
-        message: 'Your desktop app is not connected. Open it to use your browser.',
+        message: 'The Person’s computer is not connected.',
       })
-      expect(JSON.stringify(result)).not.toContain('private-person-identity')
     }),
   )
 

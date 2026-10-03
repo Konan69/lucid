@@ -115,8 +115,7 @@ export const settle = Effect.fn('Tools.settle')(function* (
       return warnFailure(tool, tag)
     }),
     Effect.catchTags({
-      NoDeviceConnected: () =>
-        failure('Your desktop app is not connected. Open it to use your browser.'),
+      NoDeviceConnected: () => failure('The Person’s computer is not connected.'),
       NameMissing: ({ name }) => failure(`Nothing here is called “${name}”; list them again.`),
       NameAmbiguous: ({ name, matches }) =>
         failure(`More than one match for “${name}”: ${matches.join(', ')}; list them again.`),
