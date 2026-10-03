@@ -11,6 +11,16 @@ import { procedure as outcome } from './outcome.ts'
 import { procedure as watch } from './watch.ts'
 import { procedure as preferences } from './preferences.ts'
 import { procedure as learn } from './learn.ts'
+import { procedure as document } from './document.ts'
+import { procedure as check } from './check.ts'
+import { procedure as wide } from './wide.ts'
+import { procedure as travel } from './travel.ts'
+import { procedure as shopping } from './shopping.ts'
+import { procedure as places } from './places.ts'
+import { procedure as booking } from './booking.ts'
+import { procedure as forgetting } from './forget.ts'
+import { procedure as abilities } from './self.ts'
+import { procedure as images } from './images.ts'
 
 /** The release date is version evidence, independent of any Person or database row. */
 const releasedAt = Date.UTC(2026, 9, 2)
@@ -27,6 +37,16 @@ export const procedures = [
   watch,
   preferences,
   learn,
+  document,
+  check,
+  wide,
+  travel,
+  shopping,
+  places,
+  booking,
+  forgetting,
+  abilities,
+  images,
 ]
 
 /** Deterministic shipped identities are private lookup handles; runtime views project only words. */

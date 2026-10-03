@@ -18,6 +18,8 @@ import {
   computerDefinitions,
   desktopModelTool,
 } from '../../../../../packages/agent/runtime/src/tools/computer.ts'
+import { documentTools } from '../../../../../packages/agent/runtime/src/tools/documents.ts'
+import { showTools } from '../../../../../packages/agent/runtime/src/tools/show.ts'
 import { codeTools } from '../../../../../packages/agent/runtime/src/tools/code.ts'
 import type { RunTool } from '../../../../../packages/agent/runtime/src/tools/scope.ts'
 import * as views from '../../../../../packages/agent/runtime/src/tools/views.ts'
@@ -37,6 +39,8 @@ const registered = new Set(
     ...computerDefinitions(runner),
     desktopModelTool(runner),
     ...codeTools(runner),
+    ...documentTools(runner),
+    ...showTools(),
   ].map((tool) => tool.name),
 )
 
@@ -54,7 +58,7 @@ const connection = (serviceName: string, state: ConnectionState) =>
 
 describe('shipped procedure catalogue', () => {
   it('uses registered tools, bounds instructions and projects no record handles', () => {
-    expect(procedures).toHaveLength(12)
+    expect(procedures).toHaveLength(22)
     for (const procedure of procedures) {
       expect(procedure.about).not.toMatch(/the Person|^When\b|`/iu)
       expect(procedure.about.length).toBeLessThanOrEqual(300)
