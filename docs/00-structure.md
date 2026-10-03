@@ -7,15 +7,16 @@ before adding a file. Extend it in the same change that adds a directory.
 
 1. **One word per file and per directory.** The directory carries the context:
    `agent/runtime`, never `agent-runtime`; `routines/store.ts`, never `routine-store.ts`. Components are
-   one PascalCase word (`connector/Card.tsx`). Allowed suffixes: `.test.ts(x)`, `.live.test.ts`,
+   one PascalCase word (`integration/Card.tsx`). Allowed suffixes: `.test.ts(x)`, `.live.test.ts`,
    `.server.ts`, the React Native platform suffixes, and tool configs that a tool names for us.
 2. **Group what changes together.** A group directory (`agent/`, `design/`, `client/`) exists
    because its members share a reason to change, not because there are two of them yet.
 3. **Backend logic lives in `apps/server`, by domain.** A package exists only for code that more
    than one app imports. Nothing in `packages/` owns a database table or a scheduler.
-4. **One declaration per boundary.** Wire types, the RPC group and the HTTP API are declared once
-   in `packages/contracts`; every client is derived. No app hand-writes a path, a response type or
-   a copy of a domain type.
+4. **One declaration per boundary.** Wire schemas and `VividRpc` are declared once
+   in `packages/contracts`; RPC clients are derived in `packages/client/rpc`. Plain HTTP adapters
+   live in the server and their owning domains; there is no `VividApi` declaration today. Do not
+   duplicate domain types or add untyped requests.
 5. **No `utils`, `helpers`, `common`, `shared`, `misc` or `lib` dumping grounds.** Name the thing.
 6. **Every domain directory holds one `README.md` that is true.** While a directory is only
    scaffolded it says what belongs there, which document defines it, and that it is not built.
@@ -29,8 +30,8 @@ before adding a file. Extend it in the same change that adds a directory.
 `konsistent.json`, and `.husky/pre-push` runs it on every push. It fails on a multi-word source
 file or package directory, on a `utils`/`helpers`/`common`/`shared`/`misc` module, on a server
 `handlers.ts` that imports Drizzle, and on a server `store.ts` that imports an HTTP or RPC module.
-The `!` entries in `konsistent.json` are the consolidations still owed below; delete each exception
-in the change that pays it. Add a convention here whenever this document gains a rule a machine
+`konsistent.json` currently has no source-consolidation exceptions; its `!` entries only exclude
+package dependency directories from the package-name rule. Add a convention here whenever this document gains a rule a machine
 can check.
 
 ## The tree
@@ -42,17 +43,16 @@ apps/
   web/        ● Vite + React. Person-facing surface.
   mobile/     ● Expo. Same surface, native.
   desktop/    ● Electron shell around the web renderer.
-  server/     ◐ The application server. ALL product logic. See "Server" below.
+  server/     ● The application server. ALL product logic. See "Server" below.
 
 packages/
   contracts/  ● The only declaration of every boundary.
-    src/api.ts        ● VividApi — the plain-HTTP surface
     src/rpc.ts        ● VividRpc — every product call
     src/<domain>.ts   ● wire schemas, one file per domain
 
   client/             what every app needs to talk to the server
-    rpc/      ● derived VividRpc + VividApi clients
-    state/    ● the pure view logic every surface shares (lanes, steps, cards, wording)
+    rpc/      ● derived VividRpc clients over HTTP and WebSocket
+    state/    ● shared view logic, live cache, subscriptions and optimistic writes
 
   agent/              everything that is Vivid-the-model rather than Vivid-the-product
     runtime/  ● Flue: conversation transport, history, model adapter
@@ -68,7 +68,7 @@ packages/
     motion/   ○ shared durations, curves and spring values
 
   computer/           the Person's machine (docs/04-computer.md)
-    state/    ◐ manifest, capture, restore, archive
+    state/    ● manifest, capture, restore, archive; external state sync remains planned
     machine/  ○ nothing here; the provider boundary is built in apps/server/src/computers
     desktop/  ○ nothing here; viewing is built in the server and the apps, take-over is not built
     device/   ○ the local daemon on the Person's own computer: permissioned exec, copy in and out
@@ -86,7 +86,7 @@ rule; `store.ts` holds no HTTP or RPC type.
 
 ```
 main.ts  config.ts
-database/  auth/  http/  rpc/  runtime/          shared infrastructure; never imports a domain
+database/  auth/  http/  rpc/  runtime/          infrastructure and composition adapters
 
 people/         ○ Person profile and preferences (not built)             docs/12
 companies/      ● Company, Membership, invitation                        docs/12, 22
@@ -112,8 +112,10 @@ settings/       ● theme and per-Person settings                          docs/
 audit/          ● the append-only record of consequential actions        docs/22
 ```
 
-Each built domain is `tables.ts` · `store.ts` · `handlers.ts` · `<name>.test.ts`, plus named files
-for real sub-concerns (`routines/scheduler.ts`, `library/ingest.ts`).
+Most persisted domains use `tables.ts` · `store.ts` · `handlers.ts` and behavior tests. Provider
+and projection domains contain only their actual concerns; schedulers and ingestion have named
+modules (`routines/scheduler.ts`, `library/ingest.ts`). Composition adapters may import domain
+Layers and handlers; domain-to-domain calls go through exported services.
 
 ## Apps
 
@@ -122,5 +124,5 @@ Web, mobile and desktop use the same three layers, so a feature lands in the sam
 ```
 screen/<Name>.tsx     one route or pane; composes ui, owns no request
 ui/<group>/<Name>.tsx presentational components; no data access
-data/<domain>.ts      programs over @vivid/client for one domain; no JSX
+data/<domain>.ts      programs over @vivid/client-runtime for one domain; no JSX
 ```
