@@ -49,7 +49,7 @@ export function Sheet({
         <View
           style={{
             flex: 1,
-            backgroundColor: c['surface-0'],
+            backgroundColor: c.screen,
             paddingTop: Platform.OS === 'ios' && presentation === 'pageSheet' ? 8 : insets.top,
             paddingBottom: keyboard ? 0 : insets.bottom,
           }}
@@ -65,7 +65,7 @@ export function Sheet({
           >
             <View style={{ flex: 1 }}>
               {title !== undefined && (
-                <Label accessibilityRole="header" numberOfLines={1} size="headline">
+                <Label accessibilityRole="header" numberOfLines={1} size="heading">
                   {title}
                 </Label>
               )}
@@ -74,7 +74,7 @@ export function Sheet({
           </View>
           <SheetBody content={content}>
             {detail !== undefined && (
-              <Label size="label" tone="ink-3">
+              <Label size="label" tone="ink-2">
                 {detail}
               </Label>
             )}
@@ -166,6 +166,7 @@ export function NameSheet({
       </Labelled>
       {Option.isSome(refused) && <Notice message={refused.value} />}
       <Button
+        morph
         kind="primary"
         label={busy ? 'One moment…' : action}
         disabled={busy || text.length === 0}

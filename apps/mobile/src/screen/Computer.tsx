@@ -9,7 +9,7 @@ import { commit } from '../data/haptics'
 import { LiveState, useLive, useLiveData, type LiveData } from '../data/live'
 import { useTheme } from '../theme'
 import { Header, Screen } from '../ui/Header'
-import { Button, Dot, Face, HAIRLINE, Label, Notice, radius, styles } from '../ui/ui'
+import { Button, Dot, EDGE, Face, Label, Notice, radius, styles } from '../ui/ui'
 import { useGo } from '../workspace'
 
 /**
@@ -136,9 +136,9 @@ function Said({
           alignItems: 'center',
           justifyContent: 'center',
           borderRadius: radius.panel,
-          borderWidth: HAIRLINE,
-          borderColor: c['line-2'],
-          backgroundColor: c['surface-well'],
+          borderWidth: EDGE,
+          borderColor: c.border,
+          backgroundColor: c['md-code-bg'],
         }}
       >
         {on && (
@@ -164,7 +164,7 @@ function Said({
         <Label accessibilityRole="header" size="title" style={{ fontWeight: '600' }}>
           {title}
         </Label>
-        <Label tone="ink-3">{detail}</Label>
+        <Label tone="ink-2">{detail}</Label>
       </View>
     </>
   )
@@ -201,7 +201,7 @@ function Machine({ computer }: { computer: ComputerRecord }) {
     <>
       <Said mood={standing.mood} on={running} title={standing.title} detail={standing.detail} />
       {running && (
-        <Label size="label" tone="ink-3" style={{ paddingHorizontal: 4 }}>
+        <Label size="label" tone="ink-2" style={{ paddingHorizontal: 4 }}>
           Its screen is not shown on the phone. Open Vivid in a browser to watch it.
         </Label>
       )}

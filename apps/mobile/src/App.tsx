@@ -123,7 +123,7 @@ function Quiet({ mood }: { mood: 'neutral' | 'thinking' }) {
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: c['surface-0'],
+        backgroundColor: c.screen,
       }}
     >
       <Face size={44} mood={mood} />
@@ -154,7 +154,7 @@ function Connecting() {
         justifyContent: 'center',
         gap: 10,
         paddingHorizontal: GUTTER + 12,
-        backgroundColor: c['surface-0'],
+        backgroundColor: c.screen,
       }}
     >
       <Face size={44} mood="thinking" />
@@ -187,7 +187,7 @@ function Stopped({ message }: { message: string }) {
         justifyContent: 'center',
         gap: 10,
         paddingHorizontal: GUTTER + 12,
-        backgroundColor: c['surface-0'],
+        backgroundColor: c.screen,
       }}
     >
       <Label size="headline" style={{ textAlign: 'center' }}>

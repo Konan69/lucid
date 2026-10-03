@@ -18,7 +18,7 @@ import { useLiveData, useLiveValue } from '../../data/live'
 import { connectionsAddress } from '../../data/server'
 import { useTheme } from '../../theme'
 import { ServiceMark } from '../../ui/Mark'
-import { Button, HAIRLINE, Label, Notice, radius } from '../../ui/ui'
+import { Button, EDGE, Label, Notice, radius } from '../../ui/ui'
 import { EnterKey } from './Key'
 
 /**
@@ -66,9 +66,9 @@ export function IntegrationCard({
         padding: 12,
         gap: 12,
         borderRadius: radius.card,
-        borderWidth: HAIRLINE,
-        borderColor: c['line-3'],
-        backgroundColor: c['surface-2'],
+        borderWidth: EDGE,
+        borderColor: c.border,
+        backgroundColor: c.subtle,
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
@@ -77,7 +77,7 @@ export function IntegrationCard({
           <Label numberOfLines={1} size="footnote">
             {request.serviceName}
           </Label>
-          <Label size="label" tone="ink-3">
+          <Label size="label" tone="ink-2">
             {request.reason}
           </Label>
         </View>
@@ -257,7 +257,7 @@ function SignIn({
         onPress={() => void leave()}
       />
       {Trip.$is('Unfinished')(trip) && (
-        <Label size="label" tone="ink-3">
+        <Label size="label" tone="ink-2">
           {name} is not signed in yet.
         </Label>
       )}

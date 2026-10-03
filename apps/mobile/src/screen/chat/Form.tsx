@@ -58,7 +58,7 @@ export function Form({ form, live, onSay }: { form: FormKind; live: boolean; onS
             accessibilityLabel={`${field.label}: ${value.length === 0 ? 'empty' : value}`}
             style={{ gap: 2, paddingVertical: 8 }}
           >
-            <Label size="caption" tone="ink-3">
+            <Label size="caption" tone="ink-2">
               {field.label}
             </Label>
             <Label size="label" tone={value.length === 0 ? 'ink-4' : 'ink'} numberOfLines={2}>
@@ -155,7 +155,7 @@ function Picker({
       <Label size="reading" tone={value.length === 0 ? 'ink-4' : 'ink'} style={{ flex: 1 }}>
         {value.length === 0 ? placeholder : value}
       </Label>
-      <ChevronDown pointerEvents="none" size={18} color={c['ink-3']} />
+      <ChevronDown pointerEvents="none" size={18} color={c['foreground-secondary']} />
     </>
   )
   if (onPress === undefined)
@@ -165,7 +165,7 @@ function Picker({
         accessibilityRole="button"
         accessibilityLabel={label}
         accessibilityValue={{ text: value.length === 0 ? placeholder : value }}
-        style={[PICKER, { backgroundColor: c['surface-well'] }]}
+        style={[PICKER, { backgroundColor: c['md-code-bg'] }]}
       >
         {body}
       </View>
@@ -178,7 +178,7 @@ function Picker({
       onPress={onPress}
       style={({ pressed }) => [
         PICKER,
-        { backgroundColor: pressed ? c['wash-pressed'] : c['surface-well'] },
+        { backgroundColor: pressed ? c['wash-pressed'] : c['md-code-bg'] },
       ]}
     >
       {body}

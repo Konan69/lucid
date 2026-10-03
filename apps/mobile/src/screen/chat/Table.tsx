@@ -36,7 +36,7 @@ export function Table({ table }: { table: TableKind }) {
   const long = table.rows.length > PREVIEW_ROWS
   const note =
     table.note === undefined ? null : (
-      <Label size="caption" tone="ink-3">
+      <Label size="caption" tone="ink-2">
         {table.note}
       </Label>
     )
@@ -131,7 +131,7 @@ function Held({
             cells={cells}
             names={names}
             header={index === 0}
-            held={{ style: held, edge, ground: c[ground], line: c['line-3'] }}
+            held={{ style: held, edge, ground: c[ground], line: c.border }}
           />
         ))}
       </View>

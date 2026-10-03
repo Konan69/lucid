@@ -87,7 +87,7 @@ function Words({ option, tone }: { option: Ask['options'][number]; tone: 'ink' |
         {option.label}
       </Label>
       {option.detail !== undefined && (
-        <Label size="label" tone="ink-3">
+        <Label size="label" tone="ink-2">
           {option.detail}
         </Label>
       )}
@@ -107,12 +107,12 @@ function Box({ chosen }: { chosen: boolean }) {
         justifyContent: 'center',
         borderRadius: 6,
         borderWidth: chosen ? 0 : 1.5,
-        borderColor: c['line-4'],
-        backgroundColor: chosen ? c.accent : 'transparent',
+        borderColor: c.border,
+        backgroundColor: chosen ? c.primary : 'transparent',
       }}
     >
       {chosen && (
-        <Check pointerEvents="none" size={15} strokeWidth={3} color={c['ink-on-accent']} />
+        <Check pointerEvents="none" size={15} strokeWidth={3} color={c['primary-foreground']} />
       )}
     </View>
   )
@@ -127,12 +127,12 @@ function Closed({ option, chosen }: { option: Ask['options'][number]; chosen: bo
         ROW,
         {
           borderRadius: radius.control,
-          backgroundColor: chosen ? c['accent-soft'] : 'transparent',
+          backgroundColor: chosen ? c['thread-selected'] : 'transparent',
         },
       ]}
     >
       <Words option={option} tone={chosen ? 'ink' : 'ink-2'} />
-      {chosen && <Check pointerEvents="none" size={18} color={c['accent-ink']} />}
+      {chosen && <Check pointerEvents="none" size={18} color={c['primary-text']} />}
     </View>
   )
 }
@@ -167,13 +167,13 @@ function Choice({
           borderRadius: radius.control,
           backgroundColor: pressed ? c['wash-pressed'] : c[chosen ? 'accent-soft' : 'surface-2'],
           borderWidth: chosen ? 1 : HAIRLINE,
-          borderColor: chosen ? c.accent : c['line-2'],
+          borderColor: chosen ? c.primary : c.border,
         },
       ]}
     >
       {many && <Box chosen={chosen} />}
       <Words option={option} tone="ink" />
-      {!many && <ChevronRight pointerEvents="none" size={18} color={c['ink-4']} />}
+      {!many && <ChevronRight pointerEvents="none" size={18} color={c.chevron} />}
     </Press>
   )
 }

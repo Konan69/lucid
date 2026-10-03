@@ -19,7 +19,7 @@ import { commit, confirm, warn } from '../../data/haptics'
 import { useLiveData } from '../../data/live'
 import { Card, cardOf, type ToolPart } from '../../data/message'
 import { useTheme } from '../../theme'
-import { Button, Dot, Field, HAIRLINE, Label, Notice, Press, radius, styles } from '../../ui/ui'
+import { Button, Dot, EDGE, Field, Label, Notice, Press, radius, styles } from '../../ui/ui'
 import { IntegrationCard } from '../integration/Card'
 import { Exactly } from './Exactly'
 import { Display } from './Shown'
@@ -129,9 +129,9 @@ function Shell({
         padding: 14,
         gap: 8,
         borderRadius: radius.card,
-        borderWidth: HAIRLINE,
-        borderColor: c['line-3'],
-        backgroundColor: c['surface-2'],
+        borderWidth: EDGE,
+        borderColor: c.border,
+        backgroundColor: c.subtle,
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -198,17 +198,17 @@ function ApprovalOutcome({ state }: { state: ApprovalState }) {
       </Label>
     ),
     Denied: ({ decidedBy }) => (
-      <Label size="label" tone="ink-3">
+      <Label size="label" tone="ink-2">
         Not allowed by {decidedBy.name}.
       </Label>
     ),
     Expired: () => (
-      <Label size="label" tone="ink-3">
+      <Label size="label" tone="ink-2">
         This request ran out.
       </Label>
     ),
     Withdrawn: () => (
-      <Label size="label" tone="ink-3">
+      <Label size="label" tone="ink-2">
         Withdrawn.
       </Label>
     ),
@@ -250,19 +250,19 @@ function ApprovalCard({ approval, me }: { approval: Approval; me: PersonId }) {
         {approval.action.summary}
       </Label>
       {approval.action.rationale.length > 0 && (
-        <Label size="label" tone="ink-3">
+        <Label size="label" tone="ink-2">
           {approval.action.rationale}
         </Label>
       )}
       <Exactly target={approval.action.target} />
       {pending && mine && (
-        <Label size="caption" tone="ink-3">
+        <Label size="caption" tone="ink-2">
           Your answer applies only to what is shown above.
         </Label>
       )}
       {!pending && <ApprovalOutcome state={approval.state} />}
       {pending && !mine && (
-        <Label size="label" tone="ink-3">
+        <Label size="label" tone="ink-2">
           Waiting on {approval.askedOf.name}.
         </Label>
       )}
@@ -296,18 +296,18 @@ function Standing({ request, mine }: { request: InputRequest; mine: boolean }) {
       mine ? (
         <Answering request={request} />
       ) : (
-        <Label size="label" tone="ink-3">
+        <Label size="label" tone="ink-2">
           Waiting on {request.askedOf.name}.
         </Label>
       ),
     Answered: ({ answeredBy, answer }) => (
       <Label size="label" tone="ink-2">
-        <Label size="label" tone="ink-3">{`${answeredBy.name} said: `}</Label>
+        <Label size="label" tone="ink-2">{`${answeredBy.name} said: `}</Label>
         {answer}
       </Label>
     ),
     Withdrawn: () => (
-      <Label size="label" tone="ink-3">
+      <Label size="label" tone="ink-2">
         No longer needed.
       </Label>
     ),
@@ -365,14 +365,14 @@ function Answering({ request }: { request: InputRequest }) {
             paddingVertical: 9,
             justifyContent: 'center',
             borderRadius: radius.card - 6,
-            borderWidth: HAIRLINE,
-            borderColor: c['line-3'],
-            backgroundColor: pressed ? c['wash-pressed'] : c['surface-3'],
+            borderWidth: EDGE,
+            borderColor: c.border,
+            backgroundColor: pressed ? c['wash-pressed'] : c['subtle-strong'],
           })}
         >
           <Label size="footnote">{option.label}</Label>
           {option.detail.length > 0 && (
-            <Label size="label" tone="ink-3">
+            <Label size="label" tone="ink-2">
               {option.detail}
             </Label>
           )}
@@ -386,7 +386,12 @@ function Answering({ request }: { request: InputRequest }) {
             placeholder="Or say it your way"
             multiline
             onChangeText={setOwn}
-            style={{ flex: 1, minHeight: 44, paddingVertical: 10, backgroundColor: c['surface-3'] }}
+            style={{
+              flex: 1,
+              minHeight: 44,
+              paddingVertical: 10,
+              backgroundColor: c['subtle-strong'],
+            }}
           />
           <Button
             kind="primary"

@@ -31,16 +31,14 @@ export function Draft({
           style={{
             borderTopWidth: HAIRLINE,
             borderBottomWidth: HAIRLINE,
-            borderColor: c['line-2'],
+            borderColor: c.border,
           }}
         >
           {draft.to.length > 0 && <Header name="To" value={draft.to.join(', ')} />}
           {draft.subject !== undefined && <Header name="Subject" value={draft.subject} strong />}
         </View>
       )}
-      <View
-        style={{ padding: 14, borderRadius: radius.control, backgroundColor: c['surface-well'] }}
-      >
+      <View style={{ padding: 14, borderRadius: radius.control, backgroundColor: c['md-code-bg'] }}>
         <Label selectable size="reading" numberOfLines={long ? 6 : undefined}>
           {draft.body}
         </Label>
@@ -83,7 +81,7 @@ function Header({
 }) {
   return (
     <View style={{ flexDirection: 'row', gap: 12, paddingVertical: 10 }}>
-      <Label size="label" tone="ink-3" style={{ width: 56 }}>
+      <Label size="label" tone="ink-2" style={{ width: 56 }}>
         {name}
       </Label>
       <Label size={strong ? 'footnote' : 'label'} style={{ flex: 1 }}>

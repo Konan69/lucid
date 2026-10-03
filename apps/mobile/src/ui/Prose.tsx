@@ -63,25 +63,25 @@ export function Prose({
           return false
         }}
         style={{
-          body: { color: c.ink, ...MOBILE_TYPOGRAPHY.reading },
+          body: { color: c.foreground, ...MOBILE_TYPOGRAPHY.reading },
           paragraph: { marginTop: 0, marginBottom: 10 },
           heading1: { ...MOBILE_TYPOGRAPHY.title, marginTop: 6, marginBottom: 8 },
           heading2: { ...MOBILE_TYPOGRAPHY.headline, marginTop: 6, marginBottom: 6 },
           heading3: { ...MOBILE_TYPOGRAPHY.footnote, marginTop: 4, marginBottom: 4 },
           bullet_list: { marginBottom: 10 },
           ordered_list: { marginBottom: 10 },
-          code_inline: { backgroundColor: c['surface-2'], color: c.ink },
-          fence: { backgroundColor: c['surface-well'], color: c.ink, borderColor: c['line-2'] },
+          code_inline: { backgroundColor: c.subtle, color: c.foreground },
+          fence: { backgroundColor: c['md-code-bg'], color: c.foreground, borderColor: c.border },
           code_block: {
-            backgroundColor: c['surface-well'],
-            color: c.ink,
-            borderColor: c['line-2'],
+            backgroundColor: c['md-code-bg'],
+            color: c.foreground,
+            borderColor: c.border,
           },
-          link: { color: c['accent-ink'] },
-          blockquote: { backgroundColor: c['surface-2'], borderColor: c['line-3'] },
-          hr: { backgroundColor: c['line-2'] },
-          table: { borderColor: c['line-2'] },
-          tr: { borderColor: c['line-2'] },
+          link: { color: c['primary-text'] },
+          blockquote: { backgroundColor: c.subtle, borderColor: c.border },
+          hr: { backgroundColor: c.separator },
+          table: { borderColor: c.border },
+          tr: { borderColor: c.border },
         }}
       >
         {text}

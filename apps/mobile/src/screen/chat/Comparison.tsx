@@ -131,7 +131,7 @@ function Page({ item, comparison }: { item: Item; comparison: ComparisonKind }) 
     >
       {pick && (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Sparkles pointerEvents="none" size={14} strokeWidth={2} color={c['accent-ink']} />
+          <Sparkles pointerEvents="none" size={14} strokeWidth={2} color={c['primary-text']} />
           <Label size="caption" tone="accent-ink">
             Vivid’s pick
           </Label>
@@ -146,7 +146,7 @@ function Page({ item, comparison }: { item: Item; comparison: ComparisonKind }) 
         </Label>
       )}
       {item.summary !== undefined && (
-        <Label size="label" tone="ink-3">
+        <Label size="label" tone="ink-2">
           {item.summary}
         </Label>
       )}
@@ -163,10 +163,10 @@ function Page({ item, comparison }: { item: Item; comparison: ComparisonKind }) 
                 gap: 12,
                 paddingVertical: 8,
                 borderTopWidth: HAIRLINE,
-                borderTopColor: c['line-2'],
+                borderTopColor: c.border,
               }}
             >
-              <Label size="label" tone="ink-3" style={{ flexShrink: 1 }}>
+              <Label size="label" tone="ink-2" style={{ flexShrink: 1 }}>
                 {fact.label}
               </Label>
               <Label size="footnote" style={{ fontVariant: ['tabular-nums'], flexShrink: 1 }}>

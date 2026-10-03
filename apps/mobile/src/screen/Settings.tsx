@@ -6,7 +6,7 @@ import {
 } from '@vivid/contracts'
 import { Data, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
-import { Linking, ScrollView, View } from 'react-native'
+import { Linking, ScrollView, Switch, View } from 'react-native'
 import { followThemeAtom } from '../data/appearance'
 import { door } from '../data/door'
 import { warn } from '../data/haptics'
@@ -20,18 +20,15 @@ import { Live } from '../ui/Live'
 import { NameSheet } from '../ui/Sheet'
 import { confirmDestructive, Label, Notice, Segmented, Skeleton, styles } from '../ui/ui'
 import { useGo, useMe } from '../workspace'
+import { useTheme } from '../theme'
 import { Devices } from './settings/Devices'
+import { Themes } from './settings/Themes'
 
 const THEMES = [
   { value: 'system', label: 'System' },
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
 ] as const satisfies ReadonlyArray<{ value: Theme; label: string }>
-
-const SWITCH = [
-  { value: 'on', label: 'On' },
-  { value: 'off', label: 'Off' },
-] as const
 
 /**
  * The parts of Settings that are done in the web app, which the server also serves: each row
@@ -124,7 +121,7 @@ function Sharing({ workspace, onPeople }: { workspace: Workspace; onPeople: () =
     Personal: () => (
       <Row
         title="You are working in your own space"
-        detail="To share threads, a library and integrations, create a company from the switcher at the top of Home."
+        detail="To share threads, a library and integrations, create a company from the menu on Home."
       />
     ),
     Company: () => (
@@ -190,7 +187,7 @@ function Setting({
     <View style={{ paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}>
       <View style={{ gap: 1 }}>
         <Label>{title}</Label>
-        <Label size="label" tone="ink-3">
+        <Label size="label" tone="ink-2">
           {detail}
         </Label>
       </View>
@@ -229,6 +226,7 @@ const saveSettings = (data: LiveData, edit: PatchSettingsRequest) =>
  */
 function Preferences({ settings, onZone }: { settings: SettingsRecord; onZone: () => void }) {
   const data = useLiveData()
+  const { colors: c } = useTheme()
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
 
   async function save(edit: PatchSettingsRequest) {
@@ -239,7 +237,7 @@ function Preferences({ settings, onZone }: { settings: SettingsRecord; onZone: (
     <>
       {Option.isSome(refused) && <Notice message={refused.value} />}
       <Section title="Preferences">
-        <Setting title="Appearance" detail="How Vivid looks on this phone and your other devices.">
+        <Setting title="Appearance" detail="Light or dark, on this phone and your other devices.">
           <Segmented
             label="Appearance"
             value={settings.theme}
@@ -251,14 +249,22 @@ function Preferences({ settings, onZone }: { settings: SettingsRecord; onZone: (
             }}
           />
         </Setting>
-        <Setting title="Notifications" detail="Tell me when something finishes or needs me.">
-          <Segmented
-            label="Notifications"
-            value={settings.notify ? 'on' : 'off'}
-            options={SWITCH}
-            onChange={(next) => void save(new PatchSettingsRequest({ notify: next === 'on' }))}
-          />
+        <Setting title="Theme" detail="The colours Vivid is painted in on this phone.">
+          <Themes />
         </Setting>
+        <Row
+          title="Notifications"
+          detail="Tell me when something finishes or needs me."
+          trailing={
+            // The system's own switch, in the theme's primary: on or off is what it is for.
+            <Switch
+              accessibilityLabel="Notifications"
+              value={settings.notify}
+              trackColor={{ true: c.primary, false: c['subtle-strong'] }}
+              onValueChange={(notify) => void save(new PatchSettingsRequest({ notify }))}
+            />
+          }
+        />
         <Row
           title="Time zone"
           detail={`${settings.timezone.replaceAll('_', ' ')}. Routines and “tomorrow at 9” use this.`}

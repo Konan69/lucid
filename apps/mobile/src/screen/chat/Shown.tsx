@@ -67,7 +67,7 @@ function StepsShown({ plan }: { plan: Kind<'Steps'> }) {
   const { colors: c } = useTheme()
   return (
     <Frame title={plan.title}>
-      <Label size="caption" tone="ink-3">
+      <Label size="caption" tone="ink-2">
         {plan.steps.filter((step) => step.state === 'done').length} of {plan.steps.length} done
       </Label>
       <View style={{ gap: 14 }}>
@@ -91,7 +91,7 @@ function StepsShown({ plan }: { plan: Kind<'Steps'> }) {
                   {step.label}
                 </Label>
                 {step.detail !== undefined && (
-                  <Label size="caption" tone="ink-3">
+                  <Label size="caption" tone="ink-2">
                     {step.detail}
                   </Label>
                 )}
@@ -126,13 +126,13 @@ function LinksShown({ list }: { list: Kind<'Links'> }) {
             paddingVertical: 10,
             alignItems: 'center',
             borderTopWidth: HAIRLINE,
-            borderTopColor: c['line-2'],
+            borderTopColor: c.border,
             backgroundColor: pressed ? c['wash-pressed'] : 'transparent',
           })}
         >
           <View style={{ flex: 1 }}>
             <Label size="label">{link.title}</Label>
-            <Label size="caption" tone="ink-3" numberOfLines={1}>
+            <Label size="caption" tone="ink-2" numberOfLines={1}>
               {siteOf(link.address)}
             </Label>
             {link.note !== undefined && (
@@ -141,7 +141,7 @@ function LinksShown({ list }: { list: Kind<'Links'> }) {
               </Label>
             )}
           </View>
-          <ExternalLink pointerEvents="none" size={16} color={c['ink-4']} />
+          <ExternalLink pointerEvents="none" size={16} color={c.chevron} />
         </Press>
       ))}
       {unopened && (
@@ -171,10 +171,10 @@ function FactsShown({ board }: { board: Kind<'Facts'> }) {
               borderRadius: radius.control,
               padding: 12,
               gap: 4,
-              backgroundColor: c['surface-2'],
+              backgroundColor: c.subtle,
             }}
           >
-            <Label size="caption" tone="ink-3" numberOfLines={1}>
+            <Label size="caption" tone="ink-2" numberOfLines={1}>
               {fact.label}
             </Label>
             <Label
@@ -207,7 +207,7 @@ function ScheduleShown({ schedule }: { schedule: Kind<'Schedule'> }) {
   return (
     <Frame title={schedule.title === undefined ? schedule.day : schedule.title}>
       {schedule.title !== undefined && schedule.day !== undefined && (
-        <Label size="caption" tone="ink-3">
+        <Label size="caption" tone="ink-2">
           {schedule.day}
         </Label>
       )}
@@ -229,7 +229,7 @@ function ScheduleShown({ schedule }: { schedule: Kind<'Schedule'> }) {
               gap: 12,
               paddingVertical: 12,
               borderTopWidth: HAIRLINE,
-              borderTopColor: c['line-2'],
+              borderTopColor: c.border,
             }}
           >
             <View style={{ width: 64 }}>
@@ -237,18 +237,18 @@ function ScheduleShown({ schedule }: { schedule: Kind<'Schedule'> }) {
                 {item.at}
               </Label>
               {item.until !== undefined && (
-                <Label size="caption" tone="ink-3" style={{ fontVariant: ['tabular-nums'] }}>
+                <Label size="caption" tone="ink-2" style={{ fontVariant: ['tabular-nums'] }}>
                   {item.until}
                 </Label>
               )}
             </View>
-            <View style={{ width: 3, borderRadius: 2, backgroundColor: c.accent }} />
+            <View style={{ width: 3, borderRadius: 2, backgroundColor: c.primary }} />
             <View style={{ flex: 1, gap: 2 }}>
               <Label size="footnote">{item.title}</Label>
               {item.where !== undefined && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                  <MapPin pointerEvents="none" size={12} color={c['ink-3']} />
-                  <Label size="caption" tone="ink-3" style={{ flexShrink: 1 }}>
+                  <MapPin pointerEvents="none" size={12} color={c['foreground-secondary']} />
+                  <Label size="caption" tone="ink-2" style={{ flexShrink: 1 }}>
                     {item.where}
                   </Label>
                 </View>

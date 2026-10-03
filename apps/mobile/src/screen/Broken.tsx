@@ -1,7 +1,7 @@
 import { View } from 'react-native'
 import { useTheme } from '../theme'
 import { useAgain } from '../ui/Recover'
-import { Button, Face, GUTTER, Label } from '../ui/ui'
+import { Button, GUTTER, Label } from '../ui/ui'
 
 /**
  * What is shown when the app itself failed to draw. Nothing is lost by it: Threads and everything
@@ -24,7 +24,7 @@ export function Broken() {
         justifyContent: 'center',
         gap: 10,
         paddingHorizontal: GUTTER + 12,
-        backgroundColor: c['surface-0'],
+        backgroundColor: c.screen,
       }}
     >
       <Label size="headline" style={{ textAlign: 'center' }}>

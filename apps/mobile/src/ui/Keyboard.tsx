@@ -21,7 +21,7 @@ export function AboveKeyboard({ children }: { children: ReactNode }) {
     <KeyboardAvoidingView
       behavior="padding"
       enabled={Platform.OS !== 'android' || showing}
-      style={{ flex: 1, backgroundColor: c['surface-0'] }}
+      style={{ flex: 1, backgroundColor: c.screen }}
     >
       {/* Clear of a notch or a rounded corner at the sides, as `Screen` is. It is a view of its
           own because the outer one's padding is the keyboard's to set. */}

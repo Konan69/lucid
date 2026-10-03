@@ -45,7 +45,7 @@ function Sending({ account, tool, input }: { account: string; tool: string; inpu
         {/* In full and wrapping: the account is where the action lands. */}
         <Label selectable size="label" tone="ink-2" style={{ flex: 1 }}>
           {account}
-          <Label size="label" tone="ink-3">{` · ${tool}`}</Label>
+          <Label size="label" tone="ink-2">{` · ${tool}`}</Label>
         </Label>
       </Line>
       <View style={{ paddingHorizontal: INSET, paddingVertical: 10, gap: 10 }}>
@@ -89,7 +89,7 @@ function Well({ children }: { children: ReactNode }) {
       style={{
         // Tighter than the card's own corners, which it sits inside.
         borderRadius: radius.card - 10,
-        backgroundColor: c['surface-well'],
+        backgroundColor: c['md-code-bg'],
         // The rule under a Connection's account stops at the rounded corners.
         overflow: 'hidden',
       }}
@@ -123,12 +123,12 @@ function Line({
         paddingHorizontal: INSET,
         paddingVertical: 8,
         borderBottomWidth: ruled ? HAIRLINE : 0,
-        borderBottomColor: c['line-2'],
+        borderBottomColor: c.border,
       }}
     >
       {/* A 15-point mark centred on the first 18-point line of the words beside it. */}
       <View style={{ marginTop: 1.5 }}>
-        <Icon size={15} strokeWidth={1.7} color={c['ink-3']} />
+        <Icon size={15} strokeWidth={1.7} color={c['foreground-secondary']} />
       </View>
       {children}
     </View>
@@ -145,10 +145,10 @@ function Field({ name, value }: { name: string; value: Schema.Json }) {
       <View
         style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 6 }}
       >
-        <Label size="caption" tone="ink-3">
+        <Label size="caption" tone="ink-2">
           {fieldName(name)}
         </Label>
-        <Label size="caption" tone="ink-3" style={{ fontFamily: MONO }}>
+        <Label size="caption" tone="ink-2" style={{ fontFamily: MONO }}>
           {name}
         </Label>
       </View>
@@ -180,7 +180,7 @@ function Value({ value }: { value: Schema.Json }) {
           // A list's items have no identity but their place, and the list is drawn once.
           // oxlint-disable-next-line react/no-array-index-key
           <View key={position} style={{ flexDirection: 'row', gap: 8 }}>
-            <Label size="label" tone="ink-3" style={{ fontVariant: ['tabular-nums'] }}>
+            <Label size="label" tone="ink-2" style={{ fontVariant: ['tabular-nums'] }}>
               {position + 1}.
             </Label>
             <View style={{ flex: 1, minWidth: 0 }}>

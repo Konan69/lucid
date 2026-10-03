@@ -2,11 +2,15 @@ import { Children, isValidElement, type ReactNode } from 'react'
 import { View } from 'react-native'
 import { ChevronRight, ExternalLink } from 'lucide-react-native'
 import { useTheme } from '../theme'
-import { HAIRLINE, Label, Press, radius, TARGET } from './ui'
+import { EDGE, Label, Press, radius, TARGET } from './ui'
 
 /**
- * A titled group of rows on one quiet shape. The rows inside are told apart by hairlines, which
- * here are structure (one row ends, the next begins), not decoration.
+ * A titled group of rows on one bordered shape: the theme's `grouped-card` inside a solid
+ * `border`, with a solid `separator` between rows. The lines are structure (one row ends, the
+ * next begins), not decoration.
+ *
+ * The treatment is T3 Code mobile's settings groups (`bg-grouped-card`, `border-border`,
+ * `bg-separator`; `src/features/connection/ConnectionEnvironmentRow.tsx`).
  */
 export function Section({
   title,
@@ -23,11 +27,11 @@ export function Section({
   return (
     <View style={{ gap: 8 }}>
       <View style={{ paddingHorizontal: 4, gap: 2 }}>
-        <Label accessibilityRole="header" size="label" tone="ink-3">
+        <Label accessibilityRole="header" size="label" tone="ink-2" style={{ fontWeight: '600' }}>
           {title}
         </Label>
         {detail !== undefined && (
-          <Label size="caption" tone="ink-4">
+          <Label size="caption" tone="foreground-tertiary">
             {detail}
           </Label>
         )}
@@ -35,16 +39,17 @@ export function Section({
       <View
         style={{
           borderRadius: radius.card,
-          backgroundColor: c['surface-2'],
-          borderWidth: HAIRLINE,
-          borderColor: c['line-2'],
+          borderCurve: 'continuous',
+          backgroundColor: c['grouped-card'],
+          borderWidth: EDGE,
+          borderColor: c.border,
           overflow: 'hidden',
         }}
       >
         {rows.map((row, place) => (
           <View key={row.key}>
             {place > 0 && (
-              <View style={{ height: HAIRLINE, marginLeft: 16, backgroundColor: c['line-2'] }} />
+              <View style={{ height: EDGE, marginLeft: 16, backgroundColor: c.separator }} />
             )}
             {row}
           </View>
@@ -83,7 +88,7 @@ function RowBody({
           {title}
         </Label>
         {detail !== undefined && (
-          <Label numberOfLines={wrap ? undefined : 2} size="label" tone="ink-3">
+          <Label numberOfLines={wrap ? undefined : 2} size="label" tone="ink-2">
             {detail}
           </Label>
         )}
@@ -161,10 +166,7 @@ export function Row({
       accessibilityRole={goes.role}
       accessibilityHint={goes.hint}
       onPress={onPress}
-      style={({ pressed }) => [
-        ROW,
-        { backgroundColor: pressed ? c['wash-pressed'] : 'transparent' },
-      ]}
+      style={({ pressed }) => [ROW, { backgroundColor: pressed ? c['row-hover'] : 'transparent' }]}
     >
       <RowBody
         leading={leading}
@@ -174,7 +176,7 @@ export function Row({
         wrap={wrap}
         trailing={
           trailing === undefined ? (
-            <goes.mark pointerEvents="none" size={18} strokeWidth={1.7} color={c['ink-4']} />
+            <goes.mark pointerEvents="none" size={18} strokeWidth={1.7} color={c.chevron} />
           ) : (
             trailing
           )

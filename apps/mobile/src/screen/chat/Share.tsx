@@ -138,7 +138,7 @@ function Choice({
   onSelect: () => void
 }) {
   const { colors: c } = useTheme()
-  const fill = selected ? c['accent-soft'] : c['surface-2']
+  const fill = selected ? c['thread-selected'] : c.subtle
   return (
     <Press
       accessibilityRole="radio"
@@ -154,7 +154,7 @@ function Choice({
         borderRadius: radius.control,
         // A selected choice's border is its state, so it is a full point and not a hairline.
         borderWidth: selected ? 1 : HAIRLINE,
-        borderColor: selected ? c.accent : c['line-2'],
+        borderColor: selected ? c.primary : c.border,
         backgroundColor: pressed && !selected ? c['wash-pressed'] : fill,
       })}
     >
@@ -162,11 +162,11 @@ function Choice({
         pointerEvents="none"
         size={19}
         strokeWidth={1.7}
-        color={selected ? c['accent-ink'] : c['ink-3']}
+        color={selected ? c['primary-text'] : c['foreground-secondary']}
       />
       <View style={{ flex: 1, minWidth: 0 }}>
         <Label size="footnote">{title}</Label>
-        <Label size="label" tone="ink-3">
+        <Label size="label" tone="ink-2">
           {detail}
         </Label>
       </View>
@@ -189,7 +189,7 @@ function Picker({
   const { colors: c } = useTheme()
   if (members.length === 0) {
     return (
-      <Label size="label" tone="ink-3" style={{ paddingHorizontal: 14, paddingVertical: 6 }}>
+      <Label size="label" tone="ink-2" style={{ paddingHorizontal: 14, paddingVertical: 6 }}>
         Nobody else is in {company} yet. Invite people in Settings.
       </Label>
     )
@@ -226,11 +226,11 @@ function Picker({
                 justifyContent: 'center',
                 borderRadius: 7,
                 borderWidth: picked ? 0 : 1,
-                borderColor: c['line-4'],
-                backgroundColor: picked ? c.accent : 'transparent',
+                borderColor: c.border,
+                backgroundColor: picked ? c.primary : 'transparent',
               }}
             >
-              {picked && <Check size={14} strokeWidth={2.6} color={c['ink-on-accent']} />}
+              {picked && <Check size={14} strokeWidth={2.6} color={c['primary-foreground']} />}
             </View>
           </Press>
         )

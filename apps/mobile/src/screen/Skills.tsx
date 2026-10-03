@@ -33,7 +33,7 @@ import {
   Button,
   Card,
   confirmDestructive,
-  HAIRLINE,
+  EDGE,
   Label,
   Notice,
   Press,
@@ -92,10 +92,10 @@ function Mark({ icon: Icon }: { icon: LucideIcon }) {
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: radius.row,
-        backgroundColor: c['accent-soft'],
+        backgroundColor: c['thread-selected'],
       }}
     >
-      <Icon pointerEvents="none" size={18} strokeWidth={1.75} color={c['accent-ink']} />
+      <Icon pointerEvents="none" size={18} strokeWidth={1.75} color={c['primary-text']} />
     </View>
   )
 }
@@ -133,7 +133,7 @@ export function Skills() {
           >
             What Vivid already knows how to do.
           </Label>
-          <Label tone="ink-3">
+          <Label tone="ink-2">
             Ask for any of these in your own words. When you show Vivid how you like something done,
             it keeps that here too.
           </Label>
@@ -331,8 +331,13 @@ function Steps({ instructions }: { instructions: string }) {
         containerStyle={{ alignSelf: 'flex-start' }}
         style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 24 }}
       >
-        <Chevron pointerEvents="none" size={15} strokeWidth={1.8} color={c['ink-3']} />
-        <Label size="label" tone="ink-3">
+        <Chevron
+          pointerEvents="none"
+          size={15}
+          strokeWidth={1.8}
+          color={c['foreground-secondary']}
+        />
+        <Label size="label" tone="ink-2">
           How Vivid goes about it
         </Label>
       </Press>
@@ -344,9 +349,9 @@ function Steps({ instructions }: { instructions: string }) {
             // A formatted paragraph leaves ten points under itself.
             paddingBottom: 4,
             borderRadius: radius.control,
-            borderWidth: HAIRLINE,
-            borderColor: c['line-2'],
-            backgroundColor: c['surface-well'],
+            borderWidth: EDGE,
+            borderColor: c.border,
+            backgroundColor: c['md-code-bg'],
           }}
         >
           <Prose

@@ -48,17 +48,17 @@ function Plot({ chart }: { chart: ShownChart }) {
         importantForAccessibility="no-hide-descendants"
         accessibilityElementsHidden
       >
-        <Line x1={LEFT} x2={W - RIGHT} y1={y(0)} y2={y(0)} stroke={c['line-3']} strokeWidth={1} />
+        <Line x1={LEFT} x2={W - RIGHT} y1={y(0)} y2={y(0)} stroke={c.border} strokeWidth={1} />
         <Line
           x1={LEFT}
           x2={W - RIGHT}
           y1={y(top)}
           y2={y(top)}
-          stroke={c['line-2']}
+          stroke={c.border}
           strokeWidth={1}
           strokeDasharray="3 4"
         />
-        <Text x={LEFT} y={y(top) - 3} fill={c['ink-3']} fontSize={16}>
+        <Text x={LEFT} y={y(top) - 3} fill={c['foreground-secondary']} fontSize={16}>
           {chartValue(top, chart.unit)}
         </Text>
         {chart.kind === 'bar' ? (
@@ -73,7 +73,7 @@ function Plot({ chart }: { chart: ShownChart }) {
               x={LEFT + slot * index + slot / 2}
               y={H - 8}
               textAnchor="middle"
-              fill={c['ink-3']}
+              fill={c['foreground-secondary']}
               fontSize={16}
             >
               {label.length > 10 ? `${label.slice(0, 9)}…` : label}

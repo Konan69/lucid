@@ -28,7 +28,7 @@ import { useTheme } from '../../theme'
 import { Avatar } from '../../ui/Avatar'
 import { openWebLink, Prose } from '../../ui/Prose'
 import { Sheet } from '../../ui/Sheet'
-import { Dot, Face, HAIRLINE, Label, Press, radius } from '../../ui/ui'
+import { Dot, EDGE, Face, HAIRLINE, Label, Press, radius } from '../../ui/ui'
 import { useGo } from '../../workspace'
 import { Cards } from './Cards'
 
@@ -103,7 +103,7 @@ const Voice = Data.taggedEnum<Voice>()
 const TAIL = 6
 
 /**
- * A Person's words. The reader's own sit on the right, filled in Vivid's accent with the corner
+ * A Person's words. The reader's own sit on the right, filled in the theme's `user-bubble` with the corner
  * nearest the composer squared off: in a Thread that is mostly Vivid's plain text, the Person's
  * words are the one filled shape, found at a glance. Words that did not arrive keep their place
  * and their shape but are only an outline, dashed, so nothing unsent is ever mistaken for said;
@@ -127,10 +127,15 @@ function Said({
 }) {
   const { colors: c } = useTheme()
   const paint = Voice.$match(voice, {
-    Mine: () => ({ fill: c.accent, edge: c.accent, line: 1, ink: 'ink-on-accent' }) as const,
-    Unsent: () => ({ fill: 'transparent', edge: c['line-4'], line: 1, ink: 'ink-2' }) as const,
-    Theirs: () =>
-      ({ fill: c['surface-2'], edge: c['line-2'], line: HAIRLINE, ink: 'ink' }) as const,
+    Mine: () =>
+      ({
+        fill: c['user-bubble'],
+        edge: c['user-bubble'],
+        line: 1,
+        ink: 'user-bubble-foreground',
+      }) as const,
+    Unsent: () => ({ fill: 'transparent', edge: c.border, line: 1, ink: 'ink-2' }) as const,
+    Theirs: () => ({ fill: c.subtle, edge: c.border, line: EDGE, ink: 'ink' }) as const,
   })
   const unsent = Voice.$is('Unsent')(voice)
   const from = Voice.$is('Theirs')(voice) ? voice.name : Option.none<string>()
@@ -146,7 +151,7 @@ function Said({
       )}
       <View style={{ flexShrink: 1, maxWidth: '84%', gap: 4 }}>
         {Option.isSome(from) && (
-          <Label size="caption" tone="ink-3" style={{ marginLeft: 4 }}>
+          <Label size="caption" tone="ink-2" style={{ marginLeft: 4 }}>
             {from.value}
           </Label>
         )}
@@ -232,8 +237,8 @@ function Wake({ reason, name }: { reason: keyof typeof WAKE; name: Option.Option
   const { Icon, label } = WAKE[reason]
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-      <Icon size={14} strokeWidth={1.7} color={c['ink-3']} />
-      <Label size="caption" tone="ink-3" style={{ flexShrink: 1 }}>
+      <Icon size={14} strokeWidth={1.7} color={c['foreground-secondary']} />
+      <Label size="caption" tone="ink-2" style={{ flexShrink: 1 }}>
         {Option.match(name, { onNone: () => label, onSome: (named) => `${label} · ${named}` })}
       </Label>
     </View>
@@ -249,12 +254,12 @@ function Aside({ text, failed }: { text: string; failed: boolean }) {
         paddingHorizontal: 14,
         paddingVertical: 10,
         borderRadius: radius.control,
-        borderWidth: HAIRLINE,
-        borderColor: c['line-2'],
-        backgroundColor: c['surface-2'],
+        borderWidth: EDGE,
+        borderColor: c.border,
+        backgroundColor: c.subtle,
       }}
     >
-      <Label size="label" tone="ink-3">
+      <Label size="label" tone="ink-2">
         {failed ? `Vivid could not finish that. ${text}` : text}
       </Label>
     </View>
@@ -289,9 +294,14 @@ function Steps({ steps, working }: { steps: ReadonlyArray<Step>; working: boolea
           containerStyle={{ flexShrink: 1 }}
           style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 24 }}
         >
-          <Chevron pointerEvents="none" size={15} strokeWidth={1.8} color={c['ink-3']} />
+          <Chevron
+            pointerEvents="none"
+            size={15}
+            strokeWidth={1.8}
+            color={c['foreground-secondary']}
+          />
           {busy && <Dot tone="status-working" size={6} />}
-          <Label size="label" tone="ink-3" style={{ flexShrink: 1 }}>
+          <Label size="label" tone="ink-2" style={{ flexShrink: 1 }}>
             {summary}
           </Label>
         </Press>
@@ -309,10 +319,10 @@ function Steps({ steps, working }: { steps: ReadonlyArray<Step>; working: boolea
               alignItems: 'center',
               gap: 5,
               borderRadius: 14,
-              backgroundColor: pressed ? c['wash-pressed'] : c['accent-soft'],
+              backgroundColor: pressed ? c['wash-pressed'] : c['thread-selected'],
             })}
           >
-            <Monitor pointerEvents="none" size={13} strokeWidth={1.9} color={c['accent-ink']} />
+            <Monitor pointerEvents="none" size={13} strokeWidth={1.9} color={c['primary-text']} />
             <Label size="caption" tone="accent-ink">
               Watch
             </Label>
@@ -327,14 +337,14 @@ function Steps({ steps, working }: { steps: ReadonlyArray<Step>; working: boolea
             paddingLeft: 14,
             gap: 6,
             borderLeftWidth: HAIRLINE,
-            borderLeftColor: c['line-3'],
+            borderLeftColor: c.border,
           }}
         >
           {steps.map((step) => (
             <Label key={step.id} size="label" tone={STEP_TONE[step.standing]}>
               {step.label}
               {Option.isSome(step.detail) && (
-                <Label size="label" tone="ink-3">{` · ${step.detail.value}`}</Label>
+                <Label size="label" tone="ink-2">{` · ${step.detail.value}`}</Label>
               )}
             </Label>
           ))}
@@ -389,7 +399,7 @@ function Words({ text }: { text: string }) {
 function Stamp({ moment }: { moment: number }) {
   const now = useNow()
   return (
-    <Label size="micro" tone="ink-4" style={{ marginTop: 2 }}>
+    <Label size="micro" tone="foreground-tertiary" style={{ marginTop: 2 }}>
       {when(moment, now)}
     </Label>
   )
@@ -423,7 +433,7 @@ function FromVivid({
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         {Option.isSome(answering) && (
-          <Label size="caption" tone="ink-3" style={{ marginBottom: 4 }}>
+          <Label size="caption" tone="ink-2" style={{ marginBottom: 4 }}>
             Answering {answering.value}
           </Label>
         )}

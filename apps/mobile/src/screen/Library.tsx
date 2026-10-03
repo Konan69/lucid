@@ -186,7 +186,7 @@ function LevelScreen({
       <ScrollView contentContainerStyle={[styles.page, styles.column]}>
         {above}
         {adding.busy && (
-          <Label size="label" tone="ink-3">
+          <Label size="label" tone="ink-2">
             Adding your file…
           </Label>
         )}
@@ -258,7 +258,7 @@ function Contents({
           {list.folders.map((folder: LibraryFolder) => (
             <Row
               key={folder.id}
-              leading={<FolderIcon size={20} strokeWidth={1.6} color={c['ink-2']} />}
+              leading={<FolderIcon size={20} strokeWidth={1.6} color={c['foreground-secondary']} />}
               title={folder.name}
               detail={folder.itemCount === 1 ? '1 file' : `${folder.itemCount} files`}
               onPress={() =>
@@ -273,7 +273,7 @@ function Contents({
           {list.documents.map((item) => (
             <Row
               key={item.id}
-              leading={<FileText size={20} strokeWidth={1.6} color={c['ink-2']} />}
+              leading={<FileText size={20} strokeWidth={1.6} color={c['foreground-secondary']} />}
               title={item.name}
               detail={noteOf(item)}
               onPress={() => onItem(item)}

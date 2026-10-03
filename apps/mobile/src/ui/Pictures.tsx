@@ -54,12 +54,12 @@ export function Pictures({ pictures }: { pictures: ReadonlyArray<Picture> }) {
                   width: 128,
                   height: 128,
                   borderRadius: radius.control,
-                  backgroundColor: c['surface-2'],
+                  backgroundColor: c.subtle,
                 }}
               />
             </Press>
             {Option.isSome(picture.caption) && (
-              <Label numberOfLines={1} size="caption" tone="ink-3">
+              <Label numberOfLines={1} size="caption" tone="ink-2">
                 {picture.caption.value}
               </Label>
             )}

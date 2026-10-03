@@ -4,7 +4,7 @@ import { Clipboard } from 'react-native'
 import { Check, Copy as CopyIcon } from 'lucide-react-native'
 import { useLiveData } from '../data/live'
 import { useTheme } from '../theme'
-import { HAIRLINE, Label, Press, radius } from './ui'
+import { EDGE, Label, Press, radius } from './ui'
 
 /** A refused native clipboard write leaves selectable text as the way to copy by hand. */
 class ClipboardRefused extends Schema.TaggedError<ClipboardRefused>()(
@@ -43,12 +43,12 @@ export function Copy({ name, read }: { name: string; read: () => string }) {
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: radius.control,
-        borderWidth: HAIRLINE,
-        borderColor: c['line-3'],
-        backgroundColor: pressed ? c['wash-pressed'] : c['surface-2'],
+        borderWidth: EDGE,
+        borderColor: c.border,
+        backgroundColor: pressed ? c['wash-pressed'] : c.subtle,
       })}
     >
-      <Icon pointerEvents="none" size={17} strokeWidth={1.8} color={c.ink} />
+      <Icon pointerEvents="none" size={17} strokeWidth={1.8} color={c.foreground} />
       <Label size="footnote">{LABEL[state]}</Label>
     </Press>
   )

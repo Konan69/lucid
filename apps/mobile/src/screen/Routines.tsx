@@ -178,10 +178,14 @@ function Mark({ routine }: { routine: Routine }) {
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: radius.row,
-        backgroundColor: routine.enabled ? c['accent-soft'] : c['wash-pressed'],
+        backgroundColor: routine.enabled ? c['thread-selected'] : c['wash-pressed'],
       }}
     >
-      <Icon size={17} strokeWidth={1.7} color={routine.enabled ? c['accent-ink'] : c['ink-3']} />
+      <Icon
+        size={17}
+        strokeWidth={1.7}
+        color={routine.enabled ? c['primary-text'] : c['foreground-secondary']}
+      />
     </View>
   )
 }
@@ -252,7 +256,7 @@ function Fieldset({
       {Option.isSome(fixed) ? (
         // Set up by Vivid in conversation (an Integration to watch, or one time); shown as it is.
         <Labelled label="Starts">
-          <Label size="label" tone="ink-3">
+          <Label size="label" tone="ink-2">
             {fixed.value} To change when it starts, ask Vivid.
           </Label>
         </Labelled>
@@ -267,7 +271,7 @@ function Fieldset({
             />
           </Labelled>
           {fields.kind === 'Webhook' ? (
-            <Label size="label" tone="ink-3">
+            <Label size="label" tone="ink-2">
               Vivid starts this routine each time an outside service calls its address with its key,
               and reads whatever the service sends. You get the address and the key once the routine
               is saved.
@@ -553,7 +557,7 @@ function Address({
           onPress={() => void ask()}
           containerStyle={{ alignSelf: 'flex-start' }}
         />
-        <Label size="caption" tone="ink-3">
+        <Label size="caption" tone="ink-2">
           Each time you get the address, the key is replaced and the one before it stops working.
         </Label>
       </View>
@@ -570,7 +574,7 @@ function Address({
             {Redacted.value(webhook.key)}
           </Label>
         </Labelled>
-        <Label size="caption" tone="ink-3">
+        <Label size="caption" tone="ink-2">
           Send a POST request to the address, with the key as a bearer token in the Authorization
           header.
         </Label>
@@ -613,7 +617,7 @@ function History({
     Option.exists(threads, (list) => list.threads.some((thread) => thread.id === id))
   if (routine.runs.length === 0) {
     return (
-      <Label size="label" tone="ink-3">
+      <Label size="label" tone="ink-2">
         It has not run yet.
       </Label>
     )

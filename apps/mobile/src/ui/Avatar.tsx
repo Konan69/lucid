@@ -28,9 +28,9 @@ export function Avatar({
         overflow: 'hidden',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: c['surface-3'],
+        backgroundColor: c['subtle-strong'],
         borderWidth: 0.5,
-        borderColor: c['line-2'],
+        borderColor: c.border,
       }}
     >
       {image === null ? (
@@ -79,7 +79,7 @@ export function Faces({
         </View>
       ))}
       {more > 0 && (
-        <Label size="micro" tone="ink-4" style={{ marginLeft: 4 }}>
+        <Label size="micro" tone="foreground-tertiary" style={{ marginLeft: 4 }}>
           +{more}
         </Label>
       )}

@@ -28,7 +28,7 @@ function ProjectRow({ project }: { project: ProjectRecord }) {
   const { colors: c } = useTheme()
   return (
     <Row
-      leading={<FolderKanban size={20} strokeWidth={1.6} color={c['ink-2']} />}
+      leading={<FolderKanban size={20} strokeWidth={1.6} color={c['foreground-secondary']} />}
       title={project.name}
       detail={projects.countThreads(project.threadCount)}
       onPress={() => go.push('Project', { id: project.id })}
@@ -196,7 +196,7 @@ function Filed({ threads, hidden }: { threads: ReadonlyArray<Thread>; hidden: nu
   const now = useNow()
   if (threads.length === 0 && hidden === 0) {
     return (
-      <Label size="label" tone="ink-3">
+      <Label size="label" tone="ink-2">
         No threads are filed here yet.
       </Label>
     )
@@ -212,7 +212,7 @@ function Filed({ threads, hidden }: { threads: ReadonlyArray<Thread>; hidden: nu
               title={thread.title}
               detail={thread.preview.length > 0 ? thread.preview : undefined}
               trailing={
-                <Label size="caption" tone="ink-3" style={{ fontVariant: ['tabular-nums'] }}>
+                <Label size="caption" tone="ink-2" style={{ fontVariant: ['tabular-nums'] }}>
                   {relativeTime(thread.updatedAt, now)}
                 </Label>
               }
@@ -222,7 +222,7 @@ function Filed({ threads, hidden }: { threads: ReadonlyArray<Thread>; hidden: nu
         </Section>
       )}
       {hidden > 0 && (
-        <Label size="caption" tone="ink-3" style={{ paddingHorizontal: 4 }}>
+        <Label size="caption" tone="ink-2" style={{ paddingHorizontal: 4 }}>
           {`${projects.countThreads(hidden)} here ${hidden === 1 ? 'is' : 'are'} private to other people.`}
         </Label>
       )}

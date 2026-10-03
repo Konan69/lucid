@@ -13,7 +13,7 @@ export function Frame({ title, children }: { title?: string; children: ReactNode
         padding: 16,
         gap: 12,
         borderRadius: radius.card,
-        backgroundColor: c['surface-3'],
+        backgroundColor: c['subtle-strong'],
         overflow: 'hidden',
       }}
     >

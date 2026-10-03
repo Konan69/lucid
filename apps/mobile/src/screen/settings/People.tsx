@@ -171,7 +171,7 @@ function Listed({
               detail={member.email}
               trailing={
                 editable ? undefined : (
-                  <Label size="label" tone="ink-3">
+                  <Label size="label" tone="ink-2">
                     {ROLE_NAME[member.role]}
                   </Label>
                 )
@@ -249,7 +249,7 @@ function MemberSheet({ member, onClose }: { member: Member; onClose: () => void 
           onChange={(next) => void change(next)}
         />
       </Labelled>
-      <Label size="label" tone="ink-3">
+      <Label size="label" tone="ink-2">
         {role === 'admin'
           ? 'Can invite people and set company rules.'
           : 'Works with what admins set up.'}
@@ -363,7 +363,7 @@ function Invite({ company, onClose }: { company: string; onClose: () => void }) 
       <Labelled label="Role">
         <View style={{ gap: 8 }}>
           <Segmented label="Role" value={role} options={ROLES} onChange={setRole} />
-          <Label size="label" tone="ink-3">
+          <Label size="label" tone="ink-2">
             {role === 'admin'
               ? 'Can invite people and set company rules.'
               : 'Works with what admins set up.'}

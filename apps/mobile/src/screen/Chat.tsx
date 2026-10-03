@@ -31,10 +31,10 @@ import { Header, Screen } from '../ui/Header'
 import { AboveKeyboard } from '../ui/Keyboard'
 import {
   Button,
+  EDGE,
   Empty,
   Face,
   GUTTER,
-  HAIRLINE,
   IconButton,
   Label,
   Notice,
@@ -567,9 +567,9 @@ function LatestButton({ count, onPress }: { count: number; onPress: () => void }
           alignItems: 'center',
           gap: 8,
           borderRadius: TARGET / 2,
-          borderWidth: HAIRLINE,
-          borderColor: c['line-3'],
-          backgroundColor: pressed ? c['wash-pressed'] : c['surface-3'],
+          borderWidth: EDGE,
+          borderColor: c.border,
+          backgroundColor: pressed ? c['wash-pressed'] : c['subtle-strong'],
         })}
       >
         <Label size="footnote">Latest messages</Label>
@@ -581,7 +581,7 @@ function LatestButton({ count, onPress }: { count: number; onPress: () => void }
             alignItems: 'center',
             justifyContent: 'center',
             borderRadius: 12,
-            backgroundColor: c.accent,
+            backgroundColor: c.primary,
           }}
         >
           <Label size="caption" tone="ink-on-accent">
@@ -632,12 +632,12 @@ function Tail({
           style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
         >
           <Face size={24} mood="thinking" />
-          <Label tone="ink-3">Thinking…</Label>
+          <Label tone="ink-2">Thinking…</Label>
         </View>
       )}
       {Option.isSome(ended) && (
         <View style={{ gap: 8 }}>
-          <Label size="label" tone="ink-3">
+          <Label size="label" tone="ink-2">
             {ended.value.words}
           </Label>
           {Option.isSome(ended.value.onAgain) && (
