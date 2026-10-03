@@ -47,6 +47,43 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
       ),
     )
 
+    it.effect('dispatches callable accounts once and awaits proxies without thenable calls', () =>
+      Effect.gen(function* () {
+        const frames = yield* Ref.make<Schema.Json[]>([])
+        const dispatch: Dispatch = Effect.fn('Test.accountCall')(function* (call) {
+          expect(call.kind).toBe('use_tool')
+          yield* Ref.update(frames, (items) => items.concat([call.input]))
+          return CallOutcome.cases.Returned.make({
+            value: { ok: true, output: 'sent' },
+            summary: 'Send mail',
+            end: 'completed',
+          })
+        })
+        const outcome = yield* run(
+          'await accounts; await accounts["x"]; if(accounts[Symbol.iterator]!==undefined || accounts["x"][Symbol.iterator]!==undefined) throw new Error("symbol exposed"); return await accounts["Work Gmail"].send_email({to:"Ada"},{summary:"Send mail",rationale:"Reply"});',
+          dispatch,
+        )
+        check(outcome, 'Completed', { result: { ok: true, output: 'sent' } })
+        expect(yield* Ref.get(frames)).toEqual([
+          {
+            account: 'Work Gmail',
+            tool: 'send_email',
+            input: { to: 'Ada' },
+            summary: 'Send mail',
+            rationale: 'Reply',
+          },
+        ])
+      }),
+    )
+
+    it.effect('keeps model source line numbers after the trusted prelude', () =>
+      Effect.gen(function* () {
+        const outcome = yield* run('const label="model";\nreturn new Error(label).stack;', reply)
+        expect(CodeOutcome.guards.Completed(outcome)).toBe(true)
+        expect(outcome).toHaveProperty('result', expect.stringContaining('codemode.js:2'))
+      }),
+    )
+
     it.effect(
       'composes dependent and Promise.all reads, filters intermediate records and combines a Computer receipt',
       () =>

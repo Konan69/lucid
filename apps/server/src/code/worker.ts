@@ -23,6 +23,16 @@ import {
   WorkerMessage,
 } from './protocol.ts'
 
+/**
+ * Like pi README/Source format and runtime/prelude-source.js/run, keep the trusted prefix on
+ * the model's first line so guest stack line numbers stay intact. Executor execute.ts exposes
+ * callable namespaces; Vivid adapts them to exact account names and its existing use_tool gate.
+ * String keys alone name accounts/tools; then must be absent so awaiting either proxy settles.
+ * The server budgets first.code, and every generated function uses the ordinary metered bridge.
+ */
+const ACCOUNTS =
+  'const accounts=new Proxy({}, {get(_target,account){if(account==="then"||String(account)!==account)return undefined;return new Proxy({}, {get(_target,tool){if(tool==="then"||String(tool)!==tool)return undefined;return (input,about)=>tools.use_tool({account,tool,input,summary:about.summary,rationale:about.rationale});}});}});'
+
 /** The only Promise adapter is pi's public callback API; tools themselves never run in this child. */
 function invokeTool(call: Effect.Effect<Schema.Json, PipeFailure>, signal: AbortSignal) {
   // oxlint-disable-next-line vivid/no-runpromise-in-library -- pi's public Promise-only callback ingress in this isolated executable.
@@ -32,7 +42,7 @@ function invokeTool(call: Effect.Effect<Schema.Json, PipeFailure>, signal: Abort
 /** Pi returns failures as values. Rejections outside its VM are installation failures, never host text. */
 const execute = Effect.fn('Code.executeGuest')((sandbox: CodemodeSandbox, code: string) =>
   Effect.callback<CodemodeResult, PipeFailure>((resume, signal) => {
-    sandbox.execute(code, { signal, store: {} }).then(
+    sandbox.execute(ACCOUNTS + code, { signal, store: {} }).then(
       (result) => resume(Effect.succeed(result)),
       () => resume(Effect.fail(new PipeFailure({ reason: 'closed' }))),
     )
