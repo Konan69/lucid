@@ -15,6 +15,7 @@ import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import {
   AuditEvent,
   Conflict,
+  InvalidRequest,
   Company,
   CompanyId,
   ConnectionId,
@@ -46,6 +47,7 @@ import { ThreadStore, threadStoreLayer } from '../threads/store.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { notifications } from '../notifications/tables.ts'
 import { notifierLayer } from '../notifications/notifier.ts'
+import { SettingsStore, settingsStoreLayer } from '../settings/store.ts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { RoutineInvocation, RoutineThreadUnavailable } from './attempts.ts'
 import { routineHandlers } from './handlers.ts'
@@ -230,7 +232,12 @@ const fakeWatchLayer = Layer.effectContext(
   }),
 )
 
-const storesLayer = Layer.mergeAll(routineStoreServiceLayer, threadStoreLayer, runStoreLayer).pipe(
+const storesLayer = Layer.mergeAll(
+  routineStoreServiceLayer,
+  threadStoreLayer,
+  runStoreLayer,
+  settingsStoreLayer,
+).pipe(
   Layer.provideMerge(fakeWatchLayer),
   Layer.provideMerge(testDatabaseLayer),
   Layer.provideMerge(recordedChangesLayer),
@@ -485,6 +492,62 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           yield* Effect.flip(store.patch(owner, routine.id, { enabled: true })),
         ).toBeInstanceOf(RoutineTimePassed)
       }),
+    )
+
+    it.effect('resolves a one-off RPC in server-owned Person Settings and maps expired times', () =>
+      Effect.gen(function* () {
+        const { owner } = yield* fixture()
+        yield* TestClock.setTime(Date.UTC(2026, 9, 3, 12))
+        yield* (yield* SettingsStore).patch(owner.person.id, { timezone: 'Africa/Lagos' })
+        const auth = AuthState.Person({
+          person: owner.person,
+          workspace: owner.workspace,
+          sessionId: SessionId.make(NodeCrypto.randomUUID()),
+        })
+        const create = (localAt: string) =>
+          routineHandlers
+            .CreateOnceRoutine({ name: 'Check report', prompt: 'Remind me.', localAt })
+            .pipe(Effect.provideService(AuthContext, auth))
+        const { routine } = yield* create('2026-10-04T09:00')
+        expect(routine.trigger).toEqual(
+          RoutineTrigger.cases.Once.make({ at: Date.UTC(2026, 9, 4, 8), timezone: 'Africa/Lagos' }),
+        )
+        expect(routine.nextExpectedAt).toBe(Date.UTC(2026, 9, 4, 8))
+        const error = yield* Effect.flip(create('2026-10-03T09:00'))
+        expect(error).toBeInstanceOf(InvalidRequest)
+        expect(error).toMatchObject({ message: 'A one-off Routine must be in the future.' })
+      }),
+    )
+
+    it.effect(
+      'an explicit pause withdraws a consumed one-off before its pending delivery replays',
+      () =>
+        Effect.gen(function* () {
+          const { owner } = yield* fixture()
+          const store = yield* RoutineStore
+          const now = yield* Clock.currentTimeMillis
+          const routine = yield* store.create(owner, {
+            name: 'Withdraw reminder',
+            prompt: 'Check once.',
+            trigger: RoutineTrigger.cases.Once.make({ at: now + 1000, timezone: 'UTC' }),
+          })
+          yield* TestClock.adjust('1 second')
+          yield* store.claimDue()
+          yield* store.patch(owner, routine.id, { enabled: false })
+          yield* (yield* RoutineScheduler).runDue()
+          const result = yield* returned(
+            (yield* store.list(owner)).filter((item) => item.id === routine.id),
+            'One-off',
+          )
+          expect(result.runs).toMatchObject([
+            { status: 'failed', error: 'Its Routine was disabled before delivery' },
+          ])
+          expect(
+            (yield* Ref.get(yield* Deliveries)).filter(
+              (delivery) => delivery.threadId === `routine-${routine.id}`,
+            ),
+          ).toEqual([])
+        }),
     )
 
     it.effect('refuses expired one-offs before inserting any Routine', () =>

@@ -306,14 +306,17 @@ const patchedDue = Effect.fn('RoutineStore.patchedDue')(function* (change: {
   return change.enabled ? change.now + change.integration.intervalMillis : null
 })
 
-/** Trigger edits and explicit pauses withdraw receipts that have not reached Conversation. */
+/** Trigger edits withdraw one-off and Integration content; cron receipts retain their claimed
+ * instant when cadence changes. Explicit pauses withdraw every unadmitted receipt. */
 const withdrawPending = Effect.fn('RoutineStore.withdrawPending')(function* (
   tx: Pick<DatabaseService, 'update'>,
   current: RoutineRecord,
   input: PatchInput,
   now: number,
 ) {
-  if (input.trigger !== undefined || input.enabled === false)
+  const withdrawTrigger =
+    input.trigger !== undefined && !RoutineTrigger.guards.Schedule(current.routine.trigger)
+  if (withdrawTrigger || input.enabled === false)
     yield* tx
       .update(occurrences)
       .set({
