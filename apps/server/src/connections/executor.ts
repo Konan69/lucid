@@ -112,7 +112,8 @@ export const ExecutorTool = Schema.Struct({
   name: Schema.NonEmptyString,
   description: Schema.String,
   input: Schema.Json,
-  output: Schema.optionalKey(Schema.Json),
+  // Discovery mapping keeps an explicit undefined when the provider declares no output schema.
+  output: Schema.optional(Schema.Json),
   effect: ActionEffect,
 })
 export const ExecutorCallOutcome = Schema.TaggedUnion({
