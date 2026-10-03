@@ -14,26 +14,26 @@ source locations, and what must change on the way in.
 
 ## Summary
 
-| #   | Mechanism                                              | OpenMuse source                                                                                     | Vivid target                          | Priority |
-| --- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------- | ------------------------------------- | -------- |
-| 1   | Hash-bound, expiring approval with atomic claim        | `apps/server/src/actions.ts`, `apps/server/src/db.ts:77-94`, `packages/domain/src/index.ts:117-156` | `apps/server/src/approvals` (empty)   | P0       |
-| 2   | Outcome-unknown for uncertain external writes          | `packages/integrations/src/google.ts:19-27,551-606`, `apps/server/src/db.ts:90-94`                  | Approvals + Connections               | P0       |
-| 3   | Leased background work with heartbeat and recovery     | `apps/server/src/engine/worker.ts`                                                                  | Routine Occurrences + Thread Runs | P0       |
-| 4   | Typed input request that resumes the work              | `apps/server/src/engine/service.ts:306-330,844-864`                                                 | `apps/server/src/inputs` (empty)      | P0       |
-| 5   | Tool-result journal (replay-safe tools after re-lease) | `apps/server/src/engine/model.ts:24-95`                                                             | Flue tool adapter / Runs              | P1       |
-| 6   | Idempotent, keyed notifications + outcome publication  | `apps/server/src/engine/service.ts:73-116,578-588,749-807`                                          | `apps/server/src/notifications`       | P1       |
-| 7   | Browser egress guard (public-unicast only)             | `apps/worker/src/network.ts`, `apps/worker/src/browser.ts:215-235`                                  | `packages/computer` egress            | P0       |
-| 8   | Persistent Chromium profile per session + takeover     | `apps/worker/src/browser.ts`, `apps/server/src/browser-console.ts`                                  | `packages/computer/desktop`           | P1       |
-| 9   | Hardened command container + command receipts          | `apps/server/src/computer.ts:441-750`, `apps/computer/Dockerfile`                                   | `packages/computer/machine`           | P1       |
-| 10  | Short-lived signed file URLs                           | `apps/server/src/auth.ts:42-55`, `apps/server/src/files.ts:50-52`                                   | Artifacts                             | P1       |
-| 11  | Credential envelope encryption                         | `packages/integrations/src/vault.ts`                                                                | `apps/server/src/connections`         | P1       |
-| 12  | Google adapter: ETag-guarded calendar writes           | `packages/integrations/src/google.ts:523-548,787-816`                                               | `apps/server/src/connections/google`  | P1       |
-| 13  | PDF inspect/fill with script stripping                 | `packages/integrations/src/pdf.ts:93-153`, `apps/server/src/files.ts`                               | Artifacts / Library                   | P2       |
-| 14  | Document job (attachment → form → reply for approval)  | `apps/server/src/engine/service.ts:808-899`                                                         | A Routine template, once 1–4 exist    | P2       |
-| 15  | Page watch with change dedupe                          | `apps/server/src/engine/service.ts:359-440,900-997`                                                 | `apps/server/src/routines` trigger    | P2       |
-| 16  | Client message queue that never auto-resends           | `apps/mobile/src/conversation-queue.ts`                                                             | `packages/client`                     | P2       |
-| 17  | Inline result cards linked to durable records          | `apps/mobile/src/thread-artifacts.tsx`, `browser-tool-card.tsx`, `mail-tool-card.tsx`               | Thread UI (web + mobile)              | P1       |
-| 18  | Suggestions with source evidence                       | `apps/server/src/engine/service.ts:441-577`                                                         | Today                                 | P2       |
+| #   | Mechanism                                              | OpenMuse source                                                                                     | Vivid target                         | Priority |
+| --- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------- | ------------------------------------ | -------- |
+| 1   | Hash-bound, expiring approval with atomic claim        | `apps/server/src/actions.ts`, `apps/server/src/db.ts:77-94`, `packages/domain/src/index.ts:117-156` | `apps/server/src/approvals` (empty)  | P0       |
+| 2   | Outcome-unknown for uncertain external writes          | `packages/integrations/src/google.ts:19-27,551-606`, `apps/server/src/db.ts:90-94`                  | Approvals + Connections              | P0       |
+| 3   | Leased background work with heartbeat and recovery     | `apps/server/src/engine/worker.ts`                                                                  | Routine Occurrences + Thread Runs    | P0       |
+| 4   | Typed input request that resumes the work              | `apps/server/src/engine/service.ts:306-330,844-864`                                                 | `apps/server/src/inputs` (empty)     | P0       |
+| 5   | Tool-result journal (replay-safe tools after re-lease) | `apps/server/src/engine/model.ts:24-95`                                                             | Flue tool adapter / Runs             | P1       |
+| 6   | Idempotent, keyed notifications + outcome publication  | `apps/server/src/engine/service.ts:73-116,578-588,749-807`                                          | `apps/server/src/notifications`      | P1       |
+| 7   | Browser egress guard (public-unicast only)             | `apps/worker/src/network.ts`, `apps/worker/src/browser.ts:215-235`                                  | `packages/computer` egress           | P0       |
+| 8   | Persistent Chromium profile per session + takeover     | `apps/worker/src/browser.ts`, `apps/server/src/browser-console.ts`                                  | `packages/computer/desktop`          | P1       |
+| 9   | Hardened command container + command receipts          | `apps/server/src/computer.ts:441-750`, `apps/computer/Dockerfile`                                   | `packages/computer/machine`          | P1       |
+| 10  | Short-lived signed file URLs                           | `apps/server/src/auth.ts:42-55`, `apps/server/src/files.ts:50-52`                                   | Artifacts                            | P1       |
+| 11  | Credential envelope encryption                         | `packages/integrations/src/vault.ts`                                                                | `apps/server/src/connections`        | P1       |
+| 12  | Google adapter: ETag-guarded calendar writes           | `packages/integrations/src/google.ts:523-548,787-816`                                               | `apps/server/src/connections/google` | P1       |
+| 13  | PDF inspect/fill with script stripping                 | `packages/integrations/src/pdf.ts:93-153`, `apps/server/src/files.ts`                               | Artifacts / Library                  | P2       |
+| 14  | Document job (attachment → form → reply for approval)  | `apps/server/src/engine/service.ts:808-899`                                                         | A Routine template, once 1–4 exist   | P2       |
+| 15  | Page watch with change dedupe                          | `apps/server/src/engine/service.ts:359-440,900-997`                                                 | `apps/server/src/routines` trigger   | P2       |
+| 16  | Client message queue that never auto-resends           | `apps/mobile/src/conversation-queue.ts`                                                             | `packages/client`                    | P2       |
+| 17  | Inline result cards linked to durable records          | `apps/mobile/src/thread-artifacts.tsx`, `browser-tool-card.tsx`, `mail-tool-card.tsx`               | Thread UI (web + mobile)             | P1       |
+| 18  | Suggestions with source evidence                       | `apps/server/src/engine/service.ts:441-577`                                                         | Today                                | P2       |
 
 P0 is the trust loop Vivid lacks entirely: Approval, Input request, Run lease, and honest
 uncertainty. Everything else rides on it.

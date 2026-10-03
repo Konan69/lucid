@@ -38,13 +38,13 @@ independent of state-machine choice.
 
 ## Current application fit
 
-| Area                                       | Observed behavior                                                                                               | Recommendation                                                                                                                  |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Connection authorization                   | Web and mobile separately manage authorization, retry, errors, returning from sign-in, and Thread continuation. | Best first trial: share the transition controller, retain native platform adapters.                                             |
-| Routine Occurrences                        | Three result states plus persisted Flue submission receipts and guarded completion.                             | Keep the current approach until cancellation, approval, pause, or overlapping-run policy adds meaningful transition complexity. |
-| Library ingestion                          | Mostly linear read, extract, and index work.                                                                    | Keep Effect programs; reconsider for resumable stages, cancellation, or richer retries.                                         |
+| Area                                | Observed behavior                                                                                               | Recommendation                                                                                                                  |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Connection authorization            | Web and mobile separately manage authorization, retry, errors, returning from sign-in, and Thread continuation. | Best first trial: share the transition controller, retain native platform adapters.                                             |
+| Routine Occurrences                 | Three result states plus persisted Flue submission receipts and guarded completion.                             | Keep the current approach until cancellation, approval, pause, or overlapping-run policy adds meaningful transition complexity. |
+| Library ingestion                   | Mostly linear read, extract, and index work.                                                                    | Keep Effect programs; reconsider for resumable stages, cancellation, or richer retries.                                         |
 | Notification read state, navigation | Mostly simple values and updates.                                                                               | Schemas and direct functions suffice.                                                                                           |
-| Conversation streaming                     | Flue owns conversation execution and lifecycle.                                                                 | Preserve its authority; do not mirror it into a competing machine.                                                              |
+| Conversation streaming              | Flue owns conversation execution and lifecycle.                                                                 | Preserve its authority; do not mirror it into a competing machine.                                                              |
 
 Local evidence:
 
