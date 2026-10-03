@@ -9,8 +9,10 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: false,
   name: 'Check a deliverable',
-  about: 'Looks at finished work the way you will see it and fixes what is wrong before handing it over.',
-  useWhen: 'When a document, page or data file is about to be handed over, or the Person asks for a check.',
+  about:
+    'Looks at finished work the way you will see it and fixes what is wrong before handing it over.',
+  useWhen:
+    'When a document, page or data file is about to be handed over, or the Person asks for a check.',
   needs: ['read_document', 'write_document', 'browse', 'use_desktop', 'run_command', 'ask_person'],
   connections: [],
   instructions: `A deliverable is checked by looking at what the Person will see, freshly, not by trusting the steps that produced it. Run this before saying that a document, page or data file is ready, and whenever the Person asks for a check. Never hand it over while a check below fails.

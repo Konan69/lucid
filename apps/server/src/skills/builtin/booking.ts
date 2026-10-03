@@ -9,8 +9,10 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: false,
   name: 'Make a booking',
-  about: 'Reserves a flight, hotel, table or ticket for you, and confirms the exact terms with you first.',
-  useWhen: 'When the Person wants live availability checked or a flight, hotel, table or ticket booked.',
+  about:
+    'Reserves a flight, hotel, table or ticket for you, and confirms the exact terms with you first.',
+  useWhen:
+    'When the Person wants live availability checked or a flight, hotel, table or ticket booked.',
   needs: [
     'find_tools',
     'use_tool',

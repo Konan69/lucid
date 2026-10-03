@@ -9,8 +9,10 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: false,
   name: 'What Vivid can do',
-  about: 'Tells you what Vivid can do, knows and has scheduled, from what is actually set up right now.',
-  useWhen: 'When the Person asks what Vivid can do, knows, remembers, has connected or has scheduled.',
+  about:
+    'Tells you what Vivid can do, knows and has scheduled, from what is actually set up right now.',
+  useWhen:
+    'When the Person asks what Vivid can do, knows, remembers, has connected or has scheduled.',
   needs: [
     'find_tools',
     'find_integrations',

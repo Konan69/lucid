@@ -9,8 +9,10 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: false,
   name: 'Write a document',
-  about: 'Writes a document you will keep, with real structure, and reads it back before handing it over.',
-  useWhen: 'When the Person wants a report, plan, proposal, notes or long draft they will keep or edit.',
+  about:
+    'Writes a document you will keep, with real structure, and reads it back before handing it over.',
+  useWhen:
+    'When the Person wants a report, plan, proposal, notes or long draft they will keep or edit.',
   needs: ['write_document', 'read_document', 'search_library', 'ask_person'],
   connections: [],
   instructions: `Settle what the document is for, who reads it and what it must contain before writing. Use \`search_library\` for supplied material and ask with \`ask_person\` only when a missing fact changes the content. Content comes from what was gathered or supplied; a value you do not have is a stated gap or a question, never an invented figure.

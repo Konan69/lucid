@@ -9,8 +9,10 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: false,
   name: 'Wide research',
-  about: 'Runs the same lookup across a long list and returns one table, with what was and was not found.',
-  useWhen: 'When one lookup repeats across many independent inputs that all return the same fields.',
+  about:
+    'Runs the same lookup across a long list and returns one table, with what was and was not found.',
+  useWhen:
+    'When one lookup repeats across many independent inputs that all return the same fields.',
   needs: ['run_code', 'find_tools', 'use_tool', 'read_page', 'connect', 'show', 'ask_person'],
   connections: [['Search', 'Web Search', 'Brave Search', 'Tavily', 'Exa']],
   instructions: `Use this when one research task repeats across many independent inputs, such as one company, person or topic each, and every input returns the same fields. Do not use it for a single item or when one lookup depends on another's result; that is ordinary research.

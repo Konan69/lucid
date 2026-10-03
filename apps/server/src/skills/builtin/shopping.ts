@@ -9,7 +9,8 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: false,
   name: 'Shop for something',
-  about: 'Finds well-priced products that match what you asked for and checks each one is really available.',
+  about:
+    'Finds well-priced products that match what you asked for and checks each one is really available.',
   useWhen: 'When the Person wants products found, compared, a deal located or a purchase made.',
   needs: [
     'find_tools',

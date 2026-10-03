@@ -9,7 +9,8 @@ import { Procedure } from './procedure.ts'
 export const procedure = Procedure.make({
   starter: false,
   name: 'Find a place',
-  about: 'Finds and compares restaurants, hotels, shops and other places, grounded in current sources.',
+  about:
+    'Finds and compares restaurants, hotels, shops and other places, grounded in current sources.',
   useWhen: 'When the Person wants physical places found or compared near them or in a named area.',
   needs: ['find_tools', 'use_tool', 'connect', 'read_page', 'show', 'ask_person'],
   connections: [['Search', 'Web Search', 'Brave Search', 'Tavily', 'Exa']],

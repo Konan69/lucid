@@ -10,7 +10,8 @@ export const procedure = Procedure.make({
   starter: false,
   name: 'Plan a trip',
   about: 'Researches a trip, checks that it works and keeps one itinerary for you to decide on.',
-  useWhen: 'When a destination, date, route, stay or daily structure of a trip still needs a real choice.',
+  useWhen:
+    'When a destination, date, route, stay or daily structure of a trip still needs a real choice.',
   needs: [
     'find_tools',
     'use_tool',

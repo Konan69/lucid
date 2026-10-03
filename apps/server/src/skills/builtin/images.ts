@@ -10,7 +10,8 @@ export const procedure = Procedure.make({
   starter: false,
   name: 'Find pictures',
   about: 'Finds public pictures that match your description and keeps the source of each one.',
-  useWhen: 'When the Person wants public pictures found from a description, not a supplied picture identified.',
+  useWhen:
+    'When the Person wants public pictures found from a description, not a supplied picture identified.',
   needs: ['find_tools', 'use_tool', 'connect', 'read_page', 'show', 'ask_person'],
   connections: [['Search', 'Web Search', 'Brave Search', 'Tavily', 'Exa']],
   instructions: `Find public pictures from a text description, for a visual reference or to illustrate work. This is search by words. It does not identify a supplied picture, and must never be used to identify an unknown person from a photograph.
