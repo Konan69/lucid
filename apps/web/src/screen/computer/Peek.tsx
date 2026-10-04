@@ -6,10 +6,17 @@ import { live, useLiveValue } from '../../data/live'
 import { panel } from '../../data/panel'
 import { Button } from '../../ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
-import { Glass, hold, Viewer, type Heard } from '../Computer'
+import { Glass, hold, Viewer, type Heard, type Resolution } from '../Computer'
 
 /** Whether the small picture has a frame on it yet; until it has, the wallpaper says "connecting". */
 const seenAfter = (_seen: boolean, heard: Heard) => heard === 'opened'
+
+/**
+ * The small picture's box is one size whatever the machine's screen is, so the row in the Thread
+ * does not move when the screen arrives; the screen client fits the machine's shape inside it.
+ * The shape the stream reports is therefore heard and not used here.
+ */
+const anyResolution = (_resolution: Resolution) => undefined
 
 /**
  * Vivid's computer, small, in the Thread, while Vivid is using it. The pattern is the reference's
@@ -106,7 +113,12 @@ function Picture({ computer }: { computer: ComputerRecord }) {
   return (
     <span className="pointer-events-none absolute inset-0">
       {!seen && <Resting />}
-      <Glass address={state.screen.address} control={false} onHeard={hear} />
+      <Glass
+        address={state.screen.address}
+        control={false}
+        onHeard={hear}
+        onResolution={anyResolution}
+      />
     </span>
   )
 }

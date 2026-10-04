@@ -22,6 +22,8 @@
   --page-tab-w: 236px;
   --page-tab-min-w: 90px;
   --page-nav-w: 98px;
+  /* Under the machine's screen: the 40 px line of control and the 12 px between the two. */
+  --screen-dock-h: 52px;
   --around-w: 300px;
   --around-reserve-w: 312px;
   /* The primary button under the pointer: its own colour, a step toward the ink. Stated here and
@@ -29,16 +31,70 @@
   --accent-hover: color-mix(in srgb, var(--primary) 88%, var(--foreground));
 }
 
-/* The Computer beside the Thread: as wide as the divider was left, or the whole page in full view. */
+/* Where the popped-out Computer is and how large. They are lengths that do not inherit, so a
+   drag that rewrites them restyles the window and nothing inside it. */
+@property --float-x {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@property --float-y {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@property --float-w {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 480px;
+}
+@property --float-h {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 420px;
+}
+/* The Computer, three ways. Beside the Thread it is as wide as the divider was left. In full view
+   it is the whole page. Popped out it is a window over the page: its size and place are written
+   on the element by `screen/computer/place.ts`, the place as `translate` so a drag is not a
+   layout, and it casts the one shadow a floating layer casts. */
 @utility computer-workspace {
   position: relative;
   width: var(--computer-w);
-  &[data-full='true'] {
+  height: 100%;
+  &[data-view='full'] {
     position: absolute;
     inset: 0;
     width: 100%;
     z-index: 30;
   }
+  &[data-view='popout'] {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: var(--float-w);
+    height: var(--float-h);
+    translate: var(--float-x) var(--float-y);
+    z-index: 30;
+    overflow: hidden;
+    border-radius: var(--radius-panel);
+    box-shadow:
+      0 0 0 1px var(--line-3),
+      var(--shadow-modal);
+  }
+}
+/* The room the machine's screen is given, and the largest screen that fits it. The screen keeps
+   the machine's own shape (`--screen-w` by `--screen-h`, read from the stream), is as wide as the
+   room when the room is tall, and as tall as the room less the line of control when the room is
+   wide. The units are the room's own, so the divider, the popped-out window and full view all fit
+   the screen with no script. */
+@utility screen-room {
+  container-type: size;
+}
+@utility screen-fit {
+  width: min(100cqw, calc((100cqh - var(--screen-dock-h)) * var(--screen-w) / var(--screen-h)));
+}
+@utility screen-glass {
+  aspect-ratio: var(--screen-w) / var(--screen-h);
 }
 /* The divider's line, centred in its wider hit area so the hairline stays one pixel. */
 @utility computer-edge {
