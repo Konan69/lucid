@@ -45,7 +45,6 @@ import {
   ExecutorStep,
   ExecutorTool,
   ExecutorCallOutcome,
-  ExecutorResumeOutcome,
 } from './executor.ts'
 import { connectionStoreLayer } from './store.ts'
 
@@ -128,7 +127,7 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
             ...identity,
             authorization: ExecutorAuthorizationId.make(crypto.randomUUID()),
           }),
-          address: 'https://example.test/sign-in',
+          address: `https://example.test/sign-in?state=${input.connectionId}`,
         })
       if (step === 'EnterKey')
         return ExecutorStep.cases.EnterKey.make({
@@ -159,7 +158,7 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
             ...identity,
             authorization: ExecutorAuthorizationId.make(crypto.randomUUID()),
           }),
-          address: `https://example.test/sign-in/${crypto.randomUUID()}`,
+          address: `https://example.test/sign-in/${crypto.randomUUID()}?state=${input.connectionId}`,
         })
       if (step === 'EnterKey')
         return ExecutorStep.cases.EnterKey.make({
@@ -196,9 +195,6 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
       yield* Ref.update(probe.calls, (count) => count + 1)
       return yield* Ref.get(probe.outcome)
     }),
-    resume: Effect.fn('Executor.Test.resume')(() =>
-      Effect.succeed(ExecutorResumeOutcome.cases.Completed.make({ value: { resumed: true } })),
-    ),
   })
 }
 
@@ -347,6 +343,8 @@ export const toolRequest = (connectionId: ConnectionId, tool: string) => ({
 
 const HostedInstall = Schema.Struct({ name: Schema.NonEmptyString })
 const HostedImport = Schema.Struct({ source: HostedInstall })
+const HostedTargetInput = Schema.Struct({ profile: Schema.NonEmptyString })
+const decodeHostedTarget = Schema.decodeUnknownEffect(HostedTargetInput)
 const HostedProfileInput = Schema.Struct({ idempotencyKey: Schema.NonEmptyString })
 const decodeHostedInstall = Schema.decodeUnknownEffect(HostedInstall)
 const decodeHostedImport = Schema.decodeUnknownEffect(HostedImport)
@@ -373,6 +371,8 @@ interface HostedReply {
   readonly body: Schema.Json
 }
 interface HostedState {
+  readonly target: Ref.Ref<Schema.Json>
+  readonly intercept: Ref.Ref<(request: HostedRequest) => Effect.Effect<void>>
   readonly requests: Ref.Ref<readonly HostedRequest[]>
   readonly replies: Ref.Ref<ReadonlyMap<string, HostedReply>>
   readonly apps: Ref.Ref<readonly { readonly id: string; readonly name: string }[]>
@@ -384,12 +384,12 @@ interface HostedState {
   readonly result: Ref.Ref<Schema.Json>
 }
 
-/** The remote app's provider declaration drives Vivid's form and OAuth method selection. */
+/** Each installation has its own foreign identity; the remote app's provider declaration drives Vivid's form and OAuth method selection. */
 const hostedApp = Effect.fn('Executor.HostedTest.app')(function* (
   state: HostedState,
-  name: string,
+  app: { readonly id: string; readonly name: string },
 ) {
-  return { id: 'app', name, requirements: { accounts: yield* Ref.get(state.accounts) } }
+  return { id: app.id, name: app.name, requirements: { accounts: yield* Ref.get(state.accounts) } }
 })
 
 /** Simulate create-only app installation plus ConnectionId profile deduplication on the remote
@@ -404,10 +404,13 @@ const hostedWrite = Effect.fn('Executor.HostedTest.write')(function* (
       request.path === 'POST /apps/install'
         ? yield* decodeHostedInstall(request.body)
         : (yield* decodeHostedImport(request.body)).source
-    yield* Ref.update(state.apps, (apps) => [...apps, { id: 'app', name }])
-    return yield* hostedApp(state, name)
+    const app = yield* Ref.modify(state.apps, (apps) => {
+      const created = { id: apps.length === 0 ? 'app' : `app-${apps.length + 1}`, name }
+      return [created, [...apps, created]]
+    })
+    return yield* hostedApp(state, app)
   }
-  if (request.path === 'POST /apps/app/profiles') {
+  if (/^POST \/apps\/[^/]+\/profiles$/u.test(request.path)) {
     const { idempotencyKey } = yield* decodeHostedProfileInput(request.body)
     const id = yield* Ref.modify(state.profiles, (profiles) => {
       const existing = profiles.get(idempotencyKey)
@@ -417,14 +420,21 @@ const hostedWrite = Effect.fn('Executor.HostedTest.write')(function* (
     })
     return { ...hostedProfile, id }
   }
-  if (request.path === 'POST /apps/app/connections')
+  const connectionPath = request.path.match(/^POST \/apps\/([^/]+)\/connections$/u)
+  if (connectionPath !== null) {
+    const app = connectionPath[1]
+    if (app === undefined) return yield* Effect.die('Hosted fixture connection app is absent')
+    const { profile } = yield* decodeHostedTarget(request.body)
+    const target = { app, profile }
+    yield* Ref.set(state.target, target)
     return {
       id: 'authorization',
       reconnectAccount: null,
-      target: { app: 'app', profile: 'profile' },
+      target,
       state: { status: 'pending' },
       url: 'https://executor.example.test/form',
     }
+  }
   if (request.path === 'POST /accounts/account/connections')
     return {
       id: 'authorization',
@@ -440,11 +450,12 @@ const hostedWrite = Effect.fn('Executor.HostedTest.write')(function* (
   if (request.path === 'POST /connections/authorization/oauth/start')
     return {
       status: 'redirect',
-      authorizationUrl: 'https://provider.example.test/sign-in',
+      authorizationUrl:
+        'https://provider.example.test/sign-in?state=hosted-fixture-oauth-state-00000000',
       redirectUri: yield* Ref.get(state.redirectUri),
       expiresAt: '2026-10-04T00:00:00Z',
     }
-  if (request.path === 'POST /apps/app/tools/call') return yield* Ref.get(state.result)
+  if (/^POST \/apps\/[^/]+\/tools\/call$/u.test(request.path)) return yield* Ref.get(state.result)
   return hostedProfile
 })
 
@@ -457,17 +468,16 @@ const hostedRead = Effect.fn('Executor.HostedTest.read')(function* (
 ) {
   if (request.path === 'GET /catalog') return yield* Ref.get(state.catalog)
   if (request.path === 'GET /inventory') {
-    const apps = yield* Effect.forEach(yield* Ref.get(state.apps), (app) =>
-      hostedApp(state, app.name),
-    )
+    const apps = yield* Effect.forEach(yield* Ref.get(state.apps), (app) => hostedApp(state, app))
     return { apps, accounts: [{ id: 'unrelated-account', label: 'Same label' }] }
   }
-  if (request.path === 'GET /apps/app') {
-    const app = (yield* Ref.get(state.apps))[0]
+  const appPath = request.path.match(/^GET \/apps\/([^/]+)$/u)
+  if (appPath !== null) {
+    const app = (yield* Ref.get(state.apps)).find((candidate) => candidate.id === appPath[1])
     if (app === undefined) return yield* Effect.die('Hosted fixture app was not installed')
-    return yield* hostedApp(state, app.name)
+    return yield* hostedApp(state, app)
   }
-  if (request.path === 'GET /apps/app/tools') {
+  if (/^GET \/apps\/[^/]+\/tools$/u.test(request.path)) {
     const search = new URLSearchParams(request.search)
     const profile = search.get('profile')
     const page = {
@@ -491,7 +501,7 @@ const hostedRead = Effect.fn('Executor.HostedTest.read')(function* (
     return {
       id: 'authorization',
       reconnectAccount: null,
-      target: { app: 'app', profile: 'profile' },
+      target: yield* Ref.get(state.target),
       state: { status: 'pending' },
     }
   return hostedProfile
@@ -503,6 +513,8 @@ const hostedRead = Effect.fn('Executor.HostedTest.read')(function* (
  */
 export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(function* () {
   const state: HostedState = {
+    target: yield* Ref.make<Schema.Json>({ app: 'app', profile: 'profile' }),
+    intercept: yield* Ref.make<(request: HostedRequest) => Effect.Effect<void>>(() => Effect.void),
     requests: yield* Ref.make<readonly HostedRequest[]>([]),
     replies: yield* Ref.make<ReadonlyMap<string, HostedReply>>(new Map()),
     apps: yield* Ref.make<readonly { readonly id: string; readonly name: string }[]>([]),
@@ -543,6 +555,7 @@ export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(fu
       headers: request.headers,
     }
     yield* Ref.update(state.requests, (items) => [...items, received])
+    yield* (yield* Ref.get(state.intercept))(received)
     const reply = (yield* Ref.get(state.replies)).get(received.path)
     if (reply !== undefined)
       return HttpServerResponse.jsonUnsafe(reply.body, { status: reply.status })
@@ -583,22 +596,19 @@ function hostedRoute(path: string) {
     [
       'GET /catalog',
       'GET /inventory',
-      'GET /apps/app',
-      'GET /apps/app/tools',
       'GET /providers/provider/oauth/oauth/setup',
       'GET /connections/authorization',
       'POST /apps/install',
       'POST /apps/import',
-      'POST /apps/app/profiles',
-      'POST /apps/app/connections',
       'POST /accounts/account/connections',
       'POST /connections/authorization/submit',
       'POST /connections/authorization/oauth/start',
       'POST /connections/authorization/oauth/complete',
-      'POST /apps/app/tools/call',
       'DELETE /accounts/account',
     ].includes(path) ||
-    /^(?:GET|DELETE) \/apps\/app\/profiles\/[^/]+$/u.test(path) ||
-    /^POST \/apps\/app\/profiles\/[^/]+\/reconcile$/u.test(path)
+    /^GET \/apps\/[^/]+(?:\/tools)?$/u.test(path) ||
+    /^POST \/apps\/[^/]+\/(?:profiles|connections|tools\/call)$/u.test(path) ||
+    /^(?:GET|DELETE) \/apps\/[^/]+\/profiles\/[^/]+$/u.test(path) ||
+    /^POST \/apps\/[^/]+\/profiles\/[^/]+\/reconcile$/u.test(path)
   )
 }

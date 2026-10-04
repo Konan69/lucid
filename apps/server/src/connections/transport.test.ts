@@ -247,6 +247,58 @@ describe('Executor hosted transport', () => {
     ),
   )
 
+  it.effect('keeps two distinct Integrations on their own installed app and profile ids', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        const other = ServiceId.make('other/service')
+        yield* Ref.update(remote.catalog, (entries) => [
+          ...entries,
+          { id: other, kind: 'app', name: 'Other Integration', description: '' },
+        ])
+        const executor = yield* Executor
+        const first = yield* executor.begin(begin)
+        const second = yield* executor.begin({
+          ...begin,
+          service: other,
+          connectionId: ConnectionId.make('second'),
+        })
+        const repeated = yield* executor.begin({
+          ...begin,
+          service: other,
+          connectionId: ConnectionId.make('third'),
+        })
+        expect(first.references.app).not.toBe(second.references.app)
+        expect(first.references.profile).not.toBe(second.references.profile)
+        expect(repeated.references.app).toBe(second.references.app)
+        expect(repeated.references.profile).not.toBe(second.references.profile)
+        const requests = yield* Ref.get(remote.requests)
+        expect(
+          requests.filter((request) => request.path === `POST ${hostedPrefix}/apps/install`),
+        ).toHaveLength(2)
+        expect(
+          requests.filter(
+            (request) =>
+              request.path === `POST ${hostedPrefix}/apps/${first.references.app}/profiles`,
+          ),
+        ).toHaveLength(1)
+        expect(
+          requests.filter(
+            (request) =>
+              request.path === `POST ${hostedPrefix}/apps/${second.references.app}/profiles`,
+          ),
+        ).toHaveLength(2)
+        yield* executor.remove(first.references)
+        expect(
+          (yield* Ref.get(remote.requests))
+            .filter((request) => request.path.startsWith('DELETE'))
+            .map((request) => request.path),
+        ).toEqual([
+          `DELETE ${hostedPrefix}/apps/${first.references.app}/profiles/${first.references.profile}`,
+        ])
+      }),
+    ),
+  )
+
   it.effect('ignores foreign requirement shapes and reads only the selected installed app', () =>
     scenario((remote) =>
       Effect.gen(function* () {
