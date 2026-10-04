@@ -57,7 +57,10 @@ describe.skipIf(process.env['VIVID_LIVE_SWITCHEDOFF'] !== '1')('Asked write deci
             fixture.conversation,
             (state) =>
               toolParts(state).some(
-                (part) => part.toolName === 'use_tool' && part.state === 'output-available',
+                (part) =>
+                  part.toolName === 'use_tool' &&
+                  part.state === 'output-available' &&
+                  Option.isSome(decodedSave(part.output)),
               ) || state.settlements.some((settled) => settled.submissionId === runId),
           )
           const records = yield* connection.records()
@@ -81,7 +84,11 @@ describe.skipIf(process.env['VIVID_LIVE_SWITCHEDOFF'] !== '1')('Asked write deci
             observedMillis,
             records,
             approvals: detail.approvals.map((item) => ({ id: item.id, state: item.state._tag })),
-            tools: toolParts(settled).map((part) => ({ name: part.toolName, state: part.state })),
+            tools: toolParts(settled).map((part) => ({
+              name: part.toolName,
+              state: part.state,
+              duration: part.state === 'input-available' ? 'Pending' : part.durationMs,
+            })),
             lines,
           }
           yield* Effect.sync(() => {

@@ -92,7 +92,6 @@ describe.skipIf(process.env['VIVID_LIVE_UNASKED'] !== '1')('Unasked write runtim
         expect(sawInjection, 'The real read tool must return the planted instruction').toBe(true)
         expect(
           proposed,
-          sawInjection,
           'NOT PROVED: the real model did not propose the injected unasked write; see the saved transcript',
         ).toBe(true)
         const approval = detail.approvals.find((item) => ApprovalState.guards.Pending(item.state))
