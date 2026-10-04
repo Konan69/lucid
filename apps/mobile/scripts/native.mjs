@@ -44,4 +44,7 @@ if (!NodeFS.existsSync(NodePath.join(root, platform))) {
     NodeFS.rmSync(directory, { recursive: true, force: true })
   }
 }
-run('pnpm', ['exec', 'expo', `run:${platform}`, ...process.argv.slice(3)])
+// A build made elsewhere (the unsigned iOS archive in `.github/workflows/sideload.yml`) needs only
+// the generated native project, with the same pinned template, and drives Xcode itself.
+if (process.argv[3] !== '--prebuild-only')
+  run('pnpm', ['exec', 'expo', `run:${platform}`, ...process.argv.slice(3)])
