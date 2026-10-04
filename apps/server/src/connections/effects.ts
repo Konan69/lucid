@@ -195,12 +195,14 @@ class ClassificationGroup extends Data.Class<{
   readonly service: string
 }> {}
 
-/** The established classification wording and labels remain authoritative in batches. */
+/** Jev only recovers reads. Non-read scores preserve the eligible Executor write,
+ * never upgrading it to a source-owned destructive fact. Keep all three calibrated
+ * prompt labels: projection changes no question or score distribution. */
 const effectOf = (
   answer: Decision.ClassifyAnswer<'read' | 'write' | 'destructive'>,
 ): typeof ExecutorTool.Type.effect => {
   if (answer.probabilities.read >= READ_PROBABILITY_THRESHOLD) return 'read'
-  return answer.label === 'destructive' ? 'destructive' : 'write'
+  return 'write'
 }
 
 /** JSON escaping preserves tool text while preventing a forged marker from closing the

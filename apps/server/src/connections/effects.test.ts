@@ -58,7 +58,7 @@ it.effect.each([
   { read: 0.9499, label: 'read', expected: 'write' },
   { read: 0.95, label: 'read', expected: 'read' },
   { read: 0.9501, label: 'read', expected: 'read' },
-  { read: 0, label: 'destructive', expected: 'destructive' },
+  { read: 0, label: 'destructive', expected: 'write' },
 ])('classifies $label at $read as $expected', ({ read, label, expected }) =>
   Effect.gen(function* () {
     expect(yield* (yield* ToolEffects).classify(request)).toBe(expected)

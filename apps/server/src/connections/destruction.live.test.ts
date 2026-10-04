@@ -11,12 +11,12 @@ import {
 import { ExecutorTool } from './executor.ts'
 import { ToolEffects, toolEffectsLayer } from './effects.ts'
 
-/** One claim: the production direct path projects destructive tools correctly. This uses
- * ToolEffects' actual metadata eligibility, deadline, cache and threshold; debug scores
- * are from that attempt, not an independently repeated ten-second calibration request. */
+/** Destructive semantics must never remove Approval. Jev retains Executor's write
+ * when the source did not declare destructive; only the source owns that upgrade.
+ * Each debug receipt proves a real judgment rather than conservative outage recovery. */
 describe.skipIf(!liveDecisionEnabled)('Gateway destructive effects', () => {
   it.live(
-    'preserve destructive classifications',
+    'never recover a destructive operation as read',
     () => {
       const lines: string[] = []
       return Effect.gen(function* () {
@@ -34,7 +34,7 @@ describe.skipIf(!liveDecisionEnabled)('Gateway destructive effects', () => {
             }),
           })
           expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
-          if (effect === 'read') misses.push(`${tool.name}:${effect}`)
+          if (effect !== 'write') misses.push(`${tool.name}:${effect}`)
         }
         expect(misses).toEqual([])
       }).pipe(
