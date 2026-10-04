@@ -5,13 +5,13 @@ import { Option, Result } from 'effect'
 import {
   Building2,
   ChevronsUpDown,
+  FolderClosed,
   Library,
   PanelLeft,
   Plus,
   Repeat2,
   Search,
   Settings as SettingsIcon,
-  SquarePen,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { IconButton } from '../ui/button'
@@ -156,10 +156,16 @@ export function Sidebar({
             onCreateCompany={() => setCreatingCompany(true)}
           />
           <ToolRow
-            icon={<SquarePen className="size-4" strokeWidth={1.6} />}
+            icon={<Plus className="size-4" strokeWidth={1.6} />}
             label="New thread"
             active={Route.$is('New')(route)}
             onClick={() => router.go(Route.New())}
+          />
+          <ToolRow
+            icon={<FolderClosed className="size-4" strokeWidth={1.6} />}
+            label="Projects"
+            active={Route.$is('Projects')(route) && Option.isNone(route.open)}
+            onClick={() => router.go(Route.Projects({ open: Option.none() }))}
           />
           <ToolRow
             icon={<Repeat2 className="size-4" strokeWidth={1.6} />}
