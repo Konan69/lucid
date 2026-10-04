@@ -150,26 +150,14 @@ describe('Executor hosted transport', () => {
               app: 'internal-app',
               deployment: 'internal-deployment',
               tool: 'read',
-              problems: [
-                'repoName: expected a string',
-                'question: required',
-                'Authorization: Bearer private-value',
-                'account id: short-private',
-                'Invalid internal-app selection',
-              ],
+              problems: ['Input did not match the tool schema'],
             },
           })
           const executor = yield* Executor
           const outcome = yield* executor.call({ references, tool: 'read', input: {} })
           expect(outcome).toMatchObject({
             _tag: 'Rejected',
-            problems: [
-              'repoName: expected a string',
-              'question: required',
-              'The integration rejected the tool request; sensitive diagnostics were removed.',
-              'A validation diagnostic containing internal identity was removed.',
-              'A validation diagnostic containing internal identity was removed.',
-            ],
+            problems: ['Input did not match the tool schema'],
           })
           expect(JSON.stringify(outcome)).not.toMatch(
             /private-value|short-private|internal-app|internal-deployment/,
@@ -185,24 +173,58 @@ describe('Executor hosted transport', () => {
       ),
   )
 
-  it.effect('rejects malformed validation problems instead of trusting untyped diagnostics', () =>
+  it.effect('keeps invalid or absent validation detail a definite rejection', () =>
     scenario((remote) =>
       Effect.gen(function* () {
-        yield* failRoute(remote, 'POST /apps/app/tools/call', {
-          status: 422,
-          body: {
-            _tag: 'InputInvalid',
-            app: 'app',
-            deployment: 'deployment',
-            tool: 'read',
-            problems: [42],
-          },
-        })
-        expect(yield* (yield* Executor).call({ references, tool: 'read', input: {} })).toEqual(
-          ExecutorCallOutcome.cases.OutcomeUnknown.make({}),
-        )
+        const executor = yield* Executor
+        for (const body of [
+          { _tag: 'InputInvalid' },
+          { _tag: 'InputInvalid', problems: [42] },
+          { _tag: 'InputInvalid', problems: 'invalid' },
+        ]) {
+          yield* failRoute(remote, 'POST /apps/app/tools/call', { status: 422, body })
+          expect(yield* executor.call({ references, tool: 'read', input: {} })).toEqual(
+            ExecutorCallOutcome.cases.Rejected.make({
+              message:
+                'Input did not match the tool schema. Inspect the current tool and correct its input.',
+            }),
+          )
+        }
       }),
     ),
+  )
+
+  it.effect(
+    'accepts future safe field problems without response identity and removes call references',
+    () =>
+      scenario((remote) =>
+        Effect.gen(function* () {
+          yield* failRoute(remote, 'POST /apps/app/tools/call', {
+            status: 422,
+            body: {
+              _tag: 'InputInvalid',
+              problems: [
+                'owner: required',
+                'id: expected a string',
+                'selection app profile account',
+              ],
+            },
+          })
+          const outcome = yield* (yield* Executor).call({
+            references: authorized,
+            tool: 'read',
+            input: {},
+          })
+          expect(outcome).toMatchObject({
+            _tag: 'Rejected',
+            problems: [
+              'owner: required',
+              'id: expected a string',
+              'selection [REDACTED] [REDACTED] [REDACTED]',
+            ],
+          })
+        }),
+      ),
   )
 
   it.effect('installs one shared app, reuses it, and deduplicates profiles by ConnectionId', () =>

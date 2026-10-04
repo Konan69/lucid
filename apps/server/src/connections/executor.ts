@@ -28,7 +28,7 @@ import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import type * as HttpBody from 'effect/unstable/http/HttpBody'
 
-import { toolMessage, validationProblem } from './message.ts'
+import { toolMessage, validationProblems } from './message.ts'
 import { retainCatalog } from './catalog.ts'
 import { ConnectionSource } from './address.ts'
 import { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
@@ -186,7 +186,7 @@ export class ExecutorRejected extends Schema.TaggedError<ExecutorRejected>()(
 /** HostedTools.call (apps/hosted/server/src/contracts/tools.ts) returns SDK InputInvalid
  * (packages/sdk/src/contracts/tools.ts): problems is an array of safe validation summaries.
  * Keep that failure distinct from policy/transport refusal so input can be corrected and retried.
- * Foreign identities are intentionally excluded; summaries are filtered before construction.
+ * Foreign identities are intentionally excluded; summaries are filtered against call references before projection.
  */
 export class ExecutorInputInvalid extends Schema.TaggedError<ExecutorInputInvalid>()(
   'ExecutorInputInvalid',
@@ -597,9 +597,6 @@ const decodeFailure = Schema.decodeUnknownEffect(WireFailure)
  */
 const WireInputInvalid = Schema.Struct({
   _tag: Schema.Literal('InputInvalid'),
-  app: ExecutorAppId,
-  deployment: ExecutorDeploymentId,
-  tool: Schema.NonEmptyString,
   problems: Schema.Array(Schema.String),
 })
 const decodeInputInvalid = Schema.decodeUnknownEffect(WireInputInvalid)
@@ -656,11 +653,13 @@ function responseReader(client: HttpClient.HttpClient) {
         }
         const failure = yield* decodeFailure(body).pipe(Effect.mapError(invalid))
         if (failure._tag === 'InputInvalid' && tool !== null) {
-          const detail = yield* decodeInputInvalid(body).pipe(Effect.mapError(invalid))
+          const detail = yield* decodeInputInvalid(body).pipe(
+            Effect.mapError(() => translateFailure('InputInvalid', tool)),
+          )
           return yield* Effect.fail(
             ExecutorInputInvalid.make({
               ...context,
-              problems: detail.problems.map((problem) => validationProblem(problem, detail)),
+              problems: detail.problems,
             }),
           )
         }
@@ -1826,6 +1825,26 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
         )
         .pipe(
           Effect.map(completedCall),
+          Effect.catchTag('ExecutorInputInvalid', ({ problems }) =>
+            Effect.succeed(
+              ExecutorCallOutcome.cases.Rejected.make({
+                message: 'Input did not match the tool schema. Correct its input and retry.',
+                problems: validationProblems(problems, [
+                  references.app,
+                  catalog.deployment,
+                  references.profile,
+                  ...ExecutorReferences.match(references, {
+                    Public: () => [],
+                    Authorized: ({ account }) => [account],
+                    EnteringKey: () => [],
+                    SigningIn: () => [],
+                    OAuthSigningIn: () => [],
+                    GoogleSigningIn: () => [],
+                  }),
+                ]),
+              }),
+            ),
+          ),
           Effect.catchTags({
             ExecutorTransportFailure: () =>
               Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),
@@ -1839,13 +1858,6 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
     (effect) =>
       effect.pipe(
         Effect.catchTags({
-          ExecutorInputInvalid: ({ problems }) =>
-            Effect.succeed(
-              ExecutorCallOutcome.cases.Rejected.make({
-                message: 'Input did not match the tool schema. Correct its input and retry.',
-                problems,
-              }),
-            ),
           ExecutorNotReady: () => Effect.succeed(ExecutorCallOutcome.cases.NotReady.make({})),
           ExecutorRejected: ({ message }) =>
             Effect.succeed(ExecutorCallOutcome.cases.Rejected.make({ message })),
