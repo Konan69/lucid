@@ -6,6 +6,7 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as PlatformError from 'effect/PlatformError'
 import * as Predicate from 'effect/Predicate'
+import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import * as SchemaAST from 'effect/SchemaAST'
 import * as HttpClientError from 'effect/unstable/http/HttpClientError'
@@ -60,7 +61,7 @@ const DEEPEST_CAUSE = 8
  * object). The semantic convention reserves `_OTHER` for exactly this, so the attribute is always
  * present and a missing type is countable instead of being an absent attribute.
  */
-const UNTYPED = '_OTHER'
+export const UNTYPED = '_OTHER'
 
 /**
  * Removes credentials, address query strings and personal identifiers from the diagnostic text
@@ -149,13 +150,37 @@ interface Link {
  * A thrown value cannot forge this by carrying a property: `failure._tag` is not read at all, and
  * the value must be an instance of the class its `constructor` names. `Schema.Error` and
  * `Schema.Class` with a literal `_tag` field go through the same `makeClass` and are read the
- * same way. The residual assumption is that such classes are written in code; nothing in Vivid
- * builds one from data.
+ * same way.
+ *
+ * The order of the checks is what keeps `instanceof` from throwing. `constructor` is a property
+ * of the thrown value like any other, so it can be anything: a function without a `prototype`
+ * (an arrow function) makes `instanceof` throw a `TypeError`. It is therefore asked first whether
+ * it is a schema class, which no stray function is, and whether it has a prototype object, and
+ * only then is the value tested against it. `constructor` is read once. A getter or a `Proxy`
+ * can still throw on that one read; `summarize` contains that.
+ *
+ * The residual, accepted: this proves that the type is a schema class's tag, not that the class
+ * was written in Vivid's code. Three things would put outside text in an exported type name, and
+ * each needs code inside the process to do it, not a request:
+ *
+ * - a dependency that builds a class with `Schema.TaggedError` using text it was given as the
+ *   tag;
+ * - a subclass that overrides `static fields` with another `_tag`;
+ * - an object whose prototype was set to such a class's (`Object.setPrototypeOf`), which then is
+ *   an instance of it.
+ *
+ * No request path reaches any of them: a request is decoded into plain data by a schema that
+ * already exists (`Schema.decodeUnknownEffect`), and decoding makes instances of declared classes;
+ * it never declares a class, edits one, or sets a prototype. The review that raised this found no
+ * path that does. Because the proof stops there, the exporter bounds what a miss could cost: it
+ * admits a fixed number of distinct type names for the life of the process and no more
+ * (`export.ts` `MOST_TYPE_NAMES`).
  */
 const schemaTag = ({ value }: Link): Option.Option<string> => {
   const made: unknown = value.constructor
-  if (!Predicate.isFunction(made) || !(value instanceof made)) return Option.none()
-  if (!Schema.isSchema(made) || !Predicate.hasProperty(made, 'fields')) return Option.none()
+  if (!Predicate.isFunction(made) || !Schema.isSchema(made)) return Option.none()
+  if (!Predicate.isObject(made.prototype) || !(value instanceof made)) return Option.none()
+  if (!Predicate.hasProperty(made, 'fields')) return Option.none()
   const { fields } = made
   if (!Predicate.hasProperty(fields, '_tag') || !Schema.isSchema(fields._tag)) return Option.none()
   const { ast } = fields._tag
@@ -294,9 +319,11 @@ export interface FailureSummary {
  * (VCOS concepts with no counterpart on a failure here) and its constraint `detail` and source
  * frame, and it types a failure by its class where the reference reads `_tag` and `name`
  * (`typeOf`): those are properties of the thrown value, and this summary is exported.
+ *
+ * Reading a foreign value can throw: see `summarize`, which is the only caller.
  */
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- The typed error channel is generic and a defect is unknown; `chain` decodes it at once.
-export const summarize = (kind: FailureKind, failure: unknown): FailureSummary => {
+const inspect = (kind: FailureKind, failure: unknown): FailureSummary => {
   const { links, terminal } = chain(failure)
   const outer = Option.fromUndefinedOr(links.at(0))
   const inner = links.length > 1 ? Option.fromUndefinedOr(links.at(-1)) : Option.none()
@@ -322,6 +349,43 @@ export const summarize = (kind: FailureKind, failure: unknown): FailureSummary =
     databaseTable: field('table'),
   }
 }
+
+/** What is recorded about a failure that could not be read: that there was one, and nothing more. */
+const UNREADABLE: FailureSummary = {
+  type: UNTYPED,
+  message: Option.none(),
+  rootType: Option.none(),
+  databaseCode: Option.none(),
+  databaseConstraint: Option.none(),
+  databaseTable: Option.none(),
+}
+
+/**
+ * The summary of one failure value, for any value at all. It does not throw.
+ *
+ * A failure is whatever was thrown or failed with, and reading it runs its code: `inspect` reads
+ * `constructor`, `message`, `cause` and the driver's fields, and asks `instanceof`. A getter that
+ * throws, a `Proxy` whose traps throw, or a revoked `Proxy` (where every operation is a
+ * `TypeError`, `in` and `instanceof` included) turns any of those reads into an exception, and no
+ * order of checks avoids that, because the first read is already the value's own code.
+ *
+ * That exception is caught here, with `Result.try`, and the failure is recorded as `_OTHER` with
+ * no other field. This is the one place in the server where a defect is caught and discarded,
+ * and the reason is particular to it. Everywhere else a defect is a bug in Vivid's own code and
+ * must stop the work it is in. Here the code that threw belongs to the failure being reported:
+ * the recorder runs inside `observeFailures`, on the way out of an effect that has already
+ * failed, and Effect adds a recorder's defect to that effect's cause (`Effect.tapCause`). An HTTP
+ * route that answers its typed failure would answer `500` in its place, and a scheduled pass that
+ * carries on after a typed failure would stop. Recording must never change the outcome it
+ * records, so what could not be read is counted as unreadable and the original cause goes on
+ * untouched.
+ */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- The typed error channel is generic and a defect is unknown; `chain` decodes it at once.
+export const summarize = (kind: FailureKind, failure: unknown): FailureSummary =>
+  Result.getOrElse(
+    Result.try(() => inspect(kind, failure)),
+    () => UNREADABLE,
+  )
 
 /**
  * One reason an effect did not succeed. `Expected` is a typed failure the code declared; `Defect`
@@ -420,7 +484,8 @@ const record = Effect.fnUntraced(function* (
 
 /**
  * Records every failure that passes through `effect`, and changes nothing about it: the result,
- * the error channel and the cause are the ones the effect produced.
+ * the error channel and the cause are the ones the effect produced, whatever the failure is. A
+ * failure that throws when it is read is recorded as `_OTHER` (`summarize`).
  *
  * Apply it to the operation before the boundary turns its failures into an answer (`catchTags`, a
  * status code, a retry), because after that mapping the failure no longer exists. The span

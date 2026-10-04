@@ -131,8 +131,14 @@ and `/v1/logs`; metrics are not exported), and `VIVID_OTLP_HEADERS` is the backe
 comma-separated `name=value` pairs, held as a secret. Every failure that reaches a boundary is
 exported with `error.type` (the error's tag), `vivid.failure.kind` (`expected` or `defect`) and
 `vivid.boundary` (`rpc`, `http`, `schedule` or `runtime`); every refusal is a `vivid.refusal`
-event with `vivid.refusal.kind`. Text is redacted as it leaves the process, and stdout logging is
-unchanged. The resource is `vivid-server`, with `VIVID_ENVIRONMENT` and `VIVID_COMMIT` when they
+event with `vivid.refusal.kind`. Only attributes on an allowlist leave the process, never message
+text, and stdout logging is unchanged. An export gets one attempt. When one fails (a reset, a
+`503`, a timeout), that signal is not exported for the next 60 seconds: what it recorded just
+before the failure and during that minute never reaches the backend and is not sent later. This
+is accepted, because the product must not depend on the backend. The server's stdout log on the
+host keeps every line, and each gap is marked there by a `Telemetry batches dropped` line that
+names the signal (`vivid.export.signal`) and the pause (`vivid.export.paused_seconds=60`). The
+resource is `vivid-server`, with `VIVID_ENVIRONMENT` and `VIVID_COMMIT` when they
 are set; on Railway they are filled from `RAILWAY_ENVIRONMENT_NAME` and `RAILWAY_GIT_COMMIT_SHA`,
 and an empty value counts as unset. The code is
 `apps/server/src/observability/`.

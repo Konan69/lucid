@@ -39,10 +39,12 @@ import { faultRoutes } from '../http/faults.ts'
 import { threads } from '../threads/tables.ts'
 import {
   LONGEST_EXPORT,
+  MOST_DATABASE_CODES,
   MOST_OUTSTANDING,
+  MOST_TYPE_NAMES,
   observabilityLayer,
   OMITTED,
-  REPORT_EVERY_MILLIS,
+  PAUSE_MILLIS,
 } from './export.ts'
 import { observeFailures } from './failure.ts'
 import { Message } from './messages.ts'
@@ -747,45 +749,71 @@ it.effect("exports no query, path or header of a provider's sign-in return", () 
   }).pipe(Effect.provide(NodeHttpServer.layerTest)),
 )
 
-it.effect('exports no span under a malformed inbound trace id, and no malformed parent', () =>
-  Effect.gen(function* () {
-    const inbound = Effect.fn('Probe.inbound')(function* () {
-      yield* recordRefusal(Refusal.cases.DeviceRefused.make({ reason: 'NotAllowed' }))
-      return HttpServerResponse.empty({ status: 204 })
-    })
-    const trace = '0af7651916cd43dd8448eb211c80319c'
-    const { lines, spans, statuses, text } = yield* requested(
-      HttpRouter.add('GET', '/probe', inbound()),
-      [
-        // rc.116 `HttpTraceContext.xb3` takes both of these as sent.
-        HttpClientRequest.get('/probe').pipe(
-          HttpClientRequest.setHeader('x-b3-traceid', 'forged-trace Ada Lovelace'),
-          HttpClientRequest.setHeader('x-b3-spanid', 'forged-span'),
-        ),
-        // `b3` too: here the trace id is sound and only the parent's span id is not.
-        HttpClientRequest.get('/probe').pipe(
-          HttpClientRequest.setHeader('b3', `${trace}-forgedparent-1`),
-        ),
-        // Hexadecimal, and neither of the two lengths a trace id has.
-        HttpClientRequest.get('/probe').pipe(
-          HttpClientRequest.setHeader('b3', '463ac35c9f6413ad463ac35c-a2fb4a1d1a96d312-1'),
-        ),
-      ],
-    )
+it.effect(
+  'exports no span under a malformed or all-zero inbound trace id, and no such parent',
+  () =>
+    Effect.gen(function* () {
+      const inbound = Effect.fn('Probe.inbound')(function* () {
+        yield* recordRefusal(Refusal.cases.DeviceRefused.make({ reason: 'NotAllowed' }))
+        return HttpServerResponse.empty({ status: 204 })
+      })
+      const trace = '0af7651916cd43dd8448eb211c80319c'
+      const rooted = '4bf92f3577b34da6a3ce929d0e0e4736'
+      const { lines, spans, statuses, text } = yield* requested(
+        HttpRouter.add('GET', '/probe', inbound()),
+        [
+          // rc.116 `HttpTraceContext.xb3` takes both of these as sent.
+          HttpClientRequest.get('/probe').pipe(
+            HttpClientRequest.setHeader('x-b3-traceid', 'forged-trace Ada Lovelace'),
+            HttpClientRequest.setHeader('x-b3-spanid', 'forged-span'),
+          ),
+          // `b3` too: here the trace id is sound and only the parent's span id is not.
+          HttpClientRequest.get('/probe').pipe(
+            HttpClientRequest.setHeader('b3', `${trace}-forgedparent-1`),
+          ),
+          // Hexadecimal, and neither of the two lengths a trace id has.
+          HttpClientRequest.get('/probe').pipe(
+            HttpClientRequest.setHeader('b3', '463ac35c9f6413ad463ac35c-a2fb4a1d1a96d312-1'),
+          ),
+          // Well formed and all zero, which OpenTelemetry defines as no id: a 64-bit B3 trace id
+          // that widening would turn into the all-zero 128-bit one, then that one as sent.
+          HttpClientRequest.get('/probe').pipe(
+            HttpClientRequest.setHeader('b3', '0000000000000000-a2fb4a1d1a96d312-1'),
+          ),
+          HttpClientRequest.get('/probe').pipe(
+            HttpClientRequest.setHeader('b3', `${'0'.repeat(32)}-a2fb4a1d1a96d312-1`),
+          ),
+          // A sound trace id whose parent span id is all zero.
+          HttpClientRequest.get('/probe').pipe(
+            HttpClientRequest.setHeader('b3', `${rooted}-0000000000000000-1`),
+          ),
+        ],
+      )
 
-    expect(statuses).toEqual([204, 204, 204])
-    // The first and third requests' spans are gone; the second's are exported, the server span
-    // as a root.
-    const servers = spanNamed(spans, 'http.server GET')
-    expect(servers.map((span) => [span.traceId, span.parentSpanId])).toEqual([[trace, undefined]])
-    expect(spanNamed(spans, 'Probe.inbound').map((span) => span.traceId)).toEqual([trace])
-    // Every refusal is still counted; a line written under a dropped span names no trace.
-    const refusals = lines.filter((line) => line.body.stringValue === Message.refusal)
-    expect(refusals.map((line) => line.traceId)).toEqual([undefined, trace, undefined])
-    expect(text).not.toContain('forged')
-    expect(text).not.toContain('Lovelace')
-    expect(text).not.toContain('463ac35c9f6413ad463ac35c')
-  }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+      expect(statuses).toEqual([204, 204, 204, 204, 204, 204])
+      // The second and last requests' spans are exported, the server span as a root; the spans of
+      // every other request are gone.
+      const servers = spanNamed(spans, 'http.server GET')
+      expect(servers.map((span) => [span.traceId, span.parentSpanId])).toEqual([
+        [trace, undefined],
+        [rooted, undefined],
+      ])
+      expect(spanNamed(spans, 'Probe.inbound').map((span) => span.traceId)).toEqual([trace, rooted])
+      // Every refusal is still counted; a line written under a dropped span names no trace.
+      const refusals = lines.filter((line) => line.body.stringValue === Message.refusal)
+      expect(refusals.map((line) => line.traceId)).toEqual([
+        undefined,
+        trace,
+        undefined,
+        undefined,
+        undefined,
+        rooted,
+      ])
+      expect(text).not.toContain('forged')
+      expect(text).not.toContain('Lovelace')
+      expect(text).not.toContain('463ac35c9f6413ad463ac35c')
+      expect(text).not.toContain('0'.repeat(16))
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
 )
 
 it.effect('files a 64-bit B3 trace under its 128-bit form, on spans, links and lines alike', () =>
@@ -918,7 +946,22 @@ it.effect('builds no span name from what a request carries, over HTTP or RPC', (
   }).pipe(Effect.provide(NodeHttpServer.layerTest)),
 )
 
-it.effect('bounds what a backend that never answers can hold, and reports the drops once', () => {
+/** What a drop report says, read from its stdout line: the signal, the count, and the pause. */
+const reported = (line: string) =>
+  ['vivid.export.signal', 'vivid.export.dropped', 'vivid.export.paused_seconds']
+    .map((key) =>
+      Option.fromNullishOr(new RegExp(`${key}=(\\w+)`).exec(line)).pipe(
+        Option.flatMap((match) => Option.fromUndefinedOr(match[1])),
+        Option.getOrElse(() => 'absent'),
+      ),
+    )
+    .join(' ')
+
+/** The report of a drop that paused `signal`, `dropped` batches after that signal's last report. */
+const paused = (signal: 'traces' | 'logs', dropped: number) =>
+  `${signal} ${dropped} ${PAUSE_MILLIS / 1000}`
+
+it.effect('bounds what a backend that never answers can hold, and reports each pause once', () => {
   const stdout = capturing()
   return Effect.gen(function* () {
     const { arrivals, flush, run } = yield* observed({ ...plain, answer: Effect.never })
@@ -945,26 +988,29 @@ it.effect('bounds what a backend that never answers can hold, and reports the dr
     yield* Fiber.join(yield* round())
     expect(yield* Queue.size(arrivals)).toBe(0)
     const reports = () => stdout.lines.filter((line) => line.includes(Message.dropped))
-    expect(reports()).toHaveLength(1)
-    expect(reports()[0]).toContain('vivid.export.dropped=1')
+    // One report for each signal, written by the drop that paused it, and it says so.
+    expect(reports().map(reported)).toEqual([paused('traces', 1), paused('logs', 1)])
 
-    // The held posts time out and are dropped too. All of that is one minute's drops, so there
-    // is still one report; the backend was never sent more than the cap.
+    // The held posts time out and are dropped too. They fall inside the pauses already
+    // reported, so there is no new report; the backend was never sent more than the cap.
     yield* TestClock.adjust(LONGEST_EXPORT)
     yield* Effect.forEach(held, Fiber.join)
-    expect(reports()).toHaveLength(1)
+    expect(reports()).toHaveLength(2)
     expect(yield* Queue.size(arrivals)).toBe(0)
 
-    // A minute on, the exporters accept data again and the next drop reports the count so far:
-    // the second cancelled post, the eight that timed out, and this one.
-    yield* TestClock.adjust(REPORT_EVERY_MILLIS)
+    // A minute on, the exporters accept data again, and the next drop of each signal starts its
+    // next pause and reports the count so far: the four that timed out, and this one.
+    yield* TestClock.adjust(PAUSE_MILLIS)
     const late = yield* round()
     yield* Queue.take(arrivals)
     yield* Queue.take(arrivals)
     yield* TestClock.adjust(LONGEST_EXPORT)
     yield* Fiber.join(late)
-    expect(reports()).toHaveLength(2)
-    expect(reports()[1]).toContain(`vivid.export.dropped=${MOST_OUTSTANDING + 2}`)
+    const perSignal = MOST_OUTSTANDING / 2 + 1
+    expect(reports()).toHaveLength(4)
+    expect(new Set(reports().slice(2).map(reported))).toEqual(
+      new Set([paused('traces', perSignal), paused('logs', perSignal)]),
+    )
   }).pipe(Effect.provide(stdout.layer), Effect.provide(NodeHttpServer.layerTest))
 })
 
@@ -1011,9 +1057,9 @@ it.effect('gives a refused export one attempt, keeps nothing of it, and reports 
       // Both connections are given up with the export, though the refusal's body never ended.
       yield* Queue.takeN(closed, 2)
       expect(yield* Queue.size(arrivals)).toBe(0)
-      expect(reports()).toHaveLength(round)
-      // The exporters accept data again a minute after a drop; the drop report is due then too.
-      yield* TestClock.adjust(REPORT_EVERY_MILLIS)
+      expect(reports()).toHaveLength(round * 2)
+      // The exporters accept data again a minute after a drop.
+      yield* TestClock.adjust(PAUSE_MILLIS)
     }
     // Long past the day the backend asked for, nothing was sent a second time.
     yield* TestClock.adjust(Duration.days(2))
@@ -1022,10 +1068,9 @@ it.effect('gives a refused export one attempt, keeps nothing of it, and reports 
     const { batches, received } = yield* collect()
     expect(received).toHaveLength(ROUNDS * 2)
     expect(batches).toEqual(Array.from({ length: ROUNDS }, () => 1))
-    // Every refused batch is in the count: the first alone, then each minute's two with the one
-    // before them that was still waiting to be reported.
-    expect(reports()[0]).toContain('vivid.export.dropped=1')
-    for (const report of reports().slice(1)) expect(report).toContain('vivid.export.dropped=2')
+    // Every refused batch is reported: each one paused its signal, so each has its own line.
+    for (const signal of ['traces', 'logs'] as const)
+      expect(reports().filter((line) => reported(line) === paused(signal, 1))).toHaveLength(ROUNDS)
   }).pipe(Effect.provide(stdout.layer), Effect.provide(NodeHttpServer.layerTest))
 })
 
@@ -1062,7 +1107,7 @@ it.effect('holds a place until the answer ends, and gives the connection back wi
     // next export is turned away unsent, so no ninth connection is opened.
     yield* Fiber.join(yield* round())
     expect(yield* Queue.size(arrivals)).toBe(0)
-    expect(reports()).toHaveLength(1)
+    expect(reports()).toHaveLength(2)
     expect(yield* Queue.size(closed)).toBe(0)
 
     // The time limit runs to the end of the body. When it passes, each export is dropped, and
@@ -1073,17 +1118,144 @@ it.effect('holds a place until the answer ends, and gives the connection back wi
     yield* Queue.takeN(closed, MOST_OUTSTANDING)
 
     // The places are free again: a minute on, an export is sent.
-    yield* TestClock.adjust(REPORT_EVERY_MILLIS)
+    yield* TestClock.adjust(PAUSE_MILLIS)
     const late = yield* round()
     yield* Queue.take(arrivals)
     yield* Queue.take(arrivals)
     yield* TestClock.adjust(LONGEST_EXPORT)
     yield* Fiber.join(late)
     yield* Queue.takeN(closed, 2)
-    expect(reports()).toHaveLength(2)
-    expect(reports()[1]).toContain(`vivid.export.dropped=${MOST_OUTSTANDING + 2}`)
+    const perSignal = MOST_OUTSTANDING / 2 + 1
+    expect(reports()).toHaveLength(4)
+    expect(new Set(reports().slice(2).map(reported))).toEqual(
+      new Set([paused('traces', perSignal), paused('logs', perSignal)]),
+    )
   }).pipe(Effect.provide(stdout.layer), Effect.provide(NodeHttpServer.layerTest))
 })
+
+it.effect('pauses a signal for a minute after one failed export, then sends again', () => {
+  const stdout = capturing()
+  return Effect.gen(function* () {
+    // A backend that is down for its first two posts, one of each signal, and well after.
+    const answers = yield* Ref.make(0)
+    const { arrivals, collect, flush, run } = yield* observed({
+      ...plain,
+      answer: Ref.getAndUpdate(answers, (count) => count + 1).pipe(
+        Effect.map((count) => HttpServerResponse.empty({ status: count < 2 ? 503 : 200 })),
+      ),
+    })
+    const named = (name: string) =>
+      Effect.fn(name)(function* () {
+        return yield* Effect.fail(new ProbeRefused({ message: 'not today' }))
+      }, observeFailures('rpc'))()
+    const reports = () => stdout.lines.filter((line) => line.includes(Message.dropped))
+
+    // One failed attempt for each signal. The line on stdout says which, and for how long.
+    yield* run(named('Probe.before'))
+    yield* flush
+    yield* Queue.take(arrivals)
+    yield* Queue.take(arrivals)
+    expect(reports()).toHaveLength(2)
+    expect(new Set(reports().map(reported))).toEqual(
+      new Set([paused('traces', 1), paused('logs', 1)]),
+    )
+
+    // Inside the pause nothing is buffered and nothing is sent: this is the gap in the backend.
+    yield* run(named('Probe.during'))
+    yield* flush
+    expect(yield* Queue.size(arrivals)).toBe(0)
+
+    // When the pause has ended, a new batch is sent and accepted.
+    yield* TestClock.adjust(PAUSE_MILLIS)
+    yield* run(named('Probe.after'))
+    yield* flush
+    yield* Queue.take(arrivals)
+    yield* Queue.take(arrivals)
+    expect(yield* Queue.size(arrivals)).toBe(0)
+    const { batches, received, spans } = yield* collect()
+    expect(received).toHaveLength(4)
+    expect(batches).toEqual([1, 1])
+    // The refused batch was posted once and the accepted one once; the pause's span never left.
+    expect(spans.map((span) => span.name)).toEqual(['Probe.before', 'Probe.after'])
+    // Nothing was dropped after the first two, so stdout has no further report.
+    expect(reports()).toHaveLength(2)
+  }).pipe(Effect.provide(stdout.layer), Effect.provide(NodeHttpServer.layerTest))
+})
+
+/** The instance type of the classes `declared` makes. */
+interface Declared {
+  readonly cause: unknown
+}
+
+/**
+ * A failure of a class declared with `Schema.TaggedError` under a tag that is given, not written:
+ * what a dependency building error classes from text it was handed would do, and what the cap
+ * bounds.
+ */
+const declared = (tag: string, cause: Declared['cause']): Declared =>
+  new (Schema.TaggedError<Declared>()(tag, { cause: Schema.Unknown }))({ cause })
+
+/** The attributes of every failure line, in the order the lines were written. */
+const failureLines = (
+  lines: ReadonlyArray<{ readonly attributes: ReadonlyArray<typeof Pair.Type> }>,
+) =>
+  lines.flatMap((line) => {
+    const values = valuesOf(line.attributes)
+    return 'vivid.boundary' in values ? [values] : []
+  })
+
+it.effect('names at most 256 failure types in one process, and `_OTHER` after that', () =>
+  Effect.gen(function* () {
+    const failing = (failure: Declared) =>
+      Effect.exit(Effect.fail(failure).pipe(observeFailures('rpc')))
+    const tags = Array.from({ length: MOST_TYPE_NAMES }, (_, index) => `Bulk${index}`)
+    const { lines } = yield* exported(
+      Effect.gen(function* () {
+        // Every place is taken, in order, by a failure's own type.
+        yield* Effect.forEach(tags, (tag) => failing(declared(tag, undefined)))
+        // A name that arrives after that, as a type and as a root; then admitted names again.
+        yield* failing(declared('Late', undefined))
+        yield* failing(declared('Bulk0', declared('Later', undefined)))
+        yield* failing(declared('Bulk1', declared('Bulk0', undefined)))
+      }),
+    )
+
+    const types = failureLines(lines).map((values) => [
+      values['error.type'],
+      values['vivid.failure.root'],
+    ])
+    expect(types.slice(0, MOST_TYPE_NAMES)).toEqual(tags.map((tag) => [tag, undefined]))
+    expect(types.slice(MOST_TYPE_NAMES)).toEqual([
+      ['_OTHER', undefined],
+      ['Bulk0', '_OTHER'],
+      ['Bulk1', 'Bulk0'],
+    ])
+  }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+)
+
+it.effect('exports at most 64 database codes in one process, and none after that', () =>
+  Effect.gen(function* () {
+    const refused = (code: string) =>
+      Effect.exit(
+        Effect.fail(
+          new ProbeWrapped({ cause: Object.assign(new Error('refused'), { code }) }),
+        ).pipe(observeFailures('rpc')),
+      )
+    const codes = Array.from({ length: MOST_DATABASE_CODES + 1 }, (_, index) =>
+      String(index).padStart(5, '0'),
+    )
+    const { lines } = yield* exported(
+      Effect.forEach([...codes, '00000'], refused, { discard: true }),
+    )
+
+    // The 65th distinct code is left off its line; one admitted before it still passes.
+    expect(failureLines(lines).map((values) => values['db.response.status_code'])).toEqual([
+      ...codes.slice(0, MOST_DATABASE_CODES),
+      undefined,
+      '00000',
+    ])
+  }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+)
 
 it.effect('posts nothing when export is disabled', () =>
   Effect.gen(function* () {

@@ -19,7 +19,7 @@ import * as OtlpTracer from 'effect/unstable/observability/OtlpTracer'
 import { ObservabilityConfiguration } from '../config.ts'
 import * as productSchema from '../database/product.ts'
 import * as identitySchema from '../database/schema.ts'
-import { Boundary, FailureAttribute, FailureKind, fixedTypeNames } from './failure.ts'
+import { Boundary, FailureAttribute, FailureKind, fixedTypeNames, UNTYPED } from './failure.ts'
 import { isCodeName, isMessage, Message } from './messages.ts'
 import { refusalExport } from './refusal.ts'
 
@@ -32,14 +32,26 @@ const SERVICE = 'vivid-server'
  */
 export const OMITTED = '[omitted]'
 
-/** The attribute the drop report carries: how many batches were lost since the last report. */
+/** One of the two signals exported, as the last segment of its OTLP path. */
+const Signals = ['traces', 'logs'] as const
+type Signal = (typeof Signals)[number]
+
+/**
+ * The attributes of the drop report: how many batches of a signal were lost since its last
+ * report, which signal, and for how many seconds the exporter of that signal now accepts nothing.
+ */
 const DROPPED_COUNT = 'vivid.export.dropped'
+const PAUSED_SIGNAL = 'vivid.export.signal'
+const PAUSED_SECONDS = 'vivid.export.paused_seconds'
 
 /**
  * Decides whether one attribute value may leave, and if so builds the value that does. A value is
  * never trimmed, cleaned or partly kept: it has the shape its key calls for, or it is absent.
  */
 type Rule = (value: AnyValue) => Option.Option<AnyValue>
+
+/** The export allowlist of one serialization layer: the rule for every key that may leave. */
+type Rules = ReadonlyMap<string, Rule>
 
 /** A string value that `allowed` accepts; every other kind of value is refused. */
 const text =
@@ -66,12 +78,60 @@ const integer =
 /**
  * A code identifier (`isCodeName`). The shape alone proves nothing about where a value came from,
  * so this rule is given only to keys whose every writer puts a name from code there: see the
- * note on each such key in `ALLOWED`.
+ * note on each such key in `rulesOf`.
  */
 const codeName = text(isCodeName)
 
-/** PostgreSQL's SQLSTATE: exactly five digits or capitals. */
-const sqlState = text((candidate) => /^[0-9A-Z]{5}$/.test(candidate))
+/** How many distinct failure type names one process exports, `error.type` and the root together. */
+export const MOST_TYPE_NAMES = 256
+/** How many distinct SQLSTATE values one process exports. */
+export const MOST_DATABASE_CODES = 64
+
+/**
+ * A set that takes at most `most` members: whether `candidate` is one of them, having made it one
+ * when there was still room. It only grows, so a value admitted once is admitted for as long as
+ * the set lives, and what it bounds is how many distinct values a backend can ever be sent under
+ * the keys that use it.
+ *
+ * It is mutable state, and it belongs to one serialization layer (`rulesOf`), never to the
+ * module: two layers, as in two tests, do not share what they have admitted.
+ */
+const admitting = (most: number) => {
+  const admitted = new Set<string>()
+  return (candidate: string): boolean => {
+    if (admitted.has(candidate)) return true
+    if (admitted.size >= most) return false
+    admitted.add(candidate)
+    return true
+  }
+}
+
+/**
+ * A failure's type name: a code name among those admitted so far, and `_OTHER` in place of one
+ * that arrives after the set is full. `_OTHER` itself is always let through and takes no place,
+ * so the failure is still counted, under the name OpenTelemetry reserves for an unnamed type.
+ *
+ * The bound is for the residual `failure.ts` `schemaTag` states: a type name is proved to be a
+ * schema class's tag, not to be written in Vivid's code, and a backend's cost grows with every
+ * distinct value of an attribute it indexes.
+ */
+const typeName =
+  (admit: (candidate: string) => boolean): Rule =>
+  (value) => {
+    if (!Predicate.isString(value.stringValue) || !isCodeName(value.stringValue))
+      return Option.none()
+    const name = value.stringValue
+    return Option.some({ stringValue: name === UNTYPED || admit(name) ? name : UNTYPED })
+  }
+
+/**
+ * PostgreSQL's SQLSTATE: exactly five digits or capitals, and among those admitted so far. The
+ * code is a property of whatever was thrown (`failure.ts` `Diagnostics`), accepted by its shape,
+ * so the set bounds it. A code that arrives after the set is full is left off: nothing with the
+ * shape of a SQLSTATE means "another one", so there is no value to put in its place.
+ */
+const sqlState = (admit: (candidate: string) => boolean) =>
+  text((candidate) => /^[0-9A-Z]{5}$/.test(candidate) && admit(candidate))
 
 /**
  * A git commit as the host names it: 7 to 40 lowercase hexadecimal digits, the abbreviated and
@@ -129,38 +189,46 @@ const METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'TR
  *
  * - `error.type` and `vivid.failure.root` are written by `failure.ts` alone, which takes a type
  *   from a class and never from a property of what was thrown (`typeOf` there). Nothing in
- *   rc.116 Effect writes either key.
+ *   rc.116 Effect writes either key. The two share one bounded set of names (`typeName`).
  * - `rpc.system`, `rpc.service` and `rpc.method` are not written by rc.116 `RpcServer` or by
  *   Vivid today; they are listed for a recorder that names the call from the contract.
+ *
+ * The rules are built once for each serialization layer, because two of them keep state: the
+ * names and the database codes admitted so far (`admitting`).
  */
-const ALLOWED: ReadonlyMap<string, Rule> = new Map<string, Rule>([
-  [FailureAttribute.type, codeName],
-  [FailureAttribute.kind, oneOf(FailureKind.literals)],
-  [FailureAttribute.boundary, oneOf(Boundary.literals)],
-  [FailureAttribute.root, codeName],
-  [FailureAttribute.databaseCode, sqlState],
-  [FailureAttribute.table, oneOf(TABLES)],
-  ...refusalExport.map(([key, members]) => [key, oneOf(members)] as const),
-  [DROPPED_COUNT, integer(0, Number.MAX_SAFE_INTEGER)],
-  // The tracer's own event for a failed span (rc.116 `OtlpTracer.ts` `makeOtlpSpan`) takes its
-  // type from `error.name`, a string by the time it is here, so only a fixed name is let through.
-  ['exception.type', oneOf(fixedTypeNames)],
-  ['service.name', oneOf([SERVICE])],
-  ['service.version', commitHash],
-  ['deployment.environment.name', environmentName],
-  ['deployment.environment', environmentName],
-  ['rpc.system', codeName],
-  ['rpc.service', codeName],
-  ['rpc.method', codeName],
-  ['http.request.method', oneOf(METHODS)],
-  ['http.response.status_code', integer(100, 599)],
-  ['url.scheme', oneOf(['http', 'https'])],
-])
+const rulesOf = (): Rules => {
+  const typeNames = typeName(admitting(MOST_TYPE_NAMES))
+  return new Map<string, Rule>([
+    [FailureAttribute.type, typeNames],
+    [FailureAttribute.kind, oneOf(FailureKind.literals)],
+    [FailureAttribute.boundary, oneOf(Boundary.literals)],
+    [FailureAttribute.root, typeNames],
+    [FailureAttribute.databaseCode, sqlState(admitting(MOST_DATABASE_CODES))],
+    [FailureAttribute.table, oneOf(TABLES)],
+    ...refusalExport.map(([key, members]) => [key, oneOf(members)] as const),
+    [DROPPED_COUNT, integer(0, Number.MAX_SAFE_INTEGER)],
+    [PAUSED_SIGNAL, oneOf(Signals)],
+    [PAUSED_SECONDS, integer(0, Number.MAX_SAFE_INTEGER)],
+    // The tracer's own event for a failed span (rc.116 `OtlpTracer.ts` `makeOtlpSpan`) takes its
+    // type from `error.name`, a string by the time it is here, so only a fixed name is let through.
+    ['exception.type', oneOf(fixedTypeNames)],
+    ['service.name', oneOf([SERVICE])],
+    ['service.version', commitHash],
+    ['deployment.environment.name', environmentName],
+    ['deployment.environment', environmentName],
+    ['rpc.system', codeName],
+    ['rpc.service', codeName],
+    ['rpc.method', codeName],
+    ['http.request.method', oneOf(METHODS)],
+    ['http.response.status_code', integer(100, 599)],
+    ['url.scheme', oneOf(['http', 'https'])],
+  ])
+}
 
 /** The pairs that may leave, each rebuilt from its key and the value its rule produced. */
-const allowed = (pairs: ReadonlyArray<KeyValue>): Array<KeyValue> =>
+const allowed = (rules: Rules, pairs: ReadonlyArray<KeyValue>): Array<KeyValue> =>
   pairs.flatMap(({ key, value }) =>
-    Option.fromUndefinedOr(ALLOWED.get(key)).pipe(
+    Option.fromUndefinedOr(rules.get(key)).pipe(
       Option.flatMap((rule) => rule(value)),
       Option.map((kept) => ({ key, value: kept })),
       Option.toArray,
@@ -168,8 +236,8 @@ const allowed = (pairs: ReadonlyArray<KeyValue>): Array<KeyValue> =>
   )
 
 /** Allowlisted attributes, with OTLP's own count of how many were left behind. */
-const attributesOf = (pairs: ReadonlyArray<KeyValue>) => {
-  const attributes = allowed(pairs)
+const attributesOf = (rules: Rules, pairs: ReadonlyArray<KeyValue>) => {
+  const attributes = allowed(rules, pairs)
   return { attributes, droppedAttributesCount: pairs.length - attributes.length }
 }
 
@@ -184,17 +252,29 @@ type ExportedLine = NonNullable<
 
 const TRACE_ID = /^[0-9a-f]{32}$/i
 const SPAN_ID = /^[0-9a-f]{16}$/i
+const ZERO = /^0+$/
 
 /**
- * A trace id as OTLP carries it: 32 hexadecimal digits.
+ * Whether `id` is a span id: 16 hexadecimal digits that are not all zero. OpenTelemetry defines
+ * the all-zero span id as invalid, and so does B3; it is what a caller sends when it has no id, so
+ * it names no span and is treated like any other text that is not an id.
+ */
+const isSpanId = (id: string) => SPAN_ID.test(id) && !ZERO.test(id)
+
+/**
+ * A trace id as OTLP carries it: 32 hexadecimal digits, not all zero.
  *
  * B3 also allows a 64-bit trace id, 16 digits (`b3: 463ac35c9f6413ad-a2fb4a1d1a96d312-1`), and
  * rc.116 `HttpTraceContext` hands it on as sent. That is a sound id from a caller that
  * propagates B3, so it is widened the way B3 prescribes, with zeros on the left, and every span,
  * link and log line of that trace is filed under the same 32 digits. Any other text is not an id
  * and has no exportable form.
+ *
+ * Neither is an id of zeros in either length: OpenTelemetry defines the all-zero trace id as
+ * invalid, and the widening would otherwise make one out of `b3: 0000000000000000-…`.
  */
 const traceIdOf = (id: string): Option.Option<string> => {
+  if (ZERO.test(id)) return Option.none()
   if (TRACE_ID.test(id)) return Option.some(id)
   return SPAN_ID.test(id) ? Option.some(`${'0'.repeat(16)}${id}`) : Option.none()
 }
@@ -226,18 +306,24 @@ const spanName = (name: string) => {
  * An event is named by a log message (rc.116 `internal/effect.ts` `tracerLogger`) or is the
  * tracer's `exception`; any other name is text someone logged.
  */
-const allowEvent = (event: ExportedEvent): ExportedEvent => ({
-  name: event.name === 'exception' || isMessage(event.name) ? event.name : OMITTED,
-  timeUnixNano: event.timeUnixNano,
-  ...attributesOf(event.attributes),
-})
+const allowEvent =
+  (rules: Rules) =>
+  (event: ExportedEvent): ExportedEvent => ({
+    name: event.name === 'exception' || isMessage(event.name) ? event.name : OMITTED,
+    timeUnixNano: event.timeUnixNano,
+    ...attributesOf(rules, event.attributes),
+  })
 
 /** A link to a span whose ids are not ids is dropped; see `allowSpan`. */
-const allowLink = (link: ExportedLink): ReadonlyArray<ExportedLink> => {
-  const traceId = traceIdOf(link.traceId)
-  if (Option.isNone(traceId) || !SPAN_ID.test(link.spanId)) return []
-  return [{ traceId: traceId.value, spanId: link.spanId, ...attributesOf(link.attributes) }]
-}
+const allowLink =
+  (rules: Rules) =>
+  (link: ExportedLink): ReadonlyArray<ExportedLink> => {
+    const traceId = traceIdOf(link.traceId)
+    if (Option.isNone(traceId) || !isSpanId(link.spanId)) return []
+    return [
+      { traceId: traceId.value, spanId: link.spanId, ...attributesOf(rules, link.attributes) },
+    ]
+  }
 
 /**
  * One span, rebuilt field by field.
@@ -249,40 +335,43 @@ const allowLink = (link: ExportedLink): ReadonlyArray<ExportedLink> => {
  *   trace id (`SpanImpl.traceId`). A span whose trace id is not an id (`traceIdOf`) is therefore
  *   dropped whole: its only alternative is a made-up id, which would file it under a trace that
  *   does not exist. When the trace id is sound and only the inherited parent's span id is not,
- *   the parent is dropped and the span is exported as a root of that trace.
+ *   the parent is dropped and the span is exported as a root of that trace. An id of zeros is
+ *   not an id in any of these places (`isSpanId`, `traceIdOf`).
  */
-const allowSpan = (span: ExportedSpan): ReadonlyArray<ExportedSpan> => {
-  const traceId = traceIdOf(span.traceId)
-  if (Option.isNone(traceId) || !SPAN_ID.test(span.spanId)) return []
-  const links = span.links.flatMap(allowLink)
-  return [
-    {
-      traceId: traceId.value,
-      spanId: span.spanId,
-      parentSpanId:
-        span.parentSpanId !== undefined && SPAN_ID.test(span.parentSpanId)
-          ? span.parentSpanId
-          : undefined,
-      name: spanName(span.name),
-      kind: span.kind,
-      startTimeUnixNano: span.startTimeUnixNano,
-      endTimeUnixNano: span.endTimeUnixNano,
-      ...attributesOf(span.attributes),
-      events: span.events.map(allowEvent),
-      droppedEventsCount: 0,
-      status: { code: span.status.code },
-      links,
-      droppedLinksCount: span.links.length - links.length,
-    },
-  ]
-}
+const allowSpan =
+  (rules: Rules) =>
+  (span: ExportedSpan): ReadonlyArray<ExportedSpan> => {
+    const traceId = traceIdOf(span.traceId)
+    if (Option.isNone(traceId) || !isSpanId(span.spanId)) return []
+    const links = span.links.flatMap(allowLink(rules))
+    return [
+      {
+        traceId: traceId.value,
+        spanId: span.spanId,
+        parentSpanId:
+          span.parentSpanId !== undefined && isSpanId(span.parentSpanId)
+            ? span.parentSpanId
+            : undefined,
+        name: spanName(span.name),
+        kind: span.kind,
+        startTimeUnixNano: span.startTimeUnixNano,
+        endTimeUnixNano: span.endTimeUnixNano,
+        ...attributesOf(rules, span.attributes),
+        events: span.events.map(allowEvent(rules)),
+        droppedEventsCount: 0,
+        status: { code: span.status.code },
+        links,
+        droppedLinksCount: span.links.length - links.length,
+      },
+    ]
+  }
 
 /**
  * The span a log line was written under, when its ids are ids, with the trace id in the same
  * form its span is exported under; see `allowSpan`.
  */
 const spanOf = ({ traceId, spanId }: ExportedLine) =>
-  Predicate.isString(traceId) && Predicate.isString(spanId) && SPAN_ID.test(spanId)
+  Predicate.isString(traceId) && Predicate.isString(spanId) && isSpanId(spanId)
     ? Option.map(traceIdOf(traceId), (trace) => ({ traceId: trace, spanId }))
     : Option.none()
 
@@ -299,28 +388,36 @@ const bodyOf = (line: ExportedLine): string =>
  * times and the level are the logger's own (rc.116 `OtlpLogger.ts` `makeLogRecord`). The ids are
  * kept as a pair or not at all: a line under a span that is not exported names no span.
  */
-const allowLine = (line: ExportedLine): ExportedLine => {
-  const span = spanOf(line)
-  return {
-    timeUnixNano: line.timeUnixNano,
-    observedTimeUnixNano: line.observedTimeUnixNano,
-    severityNumber: line.severityNumber,
-    severityText: line.severityText,
-    body: { stringValue: bodyOf(line) },
-    ...attributesOf(line.attributes),
-    traceId: Option.getOrUndefined(Option.map(span, ({ traceId }) => traceId)),
-    spanId: Option.getOrUndefined(Option.map(span, ({ spanId }) => spanId)),
+const allowLine =
+  (rules: Rules) =>
+  (line: ExportedLine): ExportedLine => {
+    const span = spanOf(line)
+    return {
+      timeUnixNano: line.timeUnixNano,
+      observedTimeUnixNano: line.observedTimeUnixNano,
+      severityNumber: line.severityNumber,
+      severityText: line.severityText,
+      body: { stringValue: bodyOf(line) },
+      ...attributesOf(rules, line.attributes),
+      traceId: Option.getOrUndefined(Option.map(span, ({ traceId }) => traceId)),
+      spanId: Option.getOrUndefined(Option.map(span, ({ spanId }) => spanId)),
+    }
   }
+
+/** What every post is rebuilt with: the allowlist's rules and the resource named on it. */
+interface Allowlist {
+  readonly rules: Rules
+  readonly resource: Resource
 }
 
 const allowTraces =
-  (resource: Resource) =>
+  ({ rules, resource }: Allowlist) =>
   (data: Traces): Traces => ({
     resourceSpans: data.resourceSpans.map((group) => ({
       resource,
       scopeSpans: group.scopeSpans.map((scope) => ({
         scope: { name: SERVICE },
-        spans: scope.spans.flatMap(allowSpan),
+        spans: scope.spans.flatMap(allowSpan(rules)),
       })),
     })),
   })
@@ -328,20 +425,20 @@ const allowTraces =
 type ExportedScope = Logs['resourceLogs'][number]['scopeLogs'][number]
 
 /** The records of one scope; rc.116 types them as optional, and a scope without any has none. */
-const linesOf = (scope: ExportedScope): Array<ExportedLine> =>
+const linesOf = (rules: Rules, scope: ExportedScope): Array<ExportedLine> =>
   Option.fromUndefinedOr(scope.logRecords).pipe(
-    Option.map((records) => records.map(allowLine)),
+    Option.map((records) => records.map(allowLine(rules))),
     Option.getOrElse(() => []),
   )
 
 const allowLogs =
-  (resource: Resource) =>
+  ({ rules, resource }: Allowlist) =>
   (data: Logs): Logs => ({
     resourceLogs: data.resourceLogs.map((group) => ({
       resource,
       scopeLogs: group.scopeLogs.map((scope) => ({
         scope: { name: SERVICE },
-        logRecords: linesOf(scope),
+        logRecords: linesOf(rules, scope),
       })),
     })),
   })
@@ -358,10 +455,11 @@ const allowLogs =
  * was not verified.
  */
 const resourceOf = (
+  rules: Rules,
   environment: Option.Option<string>,
   commit: Option.Option<string>,
 ): Resource => ({
-  attributes: allowed([
+  attributes: allowed(rules, [
     { key: 'service.name', value: { stringValue: SERVICE } },
     ...Option.toArray(commit).map((version) => ({
       key: 'service.version',
@@ -383,68 +481,107 @@ const resourceOf = (
  * server span's address and headers, a line logged by any module with any text. Sentry accepts
  * JSON on the traces and logs paths. Metrics are not installed (its OTLP endpoint has no metrics
  * path); nothing about a metric is on the allowlist, so that encoder exports none.
+ *
+ * The rules are made when the layer is built, not when the module loads, because they hold the
+ * sets of values admitted so far (`rulesOf`). Both signals are serialized by the one layer, so a
+ * type name admitted on a span is the same name on its log line, and the bound is on the two
+ * together. A batch that is serialized and then dropped has still taken its places.
  */
-const allowlistSerializationLayer = (resource: Resource) =>
-  Layer.succeed(OtlpSerialization.OtlpSerialization, {
-    traces: (data) => HttpBody.jsonUnsafe(allowTraces(resource)(data)),
-    logs: (data) => HttpBody.jsonUnsafe(allowLogs(resource)(data)),
-    metrics: () => HttpBody.jsonUnsafe({ resourceMetrics: [] }),
+const allowlistSerializationLayer = (
+  environment: Option.Option<string>,
+  commit: Option.Option<string>,
+) =>
+  Layer.sync(OtlpSerialization.OtlpSerialization, () => {
+    const rules = rulesOf()
+    const allowlist: Allowlist = { rules, resource: resourceOf(rules, environment, commit) }
+    return {
+      traces: (data) => HttpBody.jsonUnsafe(allowTraces(allowlist)(data)),
+      logs: (data) => HttpBody.jsonUnsafe(allowLogs(allowlist)(data)),
+      metrics: () => HttpBody.jsonUnsafe({ resourceMetrics: [] }),
+    }
   })
 
 /** How long one export may take, from sending the request to the end of the answer's body. */
 export const LONGEST_EXPORT = Duration.seconds(10)
 /** How many exports may be outstanding at once, traces and logs together. */
 export const MOST_OUTSTANDING = 8
-/** The least time between two drop reports. */
-export const REPORT_EVERY_MILLIS = 60_000
+/**
+ * How long an exporter accepts nothing after one failed export. The number is rc.116
+ * `OtlpExporter.ts` `make`'s own (`disabledUntil = now + 60_000`), which that module does not
+ * export; it is repeated here so that the drop report can say when a pause began.
+ */
+export const PAUSE_MILLIS = 60_000
 /** The most of an answer's body that is read. An OTLP success is a few bytes of JSON. */
 const LARGEST_ANSWER = 64 * 1024
 
+/** What one signal's client knows about its losses. */
 interface Drops {
   /** Batches lost since the last report. */
   readonly pending: number
-  /** The clock time from which the next report may be written. */
-  readonly reportDue: number
+  /** The clock time until which this signal's exporter is paused; a drop from then on starts a pause. */
+  readonly pausedUntil: number
+}
+
+/** The state one bounded client keeps. */
+interface Bounds {
+  /** The signal this client posts. Each exporter has its own client, because each pauses alone. */
+  readonly signal: Signal
+  /** How many exports are in flight, traces and logs together: the one count both clients share. */
+  readonly outstanding: Ref.Ref<number>
+  readonly drops: Ref.Ref<Drops>
 }
 
 /**
- * Counts one lost batch, reports the count when a report is due, and ends the export by
- * interrupting it.
+ * Counts one lost batch, reports it when it starts a pause, and ends the export by interrupting
+ * it.
  *
  * The interrupt is the point. rc.116 `OtlpExporter.ts` `make` wraps the client it is given in
  * `filterStatusOk` and `retryTransient`, outside anything this module does to that client. A
  * failure or a refusal handed back to it would be retried there on the exporter's own schedule
  * (a `429` waits out its `Retry-After`, however long), with the export fiber and its serialized
  * batch held for the whole delay. An interruption is not an error and not a response, so nothing
- * is scheduled: it reaches the exporter's `catchCause`, which clears its buffer and stops it
- * accepting data for 60 seconds.
+ * is scheduled: it reaches the exporter's `catchCause`.
  *
- * The count is of the batches this wrapper gave up on: past the cap, out of time, refused by the
- * backend, or never delivered. Data the exporter declines to buffer during its 60 seconds never
- * passes through here and is not in it.
+ * What that `catchCause` does is a pause, and it is the price of one failed attempt of any kind
+ * (a reset, a `503`, a body that broke off, a timeout, a turn-away at the cap). When the exporter
+ * is not already paused it empties its buffer and sets `disabledUntil` 60 seconds ahead; until
+ * then `push` discards what it is given and `runExport` sends nothing, and the flush at shutdown
+ * is skipped while `disabledUntil` is set. The exporter clears it in the first `runExport` after
+ * the 60 seconds, which is its next interval tick, so the gap runs that little longer. Each
+ * signal has its own exporter and pauses alone.
  *
- * At most one report a minute, written when a drop happens: the count of a quiet minute's last
- * drops waits for the next drop to be reported with it.
+ * This function keeps the same clock for its signal. A drop at or after `pausedUntil` is one the
+ * exporter answers by pausing: an export only starts when the exporter is not paused, and it ends
+ * within `LONGEST_EXPORT`, which is shorter than a pause, so a drop inside a pause can only come
+ * from an export that was already in flight when the pause began. That drop is counted and not
+ * reported.
+ *
+ * So the report is written exactly when a pause starts, and says so: the signal, that its export
+ * is paused for 60 seconds, and how many of its batches were lost since its last report. That is
+ * also the rate limit: at most one report a minute for each signal. The count of a pause's later
+ * drops waits for the drop that starts the next one.
+ *
+ * The count is of the batches this client gave up on: past the cap, out of time, refused by the
+ * backend, or never delivered. What the exporter emptied from its buffer or declined to buffer
+ * during the pause never passes through here and is not in it, which is why the line states the
+ * pause: a reader of stdout is told there is a gap in the backend, and stdout itself has every
+ * line (`observabilityLayer`).
  */
-const drop = Effect.fnUntraced(function* (drops: Ref.Ref<Drops>) {
+const drop = Effect.fnUntraced(function* ({ signal, drops }: Bounds) {
   const now = yield* Clock.currentTimeMillis
-  const report = yield* Ref.modify(drops, ({ pending, reportDue }) =>
-    now >= reportDue
-      ? [Option.some(pending + 1), { pending: 0, reportDue: now + REPORT_EVERY_MILLIS }]
-      : [Option.none<number>(), { pending: pending + 1, reportDue }],
+  const report = yield* Ref.modify(drops, ({ pending, pausedUntil }) =>
+    now >= pausedUntil
+      ? [Option.some(pending + 1), { pending: 0, pausedUntil: now + PAUSE_MILLIS }]
+      : [Option.none<number>(), { pending: pending + 1, pausedUntil }],
   )
   if (Option.isSome(report))
     yield* Effect.annotateLogs(Effect.logWarning(Message.dropped), {
       [DROPPED_COUNT]: report.value,
+      [PAUSED_SIGNAL]: signal,
+      [PAUSED_SECONDS]: PAUSE_MILLIS / 1000,
     })
   return yield* Effect.interrupt
 })
-
-/** The state one bounded client keeps: how many exports are in flight, and the drop count. */
-interface Bounds {
-  readonly outstanding: Ref.Ref<number>
-  readonly drops: Ref.Ref<Drops>
-}
 
 /**
  * Reads an accepted answer's body to its end, or to `LARGEST_ANSWER`, whichever is first.
@@ -509,17 +646,17 @@ const bounded = <E, R>(bounds: Bounds, send: Effect.Effect<HttpClientResponse, E
         ? Effect.timeoutOption(exchange(send), LONGEST_EXPORT).pipe(
             Effect.flatMap((ended) =>
               Option.match(Option.flatten(ended), {
-                onNone: () => drop(bounds.drops),
+                onNone: () => drop(bounds),
                 onSome: (response) => Effect.succeed(response),
               }),
             ),
           )
-        : drop(bounds.drops),
+        : drop(bounds),
     (admitted) => (admitted ? Ref.update(bounds.outstanding, (count) => count - 1) : Effect.void),
   )
 
 /**
- * The HTTP client the exporters post with, bounded so that a slow, absent or refusing backend
+ * The HTTP client one exporter posts with, bounded so that a slow, absent or refusing backend
  * costs the server a fixed amount and no more.
  *
  * rc.116 `OtlpExporter.ts` puts no limit on a request: it starts one every interval and one more
@@ -530,9 +667,19 @@ const bounded = <E, R>(bounds: Bounds, send: Effect.Effect<HttpClientResponse, E
  * - an export gets one attempt: an answer that is not a success, and a request that fails, end it
  *   in a way the exporter does not retry;
  * - an export is cancelled after `LONGEST_EXPORT`, counted to the end of the answer's body;
- * - at most `MOST_OUTSTANDING` exports are in flight across both signals, each holding at most
- *   one connection, and one past that is cancelled before it is sent;
+ * - at most `MOST_OUTSTANDING` exports are in flight across both signals (`outstanding` is the
+ *   one count both clients are given), each holding at most one connection, and one past that is
+ *   cancelled before it is sent;
  * - in every one of those cases the batch is dropped, not queued (`drop`).
+ *
+ * The cost of that, accepted as policy: one failed attempt blacks out its signal in the backend.
+ * The exporter answers it by emptying its buffer and accepting nothing for 60 seconds, and it
+ * skips its shutdown flush while paused, so everything that signal recorded just before the
+ * failure and during the minute after it never reaches the backend, and is not sent later. The
+ * product does not depend on the backend, and nothing is lost to an operator: the server's own
+ * stdout log on the host has every line in full, and the drop report on it says when each gap
+ * began (`drop`). Keeping the batches instead would mean holding them in memory against a backend
+ * that is failing, which is the unbounded cost this client exists to refuse.
  *
  * Nothing that serves a Person waits on any of this. Recording a span or a line is a push onto
  * the exporter's in-memory buffer (`exporter.push`), and the requests run on the exporter's own
@@ -541,11 +688,15 @@ const bounded = <E, R>(bounds: Bounds, send: Effect.Effect<HttpClientResponse, E
  * Untraced, as are the programs it runs per request: a span about an export would itself be
  * exported.
  */
-const boundedClient = Effect.fnUntraced(function* () {
+const boundedClient = Effect.fnUntraced(function* (
+  signal: Signal,
+  outstanding: Bounds['outstanding'],
+) {
   const client = yield* HttpClient.HttpClient
   const bounds: Bounds = {
-    outstanding: yield* Ref.make(0),
-    drops: yield* Ref.make<Drops>({ pending: 0, reportDue: 0 }),
+    signal,
+    outstanding,
+    drops: yield* Ref.make<Drops>({ pending: 0, pausedUntil: 0 }),
   }
   // `withScope` asks its caller for the scope it ties the request to, and `bounded` supplies one
   // per exchange. `makeWith` is used in place of `transform` so that the client's type says so:
@@ -560,8 +711,7 @@ const boundedClient = Effect.fnUntraced(function* () {
 })
 
 /** `<base>/v1/<signal>`, whether or not the configured base ends in a slash. */
-const endpoint = (base: URL, signal: 'traces' | 'logs') =>
-  `${base.href.replace(/\/+$/, '')}/v1/${signal}`
+const endpoint = (base: URL, signal: Signal) => `${base.href.replace(/\/+$/, '')}/v1/${signal}`
 
 /**
  * Installs the OTLP tracer and logger exporters for an `Enabled` setting, and nothing for
@@ -579,29 +729,40 @@ const endpoint = (base: URL, signal: 'traces' | 'logs') =>
  * - The exporters are given the service name only so that they can be built (without one, rc.116
  *   `OtlpResource.fromConfig` requires `OTEL_SERVICE_NAME`); the resource and scope that are
  *   actually posted are the ones `allowlistSerializationLayer` puts in.
- * - Both exporters share one bounded client (`boundedClient`), so the cap on outstanding requests
- *   is across both signals.
+ * - Each exporter posts through its own bounded client (`boundedClient`), because each pauses on
+ *   its own, and both clients count against one cap on outstanding requests. `Layer.unwrap` is
+ *   what makes that one count: it is created once, when the Layer is built, and handed to both.
+ * - One serialization layer is provided to both, so they share one allowlist and its bounds.
  *
  * The exporter batches on a timer and flushes when the Layer's scope closes, bounded by its own
  * shutdown timeout (rc.116 `OtlpExporter.ts` `make`); `Flusher` in the output drains it on demand.
+ * A failed export pauses its signal for a minute and the batches of that time are not sent
+ * (`boundedClient`).
  */
 export const observabilityLayer = (configuration: ObservabilityConfiguration) =>
   ObservabilityConfiguration.$match(configuration, {
     Disabled: () => Layer.empty,
-    Enabled: ({ url, headers, environment, commit }) => {
-      const resource = { serviceName: SERVICE }
-      const credentials = Redacted.value(headers)
-      return Layer.mergeAll(
-        OtlpTracer.layer({ url: endpoint(url, 'traces'), resource, headers: credentials }),
-        OtlpLogger.layer({
-          url: endpoint(url, 'logs'),
-          resource,
-          headers: credentials,
-          mergeWithExisting: true,
+    Enabled: ({ url, headers, environment, commit }) =>
+      Layer.unwrap(
+        Effect.gen(function* () {
+          const resource = { serviceName: SERVICE }
+          const credentials = Redacted.value(headers)
+          const outstanding = yield* Ref.make(0)
+          const posting = (signal: Signal) =>
+            Layer.effect(HttpClient.HttpClient, boundedClient(signal, outstanding))
+          return Layer.mergeAll(
+            OtlpTracer.layer({
+              url: endpoint(url, 'traces'),
+              resource,
+              headers: credentials,
+            }).pipe(Layer.provide(posting('traces'))),
+            OtlpLogger.layer({
+              url: endpoint(url, 'logs'),
+              resource,
+              headers: credentials,
+              mergeWithExisting: true,
+            }).pipe(Layer.provide(posting('logs'))),
+          ).pipe(Layer.provide(allowlistSerializationLayer(environment, commit)))
         }),
-      ).pipe(
-        Layer.provide(allowlistSerializationLayer(resourceOf(environment, commit))),
-        Layer.provide(Layer.effect(HttpClient.HttpClient, boundedClient())),
-      )
-    },
+      ),
   })
