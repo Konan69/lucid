@@ -1,7 +1,9 @@
 import { Data, Effect, Stream } from 'effect'
 import * as Atom from 'effect/unstable/reactivity/Atom'
+import { Linking } from 'react-native'
 import { pairingTransport, signIn, signOut, signUp } from './account'
 import { Pairing, pairing } from './device'
+import { googleAddress } from './google'
 import type { ServerAddress } from './server'
 import { adopt, leave } from './held'
 import { Session, type SignedIn } from './session'
@@ -18,16 +20,53 @@ import { Session, type SignedIn } from './session'
  * the sign-in screen showing it starts it, leaving that screen interrupts it mid-wait, and
  * refreshing the atom asks for a new code. When the code is entered on another device it adopts
  * the session itself, so the screen only ever draws the states before that.
+ *
+ * `onCode` is what happens once, when the code arrives. Signing in with a code does nothing: the
+ * Person reads it off the screen. Signing in with Google opens the browser with it.
  */
-export const pairingAtom = Atom.family((server: ServerAddress) =>
+const exchange = (server: ServerAddress, onCode: (userCode: string) => Effect.Effect<void>) =>
   Atom.make(
     pairing(pairingTransport(server)).pipe(
       Stream.tap((state) =>
-        Pairing.$is('Approved')(state)
-          ? adopt(Session.SignedIn({ server, token: state.token }))
-          : Effect.void,
+        Pairing.$match(state, {
+          Asking: () => Effect.void,
+          Waiting: ({ userCode }) => onCode(userCode),
+          Approved: ({ token }) => adopt(Session.SignedIn({ server, token })),
+          Ended: () => Effect.void,
+        }),
       ),
     ),
+  )
+
+export const pairingAtom = Atom.family((server: ServerAddress) =>
+  exchange(server, () => Effect.void),
+)
+
+/**
+ * Opens the system browser at the page where the Person signs in with Google and approves this
+ * phone (`googleAddress`). A phone with no browser to open is not a reason to stop the exchange:
+ * the step still shows the way to try again, and the code is still good.
+ */
+const openGoogle = (server: ServerAddress, userCode: string) =>
+  Effect.ignore(Effect.tryPromise(() => Linking.openURL(googleAddress(server, userCode))))
+
+/**
+ * Signing in with Google: the same code exchange, with the browser opened as soon as there is a
+ * code to approve. It is its own atom, so the code a Person was reading on the code step is not
+ * the one the browser was opened with.
+ */
+export const googlePairingAtom = Atom.family((server: ServerAddress) =>
+  exchange(server, (userCode) => openGoogle(server, userCode)),
+)
+
+/**
+ * Opens the browser again with the code this phone is already waiting on, for a Person who came
+ * back from it without finishing. It does not ask for a new code. It is kept alive because
+ * nothing reads it: a function atom nobody reads is otherwise thrown away with its run.
+ */
+export const reopenGoogleAtom = Atom.keepAlive(
+  Atom.fn((waiting: { readonly server: ServerAddress; readonly userCode: string }) =>
+    openGoogle(waiting.server, waiting.userCode),
   ),
 )
 
