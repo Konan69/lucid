@@ -1,0 +1,125 @@
+name: Mobile iOS sideload
+
+# Builds the unsigned iPhone app for one Vivid. The file it uploads is signed and installed over
+# USB by the person who downloads it, so the build needs no Apple account. Ported from
+# `mobile-ios-sideload.yml` in the T3 Code fork.
+#
+# The build is made for the server named in the `VIVID_SERVER` repository variable: that address
+# is where the app signs in and where it asks for over-the-air updates (`apps/mobile/app.config.ts`).
+
+on:
+  workflow_dispatch:
+  # A manual run is only offered for a workflow on the default branch. Until this one is there, a
+  # push that touches this file is the way to ask for a build.
+  push:
+    paths: [.github/workflows/sideload.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sideload-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  EXPO_NO_TELEMETRY: '1'
+  NODE_OPTIONS: --max-old-space-size=8192
+  VIVID_SERVER: ${{ vars.VIVID_SERVER }}
+
+jobs:
+  ipa:
+    name: Build unsigned IPA
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Require the server address
+        run: |
+          if [ -z "$VIVID_SERVER" ]; then
+            echo "Set the VIVID_SERVER repository variable to the address of the Vivid this build is for." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter @vivid/mobile...
+
+      - name: Generate the iOS project
+        working-directory: apps/mobile
+        run: node scripts/native.mjs ios --prebuild-only
+
+      # The address is written into the native project by the step above. A build without it can
+      # never update, so stop here instead of handing out such a file.
+      - name: Verify the embedded update address
+        working-directory: apps/mobile
+        run: |
+          expo_plist="$(find ios -name Expo.plist -print -quit)"
+          if [ -z "$expo_plist" ]; then
+            echo "Generated Expo.plist was not found." >&2
+            exit 1
+          fi
+          embedded="$(/usr/libexec/PlistBuddy -c 'Print :EXUpdatesURL' "$expo_plist")"
+          expected="${VIVID_SERVER%/}/api/updates/manifest"
+          if [ "$embedded" != "$expected" ]; then
+            echo "Expected update address '$expected', found '$embedded'." >&2
+            exit 1
+          fi
+          echo "Runtime version: $(/usr/libexec/PlistBuddy -c 'Print :EXUpdatesRuntimeVersion' "$expo_plist")"
+
+      - name: Install CocoaPods dependencies
+        working-directory: apps/mobile/ios
+        run: pod install
+
+      - name: Build the unsigned app
+        working-directory: apps/mobile
+        run: |
+          workspace="$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)"
+          if [ -z "$workspace" ]; then
+            echo "No generated Xcode workspace found." >&2
+            exit 1
+          fi
+          scheme="$(basename "$workspace" .xcworkspace)"
+          xcodebuild \
+            -workspace "$workspace" \
+            -scheme "$scheme" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath "$RUNNER_TEMP/derived" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            DEVELOPMENT_TEAM= \
+            build
+
+      - name: Package the IPA
+        run: |
+          app="$(find "$RUNNER_TEMP/derived/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
+          if [ -z "$app" ]; then
+            echo "No built iOS app found." >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          ditto "$app" "$RUNNER_TEMP/ipa/Payload/$(basename "$app")"
+          (
+            cd "$RUNNER_TEMP/ipa"
+            zip -qry "$GITHUB_WORKSPACE/Vivid.ipa" Payload
+          )
+          unzip -tq "$GITHUB_WORKSPACE/Vivid.ipa"
+
+      - name: Upload the IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vivid-unsigned-ipa
+          path: Vivid.ipa
+          if-no-files-found: error
+          retention-days: 14
