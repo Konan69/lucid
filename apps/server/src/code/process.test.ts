@@ -3,7 +3,7 @@ import { ConfigProvider, Context, Layer, Logger } from 'effect'
 import { programHost } from './host.ts'
 import { describe, expect, it as standalone, layer } from '@effect/vitest'
 import { ApprovalId, CodeCall, CodeFailure, CodeOutcome, ThreadId } from '@vivid/contracts'
-import { Deferred, Effect, Fiber, Ref, Option, type Schema } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Ref, Option, type Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { CallOutcome, CodeProcess, codeProcessLayer, Execution, type Dispatch } from './process.ts'
 import { discoveredTool } from './signatures.ts'
@@ -887,3 +887,32 @@ standalone.effect('keeps failed aggregate bytes within the limit when logs nearl
     expect(outcome).toHaveProperty('logsTruncated', true)
   }),
 )
+
+/** Recovery is exercised without host prerequisites; the real supervisor uses this same transition. */
+standalone.effect('supervision contains hostile causes and logs only bounded type facts', () => {
+  const secret = 'PRIVATE-supervision-content'
+  const circular = new Error(secret)
+  circular.cause = circular
+  const getter = Object.defineProperty(new Error(secret), 'message', {
+    get: () => {
+      throw new Error(secret)
+    },
+  })
+  const messages: string[] = []
+  const logger = Logger.make((entry) => messages.push(Logger.formatSimple.log(entry)))
+  return Effect.gen(function* () {
+    for (const failure of [circular, getter]) {
+      const state = new Execution()
+      const exit = yield* Effect.exit(state.supervise(Effect.die(failure)))
+      expect(Exit.isSuccess(exit)).toBe(true)
+      if (Exit.isSuccess(exit))
+        check(exit.value, 'Failed', { failure: CodeFailure.cases.Unavailable.make({}) })
+    }
+    expect(messages).toHaveLength(2)
+    for (const message of messages) {
+      expect(message).toContain('Program supervision failed')
+      expect(message).not.toContain(secret)
+      expect(message.length).toBeLessThan(400)
+    }
+  }).pipe(Effect.provide(Logger.layer([logger])))
+})

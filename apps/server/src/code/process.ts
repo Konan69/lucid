@@ -12,6 +12,7 @@ import {
   ApprovalId,
 } from '@vivid/contracts'
 import {
+  Cause,
   Config,
   Context,
   Deferred,
@@ -288,6 +289,21 @@ export class Execution {
     if (this.calls.some((call) => call.end === 'unknown'))
       return CodeOutcome.cases.OutcomeUnknown.make({ calls: this.calls.slice() })
     return boundedFailure(failure, this.calls, this.logs)
+  }
+
+  /** Supervision owns recovery after guest resources close; receipts still determine uncertainty. */
+  supervise<E, R>(program: Effect.Effect<CodeOutcome, E, R>) {
+    return program.pipe(
+      Effect.catchCause((cause) =>
+        // Only Effect-owned reason kinds are read. Never give a logger the foreign failure:
+        // rc.116 Cause.pretty runs getters and recursively follows circular causes (guard.ts).
+        Effect.annotateLogs(Effect.logError('Program supervision failed'), {
+          'vivid.supervision.failed': Cause.hasFails(cause),
+          'vivid.supervision.defected': Cause.hasDies(cause),
+          'vivid.supervision.interrupted': Cause.hasInterrupts(cause),
+        }).pipe(Effect.as(this.failed(CodeFailure.cases.Unavailable.make({})))),
+      ),
+    )
   }
 
   /** Reserve bounded queue space before forking; arguments count even if completion cancels the call. */
@@ -612,12 +628,6 @@ const execute = Effect.fn('Code.supervise')(function* (
         ),
       )
     }),
-  ).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logError('Program supervision failed', cause).pipe(
-        Effect.as(state.failed(CodeFailure.cases.Unavailable.make({}))),
-      ),
-    ),
   )
   const deadline = Effect.fn('Code.deadline')(function* () {
     yield* Effect.sleep(`${budgets.seconds} seconds`)
@@ -630,7 +640,7 @@ const execute = Effect.fn('Code.supervise')(function* (
     })
     return yield* state.timeout(cancelled)
   })()
-  return yield* Effect.raceFirst(program, deadline)
+  return yield* Effect.raceFirst(state.supervise(program), deadline)
 })
 
 /** Fail-fast capacity avoids running stale requests after another program has finished. */
