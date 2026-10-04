@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect'
-import { Decision } from 'effect/unstable/ai'
+import { Decision, DecisionModel } from 'effect/unstable/ai'
 import { decideWithin, DecisionUnavailable } from '../decisions/model.ts'
 import { TOOL_DESCRIPTION_LIMIT } from './effects.ts'
 
@@ -69,13 +69,19 @@ const scoreBatch = Effect.fn('Connections.scoreTools')(function* <A extends Cand
   return { scores, usage }
 })
 
-/** Jev can promote candidates, never remove them. Stable score ties retain lexical
- * order; unpromoted and unscored candidates follow in their original lexical order.
+/** Empty and single-candidate lists have nothing to order and never reach Decision.make.
+ * Before caller truncation, Jev promotes candidates without removing them. Stable score ties
+ * retain lexical order; unpromoted and unscored candidates keep their original lexical order.
  * Provider usage accompanies the result so live evaluations measure the actual request. */
 export const relevantTools = Effect.fn('Connections.relevantTools')(function* <A extends Candidate>(
   request: string,
   tools: readonly A[],
 ) {
+  if (tools.length < 2)
+    return {
+      ordered: tools,
+      usage: new DecisionModel.DecisionUsage({ inputTokens: undefined, outputTokens: undefined }),
+    }
   const { scores, usage } = yield* scoreBatch(request, tools.slice(0, RELEVANCE_BATCH_SIZE))
   const promoted = scores
     .filter(({ probability }) => probability >= TOOL_RELEVANCE_THRESHOLD)

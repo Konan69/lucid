@@ -264,6 +264,93 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
       }),
     )
 
+    /** A caller's eight-result limit must not let eight semantic promotions displace the best
+     * lexical match. The real public discovery seam applies the limit after optional ranking. */
+    it.effect('retains the first lexical result when eight promotions fill the caller limit', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const probe = yield* ConnectionProbe
+        const previous = yield* Ref.get(probe.tools)
+        yield* Effect.addFinalizer(() => Ref.set(probe.tools, previous))
+        yield* Ref.set(probe.tools, [
+          ExecutorTool.make({
+            name: 'needle',
+            description: 'Read needle records',
+            effect: 'read',
+            input: {},
+          }),
+          ...Array.from({ length: 8 }, (_, index) =>
+            ExecutorTool.make({
+              name: `lookup_${index}`,
+              description: 'Read needle records',
+              effect: 'read',
+              input: {},
+            }),
+          ),
+        ])
+        yield* (yield* ConnectionStore).begin(ownerActor, {
+          service: serviceId,
+          label: 'Work',
+          shared: false,
+        })
+        const model = yield* DecisionModel.make({
+          decide: ({ decisions }) =>
+            Effect.succeed({
+              answers: Object.fromEntries(
+                Object.keys(decisions).map((key, index) => [
+                  key,
+                  ScriptedAnswer.cases.Probability.make({ probability: index === 0 ? 0.1 : 0.9 }),
+                ]),
+              ),
+              usage: { inputTokens: undefined, outputTokens: undefined },
+            }),
+        })
+        const result = yield* findTools(ownerActor, { query: 'needle', limit: 8 }).pipe(
+          Effect.provideService(DecisionModel.DecisionModel, model),
+        )
+        expect(result.tools.map((tool) => tool.name)).toEqual([
+          'needle',
+          ...Array.from({ length: 7 }, (_, index) => `lookup_${index}`),
+        ])
+      }),
+    )
+
+    /** A sole lexical result has no relative position to enrich. A stalled supplied model
+     * proves public discovery returns without entering the semantic provider at all. */
+    it.effect('a single lexical candidate never calls relevance', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const probe = yield* ConnectionProbe
+        const previous = yield* Ref.get(probe.tools)
+        yield* Effect.addFinalizer(() => Ref.set(probe.tools, previous))
+        yield* Ref.set(probe.tools, [
+          ExecutorTool.make({
+            name: 'read',
+            description: 'Read records',
+            effect: 'read',
+            input: {},
+          }),
+        ])
+        yield* (yield* ConnectionStore).begin(ownerActor, {
+          service: serviceId,
+          label: 'Work',
+          shared: false,
+        })
+        let calls = 0
+        const model = yield* DecisionModel.make({
+          decide: () => {
+            calls += 1
+            return Effect.never
+          },
+        })
+        const result = yield* findTools(ownerActor, { query: 'read' }).pipe(
+          Effect.provideService(DecisionModel.DecisionModel, model),
+        )
+        expect(result.tools.map((tool) => tool.name)).toEqual(['read'])
+        expect(calls).toBe(0)
+      }),
+    )
+
     /** Low scores cannot hide lexical candidates; time exhaustion cannot reorder them. */
     it.effect.each(['below', 'timeout'] as const)(
       'preserves lexical order on %s relevance',

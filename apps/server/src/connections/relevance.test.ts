@@ -2,6 +2,7 @@ import { expect, it } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
 import { DecisionModel } from 'effect/unstable/ai'
 import { ScriptedAnswer } from '../decisions/testing.ts'
+import { unconfiguredDecisionLayer } from '../decisions/model.ts'
 import { TOOL_DESCRIPTION_LIMIT } from './effects.ts'
 import { relevantTools } from './relevance.ts'
 
@@ -45,3 +46,24 @@ it.effect('caps relevance descriptions before constructing questions', () => {
     expect(calls).toBe(1)
   }).pipe(Effect.provide(model))
 })
+
+/** Absence and a sole lexical result are valid discovery states. Neither spends a provider
+ * request, even if the provided model cannot answer anything. Usage is genuinely unreported. */
+it.effect('returns empty and single candidate lists without a decision', () =>
+  Effect.gen(function* () {
+    const single = [
+      {
+        serviceName: 'Records',
+        account: 'Work',
+        name: 'read',
+        description: 'Read records',
+      },
+    ]
+    for (const tools of [[], single]) {
+      const result = yield* relevantTools('read records', tools)
+      expect(result.ordered).toBe(tools)
+      expect(result.usage.inputTokens).toBeUndefined()
+      expect(result.usage.outputTokens).toBeUndefined()
+    }
+  }).pipe(Effect.provide(unconfiguredDecisionLayer)),
+)
