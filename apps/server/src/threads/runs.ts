@@ -99,6 +99,49 @@ export const actingRun = Effect.fn('RunStore.actingRun')(function* (
   return run.id
 })
 
+/** How many of a Person's newest Runs in a Thread the reviewer looks back over (`requestRuns`). */
+const REQUEST_RUNS = 20
+
+/** One admitted Run acting for a Person: whether it is the turn in progress, and why it started. */
+export interface RequestRun {
+  readonly id: RunId
+  readonly working: boolean
+  readonly origin: StoredRunOrigin
+}
+
+/**
+ * The newest Runs in a Thread that act for one Person, oldest first, with the stored origin.
+ *
+ * `list` cannot serve the reviewer of a proposed action (`approvals/request.ts`): it folds
+ * `Standing` and `Attention` into `Routine`, and those two start from text the server or Vivid
+ * wrote, which must never be read as the Person's instruction. Filtering by Person here, not
+ * after a Thread-wide limit, keeps attribution exact in a long shared Thread. Only admitted Runs
+ * count, as in `actingRun`: a reserved turn the runtime has not accepted has no words in history.
+ */
+export const requestRuns = Effect.fn('RunStore.requestRuns')(function* (
+  threadId: ThreadId,
+  personId: PersonId,
+) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .select({ id: runs.id, state: runs.state, origin: runs.origin })
+      .from(runs)
+      .where(
+        and(eq(runs.threadId, threadId), eq(runs.personId, personId), isNotNull(runs.admittedAt)),
+      )
+      .orderBy(desc(runs.turn))
+      .limit(REQUEST_RUNS),
+  )
+  return yield* Effect.forEach(Arr.reverse(rows), (row) =>
+    Effect.map(decodeOrigin(row.origin), (origin): RequestRun => ({
+      id: row.id,
+      working: row.state === 'working',
+      origin,
+    })),
+  )
+})
+
 export interface RunStoreService {
   /** Reserves a turn only when no working Run acts for another Person; replays keep their turn. */
   readonly start: (input: {

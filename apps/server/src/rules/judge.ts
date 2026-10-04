@@ -4,7 +4,7 @@ import * as Layer from 'effect/Layer'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import { Decision, DecisionModel } from 'effect/unstable/ai'
-import { Rule, RuleScope, type ProposedAction } from '@vivid/contracts'
+import { ActionTarget, BrowseTarget, Rule, RuleScope, type ProposedAction } from '@vivid/contracts'
 import { decide } from '../decisions/model.ts'
 
 /** A failed judge cannot authorize an action; provider detail and private payloads stay behind this seam. */
@@ -29,11 +29,33 @@ export const RULE_APPLICABILITY_THRESHOLD = 0.5
 const Action = Schema.Struct({
   summary: Schema.String,
   effect: Schema.String,
-  target: Schema.String,
+  /** Where it runs, in the Person's words: an Integration by its label, or Vivid's Computer. */
+  integration: Schema.String,
+  tool: Schema.String,
 })
 
-/** The model sees summary, effect and target tag only; target values and rationale stay
- * private. Positional keys keep rule identifiers out of provider prompts. Decision.ts
+/**
+ * The action as the judge is shown it. A rule such as "Never use my work Gmail" can only be
+ * matched against the account label and tool name, so both are given; the arguments and the
+ * working model's rationale are not, and no identifier is. Product words only: a Person writes
+ * rules about an "Integration", never a "Connection".
+ */
+const shown = (action: ProposedAction) => ({
+  summary: action.summary,
+  effect: action.effect,
+  ...ActionTarget.match(action.target, {
+    Connection: ({ account, tool }) => ({ integration: account, tool }),
+    Command: () => ({ integration: 'Computer', tool: 'command' }),
+    Browser: ({ target }) => ({
+      integration: BrowseTarget.guards.Person(target) ? "Person's own browser" : 'Computer',
+      tool: 'browser',
+    }),
+    Desktop: () => ({ integration: 'Computer', tool: 'desktop' }),
+  }),
+})
+
+/** The model sees the summary, effect, Integration label and tool name; arguments and rationale
+ * stay private. Positional keys keep rule identifiers out of provider prompts. Decision.ts
  * probability and DecisionModel.ts make validate every answer in one provider call. */
 export const ruleJudgeLayer = Layer.effect(
   RuleJudge,
@@ -54,11 +76,10 @@ export const ruleJudgeLayer = Layer.effect(
               }),
             ]),
           )
-          const { answers } = yield* decide(Decision.make({ input: Action, decisions }), {
-            summary: action.summary,
-            effect: action.effect,
-            target: action.target._tag,
-          }).pipe(Effect.provideService(DecisionModel.DecisionModel, model))
+          const { answers } = yield* decide(
+            Decision.make({ input: Action, decisions }),
+            shown(action),
+          ).pipe(Effect.provideService(DecisionModel.DecisionModel, model))
           // Even validated dynamic keys are checked explicitly; a missing answer can never erase a rule.
           return yield* Effect.filter(rules, (_rule: Rule, index: number) => {
             const answer = answers[`rule_${index}`]
@@ -69,8 +90,9 @@ export const ruleJudgeLayer = Layer.effect(
         },
         (effect) =>
           effect.pipe(
+            // The tag tells an unconfigured provider from a timeout; nothing else is logged.
+            Effect.tapError((error) => Effect.logWarning('Rules not judged', { tag: error._tag })),
             Effect.mapError(() => new RulesNotJudged({})),
-            Effect.tapError(() => Effect.logWarning('RulesNotJudged')),
           ),
       ),
     })
@@ -82,28 +104,38 @@ export const BindingJudgment = Schema.TaggedUnion({
   Uncertain: { rules: Schema.Array(Rule) },
 })
 
-/** Independent contexts preserve known prohibitions even when the other completion fails. */
+/**
+ * Whether rules that could not be judged leave the answer open. Only a rule that could make the
+ * action stricter does: an unjudged `Never` or `Ask` might apply, so the gate must ask. An
+ * unjudged `Allow` can only loosen, so losing it leaves the default in force and never causes a
+ * question; before this, one unrelated Allow rule made every action ask whenever the judge failed.
+ */
+const restricts = (rules: ReadonlyArray<Rule>) => rules.some((rule) => rule.decision !== 'Allow')
+
+/**
+ * Independent contexts preserve known prohibitions even when the other completion fails, and
+ * hostile wording in a personal rule never shares a prompt with a Company rule. The two are
+ * judged at once: they do not depend on each other and each has its own ten seconds.
+ */
 export const judgeBinding = Effect.fn('Rules.judgeBinding')(function* (
   judge: RuleJudgeService,
   action: ProposedAction,
   rules: ReadonlyArray<Rule>,
 ) {
-  const company = yield* Effect.result(
-    judge.judge(
-      action,
-      rules.filter((rule) => RuleScope.guards.Company(rule.scope)),
-    ),
+  const scopes = [
+    rules.filter((rule) => RuleScope.guards.Company(rule.scope)),
+    rules.filter((rule) => RuleScope.guards.Personal(rule.scope)),
+  ]
+  const judged = yield* Effect.forEach(
+    scopes,
+    (scope) =>
+      Effect.map(Effect.result(judge.judge(action, scope)), (result) => ({ scope, result })),
+    { concurrency: 2 },
   )
-  const personal = yield* Effect.result(
-    judge.judge(
-      action,
-      rules.filter((rule) => RuleScope.guards.Personal(rule.scope)),
-    ),
-  )
-  const applicable = [company, personal].flatMap((result) =>
+  const applicable = judged.flatMap(({ result }) =>
     Result.isSuccess(result) ? result.success : [],
   )
-  return Result.isFailure(company) || Result.isFailure(personal)
+  return judged.some(({ scope, result }) => Result.isFailure(result) && restricts(scope))
     ? BindingJudgment.cases.Uncertain.make({ rules: applicable })
     : BindingJudgment.cases.Judged.make({ rules: applicable })
 })
