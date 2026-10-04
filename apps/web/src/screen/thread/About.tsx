@@ -114,9 +114,9 @@ export function AboutHome({
     <>
       {/* At every width, unlike a Thread's (`around-scrim` shows it only where the card floats). */}
       <Scrim className="block" onClose={onClose} />
-      {/* The chip is at the top centre of Home, so the card hangs centred under it and grows
-          from its top edge. */}
-      <div className="pointer-events-none absolute inset-x-0 top-(--topbar-h) bottom-0 z-20 flex items-start justify-center px-3 pt-1 pb-3">
+      {/* Home draws Vivid as a Thread does: face at 56 and the name capsule, 104 tall from the
+          top of the page. The card hangs centred 8 under that and grows from its top edge. */}
+      <div className="pointer-events-none absolute inset-x-0 top-28 bottom-0 z-20 flex items-start justify-center px-3 pb-3">
         <Frame
           className="pointer-events-auto max-h-full w-(--around-w) max-w-full origin-top"
           mood={mood}

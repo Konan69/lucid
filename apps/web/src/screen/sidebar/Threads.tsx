@@ -7,6 +7,7 @@ import {
   CircleCheck,
   FolderInput,
   Pencil,
+  Plus,
   RefreshCw,
   Trash2,
   Undo2,
@@ -550,23 +551,42 @@ function DeleteThread({ thread, onClose }: { thread: Thread; onClose: () => void
   )
 }
 
+/**
+ * The line over each part of the list, with the way to start a Thread at its far end. A Person
+ * reading down the list is looking at these lines, so "new" is where the eye already is, on
+ * every one of them, not only at the top of the sidebar.
+ */
 function Caption({ label, count }: { label: string; count?: number }) {
   return (
-    <h3
+    <div
       // A caption moves with the rows under it when the list above it grows or closes up.
       data-moves={`caption:${label}`}
-      className={cn(
-        'mt-1 flex items-center gap-1.5 px-2.5 text-meta font-title text-ink-3',
-        CAPTION,
-      )}
+      className={cn('mt-1 flex items-center gap-1.5 ps-2.5 pe-1', CAPTION)}
     >
-      {label}
-      {count !== undefined && (
-        <span className="font-meta">
-          <Count value={count} />
-        </span>
-      )}
-    </h3>
+      <h3 className="flex min-w-0 flex-1 items-center gap-1.5 text-meta font-title text-ink-3">
+        {label}
+        {count !== undefined && (
+          <span className="font-meta">
+            <Count value={count} />
+          </span>
+        )}
+      </h3>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label="New thread"
+              onClick={() => router.go(Route.New())}
+              className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink focus-visible:-outline-offset-2"
+            />
+          }
+        >
+          <Plus className="size-3.5" strokeWidth={1.8} />
+        </TooltipTrigger>
+        <TooltipContent>New thread</TooltipContent>
+      </Tooltip>
+    </div>
   )
 }
 

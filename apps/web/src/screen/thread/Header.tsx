@@ -152,22 +152,43 @@ function AudienceIcon({ audience }: { audience: ThreadAudience }) {
  * with the first messages, and while the card around Vivid is open the card owns the identity.
  */
 export function Hero({ mood, onOpen }: { mood: FaceMood; onOpen: () => void }) {
+  return (
+    <li className="pt-4 pb-8 text-center">
+      <HeroButton mood={mood} open={false} onOpen={onOpen} />
+    </li>
+  )
+}
+
+/**
+ * The face and the name capsule themselves, without the list row a conversation puts them in.
+ * Home draws the same thing at the same place: a Person who has not said anything yet sees
+ * Vivid exactly where they will see it once the conversation starts, so opening a Thread from
+ * Home does not move it.
+ */
+export function HeroButton({
+  mood,
+  open,
+  onOpen,
+}: {
+  mood: FaceMood
+  /** Whether the card around Vivid is open from this button. */
+  open: boolean
+  onOpen: () => void
+}) {
   // The name this Person or their Company gave Vivid, live.
   const { name } = useAppearance()
   return (
-    <li className="pt-4 pb-8 text-center">
-      <button
-        aria-haspopup="dialog"
-        aria-expanded={false}
-        onClick={onOpen}
-        className="group/hero inline-flex cursor-pointer flex-col items-center gap-2 rounded-panel transition-press duration-(--dur-fast) outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-96"
-      >
-        <Face size={56} mood={mood} />
-        <span className="flex h-6 items-center gap-0.5 rounded-full pr-1.5 pl-2.5 text-title text-ink-2 ring-line transition-press duration-(--dur-fast) group-hover/hero:bg-wash-hover group-hover/hero:text-ink group-focus-visible/hero:bg-wash-hover">
-          {name}
-          <ChevronDown className="size-3.5 text-ink-3" />
-        </span>
-      </button>
-    </li>
+    <button
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      onClick={onOpen}
+      className="group/hero inline-flex cursor-pointer flex-col items-center gap-2 rounded-panel transition-press duration-(--dur-fast) outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-96"
+    >
+      <Face size={56} mood={mood} />
+      <span className="flex h-6 items-center gap-0.5 rounded-full pr-1.5 pl-2.5 text-title text-ink-2 ring-line transition-press duration-(--dur-fast) group-hover/hero:bg-wash-hover group-hover/hero:text-ink group-focus-visible/hero:bg-wash-hover group-aria-expanded/hero:bg-wash-hover group-aria-expanded/hero:text-ink">
+        {name}
+        <ChevronDown className="size-3.5 text-ink-3" />
+      </span>
+    </button>
   )
 }

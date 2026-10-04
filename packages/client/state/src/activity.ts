@@ -288,6 +288,46 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.question)],
   },
+  create_project: {
+    said: {
+      running: 'Starting a project',
+      done: 'Started a project',
+      failed: 'Could not start the project',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  find_events: {
+    said: {
+      running: 'Looking at what can start a routine',
+      done: 'Looked at what can start a routine',
+      failed: 'Could not look at what can start a routine',
+    },
+    detail: (asked) => [said(asked.account)],
+  },
+  notify_person: {
+    said: {
+      running: 'Sending you a notification',
+      done: 'Sent you a notification',
+      failed: 'Could not send the notification',
+    },
+    detail: (asked) => [said(asked.title)],
+  },
+  open_thread: {
+    said: {
+      running: 'Opening a thread for this',
+      done: 'Opened a thread for this',
+      failed: 'Could not open the thread',
+    },
+    detail: (asked) => [said(asked.title)],
+  },
+  show: {
+    said: {
+      running: 'Putting it on screen',
+      done: 'Put it on screen',
+      failed: 'Could not show it',
+    },
+    detail: nothing,
+  },
 } satisfies Record<string, Step>
 
 /** A tool this client has not heard of: still a true line, with nothing made up about it. */
