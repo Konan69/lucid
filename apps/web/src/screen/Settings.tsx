@@ -83,6 +83,8 @@ export function Settings({
         // centre, so the box between them is what the two limits clamp, and its one row is as
         // tall as it is, so the sections scroll inside it.
         flush
+        // It fills the window and its panes scroll, so it is not glass (see `solid`).
+        solid
         className="inset-0 m-auto size-auto max-h-none max-w-none translate-none grid-rows-1 overflow-hidden sm:inset-4 sm:max-h-190 sm:max-w-5xl"
       >
         {/* The panel's own name. What is on screen is the open section's title, in the header. */}
