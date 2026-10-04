@@ -1,18 +1,9 @@
 import * as NodeAssert from 'node:assert/strict'
-import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeTest from 'node:test'
 import * as NodeURL from 'node:url'
-import * as Schema from 'effect/Schema'
-import { validateVersions, versions, workspaceManifestPaths } from './versions.mjs'
+import { validateVersions, workspaceManifestPaths } from './versions.mjs'
 
-const PackageManagerManifest = Schema.Struct({
-  packageManager: Schema.String,
-  engines: Schema.Struct({ pnpm: Schema.String }),
-})
-const decodePackageManagerManifest = Schema.decodeUnknownSync(
-  Schema.fromJsonString(PackageManagerManifest),
-)
 const assert = NodeAssert
 const test = NodeTest.default
 const repositoryRoot = NodePath.resolve(
