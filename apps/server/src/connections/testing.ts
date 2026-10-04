@@ -46,6 +46,8 @@ import {
   ExecutorTool,
   ExecutorCallOutcome,
 } from './executor.ts'
+import { unconfiguredDecisionLayer } from '../decisions/model.ts'
+import { toolEffectsLayer } from './effects.ts'
 import { connectionStoreLayer } from './store.ts'
 
 export const serviceId = ServiceId.make('test-service')
@@ -259,6 +261,7 @@ const dependencies = Layer.mergeAll(
   testConfigLayer,
   silentChangesLayer,
   probeLayer,
+  toolEffectsLayer.pipe(Layer.provideMerge(unconfiguredDecisionLayer)),
 )
 export const connectionTestLayer = connectionStoreLayer.pipe(Layer.provideMerge(dependencies))
 

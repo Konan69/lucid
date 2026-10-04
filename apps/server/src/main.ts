@@ -29,6 +29,7 @@ import { deviceLayer } from './computers/device.ts'
 import { computerStoreLayer } from './computers/store.ts'
 import { loadServerConfig, ServerConfig } from './config.ts'
 import { executorLayer } from './connections/executor.ts'
+import { toolEffectsLayer } from './connections/effects.ts'
 import { connectionStoreLayer } from './connections/store.ts'
 import { workLayer } from './database/work.ts'
 import { databaseLayer } from './database/client.ts'
@@ -144,7 +145,7 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
   const knowledge = Layer.mergeAll(memoryLayer, memoryModelLayer).pipe(Layer.provideMerge(recorded))
   const named = threadTitlesLayer.pipe(Layer.provideMerge(knowledge))
   const conversation = conversationLayer.pipe(Layer.provideMerge(named))
-  const accounts = Layer.mergeAll(connectionStoreLayer, computerStoreLayer).pipe(
+  const accounts = Layer.mergeAll(connectionStoreLayer, toolEffectsLayer, computerStoreLayer).pipe(
     Layer.provideMerge(conversation),
   )
   const trust = Layer.mergeAll(approvalStoreLayer, inputStoreLayer).pipe(

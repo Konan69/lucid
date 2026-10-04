@@ -32,6 +32,7 @@ import {
 import { callableTool, discoveredTool } from '../code/signatures.ts'
 import { executorFailure } from './errors.ts'
 import { ConnectionStore } from './store.ts'
+import { ToolEffects } from './effects.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
 
 /** Provider schemas stay on this server projection; discovery publishes only rendered signatures. */
@@ -83,10 +84,31 @@ const projectTools = Effect.fn('Connections.projectTools')(function* (
   account: string,
 ) {
   const tools = yield* store.tools(actor, row)
-  return tools.flatMap((tool) =>
+  const classified = yield* classifyTools(row, tools)
+  return classified.flatMap((tool) =>
     row.companyId !== null && tool.effect !== 'read'
       ? []
       : [NamedTool.make({ ...tool, connectionId: row.id, account, serviceName: row.serviceName })],
+  )
+})
+
+/** All projections share the same authority and cache; ids are used only locally. */
+const classifyTools = Effect.fn('Connections.classifyTools')(function* (
+  row: ConnectionRecord,
+  tools: readonly (typeof ExecutorTool.Type)[],
+) {
+  const effects = yield* ToolEffects
+  return yield* Effect.forEach(
+    tools,
+    Effect.fn('Connections.classifyTool')(function* (tool) {
+      const effect = yield* effects.classify({
+        serviceId: row.service,
+        service: row.serviceName,
+        tool,
+      })
+      return ExecutorTool.make({ ...tool, effect })
+    }),
+    { concurrency: 4 },
   )
 })
 
@@ -295,7 +317,8 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
   )
   if (Option.isNone(tools))
     return ToolOutcome.cases.Rejected.make({ message: 'Integrations are unavailable.' })
-  const tool = tools.value.find((entry) => entry.name === request.tool)
+  const classified = yield* classifyTools(row, tools.value)
+  const tool = classified.find((entry) => entry.name === request.tool)
   if (tool === undefined)
     return ToolOutcome.cases.Rejected.make({
       message: `Tool ${request.tool} is not available on this integration.`,
@@ -378,7 +401,8 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
         ),
       ),
     )
-    const tool = discovered.find((entry) => entry.name === input.target.tool)
+    const classified = yield* classifyTools(row, discovered)
+    const tool = classified.find((entry) => entry.name === input.target.tool)
     if (tool === undefined || (row.companyId !== null && tool.effect !== 'read'))
       return ActionOutcome.cases.Failed.make({
         reason: 'This tool is no longer available on this integration.',
