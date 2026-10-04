@@ -8,6 +8,7 @@ import {
   MemoryScope,
   PersonId,
   PersonSummary,
+  RunId,
   ThreadId,
   InvalidRequest,
   NotFound,
@@ -45,12 +46,15 @@ import { Embeddings, EmbeddingBatchMismatch, type EmbeddingFailure } from './emb
 import {
   HelixMemory,
   MemoryPartition,
+  MemoryReceiptId,
   MemoryRecord,
   MemoryScopeKey,
+  ReceiptedWrite,
   type BriefIdentity,
   type HelixFailure,
   type MemoryLink,
   type ReadScope,
+  type ReceiptIdentity,
   type RecordIdentity,
 } from './helix.js'
 
@@ -76,6 +80,70 @@ export const RememberResult = Schema.TaggedUnion({
   Reinforced: { memory: Memory },
 })
 export type RememberResult = typeof RememberResult.Type
+/**
+ * One positioned candidate of one Run. The learning lifecycle assigns `position` to each extracted
+ * candidate before selection and keeps it through filtering and reordering, so a replay of the
+ * same Run names the same candidate by the same key.
+ */
+export const LearnKey = Schema.Struct({
+  runId: RunId,
+  position: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+})
+export type LearnKey = typeof LearnKey.Type
+
+/**
+ * Where a candidate is written. It is resolved and authorized once (`MemoryAccess.destination`),
+ * checkpointed by the lifecycle before the first write, and passed back unchanged on a replay.
+ *
+ * It is never recomputed on replay: a Thread made private between two attempts would move a
+ * candidate from the Company partition to the Person's, miss its receipt there and write twice
+ * (found in review of the M1 design, 4 Oct 2026).
+ */
+export const LearnDestination = Schema.Struct({
+  partition: MemoryPartition,
+  scope: MemoryLocation,
+  learnedIn: Schema.NullOr(ThreadId),
+})
+export type LearnDestination = typeof LearnDestination.Type
+
+/**
+ * What applying one candidate did.
+ *
+ * - `Saved`: this call applied it.
+ * - `AlreadySaved`: an earlier attempt applied it, and the memory it wrote is still current and
+ *   readable by this actor.
+ * - `AlreadyApplied`: an earlier attempt applied it, but that memory has since been forgotten or
+ *   replaced, or this actor may no longer read it. No knowledge is returned.
+ * - `Skipped`: the candidate is not to be stored. Nothing was written, and no receipt exists.
+ */
+export const LearnResult = Schema.TaggedUnion({
+  Saved: { memory: Memory },
+  AlreadySaved: { memory: Memory },
+  AlreadyApplied: {},
+  Skipped: {},
+})
+export type LearnResult = typeof LearnResult.Type
+
+/**
+ * The checkpointed destination is not where this actor would write the candidate now. The
+ * candidate is not moved to the new destination: that could widen or narrow who can read it.
+ */
+export class DestinationChanged extends Schema.TaggedError<DestinationChanged>()(
+  'MemoryDestinationChanged',
+  {},
+  { title: 'MemoryDestinationChanged' },
+) {}
+
+/**
+ * A receipted store write: applied now, with the memory as persisted, or recorded by an earlier
+ * attempt, with only the identity that attempt wrote to (its present state is the caller's to check).
+ */
+export const OnceResult = Schema.TaggedUnion({
+  Applied: { memory: Memory },
+  Recorded: { memoryId: MemoryId },
+})
+export type OnceResult = typeof OnceResult.Type
+
 export class MemoryNotFound extends Schema.TaggedError<MemoryNotFound>()(
   'MemoryNotFound',
   { partition: MemoryPartition, id: MemoryId },
@@ -115,6 +183,28 @@ export interface MemoryStoreService {
   readonly remember: (input: RememberInput) => Effect.Effect<RememberResult, MemoryFailure>
   readonly correct: (input: CorrectionInput) => Effect.Effect<Memory, MemoryFailure>
   readonly forget: (input: RecordIdentity) => Effect.Effect<void, MemoryFailure>
+  /** The memory an earlier attempt at this candidate wrote to, if one did. */
+  readonly receipt: (
+    input: ReceiptIdentity,
+  ) => Effect.Effect<Option.Option<MemoryId>, MemoryFailure>
+  /** `remember` with a receipt; `extends` links the saved statement to a record of this partition. */
+  readonly rememberOnce: (
+    input: ReceiptIdentity & {
+      readonly statement: RememberInput
+      readonly extends: Option.Option<MemoryId>
+    },
+  ) => Effect.Effect<OnceResult, MemoryFailure>
+  /** `reinforce` with a receipt. */
+  readonly reinforceOnce: (
+    input: ReceiptIdentity & {
+      readonly id: MemoryId
+      readonly aliases: ReadonlyArray<string>
+    },
+  ) => Effect.Effect<OnceResult, MemoryFailure>
+  /** `correct` with a receipt. */
+  readonly correctOnce: (
+    input: ReceiptIdentity & { readonly correction: CorrectionInput },
+  ) => Effect.Effect<OnceResult, MemoryFailure>
   readonly recall: (input: RecallInput) => Effect.Effect<ReadonlyArray<Memory>, MemoryFailure>
   readonly list: (input: ReadScope) => Effect.Effect<ReadonlyArray<Memory>, MemoryFailure>
   readonly brief: {
@@ -296,6 +386,141 @@ const correcting = Effect.fn('MemoryStore.correct')(function* (
   return memory
 })
 
+/**
+ * Turn the adapter's answer into the store's. `Missing` means the record this write targeted
+ * stopped being current between the store's read and the write: nothing was written and no receipt
+ * exists, so it is the same precise failure as not finding the record in the first place.
+ */
+const onceResult = Effect.fn('MemoryStore.onceResult')(function* (
+  written: ReceiptedWrite,
+  applied: { readonly partition: MemoryPartition; readonly memory: Memory },
+) {
+  return yield* ReceiptedWrite.match<Effect.Effect<OnceResult, MemoryNotFound>>(written, {
+    Applied: () => Effect.succeed(OnceResult.cases.Applied.make({ memory: applied.memory })),
+    Recorded: ({ memoryId }) => Effect.succeed(OnceResult.cases.Recorded.make({ memoryId })),
+    Missing: () =>
+      Effect.fail(MemoryNotFound.make({ partition: applied.partition, id: applied.memory.id })),
+  })
+})
+
+/**
+ * `remember`, receipted. Reconciliation is the same as `remembering`: a statement that already
+ * exists is reinforced, not stored twice. Whichever branch runs, the change, the EXTENDS edge and
+ * the receipt commit in one Helix batch, and the receipt names the memory actually written to, so
+ * a replay returns the deduplicated record and not a second copy.
+ */
+const rememberingOnce = Effect.fn('MemoryStore.rememberOnce')(function* (
+  dependencies: {
+    readonly helix: HelixMemory['Service']
+    readonly embeddings: Embeddings['Service']
+  },
+  input: ReceiptIdentity & {
+    readonly statement: RememberInput
+    readonly extends: Option.Option<MemoryId>
+  },
+) {
+  const { helix, embeddings } = dependencies
+  const { statement: said, partition, receiptId } = input
+  const scoped = location(said.scope)
+  const embedding = yield* embedOne(embeddings, said.content)
+  const candidates = yield* helix.search({
+    partition,
+    scopes: [scoped.key],
+    query: said.content,
+    embedding,
+    limit: 12,
+  })
+  const existing = duplicate(said.content, candidates)
+  const now = yield* Clock.currentTimeMillis
+  if (Option.isSome(existing)) {
+    const memory = Memory.make({ ...existing.value.memory, updatedAt: now })
+    const written = yield* helix.reinforceOnce({
+      partition,
+      receiptId,
+      record: MemoryRecord.make({
+        memory,
+        scope: existing.value.scope,
+        aliases: Arr.dedupe([...existing.value.aliases, ...said.aliases]),
+      }),
+      // A statement cannot extend itself; the relation named the record this one deduplicated to.
+      extends: Option.filter(input.extends, (id) => id !== memory.id),
+    })
+    return yield* onceResult(written, { partition, memory })
+  }
+  const memory = Memory.make({
+    id: MemoryId.make(NodeCrypto.randomUUID()),
+    kind: said.kind,
+    content: said.content,
+    scope: scoped.scope,
+    learnedIn: said.learnedIn,
+    learnedFrom: said.learnedFrom,
+    createdAt: now,
+    updatedAt: now,
+  })
+  const written = yield* helix.insertOnce({
+    partition,
+    receiptId,
+    record: MemoryRecord.make({ memory, aliases: said.aliases, scope: scoped.key }),
+    embedding,
+    extends: input.extends,
+  })
+  return yield* onceResult(written, { partition, memory })
+})
+
+/** `reinforce`, receipted: the count rises and the aliases merge once per candidate, not per attempt. */
+const reinforcingOnce = Effect.fn('MemoryStore.reinforceOnce')(function* (
+  helix: HelixMemory['Service'],
+  input: ReceiptIdentity & { readonly id: MemoryId; readonly aliases: ReadonlyArray<string> },
+) {
+  const previous = yield* requireRecord(helix, input)
+  const memory = Memory.make({ ...previous.memory, updatedAt: yield* Clock.currentTimeMillis })
+  const written = yield* helix.reinforceOnce({
+    partition: input.partition,
+    receiptId: input.receiptId,
+    record: MemoryRecord.make({
+      ...previous,
+      memory,
+      aliases: Arr.dedupe([...previous.aliases, ...input.aliases]),
+    }),
+    extends: Option.none(),
+  })
+  return yield* onceResult(written, { partition: input.partition, memory })
+})
+
+/** `correct`, receipted: the replacement, the invalidated old version and the receipt commit together. */
+const correctingOnce = Effect.fn('MemoryStore.correctOnce')(function* (
+  dependencies: {
+    readonly helix: HelixMemory['Service']
+    readonly embeddings: Embeddings['Service']
+  },
+  input: ReceiptIdentity & { readonly correction: CorrectionInput },
+) {
+  const { correction } = input
+  const previous = yield* requireRecord(dependencies.helix, correction)
+  const embedding = yield* embedOne(dependencies.embeddings, correction.content)
+  const now = yield* Clock.currentTimeMillis
+  const memory = Memory.make({
+    ...previous.memory,
+    id: MemoryId.make(NodeCrypto.randomUUID()),
+    content: correction.content,
+    learnedFrom: correction.learnedFrom,
+    learnedIn: correction.learnedIn,
+    createdAt: now,
+    updatedAt: now,
+  })
+  const written = yield* dependencies.helix.supersedeOnce({
+    partition: input.partition,
+    receiptId: input.receiptId,
+    oldId: correction.id,
+    record: MemoryRecord.make({ memory, aliases: previous.aliases, scope: previous.scope }),
+    embedding,
+  })
+  // `Missing` names the record that was to be replaced, not the replacement that was never written.
+  return yield* onceResult(written, { partition: input.partition, memory }).pipe(
+    Effect.mapError(() => MemoryNotFound.make({ partition: input.partition, id: correction.id })),
+  )
+})
+
 /** One-hop neighbors obey the same scopes and lifecycle as ranked seeds, and the caller's limit bounds the whole response. */
 const recalling = Effect.fn('MemoryStore.recall')(function* (
   dependencies: {
@@ -374,6 +599,11 @@ export const memoryStoreLayer = Layer.effect(
       remember: (input) => writes.withPermit(remembering(dependencies, input)),
       /** Corrections share the write permit with remembers to prevent stale reconciliation against replaced records. */
       correct: (input) => writes.withPermit(correcting(dependencies, input)),
+      receipt: (input) => helix.receipt(input),
+      /** Receipted writes share the write permit, so reconciliation sees this process's earlier writes. */
+      rememberOnce: (input) => writes.withPermit(rememberingOnce(dependencies, input)),
+      reinforceOnce: (input) => writes.withPermit(reinforcingOnce(helix, input)),
+      correctOnce: (input) => writes.withPermit(correctingOnce(dependencies, input)),
       /** Read existence before tombstoning so missing or superseded IDs remain a precise domain failure. */
       forget: Effect.fn('MemoryStore.forget')(
         function* (input: RecordIdentity) {
@@ -438,10 +668,33 @@ export interface MemoryAccessService {
     actor: Actor,
     candidate: MemoryCandidate,
   ) => Effect.Effect<Option.Option<Memory>, MemoryAccessFailure>
+  /**
+   * Where `learnOnce` will write this candidate for this actor, authorization included. The
+   * lifecycle checkpoints it before the first write. `None` exactly when `learnOnce` answers
+   * `Skipped`, so a candidate that is not stored has no destination to checkpoint.
+   */
+  readonly destination: (
+    actor: Actor,
+    candidate: MemoryCandidate,
+  ) => Effect.Effect<Option.Option<LearnDestination>, MemoryAccessFailure>
+  /**
+   * Apply one positioned candidate at most once, however often it is attempted. It will replace
+   * `learn` when the learning lifecycle consumes it; until then both exist and `learn` is unchanged.
+   */
+  readonly learnOnce: (
+    actor: Actor,
+    input: LearnOnceInput,
+  ) => Effect.Effect<LearnResult, MemoryAccessFailure | DestinationChanged>
   readonly actorFor: (
     thread: StoredThread,
     person: Person,
   ) => Effect.Effect<Actor, MemoryAccessFailure>
+}
+
+export interface LearnOnceInput {
+  readonly candidate: MemoryCandidate
+  readonly key: LearnKey
+  readonly destination: LearnDestination
 }
 
 /** Calls and learning share one authority over visibility, ownership, and cross-partition ranking. */
@@ -860,6 +1113,222 @@ const learnCandidate = Effect.fn('MemoryAccess.learn')(function* (
   })
 })
 
+/** A candidate that is not to be stored: the same pure test `learn` applies before any read. */
+function notStored(actor: Actor, candidate: MemoryCandidate) {
+  return (
+    !candidate.shouldStore || (candidate.forCompany && Workspace.guards.Personal(actor.workspace))
+  )
+}
+
+/**
+ * Whether the checkpointed destination is still where this actor writes the candidate. Partition
+ * and storage scope decide who can read the memory, so both must match; a renamed Thread is the
+ * same destination, so its title is not compared.
+ */
+function sameLocation(current: WriteLocation, checkpointed: LearnDestination) {
+  return (
+    current.partition === checkpointed.partition &&
+    location(current.scope).key === location(checkpointed.scope).key
+  )
+}
+
+/** Encoded once, at persistence egress, in the same form as the brief's identity. */
+function receiptOf(destination: LearnDestination, key: LearnKey): ReceiptIdentity {
+  return {
+    partition: destination.partition,
+    receiptId: MemoryReceiptId.make(
+      JSON.stringify([destination.partition, key.runId, key.position]),
+    ),
+  }
+}
+
+/**
+ * What an existing receipt means for this actor now. A receipt proves the candidate was applied;
+ * it does not prove the memory still exists or that this actor may read it. `readableRecord`
+ * applies today's read rule and lifecycle, so a memory forgotten, replaced or no longer visible
+ * is reported as applied without returning it.
+ */
+const settled = Effect.fn('MemoryAccess.settled')(function* (
+  dependencies: AccessDependencies,
+  actor: Actor,
+  memoryId: MemoryId,
+) {
+  return yield* readableRecord(dependencies, actor, memoryId).pipe(
+    Effect.map((found) => LearnResult.cases.AlreadySaved.make({ memory: found.memory })),
+    Effect.catchTag('NotFound', () => Effect.succeed(LearnResult.cases.AlreadyApplied.make({}))),
+  )
+})
+
+interface AppliedOnce {
+  readonly actor: Actor
+  readonly candidate: MemoryCandidate
+  readonly destination: LearnDestination
+  readonly receipt: ReceiptIdentity
+}
+
+/** The candidate as a new statement at its destination, optionally extending a record there. */
+function statedOnce(
+  store: MemoryStore['Service'],
+  input: AppliedOnce,
+  target: Option.Option<MemoryId>,
+) {
+  return store.rememberOnce({
+    ...input.receipt,
+    statement: RememberInput.make({
+      partition: input.destination.partition,
+      scope: input.destination.scope,
+      learnedIn: input.destination.learnedIn,
+      kind: input.candidate.kind,
+      content: input.candidate.content,
+      aliases: input.candidate.aliases,
+      learnedFrom: summaryOf(input.actor.person),
+    }),
+    extends: target,
+  })
+}
+
+/**
+ * Each relation keeps the authority check `learn` gives it and then makes exactly one receipted
+ * write. An extension still only links inside its own partition; a duplicate outside the
+ * destination is stored as a new statement; an update outside it is refused.
+ */
+const applyOnce = Effect.fn('MemoryAccess.applyOnce')(function* (
+  dependencies: AccessDependencies,
+  input: AppliedOnce,
+) {
+  const { store } = dependencies
+  const { actor, candidate, destination, receipt } = input
+  return yield* MemoryRelation.match<Effect.Effect<OnceResult, MemoryAccessFailure, Database>>(
+    candidate.relation,
+    {
+      new: () => statedOnce(store, input, Option.none()),
+      extends: ({ id }) =>
+        Effect.gen(function* () {
+          const target = yield* readableRecord(dependencies, actor, id)
+          const within = target.partition === destination.partition
+          return yield* statedOnce(
+            store,
+            input,
+            within ? Option.some(target.memory.id) : Option.none(),
+          )
+        }),
+      duplicate: ({ id }) =>
+        Effect.gen(function* () {
+          const target = yield* readableRecord(dependencies, actor, id)
+          if (!sameDestination(destination, target))
+            return yield* statedOnce(store, input, Option.none())
+          return yield* store.reinforceOnce({
+            ...receipt,
+            id: target.memory.id,
+            aliases: candidate.aliases,
+          })
+        }),
+      updates: ({ id }) =>
+        Effect.gen(function* () {
+          const target = yield* writable(dependencies, actor, id)
+          if (!sameDestination(destination, target))
+            return yield* Effect.fail(
+              InvalidRequest.make({ message: 'Memory relation crosses its write scope' }),
+            )
+          return yield* store.correctOnce({
+            ...receipt,
+            correction: {
+              partition: target.partition,
+              id: target.memory.id,
+              content: candidate.content,
+              learnedFrom: summaryOf(actor.person),
+              learnedIn: destination.learnedIn,
+            },
+          })
+        }),
+    },
+  )
+})
+
+/** The relation's one receipted write, answered for this actor. */
+const attemptOnce = Effect.fn('MemoryAccess.attemptOnce')(function* (
+  dependencies: AccessDependencies,
+  input: AppliedOnce,
+) {
+  const written = yield* applyOnce(dependencies, input)
+  return yield* OnceResult.match<Effect.Effect<LearnResult, MemoryAccessFailure, Database>>(
+    written,
+    {
+      Applied: ({ memory }) => Effect.succeed(LearnResult.cases.Saved.make({ memory })),
+      Recorded: ({ memoryId }) => settled(dependencies, input.actor, memoryId),
+    },
+  )
+})
+
+/**
+ * Failures a competing attempt can explain, after which the whole ordered procedure is run again:
+ * the relation's target is gone (a competing update replaced it before this attempt read it), or
+ * Helix rolled this batch back because another write won (a transaction conflict, or the unique
+ * receipt index; both measured as full rollbacks, artifacts/memory-learn/probe).
+ */
+const RERUN: ReadonlySet<string> = new Set([
+  'NotFound',
+  'MemoryNotFound',
+  'MemoryHelixConflict',
+  'MemoryHelixDuplicate',
+])
+
+/**
+ * How many times the ordered procedure runs again after such a failure. One rerun finds a
+ * competitor's receipt; the second covers a transaction conflict with an unrelated write, which
+ * leaves no receipt and nothing written, so applying again is safe.
+ */
+const RERUNS = 2
+
+/**
+ * One pass, in the only permitted order: (1) this actor's CURRENT authority, and that the
+ * checkpointed destination is still theirs, so a receipt is never read for an actor who has lost
+ * access or whose destination moved; (2) the receipt, before any read of the relation's target,
+ * because a successful update leaves its old target no longer current and a replay would otherwise
+ * fail on it; (3) the relation's own authority check and its one receipted write.
+ */
+const orderedOnce = Effect.fn('MemoryAccess.orderedOnce')(function* (
+  dependencies: AccessDependencies,
+  actor: Actor,
+  input: LearnOnceInput,
+) {
+  const current = yield* writeLocation(actor, input.candidate.forCompany)
+  if (!sameLocation(current, input.destination))
+    return yield* Effect.fail(DestinationChanged.make({}))
+  const receipt = receiptOf(input.destination, input.key)
+  const earlier = yield* dependencies.store.receipt(receipt)
+  if (Option.isSome(earlier)) return yield* settled(dependencies, actor, earlier.value)
+  return yield* attemptOnce(dependencies, {
+    actor,
+    candidate: input.candidate,
+    destination: input.destination,
+    receipt,
+  })
+})
+
+/**
+ * Apply one candidate at most once.
+ *
+ * After a failure that a competing attempt can explain, the WHOLE ordered pass runs again, never
+ * only the receipt read: authority and destination are checked afresh before the receipt is read a
+ * second time, so an actor who lost access or whose destination moved while the first pass ran gets
+ * that failure and not an answer from the receipt (found in review of this implementation, 4 Oct
+ * 2026). When the rerun finds no receipt it applies again and, if the target truly is absent, the
+ * original failure stands; it is never turned into a success. Any other failure (an outage, a
+ * timeout after the request was sent) is an unknown outcome and is returned as it is; the caller's
+ * retry resolves it through the receipt.
+ */
+const learnOnce = Effect.fn('MemoryAccess.learnOnce')(function* (
+  dependencies: AccessDependencies,
+  actor: Actor,
+  input: LearnOnceInput,
+) {
+  if (notStored(actor, input.candidate)) return LearnResult.cases.Skipped.make({})
+  return yield* orderedOnce(dependencies, actor, input).pipe(
+    Effect.retry({ times: RERUNS, while: (failure) => RERUN.has(failure._tag) }),
+  )
+})
+
 /** Brief cache keys include the exact authorized current memories; changing audience, membership, or a statement cannot reuse a wider page. */
 const makeAccess = Effect.fn('MemoryAccess.make')(function* () {
   const store = yield* MemoryStore
@@ -900,6 +1369,15 @@ const makeAccess = Effect.fn('MemoryAccess.make')(function* () {
       const memories = yield* reads.list(actor)
       return pageOf({ memories, truncated: memories.length >= LIST_LIMIT })
     }),
+    destination: Effect.fn('MemoryAccess.destination')(
+      function* (actor: Actor, candidate: MemoryCandidate) {
+        if (notStored(actor, candidate)) return Option.none<LearnDestination>()
+        return Option.some(LearnDestination.make(yield* writeLocation(actor, candidate.forCompany)))
+      },
+      (effect) => Effect.provideService(effect, Database, database),
+    ),
+    learnOnce: (actor, input) =>
+      learnOnce(dependencies, actor, input).pipe(Effect.provideService(Database, database)),
     /** Candidate writes are evaluated individually so one rejected relation need not erase other useful notes. */
     learn: (actor, candidate) =>
       learnCandidate(dependencies, actor, candidate).pipe(
@@ -921,6 +1399,8 @@ export const unavailableMemoryAccessLayer = Layer.succeed(
     list: Effect.fn('MemoryAccess.unconfigured.list')(() => unconfiguredMemory),
     brief: Effect.fn('MemoryAccess.unconfigured.brief')(() => unconfiguredMemory),
     page: Effect.fn('MemoryAccess.unconfigured.page')(() => unconfiguredMemory),
+    destination: Effect.fn('MemoryAccess.unconfigured.destination')(() => unconfiguredMemory),
+    learnOnce: Effect.fn('MemoryAccess.unconfigured.learnOnce')(() => unconfiguredMemory),
     recall: Effect.fn('MemoryAccess.unconfigured.recall')(() => unconfiguredMemory),
     remember: Effect.fn('MemoryAccess.unconfigured.remember')(() => unconfiguredMemory),
     correct: Effect.fn('MemoryAccess.unconfigured.correct')(() => unconfiguredMemory),
