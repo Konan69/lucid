@@ -6,6 +6,7 @@ The server owns all product logic and persistence. Clients use `VividRpc` over `
 
 - `main.ts`: compose Layers and launch only.
 - `config.ts`: Effect Config; secrets stay `Redacted`.
+- `observability/`: an infrastructure adapter. `export.ts` installs the OTLP trace and log exporters, `failure.ts` records a failure at the boundary that answers it (`observeFailures`), and `refusal.ts` is the one vocabulary and recorder for refusals (`recordRefusal`).
 - `database/`, `auth/`, `http/`, `rpc/`, `runtime/`: thin infrastructure adapters.
 - Domain directories own product rules, persistence, handlers, and behavior tests. Most persisted domains have `tables.ts`, `store.ts`, and `handlers.ts`; provider and projection domains need only their actual concerns. `people/`, `rooms/`, and `runs/` contain reservation READMEs today.
 
