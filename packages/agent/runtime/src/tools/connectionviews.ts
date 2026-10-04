@@ -52,6 +52,11 @@ export function integrations(response: FindIntegrationsResponse) {
 export function added(outcome: AddIntegrationOutcome) {
   return AddIntegrationOutcome.match<typeof Schema.Json.Type>(outcome, {
     Added: ({ account }) => ({ added: true, account: modelText(account) }),
+    AlreadyConnected: ({ account }) => ({
+      alreadyConnected: true,
+      account: modelText(account),
+      message: `This integration is already connected. Use find_tools with query ${modelText(account)} to discover its tools.`,
+    }),
     NeedsSignIn: ({ step }) =>
       ConnectionAuthorizationMessage.make({
         kind: 'connection-request',

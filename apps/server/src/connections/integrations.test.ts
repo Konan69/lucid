@@ -5,7 +5,7 @@ import { Effect, Redacted, Ref } from 'effect'
 import { eq } from 'drizzle-orm'
 import { connectionHandlers } from './handlers.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
-import { ConnectionAddress, ConnectionSource } from './address.ts'
+import { ConnectionAddress, ConnectionSource, ConnectionAddressUnreachable } from './address.ts'
 import { Executor, ExecutorPublicAddressRequired, ExecutorTool } from './executor.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -16,6 +16,111 @@ import { Database } from '../database/client.ts'
 /** Handler calls retain transport authentication, real store scope and real disposable SQL. */
 describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
   layer(connectionTestLayer)((it) => {
+    it.effect(
+      "reuses the Person's ready service or imported address before probing or importing",
+      () =>
+        Effect.gen(function* () {
+          const { ownerActor, personalActor, memberActor, threadId } = yield* fixture()
+          const store = yield* ConnectionStore
+          const probe = yield* ConnectionProbe
+          const auth = AuthState.Vivid({
+            person: personalActor.person,
+            workspace: personalActor.workspace,
+            threadId,
+          })
+          yield* store.begin(memberActor, {
+            service: serviceId,
+            label: 'Someone else',
+            shared: false,
+          })
+          yield* store.begin(ownerActor, { service: serviceId, label: 'My account', shared: false })
+          const before = yield* Ref.get(probe.begins)
+          const byService = yield* connectionHandlers
+            .AddIntegration({
+              address: 'https://records.example/mcp',
+              name: ' records ',
+              shared: false,
+            })
+            .pipe(Effect.provideService(AuthContext, auth))
+          expect(byService).toEqual(
+            AddIntegrationOutcome.cases.AlreadyConnected.make({ account: 'My account' }),
+          )
+          expect(yield* Ref.get(probe.begins)).toBe(before)
+          yield* store.add(
+            ownerActor,
+            { address: 'https://imported.example/mcp', name: 'Imported', shared: false },
+            ConnectionSource.cases.Mcp.make({
+              address: 'https://imported.example/mcp',
+              authorization: 'auto',
+            }),
+          )
+          const importedCount = yield* Ref.get(probe.begins)
+          const byAddress = yield* connectionHandlers
+            .AddIntegration({
+              address: 'https://IMPORTED.example/mcp',
+              name: 'Different label',
+              shared: false,
+            })
+            .pipe(Effect.provideService(AuthContext, auth))
+          expect(byAddress).toEqual(
+            AddIntegrationOutcome.cases.AlreadyConnected.make({ account: 'Imported' }),
+          )
+          expect(yield* Ref.get(probe.begins)).toBe(importedCount)
+          expect(yield* store.records(ownerActor)).toHaveLength(2)
+        }).pipe(
+          Effect.provideService(
+            ConnectionAddress,
+            ConnectionAddress.of({
+              inspect: Effect.fn('Test.noProbe')(() =>
+                Effect.fail(new ConnectionAddressUnreachable({})),
+              ),
+            }),
+          ),
+        ),
+    )
+
+    it.effect('does not reuse an account still waiting for authorization', () =>
+      Effect.gen(function* () {
+        const { ownerActor, personalActor, threadId } = yield* fixture()
+        const probe = yield* ConnectionProbe
+        const previousStep = yield* Ref.get(probe.step)
+        yield* Effect.addFinalizer(() => Ref.set(probe.step, previousStep))
+        yield* Ref.set(probe.step, 'OpenSignIn')
+        yield* (yield* ConnectionStore).begin(ownerActor, {
+          service: serviceId,
+          label: 'Pending',
+          shared: false,
+        })
+        const result = yield* connectionHandlers
+          .AddIntegration({
+            address: 'https://records.example/mcp',
+            name: 'Records',
+            shared: false,
+          })
+          .pipe(
+            Effect.provideService(
+              AuthContext,
+              AuthState.Vivid({
+                person: personalActor.person,
+                workspace: personalActor.workspace,
+                threadId,
+              }),
+            ),
+            Effect.provideService(
+              ConnectionAddress,
+              ConnectionAddress.of({
+                inspect: Effect.fn('Test.unreachable')(() =>
+                  Effect.fail(new ConnectionAddressUnreachable({})),
+                ),
+              }),
+            ),
+          )
+        expect(result).toEqual(
+          AddIntegrationOutcome.cases.Unreachable.make({ reason: 'could not be reached' }),
+        )
+      }),
+    )
+
     it.effect('explains unavailable server-by-address support in plain words before import', () =>
       Effect.gen(function* () {
         const { personalActor, threadId } = yield* fixture()

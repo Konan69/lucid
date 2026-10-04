@@ -14,10 +14,10 @@ import {
 } from '@vivid/contracts'
 import { Effect, Option } from 'effect'
 import { requireAdmin, type Actor } from '../auth/access.ts'
-import { ConnectionAddress } from './address.ts'
+import { ConnectionAddress, publicAddress } from './address.ts'
 import { ConnectionStore } from './store.ts'
 import { namedAccounts, useTool } from './tools.ts'
-import { stateOf } from './records.ts'
+import { stateOf, type ConnectionRecord } from './records.ts'
 import { testInput } from './probe.ts'
 
 /** Match names and descriptions; query words support requests such as “Google calendar”. */
@@ -74,12 +74,34 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
   }
 })
 
-/** A Run can begin authorization, but only the Person-only completion endpoint accepts secrets. */
+/** Reuse only the acting Person's ready account: exact canonical imported address wins, then
+ * an exact service name (case/edge-space insensitive). Account labels are not service identity.
+ * Catalogue Connections do not persist their endpoint, so their authoritative service name is
+ * the available match. No network probe or installation is needed to use an existing account. */
+function existingAccount(records: readonly ConnectionRecord[], request: AddIntegrationRequest) {
+  const ready = namedAccounts(records).filter(
+    ({ row }) => row.companyId === null && row.status === 'ready',
+  )
+  const address = publicAddress(request.address)
+  const byAddress =
+    address === undefined
+      ? undefined
+      : ready.find(({ row }) => row.service === `url:${address.href}`)
+  if (byAddress !== undefined) return byAddress
+  const name = request.name.trim().toLowerCase()
+  return ready.find(({ row }) => row.serviceName.trim().toLowerCase() === name)
+}
+
+/** A Run reuses a ready personal Integration before inspecting or importing an address.
+ * Only the Person-only completion endpoint accepts secrets for a new Integration. */
 export const addIntegration = Effect.fn('Connections.addIntegration')(
   function* (actor: Actor, request: AddIntegrationRequest) {
     if (request.shared) yield* requireAdmin(actor.workspace)
-    const source = yield* (yield* ConnectionAddress).inspect(request.address)
     const store = yield* ConnectionStore
+    const existing = existingAccount(yield* store.records(actor), request)
+    if (existing !== undefined)
+      return AddIntegrationOutcome.cases.AlreadyConnected.make({ account: existing.account })
+    const source = yield* (yield* ConnectionAddress).inspect(request.address)
     const step = yield* store.add(actor, request, source)
     const selected = namedAccounts(yield* store.records(actor)).find(
       (entry) => entry.row.id === step.connection.id,
