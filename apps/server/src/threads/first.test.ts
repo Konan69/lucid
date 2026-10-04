@@ -1,3 +1,4 @@
+import { silentChannelRepliesLayer } from '../channels/replies.ts'
 import { ThreadTitles } from './generation.ts'
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, it } from '@effect/vitest'
@@ -163,7 +164,9 @@ const harness = Effect.fn('FirstThread.test.harness')(function* () {
     Layer.succeed(Notifier, Notifier.of({ notify: () => Effect.void })),
     Layer.mock(Presence, { watching: () => Effect.succeed(true) }),
   )
-  const context = yield* Layer.build(conversationLayer.pipe(Layer.provide(services)))
+  const context = yield* Layer.build(
+    conversationLayer.pipe(Layer.provide(silentChannelRepliesLayer), Layer.provide(services)),
+  )
   const conversation = yield* Conversation.pipe(Effect.provideContext(context))
   const auth = AuthState.Person({
     person: test.actor.person,

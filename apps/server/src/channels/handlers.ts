@@ -1,42 +1,47 @@
-import { Effect } from 'effect'
+import { Effect, Option } from 'effect'
 import {
-  Channel,
-  ChannelLink,
   ChannelListResponse,
-  ChannelStanding,
-  ChannelUnavailable,
+  ChannelLinkResponse,
+  type Channel,
   type ConnectChannelRequest,
 } from '@vivid/contracts'
-import { requirePerson } from '../auth/access.ts'
+import { requirePerson, type Actor } from '../auth/access.ts'
 import { live } from '../live/query.ts'
+import { ChannelStore } from './store.ts'
 
-/**
- * Every channel as it stands for a Person today: none has a store behind it yet, so each is
- * `Unavailable`. This is the true state, not a placeholder value: the linking store, the ledger
- * and the provider wiring are not built, so no number can be connected and none is claimed to
- * be. The screens are built against the real contract and change by themselves when this does.
- */
-const standings = Effect.succeed(
-  ChannelListResponse.make({
-    channels: Channel.literals.map((channel) =>
-      ChannelLink.make({ channel, standing: ChannelStanding.cases.Unavailable.make({}) }),
-    ),
-  }),
-)
+/** Every watch reloads this Person's persisted standing through the house live-query helper. */
+const standings = Effect.fn('Channels.standings')(function* (actor: Actor) {
+  return ChannelListResponse.make({ channels: yield* (yield* ChannelStore).list(actor) })
+})
+
+/** Linking remains a signed-in Person's act even when their selected workspace is a Company. */
+const personActor = Effect.fn('Channels.personActor')(function* () {
+  const auth = yield* requirePerson()
+  return {
+    person: auth.person,
+    workspace: auth.workspace,
+    by: 'person',
+    threadId: Option.none(),
+  } satisfies Actor
+})
 
 export const channelHandlers = {
-  WatchChannels: () => live(() => standings),
-  /** Refused with the channel named, so the screen can say which one is not set up. */
+  WatchChannels: () => live(standings),
+  /** Owner decision, 4 October 2026: testing with one Person; ownership proof deferred, so Connect emits Connected directly. */
   ConnectChannel: Effect.fn('Rpc.ConnectChannel')(function* (request: ConnectChannelRequest) {
-    yield* requirePerson()
-    return yield* new ChannelUnavailable({ channel: request.channel })
+    const link = yield* (yield* ChannelStore).connect(
+      yield* personActor(),
+      request.channel,
+      request.address,
+    )
+    return ChannelLinkResponse.make({ link })
   }),
   DisconnectChannel: Effect.fn('Rpc.DisconnectChannel')(function* ({
     channel,
   }: {
     readonly channel: Channel
   }) {
-    yield* requirePerson()
-    return yield* new ChannelUnavailable({ channel })
+    const link = yield* (yield* ChannelStore).disconnect(yield* personActor(), channel)
+    return ChannelLinkResponse.make({ link })
   }),
 }

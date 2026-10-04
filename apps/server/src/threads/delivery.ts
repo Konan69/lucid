@@ -6,12 +6,14 @@ import {
   Conflict,
   NotFound,
   RuntimeUnavailable,
+  ThreadAudience,
   type Person,
   type PersonId,
   type RunId,
   type ThreadId,
 } from '@vivid/contracts'
 import { findPerson } from '../auth/access.ts'
+import { ChannelReplies } from '../channels/replies.ts'
 import { Database } from '../database/client.ts'
 import { Changes } from '../live/changes.ts'
 import { Learning } from '../memory/learn.ts'
@@ -26,7 +28,7 @@ import {
   type Admitted,
   type ConversationService,
   type Delivery,
-  type SignalDelivery,
+  type ServerDelivery,
 } from './conversation.ts'
 import { serializeAdmissions } from './admissions.ts'
 import { flueMessage } from './message.ts'
@@ -45,6 +47,7 @@ import { ThreadStore } from './store.ts'
 const previewOf = (message: DeliveryMessage) =>
   DeliveryMessage.match(message, {
     Said: ({ body }) => Option.some(body),
+    ChannelText: ({ body }) => Option.some(body),
     Signal: () => Option.none<string>(),
     FirstConversation: () => Option.none<string>(),
   })
@@ -81,6 +84,7 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
   const presence = yield* Presence
   const learning = yield* Learning
   const titles = yield* ThreadTitles
+  const channels = yield* ChannelReplies
   const scope = yield* Effect.scope
 
   /** Tells the Person Vivid worked for that it is done, unless they are watching it happen. */
@@ -124,6 +128,14 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
     yield* changes.publish(
       audienceTopics(thread.value, yield* threads.participants(thread.value.id)),
     )
+    // A reply transport failure must not prevent Thread state, notifications, or learning from settling.
+    yield* channels
+      .ended({ runId: run.id, threadId: run.threadId, settlement })
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning('A channel reply could not be sent', { reason: error._tag }),
+        ),
+      )
     const quiet =
       Settlement.guards.Completed(settlement) &&
       !(yield* automaticallyNotifies(run.id).pipe(Effect.provideService(Database, database)))
@@ -156,12 +168,21 @@ const admitRuntime = Effect.fn('Conversation.admitRuntime')(
 
 /** Producers keep durable receipts and retry on their own schedule; Busy never waits in-process. */
 const makeDeliver = (admit: ConversationService['admit'], runs: RunStore['Service']) =>
-  Effect.fn('Conversation.deliver')(function* (delivery: SignalDelivery) {
+  Effect.fn('Conversation.deliver')(function* (delivery: ServerDelivery) {
     const admitted = yield* admit(delivery)
     const recorded = yield* runs.list(delivery.threadId)
     const run = recorded.find((candidate) => candidate.id === admitted.runId)
     return run === undefined ? yield* threadMissing() : run
   })
+
+/** Resolve attribution at the persistence boundary; a missing Person cannot start a Run. */
+const resolvePerson = (database: Database['Service']) => {
+  /** The Person a delivery is for, who must exist; otherwise the delivery has nobody behind it. */
+  return Effect.fn('Conversation.personOf')(function* (personId: PersonId) {
+    const person = yield* findPerson(personId).pipe(Effect.provideService(Database, database))
+    return Option.isNone(person) ? yield* threadMissing() : person.value
+  })
+}
 
 const makeConversation = Effect.fn('Conversation.make')(function* () {
   const database = yield* Database
@@ -191,11 +212,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
     )
   }
 
-  /** The Person a delivery is for, who must exist; otherwise the delivery has nobody behind it. */
-  const personOf = Effect.fn('Conversation.personOf')(function* (personId: PersonId) {
-    const person = yield* findPerson(personId).pipe(withDatabase)
-    return Option.isNone(person) ? yield* threadMissing() : person.value
-  })
+  const personOf = resolvePerson(database)
 
   /**
    * A decision continues the Run under the Person it started for, including their Connections.
@@ -226,6 +243,12 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
       const found = yield* findThread(delivery.threadId).pipe(withDatabase)
       if (Option.isNone(found)) return yield* threadMissing()
       const thread = found.value
+      // A channel can never widen phone ownership into a Company or shared Thread's authority.
+      if (DeliveryMessage.guards.ChannelText(delivery.message)) {
+        const visible = yield* threads.view(thread, delivery.personId)
+        if (thread.companyId !== null || !ThreadAudience.guards.Private(visible.audience))
+          return yield* threadMissing()
+      }
       if (!(yield* canSee(thread.id, delivery.personId).pipe(withDatabase)))
         return yield* threadMissing()
       const speaker = yield* personOf(delivery.personId)
@@ -294,10 +317,9 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
 
   const deliver: ConversationService['deliver'] = makeDeliver(admit, runs)
 
-  // A server that restarts while Runs are in progress picks each one back up: Flue still knows
+  // A server restarting while Runs are in progress picks each one back up: Flue still knows
   // how they ended, or says it does not, and either way the row stops claiming it is working.
-  const unfinished = yield* runs.working()
-  yield* Effect.forEach(unfinished, (run) => resume(run), { discard: true })
+  yield* Effect.forEach(yield* runs.working(), resume, { discard: true })
 
   function resume(run: WorkingRun) {
     return personOf(run.personId).pipe(
