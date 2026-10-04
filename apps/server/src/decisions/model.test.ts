@@ -286,7 +286,8 @@ it.effect('requires two timeouts and caps a failed recovery probe at two seconds
  * only their caller; explicit provider outages immediately suppress sibling requests. */
 it.effect.each([
   { status: 400, next: 'Provider', requests: 2 },
-  { status: 401, next: 'Provider', requests: 2 },
+  { status: 401, next: 'Backoff', requests: 1 },
+  { status: 403, next: 'Backoff', requests: 1 },
   { status: 503, next: 'Backoff', requests: 1 },
   { status: 429, next: 'Backoff', requests: 1 },
 ])('HTTP $status gives the next caller $next', ({ status, next, requests }) => {
@@ -299,7 +300,9 @@ it.effect.each([
     }),
   )
   return Effect.gen(function* () {
-    expect((yield* Effect.flip(decide(definition, 'first'))).reason).toBe('Provider')
+    expect((yield* Effect.flip(decide(definition, 'first'))).reason).toBe(
+      status === 401 || status === 403 ? 'Authentication' : 'Provider',
+    )
     expect((yield* Effect.flip(decide(definition, 'second'))).reason).toBe(next)
     expect(calls).toBe(requests)
   }).pipe(Effect.provide(configuredGateway(transport)))
@@ -424,5 +427,153 @@ it.effect.each(['TransportError', 'EncodeError', 'Defect'] as const)(
       )
       expect(calls).toBe(failure === 'TransportError' ? 1 : 2)
     }).pipe(Effect.provide(configuredGateway(transport)))
+  },
+)
+
+/** Two concurrent requests share one slow moment. Only a later admitted attempt can
+ * corroborate suspicion; this crosses the real gateway admission and timeout boundary. */
+it.effect('concurrent timeouts do not open admission without a later attempt', () =>
+  Effect.gen(function* () {
+    let calls = 0
+    const started = yield* Deferred.make<void>()
+    const transport = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make(() => {
+        calls += 1
+        return (calls === 2 ? Deferred.succeed(started, undefined) : Effect.void).pipe(
+          Effect.andThen(Effect.never),
+        )
+      }),
+    )
+    yield* Effect.gen(function* () {
+      const burst = yield* Effect.forEach(
+        [1, 2],
+        () => Effect.flip(decideWithin(definition, 'burst', '100 millis')),
+        { concurrency: 'unbounded' },
+      ).pipe(Effect.forkChild)
+      yield* Deferred.await(started)
+      yield* TestClock.adjust('100 millis')
+      expect((yield* Fiber.join(burst)).map((error) => error.reason)).toEqual([
+        'TimedOut',
+        'TimedOut',
+      ])
+      const later = yield* decideWithin(definition, 'later', '100 millis').pipe(Effect.forkChild)
+      yield* TestClock.adjust('100 millis')
+      expect((yield* Effect.flip(Fiber.join(later))).reason).toBe('TimedOut')
+      expect(calls).toBe(3)
+      expect((yield* Effect.flip(decide(definition, 'gated'))).reason).toBe('Backoff')
+    }).pipe(Effect.provide(configuredGateway(transport)))
+  }),
+)
+
+/** A suspicion mark has a lifetime, not a permanent process-wide timeout counter. */
+it.effect('expired suspicion cannot corroborate a later isolated timeout', () => {
+  let calls = 0
+  const transport = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      calls += 1
+      if (calls <= 2) return Effect.never
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            JSON.stringify({
+              model: 'jev-latest',
+              answers: { applies: { type: 'noul', noul: 0.7 } },
+            }),
+          ),
+        ),
+      )
+    }),
+  )
+  return Effect.gen(function* () {
+    for (const attempt of [1, 2]) {
+      if (attempt === 2) yield* TestClock.adjust('30 seconds')
+      const pending = yield* decideWithin(definition, 'isolated stall', '100 millis').pipe(
+        Effect.forkChild,
+      )
+      yield* TestClock.adjust('100 millis')
+      expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
+    }
+    expect((yield* decide(definition, 'reachable')).answers.applies.probability).toBe(0.7)
+    expect(calls).toBe(3)
+  }).pipe(Effect.provide(configuredGateway(transport)))
+})
+
+/** A success between two timeouts breaks the streak through the public decision API. */
+it.effect('a success between timeouts resets the evidence', () => {
+  let calls = 0
+  const transport = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      calls += 1
+      if (calls === 1 || calls === 3) return Effect.never
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            JSON.stringify({
+              model: 'jev-latest',
+              answers: { applies: { type: 'noul', noul: 0.7 } },
+            }),
+          ),
+        ),
+      )
+    }),
+  )
+  return Effect.gen(function* () {
+    for (const attempt of [1, 2]) {
+      void attempt
+      const pending = yield* decideWithin(definition, 'stall', '100 millis').pipe(Effect.forkChild)
+      yield* TestClock.adjust('100 millis')
+      expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
+      expect((yield* decide(definition, 'success')).answers.applies.probability).toBe(0.7)
+    }
+    expect(calls).toBe(4)
+  }).pipe(Effect.provide(configuredGateway(transport)))
+})
+
+/** A revoked key produces one actionable error per credential window, with no per-action
+ * caller warning. Both forbidden and unauthorized HTTP statuses use the pinned AiError map. */
+it.effect.each([401, 403])(
+  'HTTP %s closes credentials for five minutes with one error',
+  (status) => {
+    let calls = 0
+    const lines: { readonly level: string; readonly message: string }[] = []
+    const transport = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        calls += 1
+        return Effect.succeed(HttpClientResponse.fromWeb(request, new Response('{}', { status })))
+      }),
+    )
+    return Effect.gen(function* () {
+      expect((yield* Effect.flip(decide(definition, 'rejected'))).reason).toBe('Authentication')
+      for (let index = 0; index < 20; index += 1)
+        expect((yield* Effect.flip(decide(definition, 'gated'))).reason).toBe('Backoff')
+      yield* TestClock.adjust('4 minutes')
+      expect((yield* Effect.flip(decide(definition, 'still gated'))).reason).toBe('Backoff')
+      expect(calls).toBe(1)
+      const errors = lines.filter((line) => line.level === 'Error')
+      expect(errors).toHaveLength(1)
+      expect(errors.map((line) => line.message).join()).toContain(
+        'Decision authentication rejected',
+      )
+      expect(lines.filter((line) => line.level === 'Warn')).toHaveLength(0)
+      yield* TestClock.adjust('1 minute')
+      expect((yield* Effect.flip(decide(definition, 'new window'))).reason).toBe('Authentication')
+      expect(calls).toBe(2)
+      expect(lines.filter((line) => line.level === 'Error')).toHaveLength(2)
+    }).pipe(
+      Effect.provide(configuredGateway(transport)),
+      Effect.provide(
+        Logger.layer([
+          Logger.make(({ logLevel, message }) => {
+            lines.push({ level: logLevel, message: JSON.stringify(message) })
+          }),
+        ]),
+      ),
+    )
   },
 )
