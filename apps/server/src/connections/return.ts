@@ -29,13 +29,11 @@ const callback = Effect.fn('Http.Connections.return')(function* () {
     target.searchParams.set(ConnectionState.guards.Ready(result) ? 'connected' : 'failed', id)
     return target
   }).pipe(
-    // Recorded before the recovery below, which answers every failure with the same redirect.
+    // The recorder writes the one log line a failure gets here: its tag, never the callback
+    // address. The recovery below then answers every failure with the same redirect, so the
+    // response says nothing about which state was unknown, foreign, reused or malformed.
     observeFailures('http'),
-    Effect.catch((error) =>
-      Effect.logWarning({ tag: error._tag }).pipe(
-        Effect.as(new URL('/settings/connections', config.PUBLIC_URL)),
-      ),
-    ),
+    Effect.catch(() => Effect.succeed(new URL('/settings/connections', config.PUBLIC_URL))),
   )
   return HttpServerResponse.redirect(destination.href, { status: 303 })
 })
