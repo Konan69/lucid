@@ -146,6 +146,9 @@ export const pages = {
   reload: (tab: Tab) =>
     ask((browser) => browser.reload(tab), 'That page could not be loaded again.'),
   stop: (tab: Tab) => ask((browser) => browser.stop(tab), 'That page could not be stopped.'),
+  /** Stops what Vivid is doing on this page, at once. Vivid is told the Person stopped it. */
+  stopVivid: (tab: Tab) =>
+    ask((browser) => browser.stopVivid(tab), 'Vivid could not be stopped. Try again.'),
   /** Where on the window the showing page is drawn, or that it is not drawn at all. */
   place: (placement: PagePlacement) => ask((browser) => browser.place(placement), ''),
   /** Closes every page, as part of signing out. What the pages remembered is kept. */

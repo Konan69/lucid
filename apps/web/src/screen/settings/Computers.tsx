@@ -42,7 +42,7 @@ export function YourComputers() {
       <Refusal message={refused} />
       <Section
         title="Your computers"
-        detail="Vivid can open and use pages in the Vivid desktop app on one computer you allow. Touch a page Vivid is using to take over."
+        detail="Vivid can open and use pages in the Vivid desktop app on one computer you allow. A page Vivid is using shows a Stop button."
       >
         <Suspense fallback={<Empty>Looking…</Empty>}>
           <ComputerList
