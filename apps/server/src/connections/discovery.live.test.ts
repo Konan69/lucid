@@ -1,8 +1,30 @@
+import * as NodeCrypto from 'node:crypto'
 import * as NodeFS from 'node:fs'
 import { describe, expect, it } from '@effect/vitest'
+import { RunId, RuntimeUnavailable } from '@vivid/contracts'
 import { Config, Effect, Schema } from 'effect'
 import { chainFixture, chainLayer, completeRun, toolParts } from '../runtime/chains.ts'
 import { proofConnection } from './proof.ts'
+
+import type { ChainFixture } from '../runtime/chains.ts'
+
+const decodeRunId = Schema.decodeUnknownEffect(RunId)
+
+/** chains.ts send omits the required kind, so use the same shipped Flue client as the
+ * Person's real UI. The full production gateway, attribution and runtime remain in the path.
+ * SDK decoding owns receipt ingress; refine its submission into Vivid's branded Run id.
+ */
+const send = Effect.fn('RuntimeProof.send')(function* (fixture: ChainFixture, body: string) {
+  const receipt = yield* Effect.tryPromise({
+    try: () =>
+      fixture.conversation.send({
+        message: { kind: 'user', body },
+        idempotencyKey: NodeCrypto.randomUUID(),
+      }),
+    catch: () => RuntimeUnavailable.make({ message: 'Proof Person message was rejected' }),
+  })
+  return yield* decodeRunId(receipt.submissionId)
+})
 
 const Found = Schema.Struct({
   tools: Schema.Array(
@@ -28,7 +50,8 @@ describe.skipIf(process.env['VIVID_LIVE_DISCOVERY'] !== '1')('Tool discovery run
         const fixture = yield* chainFixture('Discovery proof')
         const connection = yield* proofConnection(fixture)
         const offset = yield* Effect.sync(() => NodeFS.readFileSync(logPath, 'utf8').length)
-        const runId = yield* fixture.send(
+        const runId = yield* send(
+          fixture,
           'Find the tool in my Proof Records integration that saves a new record. Show the available tools, but do not call any of them yet.',
         )
         // Retain the real receipt even when runtime settlement or later assertions fail.

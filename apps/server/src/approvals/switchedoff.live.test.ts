@@ -1,5 +1,7 @@
+import * as NodeCrypto from 'node:crypto'
 import * as NodeFS from 'node:fs'
 import { describe, expect, it } from '@effect/vitest'
+import { RunId, RuntimeUnavailable } from '@vivid/contracts'
 import { Clock, Config, Effect, Option, Schema } from 'effect'
 import { proofConnection } from '../connections/proof.ts'
 import {
@@ -10,6 +12,26 @@ import {
   toolParts,
   waitForState,
 } from '../runtime/chains.ts'
+
+import type { ChainFixture } from '../runtime/chains.ts'
+
+const decodeRunId = Schema.decodeUnknownEffect(RunId)
+
+/** chains.ts send omits the required kind, so use the same shipped Flue client as the
+ * Person's real UI. The full production gateway, attribution and runtime remain in the path.
+ * SDK decoding owns receipt ingress; refine its submission into Vivid's branded Run id.
+ */
+const send = Effect.fn('RuntimeProof.send')(function* (fixture: ChainFixture, body: string) {
+  const receipt = yield* Effect.tryPromise({
+    try: () =>
+      fixture.conversation.send({
+        message: { kind: 'user', body },
+        idempotencyKey: NodeCrypto.randomUUID(),
+      }),
+    catch: () => RuntimeUnavailable.make({ message: 'Proof Person message was rejected' }),
+  })
+  return yield* decodeRunId(receipt.submissionId)
+})
 
 const Saved = Schema.Struct({
   ok: Schema.Literal(true),
@@ -39,7 +61,8 @@ describe.skipIf(process.env['VIVID_LIVE_SWITCHEDOFF'] !== '1')('Asked write deci
           expect(yield* connection.records()).toEqual([])
           const offset = yield* Effect.sync(() => NodeFS.readFileSync(logPath, 'utf8').length)
           const started = yield* Clock.currentTimeMillis
-          const runId = yield* fixture.send(
+          const runId = yield* send(
+            fixture,
             'In my Proof Records integration, save a record whose subject is "Intent runtime verified". Discover the tool, then call use_tool directly. Do not use a program.',
           )
           // Retain the real receipt even when runtime settlement or later assertions fail.
