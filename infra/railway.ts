@@ -1,6 +1,7 @@
 import * as Output from 'alchemy/Output'
 import * as Railway from 'alchemy/Railway'
 import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
 import type { InfrastructureEnvironment } from './env.ts'
 import type { DeploymentTarget } from './targets.ts'
 
@@ -12,12 +13,13 @@ import type { DeploymentTarget } from './targets.ts'
  */
 const serviceNames = {
   database: 'vivid-postgres',
+  executor: 'vivid-executor',
   helix: 'vivid-helix',
   runtime: 'vivid-runtime',
   server: 'vivid-server',
 } as const
 
-const ports = { helix: 8080, runtime: 5173, server: 8787 } as const
+const ports = { executor: 8080, helix: 8080, runtime: 5173, server: 8787 } as const
 
 /** Private mesh address of a service; never reachable from the public internet. */
 const privateUrl = (name: string, port: number) => `http://${name}.railway.internal:${port}`
@@ -34,9 +36,9 @@ const listenHost = '::'
  * (`VIVID_WEB_DIST`, set in `apps/server/Dockerfile`), so web, `/api` and WebSockets share one
  * origin exactly as they do behind the Vite proxy locally.
  *
- * Helix gives Vivid its memory. Executor and program isolation are not part of this graph yet: the
- * server reports those capabilities as unavailable when their addresses are absent
- * (`docs/19-infrastructure.md`).
+ * Helix gives Vivid its memory and Executor its Integrations (`docs/24-executor-scale.md`).
+ * Program isolation is not part of this graph yet: the server reports that capability as
+ * unavailable (`docs/19-infrastructure.md`).
  */
 export const railwayResources = Effect.fn('railwayResources')(function* (
   target: DeploymentTarget,
@@ -89,6 +91,47 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     },
   })
   yield* Railway.Volume('HelixData', { project, service: helix, mountPath: '/var/lib/helix' })
+
+  /**
+   * Executor's hosted shape, as its self-host guide deploys it on Railway
+   * (`apps/hosted/self-host/README.md`, "Railway", in the Executor repository): one image, one
+   * volume at `/app/data` holding its database, app source, builds and generated keys, a public
+   * domain because a Person's browser returns from a provider's sign-in through it, `/health` with
+   * a 120-second start, and exactly one instance per volume. The image derives its own origin from
+   * `RAILWAY_PUBLIC_DOMAIN`. The tag is the published build the pilot ran; it moves to an image
+   * built from our fork when the fork carries changes.
+   *
+   * Every sign-in returns to Vivid, not to Executor's own page, which needs an Executor browser
+   * session no Person has. Railway resolves the server's domain in the reference at deploy time.
+   */
+  const executor = yield* Railway.Service('Executor', {
+    project,
+    name: serviceNames.executor,
+    image: 'ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.8',
+    port: ports.executor,
+    publicDomain: true,
+    healthcheckPath: '/health',
+    healthcheckTimeout: 120,
+    env: {
+      PORT: String(ports.executor),
+      EXECUTOR_OAUTH_CALLBACK_URL: `https://\${{${serviceNames.server}.RAILWAY_PUBLIC_DOMAIN}}/api/connections/return`,
+    },
+  })
+  yield* Railway.Volume('ExecutorData', { project, service: executor, mountPath: '/app/data' })
+
+  /**
+   * The server reaches Executor over the private mesh with a key minted on that Executor. Until
+   * the key exists the three settings are absent together and Integrations are off; a URL without
+   * its key and organization would stop the server at launch.
+   */
+  const executorAccess = Option.match(environment.executor, {
+    onNone: () => ({}),
+    onSome: ({ key, organization }) => ({
+      VIVID_EXECUTOR_URL: privateUrl(serviceNames.executor, ports.executor),
+      VIVID_EXECUTOR_KEY: key,
+      VIVID_EXECUTOR_ORGANIZATION: organization,
+    }),
+  })
 
   /** Flue keeps its durable state in PostgreSQL, so the runtime needs no volume of its own. */
   yield* Railway.Service('Runtime', {
@@ -150,6 +193,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       VIVID_RUNTIME_TOKEN: environment.runtimeToken,
       EXPLABS_API_KEY: environment.modelGatewayKey,
       VIVID_HELIX_URL: privateUrl(serviceNames.helix, ports.helix),
+      ...executorAccess,
       /** Where `apps/server/Dockerfile` leaves the built web app; the server serves it itself. */
       VIVID_WEB_DIST: '/app/apps/web/dist',
       /** Where the same image leaves the mobile app's over-the-air update (`/api/updates`). */

@@ -21,6 +21,16 @@ export interface InfrastructureEnvironment {
   readonly googleClientId: Option.Option<string>
   readonly googleClientSecret: Option.Option<Redacted.Redacted>
   readonly googleRedirectUri: Option.Option<string>
+  /**
+   * The key and organization Vivid's server uses on Executor. Both are minted on the deployed
+   * Executor itself, so the first deploy has neither and the server runs with Integrations off.
+   */
+  readonly executor: Option.Option<ExecutorAccess>
+}
+
+export interface ExecutorAccess {
+  readonly key: Redacted.Redacted
+  readonly organization: string
 }
 
 const environmentError = (variable: string) =>
@@ -66,6 +76,22 @@ export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnviro
       )
     }
 
+    const executorKey = yield* optionalSecret('VIVID_EXECUTOR_KEY')
+    const executorOrganization = yield* optionalString('VIVID_EXECUTOR_ORGANIZATION')
+    if (Option.isSome(executorKey) !== Option.isSome(executorOrganization)) {
+      return yield* Effect.fail(
+        new InfrastructureEnvironmentError({
+          variable: 'VIVID_EXECUTOR_KEY, VIVID_EXECUTOR_ORGANIZATION',
+          message: 'Executor access must provide both variables or neither',
+        }),
+      )
+    }
+    const executor = Option.zipWith(
+      executorKey,
+      executorOrganization,
+      (key, organization): ExecutorAccess => ({ key, organization }),
+    )
+
     return {
       authSecret,
       runtimeToken,
@@ -74,6 +100,7 @@ export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnviro
       googleClientId,
       googleClientSecret,
       googleRedirectUri,
+      executor,
     } satisfies InfrastructureEnvironment
   },
 )()
