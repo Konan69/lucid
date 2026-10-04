@@ -1,3 +1,4 @@
+import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as NodeProcess from 'node:process'
@@ -239,6 +240,28 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
   return { computer, control }
 })
 
+const ShippedManifest = Schema.fromJsonString(
+  Schema.Struct({ vividHome: Schema.OptionFromOptionalKey(ServerAddress) }),
+)
+const decodeShippedManifest = Schema.decodeUnknownOption(ShippedManifest)
+
+/**
+ * The Vivid address this build ships with, when it ships with one. Packaging writes it into the
+ * app's own `package.json` as `vividHome` (`electron-builder.yml`, `extraMetadata`), which keeps
+ * the address out of the source and out of the web bundle. Development has no packaged manifest
+ * and starts at the chooser. A manifest that cannot be read, or an address that is not a valid
+ * server origin, is no home: the chooser is the honest start then, not a guessed address.
+ */
+function shippedHome(): Option.Option<ServerAddress> {
+  if (!app.isPackaged) return Option.none()
+  const manifest = NodePath.join(app.getAppPath(), 'package.json')
+  if (!NodeFS.existsSync(manifest)) return Option.none()
+  return Option.flatMap(
+    decodeShippedManifest(NodeFS.readFileSync(manifest, 'utf8')),
+    (decoded) => decoded.vividHome,
+  )
+}
+
 /**
  * Finish startup after Electron is ready: decode configuration and disk state, construct one window,
  * and install bridge handlers. Placement failure is deliberately recoverable because geometry is a
@@ -406,7 +429,9 @@ if (!hasSingleInstanceLock) {
   }).pipe(
     Effect.flatMap(() =>
       boot().pipe(
-        Effect.provide(settingsLayer(NodePath.join(app.getPath('userData'), 'settings.json'))),
+        Effect.provide(
+          settingsLayer(NodePath.join(app.getPath('userData'), 'settings.json'), shippedHome()),
+        ),
       ),
     ),
     Effect.matchEffect({

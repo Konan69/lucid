@@ -3,6 +3,7 @@ import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import { describe, expect, it } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import { DesktopSettings, readServerSettings, settingsLayer } from './settings.ts'
 import { ServerAddress, ServerSettings, SettingsSaveFailed } from '../shared/settings.ts'
@@ -15,6 +16,24 @@ const directory = Effect.acquireRelease(
 )
 
 describe('desktop server settings', () => {
+  it.effect('a build that ships its address opens there; a stored choice still wins', () =>
+    Effect.gen(function* () {
+      const path = NodePath.join(yield* directory, 'settings.json')
+      const origin = yield* decodeAddress('https://home.vivid.example')
+      const home = Option.some(origin)
+      // Nothing stored: the Person is in Vivid, not at an address chooser.
+      expect(yield* readServerSettings(path, home)).toEqual(
+        ServerSettings.cases.Server.make({ origin }),
+      )
+      yield* Effect.gen(function* () {
+        const settings = yield* DesktopSettings
+        // "Use a Different Vivid" forgets the server; that choice is stored and is kept.
+        yield* settings.forget
+      }).pipe(Effect.provide(settingsLayer(path, home)))
+      expect(yield* readServerSettings(path, home)).toEqual(ServerSettings.cases.NoServer.make({}))
+    }),
+  )
+
   it.effect('first launch has no server; choose and forget survive the next launch', () =>
     Effect.gen(function* () {
       const root = yield* directory
@@ -23,11 +42,13 @@ describe('desktop server settings', () => {
         const settings = yield* DesktopSettings
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
         const selected = yield* settings.set(yield* decodeAddress('https://vivid.example:8443'))
-        expect(yield* readServerSettings(path)).toEqual(selected)
+        expect(yield* readServerSettings(path, Option.none())).toEqual(selected)
         expect(NodeFS.readdirSync(root)).toEqual(['settings.json'])
         expect(yield* settings.forget).toEqual(ServerSettings.cases.NoServer.make({}))
-        expect(yield* readServerSettings(path)).toEqual(ServerSettings.cases.NoServer.make({}))
-      }).pipe(Effect.provide(settingsLayer(path)))
+        expect(yield* readServerSettings(path, Option.none())).toEqual(
+          ServerSettings.cases.NoServer.make({}),
+        )
+      }).pipe(Effect.provide(settingsLayer(path, Option.none())))
     }),
   )
 
@@ -41,7 +62,9 @@ describe('desktop server settings', () => {
         '{"version":1,"serverAddress":"https://person:secret@vivid.example"}',
       ]) {
         NodeFS.writeFileSync(path, text)
-        expect(yield* readServerSettings(path)).toEqual(ServerSettings.cases.NoServer.make({}))
+        expect(yield* readServerSettings(path, Option.none())).toEqual(
+          ServerSettings.cases.NoServer.make({}),
+        )
         expect(NodeFS.existsSync(path)).toBe(false)
       }
       const backups = NodeFS.readdirSync(root).filter((name) => name.endsWith('.damaged'))
@@ -55,7 +78,9 @@ describe('desktop server settings', () => {
       const root = yield* directory
       const path = NodePath.join(root, 'settings.json')
       NodeFS.mkdirSync(path)
-      expect(yield* readServerSettings(path)).toEqual(ServerSettings.cases.NoServer.make({}))
+      expect(yield* readServerSettings(path, Option.none())).toEqual(
+        ServerSettings.cases.NoServer.make({}),
+      )
       expect(NodeFS.statSync(`${path}.damaged`).isDirectory()).toBe(true)
     }),
   )
@@ -65,7 +90,7 @@ describe('desktop server settings', () => {
       const root = yield* directory
       const path = NodePath.join(root, 'settings.json')
       NodeFS.writeFileSync(path, '{"version":1,"serverAddress":"https://vivid.example/"}')
-      expect(yield* readServerSettings(path)).toEqual(
+      expect(yield* readServerSettings(path, Option.none())).toEqual(
         ServerSettings.cases.Server.make({ origin: ServerAddress.make('https://vivid.example') }),
       )
     }),
@@ -83,7 +108,7 @@ describe('desktop server settings', () => {
         expect(yield* Effect.flip(settings.forget)).toBeInstanceOf(SettingsSaveFailed)
         expect(yield* settings.get).toEqual(before)
         expect(NodeFS.readdirSync(root)).toEqual(['settings.json'])
-      }).pipe(Effect.provide(settingsLayer(path)))
+      }).pipe(Effect.provide(settingsLayer(path, Option.none())))
     }),
   )
 
@@ -121,7 +146,7 @@ describe('desktop server settings', () => {
       }
       expect(
         ServerSettings.guards.NoServer(
-          yield* readServerSettings(NodePath.join(yield* directory, 'absent')),
+          yield* readServerSettings(NodePath.join(yield* directory, 'absent'), Option.none()),
         ),
       ).toBe(true)
     }),

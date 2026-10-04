@@ -82,8 +82,18 @@ export const loadThemeSurfaces = Effect.fn('DesktopTheme.loadTokens')(function* 
 export const surfaceFor = (surfaces: ThemeSurfaces, resolved: ResolvedColorScheme): string =>
   resolved === 'dark' ? surfaces.dark : surfaces.light
 
-/** Solid native title-bar glyph color derived from the shared RGB token. */
+/**
+ * Solid native title-bar glyph color derived from the shared RGB token, as `#rrggbb`.
+ *
+ * The token is the space-separated triplet CSS uses inside `rgb(… / alpha)`. Windows' title-bar
+ * overlay does not read `rgb(250 250 250)`: given that, it drew its default black glyphs, which
+ * on the dark page left minimise, maximise and close invisible. Hexadecimal is the form the
+ * window's own background already uses.
+ */
 export const inkFor = (surfaces: ThemeSurfaces, resolved: ResolvedColorScheme): string => {
   const triplet = resolved === 'dark' ? surfaces.inkBase.dark : surfaces.inkBase.light
-  return `rgb(${triplet})`
+  const channels = triplet
+    .split(' ')
+    .map((channel) => Number(channel).toString(16).padStart(2, '0'))
+  return `#${channels.join('')}`
 }

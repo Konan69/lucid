@@ -19,6 +19,8 @@ describe('desktop theme tokens', () => {
       const surfaces = yield* loadThemeSurfaces(shipped)
       expect(surfaceFor(surfaces, 'dark')).not.toBe(surfaceFor(surfaces, 'light'))
       expect(inkFor(surfaces, 'dark')).not.toBe(inkFor(surfaces, 'light'))
+      // The form Windows' title-bar overlay reads; a CSS triplet left the glyphs black.
+      expect(inkFor(surfaces, 'dark')).toMatch(/^#[0-9a-f]{6}$/u)
     }),
   )
 })

@@ -11,6 +11,12 @@ files:
 
 asar: true
 
+# The address a packaged Vivid opens on first launch, so nobody is asked for one. Main reads it
+# from the packaged manifest (`shippedHome` in src/main/main.ts); File > Use a Different Vivid
+# still changes it.
+extraMetadata:
+  vividHome: https://vivid-server-production.up.railway.app
+
 protocols:
   name: Vivid URL
   schemes:

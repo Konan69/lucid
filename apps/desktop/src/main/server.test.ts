@@ -98,7 +98,7 @@ describe('desktop server selection', () => {
             }),
           ),
         )
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
   it.effect('denies selected-server documents before shell settings or browsing can change', () =>
@@ -145,7 +145,7 @@ describe('desktop server selection', () => {
         ).toEqual(BridgeResponse.cases.AppVersion.make({ value: '1.0.0' }))
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
         expect(changes).toEqual([])
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
 
@@ -189,7 +189,7 @@ describe('desktop server selection', () => {
         ).toEqual(BridgeResponse.cases.Forgotten.make({}))
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
         expect(changes).toEqual(['Server', 'NoServer'])
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
 
@@ -205,7 +205,7 @@ describe('desktop server selection', () => {
         expect(yield* chooseServer(origin, settings)).toEqual(ServerChoice.cases.NotVivid.make({}))
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
         expect(NodeFS.readdirSync(root)).toEqual([])
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
 
@@ -229,7 +229,7 @@ describe('desktop server selection', () => {
         expect(result._tag).toBe('Unreachable')
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
         expect(foreignRequests).toBe(0)
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
 
@@ -243,7 +243,7 @@ describe('desktop server selection', () => {
         const before = yield* settings.set(ServerAddress.make('https://vivid.example'))
         expect((yield* chooseServer(origin, settings))._tag).toBe('Unreachable')
         expect(yield* settings.get).toEqual(before)
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
 
@@ -268,7 +268,7 @@ describe('desktop server selection', () => {
           }),
         )
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
 
