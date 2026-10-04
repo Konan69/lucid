@@ -48,7 +48,7 @@ import {
   type MachineFailure,
   type MachineScreen,
 } from './machine.ts'
-import { DeviceRegistry } from './device.ts'
+import { BrowseAuthority, DeviceRegistry } from './device.ts'
 import { requireThread } from '../threads/access.ts'
 import { computers } from './tables.ts'
 
@@ -957,6 +957,7 @@ const personBrowse = Effect.fn('Computer.personBrowse')(function* (input: {
   readonly person: Person
   readonly origin: ActionOrigin
   readonly action: BrowserAction
+  readonly authority: BrowseAuthority
 }) {
   if (!ActionOrigin.guards.Run(input.origin)) return BrowseOutcome.cases.RunRequired.make({})
   const unavailable = yield* personAvailability(input.person.id)
@@ -967,6 +968,7 @@ const personBrowse = Effect.fn('Computer.personBrowse')(function* (input: {
       threadId: input.origin.threadId,
       runId: input.origin.runId,
       action: input.action,
+      authority: input.authority,
     })
     .pipe(
       Effect.catchTag('NoDeviceConnected', () =>
@@ -1022,7 +1024,12 @@ export const computerBrowse = Effect.fn('Computer.browse')(function* (
       ),
     Allowed: Effect.fn('Computer.browser.allowed')(() =>
       BrowseTarget.guards.Person(request.target)
-        ? personBrowse({ person: actor.person, origin, action: request.action })
+        ? personBrowse({
+            person: actor.person,
+            origin,
+            action: request.action,
+            authority: BrowseAuthority.cases.Acting.make({}),
+          })
         : store.browse(actor.person.id, request.action).pipe(
             Effect.map((result) => BrowseOutcome.cases.Completed.make({ result })),
             Effect.catchTag('MachineExecutionUnknown', () =>
@@ -1158,9 +1165,12 @@ export const computerRunner = Effect.fn('Computer.runner')(function* (input: {
       ),
     Browser: ({ action, target }) =>
       BrowseTarget.guards.Person(target)
-        ? personBrowse({ person: input.person, origin: input.origin, action }).pipe(
-            Effect.map(approvedBrowse),
-          )
+        ? personBrowse({
+            person: input.person,
+            origin: input.origin,
+            action,
+            authority: BrowseAuthority.cases.Approved.make({}),
+          }).pipe(Effect.map(approvedBrowse))
         : store
             .browse(input.person.id, action)
             .pipe(

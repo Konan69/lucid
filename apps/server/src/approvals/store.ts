@@ -220,8 +220,17 @@ export class ApprovalStore extends Context.Service<ApprovalStore, ApprovalStoreS
   'vivid/ApprovalStore',
 ) {}
 
-/** Shared visibility never grants personal computer authority. Exact action grants do not exist:
- * AlwaysAllow is prose, so this target cannot turn one approval into standing permission. */
+/**
+ * Who may decide, and what may become standing permission.
+ *
+ * Seeing a Thread never grants authority over someone's computer: only the Person whose computer
+ * it is may approve an action on it. "Always allow" is refused for a destructive action, and for
+ * anything of the Person's own (their Integration or their browser) in a Thread others can see.
+ * In a Thread only they can see, the Person's own browser takes "Always allow" exactly as their
+ * own Integration does: the owner decided on 4 October 2026 that a write there follows the
+ * Integration table (`policy.ts#reviewOutcome`), and it was the last place still treating the
+ * browser as always asked.
+ */
 const requireDecisionAuthority = Effect.fn('Approvals.requireDecisionAuthority')(function* (
   actor: Actor,
   row: typeof Row.Type,
@@ -240,8 +249,8 @@ const requireDecisionAuthority = Effect.fn('Approvals.requireDecisionAuthority')
   if (
     ApprovalDecision.guards.AlwaysAllow(request.decision) &&
     (row.action.effect === 'destructive' ||
-      personalBrowser ||
-      (ActionTarget.guards.Connection(row.action.target) && audience !== 'private'))
+      ((personalBrowser || ActionTarget.guards.Connection(row.action.target)) &&
+        audience !== 'private'))
   )
     return yield* new InvalidRequest({ message: 'This kind of action is always asked about' })
 })

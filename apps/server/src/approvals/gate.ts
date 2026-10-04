@@ -82,8 +82,8 @@ export interface GateService {
    * The working model never decides this. A `read` passes. A `write` or `destructive` action is
    * weighed against the rules that bind the acting Person: `Never` beats `Ask` beats `Allow`, a
    * Company's rules are binding on every Member, and a Person's own rules can only make things
-   * stricter. Person-browser non-reads always ask; prose Allow rules cannot prove exact authority.
-   * With no rule, the default for other targets is to run: only an action that uses something of the
+   * stricter. With no rule, the default is to run, and that includes a write on the Person's
+   * own browser (owner decision, 4 October 2026; see the ask group below): only an action that uses something of the
    * Person's own, or is `destructive`, goes to the `Reviewer`, and `policy.ts#reviewOutcome` asks
    * only when the Person did not ask for it and it reaches other people or cannot be undone. With
    * no review (decisions switched off or unavailable) a `write` runs and a `destructive` action

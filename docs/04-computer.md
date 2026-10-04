@@ -322,16 +322,23 @@ Reference: browser `browser-service.mjs::ai/ec/tc/JA/Rs/wB/mJ/Dne/a7e`, main
 The missing input-token receiver must be recovered before desktop control can ship.
 
 **4 October 2026 — stage 1 browser decision.** The desktop app executes Person-computer
-browser actions using T3 Code desktop’s mechanism: `webContents.debugger` CDP, expected-input
-matching, and human-control epochs that interrupt an action when the Person touches the page.
+browser actions using T3 Code desktop’s mechanism: `webContents.debugger` CDP. T3’s
+expected-input matching and human-control epochs were deliberately NOT ported: the owner decided
+the same day that touching the page does not interrupt Vivid; only the explicit Stop does.
 The Codex token receiver was never recovered; that token blocker no longer gates stage 1.
 
 ### Permission for the Person’s browser
 
-Click, Type, Press and CloseTab on the Person’s computer always require that Person’s Approval.
-Reviewer configuration, timeout and scores cannot authorize them. No current Allow rule skips
-this ask: rules are prose matched probabilistically, not exact action capabilities. AlwaysAllow
-is refused for this target. Vivid’s cloud Computer and Integrations retain their existing policy.
+**4 October 2026 — owner decision: “I don't need approval for writing my browser”.** Click,
+Type, Press and CloseTab on the Person’s computer follow the same table as a write through the
+Person’s own Integration: with no review a write runs; with review, the Person asked for it or
+it is contained runs, and unasked and reaching other people asks. A destructive action, an Ask
+rule, a Never rule and anything personal in a Thread others can see still ask or refuse. The
+risk, stated plainly: Vivid acts as the Person on every site they are signed in to, without
+asking. What stops it is a rule, the Stop on the page, and removing the computer in Settings.
+Earlier the same day these writes always asked; that rule is gone and must not be put back by
+a later review without the owner. Only the Person whose computer it is may decide an Approval
+for an action on it.
 
 Personal browser reads and screenshots ask before their contents enter a shared Thread. Private
 Threads keep reads unasked. Open, OpenTab, Back and Forward remain reads by explicit policy; a

@@ -41,7 +41,7 @@ import { StoredRunOrigin } from '../threads/conversation.ts'
 import { actingRun } from '../threads/runs.ts'
 import { actionOrigin } from '../approvals/gate.ts'
 import { runs, threads } from '../threads/tables.ts'
-import { DeviceRegistry, deviceLayer } from './device.ts'
+import { BrowseAuthority, DeviceRegistry, deviceLayer } from './device.ts'
 import { computerHandlers } from './handlers.ts'
 import { DeviceReceipt, DeviceSubscriptionId } from './receipt.ts'
 import { deviceRequests, devices } from './tables.ts'
@@ -330,6 +330,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             threadId,
             runId,
             action: BrowserAction.cases.Type.make({ target: 'Password', text: typed }),
+            authority: BrowseAuthority.cases.Acting.make({}),
           })
           .pipe(Effect.forkScoped)
         const request = yield* Queue.take(fresh.requests)
@@ -382,6 +383,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           threadId: shared.threadId,
           runId: shared.runId,
           action: read,
+          authority: BrowseAuthority.cases.Acting.make({}),
         })
         .pipe(Effect.flip)
       expect(reasonOf(refused)).toBe('ActsForAnotherPerson')
@@ -398,6 +400,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
               threadId: idle.threadId,
               runId: idle.runId,
               action: read,
+              authority: BrowseAuthority.cases.Acting.make({}),
             })
             .pipe(Effect.flip),
         ),
@@ -443,6 +446,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
               threadId: busy.threadId,
               runId: RunId.make(NodeCrypto.randomUUID()),
               action: read,
+              authority: BrowseAuthority.cases.Acting.make({}),
             })
             .pipe(Effect.flip),
         ),
@@ -467,7 +471,13 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         const link = yield* listen(who, device, installation)
         const { threadId, runId } = yield* working(who.person, who.person)
         const running = yield* registry
-          .browse({ personId: who.person.id, threadId, runId, action: read })
+          .browse({
+            personId: who.person.id,
+            threadId,
+            runId,
+            action: read,
+            authority: BrowseAuthority.cases.Acting.make({}),
+          })
           .pipe(Effect.forkScoped)
         return { device, running, request: yield* Queue.take(link.requests) }
       })
@@ -503,7 +513,13 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
       const link = yield* listen(ada, device, installation)
       const { threadId, runId } = yield* working(ada.person, ada.person)
       const running = yield* (yield* DeviceRegistry)
-        .browse({ personId: ada.person.id, threadId, runId, action: read })
+        .browse({
+          personId: ada.person.id,
+          threadId,
+          runId,
+          action: read,
+          authority: BrowseAuthority.cases.Acting.make({}),
+        })
         .pipe(Effect.forkScoped)
       const request = yield* Queue.take(link.requests)
       yield* TestClock.adjust('30 seconds')

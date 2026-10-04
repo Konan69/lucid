@@ -74,7 +74,7 @@ import {
   computerScreenAddress,
 } from './store.ts'
 import * as TestClock from 'effect/testing/TestClock'
-import { DeviceRegistry, deviceLayer } from './device.ts'
+import { BrowseAuthority, DeviceRegistry, deviceLayer } from './device.ts'
 import { ApprovalStore, approvalStoreLayer } from '../approvals/store.ts'
 import { stores, fixture as trustFixture } from '../approvals/testing.ts'
 import { approvals } from '../approvals/tables.ts'
@@ -341,6 +341,17 @@ const personalBrowser = Effect.fn('Computer.test.personalBrowser')(function* () 
   const actor = test.vivid
   return { test, registry, database, runId, device, session, requests, connect, actor }
 })
+/** A click on the Person's own signed-in page, as an Approval would hold it. */
+const approvedClick = ProposedAction.make({
+  summary: 'Click Send',
+  rationale: '',
+  effect: 'write',
+  target: ActionTarget.cases.Browser.make({
+    action: BrowserAction.cases.Click.make({ target: 'Send' }),
+    target: BrowseTarget.cases.Person.make({}),
+  }),
+})
+
 const signedPage = BrowseResult.make({
   address: 'https://example.test',
   title: 'Signed-in page',
@@ -530,7 +541,8 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
     )
   }
 
-  it.effect('closing the Person’s tab is a write and cannot create a standing Allow rule', () =>
+  // Closing a tab destroys the Person's state, so it is weighed as a write, not a read.
+  it.effect('closing the Person’s tab is a write, and nothing is sent before it is decided', () =>
     Effect.gen(function* () {
       const browser = yield* personalBrowser()
       yield* browser.connect()
@@ -551,15 +563,13 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
       const [approval] = yield* store.inThread(browser.test.personalId)
       if (approval === undefined) expect.fail('Expected pending Approval')
       expect(approval.action.effect).toBe('write')
-      expect(
-        (yield* store
-          .decide(browser.test.personal, {
-            id: approval.id,
-            digest: approval.digest,
-            decision: ApprovalDecision.cases.AlwaysAllow.make({}),
-          })
-          .pipe(Effect.flip))._tag,
-      ).toBe('InvalidRequest')
+      expect(yield* Queue.size(browser.requests)).toBe(0)
+      const denied = yield* store.decide(browser.test.personal, {
+        id: approval.id,
+        digest: approval.digest,
+        decision: ApprovalDecision.cases.Deny.make({}),
+      })
+      expect(denied.state._tag).toBe('Denied')
       expect(yield* Queue.size(browser.requests)).toBe(0)
     }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
   )
@@ -763,6 +773,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           threadId: browser.test.personalId,
           runId: browser.runId,
           action: personalRead.action,
+          authority: BrowseAuthority.cases.Acting.make({}),
         }),
       ).toEqual(BrowseOutcome.cases.RunRequired.make({}))
       expect(yield* Queue.size(browser.requests)).toBe(0)
@@ -797,29 +808,54 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
     }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
   )
 
-  it.effect('approved non-Run Person actions fail explicitly without dispatch', () =>
+  // Raising an Approval ends the Run's turn, so the Run has always completed by the time the
+  // Person can press Allow. The approved action must still be sent, once.
+  it.effect('an approved action is sent after its proposing Run has completed', () =>
     Effect.gen(function* () {
       const browser = yield* personalBrowser()
       yield* browser.connect()
+      const store = yield* ApprovalStore
+      const approval = yield* store.raise(browser.test.vivid, approvedClick)
       yield* browser.database.run(
         browser.database
           .update(runs)
           .set({ state: 'completed', finishedAt: 1 })
           .where(eq(runs.id, browser.runId)),
       )
-      const approval = yield* (yield* ApprovalStore).raise(
-        browser.test.vivid,
-        ProposedAction.make({
-          summary: 'Click Send',
-          rationale: '',
-          effect: 'write',
-          target: ActionTarget.cases.Browser.make({
-            action: BrowserAction.cases.Click.make({ target: 'Send' }),
-            target: BrowseTarget.cases.Person.make({}),
-          }),
-        }),
+      const executing = yield* store
+        .decide(browser.test.personal, {
+          id: approval.id,
+          digest: approval.digest,
+          decision: ApprovalDecision.cases.AllowOnce.make({}),
+        })
+        .pipe(Effect.forkScoped)
+      const dispatched = yield* Queue.take(browser.requests)
+      expect(dispatched.runId).toBe(browser.runId)
+      yield* browser.registry.answer(browser.actor.person.id, browser.session.sessionId, {
+        device: browser.device.id,
+        id: dispatched.id,
+        answer: DeviceAnswer.cases.Done.make({ result: signedPage }),
+      })
+      const settled = yield* Fiber.join(executing)
+      expect(ApprovalState.guards.Succeeded(settled.state)).toBe(true)
+      expect(yield* Queue.size(browser.requests)).toBe(0)
+    }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
+  )
+
+  // Stopping a Run is the Person saying "no more from this": approving afterwards sends nothing.
+  it.effect('an approved action is not sent when its proposing Run was stopped', () =>
+    Effect.gen(function* () {
+      const browser = yield* personalBrowser()
+      yield* browser.connect()
+      const store = yield* ApprovalStore
+      const approval = yield* store.raise(browser.test.vivid, approvedClick)
+      yield* browser.database.run(
+        browser.database
+          .update(runs)
+          .set({ state: 'stopped', finishedAt: 1 })
+          .where(eq(runs.id, browser.runId)),
       )
-      const settled = yield* (yield* ApprovalStore).decide(browser.test.personal, {
+      const settled = yield* store.decide(browser.test.personal, {
         id: approval.id,
         digest: approval.digest,
         decision: ApprovalDecision.cases.AllowOnce.make({}),

@@ -79,6 +79,13 @@ interface Pending {
   readonly answer: Deferred.Deferred<DeviceAnswer>
 }
 
+/**
+ * On whose word an action is sent to the Person's computer: the Run acting now, or the Person
+ * who approved what a Run proposed. See `dispatchRun` for what each one requires of the Run.
+ */
+export const BrowseAuthority = Schema.TaggedUnion({ Acting: {}, Approved: {} })
+export type BrowseAuthority = typeof BrowseAuthority.Type
+
 export interface DeviceService {
   /** Records this installation as one of the Person's computers. Repeating it returns the same one. */
   readonly enrol: (
@@ -114,12 +121,13 @@ export interface DeviceService {
     NotFound | Forbidden | DatabaseInfrastructureError,
     Scope.Scope
   >
-  /** Sends one action to the Person's computer for the Run working in this Thread. */
+  /** Sends one action to the Person's computer for the Run that proposed it in this Thread. */
   readonly browse: (input: {
     readonly personId: PersonId
     readonly threadId: ThreadId
     readonly runId: RunId
     readonly action: BrowserAction
+    readonly authority: BrowseAuthority
   }) => Effect.Effect<
     BrowseOutcome,
     NoDeviceConnected | NoActingRun | DeviceBusy | DatabaseInfrastructureError
@@ -602,14 +610,25 @@ interface Dispatcher {
   readonly send: ReturnType<typeof makeSend>
 }
 
-/** Only an admitted Working Run authorizes dispatch; ended work is a refusal before send. */
+/**
+ * Whether the Run named by a request may have its action sent, which depends on who is asking.
+ *
+ * `Acting`: the Run is sending its own action now, so it must still be working. `Approved`: the
+ * Person answered an Approval the Run raised. Raising an Approval ends the Run's turn and the Run
+ * settles as completed, so by the time anyone can press Allow the Run is never working. Requiring
+ * a working Run there (as this did for a few hours on 4 October 2026) meant an approved action
+ * was never sent: the card settled as failed, Vivid proposed again, and the Person was asked
+ * again, for ever. An approved action is therefore sent for a Run that is working or completed.
+ * A Run the Person stopped, or one that failed or whose outcome is unknown, authorizes nothing
+ * either way: stopping is the Person saying "no more from this".
+ */
 const dispatchRun = Effect.fn('Device.dispatchRun')(function* (
   input: Parameters<DeviceService['browse']>[0],
 ) {
   const state = yield* admittedRunState(input)
   return RunState.match(state, {
     Working: () => true,
-    Completed: () => false,
+    Completed: () => BrowseAuthority.guards.Approved(input.authority),
     Failed: () => false,
     Stopped: () => false,
     Unknown: () => false,
