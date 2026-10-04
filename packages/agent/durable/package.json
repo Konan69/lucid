@@ -21,6 +21,7 @@
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "zod": "4.5.4"
   }
 }
