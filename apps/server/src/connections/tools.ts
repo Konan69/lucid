@@ -1,5 +1,4 @@
-import { Refusal, recordRefusal } from '../observability/refusal.ts'
-import { Array as Arr, Clock, Duration, Effect, Option, Order, Schema } from 'effect'
+import { Array as Arr, Clock, Duration, Effect, Option, Order, Result, Schema } from 'effect'
 import {
   ActionTarget,
   ConnectionRequestMessage,
@@ -18,6 +17,7 @@ import {
   type Service,
   type UseToolRequest,
 } from '@vivid/contracts'
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { requireCompany, type Actor } from '../auth/access.ts'
 import { workspaceIn } from '../auth/session.ts'
 import { ActionOutcome, Gate, GateDecision, type GateExposure } from '../approvals/gate.ts'
@@ -339,45 +339,50 @@ const exposureOf = Effect.fn('Connections.exposure')(function* (
 })
 
 /** Vivid's gate authorizes execution; unsupported provider approval fails at the adapter. */
-export const runConnection = Effect.fn('Connections.run')(function* (
-  actor: Actor,
-  row: ConnectionRecord,
-  target: typeof ActionTarget.cases.Connection.Type,
-) {
-  const executor = yield* Executor
-  const outcome = yield* executor
-    .call({ references: row.references, tool: target.tool, input: target.input })
-    .pipe(
-      Effect.mapError((error) => (isResourceMissing(error) ? error : executorFailure(error))),
+export const runConnection = Effect.fn('Connections.run')(
+  function* (
+    actor: Actor,
+    row: ConnectionRecord,
+    target: typeof ActionTarget.cases.Connection.Type,
+  ) {
+    const executor = yield* Executor
+    const outcome = yield* executor
+      .call({ references: row.references, tool: target.tool, input: target.input })
+      .pipe(Effect.mapError((error) => (isResourceMissing(error) ? error : executorFailure(error))))
+    return yield* ExecutorCallOutcome.match<
+      Effect.Effect<
+        ToolOutcome,
+        | import('@vivid/contracts').NotFound
+        | ReturnType<typeof executorFailure>
+        | import('@vivid/contracts').Conflict
+        | import('../database/client.ts').DatabaseInfrastructureError,
+        ConnectionStore
+      >
+    >(outcome, {
+      Completed: ({ value }) => Effect.succeed(ToolOutcome.cases.Completed.make({ output: value })),
+      Rejected: Effect.fnUntraced(function* ({ message, problems }) {
+        // The service answer becomes a Tool rejection here; its private message is never recorded.
+        yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'ServiceRejected' }))
+        return ToolOutcome.cases.Rejected.make({ message, problems })
+      }),
+      OutcomeUnknown: () => Effect.succeed(ToolOutcome.cases.OutcomeUnknown.make({})),
+      NotReady: () => markNotReady(actor, row),
+    })
+  },
+  (effect, actor, row) =>
+    effect.pipe(
       Effect.catchTag(
         'ExecutorResourceMissing',
         Effect.fn('Connections.missing')(function* ({ resource }) {
           const reason = resourceReason(resource)
           yield* (yield* ConnectionStore).failed(actor, row, reason)
-          return ExecutorCallOutcome.cases.Rejected.make({ message: reason })
+          // Vivid just marked the Integration failed; no service Rejected answer exists to count.
+          yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationFailed' }))
+          return ToolOutcome.cases.Rejected.make({ message: reason })
         }),
       ),
-    )
-  return yield* ExecutorCallOutcome.match<
-    Effect.Effect<
-      ToolOutcome,
-      | import('@vivid/contracts').NotFound
-      | ReturnType<typeof executorFailure>
-      | import('@vivid/contracts').Conflict
-      | import('../database/client.ts').DatabaseInfrastructureError,
-      ConnectionStore
-    >
-  >(outcome, {
-    Completed: ({ value }) => Effect.succeed(ToolOutcome.cases.Completed.make({ output: value })),
-    Rejected: Effect.fnUntraced(function* ({ message, problems }) {
-      // The service answer becomes a Tool rejection here; its private message is never recorded.
-      yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'ServiceRejected' }))
-      return ToolOutcome.cases.Rejected.make({ message, problems })
-    }),
-    OutcomeUnknown: () => Effect.succeed(ToolOutcome.cases.OutcomeUnknown.make({})),
-    NotReady: () => markNotReady(actor, row),
-  })
-})
+    ),
+)
 
 /** Revoked authorization refreshes screens before Vivid offers reconnection. */
 const markNotReady = Effect.fn('Connections.markNotReady')(function* (
@@ -395,10 +400,10 @@ const markNotReady = Effect.fn('Connections.markNotReady')(function* (
   })
 })
 
-/** Tool refusals are data; permission and effect come from ownership and provider metadata. */
-export const useTool = Effect.fn('Connections.useTool')(function* (
+/** Direct and approved calls share one admission decision, recorded once before dispatch. */
+const prepareTool = Effect.fn('Connections.prepareTool')(function* (
   actor: Actor,
-  request: UseToolRequest,
+  request: Pick<UseToolRequest, 'connectionId' | 'tool'>,
 ) {
   const store = yield* ConnectionStore
   const found = yield* store.get(actor, request.connectionId).pipe(
@@ -408,7 +413,9 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
   if (Option.isNone(found)) {
     // An unavailable scoped record is a Tool refusal; no Integration identity is invented.
     yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationUnavailable' }))
-    return ToolOutcome.cases.Rejected.make({ message: 'This integration is not available to you.' })
+    return Result.fail(
+      ToolOutcome.cases.Rejected.make({ message: 'This integration is not available to you.' }),
+    )
   }
   const row = found.value
   const state = yield* stateOf(row)
@@ -430,7 +437,7 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
     }),
     Ready: () => Effect.succeed(Option.none()),
   })
-  if (Option.isSome(refusal)) return refusal.value
+  if (Option.isSome(refusal)) return Result.fail(refusal.value)
   const tools = yield* store.tools(actor, row).pipe(
     Effect.map(Option.some),
     Effect.catchTags({
@@ -441,24 +448,41 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
   if (Option.isNone(tools)) {
     // Failed tool discovery proves this call cannot be admitted to the Integration.
     yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationUnavailable' }))
-    return ToolOutcome.cases.Rejected.make({ message: 'Integrations are unavailable.' })
+    return Result.fail(
+      ToolOutcome.cases.Rejected.make({ message: 'Integrations are unavailable.' }),
+    )
   }
   const requested = tools.value.find((entry) => entry.name === request.tool)
   if (requested === undefined) {
     // The tool name is Person content; count only the closed missing-capability reason.
     yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'ToolUnknown' }))
-    return ToolOutcome.cases.Rejected.make({
-      message: `Tool ${request.tool} is not available on this integration.`,
-    })
+    return Result.fail(
+      ToolOutcome.cases.Rejected.make({
+        message: `Tool ${request.tool} is not available on this integration.`,
+      }),
+    )
   }
   const tool = yield* classifyTool(row, requested)
   if (row.companyId !== null && tool.effect !== 'read') {
     // Shared read-only policy rejects before the Gate; this is a distinct Tool decision.
     yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'SharedReadOnly' }))
-    return ToolOutcome.cases.Rejected.make({
-      message: 'Shared integrations are read-only. Connect your own account to make this change.',
-    })
+    return Result.fail(
+      ToolOutcome.cases.Rejected.make({
+        message: 'Shared integrations are read-only. Connect your own account to make this change.',
+      }),
+    )
   }
+  return Result.succeed({ row, tool })
+})
+
+/** Tool refusals are data; permission and effect come from ownership and provider metadata. */
+export const useTool = Effect.fn('Connections.useTool')(function* (
+  actor: Actor,
+  request: UseToolRequest,
+) {
+  const prepared = yield* prepareTool(actor, request)
+  if (Result.isFailure(prepared)) return prepared.failure
+  const { row, tool } = prepared.success
   const target = ActionTarget.cases.Connection.make({
     connectionId: row.id,
     account: row.label,
@@ -484,6 +508,20 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
     Allowed: () => runConnection(actor, row, target),
   })
 })
+
+/** Approved execution carries the shared Tool decision as an action receipt without recording again. */
+const actionOutcome = (outcome: ToolOutcome) =>
+  ToolOutcome.match<ActionOutcome>(outcome, {
+    Completed: ({ output }) =>
+      ActionOutcome.cases.Succeeded.make({ result: JSON.stringify(output).slice(0, 4000) }),
+    Rejected: ({ message }) => ActionOutcome.cases.Failed.make({ reason: message }),
+    ConnectionNotReady: () =>
+      ActionOutcome.cases.Failed.make({ reason: 'This integration needs authorization.' }),
+    OutcomeUnknown: () => ActionOutcome.cases.Unknown.make({}),
+    Blocked: ({ rule }) => ActionOutcome.cases.Failed.make({ reason: rule }),
+    ApprovalRequired: () =>
+      ActionOutcome.cases.Failed.make({ reason: 'This action requires a new Approval.' }),
+  })
 
 /** Only a missing record or revoked permission proves that this delayed action did not run. */
 const unavailableAction = () =>
@@ -511,20 +549,8 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     // An Approval in a Company cannot survive removal of its acting Person's Membership.
     if (Workspace.guards.Company(input.workspace)) yield* requireCompany(workspace)
     const actor: Actor = { person: input.person, workspace, by: 'vivid', threadId: Option.none() }
-    const store = yield* ConnectionStore
-    const row = yield* store.get(actor, input.target.connectionId)
-    const state = yield* stateOf(row)
-    const refusal = ConnectionState.match<Option.Option<ActionOutcome>>(state, {
-      Failed: ({ reason }) => Option.some(ActionOutcome.cases.Failed.make({ reason })),
-      NeedsAuthorization: () =>
-        Option.some(
-          ActionOutcome.cases.Failed.make({ reason: 'This integration needs authorization.' }),
-        ),
-      Ready: () => Option.none(),
-    })
-    if (Option.isSome(refusal)) return refusal.value
-    // This read precedes dispatch, so losing discovery is a failed, retryable action.
-    const discovered = yield* store.tools(actor, row).pipe(
+    const prepared = yield* prepareTool(actor, input.target).pipe(
+      // Discovery precedes dispatch; an infrastructure fault here is retryable, never uncertain.
       Effect.catchTag('ServiceUnavailable', () =>
         Effect.fail(
           new InvalidRequest({
@@ -533,27 +559,9 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
         ),
       ),
     )
-    const requested = discovered.find((entry) => entry.name === input.target.tool)
-    if (requested === undefined)
-      return ActionOutcome.cases.Failed.make({
-        reason: 'This tool is no longer available on this integration.',
-      })
-    const tool = yield* classifyTool(row, requested)
-    if (row.companyId !== null && tool.effect !== 'read')
-      return ActionOutcome.cases.Failed.make({
-        reason: 'This tool is no longer available on this integration.',
-      })
-    return ToolOutcome.match<ActionOutcome>(yield* runConnection(actor, row, input.target), {
-      Completed: ({ output }) =>
-        ActionOutcome.cases.Succeeded.make({ result: JSON.stringify(output).slice(0, 4000) }),
-      Rejected: ({ message }) => ActionOutcome.cases.Failed.make({ reason: message }),
-      ConnectionNotReady: () =>
-        ActionOutcome.cases.Failed.make({ reason: 'This integration needs authorization.' }),
-      OutcomeUnknown: () => ActionOutcome.cases.Unknown.make({}),
-      Blocked: ({ rule }) => ActionOutcome.cases.Failed.make({ reason: rule }),
-      ApprovalRequired: () =>
-        ActionOutcome.cases.Failed.make({ reason: 'This action requires a new Approval.' }),
-    })
+    if (Result.isFailure(prepared)) return actionOutcome(prepared.failure)
+    const { row } = prepared.success
+    return actionOutcome(yield* runConnection(actor, row, input.target))
   },
   (effect) =>
     effect.pipe(

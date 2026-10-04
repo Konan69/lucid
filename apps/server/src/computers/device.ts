@@ -1,4 +1,3 @@
-import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import * as NodeCrypto from 'node:crypto'
 import { and, eq, lte, gt, ne, sql } from 'drizzle-orm'
 import {
@@ -39,6 +38,7 @@ import {
   type ThreadId,
   type RunId,
 } from '@vivid/contracts'
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
 import { NoActingRun, admittedRunState } from '../threads/runs.ts'
 import { DeviceReceipt, DeviceSubscriptionId, receiptOf } from './receipt.ts'

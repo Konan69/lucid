@@ -1,4 +1,3 @@
-import { refusalLogs } from '../observability/testing.ts'
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, it } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
@@ -33,6 +32,7 @@ import {
   type DeviceRequest,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
+import { refusalLogs } from '../observability/testlogger.ts'
 import { authEffect, localAuthRuntimeLayer } from '../auth/provider.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { Database, decodeStored } from '../database/client.ts'

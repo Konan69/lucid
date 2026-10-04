@@ -1,4 +1,3 @@
-import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as Array from 'effect/Array'
 import * as Result from 'effect/Result'
@@ -30,6 +29,7 @@ import {
   type DecideApprovalRequest,
   type PersonSummary,
 } from '@vivid/contracts'
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { companyColumnOf, loadSummaries, ownedHere, type Actor } from '../auth/access.ts'
 import { Audit, AuditAttribution, recordAudit } from '../audit/record.ts'
 import {

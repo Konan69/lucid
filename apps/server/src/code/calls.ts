@@ -1,8 +1,8 @@
-import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import {
   BrowseOutcome,
   BrowseRequest,
   CommandOutcome,
+  CodeCallKind,
   FindToolsRequest,
   ReadPageOutcome,
   ReadPageRequest,
@@ -11,8 +11,9 @@ import {
 } from '@vivid/contracts'
 import { Context, Effect, Layer, Schema } from 'effect'
 import { DecisionModel } from 'effect/unstable/ai'
-import { ToolEffects } from '../connections/effects.ts'
 import { CodeToolNames } from '@vivid/contracts/code'
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
+import { ToolEffects } from '../connections/effects.ts'
 import type { Actor } from '../auth/access.ts'
 import { Gate } from '../approvals/gate.ts'
 import { Executor } from '../connections/executor.ts'
@@ -66,6 +67,16 @@ const returned = (
   end: 'completed' | 'refused' = 'completed',
 ) => CallOutcome.cases.Returned.make({ value, summary, end })
 
+/** Typed recovery here decides a new refusal; carried Tool, Page and Device replies bypass it. */
+const refused = Effect.fn('Code.refused')(function* (
+  call: CodeCallKind,
+  value: Schema.Json,
+  summary: string,
+) {
+  yield* recordRefusal(Refusal.cases.CallRefused.make({ call }))
+  return returned(value, summary, 'refused')
+})
+
 /** Resolve under current authority; the existing owner rechecks provider metadata and gates the action. */
 const connection = Effect.fn('Code.useConnection')(function* (actor: Actor, input: Schema.Json) {
   const request = yield* decodeUse(input, { onExcessProperty: 'error' })
@@ -97,12 +108,17 @@ const command = Effect.fn('Code.runCommand')(function* (actor: Actor, input: Sch
     request.timeoutSeconds !== undefined &&
     (request.timeoutSeconds < 1 || request.timeoutSeconds > 30)
   )
-    return returned(
+    return yield* refused(
+      'run_command',
       { ok: false, reason: 'Command timeout must be between 1 and 30 seconds.' },
       request.summary,
-      'refused',
     )
-  return CommandOutcome.match<CallOutcome>(yield* computerRunCommand(actor, request), {
+  const outcome = yield* computerRunCommand(actor, request)
+  if (CommandOutcome.guards.Unavailable(outcome)) {
+    // Command unavailability has no lower refusal receipt; the code reply decides it here.
+    yield* recordRefusal(Refusal.cases.CallRefused.make({ call: 'run_command' }))
+  }
+  return CommandOutcome.match<CallOutcome>(outcome, {
     Completed: ({ result }) =>
       returned(
         {
@@ -127,7 +143,17 @@ const command = Effect.fn('Code.runCommand')(function* (actor: Actor, input: Sch
 /** Browser results expose readable content, never Computer or session references or screen URLs. */
 const browse = Effect.fn('Code.browse')(function* (actor: Actor, input: Schema.Json) {
   const request = yield* decodeBrowse(input, { onExcessProperty: 'error' })
-  return BrowseOutcome.match<CallOutcome>(yield* computerBrowse(actor, request), {
+  const outcome = yield* computerBrowse(actor, request)
+  if (
+    BrowseOutcome.isAnyOf(['NotConnected', 'NotAllowed', 'Busy', 'RunRequired', 'Unavailable'])(
+      outcome,
+    )
+  ) {
+    // Server availability decisions have no DeviceRefused receipt. AddressRefused, Stopped,
+    // PageGone and Unsupported carry the Device's already-recorded refusal and bypass this call.
+    yield* recordRefusal(Refusal.cases.CallRefused.make({ call: 'browse' }))
+  }
+  return BrowseOutcome.match<CallOutcome>(outcome, {
     NotConnected: () =>
       returned(
         { ok: false, reason: 'The Person’s desktop app is not connected. Ask them to connect it.' },
@@ -297,56 +323,42 @@ export const codeCallsLayer = Layer.effect(
             ),
             Effect.catchTags({
               SchemaError: () =>
-                Effect.succeed(
-                  returned(
-                    { ok: false, reason: 'The tool arguments are invalid.' },
-                    'Check tool arguments',
-                    'refused',
-                  ),
+                refused(
+                  call.kind,
+                  { ok: false, reason: 'The tool arguments are invalid.' },
+                  'Check tool arguments',
                 ),
               NotFound: () =>
-                Effect.succeed(
-                  returned(
-                    { ok: false, reason: 'That tool is not available here.' },
-                    'Find the tool',
-                    'refused',
-                  ),
+                refused(
+                  call.kind,
+                  { ok: false, reason: 'That tool is not available here.' },
+                  'Find the tool',
                 ),
               InvalidRequest: () =>
-                Effect.succeed(
-                  returned(
-                    { ok: false, reason: 'The request was refused.' },
-                    'Check the request',
-                    'refused',
-                  ),
+                refused(
+                  call.kind,
+                  { ok: false, reason: 'The request was refused.' },
+                  'Check the request',
                 ),
               Conflict: () =>
-                Effect.succeed(
-                  returned(
-                    { ok: false, reason: 'The account changed; discover its tools again.' },
-                    'Check the account',
-                    'refused',
-                  ),
+                refused(
+                  call.kind,
+                  { ok: false, reason: 'The account changed; discover its tools again.' },
+                  'Check the account',
                 ),
             }),
             // Owning adapters report post-dispatch loss as values. Remaining typed errors are
             // pre-dispatch refusals; defects deliberately bypass this typed recovery.
             Effect.catch(() =>
-              Effect.succeed(
-                returned(
-                  { ok: false, reason: 'The service is unavailable. No action was sent.' },
-                  'Check service availability',
-                  'refused',
-                ),
+              refused(
+                call.kind,
+                { ok: false, reason: 'The service is unavailable. No action was sent.' },
+                'Check service availability',
               ),
             ),
-            Effect.tap((outcome) => {
-              if (!CallOutcome.guards.Returned(outcome) || outcome.end !== 'refused')
-                return Effect.void
-              // The bound call decides the guest-readable reply, including argument/adaptor
-              // refusals. Blocked only carries the Gate decision and is not counted here.
-              return recordRefusal(Refusal.cases.CallRefused.make({ call: call.kind }))
-            }),
+            // Tool/Page/Device refusals and Gate Blocked decisions are recorded by their owners.
+            // CodeAuthorityRevoked also returns Blocked, but has no Gate decision and no matching
+            // Refusal case; authority revocation remains unrecorded in this vocabulary.
           ),
         ),
     })

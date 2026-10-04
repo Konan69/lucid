@@ -1,4 +1,3 @@
-import { refusalLogs } from '../observability/testing.ts'
 import { deviceLayer } from '../computers/device.ts'
 import * as NodeProcess from 'node:process'
 import { programHost } from './host.ts'
@@ -16,6 +15,7 @@ import {
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { Deferred, Effect, Fiber, Layer, Ref, Result, Option, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
+import { refusalLogs } from '../observability/testlogger.ts'
 import type { Actor } from '../auth/access.ts'
 import { membershipTable } from '../companies/tables.ts'
 import { threads } from '../threads/tables.ts'
@@ -34,7 +34,7 @@ import { ConnectionProbe, connectionTestLayer, serviceId } from '../connections/
 import { ApprovalStore } from '../approvals/store.ts'
 import { fixture, Observation, trustTestLayer } from '../approvals/testing.ts'
 import { RuleStore } from '../rules/store.ts'
-import { CodeAuthority, codeAuthorityLayer } from './authority.ts'
+import { CodeAuthority, CodeAuthorityRevoked, codeAuthorityLayer } from './authority.ts'
 import { CodeCalls, codeCallsLayer } from './calls.ts'
 import { codeHandlers } from './handlers.ts'
 import { publicPageLayer } from './page.ts'
@@ -478,6 +478,108 @@ describe.skipIf(!testDatabaseConfigured || Option.isSome(missingHost))(
 
 /** Infrastructure faults exercise bound dispatch directly, independently of host interpreter support. */
 describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => {
+  /** Provider rejection travels through the real code-call seam without a second refusal. */
+  standalone.effect('records exactly one ToolRejected for a rejected use_tool code call', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        yield* (yield* ConnectionStore).begin(test.personal, {
+          service: serviceId,
+          label: 'Records',
+          shared: false,
+        })
+        const executor = yield* Executor
+        const logs = refusalLogs()
+        const outcome = yield* Effect.gen(function* () {
+          return yield* (yield* CodeCalls).bind({
+            person: test.personal.person.id,
+            thread: test.personalId,
+          })(
+            WorkerMessage.cases.Call.make({
+              id: 1,
+              kind: 'use_tool',
+              input: {
+                account: 'Records',
+                tool: 'read',
+                input: {},
+                summary: 'Read',
+                rationale: '',
+              },
+            }),
+          )
+        }).pipe(
+          Effect.provide(codeCallsLayer, { local: true }),
+          Effect.provideService(
+            Executor,
+            Executor.of({
+              ...executor,
+              call: () =>
+                Effect.succeed(
+                  ExecutorCallOutcome.cases.Rejected.make({ message: 'Private rejection' }),
+                ),
+            }),
+          ),
+          Effect.provide(logs.layer),
+        )
+        expect(outcome).toMatchObject({ end: 'refused', value: { ok: false } })
+        expect(logs.recorded()).toHaveLength(1)
+        expect(logs.recorded()[0]).toContain('vivid.refusal.kind=ToolRejected')
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  )
+
+  /** Address policy is decided by the real PageReader before its refused reply reaches code. */
+  standalone.effect('records exactly one PageRefused for a refused read_page code call', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const logs = refusalLogs()
+        const outcome = yield* (yield* CodeCalls)
+          .bind({
+            person: test.personal.person.id,
+            thread: test.personalId,
+          })(
+            WorkerMessage.cases.Call.make({
+              id: 1,
+              kind: 'read_page',
+              input: { address: 'file:///private' },
+            }),
+          )
+          .pipe(Effect.provide(logs.layer))
+        expect(outcome).toMatchObject({ end: 'refused', value: { ok: false } })
+        expect(logs.recorded()).toHaveLength(1)
+        expect(logs.recorded()[0]).toContain('vivid.refusal.kind=PageRefused')
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  )
+
+  /** This vocabulary has no authority-revocation case; a Blocked receipt must not invent a Gate refusal. */
+  standalone.effect('authority revocation blocks without inventing a recorded Gate decision', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const logs = refusalLogs()
+        const outcome = yield* Effect.gen(function* () {
+          return yield* (yield* CodeCalls).bind({
+            person: test.personal.person.id,
+            thread: test.personalId,
+          })(WorkerMessage.cases.Call.make({ id: 1, kind: 'find_tools', input: { query: 'read' } }))
+        }).pipe(
+          Effect.provide(codeCallsLayer, { local: true }),
+          Effect.provideService(
+            CodeAuthority,
+            CodeAuthority.of({
+              refresh: () => Effect.fail(new CodeAuthorityRevoked({})),
+            }),
+          ),
+          Effect.provide(logs.layer),
+        )
+        expect(CallOutcome.guards.Blocked(outcome)).toBe(true)
+        expect(logs.recorded()).toEqual([])
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  )
+
   for (const kind of CodeCallKind.literals) {
     standalone.effect(
       `returns a refused ${kind} receipt when authority storage is unavailable`,

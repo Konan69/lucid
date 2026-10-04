@@ -1,4 +1,3 @@
-import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { createFlueClient } from '@flue/sdk'
 import * as Config from 'effect/Config'
 import * as Context from 'effect/Context'
@@ -22,6 +21,7 @@ import {
   type ThreadOrigin,
 } from '@vivid/contracts'
 import { RuntimeUnavailable } from '@vivid/contracts/rpc'
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { ServerConfig } from '../config.ts'
 import { submissionId } from './identity.ts'
 import { observeRun, type Settlement } from './settlement.ts'

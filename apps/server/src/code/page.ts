@@ -1,7 +1,7 @@
-import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { ReadPageOutcome, type ReadPageRequest } from '@vivid/contracts'
 import { compile } from 'html-to-text'
 import { Context, Effect, Layer, Option } from 'effect'
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { budgets, bytes } from './budgets.ts'
 import { PageFailure, pageResolverLayer, pageUrl, resolvePage } from './address.ts'
 import { PageNetwork, pageNetworkLayer, type PageResponse } from './network.ts'

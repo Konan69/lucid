@@ -1,4 +1,3 @@
-import { refusalLogs } from '../observability/testing.ts'
 import { describe, expect, it } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
 import * as Ref from 'effect/Ref'
@@ -10,6 +9,7 @@ import {
   ProposedAction,
   RuleScope,
 } from '@vivid/contracts'
+import { refusalLogs } from '../observability/testlogger.ts'
 import { loadAudit } from '../audit/store.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { RuleStore } from '../rules/store.ts'

@@ -1,4 +1,3 @@
-import { refusalLogs } from '../observability/testing.ts'
 import { describe, expect, it } from '@effect/vitest'
 import { Deferred, Effect, Exit, Fiber, Layer, Predicate, Result, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
@@ -7,6 +6,7 @@ import * as HttpClientError from 'effect/unstable/http/HttpClientError'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
 import { LibraryFolderId, PersonId, RunId, RuntimeAdmissionBody, ThreadId } from '@vivid/contracts'
+import { refusalLogs } from '../observability/testlogger.ts'
 import { testConfigLayer, testDatabaseConfigured } from '../database/testdb.ts'
 import {
   AdmissionRefused,

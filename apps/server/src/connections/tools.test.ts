@@ -1,4 +1,3 @@
-import { refusalLogs } from '../observability/testing.ts'
 import { describe, expect, layer } from '@effect/vitest'
 import { Clock, Deferred, Effect, Fiber, Layer, Logger, Predicate, Ref, Schema } from 'effect'
 import { ScriptedAnswer } from '../decisions/testing.ts'
@@ -7,8 +6,10 @@ import { RELEVANCE_BUDGET } from './relevance.ts'
 import { ToolEffects, toolEffectsLayer } from './effects.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { ActionTarget, ConnectionStep, InvalidRequest, ToolOutcome } from '@vivid/contracts'
+import { refusalLogs } from '../observability/testlogger.ts'
+import { ActionOutcome } from '../approvals/gate.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
-import { ExecutorCallOutcome, ExecutorTool } from './executor.ts'
+import { Executor, ExecutorCallOutcome, ExecutorResourceMissing, ExecutorTool } from './executor.ts'
 import { ConnectionStore } from './store.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
 import { connectionRunner, findTools, resolveTool, useTool } from './tools.ts'
@@ -67,6 +68,95 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         expect(recorded[0]).not.toContain('private_missing_tool')
       }).pipe(Effect.provide(logs.layer))
     })
+
+    /** A missing foreign resource is Vivid's durable Integration failure, not a service rejection. */
+    it.effect('records IntegrationFailed when execution loses its resource', () => {
+      const logs = refusalLogs()
+      return Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const store = yield* ConnectionStore
+        const probe = yield* ConnectionProbe
+        const checked = yield* Ref.get(probe.checked)
+        yield* Effect.addFinalizer(() => Ref.set(probe.checked, checked))
+        const step = yield* store.begin(ownerActor, {
+          service: serviceId,
+          label: 'Work',
+          shared: false,
+        })
+        const executor = yield* Executor
+        const outcome = yield* useTool(ownerActor, {
+          connectionId: step.connection.id,
+          tool: 'read',
+          input: {},
+          summary: 'Read',
+          rationale: '',
+        }).pipe(
+          Effect.provideService(
+            Executor,
+            Executor.of({
+              ...executor,
+              call: () =>
+                Effect.fail(
+                  new ExecutorResourceMissing({
+                    service: 'connections',
+                    tool: 'read',
+                    resource: 'App',
+                  }),
+                ),
+            }),
+          ),
+        )
+        expect(ToolOutcome.guards.Rejected(outcome)).toBe(true)
+        expect((yield* store.get(ownerActor, step.connection.id)).status).toBe('failed')
+        expect(logs.recorded()).toHaveLength(1)
+        expect(logs.recorded()[0]).toContain('vivid.refusal.reason=IntegrationFailed')
+        expect(logs.recorded()[0]).not.toContain('ServiceRejected')
+      }).pipe(Effect.provide(logs.layer))
+    })
+
+    /** Approved actions recheck the same admission rules before sending any provider action. */
+    it.effect.each(['IntegrationFailed', 'NeedsAuthorization', 'ToolUnknown', 'SharedReadOnly'])(
+      'approved execution records %s once before dispatch',
+      (reason) => {
+        const logs = refusalLogs()
+        return Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
+          const store = yield* ConnectionStore
+          const probe = yield* ConnectionProbe
+          const calls = yield* Ref.get(probe.calls)
+          const step = yield* store.begin(ownerActor, {
+            service: serviceId,
+            label: 'Work',
+            shared: reason === 'SharedReadOnly',
+          })
+          const row = yield* store.get(ownerActor, step.connection.id)
+          if (reason === 'IntegrationFailed')
+            yield* store.failed(ownerActor, row, 'Private failure')
+          if (reason === 'NeedsAuthorization') yield* store.notReady(ownerActor, row)
+          const outcome = yield* connectionRunner({
+            person: ownerActor.person,
+            workspace: ownerActor.workspace,
+            target: ActionTarget.cases.Connection.make({
+              connectionId: row.id,
+              account: 'Work',
+              tool: reason === 'ToolUnknown' ? 'missing' : 'write',
+              input: {},
+            }),
+          })
+          expect(ActionOutcome.guards.Failed(outcome)).toBe(true)
+          expect(yield* Ref.get(probe.calls)).toBe(calls)
+          expect(logs.recorded()).toHaveLength(1)
+          if (reason === 'NeedsAuthorization') {
+            expect(logs.recorded()[0]).toContain('vivid.refusal.kind=IntegrationNotReady')
+            expect(logs.recorded()[0]).toContain(`vivid.refusal.service=${serviceId}`)
+          } else {
+            expect(logs.recorded()[0]).toContain('vivid.refusal.kind=ToolRejected')
+            expect(logs.recorded()[0]).toContain(`vivid.refusal.reason=${reason}`)
+          }
+          expect(logs.recorded()[0]).not.toContain('Private failure')
+        }).pipe(Effect.provide(logs.layer))
+      },
+    )
 
     /** Tool metadata can disappear before dispatch; the refusal belongs to this call. */
     it.effect('records unavailable tool discovery as IntegrationUnavailable', () => {

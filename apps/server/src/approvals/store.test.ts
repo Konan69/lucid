@@ -1,4 +1,3 @@
-import { refusalLogs } from '../observability/testing.ts'
 import { describe, expect, it } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
@@ -679,6 +678,7 @@ describe.skipIf(!testDatabaseConfigured)('Approval identity across Runs', () => 
 import * as NodeCrypto from 'node:crypto'
 import * as Schema from 'effect/Schema'
 import { RunId } from '@vivid/contracts'
+import { refusalLogs } from '../observability/testlogger.ts'
 import { runs } from '../threads/tables.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 

@@ -1,4 +1,3 @@
-import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
@@ -13,6 +12,7 @@ import {
 } from '@vivid/contracts'
 import * as Option from 'effect/Option'
 import * as Match from 'effect/Match'
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { actingRun } from '../threads/runs.ts'
 import type { Actor } from '../auth/access.ts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
