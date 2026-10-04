@@ -3,6 +3,7 @@ import { ApprovalDecision, Conflict, DatabaseFailure, RuntimeUnavailable } from 
 import { eq } from 'drizzle-orm'
 import { Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Queue, Ref, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
+import { Message } from '../observability/messages.ts'
 import { refusalLogs } from '../observability/testlogger.ts'
 import { Database, returned } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -27,9 +28,11 @@ describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
     it.effect(`replay retains debt and logs only unexpected ${failure._tag} once`, () => {
       const logged: string[] = []
       const refusals = refusalLogs()
-      // This assertion owns unexpected error diagnostics; refusal info lines are a separate receipt.
-      const logger = Logger.make(({ message, logLevel }) => {
-        if (logLevel === 'Error') logged.push(JSON.stringify(message))
+      // Every line at every level counts, so a new diagnostic on replay still fails this test.
+      // Only the refusal receipt is left out: it is asserted on its own below.
+      const logger = Logger.make(({ message }) => {
+        const line = JSON.stringify(message)
+        if (!line.includes(Message.refusal)) logged.push(line)
       })
       return Effect.gen(function* () {
         const test = yield* fixture()

@@ -528,8 +528,11 @@ const prepareTool = Effect.fn('Connections.prepareTool')(function* (
       }),
     )
   if (Result.isFailure(tools)) {
-    // Failed tool discovery proves this call cannot be admitted to the Integration.
-    yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationUnavailable' }))
+    // An invalid discovery is a decision for both callers. A conflict is not decided here: the
+    // code path turns it into a rejection and counts it, while the approved path reports the
+    // action as Unknown, and an action whose result is uncertain was not refused.
+    if (ToolAdmissionRefusal.guards.DiscoveryInvalid(tools.failure))
+      yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationUnavailable' }))
     return Result.fail(tools.failure)
   }
   if (ToolDiscovery.guards.Failed(tools.success)) {
@@ -558,7 +561,13 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
   request: UseToolRequest,
 ) {
   const prepared = yield* prepareTool(actor, request)
-  if (Result.isFailure(prepared)) return toolAdmissionOutcome(prepared.failure)
+  if (Result.isFailure(prepared)) {
+    // The one admission refusal `prepareTool` leaves to its caller: here a discovery conflict is
+    // a rejection the program reads, so it is counted here and nowhere else.
+    if (ToolAdmissionRefusal.guards.DiscoveryConflict(prepared.failure))
+      yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationUnavailable' }))
+    return toolAdmissionOutcome(prepared.failure)
+  }
   const { row, tool } = prepared.success
   const target = ActionTarget.cases.Connection.make({
     connectionId: row.id,

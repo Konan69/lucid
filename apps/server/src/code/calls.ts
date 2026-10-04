@@ -68,7 +68,8 @@ const returned = (
 ) => CallOutcome.cases.Returned.make({ value, summary, end })
 
 /** Typed recovery here decides a new refusal; carried Tool, Page and Device replies bypass it. */
-const refused = Effect.fn('Code.refused')(function* (
+// Untraced, as `recordRefusal` is: the event belongs on the producer's span, not a child of it.
+const refused = Effect.fnUntraced(function* (
   call: CodeCallKind,
   value: Schema.Json,
   summary: string,

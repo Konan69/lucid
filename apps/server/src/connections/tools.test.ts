@@ -278,6 +278,11 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             : ActionOutcome.cases.Failed.make({ reason: 'Private catalog failure' })
         expect(outcome).toEqual(expected)
         expect(yield* Ref.get(probe.calls)).toBe(calls)
+        // A conflict leaves the action Unknown, and an uncertain action is not a refusal.
+        if (error instanceof Conflict) {
+          expect(logs.recorded()).toHaveLength(0)
+          return
+        }
         expect(logs.recorded()).toHaveLength(1)
         expect(logs.recorded()[0]).toContain('vivid.refusal.reason=IntegrationUnavailable')
       }).pipe(Effect.provide(logs.layer))
