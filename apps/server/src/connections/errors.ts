@@ -1,10 +1,16 @@
 import { Match } from 'effect'
-import { Conflict, InvalidRequest, ServiceUnavailable } from '@vivid/contracts'
+import {
+  Conflict,
+  InvalidRequest,
+  ServiceUnavailable,
+  openApiUnsupportedMessage,
+} from '@vivid/contracts'
 import { connectionSetupMessage, resourceReason, type ExecutorFailure } from './executor.ts'
 
 /** Provider internals never cross RPC; unavailable authority remains distinct from bad user input. */
 export const executorFailure = Match.type<ExecutorFailure>().pipe(
   Match.tagsExhaustive({
+    ExecutorSourceUnsupported: () => new InvalidRequest({ message: openApiUnsupportedMessage }),
     ExecutorPublicAddressRequired: () =>
       new ServiceUnavailable({
         service: 'connections',

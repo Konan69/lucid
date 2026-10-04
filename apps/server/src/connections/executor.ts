@@ -29,6 +29,8 @@ import type * as HttpBody from 'effect/unstable/http/HttpBody'
 import { toolMessage } from './message.ts'
 import { retainCatalog } from './catalog.ts'
 import { ConnectionSource } from './address.ts'
+import { ExecutorSourceUnsupported } from './source.ts'
+export { ExecutorSourceUnsupported } from './source.ts'
 import {
   encodeGoogleClient,
   googleApp,
@@ -239,6 +241,7 @@ export class ExecutorApprovalUnsupported extends Schema.TaggedError<ExecutorAppr
 ) {}
 
 export type ExecutorFailure =
+  | ExecutorSourceUnsupported
   | ExecutorPublicAddressRequired
   | ServiceUnavailable
   | ExecutorTransportFailure
@@ -1462,13 +1465,7 @@ function makeAdd(
     input: typeof BeginInput.Type & { readonly source: ConnectionSource },
   ) {
     if (ConnectionSource.guards.OpenApi(input.source))
-      return yield* Effect.fail(
-        ExecutorRejected.make({
-          service: 'connections',
-          tool: null,
-          message: 'This Integration installation supports MCP addresses only.',
-        }),
-      )
+      return yield* Effect.fail(new ExecutorSourceUnsupported({ source: 'OpenApi' }))
     const app = yield* install(input.service, (name) => {
       // Executor resolves the inspected URL again; production requires public-only egress.
       const source = WireImportSource.make({ name, url: input.source.address })

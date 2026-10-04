@@ -217,7 +217,13 @@ describe('Executor hosted transport', () => {
           address: 'https://example.test/openapi.json',
         })
         const error = yield* (yield* Executor).add({ ...begin, source }).pipe(Effect.flip)
-        expect(error).toHaveProperty('_tag', 'ExecutorRejected')
+        expect(error).toHaveProperty('_tag', 'ExecutorSourceUnsupported')
+        expect(executorFailure(error)).toEqual(
+          new InvalidRequest({
+            message:
+              'An OpenAPI document cannot be added as an Integration yet. You can add an MCP server.',
+          }),
+        )
         expect(
           (yield* Ref.get(remote.requests)).every((request) => request.path.endsWith('/catalog')),
         ).toBe(true)

@@ -12,6 +12,7 @@ import { publicAddress as publicIp } from '../code/address.ts'
 import { PageReader, publicPageLayer } from '../code/page.ts'
 import { ReadPageOutcome } from '@vivid/contracts'
 import { ConnectionAddressRefusal } from '@vivid/contracts'
+import { ExecutorSourceUnsupported } from './source.ts'
 
 /** Invalid addresses never carry their supplied value, which might contain a pasted credential. */
 export class ConnectionAddressInvalid extends Schema.TaggedError<ConnectionAddressInvalid>()(
@@ -69,7 +70,10 @@ const decodeSpec = Schema.decodeUnknownOption(Schema.fromJsonString(Spec))
 interface ConnectionAddressService {
   readonly inspect: (
     address: string,
-  ) => Effect.Effect<ConnectionSource, ConnectionAddressInvalid | ConnectionAddressUnreachable>
+  ) => Effect.Effect<
+    ConnectionSource,
+    ConnectionAddressInvalid | ConnectionAddressUnreachable | ExecutorSourceUnsupported
+  >
 }
 /** Public endpoint inspection owns outbound network authority independently of Executor credentials. */
 export class ConnectionAddress extends Context.Service<
@@ -213,9 +217,7 @@ const specificationFromPage = Effect.fn('Connections.specificationFromPage')(fun
       Effect.mapError(() => ConnectionAddressUnreachable.make({})),
     )
     if (Option.isSome(decodeSpec(body)) || /^openapi:\s*['"]?3\./mu.test(body))
-      return ConnectionSource.cases.OpenApi.make({
-        address: candidate.value.address.href,
-      })
+      return yield* Effect.fail(new ExecutorSourceUnsupported({ source: 'OpenApi' }))
   }
   return yield* Effect.fail(
     ConnectionAddressInvalid.make({
@@ -224,7 +226,7 @@ const specificationFromPage = Effect.fn('Connections.specificationFromPage')(fun
   )
 })
 
-/** Docs pages have a precise refusal; JSON/YAML specs are passed to Executor's validating importer. */
+/** Hosted import is MCP-only. Recognized specs fail during the probe, before app installation. */
 const classifyResponse = Effect.fn('Connections.classifyAddress')(function* (
   address: URL,
   response: HttpClientResponse.HttpClientResponse,
@@ -243,7 +245,7 @@ const classifyResponse = Effect.fn('Connections.classifyAddress')(function* (
     Effect.mapError(() => ConnectionAddressUnreachable.make({})),
   )
   if (Option.isSome(decodeSpec(body)) || /^openapi:\s*['"]?3\./mu.test(body))
-    return ConnectionSource.cases.OpenApi.make({ address: address.href })
+    return yield* Effect.fail(new ExecutorSourceUnsupported({ source: 'OpenApi' }))
   return yield* probeMcp(address, client)
 })
 

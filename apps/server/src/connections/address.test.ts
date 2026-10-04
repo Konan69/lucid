@@ -1,3 +1,4 @@
+import { ExecutorSourceUnsupported } from './source.ts'
 import * as NodeHttp from 'node:http'
 import { NodeHttpClient, NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, it } from '@effect/vitest'
@@ -145,16 +146,17 @@ const fixture = Effect.fn('AddressTest.fixture')(function* () {
 })
 
 describe('public integration addresses', () => {
-  it.effect('resolves a docs link and spec redirect to the final import URL', () =>
+  it.effect('recognizes a linked OpenAPI document and refuses it before import', () =>
     Effect.gen(function* () {
       const { client, pages, requests } = yield* fixture()
       const result = yield* inspectAddress('https://integration.example/linkedredirect').pipe(
         Effect.provideService(HttpClient.HttpClient, client),
         Effect.provide(pages),
+        Effect.flip,
       )
       expect(result).toEqual(
-        ConnectionSource.cases.OpenApi.make({
-          address: 'https://integration.example/spec?format=json',
+        new ExecutorSourceUnsupported({
+          source: 'OpenApi',
         }),
       )
       expect(yield* Ref.get(requests)).toContain('GET /openapi.json')
@@ -177,16 +179,17 @@ describe('public integration addresses', () => {
       expect(yield* Ref.get(requests)).toEqual(['GET /negotiated', 'POST /negotiated'])
     }).pipe(Effect.provide(NodeHttpClient.layerUndici), Effect.scoped),
   )
-  it.effect('accepts public specification query parameters and retains the checked URL', () =>
+  it.effect('refuses a recognized OpenAPI document even with public query parameters', () =>
     Effect.gen(function* () {
       const { client, pages, requests } = yield* fixture()
       const result = yield* inspectAddress('https://integration.example/spec?format=json').pipe(
         Effect.provideService(HttpClient.HttpClient, client),
         Effect.provide(pages),
+        Effect.flip,
       )
       expect(result).toEqual(
-        ConnectionSource.cases.OpenApi.make({
-          address: 'https://integration.example/spec?format=json',
+        new ExecutorSourceUnsupported({
+          source: 'OpenApi',
         }),
       )
       expect(yield* Ref.get(requests)).toContain('GET /spec?format=json')
@@ -208,10 +211,8 @@ describe('public integration addresses', () => {
             authorization: 'auto',
           }),
         )
-        expect(yield* inspect('/linked')).toEqual(
-          ConnectionSource.cases.OpenApi.make({
-            address: 'https://integration.example/spec',
-          }),
+        expect(yield* inspect('/linked').pipe(Effect.flip)).toEqual(
+          new ExecutorSourceUnsupported({ source: 'OpenApi' }),
         )
         expect(yield* inspect('/postredirect')).toEqual(
           ConnectionSource.cases.Mcp.make({
@@ -222,15 +223,11 @@ describe('public integration addresses', () => {
         expect(yield* inspect('/postprivate').pipe(Effect.flip)).toMatchObject({
           reason: 'not a public web address',
         })
-        expect(yield* inspect('/spec')).toEqual(
-          ConnectionSource.cases.OpenApi.make({
-            address: 'https://integration.example/spec',
-          }),
+        expect(yield* inspect('/spec').pipe(Effect.flip)).toEqual(
+          new ExecutorSourceUnsupported({ source: 'OpenApi' }),
         )
-        expect(yield* inspect('/redirect')).toEqual(
-          ConnectionSource.cases.OpenApi.make({
-            address: 'https://integration.example/spec',
-          }),
+        expect(yield* inspect('/redirect').pipe(Effect.flip)).toEqual(
+          new ExecutorSourceUnsupported({ source: 'OpenApi' }),
         )
         expect(yield* inspect('/key')).toEqual(
           ConnectionSource.cases.Mcp.make({
