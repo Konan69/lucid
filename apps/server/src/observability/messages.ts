@@ -17,7 +17,7 @@ export const Message = {
   refusal: 'vivid.refusal',
   /** `http/faults.ts`: a client reported that it failed to draw. */
   fault: 'Client fault',
-  /** `export.ts`: export requests were cancelled or timed out, and their batches lost. */
+  /** `export.ts`: an export was cancelled, refused or timed out; its signal is paused a minute. */
   dropped: 'Telemetry batches dropped',
 } as const
 export type Message = (typeof Message)[keyof typeof Message]

@@ -1,6 +1,6 @@
 import { expect, it } from '@effect/vitest'
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core/errors'
-import { Cause, Exit, Option, Schema } from 'effect'
+import { Cause, Effect, Exit, Logger, Option, Schema } from 'effect'
 import * as PlatformError from 'effect/PlatformError'
 import * as HttpClientError from 'effect/unstable/http/HttpClientError'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
@@ -11,10 +11,12 @@ import {
   failuresOf,
   FailureOutcome,
   fixedTypeNames,
+  observeFailures,
   primaryOf,
   redact,
   summarize,
 } from './failure.ts'
+import { Message } from './messages.ts'
 
 class StoreUnavailable extends Schema.TaggedError<StoreUnavailable>()(
   'StoreUnavailable',
@@ -178,6 +180,77 @@ it('exports no type that is a property of what was thrown', () => {
   expect(summarize('expected', { constructor: StoreUnavailable }).type).toBe('_OTHER')
   // Every type therefore comes from a class: a declared tag, or one of a fixed list.
   expect(fixedTypeNames).not.toContain(PRIVATE)
+})
+
+/** A trap, a getter or a function that throws as soon as it is used. */
+const refuse = (): never => {
+  throw new TypeError('this value does not allow that')
+}
+
+/**
+ * Values that throw when they are read. A failure is whatever was thrown or failed with, so each
+ * of these can reach a boundary, and reading one runs its own code.
+ */
+const hostile = (): ReadonlyArray<unknown> => {
+  const revocable = Proxy.revocable({}, {})
+  revocable.revoke()
+  return [
+    // `instanceof` against a function that has no prototype throws.
+    { constructor: () => undefined },
+    Object.defineProperty({}, 'constructor', { get: refuse }),
+    // The handler is itself a proxy that answers every trap's name with `refuse`.
+    new Proxy({}, new Proxy({}, { get: () => refuse })),
+    // Every operation on a revoked proxy throws, `in` and `instanceof` included.
+    revocable.proxy,
+  ]
+}
+
+/** Each reason of a failed exit as its kind and the very value it holds; empty for a success. */
+const reasonsOf = <A, E>(exit: Exit.Exit<A, E>): ReadonlyArray<readonly [string, unknown]> =>
+  Exit.isSuccess(exit)
+    ? []
+    : exit.cause.reasons.map((reason) => {
+        if (Cause.isFailReason(reason)) return ['Fail', reason.error] as const
+        return Cause.isDieReason(reason)
+          ? (['Die', reason.defect] as const)
+          : (['Interrupt', undefined] as const)
+      })
+
+it.effect('hands back the exit it was given when a failure throws on being read', () => {
+  const lines: Array<string> = []
+  const capture = Logger.make((entry) => {
+    lines.push(Logger.formatSimple.log(entry))
+  })
+  const cases = hostile().flatMap((value) => [
+    { value, kind: 'Fail', failing: Effect.fail(value) },
+    { value, kind: 'Die', failing: Effect.die(value) },
+  ])
+  return Effect.gen(function* () {
+    for (const { value, kind, failing } of cases) {
+      const observed = reasonsOf(yield* Effect.exit(failing.pipe(observeFailures('http'))))
+      // One reason, of the kind it had, holding the same value: no defect was added beside it.
+      expect(observed.map(([reason]) => reason)).toEqual([kind])
+      expect(observed.map(([, held]) => Object.is(held, value))).toEqual([true])
+    }
+    // Each was still recorded, as a failure of no nameable type.
+    const recorded = lines.filter(
+      (line) => line.includes(Message.failure) || line.includes(Message.defect),
+    )
+    expect(recorded).toHaveLength(cases.length)
+    for (const line of recorded) expect(line).toContain('error.type=_OTHER')
+  }).pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: true })))
+})
+
+it('summarizes a failure it cannot read as `_OTHER`, without throwing', () => {
+  for (const value of hostile())
+    expect(summarize('expected', value)).toEqual({
+      type: '_OTHER',
+      message: Option.none(),
+      rootType: Option.none(),
+      databaseCode: Option.none(),
+      databaseConstraint: Option.none(),
+      databaseTable: Option.none(),
+    })
 })
 
 it('strips address queries, tokens and email addresses from diagnostic text', () => {
