@@ -3,7 +3,7 @@ import * as Effect from 'effect/Effect'
 import * as v from 'valibot'
 import { Scope, type RunTool } from './scope.ts'
 import * as views from './views.ts'
-import { text } from './inputs.ts'
+import { summary, text } from './inputs.ts'
 
 /** A durable question ends this turn; the server returns the answer as a new delivery. */
 export function askTools(runTool: RunTool) {
@@ -13,6 +13,7 @@ export function askTools(runTool: RunTool) {
       description:
         'Ask the person a question you cannot answer safely yourself. The turn ends immediately until they answer.',
       input: v.object({
+        summary,
         question: text('One self-contained question.', 400),
         options: v.pipe(
           v.array(
@@ -34,7 +35,11 @@ export function askTools(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            const { request } = yield* client.AskInput(data)
+            const { request } = yield* client.AskInput({
+              question: data.question,
+              options: data.options,
+              allowsOwnAnswer: data.allowsOwnAnswer,
+            })
             return { output: views.inputRequest(request), terminate: true }
           }),
           { signal, tool: 'ask_person' },

@@ -11,7 +11,10 @@ export function text(description: string, maximum: number) {
   )
 }
 
-export const summary = text('One sentence describing this action to the person.', 200)
+export const summary = text(
+  'What this step is for, in a few plain words the person will read, such as "Friday\'s plan for the launch". No names of tools, no identifiers.',
+  200,
+)
 export const forCompany = v.pipe(
   v.boolean(),
   v.description('True only when the person asks to share this with the Company.'),

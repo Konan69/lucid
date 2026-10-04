@@ -98,12 +98,19 @@ const fixture = Effect.fn('SkillToolsTest.fixture')(function* () {
     requests,
     reply,
     read: (name: string) =>
-      Effect.promise(() => Promise.resolve(read.run({ ...context, data: { name } }))).pipe(
-        Effect.flatMap(decodeOutput),
-      ),
+      Effect.promise(() =>
+        Promise.resolve(
+          read.run({ ...context, data: { summary: 'Agreement review steps', name } }),
+        ),
+      ).pipe(Effect.flatMap(decodeOutput)),
     save: (name: string) =>
       Effect.promise(() =>
-        Promise.resolve(save.run({ ...context, data: { ...saveRequest, name } })),
+        Promise.resolve(
+          save.run({
+            ...context,
+            data: { summary: 'Save the agreement review steps', ...saveRequest, name },
+          }),
+        ),
       ).pipe(Effect.flatMap(decodeOutput)),
   }
 })

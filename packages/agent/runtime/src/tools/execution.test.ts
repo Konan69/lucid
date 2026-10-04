@@ -47,7 +47,7 @@ describe('scoped tool execution', () => {
           const call = Effect.promise(() =>
             Promise.resolve(
               search.run({
-                data: { query: 'Agreement', limit: 6 },
+                data: { summary: 'Agreement sources', query: 'Agreement', limit: 6 },
                 toolCallId: 'MARK-call',
                 signal: new AbortController().signal,
                 log: { info: () => void 0, warn: () => void 0, error: () => void 0 },

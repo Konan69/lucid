@@ -2,7 +2,7 @@ import { defineTool } from '@flue/runtime'
 import { InvalidRequest, RoutineTrigger } from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
 import * as v from 'valibot'
-import { text } from './inputs.ts'
+import { summary, text } from './inputs.ts'
 import { Scope, type RunTool } from './scope.ts'
 import * as views from './views.ts'
 
@@ -52,6 +52,7 @@ export function routineTools(runTool: RunTool) {
       name: 'create_routine',
       description: `Create a Routine for one-off or recurring work. ${instructions}`,
       input: v.object({
+        summary,
         name: text('A short name for the work.', 200),
         prompt: text('What Vivid should do when it runs.', 4000),
         trigger: triggerInput,
@@ -82,7 +83,10 @@ export function routineTools(runTool: RunTool) {
     defineTool({
       name: 'find_events',
       description: 'Find what can happen in an Integration to start a Routine, in words.',
-      input: v.object({ account: text('The exact account name the Person was shown.', 300) }),
+      input: v.object({
+        summary,
+        account: text('The exact account name the Person was shown.', 300),
+      }),
       /** Discovery returns names and provider filter schemas without storage authority. */
       run({ data, signal }) {
         return runTool(
@@ -97,7 +101,7 @@ export function routineTools(runTool: RunTool) {
     defineTool({
       name: 'list_routines',
       description: 'List the Person’s Routines and what starts them.',
-      input: v.object({}),
+      input: v.object({ summary }),
       /** Routine metadata is projected explicitly instead of returning RPC envelopes. */
       run({ signal }) {
         return runTool(

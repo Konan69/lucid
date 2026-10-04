@@ -2,7 +2,7 @@ import { defineTool } from '@flue/runtime'
 import { LibrarySearchRequest } from '@vivid/contracts'
 import { Effect, Option } from 'effect'
 import * as v from 'valibot'
-import { text } from './inputs.ts'
+import { summary, text } from './inputs.ts'
 import { Scope, type RunTool } from './scope.ts'
 import * as views from './views.ts'
 
@@ -14,6 +14,7 @@ export function libraryTools(runTool: RunTool) {
       description:
         'Search the Library before answering from documents and cite returned passages. A Routine automatically searches its Library folder and descendants.',
       input: v.object({
+        summary,
         query: v.pipe(text('The question or passage to search for.', 500), v.minLength(2)),
         limit: v.optional(
           v.pipe(

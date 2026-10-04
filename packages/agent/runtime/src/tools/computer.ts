@@ -92,9 +92,12 @@ const browseInput = Schema.Struct({
     modelAction(BrowserAction.cases.ShowTab.fields, 'show_tab'),
     modelAction(BrowserAction.cases.CloseTab.fields, 'close_tab'),
   ]),
-  summary: RunCommandRequest.fields.summary.check(Schema.isPattern(/\S/)).annotate({
-    description: 'One sentence describing this action to the person.',
-  }),
+  summary: RunCommandRequest.fields.summary
+    .check(
+      Schema.isPattern(/\S/),
+      Schema.makeFilter((value) => v.is(summary, value)),
+    )
+    .annotate({ description: v.getDescription(summary) }),
 })
 const decodeBrowse = Schema.decodeUnknownResult(browseInput)
 const browserDocument = Schema.toJsonSchemaDocument(browseInput)
@@ -198,11 +201,21 @@ export function commandDefinition(runTool: RunTool) {
 const browseDescription =
   'Open, read or interact with a browser page. Use Vivid’s own computer by default. Choose person for their signed-in sites, something only on their machine, or when they ask to use their computer; their desktop app must be connected. Screenshot returns a picture. If approval is requested, stop and wait.'
 
-const decodeDesktop = Schema.decodeUnknownResult(UseDesktopRequest)
-// The TypeBox schema is derived from the authoritative Effect contract, with runtime decoding
-// below. Type.Unsafe is TypeBox's public bridge for an existing JSON Schema, not an input cast.
-const desktopDocument = Schema.toJsonSchemaDocument(UseDesktopRequest)
-const desktopParameters = Type.Unsafe<typeof UseDesktopRequest.Encoded>(
+/** Native image tools retain the server's action schema but validate and describe display words
+ * with the same Valibot summary as every defineTool input; no second wording or limit is owned here. */
+const desktopInput = UseDesktopRequest.mapFields((fields) => ({
+  action: fields.action,
+  summary: fields.summary
+    .check(
+      Schema.isPattern(/\S/),
+      Schema.makeFilter((value) => v.is(summary, value)),
+    )
+    .annotate({ description: v.getDescription(summary) }),
+}))
+const decodeDesktop = Schema.decodeUnknownResult(desktopInput)
+// Type.Unsafe is TypeBox's public bridge for an existing JSON Schema, not an input cast.
+const desktopDocument = Schema.toJsonSchemaDocument(desktopInput)
+const desktopParameters = Type.Unsafe<typeof desktopInput.Encoded>(
   Object.assign({}, desktopDocument.schema, { $defs: desktopDocument.definitions }),
 )
 
@@ -286,7 +299,10 @@ export function desktopModelTool(runTool: RunTool) {
       return runTool(
         Effect.gen(function* () {
           const { client } = yield* Scope
-          const outcome = yield* client.UseDesktop(request.success)
+          const outcome = yield* client.UseDesktop({
+            action: request.success.action,
+            summary: request.success.summary,
+          })
           if (DesktopOutcome.isAnyOf(['Blocked', 'Unavailable'])(outcome))
             yield* warnFailure('use_desktop', outcome._tag)
           if (DesktopOutcome.guards.Completed(outcome)) picture = Option.some(outcome.view)

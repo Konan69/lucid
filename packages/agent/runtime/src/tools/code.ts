@@ -94,7 +94,10 @@ export function codeTools(runTool: RunTool) {
       run({ data, signal }) {
         return runTool(
           Effect.gen(function* () {
-            const outcome = yield* (yield* Scope).client.RunCode(data)
+            const outcome = yield* (yield* Scope).client.RunCode({
+              code: data.code,
+              summary: data.summary,
+            })
             if (CodeOutcome.guards.Failed(outcome))
               yield* warnFailure('run_code', outcome.failure._tag)
             if (CodeOutcome.isAnyOf(['Blocked', 'OutcomeUnknown'])(outcome))
@@ -109,11 +112,11 @@ export function codeTools(runTool: RunTool) {
       name: 'read_page',
       description:
         'Read any public web page as text, without a Computer or signed-in browser. Returns title, headings, paragraphs, lists and links.',
-      input: v.object({ address: text('The public http or https page address.', 4000) }),
+      input: v.object({ summary, address: text('The public http or https page address.', 4000) }),
       run({ data, signal }) {
         return runTool(
           Effect.gen(function* () {
-            const outcome = yield* (yield* Scope).client.ReadPage(data)
+            const outcome = yield* (yield* Scope).client.ReadPage({ address: data.address })
             if (ReadPageOutcome.guards.Refused(outcome))
               yield* warnFailure('read_page', outcome._tag)
             return pageOutcome(outcome)

@@ -1,6 +1,7 @@
 import { defineTool } from '@flue/runtime'
 import { Shown, WEB_ADDRESS } from '@vivid/contracts'
 import * as v from 'valibot'
+import { summary } from './inputs.ts'
 
 /** Match the contract's length-only rule; trimming would reject valid display input. */
 function line(description: string) {
@@ -385,6 +386,7 @@ export function showTools() {
       description:
         'Show a rich result in the Thread. Pass show as a JSON object, never a quoted JSON string. Comparison items require name, good, bad and facts (use [] for empty arrays); short labels are 1–200 characters. If refused, correct the named field and retry once. Options, Form and Draft stop the turn for the Person to answer.',
       input: v.object({
+        summary,
         show: v.pipe(
           // Flue 2.2.2 / pi 0.87.1 checks generated JSON Schema before our Valibot messages.
           // Retain the complete advertised shape, but admit untrusted input to this callback

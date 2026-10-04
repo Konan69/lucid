@@ -177,6 +177,29 @@ export const routes = Effect.fn('RuntimeTest.routes')(function* () {
           catch: () => new RouteRequestFailed({ path }),
         }),
     ),
+    /** Inspect the real model-visible registry after Vivid and Flue assemble it. Flue 2.2.2
+     * reserves task/activate_skill/read_skill_resource and exposes no schema override; these
+     * framework-owned inputs need upstream support before they can carry Vivid's display words. */
+    inspectTools: Effect.sync(() =>
+      faux.appendResponses([
+        (context) => {
+          // pi 0.87.1 TranscriptContext carries tool declarations on the leading system message.
+          const system = context.messages.find((message) => message.role === 'system')
+          if (system === undefined || system.toolsAdded === undefined)
+            expect.fail('Vivid must register its tools')
+          const owned = system.toolsAdded.filter(
+            (tool) => !['task', 'activate_skill', 'read_skill_resource'].includes(tool.name),
+          )
+          expect(owned).toHaveLength(28)
+          for (const tool of owned)
+            expect(tool.parameters, tool.name).toHaveProperty(
+              'required',
+              expect.arrayContaining(['summary']),
+            )
+          return fauxAssistantMessage('ready')
+        },
+      ]),
+    ),
     /** A missing queued response fails loudly in the installed faux provider. */
     reply: (text: string) => Effect.sync(() => faux.appendResponses([fauxAssistantMessage(text)])),
     hold: (text: string) => heldReply(faux, text),
