@@ -418,7 +418,7 @@ function Disconnect({
               onDisconnect()
             }}
           >
-            Disconnect
+            Disconnect {channel}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
