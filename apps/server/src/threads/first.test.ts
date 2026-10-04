@@ -1,3 +1,4 @@
+import { ThreadTitles } from './generation.ts'
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, it } from '@effect/vitest'
 import {
@@ -158,6 +159,7 @@ const harness = Effect.fn('FirstThread.test.harness')(function* () {
     Layer.succeed(Runtime, runtime),
     silentChangesLayer,
     silentLearningLayer,
+    Layer.mock(ThreadTitles, { afterRun: () => Effect.void }),
     Layer.succeed(Notifier, Notifier.of({ notify: () => Effect.void })),
     Layer.mock(Presence, { watching: () => Effect.succeed(true) }),
   )

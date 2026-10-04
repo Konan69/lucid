@@ -28,7 +28,6 @@ import {
   ExecutorResourceMissing,
   connectionSetupMessage,
   resourceReason,
-  ExecutorResumeOutcome,
 } from './executor.ts'
 import { callableTool, discoveredTool } from '../code/signatures.ts'
 import { executorFailure } from './errors.ts'
@@ -188,7 +187,7 @@ const exposureOf = Effect.fn('Connections.exposure')(function* (
   return thread.audience === 'private' ? 'Ordinary' : 'PersonalInShared'
 })
 
-/** Vivid's gate authorizes execution; provider consent resumes the approved call. */
+/** Vivid's gate authorizes execution; unsupported provider approval fails at the adapter. */
 export const runConnection = Effect.fn('Connections.run')(function* (
   actor: Actor,
   row: ConnectionRecord,
@@ -222,20 +221,6 @@ export const runConnection = Effect.fn('Connections.run')(function* (
     Rejected: ({ message }) => Effect.succeed(ToolOutcome.cases.Rejected.make({ message })),
     OutcomeUnknown: () => Effect.succeed(ToolOutcome.cases.OutcomeUnknown.make({})),
     NotReady: () => markNotReady(actor, row),
-    ApprovalRequired: ({ requestId }) =>
-      executor.resume({ references: row.references, requestId, accept: true }).pipe(
-        Effect.mapError(executorFailure),
-        Effect.map((resumed) =>
-          ExecutorResumeOutcome.match<ToolOutcome>(resumed, {
-            Completed: ({ value }) => ToolOutcome.cases.Completed.make({ output: value }),
-            Denied: () =>
-              ToolOutcome.cases.Rejected.make({ message: 'The integration declined the action.' }),
-            Failed: ({ reason }) => ToolOutcome.cases.Rejected.make({ message: reason }),
-            AlreadyConsumed: () => ToolOutcome.cases.OutcomeUnknown.make({}),
-            OutcomeUnknown: () => ToolOutcome.cases.OutcomeUnknown.make({}),
-          }),
-        ),
-      ),
   })
 })
 

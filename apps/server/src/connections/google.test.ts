@@ -66,8 +66,8 @@ describe.skipIf(!testDatabaseConfigured)('Google fixed callback', () => {
             const firstRow = yield* store.get(ownerActor, first.connection.id)
             const secondRow = yield* store.get(ownerActor, second.connection.id)
             if (
-              !ExecutorReferences.guards.GoogleSigningIn(firstRow.references) ||
-              !ExecutorReferences.guards.GoogleSigningIn(secondRow.references)
+              !ExecutorReferences.guards.OAuthSigningIn(firstRow.references) ||
+              !ExecutorReferences.guards.OAuthSigningIn(secondRow.references)
             )
               expect.fail('Pending references required')
             const ownerToken = crypto.randomUUID()
@@ -107,8 +107,8 @@ describe.skipIf(!testDatabaseConfigured)('Google fixed callback', () => {
                 ),
               )
             })
-            const firstState = firstRow.references.googleState
-            const secondState = secondRow.references.googleState
+            const firstState = new URL(first.address).searchParams.get('state')
+            const secondState = new URL(second.address).searchParams.get('state')
             const generic = new URL('/settings/connections', config.PUBLIC_URL).href
             expect((yield* send(`state=${firstState}`, memberToken)).headers.location).toBe(generic)
             expect(yield* Ref.get(probe.signIns)).toBe(0)

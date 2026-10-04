@@ -37,6 +37,7 @@ import {
   automaticallyNotifies,
   type WorkingRun,
 } from './runs.ts'
+import { ThreadTitles } from './generation.ts'
 import { ThreadStore } from './store.ts'
 
 /** What the delivery says, for the Thread's preview. Only a Person's own words are shown there. */
@@ -78,6 +79,8 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
   const notifier = yield* Notifier
   const presence = yield* Presence
   const learning = yield* Learning
+  const titles = yield* ThreadTitles
+  const scope = yield* Effect.scope
 
   /** Tells the Person Vivid worked for that it is done, unless they are watching it happen. */
   const announce = Effect.fn('Conversation.announce')(function* (
@@ -106,6 +109,8 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
   return Effect.fn('Conversation.observe')(function* (run: Followed) {
     const settlement = yield* runtime.settled(run.threadId, run.id)
     if (!(yield* runs.end(run.id, endingOf(settlement)))) return
+    // Naming lives in the server scope as its own fiber; even a stalled model cannot hold settlement open.
+    yield* titles.afterRun(run.threadId).pipe(Effect.forkIn(scope))
     const thread = yield* findThread(run.threadId).pipe(Effect.provideService(Database, database))
     if (Option.isNone(thread)) return
     const reply = Settlement.guards.Completed(settlement)

@@ -57,10 +57,33 @@ class MemoryHistoryUnavailable extends Schema.TaggedError<MemoryHistoryUnavailab
 ) {}
 
 /** Tools, reasoning, attachments and unfinished text are never evidence for memory extraction. */
-const textOf = (message: Message) =>
+export const textOf = (message: Message) =>
   message.parts
     .flatMap((part) => ('text' in part && part.state === 'done' ? [part.text] : []))
     .join('\n')
+
+/** History transport status is independent of a particular Run or consumer. */
+class ConversationHistoryUnavailable extends Schema.TaggedError<ConversationHistoryUnavailable>()(
+  'ConversationHistoryUnavailable',
+  { threadId: ThreadId },
+  { title: 'Conversation history unavailable' },
+) {}
+
+/** Read the canonical Flue projection once at ingress; memory and Thread titles share this path. */
+export const readConversationHistory = Effect.fn('Conversation.history')(function* (
+  runtime: Pick<RuntimeService, 'read'>,
+  threadId: ThreadId,
+) {
+  const response = yield* runtime.read({
+    threadId,
+    suffix: '',
+    search: '?view=history',
+    accept: 'application/json',
+  })
+  if (response.status < 200 || response.status >= 300)
+    return yield* Effect.fail(ConversationHistoryUnavailable.make({ threadId }))
+  return yield* decodeHistory(response)
+})
 
 /** Shared deliveries carry names. A historical plain user turn belongs only to the creator;
  * omit it when that creator is not the current Person rather than attributing it to the asker. */
@@ -135,16 +158,9 @@ export const conversationContext = Effect.fn('Learning.context')(
   function* (runtime: Pick<RuntimeService, 'read'>, input: LearningInput) {
     const unavailable = () =>
       MemoryHistoryUnavailable.make({ threadId: input.thread.id, runId: input.runId })
-    const response = yield* runtime
-      .read({
-        threadId: input.thread.id,
-        suffix: '',
-        search: '?view=history',
-        accept: 'application/json',
-      })
-      .pipe(Effect.mapError(unavailable))
-    if (response.status < 200 || response.status >= 300) return yield* Effect.fail(unavailable())
-    const history = yield* decodeHistory(response).pipe(Effect.mapError(unavailable))
+    const history = yield* readConversationHistory(runtime, input.thread.id).pipe(
+      Effect.mapError(unavailable),
+    )
     const context = contextOf(history, input)
     if (Option.isNone(context)) return yield* Effect.fail(unavailable())
     return context.value

@@ -36,6 +36,8 @@ import { inputStoreLayer } from './inputs/store.ts'
 import { libraryStoreLayer } from './library/store.ts'
 import { changesLayer } from './live/changes.ts'
 import { embeddingsLayer } from './memory/embeddings.ts'
+import { memoryModelLayer } from './memory/model.ts'
+import { threadTitlesLayer } from './threads/generation.ts'
 import { memoryExtractionLayer } from './memory/extract.ts'
 import { helixMemoryLayer } from './memory/helix.ts'
 import { learningLayer, silentLearningLayer } from './memory/learn.ts'
@@ -129,8 +131,9 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     appearanceStoreLayer,
   ).pipe(Layer.provideMerge(delivery))
   const recorded = ruleStoreLayer.pipe(Layer.provideMerge(reach))
-  const knowledge = memoryLayer.pipe(Layer.provideMerge(recorded))
-  const conversation = conversationLayer.pipe(Layer.provideMerge(knowledge))
+  const knowledge = Layer.mergeAll(memoryLayer, memoryModelLayer).pipe(Layer.provideMerge(recorded))
+  const named = threadTitlesLayer.pipe(Layer.provideMerge(knowledge))
+  const conversation = conversationLayer.pipe(Layer.provideMerge(named))
   const accounts = Layer.mergeAll(connectionStoreLayer, computerStoreLayer).pipe(
     Layer.provideMerge(conversation),
   )

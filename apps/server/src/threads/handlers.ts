@@ -1,3 +1,4 @@
+import { ThreadTitles } from './generation.ts'
 import * as Effect from 'effect/Effect'
 import {
   AuditEvent,
@@ -138,6 +139,16 @@ export const threadHandlers = {
     const thread = yield* store.patch(actor.person.id, id, patch)
     yield* announce(yield* requireThread(id, actor.person.id), [])
     return { thread }
+  }),
+  /** Same authority as PatchThread: any Person who may rename this Thread may ask Vivid to name it. */
+  RegenerateThreadTitle: Effect.fn('Rpc.RegenerateThreadTitle')(function* ({
+    thread,
+  }: {
+    readonly thread: ThreadId
+  }) {
+    const actor = yield* requireActor()
+    const stored = yield* requireThread(thread, actor.person.id)
+    return { title: yield* (yield* ThreadTitles).regenerate(stored, actor.person.id) }
   }),
   ShareThread: Effect.fn('Rpc.ShareThread')(function* ({
     id,

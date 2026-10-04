@@ -1,8 +1,19 @@
 import type { Thread, ThreadId } from '@vivid/contracts'
 import { ThreadAudience } from '@vivid/contracts'
+import { regenerateThreadTitle } from '@vivid/client-runtime'
 import { Data } from 'effect'
-import { Check, CircleCheck, FolderInput, Pencil, Trash2, Undo2, Users } from 'lucide-react'
+import {
+  Check,
+  CircleCheck,
+  FolderInput,
+  Pencil,
+  RefreshCw,
+  Trash2,
+  Undo2,
+  Users,
+} from 'lucide-react'
 import { useRef, useState } from 'react'
+import { run } from '../../data/app'
 import { change, live } from '../../data/live'
 import { Route, router } from '../../data/route'
 import { orSay } from '../../data/said'
@@ -54,6 +65,32 @@ function patchThread(
       : 'That thread could not be renamed just now. Try again.',
   )
 }
+
+/**
+ * Asking Vivid for a better title, and which Threads are waiting on one.
+ *
+ * Nothing is written into the list here: the new title is not known until Vivid has thought of
+ * it, and the server publishes the Thread when it has, so every list shows it at once. Until then
+ * the row's own title is drawn quieter (`IN_FLUX`), which is the only sign that something was
+ * asked. Several Threads can be waiting together, so this is a set and not part of `Doing`. A
+ * Thread already waiting is not asked about twice.
+ */
+function useRetitling() {
+  const [waiting, setWaiting] = useState<ReadonlySet<ThreadId>>(() => new Set())
+  const retitle = (id: ThreadId) => {
+    if (waiting.has(id)) return
+    setWaiting((now) => new Set(now).add(id))
+    const settle = () => setWaiting((now) => new Set([...now].filter((other) => other !== id)))
+    void orSay(
+      run(regenerateThreadTitle(id)),
+      'Vivid could not think of a better title just now.',
+    ).then(settle, settle)
+  }
+  return { waiting, retitle }
+}
+
+/** A title Vivid is thinking of a replacement for: quieter, and still, until the new one lands. */
+const IN_FLUX = 'transition-opacity duration-(--dur-fast) aria-busy:opacity-50'
 
 const DAY = 86_400_000
 
@@ -110,6 +147,7 @@ export function Threads({
 }) {
   const [doing, setDoing] = useState<Doing>(Doing.Nothing())
   const [doneOpen, setDoneOpen] = useState(false)
+  const { waiting, retitle } = useRetitling()
   // Read once when the list mounts: grouping by day does not need to tick.
   const [now] = useState(() => Date.now())
   const current = threads.filter((thread) => !thread.archived)
@@ -134,6 +172,7 @@ export function Threads({
         active={thread.id === active}
         now={now}
         renaming={Doing.$is('Renaming')(doing) && doing.id === thread.id}
+        retitling={waiting.has(thread.id)}
         onDo={setDoing}
       />
     </li>
@@ -191,7 +230,7 @@ export function Threads({
         </section>
       )}
       {Doing.$is('Choosing')(doing) && (
-        <ThreadMenu thread={doing.thread} at={doing.at} onDo={setDoing} />
+        <ThreadMenu thread={doing.thread} at={doing.at} onDo={setDoing} onRetitle={retitle} />
       )}
       {Doing.$is('Moving')(doing) && <MoveThread thread={doing.thread} onClose={nothing} />}
       {Doing.$is('Deleting')(doing) && <DeleteThread thread={doing.thread} onClose={nothing} />}
@@ -207,6 +246,8 @@ interface RowProps {
   readonly active: boolean
   readonly now: number
   readonly renaming: boolean
+  /** Whether Vivid has been asked for a better title and has not answered yet. */
+  readonly retitling: boolean
   readonly onDo: (doing: Doing) => void
 }
 
@@ -241,7 +282,7 @@ function ThreadRow(props: RowProps) {
 const openThread = (thread: Thread) => router.go(Route.Thread({ id: thread.id }))
 
 /** A Thread that needs someone or is being worked on: who is in it, its state, its last line. */
-function CardFace({ thread, active, onDo }: RowProps) {
+function CardFace({ thread, active, retitling, onDo }: RowProps) {
   return (
     <button
       onClick={() => openThread(thread)}
@@ -261,7 +302,12 @@ function CardFace({ thread, active, onDo }: RowProps) {
           <StatusLabel status={thread.attention === 'NeedsYou' ? 'attention' : 'working'} />
         </span>
       </span>
-      <span className="mt-0.5 block truncate text-title text-ink">{thread.title}</span>
+      <span
+        aria-busy={retitling}
+        className={cn('mt-0.5 block truncate text-title text-ink', IN_FLUX)}
+      >
+        {thread.title}
+      </span>
       <span className="mt-0.5 block truncate text-label font-meta text-ink-3">
         {thread.preview}
       </span>
@@ -270,7 +316,7 @@ function CardFace({ thread, active, onDo }: RowProps) {
 }
 
 /** Any other Thread: a mark that says whether it has something unread, its title, and when. */
-function LineFace({ thread, active, now, onDo }: RowProps) {
+function LineFace({ thread, active, now, retitling, onDo }: RowProps) {
   const unread = thread.attention === 'Unread' && !active
   return (
     <button
@@ -283,8 +329,10 @@ function LineFace({ thread, active, now, onDo }: RowProps) {
         <i className={cn('size-1.5 rounded-full', unread ? 'bg-accent' : 'bg-line-4')} />
       </span>
       <span
+        aria-busy={retitling}
         className={cn(
           'min-w-0 flex-1 truncate text-label',
+          IN_FLUX,
           unread && 'font-strong',
           unread || active ? 'text-ink' : 'text-ink-2 group-hover/row:text-ink',
         )}
@@ -391,10 +439,13 @@ function ThreadMenu({
   thread,
   at,
   onDo,
+  onRetitle,
 }: {
   thread: Thread
   at: MenuPoint
   onDo: (doing: Doing) => void
+  /** Asks Vivid for a better title. The menu closes at once; the row shows that it was asked. */
+  onRetitle: (id: ThreadId) => void
 }) {
   return (
     <ContextMenu at={at} onClose={() => onDo(Doing.Nothing())}>
@@ -403,6 +454,15 @@ function ThreadMenu({
         onSelect={() => onDo(Doing.Renaming({ id: thread.id }))}
       >
         Rename
+      </MenuItem>
+      <MenuItem
+        icon={<RefreshCw className="size-3.5" />}
+        onSelect={() => {
+          onRetitle(thread.id)
+          onDo(Doing.Nothing())
+        }}
+      >
+        Regenerate title
       </MenuItem>
       <MenuItem
         icon={thread.archived ? <Undo2 className="size-3.5" /> : <Check className="size-3.5" />}

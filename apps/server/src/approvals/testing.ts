@@ -252,6 +252,7 @@ export const fixture = Effect.fn('TrustTest.fixture')(function* () {
       {
         id: personalId,
         title: 'Personal',
+        titleSource: 'Person',
         personId: first.id,
         companyId: null,
         audience: 'private',
@@ -260,6 +261,7 @@ export const fixture = Effect.fn('TrustTest.fixture')(function* () {
       {
         id: companyId,
         title: 'Company work',
+        titleSource: 'Person',
         personId: first.id,
         companyId: company.id,
         audience: 'private',
@@ -268,6 +270,7 @@ export const fixture = Effect.fn('TrustTest.fixture')(function* () {
       {
         id: otherId,
         title: 'Other personal',
+        titleSource: 'Person',
         personId: second.id,
         companyId: null,
         audience: 'private',

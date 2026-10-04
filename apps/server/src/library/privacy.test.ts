@@ -57,6 +57,7 @@ const setup = Effect.fn('LibraryPrivacy.setup')(function* () {
       {
         id: privateId,
         title: 'Private privacy test',
+        titleSource: 'Person',
         audience: 'private',
         personId: actor.person.id,
         companyId: people.company.id,
@@ -65,6 +66,7 @@ const setup = Effect.fn('LibraryPrivacy.setup')(function* () {
       {
         id: peopleId,
         title: 'People privacy test',
+        titleSource: 'Person',
         audience: 'people',
         personId: actor.person.id,
         companyId: people.company.id,
@@ -73,6 +75,7 @@ const setup = Effect.fn('LibraryPrivacy.setup')(function* () {
       {
         id: companyId,
         title: 'Company privacy test',
+        titleSource: 'Person',
         audience: 'company',
         personId: actor.person.id,
         companyId: people.company.id,

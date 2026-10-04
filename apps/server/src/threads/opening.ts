@@ -57,7 +57,13 @@ export const openAttentionThread = Effect.fn('Threads.openAttention')(function* 
     .update(JSON.stringify([runId, title, context]))
     .digest('hex')
   const id = ThreadId.make(identity)
-  yield* (yield* ThreadStore).ensure({ id, title, personId: input.personId, companyId: null })
+  yield* (yield* ThreadStore).ensure({
+    id,
+    title,
+    titleSource: 'Assigned',
+    personId: input.personId,
+    companyId: null,
+  })
   yield* (yield* Conversation).admit({
     threadId: id,
     personId: input.personId,

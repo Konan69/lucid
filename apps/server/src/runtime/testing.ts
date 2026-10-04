@@ -37,9 +37,13 @@ export const productFixture = Effect.fn('Models.test.product')(function* () {
       .values({ id: personId, name: 'Provider test', email: `${personId}@example.test` }),
   )
   yield* database.run(
-    database
-      .insert(threads)
-      .values({ id: threadId, personId, title: 'Provider test', updatedAt: 0 }),
+    database.insert(threads).values({
+      id: threadId,
+      personId,
+      title: 'Provider test',
+      titleSource: 'Person',
+      updatedAt: 0,
+    }),
   )
   return { personId, threadId }
 })

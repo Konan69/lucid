@@ -1,0 +1,1 @@
+ALTER TABLE "vivid_conversations" ALTER COLUMN "title_source" DROP DEFAULT;

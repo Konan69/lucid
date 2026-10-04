@@ -135,9 +135,13 @@ const working = Effect.fn('DeviceTest.working')(function* (owner: Person, acting
   const threadId = ThreadId.make(NodeCrypto.randomUUID())
   const runId = RunId.make(NodeCrypto.randomUUID())
   yield* database.run(
-    database
-      .insert(threads)
-      .values({ id: threadId, title: 'Device test', personId: owner.id, updatedAt: 0 }),
+    database.insert(threads).values({
+      id: threadId,
+      title: 'Device test',
+      titleSource: 'Person',
+      personId: owner.id,
+      updatedAt: 0,
+    }),
   )
   yield* database.run(
     database.insert(runs).values({

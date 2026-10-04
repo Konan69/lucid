@@ -13,6 +13,7 @@ import type { EffectPgQueryEffectHKT, EffectPgQueryResultHKT } from 'drizzle-orm
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core/errors'
 import type { PgEffectTransaction } from 'drizzle-orm/pg-core/effect/session'
 import { ServerConfig } from '../config.ts'
+import { postgresCodecs } from './codecs.ts'
 
 type DriverError = SqlErrorModule.SqlError | EffectDrizzleQueryError
 export type DatabaseInfrastructureError =
@@ -94,6 +95,8 @@ export const databaseLayer = Layer.unwrap(
     const postgresLayer = pgClientLayer({
       url: config.DATABASE_URL,
       applicationName: 'vivid-server',
+      // The owned codec policy covers catalogue types missing from the pinned driver.
+      types: postgresCodecs(),
     })
     return Layer.effect(
       Database,

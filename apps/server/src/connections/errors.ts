@@ -1,10 +1,19 @@
 import { Match } from 'effect'
-import { Conflict, InvalidRequest, ServiceUnavailable } from '@vivid/contracts'
+import {
+  Conflict,
+  InvalidRequest,
+  ServiceUnavailable,
+  openApiUnsupportedMessage,
+  mcpQueryUnsupportedMessage,
+} from '@vivid/contracts'
 import { connectionSetupMessage, resourceReason, type ExecutorFailure } from './executor.ts'
 
 /** Provider internals never cross RPC; unavailable authority remains distinct from bad user input. */
 export const executorFailure = Match.type<ExecutorFailure>().pipe(
   Match.tagsExhaustive({
+    ExecutorImportQueryUnsupported: () =>
+      new InvalidRequest({ message: mcpQueryUnsupportedMessage }),
+    ExecutorSourceUnsupported: () => new InvalidRequest({ message: openApiUnsupportedMessage }),
     ExecutorPublicAddressRequired: () =>
       new ServiceUnavailable({
         service: 'connections',
@@ -13,6 +22,8 @@ export const executorFailure = Match.type<ExecutorFailure>().pipe(
     ServiceUnavailable: (error) => error,
     ExecutorSetupRequired: () => new InvalidRequest({ message: connectionSetupMessage }),
     ExecutorRejected: ({ message }) => new InvalidRequest({ message }),
+    ExecutorAppNameTaken: () =>
+      new Conflict({ message: 'The Integration installation changed; retry connecting.' }),
     ExecutorConflict: () =>
       new Conflict({ message: 'The integration changed; reload before continuing.' }),
     ExecutorSignInRequired: ({ message }) => new InvalidRequest({ message }),

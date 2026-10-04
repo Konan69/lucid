@@ -127,6 +127,7 @@ export const fixture = Effect.fn('PushTest.fixture')(function* () {
       id: threadId,
       personId: person.id,
       title: 'Waiting reply',
+      titleSource: 'Person',
       companyId: null,
       audience: 'private',
       updatedAt: now,

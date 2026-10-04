@@ -119,8 +119,10 @@ export function Connections({ me }: { me: MeResponse }) {
   }
 
   async function connect(service: Service) {
-    // A sign-in tab is opened by the click itself, before the server is asked anything.
-    const tab = ServiceAuthorization.guards.SignIn(service.authorization)
+    // A sign-in tab is opened by the click itself, before the server is asked anything. A service
+    // whose way in is known only after install may turn out to want a sign-in, so it gets the tab
+    // too; `follow` closes a tab the answer does not need.
+    const tab = ServiceAuthorization.isAnyOf(['SignIn', 'KnownAfterInstall'])(service.authorization)
       ? window.open('about:blank', '_blank')
       : null
     mark(service.id, Option.some('starting'))
@@ -524,6 +526,7 @@ function noteOf(service: Service, connected: boolean, pressed: Option.Option<Pre
     Key: () => Option.some('Needs a key'),
     None: () => Option.none<string>(),
     SetupRequired: () => Option.some('Not set up on this Vivid'),
+    KnownAfterInstall: () => Option.none<string>(),
   })
 }
 

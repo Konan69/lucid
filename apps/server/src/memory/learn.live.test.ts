@@ -84,6 +84,7 @@ describe.skipIf(!enabled)('Settled Run learning', () => {
           email: `learning-${suffix}@example.test`,
         })
         const thread = StoredThread.make({
+          titleSource: 'Person',
           id: ThreadId.make(`learning-${suffix}`),
           title: 'A private preference',
           preview: '',

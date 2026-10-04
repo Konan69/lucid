@@ -1,11 +1,12 @@
 import { ThreadAudience, type Thread } from '@vivid/contracts'
 import { Option, Result } from 'effect'
 import { Users } from 'lucide-react-native'
+import { useState } from 'react'
 import { View } from 'react-native'
 import { commit, warn } from '../../data/haptics'
 import { relativeTime, type Lane } from '../../data/lanes'
 import { useLiveData } from '../../data/live'
-import { deleteThread, patchThread } from '../../data/threads'
+import { deleteThread, patchThread, retitleThread } from '../../data/threads'
 import { ControlPillMenu } from '../../t3/Menu'
 import { ThreadSwipeable } from '../../t3/swipe'
 import { useTheme } from '../../theme'
@@ -43,8 +44,19 @@ function Standing({ thread }: { thread: Thread }) {
   )
 }
 
+/** What each face of a row is told: the Thread, whether a finger is on it, and its title's state. */
+interface FaceProps {
+  readonly thread: Thread
+  readonly pressed: boolean
+  /** Whether Vivid has been asked for a better title and has not answered yet. */
+  readonly retitling: boolean
+}
+
+/** A title Vivid is thinking of a replacement for is drawn quieter, and still, until it lands. */
+const titleOpacity = (retitling: boolean) => (retitling ? 0.5 : 1)
+
 /** A Thread that needs someone or is being worked on: its state, who is in it, its last words. */
-function CardFace({ thread, pressed }: { thread: Thread; pressed: boolean }) {
+function CardFace({ thread, pressed, retitling }: FaceProps) {
   const { colors: c } = useTheme()
   return (
     <View
@@ -66,7 +78,11 @@ function CardFace({ thread, pressed }: { thread: Thread; pressed: boolean }) {
         <View style={{ flex: 1 }} />
         <Audience thread={thread} />
       </View>
-      <Label numberOfLines={1} size="footnote" style={{ fontSize: 15 }}>
+      <Label
+        numberOfLines={1}
+        size="footnote"
+        style={{ fontSize: 15, opacity: titleOpacity(retitling) }}
+      >
         {thread.title}
       </Label>
       {thread.preview.length > 0 && (
@@ -79,7 +95,7 @@ function CardFace({ thread, pressed }: { thread: Thread; pressed: boolean }) {
 }
 
 /** Any other Thread: a mark that says whether something in it is unread, its title, and when. */
-function LineFace({ thread, now, pressed }: { thread: Thread; now: number; pressed: boolean }) {
+function LineFace({ thread, now, pressed, retitling }: FaceProps & { readonly now: number }) {
   const { colors: c } = useTheme()
   const unread = thread.attention === 'Unread'
   return (
@@ -99,7 +115,7 @@ function LineFace({ thread, now, pressed }: { thread: Thread; now: number; press
       <Label
         numberOfLines={1}
         tone={unread ? 'ink' : 'ink-2'}
-        style={{ flex: 1, fontWeight: unread ? '600' : '400' }}
+        style={{ flex: 1, fontWeight: unread ? '600' : '400', opacity: titleOpacity(retitling) }}
       >
         {thread.title}
       </Label>
@@ -151,6 +167,7 @@ export function ThreadRow({
   const { colors: c } = useTheme()
   const data = useLiveData()
   const shelveLabel = thread.archived ? 'Move back to threads' : 'Mark as done'
+  const [retitling, setRetitling] = useState(false)
 
   /** Follows a quick action to its end and tells the list what came of it. */
   const follow = async (made: Promise<Result.Result<unknown, unknown>>, words: string) => {
@@ -164,6 +181,20 @@ export function ThreadRow({
       patchThread(data, thread.id, { archived: !thread.archived }),
       'That thread could not be moved just now. Try again.',
     )
+  }
+  /**
+   * Asks Vivid for a better title. The title is drawn quieter while Vivid thinks, since the menu
+   * has closed and nothing else would say the press was heard; a second press while one is
+   * already asked does nothing.
+   */
+  const retitle = () => {
+    if (retitling) return
+    commit()
+    setRetitling(true)
+    const settle = () => setRetitling(false)
+    const asked = retitleThread(data, thread.id)
+    void asked.then(settle, settle)
+    void follow(asked, 'Vivid could not think of a better title just now.')
   }
   const remove = () =>
     confirmDestructive({
@@ -185,6 +216,7 @@ export function ThreadRow({
   })
   const chosen = new Map([
     ['rename', () => onRename(thread)],
+    ['retitle', retitle],
     ['file', () => Option.map(onFile, (file) => file(thread))],
     ['shelve', shelve],
     ['remove', remove],
@@ -211,6 +243,7 @@ export function ThreadRow({
           title={thread.title}
           actions={[
             { id: 'rename', title: 'Rename' },
+            { id: 'retitle', title: 'Regenerate title' },
             ...filing,
             { id: 'shelve', title: shelveLabel },
             { id: 'remove', title: 'Delete…', attributes: { destructive: true } },
@@ -223,9 +256,9 @@ export function ThreadRow({
           <Press accessibilityRole="button" onPress={() => onOpen(thread)}>
             {({ pressed }) =>
               variant === 'card' ? (
-                <CardFace thread={thread} pressed={pressed} />
+                <CardFace thread={thread} pressed={pressed} retitling={retitling} />
               ) : (
-                <LineFace thread={thread} now={now} pressed={pressed} />
+                <LineFace thread={thread} now={now} pressed={pressed} retitling={retitling} />
               )
             }
           </Press>

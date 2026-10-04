@@ -19,6 +19,7 @@ import { MemoryAccess } from './store.ts'
 
 const input: LearningInput = {
   thread: StoredThread.make({
+    titleSource: 'Person',
     id: ThreadId.make('MARK-thread'),
     personId: PersonId.make('MARK-person'),
     companyId: null,
@@ -246,6 +247,7 @@ describe('settled exchange context', () => {
         const shared = {
           ...input,
           thread: StoredThread.make({
+            titleSource: 'Person',
             id: input.thread.id,
             personId: input.thread.personId,
             companyId: input.thread.companyId,

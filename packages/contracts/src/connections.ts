@@ -51,6 +51,13 @@ export const ServiceAuthorization = Schema.TaggedUnion({
    * found by name, and it is not offered.
    */
   SetupRequired: {},
+  /**
+   * How the service is entered is not known until it is installed: Executor's hosted catalogue
+   * lists a service without saying whether it wants a sign-in, a key, or nothing. Beginning the
+   * Connection installs it, reads what it needs, and answers with the real next step. It is on
+   * offer, unlike `SetupRequired`.
+   */
+  KnownAfterInstall: {},
 })
 export type ServiceAuthorization = typeof ServiceAuthorization.Type
 
@@ -285,8 +292,16 @@ export const AddIntegrationRequest = Schema.Struct({
 })
 export interface AddIntegrationRequest extends Schema.Schema.Type<typeof AddIntegrationRequest> {}
 
+export const mcpQueryUnsupportedMessage =
+  'An MCP server address cannot include query parameters. Use its base endpoint address.'
+
+export const openApiUnsupportedMessage =
+  'An OpenAPI document cannot be added as an Integration yet. You can add an MCP server.'
+
 /** Failure reasons are precise and credential-free; documentation must publish a specification link. */
 export const ConnectionAddressRefusal = Schema.Literals([
+  openApiUnsupportedMessage,
+  mcpQueryUnsupportedMessage,
   'not a public web address',
   'documentation page has no OpenAPI specification link',
   'not an MCP server or OpenAPI specification',

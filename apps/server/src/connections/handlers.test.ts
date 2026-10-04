@@ -24,7 +24,7 @@ import {
   Executor,
   ExecutorAccessDenied,
   ExecutorCallOutcome,
-  ExecutorRequestId,
+  ExecutorApprovalUnsupported,
   ExecutorResourceMissing,
   ExecutorAuthorizationUnavailable,
   ExecutorReferences,
@@ -600,52 +600,56 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
           expect((yield* store.get(ownerActor, ready.connection.id)).status).toBe('ready')
         }),
     )
-    it.effect(
-      'resumes provider consent only after Vivid allows it and reports uncertain execution',
-      () =>
-        Effect.gen(function* () {
-          const { ownerActor, threadId } = yield* fixture()
-          const store = yield* ConnectionStore
-          const probe = yield* ConnectionProbe
-          const step = yield* store.begin(ownerActor, {
-            service: serviceId,
-            label: 'Approved account',
-            shared: false,
-          })
-          const auth = AuthState.Vivid({
-            person: ownerActor.person,
-            workspace: ownerActor.workspace,
-            threadId,
-          })
-          yield* Ref.set(probe.decision, 'Allowed')
-          yield* Ref.set(
-            probe.outcome,
-            ExecutorCallOutcome.cases.ApprovalRequired.make({
-              requestId: ExecutorRequestId.make('provider-approval'),
-              expiresAt: 100_000,
-            }),
+    it.effect('refuses unsupported provider approvals and reports uncertain execution', () =>
+      Effect.gen(function* () {
+        const { ownerActor, threadId } = yield* fixture()
+        const store = yield* ConnectionStore
+        const probe = yield* ConnectionProbe
+        const step = yield* store.begin(ownerActor, {
+          service: serviceId,
+          label: 'Approved account',
+          shared: false,
+        })
+        const auth = AuthState.Vivid({
+          person: ownerActor.person,
+          workspace: ownerActor.workspace,
+          threadId,
+        })
+        yield* Ref.set(probe.decision, 'Allowed')
+        const executor = yield* Executor
+        const refused = Executor.of({
+          ...executor,
+          call: () => Effect.fail(new ExecutorApprovalUnsupported({ tool: 'write' })),
+        })
+        const failure = yield* connectionHandlers
+          .UseTool(toolRequest(step.connection.id, 'write'))
+          .pipe(
+            Effect.provideService(AuthContext, auth),
+            Effect.provideService(Executor, refused),
+            Effect.flip,
           )
-          const resumed = yield* connectionHandlers
-            .UseTool(toolRequest(step.connection.id, 'write'))
-            .pipe(Effect.provideService(AuthContext, auth))
-          expect(resumed).toMatchObject({ output: { resumed: true } })
-          yield* Ref.set(probe.outcome, ExecutorCallOutcome.cases.OutcomeUnknown.make({}))
-          const before = yield* Ref.get(probe.calls)
-          const uncertain = yield* connectionHandlers
-            .UseTool(toolRequest(step.connection.id, 'write'))
-            .pipe(Effect.provideService(AuthContext, auth))
-          expect(uncertain._tag).toBe('OutcomeUnknown')
-          expect(yield* Ref.get(probe.calls)).toBe(before + 1)
-          const absent = yield* connectionHandlers
-            .UseTool(toolRequest(step.connection.id, 'absent-tool'))
-            .pipe(Effect.provideService(AuthContext, auth))
-          expect(absent._tag).toBe('Rejected')
-          expect(JSON.stringify(absent)).toContain('absent-tool')
-          yield* Ref.set(
-            probe.outcome,
-            ExecutorCallOutcome.cases.Completed.make({ value: { ok: true } }),
-          )
-        }),
+        expect(failure).toHaveProperty('_tag', 'InvalidRequest')
+        expect(failure).toHaveProperty(
+          'message',
+          'This Integration action needs an approval Vivid cannot give yet.',
+        )
+        yield* Ref.set(probe.outcome, ExecutorCallOutcome.cases.OutcomeUnknown.make({}))
+        const before = yield* Ref.get(probe.calls)
+        const uncertain = yield* connectionHandlers
+          .UseTool(toolRequest(step.connection.id, 'write'))
+          .pipe(Effect.provideService(AuthContext, auth))
+        expect(uncertain._tag).toBe('OutcomeUnknown')
+        expect(yield* Ref.get(probe.calls)).toBe(before + 1)
+        const absent = yield* connectionHandlers
+          .UseTool(toolRequest(step.connection.id, 'absent-tool'))
+          .pipe(Effect.provideService(AuthContext, auth))
+        expect(absent._tag).toBe('Rejected')
+        expect(JSON.stringify(absent)).toContain('absent-tool')
+        yield* Ref.set(
+          probe.outcome,
+          ExecutorCallOutcome.cases.Completed.make({ value: { ok: true } }),
+        )
+      }),
     )
   })
 })

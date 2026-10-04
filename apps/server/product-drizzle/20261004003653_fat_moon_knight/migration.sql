@@ -1,0 +1,2 @@
+CREATE TYPE "vivid_thread_title_source" AS ENUM('Seed', 'Generated', 'Person');--> statement-breakpoint
+ALTER TABLE "vivid_conversations" ADD COLUMN "title_source" "vivid_thread_title_source" DEFAULT 'Person'::"vivid_thread_title_source" NOT NULL;

@@ -174,6 +174,7 @@ describe.skipIf(!testDatabaseConfigured)('Library shelves', () => {
               {
                 id: sharedId,
                 title: 'Shared search',
+                titleSource: 'Person',
                 personId: people.owner.actor.person.id,
                 companyId: people.company.id,
                 audience: 'company',
@@ -182,6 +183,7 @@ describe.skipIf(!testDatabaseConfigured)('Library shelves', () => {
               {
                 id: privateId,
                 title: 'Private search',
+                titleSource: 'Person',
                 personId: people.owner.actor.person.id,
                 companyId: people.company.id,
                 audience: 'private',

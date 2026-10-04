@@ -169,6 +169,9 @@ import {
   ThreadDetail,
   ThreadListResponse,
   ThreadResponse,
+  ThreadTitleHistoryUnavailable,
+  ThreadTitleModelUnavailable,
+  ThreadTitleOutputInvalid,
   DeliveryScope,
   DeliveryScopeRequest,
 } from './threads.js'
@@ -334,6 +337,18 @@ const PatchThread = Rpc.make('PatchThread', {
   ...call,
   payload: { id: ThreadId, patch: PatchThreadRequest },
   success: ThreadResponse,
+})
+/** Explicit naming uses the same visibility/rename authority as PatchThread. */
+const RegenerateThreadTitle = Rpc.make('RegenerateThreadTitle', {
+  ...call,
+  payload: { thread: ThreadId },
+  success: Schema.Struct({ title: Schema.String }),
+  error: Schema.Union([
+    RpcFailure,
+    ThreadTitleHistoryUnavailable,
+    ThreadTitleModelUnavailable,
+    ThreadTitleOutputInvalid,
+  ]),
 })
 const ShareThread = Rpc.make('ShareThread', {
   ...call,
@@ -769,6 +784,7 @@ export const VividRpc = RpcGroup.make(
   OpenFirstThread,
   OpenThread,
   PatchThread,
+  RegenerateThreadTitle,
   ShareThread,
   DeleteThread,
   MarkThreadRead,

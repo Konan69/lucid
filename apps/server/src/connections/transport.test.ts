@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { ConnectionId, InvalidRequest, ServiceId } from '@vivid/contracts'
-import { ConfigProvider, Effect, Layer, Redacted, Ref, Schema } from 'effect'
+import { ConfigProvider, Effect, Layer, Redacted, Ref, Schema, Deferred, Fiber } from 'effect'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import {
   Executor,
@@ -12,7 +12,6 @@ import {
   ExecutorOwnerId,
   ExecutorProfileId,
   ExecutorReferences,
-  ExecutorRequestId,
   ExecutorResponseInvalid,
   ExecutorSetupRequired,
   ExecutorStep,
@@ -73,6 +72,8 @@ const keyRequirement = {
 const signInRequirement = {
   slot: { provider: 'provider', definition: { auth: { oauth: { type: 'oauth2' } } } },
 }
+const isFirstInstall = Schema.is(Schema.Struct({ entry: Schema.Literal(hostedService) }))
+const decodeInstallName = Schema.decodeUnknownSync(Schema.Struct({ name: Schema.String }))
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json)
 const approvalRequiredReply = Schema.TaggedStruct('ToolApprovalRequired', {
   app: Schema.String,
@@ -174,6 +175,172 @@ describe('Executor hosted transport', () => {
     ),
   )
 
+  it.effect('installs different app names independently while one install is blocked', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        const other = ServiceId.make('other/service')
+        yield* Ref.update(remote.catalog, (entries) => [
+          ...entries,
+          { id: other, kind: 'app', name: 'Other Integration', description: '' },
+        ])
+        const entered = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        yield* Ref.set(
+          remote.intercept,
+          Effect.fn('InstallTest.blockFirst')(function* (request) {
+            if (
+              request.path === `POST ${hostedPrefix}/apps/install` &&
+              isFirstInstall(request.body)
+            ) {
+              yield* Deferred.succeed(entered, undefined)
+              yield* Deferred.await(release)
+            }
+          }),
+        )
+        const executor = yield* Executor
+        const first = yield* executor.begin(begin).pipe(Effect.forkChild)
+        yield* Deferred.await(entered)
+        const second = yield* executor.begin({
+          ...begin,
+          service: other,
+          connectionId: ConnectionId.make('second'),
+        })
+        expect(second._tag).toBe('Done')
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(first)
+        expect(
+          (yield* Ref.get(remote.requests)).filter(
+            (request) => request.path === `POST ${hostedPrefix}/apps/install`,
+          ),
+        ).toHaveLength(2)
+      }),
+    ),
+  )
+
+  it.effect('rereads inventory once after another process wins the exact app-name race', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        yield* Ref.set(
+          remote.intercept,
+          Effect.fn('InstallTest.racingProcess')(function* (request) {
+            if (request.path !== `POST ${hostedPrefix}/apps/install`) return
+            const payload = decodeInstallName(request.body)
+            yield* Ref.set(remote.apps, [{ id: 'app', name: payload.name }])
+          }),
+        )
+        yield* failRoute(remote, 'POST /apps/install', {
+          status: 409,
+          body: Schema.TaggedStruct('AppNameTaken', {}).make({}),
+        })
+        expect((yield* (yield* Executor).begin(begin))._tag).toBe('Done')
+        const requests = yield* Ref.get(remote.requests)
+        expect(
+          requests.filter((request) => request.path === `GET ${hostedPrefix}/inventory`),
+        ).toHaveLength(2)
+        expect(
+          requests.filter((request) => request.path === `POST ${hostedPrefix}/apps/install`),
+        ).toHaveLength(1)
+        expect(
+          requests.filter((request) => request.path === `GET ${hostedPrefix}/apps/app`),
+        ).toHaveLength(1)
+      }),
+    ),
+  )
+
+  it.effect('keeps two distinct Integrations on their own installed app and profile ids', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        const other = ServiceId.make('other/service')
+        yield* Ref.update(remote.catalog, (entries) => [
+          ...entries,
+          { id: other, kind: 'app', name: 'Other Integration', description: '' },
+        ])
+        const executor = yield* Executor
+        const first = yield* executor.begin(begin)
+        const second = yield* executor.begin({
+          ...begin,
+          service: other,
+          connectionId: ConnectionId.make('second'),
+        })
+        const repeated = yield* executor.begin({
+          ...begin,
+          service: other,
+          connectionId: ConnectionId.make('third'),
+        })
+        expect(first.references.app).not.toBe(second.references.app)
+        expect(first.references.profile).not.toBe(second.references.profile)
+        expect(repeated.references.app).toBe(second.references.app)
+        expect(repeated.references.profile).not.toBe(second.references.profile)
+        const requests = yield* Ref.get(remote.requests)
+        expect(
+          requests.filter((request) => request.path === `POST ${hostedPrefix}/apps/install`),
+        ).toHaveLength(2)
+        expect(
+          requests.filter(
+            (request) =>
+              request.path === `POST ${hostedPrefix}/apps/${first.references.app}/profiles`,
+          ),
+        ).toHaveLength(1)
+        expect(
+          requests.filter(
+            (request) =>
+              request.path === `POST ${hostedPrefix}/apps/${second.references.app}/profiles`,
+          ),
+        ).toHaveLength(2)
+        yield* executor.remove(first.references)
+        expect(
+          (yield* Ref.get(remote.requests))
+            .filter((request) => request.path.startsWith('DELETE'))
+            .map((request) => request.path),
+        ).toEqual([
+          `DELETE ${hostedPrefix}/apps/${first.references.app}/profiles/${first.references.profile}`,
+        ])
+      }),
+    ),
+  )
+
+  it.effect('ignores foreign requirement shapes and reads only the selected installed app', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        const executor = yield* Executor
+        const first = yield* executor.begin(begin)
+        const installed = yield* Ref.get(remote.apps)
+        yield* failRoute(remote, 'GET /inventory', {
+          status: 200,
+          body: {
+            apps: [
+              {
+                id: 'foreign-app',
+                name: 'Other app',
+                requirements: {
+                  accounts: { many: { definition: { auth: { alien: { type: 'future-auth' } } } } },
+                },
+              },
+              ...installed.map((app) => ({
+                id: app.id,
+                name: app.name,
+                requirements: 'detail must be fetched separately',
+              })),
+            ],
+          },
+        })
+        const second = yield* executor.begin({
+          ...begin,
+          connectionId: ConnectionId.make('second'),
+        })
+        expect(second.references.app).toBe(first.references.app)
+        const requests = yield* Ref.get(remote.requests)
+        expect(
+          requests.filter((request) => request.path === `POST ${hostedPrefix}/apps/install`),
+        ).toHaveLength(1)
+        expect(
+          requests.filter((request) => request.path === `GET ${hostedPrefix}/apps/app`),
+        ).toHaveLength(1)
+        expect(requests.some((request) => request.path.includes('foreign-app'))).toBe(false)
+      }),
+    ),
+  )
+
   it.effect('imports one shared MCP app with the source-verified body', () =>
     scenario((remote) =>
       Effect.gen(function* () {
@@ -217,13 +384,86 @@ describe('Executor hosted transport', () => {
           address: 'https://example.test/openapi.json',
         })
         const error = yield* (yield* Executor).add({ ...begin, source }).pipe(Effect.flip)
-        expect(error).toHaveProperty('_tag', 'ExecutorRejected')
+        expect(error).toHaveProperty('_tag', 'ExecutorSourceUnsupported')
+        expect(executorFailure(error)).toEqual(
+          new InvalidRequest({
+            message:
+              'An OpenAPI document cannot be added as an Integration yet. You can add an MCP server.',
+          }),
+        )
         expect(
           (yield* Ref.get(remote.requests)).every((request) => request.path.endsWith('/catalog')),
         ).toBe(true)
       }),
     ),
   )
+
+  it.effect('refuses query-bearing import URLs before HTTP with actionable copy', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        const source = ConnectionSource.cases.Mcp.make({
+          address: 'https://example.test/mcp?token=private-value',
+          authorization: 'auto',
+        })
+        const failure = yield* (yield* Executor).add({ ...begin, source }).pipe(Effect.flip)
+        expect(failure._tag).toBe('ExecutorImportQueryUnsupported')
+        expect(executorFailure(failure)).toHaveProperty(
+          'message',
+          'An MCP server address cannot include query parameters. Use its base endpoint address.',
+        )
+        expect(JSON.stringify(failure)).not.toContain('private-value')
+        expect(yield* Ref.get(remote.requests)).toEqual([])
+      }),
+    ),
+  )
+
+  it.effect('does not describe an unknown import refusal as a tool dispatch', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        yield* failRoute(remote, 'POST /apps/import', {
+          status: 422,
+          body: Schema.TaggedStruct('FutureImportFailure', {}).make({}),
+        })
+        const source = ConnectionSource.cases.Mcp.make({
+          address: 'https://example.test/mcp',
+          authorization: 'auto',
+        })
+        const failure = yield* (yield* Executor).add({ ...begin, source }).pipe(Effect.flip)
+        expect(executorFailure(failure)).toHaveProperty(
+          'message',
+          'The Integration management request was refused.',
+        )
+      }),
+    ),
+  )
+
+  for (const operation of ['status', 'reauthorize', 'remove'] as const) {
+    it.effect(`refuses a mismatching pending profile during ${operation} without mutation`, () =>
+      scenario((remote) =>
+        Effect.gen(function* () {
+          yield* failRoute(remote, 'GET /connections/authorization', {
+            status: 200,
+            body: {
+              id: 'authorization',
+              reconnectAccount: null,
+              target: { app: 'app', profile: 'foreign-profile' },
+              state: { status: 'pending' },
+            },
+          })
+          const executor = yield* Executor
+          const action =
+            operation === 'reauthorize'
+              ? executor.reauthorize({ ...begin, references: key })
+              : executor[operation](key)
+          const failure = yield* action.pipe(Effect.flip)
+          expect(failure).toBeInstanceOf(ExecutorResponseInvalid)
+          expect(
+            (yield* Ref.get(remote.requests)).every((request) => request.path.startsWith('GET')),
+          ).toBe(true)
+        }),
+      ),
+    )
+  }
 
   it.effect('reads every cursor page and pins the snapshot for invocation', () =>
     scenario((remote) =>
@@ -355,24 +595,6 @@ describe('Executor hosted transport', () => {
     ),
   )
 
-  for (const accept of [true, false]) {
-    it.effect(`refuses resume locally when accept is ${accept}`, () =>
-      scenario((remote) =>
-        Effect.gen(function* () {
-          const executor = yield* Executor
-          yield* executor.catalog()
-          const before = yield* Ref.get(remote.requests)
-          expect(
-            yield* executor
-              .resume({ references, requestId: ExecutorRequestId.make('old-request'), accept })
-              .pipe(Effect.flip),
-          ).toEqual(ExecutorApprovalUnsupported.make({ tool: null }))
-          expect(yield* Ref.get(remote.requests)).toEqual(before)
-        }),
-      ),
-    )
-  }
-
   it.effect(
     'begins an API-key connection from the real provider method, submits it and reconciles',
     () =>
@@ -413,6 +635,32 @@ describe('Executor hosted transport', () => {
       ),
   )
 
+  it.effect('prefers OAuth for a newly installed mixed-auth catalogue app', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        yield* Ref.set(remote.accounts, {
+          slot: {
+            provider: 'provider',
+            definition: {
+              auth: {
+                ...keyRequirement.slot.definition.auth,
+                ...signInRequirement.slot.definition.auth,
+              },
+            },
+          },
+        })
+        const step = yield* (yield* Executor).begin(begin)
+        expect(step._tag).toBe('OpenSignIn')
+        expect(
+          (yield* Ref.get(remote.requests)).find(
+            (request) =>
+              request.path === `POST ${hostedPrefix}/connections/authorization/oauth/start`,
+          ),
+        ).toMatchObject({ body: { method: 'oauth' } })
+      }),
+    ),
+  )
+
   it.effect('inspects OAuth setup and starts with the matching deployment redirect', () =>
     scenario((remote) =>
       Effect.gen(function* () {
@@ -420,7 +668,9 @@ describe('Executor hosted transport', () => {
         const step = yield* (yield* Executor).begin(begin)
         expect(ExecutorStep.guards.OpenSignIn(step)).toBe(true)
         if (ExecutorStep.guards.OpenSignIn(step))
-          expect(step.address).toBe('https://provider.example.test/sign-in')
+          expect(step.address).toBe(
+            'https://provider.example.test/sign-in?state=hosted-fixture-oauth-state-00000000',
+          )
         expect(step).not.toHaveProperty('url')
         const requests = yield* Ref.get(remote.requests)
         expect(
@@ -450,8 +700,35 @@ describe('Executor hosted transport', () => {
           expect(error).toBeInstanceOf(ExecutorSetupRequired)
           expect(JSON.stringify(executorFailure(error))).not.toMatch(/https?:|private-callback/u)
           expect(
-            (yield* Ref.get(remote.requests)).some((request) => request.path.startsWith('DELETE')),
-          ).toBe(false)
+            (yield* Ref.get(remote.requests))
+              .filter((request) => request.path.startsWith('DELETE'))
+              .map((request) => request.path),
+          ).toEqual([`DELETE ${hostedPrefix}/apps/app/profiles/profile-connection`])
+        }),
+      ),
+  )
+
+  it.effect(
+    'cleans up a profile after a lost authorization create and preserves that failure if cleanup fails',
+    () =>
+      scenario((remote) =>
+        Effect.gen(function* () {
+          yield* Ref.set(remote.accounts, keyRequirement)
+          yield* failRoute(remote, 'POST /apps/app/connections', {
+            status: 502,
+            body: Schema.TaggedStruct('StorageError', {}).make({}),
+          })
+          yield* failRoute(remote, 'DELETE /apps/app/profiles/profile-connection', {
+            status: 409,
+            body: profileConflictReply.make({}),
+          })
+          const failure = yield* (yield* Executor).begin(begin).pipe(Effect.flip)
+          expect(failure._tag).toBe('ExecutorExecutionUncertain')
+          expect(
+            (yield* Ref.get(remote.requests))
+              .filter((request) => request.path.startsWith('DELETE'))
+              .map((request) => request.path),
+          ).toEqual([`DELETE ${hostedPrefix}/apps/app/profiles/profile-connection`])
         }),
       ),
   )
@@ -548,6 +825,41 @@ describe('Executor hosted transport', () => {
     ),
   )
 
+  it.effect('retries a partial remove through an already absent profile and account', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        const executor = yield* Executor
+        yield* failRoute(remote, 'DELETE /accounts/account', {
+          status: 409,
+          body: profileConflictReply.make({}),
+        })
+        expect(yield* executor.remove(authorized).pipe(Effect.flip)).toHaveProperty(
+          '_tag',
+          'ExecutorConflict',
+        )
+        yield* failRoute(remote, 'DELETE /apps/app/profiles/profile', {
+          status: 404,
+          body: Schema.TaggedStruct('ProfileNotFound', {}).make({}),
+        })
+        yield* failRoute(remote, 'DELETE /accounts/account', {
+          status: 404,
+          body: Schema.TaggedStruct('AccountNotFound', {}).make({}),
+        })
+        yield* executor.remove(authorized)
+        expect(
+          (yield* Ref.get(remote.requests))
+            .filter((request) => request.path.startsWith('DELETE'))
+            .map((request) => request.path),
+        ).toEqual([
+          `DELETE ${hostedPrefix}/apps/app/profiles/profile`,
+          `DELETE ${hostedPrefix}/accounts/account`,
+          `DELETE ${hostedPrefix}/apps/app/profiles/profile`,
+          `DELETE ${hostedPrefix}/accounts/account`,
+        ])
+      }),
+    ),
+  )
+
   it.effect('removes the profile before its exact account and preserves the shared app', () =>
     scenario((remote) =>
       Effect.gen(function* () {
@@ -563,6 +875,33 @@ describe('Executor hosted transport', () => {
       }),
     ),
   )
+
+  for (const pending of [key, signingIn]) {
+    it.effect(`removes the saved reconnect account while ${pending._tag}`, () =>
+      scenario((remote) =>
+        Effect.gen(function* () {
+          yield* failRoute(remote, 'GET /connections/authorization', {
+            status: 200,
+            body: {
+              id: 'authorization',
+              reconnectAccount: { id: 'account' },
+              target: null,
+              state: { status: 'pending' },
+            },
+          })
+          yield* (yield* Executor).remove(pending)
+          expect(
+            (yield* Ref.get(remote.requests))
+              .filter((request) => request.path.startsWith('DELETE'))
+              .map((request) => request.path),
+          ).toEqual([
+            `DELETE ${hostedPrefix}/apps/app/profiles/profile`,
+            `DELETE ${hostedPrefix}/accounts/account`,
+          ])
+        }),
+      ),
+    )
+  }
 
   it.effect('lets pending requests expire and deletes only their profile', () =>
     scenario((remote) =>

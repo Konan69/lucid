@@ -24,7 +24,7 @@ const GoogleInstallation = Schema.Struct({
 export type GoogleInstallation = typeof GoogleInstallation.Type
 const decodeInstallation = Schema.decodeUnknownEffect(Schema.fromJsonString(GoogleInstallation))
 export const encodeGoogleClient = Schema.encodeEffect(GoogleInstallation.fields.client)
-export const googleReturnPath = '/api/connections/google/return'
+export const googleReturnPath = '/api/connections/return'
 export const GoogleState = Schema.String.check(Schema.isMinLength(32)).pipe(
   Schema.brand('GoogleState'),
 )

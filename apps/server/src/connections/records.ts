@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull, or, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
-import { Clock, Effect, Schema } from 'effect'
+import { Clock, Effect, Schema, Match } from 'effect'
 import {
   CompanyId,
   Connection,
@@ -19,7 +19,6 @@ import { Database, decodeStored, returned } from '../database/client.ts'
 import { changed, Topic } from '../live/changes.ts'
 import { ExecutorReferences } from './executor.ts'
 import { connections } from './tables.ts'
-import { GoogleState } from './google.ts'
 
 const rowSchema = createSelectSchema(connections, {
   id: ConnectionId,
@@ -73,13 +72,12 @@ export const getRecord = Effect.fn('Connections.getRecord')(function* (
   return yield* decodeRow(row)
 })
 
-/** A stable Google callback resolves exactly its stored OAuth state and initiating Person.
- * SQL parameters keep state out of diagnostics; pending state alone grants no callback authority.
- * Executor independently verifies that state, its request id, PKCE, and the exact redirect URI.
+/** A fixed callback resolves only the initiating Person's exact pending hash. Unknown,
+ * foreign, and consumed state are indistinguishable and never expose another Connection id.
  */
-export const googleCallbackId = Effect.fn('Connections.googleCallbackId')(function* (
+export const callbackId = Effect.fn('Connections.callbackId')(function* (
   actor: Actor,
-  state: typeof GoogleState.Type,
+  stateHash: string,
 ) {
   const database = yield* Database
   const rows = yield* database.run(
@@ -90,7 +88,8 @@ export const googleCallbackId = Effect.fn('Connections.googleCallbackId')(functi
         and(
           eq(connections.personId, actor.person.id),
           eq(connections.status, 'needs-authorization'),
-          sql`${connections.references}->>'googleState' = ${state}`,
+          sql`${connections.references}->>'_tag' = 'OAuthSigningIn'`,
+          sql`${connections.references}->>'stateHash' = ${stateHash}`,
         ),
       )
       .limit(2),
@@ -104,18 +103,19 @@ export const googleCallbackId = Effect.fn('Connections.googleCallbackId')(functi
 })
 
 /** Stored failure reasons are required only for failed state; invalid legacy rows fail explicitly. */
-export const stateOf = (row: ConnectionRecord) => {
-  switch (row.status) {
-    case 'ready':
-      return Effect.succeed(ConnectionState.cases.Ready.make({}))
-    case 'needs-authorization':
-      return Effect.succeed(ConnectionState.cases.NeedsAuthorization.make({}))
-    case 'failed':
-      if (row.reason === null)
-        return Effect.fail(new DatabaseFailure({ message: 'Failed integration has no reason' }))
-      return Effect.succeed(ConnectionState.cases.Failed.make({ reason: row.reason }))
-  }
-}
+export const stateOf = (row: ConnectionRecord) =>
+  Match.value(row.status).pipe(
+    Match.when('ready', () => Effect.succeed(ConnectionState.cases.Ready.make({}))),
+    Match.when('needs-authorization', () =>
+      Effect.succeed(ConnectionState.cases.NeedsAuthorization.make({})),
+    ),
+    Match.when('failed', () =>
+      row.reason === null
+        ? Effect.fail(new DatabaseFailure({ message: 'Failed integration has no reason' }))
+        : Effect.succeed(ConnectionState.cases.Failed.make({ reason: row.reason })),
+    ),
+    Match.exhaustive,
+  )
 
 /** Personal ownership always refers to the acting owner, never to a Company's administrator. */
 export const publicConnection = Effect.fn('Connections.public')(function* (

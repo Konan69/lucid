@@ -12,6 +12,7 @@ import { publicAddress as publicIp } from '../code/address.ts'
 import { PageReader, publicPageLayer } from '../code/page.ts'
 import { ReadPageOutcome } from '@vivid/contracts'
 import { ConnectionAddressRefusal } from '@vivid/contracts'
+import { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
 
 /** Invalid addresses never carry their supplied value, which might contain a pasted credential. */
 export class ConnectionAddressInvalid extends Schema.TaggedError<ConnectionAddressInvalid>()(
@@ -69,7 +70,13 @@ const decodeSpec = Schema.decodeUnknownOption(Schema.fromJsonString(Spec))
 interface ConnectionAddressService {
   readonly inspect: (
     address: string,
-  ) => Effect.Effect<ConnectionSource, ConnectionAddressInvalid | ConnectionAddressUnreachable>
+  ) => Effect.Effect<
+    ConnectionSource,
+    | ConnectionAddressInvalid
+    | ConnectionAddressUnreachable
+    | ExecutorSourceUnsupported
+    | ExecutorImportQueryUnsupported
+  >
 }
 /** Public endpoint inspection owns outbound network authority independently of Executor credentials. */
 export class ConnectionAddress extends Context.Service<
@@ -87,6 +94,16 @@ const Initialized = Schema.Struct({
 })
 const decodeInitialized = Schema.decodeUnknownOption(Schema.fromJsonString(Initialized))
 
+/** Match packages/catalog/src/contracts/imports.ts ImportUrl: query-bearing MCP endpoints
+ * cannot be installed. Keep the exact accepted URL; do not silently strip meaningful parameters. */
+const mcpSource = Effect.fn('Connections.mcpSource')(function* (
+  address: URL,
+  authorization: 'auto' | 'apiKey',
+) {
+  if (address.search.length > 0) return yield* Effect.fail(new ExecutorImportQueryUnsupported({}))
+  return ConnectionSource.cases.Mcp.make({ address: address.href, authorization })
+})
+
 /** OAuth metadata selects discovery; a plain Bearer challenge selects a masked token field. */
 const mcpAuthorization = Effect.fn('Connections.mcpAuthorization')(function* (
   address: URL,
@@ -99,10 +116,7 @@ const mcpAuthorization = Effect.fn('Connections.mcpAuthorization')(function* (
         reason: 'unsupported integration authorization or specification',
       }),
     )
-  return ConnectionSource.cases.Mcp.make({
-    address: address.href,
-    authorization: challenge.includes('resource_metadata') ? 'auto' : 'apiKey',
-  })
+  return yield* mcpSource(address, challenge.includes('resource_metadata') ? 'auto' : 'apiKey')
 })
 
 /** Preserve POST only across 307/308 redirects, rechecking every destination before dispatch. */
@@ -161,7 +175,7 @@ const probeMcp = Effect.fn('Connections.probeMcp')(function* (
     return yield* Effect.fail(
       ConnectionAddressInvalid.make({ reason: 'not an MCP server or OpenAPI specification' }),
     )
-  return ConnectionSource.cases.Mcp.make({ address: address.href, authorization: 'auto' })
+  return yield* mcpSource(address, 'auto')
 })
 
 /** One bounded public redirect chain is shared by initial URLs and discovered specification links. */
@@ -213,9 +227,7 @@ const specificationFromPage = Effect.fn('Connections.specificationFromPage')(fun
       Effect.mapError(() => ConnectionAddressUnreachable.make({})),
     )
     if (Option.isSome(decodeSpec(body)) || /^openapi:\s*['"]?3\./mu.test(body))
-      return ConnectionSource.cases.OpenApi.make({
-        address: candidate.value.address.href,
-      })
+      return yield* Effect.fail(new ExecutorSourceUnsupported({ source: 'OpenApi' }))
   }
   return yield* Effect.fail(
     ConnectionAddressInvalid.make({
@@ -224,7 +236,7 @@ const specificationFromPage = Effect.fn('Connections.specificationFromPage')(fun
   )
 })
 
-/** Docs pages have a precise refusal; JSON/YAML specs are passed to Executor's validating importer. */
+/** Hosted import is MCP-only. Recognized specs fail during the probe, before app installation. */
 const classifyResponse = Effect.fn('Connections.classifyAddress')(function* (
   address: URL,
   response: HttpClientResponse.HttpClientResponse,
@@ -243,7 +255,7 @@ const classifyResponse = Effect.fn('Connections.classifyAddress')(function* (
     Effect.mapError(() => ConnectionAddressUnreachable.make({})),
   )
   if (Option.isSome(decodeSpec(body)) || /^openapi:\s*['"]?3\./mu.test(body))
-    return ConnectionSource.cases.OpenApi.make({ address: address.href })
+    return yield* Effect.fail(new ExecutorSourceUnsupported({ source: 'OpenApi' }))
   return yield* probeMcp(address, client)
 })
 

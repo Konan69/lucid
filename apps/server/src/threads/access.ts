@@ -13,6 +13,7 @@ import {
 import { membershipTable } from '../companies/tables.ts'
 import { Database, decodeStored } from '../database/client.ts'
 import { Topic } from '../live/changes.ts'
+import { TitleSource } from './title.ts'
 import { threadParticipants, threads } from './tables.ts'
 
 /** How a Thread's audience is written in its row. */
@@ -23,6 +24,7 @@ export type StoredAudience = typeof StoredAudience.Type
 export const StoredThread = Schema.Struct({
   id: ThreadId,
   title: Schema.String,
+  titleSource: TitleSource,
   preview: Schema.String,
   updatedAt: Schema.Number,
   archived: Schema.Boolean,

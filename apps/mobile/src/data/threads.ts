@@ -1,4 +1,5 @@
 import { createFlueClient, type FlueClient } from '@flue/sdk'
+import { regenerateThreadTitle } from '@vivid/client-runtime'
 import { ThreadId, type ProjectId } from '@vivid/contracts'
 import { titleFromMessage } from '@vivid/state'
 import { Data, Effect, Option, Redacted, Result, Schema } from 'effect'
@@ -132,6 +133,13 @@ export const patchThread = (
         ),
       })),
   )
+
+/**
+ * Asks Vivid for a better title. Nothing is shown ahead of the answer, because the new title is
+ * not known until Vivid has thought of it; the server publishes the Thread when it has, and the
+ * list shows it then.
+ */
+export const retitleThread = (data: LiveData, id: ThreadId) => data.run(regenerateThreadTitle(id))
 
 /** Deletes a Thread for everyone who can see it. It leaves the list at once. */
 export const deleteThread = (data: LiveData, id: ThreadId) =>
