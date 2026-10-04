@@ -18,18 +18,26 @@ class FaultUnsent extends Schema.TaggedError<FaultUnsent>()(
 
 /** Reports one error caught while drawing, with React's component stack for it. */
 export const reportFault = (thrown: Error, components: string | null): void => {
-  const body = JSON.stringify(
-    cutFault({ surface: 'web', thrown, components, build: navigator.userAgent }),
-  )
-  const report = Effect.tryPromise({
+  // The report is built inside the program, so nothing here can throw into the boundary that
+  // called it: a report that cannot even be written is dropped like one unsent.
+  const report = Effect.try({
     try: () =>
-      fetch('/api/faults', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body,
-      }),
+      JSON.stringify(cutFault({ surface: 'web', thrown, components, build: navigator.userAgent })),
     catch: () => new FaultUnsent({}),
-  }).pipe(Effect.ignore)
+  }).pipe(
+    Effect.flatMap((body) =>
+      Effect.tryPromise({
+        try: () =>
+          fetch('/api/faults', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body,
+          }),
+        catch: () => new FaultUnsent({}),
+      }),
+    ),
+    Effect.ignore,
+  )
   // The runtime boundary (`./app`) opens the app's socket when it is first loaded, so it is
   // loaded here, when a fault is reported, and not when this module is: a component that only
   // draws (`ui/Recover.tsx`, and so `ui/Markdown.tsx`) must not need a browser page to be imported.

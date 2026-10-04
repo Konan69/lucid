@@ -38,13 +38,27 @@ const build = () =>
 export const reportFault = (thrown: Error, components: string | null): void => {
   if (Option.isNone(origin)) return
   const address = `${origin.value}/api/faults`
-  const body = JSON.stringify(cutFault({ surface: 'mobile', thrown, components, build: build() }))
+  // The report is built inside the program, so nothing here can throw into the boundary or the
+  // handler that called it: a report that cannot even be written is dropped like one unsent.
   void start(
-    Effect.tryPromise({
+    Effect.try({
       try: () =>
-        fetch(address, { method: 'POST', headers: { 'content-type': 'application/json' }, body }),
+        JSON.stringify(cutFault({ surface: 'mobile', thrown, components, build: build() })),
       catch: () => new FaultUnsent({}),
-    }).pipe(Effect.ignore),
+    }).pipe(
+      Effect.flatMap((body) =>
+        Effect.tryPromise({
+          try: () =>
+            fetch(address, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body,
+            }),
+          catch: () => new FaultUnsent({}),
+        }),
+      ),
+      Effect.ignore,
+    ),
   )
 }
 
