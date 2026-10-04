@@ -10,6 +10,8 @@ import {
   DatabaseUnavailable,
   ServiceUnavailable,
   CodeCallKind,
+  BrowseTarget,
+  BrowserAction,
   type ThreadId,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
@@ -24,6 +26,7 @@ import { testDatabaseConfigured } from '../database/testdb.ts'
 import { unavailableMachineLayer } from '../computers/machine.ts'
 import {
   ComputerAccess,
+  ComputerNotReady,
   ComputerStore,
   computerMachineKey,
   computerStoreLayer,
@@ -478,6 +481,51 @@ describe.skipIf(!testDatabaseConfigured || Option.isSome(missingHost))(
 
 /** Infrastructure faults exercise bound dispatch directly, independently of host interpreter support. */
 describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => {
+  /** Availability replies are new code refusals; they are recorded once without private reasons. */
+  standalone.effect.each(['command', 'personal browser', 'cloud browser'] as const)(
+    'records one CallRefused for unavailable %s',
+    (surface) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          const logs = refusalLogs()
+          const store = yield* ComputerStore
+          const unavailable = ComputerStore.of({
+            ...store,
+            exec: () => Effect.fail(new ComputerNotReady({ reason: 'Private command outage' })),
+            browse: () => Effect.fail(new ComputerNotReady({ reason: 'Private browser outage' })),
+          })
+          const input =
+            surface === 'command'
+              ? { command: 'pwd', summary: 'Check availability' }
+              : {
+                  target:
+                    surface === 'personal browser'
+                      ? BrowseTarget.cases.Person.make({})
+                      : BrowseTarget.cases.Vivid.make({}),
+                  action: BrowserAction.cases.Open.make({ address: 'https://example.test' }),
+                  summary: 'Check availability',
+                }
+          const kind = surface === 'command' ? 'run_command' : 'browse'
+          const outcome = yield* Effect.gen(function* () {
+            return yield* (yield* CodeCalls).bind({
+              person: test.personal.person.id,
+              thread: test.personalId,
+            })(WorkerMessage.cases.Call.make({ id: 1, kind, input }))
+          }).pipe(
+            Effect.provide(codeCallsLayer, { local: true }),
+            Effect.provideService(ComputerStore, unavailable),
+            Effect.provide(logs.layer),
+          )
+          expect(outcome).toMatchObject({ end: 'refused', value: { ok: false } })
+          expect(logs.recorded()).toHaveLength(1)
+          expect(logs.recorded()[0]).toContain('vivid.refusal.kind=CallRefused')
+          expect(logs.recorded()[0]).toContain(`vivid.refusal.call=${kind}`)
+          expect(logs.recorded()[0]).not.toContain('Private')
+        }),
+      ).pipe(Effect.provide(testLayer)),
+  )
+
   /** Provider rejection travels through the real code-call seam without a second refusal. */
   standalone.effect('records exactly one ToolRejected for a rejected use_tool code call', () =>
     Effect.scoped(

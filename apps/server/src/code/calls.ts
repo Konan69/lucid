@@ -114,29 +114,34 @@ const command = Effect.fn('Code.runCommand')(function* (actor: Actor, input: Sch
       request.summary,
     )
   const outcome = yield* computerRunCommand(actor, request)
-  if (CommandOutcome.guards.Unavailable(outcome)) {
-    // Command unavailability has no lower refusal receipt; the code reply decides it here.
-    yield* recordRefusal(Refusal.cases.CallRefused.make({ call: 'run_command' }))
-  }
-  return CommandOutcome.match<CallOutcome>(outcome, {
+  return yield* CommandOutcome.match<Effect.Effect<CallOutcome>>(outcome, {
     Completed: ({ result }) =>
-      returned(
-        {
-          ok: true,
-          result: { exitCode: result.exitCode, output: result.output, truncated: result.truncated },
-        },
-        request.summary,
+      Effect.succeed(
+        returned(
+          {
+            ok: true,
+            result: {
+              exitCode: result.exitCode,
+              output: result.output,
+              truncated: result.truncated,
+            },
+          },
+          request.summary,
+        ),
       ),
     ApprovalRequired: ({ approvalId, summary }) =>
-      CallOutcome.cases.ApprovalRequired.make({ approvalId, summary }),
-    Blocked: ({ rule }) => CallOutcome.cases.Blocked.make({ rule, summary: request.summary }),
+      Effect.succeed(CallOutcome.cases.ApprovalRequired.make({ approvalId, summary })),
+    Blocked: ({ rule }) =>
+      Effect.succeed(CallOutcome.cases.Blocked.make({ rule, summary: request.summary })),
+    // Command unavailability has no lower refusal receipt; the code reply decides it here.
     Unavailable: () =>
-      returned(
+      refused(
+        'run_command',
         { ok: false, reason: 'The Computer is unavailable. No action was sent.' },
         request.summary,
-        'refused',
       ),
-    OutcomeUnknown: () => CallOutcome.cases.Unknown.make({ summary: request.summary }),
+    OutcomeUnknown: () =>
+      Effect.succeed(CallOutcome.cases.Unknown.make({ summary: request.summary })),
   })
 })
 
@@ -144,99 +149,105 @@ const command = Effect.fn('Code.runCommand')(function* (actor: Actor, input: Sch
 const browse = Effect.fn('Code.browse')(function* (actor: Actor, input: Schema.Json) {
   const request = yield* decodeBrowse(input, { onExcessProperty: 'error' })
   const outcome = yield* computerBrowse(actor, request)
-  if (
-    BrowseOutcome.isAnyOf(['NotConnected', 'NotAllowed', 'Busy', 'RunRequired', 'Unavailable'])(
-      outcome,
-    )
-  ) {
-    // Server availability decisions have no DeviceRefused receipt. AddressRefused, Stopped,
-    // PageGone and Unsupported carry the Device's already-recorded refusal and bypass this call.
-    yield* recordRefusal(Refusal.cases.CallRefused.make({ call: 'browse' }))
-  }
-  return BrowseOutcome.match<CallOutcome>(outcome, {
+  // Each exhaustive branch owns whether this is a new code refusal or a carried Device reply.
+  // New outcomes must choose their recording Effect here; there is no separate recording list.
+  return yield* BrowseOutcome.match<Effect.Effect<CallOutcome>>(outcome, {
     NotConnected: () =>
-      returned(
+      refused(
+        'browse',
         { ok: false, reason: 'The Person’s desktop app is not connected. Ask them to connect it.' },
         request.summary,
-        'refused',
       ),
+    // The Device already recorded AddressRefused, Stopped, PageGone and Unsupported.
     AddressRefused: () =>
-      returned(
-        {
-          ok: false,
-          reason:
-            'That page or address cannot be opened on the Person’s computer. Use a public web address.',
-        },
-        request.summary,
-        'refused',
+      Effect.succeed(
+        returned(
+          {
+            ok: false,
+            reason:
+              'That page or address cannot be opened on the Person’s computer. Use a public web address.',
+          },
+          request.summary,
+          'refused',
+        ),
       ),
     NotAllowed: () =>
-      returned(
+      refused(
+        'browse',
         {
           ok: false,
           reason:
             'The Person has not allowed access to their computer. Ask them to allow it in the desktop app.',
         },
         request.summary,
-        'refused',
       ),
     Busy: () =>
-      returned(
+      refused(
+        'browse',
         {
           ok: false,
           reason: 'The Person’s computer is busy with an earlier action. Wait for it to finish.',
         },
         request.summary,
-        'refused',
       ),
     Stopped: () =>
-      returned(
-        {
-          ok: false,
-          reason: 'The Person took control of the page. Stop and do not retry by yourself.',
-        },
-        request.summary,
-        'refused',
+      Effect.succeed(
+        returned(
+          {
+            ok: false,
+            reason: 'The Person took control of the page. Stop and do not retry by yourself.',
+          },
+          request.summary,
+          'refused',
+        ),
       ),
     PageGone: () =>
-      returned(
-        { ok: false, reason: 'The page is gone. Ask the Person to open it again.' },
-        request.summary,
-        'refused',
+      Effect.succeed(
+        returned(
+          { ok: false, reason: 'The page is gone. Ask the Person to open it again.' },
+          request.summary,
+          'refused',
+        ),
       ),
     Unsupported: () =>
-      returned(
-        {
-          ok: false,
-          reason:
-            'The Person’s computer does not support this browser action. Ask the Person to do it.',
-        },
-        request.summary,
-        'refused',
+      Effect.succeed(
+        returned(
+          {
+            ok: false,
+            reason:
+              'The Person’s computer does not support this browser action. Ask the Person to do it.',
+          },
+          request.summary,
+          'refused',
+        ),
       ),
     RunRequired: () =>
-      returned(
+      refused(
+        'browse',
         {
           ok: false,
           reason:
             'Nothing was sent, because the work that asked for it has ended. Ask the Person before trying again.',
         },
         request.summary,
-        'refused',
       ),
     Completed: ({ result }) =>
-      returned(
-        {
-          ok: true,
-          result: { title: result.title, outline: result.outline, truncated: result.truncated },
-        },
-        request.summary,
+      Effect.succeed(
+        returned(
+          {
+            ok: true,
+            result: { title: result.title, outline: result.outline, truncated: result.truncated },
+          },
+          request.summary,
+        ),
       ),
     ApprovalRequired: ({ approvalId, summary }) =>
-      CallOutcome.cases.ApprovalRequired.make({ approvalId, summary }),
-    Blocked: ({ rule }) => CallOutcome.cases.Blocked.make({ rule, summary: request.summary }),
-    Unavailable: ({ reason }) => returned({ ok: false, reason }, request.summary, 'refused'),
-    OutcomeUnknown: () => CallOutcome.cases.Unknown.make({ summary: request.summary }),
+      Effect.succeed(CallOutcome.cases.ApprovalRequired.make({ approvalId, summary })),
+    Blocked: ({ rule }) =>
+      Effect.succeed(CallOutcome.cases.Blocked.make({ rule, summary: request.summary })),
+    Unavailable: ({ reason }) => refused('browse', { ok: false, reason }, request.summary),
+    OutcomeUnknown: () =>
+      Effect.succeed(CallOutcome.cases.Unknown.make({ summary: request.summary })),
   })
 })
 
