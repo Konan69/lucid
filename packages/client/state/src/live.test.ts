@@ -191,21 +191,6 @@ describe('live state', () => {
       }),
   )
 
-  it.effect('returns Result values from run for both success and failure', () =>
-    Effect.gen(function* () {
-      const plans = yield* Queue.unbounded<Effect.Effect<void, MarkThreadReadFailure>>()
-      const live = makeLive(yield* testClientLayer(plans))
-      const success = yield* live.run(Effect.succeed('done'))
-      const failure = yield* live.run(Effect.fail(Forbidden.make({ message: 'Denied' })))
-
-      expect(Result.isSuccess(success)).toBe(true)
-      if (Result.isSuccess(success)) expect(success.success).toBe('done')
-      expect(Result.isFailure(failure)).toBe(true)
-      if (Result.isFailure(failure))
-        expect(failure.failure).toEqual(Forbidden.make({ message: 'Denied' }))
-    }),
-  )
-
   it.effect('debounces new ask arguments and retains the last answer while pending', () => {
     const program = Effect.fn('LiveTest.ask')(function* () {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })

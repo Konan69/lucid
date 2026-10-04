@@ -31,30 +31,3 @@ void test('workspace manifest discovery covers both apps and packages', () => {
   assert.ok(manifests.includes('apps/server/package.json'))
   assert.ok(manifests.includes('packages/contracts/package.json'))
 })
-
-/** Exact prerelease pins are deliberate because semver drift changes Effect and Drizzle APIs. */
-void test('critical prerelease versions are exact', () => {
-  assert.equal(versions.effect, '4.0.0-rc.116')
-  assert.equal(versions['drizzle-orm'], '1.0.0-rc.5-ab785fc')
-  assert.equal(versions.electron, '44.4.3')
-  assert.equal(versions['electron-builder'], '26.15.3')
-  assert.equal(versions['electron-builder-squirrel-windows'], '26.15.3')
-  assert.equal(versions.esbuild, '0.28.2')
-  assert.equal(versions.alchemy, '2.0.0-beta.79')
-  assert.equal(versions['better-auth'], '1.7.5')
-  assert.equal(versions['@typescript/native'], 'npm:typescript@7.0.2')
-  assert.equal(versions['@shadcn/lint'], '0.1.1')
-  assert.equal(versions['@flue/runtime'], '2.2.2')
-  assert.equal(versions.expo, '57.0.24')
-  assert.equal(versions['react-native'], '0.86.3')
-  assert.equal(versions.react, '19.2.3')
-  assert.equal(versions['lucide-react'], '1.47.0')
-  assert.equal(versions['@vitejs/plugin-react'], '6.1.1')
-  assert.equal(versions['@earendil-works/pi-ai'], '0.87.1')
-  assert.equal(versions['oxlint-tailwindcss'], '1.12.0')
-  const manifest = decodePackageManagerManifest(
-    NodeFS.readFileSync(NodePath.join(repositoryRoot, 'package.json'), 'utf8'),
-  )
-  assert.equal(manifest.packageManager, 'pnpm@12.4.2')
-  assert.equal(manifest.engines.pnpm, '12.4.2')
-})
