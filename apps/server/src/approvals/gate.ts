@@ -140,7 +140,7 @@ import { auditAction } from './action.ts'
 import { reviewOutcome } from './policy.ts'
 import { Reviewer } from './review.ts'
 
-/** Personal browser authority belongs to the computer’s Person, regardless of review scores. */
+/** Whether the action is on the Person's own computer: only that Person may decide an Approval for it. */
 export const usesPersonalBrowser = (action: ProposedAction) =>
   ActionTarget.match(action.target, {
     Browser: ({ target }) => BrowseTarget.match(target, { Person: () => true, Vivid: () => false }),
@@ -223,11 +223,19 @@ export const gateLayer = Layer.effect(
         }
         // An applicable Ask rule, rules that could not be weighed, and something personal
         // entering a shared Thread always ask: none of these is a judgment about the request.
+        //
+        // A write on the Person's own signed-in browser is deliberately NOT in this group. It
+        // was, for a few hours on 4 October 2026, after a review found such writes could run
+        // unasked; the owner then decided, the same day: "I don't need approval for writing my
+        // browser". It follows the same table as a write through the Person's own Integration
+        // (`reviewOutcome` in `policy.ts`, where the decision and its risk are recorded): Vivid
+        // acts as the Person on every site they are signed in to. What still stops it is here
+        // and below: a Never rule, an Ask rule, a shared Thread, a destructive effect, and the
+        // Stop on the page itself.
         if (
           applicable.some((rule) => rule.decision === 'Ask') ||
           BindingJudgment.guards.Uncertain(judged) ||
-          exposure === 'PersonalInShared' ||
-          usesPersonalBrowser(action)
+          exposure === 'PersonalInShared'
         )
           return yield* ask(approvals, actor, action)
         // An Allow rule is the Person's standing request for an undoable action. It does not

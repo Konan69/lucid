@@ -26,67 +26,73 @@ import {
 
 /** Policy is tested with production stores, including the durable Approval raised by the real gate. */
 describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', () => {
-  it.effect('Person browser writes always ask; broad Allow prose cannot authorize them', () =>
-    Effect.gen(function* () {
-      const test = yield* fixture()
-      const gate = yield* Gate
-      const action = ProposedAction.make({
-        summary: 'Use my browser',
-        rationale: '',
-        effect: 'write',
-        target: ActionTarget.cases.Browser.make({
-          target: BrowseTarget.cases.Person.make({}),
-          action: BrowserAction.cases.Click.make({ target: 'Send' }),
-        }),
-      })
-      expect(
-        GateDecision.guards.ApprovalRequired(yield* gate.check(test.vivid, action, 'Ordinary')),
-      ).toBe(true)
-      expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toHaveLength(1)
-      yield* (yield* RuleStore).create(test.personal, {
-        action: 'Use my browser',
-        decision: 'Allow',
-        scope: RuleScope.cases.Personal.make({}),
-      })
-      expect(
-        GateDecision.guards.ApprovalRequired(yield* gate.check(test.vivid, action, 'Ordinary')),
-      ).toBe(true)
-      expect(
-        yield* gate.check(
-          test.vivid,
-          ProposedAction.make({ ...action, effect: 'read' }),
-          'Ordinary',
-        ),
-      ).toEqual(GateDecision.cases.Allowed.make({}))
-    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  /** A click on the Person's own signed-in page: the action the owner decided needs no Approval. */
+  const browserWrite = ProposedAction.make({
+    summary: 'Click Send',
+    rationale: '',
+    effect: 'write',
+    target: ActionTarget.cases.Browser.make({
+      target: BrowseTarget.cases.Person.make({}),
+      action: BrowserAction.cases.Click.make({ target: 'Send' }),
+    }),
+  })
+
+  // Owner decision, 4 October 2026: "I don't need approval for writing my browser". A write on
+  // the Person's own browser follows the same table as a write on their own Integration.
+  it.effect(
+    'with no review a write on the Person’s own browser runs; destructive, shared and ruled ones still ask or refuse',
+    () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const gate = yield* Gate
+        yield* Ref.set((yield* Observation).review, Review.cases.Unreviewed.make({}))
+        expect(yield* gate.check(test.vivid, browserWrite, 'Ordinary')).toEqual(
+          GateDecision.cases.Allowed.make({}),
+        )
+        expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toHaveLength(0)
+        expect(
+          GateDecision.guards.ApprovalRequired(
+            yield* gate.check(
+              test.vivid,
+              ProposedAction.make({ ...browserWrite, effect: 'destructive' }),
+              'Ordinary',
+            ),
+          ),
+        ).toBe(true)
+        expect(
+          GateDecision.guards.ApprovalRequired(
+            yield* gate.check(test.vivid, browserWrite, 'PersonalInShared'),
+          ),
+        ).toBe(true)
+        yield* (yield* RuleStore).create(test.personal, {
+          action: 'Never click Send in my browser',
+          decision: 'Never',
+          scope: RuleScope.cases.Personal.make({}),
+        })
+        expect(
+          GateDecision.guards.Blocked(yield* gate.check(test.vivid, browserWrite, 'Ordinary')),
+        ).toBe(true)
+      }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
 
-  for (const [name, review] of [
-    ['off', Review.cases.Unreviewed.make({})],
-    ['timed out', Review.cases.Unreviewed.make({})],
-    ['high score', Review.cases.Reviewed.make({ asked: 1, beyond: 0, contained: 1 })],
-    ['Ask', Review.cases.Reviewed.make({ asked: 0, beyond: 1, contained: 0 })],
+  for (const [name, review, asks] of [
+    ['asked for', Review.cases.Reviewed.make({ asked: 1, beyond: 0, contained: 1 }), false],
+    [
+      'unasked and reaching others',
+      Review.cases.Reviewed.make({ asked: 0, beyond: 1, contained: 0 }),
+      true,
+    ],
   ] as const) {
     it.effect(
-      `Person-browser writes require the real Gate's Approval when reviewer is ${name}`,
+      `a reviewed write on the Person’s own browser that is ${name} ${asks ? 'asks' : 'runs'}`,
       () =>
         Effect.gen(function* () {
           const test = yield* fixture()
           const observed = yield* Observation
           yield* Ref.set(observed.review, review)
-          const action = ProposedAction.make({
-            summary: 'Click Send',
-            rationale: '',
-            effect: 'write',
-            target: ActionTarget.cases.Browser.make({
-              target: BrowseTarget.cases.Person.make({}),
-              action: BrowserAction.cases.Click.make({ target: 'Send' }),
-            }),
-          })
-          const decision = yield* (yield* Gate).check(test.vivid, action, 'Ordinary')
-          expect(GateDecision.guards.ApprovalRequired(decision)).toBe(true)
-          expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toHaveLength(1)
-          expect(yield* Ref.get(observed.reviewCalls)).toEqual([])
+          const decision = yield* (yield* Gate).check(test.vivid, browserWrite, 'Ordinary')
+          expect(GateDecision.guards.ApprovalRequired(decision)).toBe(asks)
+          expect(yield* Ref.get(observed.reviewCalls)).toHaveLength(1)
         }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
     )
   }

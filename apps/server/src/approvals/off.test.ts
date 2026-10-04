@@ -31,9 +31,12 @@ const offLayer = gateLayer.pipe(
 )
 
 describe.skipIf(!testDatabaseConfigured)('The gate with decisions switched off', () => {
-  it.effect('Person-browser input always asks with the production Reviewer disabled', () =>
+  it.effect('a write on the Person’s own browser runs and a destructive one asks', () =>
     Effect.gen(function* () {
       const test = yield* fixture()
+      const gate = yield* Gate
+      // Konan, 4 Oct 2026: "I don't need approval for writing my browser". The Person's own
+      // signed-in browser follows the Integration table (`policy.ts#reviewOutcome`).
       const action = ProposedAction.make({
         summary: 'Click Send',
         rationale: '',
@@ -43,19 +46,13 @@ describe.skipIf(!testDatabaseConfigured)('The gate with decisions switched off',
           action: BrowserAction.cases.Click.make({ target: 'Send' }),
         }),
       })
+      expect(yield* gate.check(test.vivid, action, 'Ordinary')).toEqual(
+        GateDecision.cases.Allowed.make({}),
+      )
+      const destructive = ProposedAction.make({ ...action, effect: 'destructive' })
       expect(
         GateDecision.guards.ApprovalRequired(
-          yield* (yield* Gate).check(test.vivid, action, 'Ordinary'),
-        ),
-      ).toBe(true)
-      yield* (yield* RuleStore).create(test.personal, {
-        action: 'Click Send',
-        decision: 'Allow',
-        scope: RuleScope.cases.Personal.make({}),
-      })
-      expect(
-        GateDecision.guards.ApprovalRequired(
-          yield* (yield* Gate).check(test.vivid, action, 'Ordinary'),
+          yield* gate.check(test.vivid, destructive, 'Ordinary'),
         ),
       ).toBe(true)
     }).pipe(Effect.scoped, Effect.provide(offLayer)),
