@@ -1,10 +1,9 @@
-import { jsonb, pgTable, primaryKey, text, uniqueIndex } from 'drizzle-orm/pg-core'
+import { pgTable, primaryKey, text, uniqueIndex } from 'drizzle-orm/pg-core'
 import type { Channel, ChannelAddress, RunId, PersonId } from '@vivid/contracts'
 import { personTable } from '../auth/tables.ts'
 import { epoch, personColumn, threadColumn } from '../database/owner.ts'
 import { threads } from '../threads/tables.ts'
-import type { LinkState } from './model.ts'
-import type { ChannelMessageId } from './provider.ts'
+import type { ChannelMessageId, ChannelEnrolmentId } from './provider.ts'
 
 /** Personal ownership deliberately has no Company column: channel linking never grants shared reach. */
 export const channelLinks = pgTable(
@@ -14,8 +13,8 @@ export const channelLinks = pgTable(
     channel: text('channel').$type<Channel>().notNull(),
     address: text('address').$type<ChannelAddress>().notNull(),
     textTo: text('text_to').$type<ChannelAddress>().notNull(),
-    enrolmentId: text('enrolment_id').notNull(),
-    state: jsonb('state').$type<LinkState>().notNull(),
+    enrolmentId: text('enrolment_id').$type<ChannelEnrolmentId>().notNull(),
+    since: epoch('since').notNull(),
     threadId: threadColumn('thread_id').references(() => threads.id, { onDelete: 'set null' }),
   },
   (table) => [
@@ -56,17 +55,3 @@ export const channelReplies = pgTable('vivid_channel_replies', {
   status: text('status', { enum: ['awaiting', 'unknown', 'sent'] }).notNull(),
   updatedAt: epoch('updated_at').notNull(),
 })
-
-/**
- * This is the one wholly ownerless table: an unlinked sender has no Person. It is channel
- * infrastructure, keyed by an address hash and UTC day, solely to bound the onboarding reply.
- */
-export const channelNotices = pgTable(
-  'vivid_channel_notices',
-  {
-    channel: text('channel').$type<Channel>().notNull(),
-    addressHash: text('address_hash').notNull(),
-    day: text('day').notNull(),
-  },
-  (table) => [primaryKey({ columns: [table.channel, table.addressHash, table.day] })],
-)

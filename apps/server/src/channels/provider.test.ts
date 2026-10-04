@@ -1,3 +1,4 @@
+import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, it } from '@effect/vitest'
 import { ConfigProvider, Effect, Layer, Option, Result, Stream } from 'effect'
 import { normalizeChannelAddress } from './address.ts'
@@ -6,11 +7,13 @@ import { ChannelProvider } from './provider.ts'
 
 /** Empty config exercises the production selection without contacting Photon or opening a line. */
 const noPhoton = photonLayer.pipe(
+  Layer.provide(NodeHttpClient.layerUndici),
   Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
 )
 
 /** Partial credentials must also select unavailable, rather than trying an anonymous connection. */
 const partialPhoton = photonLayer.pipe(
+  Layer.provide(NodeHttpClient.layerUndici),
   Layer.provide(
     ConfigProvider.layer(ConfigProvider.fromUnknown({ VIVID_PHOTON_PROJECT_ID: 'test' })),
   ),
@@ -21,13 +24,14 @@ describe('channel provider', () => {
     Effect.gen(function* () {
       const provider = yield* ChannelProvider
       for (const channel of ['iMessage', 'WhatsApp'] as const) {
-        const outcome = yield* provider.address(channel).pipe(Effect.result)
+        const outcome = yield* provider
+          .enrol(channel, yield* normalizeChannelAddress({ channel, value: '+12025550123' }))
+          .pipe(Effect.result)
         expect(Result.isFailure(outcome) ? outcome.failure._tag : 'available').toBe(
           'ChannelUnavailable',
         )
       }
       expect(Option.isNone(yield* Stream.runHead(provider.inbound))).toBe(true)
-      expect(provider.idempotentSends).toBe(false)
     }).pipe(Effect.provide(noPhoton)),
   )
 
@@ -48,7 +52,12 @@ describe('channel provider', () => {
 
   it.effect('does not acquire a connection with partial credentials', () =>
     Effect.gen(function* () {
-      const outcome = yield* (yield* ChannelProvider).address('iMessage').pipe(Effect.result)
+      const outcome = yield* (yield* ChannelProvider)
+        .enrol(
+          'iMessage',
+          yield* normalizeChannelAddress({ channel: 'iMessage', value: '+12025550123' }),
+        )
+        .pipe(Effect.result)
       expect(Result.isFailure(outcome) ? outcome.failure._tag : 'available').toBe(
         'ChannelUnavailable',
       )

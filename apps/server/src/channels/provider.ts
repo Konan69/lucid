@@ -1,23 +1,22 @@
-import { Channel, ChannelAddress, ChannelUnavailable } from '@vivid/contracts'
+import {
+  Channel,
+  ChannelAddress,
+  ChannelUnavailable,
+  ChannelLimitReached,
+  ChannelProviderFailed,
+} from '@vivid/contracts'
 import { Context, Effect, Layer, Schema, Stream } from 'effect'
 
 /** Provider ids are opaque; replay identity must not depend on the message's words. */
 export const ChannelMessageId = Schema.NonEmptyString.pipe(Schema.brand('ChannelMessageId'))
 export type ChannelMessageId = typeof ChannelMessageId.Type
 
-/** Attachments and control events stay explicit so none accidentally become Person-authored text. */
-export const ChannelContent = Schema.TaggedUnion({
-  Text: { text: Schema.NonEmptyString },
-  Unsupported: {},
-})
-export type ChannelContent = typeof ChannelContent.Type
-
 /** The adapter decodes once; no SDK values or credentials cross the provider seam. */
 export const ChannelInbound = Schema.Struct({
   id: ChannelMessageId,
   channel: Channel,
   sender: ChannelAddress,
-  content: ChannelContent,
+  text: Schema.NonEmptyString,
   receivedAt: Schema.Number.check(Schema.isFinite()),
 })
 export type ChannelInbound = typeof ChannelInbound.Type
@@ -51,7 +50,19 @@ export class ChannelRecipientMissing extends Schema.TaggedError<ChannelRecipient
 ) {}
 
 export interface ChannelProviderService {
-  readonly address: (channel: Channel) => Effect.Effect<ChannelAddress, ChannelUnavailable>
+  readonly available: (channel: Channel) => boolean
+  /** Photon deletes by user id, so its opaque enrolment receipt must survive server restarts. */
+  readonly enrol: (
+    channel: Channel,
+    address: ChannelAddress,
+  ) => Effect.Effect<
+    ChannelEnrolment,
+    ChannelUnavailable | ChannelLimitReached | ChannelProviderFailed
+  >
+  readonly unenrol: (
+    channel: Channel,
+    id: ChannelEnrolmentId,
+  ) => Effect.Effect<void, ChannelUnavailable | ChannelProviderFailed>
   readonly inbound: Stream.Stream<ChannelInbound, ChannelDisconnected>
   readonly send: (input: {
     readonly channel: Channel
@@ -59,9 +70,13 @@ export interface ChannelProviderService {
     readonly text: string
     readonly key: string
   }) => Effect.Effect<void, ChannelUnavailable | ChannelRecipientMissing | ChannelSendUnknown>
-  /** Recovery may resend only when this capability guarantees caller-key deduplication. */
-  readonly idempotentSends: boolean
 }
+
+/** The hosted API assigns a line per Person and deletes by opaque user id, never by phone. */
+export const ChannelEnrolmentId = Schema.NonEmptyString.pipe(Schema.brand('ChannelEnrolmentId'))
+export type ChannelEnrolmentId = typeof ChannelEnrolmentId.Type
+export const ChannelEnrolment = Schema.Struct({ id: ChannelEnrolmentId, textTo: ChannelAddress })
+export type ChannelEnrolment = typeof ChannelEnrolment.Type
 
 /** Owns the external messaging connection, independent of Thread transport and tenancy. */
 export class ChannelProvider extends Context.Service<ChannelProvider, ChannelProviderService>()(
@@ -70,12 +85,15 @@ export class ChannelProvider extends Context.Service<ChannelProvider, ChannelPro
 
 /** Missing credentials leave the server operational and every channel start explicitly unavailable. */
 export const unavailableChannelProviderLayer = Layer.succeed(ChannelProvider, {
-  address: Effect.fn('Channels.unavailableAddress')((channel) =>
+  available: () => false,
+  enrol: Effect.fn('Channels.unavailableEnrol')((channel) =>
+    Effect.fail(new ChannelUnavailable({ channel })),
+  ),
+  unenrol: Effect.fn('Channels.unavailableUnenrol')((channel) =>
     Effect.fail(new ChannelUnavailable({ channel })),
   ),
   inbound: Stream.empty,
   send: Effect.fn('Channels.unavailableSend')((input) =>
     Effect.fail(new ChannelUnavailable({ channel: input.channel })),
   ),
-  idempotentSends: false,
 })

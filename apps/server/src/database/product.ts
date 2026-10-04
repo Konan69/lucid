@@ -6,12 +6,7 @@ import { bigint, integer, pgTable } from 'drizzle-orm/pg-core'
  */
 export { artifacts, artifactVersions } from '../artifacts/tables.ts'
 export { approvals } from '../approvals/tables.ts'
-export {
-  channelLinks,
-  channelMessages,
-  channelReplies,
-  channelNotices,
-} from '../channels/tables.ts'
+export { channelLinks, channelMessages, channelReplies } from '../channels/tables.ts'
 export { auditEntries } from '../audit/tables.ts'
 export { computers, machineBindings, devices, deviceRequests } from '../computers/tables.ts'
 export { connections, credentials } from '../connections/tables.ts'
