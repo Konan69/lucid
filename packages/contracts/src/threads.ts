@@ -321,3 +321,24 @@ export const Inbox = Schema.Struct({
   requests: Schema.Array(InputRequest),
 }).annotate({ identifier: 'Inbox', title: 'Inbox' })
 export interface Inbox extends Schema.Schema.Type<typeof Inbox> {}
+
+/** Background naming may log these failures; explicit regeneration returns them without changing the title. */
+export class ThreadTitleHistoryUnavailable extends Schema.TaggedError<ThreadTitleHistoryUnavailable>()(
+  'ThreadTitleHistoryUnavailable',
+  { thread: ThreadId },
+  { title: 'Thread title history unavailable' },
+) {}
+
+/** Provider/configuration failure is distinct from a malformed title response. */
+export class ThreadTitleModelUnavailable extends Schema.TaggedError<ThreadTitleModelUnavailable>()(
+  'ThreadTitleModelUnavailable',
+  { thread: ThreadId },
+  { title: 'Thread title model unavailable' },
+) {}
+
+/** The model must return exactly one JSON string field named title. */
+export class ThreadTitleOutputInvalid extends Schema.TaggedError<ThreadTitleOutputInvalid>()(
+  'ThreadTitleOutputInvalid',
+  { thread: ThreadId },
+  { title: 'Thread title output invalid' },
+) {}

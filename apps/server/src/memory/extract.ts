@@ -1,14 +1,12 @@
+import { MemoryId, MemoryKind, MemoryScope, PersonSummary, type Memory } from '@vivid/contracts'
+import { Context, Effect, Layer, Option, Schema } from 'effect'
+import { ProviderMalformed, type ProviderFailure } from './embeddings.js'
 import {
-  MemoryId,
-  MemoryKind,
-  MemoryScope,
-  PersonSummary,
-  ServiceUnavailable,
-  type Memory,
-} from '@vivid/contracts'
-import { Config, Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
-import { ProviderMalformed, providerResponse, type ProviderFailure } from './embeddings.js'
+  MemoryModel,
+  memoryModelLayer,
+  MemoryGenerationIncomplete,
+  completionDecoder,
+} from './model.ts'
 
 /** An exchange includes the question a short answer responds to; null means that context is unavailable. */
 export const MemoryExchange = Schema.Struct({
@@ -61,26 +59,12 @@ const Candidates = Schema.Struct({
   candidates: Schema.Array(WrittenCandidate).check(Schema.isMaxLength(12)),
 })
 const Summary = Schema.Struct({ text: Schema.NonEmptyString })
-const ChatResponse = Schema.Struct({
-  choices: Schema.Array(
-    Schema.Struct({
-      message: Schema.Struct({ content: Schema.String }),
-      finish_reason: Schema.String,
-    }),
-  ).check(Schema.isMinLength(1)),
-})
-const decodeChat = HttpClientResponse.schemaBodyJson(ChatResponse)
 const decodeCandidates = Schema.decodeUnknownEffect(Schema.fromJsonString(Candidates), {
   onExcessProperty: 'error',
 })
 const decodeSummary = Schema.decodeUnknownEffect(Schema.fromJsonString(Summary), {
   onExcessProperty: 'error',
 })
-const Completion = Schema.TaggedUnion({
-  Finished: { text: Schema.NonEmptyString },
-  BudgetReached: { text: Schema.NonEmptyString },
-})
-type Completion = typeof Completion.Type
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json)
 
 /**
@@ -123,11 +107,6 @@ export class MemorySummaryTooLong extends Schema.TaggedError<MemorySummaryTooLon
   'MemorySummaryTooLong',
   { words: Schema.Number },
   { title: 'MemorySummaryTooLong' },
-) {}
-export class MemoryGenerationIncomplete extends Schema.TaggedError<MemoryGenerationIncomplete>()(
-  'MemoryGenerationIncomplete',
-  { operation: Schema.String, reason: Schema.String, outputCharacters: Schema.Int },
-  { title: 'Incomplete memory generation' },
 ) {}
 export type ExtractionFailure = ProviderFailure | MemorySummaryTooLong | MemoryGenerationIncomplete
 export interface ExtractInput {
@@ -175,89 +154,6 @@ State only what the memories say. Never mention identifiers, where or how someth
 Do not invent facts, commitments, authority, or dates. Do not treat memories as live evidence. Do not mention internal storage or models.
 Return JSON with text.`
 
-/** Give the model the same closed schema used for constrained output and decoding; providers may constrain tokens without explaining the fields to the model. Incomplete output remains a typed failure. */
-const complete = Effect.fn('MemoryExtraction.complete')(function* (
-  dependencies: {
-    readonly client: HttpClient.HttpClient
-    readonly key: Redacted.Redacted
-    readonly model: string
-  },
-  input: {
-    readonly name: string
-    readonly prompt: string
-    readonly content: Schema.Json
-    readonly schema: Schema.Json
-  },
-) {
-  const body = {
-    model: dependencies.model,
-    messages: [
-      {
-        role: 'system',
-        content: `${input.prompt}\nRequired JSON schema: ${JSON.stringify(input.schema)}`,
-      },
-      { role: 'user', content: JSON.stringify(input.content) },
-    ],
-    response_format: {
-      type: 'json_schema',
-      json_schema: { name: input.name, strict: true, schema: input.schema },
-    },
-    // Reasoning can use up max_tokens before any structured content is written, so a bounded
-    // background pass asks for as little of it as the gateway allows. The gateway refuses turning
-    // it off on this model ("effort 'none' is not supported"); `low` is its smallest setting.
-    reasoning_effort: 'low',
-    temperature: 0,
-    max_tokens: 4096,
-  }
-  const response = yield* providerResponse(dependencies.client, {
-    key: dependencies.key,
-    path: 'chat/completions',
-    body,
-  })
-  const chat = yield* decodeChat(response).pipe(
-    Effect.mapError(() => ProviderMalformed.make({ operation: input.name })),
-  )
-  const first = chat.choices[0]
-  if (first === undefined)
-    return yield* Effect.fail(ProviderMalformed.make({ operation: input.name }))
-  if (
-    !['stop', 'length'].includes(first.finish_reason) ||
-    first.message.content.trim().length === 0
-  )
-    return yield* Effect.fail(
-      MemoryGenerationIncomplete.make({
-        operation: input.name,
-        reason: first.finish_reason,
-        outputCharacters: first.message.content.length,
-      }),
-    )
-  if (first.finish_reason === 'length')
-    return Completion.cases.BudgetReached.make({ text: first.message.content })
-  return Completion.cases.Finished.make({ text: first.message.content })
-})
-
-/** The schema determines whether a budget-limited response is complete; a finished JSON value is usable, while truncated JSON retains its precise failure. */
-function completionDecoder<A>(
-  decode: (text: string) => Effect.Effect<A, Schema.SchemaError>,
-  operation: string,
-) {
-  return Effect.fn('MemoryExtraction.decode')(function* (completion: Completion) {
-    return yield* decode(completion.text).pipe(
-      Effect.mapError(() =>
-        Completion.match(completion, {
-          Finished: (): ProviderMalformed | MemoryGenerationIncomplete =>
-            ProviderMalformed.make({ operation }),
-          BudgetReached: ({ text }) =>
-            MemoryGenerationIncomplete.make({
-              operation,
-              reason: 'length',
-              outputCharacters: text.length,
-            }),
-        }),
-      ),
-    )
-  })
-}
 const candidateCompletion = completionDecoder(decodeCandidates, 'extract')
 const summaryCompletion = completionDecoder(decodeSummary, 'summarize')
 
@@ -301,21 +197,7 @@ export function candidatesWithKnownRelations(
 export const memoryExtractionLayer = Layer.effect(
   MemoryExtraction,
   Effect.gen(function* () {
-    const client = yield* HttpClient.HttpClient
-    const key = yield* Config.Redacted('EXPLABS_API_KEY').pipe(
-      Effect.mapError(() =>
-        ServiceUnavailable.make({
-          service: 'memory',
-          message: 'EXPLABS_API_KEY is unconfigured',
-        }),
-      ),
-    )
-    const model = yield* Config.String('VIVID_MEMORY_MODEL').pipe(
-      Config.withDefault('glm-5.3-flash'),
-      Effect.mapError(() =>
-        ServiceUnavailable.make({ service: 'memory', message: 'VIVID_MEMORY_MODEL is invalid' }),
-      ),
-    )
+    const model = yield* MemoryModel
     const candidateDocument = Schema.toJsonSchemaDocument(Candidates, { onExcessProperty: 'error' })
     const summaryDocument = Schema.toJsonSchemaDocument(Summary, { onExcessProperty: 'error' })
     const candidateSchema = yield* decodeJson({
@@ -326,10 +208,9 @@ export const memoryExtractionLayer = Layer.effect(
       ...summaryDocument.schema,
       $defs: summaryDocument.definitions,
     }).pipe(Effect.mapError(() => ProviderMalformed.make({ operation: 'summary schema' })))
-    const dependencies = { client, key, model }
     return MemoryExtraction.of({
       extract: Effect.fn('MemoryExtraction.extract')(function* (input) {
-        const text = yield* complete(dependencies, {
+        const text = yield* model.complete({
           name: 'memory_candidates',
           prompt: extractionPrompt,
           content: {
@@ -344,7 +225,7 @@ export const memoryExtractionLayer = Layer.effect(
         return candidatesWithKnownRelations(decoded.candidates, input.known)
       }),
       summarize: Effect.fn('MemoryExtraction.summarize')(function* (input) {
-        const text = yield* complete(dependencies, {
+        const text = yield* model.complete({
           name: 'memory_brief',
           prompt: summaryPrompt,
           content: { person: input.person.name, memories: input.memories.map(shownMemory) },
@@ -357,4 +238,4 @@ export const memoryExtractionLayer = Layer.effect(
       }),
     })
   }),
-)
+).pipe(Layer.provide(memoryModelLayer))

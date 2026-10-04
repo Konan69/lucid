@@ -103,6 +103,12 @@ export interface ThreadStoreService {
     id: ThreadId,
     preview: Option.Option<string>,
   ) => Effect.Effect<void, ThreadStoreError>
+  /** Atomically accepts a generated title only while the generation's source/title guard still holds. */
+  readonly generatedTitle: (
+    id: ThreadId,
+    title: string,
+    previous: Option.Option<string>,
+  ) => Effect.Effect<boolean, ThreadStoreError>
   /** The Members a `people` Thread is shared with, beside its creator. */
   readonly participants: (id: ThreadId) => Effect.Effect<ReadonlyArray<PersonId>, ThreadStoreError>
 }
@@ -161,6 +167,7 @@ const makeEnsure = (database: DatabaseService) =>
         .values({
           id: input.id,
           title: input.title,
+          titleSource: 'Seed',
           updatedAt: now,
           personId: input.personId,
           companyId: input.companyId,
@@ -245,6 +252,7 @@ const makeCreate = (database: DatabaseService) =>
         .values({
           id: request.id,
           title: request.title,
+          titleSource: 'Seed',
           updatedAt: now,
           personId,
           companyId,
@@ -280,6 +288,7 @@ const makePatch = (database: DatabaseService) =>
       database
         .update(threads)
         .set({
+          titleSource: change.title === undefined ? sql`${threads.titleSource}` : 'Person',
           title: change.title === undefined ? sql`${threads.title}` : change.title,
           archived: change.archived === undefined ? sql`${threads.archived}` : change.archived,
           projectId: change.projectId === undefined ? sql`${threads.projectId}` : change.projectId,
@@ -289,6 +298,24 @@ const makePatch = (database: DatabaseService) =>
     )
     const stored = yield* decodeThread(yield* returned(rows, 'Thread'))
     return yield* makeView(database)(stored, personId)
+  })
+
+/** T3 apps/server/src/orchestration/Layers/ProviderCommandReactor.ts#regenerateThreadTitle/canReplaceThreadTitle: conditional SQL closes the
+ * read/write race with Person renames. None means automatic Seed-only; Some is explicit regeneration. */
+const makeGeneratedTitle = (database: DatabaseService): ThreadStoreService['generatedTitle'] =>
+  Effect.fn('ThreadStore.generatedTitle')(function* (id, title, previous) {
+    const guard = Option.match(previous, {
+      onNone: () => eq(threads.titleSource, 'Seed'),
+      onSome: (before) => eq(threads.title, before),
+    })
+    const rows = yield* database.run(
+      database
+        .update(threads)
+        .set({ title, titleSource: 'Generated' })
+        .where(and(eq(threads.id, id), guard))
+        .returning({ id: threads.id }),
+    )
+    return rows.length > 0
   })
 
 const makeParticipants = (database: DatabaseService) =>
@@ -433,6 +460,7 @@ export const threadStoreLayer = Layer.effect(
       markRead: makeMarkRead(database),
       touch: makeTouch(database),
       participants: makeParticipants(database),
+      generatedTitle: makeGeneratedTitle(database),
     })
   }),
 )

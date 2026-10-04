@@ -16,7 +16,14 @@ export { rules } from '../rules/tables.ts'
 export { skills } from '../skills/tables.ts'
 export { notifications } from '../notifications/tables.ts'
 export { pushTargets, pushDeliveries } from '../push/tables.ts'
-export { firstThreads, runs, threadParticipants, threadReads, threads } from '../threads/tables.ts'
+export {
+  firstThreads,
+  runs,
+  threadParticipants,
+  threadReads,
+  threads,
+  titleSource,
+} from '../threads/tables.ts'
 
 /** Compatibility marker retained exactly because existing databases already contain this table. */
 export const schemaMigrations = pgTable('vivid_schema_migrations', {

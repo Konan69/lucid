@@ -1,3 +1,4 @@
+import { ThreadTitles } from './generation.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeBuffer from 'node:buffer'
 import { createFlueClient } from '@flue/sdk'
@@ -244,6 +245,7 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
     threadStoreLayer.pipe(Layer.provide(Layer.succeed(Database, database))),
     silentChangesLayer,
     silentLearningLayer,
+    Layer.mock(ThreadTitles, { afterRun: () => Effect.void }),
     Layer.succeed(
       Notifier,
       Notifier.of({ notify: Effect.fn('Delivery.test.notify')(() => Effect.void) }),

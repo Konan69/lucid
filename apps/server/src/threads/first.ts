@@ -45,6 +45,7 @@ export const claimFirstThread = Effect.fn('Threads.claimFirst')(function* (actor
         // The existing empty-Thread convention is "New thread": web data/threads.openThread
         // and mobile data/threads.UNTITLED use it before Person words supply a derived title.
         title: 'New thread',
+        titleSource: 'Seed',
         personId,
         companyId: companyColumnOf(actor.workspace),
         updatedAt: now,

@@ -4,13 +4,18 @@ import {
   integer,
   jsonb,
   pgTable,
+  pgEnum,
   primaryKey,
   text,
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 import type { LibraryFolderId, RunFailure, RunId } from '@vivid/contracts'
 import { companyColumn, epoch, personColumn, threadColumn } from '../database/owner.ts'
+import { TitleSource } from './title.ts'
 import { projectTable } from '../projects/tables.ts'
+
+/** Existing titles have no rename provenance; Person protects every legacy title. New writers explicitly use Seed. */
+export const titleSource = pgEnum('vivid_thread_title_source', TitleSource.literals)
 
 /**
  * One row per Thread. The table keeps its first name because Flue's history is keyed by the same
@@ -26,6 +31,7 @@ export const threads = pgTable(
   {
     id: threadColumn('id').primaryKey(),
     title: text('title').notNull(),
+    titleSource: titleSource('title_source').notNull().default('Person'),
     preview: text('preview').notNull().default(''),
     updatedAt: epoch('updated_at').notNull(),
     archived: boolean('archived').notNull().default(false),
