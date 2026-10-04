@@ -142,13 +142,24 @@ const reuseAccount = Effect.fn('Connections.reuseAccount')(function* (
       ),
     Failed: () =>
       Effect.succeed(AddIntegrationOutcome.cases.Failed.make({ account: existing.account })),
-    NeedsAuthorization: Effect.fn('Connections.resumeAccount')(function* () {
-      const step = yield* (yield* ConnectionStore).resume(actor, existing.row.id)
-      return AddIntegrationOutcome.cases.PendingAuthorization.make({
-        account: existing.account,
-        step,
-      })
-    }),
+    /**
+     * A sign-in that cannot be restarted (the provider is no longer set up, or another attempt
+     * won the row) is this existing account's failure. It must not fall through to the outer
+     * `InvalidRequest` mapping, which describes a new address and would call an account the
+     * Person already has an "unsupported integration".
+     */
+    NeedsAuthorization: () =>
+      Effect.gen(function* () {
+        const step = yield* (yield* ConnectionStore).resume(actor, existing.row.id)
+        return AddIntegrationOutcome.cases.PendingAuthorization.make({
+          account: existing.account,
+          step,
+        })
+      }).pipe(
+        Effect.catchTag('InvalidRequest', () =>
+          Effect.succeed(AddIntegrationOutcome.cases.Failed.make({ account: existing.account })),
+        ),
+      ),
   })
 })
 

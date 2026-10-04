@@ -1,5 +1,6 @@
 import { defineTool } from '@flue/runtime'
 import {
+  ConnectionStep,
   AddIntegrationOutcome,
   InvalidRequest,
   TestIntegrationOutcome,
@@ -176,7 +177,11 @@ function integrationTools(runTool: RunTool) {
               yield* warnFailure('add_integration', outcome._tag)
             return {
               output: connectionViews.added(outcome),
-              terminate: AddIntegrationOutcome.isAnyOf(['NeedsSignIn', 'NeedsKey'])(outcome),
+              // A resumed sign-in shows the same card as a new one, so the Run stops for it too.
+              terminate:
+                AddIntegrationOutcome.isAnyOf(['NeedsSignIn', 'NeedsKey'])(outcome) ||
+                (AddIntegrationOutcome.guards.PendingAuthorization(outcome) &&
+                  !ConnectionStep.guards.Done(outcome.step)),
             }
           }),
           { signal, tool: 'add_integration' },
