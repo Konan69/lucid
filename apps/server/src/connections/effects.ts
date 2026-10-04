@@ -1,8 +1,13 @@
-import { Cache, Context, Data, Effect, Exit, Layer, Schema } from 'effect'
+import { Cache, Context, Data, Effect, Exit, Layer, Request, RequestResolver, Schema } from 'effect'
 import { Decision, DecisionModel } from 'effect/unstable/ai'
 import { type ServiceId } from '@vivid/contracts'
-import { decide, decisionConfigured } from '../decisions/model.ts'
-import { type ExecutorTool } from './executor.ts'
+import {
+  decide,
+  decideWithin,
+  decisionConfigured,
+  DecisionUnavailable,
+} from '../decisions/model.ts'
+import { ExecutorTool } from './executor.ts'
 
 /** Removing an Approval requires near-certainty, rather than merely the top label.
  * Live Jev calibration (36 tools, 2026-10-04): 18 reads had read probability
@@ -15,6 +20,15 @@ const EFFECT_CACHE_CAPACITY = 4096
 const EFFECT_CACHE_TTL = '24 hours'
 /** One minute suppresses outage storms without remembering failure as an answer. */
 const EFFECT_FAILURE_TTL = '1 minute'
+/** Forty tools fit one cold catalog; larger catalogs split to bound request payloads. */
+export const EFFECT_BATCH_SIZE = 40
+/** Discovery is optional enrichment; a stalled provider gets only two seconds. */
+export const EFFECT_BATCH_BUDGET = '2 seconds'
+
+/** Request mode changes the lookup budget, not cache identity or caller authority. */
+const discoveryClassification = Context.Reference('vivid/DiscoveryClassification', {
+  defaultValue: () => false,
+})
 
 const Input = Schema.Struct({
   service: Schema.String,
@@ -47,6 +61,11 @@ interface EffectRequest {
 
 interface ToolEffectsService {
   readonly classify: (request: EffectRequest) => Effect.Effect<typeof ExecutorTool.Type.effect>
+  readonly classifyBatch: (request: {
+    readonly serviceId: ServiceId
+    readonly service: string
+    readonly tools: readonly (typeof ExecutorTool.Type)[]
+  }) => Effect.Effect<readonly (typeof ExecutorTool.Type)[]>
 }
 
 /** Owns provider classification and its process-lifetime cache across discovery and execution. */
@@ -63,59 +82,158 @@ class CacheKey extends Data.Class<{
   readonly description: string
 }> {}
 
-/** Executor protocolOperations defaults undeclared tools to mutation, and host inspect emits
- * readOnly:false for those mutations (packages/apps/src/implementation/{protocol-operations,host}.ts).
- * Only writes need judgment; explicit read/destructive hints remain authoritative.
- * The description comes from the provider: a server that lies about a write tool can get it
- * classified as read, the same trust already given to a declared read hint. Failures stay write.
- * Effect Cache.ts makeWith retains successful judgments for a day and failures for a minute. */
+/** Resolver requests carry the original metadata; Cache owns cross-caller deduplication. */
+class Classification extends Request.Class<
+  {
+    readonly key: CacheKey
+    readonly discovery: boolean
+  },
+  typeof ExecutorTool.Type.effect,
+  DecisionUnavailable
+> {}
+
+/** Separate catalogs and budgets must not share a provider request. */
+class ClassificationGroup extends Data.Class<{
+  readonly serviceId: ServiceId
+  readonly service: string
+  readonly discovery: boolean
+}> {}
+
+/** The established classification wording and labels remain authoritative in batches. */
+const effectOf = (
+  answer: Decision.ClassifyAnswer<'read' | 'write' | 'destructive'>,
+): typeof ExecutorTool.Type.effect => {
+  if (answer.probabilities.read >= READ_PROBABILITY_THRESHOLD) return 'read'
+  return answer.label === 'destructive' ? 'destructive' : 'write'
+}
+
+/** Positional questions keep each tool's facts beside its criteria. rc.116
+ * DecisionModel.make validates coverage; a missing dynamic key still fails explicitly.
+ * Discovery uses a single two-second attempt, with no failure converted to an answer. */
+const classifyQuestions = Effect.fn('Connections.classifyQuestions')(function* (
+  keys: readonly CacheKey[],
+) {
+  const decisions = Object.fromEntries(
+    keys.map((key, index) => [
+      `tool_${index}`,
+      Decision.classify({
+        ...toolEffectDecision.decisions.effect,
+        instructions: `${toolEffectDecision.decisions.effect.instructions}. Judge only this tool: ${JSON.stringify({ service: key.service, tool: key.tool, description: key.description })}`,
+      }),
+    ]),
+  )
+  const { answers } = yield* decideWithin(
+    Decision.make({ input: Schema.Struct({}), decisions }),
+    {},
+    EFFECT_BATCH_BUDGET,
+  )
+  return yield* Effect.forEach(keys, (_, index) => {
+    const answer = answers[`tool_${index}`]
+    if (answer === undefined) return Effect.fail(new DecisionUnavailable({ reason: 'Provider' }))
+    return Effect.succeed(effectOf(answer))
+  })
+})
+
+/** RequestResolver.ts makeGrouped collects concurrently requested cache misses in one
+ * catalog; batchN bounds payloads. Cache.ts makeWith owns pending deduplication and
+ * exit-dependent expiry across discovery, direct use and delayed use. Declared hints
+ * bypass Jev, and the unconfigured model bypasses the cache entirely. */
 export const toolEffectsLayer = Layer.effect(
   ToolEffects,
   Effect.gen(function* () {
     const model = yield* DecisionModel.DecisionModel
     const configured = yield* decisionConfigured
-    const cache = yield* Cache.makeWith(
-      Effect.fn('Connections.judgeEffect')(
-        function* (key: CacheKey) {
-          const { answers } = yield* decide(toolEffectDecision, {
-            service: key.service,
-            tool: key.tool,
-            description: key.description,
-          }).pipe(Effect.provideService(DecisionModel.DecisionModel, model))
-          if (answers.effect.probabilities.read >= READ_PROBABILITY_THRESHOLD)
-            return 'read' as const
-          return answers.effect.label === 'destructive'
-            ? ('destructive' as const)
-            : ('write' as const)
-        },
-        (effect) =>
-          effect.pipe(
-            Effect.tapError((error) =>
-              Effect.logWarning('Tool effect unavailable', {
-                tag: error._tag,
-                reason: error.reason,
+    const resolver = RequestResolver.makeGrouped<Classification, ClassificationGroup>({
+      key: ({ request }) =>
+        new ClassificationGroup({
+          serviceId: request.key.serviceId,
+          service: request.key.service,
+          discovery: request.discovery,
+        }),
+      resolver: Effect.fn('Connections.resolveEffects')(function* (entries, group) {
+        const keys = entries.map(({ request }) => request.key)
+        const operation = group.discovery
+          ? classifyQuestions(keys)
+          : Effect.forEach(
+              keys,
+              Effect.fn('Connections.judgeEffect')(function* (key) {
+                const { answers } = yield* decide(toolEffectDecision, {
+                  service: key.service,
+                  tool: key.tool,
+                  description: key.description,
+                })
+                return effectOf(answers.effect)
               }),
-            ),
+              { concurrency: 'unbounded' },
+            )
+        const exit = yield* Effect.exit(
+          operation.pipe(Effect.provideService(DecisionModel.DecisionModel, model)),
+        )
+        for (const [index, entry] of entries.entries()) {
+          if (Exit.isFailure(exit)) yield* Request.complete(entry, exit)
+          else {
+            const effect = exit.value[index]
+            yield* Request.complete(
+              entry,
+              effect === undefined
+                ? Exit.fail(new DecisionUnavailable({ reason: 'Provider' }))
+                : Exit.succeed(effect),
+            )
+          }
+        }
+      }),
+    }).pipe(RequestResolver.batchN(EFFECT_BATCH_SIZE))
+    const cache = yield* Cache.makeWith(
+      Effect.fn('Connections.lookupEffect')(function* (key: CacheKey) {
+        const discovery = yield* discoveryClassification
+        return yield* Effect.request(new Classification({ key, discovery }), resolver).pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning('Tool effect unavailable', {
+              tag: error._tag,
+              reason: error.reason,
+            }),
           ),
-      ),
+        )
+      }),
       {
         capacity: EFFECT_CACHE_CAPACITY,
         timeToLive: (exit) => (Exit.isSuccess(exit) ? EFFECT_CACHE_TTL : EFFECT_FAILURE_TTL),
       },
     )
+    /** The cache key excludes mode, so competing discovery/use callers share one lookup. */
+    const classify = Effect.fn('Connections.toolEffect')(function* ({
+      serviceId,
+      service,
+      tool,
+    }: EffectRequest) {
+      if (tool.effect !== 'write' || !configured) return tool.effect
+      const key = new CacheKey({
+        serviceId,
+        service,
+        tool: tool.name,
+        description: tool.description,
+      })
+      return yield* Cache.get(cache, key).pipe(
+        Effect.catch(() => Effect.succeed<typeof ExecutorTool.Type.effect>('write')),
+      )
+    })
     return ToolEffects.of({
-      /** The same cached answer owns discovery, direct use and delayed-use projection. */
-      classify: Effect.fn('Connections.toolEffect')(function* ({ serviceId, service, tool }) {
-        if (tool.effect !== 'write' || !configured) return tool.effect
-        const key = new CacheKey({
-          serviceId,
-          service,
-          tool: tool.name,
-          description: tool.description,
-        })
-        return yield* Cache.get(cache, key).pipe(
-          Effect.catch(() => Effect.succeed<typeof ExecutorTool.Type.effect>('write')),
-        )
+      classify,
+      /** Concurrent misses reach one resolver batch; successful exits fill the same cache.
+       * Failed exits retain only the brief outage backoff, never a successful write answer. */
+      classifyBatch: Effect.fn('Connections.toolEffects')(function* ({
+        serviceId,
+        service,
+        tools,
+      }) {
+        return yield* Effect.forEach(
+          tools,
+          Effect.fn('Connections.projectEffect')(function* (tool) {
+            const effect = yield* classify({ serviceId, service, tool })
+            return ExecutorTool.make({ ...tool, effect })
+          }),
+          { concurrency: 'unbounded' },
+        ).pipe(Effect.provideService(discoveryClassification, true))
       }),
     })
   }),

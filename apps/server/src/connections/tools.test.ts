@@ -4,12 +4,12 @@ import { ScriptedAnswer } from '../decisions/testing.ts'
 import { AiError, DecisionModel } from 'effect/unstable/ai'
 import { toolEffectsLayer } from './effects.ts'
 import * as TestClock from 'effect/testing/TestClock'
-import { ConnectionStep } from '@vivid/contracts'
+import { ActionTarget, ConnectionStep } from '@vivid/contracts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { ExecutorTool } from './executor.ts'
 import { ConnectionStore } from './store.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
-import { findTools, resolveTool, useTool } from './tools.ts'
+import { connectionRunner, findTools, resolveTool, useTool } from './tools.ts'
 
 const decodeInputs = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ tool: Schema.String })),
@@ -335,6 +335,82 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             'read',
           ])
           expect(effectCalls).toBe(1)
+        }).pipe(Effect.provide(Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer)))))
+      }),
+    )
+
+    /** Every execution entrypoint inspects exactly the requested undeclared tool. */
+    it.effect('direct use, resolution and approved use never classify the whole catalog', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const probe = yield* ConnectionProbe
+        const previous = yield* Ref.get(probe.tools)
+        yield* Effect.addFinalizer(() => Ref.set(probe.tools, previous))
+        yield* Ref.set(
+          probe.tools,
+          Array.from({ length: 40 }, (_, index) =>
+            ExecutorTool.make({
+              name: `lookup_${index}`,
+              description: 'Lookup a record',
+              effect: 'write',
+              input: {},
+            }),
+          ),
+        )
+        const connection = yield* (yield* ConnectionStore).begin(ownerActor, {
+          service: serviceId,
+          label: 'Work',
+          shared: false,
+        })
+        const names: string[] = []
+        const modelLayer = Layer.effect(
+          DecisionModel.DecisionModel,
+          DecisionModel.make({
+            decide: Effect.fn('Test.requestedEffect')(function* ({ state }) {
+              const input = yield* Schema.decodeUnknownEffect(
+                Schema.Struct({ tool: Schema.String }),
+              )(state).pipe(
+                Effect.mapError(() =>
+                  AiError.make({
+                    module: 'Test',
+                    method: 'decide',
+                    reason: new AiError.InvalidUserInputError({ description: 'Invalid fixture' }),
+                  }),
+                ),
+              )
+              names.push(input.tool)
+              return {
+                answers: {
+                  effect: ScriptedAnswer.cases.Classify.make({
+                    label: 'read',
+                    probabilities: { read: 0.99, write: 0.01, destructive: 0 },
+                  }),
+                },
+                usage: { inputTokens: undefined, outputTokens: undefined },
+              }
+            }),
+          }),
+        )
+        yield* Effect.gen(function* () {
+          yield* useTool(ownerActor, {
+            connectionId: connection.connection.id,
+            tool: 'lookup_0',
+            input: {},
+            summary: 'Read',
+            rationale: 'Read a record',
+          })
+          yield* resolveTool(ownerActor, { account: 'Work', tool: 'lookup_1' })
+          yield* connectionRunner({
+            person: ownerActor.person,
+            workspace: ownerActor.workspace,
+            target: ActionTarget.cases.Connection.make({
+              connectionId: connection.connection.id,
+              account: 'Work',
+              tool: 'lookup_2',
+              input: {},
+            }),
+          })
+          expect(names).toEqual(['lookup_0', 'lookup_1', 'lookup_2'])
         }).pipe(Effect.provide(Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer)))))
       }),
     )

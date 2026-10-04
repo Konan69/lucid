@@ -1,12 +1,12 @@
 import { expect, it } from '@effect/vitest'
-import { Effect, Fiber, Layer } from 'effect'
+import { Deferred, Effect, Fiber, Layer } from 'effect'
 import { unconfiguredDecisionLayer } from '../decisions/model.ts'
 import { ScriptedAnswer } from '../decisions/testing.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { AiError, DecisionModel } from 'effect/unstable/ai'
 import { ServiceId } from '@vivid/contracts'
 import { ExecutorTool } from './executor.ts'
-import { ToolEffects, toolEffectsLayer } from './effects.ts'
+import { EFFECT_BATCH_SIZE, ToolEffects, toolEffectsLayer } from './effects.ts'
 
 const request = {
   serviceId: ServiceId.make('private-service-id'),
@@ -196,3 +196,120 @@ it.effect('unconfigured classification immediately retains write', () =>
     expect(yield* (yield* ToolEffects).classify(request)).toBe('write')
   }).pipe(Effect.provide(toolEffectsLayer.pipe(Layer.provide(unconfiguredDecisionLayer)))),
 )
+
+/** Catalog projection exercises the real resolver and cache, including a bounded overflow. */
+it.effect('cold discovery batches forty misses and reuses them during execution', () => {
+  const sizes: number[] = []
+  return Effect.gen(function* () {
+    const effects = yield* ToolEffects
+    const tools = Array.from({ length: EFFECT_BATCH_SIZE + 1 }, (_, index) =>
+      ExecutorTool.make({ ...request.tool, name: `get_record_${index}` }),
+    )
+    const batch = { serviceId: request.serviceId, service: request.service, tools }
+    const classified = yield* effects.classifyBatch(batch)
+    expect(classified.every((tool) => tool.effect === 'read')).toBe(true)
+    expect(sizes).toEqual([40, 1])
+    expect(yield* effects.classify(request)).toBe('read')
+    expect(sizes).toEqual([40, 1, 1])
+    yield* effects.classifyBatch(batch)
+    for (const tool of tools) expect(yield* effects.classify({ ...request, tool })).toBe('read')
+    expect(sizes).toEqual([40, 1, 1])
+  }).pipe(
+    Effect.provide(
+      provider(({ decisions }) => {
+        sizes.push(Object.keys(decisions).length)
+        return Effect.succeed({
+          answers: Object.fromEntries(
+            Object.keys(decisions).map((key) => [
+              key,
+              ScriptedAnswer.cases.Classify.make({
+                label: 'read',
+                probabilities: { read: 0.99, write: 0.01, destructive: 0 },
+              }),
+            ]),
+          ),
+          usage: { inputTokens: undefined, outputTokens: undefined },
+        })
+      }),
+    ),
+  )
+})
+
+/** Shared cache identity deduplicates use callers arriving during a discovery lookup. */
+it.effect('pending discovery and direct use share one provider request', () => {
+  let calls = 0
+  return Effect.gen(function* () {
+    const started = yield* Deferred.make<void>()
+    const release = yield* Deferred.make<void>()
+    const modelLayer = provider(
+      Effect.fn('Test.pending')(function* ({ decisions }) {
+        calls += 1
+        yield* Deferred.succeed(started, undefined)
+        yield* Deferred.await(release)
+        return {
+          answers: Object.fromEntries(
+            Object.keys(decisions).map((key) => [
+              key,
+              ScriptedAnswer.cases.Classify.make({
+                label: 'read',
+                probabilities: { read: 0.99, write: 0.01, destructive: 0 },
+              }),
+            ]),
+          ),
+          usage: { inputTokens: undefined, outputTokens: undefined },
+        }
+      }),
+    )
+    yield* Effect.gen(function* () {
+      const effects = yield* ToolEffects
+      const pending = yield* effects
+        .classifyBatch({
+          serviceId: request.serviceId,
+          service: request.service,
+          tools: [request.tool],
+        })
+        .pipe(Effect.forkChild)
+      yield* Deferred.await(started)
+      const direct = yield* effects.classify(request).pipe(Effect.forkChild)
+      yield* Deferred.succeed(release, undefined)
+      expect((yield* Fiber.join(pending)).map((tool) => tool.effect)).toEqual(['read'])
+      expect(yield* Fiber.join(direct)).toBe('read')
+      expect(calls).toBe(1)
+    }).pipe(Effect.provide(modelLayer))
+  })
+})
+
+/** Discovery has one short attempt; failure is not a cached successful write answer. */
+it.effect('stalled discovery returns writes in two seconds then retries after backoff', () => {
+  let calls = 0
+  return Effect.gen(function* () {
+    const effects = yield* ToolEffects
+    const batch = { serviceId: request.serviceId, service: request.service, tools: [request.tool] }
+    const pending = yield* effects.classifyBatch(batch).pipe(Effect.forkChild)
+    yield* TestClock.adjust('2 seconds')
+    expect((yield* Fiber.join(pending)).map((tool) => tool.effect)).toEqual(['write'])
+    expect(calls).toBe(1)
+    yield* TestClock.adjust('1 minute')
+    expect((yield* effects.classifyBatch(batch)).map((tool) => tool.effect)).toEqual(['read'])
+    expect(calls).toBe(2)
+  }).pipe(
+    Effect.provide(
+      provider(({ decisions }) => {
+        calls += 1
+        if (calls === 1) return Effect.never
+        return Effect.succeed({
+          answers: Object.fromEntries(
+            Object.keys(decisions).map((key) => [
+              key,
+              ScriptedAnswer.cases.Classify.make({
+                label: 'read',
+                probabilities: { read: 0.99, write: 0.01, destructive: 0 },
+              }),
+            ]),
+          ),
+          usage: { inputTokens: undefined, outputTokens: undefined },
+        })
+      }),
+    ),
+  )
+})

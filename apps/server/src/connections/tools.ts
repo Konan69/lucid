@@ -93,24 +93,29 @@ const projectTools = Effect.fn('Connections.projectTools')(function* (
   )
 })
 
-/** All projections share the same authority and cache; ids are used only locally. */
+/** Discovery submits uncached metadata in one bounded resolver batch per Integration. */
 const classifyTools = Effect.fn('Connections.classifyTools')(function* (
   row: ConnectionRecord,
   tools: readonly (typeof ExecutorTool.Type)[],
 ) {
-  const effects = yield* ToolEffects
-  return yield* Effect.forEach(
+  return yield* (yield* ToolEffects).classifyBatch({
+    serviceId: row.service,
+    service: row.serviceName,
     tools,
-    Effect.fn('Connections.classifyTool')(function* (tool) {
-      const effect = yield* effects.classify({
-        serviceId: row.service,
-        service: row.serviceName,
-        tool,
-      })
-      return ExecutorTool.make({ ...tool, effect })
-    }),
-    { concurrency: 4 },
-  )
+  })
+})
+
+/** Execution and label resolution classify only the requested metadata. */
+const classifyTool = Effect.fn('Connections.classifyTool')(function* (
+  row: ConnectionRecord,
+  tool: typeof ExecutorTool.Type,
+) {
+  const effect = yield* (yield* ToolEffects).classify({
+    serviceId: row.service,
+    service: row.serviceName,
+    tool,
+  })
+  return ExecutorTool.make({ ...tool, effect })
 })
 
 /** Name all accessible Connections before status/query filtering; creation order fixes duplicate suffixes.
@@ -220,10 +225,19 @@ export const resolveTool = Effect.fn('Connections.resolveTool')(function* (
     (entry) => entry.account.toLowerCase() === requestedAccount && entry.row.status === 'ready',
   )
   if (account === undefined) return yield* Effect.fail(new NotFound({ message: 'Tool not found' }))
-  const tools = yield* projectTools(store, actor, account.row, account.account)
-  const tool = tools.find((entry) => entry.name === request.tool)
-  if (tool === undefined) return yield* Effect.fail(new NotFound({ message: 'Tool not found' }))
-  return tool
+  const tools = yield* store.tools(actor, account.row)
+  const requested = tools.find((entry) => entry.name === request.tool)
+  if (requested === undefined)
+    return yield* Effect.fail(new NotFound({ message: 'Tool not found' }))
+  const tool = yield* classifyTool(account.row, requested)
+  if (account.row.companyId !== null && tool.effect !== 'read')
+    return yield* Effect.fail(new NotFound({ message: 'Tool not found' }))
+  return NamedTool.make({
+    ...tool,
+    connectionId: account.row.id,
+    account: account.account,
+    serviceName: account.row.serviceName,
+  })
 })
 
 /** Shared Threads expose personal results even when the operation is a read. */
@@ -328,12 +342,12 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
   )
   if (Option.isNone(tools))
     return ToolOutcome.cases.Rejected.make({ message: 'Integrations are unavailable.' })
-  const classified = yield* classifyTools(row, tools.value)
-  const tool = classified.find((entry) => entry.name === request.tool)
-  if (tool === undefined)
+  const requested = tools.value.find((entry) => entry.name === request.tool)
+  if (requested === undefined)
     return ToolOutcome.cases.Rejected.make({
       message: `Tool ${request.tool} is not available on this integration.`,
     })
+  const tool = yield* classifyTool(row, requested)
   if (row.companyId !== null && tool.effect !== 'read')
     return ToolOutcome.cases.Rejected.make({
       message: 'Shared integrations are read-only. Connect your own account to make this change.',
@@ -412,9 +426,13 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
         ),
       ),
     )
-    const classified = yield* classifyTools(row, discovered)
-    const tool = classified.find((entry) => entry.name === input.target.tool)
-    if (tool === undefined || (row.companyId !== null && tool.effect !== 'read'))
+    const requested = discovered.find((entry) => entry.name === input.target.tool)
+    if (requested === undefined)
+      return ActionOutcome.cases.Failed.make({
+        reason: 'This tool is no longer available on this integration.',
+      })
+    const tool = yield* classifyTool(row, requested)
+    if (row.companyId !== null && tool.effect !== 'read')
       return ActionOutcome.cases.Failed.make({
         reason: 'This tool is no longer available on this integration.',
       })
