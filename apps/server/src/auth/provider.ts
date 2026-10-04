@@ -1,12 +1,11 @@
 import { BetterAuth } from '@alchemy.run/better-auth'
-import { Postgres } from '@alchemy.run/better-auth/Postgres'
 import { bearer, deviceAuthorization, organization } from 'better-auth/plugins'
 import { RuntimeContext } from 'alchemy'
 import * as Effect from 'effect/Effect'
 import * as Redacted from 'effect/Redacted'
-import { DatabaseFailure, PersonId } from '@vivid/contracts'
+import { DatabaseFailure } from '@vivid/contracts'
 import { GoogleOAuthConfiguration, ServerConfig } from '../config.ts'
-import { Changes, Topic } from '../live/changes.ts'
+import { authDatabaseLayer } from './dialect.ts'
 
 /**
  * Better Auth's internal identity model is mapped once at this boundary:
@@ -14,10 +13,7 @@ import { Changes, Topic } from '../live/changes.ts'
  * membership, and invitation tables. Public contracts and routes use only
  * the Vivid glossary.
  */
-const makeOptions = (
-  config: ServerConfig['Service'],
-  sessionEnded: (personId: string) => Promise<void>,
-) => {
+const makeOptions = (config: ServerConfig['Service']) => {
   const options = {
     id: 'VividAuth',
     migrate: false,
@@ -28,18 +24,6 @@ const makeOptions = (
     emailAndPassword: {
       enabled: true,
       autoSignIn: true,
-    },
-    /**
-     * Every way a session ends by being removed (signing out, revoking a paired device, revoking
-     * the other sessions) deletes its row through this hook, in Better Auth 1.7.5's
-     * `db/with-hooks` `deleteWithHooks` and `deleteManyWithHooks`. The hook runs after the delete
-     * has committed and says the Person's data moved, which is what makes every open subscription
-     * of theirs ask again whether its session is still one.
-     */
-    databaseHooks: {
-      session: {
-        delete: { after: (session: { readonly userId: string }) => sessionEnded(session.userId) },
-      },
     },
     account: {
       accountLinking: {
@@ -86,19 +70,24 @@ const makeOptions = (
 export const localAuthRuntimeLayer = RuntimeContext.phantom
 
 /**
- * Says a Person's data moved when one of their sessions is removed. Better Auth calls its database
- * hooks as Promises and offers no other way in, so the publish is run as one here and nowhere else.
+ * The Better Auth instance over Vivid's PostgreSQL.
+ *
+ * Every way a session ends by being removed (signing out, revoking a paired device, revoking the
+ * other sessions) is a delete on the session table. The database Layer announces the Person in
+ * that delete's own commit (`auth/dialect.ts`), which is what makes every open subscription of
+ * theirs ask again whether its session is still one. Nothing here publishes, so this needs no
+ * change bus.
+ *
+ * The only failure is that Layer refusing to build because it could not form the removal's
+ * receipt; auth is then unavailable rather than removing sessions unannounced.
  */
-const sessionRemoved = (changes: Changes['Service']) => (personId: string) =>
-  // oxlint-disable-next-line vivid/no-runpromise-in-library -- Better Auth's Promise-only database hook ingress.
-  Effect.runPromise(changes.publish([Topic.person(PersonId.make(personId))]))
-
 export const authEffect = Effect.gen(function* () {
   const config = yield* ServerConfig
-  const changes = yield* Changes
-  return yield* BetterAuth(makeOptions(config, sessionRemoved(changes))).pipe(
-    Effect.provide(Postgres(Redacted.value(config.DATABASE_URL), { migrate: false })),
+  return yield* BetterAuth(makeOptions(config)).pipe(
+    Effect.provide(authDatabaseLayer(config.DATABASE_URL)),
   )
-}).pipe(Effect.mapError(() => new DatabaseFailure({ message: 'Server configuration is invalid' })))
+}).pipe(
+  Effect.mapError(() => new DatabaseFailure({ message: 'Session removal cannot be announced' })),
+)
 
 export type AuthInstance = Effect.Success<typeof authEffect>

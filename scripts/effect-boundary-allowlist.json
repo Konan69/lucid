@@ -40,8 +40,8 @@
     "symbols": ["invokeTool"]
   },
   {
-    "file": "apps/server/src/auth/provider.ts",
+    "file": "apps/server/src/auth/dialect.ts",
     "classification": "third-party-adapter",
-    "symbols": ["makeOptions", "sessionRemoved"]
+    "symbols": ["attempt", "settle", "owned"]
   }
 ]

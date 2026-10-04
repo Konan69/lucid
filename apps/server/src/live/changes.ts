@@ -84,7 +84,7 @@ const NOTIFICATION_BYTES = 8_000
  * rc.116 Array.chop and splitWhere consume bounded prefixes without rebuilding a grouping loop.
  * Source: https://www.postgresql.org/docs/18/sql-notify.html (payload and transaction ordering).
  */
-const notificationPayloads = Effect.fn('Changes.payloads')(function* (
+export const notificationPayloads = Effect.fn('Changes.payloads')(function* (
   topics: ReadonlyArray<Topic>,
 ) {
   const encoded = yield* Effect.forEach(topics, (topic) => {
