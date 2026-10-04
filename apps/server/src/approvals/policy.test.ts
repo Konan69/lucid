@@ -1,16 +1,33 @@
 import { describe, expect, it } from '@effect/vitest'
-import { ASKED_THRESHOLD, Review, reviewOutcome } from './policy.ts'
+import {
+  ASKED_THRESHOLD,
+  BEYOND_THRESHOLD,
+  Review,
+  reviewOutcome,
+  type Consequence,
+} from './policy.ts'
 
-const asked = (consequence: 'contained' | 'reaches' | 'irreversible') =>
-  Review.cases.Reviewed.make({ asked: ASKED_THRESHOLD, consequence })
-const unasked = (consequence: 'contained' | 'reaches' | 'irreversible') =>
-  Review.cases.Reviewed.make({ asked: ASKED_THRESHOLD - 0.01, consequence })
+const within = BEYOND_THRESHOLD - 0.01
+const asked = (consequence: Consequence) =>
+  Review.cases.Reviewed.make({ asked: ASKED_THRESHOLD, beyond: within, consequence })
+const unasked = (consequence: Consequence) =>
+  Review.cases.Reviewed.make({ asked: ASKED_THRESHOLD - 0.01, beyond: within, consequence })
 
 /** The whole policy is this table: what Vivid does with no rule, for every review ending. */
 describe('Review policy', () => {
   it('runs whatever the Person asked for, whatever it does', () => {
     expect(reviewOutcome('write', asked('reaches'))).toBe('Run')
     expect(reviewOutcome('destructive', asked('irreversible'))).toBe('Run')
+  })
+
+  it('asks when an asked-for action also reaches what the request did not name', () => {
+    const hidden = Review.cases.Reviewed.make({
+      asked: 0.93,
+      beyond: BEYOND_THRESHOLD,
+      consequence: 'reaches',
+    })
+    expect(reviewOutcome('destructive', hidden)).toBe('Ask')
+    expect(reviewOutcome('write', hidden)).toBe('Ask')
   })
 
   it('runs an unasked action only when it is contained and undoable', () => {
@@ -23,8 +40,8 @@ describe('Review policy', () => {
     expect(reviewOutcome('destructive', unasked('contained'))).toBe('Ask')
   })
 
-  it('does not block undoable work when the review fails, and asks before a destructive one', () => {
-    expect(reviewOutcome('write', Review.cases.Unreviewed.make({}))).toBe('Run')
+  it('asks when the review could not be made, because the effect label proves nothing', () => {
+    expect(reviewOutcome('write', Review.cases.Unreviewed.make({}))).toBe('Ask')
     expect(reviewOutcome('destructive', Review.cases.Unreviewed.make({}))).toBe('Ask')
   })
 })

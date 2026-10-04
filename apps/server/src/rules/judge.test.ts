@@ -35,8 +35,8 @@ const action = ProposedAction.make({
   effect: 'write',
   target: ActionTarget.cases.Connection.make({
     connectionId: ConnectionId.make('connection-one'),
-    account: 'PRIVATE_ACCOUNT',
-    tool: 'PRIVATE_TOOL',
+    account: 'Gmail (Work)',
+    tool: 'update_record',
     input: { private: 'PRIVATE_INPUT' },
   }),
 })
@@ -76,11 +76,14 @@ it.effect('one call selects threshold edges and keeps identifiers and private va
     const prompt = JSON.stringify(input)
     expect(prompt).toContain(action.summary)
     expect(prompt).toContain(rule.action)
+    // A rule about "my work Gmail" can only be matched against the names the Person knows.
+    expect(prompt).toContain('Gmail (Work)')
+    expect(prompt).toContain('update_record')
     for (const value of [
       'PRIVATE_INPUT',
       'PRIVATE_RATIONALE',
-      'PRIVATE_ACCOUNT',
-      'PRIVATE_TOOL',
+      'connection-one',
+      'Connection',
       rule.id,
     ])
       expect(prompt).not.toContain(value)
