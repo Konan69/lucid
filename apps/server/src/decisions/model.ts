@@ -5,11 +5,13 @@ import {
   Duration,
   Effect,
   Exit,
+  Fiber,
   Layer,
   Option,
   Redacted,
   Ref,
   Schema,
+  type Scope,
 } from 'effect'
 import { AiError, Decision, DecisionModel } from 'effect/unstable/ai'
 import { TypeSafeClient, TypeSafeDecisionModel } from '@effect/ai-typesafe'
@@ -183,8 +185,14 @@ const classifyProviderFailure = (error: AiError.AiError) =>
     () => FailureClassification.cases.RequestSpecific.make({}),
   )
 
-/** Captured gateway models share one process-lifetime gate; independent test models do not. */
-const availability = new WeakMap<DecisionModel.DecisionModel, Ref.Ref<typeof Availability.Type>>()
+/** Recovery belongs to the model Layer, not the request that acquires its lease.
+ * Keeping the scope with the gate lets a short caller leave without cancelling I/O;
+ * closing the Layer still interrupts that I/O and settles its lease. */
+interface ModelAvailability {
+  readonly state: Ref.Ref<typeof Availability.Type>
+  readonly scope: Scope.Scope
+}
+const availability = new WeakMap<DecisionModel.DecisionModel, ModelAvailability>()
 
 /** Read-only preflight for callers that prepare expensive decision inputs. False
  * means the model is absent, still cooling, or already probing. An elapsed cooling
@@ -197,7 +205,7 @@ export const decisionWouldAttempt = Effect.gen(function* () {
   if (absent.has(model)) return false
   const state = availability.get(model)
   if (state === undefined) return true
-  const current = yield* Ref.get(state)
+  const current = yield* Ref.get(state.state)
   const now = yield* Clock.currentTimeMillis
   return Availability.match(current, {
     Ready: () => true,
@@ -460,7 +468,8 @@ export const gatewayDecisionLayer = (options: {
     Effect.gen(function* () {
       const model = yield* TypeSafeDecisionModel.make({ model: options.model })
       const state = yield* Ref.make<typeof Availability.Type>(Availability.cases.Ready.make({}))
-      availability.set(model, state)
+      const scope = yield* Effect.scope
+      availability.set(model, { state, scope })
       return model
     }),
   ).pipe(Layer.provide(TypeSafeClient.layer({ apiKey: options.key, apiUrl: GATEWAY_URL })))
@@ -481,21 +490,85 @@ export const decisionModelLayer = Layer.unwrap(
   }),
 )
 
-/**
- * One attempt bounds all questions in a request. Switched off or unconfigured fails at once,
- * before encoding, timers or network, and writes no log line: that is the normal state while
- * decisions are off, not an event. A provider failure, an encoding failure and a defect inside
- * the provider call share the `Provider` reason; a defect is mapped here so that no caller's
- * cache or request can die on a library fault. rc.116 DecisionModel.decide preserves schema
- * encoding services in its context. Transport, HTTP 429/5xx and later independent
- * timeouts with a calibrated budget open outage backoff; shorter timeouts remain
- * caller-local. Authentication rejection opens a five-minute window with one error.
- * Suspect expires after thirty seconds; request-specific failures never change
- * other callers' admission. The shared gate rejects outage traffic immediately as
- * Backoff, silently, with one recovery probe after thirty seconds. Admission and settlement
- * are interruption-safe; only the provider attempt is interruptible. Latency and provider-reported
- * usage are logged for actual attempts, with one log on each backoff open/close transition.
- */
+/** The provider boundary owns validation, defects and its independent I/O timer.
+ * Preserve the classification until settlement; safe public reasons are derived later. */
+const attemptDecision = <
+  Input extends Schema.Constraint,
+  Decisions extends Record<string, Decision.Any>,
+>(
+  definition: Decision.Definition<Input, Decisions>,
+  input: Input['Type'],
+  budget: Duration.Input,
+) =>
+  DecisionModel.decide(definition, { input }).pipe(
+    Effect.catchDefect(() =>
+      Effect.logError('Decision defect').pipe(
+        Effect.andThen(
+          Effect.fail(
+            new AttemptUnavailable({
+              classification: FailureClassification.cases.RequestSpecific.make({}),
+            }),
+          ),
+        ),
+      ),
+    ),
+    Effect.mapError((error) =>
+      error instanceof AttemptUnavailable
+        ? error
+        : new AttemptUnavailable({ classification: classifyProviderFailure(error) }),
+    ),
+    Effect.timeoutOrElse({
+      duration: budget,
+      orElse: () =>
+        Effect.fail(
+          new AttemptTimedOut({
+            budgetMillis: Duration.toMillis(Duration.fromInputUnsafe(budget)),
+          }),
+        ),
+    }),
+  )
+
+/** Settlement and its receipt cannot be cancelled after the provider exits. rc.116
+ * forkIn owns a probe in the Layer scope; the same attempt settlement handles its
+ * independent timeout or Layer shutdown even when its initiating caller has left. */
+const completeAttempt = <A extends { readonly usage: DecisionModel.DecisionUsage }, R>(
+  attempt: Effect.Effect<A, AttemptUnavailable | AttemptTimedOut, R>,
+  state: Option.Option<Ref.Ref<typeof Availability.Type>>,
+  admission: typeof Admission.Type,
+): Effect.Effect<A, DecisionUnavailable, R> =>
+  Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const start = yield* Clock.currentTimeMillis
+      const exit = yield* Effect.exit(restore(attempt))
+      if (Option.isSome(state)) {
+        const outcome = Exit.match(exit, {
+          onSuccess: () => Outcome.cases.Success.make({}),
+          onFailure: failedOutcome,
+        })
+        yield* settle(state.value, admission, outcome)
+      }
+      const latency = (yield* Clock.currentTimeMillis) - start
+      if (Exit.isSuccess(exit))
+        yield* Effect.logInfo('Decision', {
+          latency,
+          inputTokens: exit.value.usage.inputTokens,
+          outputTokens: exit.value.usage.outputTokens,
+        })
+      else yield* Effect.logInfo('Decision', { latency })
+      return yield* exit.pipe(
+        Effect.mapError((error) => new DecisionUnavailable({ reason: unavailableReason(error) })),
+      )
+    }),
+  )
+
+/** OFF and unconfigured fail before encoding, timers or network. Admission and
+ * settlement are interruption-safe; normal calls wait only their supplied budget.
+ * Transport/429/5xx open backoff immediately; independent calibrated stalls
+ * corroborate suspicion. Short timeouts remain caller-local, and 401 opens a
+ * separate five-minute credential window. After cooling, one Layer-owned probe
+ * has 2500ms to settle the gate. Its initiating caller waits at most its own
+ * budget and may leave sooner; siblings fail as Backoff without queueing.
+ * Each actual attempt logs one latency receipt and gate transitions log once. */
 export const decideWithin = <
   Input extends Schema.Constraint,
   Decisions extends Record<string, Decision.Any>,
@@ -513,70 +586,34 @@ export const decideWithin = <
       const model = yield* DecisionModel.DecisionModel
       const reason = absent.get(model)
       if (reason !== undefined) return yield* new DecisionUnavailable({ reason })
-      const state = availability.get(model)
+      const shared = availability.get(model)
       const admission =
-        state === undefined
+        shared === undefined
           ? Admission.cases.Normal.make({
               startedAt: yield* Clock.currentTimeMillis,
               suspicion: Option.none(),
             })
-          : yield* admit(state)
+          : yield* admit(shared.state)
       if (Admission.guards.Backoff(admission))
         return yield* new DecisionUnavailable({ reason: 'Backoff' })
-      const attemptBudget = Admission.guards.Probe(admission) ? RECOVERY_PROBE_BUDGET : budget
-      const start = yield* Clock.currentTimeMillis
-      const exit = yield* Effect.exit(
-        restore(
-          DecisionModel.decide(definition, { input }).pipe(
-            // Loud, because a defect is a fault in the provider adapter or in a definition, not an
-            // outage; typed, because a caller's cache or request must not die on it.
-            Effect.catchDefect(() =>
-              Effect.logError('Decision defect').pipe(
-                Effect.andThen(
-                  Effect.fail(
-                    new AttemptUnavailable({
-                      classification: FailureClassification.cases.RequestSpecific.make({}),
-                    }),
-                  ),
-                ),
-              ),
-            ),
-            Effect.mapError((error) =>
-              error instanceof AttemptUnavailable
-                ? error
-                : new AttemptUnavailable({
-                    classification: classifyProviderFailure(error),
-                  }),
-            ),
+      const state = shared === undefined ? Option.none() : Option.some(shared.state)
+      if (Admission.guards.Probe(admission) && shared !== undefined) {
+        const probe = yield* completeAttempt(
+          attemptDecision(definition, input, RECOVERY_PROBE_BUDGET),
+          state,
+          admission,
+        ).pipe(Effect.forkIn(shared.scope))
+        return yield* restore(
+          Fiber.join(probe).pipe(
             Effect.timeoutOrElse({
-              duration: attemptBudget,
-              orElse: () =>
-                Effect.fail(
-                  new AttemptTimedOut({
-                    budgetMillis: Duration.toMillis(Duration.fromInputUnsafe(attemptBudget)),
-                  }),
-                ),
+              duration: budget,
+              orElse: () => Effect.fail(new DecisionUnavailable({ reason: 'TimedOut' })),
             }),
           ),
-        ),
-      )
-      if (state !== undefined) {
-        const outcome = Exit.match(exit, {
-          onSuccess: () => Outcome.cases.Success.make({}),
-          onFailure: failedOutcome,
-        })
-        yield* settle(state, admission, outcome)
+        )
       }
-      const latency = (yield* Clock.currentTimeMillis) - start
-      if (Exit.isSuccess(exit))
-        yield* Effect.logInfo('Decision', {
-          latency,
-          inputTokens: exit.value.usage.inputTokens,
-          outputTokens: exit.value.usage.outputTokens,
-        })
-      else yield* Effect.logInfo('Decision', { latency })
-      return yield* exit.pipe(
-        Effect.mapError((error) => new DecisionUnavailable({ reason: unavailableReason(error) })),
+      return yield* restore(
+        completeAttempt(attemptDecision(definition, input, budget), state, admission),
       )
     }),
   ).pipe(Effect.withSpan('Decisions.decide'))

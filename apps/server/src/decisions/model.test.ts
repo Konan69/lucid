@@ -295,9 +295,11 @@ it.effect('requires calibrated timeouts and gives a recovery probe its own budge
     const probe = yield* decideWithin(definition, 'short caller', '100 millis').pipe(
       Effect.forkChild,
     )
-    yield* TestClock.adjust('2500 millis')
+    yield* TestClock.adjust('100 millis')
     expect((yield* Effect.flip(Fiber.join(probe))).reason).toBe('TimedOut')
     expect(requests).toBe(3)
+    expect(yield* decisionWouldAttempt).toBe(false)
+    yield* TestClock.adjust('2400 millis')
     expect((yield* Effect.flip(decide(definition, 'fresh window'))).reason).toBe('Backoff')
   }).pipe(Effect.provide(configuredGateway(transport)))
 })
@@ -350,8 +352,8 @@ it.effect('malformed answers do not open the process gate', () => {
   )
 })
 
-/** Interrupting the sole probe must release its lease. The next request still cools briefly,
- * then may probe again instead of being gated forever. */
+/** Caller interruption abandons only its wait. The bounded Layer-owned probe
+ * keeps its lease until its independent timeout, then releases into cooling. */
 it.effect('an interrupted recovery probe cannot leave availability stuck', () =>
   Effect.gen(function* () {
     let requests = 0
@@ -374,6 +376,7 @@ it.effect('an interrupted recovery probe cannot leave availability stuck', () =>
       yield* Deferred.await(started)
       yield* Fiber.interrupt(probe)
       expect((yield* Effect.flip(decide(definition, 'cooling'))).reason).toBe('Backoff')
+      yield* TestClock.adjust('2500 millis')
       yield* TestClock.adjust('30 seconds')
       expect((yield* Effect.flip(decide(definition, 'new probe'))).reason).toBe('Provider')
       expect(requests).toBe(3)
@@ -638,11 +641,12 @@ it.effect('short-budget timeouts do not corroborate process-wide outage', () => 
 
 /** A recovery request admitted by a short-budget caller must have enough time to
  * establish reachability; the caller's budget cannot cause perpetual backoff. */
-it.effect('a healthy probe outlives the initiating caller budget', () =>
+it.effect.each([100, 1800, 2000])('a healthy probe outlives a %sms caller budget', (budget) =>
   Effect.gen(function* () {
     let calls = 0
     const started = yield* Deferred.make<void>()
     const release = yield* Deferred.make<void>()
+    const settled = yield* Deferred.make<void>()
     const transport = Layer.succeed(
       HttpClient.HttpClient,
       HttpClient.make(
@@ -667,14 +671,28 @@ it.effect('a healthy probe outlives the initiating caller budget', () =>
     yield* Effect.gen(function* () {
       yield* Effect.flip(decide(definition, 'outage'))
       yield* TestClock.adjust('30 seconds')
-      const pending = yield* decideWithin(definition, 'probe', '100 millis').pipe(Effect.forkChild)
+      const pending = yield* decideWithin(definition, 'probe', budget).pipe(Effect.forkChild)
       yield* Deferred.await(started)
-      yield* TestClock.adjust('500 millis')
+      yield* TestClock.adjust(budget)
+      expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
+      expect(yield* decisionWouldAttempt).toBe(false)
+      yield* TestClock.adjust('400 millis')
       yield* Deferred.succeed(release, undefined)
-      expect((yield* Fiber.join(pending)).answers.applies.probability).toBe(0.7)
+      yield* Deferred.await(settled)
+      expect(yield* decisionWouldAttempt).toBe(true)
       expect((yield* decide(definition, 'recovered')).answers.applies.probability).toBe(0.7)
       expect(calls).toBe(3)
-    }).pipe(Effect.provide(configuredGateway(transport)))
+    }).pipe(
+      Effect.provide(configuredGateway(transport)),
+      Effect.provide(
+        Logger.layer([
+          Logger.make(({ message }) => {
+            if (JSON.stringify(message).includes('Closed'))
+              Deferred.doneUnsafe(settled, Effect.void)
+          }),
+        ]),
+      ),
+    )
   }),
 )
 
@@ -707,3 +725,37 @@ it.effect('a forbidden recovery payload releases the outage gate for other calle
     expect(calls).toBe(3)
   }).pipe(Effect.provide(configuredGateway(transport)))
 })
+
+/** Recovery is background work, but never process-root work. Closing the model
+ * Layer interrupts the actual HTTP attempt after its initiating wait has ended. */
+it.effect('Layer shutdown interrupts a detached recovery probe', () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>()
+    const stopped = yield* Deferred.make<void>()
+    let calls = 0
+    const transport = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        calls += 1
+        if (calls === 1)
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response('{}', { status: 503 })),
+          )
+        return Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() => Deferred.succeed(stopped, undefined)),
+        )
+      }),
+    )
+    yield* Effect.gen(function* () {
+      yield* Effect.flip(decide(definition, 'outage'))
+      yield* TestClock.adjust('30 seconds')
+      const pending = yield* decideWithin(definition, 'probe', '100 millis').pipe(Effect.forkChild)
+      yield* Deferred.await(started)
+      yield* TestClock.adjust('100 millis')
+      expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
+    }).pipe(Effect.provide(configuredGateway(transport)))
+    yield* Deferred.await(stopped)
+    expect(calls).toBe(2)
+  }),
+)
