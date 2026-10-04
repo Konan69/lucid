@@ -11,8 +11,14 @@ export function text(description: string, maximum: number) {
   )
 }
 
+/**
+ * What one tool call does, in Vivid's own words. It is read in two places, so it is one action
+ * sentence that works in both: as the line for the step in the Thread, and, on a tool that needs
+ * an Approval, as the action the Person is asked to allow (`ProposedAction.summary`). A noun phrase
+ * ("Friday's plan") read well as a step and said nothing on an Approval card.
+ */
 export const summary = text(
-  'What this step is for, in a few plain words the person will read, such as "Friday\'s plan for the launch". No names of tools, no identifiers.',
+  'One short sentence the person will read, saying what this call does and to what, such as "Email Friday\'s launch plan to Dana". No names of tools, no identifiers.',
   200,
 )
 export const forCompany = v.pipe(
