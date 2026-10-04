@@ -179,3 +179,28 @@ it.effect('ten-second timeout asks without a retry', () => {
     ),
   )
 })
+
+/** The gateway rejects a request with too many questions; a Person with many rules must still be judged. */
+it.effect('more rules than one request holds are judged in batches, keeping their order', () => {
+  const sizes: Array<number> = []
+  const rules = Array.from({ length: 45 }, (_unused, index) =>
+    Rule.make({ ...rule, id: RuleId.make(`rule-${index}`), action: `Rule number ${index}` }),
+  )
+  // Each batch answers "applies" for its first rule only: positions 0, 20 and 40 overall.
+  const provider = scripted((input) => {
+    const count = Object.keys(input.decisions).length
+    sizes.push(count)
+    return Effect.succeed(
+      probabilities(Array.from({ length: count }, (_unused, at) => (at === 0 ? 1 : 0))),
+    )
+  })
+  return Effect.gen(function* () {
+    const applicable = yield* (yield* RuleJudge).judge(action, rules)
+    expect(sizes.toSorted((left, right) => left - right)).toEqual([5, 20, 20])
+    expect(applicable.map((entry) => entry.action)).toEqual([
+      'Rule number 0',
+      'Rule number 20',
+      'Rule number 40',
+    ])
+  }).pipe(Effect.provide(provider))
+})
