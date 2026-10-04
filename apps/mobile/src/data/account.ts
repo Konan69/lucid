@@ -116,6 +116,27 @@ const asPerson = Effect.fn('Account.asPerson')(function* (
   yield* answer.ok ? Effect.void : Effect.fail(refusalFor(answer.status, answer.body))
 })
 
+/**
+ * Binds a waiting code to the Person signed in on this phone. Better Auth 1.7.5 refuses to approve
+ * a code no session has claimed (`DEVICE_CODE_NOT_CLAIMED`, `plugins/device-authorization/routes.mjs`),
+ * and the claim is a `GET /device?user_code=…` made with the approving session, so it goes first.
+ */
+const claimDevice = Effect.fn('Account.claimDevice')(function* (
+  session: SignedIn,
+  userCode: string,
+) {
+  const address = `${accountAddress(session.server, 'device')}?user_code=${encodeURIComponent(userCode)}`
+  const response = yield* Effect.tryPromise({
+    try: (signal) => request(address, { method: 'GET', headers: bearer(session.token), signal }),
+    catch: () => new AccountUnreachable({ message: UNREACHABLE }),
+  })
+  const body = yield* Effect.tryPromise({
+    try: () => response.text(),
+    catch: () => new AccountUnreachable({ message: UNREACHABLE }),
+  })
+  yield* response.ok ? Effect.void : Effect.fail(refusalFor(response.status, body))
+})
+
 /** Ends the session on the server, so its token stops working everywhere. */
 export const signOut = (session: SignedIn) => asPerson(session, 'sign-out', {})
 
@@ -124,7 +145,7 @@ export const signOut = (session: SignedIn) => asPerson(session, 'sign-out', {})
  * The same call the web makes from Settings → Devices, carried by this session's token.
  */
 export const approveDevice = (session: SignedIn, userCode: string) =>
-  asPerson(session, 'device/approve', { userCode })
+  Effect.andThen(claimDevice(session, userCode), asPerson(session, 'device/approve', { userCode }))
 
 /** One request of the code exchange, with "no answer" kept apart from "an answer that says no". */
 const wire = (posting: Omit<Posting, 'headers'>) =>

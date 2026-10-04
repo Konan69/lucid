@@ -20,7 +20,7 @@ const makeOptions = (config: ServerConfig['Service']) => {
     basePath: '/api/auth',
     baseURL: config.PUBLIC_URL.href,
     secret: config.AUTH_SECRET,
-    trustedOrigins: [config.PUBLIC_URL.href],
+    trustedOrigins: [config.PUBLIC_URL.origin],
     emailAndPassword: {
       enabled: true,
       autoSignIn: true,
