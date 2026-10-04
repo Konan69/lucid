@@ -11,6 +11,44 @@ import { findTools, resolveTool } from './tools.ts'
 /** Discovery uses real scoped records; suffixes must remain stable across ranking queries and ownership. */
 describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
   layer(connectionTestLayer)((it) => {
+    it.effect('ranks service and account words while withholding shared writes', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const store = yield* ConnectionStore
+        const probe = yield* ConnectionProbe
+        const previousTools = yield* Ref.get(probe.tools)
+        yield* Effect.addFinalizer(() => Ref.set(probe.tools, previousTools))
+        yield* Ref.set(probe.tools, [
+          ExecutorTool.make({
+            name: 'write',
+            description: 'Change entries',
+            effect: 'write',
+            input: {},
+          }),
+          ExecutorTool.make({
+            name: 'read',
+            description: 'Read entries',
+            effect: 'read',
+            input: {},
+          }),
+        ])
+        yield* store.begin(ownerActor, { service: serviceId, label: 'Work', shared: false })
+        yield* TestClock.adjust(1)
+        yield* store.begin(ownerActor, { service: serviceId, label: 'Team', shared: true })
+        const service = yield* findTools(ownerActor, { query: 'Records' })
+        expect(service.tools.map((tool) => [tool.account, tool.name])).toEqual([
+          ['Work', 'write'],
+          ['Work', 'read'],
+          ['Team', 'read'],
+        ])
+        const specific = yield* findTools(ownerActor, { query: 'Records read' })
+        expect(specific.tools.map((tool) => tool.name)).toEqual(['read', 'read', 'write'])
+        const account = yield* findTools(ownerActor, { query: 'Work' })
+        expect(account.tools.map((tool) => tool.account)).toEqual(['Work', 'Work'])
+        expect((yield* findTools(ownerActor, { query: 'unrelated' })).tools).toEqual([])
+      }),
+    )
+
     it.effect(
       'resolves a tool beyond the ranked discovery limit and a name with no query words',
       () =>

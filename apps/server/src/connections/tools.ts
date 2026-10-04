@@ -39,6 +39,7 @@ const NamedTool = ExecutorTool.pipe(
   Schema.fieldsAssign({
     connectionId: ConnectionTool.fields.connectionId,
     account: ConnectionTool.fields.account,
+    serviceName: Schema.String,
   }),
 )
 
@@ -47,17 +48,18 @@ const isResourceMissing = Schema.is(ExecutorResourceMissing)
 /** Distinct query words prevent repeated tokens from inflating relevance. */
 const words = (value: string) => new Set(value.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])
 
-/** Rank plain metadata only; ties preserve provider ordering. */
-const rank = <A extends { readonly name: string; readonly description: string }>(
+/** Score caller-selected metadata by distinct query words; ties preserve provider order.
+ * A service/account name alone exposes its tools, since the model needs to learn its capabilities.
+ * Tools matching additional words outrank tools matching only the service or account. */
+const rank = <A>(
   items: readonly A[],
   query: string,
   limit: number,
+  text: (item: A) => string,
 ): readonly A[] => {
   const queryWords = words(query)
   const scored = items.flatMap((item) => {
-    const score = [...words(`${item.name} ${item.description}`)].filter((word) =>
-      queryWords.has(word),
-    ).length
+    const score = [...words(text(item))].filter((word) => queryWords.has(word)).length
     return score === 0 ? [] : [{ item, score }]
   })
   return Arr.sortWith(scored, (item) => item.score, Order.flip(Order.Number))
@@ -76,7 +78,7 @@ const projectTools = Effect.fn('Connections.projectTools')(function* (
   return tools.flatMap((tool) =>
     row.companyId !== null && tool.effect !== 'read'
       ? []
-      : [NamedTool.make({ ...tool, connectionId: row.id, account })],
+      : [NamedTool.make({ ...tool, connectionId: row.id, account, serviceName: row.serviceName })],
   )
 })
 
@@ -125,7 +127,7 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     (service) => !records.some((row) => row.service === service.id && row.status === 'ready'),
   )
   const offered = yield* Effect.forEach(
-    rank(unconnected, request.query, 3),
+    rank(unconnected, request.query, 3, (service) => `${service.name} ${service.description}`),
     (service) => store.service(service.id),
     { concurrency: 3 },
   ).pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
@@ -136,7 +138,12 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     )
   return {
     tools: yield* Effect.forEach(
-      rank(groups.flat().filter(callableTool), request.query, Math.min(25, Math.floor(limit))),
+      rank(
+        groups.flat().filter(callableTool),
+        request.query,
+        Math.min(25, Math.floor(limit)),
+        (tool) => `${tool.name} ${tool.description} ${tool.serviceName} ${tool.account}`,
+      ),
       Effect.fn('Connections.discoveredTool')(function* (tool) {
         return DiscoveredTool.make({
           connectionId: tool.connectionId,
