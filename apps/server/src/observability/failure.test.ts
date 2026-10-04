@@ -11,9 +11,11 @@ import {
   failuresOf,
   FailureOutcome,
   fixedTypeNames,
+  LONGEST_SCAN,
   observeFailures,
   primaryOf,
   redact,
+  redactionPatterns,
   summarize,
 } from './failure.ts'
 import { Message } from './messages.ts'
@@ -256,11 +258,19 @@ it('summarizes a failure it cannot read as `_OTHER`, without throwing', () => {
 it('strips address queries, tokens and email addresses from diagnostic text', () => {
   expect(
     redact(
-      'GET https://person:pw@example.com/return?code=abc#frag failed for dami@example.com with api_key=xyz sentry_key=abc',
+      'GET https://person:pw@example.com/return?code=abc#frag failed for dami@example.com with api_key=xyz sentry_key=0123456789abcdef',
     ),
   ).toBe(
-    'GET https://example.com/return failed for [EMAIL REDACTED] with api_key=[REDACTED] sentry_key=[REDACTED]',
+    'GET https://example.com/return failed for [EMAIL REDACTED] with api_key=* sentry_key=[REDACTED]',
   )
+  expect(redact('Authorization: Bearer abcdefghijklmnop, then ghp_0123456789abcdef')).toBe(
+    'Authorization: * [REDACTED], then [REDACTED]',
+  )
+  expect(redact('got eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl back')).toBe(
+    'got [REDACTED] back',
+  )
+  // A password with a `/` in it ends the authority early; nothing of such an address is kept.
+  expect(redact('at https://person:p/w@example.com/return now')).toBe('at [URL] now')
 })
 
 /**
@@ -269,11 +279,96 @@ it('strips address queries, tokens and email addresses from diagnostic text', ()
  * the answer for its opening and a secret beyond the bound is never read at all.
  */
 it('reads only the opening of a very long message', () => {
-  const opening = `token=abc123 then ${'!'.repeat(64)}`
+  const opening = `token=abc1234567 then ${'!'.repeat(64)}`
   const huge = `${opening}${'!'.repeat(1_000_000)} Bearer far-away-secret`
   const read = redact(huge)
-  expect(read).toBe(redact(huge.slice(0, 4096)))
+  expect(read).toBe(redact(huge.slice(0, LONGEST_SCAN)))
   expect(read).toHaveLength(2048)
   expect(read.startsWith('token=[REDACTED] then ')).toBe(true)
   expect(read).not.toContain('far-away-secret')
+})
+
+it('removes to the end a credential or a statement that the cut left unfinished', () => {
+  // The closing quote is beyond what is read, so no quoted value ends inside it.
+  for (const quote of ['"', "'"]) {
+    const read = redact(`sign-in failed: password=${quote}${'hunter2'.repeat(800)}${quote} end`)
+    expect(read).toBe('sign-in failed: password=[REDACTED]')
+  }
+  // The `params:` line is beyond what is read.
+  const statement = `Store failed. Failed query: select ${"'my private note', ".repeat(400)}\nparams: 1`
+  expect(redact(statement)).toBe('Store failed. [SQL omitted]')
+  // With the line inside what is read, only the statement goes and what follows it stays.
+  expect(redact('Failed query: select $1\nparams: my private note\n    at store.ts:1')).toBe(
+    '[SQL omitted]\n    at store.ts:1',
+  )
+  // A token whose later segments are beyond what is read.
+  expect(redact(`got eyJ${'a'.repeat(5000)}.b.c`)).toBe('got [REDACTED]')
+})
+
+/**
+ * Text built to cost the most or to grow: for each pattern, the characters its first repetition
+ * accepts, with nothing after them that would let it finish, at every size up to what is read.
+ * There is deliberately no clock in this test. What it can observe is that no pass lengthens the
+ * text, which is what kept the cost from being bounded by the cut before; that the cost is linear
+ * is argued from how each pattern is built, and the test below checks the part of that argument a
+ * pattern's source shows.
+ */
+it('never returns more text than it was given, for text built against each pattern', () => {
+  const fill = (unit: string, size: number) =>
+    unit.repeat(Math.ceil(size / unit.length)).slice(0, size)
+  const adversarial = (size: number) => [
+    // Percent-encoding made nine characters of each of these.
+    `https://example.com/${fill('中', size - 20)}`,
+    fill('https://a@', size),
+    fill('http://@ ', size),
+    // An address's local part, never followed by `@`; then one with `@` and no domain.
+    fill('a', size),
+    fill('a.!#$%&*+/=?^_`{|}~-', size),
+    fill('a@', size),
+    fill('a@b ', size),
+    // A key's name that never reaches `key`, and one that reaches it at every step.
+    fill('a_-', size),
+    fill('key', size),
+    fill('key= ', size),
+    `password="${fill('x', size - 10)}`,
+    `password='${fill('x', size - 10)}`,
+    fill('token=a ', size),
+    // The opening of a token at every boundary, with no second segment.
+    fill('eyJ-', size),
+    fill('eyJa.', size),
+    fill('sk-', size),
+    fill('ghp_ ', size),
+    `Bearer${fill(' ', size - 6)}`,
+    fill('Bearer a ', size),
+    fill('Failed query:', size),
+    fill('Failed query:\nparams:\n', size),
+    fill(' ', size),
+    fill('\n', size),
+  ]
+  for (const size of [1000, 2000, LONGEST_SCAN, LONGEST_SCAN * 4])
+    for (const text of adversarial(size)) {
+      const read = redact(text)
+      expect(read.length).toBeLessThanOrEqual(Math.min(text.length, 2048))
+    }
+  // The shortest thing each pattern can match is not lengthened either.
+  for (const text of [
+    'Failed query:',
+    'Failed query:\nparams:',
+    'http://a',
+    'http://a@b',
+    'Bearer a',
+    'eyJa.b.c',
+    'eyJa',
+    'sk-a',
+    'key=a',
+    'key:""',
+    'a@b.c',
+  ])
+    expect(redact(text).length).toBeLessThanOrEqual(text.length)
+})
+
+it('repeats no group without bound in any pattern it runs', () => {
+  // A group under `*`, `+` or `{n,}` is how a pattern comes to retry one stretch of text in many
+  // ways. This reads the sources, so it is a check on how they are written, not a measurement.
+  for (const pattern of redactionPatterns) expect(pattern.source).not.toMatch(/\)(?:[*+]|\{\d+,\})/)
 })
