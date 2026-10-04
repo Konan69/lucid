@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { AlertDialog as AlertDialogPrimitive } from '@base-ui/react/alert-dialog'
+import { AlertDialog as AlertDialogPrimitive } from '@base-ui/react/alertdialog'
 import { cn } from '@/ui/cn'
 import { countSurface } from '@/ui/Layer'
 

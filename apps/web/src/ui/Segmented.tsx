@@ -2,7 +2,7 @@ import { Radio } from '@base-ui/react/radio'
 import type { MouseEvent, ReactNode } from 'react'
 import { cn } from './cn'
 import { byKeyboard, slide } from './motion'
-import { RadioGroup } from './radio-group'
+import { RadioGroup } from './radiogroup'
 
 /**
  * Plays the raised mark from the option that was chosen to the one just clicked. Each option

@@ -26,7 +26,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '../../ui/alert-dialog'
+} from '../../ui/alertdialog'
 import { Faces } from '../../ui/Person'
 import { cn } from '../../ui/cn'
 import {
@@ -35,7 +35,7 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
-} from '../../ui/context-menu'
+} from '../../ui/contextmenu'
 import { Count } from '../../ui/Count'
 import { useSurface } from '../../ui/Layer'
 import { byKeyboard, leave } from '../../ui/motion'

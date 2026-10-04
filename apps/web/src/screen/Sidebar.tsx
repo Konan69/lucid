@@ -32,7 +32,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '../ui/dropdown-menu'
+} from '../ui/dropdownmenu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { settling } from '../ui/settle'
 import { sidebar } from '../data/sidebar'

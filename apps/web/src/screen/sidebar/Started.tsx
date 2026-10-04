@@ -13,7 +13,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '../../ui/dropdown-menu'
+} from '../../ui/dropdownmenu'
 import { Customise } from '../vivid/Customise'
 
 /** What each step is called. Vivid's name is the Person's to choose, so the title is told it. */

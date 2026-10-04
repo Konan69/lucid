@@ -21,14 +21,14 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
-} from '../../ui/context-menu'
+} from '../../ui/contextmenu'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '../../ui/dropdown-menu'
+} from '../../ui/dropdownmenu'
 import { Face } from '../../ui/Face'
 import { floatingSurfaces } from '../../ui/Layer'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'

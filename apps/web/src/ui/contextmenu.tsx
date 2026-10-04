@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { ContextMenu as ContextMenuPrimitive } from '@base-ui/react/context-menu'
+import { ContextMenu as ContextMenuPrimitive } from '@base-ui/react/contextmenu'
 import { cn } from '@/ui/cn'
 import { countSurface } from '@/ui/Layer'
 import { ChevronRightIcon, CheckIcon } from 'lucide-react'
