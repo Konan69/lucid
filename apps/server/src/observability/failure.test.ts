@@ -262,3 +262,18 @@ it('strips address queries, tokens and email addresses from diagnostic text', ()
     'GET https://example.com/return failed for [EMAIL REDACTED] with api_key=[REDACTED] sentry_key=[REDACTED]',
   )
 })
+
+/**
+ * A megabyte of text with nothing to redact used to be scanned whole, by patterns whose time grows
+ * with the square of the text. What is read is now bounded, so the answer for a huge message is
+ * the answer for its opening and a secret beyond the bound is never read at all.
+ */
+it('reads only the opening of a very long message', () => {
+  const opening = `token=abc123 then ${'!'.repeat(64)}`
+  const huge = `${opening}${'!'.repeat(1_000_000)} Bearer far-away-secret`
+  const read = redact(huge)
+  expect(read).toBe(redact(huge.slice(0, 4096)))
+  expect(read).toHaveLength(2048)
+  expect(read.startsWith('token=[REDACTED] then ')).toBe(true)
+  expect(read).not.toContain('far-away-secret')
+})

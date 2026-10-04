@@ -79,6 +79,12 @@ export const UNTYPED = '_OTHER'
  */
 export const redact = (value: string): string =>
   value
+    // Cut before any pattern runs. Some of these patterns take time that grows with the square of
+    // the text when nothing in it matches (the address pattern on a megabyte with no `@` in it),
+    // and a failure's message can be that long: a statement with its parameters, a provider's
+    // echoed prompt. Recording a failure must never be what stalls the server. Twice the kept
+    // length is read, so a credential that the cut would split lies wholly beyond what is kept.
+    .slice(0, LONGEST_TEXT * 2)
     .replace(/Failed query:[\s\S]*?\nparams:[^\n]*/g, 'Failed query: [statement omitted]')
     .replace(/https?:\/\/[^\s"'<>\\]+/gi, (candidate) => {
       if (!URL.canParse(candidate)) return '[URL omitted]'
