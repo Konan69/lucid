@@ -325,3 +325,21 @@ The missing input-token receiver must be recovered before desktop control can sh
 browser actions using T3 Code desktop’s mechanism: `webContents.debugger` CDP, expected-input
 matching, and human-control epochs that interrupt an action when the Person touches the page.
 The Codex token receiver was never recovered; that token blocker no longer gates stage 1.
+
+### Permission for the Person’s browser
+
+Click, Type, Press and CloseTab on the Person’s computer always require that Person’s Approval.
+Reviewer configuration, timeout and scores cannot authorize them. No current Allow rule skips
+this ask: rules are prose matched probabilistically, not exact action capabilities. AlwaysAllow
+is refused for this target. Vivid’s cloud Computer and Integrations retain their existing policy.
+
+Personal browser reads and screenshots ask before their contents enter a shared Thread. Private
+Threads keep reads unasked. Open, OpenTab, Back and Forward remain reads by explicit policy; a
+credentialed GET can still have side effects. The desktop refuses private-network addresses and
+the Person retains an explicit Stop.
+
+A pending Approval is deduplicated by its original workspace, Thread and action digest, retaining
+the first proposing Run. Device dispatch requires that exact admitted Run still be Working;
+ended work is reported as not sent. Only a sent action without a known result is OutcomeUnknown.
+Page metadata carries an optional branded PNG attachment, omitted when genuinely absent.
+Each encoded PNG is capped at 8 MiB before device-answer and history retention.

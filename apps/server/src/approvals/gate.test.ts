@@ -26,42 +26,70 @@ import {
 
 /** Policy is tested with production stores, including the durable Approval raised by the real gate. */
 describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', () => {
-  it.effect(
-    'Person browser writes ask unless a rule allows; action allowance is not a site grant',
-    () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        const gate = yield* Gate
-        const action = ProposedAction.make({
-          summary: 'Use my browser',
-          rationale: '',
-          effect: 'write',
-          target: ActionTarget.cases.Browser.make({
-            target: BrowseTarget.cases.Person.make({}),
-            action: BrowserAction.cases.Click.make({ target: 'Send' }),
-          }),
-        })
-        expect(
-          GateDecision.guards.ApprovalRequired(yield* gate.check(test.vivid, action, 'Ordinary')),
-        ).toBe(true)
-        expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toHaveLength(1)
-        yield* (yield* RuleStore).create(test.personal, {
-          action: 'Use my browser',
-          decision: 'Allow',
-          scope: RuleScope.cases.Personal.make({}),
-        })
-        expect(yield* gate.check(test.vivid, action, 'Ordinary')).toEqual(
-          GateDecision.cases.Allowed.make({}),
-        )
-        expect(
-          yield* gate.check(
-            test.vivid,
-            ProposedAction.make({ ...action, effect: 'read' }),
-            'Ordinary',
-          ),
-        ).toEqual(GateDecision.cases.Allowed.make({}))
-      }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  it.effect('Person browser writes always ask; broad Allow prose cannot authorize them', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const gate = yield* Gate
+      const action = ProposedAction.make({
+        summary: 'Use my browser',
+        rationale: '',
+        effect: 'write',
+        target: ActionTarget.cases.Browser.make({
+          target: BrowseTarget.cases.Person.make({}),
+          action: BrowserAction.cases.Click.make({ target: 'Send' }),
+        }),
+      })
+      expect(
+        GateDecision.guards.ApprovalRequired(yield* gate.check(test.vivid, action, 'Ordinary')),
+      ).toBe(true)
+      expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toHaveLength(1)
+      yield* (yield* RuleStore).create(test.personal, {
+        action: 'Use my browser',
+        decision: 'Allow',
+        scope: RuleScope.cases.Personal.make({}),
+      })
+      expect(
+        GateDecision.guards.ApprovalRequired(yield* gate.check(test.vivid, action, 'Ordinary')),
+      ).toBe(true)
+      expect(
+        yield* gate.check(
+          test.vivid,
+          ProposedAction.make({ ...action, effect: 'read' }),
+          'Ordinary',
+        ),
+      ).toEqual(GateDecision.cases.Allowed.make({}))
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
+
+  for (const [name, review] of [
+    ['off', Review.cases.Unreviewed.make({})],
+    ['timed out', Review.cases.Unreviewed.make({})],
+    ['high score', Review.cases.Reviewed.make({ asked: 1, beyond: 0, contained: 1 })],
+    ['Ask', Review.cases.Reviewed.make({ asked: 0, beyond: 1, contained: 0 })],
+  ] as const) {
+    it.effect(
+      `Person-browser writes require the real Gate's Approval when reviewer is ${name}`,
+      () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          const observed = yield* Observation
+          yield* Ref.set(observed.review, review)
+          const action = ProposedAction.make({
+            summary: 'Click Send',
+            rationale: '',
+            effect: 'write',
+            target: ActionTarget.cases.Browser.make({
+              target: BrowseTarget.cases.Person.make({}),
+              action: BrowserAction.cases.Click.make({ target: 'Send' }),
+            }),
+          })
+          const decision = yield* (yield* Gate).check(test.vivid, action, 'Ordinary')
+          expect(GateDecision.guards.ApprovalRequired(decision)).toBe(true)
+          expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toHaveLength(1)
+          expect(yield* Ref.get(observed.reviewCalls)).toEqual([])
+        }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+    )
+  }
 
   it.effect(
     'a personal completion failure cannot replace a known Company Never with an Approval',

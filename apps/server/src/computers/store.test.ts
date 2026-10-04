@@ -21,6 +21,7 @@ import {
   ApprovalDecision,
   BrowseOutcome,
   BrowseResult,
+  BrowserPicture,
   DeviceAnswer,
   RunId,
   type DeviceRequest,
@@ -208,7 +209,8 @@ const providerLayer = Layer.effect(
       if (yield* Ref.get(evidence.lost))
         return yield* Effect.fail(new MachineExecutionUnknown({ key }))
       return {
-        picture: 'test-picture',
+        picture:
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j9f8AAAAASUVORK5CYII=',
         width: 1920,
         height: 1080,
         pointer: { x: 1, y: 2 },
@@ -336,10 +338,7 @@ const personalBrowser = Effect.fn('Computer.test.personalBrowser')(function* () 
     return fiber
   })
 
-  const actor = {
-    ...test.vivid,
-    origin: ActionOrigin.cases.Run.make({ threadId: test.personalId, runId }),
-  }
+  const actor = test.vivid
   return { test, registry, database, runId, device, session, requests, connect, actor }
 })
 const signedPage = BrowseResult.make({
@@ -497,6 +496,74 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
       }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
   )
 
+  for (const step of [BrowserAction.cases.Read.make({}), BrowserAction.cases.Screenshot.make({})]) {
+    it.effect(`Person ${step._tag} asks before exposing content to a Company Thread`, () =>
+      Effect.gen(function* () {
+        const browser = yield* personalBrowser()
+        yield* browser.connect()
+        yield* browser.database.run(
+          browser.database
+            .update(threads)
+            .set({ audience: 'company' })
+            .where(eq(threads.id, browser.test.companyId)),
+        )
+        yield* browser.database.run(
+          browser.database
+            .update(runs)
+            .set({ threadId: browser.test.companyId })
+            .where(eq(runs.id, browser.runId)),
+        )
+        const outcome = yield* computerHandlers.Browse({ ...personalRead, action: step }).pipe(
+          Effect.provideService(
+            AuthContext,
+            AuthState.Vivid({
+              person: browser.actor.person,
+              workspace: browser.test.companyVivid.workspace,
+              threadId: browser.test.companyId,
+            }),
+          ),
+        )
+        expect(BrowseOutcome.guards.ApprovalRequired(outcome)).toBe(true)
+        expect(yield* Queue.size(browser.requests)).toBe(0)
+        expect(yield* (yield* ApprovalStore).inThread(browser.test.companyId)).toHaveLength(1)
+      }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
+    )
+  }
+
+  it.effect('closing the Person’s tab is a write and cannot create a standing Allow rule', () =>
+    Effect.gen(function* () {
+      const browser = yield* personalBrowser()
+      yield* browser.connect()
+      const outcome = yield* computerHandlers
+        .Browse({ ...personalRead, action: BrowserAction.cases.CloseTab.make({ tab: 1 }) })
+        .pipe(
+          Effect.provideService(
+            AuthContext,
+            AuthState.Vivid({
+              person: browser.actor.person,
+              workspace: browser.actor.workspace,
+              threadId: browser.test.personalId,
+            }),
+          ),
+        )
+      expect(BrowseOutcome.guards.ApprovalRequired(outcome)).toBe(true)
+      const store = yield* ApprovalStore
+      const [approval] = yield* store.inThread(browser.test.personalId)
+      if (approval === undefined) expect.fail('Expected pending Approval')
+      expect(approval.action.effect).toBe('write')
+      expect(
+        (yield* store
+          .decide(browser.test.personal, {
+            id: approval.id,
+            digest: approval.digest,
+            decision: ApprovalDecision.cases.AlwaysAllow.make({}),
+          })
+          .pipe(Effect.flip))._tag,
+      ).toBe('InvalidRequest')
+      expect(yield* Queue.size(browser.requests)).toBe(0)
+    }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
+  )
+
   it.effect(
     'allowed Person reads dispatch once and return Done with transient screenshot bytes',
     () =>
@@ -517,7 +584,12 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             Effect.forkScoped,
           )
         const dispatched = yield* Queue.take(browser.requests)
-        const page = BrowseResult.make({ ...signedPage, picture: 'png-bytes' })
+        const page = BrowseResult.make({
+          ...signedPage,
+          picture: BrowserPicture.make(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j9f8AAAAASUVORK5CYII=',
+          ),
+        })
         yield* browser.registry.answer(browser.actor.person.id, browser.session.sessionId, {
           device: browser.device.id,
           id: dispatched.id,
@@ -538,7 +610,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         )
         if (ledger === undefined) expect.fail('Expected durable receipt')
         expect(JSON.stringify(ledger)).not.toContain(page.outline)
-        expect(JSON.stringify(ledger)).not.toContain('png-bytes')
+        expect(JSON.stringify(ledger)).not.toContain(page.picture)
         expect(yield* Queue.size(browser.requests)).toBe(0)
         expect(yield* Ref.get((yield* ProviderEvidence).calls)).toEqual([])
       }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
@@ -575,12 +647,6 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         if (row === undefined) expect.fail('Expected persisted Approval')
         expect(row.runId).toBe(browser.runId)
         // The proposing turn ends before the Person decides; a newer Run cannot replace it.
-        yield* browser.database.run(
-          browser.database
-            .update(runs)
-            .set({ state: 'completed', finishedAt: 1 })
-            .where(eq(runs.id, browser.runId)),
-        )
         const decide = {
           id: approval.id,
           digest: approval.digest,
@@ -636,7 +702,52 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
     )
   }
 
-  it.effect('a stopped proposing Run returns OutcomeUnknown without dispatch', () =>
+  it.effect(
+    'invalid persisted Run state is a database failure, never a device outage or dispatch',
+    () =>
+      Effect.gen(function* () {
+        const browser = yield* personalBrowser()
+        yield* browser.connect()
+        const store = yield* ApprovalStore
+        const approval = yield* store.raise(
+          browser.actor,
+          ProposedAction.make({
+            summary: 'Click Send',
+            rationale: '',
+            effect: 'write',
+            target: ActionTarget.cases.Browser.make({
+              target: BrowseTarget.cases.Person.make({}),
+              action: BrowserAction.cases.Click.make({ target: 'Send' }),
+            }),
+          }),
+        )
+        yield* browser.database.run(
+          browser.database
+            .update(runs)
+            .set({ state: 'unrecognized', finishedAt: 1 })
+            .where(eq(runs.id, browser.runId)),
+        )
+        const failure = yield* store
+          .decide(browser.test.personal, {
+            id: approval.id,
+            digest: approval.digest,
+            decision: ApprovalDecision.cases.AllowOnce.make({}),
+          })
+          .pipe(Effect.flip)
+        expect(failure._tag).toBe('DatabaseFailure')
+        expect(yield* Queue.size(browser.requests)).toBe(0)
+        expect(
+          yield* browser.database.run(
+            browser.database
+              .select()
+              .from(deviceRequests)
+              .where(eq(deviceRequests.runId, browser.runId)),
+          ),
+        ).toEqual([])
+      }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
+  )
+
+  it.effect('a stopped proposing Run reports not sent without dispatch', () =>
     Effect.gen(function* () {
       const browser = yield* personalBrowser()
       yield* browser.connect()
@@ -653,7 +764,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           runId: browser.runId,
           action: personalRead.action,
         }),
-      ).toEqual(BrowseOutcome.cases.OutcomeUnknown.make({}))
+      ).toEqual(BrowseOutcome.cases.RunRequired.make({}))
       expect(yield* Queue.size(browser.requests)).toBe(0)
     }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
   )
@@ -690,6 +801,12 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
     Effect.gen(function* () {
       const browser = yield* personalBrowser()
       yield* browser.connect()
+      yield* browser.database.run(
+        browser.database
+          .update(runs)
+          .set({ state: 'completed', finishedAt: 1 })
+          .where(eq(runs.id, browser.runId)),
+      )
       const approval = yield* (yield* ApprovalStore).raise(
         browser.test.vivid,
         ProposedAction.make({
@@ -721,8 +838,11 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           first.id,
           BrowserAction.cases.Screenshot.make({}),
         )
-        expect(result.picture).toBe('test-picture')
-        expect(result.outline).toBeDefined()
+        expect(result.picture).toEqual(
+          BrowserPicture.make(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j9f8AAAAASUVORK5CYII=',
+          ),
+        )
         expect(yield* Ref.get((yield* ProviderEvidence).calls)).toHaveLength(2)
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
   )
@@ -734,9 +854,8 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         const browser = yield* personalBrowser()
         const database = yield* Database
         const store = yield* ApprovalStore
-        const origin = ActionOrigin.cases.Thread.make({ threadId: browser.test.companyId })
         const approval = yield* store.raise(
-          { ...browser.test.companyVivid, origin },
+          browser.test.companyVivid,
           ProposedAction.make({
             summary: 'Click Send',
             rationale: '',
@@ -1183,7 +1302,9 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         )
         expect(
           yield* computerRunner({
-            origin: ActionOrigin.cases.Person.make({}),
+            origin: ActionOrigin.cases.RuntimeThread.make({
+              threadId: ThreadId.make('cloud-thread'),
+            }),
             person: first,
             target: ActionTarget.cases.Command.make({ command: request.command }),
           }),
@@ -1243,7 +1364,9 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         expect(yield* Ref.get(evidence.actions)).toEqual([])
         expect(
           yield* computerRunner({
-            origin: ActionOrigin.cases.Person.make({}),
+            origin: ActionOrigin.cases.RuntimeThread.make({
+              threadId: ThreadId.make('cloud-thread'),
+            }),
             person: first,
             target: ActionTarget.cases.Browser.make({
               action: personRequest.action,
@@ -1252,7 +1375,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           }),
         ).toEqual(
           ActionOutcome.cases.Failed.make({
-            reason: 'The Person’s computer requires the Run that proposed this action.',
+            reason: 'This action was not sent because its proposing work is no longer active.',
           }),
         )
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
@@ -1306,7 +1429,9 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         yield* Ref.set(evidence.lost, true)
         expect(
           (yield* computerRunner({
-            origin: ActionOrigin.cases.Person.make({}),
+            origin: ActionOrigin.cases.RuntimeThread.make({
+              threadId: ThreadId.make('cloud-thread'),
+            }),
             person: first,
             target: ActionTarget.cases.Command.make({ command: request.command }),
           }))._tag,

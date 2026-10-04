@@ -547,3 +547,61 @@ describe.skipIf(!testDatabaseConfigured)('Approval recovery and permanent permis
       }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
 })
+
+/** Separate turns proposing the same capability share the first pending card and execute once. */
+describe.skipIf(!testDatabaseConfigured)('Approval identity across Runs', () => {
+  it.effect('keeps the first origin and returns one pending Approval to both Runs', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const database = yield* Database
+      const store = yield* ApprovalStore
+      const first = RunId.make(NodeCrypto.randomUUID())
+      const second = RunId.make(NodeCrypto.randomUUID())
+      const origin = encodeCrossRunOrigin(StoredRunOrigin.cases.Message.make({}))
+      yield* database.run(
+        database.insert(runs).values({
+          id: first,
+          threadId: test.personalId,
+          personId: test.personal.person.id,
+          turn: 1,
+          state: 'working',
+          origin,
+          startedAt: 0,
+          admittedAt: 0,
+        }),
+      )
+      const initial = yield* store.raise(test.vivid, commandAction)
+      yield* database.run(
+        database.update(runs).set({ state: 'completed', finishedAt: 1 }).where(eq(runs.id, first)),
+      )
+      yield* database.run(
+        database.insert(runs).values({
+          id: second,
+          threadId: test.personalId,
+          personId: test.personal.person.id,
+          turn: 2,
+          state: 'working',
+          origin,
+          startedAt: 1,
+          admittedAt: 1,
+        }),
+      )
+      const repeated = yield* store.raise(test.vivid, commandAction)
+      expect(repeated.id).toBe(initial.id)
+      expect(repeated.runId).toBe(first)
+      expect(yield* store.inThread(test.personalId)).toHaveLength(1)
+      const request = { id: initial.id, digest: initial.digest, decision: once }
+      expect((yield* store.decide(test.personal, request)).state._tag).toBe('Succeeded')
+      expect((yield* store.decide(test.personal, request).pipe(Effect.flip))._tag).toBe('Conflict')
+      expect(yield* Ref.get((yield* Observation).actions)).toEqual([commandAction])
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+})
+
+import * as NodeCrypto from 'node:crypto'
+import * as Schema from 'effect/Schema'
+import { RunId } from '@vivid/contracts'
+import { runs } from '../threads/tables.ts'
+import { StoredRunOrigin } from '../threads/conversation.ts'
+
+const encodeCrossRunOrigin = Schema.encodeSync(StoredRunOrigin)

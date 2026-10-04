@@ -38,6 +38,8 @@ import { Database, decodeStored } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes, changesLayer } from '../live/changes.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
+import { actingRun } from '../threads/runs.ts'
+import { actionOrigin } from '../approvals/gate.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { DeviceRegistry, deviceLayer } from './device.ts'
 import { computerHandlers } from './handlers.ts'
@@ -400,7 +402,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             .pipe(Effect.flip),
         ),
       ).toBe('NoWorkingRun')
-      // An absent supplied Run never selects either of the two working Runs.
+      // Actor-derived origin refuses ambiguity; an explicitly absent Run refuses absence.
       const busy = yield* working(ada.person, ada.person)
       yield* database.run(
         database.insert(runs).values({
@@ -414,6 +416,25 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           admittedAt: 0,
         }),
       )
+      expect(reasonOf(yield* actingRun(busy.threadId, ada.person.id).pipe(Effect.flip))).toBe(
+        'SeveralWorkingRuns',
+      )
+      expect(
+        (yield* actionOrigin({
+          person: ada.person,
+          workspace: Workspace.cases.Personal.make({}),
+          by: 'vivid',
+          threadId: Option.some(busy.threadId),
+        }).pipe(Effect.flip))._tag,
+      ).toBe('NotFound')
+      expect(
+        (yield* actionOrigin({
+          person: ada.person,
+          workspace: Workspace.cases.Personal.make({}),
+          by: 'vivid',
+          threadId: Option.some(shared.threadId),
+        }).pipe(Effect.flip))._tag,
+      ).toBe('NotFound')
       expect(
         reasonOf(
           yield* registry

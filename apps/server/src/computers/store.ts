@@ -9,7 +9,6 @@ import {
   Match,
   Option,
   Result,
-  Predicate,
   Schema,
   Semaphore,
   Scope,
@@ -35,6 +34,7 @@ import {
   PersonId,
   type CommandResult,
   BrowseResult,
+  BrowserPicture,
 } from '@vivid/contracts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
 import { type Actor } from '../auth/access.ts'
@@ -44,10 +44,12 @@ import {
   Machine,
   MachineKey,
   MachineState,
+  MachineResponseInvalid,
   type MachineFailure,
   type MachineScreen,
 } from './machine.ts'
 import { DeviceRegistry } from './device.ts'
+import { requireThread } from '../threads/access.ts'
 import { computers } from './tables.ts'
 
 export { computerScreenAddress } from './machine.ts'
@@ -702,9 +704,11 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
   return { activity, arm, watching, cancel }
 })
 
-/** Capture provider and database dependencies once; callers need only the Computer authority. */
-/** Boat browser.ts returns an outline only. Reuse desktop.ts's PNG capture without discarding
- * a first screenshot; both reads run inside the caller's single takeover permit. */
+const decodeBrowserPicture = Schema.decodeUnknownEffect(BrowserPicture)
+
+/** The provider’s browser operation returns an outline only. Cloud Screenshot therefore captures
+ * Vivid’s whole desktop through the public Look API; it is not a browser-page crop. Both reads
+ * run inside the caller’s single takeover permit, preserving the existing cloud behavior. */
 const browserReceipt = Effect.fn('ComputerStore.browserReceipt')(function* (
   machine: Machine['Service'],
   key: MachineKey,
@@ -713,9 +717,13 @@ const browserReceipt = Effect.fn('ComputerStore.browserReceipt')(function* (
   if (!BrowserAction.guards.Screenshot(action)) return yield* machine.browse({ key, action })
   const result = yield* machine.browse({ key, action: BrowserAction.cases.Read.make({}) })
   const view = yield* machine.desktop({ key, action: DesktopAction.cases.Look.make({}) })
-  return BrowseResult.make({ ...result, picture: view.picture })
+  const picture = yield* decodeBrowserPicture(view.picture).pipe(
+    Effect.mapError(() => new MachineResponseInvalid({ operation: 'browser screenshot' })),
+  )
+  return BrowseResult.make({ ...result, picture })
 })
 
+/** Capture provider and database dependencies once; callers need only the Computer authority. */
 export const computerStoreLayer = Layer.effect(
   ComputerStore,
   Effect.gen(function* () {
@@ -865,8 +873,10 @@ const executionReason = (failure: ExecutionFailure): string =>
     Match.orElse(machineFailureReason),
   )
 
-/** Read-only browser steps follow the fixed policy; commands and input steps can change external state. */
-const browserEffect = (action: BrowserAction) =>
+/** Navigation stays read by policy, including credentialed GETs that can have side effects.
+ * Desktop refuses private-network addresses and the Person has an explicit Stop. Closing their
+ * tab destroys personal state and requires permission; Vivid's contained tab behavior is unchanged. */
+const browserEffect = (action: BrowserAction, target: BrowseTarget) =>
   BrowserAction.match(action, {
     Open: () => 'read' as const,
     Read: () => 'read' as const,
@@ -880,7 +890,7 @@ const browserEffect = (action: BrowserAction) =>
     Wait: () => 'read' as const,
     OpenTab: () => 'read' as const,
     ShowTab: () => 'read' as const,
-    CloseTab: () => 'read' as const,
+    CloseTab: () => (BrowseTarget.guards.Person(target) ? ('write' as const) : ('read' as const)),
   })
 
 /** Gate decisions run before any command reaches the provider, and refusal is a wire outcome. */
@@ -896,11 +906,7 @@ export const computerRunCommand = Effect.fn('Computer.runCommand')(function* (
     effect: 'write',
     target: ActionTarget.cases.Command.make({ command: request.command }),
   })
-  const decision = yield* gate.check(
-    { ...actor, origin: yield* actionOrigin(actor) },
-    action,
-    'Ordinary',
-  )
+  const decision = yield* gate.check(actor, action, 'Ordinary')
   return yield* GateDecision.match(decision, {
     Blocked: Effect.fn('Computer.command.blocked')(
       ({ rule }: typeof GateDecision.cases.Blocked.Type): Effect.Effect<CommandOutcome> =>
@@ -938,13 +944,12 @@ const personAvailability = Effect.fn('Computer.personAvailability')(function* (p
   const devices = yield* (yield* DeviceRegistry).list(personId)
   if (devices.length > 0 && !devices.some((device) => DeviceAccess.guards.Allowed(device.access)))
     return Option.some(BrowseOutcome.cases.NotAllowed.make({}))
-  const connected = yield* Effect.result((yield* DeviceRegistry).requireConnected(personId))
-  if (Result.isFailure(connected)) {
-    if (Predicate.isTagged(connected.failure, 'NoDeviceConnected'))
-      return Option.some(BrowseOutcome.cases.NotConnected.make({}))
-    return yield* Effect.fail(connected.failure)
-  }
-  return Option.none<BrowseOutcome>()
+  return yield* (yield* DeviceRegistry).requireConnected(personId).pipe(
+    Effect.as(Option.none<BrowseOutcome>()),
+    Effect.catchTag('NoDeviceConnected', () =>
+      Effect.succeed(Option.some(BrowseOutcome.cases.NotConnected.make({}))),
+    ),
+  )
 })
 
 /** Device transport failures have safe fixed meanings; unknown dispatch never permits replay. */
@@ -971,14 +976,18 @@ const personBrowse = Effect.fn('Computer.personBrowse')(function* (input: {
       Effect.catchTag('NoActingRun', () =>
         Effect.succeed(BrowseOutcome.cases.RunRequired.make({})),
       ),
-      Effect.catch(() =>
-        Effect.succeed(
-          BrowseOutcome.cases.Unavailable.make({
-            reason: 'The Person’s computer could not complete this action.',
-          }),
-        ),
-      ),
     )
+})
+
+/** Personal page contents enter durable history; only the Thread’s real private audience avoids
+ * a disclosure Approval. Cloud results retain the existing ordinary exposure policy. */
+const browserExposure = Effect.fn('Computer.browserExposure')(function* (
+  actor: Actor,
+  target: BrowseTarget,
+) {
+  if (BrowseTarget.guards.Vivid(target) || Option.isNone(actor.threadId)) return 'Ordinary' as const
+  const thread = yield* requireThread(actor.threadId.value, actor.person.id)
+  return thread.audience === 'private' ? ('Ordinary' as const) : ('PersonalInShared' as const)
 })
 
 /** Both browser targets use the same Gate; the Person target dispatches only to their allowed Device. */
@@ -995,13 +1004,13 @@ export const computerBrowse = Effect.fn('Computer.browse')(function* (
   const action = ProposedAction.make({
     summary: request.summary,
     rationale: '',
-    effect: browserEffect(request.action),
+    effect: browserEffect(request.action, request.target),
     target: ActionTarget.cases.Browser.make({ action: request.action, target: request.target }),
   })
   const origin = yield* actionOrigin(actor)
   if (BrowseTarget.guards.Person(request.target) && !ActionOrigin.guards.Run(origin))
     return BrowseOutcome.cases.RunRequired.make({})
-  const decision = yield* gate.check({ ...actor, origin }, action, 'Ordinary')
+  const decision = yield* gate.check(actor, action, yield* browserExposure(actor, request.target))
   return yield* GateDecision.match(decision, {
     Blocked: ({ rule }) => Effect.succeed(BrowseOutcome.cases.Blocked.make({ rule })),
     ApprovalRequired: ({ approval }) =>
@@ -1056,11 +1065,7 @@ export const computerDesktop = Effect.fn('Computer.desktop')(function* (
     effect: desktopEffect(request.action),
     target: ActionTarget.cases.Desktop.make({ action: request.action }),
   })
-  const decision = yield* gate.check(
-    { ...actor, origin: yield* actionOrigin(actor) },
-    action,
-    'Ordinary',
-  )
+  const decision = yield* gate.check(actor, action, 'Ordinary')
   return yield* GateDecision.match(decision, {
     Blocked: ({ rule }) => Effect.succeed(DesktopOutcome.cases.Blocked.make({ rule })),
     ApprovalRequired: ({ approval }) =>
@@ -1118,13 +1123,18 @@ const approvedBrowse = (outcome: BrowseOutcome): ActionOutcome =>
       }),
     RunRequired: () =>
       ActionOutcome.cases.Failed.make({
-        reason: 'The Person’s computer requires the Run that proposed this action.',
+        reason: 'This action was not sent because its proposing work is no longer active.',
       }),
     Unavailable: ({ reason }) => ActionOutcome.cases.Failed.make({ reason }),
     Blocked: ({ rule }) => ActionOutcome.cases.Failed.make({ reason: rule }),
     ApprovalRequired: () =>
       ActionOutcome.cases.Failed.make({ reason: 'This action still needs approval.' }),
   })
+
+/** Expected machine refusals settle an Approval as Failed; persistence failures propagate to
+ * the handler instead of disguising an unsent action as a device outage. */
+const failedExecution = (failure: MachineFailure | ReadinessFailure) =>
+  Effect.succeed(ActionOutcome.cases.Failed.make({ reason: executionReason(failure) }))
 
 /** Approved actions run from their stored target once; a lost exec remains Unknown and is never retried. */
 export const computerRunner = Effect.fn('Computer.runner')(function* (input: {
@@ -1174,9 +1184,26 @@ export const computerRunner = Effect.fn('Computer.runner')(function* (input: {
     Effect.catchTag('MachineExecutionUnknown', () =>
       Effect.succeed(ActionOutcome.cases.Unknown.make({})),
     ),
-    Effect.catch((failure) =>
-      Effect.succeed(ActionOutcome.cases.Failed.make({ reason: executionReason(failure) })),
-    ),
+    Effect.catchTags({
+      MachineUnavailable: failedExecution,
+      MachineNotRunning: failedExecution,
+      MachineOperationFailed: failedExecution,
+      MachineResponseInvalid: failedExecution,
+      MachineInputInvalid: failedExecution,
+      BrowserAddressRefused: failedExecution,
+      BrowserStepFailed: failedExecution,
+      MachineConfigurationInvalid: failedExecution,
+      MachineAuthenticationFailed: failedExecution,
+      MachineCreationUnresolved: failedExecution,
+      MachineRequestRejected: failedExecution,
+      MachinePersistenceFailed: failedExecution,
+      MachineCapabilityUnavailable: failedExecution,
+      ComputerHeld: failedExecution,
+      ComputerProviderUnavailable: failedExecution,
+      ComputerStartFailed: failedExecution,
+      ComputerNotReady: failedExecution,
+      ComputerWakeTimedOut: failedExecution,
+    }),
   )
   return result
 })

@@ -15,6 +15,7 @@ import {
 } from 'effect'
 import {
   BrowseOutcome,
+  RunState,
   DatabaseFailure,
   Device,
   DeviceAccess,
@@ -37,8 +38,7 @@ import {
   type RunId,
 } from '@vivid/contracts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
-import { NoActingRun } from '../threads/runs.ts'
-import { runs } from '../threads/tables.ts'
+import { NoActingRun, admittedRunState } from '../threads/runs.ts'
 import { DeviceReceipt, DeviceSubscriptionId, receiptOf } from './receipt.ts'
 import { deviceRequests, devices } from './tables.ts'
 
@@ -602,18 +602,18 @@ interface Dispatcher {
   readonly send: ReturnType<typeof makeSend>
 }
 
-/** Verify the named Run, never a current or latest one. Completed proposing turns remain valid
- * for Approval execution; explicit Stop or unknown settlement cannot authorize further dispatch. */
+/** Only an admitted Working Run authorizes dispatch; ended work is a refusal before send. */
 const dispatchRun = Effect.fn('Device.dispatchRun')(function* (
-  database: DatabaseService,
   input: Parameters<DeviceService['browse']>[0],
 ) {
-  const [run] = yield* database.run(database.select().from(runs).where(eq(runs.id, input.runId)))
-  if (run === undefined || run.threadId !== input.threadId || run.admittedAt === null)
-    return yield* new NoActingRun({ threadId: input.threadId, reason: 'NoWorkingRun' })
-  if (run.personId !== input.personId)
-    return yield* new NoActingRun({ threadId: input.threadId, reason: 'ActsForAnotherPerson' })
-  return run.state !== 'stopped' && run.state !== 'unknown'
+  const state = yield* admittedRunState(input)
+  return RunState.match(state, {
+    Working: () => true,
+    Completed: () => false,
+    Failed: () => false,
+    Stopped: () => false,
+    Unknown: () => false,
+  })
 })
 
 /**
@@ -635,7 +635,8 @@ const makeBrowse = ({ database, registry, links, send }: Dispatcher): DeviceServ
   }
 
   return Effect.fn('Device.browse')(function* (input) {
-    if (!(yield* dispatchRun(database, input))) return BrowseOutcome.cases.OutcomeUnknown.make({})
+    if (!(yield* dispatchRun(input).pipe(Effect.provideService(Database, database))))
+      return BrowseOutcome.cases.RunRequired.make({})
     const device = yield* registry.allowed(input.personId)
     if (Option.isNone(device)) return yield* new NoDeviceConnected({})
     const id = device.value.id
@@ -645,8 +646,8 @@ const makeBrowse = ({ database, registry, links, send }: Dispatcher): DeviceServ
       id,
       Effect.gen(function* () {
         // Stop can arrive while queued; recheck the same Run immediately before dispatch.
-        if (!(yield* dispatchRun(database, input)))
-          return BrowseOutcome.cases.OutcomeUnknown.make({})
+        if (!(yield* dispatchRun(input).pipe(Effect.provideService(Database, database))))
+          return BrowseOutcome.cases.RunRequired.make({})
         // Read after the turn is taken: the link that was there when the wait began may be gone.
         const subscription = links.get(id)
         if (subscription === undefined) return yield* new NoDeviceConnected({})

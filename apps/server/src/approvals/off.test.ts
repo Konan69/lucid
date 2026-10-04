@@ -1,6 +1,12 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
-import { ProposedAction, RuleScope } from '@vivid/contracts'
+import {
+  ActionTarget,
+  BrowserAction,
+  BrowseTarget,
+  ProposedAction,
+  RuleScope,
+} from '@vivid/contracts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { disabledDecisionLayer } from '../decisions/model.ts'
 import { ruleJudgeLayer } from '../rules/judge.ts'
@@ -25,6 +31,36 @@ const offLayer = gateLayer.pipe(
 )
 
 describe.skipIf(!testDatabaseConfigured)('The gate with decisions switched off', () => {
+  it.effect('Person-browser input always asks with the production Reviewer disabled', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const action = ProposedAction.make({
+        summary: 'Click Send',
+        rationale: '',
+        effect: 'write',
+        target: ActionTarget.cases.Browser.make({
+          target: BrowseTarget.cases.Person.make({}),
+          action: BrowserAction.cases.Click.make({ target: 'Send' }),
+        }),
+      })
+      expect(
+        GateDecision.guards.ApprovalRequired(
+          yield* (yield* Gate).check(test.vivid, action, 'Ordinary'),
+        ),
+      ).toBe(true)
+      yield* (yield* RuleStore).create(test.personal, {
+        action: 'Click Send',
+        decision: 'Allow',
+        scope: RuleScope.cases.Personal.make({}),
+      })
+      expect(
+        GateDecision.guards.ApprovalRequired(
+          yield* (yield* Gate).check(test.vivid, action, 'Ordinary'),
+        ),
+      ).toBe(true)
+    }).pipe(Effect.scoped, Effect.provide(offLayer)),
+  )
+
   it.effect('a write on the Person’s own Integration runs and a destructive action asks', () =>
     Effect.gen(function* () {
       const test = yield* fixture()

@@ -19,6 +19,7 @@ import {
   BrowserAction,
   BrowseOutcome,
   BrowseResult,
+  BrowserPicture,
   DesktopAction,
   DesktopOutcome,
   PersonId,
@@ -140,6 +141,10 @@ describe('browser model target and image result', () => {
       const transport = yield* fixture()
       const invalid: Schema.JsonObject[] = [
         { computer: 'other', action: { kind: 'read' }, summary: 'Read the page' },
+        { action: { kind: 'read' }, summary: '   ' },
+        { action: { kind: 'show_tab', tab: 0 }, summary: 'Show the tab' },
+        { action: { kind: 'close_tab', tab: 51 }, summary: 'Close the tab' },
+        { action: { kind: 'wait', seconds: 11 }, summary: 'Wait for the page' },
         { action: { kind: 'click', target: 'x'.repeat(4001) }, summary: 'Click the control' },
         { action: { kind: 'press', key: 'x'.repeat(201) }, summary: 'Press the key' },
       ]
@@ -209,7 +214,10 @@ describe('browser model target and image result', () => {
       const response = browserReply(
         transport,
         BrowseOutcome.cases.Completed.make({
-          result: BrowseResult.make({ ...browserPage, picture }),
+          result: BrowseResult.make({
+            ...browserPage,
+            picture: BrowserPicture.make(picture),
+          }),
         }),
         BrowseTarget.cases.Person.make({}),
       )

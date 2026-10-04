@@ -48,7 +48,7 @@ import { RuleJudge, RulesNotJudged } from '../rules/judge.ts'
 import { ruleStoreLayer } from '../rules/store.ts'
 import { Conversation, type Delivery } from '../threads/conversation.ts'
 import { threads } from '../threads/tables.ts'
-import { ActionOrigin, ActionOutcome, ActionRunner, gateLayer, type ProposalActor } from './gate.ts'
+import { ActionOutcome, ActionRunner, gateLayer } from './gate.ts'
 import { approvalStoreLayer } from './store.ts'
 
 const Judgment = Schema.TaggedUnion({
@@ -298,29 +298,25 @@ export const fixture = Effect.fn('TrustTest.fixture')(function* () {
       },
     ]),
   )
-  const personal: ProposalActor = {
-    origin: ActionOrigin.cases.Thread.make({ threadId: personalId }),
+  const personal: Actor = {
     person: first,
     workspace: Workspace.cases.Personal.make({}),
     by: 'person',
     threadId: Option.none(),
   }
-  const member: ProposalActor = {
-    origin: ActionOrigin.cases.Thread.make({ threadId: companyId }),
+  const member: Actor = {
     person: first,
     workspace: Workspace.cases.Company.make({ company, role: 'member' }),
     by: 'person',
     threadId: Option.none(),
   }
-  const owner: ProposalActor = {
-    origin: ActionOrigin.cases.Thread.make({ threadId: companyId }),
+  const owner: Actor = {
     person: second,
     workspace: Workspace.cases.Company.make({ company, role: 'owner' }),
     by: 'person',
     threadId: Option.none(),
   }
-  const other: ProposalActor = {
-    origin: ActionOrigin.cases.Thread.make({ threadId: otherId }),
+  const other: Actor = {
     person: second,
     workspace: Workspace.cases.Personal.make({}),
     by: 'person',

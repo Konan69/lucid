@@ -128,13 +128,25 @@ export const BrowserTab = Schema.Struct({
 })
 export interface BrowserTab extends Schema.Schema.Type<typeof BrowserTab> {}
 
+/** 8 MiB encoded (about 6 MiB binary) caps one device answer before image/history retention. */
+export const MAX_BROWSER_PICTURE_ENCODED_LENGTH = 8 * 1024 * 1024
+
+/** Base64 PNG bytes, never a data URL or an arbitrary text receipt. The PNG signature and base64
+ * alphabet identify the representation; actual image decoding belongs to the consuming renderer. */
+export const BrowserPicture = Schema.String.check(
+  Schema.isMaxLength(MAX_BROWSER_PICTURE_ENCODED_LENGTH),
+  Schema.isPattern(/^iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/),
+).pipe(Schema.brand('BrowserPicture'))
+export type BrowserPicture = typeof BrowserPicture.Type
+
 /** What the page looks like after the action: its address, title, readable outline and the tabs. */
 export const BrowseResult = Schema.Struct({
   address: Schema.String,
   title: Schema.String,
   outline: Schema.String,
-  /** Base64 PNG, carried as Flue image content only when a screenshot was requested. */
-  picture: Schema.optionalKey(Schema.String),
+  /** Optional image attachment, orthogonal to page metadata. Its absence is genuine: a result
+   * still describes the same page without an attachment, rather than a second page state. */
+  picture: Schema.optionalKey(BrowserPicture),
   truncated: Schema.Boolean,
   tabs: Schema.Array(BrowserTab),
 }).annotate({ identifier: 'BrowseResult', title: 'Browse result' })

@@ -19,13 +19,7 @@ import {
 } from '@vivid/contracts'
 import { requireCompany, type Actor } from '../auth/access.ts'
 import { workspaceIn } from '../auth/session.ts'
-import {
-  actionOrigin,
-  ActionOutcome,
-  Gate,
-  GateDecision,
-  type GateExposure,
-} from '../approvals/gate.ts'
+import { ActionOutcome, Gate, GateDecision, type GateExposure } from '../approvals/gate.ts'
 import { requireThread } from '../threads/access.ts'
 import {
   Executor,
@@ -439,11 +433,7 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
     effect: tool.effect,
     target,
   })
-  const decision = yield* (yield* Gate).check(
-    { ...actor, origin: yield* actionOrigin(actor) },
-    action,
-    yield* exposureOf(actor, row),
-  )
+  const decision = yield* (yield* Gate).check(actor, action, yield* exposureOf(actor, row))
   return yield* GateDecision.match<ReturnType<typeof runConnection>>(decision, {
     Blocked: ({ rule }) => Effect.succeed(ToolOutcome.cases.Blocked.make({ rule })),
     ApprovalRequired: ({ approval }) =>
