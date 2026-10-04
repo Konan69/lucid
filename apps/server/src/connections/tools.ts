@@ -203,8 +203,8 @@ const orderTools = Effect.fn('Connections.orderTools')(function* <
   )
 })
 
-/** Gateway, jev-latest, 4 Oct 2026: effect/relevance warm medians total 1390ms. A shared
- * 2000ms deadline leaves 610ms typical headroom and caps sequential optional stages together;
+/** Gateway, jev-latest, 4 Oct 2026: effect/relevance warm medians total 1589.5ms. A shared
+ * 2000ms deadline leaves 410.5ms typical headroom and caps sequential optional stages together;
  * relevance is skipped if classification and mandatory metadata reads use the whole budget. */
 const FIND_TOOLS_BUDGET_MILLIS = 2000
 
@@ -237,10 +237,10 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
   )
   const limited = ordered.slice(0, Math.min(25, Math.floor(limit)))
   // Promotion cannot evict the first lexical result when the caller's limit is full.
-  // Reserve its place only when needed, keeping the remaining semantic order intact.
+  // Reserve the last slot only when needed, so promoted tools retain their lead.
   const selected = Option.match(Arr.head(lexical), {
     onNone: () => limited,
-    onSome: (first) => (limited.includes(first) ? limited : [first, ...limited.slice(0, -1)]),
+    onSome: (first) => (limited.includes(first) ? limited : [...limited.slice(0, -1), first]),
   })
   return {
     tools: yield* Effect.forEach(

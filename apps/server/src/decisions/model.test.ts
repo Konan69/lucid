@@ -31,13 +31,14 @@ it.effect.each([
     model: 'custom',
   },
 ])('switched on, asks the gateway for model $model', ({ config, model }) => {
+  const urls: string[] = []
+  const bodies: string[] = []
   const transport = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
-      expect(request.url).toBe(`${GATEWAY_URL}/systemone`)
+      urls.push(request.url)
       const body = request.body
-      if (Predicate.isTagged(body, 'Uint8Array'))
-        expect(new TextDecoder().decode(body.body)).toContain(model)
+      if (Predicate.isTagged(body, 'Uint8Array')) bodies.push(new TextDecoder().decode(body.body))
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
@@ -51,6 +52,9 @@ it.effect.each([
   return Effect.gen(function* () {
     expect((yield* decide(definition, 'question')).answers.applies.probability).toBe(0.7)
     expect(yield* decisionConfigured).toBe(true)
+    expect(urls).toEqual([`${GATEWAY_URL}/systemone`])
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0]).toContain(model)
   }).pipe(
     Effect.provide(
       decisionModelLayer.pipe(

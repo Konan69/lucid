@@ -237,9 +237,10 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           shared: false,
         })
         const sizes: number[] = []
+        const states: Schema.Json[] = []
         const model = yield* DecisionModel.make({
           decide: ({ state, decisions }) => {
-            expect(state).toEqual({ request: 'record' })
+            states.push(state)
             sizes.push(Object.keys(decisions).length)
             return Effect.succeed({
               answers: Object.fromEntries(
@@ -255,6 +256,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         const result = yield* findTools(ownerActor, { query: 'record', limit: 25 }).pipe(
           Effect.provideService(DecisionModel.DecisionModel, model),
         )
+        expect(states).toEqual([{ request: 'record' }])
         expect(sizes).toEqual([20])
         expect(result.tools.map((tool) => tool.name)).toEqual([
           'operation_19',
@@ -309,8 +311,8 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           Effect.provideService(DecisionModel.DecisionModel, model),
         )
         expect(result.tools.map((tool) => tool.name)).toEqual([
-          'needle',
           ...Array.from({ length: 7 }, (_, index) => `lookup_${index}`),
+          'needle',
         ])
       }),
     )

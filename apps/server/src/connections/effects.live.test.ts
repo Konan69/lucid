@@ -1,39 +1,38 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Clock, Effect } from 'effect'
-import { decide } from '../decisions/model.ts'
+import { Effect, Layer, References } from 'effect'
+import { ServiceId } from '@vivid/contracts'
 import { liveDecisionEnabled, liveDecisionLayer, liveTools } from '../decisions/testing.ts'
-import { READ_PROBABILITY_THRESHOLD, toolEffectDecision } from './effects.ts'
+import { ExecutorTool } from './executor.ts'
+import { ToolEffects, toolEffectsLayer } from './effects.ts'
 
-/** Read-only tools across providers exceed the calibrated near-certainty threshold.
- * Every miss is collected before assertion so calibration reports the whole category. */
-describe.skipIf(!liveDecisionEnabled)('Jev read effects', () => {
+/** One claim: the production direct path projects read tools correctly. This uses
+ * ToolEffects' actual metadata eligibility, deadline, cache and threshold; debug scores
+ * are from that attempt, not an independently repeated ten-second calibration request. */
+describe.skipIf(!liveDecisionEnabled)('Gateway read effects', () => {
   it.live(
     'recover read tools without Approval',
     () =>
       Effect.gen(function* () {
+        const effects = yield* ToolEffects
         const misses: string[] = []
-        const probabilities: number[] = []
         for (const tool of liveTools.filter((candidate) => candidate.expected === 'read')) {
-          const start = yield* Clock.currentTimeMillis
-          const { answers } = yield* decide(toolEffectDecision, {
+          const effect = yield* effects.classify({
+            serviceId: ServiceId.make(`effect-${tool.serviceName}`),
             service: tool.serviceName,
-            tool: tool.name,
-            description: tool.description,
+            tool: ExecutorTool.make({
+              name: tool.name,
+              description: tool.description,
+              effect: 'write',
+              input: {},
+            }),
           })
-          const elapsed = (yield* Clock.currentTimeMillis) - start
-          const read = answers.effect.probabilities.read
-          probabilities.push(read)
-          yield* Effect.logInfo(
-            `Jev effect ${tool.name}: label=${answers.effect.label} read=${read.toFixed(6)} latency=${elapsed}ms`,
-          )
-          if (read < READ_PROBABILITY_THRESHOLD || answers.effect.label !== 'read')
-            misses.push(`${tool.name}: expected=read label=${answers.effect.label} read=${read}`)
+          if (effect !== tool.expected) misses.push(`${tool.name}:${effect}`)
         }
-        yield* Effect.logInfo(
-          `read band=${Math.min(...probabilities)}..${Math.max(...probabilities)} misses=${JSON.stringify(misses)}`,
-        )
         expect(misses).toEqual([])
-      }).pipe(Effect.provide(liveDecisionLayer)),
-    60_000,
+      }).pipe(
+        Effect.provide(toolEffectsLayer.pipe(Layer.provide(liveDecisionLayer))),
+        Effect.provideService(References.MinimumLogLevel, 'Debug'),
+      ),
+    40_000,
   )
 })

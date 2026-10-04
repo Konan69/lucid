@@ -1,5 +1,5 @@
 import { expect, it } from '@effect/vitest'
-import { Deferred, Effect, Fiber, Layer, Redacted } from 'effect'
+import { Deferred, Effect, Fiber, Layer, Logger, Redacted } from 'effect'
 import { unconfiguredDecisionLayer, gatewayDecisionLayer } from '../decisions/model.ts'
 import { ScriptedAnswer } from '../decisions/testing.ts'
 import * as TestClock from 'effect/testing/TestClock'
@@ -64,6 +64,7 @@ it.effect.each([
 
 it.effect('explicit hints bypass Jev; identical and concurrent writes share a cache entry', () => {
   let calls = 0
+  const inputs: string[] = []
   return Effect.gen(function* () {
     const effects = yield* ToolEffects
     for (const effect of ['read', 'destructive'] as const)
@@ -91,11 +92,12 @@ it.effect('explicit hints bypass Jev; identical and concurrent writes share a ca
       tool: ExecutorTool.make({ ...request.tool, name: 'other_tool' }),
     })
     expect(calls).toBe(4)
+    expect(inputs.every((input) => !input.includes(request.serviceId))).toBe(true)
   }).pipe(
     Effect.provide(
       provider((input) => {
         calls += 1
-        expect(JSON.stringify(input)).not.toContain(request.serviceId)
+        inputs.push(JSON.stringify(input))
         return Effect.succeed(answer(0.99, 'read'))
       }),
     ),
@@ -534,6 +536,45 @@ it.effect('delimits and bounds batch evidence without trusting embedded markers'
           usage: { inputTokens: undefined, outputTokens: undefined },
         })
       }),
+    ),
+  )
+})
+
+/** The resolver owns the attempted batch, not each cache key. A twenty-tool failure
+ * emits one warning and retrying its cached failed exits emits no duplicate warning. */
+it.effect('logs one warning per failed batch, not one per tool', () => {
+  const lines: string[] = []
+  return Effect.gen(function* () {
+    const effects = yield* ToolEffects
+    const tools = Array.from({ length: EFFECT_BATCH_SIZE }, (_, index) =>
+      ExecutorTool.make({ ...request.tool, name: `lookup_${index}` }),
+    )
+    const batch = { ...request, tools }
+    for (const attempt of [1, 2]) {
+      void attempt
+      expect((yield* effects.classifyBatch(batch)).every((tool) => tool.effect === 'write')).toBe(
+        true,
+      )
+    }
+    expect(lines.filter((line) => line.includes('Tool effect unavailable'))).toHaveLength(1)
+  }).pipe(
+    Effect.provide(
+      provider(() =>
+        Effect.fail(
+          AiError.make({
+            module: 'Test',
+            method: 'decide',
+            reason: new AiError.InvalidOutputError({ description: 'Malformed answer' }),
+          }),
+        ),
+      ),
+    ),
+    Effect.provide(
+      Logger.layer([
+        Logger.make(({ message }) => {
+          lines.push(JSON.stringify(message))
+        }),
+      ]),
     ),
   )
 })

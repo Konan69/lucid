@@ -11,10 +11,10 @@ export const TOOL_RELEVANCE_THRESHOLD = 0.3
 /** Gateway rejected 39 questions with HTTP 400; twenty is the tested payload size. */
 export const RELEVANCE_BATCH_SIZE = 20
 /** Experiential Labs gateway, jev-latest, 4 Oct 2026, one process and ten warm calls:
- * twenty questions at 500 characters took first=618ms, warm min/median/max=621/646.5/728ms;
- * input/output tokens=5024/374 on every call. 1500ms gives 772ms (106%) above the warm
+ * twenty questions at 500 characters took first=828ms, warm min/median/max=662/818/1304ms;
+ * input/output tokens=5024/374 on every call. 1800ms gives 496ms (38%) above the warm
  * maximum. findTools further caps this request at its remaining two-second discovery budget. */
-export const RELEVANCE_BUDGET = '1500 millis'
+export const RELEVANCE_BUDGET = '1800 millis'
 
 interface Candidate {
   readonly serviceName: string
