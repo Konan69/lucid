@@ -355,7 +355,7 @@ function ComputerBody({
   )
 }
 
-const start = () =>
+export const start = () =>
   void orSay(
     change((client) => client.StartComputer()),
     'The computer could not be turned on. Try again.',
@@ -674,7 +674,7 @@ export type Heard = 'opened' | 'closed' | 'asked'
  * for again at once. One that never arrived says so and waits to be asked, or a machine that
  * cannot be reached would be dialled forever.
  */
-const sightAfter = (now: Sight, heard: Heard): Sight => {
+export const sightAfter = (now: Sight, heard: Heard): Sight => {
   if (heard === 'opened') return { seen: 'showing', attempt: now.attempt }
   if (heard === 'asked' || now.seen === 'showing') {
     return { seen: 'reaching', attempt: now.attempt + 1 }
