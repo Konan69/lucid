@@ -1,3 +1,6 @@
+import { extractPdf } from './extraction.ts'
+import { ingestionOperations } from './ingestion.ts'
+import { workLayer } from '../database/work.ts'
 import { describe, expect, layer } from '@effect/vitest'
 import { Effect, Layer, Option } from 'effect'
 import {
@@ -17,11 +20,11 @@ import { threads } from '../threads/tables.ts'
 import { LibraryFolderCycle, LibraryMutationDenied } from './access.ts'
 import { asPerson, fixture } from './fixtures.ts'
 import { libraryHandlers } from './handlers.ts'
-import { digestBytes, ingestLibraryItem } from './ingest.ts'
+import { digestBytes, ingestOwed } from './ingest.ts'
 import { LibraryStore, libraryStoreLayer } from './store.ts'
 
 const testLayer = libraryStoreLayer.pipe(
-  Layer.provideMerge(testDatabaseLayer),
+  Layer.provideMerge(workLayer.pipe(Layer.provideMerge(testDatabaseLayer))),
   Layer.provideMerge(silentChangesLayer),
 )
 
@@ -42,7 +45,8 @@ const upload = Effect.fn('LibraryTest.upload')(function* (
     bytes,
     sha256: digestBytes(bytes),
   })
-  if (result.duplicate !== true) yield* ingestLibraryItem(actor, result.document.id)
+  if (result.duplicate !== true)
+    yield* ingestOwed(ingestionOperations(yield* Database), extractPdf)(result.document.id, 1)
   return result
 })
 

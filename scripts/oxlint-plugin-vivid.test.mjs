@@ -399,6 +399,41 @@ for (const [ruleName, invalid, valid, filename] of cases) {
         "import * as NodeURL from 'node:url'",
       ].join('\n')
       assert.equal(ruleDiagnostics(ruleName, lint(ruleName, source)).length, 0)
+      const processObject =
+        "import NodeProcess from 'node:process'; NodeProcess.once('disconnect', onDisconnect); NodeProcess.off('disconnect', onDisconnect); const parent = NodeProcess.ppid"
+      assert.equal(ruleDiagnostics(ruleName, lint(ruleName, processObject)).length, 0)
+      const namespaceMethods =
+        "import * as NodeProcess from 'node:process'; NodeProcess.once('disconnect', onDisconnect); const parent = NodeProcess['ppid']; function own(NodeProcess) { NodeProcess.emit('local') }"
+      const processFindings = ruleDiagnostics(ruleName, lint(ruleName, namespaceMethods))
+      assert.deepEqual(
+        processFindings
+          .map((finding) => {
+            const matched = /import for (\w+);/u.exec(finding.message)
+            assert.ok(matched, 'Expected a process-object member diagnostic')
+            return matched[1]
+          })
+          .toSorted(),
+        ['once', 'ppid'],
+      )
+      const additionalMethods =
+        "import * as NodeProcess from 'node:process'; NodeProcess.prependListener('ready', callback); NodeProcess.listenerCount('ready'); const title = NodeProcess.title; const port = NodeProcess.debugPort"
+      assert.deepEqual(
+        ruleDiagnostics(ruleName, lint(ruleName, additionalMethods))
+          .map((finding) => {
+            const matched = /import for (\w+);/u.exec(finding.message)
+            assert.ok(matched, 'Expected a process-object member diagnostic')
+            return matched[1]
+          })
+          .toSorted(),
+        ['debugPort', 'listenerCount', 'prependListener', 'title'],
+      )
+      const namespaceValues =
+        "import * as NodeProcess from 'node:process'; const args = NodeProcess.execArgv; const env = NodeProcess.env"
+      assert.equal(ruleDiagnostics(ruleName, lint(ruleName, namespaceValues)).length, 0)
+      assert.equal(
+        ruleDiagnostics(ruleName, lint(ruleName, "import runtime from 'node:process'")).length,
+        1,
+      )
     }
   })
 }

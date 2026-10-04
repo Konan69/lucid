@@ -16,8 +16,11 @@ import {
   returned,
   type DatabaseInfrastructureError,
 } from '../database/client.ts'
+import { announce, Topic } from '../live/changes.ts'
 import { threads } from '../threads/tables.ts'
 import { projectTable } from './tables.ts'
+
+type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
 
 type ProjectStoreError = DatabaseInfrastructureError | NotFound
 
@@ -52,6 +55,12 @@ const inWorkspace = (actor: Actor) =>
   })
 
 type Row = typeof projectTable.$inferSelect
+
+/** The decoded stored owner is the audience, even when a different Member writes Company data. */
+const projectTopics = (project: Project): ReadonlyArray<Topic> =>
+  project.companyId === null
+    ? [Topic.person(project.createdBy)]
+    : [Topic.company(project.companyId)]
 
 /** What is filed in each of these Projects: how many Threads, and when one last moved. */
 const filedIn = Effect.fn('ProjectStore.filedIn')(function* (
@@ -105,40 +114,53 @@ const makeProjectStore = Effect.fn('ProjectStore.make')(function* () {
 
   /** A parent must be a Project the Actor can see; one in another workspace does not exist here. */
   const requireParent = Effect.fn('ProjectStore.requireParent')(function* (
+    transaction: Transaction,
     actor: Actor,
     id: ProjectId,
   ) {
-    const rows = yield* database.run(
-      database
-        .select({ id: projectTable.id })
-        .from(projectTable)
-        .where(and(eq(projectTable.id, id), inWorkspace(actor)))
-        .limit(1),
-    )
+    const rows = yield* transaction
+      .select({ id: projectTable.id })
+      .from(projectTable)
+      .where(and(eq(projectTable.id, id), inWorkspace(actor)))
+      .limit(1)
     return rows.length === 0
       ? yield* Effect.fail(new NotFound({ message: 'Parent Project not found' }))
       : id
   })
 
+  /**
+   * Parent visibility, insert, projection and live/changes.ts announce share the caller's tx.
+   * Projection reads join through rc.116 SqlClient.make's fiber connection, even though filedIn
+   * closes over Database. A failed projection or notice rolls back the Project.
+   */
+  const writeProject = Effect.fn('ProjectStore.write')(function* (
+    tx: Transaction,
+    actor: Actor,
+    request: CreateProjectRequest,
+  ) {
+    if (request.parentProjectId !== null) yield* requireParent(tx, actor, request.parentProjectId)
+    const rows = yield* tx
+      .insert(projectTable)
+      .values({
+        id: crypto.randomUUID(),
+        companyId: companyColumnOf(actor.workspace),
+        name: request.name.trim(),
+        parentProjectId: request.parentProjectId,
+        createdBy: actor.person.id,
+      })
+      .returning()
+    const projects = yield* toProjects([yield* returned(rows, 'Project')])
+    const project = yield* returned(projects, 'Project')
+    yield* announce(tx, projectTopics(project))
+    return project
+  })
+
+  /** Give the parent check, Project write and announcement one commit or one rollback. */
   const create = Effect.fn('ProjectStore.create')(function* (
     actor: Actor,
     request: CreateProjectRequest,
   ) {
-    if (request.parentProjectId !== null) yield* requireParent(actor, request.parentProjectId)
-    const rows = yield* database.run(
-      database
-        .insert(projectTable)
-        .values({
-          id: crypto.randomUUID(),
-          companyId: companyColumnOf(actor.workspace),
-          name: request.name.trim(),
-          parentProjectId: request.parentProjectId,
-          createdBy: actor.person.id,
-        })
-        .returning(),
-    )
-    const projects = yield* toProjects([yield* returned(rows, 'Project')])
-    return yield* returned(projects, 'Project')
+    return yield* database.transaction((tx) => writeProject(tx, actor, request))
   })
 
   return ProjectStore.of({ list, create })

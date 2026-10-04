@@ -105,9 +105,10 @@ export const sessionRanOut = (personId: PersonId, sessionId: SessionId) =>
  * for work, an open conversation stream) has nothing to reload, so nothing would ever notice its
  * session ending. Two things end a session and each needs its own watcher:
  *
- * - It is removed: signed out, or revoked from another device. Removing it publishes the Person's
- *   topic (`auth/provider.ts`), and the session is read again on that. `watch` subscribes before
- *   its first read, so a session removed before this started is caught by that first read.
+ * - It is removed: signed out, or revoked from another device. The delete announces the Person's
+ *   topic in its own commit (`auth/dialect.ts`), and the session is read again on that. `watch`
+ *   subscribes before its first read, so a session removed before this started is caught by that
+ *   first read.
  * - It runs out, which `sessionRanOut` waits for.
  */
 export const sessionEnded = (personId: PersonId, sessionId: SessionId) => {

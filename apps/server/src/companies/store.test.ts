@@ -8,14 +8,13 @@ import { authEffect, localAuthRuntimeLayer } from '../auth/provider.ts'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { silentChangesLayer } from '../live/changes.ts'
+import { changesLayer } from '../live/changes.ts'
 import { CompanyStore, companyStoreLayer } from './store.ts'
 import { companyTable, invitationTable, membershipTable } from './tables.ts'
 
-const testLayer = companyStoreLayer.pipe(
+const testLayer = Layer.merge(companyStoreLayer, changesLayer).pipe(
   Layer.provideMerge(testDatabaseLayer),
   Layer.provideMerge(testConfigLayer),
-  Layer.provideMerge(silentChangesLayer),
 )
 
 /**
@@ -91,7 +90,7 @@ const signedUp = Effect.fn('CompanyTest.signedUp')(function* (email: string) {
       .where(eq(personTable.email, email)),
   )
   if (row === undefined) return expect.fail('Sign-up must persist a Person')
-  return { id: PersonId.make(row.id), verified: row.verified }
+  return { id: PersonId.make(row.id), name: 'Link holder', verified: row.verified }
 })
 
 /** What the invitation and the Company's Memberships say after an attempt. */
@@ -115,8 +114,8 @@ const outcome = Effect.fn('CompanyTest.outcome')(function* (test: Invited, perso
 })
 
 describe.skipIf(!testDatabaseConfigured)('Accepting an invitation', () => {
-  /** Real time: the production auth adapter signs up on its own connection. */
-  it.live('refuses a password account that registered the invited address unverified', () =>
+  /** The production auth adapter signs up on its own SQL connection with the live adapter clock. */
+  it.effect('refuses a password account that registered the invited address unverified', () =>
     Effect.gen(function* () {
       const test = yield* invited()
       const holder = yield* signedUp(test.email)
@@ -126,7 +125,7 @@ describe.skipIf(!testDatabaseConfigured)('Accepting an invitation', () => {
       // Its own tag, carrying who asked and for which invitation: not the `Forbidden` a wrong
       // address gets, so a client never tells this Person their address is the wrong one. Any
       // other failure stays a failure here and an accept is not the context, so both fail the test.
-      const refused = yield* store.accept(holder.id, test.invitationId).pipe(
+      const refused = yield* store.accept(holder, test.invitationId).pipe(
         Effect.as('accepted' as const),
         Effect.catchTag('MailboxUnconfirmed', (failure) =>
           Effect.succeed({ personId: failure.personId, invitationId: failure.invitationId }),
@@ -145,7 +144,7 @@ describe.skipIf(!testDatabaseConfigured)('Accepting an invitation', () => {
   )
 
   /** The stored flag is what a Google sign-in or a completed verification writes. */
-  it.live('grants the invited role once the stored address is verified', () =>
+  it.effect('grants the invited role once the stored address is verified', () =>
     Effect.gen(function* () {
       const test = yield* invited()
       const holder = yield* signedUp(test.email)
@@ -157,7 +156,7 @@ describe.skipIf(!testDatabaseConfigured)('Accepting an invitation', () => {
           .where(eq(personTable.id, holder.id)),
       )
       const store = yield* CompanyStore
-      const joined = yield* store.accept(holder.id, test.invitationId)
+      const joined = yield* store.accept(holder, test.invitationId)
       expect(joined.member.role).toBe('admin')
       expect(yield* outcome(test, holder.id)).toEqual({
         invitation: { status: 'accepted' },
@@ -166,7 +165,7 @@ describe.skipIf(!testDatabaseConfigured)('Accepting an invitation', () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   )
 
-  it.live('refuses a verified Person whose address is not the invited one', () =>
+  it.effect('refuses a verified Person whose address is not the invited one', () =>
     Effect.gen(function* () {
       const test = yield* invited()
       const database = yield* Database
@@ -186,7 +185,9 @@ describe.skipIf(!testDatabaseConfigured)('Accepting an invitation', () => {
         }),
       )
       const store = yield* CompanyStore
-      const refused = yield* store.accept(other, test.invitationId).pipe(Effect.result)
+      const refused = yield* store
+        .accept({ id: other, name: 'Other' }, test.invitationId)
+        .pipe(Effect.result)
       expect(Result.isFailure(refused) ? refused.failure._tag : 'accepted').toBe('Forbidden')
       expect(yield* outcome(test, other)).toEqual({
         invitation: { status: 'pending' },

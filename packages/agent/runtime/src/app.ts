@@ -9,7 +9,7 @@ import * as Schema from 'effect/Schema'
 import './providers/rehearsal.ts'
 import { Vivid } from './agents/vivid.ts'
 import { DEFAULT_MODEL } from './providers/explabs.ts'
-import { RuntimeRunRequest, ThreadOrigin } from '@vivid/contracts'
+import { RuntimeAdmissionBody } from '@vivid/contracts'
 import { modelDelivery, recordScope } from './delivery.ts'
 import { actingFor, threadOriginOf } from './client.ts'
 import { loadContext } from './context.ts'
@@ -38,14 +38,11 @@ const requireRuntimeToken = async (context: AppContext, next: () => Promise<void
   return next()
 }
 
-/** Scope and creator initial data are server transport metadata; neither enters Flue's delivery attributes. */
-const Incoming = Schema.fromJsonString(
-  Schema.Struct({
-    ...RuntimeRunRequest.fields,
-    turn: RuntimeRunRequest.fields.turn.check(Schema.isInt(), Schema.isGreaterThan(0)),
-    initialData: ThreadOrigin,
-  }),
-)
+/**
+ * Scope and creator initial data are server transport metadata; neither enters Flue's delivery
+ * attributes. The body is the contract the server encodes with, so the two cannot drift apart.
+ */
+const Incoming = Schema.fromJsonString(RuntimeAdmissionBody)
 const decodeIncoming = Schema.decodeUnknownOption(Incoming)
 const flueRouter = createAgentRouter(Vivid)
 

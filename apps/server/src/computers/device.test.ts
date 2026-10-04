@@ -9,7 +9,6 @@ import {
   Layer,
   Option,
   Predicate,
-  PubSub,
   Queue,
   Schema,
   Stream,
@@ -37,7 +36,7 @@ import { authEffect, localAuthRuntimeLayer } from '../auth/provider.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { Database, decodeStored } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { Changes, type Topic } from '../live/changes.ts'
+import { Changes, changesLayer } from '../live/changes.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { runs, threads } from '../threads/tables.ts'
 import { DeviceRegistry, deviceLayer } from './device.ts'
@@ -46,9 +45,9 @@ import { DeviceReceipt, DeviceSubscriptionId } from './receipt.ts'
 import { deviceRequests, devices } from './tables.ts'
 
 /**
- * The change bus, in memory, with one addition: `watching` hears every subscription. A desktop
- * link subscribes to its Person's topic only after the registry has opened the link, so taking
- * from `watching` is the signal that a computer is listening, with no waiting on time.
+ * Observe subscriptions on the real PostgreSQL change bus. Session removal announces through
+ * the auth dialect's writing transaction, so replacing this bus would hide the committed notice.
+ * A desktop link subscribes only after the registry has opened it; `watching` is that receipt.
  */
 interface BusService {
   readonly watching: Queue.Queue<void>
@@ -57,22 +56,19 @@ class Bus extends Context.Service<Bus, BusService>()('vivid/test/DeviceBus') {}
 
 const busLayer = Layer.unwrap(
   Effect.gen(function* () {
-    const hub = yield* PubSub.unbounded<ReadonlyArray<Topic>>()
+    const changes = yield* Changes
     const watching = yield* Queue.unbounded<void>()
-    const changes = Changes.of({
-      publish: (topics) => PubSub.publish(hub, topics).pipe(Effect.asVoid),
+    const observed = Changes.of({
+      publish: (topics) => changes.publish(topics),
       subscribe: Effect.fn('DeviceTest.subscribe')(function* (topics) {
-        const subscription = yield* PubSub.subscribe(hub)
+        const subscription = yield* changes.subscribe(topics)
         yield* Queue.offer(watching, undefined)
-        return Stream.fromSubscription(subscription).pipe(
-          Stream.filter((moved) => moved.some((topic) => topics.includes(topic))),
-          Stream.map(() => undefined),
-        )
+        return subscription
       }),
     })
-    return Layer.mergeAll(Layer.succeed(Bus, { watching }), Layer.succeed(Changes, changes))
+    return Layer.mergeAll(Layer.succeed(Bus, { watching }), Layer.succeed(Changes, observed))
   }),
-)
+).pipe(Layer.provide(changesLayer))
 
 const testLayer = deviceLayer.pipe(
   Layer.provideMerge(busLayer),
@@ -556,7 +552,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   )
 
-  /** Real time: the production auth adapter signs up, signs out and publishes on its own. */
+  /** Real time: production auth signs out and commits the notice that ends device presence. */
   it.live('signing out ends presence', () =>
     Effect.gen(function* () {
       const database = yield* Database

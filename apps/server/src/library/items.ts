@@ -1,3 +1,5 @@
+import type * as Effect from 'effect/Effect'
+import type { libraryIngestion } from './ingestion.ts'
 import type { LibraryStoreService, DecodeItem, LibraryDatabase } from './store.ts'
 import { itemReads } from './reads.ts'
 import { itemWrites } from './writes.ts'
@@ -7,6 +9,7 @@ export const itemOperations = (
   database: LibraryDatabase,
   decodeItem: DecodeItem,
   getFolder: LibraryStoreService['getFolder'],
+  queue: Effect.Success<ReturnType<typeof libraryIngestion>>,
 ): Pick<
   LibraryStoreService,
   | 'listItems'
@@ -16,11 +19,9 @@ export const itemOperations = (
   | 'getItemByDigest'
   | 'createItem'
   | 'patchItem'
-  | 'completeItem'
-  | 'failItem'
   | 'removeItem'
 > => {
   const reads = itemReads(database, decodeItem)
-  const writes = itemWrites(database, decodeItem, { reads, getFolder })
+  const writes = itemWrites(database, decodeItem, { reads, getFolder, queue })
   return { ...reads, ...writes }
 }

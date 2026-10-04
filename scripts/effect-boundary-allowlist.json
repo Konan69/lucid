@@ -1,11 +1,11 @@
 [
   {
-    "file": "packages/agent/runtime/src/db.ts",
+    "file": "packages/agent/runtime/src/storage.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["query", "transaction"]
   },
   {
-    "file": "apps/server/src/library/ingest.ts",
+    "file": "apps/server/src/library/extraction/main.ts",
     "classification": "third-party-adapter",
     "symbols": ["extractPages"]
   },
@@ -35,8 +35,8 @@
     "symbols": ["invokeTool"]
   },
   {
-    "file": "apps/server/src/auth/provider.ts",
+    "file": "apps/server/src/auth/dialect.ts",
     "classification": "third-party-adapter",
-    "symbols": ["makeOptions", "sessionRemoved"]
+    "symbols": ["attempt", "settle", "owned"]
   }
 ]

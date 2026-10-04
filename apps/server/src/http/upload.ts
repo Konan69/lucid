@@ -1,6 +1,8 @@
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
+import * as Stream from 'effect/Stream'
+import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as Multipart from 'effect/unstable/http/Multipart'
 import * as MultipartParser from 'effect/unstable/http/MultipartParser'
 import { MAX_LIBRARY_FILE_BYTES } from '../library/ingest.ts'
@@ -48,6 +50,71 @@ export class UploadUnstored extends Schema.TaggedError<UploadUnstored>()(
   {},
   { title: 'Library upload could not be persisted' },
 ) {}
+
+/** The connection ended before the request body did, so no response can reach the Person. */
+export class UploadAbandoned extends Schema.TaggedError<UploadAbandoned>()(
+  'UploadAbandoned',
+  {},
+  { title: 'Library upload ended before its body' },
+) {}
+
+/**
+ * The bytes of a Web `Request`, read by one reader at a time and handed back unlocked. A Web
+ * body is exclusive: rc.116 Channel.readableStreamToPullUnsafe takes `getReader()` per stream
+ * evaluation, and its default finalizer is `reader.cancel()`, which discards the unread rest
+ * and never releases the lock. The SDK's Web `request.stream` and `request.multipart`
+ * (HttpServerRequest.ts ServerRequestImpl) both use that default, so a second read of the same
+ * request dies with "ReadableStream is locked". `releaseLockOnEnd` is the SDK's public option
+ * for the other finalizer, `reader.releaseLock()`: the parser and the drain below then read in
+ * turn, and a refused upload keeps its remainder for the drain instead of losing it to cancel.
+ * A request without a body has already ended; the SDK stream fails for it instead.
+ * Read failures keep the SDK's own multipart mapping (ServerRequestImpl.multipartStream).
+ */
+const webBody = (
+  source: globalThis.Request,
+): Stream.Stream<Uint8Array, Multipart.MultipartError> => {
+  const body = source.body
+  if (body === null) return Stream.empty
+  return Stream.fromReadableStream({
+    evaluate: () => body,
+    onError: (cause) => Multipart.MultipartError.fromReason('InternalError', cause),
+    releaseLockOnEnd: true,
+  })
+}
+
+/** Read and drop a body to its end; any read failure means the sender left before it ended. */
+const bodyEnded = <E>(body: Stream.Stream<Uint8Array, E>) =>
+  Stream.runDrain(body).pipe(Effect.mapError(() => new UploadAbandoned({})))
+
+/**
+ * Persist the multipart parts of an upload, leaving the body readable for `requestBodyEnded`.
+ * The two installed request sources differ in who may read the body twice, so each is named:
+ * a Web `Request` (the discriminator HttpServerRequest.toWebResult itself uses) is parsed here
+ * with the SDK's public pieces, exactly as ServerRequestImpl.multipart composes them, but over
+ * `webBody` so the reader is released. Every other source keeps its SDK adapter untouched: the
+ * Node server's `request.multipart` is NodeMultipart.persisted, which pipes the IncomingMessage
+ * into the native parser and leaves it readable by `request.stream` afterwards.
+ */
+export const persistedUpload = (request: HttpServerRequest.HttpServerRequest) =>
+  request.source instanceof globalThis.Request
+    ? Multipart.toPersisted(
+        Stream.pipeThroughChannel(webBody(request.source), Multipart.makeChannel(request.headers)),
+      )
+    : request.multipart
+
+/**
+ * Finish consuming the upload before answering, without retaining its unread bytes. Node
+ * v24.14.1 _http_client.socketOnData removes the request drain relay on a final response;
+ * an unfinished proxy pipe then stalls. _http_server.resOnFinish also closes an unfinished
+ * request when Connection is close. The SDK stream works for unread, paused and already-ended
+ * Node bodies; a Web body is read through `webBody`, after `persistedUpload` released it.
+ * Node's native request timeout bounds a sender that never finishes. Keep this drain
+ * interruptible: disconnect and server shutdown must release the request, never wait in cleanup.
+ */
+export const requestBodyEnded = (request: HttpServerRequest.HttpServerRequest) =>
+  request.source instanceof globalThis.Request
+    ? bodyEnded(webBody(request.source))
+    : bodyEnded(request.stream)
 
 // Every installed SDK reason has an honest transport outcome; adding a reason fails typecheck.
 const refusalByReason = {

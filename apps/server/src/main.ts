@@ -3,6 +3,7 @@ import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
+import * as PersistedQueue from 'effect/unstable/persistence/PersistedQueue'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import {
   NodeFileSystem,
@@ -29,10 +30,14 @@ import { computerStoreLayer } from './computers/store.ts'
 import { loadServerConfig, ServerConfig } from './config.ts'
 import { executorLayer } from './connections/executor.ts'
 import { connectionStoreLayer } from './connections/store.ts'
+import { workLayer } from './database/work.ts'
 import { databaseLayer } from './database/client.ts'
 import { routerLayer } from './http/router.ts'
 import { staticRoutes } from './http/static.ts'
 import { inputStoreLayer } from './inputs/store.ts'
+import { extractPdf, extractionAdmission } from './library/extraction.ts'
+import { ingestionBackoff } from './library/ingestion.ts'
+import { libraryIngestionLayer } from './library/worker.ts'
 import { libraryStoreLayer } from './library/store.ts'
 import { changesLayer } from './live/changes.ts'
 import { embeddingsLayer } from './memory/embeddings.ts'
@@ -88,6 +93,9 @@ const memoryLayer = Layer.unwrap(
 
 /** The process entry point only selects implementations and owns their scoped lifetime. */
 const serverProgram = Effect.fn('Server.launch')(function* () {
+  // Refuse before configuration and Layer acquisition: server misconfiguration must never spend
+  // a document's durable ingestion budget or accept uploads whose extraction cannot be bounded.
+  yield* extractionAdmission
   const config = yield* loadServerConfig
 
   // Each tier may use everything below it. `provideMerge` keeps the lower tiers available to the
@@ -99,6 +107,7 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     NodePath.layer,
   )
   const data = databaseLayer.pipe(Layer.provideMerge(platform))
+  const durable = workLayer.pipe(Layer.provideMerge(data))
   const foundation = Layer.mergeAll(
     changesLayer,
     runtimeLayer,
@@ -117,7 +126,7 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     publicPageLayer,
     codeAuthorityLayer,
     deviceLayer,
-  ).pipe(Layer.provideMerge(data))
+  ).pipe(Layer.provideMerge(durable))
   const pushConfiguration = Layer.mergeAll(presenceLayer, pushConfigLayer).pipe(
     Layer.provideMerge(foundation),
   )
@@ -144,7 +153,13 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
   const decisions = gateLayer.pipe(Layer.provideMerge(trust))
   const work = Layer.mergeAll(routineStoreLayer, codeCallsLayer).pipe(Layer.provideMerge(decisions))
   const schedules = routineSchedulerServiceLayer.pipe(Layer.provideMerge(work))
-  const background = Layer.mergeAll(routineSchedulerLayer, approvalSweeperLayer, pushReceiptsLayer)
+  const background = Layer.mergeAll(
+    routineSchedulerLayer,
+    approvalSweeperLayer,
+    pushReceiptsLayer,
+    libraryIngestionLayer(ingestionBackoff, extractPdf),
+    PersistedQueue.layerCleanup(),
+  )
 
   const server = NodeHttpServer.layer(() => NodeHttp.createServer(), {
     host: config.HOST,

@@ -1,19 +1,17 @@
-import { Config, Effect, Option, Redacted } from 'effect'
+import { flue } from '@flue/vite'
 import { defineProject } from 'vitest/config'
 
-// oxlint-disable-next-line vivid/no-runpromise-in-library -- Vitest config is the process boundary that injects the isolated URL before workers start.
-const testDatabaseUrl = Effect.runSync(Config.option(Config.Redacted('VIVID_TEST_DATABASE_URL')))
-const testEnvironment: Record<string, string> = Option.isSome(testDatabaseUrl)
-  ? { DATABASE_URL: Redacted.value(testDatabaseUrl.value) }
-  : {}
-
 const project = {
+  // Match the skills test project's public Flue Markdown packaging plugin. The production app
+  // imports the real catalog, while server bootstrap and runtime state stay outside this fixture.
+  plugins: flue().filter((plugin) => plugin.name === 'flue-markdown-imports'),
   test: {
     name: '@vivid/agent-runtime',
     environment: 'node',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     passWithNoTests: true,
-    env: testEnvironment,
+    // Worker setup owns database authority; config-time mutation would affect other projects.
+    setupFiles: ['./tests/setup.ts'],
   },
 }
 

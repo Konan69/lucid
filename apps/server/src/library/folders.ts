@@ -5,7 +5,14 @@ import * as Option from 'effect/Option'
 import { Conflict, NotFound, type LibraryFolder, type LibraryFolderId } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
 import { returned } from '../database/client.ts'
-import { readableScope, requireEditor, shelfCompany, shelfOf, shelfScope } from './access.ts'
+import {
+  readableScope,
+  requireEditor,
+  shelfCompany,
+  shelfOf,
+  shelfScope,
+  shelfTopics,
+} from './access.ts'
 import {
   folderHasChildren,
   hierarchyWrite,
@@ -103,7 +110,8 @@ export const folderOperations = (database: LibraryDatabase, decodeFolder: Decode
           })
           .returning(),
       )
-      return yield* decodeFolder(yield* returned(rows, 'Library folder'))
+      const row = yield* returned(rows, 'Library folder')
+      return { value: yield* decodeFolder(row), moved: shelfTopics(row) }
     },
     (operation) => hierarchyWrite(database, operation),
   )
@@ -112,7 +120,7 @@ export const folderOperations = (database: LibraryDatabase, decodeFolder: Decode
     function* (actor, id, patch) {
       const scope = yield* readableScope(database, libraryFolders, actor)
       const current = yield* reads.getRow(actor, id)
-      if (Option.isNone(current)) return Option.none<LibraryFolder>()
+      if (Option.isNone(current)) return { value: Option.none<LibraryFolder>(), moved: [] }
       yield* requireEditor(actor, current.value)
       const currentFolder = yield* decodeFolder(current.value)
       const parentId = patch.parentId === undefined ? currentFolder.parentId : patch.parentId
@@ -132,8 +140,8 @@ export const folderOperations = (database: LibraryDatabase, decodeFolder: Decode
       )
       const row = rows[0]
       return row === undefined
-        ? Option.none<LibraryFolder>()
-        : Option.some(yield* decodeFolder(row))
+        ? { value: Option.none<LibraryFolder>(), moved: [] }
+        : { value: Option.some(yield* decodeFolder(row)), moved: shelfTopics(row) }
     },
     (operation) => hierarchyWrite(database, operation),
   )
@@ -147,10 +155,14 @@ export const folderOperations = (database: LibraryDatabase, decodeFolder: Decode
       yield* requireEditor(actor, row.value)
       if (yield* hasChildren(actor, id))
         return yield* Effect.fail(new Conflict({ message: 'Library folder is not empty' }))
-      yield* database.run(
-        database.delete(libraryFolders).where(and(eq(libraryFolders.id, id), scope)),
+      const removed = yield* database.run(
+        database
+          .delete(libraryFolders)
+          .where(and(eq(libraryFolders.id, id), scope))
+          .returning({ personId: libraryFolders.personId, companyId: libraryFolders.companyId }),
       )
-      return undefined
+      const deleted = removed[0]
+      return { value: undefined, moved: deleted === undefined ? [] : shelfTopics(deleted) }
     },
     (operation) => hierarchyWrite(database, operation),
   )

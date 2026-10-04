@@ -1,7 +1,7 @@
 import { useInstruction, useResponseFinish, useResponseStart } from '@flue/runtime'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
-import { DEFAULT_APPEARANCE, type VividName } from '@vivid/contracts'
+import { ConnectionState, DEFAULT_APPEARANCE, type VividName } from '@vivid/contracts'
 import { asActing, type Acting } from './client.ts'
 import * as views from './tools/views.ts'
 import { boundOutput } from './tools/result.ts'
@@ -13,6 +13,7 @@ const emptyContext = VividContext.make({
   brief: '',
   skills: [],
   timezone: '',
+  integrations: [],
   name: DEFAULT_APPEARANCE.name,
 })
 const snapshots = contextSnapshots()
@@ -52,6 +53,23 @@ const loadTimezone = Effect.fn('Context.loadTimezone')(
 )
 
 /**
+ * The names of the services this Person can use now. A Connection that still needs authorization
+ * or has failed is left out, because naming it would promise tools that find_tools will not
+ * return. One service connected twice is named once; the accounts are find_tools' to tell apart.
+ * A failed read names nothing rather than failing the response.
+ */
+const loadIntegrations = Effect.fn('Context.loadIntegrations')(
+  function* (acting: Option.Option<Acting>) {
+    const response = yield* asActing(acting, (client) => client.ListConnections())
+    const ready = response.connections.filter((connection) =>
+      ConnectionState.guards.Ready(connection.state),
+    )
+    return [...new Set(ready.map((connection) => connection.serviceName))]
+  },
+  Effect.catch(() => Effect.succeed([])),
+)
+
+/**
  * What Vivid is called where this Person is working. When it cannot be read Vivid answers under
  * its own name, which is true of it everywhere, rather than failing the response over a nickname.
  */
@@ -83,9 +101,10 @@ export const loadContext = Effect.fn('Context.load')(function* (acting: Option.O
         brief: loadBrief(acting),
         skills: loadSkills(acting),
         timezone: loadTimezone(acting),
+        integrations: loadIntegrations(acting),
         name: loadName(acting),
       },
-      { concurrency: 4 },
+      { concurrency: 5 },
     ),
   )
   if (Option.isSome(acting)) snapshots.prepare(acting.value, context)
@@ -103,6 +122,7 @@ export function contextInstruction(context: VividContext) {
     brief: views.modelText(context.brief),
     skills: views.skills(context.skills),
     timezone: context.timezone,
+    integrations: context.integrations.map(views.modelText),
   })
   return `Context for this response (saved facts may be stale; confirm current facts before acting):\n${JSON.stringify(output)}`
 }

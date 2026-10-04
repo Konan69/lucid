@@ -2,9 +2,12 @@ import * as NodeCrypto from 'node:crypto'
 import { inArray } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
+import * as Schema from 'effect/Schema'
+import * as SqlClient from 'effect/unstable/sql/SqlClient'
 import {
   Company,
   CompanyId,
+  LibraryItemId,
   Person,
   PersonId,
   SessionId,
@@ -16,7 +19,41 @@ import type { Actor } from '../auth/access.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
+import { WORK_TABLE } from '../database/work.ts'
 import { libraryHandlers } from './handlers.ts'
+import { INGESTION_QUEUE_NAME } from './ingestion.ts'
+
+const decodeWork = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      state: Schema.Literals(['pending', 'completed', 'failed']),
+      attempts: Schema.Int,
+    }),
+  ),
+)
+const decodePendingWork = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ id: LibraryItemId })),
+)
+
+/** Read-only SDK persistence ingress for proofs; production never inspects this table. */
+export const storedWork = Effect.fn('LibraryTest.storedWork')(function* (id: LibraryItemId) {
+  const sql = yield* SqlClient.SqlClient
+  return yield* decodeWork(
+    yield* sql`
+      SELECT state, attempts FROM ${sql(WORK_TABLE)} WHERE queue_name = ${INGESTION_QUEUE_NAME} AND id = ${id}
+    `,
+  )
+})
+
+/** Detect older obligations before any fixture write; production never reads SDK-owned work. */
+export const pendingWork = Effect.fn('LibraryTest.pendingWork')(function* () {
+  const sql = yield* SqlClient.SqlClient
+  return yield* decodePendingWork(
+    yield* sql`
+      SELECT id FROM ${sql(WORK_TABLE)} WHERE queue_name = ${INGESTION_QUEUE_NAME} AND state = 'pending'
+    `,
+  )
+})
 
 /** A real Company with two Members, an admin and a foreign Company; cleanup precedes writes. */
 export const fixture = Effect.fn('LibraryTest.fixture')(function* () {

@@ -7,21 +7,16 @@ import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
 import * as Multipart from 'effect/unstable/http/Multipart'
-import {
-  InvalidRequest,
-  LibraryItemId,
-  LibraryUploadMetadata,
-  LibraryUploadResponse,
-  NotFound,
-} from '@vivid/contracts'
+import { InvalidRequest, LibraryItemId, LibraryUploadMetadata, NotFound } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
 import { authenticate } from '../auth/session.ts'
-import { changed } from '../live/changes.ts'
 import { libraryFailure } from '../library/failures.ts'
-import { digestBytes, ingestLibraryItem, MAX_LIBRARY_FILE_BYTES } from '../library/ingest.ts'
+import { digestBytes, MAX_LIBRARY_FILE_BYTES } from '../library/ingest.ts'
 import { LibraryStore, type StoredLibraryItem } from '../library/store.ts'
 import {
   multipartRequest,
+  persistedUpload,
+  requestBodyEnded,
   uploadLimitMessage,
   uploadLimits,
   uploadRefusal,
@@ -62,7 +57,7 @@ const upload = Effect.fn('Http.Library.upload')(function* () {
   const actor = yield* authenticatedActor()
   const request = yield* HttpServerRequest.HttpServerRequest
   yield* multipartRequest(request.headers)
-  const parts = yield* request.multipart.pipe(
+  const parts = yield* persistedUpload(request).pipe(
     Effect.provide(uploadLimits),
     Effect.mapError(uploadRefusal),
     Effect.tapErrorTag('UploadUnstored', () =>
@@ -89,17 +84,22 @@ const upload = Effect.fn('Http.Library.upload')(function* () {
     .createItem(actor, { ...metadata, bytes, sha256: digestBytes(bytes) })
     .pipe(Effect.mapError(libraryFailure))
   if (result.duplicate === true) return HttpServerResponse.jsonUnsafe(result, { status: 200 })
-  yield* changed(actor)
-  yield* ingestLibraryItem(actor, result.document.id).pipe(Effect.mapError(libraryFailure))
-  const indexed = yield* library
-    .getItem(actor, result.document.id)
-    .pipe(Effect.mapError(libraryFailure))
-  if (Option.isNone(indexed))
-    return yield* Effect.fail(new NotFound({ message: 'Library item no longer exists' }))
-  return HttpServerResponse.jsonUnsafe(
-    LibraryUploadResponse.make({ document: indexed.value, duplicate: false }),
-    { status: 201 },
-  )
+  return HttpServerResponse.jsonUnsafe(result, { status: 201 })
+})
+
+/**
+ * Hold success, refusal and defect outcomes until the upload ends, so Node proxies and closing
+ * connections can finish writing before reading the final answer. Exit preserves the original
+ * outcome rather than turning parser or persistence failures into a successful response. The
+ * drain stays on the interruptible request path, never in a finalizer for a disconnected sender.
+ * upload.ts owns both reads of the body: `persistedUpload` parses it and `requestBodyEnded`
+ * reads what is left after parsing releases its reader, so the two reads never compete.
+ */
+const uploadAfterBody = Effect.fn('Http.Library.uploadAfterBody')(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest
+  const outcome = yield* Effect.exit(upload())
+  yield* requestBodyEnded(request)
+  return yield* outcome
 })
 
 /** All byte responses come from a store lookup already scoped to the authenticated shelves. */
@@ -144,10 +144,10 @@ const content = Effect.fn('Http.Library.content')(function* () {
 
 /** Derive the closed failure vocabulary from the routes so upload limit context stays typed. */
 type BytesFailure = Effect.Error<
-  ReturnType<typeof upload> | ReturnType<typeof source> | ReturnType<typeof content>
+  ReturnType<typeof uploadAfterBody> | ReturnType<typeof source> | ReturnType<typeof content>
 >
 
-/** HTTP status mapping preserves authentication, isolation and validation failures. */
+/** HTTP status mapping preserves authentication, isolation, validation and upload failures. */
 const respond = <R>(
   operation: Effect.Effect<HttpServerResponse.HttpServerResponse, BytesFailure, R>,
 ) =>
@@ -167,26 +167,23 @@ const respond = <R>(
         ),
       UploadTooLarge: (error) =>
         Effect.succeed(
-          HttpServerResponse.jsonUnsafe(
-            { error: uploadLimitMessage(error) },
-            // A parser limit can leave body bytes unread; never reuse that HTTP connection.
-            { status: 413, headers: { connection: 'close' } },
-          ),
+          HttpServerResponse.jsonUnsafe({ error: uploadLimitMessage(error) }, { status: 413 }),
         ),
       UploadMalformed: () =>
         Effect.succeed(
           HttpServerResponse.jsonUnsafe(
             { error: 'Vivid could not read this upload.' },
-            { status: 400, headers: { connection: 'close' } },
+            { status: 400 },
           ),
         ),
       UploadUnstored: () =>
         Effect.succeed(
           HttpServerResponse.jsonUnsafe(
             { error: 'Vivid could not store this file. Try again.' },
-            { status: 500, headers: { connection: 'close' } },
+            { status: 500 },
           ),
         ),
+      UploadAbandoned: () => Effect.succeed(HttpServerResponse.empty({ status: 499 })),
       NotFound: () =>
         Effect.succeed(
           HttpServerResponse.jsonUnsafe({ error: 'Library item not found' }, { status: 404 }),
@@ -195,7 +192,7 @@ const respond = <R>(
   )
 
 export const bytesRoutes = Layer.mergeAll(
-  HttpRouter.add('POST', '/api/library', respond(upload())),
+  HttpRouter.add('POST', '/api/library', respond(uploadAfterBody())),
   HttpRouter.add('GET', '/api/library/source', respond(source())),
   HttpRouter.add('GET', '/api/library/:id/content', respond(content())),
 )

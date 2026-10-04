@@ -3,6 +3,7 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import { LibraryFolderId, NotFound, type LibraryShelf } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
+import { announce, type Topic } from '../live/changes.ts'
 import { LibraryFolderCycle, LibraryFolderMismatch, readableScope } from './access.ts'
 import type { LibraryDatabase, LibraryStoreService } from './store.ts'
 import { libraryDocuments, libraryFolders } from './tables.ts'
@@ -74,22 +75,34 @@ export const folderHasChildren = (database: LibraryDatabase) =>
     return children.length + documents.length > 0
   })
 
+/** A hierarchy write returns its public result and exactly the stored shelves it changed. */
+export interface Written<A> {
+  readonly value: A
+  readonly moved: ReadonlyArray<Topic>
+}
+
 /**
  * The document folder column has no foreign key. Serialize hierarchy checks with folder deletes
  * so an upload/move cannot leave a dangling destination, and concurrent moves cannot form a cycle.
  * Drizzle rc.5 uses PgClient.withTransaction: all queries on this captured client reuse that
  * transaction's connection, including decoder queries. Installed drizzle-orm's
- * effect-postgres/session.js constructs tx with the original session and uses client.withTransaction;
- * prepareQuery calls that same client. Effect's unstable/sql/SqlClient.ts injects its transaction
- * connection into the callback context and getConnection/borrower use it instead of the pool.
+ * effect-postgres/session.js:14-29 constructs tx with the original session and uses
+ * client.withTransaction; prepareQuery calls that same client. Effect rc.116's
+ * unstable/sql/SqlClient.ts:162-171,193-200 selects that fiber's transaction connection instead
+ * of the pool for both getConnection and borrower.
+ * After the operation, live/changes.ts announce executes pg_notify on that same transaction:
+ * commit exposes both the write and notice, while rollback exposes neither. Empty moved audiences
+ * retain duplicate/absent results without announcing a write that did not happen.
  */
-export const hierarchyWrite = <A, E, R>(
+export const hierarchyWrite = <A = never, E = never, R = never>(
   database: LibraryDatabase,
-  operation: Effect.Effect<A, E, R>,
+  operation: Effect.Effect<Written<A>, E, R>,
 ) =>
   database.transaction((transaction) =>
     Effect.gen(function* () {
       yield* transaction.execute(sql`LOCK TABLE vivid_library_folders IN SHARE ROW EXCLUSIVE MODE`)
-      return yield* operation
+      const written = yield* operation
+      yield* announce(transaction, written.moved)
+      return written.value
     }),
   )

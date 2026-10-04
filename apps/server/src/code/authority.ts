@@ -2,7 +2,7 @@ import { type PersonId, type ThreadId } from '@vivid/contracts'
 import { Context, Effect, Layer, Option, Schema } from 'effect'
 import type { Actor } from '../auth/access.ts'
 import { authenticateVivid } from '../auth/session.ts'
-import type { DatabaseInfrastructureError } from '../database/client.ts'
+import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
 
 export interface CodeBoundary {
   readonly person: PersonId
@@ -29,11 +29,13 @@ export class CodeAuthority extends Context.Service<CodeAuthority, CodeAuthorityS
 export const codeAuthorityLayer = Layer.effect(
   CodeAuthority,
   Effect.gen(function* () {
-    const context = yield* Effect.context<Effect.Services<ReturnType<typeof authenticateVivid>>>()
+    // Capture only database authority: a new scoped lookup must fail against refresh's service
+    // contract instead of silently inheriting Layer.effect's construction Scope.
+    const database = yield* Database
     return CodeAuthority.of({
       refresh: Effect.fn('Code.refreshAuthority')((boundary) =>
         authenticateVivid({ thread: boundary.thread, actor: boundary.person }).pipe(
-          Effect.provide(context),
+          Effect.provideService(Database, database),
           Effect.map((auth): Actor => ({
             person: auth.person,
             workspace: auth.workspace,

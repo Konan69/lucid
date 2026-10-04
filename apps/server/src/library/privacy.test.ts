@@ -1,3 +1,4 @@
+import { workLayer } from '../database/work.ts'
 import { describe, expect, layer } from '@effect/vitest'
 import { Effect, Layer, Option } from 'effect'
 import { NotFound, ThreadId, type LibraryShelf } from '@vivid/contracts'
@@ -13,7 +14,7 @@ import { digestBytes } from './ingest.ts'
 import { LibraryStore, libraryStoreLayer } from './store.ts'
 
 const testLayer = libraryStoreLayer.pipe(
-  Layer.provideMerge(testDatabaseLayer),
+  Layer.provideMerge(workLayer.pipe(Layer.provideMerge(testDatabaseLayer))),
   Layer.provideMerge(silentChangesLayer),
 )
 

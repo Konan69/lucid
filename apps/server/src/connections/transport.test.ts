@@ -1,3 +1,7 @@
+import * as NodeHttp from 'node:http'
+import type * as NodeNet from 'node:net'
+import { NodeHttpClient, NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
+import * as Undici from '@effect/platform-node/Undici'
 import { describe, expect, it } from '@effect/vitest'
 import { ConnectionId, InvalidRequest, ServiceId } from '@vivid/contracts'
 import {
@@ -10,9 +14,15 @@ import {
   Deferred,
   Fiber,
   Scope,
+  Queue,
+  Result,
+  Stream,
 } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
+import * as HttpServer from 'effect/unstable/http/HttpServer'
+import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
+import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
 import {
   Executor,
   ExecutorAccountId,
@@ -34,6 +44,7 @@ import { executorFailure } from './errors.ts'
 import {
   hostedExecutorFixture,
   hostedPrefix,
+  hostedOrganization,
   hostedReturnAddress,
   hostedService,
 } from './testing.ts'
@@ -111,7 +122,7 @@ function requestAt<T>(items: readonly T[], index: number): T {
   return item
 }
 
-/** Every scenario drives the public Executor service with the production HTTP Layer. Reusing
+/** Every scenario drives the public Executor service through its Fetch HTTP test Layer. Reusing
  * the captured requests proves route, header, account isolation and submission-body semantics.
  */
 const scenario = <E>(
@@ -125,6 +136,21 @@ const scenario = <E>(
     // the recorded requests are checked.
     yield* run(remote).pipe(Effect.scoped, Effect.provide(remote.configured))
     const requests = yield* Ref.get(remote.requests)
+    // A loopback listener can receive unrelated traffic. Preserve the failing postcondition,
+    // but expose a safe receipt before individual assertions hide the request's provenance.
+    expect(
+      requests
+        .filter((request) => !request.path.includes(`${hostedPrefix}/`))
+        .map(({ path, peer, headers }) => ({
+          path,
+          peer,
+          host: headers.host,
+          userAgent: headers['user-agent'],
+          accept: headers.accept,
+          authorizationPresent: headers.authorization !== undefined,
+          fixtureAuthorization: headers.authorization === 'Bearer isolated-test-key',
+        })),
+    ).toEqual([])
     for (const request of requests) {
       expect(request.path).toContain(`${hostedPrefix}/`)
       expect(request.headers.authorization).toBe('Bearer isolated-test-key')
@@ -1433,5 +1459,106 @@ it.effect('requires organization configuration when URL and key enable Executor'
     )
     expect(JSON.stringify(result)).toContain('VIVID_EXECUTOR_ORGANIZATION')
     expect(JSON.stringify(result)).not.toContain('isolated-test-key')
+  }),
+)
+
+const Exchange = Schema.TaggedUnion({
+  Received: { path: Schema.String, port: Schema.Number },
+  Released: { path: Schema.String, port: Schema.Number },
+})
+
+/**
+ * NodeHttpServer.makeHandler interrupts held streams on premature close; their finalizers
+ * report release. Build the listener before the Agent and Executor, so even a failed socket
+ * assertion tears down the catalogue refresher, then Agent, then listener without a clock wait.
+ */
+const unreadTransport = Effect.fn('ExecutorTest.unreadTransport')(function* () {
+  const receipts = yield* Queue.unbounded<typeof Exchange.Type>()
+  const sockets = new Map<number, NodeNet.Socket>()
+  const dispatcher = Layer.effect(
+    NodeHttpClient.Dispatcher,
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        const connector = Undici.buildConnector({})
+        return new Undici.Agent({
+          connect: (options, callback) =>
+            connector(options, (...args) => {
+              const [error, socket] = args
+              if (error === null) {
+                const port = socket.localPort
+                if (port === undefined) throw new Error('Connected socket has no local port')
+                sockets.set(port, socket)
+              }
+              callback(...args)
+            }),
+        })
+      }),
+      (agent) => Effect.promise(() => agent.destroy()),
+    ),
+  )
+  const exchange = Effect.fn('ExecutorTest.exchange')(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest
+    const port = NodeHttpServerRequest.toIncomingMessage(request).socket.remotePort
+    if (port === undefined) return expect.fail('Request socket has no remote port')
+    const path = request.url
+    yield* Queue.offer(receipts, Exchange.cases.Received.make({ path, port }))
+    return HttpServerResponse.stream(
+      Stream.make(new TextEncoder().encode('incomplete')).pipe(
+        Stream.concat(Stream.never),
+        Stream.ensuring(Queue.offer(receipts, Exchange.cases.Released.make({ path, port }))),
+      ),
+      { status: 401 },
+    )
+  })()
+  const listener = HttpServer.serve(exchange).pipe(
+    Layer.provideMerge(NodeHttpServer.layer(NodeHttp.createServer, { port: 0 })),
+  )
+  const configured = Layer.unwrap(
+    Effect.gen(function* () {
+      const server = yield* HttpServer.HttpServer
+      const origin = new URL(HttpServer.formatAddress(server.address))
+      origin.hostname = '127.0.0.1'
+      return executorLayer.pipe(
+        Layer.provide(NodeHttpClient.layerUndiciNoDispatcher.pipe(Layer.provide(dispatcher))),
+        Layer.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              VIVID_EXECUTOR_URL: origin.href.replace(/\/$/u, ''),
+              VIVID_EXECUTOR_KEY: 'isolated-test-key',
+              VIVID_EXECUTOR_ORGANIZATION: hostedOrganization,
+              VIVID_EXECUTOR_PUBLIC_ONLY: true,
+            }),
+          ),
+        ),
+      )
+    }),
+  ).pipe(Layer.provide(listener))
+  return { receipts, sockets, configured }
+})
+
+/** Status rejects the first profile 401 without decoding; its incomplete response belongs to that call. */
+it.effect('releases an unread Executor 401 before returning access denied', () =>
+  Effect.gen(function* () {
+    const remote = yield* unreadTransport()
+    const path = `${hostedPrefix}/apps/app/profiles/profile`
+    yield* Effect.gen(function* () {
+      const result = yield* (yield* Executor).status(references).pipe(Effect.result)
+      expect(Result.isFailure(result) && result.failure._tag).toBe('ExecutorAccessDenied')
+      // Catalogue receipts use other paths and sockets; only this operation's port proves ownership.
+      let received = yield* Queue.take(remote.receipts)
+      while (!Exchange.guards.Received(received) || received.path !== path) {
+        received = yield* Queue.take(remote.receipts)
+      }
+      const socket = remote.sockets.get(received.port)
+      if (socket === undefined) return expect.fail('Received port has no recorded client socket')
+      // RED must fail synchronously here, before waiting for the held stream's release.
+      expect(socket.destroyed).toBe(true)
+      let released = yield* Queue.take(remote.receipts)
+      while (released.path !== path || released.port !== received.port) {
+        released = yield* Queue.take(remote.receipts)
+      }
+      expect(released).toEqual(Exchange.cases.Released.make({ path, port: received.port }))
+      return undefined
+    }).pipe(Effect.provide(remote.configured))
   }),
 )

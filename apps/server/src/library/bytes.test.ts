@@ -1,6 +1,9 @@
+import { workLayer } from '../database/work.ts'
 import * as NodeServices from '@effect/platform-node/NodeServices'
 import { describe, expect, layer } from '@effect/vitest'
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, Schema } from 'effect'
+import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
+import { LibraryUploadResponse } from '@vivid/contracts'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
@@ -10,11 +13,12 @@ import { fixture } from './fixtures.ts'
 import { LibraryStore, libraryStoreLayer } from './store.ts'
 
 const testLayer = Layer.mergeAll(
-  libraryStoreLayer.pipe(Layer.provideMerge(testDatabaseLayer)),
+  libraryStoreLayer.pipe(Layer.provideMerge(workLayer.pipe(Layer.provideMerge(testDatabaseLayer)))),
   testConfigLayer,
   silentChangesLayer,
   NodeServices.layer,
 )
+const decodeUpload = Schema.decodeUnknownEffect(Schema.fromJsonString(LibraryUploadResponse))
 
 /** Real multipart requests exercise auth, filesystem persistence, ingestion and shelf selection. */
 const uploadRequest = (token: string, shelf: string) => {
@@ -27,6 +31,65 @@ const uploadRequest = (token: string, shelf: string) => {
     headers: { authorization: `Bearer ${token}` },
   })
 }
+
+const streamedBoundary = 'vivid-fetch'
+const streamedContentType = `multipart/form-data; boundary=${streamedBoundary}`
+const streamedField = `--${streamedBoundary}\r\nContent-Disposition: form-data; name="shelf"\r\n\r\n`
+
+/**
+ * A pull-driven Web body whose source reports how it was consumed. The default queue holds one
+ * chunk, so the source is asked to close only after a reader has taken the last chunk: `ended`
+ * is a receipt that the whole body was read, and `cancelled` that its remainder was discarded.
+ */
+const receiptedBody = (chunks: ReadonlyArray<string>) => {
+  const encoder = new TextEncoder()
+  const receipt = { delivered: 0, ended: false, cancelled: false }
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const chunk = chunks[receipt.delivered]
+      if (chunk === undefined) {
+        receipt.ended = true
+        controller.close()
+        return
+      }
+      receipt.delivered += 1
+      controller.enqueue(encoder.encode(chunk))
+    },
+    cancel() {
+      receipt.cancelled = true
+    },
+  })
+  return { stream, receipt }
+}
+
+/** A streamed Web request has no declared length, so only the parser can refuse its body. */
+const streamedUpload = (token: string, body: ReadableStream<Uint8Array>) =>
+  new Request('http://vivid.test/api/library', {
+    method: 'POST',
+    body,
+    duplex: 'half',
+    headers: { authorization: `Bearer ${token}`, 'content-type': streamedContentType },
+  })
+
+/** Parser limits and missing terminators retain their refusal after the whole body is read. */
+const streamedRefusals = [
+  {
+    name: 'field over its limit',
+    status: 413,
+    // The field crosses its limit before its terminator; later chunks exercise the unread tail.
+    chunks: [
+      `${streamedField}${'x'.repeat(4096)}`,
+      'x'.repeat(4096),
+      'x'.repeat(4096),
+      `\r\n--${streamedBoundary}--\r\n`,
+    ],
+  },
+  {
+    name: 'body without its multipart terminator',
+    status: 400,
+    chunks: [streamedField, 'Mi', 'ne'],
+  },
+]
 
 /** Each HTTP call owns the SDK pool and multipart resources until its response has completed.
  * Better Auth's Promise adapter cannot cancel an in-flight query: a test timeout can finalize
@@ -59,7 +122,11 @@ describe.skipIf(!testDatabaseConfigured)('Library bytes HTTP', () => {
     it.effect('uploads and deduplicates authenticated Mine bytes', () =>
       Effect.gen(function* () {
         const { people, send } = yield* httpFixture()
-        expect((yield* send(uploadRequest(people.owner.token, 'Mine'))).status).toBe(201)
+        const response = yield* send(uploadRequest(people.owner.token, 'Mine'))
+        expect(response.status).toBe(201)
+        const web = HttpServerResponse.toWeb(response)
+        const body = yield* Effect.promise(() => web.text())
+        expect((yield* decodeUpload(body)).document.status).toBe('processing')
         expect((yield* send(uploadRequest(people.owner.token, 'Mine'))).status).toBe(200)
       }),
     )
@@ -101,6 +168,37 @@ describe.skipIf(!testDatabaseConfigured)('Library bytes HTTP', () => {
           (yield* send(new Request(`http://vivid.test/api/library/${id}/content`))).status,
         ).toBe(401)
         expect((yield* send(uploadRequest(people.owner.token, 'invalid shelf'))).status).toBe(400)
+      }),
+    )
+    for (const row of streamedRefusals) {
+      it.effect(
+        `reads a ${row.name} to its end before its ${row.status}, never cancelling it`,
+        () =>
+          Effect.gen(function* () {
+            const { people, store, send } = yield* httpFixture()
+            const { stream, receipt } = receiptedBody(row.chunks)
+            const response = yield* send(streamedUpload(people.owner.token, stream))
+            expect(response.status).toBe(row.status)
+            expect(receipt).toEqual({ delivered: row.chunks.length, ended: true, cancelled: false })
+            expect((yield* store.list(people.owner.actor, { shelf: 'Mine' })).documents).toEqual([])
+          }),
+      )
+    }
+    it.effect('answers an upload without a body by its own refusal', () =>
+      Effect.gen(function* () {
+        const { people, send } = yield* httpFixture()
+        // A Web request made without a body has none to wait for; it must not read as abandoned.
+        const bodyless = (headers: Record<string, string>) =>
+          new Request('http://vivid.test/api/library', { method: 'POST', headers })
+        expect((yield* send(bodyless({ 'content-type': streamedContentType }))).status).toBe(401)
+        expect(
+          (yield* send(
+            bodyless({
+              authorization: `Bearer ${people.owner.token}`,
+              'content-type': streamedContentType,
+            }),
+          )).status,
+        ).toBe(400)
       }),
     )
   })

@@ -21,6 +21,7 @@ import {
   type Actor,
 } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
+import { Topic } from '../live/changes.ts'
 import { requireThread } from '../threads/access.ts'
 
 /** A Company shelf cannot be selected in a personal workspace. */
@@ -53,8 +54,8 @@ interface ShelfColumns {
   readonly companyId: PgColumn
 }
 export interface ShelfOwner {
-  readonly personId: string
-  readonly companyId: string | null
+  readonly personId: PersonId
+  readonly companyId: CompanyId | null
 }
 
 /** Mine belongs to the Person across workspace switches; an admin never gains another Mine. */
@@ -133,6 +134,15 @@ export const shelfScope = Effect.fn('Library.shelfScope')(function* (
 export const shelfOf = (owner: Pick<ShelfOwner, 'companyId'>): LibraryShelf =>
   owner.companyId === null ? 'Mine' : 'Company'
 
+/**
+ * Stored ownership alone defines the audience: Mine is private to its Person, Company to Members.
+ * mineScope above and auth/access.ts inWorkspace define these same read boundaries; an editor's
+ * current workspace or attribution cannot widen them. database/owner.ts:16-28 brands both stored
+ * columns, so this rule needs no reconstruction of an Actor or recasting of an identifier.
+ */
+export const shelfTopics = (owner: ShelfOwner): ReadonlyArray<Topic> =>
+  owner.companyId === null ? [Topic.person(owner.personId)] : [Topic.company(owner.companyId)]
+
 /** Reads establish visibility before this check, so Forbidden never reveals an unseen row. */
 export const requireEditor = Effect.fn('Library.requireEditor')(function* (
   actor: Actor,
@@ -150,7 +160,7 @@ export const requireEditor = Effect.fn('Library.requireEditor')(function* (
     return yield* Effect.fail(
       new LibraryMutationDenied({
         personId: actor.person.id,
-        companyId: CompanyId.make(owner.companyId),
+        companyId: owner.companyId,
       }),
     )
   }

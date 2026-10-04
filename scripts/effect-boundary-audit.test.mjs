@@ -62,6 +62,38 @@ void test('inventories requested boundary syntax with enclosing symbols', () => 
   assert.equal(settled.symbol, 'settle')
 })
 
+/** A TS generic arrow must not be parsed as JSX and hide later runtime boundaries. */
+void test('finds boundaries inside and after a single-parameter generic arrow', () => {
+  const findings = scanSource(
+    fixtureFile,
+    `const generic = <A>(value: A) => Effect.runPromise(Effect.succeed(value));
+     const later = () => Effect.tryPromise(() => fetch("https://example.test"));`,
+  )
+  assert.deepEqual(
+    findings.map(({ symbol, kind }) => ({ symbol, kind })),
+    [
+      { symbol: 'generic', kind: 'effect-run-promise' },
+      { symbol: 'later', kind: 'effect-try-promise' },
+      { symbol: 'later', kind: 'raw-fetch' },
+    ],
+  )
+})
+
+/** TSX remains JSX-aware while traversing boundary calls in attributes and expressions. */
+void test('finds boundaries in TSX expressions', () => {
+  const findings = scanSource(
+    'packages/contracts/src/audit-fixture.tsx',
+    'const view = () => <button onClick={() => Effect.runPromise(program)}>{fetch("https://example.test")}</button>;',
+  )
+  assert.deepEqual(
+    findings.map(({ symbol, kind }) => ({ symbol, kind })),
+    [
+      { symbol: 'view', kind: 'effect-run-promise' },
+      { symbol: 'view', kind: 'raw-fetch' },
+    ],
+  )
+})
+
 /** Exclusions protect the production signal without hiding similarly named domain modules. */
 void test('selects tracked production TypeScript paths narrowly', () => {
   assert.equal(isProductionTypeScript('apps/server/src/config.ts'), true)
