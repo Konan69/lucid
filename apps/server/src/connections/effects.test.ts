@@ -8,6 +8,8 @@ import { AiError, DecisionModel } from 'effect/unstable/ai'
 import { ServiceId } from '@vivid/contracts'
 import { ExecutorTool } from './executor.ts'
 import {
+  DIRECT_EFFECT_BUDGET,
+  EFFECT_BATCH_BUDGET,
   EFFECT_BATCH_SIZE,
   TOOL_DESCRIPTION_LIMIT,
   TOOL_NAME_LIMIT,
@@ -148,12 +150,12 @@ it.effect('cached classification expires after 24 hours', () => {
 })
 
 /** A stalled provider keeps Approval without attempting another request. */
-it.effect('a stalled classification keeps write after two seconds', () => {
+it.effect('a stalled classification keeps write within the direct budget', () => {
   let calls = 0
   return Effect.gen(function* () {
     const effects = yield* ToolEffects
     const pending = yield* effects.classify(request).pipe(Effect.forkChild)
-    yield* TestClock.adjust('2 seconds')
+    yield* TestClock.adjust(DIRECT_EFFECT_BUDGET)
     expect(yield* Fiber.join(pending)).toBe('write')
     expect(calls).toBe(1)
   }).pipe(
@@ -287,13 +289,13 @@ it.effect('pending discovery and direct use share one provider request', () => {
 })
 
 /** Discovery has one short attempt; failure is not a cached successful write answer. */
-it.effect('stalled discovery returns writes in two seconds then retries after backoff', () => {
+it.effect('stalled discovery returns writes within its budget then retries after backoff', () => {
   let calls = 0
   return Effect.gen(function* () {
     const effects = yield* ToolEffects
     const batch = { serviceId: request.serviceId, service: request.service, tools: [request.tool] }
     const pending = yield* effects.classifyBatch(batch).pipe(Effect.forkChild)
-    yield* TestClock.adjust('2 seconds')
+    yield* TestClock.adjust(EFFECT_BATCH_BUDGET)
     expect((yield* Fiber.join(pending)).map((tool) => tool.effect)).toEqual(['write'])
     expect(calls).toBe(1)
     yield* TestClock.adjust('1 minute')

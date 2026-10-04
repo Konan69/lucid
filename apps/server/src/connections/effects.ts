@@ -35,19 +35,20 @@ const EFFECT_FAILURE_TTL = '1 minute'
 /** Gateway rejected 39 questions with HTTP 400 on 4 Oct 2026; twenty succeeded.
  * Split larger catalogs at that measured size, without assuming a provider maximum. */
 export const EFFECT_BATCH_SIZE = 20
-/** Experiential Labs gateway, 4 Oct 2026: twenty capped 500-character descriptions used
- * 6663 input tokens and took 631ms first/666ms warm; calibration batches took 1289/675ms.
- * Two seconds leaves at least 711ms measured headroom while bounding optional discovery. */
-export const EFFECT_BATCH_BUDGET = '2 seconds'
+/** Experiential Labs gateway, jev-latest, 4 Oct 2026, one process and ten warm calls:
+ * twenty 500-character descriptions took first=755ms, warm min/median/max=676/743.5/1350ms;
+ * input/output tokens=7363/793 on every call. 1800ms gives 450ms (33%) above the warm max.
+ * findTools caps subsequent relevance to the remaining two-second discovery deadline. */
+export const EFFECT_BATCH_BUDGET = '1800 millis'
 
 /** Request mode changes the lookup budget, not cache identity or caller authority. */
 const discoveryClassification = Context.Reference('vivid/DiscoveryClassification', {
   defaultValue: () => false,
 })
 
-/** Gateway relevance payload calibration on 4 Oct 2026 measured twenty 100/500/1500-character
- * descriptions at 2292/3844/7704 input tokens and 493/667/682ms warm. Five hundred characters
- * retain useful semantics while halving the largest tested payload. Cache identity stays full. */
+/** Gateway, jev-latest, 4 Oct 2026: twenty final relevance/effect questions at this cap
+ * use 5024/7363 input tokens. The bounded prompt retains full metadata only in cache identity;
+ * oversized effect metadata bypasses judgment entirely, so unseen tails cannot remove Approval. */
 export const TOOL_DESCRIPTION_LIMIT = 500
 /** One hundred characters bounds identity fields independently of descriptions. Longer
  * metadata keeps Executor's effect: no truncated evidence may remove an Approval. */
@@ -130,13 +131,11 @@ const effectOf = (
   return answer.label === 'destructive' ? 'destructive' : 'write'
 }
 
-/**
- * How long running one tool may wait for its effect. The tool cannot start until this answers,
- * so the trust loop's ten seconds is far too long here: a stalled provider would hold every
- * uncached tool call for ten seconds. Two seconds is the discovery budget, several times the
- * 418 to 1904 ms measured through the Experiential Labs gateway on 4 Oct 2026 for single-tool calibration; past it the tool keeps Executor's `write`.
- */
-const DIRECT_EFFECT_BUDGET = '2 seconds'
+/** Experiential Labs gateway, jev-latest, 4 Oct 2026, one process and ten warm calls:
+ * one 500-character question took cold=826ms, warm min/median/max=450/514.5/845ms;
+ * input/output tokens=492/40. 1500ms leaves 655ms (78%) above the warm maximum.
+ * Measured cold calls fit these budgets, so no extra Layer warm-up request is needed. */
+export const DIRECT_EFFECT_BUDGET = '1500 millis'
 
 /** Direct use keeps the original, calibrated single-tool prompt. */
 const judgeEffect = Effect.fn('Connections.judgeEffect')(function* (key: CacheKey) {

@@ -1,5 +1,5 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { Deferred, Effect, Fiber, Layer, Predicate, Ref, Schema } from 'effect'
+import { Clock, Deferred, Effect, Fiber, Layer, Predicate, Ref, Schema } from 'effect'
 import { ScriptedAnswer } from '../decisions/testing.ts'
 import { AiError, DecisionModel } from 'effect/unstable/ai'
 import { RELEVANCE_BUDGET } from './relevance.ts'
@@ -480,6 +480,78 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             'read',
           ])
           expect(effectCalls).toBe(1)
+        }).pipe(Effect.provide(Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer)))))
+      }),
+    )
+
+    /** Classification and relevance are sequential, so separate limits would add up. Typed
+     * receipts let the test spend 1.5s on effects and prove relevance has only 0.5s left. */
+    it.effect('caps sequential discovery decisions at two seconds together', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const probe = yield* ConnectionProbe
+        const previous = yield* Ref.get(probe.tools)
+        yield* Effect.addFinalizer(() => Ref.set(probe.tools, previous))
+        yield* Ref.set(
+          probe.tools,
+          [0, 1].map((index) =>
+            ExecutorTool.make({
+              name: `lookup_${index}`,
+              description: 'Lookup a record',
+              effect: 'write',
+              input: {},
+            }),
+          ),
+        )
+        yield* (yield* ConnectionStore).begin(ownerActor, {
+          service: serviceId,
+          label: 'Work',
+          shared: false,
+        })
+        const effectsStarted = yield* Deferred.make<void>()
+        const releaseEffects = yield* Deferred.make<void>()
+        const relevanceStarted = yield* Deferred.make<void>()
+        let calls = 0
+        const modelLayer = Layer.effect(
+          DecisionModel.DecisionModel,
+          DecisionModel.make({
+            decide: Effect.fn('Test.discoveryDeadline')(function* ({ decisions }) {
+              calls += 1
+              if (calls > 1) {
+                yield* Deferred.succeed(relevanceStarted, undefined)
+                return yield* Effect.never
+              }
+              yield* Deferred.succeed(effectsStarted, undefined)
+              yield* Deferred.await(releaseEffects)
+              return {
+                answers: Object.fromEntries(
+                  Object.keys(decisions).map((key) => [
+                    key,
+                    ScriptedAnswer.cases.Classify.make({
+                      label: 'read',
+                      probabilities: { read: 0.99, write: 0.01, destructive: 0 },
+                    }),
+                  ]),
+                ),
+                usage: { inputTokens: undefined, outputTokens: undefined },
+              }
+            }),
+          }),
+        )
+        yield* Effect.gen(function* () {
+          const start = yield* Clock.currentTimeMillis
+          const pending = yield* findTools(ownerActor, { query: 'record' }).pipe(Effect.forkChild)
+          yield* Deferred.await(effectsStarted)
+          yield* TestClock.adjust('1500 millis')
+          yield* Deferred.succeed(releaseEffects, undefined)
+          yield* Deferred.await(relevanceStarted)
+          yield* TestClock.adjust('500 millis')
+          expect((yield* Fiber.join(pending)).tools.map((tool) => tool.name)).toEqual([
+            'lookup_0',
+            'lookup_1',
+          ])
+          expect((yield* Clock.currentTimeMillis) - start).toBe(2000)
+          expect(calls).toBe(2)
         }).pipe(Effect.provide(Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer)))))
       }),
     )

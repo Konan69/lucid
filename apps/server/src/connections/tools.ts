@@ -1,4 +1,4 @@
-import { Array as Arr, Effect, Option, Order, Schema } from 'effect'
+import { Array as Arr, Clock, Duration, Effect, Option, Order, Schema } from 'effect'
 import {
   ActionTarget,
   ConnectionRequestMessage,
@@ -19,7 +19,13 @@ import {
 } from '@vivid/contracts'
 import { requireCompany, type Actor } from '../auth/access.ts'
 import { workspaceIn } from '../auth/session.ts'
-import { ActionOutcome, Gate, GateDecision, type GateExposure } from '../approvals/gate.ts'
+import {
+  actionOrigin,
+  ActionOutcome,
+  Gate,
+  GateDecision,
+  type GateExposure,
+} from '../approvals/gate.ts'
 import { requireThread } from '../threads/access.ts'
 import {
   Executor,
@@ -33,7 +39,7 @@ import { callableTool, discoveredTool } from '../code/signatures.ts'
 import { executorFailure } from './errors.ts'
 import { ConnectionStore } from './store.ts'
 import { decisionConfigured, isDecisionNonEvent } from '../decisions/model.ts'
-import { relevantTools } from './relevance.ts'
+import { relevantTools, relevantToolsWithin, RELEVANCE_BUDGET } from './relevance.ts'
 import { ToolEffects } from './effects.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
 
@@ -176,9 +182,15 @@ const offeredServices = Effect.fn('Connections.offeredServices')(function* (
  */
 const orderTools = Effect.fn('Connections.orderTools')(function* <
   A extends Parameters<typeof relevantTools>[1][number],
->(query: string, lexical: ReadonlyArray<A>) {
+>(query: string, lexical: ReadonlyArray<A>, started: number) {
   if (lexical.length < 2 || !(yield* decisionConfigured)) return lexical
-  return yield* relevantTools(query, lexical).pipe(
+  const remaining = FIND_TOOLS_BUDGET_MILLIS - ((yield* Clock.currentTimeMillis) - started)
+  if (remaining <= 0) return lexical
+  const budget = Duration.min(
+    Duration.millis(remaining),
+    Duration.fromInputUnsafe(RELEVANCE_BUDGET),
+  )
+  return yield* relevantToolsWithin(query, lexical, budget).pipe(
     Effect.map((result) => result.ordered),
     Effect.catch((error) =>
       isDecisionNonEvent(error)
@@ -191,6 +203,11 @@ const orderTools = Effect.fn('Connections.orderTools')(function* <
   )
 })
 
+/** Gateway, jev-latest, 4 Oct 2026: effect/relevance warm medians total 1390ms. A shared
+ * 2000ms deadline leaves 610ms typical headroom and caps sequential optional stages together;
+ * relevance is skipped if classification and mandatory metadata reads use the whole budget. */
+const FIND_TOOLS_BUDGET_MILLIS = 2000
+
 /** Discovery removes shared writes before any tool enters model context. */
 export const findTools = Effect.fn('Connections.findTools')(function* (
   actor: Actor,
@@ -198,6 +215,7 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
 ) {
   const store = yield* ConnectionStore
   const records = yield* store.records(actor)
+  const started = yield* Clock.currentTimeMillis
   const groups = yield* Effect.forEach(
     namedAccounts(records).filter(({ row }) => row.status === 'ready'),
     ({ row, account }) => projectTools(store, actor, row, account),
@@ -214,7 +232,7 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     identity: `${tool.serviceName} ${tool.account}`,
   }))
   const [ordered, offered] = yield* Effect.all(
-    [orderTools(request.query, lexical), offeredServices(store, records, request.query)],
+    [orderTools(request.query, lexical, started), offeredServices(store, records, request.query)],
     { concurrency: 2 },
   )
   const limited = ordered.slice(0, Math.min(25, Math.floor(limit)))
@@ -395,7 +413,11 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
     effect: tool.effect,
     target,
   })
-  const decision = yield* (yield* Gate).check(actor, action, yield* exposureOf(actor, row))
+  const decision = yield* (yield* Gate).check(
+    { ...actor, origin: yield* actionOrigin(actor) },
+    action,
+    yield* exposureOf(actor, row),
+  )
   return yield* GateDecision.match<ReturnType<typeof runConnection>>(decision, {
     Blocked: ({ rule }) => Effect.succeed(ToolOutcome.cases.Blocked.make({ rule })),
     ApprovalRequired: ({ approval }) =>

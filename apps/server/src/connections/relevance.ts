@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect'
+import { Duration, Effect, Schema } from 'effect'
 import { Decision, DecisionModel } from 'effect/unstable/ai'
 import { decideWithin, DecisionUnavailable } from '../decisions/model.ts'
 import { TOOL_DESCRIPTION_LIMIT, TOOL_NAME_LIMIT, delimitedToolData } from './effects.ts'
@@ -8,15 +8,12 @@ import { TOOL_DESCRIPTION_LIMIT, TOOL_NAME_LIMIT, delimitedToolData } from './ef
  * self-promotion scored 0.02 versus 0.89 for the honest necessary tool. This threshold affects
  * ordering only; neither candidate is excluded. */
 export const TOOL_RELEVANCE_THRESHOLD = 0.3
-/** Only the top twenty lexical candidates need optional semantic enrichment; lower candidates
- * keep their order. Gateway calibration on 4 Oct 2026 used 3844 input tokens at the 500-character
- * cap, versus 7704 at 1500 characters, bounding catalog-driven payload growth. */
+/** Gateway rejected 39 questions with HTTP 400; twenty is the tested payload size. */
 export const RELEVANCE_BATCH_SIZE = 20
-/** Experiential Labs gateway, 4 Oct 2026: twenty 100/500/1500-character descriptions used
- * 2292/3844/7704 tokens; first calls took 831/2045/681ms and warm calls 493/667/682ms.
- * Repeat first calls: 841/619/677ms; warm: 527/611/715ms, with identical token counts.
- * At the selected 500-character cap, 1.5 seconds leaves 833ms warm headroom. A slow cold
- * connection may exceed it; optional ordering then keeps the lexical baseline. */
+/** Experiential Labs gateway, jev-latest, 4 Oct 2026, one process and ten warm calls:
+ * twenty questions at 500 characters took first=618ms, warm min/median/max=621/646.5/728ms;
+ * input/output tokens=5024/374 on every call. 1500ms gives 772ms (106%) above the warm
+ * maximum. findTools further caps this request at its remaining two-second discovery budget. */
 export const RELEVANCE_BUDGET = '1500 millis'
 
 interface Candidate {
@@ -53,6 +50,7 @@ ${delimitedToolData({ service: tool.serviceName.slice(0, TOOL_NAME_LIMIT), accou
 const scoreBatch = Effect.fn('Connections.scoreTools')(function* <A extends Candidate>(
   request: string,
   tools: readonly A[],
+  budget: Duration.Input,
 ) {
   const { answers, usage } = yield* decideWithin(
     toolRelevanceDecision(
@@ -62,7 +60,7 @@ const scoreBatch = Effect.fn('Connections.scoreTools')(function* <A extends Cand
       })),
     ),
     { request },
-    RELEVANCE_BUDGET,
+    budget,
   )
   yield* Effect.logDebug('Tool relevance scores', {
     probabilities: Object.values(answers).map((answer) => answer.probability),
@@ -79,20 +77,28 @@ const scoreBatch = Effect.fn('Connections.scoreTools')(function* <A extends Cand
  * Before caller truncation, Jev promotes candidates without removing them. Stable score ties
  * retain lexical order; unpromoted and unscored candidates keep their original lexical order.
  * Provider usage accompanies the result so live evaluations measure the actual request. */
-export const relevantTools = Effect.fn('Connections.relevantTools')(function* <A extends Candidate>(
-  request: string,
-  tools: readonly A[],
-) {
+export const relevantToolsWithin = Effect.fn('Connections.relevantToolsWithin')(function* <
+  A extends Candidate,
+>(request: string, tools: readonly A[], budget: Duration.Input) {
   if (tools.length < 2)
     return {
       ordered: tools,
       usage: new DecisionModel.DecisionUsage({ inputTokens: undefined, outputTokens: undefined }),
     }
-  const { scores, usage } = yield* scoreBatch(request, tools.slice(0, RELEVANCE_BATCH_SIZE))
+  const { scores, usage } = yield* scoreBatch(request, tools.slice(0, RELEVANCE_BATCH_SIZE), budget)
   const promoted = scores
     .filter(({ probability }) => probability >= TOOL_RELEVANCE_THRESHOLD)
     .toSorted((left, right) => right.probability - left.probability)
     .map(({ tool }) => tool)
   const selected = new Set(promoted)
   return { ordered: [...promoted, ...tools.filter((tool) => !selected.has(tool))], usage }
+})
+
+/** Standalone ordering uses its measured budget; discovery supplies the remaining shared
+ * deadline through relevantToolsWithin so consecutive optional stages cannot add their limits. */
+export const relevantTools = Effect.fn('Connections.relevantTools')(function* <A extends Candidate>(
+  request: string,
+  tools: readonly A[],
+) {
+  return yield* relevantToolsWithin(request, tools, RELEVANCE_BUDGET)
 })
