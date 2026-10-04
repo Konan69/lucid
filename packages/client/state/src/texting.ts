@@ -126,9 +126,37 @@ export const MESSENGER = {
 export type Composer = 'apple' | 'standard'
 
 /**
+ * Which `sms:` form a browser's device reads, from its user agent, or nothing when the device has
+ * no app that takes an `sms:` link at all.
+ *
+ * A Mac, an iPhone and an iPad open Messages (an iPad asking for the desktop site calls itself a
+ * Mac, which is the same answer). An Android phone opens its own messaging app; its user agent
+ * also says "Linux", so it is asked about first. Windows, Linux and ChromeOS desktops are nothing:
+ * pressing an `sms:` link there does nothing, or asks which app to buy. A screen must not offer a
+ * button that does that, so it is told here, once, that there is none to offer.
+ *
+ * The user agent is what the web app already reads to tell a Mac from the rest (`data/keys.ts`).
+ * `navigator.userAgentData` would say it more plainly, but Safari and Firefox do not have it, and
+ * Safari is the browser that matters most for Messages.
+ */
+export const composerOf = (userAgent: string): Option.Option<Composer> => {
+  if (/Android/u.test(userAgent)) return Option.some('standard')
+  if (/Mac|iPhone|iPad|iPod/u.test(userAgent)) return Option.some('apple')
+  return Option.none()
+}
+
+/**
+ * What a first message to Vivid says, already written when a connected channel's app is opened,
+ * so the first text is one press on "Send". It is a greeting and nothing more: the Person has not
+ * asked for anything yet, and Vivid answers a greeting by saying what it can do.
+ */
+export const FIRST_TEXT = 'Hi Vivid'
+
+/**
  * The link that opens a channel's own app on a conversation with `textTo`, with `body` already
  * written when there is one. A code is sent as the body so confirming is one press and "Send";
- * a connected channel has nothing to pre-write and only opens the conversation.
+ * a connected channel is opened on `FIRST_TEXT` (`textLink`). With no body the link only opens
+ * the conversation.
  */
 export const messageLink = (
   channel: Channel,
@@ -149,6 +177,24 @@ export const messageLink = (
     onNone: () => `sms:${textTo}`,
     onSome: (text) => `sms:${textTo}${composer === 'apple' ? '&' : '?'}body=${text}`,
   })
+}
+
+/**
+ * The link that opens a connected channel's app on a first message to Vivid, when this device can
+ * be expected to open it; nothing when it cannot, so the screen shows the number to carry to the
+ * phone and no button that would do nothing.
+ *
+ * WhatsApp's link is a web page that every browser opens (and that hands over to the app where
+ * there is one), so it is always there. An `sms:` link needs a device that reads one (`composerOf`).
+ */
+export const textLink = (
+  channel: Channel,
+  device: Option.Option<Composer>,
+  textTo: string,
+): Option.Option<string> => {
+  const body = Option.some(FIRST_TEXT)
+  if (channel === 'WhatsApp') return Option.some(messageLink(channel, 'standard', textTo, body))
+  return Option.map(device, (composer) => messageLink(channel, composer, textTo, body))
 }
 
 /**
