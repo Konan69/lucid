@@ -60,6 +60,13 @@ const makeOptions = (config: ServerConfig['Service']) => {
           clientId: google.clientId,
           clientSecret: Redacted.value(google.clientSecret),
           redirectURI: google.redirectUri.href,
+          // Signing in asks Google for who the Person is and nothing else. This client is also the
+          // one Integrations use for Gmail, Calendar and Drive, and Better Auth's default
+          // (`include_granted_scopes=true`) would carry those grants into a sign-in token.
+          includeGrantedScopes: false,
+          // A Person with several Google accounts chooses one each time; without this Google
+          // silently reuses whichever account the browser last used.
+          prompt: 'select_account' as const,
         },
       },
     }),

@@ -31,6 +31,28 @@ const privateUrl = (name: string, port: number) => `http://${name}.railway.inter
 const listenHost = '::'
 
 /**
+ * Google sign-in is one atomic set: the client's id and secret and the address Google sends a
+ * Person back to. `infra/env.ts` already refuses a partial set, so here it is all three or none,
+ * and without them the server starts with Google sign-in off.
+ */
+const googleAccess = (environment: InfrastructureEnvironment) =>
+  Option.match(
+    Option.all({
+      clientId: environment.googleClientId,
+      clientSecret: environment.googleClientSecret,
+      redirectUri: environment.googleRedirectUri,
+    }),
+    {
+      onNone: () => ({}),
+      onSome: (google) => ({
+        GOOGLE_CLIENT_ID: google.clientId,
+        GOOGLE_CLIENT_SECRET: google.clientSecret,
+        GOOGLE_REDIRECT_URI: google.redirectUri,
+      }),
+    },
+  )
+
+/**
  * The hosted product on Railway: PostgreSQL, the Flue runtime on the private mesh, and the
  * application server as the only public service. The server serves the built web app itself
  * (`VIVID_WEB_DIST`, set in `apps/server/Dockerfile`), so web, `/api` and WebSockets share one
@@ -218,6 +240,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       ...executorAccess,
       ...decisionAccess,
       ...observabilityAccess,
+      ...googleAccess(environment),
       /** Where `apps/server/Dockerfile` leaves the built web app; the server serves it itself. */
       VIVID_WEB_DIST: '/app/apps/web/dist',
       /** Where the same image leaves the mobile app's over-the-air update (`/api/updates`). */
