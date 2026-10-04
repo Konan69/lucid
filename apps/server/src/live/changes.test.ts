@@ -28,7 +28,7 @@ const singleConnectionLayer = Layer.unwrap(
 
 /** A later committed marker bounds observation without waiting for the absence of a notice. */
 const announcedBefore = Effect.fn('ChangesTest.announcedBefore')(function* (
-  notifications: Effect.Success<ReturnType<PgClient['Service']['listen']>>,
+  notifications: Effect.Success<ReturnType<PgClient['listen']>>,
   marker: string,
 ) {
   const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String)))
