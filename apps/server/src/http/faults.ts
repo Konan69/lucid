@@ -20,9 +20,14 @@ import { Message } from '../observability/messages.ts'
  * and a client that is failing may not have a working connection to anything else. That makes it
  * open to anyone, so three things bound what a stranger can do with it:
  * - A body that is not a `Fault` is refused and nothing of it is logged.
- * - A report is logged as one line: the fixed message `Client fault`, with the report as JSON in
- *   the `report` annotation. Its text is the sender's, and JSON escapes line breaks and control
- *   characters, so a report cannot write a second log line of its own.
+ * - A report is logged as one entry: the fixed message `Client fault`, with the report as JSON in
+ *   the `report` annotation. The entry is not one line of output. The server keeps Effect's
+ *   default logger, which hands the message and the annotations to the console (rc.116
+ *   `internal/effect.ts` `defaultLogger`), and Node prints an annotated entry over several
+ *   lines: the head with the time, level and message, then the annotation, indented and quoted,
+ *   then a closing brace. What holds is that the sender's text starts none of those lines and
+ *   forms none that reads as an entry's head: JSON escapes line breaks and control characters,
+ *   and Node prints the JSON as one quoted string after `report:`.
  * - The report stays in the server's log. The telemetry export (`observability/export.ts`) sends
  *   a line's body only when it is a fixed message and its annotations only when they are on the
  *   allowlist; `report` is not, so the backend sees that a client faulted and nothing it said.

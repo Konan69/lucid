@@ -1,11 +1,13 @@
 import { expect, it } from '@effect/vitest'
-import { NodeHttpServer } from '@effect/platform-node'
-import { cutFault } from '@vivid/contracts'
+import { NodeHttpClient, NodeHttpServer } from '@effect/platform-node'
+import { cutFault, ServiceId } from '@vivid/contracts'
+import { getTableName } from 'drizzle-orm'
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core/errors'
 import {
   Cause,
   ConfigProvider,
   Context,
+  Duration,
   Effect,
   Fiber,
   Layer,
@@ -15,9 +17,10 @@ import {
   Redacted,
   Ref,
   Schema,
+  Stream,
+  Tracer,
 } from 'effect'
 import { TestClock } from 'effect/testing'
-import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import * as HttpMiddleware from 'effect/unstable/http/HttpMiddleware'
@@ -26,8 +29,14 @@ import * as HttpServer from 'effect/unstable/http/HttpServer'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
 import * as OtlpExporter from 'effect/unstable/observability/OtlpExporter'
+import * as Rpc from 'effect/unstable/rpc/Rpc'
+import * as RpcClient from 'effect/unstable/rpc/RpcClient'
+import * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
+import * as RpcSerialization from 'effect/unstable/rpc/RpcSerialization'
+import * as RpcServer from 'effect/unstable/rpc/RpcServer'
 import { ObservabilityConfiguration } from '../config.ts'
 import { faultRoutes } from '../http/faults.ts'
+import { threads } from '../threads/tables.ts'
 import {
   LONGEST_EXPORT,
   MOST_OUTSTANDING,
@@ -62,6 +71,7 @@ const Traces = Schema.Struct({
               parentSpanId: Schema.optional(Schema.String),
               name: Schema.String,
               attributes: Schema.Array(Pair),
+              links: Schema.Array(Schema.Struct({ traceId: Schema.String })),
               events: Schema.Array(
                 Schema.Struct({ name: Schema.String, attributes: Schema.Array(Pair) }),
               ),
@@ -124,10 +134,15 @@ interface Setup {
   readonly ambient: Record<string, string>
   /** What the receiver does once it has kept a post. */
   readonly answer: Effect.Effect<HttpServerResponse.HttpServerResponse>
+  /** What the host names the commit, as `VIVID_COMMIT` would hold it. */
+  readonly commit: string
 }
 
 const answered = Effect.succeed(HttpServerResponse.empty({ status: 200 }))
-const plain: Setup = { routes: Layer.empty, ambient: {}, answer: answered }
+const plain: Setup = { routes: Layer.empty, ambient: {}, answer: answered, commit: 'abc1234' }
+
+/** Text that has the shape of an identifier, a slug and a media subtype, and came from data. */
+const PRIVATE = 'PrivateTokenABC123'
 
 /**
  * Stands in for the backend: routes that keep every post they are sent and say so on `arrivals`.
@@ -163,7 +178,8 @@ const receiving = Effect.fn('Test.receiving')(function* (answer: Setup['answer']
 
 /**
  * One real HTTP server on a free port that is both the backend and, when a test serves routes,
- * the server under test, with the real exporter installed under it.
+ * the server under test, with the real exporter installed under it, posting through the HTTP
+ * client `main.ts` gives it (`NodeHttpClient.layerUndici`).
  *
  * The backend's three paths are left untraced (`TracerDisabledWhen`), so the server span of a
  * post is not itself exported. Everything else served here runs under the exporter's tracer and
@@ -179,9 +195,9 @@ const observed = Effect.fn('Test.observed')(function* (setup: Setup) {
         url: new URL('/otlp', address.replace('0.0.0.0', '127.0.0.1')),
         headers: Redacted.make({ 'x-sentry-auth': CREDENTIAL }),
         environment: Option.some('production'),
-        commit: Option.some('abc1234'),
+        commit: Option.some(setup.commit),
       }),
-    ).pipe(Layer.provide(FetchHttpClient.layer)),
+    ).pipe(Layer.provide(NodeHttpClient.layerUndici)),
   ).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(setup.ambient))))
   yield* Layer.build(
     HttpRouter.serve(Layer.mergeAll(routes, setup.routes), { disableLogger: true }).pipe(
@@ -204,6 +220,12 @@ const observed = Effect.fn('Test.observed')(function* (setup: Setup) {
     )
     return {
       received,
+      /** How many spans each traces post carried, in the order the posts arrived. */
+      batches: traces.map(
+        (post) =>
+          post.resourceSpans.flatMap((group) => group.scopeSpans.flatMap((scope) => scope.spans))
+            .length,
+      ),
       /** Every byte that left, for asserting that a text is in none of it. */
       text: received.map((post) => post.text).join('\n'),
       resources: [
@@ -281,6 +303,12 @@ class ProbeRefused extends Schema.TaggedError<ProbeRefused>()(
   'ProbeRefused',
   { message: Schema.String },
   { title: 'Probe refused' },
+) {}
+
+class ProbeWrapped extends Schema.TaggedError<ProbeWrapped>()(
+  'ProbeWrapped',
+  { cause: Schema.Unknown },
+  { title: 'Probe wrapped' },
 ) {}
 
 const spanNamed = <S extends { readonly name: string }>(spans: ReadonlyArray<S>, name: string) =>
@@ -400,17 +428,17 @@ it.effect('exports the type of a failure whose message is private prose, and no 
       'vivid.failure.kind': 'expected',
       'vivid.boundary': 'runtime',
     })
-    // The tracer's exception event keeps its type; its message and stack are gone, and so is the
-    // status text. The line logged with prose in its body is still counted, under a placeholder.
+    // The tracer's exception event is kept and nothing on it is: its message and stack are prose,
+    // and its type is `error.name`, a string that only a fixed name may pass as. The span's own
+    // `error.type` above is where a declared type is exported. The status text is gone too, and
+    // the line logged with prose in its body is still counted, under a placeholder.
     expect(span === undefined ? [] : span.events.map((event) => event.name)).toEqual([
       OMITTED,
       Message.failure,
       'exception',
     ])
     const thrown = span === undefined ? [] : span.events.filter(({ name }) => name === 'exception')
-    expect(thrown.map((event) => valuesOf(event.attributes))).toEqual([
-      { 'exception.type': 'ProbeRefused' },
-    ])
+    expect(thrown.map((event) => valuesOf(event.attributes))).toEqual([{}])
     expect(span === undefined ? {} : span.status).toEqual({ code: 2 })
     expect(lines.map((line) => line.body.stringValue)).toContain(OMITTED)
     expect(text).not.toContain('Marsh Lane')
@@ -421,10 +449,11 @@ it.effect('exports the type of a failure whose message is private prose, and no 
 
 it.effect("exports none of a Drizzle query error's statement or parameters", () =>
   Effect.gen(function* () {
+    const table = getTableName(threads)
     const driver = Object.assign(new Error('duplicate key value violates unique constraint'), {
       code: '23505',
       constraint: 'messages_key_unique',
-      table: 'messages',
+      table,
     })
     // The installed class: its message is the statement, then every parameter, and a parameter
     // that spans lines puts text after the line a `params:` pattern would stop at.
@@ -445,13 +474,49 @@ it.effect("exports none of a Drizzle query error's statement or parameters", () 
       'vivid.boundary': 'rpc',
       'vivid.failure.root': 'Error',
       'db.response.status_code': '23505',
-      'vivid.failure.constraint': 'messages_key_unique',
-      'db.collection.name': 'messages',
+      'db.collection.name': table,
     })
     for (const secret of ['private line', 'insert into', 'dami@example.com', 'duplicate key'])
       expect(text).not.toContain(secret)
   }).pipe(Effect.provide(NodeHttpServer.layerTest)),
 )
+
+it.effect('exports a table name only when Vivid declares that table, and no constraint', () => {
+  const stdout = capturing()
+  return Effect.gen(function* () {
+    // `table` and `constraint` are properties of whatever was thrown. A driver sets them from
+    // the schema; anything else can set them from anything.
+    const foreign = Object.assign(new Error('refused'), {
+      code: '23505',
+      constraint: `${PRIVATE}_constraint`,
+      table: `${PRIVATE}_table`,
+    })
+    const store = Effect.fn('Probe.store')(function* () {
+      return yield* Effect.fail(
+        new EffectDrizzleQueryError({ query: 'select 1', params: [], cause: foreign }),
+      )
+    }, observeFailures('rpc'))
+    const { lines, spans, text } = yield* exported(store())
+
+    const expected = {
+      'error.type': 'EffectDrizzleQueryError',
+      'vivid.failure.kind': 'expected',
+      'vivid.boundary': 'rpc',
+      'vivid.failure.root': 'Error',
+      'db.response.status_code': '23505',
+    }
+    const [span] = spanNamed(spans, 'Probe.store')
+    expect(span === undefined ? {} : valuesOf(span.attributes)).toEqual(expected)
+    const line = lines.find((entry) => entry.body.stringValue === Message.failure)
+    expect(line === undefined ? {} : valuesOf(line.attributes)).toEqual(expected)
+    expect(text).not.toContain(PRIVATE)
+    // Both names are still on the server's own line, for whoever reads stdout.
+    const recorded = stdout.lines.filter((entry) => entry.includes(Message.failure))
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0]).toContain(`vivid.failure.constraint=${PRIVATE}_constraint`)
+    expect(recorded[0]).toContain(`db.collection.name=${PRIVATE}_table`)
+  }).pipe(Effect.provide(stdout.layer), Effect.provide(NodeHttpServer.layerTest))
+})
 
 it.effect('records every reason of a combined cause and classifies the span by the defect', () =>
   Effect.gen(function* () {
@@ -481,28 +546,83 @@ it.effect('records every reason of a combined cause and classifies the span by t
   }).pipe(Effect.provide(NodeHttpServer.layerTest)),
 )
 
-it.effect('reports a failure whose tag or name is not an identifier as _OTHER', () =>
+it.effect('exports no failure type that is a property of what was thrown', () =>
   Effect.gen(function* () {
+    // Each of these has the shape of an identifier, which is why shape decides nothing: the type
+    // exported is the one a class gives, and a foreign failure's tag or name is not one.
     const tagged = Effect.fn('Probe.tagged')(function* () {
-      return yield* Effect.fail(new Foreign('tenant 42: Ada Lovelace'))
+      return yield* Effect.fail(new Foreign(PRIVATE))
     }, observeFailures('rpc'))
     const named = Effect.fn('Probe.named')(function* () {
-      return yield* Effect.die(
-        Object.assign(new Error('boom'), { name: 'Error for grace@example.com' }),
-      )
+      return yield* Effect.die(Object.assign(new TypeError('boom'), { name: PRIVATE }))
     }, observeFailures('rpc'))
-    const { spans, text } = yield* exported(Effect.all([Effect.exit(tagged()), named()]))
+    const rooted = Effect.fn('Probe.rooted')(function* () {
+      return yield* Effect.fail(new ProbeWrapped({ cause: { name: PRIVATE, _tag: PRIVATE } }))
+    }, observeFailures('rpc'))
+    const { spans, text } = yield* exported(
+      Effect.all([Effect.exit(tagged()), Effect.exit(named()), Effect.exit(rooted())]),
+    )
 
-    for (const name of ['Probe.tagged', 'Probe.named']) {
+    const typed = (name: string) => {
       const [span] = spanNamed(spans, name)
-      expect(span === undefined ? {} : valuesOf(span.attributes)).toMatchObject({
-        'error.type': '_OTHER',
-      })
+      return span === undefined ? {} : valuesOf(span.attributes)
     }
-    expect(text).not.toContain('Lovelace')
-    expect(text).not.toContain('grace@example.com')
+    expect(typed('Probe.tagged')).toEqual({
+      'error.type': '_OTHER',
+      'vivid.failure.kind': 'expected',
+      'vivid.boundary': 'rpc',
+    })
+    expect(typed('Probe.named')).toEqual({
+      'error.type': 'TypeError',
+      'vivid.failure.kind': 'defect',
+      'vivid.boundary': 'rpc',
+    })
+    expect(typed('Probe.rooted')).toEqual({
+      'error.type': 'ProbeWrapped',
+      'vivid.failure.kind': 'expected',
+      'vivid.boundary': 'rpc',
+    })
+    // The tracer's exception events for the same failures carry the name as text; none leaves.
+    expect(text).not.toContain(PRIVATE)
   }).pipe(Effect.provide(NodeHttpServer.layerTest)),
 )
+
+it.effect('exports a refusal field only when its value is one of a closed set', () => {
+  const stdout = capturing()
+  return Effect.gen(function* () {
+    const decide = Effect.fn('Probe.decide')(function* () {
+      // A service id is an open string: an Integration a Person imported names its own.
+      yield* recordRefusal(
+        Refusal.cases.IntegrationNotReady.make({ service: ServiceId.make(PRIVATE) }),
+      )
+      // An annotation under a refusal key whose value is in no schema is not a refusal field.
+      yield* Effect.annotateLogs(Effect.logInfo(Message.refusal), {
+        'vivid.refusal.kind': PRIVATE,
+        'vivid.refusal.reason': PRIVATE,
+      })
+      yield* recordRefusal(
+        Refusal.cases.ActionBlocked.make({ effect: 'destructive', target: 'Command' }),
+      )
+    })
+    const { lines, text } = yield* exported(decide())
+
+    const refusals = lines.filter((line) => line.body.stringValue === Message.refusal)
+    expect(refusals.map((line) => valuesOf(line.attributes))).toEqual([
+      { 'vivid.refusal.kind': 'IntegrationNotReady' },
+      {},
+      {
+        'vivid.refusal.kind': 'ActionBlocked',
+        'vivid.refusal.effect': 'destructive',
+        'vivid.refusal.target': 'Command',
+      },
+    ])
+    expect(text).not.toContain(PRIVATE)
+    // The service is still on the server's own line.
+    expect(stdout.lines.some((line) => line.includes(`vivid.refusal.service=${PRIVATE}`))).toBe(
+      true,
+    )
+  }).pipe(Effect.provide(stdout.layer), Effect.provide(NodeHttpServer.layerTest))
+})
 
 it.effect('keeps ambient OTEL_RESOURCE_ATTRIBUTES out of the resource', () =>
   Effect.gen(function* () {
@@ -524,6 +644,25 @@ it.effect('keeps ambient OTEL_RESOURCE_ATTRIBUTES out of the resource', () =>
       ])
     expect(text).not.toContain('hunter2hunter2')
     expect(text).not.toContain('payments')
+  }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+)
+
+it.effect('names the commit on the resource only when it is a commit', () =>
+  Effect.gen(function* () {
+    // What `VIVID_COMMIT` would hold if a credential were pasted into it.
+    const { collect, flush, run } = yield* observed({ ...plain, commit: `ghp_${PRIVATE}` })
+    yield* run(Effect.fn('Probe.work')(() => Effect.logInfo(Message.refusal))())
+    yield* flush
+    const { resources, text } = yield* collect()
+
+    expect(resources.length).toBeGreaterThan(1)
+    for (const resource of resources)
+      expect(valuesOf(resource.attributes)).toEqual({
+        'service.name': 'vivid-server',
+        'deployment.environment': 'production',
+        'deployment.environment.name': 'production',
+      })
+    expect(text).not.toContain(PRIVATE)
   }).pipe(Effect.provide(NodeHttpServer.layerTest)),
 )
 
@@ -567,7 +706,12 @@ it.effect("exports no query, path or header of a provider's sign-in return", () 
         observeFailures('http'),
         Effect.catch(() => Effect.void),
       )
-      return HttpServerResponse.text('done', { status: 200 })
+      // A header is the sender's text on the way in and a handler's on the way out, and
+      // `application/<anything>` is a well-formed media type.
+      return HttpServerResponse.text('done', {
+        status: 200,
+        contentType: `application/answer-${PRIVATE}`,
+      })
     })
     const { spans, statuses, text } = yield* requested(
       HttpRouter.add('GET', '/api/connections/return', callback()),
@@ -575,6 +719,7 @@ it.effect("exports no query, path or header of a provider's sign-in return", () 
         HttpClientRequest.get('/api/connections/return?code=secret-code&state=opaque-state').pipe(
           HttpClientRequest.setHeader('cookie', 'session=private-session'),
           HttpClientRequest.setHeader('user-agent', 'PrivateBrowser/1.0'),
+          HttpClientRequest.setHeader('content-type', `application/private-token-${PRIVATE}`),
         ),
       ],
     )
@@ -585,7 +730,6 @@ it.effect("exports no query, path or header of a provider's sign-in return", () 
       'http.request.method': 'GET',
       'http.response.status_code': 200,
       'url.scheme': 'http',
-      'http.response.header.content-type': 'text/plain',
     })
     expect(spanNamed(spans, 'Http.Connections.return')).toHaveLength(1)
     for (const secret of [
@@ -596,6 +740,8 @@ it.effect("exports no query, path or header of a provider's sign-in return", () 
       'private-session',
       'PrivateBrowser',
       '127.0.0.1',
+      PRIVATE,
+      'content-type',
     ])
       expect(text).not.toContain(secret)
   }).pipe(Effect.provide(NodeHttpServer.layerTest)),
@@ -620,18 +766,154 @@ it.effect('exports no span under a malformed inbound trace id, and no malformed 
         HttpClientRequest.get('/probe').pipe(
           HttpClientRequest.setHeader('b3', `${trace}-forgedparent-1`),
         ),
+        // Hexadecimal, and neither of the two lengths a trace id has.
+        HttpClientRequest.get('/probe').pipe(
+          HttpClientRequest.setHeader('b3', '463ac35c9f6413ad463ac35c-a2fb4a1d1a96d312-1'),
+        ),
       ],
     )
 
-    expect(statuses).toEqual([204, 204])
-    // The first request's spans are gone; the second's are exported, the server span as a root.
+    expect(statuses).toEqual([204, 204, 204])
+    // The first and third requests' spans are gone; the second's are exported, the server span
+    // as a root.
     const servers = spanNamed(spans, 'http.server GET')
     expect(servers.map((span) => [span.traceId, span.parentSpanId])).toEqual([[trace, undefined]])
     expect(spanNamed(spans, 'Probe.inbound').map((span) => span.traceId)).toEqual([trace])
-    // Both refusals are still counted; the line written under the dropped span names no trace.
+    // Every refusal is still counted; a line written under a dropped span names no trace.
     const refusals = lines.filter((line) => line.body.stringValue === Message.refusal)
-    expect(refusals.map((line) => line.traceId)).toEqual([undefined, trace])
+    expect(refusals.map((line) => line.traceId)).toEqual([undefined, trace, undefined])
     expect(text).not.toContain('forged')
+    expect(text).not.toContain('Lovelace')
+    expect(text).not.toContain('463ac35c9f6413ad463ac35c')
+  }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+)
+
+it.effect('files a 64-bit B3 trace under its 128-bit form, on spans, links and lines alike', () =>
+  Effect.gen(function* () {
+    const short = '463ac35c9f6413ad'
+    const caller = 'a2fb4a1d1a96d312'
+    const wide = `0000000000000000${short}`
+    const inbound = Effect.fn('Probe.inbound')(function* () {
+      yield* recordRefusal(Refusal.cases.DeviceRefused.make({ reason: 'NotAllowed' }))
+      // A span elsewhere that points back at this trace, by the id as the caller sent it.
+      yield* Effect.fn('Probe.linked')(() => Effect.void)().pipe(
+        Effect.linkSpans(Tracer.externalSpan({ traceId: short, spanId: caller })),
+        Effect.withParentSpan(Tracer.externalSpan({ traceId: short, spanId: caller })),
+      )
+      return HttpServerResponse.empty({ status: 204 })
+    })
+    const { lines, spans, statuses } = yield* requested(
+      HttpRouter.add('GET', '/probe', inbound()),
+      [
+        // A valid 64-bit trace id, as B3 allows.
+        HttpClientRequest.get('/probe').pipe(
+          HttpClientRequest.setHeader('b3', `${short}-${caller}-1`),
+        ),
+      ],
+    )
+
+    expect(statuses).toEqual([204])
+    // The server span is the caller's child, and everything beneath it is in the same trace.
+    const servers = spanNamed(spans, 'http.server GET')
+    expect(servers.map((span) => [span.traceId, span.parentSpanId])).toEqual([[wide, caller]])
+    const [server] = servers
+    const [handler] = spanNamed(spans, 'Probe.inbound')
+    expect(handler === undefined ? '' : handler.traceId).toBe(wide)
+    expect(server === undefined || handler === undefined ? '' : handler.parentSpanId).not.toBe(
+      undefined,
+    )
+    const [linked] = spanNamed(spans, 'Probe.linked')
+    expect(linked === undefined ? [] : [linked.traceId, linked.parentSpanId]).toEqual([
+      wide,
+      caller,
+    ])
+    expect(linked === undefined ? [] : linked.links).toEqual([{ traceId: wide }])
+    const refusals = lines.filter((line) => line.body.stringValue === Message.refusal)
+    expect(refusals.map((line) => line.traceId)).toEqual([wide])
+  }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+)
+
+/** One product call, served the way `rpc/server.ts` serves `VividRpc` over plain HTTP. */
+const probes = RpcGroup.make(
+  Rpc.make('Echo', { payload: { note: Schema.String }, success: Schema.String }),
+)
+const probeRoutes = RpcServer.layerHttp({ group: probes, path: '/rpc', protocol: 'http' }).pipe(
+  Layer.provide(
+    probes.toLayer({
+      Echo: Effect.fn('Probe.echo')(function* ({ note }) {
+        return yield* Effect.succeed(note)
+      }),
+    }),
+  ),
+  Layer.provide(RpcSerialization.layerNdjson),
+)
+
+it.effect('builds no span name from what a request carries, over HTTP or RPC', () =>
+  Effect.gen(function* () {
+    // A dotted identifier: the one shape of data the span-name rule cannot tell from a name
+    // written in code, so the one that would be exported if a producer ever built a name from it.
+    const marker = 'Ada.Lovelace'
+    const visit = Effect.fn('Probe.visit')(function* () {
+      return yield* Effect.succeed(HttpServerResponse.empty({ status: 204 }))
+    })
+    const { collect, flush } = yield* observed({
+      ...plain,
+      routes: Layer.mergeAll(HttpRouter.add('GET', '/probe/:who', visit()), probeRoutes),
+    })
+    const http = (yield* HttpClient.HttpClient).pipe(
+      HttpClient.mapRequest(HttpClientRequest.setUrlParam('who', marker)),
+      HttpClient.mapRequest(HttpClientRequest.setHeader('x-who', marker)),
+    )
+    const sent = Effect.provideService(HttpClient.TracerPropagationEnabled, false)
+
+    // In the path, the query and a header of a plain request.
+    const visited = yield* sent(http.execute(HttpClientRequest.get(`/probe/${marker}`)))
+    expect(visited.status).toBe(204)
+    // In the payload, the query and a header of a product call.
+    const client = yield* RpcClient.make(probes).pipe(
+      Effect.provide(
+        // The test client has already put the server's address in front, so the path goes after.
+        RpcClient.layerProtocolHttp({
+          url: '',
+          transformClient: HttpClient.mapRequest(HttpClientRequest.appendUrl('/rpc')),
+        }).pipe(
+          Layer.provide(RpcSerialization.layerNdjson),
+          Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
+        ),
+      ),
+    )
+    expect(
+      yield* client.Echo({ note: marker }).pipe(RpcClient.withHeaders({ 'x-who': marker })),
+    ).toBe(marker)
+    // As the name of a call the contract does not declare: rc.116 `RpcServer.ts` names its span
+    // `RpcServer.<tag>`, and must not for a tag it did not find in the group.
+    const undeclared = yield* sent(
+      http.execute(
+        HttpClientRequest.post('/rpc').pipe(
+          HttpClientRequest.bodyText(
+            `{"_tag":"Request","id":"1","tag":"${marker}","payload":{},"headers":[]}\n`,
+            'application/ndjson',
+          ),
+        ),
+      ),
+    )
+    expect(undeclared.status).toBe(200)
+    yield* flush
+    const { spans, text } = yield* collect()
+
+    // The spans those requests made are all here, under names from code.
+    const names = spans.map((span) => span.name)
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'http.server GET',
+        'Probe.visit',
+        'http.server POST',
+        'RpcServer.Echo',
+        'Probe.echo',
+      ]),
+    )
+    expect(names.filter((name) => name.includes('Ada') || name.includes('Lovelace'))).toEqual([])
+    // And nowhere else in what left.
     expect(text).not.toContain('Lovelace')
   }).pipe(Effect.provide(NodeHttpServer.layerTest)),
 )
@@ -681,6 +963,123 @@ it.effect('bounds what a backend that never answers can hold, and reports the dr
     yield* Queue.take(arrivals)
     yield* TestClock.adjust(LONGEST_EXPORT)
     yield* Fiber.join(late)
+    expect(reports()).toHaveLength(2)
+    expect(reports()[1]).toContain(`vivid.export.dropped=${MOST_OUTSTANDING + 2}`)
+  }).pipe(Effect.provide(stdout.layer), Effect.provide(NodeHttpServer.layerTest))
+})
+
+/**
+ * A response body that starts and never ends. The first bytes put the headers on the wire; then
+ * nothing more comes. `closed` is offered when the server abandons writing it, which
+ * `NodeHttpServer` does by interrupting the request when the socket closes under it, so taking
+ * from `closed` is waiting on the backend's own receipt that a connection has gone.
+ */
+const stalling = (closed: Queue.Queue<void>) =>
+  Stream.concat(Stream.make(new TextEncoder().encode('{')), Stream.never).pipe(
+    Stream.ensuring(Queue.offer(closed, undefined)),
+  )
+
+it.effect('gives a refused export one attempt, keeps nothing of it, and reports the drop', () => {
+  const stdout = capturing()
+  return Effect.gen(function* () {
+    // A backend that answers at once, refuses, and asks to be tried again in a day. rc.116
+    // `OtlpExporter.ts` would wait that day with the batch in hand, once per batch. The refusal
+    // has a body that never ends and that nothing reads (`stalling`).
+    const closed = yield* Queue.unbounded<void>()
+    const { arrivals, collect, flush, run } = yield* observed({
+      ...plain,
+      answer: Effect.sync(() =>
+        HttpServerResponse.stream(stalling(closed), {
+          status: 429,
+          headers: { 'retry-after': '86400' },
+        }),
+      ),
+    })
+    const refuse = Effect.fn('Probe.refuse')(function* () {
+      return yield* Effect.fail(new ProbeRefused({ message: 'not today' }))
+    }, observeFailures('rpc'))
+    const reports = () => stdout.lines.filter((line) => line.includes(Message.dropped))
+
+    const ROUNDS = 5
+    for (let round = 1; round <= ROUNDS; round += 1) {
+      // The server's work goes on logging, and each minute's batch is exported. The export ends
+      // without the clock moving, so no fiber is left waiting out a retry with a batch in hand.
+      yield* run(refuse())
+      yield* flush
+      yield* Queue.take(arrivals)
+      yield* Queue.take(arrivals)
+      // Both connections are given up with the export, though the refusal's body never ended.
+      yield* Queue.takeN(closed, 2)
+      expect(yield* Queue.size(arrivals)).toBe(0)
+      expect(reports()).toHaveLength(round)
+      // The exporters accept data again a minute after a drop; the drop report is due then too.
+      yield* TestClock.adjust(REPORT_EVERY_MILLIS)
+    }
+    // Long past the day the backend asked for, nothing was sent a second time.
+    yield* TestClock.adjust(Duration.days(2))
+    expect(yield* Queue.size(arrivals)).toBe(0)
+    // Each post carried its own minute's span and no earlier one: a refused batch is not kept.
+    const { batches, received } = yield* collect()
+    expect(received).toHaveLength(ROUNDS * 2)
+    expect(batches).toEqual(Array.from({ length: ROUNDS }, () => 1))
+    // Every refused batch is in the count: the first alone, then each minute's two with the one
+    // before them that was still waiting to be reported.
+    expect(reports()[0]).toContain('vivid.export.dropped=1')
+    for (const report of reports().slice(1)) expect(report).toContain('vivid.export.dropped=2')
+  }).pipe(Effect.provide(stdout.layer), Effect.provide(NodeHttpServer.layerTest))
+})
+
+it.effect('holds a place until the answer ends, and gives the connection back with it', () => {
+  const stdout = capturing()
+  return Effect.gen(function* () {
+    // A backend that answers `200`, starts the body and never finishes it (`stalling`).
+    const closed = yield* Queue.unbounded<void>()
+    const { arrivals, flush, run } = yield* observed({
+      ...plain,
+      answer: Effect.sync(() =>
+        HttpServerResponse.stream(stalling(closed), {
+          status: 200,
+          contentType: 'application/json',
+        }),
+      ),
+    })
+    const refuse = Effect.fn('Probe.refuse')(function* () {
+      return yield* Effect.fail(new ProbeRefused({ message: 'not today' }))
+    }, observeFailures('rpc'))
+    const round = Effect.fn('Test.round')(function* () {
+      yield* run(refuse())
+      return yield* Effect.forkChild(flush)
+    })
+    const reports = () => stdout.lines.filter((line) => line.includes(Message.dropped))
+
+    const held: Array<Fiber.Fiber<void>> = []
+    for (let outstanding = 0; outstanding < MOST_OUTSTANDING; outstanding += 2) {
+      held.push(yield* round())
+      yield* Queue.take(arrivals)
+      yield* Queue.take(arrivals)
+    }
+    // Headers have been answered for every one of them, and each still holds its place: the
+    // next export is turned away unsent, so no ninth connection is opened.
+    yield* Fiber.join(yield* round())
+    expect(yield* Queue.size(arrivals)).toBe(0)
+    expect(reports()).toHaveLength(1)
+    expect(yield* Queue.size(closed)).toBe(0)
+
+    // The time limit runs to the end of the body. When it passes, each export is dropped, and
+    // the backend sees each of its eight connections close: a place given back is a socket
+    // given back. Waiting on `closed` is waiting on the server's own receipt of that.
+    yield* TestClock.adjust(LONGEST_EXPORT)
+    yield* Effect.forEach(held, Fiber.join)
+    yield* Queue.takeN(closed, MOST_OUTSTANDING)
+
+    // The places are free again: a minute on, an export is sent.
+    yield* TestClock.adjust(REPORT_EVERY_MILLIS)
+    const late = yield* round()
+    yield* Queue.take(arrivals)
+    yield* Queue.take(arrivals)
+    yield* TestClock.adjust(LONGEST_EXPORT)
+    yield* Fiber.join(late)
+    yield* Queue.takeN(closed, 2)
     expect(reports()).toHaveLength(2)
     expect(reports()[1]).toContain(`vivid.export.dropped=${MOST_OUTSTANDING + 2}`)
   }).pipe(Effect.provide(stdout.layer), Effect.provide(NodeHttpServer.layerTest))
