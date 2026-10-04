@@ -11,7 +11,7 @@ import {
   type MeResponse,
   type Service,
 } from '@vivid/contracts'
-import { channelWords, liveStateOf } from '@vivid/state'
+import { channelWords, composerOf, liveStateOf, textLink } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { Building2, Search, Unplug } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
@@ -26,7 +26,7 @@ import {
 } from '../../data/live'
 import { router } from '../../data/route'
 import { orSay } from '../../data/said'
-import { Button, IconButton } from '../../ui/button'
+import { Button, buttonVariants, IconButton } from '../../ui/button'
 import { cn } from '../../ui/cn'
 import { Segmented } from '../../ui/Segmented'
 import { Began, begin, follow } from '../integration/begin'
@@ -447,6 +447,9 @@ const TILE =
  * account to act through. So a tile does not connect anything itself; it opens "Text Vivid" in
  * Settings, the one place the number and its code are handled. The search above filters them by
  * name like everything else on the screen.
+ *
+ * A connected channel takes two columns: it has a number to show whole and an action of its own,
+ * and neither fits beside a mark in one.
  */
 function TextVivid({ query }: { query: string }) {
   const channels = useLiveValue(live.channels)
@@ -458,7 +461,10 @@ function TextVivid({ query }: { query: string }) {
       <Heading title="Text Vivid" />
       <ul className={GRID}>
         {links.map((link) => (
-          <li key={link.channel}>
+          <li
+            key={link.channel}
+            className={cn(ChannelStanding.guards.Connected(link.standing) && 'col-span-2')}
+          >
             <ChannelTile link={link} />
           </li>
         ))}
@@ -467,38 +473,105 @@ function TextVivid({ query }: { query: string }) {
   )
 }
 
-/**
- * One messaging app: its mark, its name and its standing in a word. A channel this Vivid is not
- * set up for is shown and is not a button, the way a service nobody can connect here is.
- */
-function ChannelTile({ link }: { link: ChannelLink }) {
-  const body = (
+/** What every channel tile shows: the app's mark, its name, and one line under it. */
+function ChannelFace({ channel, line }: { channel: ChannelLink['channel']; line: string }) {
+  return (
     <>
-      <Mark service={{ name: link.channel }} size={40} />
+      <Mark service={{ name: channel }} size={40} />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-title text-ink">{link.channel}</span>
-        <span className="block truncate text-meta font-meta text-ink-3">
-          {channelWords(link.standing)}
+        <span className="block truncate text-title text-ink">{channel}</span>
+        {/* The whole line is also its title: a long address is cut here and read on hover. */}
+        <span title={line} className="block truncate text-meta font-meta text-ink-3 tabular-nums">
+          {line}
         </span>
       </span>
     </>
   )
-  if (ChannelStanding.guards.Unavailable(link.standing)) {
-    return <div className={cn(TILE, 'cursor-default opacity-60')}>{body}</div>
-  }
-  return (
+}
+
+/**
+ * One messaging app: its mark, its name and its standing in a word. A channel this Vivid is not
+ * set up for is shown and is not a button, the way a service nobody can connect here is. Any
+ * other tile opens "Text Vivid" in Settings when pressed.
+ *
+ * It reads no live data, so each standing can be drawn without a server behind it.
+ */
+export function ChannelTile({ link }: { link: ChannelLink }) {
+  const { channel, standing } = link
+  const settings = () => router.openSettings(Option.some('texting'))
+  /** The tile for a channel with nothing to text yet: all of it opens Settings. */
+  const opens = (line: string) => (
     <button
       type="button"
-      onClick={() => router.openSettings(Option.some('texting'))}
+      onClick={settings}
       className={cn(
         TILE,
         'cursor-pointer outline-none hover:bg-surface-2 focus-visible:edge-primary',
         PRESS,
       )}
     >
-      {body}
-      {ChannelStanding.guards.Connected(link.standing) && <Done drawn={false} />}
+      <ChannelFace channel={channel} line={line} />
     </button>
+  )
+  return ChannelStanding.match(standing, {
+    Unavailable: (unavailable) => (
+      <div className={cn(TILE, 'cursor-default opacity-60')}>
+        <ChannelFace channel={channel} line={channelWords(unavailable)} />
+      </div>
+    ),
+    NotConnected: (waiting) => opens(channelWords(waiting)),
+    Confirming: (confirming) => opens(channelWords(confirming)),
+    Connected: ({ textTo }) => (
+      <ConnectedChannelTile channel={channel} textTo={textTo} onSettings={settings} />
+    ),
+  })
+}
+
+/**
+ * A connected channel's tile: the number to text, and "Text Vivid", which opens the messaging app
+ * on a first message to it (`textLink`).
+ *
+ * The tile is still pressed for Settings like every other standing, so the two are siblings, not
+ * one inside the other (a link inside a button is not valid, and a screen reader would read one
+ * control). The Settings button is laid over the whole tile, under the link; the tile answers its
+ * hover and focus. So there is one obvious action, the filled one, and the tile around it goes
+ * where the tile always went.
+ *
+ * Where this device has nothing that opens a text (a Windows or Linux desktop, for iMessage) there
+ * is no "Text Vivid": the tile keeps the tick every connected tile has, and Settings has the
+ * number to copy.
+ */
+function ConnectedChannelTile({
+  channel,
+  textTo,
+  onSettings,
+}: {
+  channel: ChannelLink['channel']
+  textTo: string
+  onSettings: () => void
+}) {
+  const link = textLink(channel, composerOf(navigator.userAgent), textTo)
+  return (
+    <div
+      className={cn(
+        TILE,
+        'relative has-[>button:focus-visible]:edge-primary has-[>button:hover]:bg-surface-2',
+      )}
+    >
+      <button
+        type="button"
+        aria-label={`${channel} settings`}
+        onClick={onSettings}
+        className="absolute inset-0 cursor-pointer rounded-card outline-none"
+      />
+      <ChannelFace channel={channel} line={`Connected · ${textTo}`} />
+      {Option.isNone(link) && <Done drawn={false} />}
+      {Option.isSome(link) && (
+        <a href={link.value} className={cn(buttonVariants({ size: 'sm' }), 'relative')}>
+          Text Vivid
+        </a>
+      )}
+    </div>
   )
 }
 
