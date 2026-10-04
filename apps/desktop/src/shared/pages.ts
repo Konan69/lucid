@@ -17,6 +17,11 @@ export type PageOption<A> = ReturnType<typeof pageOption<Schema.declare<A>>>['Ty
 
 /** No selection and a selected opaque handle are exhaustive bridge states. */
 export const ShowingTab = pageOption(Tab)
+/**
+ * The page Vivid is acting on right now, when it is acting on one. It is set for the length of one
+ * action and cleared when the action ends, so the renderer can say so on that page.
+ */
+export const UsedTab = pageOption(Tab)
 /** Navigation failure is absent until Chromium reports its description. */
 export const PageLoadFailure = pageOption(Schema.String)
 /** The document may not supply an icon; its address stays clone-safe across preload. */
@@ -62,6 +67,7 @@ export const BrowserState = Schema.Struct({
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   tabs: Schema.Array(Page),
   showing: ShowingTab,
+  using: UsedTab,
 })
 export type BrowserState = typeof BrowserState.Type
 

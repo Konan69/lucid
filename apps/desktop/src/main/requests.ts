@@ -7,6 +7,7 @@ import {
   decodeBridgeRequest,
   encodeBridgeResponse,
 } from '../shared/bridge.ts'
+import type { DeviceLink } from '../shared/device.ts'
 import { ServerChoice, type ServerSettings, type ServerAddress } from '../shared/settings.ts'
 import type { DesktopSettings } from './settings.ts'
 import { chooseServer } from './server.ts'
@@ -16,6 +17,8 @@ import { type PagesRequest, PagesResponse, type PagesFailure } from '../shared/p
 export interface BridgeHandlers {
   readonly pages: (request: PagesRequest) => Effect.Effect<PagesResponse, PagesFailure>
   readonly getAppVersion: () => string
+  /** This computer's link to Vivid: what it is now, and a nudge to ask the server again. */
+  readonly device: { readonly state: () => DeviceLink; readonly wake: () => void }
   readonly settings: DesktopSettings['Service']
   readonly onServerChanged: (value: ServerSettings) => void
   readonly openExternal: (
@@ -74,6 +77,13 @@ export const handleBridgeRequest = Effect.fn('DesktopBridge.handleRequest')(func
           Effect.succeed(BridgeResponse.cases.ExternalOpenFailed.make({})),
         ),
       ),
+    GetDeviceLink: () =>
+      Effect.sync(() => BridgeResponse.cases.DeviceLink.make({ value: handlers.device.state() })),
+    RefreshDeviceLink: () =>
+      Effect.sync(() => {
+        handlers.device.wake()
+        return BridgeResponse.cases.DeviceLink.make({ value: handlers.device.state() })
+      }),
     Pages: ({ request: pagesRequest }) =>
       handlers.pages(pagesRequest).pipe(
         Effect.catchTags({

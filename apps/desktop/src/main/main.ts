@@ -1,12 +1,18 @@
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as NodeProcess from 'node:process'
+import * as NodeOS from 'node:os'
+import { DeviceName } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import { app, protocol, screen, session, type BrowserWindow, type Session } from 'electron'
 import { registerBridge } from './bridge.ts'
 import { Browser } from './browser.ts'
+import { executor } from './control.ts'
+import { connectDevice, deviceLink } from './device.ts'
+import { controlledBrowser } from './driver.ts'
+import { installationIdentity } from './installation.ts'
 import {
   parseVividUrl,
   VIVID_PROTOCOL,
@@ -36,10 +42,14 @@ import { PageUnavailable } from '../shared/pages.ts'
 import { DesktopSettings, settingsLayer } from './settings.ts'
 import { registerAppProxy } from './proxy.ts'
 import { secureSession } from './session.ts'
+import { Touch } from './touch.ts'
 import { isAllowedBridgeRequest } from './security.ts'
 import { ServerSettings } from '../shared/settings.ts'
 
 const PLACEMENT_FILE = 'window-placement.json'
+const INSTALLATION_FILE = 'installation.json'
+/** The host name as the Person's list of computers shows it, cut to what the contract allows. */
+const deviceName = Schema.decodeUnknownOption(DeviceName)
 // The workspace package name is scoped; native application identity and userData must use Vivid.
 app.setName('Vivid')
 const knownPlatform = Schema.decodeUnknownOption(
@@ -134,10 +144,11 @@ function runNonFatal(program: Effect.Effect<void, object>, message: string): voi
 }
 
 /** Page events target only their owning app window; guests never receive a bridge event channel. */
-function createBrowser(window: BrowserWindow, pagesSession: Session): Browser {
+function createBrowser(window: BrowserWindow, pagesSession: Session, touch: Touch): Browser {
   return new Browser({
     window,
     session: pagesSession,
+    touch,
     run: (program) => {
       void Effect.runPromise(program)
     },
@@ -157,6 +168,52 @@ function createBrowser(window: BrowserWindow, pagesSession: Session): Browser {
     },
   })
 }
+
+/**
+ * Vivid using this computer. The executor acts in whichever Browser the open window has; the
+ * link enrols this installation, listens while the Person allows it, and hands each action to
+ * the executor. The installation identity is read here and goes nowhere else in the app. A
+ * computer whose identity cannot be kept, or that has no host name, is not linked at all.
+ */
+const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (input: {
+  readonly session: Session
+  readonly server: () => ServerSettings
+  readonly browser: () => Option.Option<Browser>
+  readonly touch: Touch
+}) {
+  const control = yield* executor({
+    browser: controlledBrowser(input.browser),
+    touch: input.touch,
+    mac: platform === 'darwin',
+    using: (tab) => {
+      Option.map(input.browser(), (available) => available.used(tab))
+    },
+  })
+  const identity = Option.all({
+    installation: yield* installationIdentity(
+      NodePath.join(app.getPath('userData'), INSTALLATION_FILE),
+    ).pipe(Effect.option),
+    name: deviceName(NodeOS.hostname().slice(0, 100)),
+  })
+  if (Option.isNone(identity)) console.error('desktop: this computer cannot be linked to Vivid')
+  const computer = yield* deviceLink({
+    connect: Option.match(identity, {
+      onNone: () => Effect.succeed(Option.none()),
+      onSome: (known) =>
+        connectDevice({
+          server: input.server,
+          // The app's own session only; never the pages partition.
+          cookies: (origin) => input.session.cookies.get({ url: origin }),
+          identity: known,
+        }),
+    }),
+    execute: control.execute,
+  })
+  // Signing in or out changes the app session's cookies; that is the link's cue to look again.
+  input.session.cookies.on('changed', () => computer.wake())
+  Effect.runFork(computer.run)
+  return computer
+})
 
 /**
  * Finish startup after Electron is ready: decode configuration and disk state, construct one window,
@@ -201,12 +258,23 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
   )
   const colorScheme = new ColorSchemeController(surfaces)
   let browser = Option.none<Browser>()
+  // One for the app: Vivid acts on one page at a time, whichever window's Browser holds it.
+  const touch = new Touch()
   const pagesSession = session.fromPartition('persist:vivid-pages')
+
+  const computer = yield* linkThisComputer({
+    session: desktopSession,
+    server: () => serverSettings,
+    browser: () => browser,
+    touch,
+  })
 
   /** A different server, or none: every page closes and the window loads what that means. */
   const serverChanged = (value: ServerSettings): void => {
     Option.map(browser, (available) => available.reset())
     serverSettings = value
+    // A link belongs to one server: drop it and start over on the new one, or on none.
+    computer.restart()
     // Complete invoke before replacing the document that owns its pending Promise.
     setImmediate(() =>
       Option.map(mainWindow, (window) =>
@@ -232,6 +300,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
           onSome: (available) => available.handle(request),
         }),
       getAppVersion: () => information.appVersion,
+      device: computer,
       settings,
       openExternal: openExternalUrl,
       onServerChanged: serverChanged,
@@ -269,7 +338,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
       },
     })
     mainWindow = Option.some(window)
-    browser = Option.some(createBrowser(window, pagesSession))
+    browser = Option.some(createBrowser(window, pagesSession, touch))
     window.on('closed', () => {
       mainWindow = Option.none()
       browser = Option.none()

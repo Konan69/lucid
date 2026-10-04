@@ -1,6 +1,7 @@
 import {
   PageFavicon,
   ShowingTab,
+  UsedTab,
   type BrowserState,
   type Page,
   type PagePlacement,
@@ -32,7 +33,12 @@ const bridge = 'vivid' in globalThis ? Option.some(globalThis.vivid.pages) : Opt
 /** What the panel has in front: Vivid's computer, an open page, or a page not opened yet. */
 export type Front = 'computer' | 'page' | 'new'
 
-const NO_PAGES: BrowserState = { revision: 0, tabs: [], showing: ShowingTab.cases.None.make({}) }
+const NO_PAGES: BrowserState = {
+  revision: 0,
+  tabs: [],
+  showing: ShowingTab.cases.None.make({}),
+  using: UsedTab.cases.None.make({}),
+}
 
 const listeners = new Set<() => void>()
 let state = NO_PAGES

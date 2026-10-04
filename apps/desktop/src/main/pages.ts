@@ -6,6 +6,7 @@ import {
   Page,
   Tab,
   ShowingTab,
+  UsedTab,
   PageLoadFailure,
   PageFavicon,
 } from '../shared/pages.ts'
@@ -43,15 +44,26 @@ export const PageChange = Schema.TaggedUnion({
   Favicon: { tab: Tab, favicon: PageFavicon },
   Navigating: { tab: Tab, address: Schema.String },
   Failed: { tab: Tab, address: Schema.String, reason: Schema.String },
+  /** Vivid starts or stops acting on a page. */
+  Used: { using: UsedTab },
   Reset: {},
 })
 export type PageChange = typeof PageChange.Type
+
+/** Whether two answers to "which page is Vivid using" name the same page, or both name none. */
+function sameUsed(left: typeof UsedTab.Type, right: typeof UsedTab.Type): boolean {
+  return UsedTab.match(left, {
+    None: () => UsedTab.guards.None(right),
+    Some: ({ value }) => UsedTab.guards.Some(right) && right.value === value,
+  })
+}
 
 /** No page is selected before main creates a guest. */
 export const emptyBrowserState = PageState.make({
   revision: 0,
   tabs: [],
   showing: ShowingTab.cases.None.make({}),
+  using: UsedTab.cases.None.make({}),
   closed: [],
 })
 
@@ -60,6 +72,7 @@ export function browserSnapshot(state: PageState): BrowserState {
   return BrowserState.make({
     revision: state.revision,
     showing: state.showing,
+    using: state.using,
     tabs: state.tabs.map((page) =>
       Page.make({
         tab: page.tab,
@@ -102,6 +115,11 @@ function closePage(state: PageState, tab: Tab): PageState {
     revision: state.revision + 1,
     tabs,
     showing,
+    // A page that closes while Vivid is acting on it is no longer a page Vivid is using.
+    using:
+      UsedTab.guards.Some(state.using) && state.using.value === tab
+        ? UsedTab.cases.None.make({})
+        : state.using,
     closed: Array.takeRight([...state.closed, ClosedPage.make({ page, index })], 10),
   })
 }
@@ -235,6 +253,10 @@ export function reducePages(state: PageState, change: PageChange): PageState {
           failed: PageLoadFailure.cases.Some.make({ value: reason }),
         }),
       ),
+    Used: ({ using }) =>
+      sameUsed(state.using, using)
+        ? state
+        : PageState.make({ ...state, revision: state.revision + 1, using }),
     Reset: () => PageState.make({ ...emptyBrowserState, revision: state.revision + 1 }),
   })
 }

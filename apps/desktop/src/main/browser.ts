@@ -13,6 +13,7 @@ import {
 import {
   PageLoadFailure,
   PageFavicon,
+  UsedTab,
   BrowserState,
   Page,
   Tab,
@@ -39,6 +40,7 @@ import {
   browserSnapshot,
   type PageDisposition,
 } from './pages.ts'
+import { InputSignal, type Touch } from './touch.ts'
 import {
   PagePresentation,
   PresentationChange,
@@ -72,6 +74,8 @@ export interface BrowserDependencies {
   readonly publish: (state: BrowserState) => void
   readonly downloadRefused: (event: PageDownloadRefused) => void
   readonly run: (program: Effect.Effect<void>) => void
+  /** Tells Vivid's announced presses from the Person's while Vivid acts on a page. */
+  readonly touch: Touch
 }
 
 /**
@@ -259,6 +263,54 @@ export class Browser {
     )
   }
 
+  /**
+   * Whether one key or pointer event may reach a page, and whose it is.
+   *
+   * Input Vivid sends through the debugger arrives here like any other. A press is judged against
+   * what Vivid announced (`touch.ts`): an announced press, and the moves and releases around it,
+   * reach the page Vivid is acting on even when that page is not the one in front, which the rule
+   * for the Person's own input would refuse. A press nobody announced on that page is the Person
+   * taking it back; judging it ends Vivid's action, and it reaches the page only if the Person
+   * could have made it there, that is, if the page is in front.
+   *
+   * The reference hears the person's presses from a preload in the guest
+   * (`preview/PickPreload.ts`, `reportHumanPointerInput`); these pages have no preload, so they
+   * are heard here. Whether Chromium reports debugger input on these two events with the same
+   * point and key names it was sent with has not been run against the pinned Electron: if it
+   * reports nothing, announcements simply expire; if it reports different values, Vivid's own
+   * press reads as the Person's and the action stops. Neither lets Vivid act unseen.
+   */
+  private admits(tab: Tab, view: WebContentsView, press: Option.Option<InputSignal>): boolean {
+    const touch = this.dependencies.touch
+    const vivid = Option.match(press, {
+      onNone: () => touch.drives(tab),
+      onSome: (signal) => touch.judge(tab, signal, Date.now()) === 'Vivid',
+    })
+    return vivid || this.ownsInput(tab, view)
+  }
+
+  /** The Browser as the renderer sees it, for the executor that acts in it. */
+  current(): BrowserState {
+    return browserSnapshot(this.state)
+  }
+
+  /** The live contents of one page, for attaching the debugger. Never crosses the bridge. */
+  contents(tab: Tab): Effect.Effect<WebContents, PageMissing> {
+    return Effect.map(this.getView(tab), (view) => view.webContents)
+  }
+
+  /** Vivid starts or stops acting on a page; the renderer says so on that page. */
+  used(tab: Option.Option<Tab>): void {
+    this.change(
+      PageChange.cases.Used.make({
+        using: Option.match(tab, {
+          onNone: () => UsedTab.cases.None.make({}),
+          onSome: (value) => UsedTab.cases.Some.make({ value }),
+        }),
+      }),
+    )
+  }
+
   /** Only live handles owned by this Browser may be driven. */
   private getView(tab: Tab): Effect.Effect<WebContentsView, PageMissing> {
     const view = this.views.get(tab)
@@ -307,11 +359,21 @@ export class Browser {
       if (!isPageAddress(url)) event.preventDefault()
     })
     contents.on('will-attach-webview', (event) => event.preventDefault())
-    contents.on('before-input-event', (event) => {
-      if (!this.ownsInput(tab, view)) event.preventDefault()
+    contents.on('before-input-event', (event, input) => {
+      const press =
+        input.type === 'keyDown' || input.type === 'rawKeyDown'
+          ? Option.some(InputSignal.cases.Key.make({ key: input.key, code: input.code }))
+          : Option.none()
+      if (!this.admits(tab, view, press)) event.preventDefault()
     })
-    contents.on('before-mouse-event', (event) => {
-      if (!this.ownsInput(tab, view)) event.preventDefault()
+    contents.on('before-mouse-event', (event, mouse) => {
+      const press =
+        mouse.type === 'mouseDown' && mouse.button !== undefined
+          ? Option.some(
+              InputSignal.cases.Pointer.make({ x: mouse.x, y: mouse.y, button: mouse.button }),
+            )
+          : Option.none()
+      if (!this.admits(tab, view, press)) event.preventDefault()
     })
     contents.setWindowOpenHandler(({ url, disposition, postBody }) => {
       if (isPageAddress(url) && postBody === undefined && this.views.size < budgets.pages)

@@ -68,6 +68,7 @@ const invoke = Effect.fn('DesktopPreload.invoke')(function* (request: BridgeRequ
     Forgotten: answered,
     ExternalOpened: answered,
     Pages: answered,
+    DeviceLink: answered,
   })
 })
 
@@ -108,9 +109,24 @@ const openExternal = Effect.fn('DesktopPreload.openExternal')(function* (value: 
   return yield* new UnexpectedBridgeResponse({})
 })
 
+/** What this computer is to Vivid. `refresh` also asks the server again, after a decision. */
+const deviceLink = Effect.fn('DesktopPreload.deviceLink')(function* (
+  request:
+    | typeof BridgeRequest.cases.GetDeviceLink.Type
+    | typeof BridgeRequest.cases.RefreshDeviceLink.Type,
+) {
+  const response = yield* invoke(request)
+  if (BridgeResponse.guards.DeviceLink(response)) return response.value
+  return yield* new UnexpectedBridgeResponse({})
+})
+
 /** Promise terminals live only at Electron's isolated context bridge. */
 const bridge: VividDesktopBridge = {
   pages: createPagesBridge(invoke, (program) => Effect.runPromise(program)),
+  device: {
+    get: () => Effect.runPromise(deviceLink(BridgeRequest.cases.GetDeviceLink.make({}))),
+    refresh: () => Effect.runPromise(deviceLink(BridgeRequest.cases.RefreshDeviceLink.make({}))),
+  },
   server: {
     get: () => Effect.runPromise(getServer()),
     choose: (origin) => Effect.runPromise(chooseServer(origin)),
@@ -124,5 +140,7 @@ const chooserDocument =
   window.location.protocol === 'file:' && window.location.pathname.endsWith('/chooser.html')
 contextBridge.exposeInMainWorld(
   BRIDGE_NAMESPACE,
-  chooserDocument ? bridge : { getAppVersion: bridge.getAppVersion, pages: bridge.pages },
+  chooserDocument
+    ? bridge
+    : { getAppVersion: bridge.getAppVersion, pages: bridge.pages, device: bridge.device },
 )
