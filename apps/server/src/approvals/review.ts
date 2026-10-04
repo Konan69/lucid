@@ -2,7 +2,7 @@ import { Context, Effect, Layer, Option, Schema } from 'effect'
 import { Decision, DecisionModel } from 'effect/unstable/ai'
 import { ActionTarget, BrowseTarget, type ProposedAction } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
-import { decide, decisionConfigured, isDecisionNonEvent } from '../decisions/model.ts'
+import { decideWithin, decisionConfigured, isDecisionNonEvent } from '../decisions/model.ts'
 import { Runtime } from '../runtime/client.ts'
 import { Database } from '../database/client.ts'
 import { Review } from './policy.ts'
@@ -16,6 +16,16 @@ import { personRequest, type PersonRequest } from './request.ts'
  * leaves room for the request and both questions under that bound.
  */
 export const INPUT_CHARACTERS = 12_000
+
+/**
+ * How long an action waits for its review. docs/22 gave the reviewer ten seconds, taken from Grok
+ * Bot's Auto-review. Vivid's policy differs: an unreviewed write runs (`policy.ts`), so a slow
+ * provider that still answers would hold every write on a Person's own Integration for up to ten
+ * seconds where switching decisions off would run it at once. Three seconds is several times the
+ * 490 to 810 ms measured per review through the gateway on 4 Oct 2026 (one first call took
+ * 1,716 ms); past it the action is unreviewed.
+ */
+export const REVIEW_BUDGET = '3 seconds'
 
 /**
  * What the reviewer reads. Names and descriptions only: no identifier, credential or Connection
@@ -112,7 +122,7 @@ export interface ReviewerService {
   /**
    * Measures whether the acting Person asked for `action` and what it would do. It never fails
    * and never decides: every ending is a `Review`, and `Unreviewed` covers a request that could
-   * not be read, arguments too long to show whole, and a provider that failed or passed its ten seconds (`decisions/model.ts`).
+   * not be read, arguments too long to show whole, and a provider that failed or passed `REVIEW_BUDGET` (`decisions/model.ts`).
    */
   readonly review: (actor: Actor, action: ProposedAction) => Effect.Effect<Review>
 }
@@ -140,9 +150,11 @@ export const reviewerLayer = Layer.effect(
           )
           // Without the Person's words `asked` would be judged from Vivid's own account alone.
           if (Option.isNone(said)) return Review.cases.Unreviewed.make({})
-          const { answers } = yield* decide(ActionReview, reviewInput(said.value, action)).pipe(
-            Effect.provideService(DecisionModel.DecisionModel, model),
-          )
+          const { answers } = yield* decideWithin(
+            ActionReview,
+            reviewInput(said.value, action),
+            REVIEW_BUDGET,
+          ).pipe(Effect.provideService(DecisionModel.DecisionModel, model))
           // Numbers only: the action, the request and provider detail never reach the log.
           yield* Effect.logInfo('Action reviewed', {
             asked: answers.asked.probability,

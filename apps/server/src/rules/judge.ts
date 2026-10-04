@@ -6,7 +6,7 @@ import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import { Decision, DecisionModel } from 'effect/unstable/ai'
 import { ActionTarget, BrowseTarget, Rule, RuleScope, type ProposedAction } from '@vivid/contracts'
-import { decide, isDecisionNonEvent } from '../decisions/model.ts'
+import { decideWithin, isDecisionNonEvent } from '../decisions/model.ts'
 
 /** A failed judge cannot authorize an action; provider detail and private payloads stay behind this seam. */
 export class RulesNotJudged extends Schema.TaggedError<RulesNotJudged>()(
@@ -82,8 +82,20 @@ const shown = (action: ProposedAction) => ({
  */
 const RULE_BATCH = 20
 
-/** Batches of one scope in flight together; a Person with over forty rules is rare, and each batch has its own budget. */
-const RULE_BATCH_CONCURRENCY = 2
+/**
+ * Batches of one scope are all judged at once, so a scope of any size waits one `RULE_BUDGET`,
+ * not one per batch. Four in flight covers eighty rules; more than that is judged in a second
+ * round rather than opening an unbounded number of provider requests for one action.
+ */
+const RULE_BATCH_CONCURRENCY = 4
+
+/**
+ * How long an action waits for its rules to be judged. With no rule that could forbid it, an
+ * unjudged scope lets the action run (`judgeBinding`), so ten seconds of waiting would only slow
+ * work down. Three seconds matches the review budget and is several times the 387 to 1,518 ms
+ * measured for a rule judgment on 4 Oct 2026.
+ */
+const RULE_BUDGET = '3 seconds'
 
 /**
  * Which of at most `RULE_BATCH` rules apply to one action, in one provider request. Positional
@@ -103,7 +115,11 @@ const judgeBatch = Effect.fn('RuleJudge.judgeBatch')(function* (
       }),
     ]),
   )
-  const { answers } = yield* decide(Decision.make({ input: Action, decisions }), judged)
+  const { answers } = yield* decideWithin(
+    Decision.make({ input: Action, decisions }),
+    judged,
+    RULE_BUDGET,
+  )
   return yield* Effect.filter(rules, (_rule: Rule, index: number) => {
     const answer = answers[`rule_${index}`]
     return answer === undefined
@@ -169,7 +185,7 @@ const restricts = (rules: ReadonlyArray<Rule>) => rules.some((rule) => rule.deci
 /**
  * Independent contexts preserve known prohibitions even when the other completion fails, and
  * hostile wording in a personal rule never shares a prompt with a Company rule. The two are
- * judged at once: they do not depend on each other and each has its own ten seconds.
+ * judged at once: they do not depend on each other and each has its own `RULE_BUDGET`.
  */
 export const judgeBinding = Effect.fn('Rules.judgeBinding')(function* (
   judge: RuleJudgeService,
