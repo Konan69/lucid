@@ -24,6 +24,7 @@
     "@vivid/marks": "workspace:*",
     "@vivid/state": "workspace:*",
     "@vivid/tokens": "workspace:*",
+    "better-auth": "catalog:",
     "border-beam": "^1.4.1",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.4.0",

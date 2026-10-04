@@ -1,7 +1,9 @@
 import { VividRpcClient } from '@vivid/client-runtime'
 import { Array as Arr, Data, Effect, Layer, Option, Order, Redacted, Schema } from 'effect'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
+import { auth } from './auth'
 import { deviceName } from './device'
+import { firstArrival, googleAddresses, outcomeOf, type GoogleOutcome } from './google'
 
 /**
  * Signing in and out. These are Better Auth's own routes (`/api/auth/*`), the one part of the
@@ -94,6 +96,73 @@ export const createAccount = (input: {
 
 export const signIn = (input: { readonly email: string; readonly password: string }) =>
   post('sign-in/email', input)
+
+/** Why Google sign-in did not start, as the outcome the welcome has a sentence for. */
+export class GoogleRefused extends Data.TaggedError('GoogleRefused')<{
+  readonly outcome: GoogleOutcome
+}> {}
+
+/** Better Auth's refusal as its client hands it back: the body's `code`, beside the status. */
+const decodeGoogleRefusal = Schema.decodeUnknownOption(
+  Schema.Struct({ code: Schema.optionalKey(Schema.String) }),
+)
+
+/**
+ * Starts signing in with Google, for a new Person and a returning one alike: Google is one
+ * action, and Better Auth makes the account when there is none.
+ *
+ * This is Better Auth's client doing what it does (`signIn.social`, better-auth 1.7.5): it posts
+ * to `/api/auth/sign-in/social`, the server keeps the state of this attempt in a cookie and
+ * answers with Google's address, and the client's own redirect plugin
+ * (`dist/client/fetch-plugins.mjs`) sends the page there. So on success this page is already on
+ * its way out, and there is nothing more to do here. Coming back is `readAddress` (a failure) or
+ * `adoptFirstArrival` (a new account).
+ *
+ * The one refusal a Person can meet before leaving is a server that was given no Google client.
+ * There is no way to ask a server which sign-in methods it has, so the button is always offered
+ * and this is where a Vivid without Google says so.
+ */
+export const continueWithGoogle = Effect.fn('Account.continueWithGoogle')(function* (
+  destination: string,
+) {
+  const answer = yield* Effect.tryPromise({
+    try: () => auth.signIn.social({ provider: 'google', ...googleAddresses(destination) }),
+    catch: () => new GoogleRefused({ outcome: 'Unreachable' }),
+  })
+  if (answer.error === null) return
+  const code = Option.flatMap(decodeGoogleRefusal(answer.error), (refusal) =>
+    Option.fromUndefinedOr(refusal.code),
+  )
+  yield* Effect.fail(
+    new GoogleRefused({
+      outcome: Option.match(code, { onNone: () => 'Failed', onSome: outcomeOf }),
+    }),
+  )
+})
+
+/**
+ * Gives an account that Google sign-in just made the time zone of this browser, the way
+ * `createAccount` does for one made with a password.
+ *
+ * A Google sign-in leaves the page before there is an account and returns after, so the only
+ * moment to do it is the landing. Better Auth sends a new account, and only a new one, to
+ * `newUserCallbackURL`, which `googleAddresses` marks with `joined=google`. This reads that mark
+ * when the page loads, takes it out of the address bar so a reload does not act on it twice, and
+ * makes the same call. A returning Person lands without the mark, so a zone they chose in
+ * Settings is never overwritten by signing in again.
+ *
+ * Outside a browser (a test drawing a screen) there is no address and nothing is done.
+ */
+export const adoptFirstArrival = Effect.suspend(() => {
+  if (!('location' in globalThis)) return Effect.void
+  return Option.match(firstArrival(`${location.pathname}${location.search}`), {
+    onNone: () => Effect.void,
+    onSome: (address) => {
+      history.replaceState(history.state, '', address)
+      return adoptTimeZone
+    },
+  })
+})
 
 export const signOut = () => post('sign-out', {})
 
