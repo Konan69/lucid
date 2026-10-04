@@ -4,6 +4,7 @@ import {
   ConnectionAuthorizationMessage,
   ConnectionMatch,
   ConnectionState,
+  ConnectionStep,
   ServiceAuthorization,
   TestIntegrationOutcome,
   type FindIntegrationsResponse,
@@ -49,14 +50,25 @@ export function integrations(response: FindIntegrationsResponse) {
 }
 
 /** Authorization references are the existing card exception; ownership and foreign ids stay hidden. */
-export function added(outcome: AddIntegrationOutcome) {
+export function added(outcome: AddIntegrationOutcome): typeof Schema.Json.Type {
   return AddIntegrationOutcome.match<typeof Schema.Json.Type>(outcome, {
     Added: ({ account }) => ({ added: true, account: modelText(account) }),
-    AlreadyConnected: ({ account }) => ({
+    AlreadyConnected: () => ({
       alreadyConnected: true,
-      account: modelText(account),
-      message: `This integration is already connected. Use find_tools with query ${modelText(account)} to discover its tools.`,
+      message:
+        'This integration is already connected. Call find_tools to discover its tools and account name.',
     }),
+    Failed: () => ({
+      added: false,
+      message:
+        'This integration has failed. Remove it in Integrations settings before connecting again.',
+    }),
+    PendingAuthorization: ({ account, step }) =>
+      ConnectionStep.match(step, {
+        Done: () => added(AddIntegrationOutcome.cases.AlreadyConnected.make({ account })),
+        OpenSignIn: (value) => added(AddIntegrationOutcome.cases.NeedsSignIn.make({ step: value })),
+        EnterKey: (value) => added(AddIntegrationOutcome.cases.NeedsKey.make({ step: value })),
+      }),
     NeedsSignIn: ({ step }) =>
       ConnectionAuthorizationMessage.make({
         kind: 'connection-request',

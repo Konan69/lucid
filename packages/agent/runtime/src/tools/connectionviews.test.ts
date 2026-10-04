@@ -72,6 +72,31 @@ describe('integration model views', () => {
     })
     expect(JSON.stringify({ view, receipt })).not.toContain('MARK-')
   })
+  it('directs an existing account to discovery without rewriting its lookup name', () => {
+    const view = added(
+      AddIntegrationOutcome.cases.AlreadyConnected.make({
+        account: 'https://private.example/account',
+      }),
+    )
+    expect(view).toMatchObject({ alreadyConnected: true })
+    expect(JSON.stringify(view)).toContain('Call find_tools')
+    expect(view).not.toHaveProperty('account')
+  })
+  it('resumes authorization with the existing connection handle', () => {
+    const view = added(
+      AddIntegrationOutcome.cases.PendingAuthorization.make({
+        account: 'Work',
+        step: ConnectionStep.cases.OpenSignIn.make({
+          connection,
+          address: 'https://private.example/sign-in',
+        }),
+      }),
+    )
+    expect(view).toMatchObject({
+      authorization: { connectionId: connection.id },
+    })
+    expect(JSON.stringify(view)).not.toContain('https://private.example/sign-in')
+  })
   it('keeps the OAuth sign-in address out of the model-visible card', () => {
     const view = decodeCard(
       added(

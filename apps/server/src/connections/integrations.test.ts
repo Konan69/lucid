@@ -12,7 +12,7 @@ import { eq } from 'drizzle-orm'
 import * as TestClock from 'effect/testing/TestClock'
 import { connectionHandlers } from './handlers.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
-import { ConnectionAddress, ConnectionSource, ConnectionAddressUnreachable } from './address.ts'
+import { ConnectionAddress, ConnectionSource } from './address.ts'
 import { Executor, ExecutorPublicAddressRequired, ExecutorTool } from './executor.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -24,108 +24,133 @@ import { Database } from '../database/client.ts'
 describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
   layer(connectionTestLayer)((it) => {
     it.effect(
-      "reuses the Person's ready service or imported address before probing or importing",
+      'matches only normalized server addresses in the requested ownership, including redirects',
       () =>
         Effect.gen(function* () {
-          const { ownerActor, personalActor, memberActor, threadId } = yield* fixture()
+          const { ownerActor, threadId } = yield* fixture()
           const store = yield* ConnectionStore
-          const probe = yield* ConnectionProbe
           const auth = AuthState.Vivid({
-            person: personalActor.person,
-            workspace: personalActor.workspace,
+            person: ownerActor.person,
+            workspace: ownerActor.workspace,
             threadId,
           })
-          yield* store.begin(memberActor, {
-            service: serviceId,
-            label: 'Someone else',
-            shared: false,
-          })
-          yield* store.begin(ownerActor, { service: serviceId, label: 'My account', shared: false })
-          const before = yield* Ref.get(probe.begins)
-          const byService = yield* connectionHandlers
-            .AddIntegration({
-              address: 'https://records.example/mcp',
-              name: ' records ',
-              shared: false,
-            })
-            .pipe(Effect.provideService(AuthContext, auth))
-          expect(byService).toEqual(
-            AddIntegrationOutcome.cases.AlreadyConnected.make({ account: 'My account' }),
-          )
-          expect(yield* Ref.get(probe.begins)).toBe(before)
-          yield* store.add(
-            ownerActor,
-            { address: 'https://imported.example/mcp', name: 'Imported', shared: false },
-            ConnectionSource.cases.Mcp.make({
-              address: 'https://imported.example/mcp',
-              authorization: 'auto',
-            }),
-          )
-          const importedCount = yield* Ref.get(probe.begins)
-          const byAddress = yield* connectionHandlers
-            .AddIntegration({
-              address: 'https://IMPORTED.example/mcp',
-              name: 'Different label',
-              shared: false,
-            })
-            .pipe(Effect.provideService(AuthContext, auth))
-          expect(byAddress).toEqual(
-            AddIntegrationOutcome.cases.AlreadyConnected.make({ account: 'Imported' }),
-          )
-          expect(yield* Ref.get(probe.begins)).toBe(importedCount)
-          expect(yield* store.records(ownerActor)).toHaveLength(2)
-        }).pipe(
-          Effect.provideService(
-            ConnectionAddress,
-            ConnectionAddress.of({
-              inspect: Effect.fn('Test.noProbe')(() =>
-                Effect.fail(new ConnectionAddressUnreachable({})),
+          const address = ConnectionAddress.of({
+            inspect: Effect.fn('Test.redirect')((value) =>
+              Effect.succeed(
+                ConnectionSource.cases.Mcp.make({
+                  address: value.replace('alias.example', 'server.example'),
+                  authorization: 'auto',
+                }),
               ),
-            }),
-          ),
-        ),
+            ),
+          })
+          const add = (url: string, name: string, shared: boolean) =>
+            connectionHandlers
+              .AddIntegration({
+                address: url,
+                name,
+                shared,
+              })
+              .pipe(
+                Effect.provideService(AuthContext, auth),
+                Effect.provideService(ConnectionAddress, address),
+              )
+          yield* store.begin(ownerActor, { service: serviceId, label: 'Catalogue', shared: false })
+          expect(
+            AddIntegrationOutcome.guards.Added(
+              yield* add('https://server.example/mcp', 'Records', false),
+            ),
+          ).toBe(true)
+          expect(yield* add('HTTPS://SERVER.example:443/mcp/', 'Other', false)).toEqual(
+            AddIntegrationOutcome.cases.AlreadyConnected.make({ account: 'Records' }),
+          )
+          yield* TestClock.adjust(1)
+          expect(
+            AddIntegrationOutcome.guards.Added(
+              yield* add('https://different.example/mcp', 'Records', false),
+            ),
+          ).toBe(true)
+          expect(
+            AddIntegrationOutcome.guards.Added(
+              yield* add('https://gmail.example/mcp', 'Gmail', false),
+            ),
+          ).toBe(true)
+          expect(
+            AddIntegrationOutcome.guards.Added(
+              yield* add('https://server.example/mcp', 'Shared', true),
+            ),
+          ).toBe(true)
+          expect(yield* add('https://alias.example/mcp', 'Redirect', false)).toEqual(
+            AddIntegrationOutcome.cases.AlreadyConnected.make({ account: 'Records' }),
+          )
+          expect(yield* add('https://alias.example/mcp', 'Redirect', true)).toEqual(
+            AddIntegrationOutcome.cases.AlreadyConnected.make({ account: 'Shared' }),
+          )
+          expect(yield* store.records(ownerActor)).toHaveLength(5)
+        }),
     )
 
-    it.effect('does not reuse an account still waiting for authorization', () =>
-      Effect.gen(function* () {
-        const { ownerActor, personalActor, threadId } = yield* fixture()
-        const probe = yield* ConnectionProbe
-        const previousStep = yield* Ref.get(probe.step)
-        yield* Effect.addFinalizer(() => Ref.set(probe.step, previousStep))
-        yield* Ref.set(probe.step, 'OpenSignIn')
-        yield* (yield* ConnectionStore).begin(ownerActor, {
-          service: serviceId,
-          label: 'Pending',
-          shared: false,
-        })
-        const result = yield* connectionHandlers
-          .AddIntegration({
-            address: 'https://records.example/mcp',
-            name: 'Records',
-            shared: false,
+    it.effect(
+      'resumes both pending authorization forms across two attempts without a second row',
+      () =>
+        Effect.gen(function* () {
+          const { ownerActor, threadId } = yield* fixture()
+          const store = yield* ConnectionStore
+          const probe = yield* ConnectionProbe
+          const previous = yield* Ref.get(probe.step)
+          yield* Effect.addFinalizer(() => Ref.set(probe.step, previous))
+          const auth = AuthState.Vivid({
+            person: ownerActor.person,
+            workspace: ownerActor.workspace,
+            threadId,
           })
-          .pipe(
-            Effect.provideService(
-              AuthContext,
-              AuthState.Vivid({
-                person: personalActor.person,
-                workspace: personalActor.workspace,
-                threadId,
-              }),
+          const address = ConnectionAddress.of({
+            inspect: Effect.fn('Test.address')((value) =>
+              Effect.succeed(
+                ConnectionSource.cases.Mcp.make({ address: value, authorization: 'auto' }),
+              ),
             ),
-            Effect.provideService(
-              ConnectionAddress,
-              ConnectionAddress.of({
-                inspect: Effect.fn('Test.unreachable')(() =>
-                  Effect.fail(new ConnectionAddressUnreachable({})),
-                ),
-              }),
-            ),
-          )
-        expect(result).toEqual(
-          AddIntegrationOutcome.cases.Unreachable.make({ reason: 'could not be reached' }),
-        )
-      }),
+          })
+          for (const step of ['OpenSignIn', 'EnterKey'] as const) {
+            yield* Ref.set(probe.step, step)
+            const add = () =>
+              connectionHandlers
+                .AddIntegration({
+                  address: `https://pending.example/${step}`,
+                  name: step,
+                  shared: false,
+                })
+                .pipe(
+                  Effect.provideService(AuthContext, auth),
+                  Effect.provideService(ConnectionAddress, address),
+                )
+            const first = yield* add()
+            const second = yield* add()
+            expect(AddIntegrationOutcome.guards.PendingAuthorization(second)).toBe(true)
+            if (!AddIntegrationOutcome.guards.PendingAuthorization(second) || !('step' in first))
+              return yield* Effect.die('Expected pending authorization')
+            expect(second.account).toBe(step)
+            expect(second.step.connection.id).toBe(first.step.connection.id)
+          }
+          const rows = yield* store.records(ownerActor)
+          expect(rows).toHaveLength(2)
+          for (const row of rows) {
+            yield* store.failed(ownerActor, row, 'Provider resource missing')
+          }
+          const failed = yield* connectionHandlers
+            .AddIntegration({
+              address: 'https://pending.example/OpenSignIn',
+              name: 'OpenSignIn',
+              shared: false,
+            })
+            .pipe(
+              Effect.provideService(AuthContext, auth),
+              Effect.provideService(ConnectionAddress, address),
+            )
+          expect(failed).toEqual(AddIntegrationOutcome.cases.Failed.make({ account: 'OpenSignIn' }))
+          expect(yield* store.records(ownerActor)).toHaveLength(2)
+          return yield* Effect.void
+        }),
     )
 
     it.effect('explains unavailable server-by-address support in plain words before import', () =>

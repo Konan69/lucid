@@ -8,6 +8,7 @@ import {
   NotFound,
   TestIntegrationOutcome,
   ToolOutcome,
+  Workspace,
   type AddIntegrationRequest,
   type FindIntegrationsRequest,
   type TestIntegrationRequest,
@@ -74,44 +75,88 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
   }
 })
 
-/** Reuse only the acting Person's ready account: exact canonical imported address wins, then
- * an exact service name (case/edge-space insensitive). Account labels are not service identity.
- * Catalogue Connections do not persist their endpoint, so their authoritative service name is
- * the available match. No network probe or installation is needed to use an existing account. */
-function existingAccount(records: readonly ConnectionRecord[], request: AddIntegrationRequest) {
-  const ready = namedAccounts(records).filter(
-    ({ row }) => row.companyId === null && row.status === 'ready',
-  )
-  const address = publicAddress(request.address)
-  const byAddress =
-    address === undefined
-      ? undefined
-      : ready.find(({ row }) => row.service === `url:${address.href}`)
-  if (byAddress !== undefined) return byAddress
-  const name = request.name.trim().toLowerCase()
-  return ready.find(({ row }) => row.serviceName.trim().toLowerCase() === name)
+/** URL serialization canonicalizes scheme/host case and default ports. Remove only the
+ * trailing path slash; paths, query parameters and schemes remain distinct server identity. */
+function serverAddress(value: string) {
+  return Option.map(Option.fromNullishOr(publicAddress(value)), (address) => {
+    return `${address.origin}${address.pathname.replace(/\/$/u, '')}${address.search}`
+  })
 }
 
-/** A Run reuses a ready personal Integration before inspecting or importing an address.
+/** Accessible personal and Company accounts are different ownership scopes. Labels are
+ * chosen by the Person and never establish server identity. Catalogue ids lack an address. */
+function existingAccount(
+  records: readonly ConnectionRecord[],
+  actor: Actor,
+  request: AddIntegrationRequest,
+  requestedAddress: string,
+) {
+  const companyId = Workspace.match(actor.workspace, {
+    Personal: () => Option.none(),
+    Company: ({ company }) => Option.some(company.id),
+  })
+  return Option.flatMap(serverAddress(requestedAddress), (address) =>
+    Option.fromNullishOr(
+      namedAccounts(records).find(({ row }) => {
+        const sameOwner = request.shared
+          ? Option.contains(companyId, row.companyId)
+          : row.companyId === null && row.personId === actor.person.id
+        if (!sameOwner || !row.service.startsWith('url:')) return false
+        return Option.contains(serverAddress(row.service.slice(4)), address)
+      }),
+    ),
+  )
+}
+
+/** Pending authorization resumes the existing provider resources and row. Failed resources
+ * must be removed explicitly; another Add must never silently allocate a duplicate account. */
+const reuseAccount = Effect.fn('Connections.reuseAccount')(function* (
+  actor: Actor,
+  existing: ReturnType<typeof namedAccounts>[number],
+) {
+  const state = yield* stateOf(existing.row)
+  return yield* ConnectionState.match(state, {
+    Ready: () =>
+      Effect.succeed(
+        AddIntegrationOutcome.cases.AlreadyConnected.make({ account: existing.account }),
+      ),
+    Failed: () =>
+      Effect.succeed(AddIntegrationOutcome.cases.Failed.make({ account: existing.account })),
+    NeedsAuthorization: Effect.fn('Connections.resumeAccount')(function* () {
+      const step = yield* (yield* ConnectionStore).resume(actor, existing.row.id)
+      return AddIntegrationOutcome.cases.PendingAuthorization.make({
+        account: existing.account,
+        step,
+      })
+    }),
+  })
+})
+
+/** A Run reuses the requested ownership before importing an address.
  * Only the Person-only completion endpoint accepts secrets for a new Integration. */
 export const addIntegration = Effect.fn('Connections.addIntegration')(
   function* (actor: Actor, request: AddIntegrationRequest) {
     if (request.shared) yield* requireAdmin(actor.workspace)
     const store = yield* ConnectionStore
-    const existing = existingAccount(yield* store.records(actor), request)
-    if (existing !== undefined)
-      return AddIntegrationOutcome.cases.AlreadyConnected.make({ account: existing.account })
+    const records = yield* store.records(actor)
+    const existing = existingAccount(records, actor, request, request.address)
+    if (Option.isSome(existing)) return yield* reuseAccount(actor, existing.value)
     const source = yield* (yield* ConnectionAddress).inspect(request.address)
+    // inspectAddress follows redirects; imports persist source.address, never the supplied alias.
+    const resolved = existingAccount(records, actor, request, source.address)
+    if (Option.isSome(resolved)) return yield* reuseAccount(actor, resolved.value)
     const step = yield* store.add(actor, request, source)
-    const selected = namedAccounts(yield* store.records(actor)).find(
-      (entry) => entry.row.id === step.connection.id,
+    const selected = Option.fromNullishOr(
+      namedAccounts(yield* store.records(actor)).find(
+        (entry) => entry.row.id === step.connection.id,
+      ),
     )
-    if (selected === undefined)
+    if (Option.isNone(selected))
       return yield* Effect.fail(
         new NotFound({ message: 'Integration not found after registration' }),
       )
     return ConnectionStep.match<AddIntegrationOutcome>(step, {
-      Done: () => AddIntegrationOutcome.cases.Added.make({ account: selected.account }),
+      Done: () => AddIntegrationOutcome.cases.Added.make({ account: selected.value.account }),
       OpenSignIn: (value) => AddIntegrationOutcome.cases.NeedsSignIn.make({ step: value }),
       EnterKey: (value) => AddIntegrationOutcome.cases.NeedsKey.make({ step: value }),
     })

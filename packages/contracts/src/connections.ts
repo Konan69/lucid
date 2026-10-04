@@ -316,6 +316,8 @@ export const ConnectionAddressRefusal = Schema.Literals([
 export const AddIntegrationOutcome = Schema.TaggedUnion({
   Added: { account: Schema.String },
   AlreadyConnected: { account: Schema.String },
+  PendingAuthorization: { account: Schema.String, step: ConnectionStep },
+  Failed: { account: Schema.String },
   NeedsSignIn: { step: ConnectionStep.cases.OpenSignIn },
   NeedsKey: { step: ConnectionStep.cases.EnterKey },
   NotAnIntegration: { reason: ConnectionAddressRefusal },
