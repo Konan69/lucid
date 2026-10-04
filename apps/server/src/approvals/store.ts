@@ -40,7 +40,7 @@ import {
 import { changed, Topic, Changes } from '../live/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { RuleStore } from '../rules/store.ts'
-import { requireThread } from '../threads/access.ts'
+import { readableBy, requireThread } from '../threads/access.ts'
 import { threads } from '../threads/tables.ts'
 import { Conversation, DeliveryMessage } from '../threads/conversation.ts'
 import { ActionOutcome, ActionRunner } from './gate.ts'
@@ -585,14 +585,23 @@ export const approvalStoreLayer = Layer.effect(
         )
         return yield* run(view(rows))
       }),
-      /** Pending cards need a surviving Thread; retained tombstones never appear in an inbox. */
+      /**
+       * Pending cards need a surviving Thread. Filter current reach before projection;
+       * unreadable or corrupt Threads disclose nothing. Keep records for re-sharing.
+       */
       inbox: Effect.fn('ApprovalStore.inbox')(function* (actor) {
         const rows = yield* database.run(
           database
             .select({ approval: approvals })
             .from(approvals)
             .innerJoin(threads, eq(threads.id, approvals.threadId))
-            .where(and(ownedHere(approvals, actor), eq(approvals.status, 'pending')))
+            .where(
+              and(
+                ownedHere(approvals, actor),
+                eq(approvals.status, 'pending'),
+                readableBy(actor.person.id),
+              ),
+            )
             .orderBy(asc(approvals.createdAt), asc(approvals.id)),
         )
         return yield* run(view(rows.map((row) => row.approval)))
