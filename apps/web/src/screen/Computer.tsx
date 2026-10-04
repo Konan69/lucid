@@ -35,6 +35,7 @@ import { Edge } from './computer/Edge'
 import { Corner, grip } from './computer/Float'
 import { PageTabs, PageToolbar, PageView } from './computer/Pages'
 import { place } from './computer/place'
+import { viewerOnDesk, viewerResolution } from './computer/viewer'
 
 /**
  * The three ways Vivid's computer is seen. `docked` is beside the Thread, sharing the page with
@@ -449,17 +450,14 @@ function Screen({ computer }: { computer: ComputerRecord }) {
           since={state.since}
         />
       ) : (
-        // The provider's page fits the machine's screen inside itself and does not say what shape
-        // that screen is, so it is given the whole room.
-        <Stage resolution={Option.none()} held={held} caption={captionOf(held, state.since)}>
-          <Viewer
-            // A new machine start has a new viewer; the one on screen is not carried over.
-            key={state.since}
-            address={state.screen.address}
-            expiresAt={state.screen.expiresAt}
-            control={held}
-          />
-        </Stage>
+        <Watched
+          // A new machine start has a new viewer; the one on screen is not carried over.
+          key={state.since}
+          address={state.screen.address}
+          expiresAt={state.screen.expiresAt}
+          held={held}
+          since={state.since}
+        />
       ),
     Failed: (state) => (
       <Note
@@ -486,6 +484,29 @@ export interface Resolution {
 }
 
 /**
+ * The provider's viewer on the stage, at the machine's own shape. Given the whole room instead, a
+ * docked panel made it a tall strip and the page streamed a desktop to match: the taskbar across
+ * the middle of a white page.
+ */
+function Watched({
+  address,
+  expiresAt,
+  held,
+  since,
+}: {
+  address: string
+  expiresAt: number
+  held: boolean
+  since: number
+}) {
+  return (
+    <Stage resolution={viewerResolution(address)} held={held} caption={captionOf(held, since)}>
+      <Viewer address={address} expiresAt={expiresAt} control={held} />
+    </Stage>
+  )
+}
+
+/**
  * The machine's screen on its desk, with the line of control under it.
  *
  * The screen is the page. With its shape known it is the largest screen of that shape the room
@@ -496,8 +517,7 @@ export interface Resolution {
  * a picture on a wall reads as centred. The line is under the screen and never on it, so nothing
  * of Vivid's covers the machine's own taskbar.
  *
- * Until the shape is known, and for a provider's viewer that never says, the screen takes the
- * whole room above the line.
+ * Until the shape is known, the screen takes the whole room above the line.
  *
  * The screen's corners are the control radius (10) inside a 10 px inset inside the desk's panel
  * radius (20): concentric. While the Person has control, the screen wears the primary outline, so
@@ -618,7 +638,7 @@ export function Viewer({
     // do not let it out of the frame the way they would for a page of ours.
     <iframe
       ref={renew}
-      src={shown.address}
+      src={viewerOnDesk(shown.address)}
       title="Vivid’s computer"
       // oxlint-disable-next-line react/iframe-missing-sandbox
       sandbox="allow-scripts allow-same-origin allow-forms"
