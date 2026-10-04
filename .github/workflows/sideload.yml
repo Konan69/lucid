@@ -80,6 +80,145 @@ jobs:
         working-directory: apps/mobile/ios
         run: pod install
 
+      # The file this workflow hands out is installed on a phone nobody here can watch, and a
+      # build can compile and still end on its first screen. So the same source is built for a
+      # simulator first and opened there: the app must still be running after the window below.
+      # expo-updates holds a failed launch for up to five seconds before it ends the app
+      # (`ErrorRecovery.RemoteLoadTimeoutMs`), so the window is several times that.
+      - name: Choose a simulator
+        id: simulator
+        run: |
+          udid="$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          best = None
+          for runtime, devices in json.load(sys.stdin)["devices"].items():
+              if "iOS" not in runtime:
+                  continue
+              for device in devices:
+                  if device["name"].startswith("iPhone"):
+                      key = (runtime, device["name"])
+                      if best is None or key > best[0]:
+                          best = (key, device["udid"])
+          print(best[1] if best else "")
+          ')"
+          if [ -z "$udid" ]; then
+            echo "No iPhone simulator is installed on this runner." >&2
+            exit 1
+          fi
+          xcrun simctl list devices available | grep "$udid"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+
+      - name: Build for the simulator
+        working-directory: apps/mobile
+        run: |
+          workspace="$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)"
+          if [ -z "$workspace" ]; then
+            echo "No generated Xcode workspace found." >&2
+            exit 1
+          fi
+          scheme="$(basename "$workspace" .xcworkspace)"
+          xcodebuild \
+            -workspace "$workspace" \
+            -scheme "$scheme" \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}" \
+            -derivedDataPath "$RUNNER_TEMP/simulator" \
+            build
+
+      - name: Open the app on the simulator
+        env:
+          UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          app="$(find "$RUNNER_TEMP/simulator/Build/Products/Release-iphonesimulator" -maxdepth 1 -name '*.app' -print -quit)"
+          if [ -z "$app" ]; then
+            echo "No built simulator app found." >&2
+            exit 1
+          fi
+          bundle="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")"
+          process="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")"
+          out="$RUNNER_TEMP/launch"
+          mkdir -p "$out"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" "$app"
+          xcrun simctl spawn "$UDID" log stream --level debug --style compact \
+            --predicate "process == \"$process\"" > "$out/device.log" 2>&1 &
+          stream=$!
+          launched="$(xcrun simctl launch "$UDID" "$bundle")"
+          echo "$launched"
+          pid="${launched##*: }"
+          # A simulator's app is a process of this machine, so its pid can be watched directly.
+          ended=""
+          for second in $(seq 1 45); do
+            sleep 1
+            if ! kill -0 "$pid" 2>/dev/null; then
+              ended="$second"
+              break
+            fi
+          done
+          xcrun simctl io "$UDID" screenshot "$out/screen.png" || true
+          kill "$stream" 2>/dev/null || true
+          if [ -z "$ended" ]; then
+            echo "The app was still open after 45 seconds."
+            exit 0
+          fi
+          echo "::error::The app ended $ended seconds after it was opened."
+          # The crash report is written by a separate process a moment after the app ends.
+          for attempt in $(seq 1 30); do
+            report="$(find "$HOME/Library/Logs/DiagnosticReports" -name "$process*.ips" -print -quit 2>/dev/null || true)"
+            [ -n "$report" ] && break
+            sleep 1
+          done
+          find "$HOME/Library/Logs/DiagnosticReports" -name "$process*.ips" -exec cp {} "$out/" \; 2>/dev/null || true
+          data="$(xcrun simctl get_app_container "$UDID" "$bundle" data 2>/dev/null || true)"
+          if [ -n "$data" ]; then
+            find "$data" -name 'expo-error.log' -exec cp {} "$out/" \; 2>/dev/null || true
+          fi
+          echo "----- expo-error.log"
+          cat "$out/expo-error.log" 2>/dev/null | cut -c1-4000 || true
+          echo "----- device log: the end of the app"
+          grep -n -i -E 'terminating app|uncaught exception|RCTFatal|Unhandled JS|Invariant|TypeError|ReferenceError|abort|fatal' "$out/device.log" | cut -c1-1500 | head -60 || true
+          echo "----- device log: last lines"
+          tail -n 60 "$out/device.log" | cut -c1-600 || true
+          echo "----- crash report"
+          for ips in "$out"/*.ips; do
+            [ -f "$ips" ] || continue
+            python3 - "$ips" <<'PY'
+          import json, sys
+          text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+          head, _, body = text.partition("\n")
+          report = json.loads(body)
+          print(json.loads(head).get("app_name"), report.get("osVersion", {}).get("train"))
+          print("exception:", json.dumps(report.get("exception")))
+          print("termination:", json.dumps(report.get("termination")))
+          print("asi:", json.dumps(report.get("asi"))[:3000])
+          images = report.get("usedImages", [])
+          def frames(items):
+              for frame in items[:45]:
+                  image = images[frame["imageIndex"]].get("name", "?") if frame.get("imageIndex", -1) < len(images) else "?"
+                  print("   ", image, frame.get("symbol", hex(frame.get("imageOffset", 0))))
+          last = report.get("lastExceptionBacktrace")
+          if last:
+              print("last exception backtrace:")
+              frames(last)
+          for thread in report.get("threads", []):
+              if thread.get("triggered"):
+                  print("crashed thread:", thread.get("name") or thread.get("queue"))
+                  frames(thread.get("frames", []))
+          PY
+          done
+          exit 1
+
+      - name: Keep what the simulator showed
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vivid-simulator-launch
+          path: ${{ runner.temp }}/launch
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Build the unsigned app
         working-directory: apps/mobile
         run: |
