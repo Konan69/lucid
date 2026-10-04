@@ -211,6 +211,7 @@ describe('connected tool execution', () => {
           id: ConnectionId.make('MARK-connection'),
           service: ServiceId.make('MARK-service'),
           serviceName: 'Records',
+          mark: null,
           label: 'Work Records',
           ownership: ConnectionOwnership.cases.Personal.make({
             owner: { id: PersonId.make('MARK-person'), name: 'Ada', image: null },

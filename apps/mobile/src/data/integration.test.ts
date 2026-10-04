@@ -19,6 +19,7 @@ const account = (id: string, state: ConnectionState): Connection => ({
   id: ConnectionId.make(id),
   service: ServiceId.make('linear'),
   serviceName: 'Linear',
+  mark: null,
   label: 'Work',
   ownership: ConnectionOwnership.cases.Personal.make({ owner: ada }),
   state,

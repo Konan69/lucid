@@ -18,6 +18,7 @@ import { inWorkspace, summaryOf, type Actor } from '../auth/access.ts'
 import { Database, decodeStored, returned } from '../database/client.ts'
 import { changed, Topic } from '../live/changes.ts'
 import { ExecutorReferences } from './executor.ts'
+import { connectionLogo } from './logo.ts'
 import { connections } from './tables.ts'
 
 const rowSchema = createSelectSchema(connections, {
@@ -126,6 +127,7 @@ export const publicConnection = Effect.fn('Connections.public')(function* (
     id: row.id,
     service: row.service,
     serviceName: row.serviceName,
+    mark: connectionLogo(row.service),
     label: row.label,
     ownership:
       row.companyId === null

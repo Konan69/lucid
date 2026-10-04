@@ -16,6 +16,7 @@ import {
 import { Array as Arr, Effect, Option, Order } from 'effect'
 import { requireAdmin, type Actor } from '../auth/access.ts'
 import { ConnectionAddress, type ConnectionAddressInvalid, publicAddress } from './address.ts'
+import { IMPORTED } from './logo.ts'
 import { ConnectionStore } from './store.ts'
 import { namedAccounts, useTool } from './tools.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
@@ -131,8 +132,8 @@ function existingAccount(
         const sameOwner = request.shared
           ? Option.contains(companyId, row.companyId)
           : row.companyId === null && row.personId === actor.person.id
-        if (!sameOwner || !row.service.startsWith('url:')) return false
-        return Option.contains(serverAddress(row.service.slice(4)), address)
+        if (!sameOwner || !row.service.startsWith(IMPORTED)) return false
+        return Option.contains(serverAddress(row.service.slice(IMPORTED.length)), address)
       }),
     ),
   )

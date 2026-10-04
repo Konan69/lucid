@@ -20,6 +20,7 @@ const connection = Connection.make({
   id: ConnectionId.make('MARK-connection'),
   service: ServiceId.make('MARK-service'),
   serviceName: 'Records',
+  mark: null,
   label: 'Work',
   ownership: ConnectionOwnership.cases.Personal.make({
     owner: { id: PersonId.make('MARK-person'), name: 'Ada', image: null },
