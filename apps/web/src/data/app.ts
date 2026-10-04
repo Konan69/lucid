@@ -21,3 +21,9 @@ export const change = <Value>(
   program: (client: VividRpcClient['Service']) => Effect.Effect<Value, ProductFailure>,
   ...expectations: ReadonlyArray<() => Settle>
 ) => Effect.runPromise(engine.change(program, ...expectations))
+
+/**
+ * Starts a program that needs nothing from the app: no client, no socket. It exists for the one
+ * thing that must work while the rest is broken, reporting a fault (`fault.ts`).
+ */
+export const send = (program: Effect.Effect<void>) => Effect.runPromise(program)

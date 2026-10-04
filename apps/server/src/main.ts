@@ -14,6 +14,7 @@ import {
 } from '@effect/platform-node'
 import { artifactStoreLayer } from './artifacts/store.ts'
 import { gateLayer } from './approvals/gate.ts'
+import { reviewerLayer } from './approvals/review.ts'
 import { actionRunnerLayer } from './approvals/runner.ts'
 import { approvalStoreLayer } from './approvals/store.ts'
 import { approvalSweeperLayer } from './approvals/sweeper.ts'
@@ -29,6 +30,7 @@ import { deviceLayer } from './computers/device.ts'
 import { computerStoreLayer } from './computers/store.ts'
 import { loadServerConfig, ServerConfig } from './config.ts'
 import { executorLayer } from './connections/executor.ts'
+import { toolEffectsLayer } from './connections/effects.ts'
 import { connectionStoreLayer } from './connections/store.ts'
 import { workLayer } from './database/work.ts'
 import { databaseLayer } from './database/client.ts'
@@ -60,6 +62,7 @@ import { pushLayer, pushReceiptsLayer } from './push/delivery.ts'
 import { pushTargetsLayer } from './push/targets.ts'
 import { routineSchedulerLayer, routineSchedulerServiceLayer } from './routines/scheduler.ts'
 import { routineStoreLayer } from './routines/store.ts'
+import { decisionModelLayer } from './decisions/model.ts'
 import { ruleJudgeLayer } from './rules/judge.ts'
 import { ruleStoreLayer } from './rules/store.ts'
 import { runtimeLayer } from './runtime/client.ts'
@@ -107,7 +110,7 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     NodePath.layer,
   )
   const data = databaseLayer.pipe(Layer.provideMerge(platform))
-  const durable = workLayer.pipe(Layer.provideMerge(data))
+  const durable = Layer.mergeAll(workLayer, decisionModelLayer).pipe(Layer.provideMerge(data))
   const foundation = Layer.mergeAll(
     changesLayer,
     runtimeLayer,
@@ -143,14 +146,14 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
   const knowledge = Layer.mergeAll(memoryLayer, memoryModelLayer).pipe(Layer.provideMerge(recorded))
   const named = threadTitlesLayer.pipe(Layer.provideMerge(knowledge))
   const conversation = conversationLayer.pipe(Layer.provideMerge(named))
-  const accounts = Layer.mergeAll(connectionStoreLayer, computerStoreLayer).pipe(
+  const accounts = Layer.mergeAll(connectionStoreLayer, toolEffectsLayer, computerStoreLayer).pipe(
     Layer.provideMerge(conversation),
   )
   const trust = Layer.mergeAll(approvalStoreLayer, inputStoreLayer).pipe(
     Layer.provideMerge(actionRunnerLayer),
     Layer.provideMerge(accounts),
   )
-  const decisions = gateLayer.pipe(Layer.provideMerge(trust))
+  const decisions = gateLayer.pipe(Layer.provideMerge(reviewerLayer), Layer.provideMerge(trust))
   const work = Layer.mergeAll(routineStoreLayer, codeCallsLayer).pipe(Layer.provideMerge(decisions))
   const schedules = routineSchedulerServiceLayer.pipe(Layer.provideMerge(work))
   const background = Layer.mergeAll(

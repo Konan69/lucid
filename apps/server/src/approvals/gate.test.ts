@@ -13,6 +13,7 @@ import { loadAudit } from '../audit/store.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { RuleStore } from '../rules/store.ts'
 import { Gate, GateDecision } from './gate.ts'
+import { Review } from './policy.ts'
 import { ApprovalStore } from './store.ts'
 import {
   commandAction,
@@ -168,7 +169,7 @@ describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', (
     }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
 
-  it.effect('destructive actions ask even with applicable Allow policy', () =>
+  it.effect('an unasked destructive action asks even with applicable Allow policy', () =>
     Effect.gen(function* () {
       const test = yield* fixture()
       yield* (yield* RuleStore).create(test.personal, {
@@ -214,7 +215,7 @@ describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', (
   )
 
   it.effect(
-    'unmatched Connection writes ask, while applicable Allow records the account label',
+    'an unasked Connection write that reaches others asks, while applicable Allow records the account label',
     () =>
       Effect.gen(function* () {
         const test = yield* fixture()
@@ -245,6 +246,78 @@ describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', (
           }),
         ])
       }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
+  it.effect('an action the Person asked for runs with no rule, even when it cannot be undone', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const observed = yield* Observation
+      yield* Ref.set(
+        observed.review,
+        Review.cases.Reviewed.make({ asked: 0.97, consequence: 'reaches' }),
+      )
+      const send = ProposedAction.make({ ...connectionAction, effect: 'destructive' })
+      expect(yield* (yield* Gate).check(test.vivid, send, 'Ordinary')).toEqual(
+        GateDecision.cases.Allowed.make({}),
+      )
+      expect(yield* Ref.get(observed.reviewCalls)).toEqual([send])
+      expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toEqual([])
+      expect((yield* loadAudit(test.personal)).entries.map((entry) => entry.event)).toEqual([
+        AuditEvent.cases.ActionAllowed.make({
+          tool: 'update_project',
+          service: 'Work account',
+          effect: 'destructive',
+        }),
+      ])
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
+  it.effect('a failed review lets an undoable write run and asks for a destructive one', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const gate = yield* Gate
+      yield* Ref.set((yield* Observation).review, Review.cases.Unreviewed.make({}))
+      expect(yield* gate.check(test.vivid, connectionAction, 'Ordinary')).toEqual(
+        GateDecision.cases.Allowed.make({}),
+      )
+      const destructive = ProposedAction.make({ ...connectionAction, effect: 'destructive' })
+      expect(
+        GateDecision.guards.ApprovalRequired(
+          yield* gate.check(test.vivid, destructive, 'Ordinary'),
+        ),
+      ).toBe(true)
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
+  it.effect('a Never rule refuses an action the Person asked for, without a review', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const observed = yield* Observation
+      yield* (yield* RuleStore).create(test.personal, {
+        action: 'Never update projects',
+        decision: 'Never',
+        scope: RuleScope.cases.Personal.make({}),
+      })
+      yield* Ref.set(
+        observed.review,
+        Review.cases.Reviewed.make({ asked: 1, consequence: 'contained' }),
+      )
+      expect(yield* (yield* Gate).check(test.vivid, connectionAction, 'Ordinary')).toEqual(
+        GateDecision.cases.Blocked.make({ rule: 'Never update projects' }),
+      )
+      expect(yield* Ref.get(observed.reviewCalls)).toEqual([])
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
+  it.effect('undoable work on the Computer never reaches the reviewer', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const observed = yield* Observation
+      expect(yield* (yield* Gate).check(test.vivid, commandAction, 'Ordinary')).toEqual(
+        GateDecision.cases.Allowed.make({}),
+      )
+      expect(yield* Ref.get(observed.reviewCalls)).toEqual([])
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
 
   it.effect('ordinary reads bypass rules, while personal data exposed in shared work asks', () =>

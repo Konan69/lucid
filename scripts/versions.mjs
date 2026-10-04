@@ -7,6 +7,8 @@ import * as Schema from 'effect/Schema'
 export const versions = Object.freeze({
   '@alchemy.run/better-auth': '2.0.0-beta.79',
   '@earendil-works/pi-ai': '0.87.1',
+  '@effect/ai-openrouter': '4.0.0-rc.116',
+  '@effect/ai-typesafe': '4.0.0-rc.116',
   '@effect/language-service': '0.87.2',
   '@effect/platform-node': '4.0.0-rc.116',
   '@effect/sql-pg': '4.0.0-rc.116',

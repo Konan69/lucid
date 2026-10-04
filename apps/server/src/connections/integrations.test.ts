@@ -1,12 +1,29 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
-import { AddIntegrationOutcome, ConnectionStep, Forbidden, SessionId } from '@vivid/contracts'
-import { Effect, Redacted, Ref } from 'effect'
+import {
+  AddIntegrationOutcome,
+  ConnectionMatch,
+  ConnectionStep,
+  Forbidden,
+  SessionId,
+  InvalidRequest,
+  ServiceAuthorization,
+  Workspace,
+} from '@vivid/contracts'
+import { Effect, Redacted, Ref, Result } from 'effect'
 import { eq } from 'drizzle-orm'
+import { connections } from './tables.ts'
+import { encodeReferences } from './records.ts'
+import * as TestClock from 'effect/testing/TestClock'
 import { connectionHandlers } from './handlers.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { ConnectionAddress, ConnectionSource } from './address.ts'
-import { Executor, ExecutorPublicAddressRequired, ExecutorTool } from './executor.ts'
+import {
+  Executor,
+  ExecutorPublicAddressRequired,
+  ExecutorTool,
+  connectionSetupMessage,
+} from './executor.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { auditLayer } from '../audit/record.ts'
@@ -16,6 +33,341 @@ import { Database } from '../database/client.ts'
 /** Handler calls retain transport authentication, real store scope and real disposable SQL. */
 describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
   layer(connectionTestLayer)((it) => {
+    it.effect(
+      'matches only normalized server addresses in the requested ownership, including redirects',
+      () =>
+        Effect.gen(function* () {
+          const { ownerActor, threadId } = yield* fixture()
+          const store = yield* ConnectionStore
+          const auth = AuthState.Vivid({
+            person: ownerActor.person,
+            workspace: ownerActor.workspace,
+            threadId,
+          })
+          const address = ConnectionAddress.of({
+            inspect: Effect.fn('Test.redirect')((value) =>
+              Effect.succeed(
+                ConnectionSource.cases.Mcp.make({
+                  address: value.replace('alias.example', 'server.example'),
+                  authorization: 'auto',
+                }),
+              ),
+            ),
+          })
+          const add = (url: string, name: string, shared: boolean) =>
+            connectionHandlers
+              .AddIntegration({
+                address: url,
+                name,
+                shared,
+              })
+              .pipe(
+                Effect.provideService(AuthContext, auth),
+                Effect.provideService(ConnectionAddress, address),
+              )
+          yield* store.begin(ownerActor, { service: serviceId, label: 'Catalogue', shared: false })
+          expect(
+            AddIntegrationOutcome.guards.Added(
+              yield* add('https://server.example/mcp', 'Records', false),
+            ),
+          ).toBe(true)
+          expect(yield* add('HTTPS://SERVER.example.:443/mcp', 'Other', false)).toEqual(
+            AddIntegrationOutcome.cases.AlreadyConnected.make({
+              account: 'Records',
+              name: 'Records',
+            }),
+          )
+          yield* TestClock.adjust(1)
+          expect(
+            AddIntegrationOutcome.guards.Added(
+              yield* add('https://different.example/mcp', 'Records', false),
+            ),
+          ).toBe(true)
+          expect(
+            AddIntegrationOutcome.guards.Added(
+              yield* add('https://gmail.example/mcp', 'Gmail', false),
+            ),
+          ).toBe(true)
+          expect(
+            AddIntegrationOutcome.guards.Added(
+              yield* add('https://server.example/mcp', 'Shared', true),
+            ),
+          ).toBe(true)
+          expect(yield* add('https://alias.example/mcp', 'Redirect', false)).toEqual(
+            AddIntegrationOutcome.cases.AlreadyConnected.make({
+              account: 'Records',
+              name: 'Records',
+            }),
+          )
+          expect(yield* add('https://alias.example/mcp', 'Redirect', true)).toEqual(
+            AddIntegrationOutcome.cases.AlreadyConnected.make({
+              account: 'Shared',
+              name: 'Shared',
+            }),
+          )
+          expect(
+            AddIntegrationOutcome.guards.Added(
+              yield* add('https://server.example/mcp/', 'Slash', false),
+            ),
+          ).toBe(true)
+          expect(yield* store.records(ownerActor)).toHaveLength(6)
+        }),
+    )
+
+    it.effect(
+      'resumes both pending authorization forms across two attempts without a second row',
+      () =>
+        Effect.gen(function* () {
+          const { ownerActor, threadId } = yield* fixture()
+          const store = yield* ConnectionStore
+          const probe = yield* ConnectionProbe
+          const previous = yield* Ref.get(probe.step)
+          yield* Effect.addFinalizer(() => Ref.set(probe.step, previous))
+          const auth = AuthState.Vivid({
+            person: ownerActor.person,
+            workspace: ownerActor.workspace,
+            threadId,
+          })
+          const address = ConnectionAddress.of({
+            inspect: Effect.fn('Test.address')((value) =>
+              Effect.succeed(
+                ConnectionSource.cases.Mcp.make({ address: value, authorization: 'auto' }),
+              ),
+            ),
+          })
+          for (const step of ['OpenSignIn', 'EnterKey'] as const) {
+            yield* Ref.set(probe.step, step)
+            const add = () =>
+              connectionHandlers
+                .AddIntegration({
+                  address: `https://pending.example/${step}`,
+                  name: step,
+                  shared: true,
+                })
+                .pipe(
+                  Effect.provideService(AuthContext, auth),
+                  Effect.provideService(ConnectionAddress, address),
+                )
+            const first = yield* add()
+            const second = yield* add()
+            expect(AddIntegrationOutcome.guards.PendingAuthorization(second)).toBe(true)
+            if (!AddIntegrationOutcome.guards.PendingAuthorization(second) || !('step' in first))
+              return yield* Effect.die('Expected pending authorization')
+            expect(second.account).toBe(step)
+            expect(second.step.connection.id).toBe(first.step.connection.id)
+          }
+          const rows = yield* store.records(ownerActor)
+          expect(rows).toHaveLength(2)
+          for (const row of rows) {
+            yield* store.failed(ownerActor, row, 'Provider resource missing')
+          }
+          const failed = yield* connectionHandlers
+            .AddIntegration({
+              address: 'https://pending.example/OpenSignIn',
+              name: 'OpenSignIn',
+              shared: true,
+            })
+            .pipe(
+              Effect.provideService(AuthContext, auth),
+              Effect.provideService(ConnectionAddress, address),
+            )
+          expect(failed).toEqual(
+            AddIntegrationOutcome.cases.Failed.make({ account: 'OpenSignIn', name: 'OpenSignIn' }),
+          )
+          expect(yield* store.records(ownerActor)).toHaveLength(2)
+          return yield* Effect.void
+        }),
+    )
+
+    it.effect(
+      'leaves another admin’s pending Company authorization and provider grant untouched',
+      () =>
+        Effect.gen(function* () {
+          const { ownerActor, memberActor, threadId } = yield* fixture()
+          const store = yield* ConnectionStore
+          const probe = yield* ConnectionProbe
+          const previous = yield* Ref.get(probe.step)
+          yield* Effect.addFinalizer(() => Ref.set(probe.step, previous))
+          yield* Ref.set(probe.step, 'OpenSignIn')
+          const address = ConnectionSource.cases.Mcp.make({
+            address: 'https://pending.example/shared',
+            authorization: 'auto',
+          })
+          yield* store.add(
+            ownerActor,
+            { address: address.address, name: 'Company Records', shared: true },
+            address,
+          )
+          const before = yield* store.records(ownerActor)
+          const begins = yield* Ref.get(probe.begins)
+          const catalogs = yield* Ref.get(probe.catalogs)
+          const workspace = Workspace.match<Workspace>(memberActor.workspace, {
+            Personal: () => Workspace.cases.Personal.make({}),
+            Company: ({ company }) => Workspace.cases.Company.make({ company, role: 'admin' }),
+          })
+          const result = yield* connectionHandlers
+            .AddIntegration({
+              address: address.address,
+              name: 'Other label',
+              shared: true,
+            })
+            .pipe(
+              Effect.provideService(
+                AuthContext,
+                AuthState.Vivid({
+                  person: memberActor.person,
+                  workspace,
+                  threadId,
+                }),
+              ),
+            )
+          expect(result).toEqual(
+            AddIntegrationOutcome.cases.AwaitingInitiator.make({ name: 'Company Records' }),
+          )
+          expect(yield* store.records(ownerActor)).toEqual(before)
+          expect(yield* Ref.get(probe.begins)).toBe(begins)
+          expect(yield* Ref.get(probe.catalogs)).toBe(catalogs)
+        }),
+    )
+
+    it.effect('prefers Ready over older Failed duplicates and chooses the newest Ready row', () =>
+      Effect.gen(function* () {
+        const { ownerActor, threadId } = yield* fixture()
+        const store = yield* ConnectionStore
+        const source = ConnectionSource.cases.Mcp.make({
+          address: 'https://duplicates.example/mcp',
+          authorization: 'auto',
+        })
+        yield* store.add(
+          ownerActor,
+          { address: source.address, name: 'Older Failed', shared: false },
+          source,
+        )
+        const rows = yield* store.records(ownerActor)
+        const row = rows[0]
+        if (row === undefined) return yield* Effect.die('Expected imported account')
+        yield* store.failed(ownerActor, row, 'Previous attempt failed')
+        const database = yield* Database
+        // Seed the earlier bug's duplicates through SQL; public Add correctly refuses to create them.
+        yield* database.run(
+          database.insert(connections).values([
+            {
+              ...row,
+              id: crypto.randomUUID(),
+              label: 'Older Ready',
+              serviceName: 'Records',
+              references: encodeReferences(row.references),
+              status: 'ready',
+              reason: null,
+              createdAt: row.createdAt + 1,
+            },
+            {
+              ...row,
+              id: crypto.randomUUID(),
+              label: 'Newest Ready',
+              serviceName: 'Records',
+              references: encodeReferences(row.references),
+              status: 'ready',
+              reason: null,
+              createdAt: row.createdAt + 2,
+            },
+            {
+              ...row,
+              id: crypto.randomUUID(),
+              label: 'Newest Pending',
+              references: encodeReferences(row.references),
+              status: 'needs-authorization',
+              reason: null,
+              createdAt: row.createdAt + 3,
+            },
+          ]),
+        )
+        const result = yield* connectionHandlers
+          .AddIntegration({ address: source.address, name: 'Again', shared: false })
+          .pipe(
+            Effect.provideService(
+              AuthContext,
+              AuthState.Vivid({
+                person: ownerActor.person,
+                workspace: ownerActor.workspace,
+                threadId,
+              }),
+            ),
+          )
+        expect(result).toEqual(
+          AddIntegrationOutcome.cases.AlreadyConnected.make({
+            account: 'Newest Ready',
+            name: 'Records',
+          }),
+        )
+        expect(yield* store.records(ownerActor)).toHaveLength(4)
+        return yield* Effect.void
+      }),
+    )
+
+    it.effect('preserves InvalidRequest from both direct and redirected resume attempts', () =>
+      Effect.gen(function* () {
+        const { ownerActor, threadId } = yield* fixture()
+        const store = yield* ConnectionStore
+        const probe = yield* ConnectionProbe
+        const previous = yield* Ref.get(probe.step)
+        yield* Effect.addFinalizer(() => Ref.set(probe.step, previous))
+        yield* Ref.set(probe.step, 'OpenSignIn')
+        const source = ConnectionSource.cases.Mcp.make({
+          address: 'https://pending.example/mcp',
+          authorization: 'auto',
+        })
+        yield* store.add(
+          ownerActor,
+          { address: source.address, name: 'Pending', shared: false },
+          source,
+        )
+        const row = (yield* store.records(ownerActor))[0]
+        if (row === undefined) return yield* Effect.die('Expected pending account')
+        const executor = yield* Executor
+        const catalog = yield* executor.catalog()
+        const entry = catalog[0]
+        if (entry === undefined) return yield* Effect.die('Expected catalogue fixture')
+        const unavailable = Executor.of({
+          ...executor,
+          catalog: Effect.fn('Test.setupRequired')(() =>
+            Effect.succeed([
+              {
+                ...entry,
+                id: row.service,
+                authorization: ServiceAuthorization.cases.SetupRequired.make({}),
+              },
+            ]),
+          ),
+        })
+        const addresses = ConnectionAddress.of({
+          inspect: Effect.fn('Test.redirect')(() => Effect.succeed(source)),
+        })
+        for (const address of [source.address, 'https://alias.example/mcp']) {
+          const result = yield* connectionHandlers
+            .AddIntegration({ address, name: 'Again', shared: false })
+            .pipe(
+              Effect.provideService(ConnectionAddress, addresses),
+              Effect.provide(connectionStoreLayer, { local: true }),
+              Effect.provideService(Executor, unavailable),
+              Effect.provideService(
+                AuthContext,
+                AuthState.Vivid({
+                  person: ownerActor.person,
+                  workspace: ownerActor.workspace,
+                  threadId,
+                }),
+              ),
+              Effect.result,
+            )
+          expect(result).toEqual(
+            Result.fail(InvalidRequest.make({ message: connectionSetupMessage })),
+          )
+        }
+        return yield* Effect.void
+      }),
+    )
+
     it.effect('explains unavailable server-by-address support in plain words before import', () =>
       Effect.gen(function* () {
         const { personalActor, threadId } = yield* fixture()
@@ -87,6 +439,16 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             { name: 'Records', connected: true },
           ])
           expect(JSON.stringify(response)).not.toContain('Private Records')
+          const unrelated = yield* connectionHandlers
+            .FindIntegrations({ query: 'fetch web pages or search the web' })
+            .pipe(Effect.provideService(AuthContext, auth))
+          expect(unrelated.integrations.filter(ConnectionMatch.guards.Account)).toHaveLength(1)
+          expect(unrelated.integrations[0]).toMatchObject({
+            name: 'Records',
+            account: 'Shared Records',
+            connected: true,
+            shared: true,
+          })
           const probe = yield* ConnectionProbe
           const before = yield* Ref.get(probe.begins)
           const denied = yield* connectionHandlers
@@ -96,6 +458,62 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           expect(yield* Ref.get(probe.begins)).toBe(before)
         }),
     )
+    it.effect(
+      'bounds discovery, prioritizes matches and recent accounts, and reports omissions',
+      () =>
+        Effect.gen(function* () {
+          const { ownerActor, personalActor, threadId } = yield* fixture()
+          const store = yield* ConnectionStore
+          for (let index = 0; index < 25; index++) {
+            yield* store.begin(ownerActor, {
+              service: serviceId,
+              label: `Account ${index}`,
+              shared: false,
+            })
+            yield* TestClock.adjust(1)
+          }
+          const response = yield* connectionHandlers.FindIntegrations({ query: 'Records' }).pipe(
+            Effect.provideService(
+              AuthContext,
+              AuthState.Vivid({
+                person: personalActor.person,
+                workspace: personalActor.workspace,
+                threadId,
+              }),
+            ),
+          )
+          const accounts = response.integrations.filter(ConnectionMatch.guards.Account)
+          expect(accounts.map((entry) => entry.account)).toEqual(
+            Array.from({ length: 24 }, (_, index) => `Account ${24 - index}`),
+          )
+          expect(response.omittedAccounts).toBe(1)
+          const narrowed = yield* connectionHandlers.FindIntegrations({ query: '0' }).pipe(
+            Effect.provideService(
+              AuthContext,
+              AuthState.Vivid({
+                person: personalActor.person,
+                workspace: personalActor.workspace,
+                threadId,
+              }),
+            ),
+          )
+          const narrowedAccounts = narrowed.integrations.filter(ConnectionMatch.guards.Account)
+          expect(narrowedAccounts.slice(0, 3).map((entry) => entry.account)).toEqual([
+            'Account 20',
+            'Account 10',
+            'Account 0',
+          ])
+          expect(narrowedAccounts[3]).toMatchObject({ account: 'Account 24' })
+          expect(narrowed.omittedAccounts).toBe(1)
+          expect(response.integrations).toHaveLength(25)
+          expect(response.integrations.slice(0, 24).every(ConnectionMatch.guards.Account)).toBe(
+            true,
+          )
+          expect(response.integrations[24]).toMatchObject({ name: 'Records', connected: true })
+          expect(ConnectionMatch.guards.Catalog(response.integrations[24])).toBe(true)
+        }),
+    )
+
     it.effect(
       'tests only reads with safe input and carries Gate approval/refusal without dispatching',
       () =>

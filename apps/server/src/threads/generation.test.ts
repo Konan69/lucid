@@ -543,6 +543,44 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
     }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
   )
 
+  // The first Thread is opened by Vivid, and the Person replies only by pressing answers on
+  // question cards. Flue records each as an `answer` dispatch, never a `user` message, so
+  // without this case the Thread has no Person words and keeps its Seed title forever.
+  it.effect('counts a pressed answer as Person words when Vivid opened the Thread', () =>
+    Effect.gen(function* () {
+      const test = yield* harness('Please plan a holiday', 'Seed')
+      yield* Ref.set(test.messages, [
+        {
+          role: 'assistant',
+          purpose: 'assistant',
+          parts: [{ type: 'text', text: 'What takes most of your day?', state: 'done' }],
+        },
+        {
+          role: 'system',
+          purpose: 'dispatch',
+          signal: { tagName: 'answer' },
+          parts: [{ type: 'text', text: 'Client building work', state: 'done' }],
+        },
+      ])
+      const fiber = yield* test.titles.afterRun(test.threadId).pipe(Effect.forkScoped)
+      const request = yield* Queue.take(test.requests)
+      expect(request.content).toEqual({
+        conversation:
+          'Thread contents:\nASSISTANT:\nWhat takes most of your day?\n\nUSER:\nClient building work',
+        previousTitle: null,
+      })
+      yield* Deferred.succeed(
+        test.completion,
+        Completion.cases.Finished.make({ text: '{"title":"Client building work"}' }),
+      )
+      yield* Fiber.join(fiber)
+      expect(yield* test.stored).toMatchObject({
+        title: 'Client building work',
+        titleSource: 'Generated',
+      })
+    }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
+  )
+
   it.effect('returns typed model failure and keeps the title on regeneration', () =>
     Effect.gen(function* () {
       const test = yield* harness('Please plan a holiday', 'Seed')

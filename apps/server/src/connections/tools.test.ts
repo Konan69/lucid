@@ -1,16 +1,100 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { Effect, Ref } from 'effect'
+import { Effect, Layer, Predicate, Ref, Schema } from 'effect'
+import { ScriptedAnswer } from '../decisions/testing.ts'
+import { AiError, DecisionModel } from 'effect/unstable/ai'
+import { toolEffectsLayer } from './effects.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { ConnectionStep } from '@vivid/contracts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { ExecutorTool } from './executor.ts'
 import { ConnectionStore } from './store.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
-import { findTools, resolveTool } from './tools.ts'
+import { findTools, resolveTool, useTool } from './tools.ts'
+
+const decodeInputs = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ tool: Schema.String })),
+)
 
 /** Discovery uses real scoped records; suffixes must remain stable across ranking queries and ownership. */
 describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
   layer(connectionTestLayer)((it) => {
+    it.effect('ranks service and account words while withholding shared writes', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const store = yield* ConnectionStore
+        const probe = yield* ConnectionProbe
+        const previousTools = yield* Ref.get(probe.tools)
+        yield* Effect.addFinalizer(() => Ref.set(probe.tools, previousTools))
+        yield* Ref.set(probe.tools, [
+          ExecutorTool.make({
+            name: 'write',
+            description: 'Change entries',
+            effect: 'write',
+            input: {},
+          }),
+          ExecutorTool.make({
+            name: 'read',
+            description: 'Read entries',
+            effect: 'read',
+            input: {},
+          }),
+        ])
+        yield* store.begin(ownerActor, { service: serviceId, label: 'Work', shared: false })
+        yield* TestClock.adjust(1)
+        yield* store.begin(ownerActor, { service: serviceId, label: 'Team', shared: true })
+        const service = yield* findTools(ownerActor, { query: 'Records' })
+        expect(service.tools.map((tool) => [tool.account, tool.name])).toEqual([
+          ['Work', 'write'],
+          ['Work', 'read'],
+          ['Team', 'read'],
+        ])
+        const specific = yield* findTools(ownerActor, { query: 'Records read' })
+        expect(specific.tools.map((tool) => tool.name)).toEqual(['read', 'read', 'write'])
+        const account = yield* findTools(ownerActor, { query: 'Work' })
+        expect(account.tools.map((tool) => tool.account)).toEqual(['Work', 'Work'])
+        expect((yield* findTools(ownerActor, { query: 'unrelated' })).tools).toEqual([])
+      }),
+    )
+
+    it.effect('keeps own-text matches ahead of identity noise and bounds a flooded service', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const store = yield* ConnectionStore
+        const probe = yield* ConnectionProbe
+        const previous = yield* Ref.get(probe.tools)
+        yield* Effect.addFinalizer(() => Ref.set(probe.tools, previous))
+        yield* store.begin(ownerActor, { service: serviceId, label: 'Work', shared: false })
+        yield* TestClock.adjust(1)
+        const target = yield* store.begin(ownerActor, {
+          service: serviceId,
+          label: 'Other',
+          shared: false,
+        })
+        yield* Ref.set(probe.tools, [
+          ...Array.from({ length: 59 }, (_, index) =>
+            ExecutorTool.make({
+              name: `operation_${index}`,
+              description: 'Generic operation',
+              effect: 'read',
+              input: {},
+            }),
+          ),
+          ExecutorTool.make({
+            name: 'search',
+            description: 'Search entries',
+            effect: 'read',
+            input: {},
+          }),
+        ])
+        const found = yield* findTools(ownerActor, { query: 'how does search work', limit: 2 })
+        expect(found.tools.map((tool) => tool.name)).toEqual(['search', 'search'])
+        expect(found.tools[1]).toMatchObject({ connectionId: target.connection.id })
+        const flood = yield* findTools(ownerActor, { query: 'Records search', limit: 25 })
+        expect(flood.tools).toHaveLength(25)
+        expect(flood.tools[0]).toMatchObject({ name: 'search' })
+      }),
+    )
+
     it.effect(
       'resolves a tool beyond the ranked discovery limit and a name with no query words',
       () =>
@@ -126,6 +210,132 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           (yield* Effect.flip(resolveTool(memberActor, { account: 'Owner only', tool: 'read' })))
             ._tag,
         ).toBe('NotFound')
+      }),
+    )
+
+    /** Public discovery proves batching, threshold edges, semantic matches without
+     * lexical overlap, and descending order against real scoped Connection records. */
+    it.effect('scores 45 tools in three provider calls with threshold edges', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const probe = yield* ConnectionProbe
+        const previous = yield* Ref.get(probe.tools)
+        yield* Effect.addFinalizer(() => Ref.set(probe.tools, previous))
+        yield* Ref.set(
+          probe.tools,
+          Array.from({ length: 45 }, (_, index) =>
+            ExecutorTool.make({
+              name: `operation_${index}`,
+              description: 'Read a record',
+              effect: 'read',
+              input: {},
+            }),
+          ),
+        )
+        yield* (yield* ConnectionStore).begin(ownerActor, {
+          service: serviceId,
+          label: 'Work',
+          shared: false,
+        })
+        const sizes: number[] = []
+        const model = yield* DecisionModel.make({
+          decide: Effect.fn('Test.relevance')(function* ({ state, decisions }) {
+            sizes.push(Object.keys(decisions).length)
+            const inputs = yield* decodeInputs(state).pipe(
+              Effect.mapError(() =>
+                AiError.make({
+                  module: 'Test',
+                  method: 'decide',
+                  reason: new AiError.InvalidUserInputError({ description: 'Invalid fixture' }),
+                }),
+              ),
+            )
+            const answers: Record<string, DecisionModel.ProviderAnswer> = Object.fromEntries(
+              inputs.map((input, index) => [
+                `tool_${index}`,
+                ScriptedAnswer.cases.Probability.make({
+                  probability: Number(input.tool.replace('operation_', '')) / 100,
+                }),
+              ]),
+            )
+            return { answers, usage: { inputTokens: undefined, outputTokens: undefined } }
+          }),
+        })
+        const result = yield* findTools(ownerActor, {
+          query: 'semantically relevant without overlap',
+          limit: 25,
+        }).pipe(Effect.provideService(DecisionModel.DecisionModel, model))
+        expect(sizes.toSorted((left, right) => right - left)).toEqual([20, 20, 5])
+        expect(result.tools.map((tool) => tool.name)).toEqual(
+          Array.from({ length: 15 }, (_, index) => `operation_${44 - index}`),
+        )
+      }),
+    )
+
+    /** Discovery and use must agree after an undeclared read is recovered from Executor's
+     * default mutation hint. One cached effect answer survives both public paths. */
+    it.effect('discovery, resolution and execution share a cached read classification', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const probe = yield* ConnectionProbe
+        const previous = yield* Ref.get(probe.tools)
+        yield* Effect.addFinalizer(() => Ref.set(probe.tools, previous))
+        yield* Ref.set(probe.tools, [
+          ExecutorTool.make({
+            name: 'ask_question',
+            description: 'Answer a repository question',
+            effect: 'write',
+            input: {},
+          }),
+        ])
+        const connection = yield* (yield* ConnectionStore).begin(ownerActor, {
+          service: serviceId,
+          label: 'Wiki',
+          shared: false,
+        })
+        let effectCalls = 0
+        const modelLayer = Layer.effect(
+          DecisionModel.DecisionModel,
+          DecisionModel.make({
+            decide: ({ decisions }) => {
+              const answers: Record<string, DecisionModel.ProviderAnswer> = {}
+              for (const [key, decision] of Object.entries(decisions)) {
+                if (Predicate.isTagged(decision, 'Classify')) {
+                  effectCalls += 1
+                  answers[key] = ScriptedAnswer.cases.Classify.make({
+                    label: 'read',
+                    probabilities: { read: 0.99, write: 0.01, destructive: 0 },
+                  })
+                } else answers[key] = ScriptedAnswer.cases.Probability.make({ probability: 0.9 })
+              }
+              return Effect.succeed({
+                answers,
+                usage: { inputTokens: undefined, outputTokens: undefined },
+              })
+            },
+          }),
+        )
+        yield* Effect.gen(function* () {
+          expect(
+            (yield* findTools(ownerActor, { query: 'explain repository' })).tools.map(
+              (tool) => tool.effect,
+            ),
+          ).toEqual(['read'])
+          expect(
+            (yield* resolveTool(ownerActor, { account: 'Wiki', tool: 'ask_question' })).effect,
+          ).toBe('read')
+          yield* useTool(ownerActor, {
+            connectionId: connection.connection.id,
+            tool: 'ask_question',
+            input: {},
+            summary: 'Read documentation',
+            rationale: 'Explain the repository',
+          })
+          expect((yield* Ref.get(probe.checked)).map(({ action }) => action.effect)).toEqual([
+            'read',
+          ])
+          expect(effectCalls).toBe(1)
+        }).pipe(Effect.provide(Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer)))))
       }),
     )
   })

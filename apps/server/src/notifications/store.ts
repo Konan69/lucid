@@ -6,10 +6,12 @@ import * as Layer from 'effect/Layer'
 import {
   Notification,
   NotificationListResponse,
+  NotificationReadResponse,
   type ReadNotificationsRequest,
 } from '@vivid/contracts'
 import { ownedHere, type Actor } from '../auth/access.ts'
 import { Database, decodeStored, returned } from '../database/client.ts'
+import { announce, Topic } from '../live/changes.ts'
 import { notifications } from '../notifications/tables.ts'
 
 const decodeNotification = decodeStored(Notification, 'notification')
@@ -44,22 +46,34 @@ const makeStore = (database: Database['Service']) => {
       unreadCount: yield* unreadCount(actor),
     })
   })
-  /** A payload id can only mark the recipient's own notifications in their active workspace. */
+  /**
+   * ownedHere keeps markers recipient/workspace scoped; notifier.ts recordNotice uses the same
+   * recipient-only topic. Zero changed rows announce nothing. Count after the update and before
+   * announce so either failure rolls markers back; the reply is the count statement's view,
+   * including our own marks, rather than a global snapshot at commit. Drizzle's
+   * EffectPgSession.transaction (effect-postgres/session.js) and rc.116 SqlClient.ts make select
+   * the fiber's writing connection even for unreadCount's root-database query.
+   */
   const read = Effect.fn('NotificationStore.read')(function* (
     actor: Actor,
     request: typeof ReadNotificationsRequest.Type,
   ) {
-    if (request.ids !== undefined && request.ids.length === 0) return 0
+    if (request.ids !== undefined && request.ids.length === 0)
+      return NotificationReadResponse.make({ changed: 0, unreadCount: yield* unreadCount(actor) })
     const now = yield* Clock.currentTimeMillis
     const selected = request.ids === undefined ? undefined : inArray(notifications.id, request.ids)
-    const rows = yield* database.run(
-      database
-        .update(notifications)
-        .set({ readAt: now })
-        .where(and(ownedHere(notifications, actor), isNull(notifications.readAt), selected))
-        .returning({ id: notifications.id }),
+    return yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        const rows = yield* tx
+          .update(notifications)
+          .set({ readAt: now })
+          .where(and(ownedHere(notifications, actor), isNull(notifications.readAt), selected))
+          .returning({ id: notifications.id })
+        const unread = yield* unreadCount(actor)
+        if (rows.length > 0) yield* announce(tx, [Topic.person(actor.person.id)])
+        return NotificationReadResponse.make({ changed: rows.length, unreadCount: unread })
+      }),
     )
-    return rows.length
   })
   return { list, read, unreadCount }
 }

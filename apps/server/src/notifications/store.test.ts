@@ -105,10 +105,15 @@ describe.skipIf(!testDatabaseConfigured)('recipient notifications', () => {
         expect(own.unreadCount).toBe(1)
         expect(own.notifications[0]).toMatchObject({ kind: 'needs-you', title: notice.title })
         expect((yield* store.list(other)).notifications).toEqual([])
-        expect(yield* store.read(other, { ids: own.notifications.map((item) => item.id) })).toBe(0)
-        expect(yield* store.read(owner, { ids: [] })).toBe(0)
-        expect(yield* store.read(owner, {})).toBe(1)
-        expect(yield* store.read(owner, {})).toBe(0)
+        expect(yield* store.read(other, { ids: own.notifications.map((item) => item.id) })).toEqual(
+          {
+            changed: 0,
+            unreadCount: 0,
+          },
+        )
+        expect(yield* store.read(owner, { ids: [] })).toEqual({ changed: 0, unreadCount: 1 })
+        expect(yield* store.read(owner, {})).toEqual({ changed: 1, unreadCount: 0 })
+        expect(yield* store.read(owner, {})).toEqual({ changed: 0, unreadCount: 0 })
         expect(yield* store.unreadCount(owner)).toBe(0)
       }),
     )

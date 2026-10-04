@@ -141,6 +141,55 @@ describe('connected tool execution', () => {
         expect(JSON.stringify(result)).not.toContain('MARK-')
       }).pipe(Effect.scoped),
   )
+  it.effect(
+    'explains an already-connected account through the real runtime RPC seam using names only',
+    () =>
+      Effect.gen(function* () {
+        const { requests, rpc, tools } = yield* fixture()
+        const [, , , , add] = tools
+        const call = yield* Effect.promise(() =>
+          Promise.resolve(
+            add.run({
+              data: { address: 'https://records.example/mcp', name: 'Work Records' },
+              signal: new AbortController().signal,
+              toolCallId: 'MARK-call',
+              log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
+            }),
+          ),
+        ).pipe(Effect.forkScoped)
+        const request = yield* Queue.take(requests)
+        if (!Predicate.isTagged(request, 'Request')) expect.fail('Expected an RPC request')
+        expect(request.tag).toBe('AddIntegration')
+        expect(request.payload).toEqual({
+          address: 'https://records.example/mcp',
+          name: 'Work Records',
+          shared: false,
+        })
+        yield* rpc.write({
+          // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK protocol envelopes have no constructor in rc.116.
+          _tag: 'Exit',
+          clientId: 0,
+          requestId: request.id,
+          exit: Exit.succeed(
+            AddIntegrationOutcome.cases.AlreadyConnected.make({
+              account: 'Work Records',
+              name: 'Records',
+            }),
+          ),
+        })
+        const result = yield* Fiber.join(call)
+        expect(result).toEqual({
+          output: {
+            alreadyConnected: true,
+            // Service names identify the Integration; find_tools supplies usable account labels.
+            message:
+              'Records is already connected. Call find_tools to discover its tools and the account names you may use.',
+          },
+          terminate: false,
+        })
+        expect(JSON.stringify(result)).not.toContain('MARK-')
+      }).pipe(Effect.scoped),
+  )
   for (const kind of ['OpenSignIn', 'EnterKey'] as const) {
     it.effect(`stops the runtime turn for secure ${kind} completion`, () =>
       Effect.gen(function* () {

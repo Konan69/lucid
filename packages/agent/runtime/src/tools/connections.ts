@@ -1,5 +1,6 @@
 import { defineTool } from '@flue/runtime'
 import {
+  ConnectionStep,
   AddIntegrationOutcome,
   InvalidRequest,
   TestIntegrationOutcome,
@@ -142,7 +143,7 @@ function integrationTools(runTool: RunTool) {
     defineTool({
       name: 'find_integrations',
       description:
-        'Find your integrations first, then catalogue matches, with connected status and whether this Vivid is set up to connect them.',
+        'List up to 24 accessible integration accounts: query matches first, then newest first within each group. omittedAccounts counts accessible accounts left out; narrow the query to surface them. Then list up to 24 catalogue matches, with connected status and whether this Vivid is set up to connect them.',
       input: v.object({ query: v.pipe(v.string(), v.maxLength(200)) }),
       /** Access is rechecked by the server for the injected acting Person. */
       run({ data, signal }) {
@@ -176,7 +177,11 @@ function integrationTools(runTool: RunTool) {
               yield* warnFailure('add_integration', outcome._tag)
             return {
               output: connectionViews.added(outcome),
-              terminate: AddIntegrationOutcome.isAnyOf(['NeedsSignIn', 'NeedsKey'])(outcome),
+              // A resumed sign-in shows the same card as a new one, so the Run stops for it too.
+              terminate:
+                AddIntegrationOutcome.isAnyOf(['NeedsSignIn', 'NeedsKey'])(outcome) ||
+                (AddIntegrationOutcome.guards.PendingAuthorization(outcome) &&
+                  !ConnectionStep.guards.Done(outcome.step)),
             }
           }),
           { signal, tool: 'add_integration' },

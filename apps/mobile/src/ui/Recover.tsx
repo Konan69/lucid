@@ -1,4 +1,5 @@
-import { Component, createContext, useContext, type ReactNode } from 'react'
+import { Component, createContext, useContext, type ErrorInfo, type ReactNode } from 'react'
+import { reportFault } from '../data/fault'
 
 interface Props {
   /** What is drawn in place of the part that broke. It can offer `useAgain()` as a way back. */
@@ -39,6 +40,14 @@ export class Recover extends Component<Props, State> {
 
   static getDerivedStateFromProps(props: Props, state: State): State | null {
     return props.from === state.from ? null : { broken: false, from: props.from }
+  }
+
+  /**
+   * Catching the error here hides it from everyone but the Person looking at the fallback, so it
+   * is reported to the server's log as it is caught (`data/fault.ts`).
+   */
+  override componentDidCatch(error: Error, info: ErrorInfo) {
+    reportFault(error, info.componentStack === undefined ? null : info.componentStack)
   }
 
   readonly again = () => this.setState({ broken: false })

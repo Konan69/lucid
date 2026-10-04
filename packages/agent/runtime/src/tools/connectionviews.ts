@@ -4,6 +4,7 @@ import {
   ConnectionAuthorizationMessage,
   ConnectionMatch,
   ConnectionState,
+  ConnectionStep,
   ServiceAuthorization,
   TestIntegrationOutcome,
   type FindIntegrationsResponse,
@@ -16,6 +17,7 @@ import { approval, modelText } from './views.ts'
 export function integrations(response: FindIntegrationsResponse) {
   return {
     catalog: response.catalog,
+    omittedAccounts: response.omittedAccounts,
     integrations: response.integrations.map((entry) =>
       ConnectionMatch.match<typeof Schema.Json.Type>(entry, {
         Account: ({ name, account, connected, shared, state }) => ({
@@ -49,15 +51,39 @@ export function integrations(response: FindIntegrationsResponse) {
 }
 
 /** Authorization references are the existing card exception; ownership and foreign ids stay hidden. */
-export function added(outcome: AddIntegrationOutcome) {
+export function added(outcome: AddIntegrationOutcome): typeof Schema.Json.Type {
   return AddIntegrationOutcome.match<typeof Schema.Json.Type>(outcome, {
     Added: ({ account }) => ({ added: true, account: modelText(account) }),
+    AlreadyConnected: ({ name }) => ({
+      alreadyConnected: true,
+      message: `${modelText(name)} is already connected. Call find_tools to discover its tools and the account names you may use.`,
+    }),
+    Failed: ({ name }) => ({
+      added: false,
+      message: `${modelText(name)} has failed. Remove ${modelText(name)} in Integrations settings before connecting again. Call find_tools for the account names you may use.`,
+    }),
+    AwaitingInitiator: ({ name }) => ({
+      added: false,
+      message: `${modelText(name)} is a Company Integration waiting for the Person who started it to finish signing in. Call find_tools for the account names you may use.`,
+    }),
+    PendingAuthorization: ({ account, step }) =>
+      ConnectionStep.match(step, {
+        Done: ({ connection }) =>
+          added(
+            AddIntegrationOutcome.cases.AlreadyConnected.make({
+              account,
+              name: connection.serviceName,
+            }),
+          ),
+        OpenSignIn: (value) => added(AddIntegrationOutcome.cases.NeedsSignIn.make({ step: value })),
+        EnterKey: (value) => added(AddIntegrationOutcome.cases.NeedsKey.make({ step: value })),
+      }),
     NeedsSignIn: ({ step }) =>
       ConnectionAuthorizationMessage.make({
         kind: 'connection-request',
         service: step.connection.service,
         serviceName: modelText(step.connection.serviceName),
-        reason: 'Sign in to finish connecting this integration.',
+        reason: `Sign in to finish connecting ${modelText(step.connection.serviceName)}. Call find_tools for the account names you may use.`,
         ready: false,
         authorization: ConnectionAuthorization.cases.OpenSignIn.make({
           connectionId: step.connection.id,
@@ -68,7 +94,7 @@ export function added(outcome: AddIntegrationOutcome) {
         kind: 'connection-request',
         service: step.connection.service,
         serviceName: modelText(step.connection.serviceName),
-        reason: 'Enter the key in the secure dialog to finish connecting this integration.',
+        reason: `Enter the key in the secure dialog to finish connecting ${modelText(step.connection.serviceName)}. Call find_tools for the account names you may use.`,
         ready: false,
         authorization: ConnectionAuthorization.cases.EnterKey.make({
           connectionId: step.connection.id,

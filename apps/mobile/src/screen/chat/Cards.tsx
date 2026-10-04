@@ -20,9 +20,10 @@ import { useLiveData } from '../../data/live'
 import { Card, cardOf, type ToolPart } from '../../data/message'
 import { useAppearance } from '../../data/vivid'
 import { useTheme } from '../../theme'
-import { Button, Dot, EDGE, Field, Label, Notice, Press, radius, styles } from '../../ui/ui'
+import { Button, EDGE, Label, Notice, radius, styles } from '../../ui/ui'
 import { IntegrationCard } from '../integration/Card'
 import { Exactly } from './Exactly'
+import { Asked, Question } from './Question'
 import { Display } from './Shown'
 
 /**
@@ -292,125 +293,68 @@ function ApprovalCard({ approval, me }: { approval: Approval; me: PersonId }) {
   )
 }
 
-/** Where a question stands: waiting on someone, answered and by whom, or no longer needed. */
-function Standing({ request, mine }: { request: InputRequest; mine: boolean }) {
-  return InputRequestState.match(request.state, {
-    Waiting: () =>
-      mine ? (
-        <Answering request={request} />
-      ) : (
-        <Label size="label" tone="ink-2">
-          Waiting on {request.askedOf.name}.
-        </Label>
-      ),
-    Answered: ({ answeredBy, answer }) => (
-      <Label size="label" tone="ink-2">
-        <Label size="label" tone="ink-2">{`${answeredBy.name} said: `}</Label>
-        {answer}
-      </Label>
-    ),
-    Withdrawn: () => (
-      <Label size="label" tone="ink-2">
-        No longer needed.
-      </Label>
-    ),
-  })
-}
-
 /**
- * A question Vivid could not answer alone. The Person it is addressed to picks an option or
- * writes their own answer; once answered, the card says what was said and by whom.
+ * A question Vivid could not answer alone. The Person it is addressed to presses an option or
+ * writes their own answer; once answered, the card closes down to what was said, and by whom
+ * when that was someone else. The card itself is `Question`: this reads the server's record into
+ * it and sends the answer.
+ *
+ * The phone answers the press in the hand at the moment it is made, and the pressed row says it
+ * is on its way until the Thread's live detail says the question is answered. It is the record
+ * that closes the card, not the call returning: the call can come back a moment before the
+ * record does, and rows that woke up for that moment could be pressed a second time.
  */
 function InputCard({ request, me }: { request: InputRequest; me: PersonId }) {
   // The name this Person or their Company gave Vivid, live.
   const vivid = useAppearance()
+  const data = useLiveData()
+  const [sending, setSending] = useState(Option.none<string>())
+  const [refused, setRefused] = useState(false)
   const mine = request.askedOf.id === me
+
+  async function answer(text: string) {
+    commit()
+    setRefused(false)
+    setSending(Option.some(text))
+    const result = await data.change((client) =>
+      client.AnswerInput({ id: request.id, answer: text }),
+    )
+    if (Result.isSuccess(result)) return
+    setSending(Option.none())
+    setRefused(true)
+  }
+
+  // Each standing is said to be an `Asked`, so the three branches agree on the union and not
+  // on whichever one is written first.
+  const asked = InputRequestState.match(request.state, {
+    Waiting: (): Asked =>
+      mine
+        ? Asked.Open({ sending, onAnswer: (text) => void answer(text) })
+        : Asked.Resting({ note: `Waiting on ${request.askedOf.name}.` }),
+    Answered: ({ answer: said, answeredBy }): Asked =>
+      Asked.Answered({
+        answer: said,
+        note: answeredBy.id === me ? Option.none() : Option.some(`Answered by ${answeredBy.name}`),
+      }),
+    Withdrawn: (): Asked => Asked.Resting({ note: 'No longer needed.' }),
+  })
   return (
-    <Shell
-      icon={<Dot tone="status-attention" size={6} />}
-      kind={
-        InputRequestState.guards.Waiting(request.state)
+    <Question
+      // Only the Person it is waiting on is told it needs them.
+      status={
+        InputRequestState.guards.Waiting(request.state) && mine
           ? `${vivid.name} needs you`
           : `${vivid.name} asked`
       }
-      tone="status-attention"
-    >
-      <Label size="footnote" style={{ fontSize: 15 }}>
-        {request.question}
-      </Label>
-      <Standing request={request} mine={mine} />
-    </Shell>
-  )
-}
-
-/** The options and the free answer, for the Person the question is addressed to. */
-function Answering({ request }: { request: InputRequest }) {
-  const data = useLiveData()
-  const { colors: c } = useTheme()
-  const [own, setOwn] = useState('')
-  const [refused, setRefused] = useState(false)
-
-  async function answer(text: string) {
-    const body = text.trim()
-    if (body.length === 0) return
-    commit()
-    setRefused(false)
-    const result = await data.change((client) =>
-      client.AnswerInput({ id: request.id, answer: body }),
-    )
-    setRefused(Result.isFailure(result))
-  }
-
-  return (
-    <View style={{ gap: 8 }}>
-      {request.options.map((option) => (
-        <Press
-          key={option.label}
-          accessibilityRole="button"
-          onPress={() => void answer(option.label)}
-          style={({ pressed }) => ({
-            minHeight: 44,
-            paddingHorizontal: 12,
-            paddingVertical: 9,
-            justifyContent: 'center',
-            borderRadius: radius.card - 6,
-            borderWidth: EDGE,
-            borderColor: c.border,
-            backgroundColor: pressed ? c['wash-pressed'] : c['subtle-strong'],
-          })}
-        >
-          <Label size="footnote">{option.label}</Label>
-          {option.detail.length > 0 && (
-            <Label size="label" tone="ink-2">
-              {option.detail}
-            </Label>
-          )}
-        </Press>
-      ))}
-      {request.allowsOwnAnswer && (
-        <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8 }}>
-          <Field
-            accessibilityLabel="Your answer"
-            value={own}
-            placeholder="Or say it your way"
-            multiline
-            onChangeText={setOwn}
-            style={{
-              flex: 1,
-              minHeight: 44,
-              paddingVertical: 10,
-              backgroundColor: c['subtle-strong'],
-            }}
-          />
-          <Button
-            kind="primary"
-            label="Answer"
-            disabled={own.trim().length === 0}
-            onPress={() => void answer(own)}
-          />
-        </View>
-      )}
-      {refused && <Notice message="That answer did not go through. It may already be answered." />}
-    </View>
+      title={request.question}
+      choices={request.options}
+      allowsOwn={request.allowsOwnAnswer}
+      asked={asked}
+      problem={
+        refused
+          ? Option.some('That answer did not go through. It may already be answered.')
+          : Option.none()
+      }
+    />
   )
 }

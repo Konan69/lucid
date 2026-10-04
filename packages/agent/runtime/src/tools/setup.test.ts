@@ -53,6 +53,7 @@ it.effect(
         requestId: request.id,
         exit: Exit.succeed({
           catalog: 'available',
+          omittedAccounts: 0,
           integrations: [
             ConnectionMatch.cases.Catalog.make({
               name: 'Google Calendar',

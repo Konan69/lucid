@@ -133,6 +133,13 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     }),
   })
 
+  /** Only the configured provider's key is sent; the server reads these two names itself. */
+  const decisionAccess = Option.match(environment.decisions, {
+    onNone: () => ({}),
+    onSome: ({ provider, key }) =>
+      provider === 'TypeSafe' ? { TYPESAFE_API_KEY: key } : { OPENROUTER_API_KEY: key },
+  })
+
   /** Flue keeps its durable state in PostgreSQL, so the runtime needs no volume of its own. */
   yield* Railway.Service('Runtime', {
     project,
@@ -194,6 +201,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       EXPLABS_API_KEY: environment.modelGatewayKey,
       VIVID_HELIX_URL: privateUrl(serviceNames.helix, ports.helix),
       ...executorAccess,
+      ...decisionAccess,
       /** Where `apps/server/Dockerfile` leaves the built web app; the server serves it itself. */
       VIVID_WEB_DIST: '/app/apps/web/dist',
       /** Where the same image leaves the mobile app's over-the-air update (`/api/updates`). */

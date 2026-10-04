@@ -9,6 +9,7 @@ import { routineWebhookRoutes } from '../routines/webhook.ts'
 import { rpcServerLayer } from '../rpc/server.ts'
 import { gatewayRoutes } from '../threads/gateway.ts'
 import { bytesRoutes } from './bytes.ts'
+import { faultRoutes } from './faults.ts'
 
 /**
  * Better Auth's organization plugin publishes its own routes for creating Companies, inviting and
@@ -42,8 +43,8 @@ const healthRoute = HttpRouter.add(
  * Everything the server answers. Product calls are `VividRpc` (`/api/live`, `/api/rpc`). The rest
  * is plain HTTP only where something other than our client is on the other end: Better Auth, the
  * Flue client talking to the conversation gateway, a provider redirecting back after sign-in, an
- * outside service calling a Routine's webhook, a browser moving Library bytes, and the Computer's
- * screen. The mobile app's update check (`updates/routes.ts`) is plain HTTP too and is added in
+ * outside service calling a Routine's webhook, a browser moving Library bytes, the Computer's
+ * screen, and a client reporting that it failed to draw (`faults.ts`). The mobile app's update check (`updates/routes.ts`) is plain HTTP too and is added in
  * `main.ts`, because whether it exists depends on launch configuration.
  */
 export const routerLayer = Layer.mergeAll(
@@ -52,6 +53,7 @@ export const routerLayer = Layer.mergeAll(
   authRoute,
   gatewayRoutes,
   bytesRoutes,
+  faultRoutes,
   connectionReturnRoutes,
   routineWebhookRoutes,
   computerScreenRoutes,

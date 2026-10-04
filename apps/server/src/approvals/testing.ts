@@ -34,6 +34,8 @@ import {
   DatabaseFailure,
 } from '@vivid/contracts'
 import { type Actor, summaryOf } from '../auth/access.ts'
+import { Review } from './policy.ts'
+import { Reviewer } from './review.ts'
 import { personTable } from '../auth/tables.ts'
 import { auditLayer } from '../audit/record.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
@@ -64,6 +66,9 @@ interface ObservationService {
   readonly notices: Ref.Ref<ReadonlyArray<Notice>>
   readonly topics: Ref.Ref<ReadonlyArray<Topic>>
   readonly judgment: Ref.Ref<Judgment>
+  /** What the reviewer port answers next; the default is an unasked action that reaches others. */
+  readonly review: Ref.Ref<Review>
+  readonly reviewCalls: Ref.Ref<ReadonlyArray<ProposedAction>>
   readonly outcome: Ref.Ref<ActionOutcome>
   readonly judgeCalls: Ref.Ref<ReadonlyArray<ReadonlyArray<Rule>>>
   readonly runnerDefect: Ref.Ref<boolean>
@@ -88,6 +93,10 @@ const ports = Layer.effectContext(
       judgeCalls: yield* Ref.make<ReadonlyArray<ReadonlyArray<Rule>>>([]),
       runnerDefect: yield* Ref.make(false),
       judgment: yield* Ref.make<Judgment>(Judgment.cases.All.make({})),
+      review: yield* Ref.make<Review>(
+        Review.cases.Reviewed.make({ asked: 0, consequence: 'reaches' }),
+      ),
+      reviewCalls: yield* Ref.make<ReadonlyArray<ProposedAction>>([]),
       outcome: yield* Ref.make<ActionOutcome>(
         ActionOutcome.cases.Succeeded.make({ result: 'Done' }),
       ),
@@ -117,6 +126,13 @@ const ports = Layer.effectContext(
           return rules.filter((rule) => RuleScope.guards.Personal(rule.scope))
         if (Judgment.guards.Failed(judgment)) return yield* Effect.fail(new RulesNotJudged({}))
         return Judgment.guards.None(judgment) ? [] : rules
+      }),
+    })
+    const reviewer = Reviewer.of({
+      /** Tests set the two measurements; `policy.ts` and the gate's precedence stay production. */
+      review: Effect.fn('TrustTest.review')(function* (_actor, action) {
+        yield* Ref.update(state.reviewCalls, (calls) => calls.concat([action]))
+        return yield* Ref.get(state.review)
       }),
     })
     const runner = ActionRunner.of({
@@ -177,6 +193,7 @@ const ports = Layer.effectContext(
     })
     return Context.make(Observation, state).pipe(
       Context.add(RuleJudge, judge),
+      Context.add(Reviewer, reviewer),
       Context.add(ActionRunner, runner),
       Context.add(Conversation, conversation),
       Context.add(Notifier, notifier),

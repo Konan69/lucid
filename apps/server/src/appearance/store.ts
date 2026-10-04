@@ -17,6 +17,10 @@ import {
 } from '../database/client.ts'
 import { SettingsStore } from '../settings/store.ts'
 import { settingsTable } from '../settings/tables.ts'
+import { announce, Topic } from '../live/changes.ts'
+
+/** The database callback is the sole authority for writing and announcing on one connection. */
+type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
 
 /**
  * Whose Vivid is being asked about: the Person's own in their personal space, or the one a
@@ -65,6 +69,13 @@ const columns = (table: typeof settingsTable | typeof companyTable) => ({
   vividOutline: table.vividOutline,
 })
 
+/** An appearance belongs to its stored owner; a Company write never moves the writer's Person. */
+const appearanceTopics = (owner: AppearanceOwner): ReadonlyArray<Topic> =>
+  AppearanceOwner.$match(owner, {
+    Person: ({ personId }) => [Topic.person(personId)],
+    Company: ({ companyId }) => [Topic.company(companyId)],
+  })
+
 const makeAppearanceStore = Effect.fn('AppearanceStore.make')(function* () {
   const database = yield* Database
   const settings = yield* SettingsStore
@@ -101,53 +112,71 @@ const makeAppearanceStore = Effect.fn('AppearanceStore.make')(function* () {
     })
   })
 
+  /** SettingsStore remains the single lazy-row creator; its statements join this transaction. */
   const setPerson = Effect.fn('AppearanceStore.setPerson')(function* (
+    tx: Transaction,
     personId: PersonId,
     appearance: Appearance,
+    now: number,
   ) {
     yield* settings.get(personId)
-    const now = yield* Clock.currentTimeMillis
-    const rows = yield* database.run(
-      database
-        .update(settingsTable)
-        .set({
-          vividName: appearance.name,
-          vividLook: appearance.look,
-          vividOutline: appearance.outline,
-          updatedAt: new Date(now),
-        })
-        .where(eq(settingsTable.personId, personId))
-        .returning(columns(settingsTable)),
-    )
-    return yield* stored(yield* returned(rows, 'Appearance'))
+    return yield* tx
+      .update(settingsTable)
+      .set({
+        vividName: appearance.name,
+        vividLook: appearance.look,
+        vividOutline: appearance.outline,
+        updatedAt: new Date(now),
+      })
+      .where(eq(settingsTable.personId, personId))
+      .returning(columns(settingsTable))
   })
 
+  /** The Company's appearance columns are replaced together; unrelated Company data is untouched. */
   const setCompany = Effect.fn('AppearanceStore.setCompany')(function* (
+    tx: Transaction,
     companyId: CompanyId,
     appearance: Appearance,
   ) {
-    const rows = yield* database.run(
-      database
-        .update(companyTable)
-        .set({
-          vividName: appearance.name,
-          vividLook: appearance.look,
-          vividOutline: appearance.outline,
-        })
-        .where(eq(companyTable.id, companyId))
-        .returning(columns(companyTable)),
-    )
-    return yield* stored(yield* returned(rows, 'Appearance'))
+    return yield* tx
+      .update(companyTable)
+      .set({
+        vividName: appearance.name,
+        vividLook: appearance.look,
+        vividOutline: appearance.outline,
+      })
+      .where(eq(companyTable.id, companyId))
+      .returning(columns(companyTable))
   })
 
+  /** Decode before announcing so invalid stored values fail the same writing unit. */
+  const replace = Effect.fn('AppearanceStore.replace')(function* (
+    tx: Transaction,
+    owner: AppearanceOwner,
+    appearance: Appearance,
+    now: number,
+  ) {
+    const rows = yield* AppearanceOwner.$match(owner, {
+      Person: ({ personId }) => setPerson(tx, personId, appearance, now),
+      Company: ({ companyId }) => setCompany(tx, companyId, appearance),
+    })
+    const saved = yield* stored(yield* returned(rows, 'Appearance'))
+    yield* announce(tx, appearanceTopics(owner))
+    return saved
+  })
+
+  /**
+   * Lazy Settings creation, the decoded appearance and its owner's notice commit as one unit.
+   * live/changes.ts announce uses the writing connection. Drizzle's EffectPgSession.transaction
+   * (effect-postgres/session.js) and rc.116 SqlClient.ts make select the fiber's transaction
+   * connection, so SettingsStore.get's root-database insert and select join it too.
+   */
   const set = Effect.fn('AppearanceStore.set')(function* (
     owner: AppearanceOwner,
     appearance: Appearance,
   ) {
-    return yield* AppearanceOwner.$match(owner, {
-      Person: ({ personId }) => setPerson(personId, appearance),
-      Company: ({ companyId }) => setCompany(companyId, appearance),
-    })
+    const now = yield* Clock.currentTimeMillis
+    return yield* database.transaction((tx) => replace(tx, owner, appearance, now))
   })
 
   return AppearanceStore.of({ get, set })

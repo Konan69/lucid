@@ -32,6 +32,8 @@ import {
 import { callableTool, discoveredTool } from '../code/signatures.ts'
 import { executorFailure } from './errors.ts'
 import { ConnectionStore } from './store.ts'
+import { relevantTools, TOOL_CANDIDATE_LIMIT } from './relevance.ts'
+import { ToolEffects } from './effects.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
 
 /** Provider schemas stay on this server projection; discovery publishes only rendered signatures. */
@@ -39,6 +41,7 @@ const NamedTool = ExecutorTool.pipe(
   Schema.fieldsAssign({
     connectionId: ConnectionTool.fields.connectionId,
     account: ConnectionTool.fields.account,
+    serviceName: Schema.String,
   }),
 )
 
@@ -47,20 +50,29 @@ const isResourceMissing = Schema.is(ExecutorResourceMissing)
 /** Distinct query words prevent repeated tokens from inflating relevance. */
 const words = (value: string) => new Set(value.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])
 
-/** Rank plain metadata only; ties preserve provider ordering. */
-const rank = <A extends { readonly name: string; readonly description: string }>(
+/** Tool capability words outrank identity words, so broad account labels cannot crowd a
+ * specific operation out of the bound. Stable ties retain provider order. */
+const rank = <A>(
   items: readonly A[],
   query: string,
   limit: number,
+  texts: (item: A) => { readonly own: string; readonly identity: string },
 ): readonly A[] => {
   const queryWords = words(query)
+  const score = (text: string) => [...words(text)].filter((word) => queryWords.has(word)).length
   const scored = items.flatMap((item) => {
-    const score = [...words(`${item.name} ${item.description}`)].filter((word) =>
-      queryWords.has(word),
-    ).length
-    return score === 0 ? [] : [{ item, score }]
+    const text = texts(item)
+    const own = score(text.own)
+    const identity = score(text.identity)
+    return own + identity === 0 ? [] : [{ item, own, identity }]
   })
-  return Arr.sortWith(scored, (item) => item.score, Order.flip(Order.Number))
+  return Arr.sort(
+    scored,
+    Order.combine(
+      Order.mapInput(Order.flip(Order.Number), (entry: (typeof scored)[number]) => entry.own),
+      Order.mapInput(Order.flip(Order.Number), (entry: (typeof scored)[number]) => entry.identity),
+    ),
+  )
     .slice(0, limit)
     .map(({ item }) => item)
 }
@@ -73,10 +85,31 @@ const projectTools = Effect.fn('Connections.projectTools')(function* (
   account: string,
 ) {
   const tools = yield* store.tools(actor, row)
-  return tools.flatMap((tool) =>
+  const classified = yield* classifyTools(row, tools)
+  return classified.flatMap((tool) =>
     row.companyId !== null && tool.effect !== 'read'
       ? []
-      : [NamedTool.make({ ...tool, connectionId: row.id, account })],
+      : [NamedTool.make({ ...tool, connectionId: row.id, account, serviceName: row.serviceName })],
+  )
+})
+
+/** All projections share the same authority and cache; ids are used only locally. */
+const classifyTools = Effect.fn('Connections.classifyTools')(function* (
+  row: ConnectionRecord,
+  tools: readonly (typeof ExecutorTool.Type)[],
+) {
+  const effects = yield* ToolEffects
+  return yield* Effect.forEach(
+    tools,
+    Effect.fn('Connections.classifyTool')(function* (tool) {
+      const effect = yield* effects.classify({
+        serviceId: row.service,
+        service: row.serviceName,
+        tool,
+      })
+      return ExecutorTool.make({ ...tool, effect })
+    }),
+    { concurrency: 4 },
   )
 })
 
@@ -125,7 +158,10 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     (service) => !records.some((row) => row.service === service.id && row.status === 'ready'),
   )
   const offered = yield* Effect.forEach(
-    rank(unconnected, request.query, 3),
+    rank(unconnected, request.query, 3, (service) => ({
+      own: `${service.name} ${service.description}`,
+      identity: '',
+    })),
     (service) => store.service(service.id),
     { concurrency: 3 },
   ).pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
@@ -134,9 +170,27 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     return yield* Effect.fail(
       new InvalidRequest({ message: 'Tool limit must be a positive number.' }),
     )
+  const available = groups.flat().filter(callableTool)
+  const lexical = rank(available, request.query, available.length, (tool) => ({
+    own: `${tool.name} ${tool.description}`,
+    identity: `${tool.serviceName} ${tool.account}`,
+  }))
+  // Zero lexical overlap must still get a semantic judgment when capacity permits.
+  const candidates =
+    available.length > TOOL_CANDIDATE_LIMIT
+      ? Arr.dedupe([...lexical, ...available]).slice(0, TOOL_CANDIDATE_LIMIT)
+      : available
+  const ordered = yield* relevantTools(request.query, candidates).pipe(
+    Effect.map((scores) => scores.map(({ tool }) => tool)),
+    Effect.catch(() =>
+      Effect.logWarning('Tool relevance unavailable; using lexical discovery').pipe(
+        Effect.as(lexical),
+      ),
+    ),
+  )
   return {
     tools: yield* Effect.forEach(
-      rank(groups.flat().filter(callableTool), request.query, Math.min(25, Math.floor(limit))),
+      ordered.slice(0, Math.min(25, Math.floor(limit))),
       Effect.fn('Connections.discoveredTool')(function* (tool) {
         return DiscoveredTool.make({
           connectionId: tool.connectionId,
@@ -274,7 +328,8 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
   )
   if (Option.isNone(tools))
     return ToolOutcome.cases.Rejected.make({ message: 'Integrations are unavailable.' })
-  const tool = tools.value.find((entry) => entry.name === request.tool)
+  const classified = yield* classifyTools(row, tools.value)
+  const tool = classified.find((entry) => entry.name === request.tool)
   if (tool === undefined)
     return ToolOutcome.cases.Rejected.make({
       message: `Tool ${request.tool} is not available on this integration.`,
@@ -357,7 +412,8 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
         ),
       ),
     )
-    const tool = discovered.find((entry) => entry.name === input.target.tool)
+    const classified = yield* classifyTools(row, discovered)
+    const tool = classified.find((entry) => entry.name === input.target.tool)
     if (tool === undefined || (row.companyId !== null && tool.effect !== 'read'))
       return ActionOutcome.cases.Failed.make({
         reason: 'This tool is no longer available on this integration.',
