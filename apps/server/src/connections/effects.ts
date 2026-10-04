@@ -1,7 +1,24 @@
-import { Cache, Context, Data, Effect, Exit, Layer, Request, RequestResolver, Schema } from 'effect'
+import {
+  Cache,
+  Cause,
+  Context,
+  Data,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Request,
+  RequestResolver,
+  Schema,
+} from 'effect'
 import { Decision, DecisionModel } from 'effect/unstable/ai'
 import { type ServiceId } from '@vivid/contracts'
-import { decideWithin, decisionConfigured, DecisionUnavailable } from '../decisions/model.ts'
+import {
+  decideWithin,
+  decisionConfigured,
+  DecisionUnavailable,
+  isDecisionNonEvent,
+} from '../decisions/model.ts'
 import { ExecutorTool } from './executor.ts'
 
 /** Removing an Approval requires near-certainty. Experiential Labs gateway, 4 Oct 2026:
@@ -225,7 +242,7 @@ export const toolEffectsLayer = Layer.effect(
         const discovery = yield* discoveryClassification
         return yield* Effect.request(new Classification({ key, discovery }), resolver).pipe(
           Effect.tapError((error) =>
-            error.reason === 'Backoff'
+            isDecisionNonEvent(error)
               ? Effect.void
               : Effect.logWarning('Tool effect unavailable', {
                   tag: error._tag,
@@ -236,7 +253,11 @@ export const toolEffectsLayer = Layer.effect(
       }),
       {
         capacity: EFFECT_CACHE_CAPACITY,
-        timeToLive: (exit) => (Exit.isSuccess(exit) ? EFFECT_CACHE_TTL : EFFECT_FAILURE_TTL),
+        timeToLive: (exit) => {
+          if (Exit.isSuccess(exit)) return EFFECT_CACHE_TTL
+          const error = Cause.findErrorOption(exit.cause)
+          return Option.exists(error, isDecisionNonEvent) ? '0 millis' : EFFECT_FAILURE_TTL
+        },
       },
     )
     /** The cache key excludes mode, so competing discovery/use callers share one lookup. */

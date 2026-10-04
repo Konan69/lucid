@@ -1,8 +1,9 @@
 import { expect, it } from '@effect/vitest'
-import { Deferred, Effect, Fiber, Layer } from 'effect'
-import { unconfiguredDecisionLayer } from '../decisions/model.ts'
+import { Deferred, Effect, Fiber, Layer, Redacted } from 'effect'
+import { unconfiguredDecisionLayer, gatewayDecisionLayer } from '../decisions/model.ts'
 import { ScriptedAnswer } from '../decisions/testing.ts'
 import * as TestClock from 'effect/testing/TestClock'
+import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 import { AiError, DecisionModel } from 'effect/unstable/ai'
 import { ServiceId } from '@vivid/contracts'
 import { ExecutorTool } from './executor.ts'
@@ -443,6 +444,55 @@ it.effect('one malformed batch answer keeps every tool write for a minute', () =
           usage: { inputTokens: undefined, outputTokens: undefined },
         })
       }),
+    ),
+  )
+})
+
+/** A gated lookup has no metadata evidence to cache. After the shared gate recovers,
+ * the same key must immediately ask again rather than retaining a one-minute write. */
+it.effect('Backoff exits are not cached beyond provider recovery', () => {
+  let calls = 0
+  const transport = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((httpRequest) => {
+      calls += 1
+      const response =
+        calls === 1
+          ? new Response('{}', { status: 503 })
+          : new Response(
+              JSON.stringify({
+                model: 'jev-latest',
+                answers: {
+                  effect: {
+                    type: 'choice',
+                    confidence: 0.99,
+                    choice: 'read',
+                    probabilities: { read: 0.99, write: 0.01, destructive: 0 },
+                  },
+                },
+              }),
+            )
+      return Effect.succeed(HttpClientResponse.fromWeb(httpRequest, response))
+    }),
+  )
+  return Effect.gen(function* () {
+    const effects = yield* ToolEffects
+    expect(yield* effects.classify(request)).toBe('write')
+    const gated = { ...request, tool: ExecutorTool.make({ ...request.tool, name: 'other_read' }) }
+    expect(yield* effects.classify(gated)).toBe('write')
+    expect(calls).toBe(1)
+    yield* TestClock.adjust('30 seconds')
+    expect(yield* effects.classify(gated)).toBe('read')
+    expect(calls).toBe(2)
+  }).pipe(
+    Effect.provide(
+      toolEffectsLayer.pipe(
+        Layer.provide(
+          gatewayDecisionLayer({ key: Redacted.make('test'), model: 'jev-latest' }).pipe(
+            Layer.provide(transport),
+          ),
+        ),
+      ),
     ),
   )
 })

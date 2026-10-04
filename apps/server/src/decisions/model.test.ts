@@ -2,7 +2,7 @@ import * as TestClock from 'effect/testing/TestClock'
 import { expect, it } from '@effect/vitest'
 import { ConfigProvider, Deferred, Effect, Fiber, Layer, Logger, Predicate, Schema } from 'effect'
 import { AiError, Decision, DecisionModel } from 'effect/unstable/ai'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
 import {
   decide,
   decideWithin,
@@ -190,7 +190,8 @@ it.effect('shares provider backoff and admits only one successful recovery probe
       HttpClient.make(
         Effect.fn('Test.gateway')(function* (request) {
           requests += 1
-          if (requests === 1) return HttpClientResponse.fromWeb(request, new Response('{}'))
+          if (requests === 1)
+            return HttpClientResponse.fromWeb(request, new Response('{}', { status: 503 }))
           if (requests === 2) {
             yield* Deferred.succeed(started, undefined)
             yield* Deferred.await(release)
@@ -232,8 +233,8 @@ it.effect('shares provider backoff and admits only one successful recovery probe
         JSON.stringify(line).includes('Decision availability backoff'),
       )
       expect(transitions).toHaveLength(2)
-      expect(JSON.stringify(transitions)).toContain('opened')
-      expect(JSON.stringify(transitions)).toContain('closed')
+      expect(JSON.stringify(transitions)).toContain('Opened')
+      expect(JSON.stringify(transitions)).toContain('Closed')
       // Configuration, three actual attempts and two transitions; gated calls log nothing.
       expect(lines).toHaveLength(6)
     }).pipe(
@@ -249,38 +250,78 @@ it.effect('shares provider backoff and admits only one successful recovery probe
   }),
 )
 
-/** Stalls open the same gate as provider failures. A failed recovery probe starts a fresh window
- * without announcing the same outage again; no wall-clock sleep is involved. */
-it.effect('timeout and a failed recovery probe each enforce a new cooling window', () =>
-  Effect.gen(function* () {
-    let requests = 0
-    const started = yield* Deferred.make<void>()
-    const transport = Layer.succeed(
-      HttpClient.HttpClient,
-      HttpClient.make((request) => {
-        requests += 1
-        if (requests === 1)
-          return Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
-        return Effect.succeed(HttpClientResponse.fromWeb(request, new Response('{}')))
-      }),
-    )
-    yield* Effect.gen(function* () {
-      const first = yield* decideWithin(definition, 'stall', '2 seconds').pipe(Effect.forkChild)
-      yield* Deferred.await(started)
-      yield* TestClock.adjust('2 seconds')
-      expect((yield* Effect.flip(Fiber.join(first))).reason).toBe('TimedOut')
-      expect((yield* Effect.flip(decide(definition, 'blocked'))).reason).toBe('Backoff')
-      yield* TestClock.adjust('30 seconds')
-      expect((yield* Effect.flip(decide(definition, 'failed probe'))).reason).toBe('Provider')
-      yield* TestClock.adjust('29 seconds')
-      expect((yield* Effect.flip(decide(definition, 'fresh window'))).reason).toBe('Backoff')
-      expect(requests).toBe(2)
-      yield* TestClock.adjust('1 second')
-      expect((yield* Effect.flip(decide(definition, 'next probe'))).reason).toBe('Provider')
-      expect(requests).toBe(3)
-    }).pipe(Effect.provide(configuredGateway(transport)))
-  }),
-)
+/** One short optional timeout cannot penalize every tenant. Two consecutive stalls open
+ * admission; the recovery probe is capped at two seconds even for a ten-second caller. */
+it.effect('requires two timeouts and caps a failed recovery probe at two seconds', () => {
+  let requests = 0
+  const transport = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make(() => {
+      requests += 1
+      return Effect.never
+    }),
+  )
+  return Effect.gen(function* () {
+    for (const attempt of [1, 2]) {
+      const pending = yield* decideWithin(definition, 'stall', '100 millis').pipe(Effect.forkChild)
+      yield* TestClock.adjust('100 millis')
+      expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
+      expect(requests).toBe(attempt)
+    }
+    expect((yield* Effect.flip(decide(definition, 'blocked'))).reason).toBe('Backoff')
+    yield* TestClock.adjust('30 seconds')
+    const probe = yield* decide(definition, 'ten second caller').pipe(Effect.forkChild)
+    yield* TestClock.adjust('2 seconds')
+    expect((yield* Effect.flip(Fiber.join(probe))).reason).toBe('TimedOut')
+    expect(requests).toBe(3)
+    expect((yield* Effect.flip(decide(definition, 'fresh window'))).reason).toBe('Backoff')
+  }).pipe(Effect.provide(configuredGateway(transport)))
+})
+
+/** HTTP status is classified before library errors are flattened. Invalid requests affect
+ * only their caller; explicit provider outages immediately suppress sibling requests. */
+it.effect.each([
+  { status: 400, next: 'Provider', requests: 2 },
+  { status: 401, next: 'Provider', requests: 2 },
+  { status: 503, next: 'Backoff', requests: 1 },
+  { status: 429, next: 'Backoff', requests: 1 },
+])('HTTP $status gives the next caller $next', ({ status, next, requests }) => {
+  let calls = 0
+  const transport = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      calls += 1
+      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response('{}', { status })))
+    }),
+  )
+  return Effect.gen(function* () {
+    expect((yield* Effect.flip(decide(definition, 'first'))).reason).toBe('Provider')
+    expect((yield* Effect.flip(decide(definition, 'second'))).reason).toBe(next)
+    expect(calls).toBe(requests)
+  }).pipe(Effect.provide(configuredGateway(transport)))
+})
+
+/** Malformed successful responses demonstrate reachability, not a global outage. */
+it.effect('malformed answers do not open the process gate', () => {
+  let calls = 0
+  return Effect.gen(function* () {
+    for (const input of ['first', 'second'])
+      expect((yield* Effect.flip(decide(definition, input))).reason).toBe('Provider')
+    expect(calls).toBe(2)
+  }).pipe(
+    Effect.provide(
+      configuredGateway(
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            calls += 1
+            return Effect.succeed(HttpClientResponse.fromWeb(request, new Response('{}')))
+          }),
+        ),
+      ),
+    ),
+  )
+})
 
 /** Interrupting the sole probe must release its lease. The next request still cools briefly,
  * then may probe again instead of being gated forever. */
@@ -294,7 +335,9 @@ it.effect('an interrupted recovery probe cannot leave availability stuck', () =>
         requests += 1
         if (requests === 2)
           return Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
-        return Effect.succeed(HttpClientResponse.fromWeb(request, new Response('{}')))
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(request, new Response('{}', { status: 503 })),
+        )
       }),
     )
     yield* Effect.gen(function* () {
@@ -336,7 +379,7 @@ it.effect('an older in-flight success cannot close newly opened backoff', () =>
               ),
             )
           }
-          return HttpClientResponse.fromWeb(request, new Response('{}'))
+          return HttpClientResponse.fromWeb(request, new Response('{}', { status: 503 }))
         }),
       ),
     )
@@ -350,4 +393,32 @@ it.effect('an older in-flight success cannot close newly opened backoff', () =>
       expect(requests).toBe(2)
     }).pipe(Effect.provide(configuredGateway(transport)))
   }),
+)
+
+/** The provider maps encoding/URL faults into NetworkError too. Only its TransportError
+ * reason means an outage; neither local encoding nor a defect can close sibling admission. */
+it.effect.each(['TransportError', 'EncodeError', 'Defect'] as const)(
+  '%s controls only the appropriate admission scope',
+  (failure) => {
+    let calls = 0
+    const transport = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        calls += 1
+        if (failure === 'Defect') return Effect.die('adapter fault')
+        const reason =
+          failure === 'TransportError'
+            ? new HttpClientError.TransportError({ request })
+            : new HttpClientError.EncodeError({ request })
+        return Effect.fail(new HttpClientError.HttpClientError({ reason }))
+      }),
+    )
+    return Effect.gen(function* () {
+      expect((yield* Effect.flip(decide(definition, 'first'))).reason).toBe('Provider')
+      expect((yield* Effect.flip(decide(definition, 'second'))).reason).toBe(
+        failure === 'TransportError' ? 'Backoff' : 'Provider',
+      )
+      expect(calls).toBe(failure === 'TransportError' ? 1 : 2)
+    }).pipe(Effect.provide(configuredGateway(transport)))
+  },
 )

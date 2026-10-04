@@ -32,7 +32,7 @@ import {
 import { callableTool, discoveredTool } from '../code/signatures.ts'
 import { executorFailure } from './errors.ts'
 import { ConnectionStore } from './store.ts'
-import { decisionConfigured } from '../decisions/model.ts'
+import { decisionConfigured, isDecisionNonEvent } from '../decisions/model.ts'
 import { relevantTools } from './relevance.ts'
 import { ToolEffects } from './effects.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
@@ -181,7 +181,7 @@ const orderTools = Effect.fn('Connections.orderTools')(function* <
   return yield* relevantTools(query, lexical).pipe(
     Effect.map((result) => result.ordered),
     Effect.catch((error) =>
-      error.reason === 'Backoff'
+      isDecisionNonEvent(error)
         ? Effect.succeed(lexical)
         : Effect.logWarning('Tool relevance unavailable', {
             tag: error._tag,
