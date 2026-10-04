@@ -1,7 +1,7 @@
+import { Pairing, spellCode, type Ending } from '@vivid/state'
 import { Option } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import { Linking, View } from 'react-native'
-import { Pairing, spellCode, type Ending } from '../../data/device'
 import { door, useDoor } from '../../data/door'
 import { commit } from '../../data/haptics'
 import { approvalAddress } from '../../data/server'
