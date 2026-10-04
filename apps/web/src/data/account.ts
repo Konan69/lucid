@@ -166,10 +166,14 @@ export const adoptFirstArrival = Effect.suspend(() => {
 
 export const signOut = () => post('sign-out', {})
 
-/** One place this Person is signed in, as Better Auth lists it. Its token is a credential. */
+/**
+ * One place this Person is signed in, as Better Auth lists it. Its token is a credential, so it
+ * is wrapped as it is read: `RedactedFromValue` decodes the plain string the server sends, where
+ * `Schema.Redacted` accepts only a value that is already wrapped and refused every answer.
+ */
 const Session = Schema.Struct({
   id: Schema.String,
-  token: Schema.Redacted(Schema.String),
+  token: Schema.RedactedFromValue(Schema.String),
   userAgent: Schema.NullOr(Schema.String),
   updatedAt: Schema.String,
 })
