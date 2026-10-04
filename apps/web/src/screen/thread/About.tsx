@@ -114,11 +114,11 @@ export function AboutHome({
     <>
       {/* At every width, unlike a Thread's (`around-scrim` shows it only where the card floats). */}
       <Scrim className="block" onClose={onClose} />
-      {/* The layer's leading inset is the bar's (`BAR`), less the 4 the chip's fill reaches past
-          its face, so the card's edge is the chip's edge with the sidebar open or put away. */}
-      <div className="pointer-events-none absolute inset-x-0 top-(--topbar-h) bottom-0 z-20 flex items-start px-3 pt-1 pb-3 group-data-[rail=shut]/shell:pl-11">
+      {/* The chip is at the top centre of Home, so the card hangs centred under it and grows
+          from its top edge. */}
+      <div className="pointer-events-none absolute inset-x-0 top-(--topbar-h) bottom-0 z-20 flex items-start justify-center px-3 pt-1 pb-3">
         <Frame
-          className="pointer-events-auto max-h-full w-(--around-w) max-w-full origin-top-left"
+          className="pointer-events-auto max-h-full w-(--around-w) max-w-full origin-top"
           mood={mood}
           standing={standing}
           onClose={onClose}

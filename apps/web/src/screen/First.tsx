@@ -10,6 +10,7 @@ import { Route, router } from '../data/route'
 import { startThread } from '../data/threads'
 import { useAppearance } from '../data/vivid'
 import { Face, type FaceMood } from '../ui/Face'
+import { cn } from '../ui/cn'
 import { BAR } from './bar'
 import { Composer } from './thread/Composer'
 
@@ -97,13 +98,15 @@ function Back({ me, working }: { me: MeResponse; working: boolean }) {
   const mood = working ? 'thinking' : 'happy'
   return (
     <section className="relative flex h-full min-w-0 flex-1 flex-col bg-surface-0">
-      <header className={BAR}>
+      {/* Vivid sits at the top centre of the page, the way a contact does at the top of a
+          conversation with them: it is who this page is with, not a control at the edge. */}
+      <header className={cn(BAR, 'justify-center')}>
         <Chip name={name} mood={mood} open={about} onPress={() => setAbout((value) => !value)} />
       </header>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <div className="mx-auto flex w-full max-w-(--thread-max-w) shrink-0 grow flex-col px-2 py-6 sm:px-0">
           <div className="my-auto">
-            <div className="motion-enter px-4 sm:px-6">
+            <div className="motion-enter px-4 text-center sm:px-6">
               <h1 className="font-display text-display font-strong tracking-display text-balance wrap-break-word text-ink">
                 {first === undefined || first.length === 0 ? `${hello}.` : `${hello}, ${first}.`}
               </h1>
@@ -163,13 +166,15 @@ function Chip({
 }) {
   return (
     // A plain button, not `Button`: no size of that one is a 36-high pill around a face, and its
-    // contract is not a screen's to restyle. The fill and its hover are `Button`'s `secondary`.
+    // contract is not a screen's to restyle. At rest it has no fill, like the icon buttons at the
+    // far end of a Thread's bar (`Button`'s `ghost`): it takes their hover and open fill, so the
+    // bar reads as one row of quiet controls and nothing in it looks pressed before it is.
     <button
       type="button"
       aria-haspopup="dialog"
       aria-expanded={open}
       onClick={onPress}
-      className="-ms-1 inline-flex h-9 max-w-full min-w-0 motion-press cursor-pointer items-center gap-2 rounded-full bg-wash-selected ps-1 pe-2.5 text-title font-title whitespace-nowrap text-ink select-none hover:bg-wash-pressed aria-expanded:bg-wash-pressed"
+      className="inline-flex h-9 max-w-full min-w-0 motion-press cursor-pointer items-center gap-2 rounded-full ps-1 pe-2.5 text-title font-title whitespace-nowrap text-ink select-none hover:bg-accent aria-expanded:bg-accent"
     >
       {/* The name beside it is the button's name; the face must not say it a second time. */}
       <Face size={28} mood={mood} label="" />
