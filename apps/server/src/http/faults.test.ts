@@ -40,6 +40,9 @@ it.effect('logs a reported fault and refuses a body that is not one', () =>
     })
     expect((yield* send(JSON.stringify(fault))).status).toBe(204)
     expect(logged).toHaveLength(1)
+    // The message is the fixed one; the report rides beside it as one annotation, so the export
+    // can count the fault without sending what the client said (`observability/export.ts`).
+    expect(logged[0]).toContain('message="Client fault" report=')
     expect(logged[0]).toContain('Skia is not linked')
     expect(logged[0]).toContain('at Composer')
     expect(logged[0]).toContain('ios 0.1.0 embedded')
@@ -49,6 +52,8 @@ it.effect('logs a reported fault and refuses a body that is not one', () =>
     expect((yield* send(JSON.stringify(forged))).status).toBe(204)
     expect(logged).toHaveLength(2)
     expect(logged.join('\n').split('\n')).toHaveLength(2)
+    expect(logged[1]).toContain('forged')
+    expect(logged[1]).toContain('message="Client fault" report=')
 
     // Not a report, and a report longer than a client is allowed to send.
     expect((yield* send(JSON.stringify({ surface: 'toaster', message: 'x' }))).status).toBe(400)

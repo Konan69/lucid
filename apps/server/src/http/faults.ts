@@ -9,6 +9,7 @@ import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
 import { observeFailures } from '../observability/failure.ts'
+import { Message } from '../observability/messages.ts'
 
 /**
  * Where a client reports that it failed to draw (`Fault` in `@vivid/contracts`). The report is
@@ -19,8 +20,12 @@ import { observeFailures } from '../observability/failure.ts'
  * and a client that is failing may not have a working connection to anything else. That makes it
  * open to anyone, so three things bound what a stranger can do with it:
  * - A body that is not a `Fault` is refused and nothing of it is logged.
- * - A report is logged as one line of JSON. Its text is the sender's, and JSON escapes line
- *   breaks and control characters, so a report cannot write a second log line of its own.
+ * - A report is logged as one line: the fixed message `Client fault`, with the report as JSON in
+ *   the `report` annotation. Its text is the sender's, and JSON escapes line breaks and control
+ *   characters, so a report cannot write a second log line of its own.
+ * - The report stays in the server's log. The telemetry export (`observability/export.ts`) sends
+ *   a line's body only when it is a fixed message and its annotations only when they are on the
+ *   allowlist; `report` is not, so the backend sees that a client faulted and nothing it said.
  * - Only so many reports are logged in a minute, counted for the whole server, and the rest are
  *   turned away before their body is read. A real failure repeats; the first few say everything.
  */
@@ -63,7 +68,7 @@ const admit = Effect.fn('Http.Faults.admit')(function* (budget: Ref.Ref<Window>)
 const report = Effect.fn('Http.Faults.report')(function* (budget: Ref.Ref<Window>) {
   yield* admit(budget)
   const fault = yield* HttpServerRequest.schemaBodyJson(Fault)
-  yield* Effect.logError(`Client fault ${JSON.stringify(fault)}`)
+  yield* Effect.annotateLogs(Effect.logError(Message.fault), { report: JSON.stringify(fault) })
   return HttpServerResponse.empty({ status: 204 })
 })
 
