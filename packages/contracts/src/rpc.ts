@@ -160,6 +160,7 @@ import {
 } from './skills.js'
 import {
   CreateThreadRequest,
+  OpenFirstThreadResult,
   OpenThreadRequest,
   Inbox,
   PatchThreadRequest,
@@ -318,6 +319,11 @@ const CreateThread = Rpc.make('CreateThread', {
   ...call,
   payload: CreateThreadRequest,
   success: ThreadResponse,
+})
+/** The signed-in Person and active workspace are the whole input; Vivid speaks first. */
+const OpenFirstThread = Rpc.make('OpenFirstThread', {
+  ...call,
+  success: OpenFirstThreadResult,
 })
 const OpenThread = Rpc.make('OpenThread', {
   ...call,
@@ -760,6 +766,7 @@ export const VividRpc = RpcGroup.make(
   GetThread,
   WatchThread,
   CreateThread,
+  OpenFirstThread,
   OpenThread,
   PatchThread,
   ShareThread,

@@ -44,6 +44,7 @@ const previewOf = (message: DeliveryMessage) =>
   DeliveryMessage.match(message, {
     Said: ({ body }) => Option.some(body),
     Signal: () => Option.none<string>(),
+    FirstConversation: () => Option.none<string>(),
   })
 
 /** The runtime's classified failure stays attached through the single conditional settlement write. */

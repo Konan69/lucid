@@ -21,6 +21,7 @@ import shopForSomething from '../shop-for-something/SKILL.md'
 import findAPlace from '../find-a-place/SKILL.md'
 import makeABooking from '../make-a-booking/SKILL.md'
 import forgetSomething from '../forget-something/SKILL.md'
+import firstConversation from '../first-conversation/SKILL.md'
 import whatVividCanDo from '../what-vivid-can-do/SKILL.md'
 import findPictures from '../find-pictures/SKILL.md'
 
@@ -47,6 +48,7 @@ export const nativeSkills = {
   'find-a-place': findAPlace,
   'make-a-booking': makeABooking,
   'forget-something': forgetSomething,
+  'first-conversation': firstConversation,
   'what-vivid-can-do': whatVividCanDo,
   'find-pictures': findPictures,
 } satisfies Record<BuiltinRuntimeName, SkillReference>

@@ -280,6 +280,22 @@ const definitions = [
     connections: [],
   },
   {
+    runtimeName: 'first-conversation',
+    displayName: 'First conversation',
+    about:
+      'Introduces Vivid in your first Thread, learns how you work and does one real task with you.',
+    starter: false,
+    needs: [
+      'ask_person',
+      'find_tools',
+      'find_integrations',
+      'activate_skill',
+      'recall',
+      'remember',
+    ],
+    connections: [],
+  },
+  {
     runtimeName: 'what-vivid-can-do',
     displayName: 'What Vivid can do',
     about:

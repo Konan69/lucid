@@ -41,6 +41,16 @@ export const threads = pgTable(
   ],
 )
 
+/**
+ * First arrival belongs to a Person across all workspaces. Keep the original Thread id even
+ * after its deletion: deleting a conversation must never restart the introduction. The id is
+ * deliberately not a cascading Thread foreign key; Person deletion removes the receipt.
+ */
+export const firstThreads = pgTable('vivid_first_threads', {
+  personId: personColumn().primaryKey(),
+  threadId: threadColumn('thread_id').notNull(),
+})
+
 /** The Members a `people` Thread is shared with, beside its creator. */
 export const threadParticipants = pgTable(
   'vivid_thread_participants',

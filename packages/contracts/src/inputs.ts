@@ -35,7 +35,7 @@ export interface InputRequest extends Schema.Schema.Type<typeof InputRequest> {}
 /** What Vivid supplies when it asks. The Thread and the Person asked come from the Run. */
 export const AskInputRequest = Schema.Struct({
   question: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(400)),
-  options: Schema.Array(InputOption).check(Schema.isMaxLength(4)),
+  options: Schema.Array(InputOption).check(Schema.isMaxLength(6)),
   allowsOwnAnswer: Schema.Boolean,
 })
 export interface AskInputRequest extends Schema.Schema.Type<typeof AskInputRequest> {}

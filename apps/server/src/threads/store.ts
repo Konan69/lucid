@@ -10,6 +10,7 @@ import {
   Forbidden,
   InvalidRequest,
   NotFound,
+  type OpenFirstThreadResult,
   ShareThreadRequest,
   Workspace,
   type CompanyId,
@@ -27,6 +28,7 @@ import { projectTable } from '../projects/tables.ts'
 import { decodeThread, requireThread, type StoredAudience, type StoredThread } from './access.ts'
 import { threadParticipants, threadReads, threads } from './tables.ts'
 import { toWire } from './wire.ts'
+import { claimFirstThread, releaseFirstThread } from './first.ts'
 
 type DatabaseService = Database['Service']
 type ThreadStoreError = DatabaseInfrastructureError
@@ -52,6 +54,13 @@ export interface Shared {
 }
 
 export interface ThreadStoreService {
+  /** Claims the first Thread once for a Person, independently of their current workspace. */
+  readonly openFirst: (actor: Actor) => Effect.Effect<OpenFirstThreadResult, ThreadStoreError>
+  /** Releases only a matching first-arrival receipt whose Thread has never had a Run. */
+  readonly releaseFirst: (
+    personId: PersonId,
+    threadId: ThreadId,
+  ) => Effect.Effect<void, ThreadStoreError>
   /** Every Thread the Actor can see in their workspace, newest activity first. */
   readonly list: (actor: Actor) => Effect.Effect<ReadonlyArray<Thread>, ThreadStoreError>
   /** One stored Thread as the given Person sees it. */
@@ -411,6 +420,9 @@ export const threadStoreLayer = Layer.effect(
   Effect.gen(function* () {
     const database = yield* Database
     return ThreadStore.of({
+      openFirst: (actor) => claimFirstThread(actor).pipe(Effect.provideService(Database, database)),
+      releaseFirst: (personId, threadId) =>
+        releaseFirstThread(personId, threadId).pipe(Effect.provideService(Database, database)),
       list: makeList(database),
       view: makeView(database),
       ensure: makeEnsure(database),

@@ -21,8 +21,8 @@ export function askTools(runTool: RunTool) {
               detail: text('The consequence of this choice.', 400),
             }),
           ),
-          v.maxLength(4),
-          v.description('Up to four choices; use an empty list for a written answer.'),
+          v.maxLength(6),
+          v.description('Up to six choices; use an empty list for a written answer.'),
         ),
         allowsOwnAnswer: v.pipe(
           v.boolean(),
