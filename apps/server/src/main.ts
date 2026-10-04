@@ -79,16 +79,33 @@ import { updateRoutes } from './updates/routes.ts'
  * it unset, every memory call answers that memory is unavailable and nothing is learned, which is
  * an expected state of a fresh install and not a fault.
  */
+const withoutMemory = Layer.mergeAll(unavailableMemoryAccessLayer, silentLearningLayer)
+const remembering = learningLayer.pipe(
+  Layer.provideMerge(memoryAccessLayer),
+  Layer.provide(memoryStoreLayer),
+  Layer.provide(Layer.mergeAll(helixMemoryLayer, embeddingsLayer)),
+  Layer.provideMerge(memoryExtractionLayer),
+)
+/**
+ * Helix answers an index build before the index exists, and the memory adapter is not offered until
+ * every index it depends on is active. A build that is slow, blocked or aborted must not stop the
+ * server from starting: memory is optional, so the installation runs without it, says which index
+ * is not active, and picks memory up again on the next start, when the build has finished.
+ */
 const memoryLayer = Layer.unwrap(
   Config.option(Config.String('VIVID_HELIX_URL')).pipe(
     Effect.map((address) =>
       Option.isNone(address)
-        ? Layer.mergeAll(unavailableMemoryAccessLayer, silentLearningLayer)
-        : learningLayer.pipe(
-            Layer.provideMerge(memoryAccessLayer),
-            Layer.provide(memoryStoreLayer),
-            Layer.provide(Layer.mergeAll(helixMemoryLayer, embeddingsLayer)),
-            Layer.provideMerge(memoryExtractionLayer),
+        ? withoutMemory
+        : remembering.pipe(
+            Layer.catchTag('MemoryIndexUnready', (unready) =>
+              Layer.unwrap(
+                Effect.logWarning('Memory is unavailable: a Helix index is not active', {
+                  index: unready.index,
+                  state: unready.state,
+                }).pipe(Effect.as(withoutMemory)),
+              ),
+            ),
           ),
     ),
   ),

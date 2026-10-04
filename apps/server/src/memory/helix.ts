@@ -18,7 +18,7 @@ import {
   type WriteBatch,
 } from '@helix-db/helix-db'
 import { Memory, MemoryBrief, MemoryId, PersonId, ServiceUnavailable } from '@vivid/contracts'
-import { Config, Context, Effect, Layer, Option, Schedule, Schema } from 'effect'
+import { Config, Context, type Duration, Effect, Layer, Option, Schedule, Schema } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 import { embeddingDimensions, embeddingModel, MemoryRateLimited } from './embeddings.js'
 
@@ -271,7 +271,7 @@ const decodeUniqueViolation = HttpClientResponse.schemaBodyJson(
 )
 
 /** One attempt. The published SDK supplies the AST; Effect HttpClient owns transport and response validation. */
-const sendHelix = Effect.fn('HelixMemory.send')(function* (
+const requestHelix = Effect.fn('HelixMemory.request')(function* (
   client: HttpClient.HttpClient,
   url: string,
   query: QueryRequest,
@@ -318,23 +318,29 @@ const sendHelix = Effect.fn('HelixMemory.send')(function* (
 const isHelixConflict = Schema.is(HelixConflict)
 /**
  * Helix commits optimistically: two writers at once can make one lose with HTTP 409
- * `transaction_conflict`, even when they touch different partitions. The loser's whole batch is
- * rolled back (measured on helixdb v0.0.5: 20 of 20 trials left nothing behind, and in the test runs
- * of 4 Oct 2026 unrelated concurrent writers hit it on plain inserts), so sending the same batch
- * again is safe. A receipted batch reads its receipt again when it is resent, so it still applies
- * at most once. It is sent again at once, with no wait: the conflict is a lost commit race that is
- * over when the answer arrives, and a clock-driven wait would stall under a controlled test clock.
- * A conflict that persists past this many attempts is returned.
+ * `transaction_conflict`, even when they touch different partitions (seen on plain inserts by
+ * unrelated concurrent writers in the test runs of 4 Oct 2026).
+ *
+ * Sending a batch again is done ONLY where a second application converges whatever the first
+ * attempt left behind: a receipted write (its receipt guards it), a creation under a unique id, a
+ * tombstone, a guarded declaration, index DDL with `IfNotExists`, a brief overwritten with the same
+ * payload. It is NOT done for `reinforce`, `link` or `supersede`: that a 409 always means nothing
+ * became durable is measured for one conflicting receipt batch and read in Helix's source
+ * (conflicts are rejected before apply), but is not established for every batch on the deployed
+ * image, and a resent increment or edge would apply twice if it were false (review, 4 Oct 2026).
+ *
+ * The batch is sent again at once, with no wait: a clock-driven wait would stall under a controlled
+ * test clock. A conflict that persists past this many attempts is returned as `HelixConflict`.
  */
 const CONFLICT_RETRIES = 6
 
-/** Every Helix request: one attempt, sent again only after a transaction conflict. */
-const requestHelix = Effect.fn('HelixMemory.request')(function* (
+/** A convergent request: one attempt, sent again only after a transaction conflict. */
+const resendHelix = Effect.fn('HelixMemory.resend')(function* (
   client: HttpClient.HttpClient,
   url: string,
   query: QueryRequest,
 ) {
-  return yield* sendHelix(client, url, query).pipe(
+  return yield* requestHelix(client, url, query).pipe(
     Effect.retry({ times: CONFLICT_RETRIES, while: isHelixConflict }),
   )
 })
@@ -595,7 +601,7 @@ const receiptedOutcome = Effect.fn('HelixMemory.receiptedOutcome')(function* (
   session: HelixSession,
   query: QueryRequest,
 ) {
-  const response = yield* requestHelix(session.client, session.url, query)
+  const response = yield* resendHelix(session.client, session.url, query)
   const rows = yield* decodeReceiptedWrite(response).pipe(
     Effect.mapError(() => HelixMalformed.make({})),
   )
@@ -679,6 +685,8 @@ interface HelixSession {
     query: QueryRequest,
   ) => Effect.Effect<ReadonlyArray<MemoryRecord>, HelixFailure>
   readonly write: (query: QueryRequest) => Effect.Effect<void, HelixFailure>
+  /** A write whose second application converges, so it is sent again after a transaction conflict. */
+  readonly rewrite: (query: QueryRequest) => Effect.Effect<void, HelixFailure>
 }
 
 /** Reads share one decoded session and constrain candidates before ranking or traversing. */
@@ -825,7 +833,7 @@ function readingBrief(session: HelixSession) {
 
 /** Writes use one batch for each lifecycle transition so a replacement cannot expose two latest records. */
 function writers(session: HelixSession) {
-  const { write } = session
+  const { write, rewrite } = session
   return {
     /** Creation writes searchable fields and attribution together; scoped timestamps invalidate readable pages lazily. */
     insert: Effect.fn('HelixMemory.insert')(function* (input: {
@@ -834,7 +842,7 @@ function writers(session: HelixSession) {
       readonly embedding: ReadonlyArray<number>
     }) {
       const values = yield* insertionValues(input)
-      yield* write(
+      yield* rewrite(
         writeBatch()
           .varAs('created', newRecord())
           .returning([])
@@ -870,7 +878,7 @@ function writers(session: HelixSession) {
     forget: Effect.fn('HelixMemory.forget')(function* (
       input: RecordIdentity & { readonly now: number },
     ) {
-      yield* write(
+      yield* rewrite(
         writeBatch()
           .varAs(
             'forgotten',
@@ -889,7 +897,7 @@ function writers(session: HelixSession) {
       const payload = yield* encodeBrief(input.brief).pipe(
         Effect.mapError(() => HelixMalformed.make({})),
       )
-      yield* write(
+      yield* rewrite(
         writeBatch()
           .varAs('existing', briefNode(input))
           .varAsIf(
@@ -1086,6 +1094,8 @@ const decodeIndexStatus = HttpClientResponse.schemaBodyJson(
  * acquisition take longer than a request should wait.
  */
 const indexSchedule = Schedule.spaced('100 millis').pipe(Schedule.upTo({ duration: '30 seconds' }))
+/** The longest one acquisition waits for its indexes, stalled answers included. */
+const INDEX_DEADLINE: Duration.Input = '45 seconds'
 const isIndexUnready = Schema.is(IndexUnready)
 
 interface RequiredIndex {
@@ -1131,7 +1141,7 @@ const startIndex = Effect.fn('HelixMemory.startIndex')(function* (
   session: { readonly client: HttpClient.HttpClient; readonly url: string },
   index: RequiredIndex,
 ) {
-  const response = yield* requestHelix(
+  const response = yield* resendHelix(
     session.client,
     session.url,
     writeBatch()
@@ -1166,6 +1176,18 @@ const awaitIndex = Effect.fn('HelixMemory.awaitIndex')(function* (
   )
 })
 
+/** Start every build, then wait for all of them side by side. */
+const buildIndexes = Effect.fn('HelixMemory.buildIndexes')(function* (
+  session: { readonly client: HttpClient.HttpClient; readonly url: string },
+  indexes: ReadonlyArray<RequiredIndex>,
+) {
+  const started = yield* Effect.forEach(indexes, (index) => startIndex(session, index))
+  yield* Effect.forEach(started, (index) => awaitIndex(session, index), {
+    concurrency: 'unbounded',
+    discard: true,
+  })
+})
+
 /**
  * Declare the given indexes and wait until all are active. The service is not offered before every
  * required index is: a search against a pending vector or text index fails `index_not_found`, a
@@ -1179,11 +1201,20 @@ const readyIndexes = Effect.fn('HelixMemory.readyIndexes')(function* (
   session: { readonly client: HttpClient.HttpClient; readonly url: string },
   indexes: ReadonlyArray<RequiredIndex>,
 ) {
-  const started = yield* Effect.forEach(indexes, (index) => startIndex(session, index))
-  yield* Effect.forEach(started, (index) => awaitIndex(session, index), {
-    concurrency: 'unbounded',
-    discard: true,
-  })
+  // The schedule bounds how often a build is asked about, not how long one answer may take: the
+  // HTTP client waits up to an hour for headers. This deadline bounds the whole acquisition.
+  return yield* buildIndexes(session, indexes).pipe(
+    Effect.timeoutOrElse({
+      duration: INDEX_DEADLINE,
+      orElse: () =>
+        Effect.fail(
+          IndexUnready.make({
+            index: indexes.map((index) => index.name).join(', '),
+            state: 'pending',
+          }),
+        ),
+    }),
+  )
 })
 
 /** Acquisition bootstraps indexes before accepting writes. No SDK Promise or raw fetch crosses this boundary. */
@@ -1219,7 +1250,7 @@ export const helixMemoryLayer = Layer.effect(
     ])
     yield* checkIndex(session, { model, dimensions })
     yield* readyIndexes(session, requiredIndexes(dimensions))
-    yield* requestHelix(client, url, declareIndex(model, dimensions))
+    yield* resendHelix(client, url, declareIndex(model, dimensions))
     yield* checkIndex(session, { model, dimensions })
     /** Typed projection decoding is shared by list, exact lookups, and bounded graph expansion. */
     const records = Effect.fn('HelixMemory.records')(function* (query: QueryRequest) {
@@ -1233,13 +1264,16 @@ export const helixMemoryLayer = Layer.effect(
     const write = Effect.fn('HelixMemory.write')(function* (query: QueryRequest) {
       yield* requestHelix(client, url, query)
     })
+    const rewrite = Effect.fn('HelixMemory.rewrite')(function* (query: QueryRequest) {
+      yield* resendHelix(client, url, query)
+    })
     return HelixMemory.of({
-      ...readers({ client, url, records, write }),
-      ...writers({ client, url, records, write }),
-      ...receipted({ client, url, records, write }),
-      link: linking({ client, url, records, write }),
-      briefGet: readingBrief({ client, url, records, write }),
-      supersede: superseding({ client, url, records, write }),
+      ...readers({ client, url, records, write, rewrite }),
+      ...writers({ client, url, records, write, rewrite }),
+      ...receipted({ client, url, records, write, rewrite }),
+      link: linking({ client, url, records, write, rewrite }),
+      briefGet: readingBrief({ client, url, records, write, rewrite }),
+      supersede: superseding({ client, url, records, write, rewrite }),
     })
   }),
 )
