@@ -5,6 +5,7 @@ import {
   Data,
   Effect,
   Exit,
+  Fiber,
   Layer,
   Option,
   Request,
@@ -39,14 +40,17 @@ const EFFECT_CACHE_TTL = '24 hours'
 const EFFECT_FAILURE_TTL = '1 minute'
 /** Gateway, jev-latest, 4 Oct 2026, generalized question, three cohorts of ten warm calls
  * at twenty 500-character descriptions: first=663/661/777ms, warm min/median/max=
- * 619/650.5/795, 683/766.5/1103, 689/745.5/1422ms; input/output tokens=7783/793.
- * 1800ms leaves 378ms (27%) above the largest measured warm sample. findTools caps every
- * classification at its remaining shared deadline; no statistical tail guarantee is implied. */
+ * 619/650.5/795, 683/766.5/1103, 689/745.5/1422ms. Round-five's first warm cohort
+ * measured 671/698/1773ms and 7783/793 input/output tokens. The 1800ms optional
+ * budget can censor a slow tail; such timeouts are below the outage-evidence floor.
+ * Discovery stops waiting at its shared deadline while Layer-owned lookup work
+ * retains this independent bound. No statistical tail guarantee is implied. */
 export const EFFECT_BATCH_BUDGET = '1800 millis'
 
 /** Gateway, jev-latest, 4 Oct 2026: twenty final relevance/effect questions at this cap
  * use 5024/7783 input tokens. Effect eligibility rejects oversized metadata entirely, so
- * the question and cache identity retain the same full evidence; unseen tails cannot remove Approval. */
+ * the question and cache identity retain the same full evidence; unseen tails
+ * cannot remove Approval. */
 export const TOOL_DESCRIPTION_LIMIT = 500
 /** The shortest read description in the 36-tool calibration is GitHub list_issues:
  * "List issues in a repository" (26 characters). Fifteen retains 11 characters of
@@ -195,6 +199,7 @@ const warnUnavailable = Effect.fn('Connections.warnUnavailable')(function* (
 export const toolEffectsLayer = Layer.effect(
   ToolEffects,
   Effect.gen(function* () {
+    const scope = yield* Effect.scope
     const model = yield* DecisionModel.DecisionModel
     const configured = yield* decisionConfigured
     const resolver = RequestResolver.makeGrouped<Classification, ClassificationGroup>({
@@ -205,12 +210,16 @@ export const toolEffectsLayer = Layer.effect(
         }),
       resolver: Effect.fn('Connections.resolveEffects')(function* (entries) {
         const keys = entries.map(({ request }) => request.key)
-        const exit = yield* Effect.exit(
-          classifyQuestions(keys).pipe(
-            Effect.provideService(DecisionModel.DecisionModel, model),
-            Effect.tapError(warnUnavailable),
-          ),
+        // rc.116 internal/request.ts runBatch executes on a runtime fiber, so
+        // caller cancellation alone cannot own its lifetime once dispatch starts.
+        // Fork the provider attempt explicitly in this Layer as well as its cache
+        // waiters: shutdown interrupts actual I/O, not just pending cache entries.
+        const attempt = yield* classifyQuestions(keys).pipe(
+          Effect.provideService(DecisionModel.DecisionModel, model),
+          Effect.tapError(warnUnavailable),
+          Effect.forkIn(scope),
         )
+        const exit = yield* Effect.exit(Fiber.join(attempt))
         for (const [index, entry] of entries.entries()) {
           if (Exit.isFailure(exit)) yield* Request.failCause(entry, exit.cause)
           else {
@@ -259,9 +268,15 @@ export const toolEffectsLayer = Layer.effect(
         tool: tool.name,
         description: tool.description,
       })
-      return yield* Cache.get(cache, key).pipe(
+      // rc.116 Cache.EntryImpl.await interrupts a pending lookup when its last
+      // waiter leaves. A Layer-owned waiter survives discovery cancellation so
+      // the bounded provider result can fill the cache. Scope shutdown still
+      // interrupts it; failed cache exits never become successful answers.
+      const pending = yield* Cache.get(cache, key).pipe(
         Effect.catch(() => Effect.succeed<typeof ExecutorTool.Type.effect>('write')),
+        Effect.forkIn(scope),
       )
+      return yield* Fiber.join(pending)
     })
     return ToolEffects.of({
       classify,

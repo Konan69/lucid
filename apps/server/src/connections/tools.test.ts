@@ -3,7 +3,7 @@ import { Clock, Deferred, Effect, Fiber, Layer, Logger, Predicate, Ref, Schema }
 import { ScriptedAnswer } from '../decisions/testing.ts'
 import { DecisionModel } from 'effect/unstable/ai'
 import { RELEVANCE_BUDGET } from './relevance.ts'
-import { toolEffectsLayer } from './effects.ts'
+import { ToolEffects, toolEffectsLayer } from './effects.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { ActionTarget, ConnectionStep } from '@vivid/contracts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -566,123 +566,144 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
     )
 
     /** Nine real Integrations exceed the four-way classification fanout. The second wave
-     * must stop at the original deadline, retain writes and be judged on the next call;
-     * a shared read hint still bypasses Jev and is never lost to optional cancellation. */
-    it.effect(
-      'bounds all Integration waves together and retries unanswered tools immediately',
-      () =>
-        Effect.gen(function* () {
-          const { ownerActor } = yield* fixture()
-          const store = yield* ConnectionStore
-          for (let index = 0; index < 9; index += 1)
-            yield* store.begin(ownerActor, {
-              service: serviceId,
-              label: `Account ${index}`,
-              shared: false,
-            })
-          const scriptedStore = ConnectionStore.of({
-            ...store,
-            tools: Effect.fn('Test.integrationTools')((_actor, row) =>
-              Effect.succeed([
-                ExecutorTool.make({
-                  name: `lookup_${row.label}`,
-                  description: 'Lookup existing records',
-                  effect: 'write',
-                  input: {},
-                }),
-                ExecutorTool.make({
-                  name: `read_${row.label}`,
-                  description: 'Read records',
-                  effect: 'read',
-                  input: {},
-                }),
-              ]),
-            ),
+     * must stop at the original deadline and retain writes for this caller. Their
+     * bounded lookups continue in the Layer and supply the next call's cached reads;
+     * a shared read hint still bypasses Jev and survives optional cancellation. */
+    it.effect('bounds discovery while late Integration lookups fill the shared cache', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const store = yield* ConnectionStore
+        for (let index = 0; index < 9; index += 1)
+          yield* store.begin(ownerActor, {
+            service: serviceId,
+            label: `Account ${index}`,
+            shared: false,
           })
-          const firstStarted = yield* Deferred.make<void>()
-          const firstRelease = yield* Deferred.make<void>()
-          const secondStarted = yield* Deferred.make<void>()
-          const firstNames: string[] = []
-          const retriedNames: string[] = []
-          let wave = 0
-          const modelLayer = Layer.effect(
-            DecisionModel.DecisionModel,
-            DecisionModel.make({
-              decide: Effect.fn('Test.integrationWaves')(function* ({ decisions }) {
-                // Relevance is a separate provider workload after the second discovery recovers.
-                if (
-                  Object.values(decisions).every((decision) =>
-                    Predicate.isTagged(decision, 'Probability'),
-                  )
+        const scriptedStore = ConnectionStore.of({
+          ...store,
+          tools: Effect.fn('Test.integrationTools')((_actor, row) =>
+            Effect.succeed([
+              ExecutorTool.make({
+                name: `lookup_${row.label}`,
+                description: 'Lookup existing records',
+                effect: 'write',
+                input: {},
+              }),
+              ExecutorTool.make({
+                name: `read_${row.label}`,
+                description: 'Read records',
+                effect: 'read',
+                input: {},
+              }),
+            ]),
+          ),
+        })
+        const firstStarted = yield* Deferred.make<void>()
+        const firstRelease = yield* Deferred.make<void>()
+        const secondStarted = yield* Deferred.make<void>()
+        const secondRelease = yield* Deferred.make<void>()
+        const firstNames: string[] = []
+        const retriedNames: string[] = []
+        let wave = 0
+        const modelLayer = Layer.effect(
+          DecisionModel.DecisionModel,
+          DecisionModel.make({
+            decide: Effect.fn('Test.integrationWaves')(function* ({ decisions }) {
+              // Relevance is a separate provider workload after the second discovery recovers.
+              if (
+                Object.values(decisions).every((decision) =>
+                  Predicate.isTagged(decision, 'Probability'),
                 )
-                  return {
-                    answers: Object.fromEntries(
-                      Object.keys(decisions).map((key) => [
-                        key,
-                        ScriptedAnswer.cases.Probability.make({ probability: 0.1 }),
-                      ]),
-                    ),
-                    usage: { inputTokens: undefined, outputTokens: undefined },
-                  }
-                wave += 1
-                const questions = Object.values(decisions).map((decision) => decision.instructions)
-                if (wave === 1) {
-                  firstNames.push(...questions)
-                  yield* Deferred.succeed(firstStarted, undefined)
-                  yield* Deferred.await(firstRelease)
-                } else if (wave === 2) {
-                  yield* Deferred.succeed(secondStarted, undefined)
-                  return yield* Effect.never
-                } else retriedNames.push(...questions)
+              )
                 return {
                   answers: Object.fromEntries(
                     Object.keys(decisions).map((key) => [
                       key,
-                      ScriptedAnswer.cases.Classify.make({
-                        label: 'read',
-                        probabilities: { read: 1, write: 0, destructive: 0 },
-                      }),
+                      ScriptedAnswer.cases.Probability.make({ probability: 0.1 }),
                     ]),
                   ),
                   usage: { inputTokens: undefined, outputTokens: undefined },
                 }
-              }),
+              wave += 1
+              const questions = Object.values(decisions).map((decision) => decision.instructions)
+              if (wave === 1) {
+                firstNames.push(...questions)
+                yield* Deferred.succeed(firstStarted, undefined)
+                yield* Deferred.await(firstRelease)
+              } else if (wave === 2) {
+                yield* Deferred.succeed(secondStarted, undefined)
+                yield* Deferred.await(secondRelease)
+              } else retriedNames.push(...questions)
+              return {
+                answers: Object.fromEntries(
+                  Object.keys(decisions).map((key) => [
+                    key,
+                    ScriptedAnswer.cases.Classify.make({
+                      label: 'read',
+                      probabilities: { read: 1, write: 0, destructive: 0 },
+                    }),
+                  ]),
+                ),
+                usage: { inputTokens: undefined, outputTokens: undefined },
+              }
             }),
+          }),
+        )
+        const lines: string[] = []
+        yield* Effect.gen(function* () {
+          const started = yield* Clock.currentTimeMillis
+          const pending = yield* findTools(ownerActor, { query: 'records', limit: 25 }).pipe(
+            Effect.forkChild,
           )
-          const lines: string[] = []
-          yield* Effect.gen(function* () {
-            const started = yield* Clock.currentTimeMillis
-            const pending = yield* findTools(ownerActor, { query: 'records', limit: 25 }).pipe(
-              Effect.forkChild,
-            )
-            yield* Deferred.await(firstStarted)
-            yield* TestClock.adjust('1700 millis')
-            yield* Deferred.succeed(firstRelease, undefined)
-            yield* Deferred.await(secondStarted)
-            yield* TestClock.adjust('300 millis')
-            const first = yield* Fiber.join(pending)
-            expect((yield* Clock.currentTimeMillis) - started).toBe(2000)
-            expect(first.tools.filter((tool) => tool.effect === 'read')).toHaveLength(13)
-            expect(first.tools.filter((tool) => tool.effect === 'write')).toHaveLength(5)
-            expect(firstNames).toHaveLength(4)
-            expect(wave).toBe(2)
-            expect(lines.some((line) => line.includes('unavailable'))).toBe(false)
-            // A fresh discovery asks all five unanswered keys without advancing the cache TTL.
-            const second = yield* findTools(ownerActor, { query: 'records', limit: 25 })
-            expect(second.tools.every((tool) => tool.effect === 'read')).toBe(true)
-            expect(retriedNames).toHaveLength(5)
-          }).pipe(
-            Effect.provideService(ConnectionStore, scriptedStore),
-            Effect.provide(Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer)))),
-            Effect.provide(
-              Logger.layer([
-                Logger.make(({ message }) => {
-                  lines.push(JSON.stringify(message))
+          yield* Deferred.await(firstStarted)
+          yield* TestClock.adjust('1700 millis')
+          yield* Deferred.succeed(firstRelease, undefined)
+          yield* Deferred.await(secondStarted)
+          yield* TestClock.adjust('300 millis')
+          const first = yield* Fiber.join(pending)
+          expect((yield* Clock.currentTimeMillis) - started).toBe(2000)
+          expect(first.tools.filter((tool) => tool.effect === 'read')).toHaveLength(13)
+          expect(first.tools.filter((tool) => tool.effect === 'write')).toHaveLength(5)
+          expect(firstNames).toHaveLength(4)
+          expect(wave).toBe(2)
+          expect(lines.some((line) => line.includes('unavailable'))).toBe(false)
+          // The first caller has left. Await the late public classification
+          // receipt before the second discovery, proving it reads completed cache.
+          yield* TestClock.adjust('100 millis')
+          yield* Deferred.succeed(secondRelease, undefined)
+          const service = yield* store.service(serviceId)
+          yield* (yield* ToolEffects).classifyBatch({
+            serviceId,
+            service: service.name,
+            tools: first.tools
+              .filter((tool) => tool.effect === 'write')
+              .map((tool) =>
+                ExecutorTool.make({
+                  name: tool.name,
+                  description: tool.description,
+                  effect: tool.effect,
+                  input: {},
                 }),
-              ]),
-            ),
-          )
-        }),
+              ),
+          })
+          const second = yield* findTools(ownerActor, { query: 'records', limit: 25 })
+          expect(second.tools.every((tool) => tool.effect === 'read')).toBe(true)
+          // The ninth Integration never began its lookup before the deadline;
+          // only that unstarted key needs a new request. Four late keys are cached.
+          expect(retriedNames).toHaveLength(1)
+          expect(wave).toBe(3)
+        }).pipe(
+          Effect.provideService(ConnectionStore, scriptedStore),
+          Effect.provide(Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer)))),
+          Effect.provide(
+            Logger.layer([
+              Logger.make(({ message }) => {
+                lines.push(JSON.stringify(message))
+              }),
+            ]),
+          ),
+        )
+      }),
     )
 
     /** Every execution entrypoint inspects exactly the requested undeclared tool. */

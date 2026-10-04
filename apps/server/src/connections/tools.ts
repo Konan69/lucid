@@ -100,7 +100,8 @@ const projectTools = Effect.fn('Connections.projectTools')(function* (
 
 /** Per-tool timers preserve already-answered siblings when a catalog spans batches.
  * All timers share findTools' deadline; concurrent misses still reach the grouped resolver.
- * Deadline cancellation is optional-work exhaustion, not provider-outage evidence. */
+ * Deadline cancellation stops only this caller's wait. ToolEffects keeps bounded
+ * lookup work in its Layer scope so later discovery can reuse the completed answer. */
 const classifyTools = Effect.fn('Connections.classifyTools')(function* (
   row: ConnectionRecord,
   tools: readonly (typeof ExecutorTool.Type)[],

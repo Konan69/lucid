@@ -160,9 +160,11 @@ it.effect('cached classification expires after 24 hours', () => {
 /** A stalled provider keeps Approval without attempting another request. */
 it.effect('a stalled classification keeps write within the direct budget', () => {
   let calls = 0
+  const started = Deferred.makeUnsafe<void>()
   return Effect.gen(function* () {
     const effects = yield* ToolEffects
     const pending = yield* effects.classify(request).pipe(Effect.forkChild)
+    yield* Deferred.await(started)
     yield* TestClock.adjust(EFFECT_BATCH_BUDGET)
     expect(yield* Fiber.join(pending)).toBe('write')
     expect(calls).toBe(1)
@@ -170,7 +172,7 @@ it.effect('a stalled classification keeps write within the direct budget', () =>
     Effect.provide(
       provider(() => {
         calls += 1
-        return Effect.never
+        return Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
       }),
     ),
   )
@@ -299,10 +301,12 @@ it.effect('pending discovery and direct use share one provider request', () => {
 /** Discovery has one short attempt; failure is not a cached successful write answer. */
 it.effect('stalled discovery returns writes within its budget then retries after backoff', () => {
   let calls = 0
+  const started = Deferred.makeUnsafe<void>()
   return Effect.gen(function* () {
     const effects = yield* ToolEffects
     const batch = { serviceId: request.serviceId, service: request.service, tools: [request.tool] }
     const pending = yield* effects.classifyBatch(batch).pipe(Effect.forkChild)
+    yield* Deferred.await(started)
     yield* TestClock.adjust(EFFECT_BATCH_BUDGET)
     expect((yield* Fiber.join(pending)).map((tool) => tool.effect)).toEqual(['write'])
     expect(calls).toBe(1)
@@ -313,7 +317,8 @@ it.effect('stalled discovery returns writes within its budget then retries after
     Effect.provide(
       provider(({ decisions }) => {
         calls += 1
-        if (calls === 1) return Effect.never
+        if (calls === 1)
+          return Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
         return Effect.succeed({
           answers: Object.fromEntries(
             Object.keys(decisions).map((key) => [
@@ -586,3 +591,65 @@ it.effect.each(['direct', 'batch'] as const)('terse descriptions bypass Jev in %
     ),
   )
 })
+
+/** A discovery timeout abandons only its wait. The lookup finishes under the
+ * Layer, and a later public caller observes the cached result without a retry. */
+it.effect('a cancelled caller leaves a bounded lookup to fill the cache', () =>
+  Effect.gen(function* () {
+    let calls = 0
+    const started = yield* Deferred.make<void>()
+    const release = yield* Deferred.make<void>()
+    const modelLayer = provider(
+      Effect.fn('Test.lateAnswer')(function* () {
+        calls += 1
+        yield* Deferred.succeed(started, undefined)
+        yield* Deferred.await(release)
+        return answer(0.99, 'read')
+      }),
+    )
+    yield* Effect.gen(function* () {
+      const effects = yield* ToolEffects
+      const pending = yield* effects
+        .classify(request)
+        .pipe(
+          Effect.timeoutOrElse({ duration: '500 millis', orElse: () => Effect.succeed('write') }),
+          Effect.forkChild,
+        )
+      yield* Deferred.await(started)
+      yield* TestClock.adjust('500 millis')
+      expect(yield* Fiber.join(pending)).toBe('write')
+      yield* TestClock.adjust('100 millis')
+      yield* Deferred.succeed(release, undefined)
+      expect(yield* effects.classify(request)).toBe('read')
+      expect(yield* effects.classify(request)).toBe('read')
+      expect(calls).toBe(1)
+    }).pipe(Effect.provide(modelLayer))
+  }),
+)
+
+/** A detached waiter belongs to the service Layer, never the process root.
+ * Closing that Layer interrupts the provider before its independent deadline. */
+it.effect('Layer shutdown interrupts abandoned lookup work', () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>()
+    const stopped = yield* Deferred.make<void>()
+    const modelLayer = provider(() =>
+      Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Effect.never),
+        Effect.onInterrupt(() => Deferred.succeed(stopped, undefined)),
+      ),
+    )
+    yield* Effect.gen(function* () {
+      const pending = yield* (yield* ToolEffects)
+        .classify(request)
+        .pipe(
+          Effect.timeoutOrElse({ duration: '500 millis', orElse: () => Effect.succeed('write') }),
+          Effect.forkChild,
+        )
+      yield* Deferred.await(started)
+      yield* TestClock.adjust('500 millis')
+      expect(yield* Fiber.join(pending)).toBe('write')
+    }).pipe(Effect.provide(modelLayer))
+    yield* Deferred.await(stopped)
+  }),
+)
