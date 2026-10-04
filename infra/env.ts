@@ -26,7 +26,18 @@ export interface InfrastructureEnvironment {
    * Executor itself, so the first deploy has neither and the server runs with Integrations off.
    */
   readonly executor: Option.Option<ExecutorAccess>
+  /**
+   * The key for Jev, the decision model behind rule matching, tool effect, tool selection and
+   * the approval review (`apps/server/src/decisions/model.ts`). Without it the server still runs:
+   * every decision takes its conservative answer, so Vivid asks more and ranks by words.
+   */
+  readonly decisions: Option.Option<DecisionAccess>
 }
+
+/** Which provider carries Jev. The server prefers TypeSafe when both keys are set. */
+export type DecisionAccess =
+  | { readonly provider: 'TypeSafe'; readonly key: Redacted.Redacted }
+  | { readonly provider: 'OpenRouter'; readonly key: Redacted.Redacted }
 
 export interface ExecutorAccess {
   readonly key: Redacted.Redacted
@@ -92,6 +103,13 @@ export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnviro
       (key, organization): ExecutorAccess => ({ key, organization }),
     )
 
+    const typeSafeKey = yield* optionalSecret('TYPESAFE_API_KEY')
+    const openRouterKey = yield* optionalSecret('OPENROUTER_API_KEY')
+    const decisions = Option.orElse(
+      Option.map(typeSafeKey, (key): DecisionAccess => ({ provider: 'TypeSafe', key })),
+      () => Option.map(openRouterKey, (key): DecisionAccess => ({ provider: 'OpenRouter', key })),
+    )
+
     return {
       authSecret,
       runtimeToken,
@@ -101,6 +119,7 @@ export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnviro
       googleClientSecret,
       googleRedirectUri,
       executor,
+      decisions,
     } satisfies InfrastructureEnvironment
   },
 )()
