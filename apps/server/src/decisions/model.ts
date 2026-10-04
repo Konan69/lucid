@@ -69,7 +69,8 @@ export class DecisionUnavailable extends Schema.TaggedError<DecisionUnavailable>
  */
 const absent = new WeakMap<DecisionModel.DecisionModel, 'Disabled' | 'Unconfigured'>()
 
-/** True only when a decision would reach a provider. Callers use it to skip work, not to choose policy. */
+/** Reports provider configuration independently of the outage gate. Cache Layers
+ * use this to avoid allocating entries when decisions are deliberately absent. */
 export const decisionConfigured = Effect.map(
   DecisionModel.DecisionModel,
   (model) => !absent.has(model),
@@ -184,6 +185,28 @@ const classifyProviderFailure = (error: AiError.AiError) =>
 
 /** Captured gateway models share one process-lifetime gate; independent test models do not. */
 const availability = new WeakMap<DecisionModel.DecisionModel, Ref.Ref<typeof Availability.Type>>()
+
+/** Read-only preflight for callers that prepare expensive decision inputs. False
+ * means the model is absent, still cooling, or already probing. An elapsed cooling
+ * window is eligible: the next actual attempt may acquire the recovery lease.
+ * Reading never expires suspicion, acquires that lease, changes the gate, logs,
+ * or attempts a decision. This is a snapshot, not a reservation: another caller
+ * can open backoff or acquire the probe before preparation finishes. */
+export const decisionWouldAttempt = Effect.gen(function* () {
+  const model = yield* DecisionModel.DecisionModel
+  if (absent.has(model)) return false
+  const state = availability.get(model)
+  if (state === undefined) return true
+  const current = yield* Ref.get(state)
+  const now = yield* Clock.currentTimeMillis
+  return Availability.match(current, {
+    Ready: () => true,
+    Suspect: () => true,
+    Cooling: ({ retryAt }) => now >= retryAt,
+    CredentialCooling: ({ retryAt }) => now >= retryAt,
+    Probing: () => false,
+  })
+}).pipe(Effect.withSpan('Decisions.wouldAttempt'))
 
 /** Atomic admission never queues callers behind a probe. */
 const admit = Effect.fn('Decisions.admit')(function* (state: Ref.Ref<typeof Availability.Type>) {

@@ -7,6 +7,7 @@ import {
   decide,
   decideWithin,
   decisionConfigured,
+  decisionWouldAttempt,
   DECISION_OUTAGE_MINIMUM_MILLIS,
   DecisionUnavailable,
   decisionModelLayer,
@@ -53,6 +54,7 @@ it.effect.each([
   return Effect.gen(function* () {
     expect((yield* decide(definition, 'question')).answers.applies.probability).toBe(0.7)
     expect(yield* decisionConfigured).toBe(true)
+    expect(yield* decisionWouldAttempt).toBe(true)
     expect(urls).toEqual([`${GATEWAY_URL}/systemone`])
     expect(bodies).toHaveLength(1)
     expect(bodies[0]).toContain(model)
@@ -88,6 +90,7 @@ it.effect.each([
     expect(first.reason).toBe(reason)
     expect(second.reason).toBe(reason)
     expect(yield* decisionConfigured).toBe(false)
+    expect(yield* decisionWouldAttempt).toBe(false)
     // One line at start says the state; a decision that was never asked is not an event.
     expect(lines).toHaveLength(1)
   }).pipe(
@@ -214,16 +217,27 @@ it.effect('shares provider backoff and admits only one successful recovery probe
       ),
     )
     yield* Effect.gen(function* () {
+      // Preflight observes admission without transport or a lease. Repeated
+      // observations after cooling below must still leave the real probe free.
+      expect(yield* decisionWouldAttempt).toBe(true)
+      expect(requests).toBe(0)
       expect((yield* Effect.flip(decide(definition, 'first'))).reason).toBe('Provider')
       expect(
         (yield* Effect.flip(decideWithin(definition, 'other caller', '1 second'))).reason,
       ).toBe('Backoff')
+      expect(yield* decisionWouldAttempt).toBe(false)
       yield* TestClock.adjust('29 seconds')
       expect((yield* Effect.flip(decide(definition, 'still cooling'))).reason).toBe('Backoff')
       expect(requests).toBe(1)
       yield* TestClock.adjust('1 second')
+      for (const inspection of [1, 2, 3]) {
+        void inspection
+        expect(yield* decisionWouldAttempt).toBe(true)
+      }
+      expect(requests).toBe(1)
       const probe = yield* decide(definition, 'probe').pipe(Effect.forkChild)
       yield* Deferred.await(started)
+      expect(yield* decisionWouldAttempt).toBe(false)
       const siblings = yield* Effect.forEach(
         [1, 2, 3],
         () => Effect.flip(decide(definition, 'sibling')),
@@ -233,6 +247,7 @@ it.effect('shares provider backoff and admits only one successful recovery probe
       expect(requests).toBe(2)
       yield* Deferred.succeed(release, undefined)
       expect((yield* Fiber.join(probe)).answers.applies.probability).toBe(0.7)
+      expect(yield* decisionWouldAttempt).toBe(true)
       expect((yield* decide(definition, 'recovered')).answers.applies.probability).toBe(0.7)
       const transitions = lines.filter((line) =>
         JSON.stringify(line).includes('Decision availability backoff'),
