@@ -640,7 +640,7 @@ function responseReader(client: HttpClient.HttpClient) {
 }
 
 /** Supported catalogue entries remain discoverable even when this installation cannot authorize them.
- * Missing or unknown auth requires operator setup; it never means unauthenticated access.
+ * Absent auth is learned after installation; an unknown declared hint requires operator setup.
  * Hosted CatalogImport quick-add supports app/MCP only; OpenAPI/GraphQL/CLI remain excluded.
  * These are method hints; cached setup inspection selects a usable method before a service is
  * offered or a Connection begins. Mixed imports retain both methods during inspection.
@@ -649,7 +649,7 @@ function catalogEntry(entry: typeof WireCatalogEntry.Type) {
   if (entry.kind !== 'app' && (entry.kind !== 'mcp' || entry.connectUrl === undefined)) return []
   const authorization =
     entry.auth === undefined
-      ? ServiceAuthorization.cases.SetupRequired.make({})
+      ? ServiceAuthorization.cases.KnownAfterInstall.make({})
       : Match.value(entry.auth.kind).pipe(
           Match.when('none', () => ServiceAuthorization.cases.None.make({})),
           Match.whenOr('oauth', 'mixed', () => ServiceAuthorization.cases.SignIn.make({})),
@@ -937,8 +937,13 @@ function makeAuthorize(
       Key: () => methods.filter(([, method]) => AuthorizationMethod.guards.secrets(method)),
       None: () => [],
       SetupRequired: () => [],
-      // The catalogue gave no hint, so the installed app's own declared methods decide.
-      KnownAfterInstall: () => methods,
+      // Absent catalogue hints follow the mixed-entry rule: OAuth takes precedence over keys.
+      KnownAfterInstall: () => {
+        const oauth = methods.filter(([, method]) => AuthorizationMethod.guards.oauth2(method))
+        return oauth.length > 0
+          ? oauth
+          : methods.filter(([, method]) => AuthorizationMethod.guards.secrets(method))
+      },
     })
     const chosen = matching[0]
     if (matching.length !== 1 || chosen === undefined)

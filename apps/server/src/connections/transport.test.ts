@@ -413,6 +413,32 @@ describe('Executor hosted transport', () => {
       ),
   )
 
+  it.effect('prefers OAuth for a newly installed mixed-auth catalogue app', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        yield* Ref.set(remote.accounts, {
+          slot: {
+            provider: 'provider',
+            definition: {
+              auth: {
+                ...keyRequirement.slot.definition.auth,
+                ...signInRequirement.slot.definition.auth,
+              },
+            },
+          },
+        })
+        const step = yield* (yield* Executor).begin(begin)
+        expect(step._tag).toBe('OpenSignIn')
+        expect(
+          (yield* Ref.get(remote.requests)).find(
+            (request) =>
+              request.path === `POST ${hostedPrefix}/connections/authorization/oauth/start`,
+          ),
+        ).toMatchObject({ body: { method: 'oauth' } })
+      }),
+    ),
+  )
+
   it.effect('inspects OAuth setup and starts with the matching deployment redirect', () =>
     scenario((remote) =>
       Effect.gen(function* () {
