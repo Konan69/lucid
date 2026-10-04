@@ -94,7 +94,7 @@ const ports = Layer.effectContext(
       runnerDefect: yield* Ref.make(false),
       judgment: yield* Ref.make<Judgment>(Judgment.cases.All.make({})),
       review: yield* Ref.make<Review>(
-        Review.cases.Reviewed.make({ asked: 0, beyond: 0.9, consequence: 'reaches' }),
+        Review.cases.Reviewed.make({ asked: 0, beyond: 0.9, contained: 0.02 }),
       ),
       reviewCalls: yield* Ref.make<ReadonlyArray<ProposedAction>>([]),
       outcome: yield* Ref.make<ActionOutcome>(

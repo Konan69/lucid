@@ -73,21 +73,6 @@ const publish = (changes: Changes['Service']) =>
     yield* changes.publish(topics)
   })
 
-/** What separates a Routine's own instruction from the outside payload in a delivery body. */
-const PAYLOAD_SEPARATOR = '\n\nPayload:\n'
-
-/**
- * The part of a `bodyOf` delivery that is the Routine's instruction. Everything before the first
- * separator was written by `bodyOf` from the Routine record; a webhook or an incoming email can
- * only ever follow it. A prompt that itself contains the separator is cut short, which loses
- * instruction text but can never admit payload text. The reviewer of a proposed action reads this
- * (`approvals/request.ts`), so outside text is never mistaken for what the Person set up.
- */
-export const instructionOf = (body: string) => {
-  const end = body.indexOf(PAYLOAD_SEPARATOR)
-  return end < 0 ? body : body.slice(0, end)
-}
-
 /** The prompt keeps its Library scope; webhook text is appended as the outside payload. */
 export const bodyOf = (record: RoutineRecord, payload: Option.Option<string>) => {
   const routine = record.routine
@@ -97,7 +82,7 @@ export const bodyOf = (record: RoutineRecord, payload: Option.Option<string>) =>
       : `${routine.prompt}\n\nSearch this Routine's Library folder and cite every source used.`
   return Option.match(payload, {
     onNone: () => prompt,
-    onSome: (text) => `${prompt}${PAYLOAD_SEPARATOR}${text}`,
+    onSome: (text) => `${prompt}\n\nPayload:\n${text}`,
   })
 }
 

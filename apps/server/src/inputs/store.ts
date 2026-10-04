@@ -36,6 +36,7 @@ import { threads } from '../threads/tables.ts'
 import { Conversation, DeliveryMessage } from '../threads/conversation.ts'
 import { Signal, encodeSignal } from '../approvals/signal.ts'
 import { replaySignals } from '../approvals/replay.ts'
+import { answerKey } from './answers.ts'
 import { inputRequests } from './tables.ts'
 
 const fields = createSelectSchema(inputRequests, {
@@ -212,7 +213,7 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
     return yield* Effect.fail(new Conflict({ message: 'Choose one of the offered answers' }))
   const now = yield* Clock.currentTimeMillis
   const signal = Signal.cases.Owed.make({
-    idempotencyKey: `answer-${request.id}`,
+    idempotencyKey: answerKey(request.id),
     deciderId: actor.person.id,
     message: DeliveryMessage.cases.Signal.make({
       type: 'answer',

@@ -37,7 +37,7 @@ const action = ProposedAction.make({
     connectionId: ConnectionId.make('connection-one'),
     account: 'Gmail (Work)',
     tool: 'update_record',
-    input: { private: 'PRIVATE_INPUT' },
+    input: { to: 'dami@example.test' },
   }),
 })
 /** The real DecisionModel constructor validates scripted provider answers; RuleJudge
@@ -79,13 +79,8 @@ it.effect('one call selects threshold edges and keeps identifiers and private va
     // A rule about "my work Gmail" can only be matched against the names the Person knows.
     expect(prompt).toContain('Gmail (Work)')
     expect(prompt).toContain('update_record')
-    for (const value of [
-      'PRIVATE_INPUT',
-      'PRIVATE_RATIONALE',
-      'connection-one',
-      'Connection',
-      rule.id,
-    ])
+    expect(prompt).toContain('dami@example.test')
+    for (const value of ['PRIVATE_RATIONALE', 'connection-one', 'Connection', rule.id])
       expect(prompt).not.toContain(value)
     return Effect.succeed(probabilities([0.499, 0.5, 0.501]))
   })

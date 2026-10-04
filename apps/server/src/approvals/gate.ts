@@ -45,9 +45,9 @@ export interface GateService {
    * Company's rules are binding on every Member, and a Person's own rules can only make things
    * stricter. With no rule, the default is to run: only an action that uses something of the
    * Person's own, or is `destructive`, goes to the `Reviewer`, and `policy.ts#reviewOutcome` asks
-   * only when the Person did not ask for it and it reaches other people or cannot be undone. If
-   * the review could not be made, or a rule that could forbid the action could not be weighed,
-   * the answer is to ask.
+   * only when the Person did not ask for it and it reaches other people or cannot be undone. With
+   * no review (decisions switched off or unavailable) a `write` runs and a `destructive` action
+   * asks. If a rule that could forbid the action could not be weighed, the answer is to ask.
    */
   readonly check: (
     actor: Actor,
