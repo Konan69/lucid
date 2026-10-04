@@ -29,7 +29,7 @@ export default defineApp({ accounts: {}, database }, async () => ({
   mutations: { save: mutation({ description: "Save a proof record", input: object({ subject: string() }) }, async ({ db }, value) => { await db.records.insert(value); return { saved: true, subject: value.subject }; }) }
 }));`
 
-const Deployment = Schema.Struct({ app: Schema.Struct({ id: ExecutorAppId }) })
+const Deployment = Schema.Struct({ id: ExecutorAppId })
 const Profile = Schema.Struct({ id: ExecutorProfileId })
 export const ProofRecords = Schema.Array(
   Schema.Struct({ id: Schema.String, subject: Schema.String }),
@@ -40,6 +40,14 @@ const cleanupFailed = () => Effect.sync(() => expect.fail('Executor proof cleanu
 const successfulRemoval = (response: HttpClientResponse.HttpClientResponse) =>
   Effect.sync(() => expect(response.status >= 200 && response.status < 300).toBe(true))
 
+/** Hosted management derives ownership from the authenticated organization. Match the adapter's
+ * URL prefix, including an operator-supplied base path, without exposing its URL or key in logs. */
+const hostedEndpoint = Effect.fn('ThreadProof.hostedEndpoint')(function* () {
+  const endpoint = yield* Config.URL('VIVID_EXECUTOR_URL')
+  const organization = yield* Config.schema(Schema.NonEmptyString, 'VIVID_EXECUTOR_ORGANIZATION')
+  return `${endpoint.href.replace(/\/$/u, '')}/api/organizations/${encodeURIComponent(organization)}`
+})
+
 /** Management calls decode the deployed host's response, keep its key redacted and refuse
  * non-success statuses. No app creation, write, tool dispatch or model request is retried.
  */
@@ -47,10 +55,10 @@ const executorRequest = Effect.fn('ThreadProof.executorRequest')(function* (
   path: string,
   body: Schema.Json,
 ) {
-  const endpoint = yield* Config.URL('VIVID_EXECUTOR_URL')
+  const endpoint = yield* hostedEndpoint()
   const key = yield* Config.Redacted('VIVID_EXECUTOR_KEY')
   const request = yield* HttpClientRequest.bodyJson(
-    HttpClientRequest.post(new URL(path, endpoint)).pipe(HttpClientRequest.bearerToken(key)),
+    HttpClientRequest.post(`${endpoint}${path}`).pipe(HttpClientRequest.bearerToken(key)),
     body,
   )
   const response = yield* (yield* HttpClient.HttpClient).execute(request).pipe(
@@ -68,14 +76,15 @@ const executorRequest = Effect.fn('ThreadProof.executorRequest')(function* (
   return response
 })
 
-/** Allocate an isolated real service/profile before linking it to this fixture's Person. Cleanup
+/** HostedApps.deploy returns App directly; HostedProfiles.create derives owner/subject from
+ * membership. Allocate an isolated real service/profile before linking it to this fixture's Person. Cleanup
  * is installed before deployment; provider resources are removed before the Person cascades.
  * Only private test rows are inserted; credentials remain exclusively inside Executor.
  */
 export const proofConnection = Effect.fn('ThreadProof.connection')(function* (
   fixture: ChainFixture,
 ) {
-  const endpoint = yield* Config.URL('VIVID_EXECUTOR_URL')
+  const endpoint = yield* hostedEndpoint()
   const key = yield* Config.Redacted('VIVID_EXECUTOR_KEY')
   const http = yield* HttpClient.HttpClient
   const owner = ExecutorOwnerId.make(`thread-proof-${NodeCrypto.randomUUID()}`)
@@ -86,7 +95,7 @@ export const proofConnection = Effect.fn('ThreadProof.connection')(function* (
       onSome: (id) =>
         http
           .execute(
-            HttpClientRequest.delete(new URL(`/v1/apps/${id}`, endpoint)).pipe(
+            HttpClientRequest.delete(`${endpoint}/apps/${encodeURIComponent(id)}`).pipe(
               HttpClientRequest.bearerToken(key),
             ),
           )
@@ -94,23 +103,21 @@ export const proofConnection = Effect.fn('ThreadProof.connection')(function* (
     }),
   )
   const deployed = yield* HttpClientResponse.schemaBodyJson(Deployment)(
-    yield* executorRequest('/v1/apps/deploy', {
-      owner,
-      name: 'Proof Records',
+    yield* executorRequest('/apps/deploy', {
+      name: `Proof Records ${NodeCrypto.randomUUID()}`,
       files: [{ path: 'index.ts', content: source }],
     }),
   )
-  created = Option.some(deployed.app.id)
+  created = Option.some(deployed.id)
   const profile = yield* HttpClientResponse.schemaBodyJson(Profile)(
-    yield* executorRequest(`/v1/apps/${deployed.app.id}/profiles`, {
-      owner,
-      subject: fixture.personId,
+    yield* executorRequest(`/apps/${encodeURIComponent(deployed.id)}/profiles`, {
+      name: 'Proof Records',
       accounts: {},
       idempotencyKey: NodeCrypto.randomUUID(),
     }),
   )
   const references = ExecutorReferences.cases.Public.make({
-    app: deployed.app.id,
+    app: deployed.id,
     profile: profile.id,
     owner,
     service: ServiceId.make('proof-records'),
