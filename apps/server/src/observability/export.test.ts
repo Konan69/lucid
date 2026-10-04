@@ -799,16 +799,21 @@ it.effect(
         [rooted, undefined],
       ])
       expect(spanNamed(spans, 'Probe.inbound').map((span) => span.traceId)).toEqual([trace, rooted])
-      // Every refusal is still counted; a line written under a dropped span names no trace.
+      // Every refusal is still counted. A line written under a dropped span is filed under that
+      // span's own trace id, which the server made: an id, a different one for each request, and
+      // never the text that was sent.
       const refusals = lines.filter((line) => line.body.stringValue === Message.refusal)
-      expect(refusals.map((line) => line.traceId)).toEqual([
-        undefined,
-        trace,
-        undefined,
-        undefined,
-        undefined,
-        rooted,
+      const filed = refusals.map((line) => (line.traceId === undefined ? '' : line.traceId))
+      expect([filed[1], filed[5]]).toEqual([trace, rooted])
+      const made = [filed[0], filed[2], filed[3], filed[4]]
+      expect(made.map((id) => id !== undefined && /^[0-9a-f]{32}$/.test(id))).toEqual([
+        true,
+        true,
+        true,
+        true,
       ])
+      expect(new Set([...made, trace, rooted]).size).toBe(6)
+      expect(filed).toHaveLength(6)
       expect(text).not.toContain('forged')
       expect(text).not.toContain('Lovelace')
       expect(text).not.toContain('463ac35c9f6413ad463ac35c')
@@ -1561,6 +1566,119 @@ it.effect('makes a span from options or a parent that cannot be read, and change
     expect(spanNamed(spans, 'Probe.neighbour')).toHaveLength(1)
     expect(text).not.toContain(PRIVATE)
   }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+)
+
+it.effect('forwards at most 128 links, whatever the collection that holds them answers', () =>
+  Effect.gen(function* () {
+    const { collect, flush, run } = yield* observed(plain)
+    const link: Tracer.SpanLink = {
+      span: Tracer.externalSpan({
+        traceId: '0af7651916cd43dd8448eb211c80319c',
+        spanId: 'a2fb4a1d1a96d312',
+      }),
+      attributes: {},
+    }
+    // A million links in an array whose `slice` hands back the array itself, so a cap taken with
+    // the array's own method caps nothing.
+    const endless = () => {
+      const links = Array.from({ length: 1_000_000 }, () => link)
+      links.slice = () => links
+      return links
+    }
+    // A collection that throws when it is asked anything, how long it is first of all.
+    const unsized = () => new Proxy([link], { get: throwing })
+    const options = (name: string, links: Array<Tracer.SpanLink>) => ({
+      name,
+      parent: Option.none<Tracer.AnySpan>(),
+      annotations: Context.empty(),
+      links,
+      startTime: 0n,
+      kind: 'internal' as const,
+      root: true,
+      sampled: true,
+    })
+    const created = Effect.fn('Probe.created')(function* () {
+      const tracer = yield* Tracer.Tracer
+      const spans = [
+        tracer.span(options('Probe.endless', endless())),
+        tracer.span(options('Probe.unsized', unsized())),
+      ]
+      for (const span of spans) span.end(1n, Exit.succeed('done'))
+      return spans.map((span) => [span.links.length, span.sampled] as const)
+    })
+    const added = Effect.fn('Probe.added')(function* () {
+      const span = yield* Effect.currentSpan
+      span.addLinks(unsized())
+      const before = span.links.length
+      // Twice, so that the second call finds no room left.
+      span.addLinks(endless())
+      span.addLinks(endless())
+      return [before, span.links.length] as const
+    })
+    const exits = [yield* run(created()), yield* run(added())]
+    yield* flush
+    const { spans, text } = yield* collect()
+
+    // Options whose links cannot be read make a span that records nothing (`unreadable`); links
+    // that cannot be read when they are added are not added, and the span goes on.
+    expect(exits).toEqual([
+      Exit.succeed([
+        [128, true],
+        [0, false],
+      ]),
+      Exit.succeed([0, 128]),
+    ])
+    const linksOf = (name: string) => spanNamed(spans, name).map((span) => span.links.length)
+    expect(linksOf('Probe.endless')).toEqual([128])
+    expect(linksOf('Probe.unsized')).toEqual([])
+    expect(linksOf('Probe.added')).toEqual([128])
+    expect(text).not.toContain(PRIVATE)
+  }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+)
+
+it.effect(
+  'files a line under its trace whether or not its span is sampled, and under no id that is not one',
+  () =>
+    Effect.gen(function* () {
+      const { collect, flush, run } = yield* observed(plain)
+      // A line under a span that is not sampled, whose parent is: the trace is exported, so the
+      // line belongs to it although its own span is not.
+      const quiet = Effect.fn('Probe.parent')(function* () {
+        const parent = yield* Effect.currentSpan
+        yield* Effect.logInfo(Message.failure).pipe(
+          Effect.withSpan('Probe.quiet', { sampled: false }),
+          Effect.provideService(Logger.CurrentLoggers, yield* exportersOnly()),
+        )
+        return parent.traceId
+      })
+      // Lines directly under a caller's span whose trace id is not one: text, one digit short, and
+      // all zero.
+      const malformed = ['not-a-trace-id', '0af7651916cd43dd8448eb211c80319', '0'.repeat(32)]
+      const stray = Effect.fn('Probe.stray')(function* () {
+        const loggers = yield* exportersOnly()
+        yield* Effect.forEach(malformed, (traceId) =>
+          Effect.logInfo(Message.defect).pipe(
+            Effect.withParentSpan(Tracer.externalSpan({ traceId, spanId: 'a2fb4a1d1a96d312' })),
+            Effect.provideService(Logger.CurrentLoggers, loggers),
+          ),
+        )
+        return 'done'
+      })
+      const [first, second] = [yield* run(quiet()), yield* run(stray())]
+      yield* flush
+      const { lines, spans } = yield* collect()
+
+      const [parent] = spanNamed(spans, 'Probe.parent')
+      expect(parent === undefined ? '' : parent.traceId).toMatch(/^[0-9a-f]{32}$/)
+      expect(first).toEqual(Exit.succeed(parent === undefined ? '' : parent.traceId))
+      expect(second).toEqual(Exit.succeed('done'))
+      // The unsampled span itself did not leave; the line under it did, in its parent's trace.
+      expect(spanNamed(spans, 'Probe.quiet')).toEqual([])
+      const tracesOf = (body: string) =>
+        lines.filter((line) => line.body.stringValue === body).map((line) => line.traceId)
+      expect(tracesOf(Message.failure)).toEqual([parent === undefined ? '' : parent.traceId])
+      expect(tracesOf(Message.defect)).toEqual(malformed.map(() => undefined))
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
 )
 
 it.effect('exports a line logged with a cause that cannot be read, and the log call succeeds', () =>

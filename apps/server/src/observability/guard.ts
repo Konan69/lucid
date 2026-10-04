@@ -12,8 +12,8 @@ import * as Result from 'effect/Result'
 import * as Tracer from 'effect/Tracer'
 import type { AnyValue } from 'effect/unstable/observability/OtlpResource'
 import type * as OtlpSerialization from 'effect/unstable/observability/OtlpSerialization'
-import { type FailureKind, summarize } from './failure.ts'
-import { isMessage, OMITTED } from './messages.ts'
+import { type FailureKind, summarize, UNTYPED } from './failure.ts'
+import { isCodeName, isMessage, OMITTED } from './messages.ts'
 
 /**
  * What stands between the program and the exporter's tracer and logger.
@@ -192,15 +192,41 @@ interface Reading {
 }
 
 /**
+ * The first entries of a collection the program supplied, at most `most` of them, in a new array
+ * of this module's own.
+ *
+ * No method of the collection is called and it is not iterated: `slice`, `map`, `filter` and
+ * `Symbol.iterator` are properties of the program's object like any other, and an array whose
+ * `slice` returns the array itself made the cap that used it forward every entry. `length` is
+ * read once and trusted only as far as the cap: anything that is not a positive number reads as
+ * empty, and a larger or infinite one as `most`. Then each entry is read by its index, once.
+ *
+ * Reading `length` or an entry runs the collection's code when it is a `Proxy` or has getters;
+ * the caller contains that.
+ */
+const firstOf = <A>(items: ArrayLike<A>, most: number): Array<A> => {
+  const { length } = items
+  const count = Predicate.isNumber(length) && length > 0 ? Math.min(Math.floor(length), most) : 0
+  const first: Array<A> = []
+  for (let index = 0; index < count; index += 1) {
+    // A hole in a sparse array is no entry, so it is left out and nothing is put in its place.
+    const item = items[index]
+    if (item !== undefined) first.push(item)
+  }
+  return first
+}
+
+/**
  * At most `room` links, each to a plain span with allowlisted attributes. A link to a span whose
- * trace id is not an id is left out. Only the first `room` entries of the array are read.
+ * trace id is not an id is left out. Only the first `room` entries of the array are read, by
+ * index (`firstOf`).
  */
 const plainLinks = (
   { own, keys }: Reading,
   links: ReadonlyArray<Tracer.SpanLink>,
   room: number,
 ): Array<Tracer.SpanLink> =>
-  links.slice(0, Math.max(room, 0)).flatMap(({ span, attributes }) =>
+  firstOf(links, room).flatMap(({ span, attributes }) =>
     Option.toArray(
       Option.map(plainSpan(own, span), (plain) => ({
         span: plain,
@@ -282,16 +308,24 @@ const plainOptions = (reading: Reading, options: SpanOptions): SpanOptions => {
  * A record, not an `Error`: constructing an `Error` captures a stack, and that stack would be
  * this module's. rc.116 `causePrettyError` accepts either, reads `message`, `cause`, `name` and
  * `stack` from it, and finds here two strings and two absences.
+ *
+ * The type is kept only when it is a code name (`messages.ts` `isCodeName`, the rule and the
+ * bound the allowlist applies to `error.type` in `export.ts` `typeName`), and is `_OTHER`
+ * otherwise. A schema class's tag is whatever the class was declared with (`failure.ts`
+ * `schemaTag` names the residual), and `causePrettyError` builds the stack text from `name`
+ * before serialization drops it, so a tag of a megabyte would be copied into that text. The
+ * length is asked before the pattern reads the text.
  */
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- A failure is unknown by Effect's contract (`Die.defect`, the generic error channel); `summarize` is where it is decoded.
-const standIn = (kind: FailureKind, failure: unknown) => ({
-  name: summarize(kind, failure).type,
-  message: '',
-})
+const standIn = (kind: FailureKind, failure: unknown) => {
+  const { type } = summarize(kind, failure)
+  return { name: Predicate.isString(type) && isCodeName(type) ? type : UNTYPED, message: '' }
+}
 
 /**
- * A cause with the first `MOST_REASONS` reasons in the same order, each failure and defect
- * replaced by its stand-in. Interruptions are kept as they are: they hold a fiber id and nothing
+ * A cause with the first `MOST_REASONS` reasons in the same order, read by index (`firstOf`: the
+ * exit a span is ended with is the caller's object too), each failure and defect replaced by its
+ * stand-in. Interruptions are kept as they are: they hold a fiber id and nothing
  * thrown.
  *
  * This is what the exporter is given in place of the real cause, because of what it does with
@@ -322,7 +356,7 @@ const standIn = (kind: FailureKind, failure: unknown) => ({
  */
 const standInCause = (cause: Cause.Cause<unknown>): Cause.Cause<unknown> =>
   Cause.fromReasons(
-    cause.reasons.slice(0, MOST_REASONS).map((reason): Cause.Reason<unknown> => {
+    firstOf(cause.reasons, MOST_REASONS).map((reason): Cause.Reason<unknown> => {
       if (Cause.isFailReason(reason)) return Cause.makeFailReason(standIn('expected', reason.error))
       if (Cause.isDieReason(reason)) return Cause.makeDieReason(standIn('defect', reason.defect))
       return reason
@@ -499,14 +533,22 @@ const bodyOf = (message: unknown): string => {
 }
 
 /**
- * The span a line names: the fiber's current span, when it is sampled and its ids are ids. A span
- * that is not sampled is not exported, so a line that named it would point at nothing; before
- * this, such a line carried the ids anyway.
+ * The span a line names: the fiber's current span, when its ids are ids (`isTraceId`,
+ * `isSpanId`: the right length, hexadecimal, not all zero), whether or not it is sampled.
+ *
+ * Sampling decides whether a span is exported, not whether its trace is: a span that is not
+ * sampled can sit under a sampled parent whose trace is exported, and the trace id is what files
+ * the line under it. rc.116 `OtlpLogger.ts` `makeLogRecord` keeps the ids the same way. For a
+ * while this left the ids off every line under an unsampled span, which cut those lines from
+ * their trace.
+ *
+ * A span made in place of one that could not be filed (`plainOptions`: a parent whose trace id is
+ * not an id; `unreadable`) is not sampled and has ids of its own, so a line under it carries
+ * those: ids this process made, never the text that was sent, and the same for every line of that
+ * piece of work.
  */
-const spanOf = ({ traceId, spanId, sampled }: Tracer.AnySpan) =>
-  Predicate.isBoolean(sampled) && sampled && isTraceId(traceId) && isSpanId(spanId)
-    ? Option.some({ traceId, spanId })
-    : Option.none()
+const spanOf = ({ traceId, spanId }: Tracer.AnySpan) =>
+  isTraceId(traceId) && isSpanId(spanId) ? Option.some({ traceId, spanId }) : Option.none()
 
 /**
  * The logger that exports, written here in place of rc.116 `OtlpLogger.make`.
@@ -523,7 +565,7 @@ const spanOf = ({ traceId, spanId, sampled }: Tracer.AnySpan) =>
  * - the level and its number are the fiber's (`SEVERITY`);
  * - the attributes are the allowlisted annotations with kept values (`keptOf`);
  * - both times are the clock's, as in the reference;
- * - the trace and span are the current span's when it is exported (`spanOf`).
+ * - the trace and span are the current span's when its ids are ids (`spanOf`).
  *
  * The reference's `fiberId`, `logSpan.*` and `log.error` attributes are not built: none is on the
  * allowlist, so none ever left, and the last is the rendered cause. The cause is not read at all.
