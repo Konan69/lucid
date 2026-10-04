@@ -98,6 +98,9 @@ export const pages = {
   current: () => state,
   front: () => front,
   showing,
+  /** Whether Vivid is acting on this page right now. The page says so while it is. */
+  usedByVivid: (browser: BrowserState, page: Page) =>
+    UsedTab.guards.Some(browser.using) && browser.using.value === page.tab,
   /** The page's own icon, when the document has declared one; otherwise the tab draws a globe. */
   favicon: (page: Page) =>
     PageFavicon.match(page.favicon, {

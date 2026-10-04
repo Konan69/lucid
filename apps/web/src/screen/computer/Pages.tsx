@@ -548,8 +548,19 @@ export function PageView({ page }: { page: Option.Option<Page> }) {
       />
     )
   }
-  // Keyed by the page, so another page gets its own element and its own first report.
-  return <div key={page.value.tab} ref={place} className="min-h-0 flex-1" />
+  return (
+    <>
+      {pages.usedByVivid(pages.current(), page.value) && (
+        // A standing line, not a toast: it is true for exactly as long as Vivid is acting here,
+        // and the page below it moves down to make room, so nothing of the page is covered.
+        <p role="status" className="shrink-0 px-3 py-1.5 text-label text-ink-2 hairline-b">
+          Vivid is using this page. Touch it to take over.
+        </p>
+      )}
+      {/* Keyed by the page, so another page gets its own element and its own first report. */}
+      <div key={page.value.tab} ref={place} className="min-h-0 flex-1" />
+    </>
+  )
 }
 
 /**
