@@ -603,6 +603,41 @@ describe('Executor hosted transport', () => {
     ),
   )
 
+  it.effect('retries a partial remove through an already absent profile and account', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        const executor = yield* Executor
+        yield* failRoute(remote, 'DELETE /accounts/account', {
+          status: 409,
+          body: profileConflictReply.make({}),
+        })
+        expect(yield* executor.remove(authorized).pipe(Effect.flip)).toHaveProperty(
+          '_tag',
+          'ExecutorConflict',
+        )
+        yield* failRoute(remote, 'DELETE /apps/app/profiles/profile', {
+          status: 404,
+          body: Schema.TaggedStruct('ProfileNotFound', {}).make({}),
+        })
+        yield* failRoute(remote, 'DELETE /accounts/account', {
+          status: 404,
+          body: Schema.TaggedStruct('AccountNotFound', {}).make({}),
+        })
+        yield* executor.remove(authorized)
+        expect(
+          (yield* Ref.get(remote.requests))
+            .filter((request) => request.path.startsWith('DELETE'))
+            .map((request) => request.path),
+        ).toEqual([
+          `DELETE ${hostedPrefix}/apps/app/profiles/profile`,
+          `DELETE ${hostedPrefix}/accounts/account`,
+          `DELETE ${hostedPrefix}/apps/app/profiles/profile`,
+          `DELETE ${hostedPrefix}/accounts/account`,
+        ])
+      }),
+    ),
+  )
+
   it.effect('removes the profile before its exact account and preserves the shared app', () =>
     scenario((remote) =>
       Effect.gen(function* () {

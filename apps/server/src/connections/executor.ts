@@ -1620,10 +1620,26 @@ function makeCompleteSignIn(http: ExecutorHttp) {
   })
 }
 
+/** A deletion retry treats only its own missing resource as success. Other missing relations,
+ * conflicts, and authority failures remain visible and cannot authorize deleting another resource.
+ */
+function makeRemoval(http: ExecutorHttp) {
+  return Effect.fn('Executor.removeResource')((path: string, resource: 'Profile' | 'Account') =>
+    http
+      .readRemoval(Effect.succeed(HttpClientRequest.delete(path)), null)
+      .pipe(
+        Effect.catchTag('ExecutorResourceMissing', (error) =>
+          error.resource === resource ? Effect.void : Effect.fail(error),
+        ),
+      ),
+  )
+}
+
 /** Remove only the Connection's profile, then its dedicated account. Hosted app code is shared
  * and must remain. Executor's active-resource conflicts protect other live account users.
  */
 function makeRemove(http: ExecutorHttp) {
+  const remove = makeRemoval(http)
   const resolveRemovalAccount = makeResolveRemovalAccount(http)
   return Effect.fn('Executor.remove')(function* (references: ExecutorReferences) {
     const account = yield* ExecutorReferences.match(references, {
@@ -1634,15 +1650,8 @@ function makeRemove(http: ExecutorHttp) {
       OAuthSigningIn: resolveRemovalAccount,
       GoogleSigningIn: resolveRemovalAccount,
     })
-    yield* http.readRemoval(
-      Effect.succeed(HttpClientRequest.make('DELETE')(target(references))),
-      null,
-    )
-    if (Option.isSome(account))
-      yield* http.readRemoval(
-        Effect.succeed(HttpClientRequest.make('DELETE')(`/accounts/${query(account.value)}`)),
-        null,
-      )
+    yield* remove(target(references), 'Profile')
+    if (Option.isSome(account)) yield* remove(`/accounts/${query(account.value)}`, 'Account')
   })
 }
 
