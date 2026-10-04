@@ -173,6 +173,48 @@ describe('Executor hosted transport', () => {
     ),
   )
 
+  it.effect('ignores foreign requirement shapes and reads only the selected installed app', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        const executor = yield* Executor
+        const first = yield* executor.begin(begin)
+        const installed = yield* Ref.get(remote.apps)
+        yield* failRoute(remote, 'GET /inventory', {
+          status: 200,
+          body: {
+            apps: [
+              {
+                id: 'foreign-app',
+                name: 'Other app',
+                requirements: {
+                  accounts: { many: { definition: { auth: { alien: { type: 'future-auth' } } } } },
+                },
+              },
+              ...installed.map((app) => ({
+                id: app.id,
+                name: app.name,
+                requirements: 'detail must be fetched separately',
+              })),
+            ],
+          },
+        })
+        const second = yield* executor.begin({
+          ...begin,
+          connectionId: ConnectionId.make('second'),
+        })
+        expect(second.references.app).toBe(first.references.app)
+        const requests = yield* Ref.get(remote.requests)
+        expect(
+          requests.filter((request) => request.path === `POST ${hostedPrefix}/apps/install`),
+        ).toHaveLength(1)
+        expect(
+          requests.filter((request) => request.path === `GET ${hostedPrefix}/apps/app`),
+        ).toHaveLength(1)
+        expect(requests.some((request) => request.path.includes('foreign-app'))).toBe(false)
+      }),
+    ),
+  )
+
   it.effect('imports one shared MCP app with the source-verified body', () =>
     scenario((remote) =>
       Effect.gen(function* () {

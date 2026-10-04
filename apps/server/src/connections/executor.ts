@@ -335,7 +335,11 @@ const WireApp = Schema.Struct({
   name: Schema.NonEmptyString,
   requirements: Schema.Struct({ accounts: Schema.Record(Schema.String, Requirement) }),
 })
-const WireInventory = Schema.Struct({ apps: Schema.Array(WireApp) })
+// Inventory identifies shared code only. Unrelated apps may use requirement shapes this
+// adapter cannot authorize; decode requirements only on the selected app's detail endpoint.
+const WireInventory = Schema.Struct({
+  apps: Schema.Array(Schema.Struct({ id: ExecutorAppId, name: Schema.NonEmptyString })),
+})
 const WireSetup = Schema.Struct({
   mode: Schema.Literals(['automatic', 'saved', 'client-required']),
 })
@@ -1329,7 +1333,11 @@ function makeInstall(http: ExecutorHttp, permit: Semaphore.Semaphore) {
         null,
       )
       const existing = inventory.apps.find((app) => app.name === name)
-      if (existing !== undefined) return existing
+      if (existing !== undefined)
+        return yield* http.readApp(
+          Effect.succeed(HttpClientRequest.get(`/apps/${query(existing.id)}`)),
+          null,
+        )
       return yield* install(name)
     },
     (effect) => permit.withPermits(1)(effect),
