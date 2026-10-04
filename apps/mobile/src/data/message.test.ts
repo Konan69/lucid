@@ -229,7 +229,7 @@ describe('what Vivid did', () => {
     // A call left running in a reply that is over was abandoned; nothing is happening now.
     const steps = stepsOf([running, tool('create_task', {})])
     expect(currentStepOf(steps, false)).toEqual(Option.none())
-    expect(stepsSummary(steps, false)).toBe('Searching the Library and one more thing')
+    expect(stepsSummary(steps, false)).toBe('Searching the Library and 1 more step')
   })
 
   it('keeps show calls out of steps even when their input cannot be drawn', () => {

@@ -336,6 +336,17 @@ const UNKNOWN: Step = {
   detail: nothing,
 }
 
+/**
+ * The line for a tool this client has no words for. When Vivid said what the step is for, that is
+ * the line while it runs and once it is done; "Did something" above a sentence saying what was
+ * done would be noise.
+ */
+const unheardOf = (purpose: Option.Option<string>): Step =>
+  Option.match(purpose, {
+    onNone: () => UNKNOWN,
+    onSome: (words) => ({ ...UNKNOWN, said: { ...UNKNOWN.said, running: words, done: words } }),
+  })
+
 const STEP_OF = new Map<string, Step>(Object.entries(STEPS))
 
 const NOTHING_ASKED: Asked = {
@@ -419,8 +430,14 @@ export function describeToolCall(
   answered: Option.Option<Answered>,
   called: ToolState,
 ): ToolCallDescription {
-  const known = Option.getOrElse(Option.fromUndefinedOr(STEP_OF.get(toolName)), () => UNKNOWN)
   const read = Option.getOrElse(asked, () => NOTHING_ASKED)
+  // Vivid says what each step is for when it calls the tool (`summary`, required on every tool's
+  // input in the runtime). Those are the words that tell this call from any other, so they lead
+  // the detail of every step; before, only the Computer's steps showed them.
+  const purpose = said(read.summary)
+  const known = Option.getOrElse(Option.fromUndefinedOr(STEP_OF.get(toolName)), () =>
+    unheardOf(purpose),
+  )
   // A call that names its subject is said with it; the detail function is the step's own.
   const step: Step =
     known.named === undefined
@@ -430,12 +447,18 @@ export function describeToolCall(
   const label = labelOf(toolName, step, answered, state)
   // A reading that is not there (a call with no input, one still running, JSON this client does
   // not recognise) contributes nothing to the line; the other reading still does.
-  const details = step
+  const own = step
     .detail(
       read,
       Option.getOrElse(answered, () => NOTHING_ANSWERED),
     )
     .flatMap((part) => Option.toArray(part))
+  // A step that already says its purpose (the Computer's, an Integration's), or one whose line is
+  // the purpose itself, does not say it twice.
+  const details = Option.match(purpose, {
+    onNone: () => own,
+    onSome: (words) => (own.includes(words) || label === words ? own : [words, ...own]),
+  })
   return details.length === 0 ? { state, label } : { state, label, detail: details.join(' · ') }
 }
 
@@ -459,6 +482,6 @@ export function summarizeSteps(
   if (first === undefined) return ''
   if (rest.length === 0) return first.label
   return rest.length === 1
-    ? `${first.label} and one more thing`
-    : `${first.label} and ${rest.length} more things`
+    ? `${first.label} and 1 more step`
+    : `${first.label} and ${rest.length} more steps`
 }
