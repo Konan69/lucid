@@ -91,6 +91,12 @@ export const ExecutorServiceEntry = Schema.Struct({
   id: ServiceId,
   name: Schema.String,
   description: Schema.String,
+  /**
+   * The service's site, as the catalog gives it ("deepwiki.com"); null when the catalog names
+   * none, or for an entry that did not come from the catalog. It is what the service's icon is
+   * found by. This field was once dropped at decode, so no catalog service had an icon.
+   */
+  domain: Schema.NullOr(Schema.String),
   authorization: ServiceAuthorization,
 })
 const SignInReferences = Schema.Union([
@@ -431,6 +437,7 @@ const WireCatalogEntry = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
   connectUrl: Schema.optionalKey(Schema.String),
+  domain: Schema.optionalKey(Schema.NullOr(Schema.String)),
   auth: Schema.optionalKey(Schema.Struct({ kind: Schema.String })),
   popularity: Schema.optionalKey(Schema.NullOr(Schema.Number)),
 })
@@ -720,6 +727,7 @@ function catalogEntry(entry: typeof WireCatalogEntry.Type) {
       id: entry.id,
       name: entry.name,
       description: entry.description,
+      domain: Option.getOrNull(Option.fromNullishOr(entry.domain)),
       authorization,
     }),
   ]
@@ -1702,6 +1710,7 @@ function makeAdd(
         id: input.service,
         name: input.label,
         description: '',
+        domain: null,
         authorization,
       }),
     )
@@ -2017,6 +2026,7 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
             id: app.service,
             name: app.name,
             description: app.name,
+            domain: null,
             authorization: ServiceAuthorization.cases.SignIn.make({}),
           }),
         ),

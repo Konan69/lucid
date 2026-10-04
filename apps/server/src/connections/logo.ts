@@ -2,17 +2,13 @@ import { getDomain } from 'tldts'
 import { Service } from '@vivid/contracts'
 import type { ExecutorServiceEntry } from './executor.ts'
 
-/** Project optional catalog domain metadata explicitly so internal fields never leak into Service.
- * The transport owns retaining this field; missing metadata never permits guessing from a name.
- */
-export function catalogService(
-  entry: typeof ExecutorServiceEntry.Type & { readonly domain?: string | null },
-): Service {
+/** Project a catalog entry into a Service: its icon is found by the site the catalog names. */
+export function catalogService(entry: typeof ExecutorServiceEntry.Type): Service {
   return Service.make({
     id: entry.id,
     name: entry.name,
     description: entry.description,
-    mark: entry.domain === undefined ? null : serviceLogo(entry.domain),
+    mark: serviceLogo(entry.domain),
     authorization: entry.authorization,
   })
 }

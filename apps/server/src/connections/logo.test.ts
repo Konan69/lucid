@@ -43,8 +43,6 @@ it.effect('projects real catalog logo metadata into Service without exposing int
       authorization,
     })
     expect(catalogService({ ...entry, domain: null }).mark).toBeNull()
-    const { domain: _domain, ...withoutDomain } = entry
-    expect(catalogService(withoutDomain).mark).toBeNull()
   }),
 )
 

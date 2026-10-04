@@ -41,22 +41,23 @@ type Art =
   | { readonly kind: 'initial' }
 
 /**
- * The artwork for a service. The address the server sends wins: it is the icon of the site the
- * Integration came from, which is the only artwork an added server has. Then the bundled files,
- * found by the service's whole name and by nothing less: "Zoom for Claude" is not Zoom, and gets
- * no logo it has not earned. A service with neither is drawn as its initial.
+ * The artwork for a service. The bundled files win, found by the service's whole name and by
+ * nothing less ("Zoom for Claude" is not Zoom): they are the brands' own vector marks, sharp at
+ * any size. A service with no bundled file takes the icon of its site, at the address the server
+ * sends, which is the only artwork an added server or a less-known catalog service has. A
+ * service with neither is drawn as its initial.
  */
 const artOf = (service: { readonly name: string; readonly mark?: string | null }): Art => {
-  const sent = Option.fromNullishOr(service.mark)
-  // The icon service answers only at its own sizes and falls to the 16-pixel favicon for any
-  // other (asking for 88 returned 15x16 on production). 128 is the size it has that covers every
-  // tile here at twice its drawn size.
-  if (Option.isSome(sent)) return { kind: 'icon', address: `${sent.value}&sz=${ICON_SIZE}` }
   const file = fileOf(service.name)
   const icon = Option.fromUndefinedOr(ICONS[`./icons/${file}.svg`])
   if (Option.isSome(icon)) return { kind: 'icon', address: icon.value }
   const logo = Option.fromUndefinedOr(LOGOS[`./logos/${file}.svg`])
   if (Option.isSome(logo)) return { kind: 'logo', address: logo.value }
+  const sent = Option.fromNullishOr(service.mark)
+  // The icon service answers only at its own sizes and falls to the 16-pixel favicon for any
+  // other (asking for 88 returned 15x16 on production). 128 is the size it has that covers every
+  // tile here at twice its drawn size.
+  if (Option.isSome(sent)) return { kind: 'icon', address: `${sent.value}&sz=${ICON_SIZE}` }
   return { kind: 'initial' }
 }
 

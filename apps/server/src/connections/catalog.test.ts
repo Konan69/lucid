@@ -27,6 +27,7 @@ const entry = (name: string) =>
     id: ServiceId.make(name),
     name,
     description: name,
+    domain: null,
     authorization: ServiceAuthorization.cases.None.make({}),
   })
 const unavailable = ServiceUnavailable.make({ service: 'connections', message: 'Unavailable' })
