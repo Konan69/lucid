@@ -36,7 +36,7 @@ export type RunState = {
 export const initialRunState: RunState = { turn: 0, response: 0, blocks: new Map(), failure: [] }
 
 type Block = AssistantMessage['content'][number]
-type Step = { readonly state: RunState; readonly chunks: readonly UIMessageChunk[] }
+export type Step = { readonly state: RunState; readonly chunks: readonly UIMessageChunk[] }
 
 /** Part id of one block. AI SDK text and reasoning parts are matched across chunks by this id. */
 const partId = (state: RunState, contentIndex: number) => `${state.response}:${contentIndex}`
@@ -203,14 +203,26 @@ function toolEnd(toolCallId: string, entry: EntryRecord | undefined): readonly U
   if (result.isError) {
     return [{ type: 'tool-output-error', toolCallId, errorText: resultText(result), dynamic: true }]
   }
+  // A tool bridged from the AI SDK keeps its own output beside the text; the client gets that, as
+  // `streamText` would give it. Any other Pi Durable tool gives what the model read, and its details.
+  const output = bridgedOutput(result.details)
   return [
-    {
-      type: 'tool-output-available',
-      toolCallId,
-      output: { content: result.content, details: result.details },
-      dynamic: true,
-    },
+    output === undefined
+      ? {
+          type: 'tool-output-available',
+          toolCallId,
+          output: { content: result.content, details: result.details },
+          dynamic: true,
+        }
+      : { type: 'tool-output-available', toolCallId, output: output.output },
   ]
+}
+
+/** The output a bridged tool stored in its result details: `{ output }` and nothing else. */
+function bridgedOutput(details: unknown): { readonly output: unknown } | undefined {
+  if (typeof details !== 'object' || details === null || Array.isArray(details)) return undefined
+  const keys = Object.keys(details)
+  return keys.length === 1 && keys[0] === 'output' ? (details as { readonly output: unknown }) : undefined
 }
 
 /**
@@ -329,4 +341,42 @@ export function replay(snapshot: SnapshotEvent): Step | undefined {
   )
   const partial = snapshot.generation?.message
   return partial === undefined ? stored : join(stored, replayPartial(stored.state, partial))
+}
+
+/** Whether `entry` is an assistant message that calls one of the tool calls in `known`. */
+function callsAny(entry: EntryRecord, known: ReadonlySet<string>): boolean {
+  const message = entry.model?.[0]
+  return (
+    message?.role === 'assistant' &&
+    message.content.some((block) => block.type === 'toolCall' && known.has(block.id))
+  )
+}
+
+/**
+ * Rebuild what followed a tool round, for a client that already shows the round's calls and comes
+ * back after it settled a hold. `known` are the tool call ids the client has.
+ *
+ * The prefix starts after the newest assistant entry that made one of those calls and stops at the
+ * next user input, so it carries the tool results, the later steps, and the partial in flight, and
+ * nothing the client already shows. Tool results match the client's parts by call id.
+ *
+ * `live` says the same run is still in progress, so live events continue the prefix. `undefined`
+ * means no entry made those calls.
+ */
+export function replayAfter(
+  snapshot: SnapshotEvent,
+  known: ReadonlySet<string>,
+): { readonly step: Step; readonly live: boolean } | undefined {
+  const at = snapshot.entries.findLastIndex((entry) => callsAny(entry, known))
+  if (at === -1) return undefined
+  const rest = snapshot.entries.slice(at + 1)
+  const nextInput = rest.findIndex((entry) => entry.kind === 'pi.user')
+  const live = nextInput === -1 && snapshot.run !== undefined
+  const stored = (nextInput === -1 ? rest : rest.slice(0, nextInput)).reduce<Step>(
+    (step, entry) => join(step, replayEntry(step.state, entry)),
+    // No message id: the client continues the assistant message it already has.
+    { state: initialRunState, chunks: [{ type: 'start' }] },
+  )
+  const partial = live ? snapshot.generation?.message : undefined
+  return { step: partial === undefined ? stored : join(stored, replayPartial(stored.state, partial)), live }
 }

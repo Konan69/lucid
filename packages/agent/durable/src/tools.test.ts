@@ -48,10 +48,11 @@ it('runs an AI SDK tool with a Zod input schema inside Pi Durable', async () => 
 
   // The Zod default was applied: the tool's own validator ran, not only the JSON Schema check.
   expect(seen).toEqual([{ item: 'rice', currency: 'NGN' }])
-  expect(message?.parts.find((part) => part.type === 'dynamic-tool')).toMatchObject({
-    toolName: 'price',
+  // A bridged tool is a typed part with the tool's own output, as `streamText` would give it.
+  expect(message?.parts.find((part) => part.type === 'tool-price')).toMatchObject({
     state: 'output-available',
-    output: { content: [{ type: 'text', text: '{"amount":1500,"currency":"NGN"}' }] },
+    input: { item: 'rice' },
+    output: { amount: 1500, currency: 'NGN' },
   })
 })
 
@@ -63,5 +64,5 @@ it('rejects arguments that do not match the schema before the tool runs', async 
   ])
 
   expect(seen).toEqual([])
-  expect(message?.parts.find((part) => part.type === 'dynamic-tool')).toMatchObject({ state: 'output-error' })
+  expect(message?.parts.find((part) => part.type === 'tool-price')).toMatchObject({ state: 'output-error' })
 })

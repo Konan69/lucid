@@ -1,4 +1,6 @@
 export { type Replay, type ToolsOptions, toolsExtension } from './tools.ts'
+export { type Answer, answer, decide, type Decision, type Settlement } from './holds.ts'
+export { type Waiting, waiting } from './waiting.ts'
 export { type ChatTurn, chatTurn, respond } from './respond.ts'
-export { initialRunState, replay, type RunState, translate } from './chunks.ts'
-export { attachRun, type RunInput, streamRun } from './stream.ts'
+export { initialRunState, replay, replayAfter, type RunState, translate } from './chunks.ts'
+export { attachRun, continueRun, type RunInput, streamRun } from './stream.ts'
