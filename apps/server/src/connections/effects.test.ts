@@ -582,6 +582,8 @@ it.effect.each(['direct', 'batch'] as const)('terse descriptions bypass Jev in %
         'Upload URL record entry.',
         'Access token record entry.',
         'Archived items record entry.',
+        'Read-only customer record.',
+        'List of invoice records.',
       ].map((description) => ExecutorTool.make({ ...request.tool, name, description })),
     )
     for (const tool of tools.flatMap((candidate) => [candidate, candidate])) {
@@ -734,3 +736,54 @@ it.effect('the calibration budget measures an outlier without changing productio
     }).pipe(Effect.provide(toolEffectsTestLayer('10 seconds').pipe(Layer.provide(modelLayer))))
   }),
 )
+
+/** Adapter-observed permission rejection suppresses caller warnings but remains
+ * an attempted failure. The same key backs off for a minute rather than causing
+ * a request storm; the model still admits a different payload independently. */
+it.effect('403 warning suppression preserves the metadata failure TTL', () => {
+  let calls = 0
+  const lines: string[] = []
+  const transport = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((httpRequest) => {
+      calls += 1
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(httpRequest, new Response('{}', { status: 403 })),
+      )
+    }),
+  )
+  return Effect.gen(function* () {
+    const effects = yield* ToolEffects
+    for (const attempt of [1, 2]) {
+      void attempt
+      expect(yield* effects.classify(request)).toBe('write')
+    }
+    expect(calls).toBe(1)
+    expect(lines.filter((line) => line.includes('Decision permission rejected'))).toHaveLength(1)
+    expect(lines.some((line) => line.includes('Tool effect unavailable'))).toBe(false)
+    yield* TestClock.adjust('59 seconds')
+    expect(yield* effects.classify(request)).toBe('write')
+    expect(calls).toBe(1)
+    yield* TestClock.adjust('1 second')
+    expect(yield* effects.classify(request)).toBe('write')
+    expect(calls).toBe(2)
+    expect(lines.filter((line) => line.includes('Decision permission rejected'))).toHaveLength(2)
+  }).pipe(
+    Effect.provide(
+      toolEffectsLayer.pipe(
+        Layer.provide(
+          gatewayDecisionLayer({ key: Redacted.make('test'), model: 'jev-latest' }).pipe(
+            Layer.provide(transport),
+          ),
+        ),
+      ),
+    ),
+    Effect.provide(
+      Logger.layer([
+        Logger.make(({ message }) => {
+          lines.push(JSON.stringify(message))
+        }),
+      ]),
+    ),
+  )
+})

@@ -552,7 +552,10 @@ const attemptDecision = <
 const warnPermission = Effect.fn('Decisions.warnPermission')(function* (
   shared: Option.Option<ModelAvailability>,
 ) {
-  if (Option.isNone(shared)) return yield* Effect.logWarning('Decision permission rejected')
+  if (Option.isNone(shared)) {
+    yield* Effect.logWarning('Decision permission rejected')
+    return
+  }
   const now = yield* Clock.currentTimeMillis
   const announce = yield* Ref.modify(shared.value.permissionWarningAfter, (next) =>
     now >= next ? [true, now + DECISION_PERMISSION_WARNING_INTERVAL_MILLIS] : [false, next],

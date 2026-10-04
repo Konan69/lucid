@@ -69,9 +69,11 @@ const DESCRIPTION_WORD_MINIMUM = 3
  * Gateway noun-phrase measurements, 4 Oct 2026: get_customer read=0.97–0.98
  * and list_invoices=0.99–1 despite no operation statement. Recognize an imperative
  * or an "it/this tool/this operation" clause at a sentence boundary, optionally
- * qualified by "permanently". This lexical grammar is eligibility, never proof of
- * safety. It excludes noun phrases, non-English descriptions, unfamiliar verbs
- * and prose that only implies an operation; those retain Executor's own effect.
+ * qualified by "permanently". A verb must precede an object, so "Read-only"
+ * adjectives and "List of" noun phrases do not count. This lexical grammar is
+ * eligibility, never proof of safety. It excludes noun phrases, non-English
+ * descriptions, unfamiliar verbs and prose that only implies an operation;
+ * those retain Executor's own effect.
  * The vocabulary covers operations, including mutations, rather than read labels. */
 const DESCRIPTION_OPERATIONS = [
   'answer',
@@ -116,7 +118,7 @@ const DESCRIPTION_OPERATIONS = [
 ]
 const descriptionOperation = new RegExp(
   '(?:^|[.!?]\\s+)(?:(?:it|this tool|this operation)\\s+)?' +
-    `(?:permanently\\s+)?(?:${DESCRIPTION_OPERATIONS.join('|')})(?:s|es)?\\b`,
+    `(?:permanently\\s+)?(?:${DESCRIPTION_OPERATIONS.join('|')})(?:s|es)?\\s+(?!of\\b)`,
   'iu',
 )
 
@@ -330,7 +332,15 @@ const toolEffectsLayerWithin = (budget: Duration.Input) =>
           timeToLive: (exit) => {
             if (Exit.isSuccess(exit)) return EFFECT_CACHE_TTL
             const error = Cause.findErrorOption(exit.cause)
-            return Option.exists(error, isDecisionNonEvent) ? '0 millis' : EFFECT_FAILURE_TTL
+            // Observed 403 failures suppress duplicate warnings, but still are
+            // attempted Provider faults. Retain their normal minute-long TTL;
+            // only absence or global admission states bypass failure caching.
+            return Option.exists(
+              error,
+              (failure) => failure.reason !== 'Provider' && isDecisionNonEvent(failure),
+            )
+              ? '0 millis'
+              : EFFECT_FAILURE_TTL
           },
         },
       )
