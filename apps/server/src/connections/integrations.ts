@@ -27,7 +27,9 @@ function matches(query: string, name: string, description: string) {
   return words.length === 0 || words.some((word) => text.includes(word))
 }
 
-/** Accessible accounts precede catalogue suggestions, even when the catalogue is offline.
+/** Up to 24 accessible accounts in stable creation order precede query-matched catalogue
+ * suggestions (also capped at 24), even for unrelated queries or an offline catalogue.
+ * Account names are assigned before the bound so discovery labels stay stable.
  * Provider slugs retain names such as Google for Gmail without exposing identifiers to the model.
  * Authorization stays explicit: a catalogue listing alone never promises a working sign-in. */
 export const findIntegrations = Effect.fn('Connections.findIntegrations')(function* (
@@ -37,9 +39,7 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
   const store = yield* ConnectionStore
   const records = yield* store.records(actor)
   const accounts = yield* Effect.forEach(
-    namedAccounts(records).filter(({ row, account }) =>
-      matches(request.query, `${row.serviceName} ${account}`, ''),
-    ),
+    namedAccounts(records).slice(0, 24),
     Effect.fn('Connections.accountMatch')(function* ({ row, account }) {
       const state = yield* stateOf(row)
       return ConnectionMatch.cases.Account.make({

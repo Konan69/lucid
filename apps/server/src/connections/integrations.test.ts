@@ -1,8 +1,15 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
-import { AddIntegrationOutcome, ConnectionStep, Forbidden, SessionId } from '@vivid/contracts'
+import {
+  AddIntegrationOutcome,
+  ConnectionMatch,
+  ConnectionStep,
+  Forbidden,
+  SessionId,
+} from '@vivid/contracts'
 import { Effect, Redacted, Ref } from 'effect'
 import { eq } from 'drizzle-orm'
+import * as TestClock from 'effect/testing/TestClock'
 import { connectionHandlers } from './handlers.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import { ConnectionAddress, ConnectionSource, ConnectionAddressUnreachable } from './address.ts'
@@ -192,6 +199,16 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             { name: 'Records', connected: true },
           ])
           expect(JSON.stringify(response)).not.toContain('Private Records')
+          const unrelated = yield* connectionHandlers
+            .FindIntegrations({ query: 'fetch web pages or search the web' })
+            .pipe(Effect.provideService(AuthContext, auth))
+          expect(unrelated.integrations.filter(ConnectionMatch.guards.Account)).toHaveLength(1)
+          expect(unrelated.integrations[0]).toMatchObject({
+            name: 'Records',
+            account: 'Shared Records',
+            connected: true,
+            shared: true,
+          })
           const probe = yield* ConnectionProbe
           const before = yield* Ref.get(probe.begins)
           const denied = yield* connectionHandlers
@@ -201,6 +218,39 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           expect(yield* Ref.get(probe.begins)).toBe(before)
         }),
     )
+    it.effect('bounds accessible accounts at 24 before query-matched catalogue entries', () =>
+      Effect.gen(function* () {
+        const { ownerActor, personalActor, threadId } = yield* fixture()
+        const store = yield* ConnectionStore
+        for (let index = 0; index < 25; index++) {
+          yield* store.begin(ownerActor, {
+            service: serviceId,
+            label: `Account ${index}`,
+            shared: false,
+          })
+          yield* TestClock.adjust(1)
+        }
+        const response = yield* connectionHandlers.FindIntegrations({ query: 'Records' }).pipe(
+          Effect.provideService(
+            AuthContext,
+            AuthState.Vivid({
+              person: personalActor.person,
+              workspace: personalActor.workspace,
+              threadId,
+            }),
+          ),
+        )
+        const accounts = response.integrations.filter(ConnectionMatch.guards.Account)
+        expect(accounts.map((entry) => entry.account)).toEqual(
+          Array.from({ length: 24 }, (_, index) => `Account ${index}`),
+        )
+        expect(response.integrations).toHaveLength(25)
+        expect(response.integrations.slice(0, 24).every(ConnectionMatch.guards.Account)).toBe(true)
+        expect(response.integrations[24]).toMatchObject({ name: 'Records', connected: true })
+        expect(ConnectionMatch.guards.Catalog(response.integrations[24])).toBe(true)
+      }),
+    )
+
     it.effect(
       'tests only reads with safe input and carries Gate approval/refusal without dispatching',
       () =>
