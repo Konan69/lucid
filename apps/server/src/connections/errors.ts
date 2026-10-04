@@ -19,6 +19,8 @@ export const executorFailure = Match.type<ExecutorFailure>().pipe(
     ServiceUnavailable: (error) => error,
     ExecutorSetupRequired: () => new InvalidRequest({ message: connectionSetupMessage }),
     ExecutorRejected: ({ message }) => new InvalidRequest({ message }),
+    ExecutorAppNameTaken: () =>
+      new Conflict({ message: 'The Integration installation changed; retry connecting.' }),
     ExecutorConflict: () =>
       new Conflict({ message: 'The integration changed; reload before continuing.' }),
     ExecutorSignInRequired: ({ message }) => new InvalidRequest({ message }),

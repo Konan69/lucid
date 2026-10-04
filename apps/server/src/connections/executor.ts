@@ -14,6 +14,8 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Ref from 'effect/Ref'
+import * as RcMap from 'effect/RcMap'
+import * as Result from 'effect/Result'
 import * as HashMap from 'effect/HashMap'
 import * as Match from 'effect/Match'
 import * as Option from 'effect/Option'
@@ -190,6 +192,14 @@ export class ExecutorConflict extends Schema.TaggedError<ExecutorConflict>()(
   errorContext,
   { title: 'Connection resource conflict' },
 ) {}
+/** A create-only install can lose a race to another Vivid process. Its exact name is safely
+ * reread once; unrelated profile/account conflicts must never trigger inventory recovery.
+ */
+export class ExecutorAppNameTaken extends Schema.TaggedError<ExecutorAppNameTaken>()(
+  'ExecutorAppNameTaken',
+  errorContext,
+  { title: 'Integration app name already installed' },
+) {}
 /** An upstream 5xx or ToolCallFailed can follow external effects. */
 export class ExecutorExecutionUncertain extends Schema.TaggedError<ExecutorExecutionUncertain>()(
   'ExecutorExecutionUncertain',
@@ -240,6 +250,7 @@ export type ExecutorFailure =
   | ExecutorRejected
   | ExecutorSetupRequired
   | ExecutorConflict
+  | ExecutorAppNameTaken
   | ExecutorExecutionUncertain
   | ExecutorSignInRequired
   | ExecutorAuthorizationUnavailable
@@ -448,6 +459,7 @@ const FailureMode = Schema.TaggedUnion({
   Rejected: { message: Schema.String },
   SetupRequired: {},
   ApprovalUnsupported: {},
+  AppNameTaken: {},
 })
 const notReady = FailureMode.cases.NotReady.make({})
 const conflict = FailureMode.cases.Conflict.make({})
@@ -486,7 +498,7 @@ const failureModes = {
   OrganizationForbidden: denied,
   AuthenticationUnavailable: denied,
   ProfileConflict: conflict,
-  AppNameTaken: conflict,
+  AppNameTaken: FailureMode.cases.AppNameTaken.make({}),
   AppSlugTaken: conflict,
   AccountConnectionTargetChanged: conflict,
   AppWorkflowsActive: conflict,
@@ -575,6 +587,7 @@ function translateFailure(tag: typeof knownFailureTag.Type, tool: string | null)
     Missing: ({ resource }): ExecutorFailure =>
       ExecutorResourceMissing.make({ ...context, resource }),
     AccessDenied: (): ExecutorFailure => ExecutorAccessDenied.make(context),
+    AppNameTaken: (): ExecutorFailure => ExecutorAppNameTaken.make(context),
     Conflict: (): ExecutorFailure => ExecutorConflict.make(context),
     Uncertain: (): ExecutorFailure => ExecutorExecutionUncertain.make(context),
     Rejected: ({ message }): ExecutorFailure => ExecutorRejected.make({ ...context, message }),
@@ -1317,32 +1330,65 @@ function integrationAppName(service: ServiceId) {
   return `Vivid Integration ${NodeCrypto.createHash('sha256').update(service).digest('hex')}`
 }
 
-/** Organization inventory is only used to locate shared app code, never to select an account.
- * HostedApps.install/import in apps/hosted/server/src/contracts/apps.ts are create-only.
- * Serialize local provisioning so concurrent Begins share one app; a lost response is recovered by the same deterministic name on the next Begin.
+/** Inventory matches only shared app code by its deterministic name. Full requirements enter
+ * through that app's detail endpoint; profiles and accounts are never selected from inventory.
  */
-function makeInstall(http: ExecutorHttp, permit: Semaphore.Semaphore) {
-  return Effect.fn('Executor.install')(
-    function* (
-      service: ServiceId,
-      install: (name: string) => Effect.Effect<typeof WireApp.Type, ExecutorFailure>,
-    ) {
-      const name = integrationAppName(service)
-      const inventory = yield* http.readInventory(
-        Effect.succeed(HttpClientRequest.get('/inventory')),
+function makeFindInstalled(http: ExecutorHttp) {
+  return Effect.fn('Executor.findInstalled')(function* (name: string) {
+    const inventory = yield* http.readInventory(
+      Effect.succeed(HttpClientRequest.get('/inventory')),
+      null,
+    )
+    const existing = inventory.apps.find((app) => app.name === name)
+    if (existing === undefined) return Option.none<typeof WireApp.Type>()
+    return Option.some(
+      yield* http.readApp(
+        Effect.succeed(HttpClientRequest.get(`/apps/${query(existing.id)}`)),
         null,
-      )
-      const existing = inventory.apps.find((app) => app.name === name)
-      if (existing !== undefined)
-        return yield* http.readApp(
-          Effect.succeed(HttpClientRequest.get(`/apps/${query(existing.id)}`)),
-          null,
-        )
-      return yield* install(name)
-    },
-    (effect) => permit.withPermits(1)(effect),
-  )
+      ),
+    )
+  })
 }
+
+const isAppNameTaken = Schema.is(ExecutorAppNameTaken)
+
+/** A name conflict is the sole proof another process may have installed this shared app.
+ * Reread once and return that exact winner; absence preserves the original conflict.
+ */
+function makeProvision(http: ExecutorHttp) {
+  const find = makeFindInstalled(http)
+  return Effect.fn('Executor.provision')(function* (
+    name: string,
+    install: (name: string) => Effect.Effect<typeof WireApp.Type, ExecutorFailure>,
+  ) {
+    const existing = yield* find(name)
+    if (Option.isSome(existing)) return existing.value
+    const result = yield* Effect.result(install(name))
+    if (Result.isSuccess(result)) return result.success
+    if (!isAppNameTaken(result.failure)) return yield* Effect.fail(result.failure)
+    const winner = yield* find(name)
+    if (Option.isSome(winner)) return winner.value
+    return yield* Effect.fail(result.failure)
+  })
+}
+
+/** HostedApps.install/import are create-only. A reference-counted semaphore per deterministic
+ * app name serializes only competing installs; other Integrations remain independent. RcMap
+ * retains a lock while callers use/wait for it, then releases it without evicting a live lock.
+ * A cross-process AppNameTaken rereads exactly once, never retries a consequential install.
+ */
+const makeInstall = Effect.fn('Executor.installLocks')(function* (http: ExecutorHttp) {
+  const locks = yield* RcMap.make({ lookup: (_name: string) => Semaphore.make(1) })
+  const provision = makeProvision(http)
+  return Effect.fn('Executor.install')(function* (
+    service: ServiceId,
+    install: (name: string) => Effect.Effect<typeof WireApp.Type, ExecutorFailure>,
+  ) {
+    const name = integrationAppName(service)
+    const permit = yield* RcMap.get(locks, name)
+    return yield* permit.withPermit(provision(name, install))
+  }, Effect.scoped)
+})
 
 const isSetupRequired = Schema.is(ExecutorSetupRequired)
 
@@ -1352,7 +1398,7 @@ const isSetupRequired = Schema.is(ExecutorSetupRequired)
 function makeBegin(
   http: ExecutorHttp,
   availability: Effect.Success<ReturnType<typeof makeAuthorization>>,
-  install: ReturnType<typeof makeInstall>,
+  install: Effect.Success<ReturnType<typeof makeInstall>>,
 ) {
   const configure = makeConfigure(http, availability)
   const begin = Effect.fn('Executor.begin')(function* (input: typeof BeginInput.Type) {
@@ -1448,7 +1494,7 @@ function makeAdd(
   http: ExecutorHttp,
   availability: Effect.Success<ReturnType<typeof makeAuthorization>>,
   configure: ReturnType<typeof makeConfigure>,
-  install: ReturnType<typeof makeInstall>,
+  install: Effect.Success<ReturnType<typeof makeInstall>>,
 ) {
   return Effect.fn('Executor.add')(function* (
     input: typeof BeginInput.Type & { readonly source: ConnectionSource },
@@ -1785,7 +1831,7 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
   const completeSignIn = makeCompleteSignIn(http)
   const remove = makeRemove(http)
   const call = makeCall(http, discover)
-  const install = makeInstall(http, yield* Semaphore.make(1))
+  const install = yield* makeInstall(http)
   const registration = makeBegin(http, availability, install)
   return Executor.of({
     configured: true,

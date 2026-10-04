@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { ConnectionId, InvalidRequest, ServiceId } from '@vivid/contracts'
-import { ConfigProvider, Effect, Layer, Redacted, Ref, Schema } from 'effect'
+import { ConfigProvider, Effect, Layer, Redacted, Ref, Schema, Deferred, Fiber } from 'effect'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import {
   Executor,
@@ -72,6 +72,8 @@ const keyRequirement = {
 const signInRequirement = {
   slot: { provider: 'provider', definition: { auth: { oauth: { type: 'oauth2' } } } },
 }
+const isFirstInstall = Schema.is(Schema.Struct({ entry: Schema.Literal(hostedService) }))
+const decodeInstallName = Schema.decodeUnknownSync(Schema.Struct({ name: Schema.String }))
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json)
 const approvalRequiredReply = Schema.TaggedStruct('ToolApprovalRequired', {
   app: Schema.String,
@@ -169,6 +171,78 @@ describe('Executor hosted transport', () => {
         expect(
           requests.find((request) => request.path === `POST ${hostedPrefix}/apps/install`),
         ).toMatchObject({ body: { entry: hostedService, name: expect.any(String) } })
+      }),
+    ),
+  )
+
+  it.effect('installs different app names independently while one install is blocked', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        const other = ServiceId.make('other/service')
+        yield* Ref.update(remote.catalog, (entries) => [
+          ...entries,
+          { id: other, kind: 'app', name: 'Other Integration', description: '' },
+        ])
+        const entered = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        yield* Ref.set(
+          remote.intercept,
+          Effect.fn('InstallTest.blockFirst')(function* (request) {
+            if (
+              request.path === `POST ${hostedPrefix}/apps/install` &&
+              isFirstInstall(request.body)
+            ) {
+              yield* Deferred.succeed(entered, undefined)
+              yield* Deferred.await(release)
+            }
+          }),
+        )
+        const executor = yield* Executor
+        const first = yield* executor.begin(begin).pipe(Effect.forkChild)
+        yield* Deferred.await(entered)
+        const second = yield* executor.begin({
+          ...begin,
+          service: other,
+          connectionId: ConnectionId.make('second'),
+        })
+        expect(second._tag).toBe('Done')
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(first)
+        expect(
+          (yield* Ref.get(remote.requests)).filter(
+            (request) => request.path === `POST ${hostedPrefix}/apps/install`,
+          ),
+        ).toHaveLength(2)
+      }),
+    ),
+  )
+
+  it.effect('rereads inventory once after another process wins the exact app-name race', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        yield* Ref.set(
+          remote.intercept,
+          Effect.fn('InstallTest.racingProcess')(function* (request) {
+            if (request.path !== `POST ${hostedPrefix}/apps/install`) return
+            const payload = decodeInstallName(request.body)
+            yield* Ref.set(remote.apps, [{ id: 'app', name: payload.name }])
+          }),
+        )
+        yield* failRoute(remote, 'POST /apps/install', {
+          status: 409,
+          body: Schema.TaggedStruct('AppNameTaken', {}).make({}),
+        })
+        expect((yield* (yield* Executor).begin(begin))._tag).toBe('Done')
+        const requests = yield* Ref.get(remote.requests)
+        expect(
+          requests.filter((request) => request.path === `GET ${hostedPrefix}/inventory`),
+        ).toHaveLength(2)
+        expect(
+          requests.filter((request) => request.path === `POST ${hostedPrefix}/apps/install`),
+        ).toHaveLength(1)
+        expect(
+          requests.filter((request) => request.path === `GET ${hostedPrefix}/apps/app`),
+        ).toHaveLength(1)
       }),
     ),
   )
