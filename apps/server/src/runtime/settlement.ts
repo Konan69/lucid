@@ -5,13 +5,13 @@ import {
   type FlueConversationMessage,
   type FlueConversationState,
 } from '@flue/sdk'
-import { RunFailure, type RunId } from '@vivid/contracts'
+import { RunFailure, RunId } from '@vivid/contracts'
 import { Effect, Filter, Option, Queue, Ref, Schema, Stream } from 'effect'
 import { classifyFailure, decodeFailureEvidence } from './failure.ts'
 
 /** The runtime verdict includes the classified reason before any product persistence or publishing. */
 export const Settlement = Schema.TaggedUnion({
-  Completed: { reply: Schema.String },
+  Completed: { reply: Schema.String, responseId: RunId },
   Failed: { reason: RunFailure },
   Stopped: {},
   Unknown: {},
@@ -24,7 +24,11 @@ const meaningful = (message: FlueConversationMessage): boolean =>
     part.type === 'text' ? part.text.trim().length > 0 : part.type === 'dynamic-tool',
   )
 
-/** Settlement linkage preserves joined submissions; an empty final text is legal after real tool work. */
+/**
+ * Flue 2.2.2 readSubmissionReply returns the host answer for joined submissions. Preserve its
+ * response identity so outbound transports claim that answer once, even when several Runs end.
+ * An empty final text remains legal after real tool work.
+ */
 const resultOf = (state: FlueConversationState, runId: RunId): Option.Option<Settlement> => {
   const settled = state.settlements.find((candidate) => candidate.submissionId === runId)
   if (settled === undefined) return Option.none()
@@ -42,7 +46,10 @@ const resultOf = (state: FlueConversationState, runId: RunId): Option.Option<Set
   const hasAnswer = answer.some(meaningful)
   if (!hasAnswer) return Option.some(Settlement.cases.Failed.make({ reason: 'NoAnswer' }))
   return Option.some(
-    Settlement.cases.Completed.make({ reply: readSubmissionReply(state, runId).text }),
+    Settlement.cases.Completed.make({
+      reply: readSubmissionReply(state, runId).text,
+      responseId: RunId.make(host),
+    }),
   )
 }
 

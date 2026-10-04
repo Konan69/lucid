@@ -111,19 +111,22 @@ const decodeEnvelope = Schema.decodeUnknownEffect(Envelope)
 const disconnected = () => new ChannelDisconnected({ channel: 'iMessage' })
 const invalidMessage = () => new InvalidChannelMessage({ channel: 'iMessage' })
 
-/** Acquire only while the stream is consumed; merely listing channel addresses does no I/O. */
+/** Spectrum lacks cancellation input; dispose late acquisition when the reply deadline interrupts it. */
+const openPhoton = async (config: PhotonCredentials, signal: AbortSignal) => {
+  const application = await Spectrum({
+    providers: [imessage.config({})],
+    projectId: config.projectId,
+    projectSecret: Redacted.value(config.projectSecret),
+    telemetry: false,
+    options: { logLevel: 'silent', flattenGroups: false },
+  })
+  if (signal.aborted) await application.stop()
+  return application
+}
+
+/** Acquire only while consuming inbound or sending; listing addresses performs no SDK I/O. */
 const connectPhoton = Effect.fn('Channels.connectPhoton')((config: PhotonCredentials) =>
-  Effect.tryPromise({
-    try: () =>
-      Spectrum({
-        providers: [imessage.config({})],
-        projectId: config.projectId,
-        projectSecret: Redacted.value(config.projectSecret),
-        telemetry: false,
-        options: { logLevel: 'silent', flattenGroups: false },
-      }),
-    catch: disconnected,
-  }),
+  Effect.tryPromise({ try: (signal) => openPhoton(config, signal), catch: disconnected }),
 )
 
 type PhotonApplication = Effect.Success<ReturnType<typeof connectPhoton>>
@@ -131,7 +134,9 @@ type PhotonApplication = Effect.Success<ReturnType<typeof connectPhoton>>
 /** SDK stop cascades iterator cancellation and closes provider clients; a cleanup failure cannot leak content. */
 const closePhoton = Effect.fn('Channels.closePhoton')((application: PhotonApplication) =>
   Effect.tryPromise({ try: () => application.stop(), catch: disconnected }).pipe(
-    Effect.catchTag('ChannelDisconnected', () =>
+    Effect.interruptible,
+    Effect.timeout('5 seconds'),
+    Effect.catchTag(['ChannelDisconnected', 'TimeoutError'], () =>
       Effect.logError('iMessage connection cleanup failed'),
     ),
   ),
@@ -147,23 +152,21 @@ const refuseEnvelope = Effect.fn('Channels.refuseEnvelope')(() =>
  * imessage/dist/index.js#createCloudClients enables autoIdempotency for one unary attempt's retries; a new send
  * after a crash gets a new key, so recovery must not resend.
  *
- * Diagnostics/telemetry are disabled to preserve Vivid's content logging policy. Original
- * inbound Spaces retain reply routing: shared hosted lines expose neither a recipient nor
- * a from selector (iMessage types.SHARED_PHONE), so creating a chat could pick another line.
+ * Diagnostics/telemetry are disabled to preserve Vivid's content logging policy.
+ * Outbound acquires independently of inbound replay: imessage.space.create(address) in installed
+ * 12.10.1 resolves a shared DM locally to any;-;{address} with phone=shared (imessage space.create),
+ * and app.send accepts that Space. No remembered inbound handle or sender map is necessary.
  */
 const makePhoton = Effect.fn('Channels.makePhoton')(function* (config: PhotonCredentials) {
   const enrolment = yield* makeEnrolment(config)
-  const spaces = new Map<string, Space>()
-  const clearSpaces = Effect.sync(() => spaces.clear())
-  /** Decode SDK input once; only a validated sender may retain a private reply handle. */
+  /** Decode SDK input once; only validated sender identity enters personal routing. */
   const receive = Effect.fn('Channels.decodePhoton')(
-    function* ([space, message]: [Space, Message]) {
+    function* ([_space, message]: [Space, Message]) {
       const envelope = yield* decodeEnvelope(message).pipe(Effect.mapError(invalidMessage))
       const sender = yield* normalizeChannelAddress({
         channel: 'iMessage',
         value: envelope.sender.id,
       })
-      spaces.set(sender, space)
       return Option.some(
         ChannelInbound.make({
           id: envelope.id,
@@ -182,11 +185,9 @@ const makePhoton = Effect.fn('Channels.makePhoton')(function* (config: PhotonCre
   /**
    * imessage/dist/index.js#buildUnwrappedContentMessage (12.10.1) also exposes grouped attachments;
    * core Message/Content also includes reactions, edits and controls. Ignore non-text before decoding.
-   * Retain no stale Space on reconnect.
    */
   const connect = Effect.fn('Channels.streamPhoton')(function* () {
     const application = yield* Effect.acquireRelease(connectPhoton(config), closePhoton)
-    yield* Effect.addFinalizer(() => clearSpaces)
     return Stream.fromAsyncIterable(application.messages, disconnected).pipe(
       Stream.filter(
         ([space, message]) =>
@@ -202,31 +203,48 @@ const makePhoton = Effect.fn('Channels.makePhoton')(function* (config: PhotonCre
     )
   })
   return ChannelProvider.of({
-    available: (channel) => channel === 'iMessage',
+    channels: ['iMessage'],
     enrol: (channel, address) => enrolment.enrol(channel, address),
     unenrol: (channel, id) => enrolment.unenrol(channel, id),
     inbound: Stream.unwrap(connect()),
-    send: Effect.fn('Channels.photonSend')(function* (input) {
-      if (input.channel !== 'iMessage')
-        return yield* new ChannelUnavailable({ channel: input.channel })
-      const space = spaces.get(input.address)
-      if (space === undefined) return yield* new ChannelRecipientMissing({ channel: input.channel })
-      return yield* Effect.tryPromise({
-        try: () => space.send(input.text),
-        catch: () => new ChannelSendUnknown({ channel: input.channel, key: input.key }),
-      }).pipe(Effect.asVoid)
-    }),
+    send: Effect.fn('Channels.photonSend')(
+      function* (input) {
+        if (input.channel !== 'iMessage')
+          return yield* new ChannelUnavailable({ channel: input.channel })
+        const application = yield* Effect.acquireRelease(
+          connectPhoton(config).pipe(
+            Effect.mapError(() => new ChannelRecipientMissing({ channel: input.channel })),
+          ),
+          closePhoton,
+          { interruptible: true },
+        )
+        const space = yield* Effect.tryPromise({
+          try: () => imessage(application).space.create(input.address),
+          catch: () => new ChannelRecipientMissing({ channel: input.channel }),
+        })
+        return yield* Effect.tryPromise({
+          try: () => application.send(space, input.text),
+          catch: () => new ChannelSendUnknown({ channel: input.channel }),
+        }).pipe(Effect.asVoid)
+      },
+      (effect) => Effect.scoped(effect),
+    ),
   })
 })
 
 /** No credentials acquires no SDK/network resource; a partially configured Integration is unavailable. */
 export const photonLayer = Layer.unwrap(
-  Effect.gen(function* () {
+  Effect.fn('Channels.configurePhoton')(function* () {
     const projectId = yield* Config.option(Config.String('VIVID_PHOTON_PROJECT_ID'))
     const projectSecret = yield* Config.option(Config.Redacted('VIVID_PHOTON_PROJECT_SECRET'))
-    if (Option.isNone(projectId) || Option.isNone(projectSecret))
+    if (
+      Option.isNone(projectId) ||
+      Option.isNone(projectSecret) ||
+      projectId.value.trim().length === 0 ||
+      Redacted.value(projectSecret.value).trim().length === 0
+    )
       return unavailableChannelProviderLayer
     const credentials = { projectId: projectId.value, projectSecret: projectSecret.value }
     return Layer.effect(ChannelProvider, makePhoton(credentials))
-  }),
+  })(),
 )

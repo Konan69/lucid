@@ -6,6 +6,7 @@ import {
   Conflict,
   NotFound,
   RuntimeUnavailable,
+  ThreadAudience,
   type Person,
   type PersonId,
   type RunId,
@@ -243,11 +244,11 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
       if (Option.isNone(found)) return yield* threadMissing()
       const thread = found.value
       // A channel can never widen phone ownership into a Company or shared Thread's authority.
-      if (
-        DeliveryMessage.guards.ChannelText(delivery.message) &&
-        (thread.companyId !== null || thread.audience !== 'private')
-      )
-        return yield* threadMissing()
+      if (DeliveryMessage.guards.ChannelText(delivery.message)) {
+        const visible = yield* threads.view(thread, delivery.personId)
+        if (thread.companyId !== null || !ThreadAudience.guards.Private(visible.audience))
+          return yield* threadMissing()
+      }
       if (!(yield* canSee(thread.id, delivery.personId).pipe(withDatabase)))
         return yield* threadMissing()
       const speaker = yield* personOf(delivery.personId)

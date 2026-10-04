@@ -43,7 +43,6 @@ describe('channel provider', () => {
           channel: 'iMessage',
           address,
           text: 'test',
-          key: 'test-send',
         })
         .pipe(Effect.result)
       expect(Result.isFailure(outcome) ? outcome.failure._tag : 'sent').toBe('ChannelUnavailable')
@@ -62,6 +61,26 @@ describe('channel provider', () => {
         'ChannelUnavailable',
       )
     }).pipe(Effect.provide(partialPhoton)),
+  )
+
+  it.effect('empty credential values also select the unavailable provider without SDK I/O', () =>
+    Effect.gen(function* () {
+      const context = yield* Layer.build(
+        photonLayer.pipe(
+          Layer.provide(NodeHttpClient.layerUndici),
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromUnknown({
+                VIVID_PHOTON_PROJECT_ID: '',
+                VIVID_PHOTON_PROJECT_SECRET: '',
+              }),
+            ),
+          ),
+        ),
+      )
+      const provider = yield* ChannelProvider.pipe(Effect.provideContext(context))
+      expect(provider.channels).toEqual([])
+    }).pipe(Effect.scoped),
   )
 
   it.effect('normalizes an international phone without inventing a country', () =>

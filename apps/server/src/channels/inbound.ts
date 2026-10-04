@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { NotFound, ThreadId } from '@vivid/contracts'
+import { NotFound, ThreadAudience, ThreadId } from '@vivid/contracts'
 import { Context, Effect, Layer, Option } from 'effect'
 import type { Actor } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
@@ -31,12 +31,15 @@ const makeInbound = Effect.fn('Channels.makeInbound')(function* () {
     link: StoredLink,
     text: string,
   ) {
-    if (link.threadId !== null) {
-      const prior = yield* findThread(link.threadId).pipe(Effect.provideService(Database, database))
+    if (Option.isSome(link.threadId)) {
+      const prior = yield* findThread(link.threadId.value).pipe(
+        Effect.provideService(Database, database),
+      )
       if (
         Option.isSome(prior) &&
         prior.value.personId === actor.person.id &&
-        prior.value.companyId === null
+        prior.value.companyId === null &&
+        ThreadAudience.guards.Private((yield* threads.view(prior.value, actor.person.id)).audience)
       )
         return prior.value.id
     }
@@ -66,17 +69,20 @@ const makeInbound = Effect.fn('Channels.makeInbound')(function* () {
       runId: submissionId(threadId, key),
       personId: actor.person.id,
       channel: message.channel,
-      address: message.sender,
+      since: link.since,
       threadId,
     })
-    yield* conversation.deliver({
-      threadId,
-      personId: actor.person.id,
-      speaker: DeliverySpeaker.cases.Acting.make({}),
-      message: DeliveryMessage.cases.ChannelText.make({ channel: message.channel, body }),
-      origin: StoredRunOrigin.cases.Message.make({}),
-      idempotencyKey: key,
-    })
+    const runId = submissionId(threadId, key)
+    yield* conversation
+      .deliver({
+        threadId,
+        personId: actor.person.id,
+        speaker: DeliverySpeaker.cases.Acting.make({}),
+        message: DeliveryMessage.cases.ChannelText.make({ body }),
+        origin: StoredRunOrigin.cases.Message.make({}),
+        idempotencyKey: key,
+      })
+      .pipe(Effect.tapError(() => ledger.record(runId, 'not-sent')))
   })
 
   /**
@@ -91,7 +97,6 @@ const makeInbound = Effect.fn('Channels.makeInbound')(function* () {
       return
     }
     if (message.receivedAt < link.value.since) return
-    yield* ledger.attribute(message, link.value.personId)
     yield* text(message, link.value, message.text)
   })
   return { receive }

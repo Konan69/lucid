@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "8106c6b4-de4a-431e-b3aa-053e81b89f05",
+  "id": "a27a71d9-4cba-45c9-b93a-f907240fa2e3",
   "prevIds": [
-    "5bca0fd9-308e-4b2b-ac86-0a76759b5464"
+    "c12c15f7-e4c0-48aa-8250-301990eb3bb3"
   ],
   "ddl": [
     {
@@ -798,32 +798,6 @@
     {
       "type": "text",
       "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "person_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "vivid_channel_messages"
-    },
-    {
-      "type": "bigint",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "received_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "vivid_channel_messages"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
       "default": null,
@@ -861,14 +835,27 @@
       "table": "vivid_channel_replies"
     },
     {
-      "type": "text",
+      "type": "bigint",
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "address",
+      "name": "since",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_channel_replies"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "response_id",
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_channel_replies"
@@ -4572,25 +4559,25 @@
         "id"
       ],
       "onUpdate": "NO ACTION",
-      "onDelete": "SET NULL",
-      "name": "vivid_channel_messages_person_id_user_id_fkey",
+      "onDelete": "CASCADE",
+      "name": "vivid_channel_replies_person_id_user_id_fkey",
       "entityType": "fks",
       "schema": "public",
-      "table": "vivid_channel_messages"
+      "table": "vivid_channel_replies"
     },
     {
       "nameExplicit": false,
       "columns": [
-        "person_id"
+        "thread_id"
       ],
       "schemaTo": "public",
-      "tableTo": "user",
+      "tableTo": "vivid_conversations",
       "columnsTo": [
         "id"
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
-      "name": "vivid_channel_replies_person_id_user_id_fkey",
+      "name": "vivid_channel_replies_thread_id_vivid_conversations_id_fkey",
       "entityType": "fks",
       "schema": "public",
       "table": "vivid_channel_replies"
@@ -5529,6 +5516,17 @@
       "schema": "public",
       "table": "vivid_conversations",
       "entityType": "pks"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "response_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "vivid_channel_replies_response_id_key",
+      "schema": "public",
+      "table": "vivid_channel_replies",
+      "entityType": "uniques"
     },
     {
       "nameExplicit": false,

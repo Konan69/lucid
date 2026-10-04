@@ -2,7 +2,6 @@ import {
   Channel,
   ChannelAddress,
   ChannelUnavailable,
-  ChannelLimitReached,
   ChannelProviderFailed,
 } from '@vivid/contracts'
 import { Context, Effect, Layer, Schema, Stream } from 'effect'
@@ -38,11 +37,11 @@ export class InvalidChannelMessage extends Schema.TaggedError<InvalidChannelMess
 /** A send can have left the provider before its Promise failed; it must never be blindly retried. */
 export class ChannelSendUnknown extends Schema.TaggedError<ChannelSendUnknown>()(
   'ChannelSendUnknown',
-  { channel: Channel, key: Schema.String },
+  { channel: Channel },
   { title: 'Channel send outcome unknown' },
 ) {}
 
-/** A proven missing inbound conversation refuses before dispatch. */
+/** SDK acquisition or recipient resolution failed before send: nothing was dispatched. */
 export class ChannelRecipientMissing extends Schema.TaggedError<ChannelRecipientMissing>()(
   'ChannelRecipientMissing',
   { channel: Channel },
@@ -50,15 +49,12 @@ export class ChannelRecipientMissing extends Schema.TaggedError<ChannelRecipient
 ) {}
 
 export interface ChannelProviderService {
-  readonly available: (channel: Channel) => boolean
+  readonly channels: ReadonlyArray<Channel>
   /** Photon deletes by user id, so its opaque enrolment receipt must survive server restarts. */
   readonly enrol: (
     channel: Channel,
     address: ChannelAddress,
-  ) => Effect.Effect<
-    ChannelEnrolment,
-    ChannelUnavailable | ChannelLimitReached | ChannelProviderFailed
-  >
+  ) => Effect.Effect<ChannelEnrolment, ChannelUnavailable | ChannelProviderFailed>
   readonly unenrol: (
     channel: Channel,
     id: ChannelEnrolmentId,
@@ -68,7 +64,6 @@ export interface ChannelProviderService {
     readonly channel: Channel
     readonly address: ChannelAddress
     readonly text: string
-    readonly key: string
   }) => Effect.Effect<void, ChannelUnavailable | ChannelRecipientMissing | ChannelSendUnknown>
 }
 
@@ -85,7 +80,7 @@ export class ChannelProvider extends Context.Service<ChannelProvider, ChannelPro
 
 /** Missing credentials leave the server operational and every channel start explicitly unavailable. */
 export const unavailableChannelProviderLayer = Layer.succeed(ChannelProvider, {
-  available: () => false,
+  channels: [],
   enrol: Effect.fn('Channels.unavailableEnrol')((channel) =>
     Effect.fail(new ChannelUnavailable({ channel })),
   ),
@@ -97,3 +92,10 @@ export const unavailableChannelProviderLayer = Layer.succeed(ChannelProvider, {
     Effect.fail(new ChannelUnavailable({ channel: input.channel })),
   ),
 })
+
+/** A timed-out send may still reach Photon; the claimed reply must remain unknown. */
+export class ChannelSendTimedOut extends Schema.TaggedError<ChannelSendTimedOut>()(
+  'ChannelSendTimedOut',
+  { channel: Channel },
+  { title: 'Channel send timed out' },
+) {}

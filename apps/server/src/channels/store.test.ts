@@ -1,7 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import {
   ChannelAddress,
-  ChannelLimitReached,
   ChannelProviderFailed,
   ChannelStanding,
   type ChannelListResponse,
@@ -109,14 +108,11 @@ describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
       }).pipe(Effect.scoped, Effect.provide(channelTestLayer)),
   )
 
-  it.effect('preserves limit and provider refusals without creating a link', () =>
+  it.effect('preserves provider refusals without creating a link', () =>
     Effect.gen(function* () {
       const test = yield* fixture()
       const control = yield* ChannelControl
-      for (const failure of [
-        new ChannelLimitReached({ channel: 'iMessage' }),
-        new ChannelProviderFailed({ channel: 'iMessage' }),
-      ]) {
+      for (const failure of [new ChannelProviderFailed({ channel: 'iMessage' })]) {
         yield* Ref.set(control.failure, Option.some(failure))
         const result = yield* channelHandlers
           .ConnectChannel({ channel: 'iMessage', address: test.address })

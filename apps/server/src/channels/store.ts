@@ -89,7 +89,7 @@ const connectLink = ({
       const address = yield* normalizeChannelPhone({ channel, value }).pipe(
         Effect.mapError(() => new ChannelAddressInvalid({ channel })),
       )
-      if (!provider.available(channel)) return yield* new ChannelUnavailable({ channel })
+      if (!provider.channels.includes(channel)) return yield* new ChannelUnavailable({ channel })
       const taken = yield* byAddress(channel, address)
       if (Option.isSome(taken) && taken.value.personId !== actor.person.id)
         return yield* new ChannelAddressTaken({ channel })
@@ -152,7 +152,7 @@ const makeChannels = Effect.fn('Channels.makeStore')(function* () {
     return yield* Effect.forEach(
       Channel.literals,
       Effect.fn('Channels.standing')(function* (channel) {
-        if (!provider.available(channel))
+        if (!provider.channels.includes(channel))
           return ChannelLink.make({ channel, standing: ChannelStanding.cases.Unavailable.make({}) })
         const found = yield* byPerson(actor.person.id, channel)
         return ChannelLink.make({
@@ -171,7 +171,7 @@ const makeChannels = Effect.fn('Channels.makeStore')(function* () {
   /** Remove the provider allowlist before releasing ownership, so another Person cannot inherit a live link. */
   const disconnect = Effect.fn('Channels.disconnect')(
     function* (actor: Actor, channel: Channel) {
-      if (!provider.available(channel)) return yield* new ChannelUnavailable({ channel })
+      if (!provider.channels.includes(channel)) return yield* new ChannelUnavailable({ channel })
       const prior = yield* byPerson(actor.person.id, channel)
       if (Option.isSome(prior)) {
         yield* provider.unenrol(channel, prior.value.enrolmentId)

@@ -210,7 +210,7 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
       return yield* Effect.sync(() => expect.fail('Run was not admitted'))
     return yield* Deferred.succeed(
       settlement,
-      Settlement.cases.Completed.make({ reply: 'Finished' }),
+      Settlement.cases.Completed.make({ reply: 'Finished', responseId: id }),
     )
   })
   return { runtime, admitted, requests, finish, failure, reads, readHeaders }

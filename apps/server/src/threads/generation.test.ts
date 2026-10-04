@@ -2,7 +2,7 @@ import { silentChannelRepliesLayer } from '../channels/replies.ts'
 import { PgClient } from '@effect/sql-pg/PgClient'
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, it } from '@effect/vitest'
-import { PersonId, RunState, ThreadId } from '@vivid/contracts'
+import { PersonId, RunId, RunState, ThreadId } from '@vivid/contracts'
 import {
   ThreadTitleHistoryUnavailable,
   ThreadTitleModelUnavailable,
@@ -226,7 +226,10 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
       const admitted = yield* test.start('title')
       yield* Deferred.succeed(
         test.settlement,
-        Settlement.cases.Completed.make({ reply: 'Florence could work.' }),
+        Settlement.cases.Completed.make({
+          reply: 'Florence could work.',
+          responseId: RunId.make('title-test-response'),
+        }),
       )
       const input = yield* Queue.take(test.requests)
       expect(input.content).toEqual({
@@ -261,7 +264,13 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
       Effect.gen(function* () {
         const test = yield* harness('Please plan a holiday', 'Seed')
         yield* test.start('title')
-        yield* Deferred.succeed(test.settlement, Settlement.cases.Completed.make({ reply: 'Done' }))
+        yield* Deferred.succeed(
+          test.settlement,
+          Settlement.cases.Completed.make({
+            reply: 'Done',
+            responseId: RunId.make('title-test-response'),
+          }),
+        )
         yield* Queue.take(test.requests)
         yield* Deferred.succeed(
           test.completion,
@@ -286,7 +295,13 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
     Effect.gen(function* () {
       const test = yield* harness(title, source)
       yield* test.start('reply')
-      yield* Deferred.succeed(test.settlement, Settlement.cases.Completed.make({ reply: 'Done' }))
+      yield* Deferred.succeed(
+        test.settlement,
+        Settlement.cases.Completed.make({
+          reply: 'Done',
+          responseId: RunId.make('title-test-response'),
+        }),
+      )
       yield* Deferred.await(test.finished)
       expect(yield* test.stored).toMatchObject({ title, titleSource: source })
       expect(yield* Queue.size(test.requests)).toBe(0)
@@ -299,7 +314,13 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
       const test = yield* harness('Please plan a holiday', 'Seed')
       yield* test.start('first')
       yield* test.start('second')
-      yield* Deferred.succeed(test.settlement, Settlement.cases.Completed.make({ reply: 'Done' }))
+      yield* Deferred.succeed(
+        test.settlement,
+        Settlement.cases.Completed.make({
+          reply: 'Done',
+          responseId: RunId.make('title-test-response'),
+        }),
+      )
       // Both observers reach the model before either may write, forcing the guarded SQL race.
       yield* Queue.take(test.requests)
       yield* Queue.take(test.requests)
@@ -345,7 +366,13 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
       Effect.gen(function* () {
         const test = yield* harness('Please plan a holiday', 'Seed')
         yield* test.start('title')
-        yield* Deferred.succeed(test.settlement, Settlement.cases.Completed.make({ reply: 'Done' }))
+        yield* Deferred.succeed(
+          test.settlement,
+          Settlement.cases.Completed.make({
+            reply: 'Done',
+            responseId: RunId.make('title-test-response'),
+          }),
+        )
         yield* Queue.take(test.requests)
         yield* TestClock.adjust(TITLE_MODEL_TIMEOUT)
         yield* Deferred.await(test.modelFinished)
@@ -371,7 +398,13 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
     return Effect.gen(function* () {
       const test = yield* harness('Please plan a holiday', 'Seed')
       yield* test.start('title')
-      yield* Deferred.succeed(test.settlement, Settlement.cases.Completed.make({ reply: 'Done' }))
+      yield* Deferred.succeed(
+        test.settlement,
+        Settlement.cases.Completed.make({
+          reply: 'Done',
+          responseId: RunId.make('title-test-response'),
+        }),
+      )
       yield* Queue.take(test.requests)
       yield* Deferred.failCause(test.completion, Cause.die(new Error('Title provider defect')))
       yield* Deferred.await(test.finished)
@@ -393,7 +426,13 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
       const test = yield* harness('Please plan a holiday', 'Seed')
       yield* test.store.patch(test.personId, test.threadId, { title: 'My holiday' })
       yield* test.start('title')
-      yield* Deferred.succeed(test.settlement, Settlement.cases.Completed.make({ reply: 'Done' }))
+      yield* Deferred.succeed(
+        test.settlement,
+        Settlement.cases.Completed.make({
+          reply: 'Done',
+          responseId: RunId.make('title-test-response'),
+        }),
+      )
       yield* Deferred.await(test.finished)
       expect(yield* test.stored).toMatchObject({ title: 'My holiday', titleSource: 'Person' })
       expect(yield* Queue.size(test.requests)).toBe(0)
@@ -404,7 +443,13 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
     Effect.gen(function* () {
       const test = yield* harness('Please plan a holiday', 'Seed')
       yield* test.start('title')
-      yield* Deferred.succeed(test.settlement, Settlement.cases.Completed.make({ reply: 'Done' }))
+      yield* Deferred.succeed(
+        test.settlement,
+        Settlement.cases.Completed.make({
+          reply: 'Done',
+          responseId: RunId.make('title-test-response'),
+        }),
+      )
       yield* Queue.take(test.requests)
       yield* Deferred.fail(test.completion, ProviderMalformed.make({ operation: 'title' }))
       yield* Deferred.await(test.finished)
