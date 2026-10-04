@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Predicate, Schema } from 'effect'
+import { Option, Predicate, Schema } from 'effect'
 import {
   LibraryItemId,
   Memory,
@@ -187,6 +187,8 @@ describe('model views', () => {
         }),
         skills: [skill, skill],
         timezone: 'Africa/Lagos',
+        // 16:00 UTC is 17:00 in Lagos (UTC+1, no daylight saving).
+        asOf: Option.some(Date.UTC(2026, 9, 4, 16, 0)),
         integrations: ['DeepWiki', `Mail ${reference}`],
         name: 'Vivid',
       }),
@@ -199,6 +201,12 @@ describe('model views', () => {
     // A shared Thread is named by its title, folded to one line.
     expect(context).toContain('- (fact, conversation "Launch plan") The launch moved to May')
     expect(context).toContain('Older facts are not shown; call recall to look one up.')
+    // The clock is the last thing in the context: the Person's local hour, and the same instant in UTC.
+    expect(
+      context.endsWith(
+        'Current local date and time (Africa/Lagos, locked to the hour): Sunday, 4 October 2026 at 17:00. UTC instant: 2026-10-04T16:00Z. This is the start of the current hour; the minutes are not known. Use it as the clock for today, tomorrow, deadlines and anything relative to now.',
+      ),
+    ).toBe(true)
     // Connected services reach the model by name, with any identifier in a name removed.
     expect(context).toContain('"integrations":["DeepWiki","Mail ')
     expect(json).toContain('admin@example.test')
