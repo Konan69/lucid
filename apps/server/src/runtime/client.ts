@@ -1,3 +1,4 @@
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { createFlueClient } from '@flue/sdk'
 import * as Config from 'effect/Config'
 import * as Context from 'effect/Context'
@@ -315,6 +316,10 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
             Effect.fail(AdmissionUncertain.make({ ...attemptOf(input), reason: 'TimedOut' })),
         }),
         Effect.scoped,
+        // Admission classifies refusal here; delivery retries and outward failures only carry it.
+        Effect.tapErrorTag('AdmissionRefused', ({ reason }) =>
+          recordRefusal(Refusal.cases.AdmissionRefused.make({ reason })),
+        ),
       ),
   )
 

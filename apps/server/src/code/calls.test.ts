@@ -1,3 +1,4 @@
+import { refusalLogs } from '../observability/testing.ts'
 import { deviceLayer } from '../computers/device.ts'
 import * as NodeProcess from 'node:process'
 import { programHost } from './host.ts'
@@ -490,6 +491,7 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
               select: () => database.select(),
               run: () => Effect.fail(new DatabaseUnavailable({ message: 'isolated fault' })),
             })
+            const logs = refusalLogs()
             const outcome = yield* Effect.gen(function* () {
               const calls = yield* CodeCalls
               return yield* calls.bind({
@@ -500,9 +502,14 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
               Effect.provide(codeCallsLayer, { local: true }),
               Effect.provide(codeAuthorityLayer, { local: true }),
               Effect.provideService(Database, unavailable),
+              Effect.provide(logs.layer),
             )
             expect(CallOutcome.guards.Returned(outcome)).toBe(true)
             expect(outcome).toMatchObject({ end: 'refused', value: { ok: false } })
+            const recorded = logs.recorded()
+            expect(recorded).toHaveLength(1)
+            expect(recorded[0]).toContain('vivid.refusal.kind=CallRefused')
+            expect(recorded[0]).toContain(`vivid.refusal.call=${kind}`)
           }),
         ).pipe(Effect.provide(testLayer)),
     )

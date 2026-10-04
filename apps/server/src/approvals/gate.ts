@@ -1,3 +1,4 @@
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
@@ -218,6 +219,10 @@ export const gateLayer = Layer.effect(
               ...auditAction(action),
               rule: never.action,
             }),
+          )
+          // The Gate decides Never; outward Blocked outcomes only carry this same decision.
+          yield* recordRefusal(
+            Refusal.cases.ActionBlocked.make({ effect: action.effect, target: action.target._tag }),
           )
           return GateDecision.cases.Blocked.make({ rule: never.action })
         }

@@ -1,3 +1,4 @@
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { Array as Arr, Clock, Duration, Effect, Option, Order, Schema } from 'effect'
 import {
   ActionTarget,
@@ -368,8 +369,11 @@ export const runConnection = Effect.fn('Connections.run')(function* (
     >
   >(outcome, {
     Completed: ({ value }) => Effect.succeed(ToolOutcome.cases.Completed.make({ output: value })),
-    Rejected: ({ message, problems }) =>
-      Effect.succeed(ToolOutcome.cases.Rejected.make({ message, problems })),
+    Rejected: Effect.fnUntraced(function* ({ message, problems }) {
+      // The service answer becomes a Tool rejection here; its private message is never recorded.
+      yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'ServiceRejected' }))
+      return ToolOutcome.cases.Rejected.make({ message, problems })
+    }),
     OutcomeUnknown: () => Effect.succeed(ToolOutcome.cases.OutcomeUnknown.make({})),
     NotReady: () => markNotReady(actor, row),
   })
@@ -383,6 +387,8 @@ const markNotReady = Effect.fn('Connections.markNotReady')(function* (
   yield* (yield* ConnectionStore)
     .notReady(actor, row)
     .pipe(Effect.catchTag('Conflict', () => Effect.void))
+  // Revoked authorization decides NotReady after updating the Integration's durable state.
+  yield* recordRefusal(Refusal.cases.IntegrationNotReady.make({ service: row.service }))
   return ToolOutcome.cases.ConnectionNotReady.make({
     service: row.service,
     serviceName: row.serviceName,
@@ -399,20 +405,30 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
     Effect.map(Option.some),
     Effect.catchTag('NotFound', () => Effect.succeed(Option.none())),
   )
-  if (Option.isNone(found))
+  if (Option.isNone(found)) {
+    // An unavailable scoped record is a Tool refusal; no Integration identity is invented.
+    yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationUnavailable' }))
     return ToolOutcome.cases.Rejected.make({ message: 'This integration is not available to you.' })
+  }
   const row = found.value
   const state = yield* stateOf(row)
-  const refusal = ConnectionState.match<Option.Option<ToolOutcome>>(state, {
-    Failed: ({ reason }) => Option.some(ToolOutcome.cases.Rejected.make({ message: reason })),
-    NeedsAuthorization: () =>
-      Option.some(
+  const refusal = yield* ConnectionState.match<Effect.Effect<Option.Option<ToolOutcome>>>(state, {
+    Failed: Effect.fnUntraced(function* ({ reason }) {
+      // The known failed Integration prevents this call; the failure's prose stays in the result.
+      yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationFailed' }))
+      return Option.some(ToolOutcome.cases.Rejected.make({ message: reason }))
+    }),
+    NeedsAuthorization: Effect.fnUntraced(function* () {
+      // This call is declined from current Integration state, without attempting the service.
+      yield* recordRefusal(Refusal.cases.IntegrationNotReady.make({ service: row.service }))
+      return Option.some(
         ToolOutcome.cases.ConnectionNotReady.make({
           service: row.service,
           serviceName: row.serviceName,
         }),
-      ),
-    Ready: () => Option.none(),
+      )
+    }),
+    Ready: () => Effect.succeed(Option.none()),
   })
   if (Option.isSome(refusal)) return refusal.value
   const tools = yield* store.tools(actor, row).pipe(
@@ -422,18 +438,27 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
       Conflict: () => Effect.succeed(Option.none()),
     }),
   )
-  if (Option.isNone(tools))
+  if (Option.isNone(tools)) {
+    // Failed tool discovery proves this call cannot be admitted to the Integration.
+    yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationUnavailable' }))
     return ToolOutcome.cases.Rejected.make({ message: 'Integrations are unavailable.' })
+  }
   const requested = tools.value.find((entry) => entry.name === request.tool)
-  if (requested === undefined)
+  if (requested === undefined) {
+    // The tool name is Person content; count only the closed missing-capability reason.
+    yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'ToolUnknown' }))
     return ToolOutcome.cases.Rejected.make({
       message: `Tool ${request.tool} is not available on this integration.`,
     })
+  }
   const tool = yield* classifyTool(row, requested)
-  if (row.companyId !== null && tool.effect !== 'read')
+  if (row.companyId !== null && tool.effect !== 'read') {
+    // Shared read-only policy rejects before the Gate; this is a distinct Tool decision.
+    yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'SharedReadOnly' }))
     return ToolOutcome.cases.Rejected.make({
       message: 'Shared integrations are read-only. Connect your own account to make this change.',
     })
+  }
   const target = ActionTarget.cases.Connection.make({
     connectionId: row.id,
     account: row.label,

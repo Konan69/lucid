@@ -1,3 +1,4 @@
+import { refusalLogs } from '../observability/testing.ts'
 import { describe, expect, it } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
 import * as Ref from 'effect/Ref'
@@ -26,6 +27,27 @@ import {
 
 /** Policy is tested with production stores, including the durable Approval raised by the real gate. */
 describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', () => {
+  /** A Never is counted at its Gate, with no rule prose in telemetry. */
+  it.effect('records the Gate refusal once with only action kinds', () => {
+    const logs = refusalLogs()
+    return Effect.gen(function* () {
+      const test = yield* fixture()
+      yield* (yield* RuleStore).create(test.personal, {
+        action: 'Private Never wording',
+        decision: 'Never',
+        scope: RuleScope.cases.Personal.make({}),
+      })
+      const outcome = yield* (yield* Gate).check(test.vivid, connectionAction, 'Ordinary')
+      expect(GateDecision.guards.Blocked(outcome)).toBe(true)
+      const recorded = logs.recorded()
+      expect(recorded).toHaveLength(1)
+      expect(recorded[0]).toContain('vivid.refusal.kind=ActionBlocked')
+      expect(recorded[0]).toContain('vivid.refusal.effect=write')
+      expect(recorded[0]).toContain('vivid.refusal.target=Connection')
+      expect(recorded[0]).not.toContain('Private Never wording')
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer), Effect.provide(logs.layer))
+  })
+
   /** A click on the Person's own signed-in page: the action the owner decided needs no Approval. */
   const browserWrite = ProposedAction.make({
     summary: 'Click Send',

@@ -1,3 +1,4 @@
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import {
   BrowseOutcome,
   BrowseRequest,
@@ -339,6 +340,13 @@ export const codeCallsLayer = Layer.effect(
                 ),
               ),
             ),
+            Effect.tap((outcome) => {
+              if (!CallOutcome.guards.Returned(outcome) || outcome.end !== 'refused')
+                return Effect.void
+              // The bound call decides the guest-readable reply, including argument/adaptor
+              // refusals. Blocked only carries the Gate decision and is not counted here.
+              return recordRefusal(Refusal.cases.CallRefused.make({ call: call.kind }))
+            }),
           ),
         ),
     })

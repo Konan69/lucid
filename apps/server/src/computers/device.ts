@@ -1,3 +1,4 @@
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import * as NodeCrypto from 'node:crypto'
 import { and, eq, lte, gt, ne, sql } from 'drizzle-orm'
 import {
@@ -453,12 +454,13 @@ const makeLedger = (database: DatabaseService, pending: Map<DeviceRequestId, Pen
     )
       return yield* new Forbidden({ message: 'This request is no longer waiting for an answer' })
     const now = yield* Clock.currentTimeMillis
+    const receipt = receiptOf(input.answer)
     return yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const written = yield* database.run(
           database
             .update(deviceRequests)
-            .set({ receipt: encodeReceipt(receiptOf(input.answer)) })
+            .set({ receipt: encodeReceipt(receipt) })
             .where(
               and(
                 open(input.id),
@@ -474,6 +476,10 @@ const makeLedger = (database: DatabaseService, pending: Map<DeviceRequestId, Pen
           return yield* new Forbidden({
             message: 'This request has expired or was already answered',
           })
+        if (DeviceReceipt.guards.Refused(receipt)) {
+          // A committed answer decides Refused once; replays and outward Browse outcomes do not.
+          yield* recordRefusal(Refusal.cases.DeviceRefused.make({ reason: receipt.reason }))
+        }
         yield* Deferred.succeed(ticket.answer, input.answer)
         return undefined
       }),

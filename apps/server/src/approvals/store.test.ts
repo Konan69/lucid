@@ -1,3 +1,4 @@
+import { refusalLogs } from '../observability/testing.ts'
 import { describe, expect, it } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
 import * as Clock from 'effect/Clock'
@@ -364,11 +365,24 @@ describe.skipIf(!testDatabaseConfigured)('Approval claims and outcomes', () => {
       const test = yield* fixture()
       const store = yield* ApprovalStore
       const denied = yield* store.raise(test.vivid, connectionAction)
-      const settled = yield* store.decide(test.personal, {
+      const logs = refusalLogs()
+      const request = {
         id: denied.id,
         digest: denied.digest,
         decision: ApprovalDecision.cases.Deny.make({}),
-      })
+      }
+      const settled = yield* store.decide(test.personal, request).pipe(Effect.provide(logs.layer))
+      // Replayed decisions fail the SQL claim; reading the terminal card decides nothing new.
+      expect(
+        (yield* store.decide(test.personal, request).pipe(Effect.provide(logs.layer), Effect.flip))
+          ._tag,
+      ).toBe('Conflict')
+      yield* store.inThread(test.personalId).pipe(Effect.provide(logs.layer))
+      const recorded = logs.recorded()
+      expect(recorded).toHaveLength(1)
+      expect(recorded[0]).toContain('vivid.refusal.kind=ApprovalDenied')
+      expect(recorded[0]).toContain('vivid.refusal.effect=write')
+      expect(recorded[0]).toContain('vivid.refusal.target=Connection')
       expect(ApprovalState.guards.Denied(settled.state)).toBe(true)
       expect((yield* loadAudit(test.personal)).entries).toEqual([
         expect.objectContaining({

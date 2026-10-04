@@ -1,3 +1,4 @@
+import { refusalLogs } from '../observability/testing.ts'
 import * as NodeHttp from 'node:http'
 import { describe, expect, it } from '@effect/vitest'
 import { Deferred, Effect, Fiber, Layer, Option, Predicate, Ref } from 'effect'
@@ -25,6 +26,31 @@ const document = (body: string): PageResponse => ({
 
 /** Public seam tests use deliberate DNS/HTTP Layers; the socket adapter is separately exercised for real. */
 describe('Public pages', () => {
+  /** Refusal is the page reader's successful value, not a network exception. */
+  it.effect('records a page refusal once without the requested address', () => {
+    const logs = refusalLogs()
+    const network = Layer.succeed(
+      PageNetwork,
+      PageNetwork.of({
+        request: () => Effect.die('A private page must never be requested'),
+      }),
+    )
+    return Effect.gen(function* () {
+      const outcome = yield* (yield* PageReader).read({ address: 'http://127.0.0.1/private' })
+      expect(outcome).toEqual(
+        ReadPageOutcome.cases.Refused.make({ reason: 'not a public web address' }),
+      )
+      const recorded = logs.recorded()
+      expect(recorded).toHaveLength(1)
+      expect(recorded[0]).toContain('vivid.refusal.kind=PageRefused')
+      expect(recorded[0]).toContain('vivid.refusal.reason="not a public web address"')
+      expect(recorded[0]).not.toContain('/private')
+    }).pipe(
+      Effect.provide(pageReaderLayer.pipe(Layer.provide(Layer.merge(publicResolver, network)))),
+      Effect.provide(logs.layer),
+    )
+  })
+
   it.effect('extracts title, headings, paragraphs, lists and links and bounds readable text', () =>
     Effect.gen(function* () {
       const network = Layer.succeed(

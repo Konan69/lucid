@@ -1,3 +1,4 @@
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { ReadPageOutcome, type ReadPageRequest } from '@vivid/contracts'
 import { compile } from 'html-to-text'
 import { Context, Effect, Layer, Option } from 'effect'
@@ -97,8 +98,13 @@ export const pageReaderLayer = Layer.effect(
             duration: `${budgets.pageSeconds} seconds`,
             orElse: () => Effect.fail(new PageFailure({ reason: 'could not be reached' })),
           }),
-          Effect.catchTag('PageFailure', ({ reason }) =>
-            Effect.succeed(ReadPageOutcome.cases.Refused.make({ reason })),
+          Effect.catchTag(
+            'PageFailure',
+            Effect.fnUntraced(function* ({ reason }) {
+              // This conversion decides the page refusal; DNS/HTTP failures alone are not outcomes.
+              yield* recordRefusal(Refusal.cases.PageRefused.make({ reason }))
+              return ReadPageOutcome.cases.Refused.make({ reason })
+            }),
           ),
         ),
       ),
