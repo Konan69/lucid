@@ -38,3 +38,5 @@ export {
   Unauthenticated,
 } from './failures.js'
 export * from './identity.js'
+
+export * from './channels.js'

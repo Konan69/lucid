@@ -33,5 +33,10 @@
     "file": "apps/server/src/auth/dialect.ts",
     "classification": "third-party-adapter",
     "symbols": ["attempt", "settle", "owned"]
+  },
+  {
+    "file": "apps/server/src/channels/photon.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["connectPhoton", "closePhoton", "makePhoton"]
   }
 ]
