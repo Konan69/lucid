@@ -59,7 +59,10 @@ function DialogContent({
         aria-modal="true"
         ref={countSurface}
         className={cn(
-          'fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100%-2rem)] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-5 overflow-y-auto rounded-dialog bg-popover p-6 text-label text-popover-foreground lift-lg outline-none sm:max-w-sm',
+          // `grid-cols-1` is a column that may be narrower than its content. A bare grid's column
+          // is as wide as the widest thing in it, so a row that should truncate instead pushed
+          // the palette's content wider than the panel, and the focused field scrolled it sideways.
+          'fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100%-2rem)] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 grid-cols-1 gap-5 overflow-y-auto rounded-dialog bg-popover p-6 text-label text-popover-foreground lift-lg outline-none sm:max-w-sm',
           flush && 'gap-0 p-0',
           !instant && 'motion-dialog',
           className,
