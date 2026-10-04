@@ -195,14 +195,36 @@ Run in an isolated folder against Flue 2.2.2 (the pinned version), just-bash 3.6
   description) on every response: 5 ms for two notes. A hand-kept `MEMORY.md` can drift from the
   files; a derived one cannot. This departs from Claude Code, where the model keeps the index.
 
+**Behaviour test, the same day.** Ten scenarios, three runs each, every turn a new conversation so
+that only the files carry over; 51 model turns, 58 tool calls, no tool error. Median turn 9 s, the
+slowest 21 s.
+
+| Scenario                                                          | Passed |
+| ----------------------------------------------------------------- | ------ |
+| Saves a durable fact as a note with a header                      | 3 of 3 |
+| Writes nothing for arithmetic or small talk                       | 3 of 3 |
+| Does not store a password or a one-message instruction            | 3 of 3 |
+| Applies two remembered facts to a later question                  | 3 of 3 |
+| A changed preference edits the same note; no second note          | 3 of 3 |
+| "Forget my gym" deletes that note and keeps the other             | 3 of 3 |
+| "Tolu, not Tobi" fixes the note and the next answer               | 3 of 3 |
+| With 81 notes, finds the one that matters, opening one note       | 3 of 3 |
+| With 81 notes, an unrelated question opens no note                | 3 of 3 |
+| The Person contradicts a note: believes them and updates the note | 3 of 3 |
+
+In one of the three recall runs the model answered correctly from the index line alone, without
+opening the note. The index for 81 notes was 6,737 characters.
+
 ## Not verified
 
 - The Computer's screenshot tool beside the file tools in the same Flue slot. The slot's `tools`
   list was used for the file tools in the proof; the desktop tool was not in it.
 - Mounting the SQLite file as a folder on the Computer (`agentfs mount`).
-- Updating one note instead of writing a second about the same thing, and deleting a wrong one, with
-  a real model. One teach and one ask were run, once each.
-- Many notes: how the derived index and its size behave past a few hundred files.
+- The product path. The behaviour test used a small harness with memory instructions only; Vivid's
+  real prompt is much longer and its other tools compete for the model's attention.
+- Long conversations, and two conversations writing at the same moment.
+- Many notes: the index grows about 83 characters a note, so a few hundred notes need a budget and
+  a rule for what stays on it.
 - The write-ahead log: a 4 KB database carried a 424 KB log after one run; closing and checkpointing
   are not designed.
 - AgentFS is young (specification v0.4).
