@@ -27,6 +27,7 @@
     "@react-native-community/datetimepicker": "9.1.0",
     "@react-native-menu/menu": "^2.0.0",
     "@react-navigation/native": "catalog:",
+    "@shopify/react-native-skia": "2.6.2",
     "@react-navigation/native-stack": "catalog:",
     "expo": "catalog:",
     "expo-blur": "catalog:",
@@ -54,7 +55,8 @@
     "react-native-screens": "4.26.2",
     "react-native-svg": "15.15.4",
     "react-native-web": "catalog:",
-    "react-native-worklets": "catalog:"
+    "react-native-worklets": "catalog:",
+    "thinking-orbs": "^0.3.2"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

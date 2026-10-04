@@ -1,5 +1,5 @@
 import { BlurView } from 'expo-blur'
-import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect'
+import { GlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect'
 import type { ReactNode } from 'react'
 import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
 import { useTheme } from '../theme'
@@ -10,9 +10,13 @@ import { useTheme } from '../theme'
  * glass is a solid bordered surface; nothing is blurred there.
  *
  * Ported from T3 Code mobile `src/native/native-glass.ts` and
- * `src/lib/native-glass-capability.ts` (`supportsNativeLiquidGlass`).
+ * `src/lib/native-glass-capability.ts` (`supportsNativeLiquidGlass`). The third check is from
+ * Appllama's liquid-glass-chat-ui (`src/cookbooks/fable/components/ui/glass.tsx`, `GLASS`): the
+ * API can be present on a build that was not compiled for liquid glass, where `GlassView` draws
+ * nothing, so both are asked.
  */
-export const GLASS_SUPPORTED = Platform.OS === 'ios' && isGlassEffectAPIAvailable()
+export const GLASS_SUPPORTED =
+  Platform.OS === 'ios' && isGlassEffectAPIAvailable() && isLiquidGlassAvailable()
 
 /** The radius of a glass surface that states none of its own. */
 const RADIUS = 32
@@ -57,6 +61,9 @@ export function GlassFill({ opaque }: { opaque?: string }) {
  * - `bordered` (the default) has the theme's border and a soft cast shadow, which is what lifts
  *   it off the page.
  * - `bare` has neither, for glass that is already inside a bordered shape.
+ * - `interactive` is for glass that is itself pressed (a round bar button): the system's glass
+ *   answers the finger with its own highlight. From liquid-glass-chat-ui's `GlassButton`
+ *   (`components/ui/glass-button.tsx`). It does nothing where glass is the solid fallback.
  *
  * Ported from T3 Code mobile `src/components/GlassSurface.tsx`: `GlassView` where the system has
  * glass, else a bordered surface over `GlassFill`; radius 32; shadow opacity 0.22 in dark and
@@ -68,11 +75,13 @@ export function Glass({
   children,
   chrome = 'bordered',
   radius = RADIUS,
+  interactive = false,
   style,
 }: {
   children: ReactNode
   chrome?: 'bordered' | 'bare'
   radius?: number
+  interactive?: boolean
   style?: StyleProp<ViewStyle>
 }) {
   const { colors: c, dark } = useTheme()
@@ -91,6 +100,7 @@ export function Glass({
     return (
       <GlassView
         glassEffectStyle="regular"
+        isInteractive={interactive}
         tintColor={c['glass-tint']}
         colorScheme={dark ? 'dark' : 'light'}
         style={[outline, { overflow: 'hidden', backgroundColor: c['glass-surface'] }, style]}

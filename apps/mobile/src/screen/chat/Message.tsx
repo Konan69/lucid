@@ -25,10 +25,11 @@ import {
 } from '../../data/message'
 import { when } from '../../data/when'
 import { useTheme } from '../../theme'
+import { ThinkingOrb } from '../../../vendor/orb'
 import { Avatar } from '../../ui/Avatar'
 import { openWebLink, Prose } from '../../ui/Prose'
 import { Sheet } from '../../ui/Sheet'
-import { Dot, EDGE, Face, HAIRLINE, Label, Press, radius } from '../../ui/ui'
+import { EDGE, Face, HAIRLINE, Label, Press, radius } from '../../ui/ui'
 import { useGo } from '../../workspace'
 import { Cards } from './Cards'
 
@@ -274,7 +275,7 @@ const STEP_TONE = {
 
 /** What Vivid did while answering, collapsed to one line that opens into each step. */
 function Steps({ steps, working }: { steps: ReadonlyArray<Step>; working: boolean }) {
-  const { colors: c } = useTheme()
+  const { colors: c, dark } = useTheme()
   const go = useGo()
   const [open, setOpen] = useState(false)
   if (steps.length === 0) return null
@@ -300,7 +301,16 @@ function Steps({ steps, working }: { steps: ReadonlyArray<Step>; working: boolea
             strokeWidth={1.8}
             color={c['foreground-secondary']}
           />
-          {busy && <Dot tone="status-working" size={6} />}
+          {/* The step in hand is the web's working orb (`apps/web/src/screen/thread/Trail.tsx`);
+              the summary beside it says what it is, so the orb itself is not announced. */}
+          {busy && (
+            <ThinkingOrb
+              state="working"
+              size={20}
+              theme={dark ? 'dark' : 'light'}
+              accessibilityLabel=""
+            />
+          )}
           <Label size="label" tone="ink-2" style={{ flexShrink: 1 }}>
             {summary}
           </Label>

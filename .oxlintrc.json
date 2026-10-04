@@ -46,6 +46,7 @@
     "scripts/__fixtures__/**",
     "scripts/oxlint-plugin-vivid.mjs",
     "apps/mobile/android/**",
+    "apps/mobile/vendor/**",
     "apps/mobile/ios/**",
     "**/drizzle/**/snapshot.json"
   ],
