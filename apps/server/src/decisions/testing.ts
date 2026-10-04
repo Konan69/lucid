@@ -296,6 +296,6 @@ export const effectScoreCount = (lines: readonly string[], tool: string) =>
     (line) => line.includes('Tool effect score') && line.includes(`"tool":${JSON.stringify(tool)}`),
   ).length
 
-/** Round-four held-out read cohorts recovered 15/18 on both paths; fourteen leaves one
+/** Round-four calibration read cohorts recovered 15/18 on both paths; fourteen leaves one
  * read of variation without weakening the 0.95 Approval-removal threshold. */
 export const LIVE_READ_RECOVERY_FLOOR = 14

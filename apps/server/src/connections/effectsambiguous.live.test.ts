@@ -49,8 +49,7 @@ describe.skipIf(!liveDecisionEnabled)('Gateway effectsambiguous', () => {
             : yield* Effect.forEach(request.tools, (tool) => effects.classify({ ...request, tool }))
         for (const [index, tool] of cohort.entries()) {
           expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
-          if (tool.expected === 'read') expect(result[index], tool.name).toBe('read')
-          else expect(result[index], tool.name).not.toBe('read')
+          expect(result[index], tool.name).not.toBe('read')
         }
       }).pipe(
         Effect.provide(toolEffectsLayer.pipe(Layer.provide(liveDecisionLayer))),
