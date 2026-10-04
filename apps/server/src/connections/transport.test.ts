@@ -12,7 +12,6 @@ import {
   ExecutorOwnerId,
   ExecutorProfileId,
   ExecutorReferences,
-  ExecutorRequestId,
   ExecutorResponseInvalid,
   ExecutorSetupRequired,
   ExecutorStep,
@@ -360,24 +359,6 @@ describe('Executor hosted transport', () => {
       }),
     ),
   )
-
-  for (const accept of [true, false]) {
-    it.effect(`refuses resume locally when accept is ${accept}`, () =>
-      scenario((remote) =>
-        Effect.gen(function* () {
-          const executor = yield* Executor
-          yield* executor.catalog()
-          const before = yield* Ref.get(remote.requests)
-          expect(
-            yield* executor
-              .resume({ references, requestId: ExecutorRequestId.make('old-request'), accept })
-              .pipe(Effect.flip),
-          ).toEqual(ExecutorApprovalUnsupported.make({ tool: null }))
-          expect(yield* Ref.get(remote.requests)).toEqual(before)
-        }),
-      ),
-    )
-  }
 
   it.effect(
     'begins an API-key connection from the real provider method, submits it and reconciles',

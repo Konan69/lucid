@@ -11,13 +11,12 @@ import {
   ExecutorOwnerId,
   ExecutorProfileId,
   ExecutorReferences,
-  ExecutorRequestId,
   executorLayer,
 } from './executor.ts'
 
 const publicService = ServiceId.make('curated/deepwiki-com-mcp')
 
-/** Missing configuration disables the entire authority seam, including mutations and resume. */
+/** Missing configuration disables the entire authority seam, including every mutation. */
 describe('Executor installation', () => {
   for (const configuration of [
     { name: 'both values missing', values: {} },
@@ -72,11 +71,6 @@ describe('Executor installation', () => {
           executor.remove(references),
           executor.tools(references),
           executor.call({ references, tool: 'unconfigured', input: {} }),
-          executor.resume({
-            references,
-            requestId: ExecutorRequestId.make('unconfigured-request'),
-            accept: true,
-          }),
         ]
         for (const operation of operations) {
           const error = yield* operation.pipe(Effect.flip)

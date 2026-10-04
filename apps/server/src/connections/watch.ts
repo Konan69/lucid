@@ -207,7 +207,6 @@ const read = (executor: Executor['Service']) =>
     >(outcome, {
       Completed: ({ value: content }) => Effect.succeed(content),
       NotReady: () => Effect.fail(new IntegrationRevoked({ connectionId })),
-      ApprovalRequired: () => Effect.fail(new IntegrationReadFailed({ connectionId })),
       Rejected: () => Effect.fail(new IntegrationReadFailed({ connectionId })),
       OutcomeUnknown: () => Effect.fail(new IntegrationReadFailed({ connectionId })),
     })

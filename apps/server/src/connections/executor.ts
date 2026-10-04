@@ -51,7 +51,6 @@ export const ExecutorOwnerId = Schema.NonEmptyString.pipe(Schema.brand('Executor
 export const ExecutorAuthorizationId = Schema.NonEmptyString.pipe(
   Schema.brand('ExecutorAuthorizationId'),
 )
-export const ExecutorRequestId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorRequestId'))
 
 const referenceFields = {
   service: ServiceId,
@@ -134,20 +133,10 @@ export const ExecutorTool = Schema.Struct({
 })
 export const ExecutorCallOutcome = Schema.TaggedUnion({
   Completed: { value: Schema.Json },
-  ApprovalRequired: { requestId: ExecutorRequestId, expiresAt: Schema.Number },
   Rejected: { message: Schema.String },
   NotReady: {},
   OutcomeUnknown: {},
 })
-export const ExecutorResumeOutcome = Schema.TaggedUnion({
-  Completed: { value: Schema.Json },
-  Denied: {},
-  Failed: { reason: Schema.String },
-  AlreadyConsumed: {},
-  /** Resume claims consent before dispatch; lost responses cannot safely be retried. */
-  OutcomeUnknown: {},
-})
-
 const errorContext = { service: Schema.Literal('connections'), tool: Schema.NullOr(Schema.String) }
 /** MCP and OpenAPI URL registration need Executor's own public-only egress, since it resolves
  * the checked URL again. The operator must disable loopback access and private-origin exceptions
@@ -274,11 +263,6 @@ const CallInput = Schema.Struct({
   tool: Schema.NonEmptyString,
   input: Schema.Json,
 })
-const ResumeInput = Schema.Struct({
-  references: ExecutorReferences,
-  requestId: ExecutorRequestId,
-  accept: Schema.Boolean,
-})
 const SignInInput = Schema.Struct({
   references: ExecutorReferences,
   callbackAddress: Schema.Redacted(Schema.String),
@@ -330,9 +314,6 @@ export interface ExecutorService {
   readonly call: (
     input: typeof CallInput.Type,
   ) => Effect.Effect<typeof ExecutorCallOutcome.Type, ExecutorFailure>
-  readonly resume: (
-    input: typeof ResumeInput.Type,
-  ) => Effect.Effect<typeof ExecutorResumeOutcome.Type, ExecutorFailure>
 }
 /** Only the server holds this installation-wide authority; product permission belongs above it. */
 export class Executor extends Context.Service<Executor, ExecutorService>()('vivid/Executor') {}
@@ -1736,15 +1717,6 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
   )
 }
 
-/** HostedTools has neither approval IDs nor a resume route. Fail locally for every saved
- * local-API approval, including decline; no fabricated request or network retry is safe.
- */
-function makeResume() {
-  return Effect.fn('Executor.resume')((_input: typeof ResumeInput.Type) =>
-    Effect.fail(ExecutorApprovalUnsupported.make({ tool: null })),
-  )
-}
-
 /** Acquire transport once and start the scoped catalog writer; tool discovery remains keyed. */
 const makeConfigured = Effect.fn('Executor.configure')(function* (
   url: string,
@@ -1853,7 +1825,6 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
         Effect.tapError(() => Cache.invalidate(snapshots, input.references)),
       ),
     ),
-    resume: makeResume(),
   })
 })
 
@@ -1886,7 +1857,6 @@ export const executorLayer = Layer.effect(
         remove: Effect.fn('Executor.remove')(() => unavailable),
         tools: Effect.fn('Executor.tools')(() => unavailable),
         call: Effect.fn('Executor.call')(() => unavailable),
-        resume: Effect.fn('Executor.resume')(() => unavailable),
       })
     }
     const organization = yield* Config.schema(ExecutorOrganizationId, 'VIVID_EXECUTOR_ORGANIZATION')
