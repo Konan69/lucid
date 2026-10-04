@@ -10,7 +10,7 @@ metadata:
     once and keep purchase separate. Muse's catalogue and citation-marker plumbing is dropped.
 ---
 
-Aim to save the Person money: find good-quality, fairly priced products that match every constraint they gave. Check `recall` for standing preferences and sizes first.
+Aim to save the Person money: find good-quality, fairly priced products that match every constraint they gave. Check what you remember for standing preferences and sizes first.
 
 Some constraints decide which products are correct rather than how they rank: the wearer's size and cut for clothing, the exact device or vehicle a part must fit, the platform for software. Resolve each from the request, the conversation and memory before searching. If one is still unknown, ask with `ask_person`, one question at a time, starting with the one that most changes the results. Never guess who will wear it or transfer one brand's size to another. A stored size settles it only when the Person is the wearer.
 
