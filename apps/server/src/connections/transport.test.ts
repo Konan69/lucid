@@ -1,6 +1,16 @@
 import { describe, expect, it } from '@effect/vitest'
 import { ConnectionId, InvalidRequest, ServiceId } from '@vivid/contracts'
-import { ConfigProvider, Effect, Layer, Redacted, Ref, Schema, Deferred, Fiber } from 'effect'
+import {
+  ConfigProvider,
+  Effect,
+  Layer,
+  Redacted,
+  Ref,
+  Schema,
+  Deferred,
+  Fiber,
+  Scope,
+} from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import {
@@ -107,11 +117,13 @@ function requestAt<T>(items: readonly T[], index: number): T {
 const scenario = <E>(
   run: (
     remote: Effect.Success<ReturnType<typeof hostedExecutorFixture>>,
-  ) => Effect.Effect<void, E, Executor>,
+  ) => Effect.Effect<void, E, Executor | Scope.Scope>,
 ) =>
   Effect.gen(function* () {
     const remote = yield* hostedExecutorFixture()
-    yield* run(remote).pipe(Effect.provide(remote.configured))
+    // A scenario may fork fibers and register finalizers; they end with the scenario, before
+    // the recorded requests are checked.
+    yield* run(remote).pipe(Effect.scoped, Effect.provide(remote.configured))
     const requests = yield* Ref.get(remote.requests)
     for (const request of requests) {
       expect(request.path).toContain(`${hostedPrefix}/`)
