@@ -346,7 +346,9 @@ credentialed GET can still have side effects. The desktop refuses private-networ
 the Person retains an explicit Stop.
 
 A pending Approval is deduplicated by its original workspace, Thread and action digest, retaining
-the first proposing Run. Device dispatch requires that exact admitted Run still be Working;
-ended work is reported as not sent. Only a sent action without a known result is OutcomeUnknown.
+the first proposing Run. A Run sending its own action must still be Working. An action the
+Person approved is sent for that exact Run when it is Working or Completed, because raising an
+Approval ends the Run's turn; a stopped or failed Run sends nothing, and that is reported as
+not sent. Only a sent action without a known result is OutcomeUnknown.
 Page metadata carries an optional branded PNG attachment, omitted when genuinely absent.
 Each encoded PNG is capped at 8 MiB before device-answer and history retention.

@@ -99,8 +99,9 @@ export const actingRun = Effect.fn('RunStore.actingRun')(function* (
   return run.id
 })
 
-/** Resolve only the supplied admitted Run and decode its persisted state. Callers may dispatch
- * only Working; completed, failed, stopped and unknown states never authorize a new action. */
+/** Resolve only the supplied admitted Run and decode its persisted state. What each state
+ * authorizes is the caller's rule: see `dispatchRun` in `computers/device.ts`, where a Run acting
+ * for itself must be Working and an action the Person approved is also sent for a Completed Run. */
 export const admittedRunState = Effect.fn('RunStore.admittedRunState')(function* (input: {
   readonly runId: RunId
   readonly threadId: ThreadId

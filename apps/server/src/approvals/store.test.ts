@@ -12,6 +12,8 @@ import {
   ApprovalState,
   AuditEvent,
   ActionTarget,
+  BrowseTarget,
+  BrowserAction,
   DesktopAction,
   Conflict,
   DatabaseFailure,
@@ -33,6 +35,17 @@ import { approvals } from './tables.ts'
 import { commandAction, connectionAction, fixture, Observation, trustTestLayer } from './testing.ts'
 
 const once = ApprovalDecision.cases.AllowOnce.make({})
+/** A click on the Person's own signed-in page. */
+const browserWrite = ProposedAction.make({
+  summary: 'Click Send',
+  rationale: '',
+  effect: 'write',
+  target: ActionTarget.cases.Browser.make({
+    target: BrowseTarget.cases.Person.make({}),
+    action: BrowserAction.cases.Click.make({ target: 'Send' }),
+  }),
+})
+
 const always = ApprovalDecision.cases.AlwaysAllow.make({})
 
 /** A1-A3 use addressed owner-role cards and real rows; reach loss must never settle pending work. */
@@ -544,6 +557,57 @@ describe.skipIf(!testDatabaseConfigured)('Approval recovery and permanent permis
         expect(yield* (yield* RuleStore).list(test.personal)).toEqual([])
         expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
         expect((yield* loadAudit(test.owner)).entries).toEqual([])
+      }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
+  // Owner decision, 4 October 2026: a write on the Person's own browser follows the same table
+  // as a write through their own Integration, and that includes "Always allow".
+  it.effect(
+    'AlwaysAllow on the Person’s own browser writes the rule in a private Thread and runs the action',
+    () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const store = yield* ApprovalStore
+        const approval = yield* store.raise(test.vivid, browserWrite)
+        const settled = yield* store.decide(test.personal, {
+          id: approval.id,
+          digest: approval.digest,
+          decision: always,
+        })
+        expect(ApprovalState.guards.Succeeded(settled.state)).toBe(true)
+        expect(
+          (yield* (yield* RuleStore).list(test.personal)).map((rule) => rule.decision),
+        ).toEqual(['Allow'])
+        expect(yield* Ref.get((yield* Observation).actions)).toEqual([browserWrite])
+      }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
+  it.effect(
+    'AlwaysAllow on the Person’s own browser is refused in a Thread others can see, before claiming',
+    () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const database = yield* Database
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'company' })
+            .where(eq(threads.id, test.companyId)),
+        )
+        const store = yield* ApprovalStore
+        const approval = yield* store.raise(test.companyVivid, browserWrite)
+        const result = yield* Effect.result(
+          store.decide(test.member, { id: approval.id, digest: approval.digest, decision: always }),
+        )
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) {
+          expect(result.failure).toBeInstanceOf(InvalidRequest)
+          expect(result.failure.message).toBe('This kind of action is always asked about')
+        }
+        expect((yield* store.inThread(test.companyId)).map((row) => row.state._tag)).toEqual([
+          'Pending',
+        ])
+        expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
       }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
 })
