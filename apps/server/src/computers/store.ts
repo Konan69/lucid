@@ -873,6 +873,32 @@ const executionReason = (failure: ExecutionFailure): string =>
     Match.orElse(machineFailureReason),
   )
 
+/** Only known provider/readiness refusals become tool outcomes; database failures remain visible. */
+const executionRefusals = <A>(
+  handle: (failure: MachineFailure | ReadinessFailure) => Effect.Effect<A>,
+) => {
+  return {
+    MachineUnavailable: handle,
+    MachineNotRunning: handle,
+    MachineOperationFailed: handle,
+    MachineResponseInvalid: handle,
+    MachineInputInvalid: handle,
+    BrowserAddressRefused: handle,
+    BrowserStepFailed: handle,
+    MachineConfigurationInvalid: handle,
+    MachineAuthenticationFailed: handle,
+    MachineCreationUnresolved: handle,
+    MachineRequestRejected: handle,
+    MachinePersistenceFailed: handle,
+    MachineCapabilityUnavailable: handle,
+    ComputerHeld: handle,
+    ComputerProviderUnavailable: handle,
+    ComputerStartFailed: handle,
+    ComputerNotReady: handle,
+    ComputerWakeTimedOut: handle,
+  }
+}
+
 /** Navigation stays read by policy, including credentialed GETs that can have side effects.
  * Desktop refuses private-network addresses and the Person has an explicit Stop. Closing their
  * tab destroys personal state and requires permission; Vivid's contained tab behavior is unchanged. */
@@ -907,36 +933,41 @@ export const computerRunCommand = Effect.fn('Computer.runCommand')(function* (
     target: ActionTarget.cases.Command.make({ command: request.command }),
   })
   const decision = yield* gate.check(actor, action, 'Ordinary')
-  return yield* GateDecision.match(decision, {
-    Blocked: Effect.fn('Computer.command.blocked')(
-      ({ rule }: typeof GateDecision.cases.Blocked.Type): Effect.Effect<CommandOutcome> =>
-        Effect.succeed(CommandOutcome.cases.Blocked.make({ rule })),
-    ),
-    ApprovalRequired: ({ approval }) =>
-      Effect.succeed(
-        CommandOutcome.cases.ApprovalRequired.make({
-          approvalId: approval.id,
-          summary: approval.action.summary,
-        }),
+  return yield* GateDecision.match<Effect.Effect<CommandOutcome, DatabaseInfrastructureError>>(
+    decision,
+    {
+      Blocked: Effect.fn('Computer.command.blocked')(
+        ({ rule }: typeof GateDecision.cases.Blocked.Type): Effect.Effect<CommandOutcome> =>
+          Effect.succeed(CommandOutcome.cases.Blocked.make({ rule })),
       ),
-    Allowed: () =>
-      store
-        .exec(actor.person.id, {
-          command: request.command,
-          timeoutSeconds: request.timeoutSeconds === undefined ? 30 : request.timeoutSeconds,
-        })
-        .pipe(
-          Effect.map((result) => CommandOutcome.cases.Completed.make({ result })),
-          Effect.catchTag('MachineExecutionUnknown', () =>
-            Effect.succeed(CommandOutcome.cases.OutcomeUnknown.make({})),
-          ),
-          Effect.catch((failure) =>
-            Effect.succeed(
-              CommandOutcome.cases.Unavailable.make({ reason: executionReason(failure) }),
+      ApprovalRequired: ({ approval }) =>
+        Effect.succeed(
+          CommandOutcome.cases.ApprovalRequired.make({
+            approvalId: approval.id,
+            summary: approval.action.summary,
+          }),
+        ),
+      Allowed: () =>
+        store
+          .exec(actor.person.id, {
+            command: request.command,
+            timeoutSeconds: request.timeoutSeconds === undefined ? 30 : request.timeoutSeconds,
+          })
+          .pipe(
+            Effect.map((result) => CommandOutcome.cases.Completed.make({ result })),
+            Effect.catchTag('MachineExecutionUnknown', () =>
+              Effect.succeed(CommandOutcome.cases.OutcomeUnknown.make({})),
+            ),
+            Effect.catchTags(
+              executionRefusals((failure) =>
+                Effect.succeed(
+                  CommandOutcome.cases.Unavailable.make({ reason: executionReason(failure) }),
+                ),
+              ),
             ),
           ),
-        ),
-  })
+    },
+  )
 })
 
 /** Device availability is explicit and never grants permission to use the cloud Computer instead. */
@@ -1035,9 +1066,11 @@ export const computerBrowse = Effect.fn('Computer.browse')(function* (
             Effect.catchTag('MachineExecutionUnknown', () =>
               Effect.succeed(BrowseOutcome.cases.OutcomeUnknown.make({})),
             ),
-            Effect.catch((failure) =>
-              Effect.succeed(
-                BrowseOutcome.cases.Unavailable.make({ reason: executionReason(failure) }),
+            Effect.catchTags(
+              executionRefusals((failure) =>
+                Effect.succeed(
+                  BrowseOutcome.cases.Unavailable.make({ reason: executionReason(failure) }),
+                ),
               ),
             ),
           ),
@@ -1073,29 +1106,34 @@ export const computerDesktop = Effect.fn('Computer.desktop')(function* (
     target: ActionTarget.cases.Desktop.make({ action: request.action }),
   })
   const decision = yield* gate.check(actor, action, 'Ordinary')
-  return yield* GateDecision.match(decision, {
-    Blocked: ({ rule }) => Effect.succeed(DesktopOutcome.cases.Blocked.make({ rule })),
-    ApprovalRequired: ({ approval }) =>
-      Effect.succeed(
-        DesktopOutcome.cases.ApprovalRequired.make({
-          approvalId: approval.id,
-          summary: approval.action.summary,
-        }),
-      ),
-    Allowed: Effect.fn('Computer.desktop.allowed')((): Effect.Effect<DesktopOutcome> =>
-      store.desktop(actor.person.id, request.action).pipe(
-        Effect.map((view) => DesktopOutcome.cases.Completed.make({ view })),
-        Effect.catchTag('MachineExecutionUnknown', () =>
-          Effect.succeed(DesktopOutcome.cases.OutcomeUnknown.make({})),
+  return yield* GateDecision.match<Effect.Effect<DesktopOutcome, DatabaseInfrastructureError>>(
+    decision,
+    {
+      Blocked: ({ rule }) => Effect.succeed(DesktopOutcome.cases.Blocked.make({ rule })),
+      ApprovalRequired: ({ approval }) =>
+        Effect.succeed(
+          DesktopOutcome.cases.ApprovalRequired.make({
+            approvalId: approval.id,
+            summary: approval.action.summary,
+          }),
         ),
-        Effect.catch((failure) =>
-          Effect.succeed(
-            DesktopOutcome.cases.Unavailable.make({ reason: executionReason(failure) }),
+      Allowed: Effect.fn('Computer.desktop.allowed')(() =>
+        store.desktop(actor.person.id, request.action).pipe(
+          Effect.map((view) => DesktopOutcome.cases.Completed.make({ view })),
+          Effect.catchTag('MachineExecutionUnknown', () =>
+            Effect.succeed(DesktopOutcome.cases.OutcomeUnknown.make({})),
+          ),
+          Effect.catchTags(
+            executionRefusals((failure) =>
+              Effect.succeed(
+                DesktopOutcome.cases.Unavailable.make({ reason: executionReason(failure) }),
+              ),
+            ),
           ),
         ),
       ),
-    ),
-  })
+    },
+  )
 })
 
 type ComputerTarget =
@@ -1115,6 +1153,11 @@ const approvedBrowse = (outcome: BrowseOutcome): ActionOutcome =>
       }),
     NotConnected: () =>
       ActionOutcome.cases.Failed.make({ reason: 'The Person’s desktop app is not connected.' }),
+    AddressRefused: () =>
+      ActionOutcome.cases.Failed.make({
+        reason:
+          'That page or address cannot be opened on the Person’s computer. Use a public web address.',
+      }),
     NotAllowed: () =>
       ActionOutcome.cases.Failed.make({
         reason: 'The Person has not allowed access to their computer.',
@@ -1138,10 +1181,20 @@ const approvedBrowse = (outcome: BrowseOutcome): ActionOutcome =>
       ActionOutcome.cases.Failed.make({ reason: 'This action still needs approval.' }),
   })
 
-/** Expected machine refusals settle an Approval as Failed; persistence failures propagate to
- * the handler instead of disguising an unsent action as a device outage. */
+/** Expected machine refusals settle an Approval as Failed with their domain-specific explanation. */
 const failedExecution = (failure: MachineFailure | ReadinessFailure) =>
   Effect.succeed(ActionOutcome.cases.Failed.make({ reason: executionReason(failure) }))
+
+/** Device errors escape only before its ledger/send boundary; cloud database writes likewise
+ * precede provider execution (post-action activity failures are logged inside executeReady).
+ * Record the infrastructure tag while allowing Approvals.decide to durably settle not-sent.
+ * A failed settlement write still propagates from the Approval owner and cannot be hidden here. */
+const notSent = Effect.fn('Computer.notSent')(function* (failure: DatabaseInfrastructureError) {
+  yield* Effect.logError('Approved Computer action was not sent', failure._tag)
+  return ActionOutcome.cases.Failed.make({
+    reason: 'Nothing was sent, because the Computer record could not be read or updated.',
+  })
+})
 
 /** Approved actions run from their stored target once; a lost exec remains Unknown and is never retried. */
 export const computerRunner = Effect.fn('Computer.runner')(function* (input: {
@@ -1194,25 +1247,11 @@ export const computerRunner = Effect.fn('Computer.runner')(function* (input: {
     Effect.catchTag('MachineExecutionUnknown', () =>
       Effect.succeed(ActionOutcome.cases.Unknown.make({})),
     ),
+    Effect.catchTags(executionRefusals(failedExecution)),
     Effect.catchTags({
-      MachineUnavailable: failedExecution,
-      MachineNotRunning: failedExecution,
-      MachineOperationFailed: failedExecution,
-      MachineResponseInvalid: failedExecution,
-      MachineInputInvalid: failedExecution,
-      BrowserAddressRefused: failedExecution,
-      BrowserStepFailed: failedExecution,
-      MachineConfigurationInvalid: failedExecution,
-      MachineAuthenticationFailed: failedExecution,
-      MachineCreationUnresolved: failedExecution,
-      MachineRequestRejected: failedExecution,
-      MachinePersistenceFailed: failedExecution,
-      MachineCapabilityUnavailable: failedExecution,
-      ComputerHeld: failedExecution,
-      ComputerProviderUnavailable: failedExecution,
-      ComputerStartFailed: failedExecution,
-      ComputerNotReady: failedExecution,
-      ComputerWakeTimedOut: failedExecution,
+      DatabaseFailure: notSent,
+      DatabaseUnavailable: notSent,
+      DatabaseConstraintViolation: notSent,
     }),
   )
   return result

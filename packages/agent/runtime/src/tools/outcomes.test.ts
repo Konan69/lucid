@@ -13,6 +13,27 @@ import { browseOutcome, commandOutcome, desktopOutcome, toolOutcome } from './ou
 const approval = { approvalId: ApprovalId.make('approval-1'), summary: 'Send the draft.' }
 
 describe('outcome mapping', () => {
+  it('distinguishes a refused page from missing computer permission and ended work', () => {
+    expect(browseOutcome(BrowseOutcome.cases.AddressRefused.make({})).output).toEqual({
+      ok: false,
+      message:
+        'That page or address cannot be opened on the Person’s computer. Use a public web address.',
+    })
+    expect(browseOutcome(BrowseOutcome.cases.NotAllowed.make({})).output).toEqual({
+      ok: false,
+      message:
+        'The Person has not allowed access to their computer. Ask them to allow it in the desktop app.',
+    })
+    expect(browseOutcome(BrowseOutcome.cases.RunRequired.make({}))).toEqual({
+      output: {
+        ok: false,
+        message:
+          'Nothing was sent, because the work that asked for it has ended. Ask the Person before trying again.',
+      },
+      terminate: true,
+    })
+  })
+
   it.effect('uncertain Computer dispatch refuses blind retries for all three tools', () =>
     Effect.sync(() => {
       const outcomes = [

@@ -34,7 +34,7 @@ import { contextInstruction } from '../context.ts'
 import { SavedProcedures, VividContext } from './snapshots.ts'
 import * as views from './views.ts'
 import { askTools } from './ask.ts'
-import { computerDefinitions } from './computer.ts'
+import { commandDefinition, desktopToolFactory } from './computer.ts'
 import { connectionTools } from './connections.ts'
 import { libraryTools } from './library.ts'
 import { memoryTools } from './memory.ts'
@@ -275,8 +275,9 @@ function inspectSchema(value: Schema.Json) {
   }
   if (!isRecord(value)) return
   expect(value.type).not.toBe('uuid')
-  if (value.entries !== undefined && isRecord(value.entries)) {
-    for (const field of Object.keys(value.entries)) expect(field).not.toMatch(/^(?:id)$|Id$/u)
+  const fields = value.entries === undefined ? value.properties : value.entries
+  if (fields !== undefined && isRecord(fields)) {
+    for (const field of Object.keys(fields)) expect(field).not.toMatch(/^(?:id)$|Id$/u)
   }
   for (const entry of Object.values(value)) inspectSchema(entry)
 }
@@ -298,7 +299,6 @@ function isRecord(value: Schema.Json): value is Schema.JsonObject {
 it('has no identifier key or UUID validator in any model tool input', () => {
   const groups = [
     askTools,
-    computerDefinitions,
     connectionTools,
     libraryTools,
     memoryTools,
@@ -306,6 +306,9 @@ it('has no identifier key or UUID validator in any model tool input', () => {
     projectTools,
     skillTools,
   ]
+  inspectSchema(schemaDocument(JSON.stringify(commandDefinition(inspectionOnly).input)))
+  for (const native of desktopToolFactory(inspectionOnly).tools())
+    inspectSchema(schemaDocument(JSON.stringify(native.parameters)))
   for (const factory of groups)
     for (const definition of factory(inspectionOnly))
       inspectSchema(schemaDocument(JSON.stringify(definition.input)))

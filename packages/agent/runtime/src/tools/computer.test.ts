@@ -229,6 +229,7 @@ describe('browser model target and image result', () => {
   for (const outcome of [
     BrowseOutcome.cases.NotConnected.make({}),
     BrowseOutcome.cases.NotAllowed.make({}),
+    BrowseOutcome.cases.AddressRefused.make({}),
     BrowseOutcome.cases.Busy.make({}),
     BrowseOutcome.cases.Stopped.make({}),
     BrowseOutcome.cases.PageGone.make({}),

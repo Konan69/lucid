@@ -133,6 +133,16 @@ const browse = Effect.fn('Code.browse')(function* (actor: Actor, input: Schema.J
         request.summary,
         'refused',
       ),
+    AddressRefused: () =>
+      returned(
+        {
+          ok: false,
+          reason:
+            'That page or address cannot be opened on the Person’s computer. Use a public web address.',
+        },
+        request.summary,
+        'refused',
+      ),
     NotAllowed: () =>
       returned(
         {
@@ -181,7 +191,8 @@ const browse = Effect.fn('Code.browse')(function* (actor: Actor, input: Schema.J
       returned(
         {
           ok: false,
-          reason: 'This action requires the Run that proposed it. Do not retry by yourself.',
+          reason:
+            'Nothing was sent, because the work that asked for it has ended. Ask the Person before trying again.',
         },
         request.summary,
         'refused',

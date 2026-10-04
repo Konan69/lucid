@@ -6,6 +6,7 @@ import {
   Deferred,
   Effect,
   Layer,
+  Match,
   Option,
   Queue,
   Schema,
@@ -179,7 +180,16 @@ const accessColumns = (access: DeviceAccess) => ({
 const outcomeOf = (answer: DeviceAnswer): BrowseOutcome =>
   DeviceAnswer.match<BrowseOutcome>(answer, {
     Done: ({ result }) => BrowseOutcome.cases.Completed.make({ result }),
-    Refused: ({ reason }) => BrowseOutcome.cases[reason].make({}),
+    // The Device’s legacy NotAllowed literal means an address/page refusal, not access permission.
+    // Keep the wire vocabulary compatible with desktop while making the product outcome precise.
+    Refused: ({ reason }) =>
+      Match.value(reason).pipe(
+        Match.when('NotAllowed', () => BrowseOutcome.cases.AddressRefused.make({})),
+        Match.when('Stopped', () => BrowseOutcome.cases.Stopped.make({})),
+        Match.when('PageGone', () => BrowseOutcome.cases.PageGone.make({})),
+        Match.when('Unsupported', () => BrowseOutcome.cases.Unsupported.make({})),
+        Match.exhaustive,
+      ),
     Failed: () =>
       BrowseOutcome.cases.Unavailable.make({
         reason: 'The Person’s computer could not complete this action.',

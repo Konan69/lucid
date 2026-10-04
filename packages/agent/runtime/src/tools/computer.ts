@@ -53,7 +53,7 @@ const modelAction = <Fields extends Schema.Struct.Fields, const Kind extends str
   kind: Kind,
 ) => Schema.Struct({ ...Struct.omit(fields, ['_tag']), kind: Schema.Literal(kind) })
 
-/** Native model parameters retain the existing Valibot vocabulary; RPC still uses BrowserAction. */
+/** Native model parameters use plain action words; RPC still uses BrowserAction. */
 const browseInput = Schema.Struct({
   computer: Schema.Literals(['vivid', 'person'])
     .annotate({
@@ -100,7 +100,7 @@ const decodeBrowse = Schema.decodeUnknownResult(browseInput)
 const browserDocument = Schema.toJsonSchemaDocument(browseInput)
 // Public TypeBox JSON Schema adapter, as use_desktop uses below; decoding and documentation
 // both derive from browseInput. This constructor does not assert untrusted input is typed.
-const browserParameters = Type.Unsafe<typeof browseInput.Type>(
+const browserParameters = Type.Unsafe<typeof browseInput.Encoded>(
   Object.assign({}, browserDocument.schema, { $defs: browserDocument.definitions }),
 )
 
@@ -156,13 +156,8 @@ export function computerTools(runTool: RunTool) {
   return [commandDefinition(runTool)]
 }
 
-/** Plain definitions can be inspected without rendering Flue hooks; the image tool mounts separately. */
-export function computerDefinitions(runTool: RunTool) {
-  return [commandDefinition(runTool), browserDefinition(runTool)] as const
-}
-
 /** The command definition is mounted directly; native browse mounts through the image factory. */
-function commandDefinition(runTool: RunTool) {
+export function commandDefinition(runTool: RunTool) {
   return defineTool({
     name: 'run_command',
     description:
@@ -203,40 +198,11 @@ function commandDefinition(runTool: RunTool) {
 const browseDescription =
   'Open, read or interact with a browser page. Use Vivid’s own computer by default. Choose person for their signed-in sites, something only on their machine, or when they ask to use their computer; their desktop app must be connected. Screenshot returns a picture. If approval is requested, stop and wait.'
 
-/** Legacy Valibot catalog callers inspect a schema object; validation and defaults delegate to
- * the authoritative native browser schema, so this adapter declares no second vocabulary. The
- * production image factory mounts browseModelTool; this definition is only the inspection seam. */
-const browserInspectionInput = v.pipe(
-  v.looseObject({}),
-  v.rawTransform((context) => {
-    const result = decodeBrowse(context.dataset.value)
-    if (Result.isSuccess(result)) return result.success
-    context.addIssue({ message: 'The browser request is invalid.' })
-    return context.NEVER
-  }),
-)
-
-/** Catalog inspection uses the native decoder; production execution mounts the image tool. */
-function browserDefinition(runTool: RunTool) {
-  return defineTool({
-    name: 'browse',
-    description: browseDescription,
-    input: browserInspectionInput,
-    /** The legacy definition shares the same attributed program without carrying image bytes. */
-    run({ data, signal }) {
-      return runTool(
-        browseProgram(data, () => undefined),
-        { signal, tool: 'browse' },
-      )
-    },
-  })
-}
-
 const decodeDesktop = Schema.decodeUnknownResult(UseDesktopRequest)
 // The TypeBox schema is derived from the authoritative Effect contract, with runtime decoding
 // below. Type.Unsafe is TypeBox's public bridge for an existing JSON Schema, not an input cast.
 const desktopDocument = Schema.toJsonSchemaDocument(UseDesktopRequest)
-const desktopParameters = Type.Unsafe<UseDesktopRequest>(
+const desktopParameters = Type.Unsafe<typeof UseDesktopRequest.Encoded>(
   Object.assign({}, desktopDocument.schema, { $defs: desktopDocument.definitions }),
 )
 
@@ -353,11 +319,11 @@ export function desktopModelTool(runTool: RunTool) {
  * empty virtual namespace, not the guest filesystem: raw FS/shell cannot bypass Vivid's RPC Gate.
  * Flue resolves it once per submission; the acting Person stays fixed while deliveries join
  * that response (agents/vivid.ts). A later submission gets a newly attributed factory. */
-export function desktopToolFactory(runTool: RunTool): SandboxFactory {
+export function desktopToolFactory(runTool: RunTool) {
   return {
     createSandbox: () => Promise.resolve(toolNamespace()),
     tools: () => [desktopModelTool(runTool), browseModelTool(runTool)],
-  }
+  } satisfies SandboxFactory
 }
 
 /** The namespace contains only its root; it makes no claim about guest files or provider identity.

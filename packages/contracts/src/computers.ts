@@ -339,6 +339,8 @@ export type CommandOutcome = typeof CommandOutcome.Type
 export const BrowseOutcome = Schema.TaggedUnion({
   NotConnected: {},
   NotAllowed: {},
+  /** The Device refused the page or address, independently of the Person’s access permission. */
+  AddressRefused: {},
   Busy: {},
   Stopped: {},
   PageGone: {},

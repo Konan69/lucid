@@ -70,6 +70,9 @@ import { computerHandlers, computerRunner } from './handlers.ts'
 import {
   ComputerStore,
   computerStoreLayer,
+  computerRunCommand,
+  computerBrowse,
+  computerDesktop,
   computerMachineKey,
   computerScreenAddress,
 } from './store.ts'
@@ -684,7 +687,12 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
       }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
   )
 
-  for (const reason of ['Stopped', 'PageGone', 'NotAllowed', 'Unsupported'] as const) {
+  for (const [reason, expected] of [
+    ['Stopped', BrowseOutcome.cases.Stopped.make({})],
+    ['PageGone', BrowseOutcome.cases.PageGone.make({})],
+    ['NotAllowed', BrowseOutcome.cases.AddressRefused.make({})],
+    ['Unsupported', BrowseOutcome.cases.Unsupported.make({})],
+  ] as const) {
     it.effect(`Device refusal ${reason} remains a distinct model outcome`, () =>
       Effect.gen(function* () {
         const browser = yield* personalBrowser()
@@ -706,55 +714,59 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           id: dispatched.id,
           answer: DeviceAnswer.cases.Refused.make({ reason }),
         })
-        expect(yield* Fiber.join(running)).toEqual(BrowseOutcome.cases[reason].make({}))
+        expect(yield* Fiber.join(running)).toEqual(expected)
         expect(yield* Queue.size(browser.requests)).toBe(0)
       }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
     )
   }
 
-  it.effect(
-    'invalid persisted Run state is a database failure, never a device outage or dispatch',
-    () =>
-      Effect.gen(function* () {
-        const browser = yield* personalBrowser()
-        yield* browser.connect()
-        const store = yield* ApprovalStore
-        const approval = yield* store.raise(
-          browser.actor,
-          ProposedAction.make({
-            summary: 'Click Send',
-            rationale: '',
-            effect: 'write',
-            target: ActionTarget.cases.Browser.make({
-              target: BrowseTarget.cases.Person.make({}),
-              action: BrowserAction.cases.Click.make({ target: 'Send' }),
-            }),
+  it.effect('invalid persisted Run state settles the Approval as not sent without dispatch', () =>
+    Effect.gen(function* () {
+      const browser = yield* personalBrowser()
+      yield* browser.connect()
+      const store = yield* ApprovalStore
+      const approval = yield* store.raise(
+        browser.actor,
+        ProposedAction.make({
+          summary: 'Click Send',
+          rationale: '',
+          effect: 'write',
+          target: ActionTarget.cases.Browser.make({
+            target: BrowseTarget.cases.Person.make({}),
+            action: BrowserAction.cases.Click.make({ target: 'Send' }),
           }),
-        )
+        }),
+      )
+      yield* browser.database.run(
+        browser.database
+          .update(runs)
+          .set({ state: 'unrecognized', finishedAt: 1 })
+          .where(eq(runs.id, browser.runId)),
+      )
+      const completed = yield* store.decide(browser.test.personal, {
+        id: approval.id,
+        digest: approval.digest,
+        decision: ApprovalDecision.cases.AllowOnce.make({}),
+      })
+      if (!ApprovalState.guards.Failed(completed.state)) expect.fail('Expected a not-sent failure')
+      expect(completed.state.reason).toBe(
+        'Nothing was sent, because the Computer record could not be read or updated.',
+      )
+      const [settled] = yield* browser.database.run(
+        browser.database.select().from(approvals).where(eq(approvals.id, approval.id)),
+      )
+      if (settled === undefined) expect.fail('Approval must remain durably recorded')
+      expect(settled.status).toBe('failed')
+      expect(yield* Queue.size(browser.requests)).toBe(0)
+      expect(
         yield* browser.database.run(
           browser.database
-            .update(runs)
-            .set({ state: 'unrecognized', finishedAt: 1 })
-            .where(eq(runs.id, browser.runId)),
-        )
-        const failure = yield* store
-          .decide(browser.test.personal, {
-            id: approval.id,
-            digest: approval.digest,
-            decision: ApprovalDecision.cases.AllowOnce.make({}),
-          })
-          .pipe(Effect.flip)
-        expect(failure._tag).toBe('DatabaseFailure')
-        expect(yield* Queue.size(browser.requests)).toBe(0)
-        expect(
-          yield* browser.database.run(
-            browser.database
-              .select()
-              .from(deviceRequests)
-              .where(eq(deviceRequests.runId, browser.runId)),
-          ),
-        ).toEqual([])
-      }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
+            .select()
+            .from(deviceRequests)
+            .where(eq(deviceRequests.runId, browser.runId)),
+        ),
+      ).toEqual([])
+    }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
   )
 
   it.effect('a stopped proposing Run reports not sent without dispatch', () =>
@@ -862,6 +874,39 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
       })
       expect(settled.state._tag).toBe('Failed')
       expect(yield* Queue.size(browser.requests)).toBe(0)
+    }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
+  )
+
+  it.effect('direct cloud actions expose corrupt persistence instead of a provider outage', () =>
+    Effect.gen(function* () {
+      const browser = yield* personalBrowser()
+      yield* (yield* ComputerStore).exec(browser.actor.person.id, request)
+      yield* browser.database.run(
+        browser.database
+          .update(computers)
+          .set({ status: 'unrecognized' })
+          .where(eq(computers.personId, browser.actor.person.id)),
+      )
+      const evidence = yield* ProviderEvidence
+      yield* Ref.set(evidence.calls, [])
+      const operations = [
+        computerRunCommand(browser.actor, request).pipe(Effect.asVoid),
+        computerBrowse(browser.actor, {
+          target: BrowseTarget.cases.Vivid.make({}),
+          action: BrowserAction.cases.Read.make({}),
+          summary: 'Read the page',
+        }).pipe(Effect.asVoid),
+        computerDesktop(browser.actor, {
+          action: DesktopAction.cases.Look.make({}),
+          summary: 'Look at the desktop',
+        }).pipe(Effect.asVoid),
+      ]
+      for (const operation of operations) {
+        const result = yield* operation.pipe(Effect.result)
+        if (Result.isSuccess(result)) expect.fail('Corrupt persistence must fail the call')
+        expect(result.failure._tag).toBe('DatabaseFailure')
+      }
+      expect(yield* Ref.get(evidence.calls)).toEqual([])
     }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
   )
 
