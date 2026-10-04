@@ -44,12 +44,18 @@ const decodeThemeSurfaces = Schema.decodeUnknownEffect(ThemeSurfaces)
 /**
  * Extract only the two native-window colors owned by design tokens. Schema validates capture
  * count and format together, so CSS changes cannot silently substitute a raw fallback color.
+ *
+ * The page colour is read from `--screen`, the literal the tokens declare; `--surface-0` is
+ * `var(--screen)` and so carries no colour of its own. Reading `--surface-0` for a hexadecimal
+ * value stopped the app at startup once the tokens were layered that way. The first two
+ * declarations are the default dark and light schemes; the named themes after them are the web
+ * app's and do not colour the native window.
  */
 const parseThemeSurfaces = Effect.fn('DesktopTheme.parseTokens')(function* (
   path: string,
   css: string,
 ) {
-  const surfaces = [...css.matchAll(/--surface-0:\s*(#[0-9a-fA-F]{6})/gu)].map((match) => match[1])
+  const surfaces = [...css.matchAll(/--screen:\s*(#[0-9a-fA-F]{6})/gu)].map((match) => match[1])
   const inks = [...css.matchAll(/--ink-base:\s*(\d{1,3} \d{1,3} \d{1,3})/gu)].map(
     (match) => match[1],
   )
