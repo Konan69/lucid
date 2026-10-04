@@ -5,6 +5,7 @@ import * as Effect from 'effect/Effect'
 import * as Redacted from 'effect/Redacted'
 import { DatabaseFailure } from '@vivid/contracts'
 import { GoogleOAuthConfiguration, ServerConfig } from '../config.ts'
+import { sessionCookie } from './cookie.ts'
 import { authDatabaseLayer } from './dialect.ts'
 
 /**
@@ -34,6 +35,9 @@ const makeOptions = (config: ServerConfig['Service']) => {
     plugins: [
       bearer(),
       deviceAuthorization({ verificationUri: '/device' }),
+      // Trades a session's bearer token for its cookie: how the desktop window, which signs in
+      // with a device code, becomes a cookie session like every other web window (`cookie.ts`).
+      sessionCookie(),
       organization({
         creatorRole: 'owner',
         schema: {
