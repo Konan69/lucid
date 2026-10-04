@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { NotFound, ThreadAudience, ThreadId } from '@vivid/contracts'
+import { NotFound, ThreadId } from '@vivid/contracts'
 import { Context, Effect, Layer, Option } from 'effect'
 import type { Actor } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
@@ -10,6 +10,7 @@ import {
   DeliverySpeaker,
   StoredRunOrigin,
 } from '../threads/conversation.ts'
+import { findThread } from '../threads/access.ts'
 import { ThreadStore } from '../threads/store.ts'
 import { ChannelLedger } from './ledger.ts'
 import type { StoredLink } from './model.ts'
@@ -31,18 +32,23 @@ const makeInbound = Effect.fn('Channels.makeInbound')(function* () {
     text: string,
   ) {
     if (link.threadId !== null) {
-      const prior = (yield* threads.list(actor)).find(
-        (thread) => thread.id === link.threadId && ThreadAudience.guards.Private(thread.audience),
+      const prior = yield* findThread(link.threadId).pipe(Effect.provideService(Database, database))
+      if (
+        Option.isSome(prior) &&
+        prior.value.personId === actor.person.id &&
+        prior.value.companyId === null
       )
-      if (prior !== undefined) return prior.id
+        return prior.value.id
     }
     const thread = yield* threads.create(actor, {
       id: ThreadId.make(NodeCrypto.randomUUID()),
       title: text.trim().slice(0, 120),
       projectId: null,
     })
-    if (!(yield* links.attach(actor, link, thread.id)))
+    if (!(yield* links.attach(actor, link, thread.id))) {
+      yield* threads.remove(actor.person.id, thread.id)
       return yield* new NotFound({ message: 'Channel disconnected' })
+    }
     return thread.id
   })
 
@@ -73,7 +79,10 @@ const makeInbound = Effect.fn('Channels.makeInbound')(function* () {
     })
   })
 
-  /** Claim first; Spectrum replay cannot start another Run, even after the first attempt failed. */
+  /**
+   * Claim first, then bound replay by this enrolment. A failure after claiming deliberately drops
+   * the text permanently; the worker logs only its failure tag, never words or sender identity.
+   */
   const receive = Effect.fn('Channels.inbound')(function* (message: ChannelInbound) {
     if (!(yield* ledger.receive(message))) return
     const link = yield* links.byAddress(message.channel, message.sender)
@@ -81,6 +90,7 @@ const makeInbound = Effect.fn('Channels.makeInbound')(function* () {
       yield* Effect.logInfo('Ignored a channel message without a link')
       return
     }
+    if (message.receivedAt < link.value.since) return
     yield* ledger.attribute(message, link.value.personId)
     yield* text(message, link.value, message.text)
   })

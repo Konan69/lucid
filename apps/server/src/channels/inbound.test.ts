@@ -68,6 +68,23 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
         expect(present(rows[0]).status).toBe('unknown')
       }).pipe(Effect.scoped, Effect.provide(channelTestLayer)),
   )
+  it.effect('claims historic replay without opening a Thread or admitting a Run', () =>
+    Effect.gen(function* () {
+      const test = yield* linked()
+      const message = yield* test.message('historic text')
+      yield* (yield* ChannelReceiver).receive({
+        id: message.id,
+        channel: message.channel,
+        sender: message.sender,
+        text: message.text,
+        receivedAt: -1,
+      })
+      expect(yield* (yield* ThreadStore).list(test.actor)).toEqual([])
+      expect(yield* Ref.get((yield* ChannelControl).admissions)).toEqual([])
+      expect(yield* (yield* ChannelLedger).receive(message)).toBe(false)
+    }).pipe(Effect.scoped, Effect.provide(channelTestLayer)),
+  )
+
   it.effect('an unlinked sender is ignored and never reaches a Thread or reply transport', () =>
     Effect.gen(function* () {
       const test = yield* fixture()

@@ -316,7 +316,8 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
 
   const deliver: ConversationService['deliver'] = makeDeliver(admit, runs)
 
-  // Resume working Runs after restart; Flue owns the durable outcome.
+  // A server restarting while Runs are in progress picks each one back up: Flue still knows
+  // how they ended, or says it does not, and either way the row stops claiming it is working.
   yield* Effect.forEach(yield* runs.working(), resume, { discard: true })
 
   function resume(run: WorkingRun) {

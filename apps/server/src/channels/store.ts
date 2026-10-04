@@ -15,7 +15,7 @@ import { Clock, Context, Effect, Layer, Option, Semaphore } from 'effect'
 import { findPerson, type Actor } from '../auth/access.ts'
 import { Database, decodeStored, returned } from '../database/client.ts'
 import { changed, Changes } from '../live/changes.ts'
-import { normalizeChannelAddress } from './address.ts'
+import { normalizeChannelPhone } from './address.ts'
 import { StoredLink, standingOf } from './model.ts'
 import { ChannelProvider } from './provider.ts'
 import { channelLinks } from './tables.ts'
@@ -86,10 +86,9 @@ const connectLink = ({
   /** Enrol before publishing Connected; repeat requests reuse the existing provider receipt. */
   return Effect.fn('Channels.connect')(
     function* (actor: Actor, channel: Channel, value: string) {
-      const address = yield* normalizeChannelAddress({ channel, value }).pipe(
+      const address = yield* normalizeChannelPhone({ channel, value }).pipe(
         Effect.mapError(() => new ChannelAddressInvalid({ channel })),
       )
-      if (!/^\+[1-9]\d{6,14}$/u.test(address)) return yield* new ChannelAddressInvalid({ channel })
       if (!provider.available(channel)) return yield* new ChannelUnavailable({ channel })
       const taken = yield* byAddress(channel, address)
       if (Option.isSome(taken) && taken.value.personId !== actor.person.id)
@@ -99,8 +98,6 @@ const connectLink = ({
         return ChannelLink.make({ channel, standing: standingOf(prior.value) })
       const enrolled = yield* provider.enrol(channel, address)
       const since = yield* Clock.currentTimeMillis
-      // Keep the former address working if unenrol refuses; no local success is reported.
-      if (Option.isSome(prior)) yield* provider.unenrol(channel, prior.value.enrolmentId)
       const saved = yield* database
         .run(
           database
@@ -133,6 +130,8 @@ const connectLink = ({
         )
       const link = yield* decodeLink(yield* returned(saved, 'channel link'))
       yield* announce(actor)
+      // Publish the durable replacement first: a failed upsert must leave the old number enrolled.
+      if (Option.isSome(prior)) yield* provider.unenrol(channel, prior.value.enrolmentId)
       return ChannelLink.make({ channel, standing: standingOf(link) })
     },
     (effect) => gate.withPermit(effect),
@@ -210,7 +209,7 @@ const makeChannels = Effect.fn('Channels.makeStore')(function* () {
         )
         .returning(),
     )
-    yield* announce(actor)
+    if (rows.length > 0) yield* announce(actor)
     return rows.length > 0
   })
   return { list, connect, disconnect, byPerson, byAddress, attach }
