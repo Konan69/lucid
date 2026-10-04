@@ -138,9 +138,16 @@ function spoken(node: AccessibilityNode, parentName: string): boolean {
   return name !== '' || TYPE_ROLES.has(role)
 }
 
-/** One line of the outline: role, name in quotes, current value, states. */
-function line(node: AccessibilityNode, depth: number): string {
-  const value = words(Option.fromUndefinedOr(node.value))
+/** What the outline says in place of what a password field holds. */
+export const HIDDEN = '(hidden)'
+
+/**
+ * One line of the outline: role, name in quotes, current value, states. A secret field's value
+ * is never written, whatever the accessibility tree reports for it, not even its length.
+ */
+function line(node: AccessibilityNode, depth: number, secret: boolean): string {
+  const held = secret ? HIDDEN : words(Option.fromUndefinedOr(node.value))
+  const value = held
   const role = roleOf(node) === 'StaticText' ? 'text' : roleOf(node)
   return `${'  '.repeat(Math.min(depth, DEEPEST))}${role} "${nameOf(node)}"${value === '' ? '' : ` = "${value}"`}${states(node)}`
 }
@@ -161,8 +168,11 @@ interface Pending {
  * the same tree is read in document order into lines of role, name, value and state, and each
  * named element keeps Chromium's handle beside it, privately, for the click or the typing that
  * follows.
+ *
+ * `secrets` are the handles of the page's password fields. Their line is kept, so the field can
+ * be named and typed into, but its value is replaced by "(hidden)" and its contents are skipped.
  */
-export function outline(tree: AccessibilityTree): PageOutline {
+export function outline(tree: AccessibilityTree, secrets: ReadonlySet<number>): PageOutline {
   const byId = new Map(tree.nodes.map((node) => [node.nodeId, node]))
   const roots = tree.nodes.filter((node) => node.parentId === undefined || !byId.has(node.parentId))
   const lines: Array<string> = []
@@ -176,14 +186,16 @@ export function outline(tree: AccessibilityTree): PageOutline {
   for (let next = stack.pop(); next !== undefined; next = stack.pop()) {
     const { node, depth, parentName } = next
     const said = spoken(node, parentName)
-    if (said) lines.push(line(node, depth))
+    const secret = node.backendDOMNodeId !== undefined && secrets.has(node.backendDOMNodeId)
+    if (said) lines.push(line(node, depth, secret))
     const name = nameOf(node)
     if (said && name !== '' && node.backendDOMNodeId !== undefined)
       controls.push({ name, role: roleOf(node), node: node.backendDOMNodeId, uses: uses(node) })
     const children = (node.childIds === undefined ? [] : node.childIds).flatMap((id) =>
       Option.toArray(Option.fromUndefinedOr(byId.get(id))),
     )
-    for (const child of Arr.reverse(children))
+    // The text inside a secret field is what it holds, so nothing under it is read either.
+    for (const child of secret ? [] : Arr.reverse(children))
       stack.push({ node: child, depth: said ? depth + 1 : depth, parentName: name })
   }
   const text = lines.join('\n')

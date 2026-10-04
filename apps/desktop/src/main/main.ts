@@ -2,17 +2,27 @@ import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as NodeProcess from 'node:process'
 import * as NodeOS from 'node:os'
+import * as NodeDns from 'node:dns'
 import { DeviceName } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
-import { app, protocol, screen, session, type BrowserWindow, type Session } from 'electron'
+import {
+  WebSocket,
+  app,
+  protocol,
+  screen,
+  session,
+  type BrowserWindow,
+  type Session,
+} from 'electron'
 import { registerBridge } from './bridge.ts'
 import { Browser } from './browser.ts'
 import { executor } from './control.ts'
-import { connectDevice, deviceLink } from './device.ts'
+import { connectDevice, deviceLink, sessionChanges } from './device.ts'
 import { controlledBrowser } from './driver.ts'
 import { installationIdentity } from './installation.ts'
+import { Unresolved, mayOpen } from './reach.ts'
 import {
   parseVividUrl,
   VIVID_PROTOCOL,
@@ -38,11 +48,10 @@ import {
   encodeBridgeEvent,
   type DesktopPlatform,
 } from '../shared/bridge.ts'
-import { PageUnavailable } from '../shared/pages.ts'
+import { PageUnavailable, type Tab } from '../shared/pages.ts'
 import { DesktopSettings, settingsLayer } from './settings.ts'
 import { registerAppProxy } from './proxy.ts'
 import { secureSession } from './session.ts'
-import { Touch } from './touch.ts'
 import { isAllowedBridgeRequest } from './security.ts'
 import { ServerSettings } from '../shared/settings.ts'
 
@@ -144,11 +153,16 @@ function runNonFatal(program: Effect.Effect<void, object>, message: string): voi
 }
 
 /** Page events target only their owning app window; guests never receive a bridge event channel. */
-function createBrowser(window: BrowserWindow, pagesSession: Session, touch: Touch): Browser {
+function createBrowser(
+  window: BrowserWindow,
+  pagesSession: Session,
+  stopVivid: (tab: Tab) => void,
+): Browser {
   return new Browser({
     window,
     session: pagesSession,
-    touch,
+    stopVivid,
+    mayOpen: vividMayOpen,
     run: (program) => {
       void Effect.runPromise(program)
     },
@@ -169,6 +183,16 @@ function createBrowser(window: BrowserWindow, pagesSession: Session, touch: Touc
   })
 }
 
+/** What the system resolver says a name leads to; failure is its own answer, not an empty list. */
+const resolveHost = (host: string) =>
+  Effect.tryPromise({
+    try: () => NodeDns.promises.lookup(host, { all: true }),
+    catch: () => new Unresolved({}),
+  }).pipe(Effect.map((found) => found.map((entry) => entry.address)))
+
+/** Whether Vivid may open an address from this computer: the public internet only. */
+const vividMayOpen = (address: string) => mayOpen(address, resolveHost)
+
 /**
  * Vivid using this computer. The executor acts in whichever Browser the open window has; the
  * link enrols this installation, listens while the Person allows it, and hands each action to
@@ -179,12 +203,11 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
   readonly session: Session
   readonly server: () => ServerSettings
   readonly browser: () => Option.Option<Browser>
-  readonly touch: Touch
 }) {
   const control = yield* executor({
     browser: controlledBrowser(input.browser),
-    touch: input.touch,
     mac: platform === 'darwin',
+    mayOpen: vividMayOpen,
     using: (tab) => {
       Option.map(input.browser(), (available) => available.used(tab))
     },
@@ -202,17 +225,31 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
       onSome: (known) =>
         connectDevice({
           server: input.server,
-          // The app's own session only; never the pages partition.
-          cookies: (origin) => input.session.cookies.get({ url: origin }),
+          // Electron's own WebSocket, in the app's session and with its cookies on the upgrade
+          // (electron.d.ts, `WebSocketOptions.session` and `useSessionCookies`). Never the pages
+          // partition. The main process does not read the cookie.
+          socket: (address, origin) =>
+            new WebSocket(address, { session: input.session, useSessionCookies: true, origin }),
           identity: known,
         }),
     }),
     execute: control.execute,
   })
-  // Signing in or out changes the app session's cookies; that is the link's cue to look again.
-  input.session.cookies.on('changed', () => computer.wake())
+  // Signing in or out changes the app session's cookies. A different session ends a link opened
+  // as the old one at once, action in progress included; anything else is a cue to look again.
+  const changed = sessionChanges(new Map())
+  input.session.cookies.on('changed', (_event, cookie, cause, removed) => {
+    const change = changed({
+      name: cookie.name,
+      value: cookie.value,
+      removed,
+      overwritten: cause === 'overwrite',
+    })
+    if (change === 'Restart') computer.restart()
+    else computer.wake()
+  })
   Effect.runFork(computer.run)
-  return computer
+  return { computer, control }
 })
 
 /**
@@ -258,15 +295,12 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
   )
   const colorScheme = new ColorSchemeController(surfaces)
   let browser = Option.none<Browser>()
-  // One for the app: Vivid acts on one page at a time, whichever window's Browser holds it.
-  const touch = new Touch()
   const pagesSession = session.fromPartition('persist:vivid-pages')
 
-  const computer = yield* linkThisComputer({
+  const { computer, control } = yield* linkThisComputer({
     session: desktopSession,
     server: () => serverSettings,
     browser: () => browser,
-    touch,
   })
 
   /** A different server, or none: every page closes and the window loads what that means. */
@@ -338,7 +372,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
       },
     })
     mainWindow = Option.some(window)
-    browser = Option.some(createBrowser(window, pagesSession, touch))
+    browser = Option.some(createBrowser(window, pagesSession, control.stop))
     window.on('closed', () => {
       mainWindow = Option.none()
       browser = Option.none()

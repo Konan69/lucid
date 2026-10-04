@@ -1,5 +1,4 @@
 import * as Option from 'effect/Option'
-import { InputSignal } from './touch.ts'
 
 /** One physical key: what it is called, where it sits, and what it types when it types anything. */
 interface KeyDefinition {
@@ -132,11 +131,10 @@ export type KeyDown = KeyFields & { readonly commands: ReadonlyArray<string> } &
     | { readonly type: 'keyDown'; readonly text: string; readonly unmodifiedText: string }
   )
 
-/** The packets for one press, and the press it will be heard as. */
+/** The packets for one press. */
 export interface KeySequence {
   readonly keyDown: KeyDown
   readonly keyUp: KeyFields & { readonly type: 'keyUp' }
-  readonly signal: InputSignal
 }
 
 /**
@@ -193,6 +191,5 @@ export function keySequence(
       }),
     }),
     keyUp: { ...shared, type: 'keyUp' },
-    signal: InputSignal.cases.Key.make({ key: found.key, code: found.code }),
   })
 }

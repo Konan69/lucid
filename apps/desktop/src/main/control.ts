@@ -18,7 +18,6 @@ import {
 import { AddressDecision, decideAddress } from './address.ts'
 import { keySequence } from './keys.ts'
 import { AccessibilityTree, findControl, outline, type ControlUse } from './outline.ts'
-import { InputSignal, type Touch } from './touch.ts'
 
 /** The page the action was for is closed, or there is no page open to act on. */
 export class PageGone extends Schema.TaggedError<PageGone>()(
@@ -44,11 +43,11 @@ export class StepUnsupported extends Schema.TaggedError<StepUnsupported>()(
   {},
   { title: 'The desktop app cannot do this' },
 ) {}
-/** The Person pressed a key or a button on the page while Vivid was acting on it. */
-class TakenOver extends Schema.TaggedError<TakenOver>()(
-  'TakenOver',
+/** The Person pressed Stop on the page Vivid was using, or the link to Vivid ended. */
+class Stopped extends Schema.TaggedError<Stopped>()(
+  'Stopped',
   {},
-  { title: 'The Person took the page back' },
+  { title: 'The Person stopped the action' },
 ) {}
 
 type StepFailure = PageGone | StepFailed | StepNotAllowed | StepUnsupported
@@ -98,14 +97,22 @@ export interface ControlledBrowser {
   readonly page: (tab: Tab) => Effect.Effect<ControlledPage, PageGone | StepFailed>
   /** The same closed set of page operations the Person's own tab row and toolbar use. */
   readonly request: (request: PagesRequest) => Effect.Effect<PagesResponse, PagesFailure>
+  /**
+   * Goes to an address for Vivid, in this page or in a new one, and answers with the page. Unlike
+   * the Person's own navigation, every hop of it is checked against `mayOpen`.
+   */
+  readonly visit: (tab: Option.Option<Tab>, address: string) => Effect.Effect<Tab, PagesFailure>
+  /** Whether a navigation on this page was refused since this was last asked. Asking clears it. */
+  readonly refused: (tab: Tab) => boolean
 }
 
 export interface ControlDependencies {
   readonly browser: ControlledBrowser
-  readonly touch: Touch
   readonly mac: boolean
   /** Says which page Vivid is acting on, so the page can show it; nothing when it is not. */
   readonly using: (tab: Option.Option<Tab>) => void
+  /** Whether Vivid may open this address from the Person's computer (`reach.ts`). */
+  readonly mayOpen: (address: string) => Effect.Effect<boolean>
 }
 
 /**
@@ -160,6 +167,13 @@ const decodeTyped = Schema.decodeUnknownEffect(
   evaluated(Schema.Literals(['ok', 'notEditable', 'different'] as const)),
 )
 const decodeScrolled = Schema.decodeUnknownEffect(evaluated(Schema.Literal('ok')))
+const decodeDocument = Schema.decodeUnknownEffect(
+  Schema.Struct({ root: Schema.Struct({ nodeId: Schema.Int }) }),
+)
+const decodeFound = Schema.decodeUnknownEffect(Schema.Struct({ nodeIds: Schema.Array(Schema.Int) }))
+const decodeDescribed = Schema.decodeUnknownEffect(
+  Schema.Struct({ node: Schema.Struct({ backendNodeId: Schema.Int }) }),
+)
 
 /** A debugger answer that is not the shape its command promises is a failed step, not a guess. */
 const failing = (step: string) => Effect.mapError(() => new StepFailed({ step }))
@@ -220,10 +234,39 @@ const TYPE_INTO_ELEMENT = `function (text) {
   return held() === text ? "ok" : "different";
 }`
 
-/** Reads the page's accessibility tree into its outline and named controls. */
+/**
+ * The password fields of the page, by Chromium's handle. The accessibility tree does not say
+ * that a field is a password, so the document is asked directly. If it cannot be asked, the page
+ * is not read at all: an outline is never returned without this.
+ *
+ * It finds `input type=password` in the main document. A password field inside a frame or a
+ * shadow root is not found by this query; Chromium already masks what such a field holds in the
+ * accessibility tree, and that masking is the only protection there.
+ */
+const secretFields = Effect.fn('DesktopControl.secretFields')(function* (page: ControlledPage) {
+  const document = yield* page.send('DOM.getDocument', { depth: 0 })
+  const { root } = yield* decodeDocument(document).pipe(failing('document'))
+  const found = yield* page.send('DOM.querySelectorAll', {
+    nodeId: root.nodeId,
+    selector: 'input[type="password" i]',
+  })
+  const { nodeIds } = yield* decodeFound(found).pipe(failing('secrets'))
+  const fields = yield* Effect.forEach(nodeIds, (nodeId) =>
+    page
+      .send('DOM.describeNode', { nodeId })
+      .pipe(Effect.flatMap((described) => decodeDescribed(described).pipe(failing('secret')))),
+  )
+  return new Set(fields.map((field) => field.node.backendNodeId))
+})
+
+/**
+ * Reads the page's accessibility tree into its outline and named controls. What a password field
+ * holds is never in it: the outline says "(hidden)" in its place.
+ */
 const read = Effect.fn('DesktopControl.read')(function* (page: ControlledPage) {
+  const secrets = yield* secretFields(page)
   const answer = yield* page.send('Accessibility.getFullAXTree', {})
-  return outline(yield* decodeTree(answer).pipe(failing('outline')))
+  return outline(yield* decodeTree(answer).pipe(failing('outline')), secrets)
 })
 
 /** Finds the one control with these words that can be used this way, on the page as it is now. */
@@ -259,29 +302,35 @@ const pointOf = Effect.fn('DesktopControl.pointOf')(function* (page: ControlledP
  *
  * Ported from the reference's `performAutomationClick` and `resolveClickPoint`: accept input,
  * bring the element into view, take the middle of where it is drawn, refuse a point outside the
- * viewport, announce the press, then send the button down and up through the debugger. The press
- * is announced immediately before it is sent, and never sent twice.
+ * viewport, then send the button down and up through the debugger. The press is never sent twice.
  *
- * What Vivid changes: the element comes from its accessible name, so it is scrolled and measured
- * through its node handle (`DOM.scrollIntoViewIfNeeded`, `DOM.getContentQuads`) where the
- * reference runs a selector in the page; and the reference's two pauses that animate its own
- * drawn cursor are left out, because the desktop app draws no cursor.
+ * What Vivid changes:
+ * - The element comes from its accessible name, so it is scrolled and measured through its node
+ *   handle (`DOM.scrollIntoViewIfNeeded`, `DOM.getContentQuads`) where the reference runs a
+ *   selector in the page.
+ * - The button is released by a finalizer registered before it goes down, as a key is in `press`.
+ *   The reference sends down and up one after the other, so a stop, a deadline or a failed
+ *   command between the two leaves the button held; here the release runs however the click ends.
+ * - The reference's two pauses that animate its own drawn cursor are left out: the desktop app
+ *   draws no cursor.
  */
-const click = Effect.fn('DesktopControl.click')(function* (
-  page: ControlledPage,
-  touch: Touch,
-  target: string,
-) {
+const click = Effect.fn('DesktopControl.click')(function* (page: ControlledPage, target: string) {
   const control = yield* locate(page, target, 'click')
   yield* page.send('Input.setIgnoreInputEvents', { ignore: false })
   const point = yield* pointOf(page, control.node)
-  touch.expect(
-    InputSignal.cases.Pointer.make({ ...point, button: 'left' }),
-    yield* Clock.currentTimeMillis,
-  )
   const button = { ...point, button: 'left', clickCount: 1 }
-  yield* page.send('Input.dispatchMouseEvent', { ...button, type: 'mousePressed' })
-  yield* page.send('Input.dispatchMouseEvent', { ...button, type: 'mouseReleased' })
+  let went = false
+  const release = Effect.fn('DesktopControl.buttonUp')(function* () {
+    if (went)
+      yield* page
+        .send('Input.dispatchMouseEvent', { ...button, type: 'mouseReleased' })
+        .pipe(Effect.ignore)
+  })
+  const down = Effect.fn('DesktopControl.buttonDown')(function* () {
+    went = true
+    yield* page.send('Input.dispatchMouseEvent', { ...button, type: 'mousePressed' })
+  })
+  yield* down().pipe(Effect.ensuring(release()))
   return undefined
 })
 
@@ -311,20 +360,19 @@ const type = Effect.fn('DesktopControl.type')(function* (
  * Presses one key on the page.
  *
  * Ported from the reference's `performAutomationPress`: give the page itself the keyboard (not
- * its window), bring it to the front for the debugger, turn on focus emulation, announce the
- * press, send the key down; then, whatever happened, send the key up if the key went down, turn
- * focus emulation off and give the keyboard back to whatever had it. The release runs even when
- * the Person takes over midway, or a key would stay held and the next page would act as focused.
+ * its window), bring it to the front for the debugger, turn on focus emulation, send the key
+ * down; then, whatever happened, send the key up if the key went down, turn focus emulation off
+ * and give the keyboard back to whatever had it. The release runs even when the action is stopped
+ * midway, or a key would stay held and the next page would act as focused.
  */
 const press = Effect.fn('DesktopControl.press')(function* (
   page: ControlledPage,
-  touch: Touch,
   key: string,
   mac: boolean,
 ) {
   const sequence = keySequence(key, { mac })
   if (Option.isNone(sequence)) return yield* new StepUnsupported({})
-  const { keyDown, keyUp, signal } = sequence.value
+  const { keyDown, keyUp } = sequence.value
   yield* page.send('Input.setIgnoreInputEvents', { ignore: false })
   let went = false
   let giveBack: Effect.Effect<void> = Effect.void
@@ -337,7 +385,6 @@ const press = Effect.fn('DesktopControl.press')(function* (
     giveBack = yield* page.focus
     yield* page.send('Page.bringToFront', {})
     yield* page.send('Emulation.setFocusEmulationEnabled', { enabled: true })
-    touch.expect(signal, yield* Clock.currentTimeMillis)
     went = true
     yield* page.send('Input.dispatchKeyEvent', keyDown)
   })
@@ -366,6 +413,12 @@ const showing = (state: BrowserState): Option.Option<Tab> =>
     Some: ({ value }) => Option.some(value),
   })
 
+/** The action that is running: the page it holds, once it holds one, and how to end it. */
+interface Running {
+  held: Option.Option<Tab>
+  readonly stopped: Deferred.Deferred<void>
+}
+
 /** Everything one action works with: the app's parts, the last tab listing, and its own end. */
 interface Acting extends ControlDependencies {
   /**
@@ -373,8 +426,7 @@ interface Acting extends ControlDependencies {
    * number is resolved against what Vivid was shown, never against an order that moved since.
    */
   readonly listed: Ref.Ref<Option.Option<ReadonlyArray<Tab>>>
-  /** Done the moment the Person presses anything on the page being acted on. */
-  readonly taken: Deferred.Deferred<void>
+  readonly running: Running
 }
 
 /** A page operation refused by the Browser, said in the executor's own terms. */
@@ -393,12 +445,12 @@ const ask = (acting: Acting, request: PagesRequest) =>
   )
 
 /**
- * Takes hold of a page for this action: from here a press nobody announced ends the action, and
- * the page says Vivid is using it.
+ * Takes hold of a page for this action: from here the page says Vivid is using it, and its Stop
+ * button ends this action.
  */
 const hold = Effect.fn('DesktopControl.hold')(function* (acting: Acting, tab: Tab) {
   const page = yield* acting.browser.page(tab)
-  acting.touch.begin(tab, () => Deferred.doneUnsafe(acting.taken, Effect.void))
+  acting.running.held = Option.some(tab)
   acting.using(Option.some(tab))
   return page
 })
@@ -410,30 +462,43 @@ const front = (acting: Acting) =>
     onSome: (tab) => hold(acting, tab),
   })
 
-/** Only a real web address is opened for Vivid. Words are not turned into a search. */
-const destination = (address: string) => {
+/**
+ * Only a real web address on the public internet is opened for Vivid. Words are not turned into
+ * a search, and this computer and its network are out of reach (`reach.ts`).
+ */
+const destination = Effect.fn('DesktopControl.destination')(function* (
+  acting: Acting,
+  address: string,
+) {
   const decision = decideAddress(address)
-  return AddressDecision.guards.Navigate(decision)
-    ? Effect.succeed(decision.address)
-    : Effect.fail(new StepNotAllowed({}))
-}
-
-/** Opens a new page in front, holds it and lets it load. */
-const openTab = Effect.fn('DesktopControl.openTab')(function* (acting: Acting, address: string) {
-  const to = yield* destination(address)
-  const opened = yield* ask(acting, PagesRequest.cases.Open.make({ address: to }))
-  if (!PagesResponse.guards.Opened(opened)) return yield* new StepFailed({ step: 'open' })
-  const page = yield* hold(acting, opened.tab)
-  return yield* page.settle
+  if (!AddressDecision.guards.Navigate(decision)) return yield* new StepNotAllowed({})
+  if (!(yield* acting.mayOpen(decision.address))) return yield* new StepNotAllowed({})
+  return decision.address
 })
 
-/** Goes to an address in the page in front, or in a first page when none is open. */
-const open = Effect.fn('DesktopControl.open')(function* (acting: Acting, address: string) {
-  const to = yield* destination(address)
-  const current = showing(acting.browser.state())
-  if (Option.isNone(current)) return yield* openTab(acting, to)
-  const page = yield* hold(acting, current.value)
-  yield* ask(acting, PagesRequest.cases.Go.make({ tab: current.value, address: to }))
+/** A navigation the Browser refused, said in the executor's own terms. */
+const visit = (acting: Acting, tab: Option.Option<Tab>, address: string) =>
+  acting.browser.visit(tab, address).pipe(
+    Effect.catchTags({
+      PageMissing: () => Effect.fail(new PageGone({})),
+      PageAddressRefused: () => Effect.fail(new StepNotAllowed({})),
+      PageUnavailable: () => Effect.fail(new StepFailed({ step: 'unavailable' })),
+      PageLimitReached: () => Effect.fail(new StepFailed({ step: 'limit' })),
+      PagePositionInvalid: () => Effect.fail(new StepFailed({ step: 'position' })),
+      PageReopenEmpty: () => Effect.fail(new StepFailed({ step: 'reopen' })),
+      PageStorageClearFailed: () => Effect.fail(new StepFailed({ step: 'storage' })),
+      PageCacheClearFailed: () => Effect.fail(new StepFailed({ step: 'cache' })),
+    }),
+  )
+
+/** Goes to an address in this page or a new one, holds the page and lets it load. */
+const go = Effect.fn('DesktopControl.go')(function* (
+  acting: Acting,
+  tab: Option.Option<Tab>,
+  address: string,
+) {
+  const to = yield* destination(acting, address)
+  const page = yield* hold(acting, yield* visit(acting, tab, to))
   return yield* page.settle
 })
 
@@ -477,12 +542,12 @@ const unseen = <Failure>(step: Effect.Effect<unknown, Failure>) =>
  */
 const perform = (acting: Acting, action: BrowserAction) =>
   BrowserAction.match<Effect.Effect<Option.Option<PagePicture>, StepFailure>>(action, {
-    Open: ({ address }) => unseen(open(acting, address)),
+    // In the page in front, or in a first page when none is open.
+    Open: ({ address }) => unseen(go(acting, showing(acting.browser.state()), address)),
     Read: () => unseen(front(acting)),
-    Click: ({ target }) => unseen(onFront(acting, (page) => click(page, acting.touch, target))),
+    Click: ({ target }) => unseen(onFront(acting, (page) => click(page, target))),
     Type: ({ target, text }) => unseen(onFront(acting, (page) => type(page, target, text))),
-    Press: ({ key }) =>
-      unseen(onFront(acting, (page) => press(page, acting.touch, key, acting.mac))),
+    Press: ({ key }) => unseen(onFront(acting, (page) => press(page, key, acting.mac))),
     Screenshot: () =>
       Effect.map(
         Effect.flatMap(front(acting), (page) => page.capture),
@@ -492,26 +557,44 @@ const perform = (acting: Acting, action: BrowserAction) =>
       unseen(onFront(acting, (page) => scroll(page, scrollDelta(direction, notches)))),
     Back: () => unseen(travel(acting, 'Back')),
     Forward: () => unseen(travel(acting, 'Forward')),
-    // Held first, so touching the page ends the wait at once.
+    // Held first, so the page shows its Stop button for the length of the wait.
     Wait: ({ seconds }) => unseen(onFront(acting, () => Effect.sleep(Duration.seconds(seconds)))),
-    OpenTab: ({ address }) => unseen(openTab(acting, address)),
+    OpenTab: ({ address }) => unseen(go(acting, Option.none(), address)),
     ShowTab: ({ tab }) => unseen(numbered(acting, tab, 'Show')),
     CloseTab: ({ tab }) => unseen(numbered(acting, tab, 'Close')),
   })
 
-/** The words of the page in front once it has stopped loading, or that there is no page. */
-const wordsOf = (page: Option.Option<ControlledPage>) =>
-  Option.match(page, {
-    // Closing the last page leaves nothing to read. The contract has no "no page" answer, so the
-    // outline says so in words and the empty tab list is the proof.
-    onNone: () => Effect.succeed({ text: 'No page is open.', truncated: false }),
-    onSome: (held) => Effect.andThen(held.settle, read(held)),
+/** The tabs as an answer lists them, with the one in front marked. */
+const tabsOf = (state: BrowserState, inFront: Option.Option<Tab>) =>
+  state.tabs.map((tab) => ({
+    title: tab.title,
+    address: tab.address,
+    showing: Option.exists(inFront, (shown) => shown === tab.tab),
+  }))
+
+/**
+ * The answer when the action left no page open, which only closing the last one does. The
+ * contract's `BrowseResult` has no form for "no page": its address and title are required text.
+ * They are empty here because there is no address and no title, the outline says so in words,
+ * and the empty tab list is the proof. A contract variant for this would remove the empty text.
+ */
+const nothingOpen = () =>
+  BrowseResult.make({
+    address: '',
+    title: '',
+    outline: 'No page is open.',
+    truncated: false,
+    tabs: [],
   })
 
 /**
  * The page in front after the action: where it is, what it is called, its outline and the tabs.
  * The same answer Vivid's own Computer gives (apps/server/src/computers/boat/browser.ts,
  * `browse`), read after the step so it describes what the step left behind.
+ *
+ * A navigation the Browser refused during the action (a redirect to this computer or its
+ * network) is `StepNotAllowed`, not a description of the page it was refused on. A page that
+ * closed while it was being read is `PageGone`: nothing is described from memory.
  */
 const describe = Effect.fn('DesktopControl.describe')(function* (
   acting: Acting,
@@ -521,26 +604,25 @@ const describe = Effect.fn('DesktopControl.describe')(function* (
   _picture: Option.Option<PagePicture>,
 ) {
   const current = showing(acting.browser.state())
-  const page = Option.isNone(current)
-    ? Option.none<ControlledPage>()
-    : Option.some(yield* hold(acting, current.value))
-  const words = yield* wordsOf(page)
+  if (Option.isNone(current)) {
+    yield* Ref.set(acting.listed, Option.some([]))
+    return nothingOpen()
+  }
+  const page = yield* hold(acting, current.value)
+  yield* page.settle
+  if (acting.browser.refused(page.tab)) return yield* new StepNotAllowed({})
+  const words = yield* read(page)
   // Read after settling: the address and title are the loaded page's, not the one it replaced.
   const state = acting.browser.state()
+  const shown = state.tabs.find((tab) => tab.tab === page.tab)
+  if (shown === undefined) return yield* new PageGone({})
   yield* Ref.set(acting.listed, Option.some(state.tabs.map((tab) => tab.tab)))
-  const shown = Option.flatMap(page, (held) =>
-    Option.fromUndefinedOr(state.tabs.find((tab) => tab.tab === held.tab)),
-  )
   return BrowseResult.make({
-    address: Option.match(shown, { onNone: () => '', onSome: (tab) => tab.address }),
-    title: Option.match(shown, { onNone: () => '', onSome: (tab) => tab.title }),
+    address: shown.address,
+    title: shown.title,
     outline: words.text,
     truncated: words.truncated,
-    tabs: state.tabs.map((tab) => ({
-      title: tab.title,
-      address: tab.address,
-      showing: Option.exists(shown, (inFront) => inFront.tab === tab.tab),
-    })),
+    tabs: tabsOf(state, Option.some(shown.tab)),
   })
 })
 
@@ -551,11 +633,13 @@ const describe = Effect.fn('DesktopControl.describe')(function* (
  */
 const act = Effect.fn('DesktopControl.act')(function* (acting: Acting, action: BrowserAction) {
   const done = perform(acting, action).pipe(Effect.flatMap((picture) => describe(acting, picture)))
-  const stopped = Deferred.await(acting.taken).pipe(Effect.andThen(Effect.fail(new TakenOver({}))))
+  const stopped = Deferred.await(acting.running.stopped).pipe(
+    Effect.andThen(Effect.fail(new Stopped({}))),
+  )
   return yield* Effect.raceFirst(done, stopped).pipe(
     Effect.map((result) => DeviceAnswer.cases.Done.make({ result })),
     Effect.catchTags({
-      TakenOver: () => Effect.succeed(DeviceAnswer.cases.Refused.make({ reason: 'Stopped' })),
+      Stopped: () => Effect.succeed(DeviceAnswer.cases.Refused.make({ reason: 'Stopped' })),
       PageGone: () => Effect.succeed(DeviceAnswer.cases.Refused.make({ reason: 'PageGone' })),
       StepNotAllowed: () =>
         Effect.succeed(DeviceAnswer.cases.Refused.make({ reason: 'NotAllowed' })),
@@ -563,12 +647,6 @@ const act = Effect.fn('DesktopControl.act')(function* (acting: Acting, action: B
         Effect.succeed(DeviceAnswer.cases.Refused.make({ reason: 'Unsupported' })),
       StepFailed: () => Effect.succeed(DeviceAnswer.cases.Failed.make({})),
     }),
-    Effect.ensuring(
-      Effect.sync(() => {
-        acting.touch.end()
-        acting.using(Option.none())
-      }),
-    ),
   )
 })
 
@@ -576,20 +654,25 @@ const act = Effect.fn('DesktopControl.act')(function* (acting: Acting, action: B
  * Carries out the actions Vivid sends to this computer, one at a time, in the app's own Browser.
  *
  * The control session is the reference desktop's (`preview/Manager.ts`, `withControlSession` and
- * the automation functions it runs): attach the debugger, act through it, and stop the moment the
- * person touches the page. What Vivid changes is stated beside each step; the two that shape this
- * function are:
+ * the automation functions it runs): attach the debugger and act through it. What Vivid changes
+ * is stated beside each step; the ones that shape this function are:
  * - One action at a time for the whole Browser, not per tab: a Person has one computer and Vivid
  *   one Run acting on it, and the server sends the next action only after this one is answered.
- * - Taking over ends the action at once through a race, where the reference compares a counter
- *   before and after each debugger command. A race also ends a wait, which has no command in it,
- *   and the release steps still run because they are finalizers.
+ * - The reference's human-control epochs and expected-input matching (`controlEpochRef`,
+ *   `expectAgentInput`, `consumeExpectedAgentInput`, `handleHumanInput`) are deliberately not
+ *   ported, on the owner's decision of 4 October 2026: the Person touching a page Vivid is using
+ *   does not stop Vivid. Vivid stops when the Person says so, with the Stop button the page
+ *   shows while an action is running (`stop`), and when the link to Vivid ends (the caller
+ *   interrupts `execute`). Both end the action at once through interruption, and the release
+ *   steps still run because they are finalizers.
  */
 export const executor = Effect.fn('DesktopControl.make')(function* (
   dependencies: ControlDependencies,
 ) {
   const turn = yield* Semaphore.make(1)
   const listed = yield* Ref.make(Option.none<ReadonlyArray<Tab>>())
+  // The action in progress. Plain state, because Stop arrives from the bridge outside any fiber.
+  let running = Option.none<Running>()
 
   /**
    * Carries out one request and returns its answer, or nothing when there is no longer anyone to
@@ -600,13 +683,32 @@ export const executor = Effect.fn('DesktopControl.make')(function* (
   const inTurn = Effect.fn('DesktopControl.inTurn')(function* (request: DeviceRequest) {
     const now = yield* Clock.currentTimeMillis
     if (now >= request.expiresAt) return Option.none<DeviceAnswer>()
-    const taken = yield* Deferred.make<void>()
-    return yield* act({ ...dependencies, listed, taken }, request.action).pipe(
+    const current: Running = { held: Option.none(), stopped: yield* Deferred.make<void>() }
+    running = Option.some(current)
+    return yield* act({ ...dependencies, listed, running: current }, request.action).pipe(
       Effect.timeoutOption(Duration.millis(request.expiresAt - now)),
+      // However the action ends, the page stops saying Vivid is using it and Stop has no target.
+      Effect.ensuring(
+        Effect.sync(() => {
+          running = Option.none()
+          dependencies.using(Option.none())
+        }),
+      ),
     )
   })
 
   return {
     execute: (request: DeviceRequest) => inTurn(request).pipe(Semaphore.withPermit(turn)),
+    /**
+     * The Person pressed Stop on this page. Ends the action running on it, at once; the answer is
+     * `Refused: Stopped`, which tells Vivid the Person stopped it. A page Vivid is not using has
+     * nothing to stop, and saying so again changes nothing.
+     */
+    stop: (tab: Tab): void => {
+      Option.map(
+        Option.filter(running, (current) => Option.exists(current.held, (held) => held === tab)),
+        (current) => Deferred.doneUnsafe(current.stopped, Effect.void),
+      )
+    },
   }
 })

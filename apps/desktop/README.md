@@ -181,38 +181,57 @@ choosing another server ends the link.
 - **Identity** (`main/installation.ts`): a random `InstallationId` in `installation.json` under
   Electron's user data directory, made once. It never leaves the main process; the renderer is
   told only the `DeviceId` it enrolled as (`window.vivid.device.get()`).
-- **The link** (`main/device.ts`): the main process opens its own socket to `/api/live`, as the
-  app's signed-in session: it reads the cookies the app session (`persist:vivid`) holds for the
-  chosen server and sends them on the upgrade. It never reads `persist:vivid-pages`. While
-  waiting to be allowed, or when the server cannot be reached, it tries again after 1 s, doubling
-  to at most 30 s. Signed out or revoked, it rests until the app session's cookies change, the
-  server changes, or the renderer calls `window.vivid.device.refresh()`. Nothing is replayed.
+- **The link** (`main/device.ts`): the main process opens its own socket to `/api/live` with
+  Electron's `WebSocket` in the app session (`persist:vivid`), which sends that session's cookies
+  on the upgrade; the main process never reads the cookie, and never uses `persist:vivid-pages`.
+  While waiting to be allowed, or when the server cannot be reached, it tries again after 1 s,
+  doubling to at most 30 s. Signed out or revoked, it rests until the session changes, the server
+  changes, or the renderer calls `window.vivid.device.refresh()`. Nothing is replayed.
+- **Consent ends action.** An action runs inside the listening: when the server ends the link
+  (revoke, sign-out, a newer link), when the connection fails, or when the session token cookie
+  changes, the action in progress is interrupted at once, held keys and the mouse button are
+  released, and nothing further is sent.
 - **The executor** (`main/control.ts`, `main/driver.ts`): one action at a time, through
   Chromium's debugger on the page (`webContents.debugger`), ported from the reference desktop's
   control session. A control is named by its accessible name, exactly one match or the step
-  fails. An action past its `expiresAt` is not started, and input is never sent twice.
-- **Taking over** (`main/touch.ts`): each press Vivid sends is announced first. Any key or
-  pointer press on that page that was not announced is the Person's: the action ends at once and
-  is answered `Refused: Stopped`. Pages have no preload, so presses are heard in the main process
-  from `before-input-event` and `before-mouse-event`.
+  fails. An action past its `expiresAt` is not started, and input is never sent twice. The
+  debugger session must be Vivid's own: a page with developer tools open, or with another
+  debugger attached, is not acted on.
+- **Stop**: while an action runs on a page, the renderer shows "Vivid is using this page." and a
+  Stop button (`window.vivid.pages.stopVivid(tab)`). Stop ends that action at once and it is
+  answered `Refused: Stopped`. The Person using the page does not stop Vivid: the reference's
+  human-control epochs and expected-input matching are deliberately not ported (owner's
+  decision, 4 October 2026). Pages have no bridge, so a website cannot press Stop.
+- **Where Vivid may go** (`main/reach.ts`): a navigation Vivid starts is allowed only to the
+  public internet. Loopback, private, link-local, carrier-grade NAT and IPv6 unique-local and
+  link-local addresses are refused, for the first address (resolved first; every resolved
+  address must be public) and for every redirect of that load. The Person's own typing in the
+  address bar is unchanged. Not closed: Chromium resolves the name again when it connects, so a
+  name that answers public here and private a moment later (DNS rebinding) gets through; and
+  only main-frame requests are checked, not frames inside a page.
+- **Passwords**: what an `input type=password` in the main document holds is never in an
+  answer; the outline says "(hidden)". Fields inside frames or shadow roots are not found by
+  that query and rely on Chromium's own masking.
 
-| Action ends as                                                                                  | Answer                                                       |
-| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| Carried out                                                                                     | `Done` with the page in front: address, title, outline, tabs |
-| The Person pressed a key or button on the page                                                  | `Refused: Stopped`                                           |
-| No page is open, or the page closed                                                             | `Refused: PageGone`                                          |
-| A local address, a non-web address, or words that are not an address                            | `Refused: NotAllowed`                                        |
-| A key outside the ones Vivid may press                                                          | `Refused: Unsupported`                                       |
-| The control was not found or is ambiguous, the page refused the text, a debugger command failed | `Failed`                                                     |
-| Its deadline passed before or during the action                                                 | no answer; the server has already closed it                  |
+| Action ends as                                                                                                               | Answer                                                       |
+| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Carried out                                                                                                                  | `Done` with the page in front: address, title, outline, tabs |
+| The Person pressed Stop                                                                                                      | `Refused: Stopped`                                           |
+| No page is open, or the page closed                                                                                          | `Refused: PageGone`                                          |
+| A local or private address (first hop, resolved name or redirect), a non-web address, or words that are not an address       | `Refused: NotAllowed`                                        |
+| A key outside the ones Vivid may press                                                                                       | `Refused: Unsupported`                                       |
+| The control was not found or is ambiguous, the page refused the text, a debugger command failed, the debugger is not Vivid's | `Failed`                                                     |
+| Its deadline passed before or during the action, or the link ended                                                           | no answer; the server has already closed it                  |
 
-`Screenshot` takes the picture, but `BrowseResult` has no field to carry it yet.
+`Screenshot` takes the picture, but `BrowseResult` has no field to carry it yet. Closing the last
+page answers `Done` with an empty address and title and no tabs, because the contract has no
+"no page" form.
 
-Not proved yet, because nothing here has been run inside Electron: that the main process's
-`WebSocket` accepts upgrade headers in the pinned Electron; that debugger input shows up on the
-two input events with the point and key names it was sent with (if it shows up differently,
-Vivid's own press reads as the Person's and the action stops; it never acts unseen); and every
-debugger command against a real page.
+Not proved yet, because nothing here has been run inside Electron: Electron's `WebSocket` with
+`session` and `useSessionCookies` against a real server; every debugger command against a real
+page, including input to a page that is not in front; that each redirect reaches the session's
+`onBeforeRequest` as a main-frame request; and the cookie `changed` causes the session rule
+relies on.
 
 ## Security
 

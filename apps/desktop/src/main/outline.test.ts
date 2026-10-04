@@ -5,6 +5,7 @@ import { AccessibilityTree, OUTLINE_LIMIT, findControl, outline } from './outlin
 
 const decode = Schema.decodeUnknownSync(AccessibilityTree)
 const text = (value: string) => ({ type: 'string', value })
+const none: ReadonlySet<number> = new Set()
 
 /** A sign-in page as Chromium's accessibility domain describes one, extra fields included. */
 const signIn = decode({
@@ -69,7 +70,7 @@ const signIn = decode({
 
 describe('the page as an outline', () => {
   it('reads the page in order, with values and states, and says a name once', () => {
-    expect(outline(signIn).text).toBe(
+    expect(outline(signIn, none).text).toBe(
       [
         'heading "Sign in"',
         'textbox "Email" = "ada@example.com" (focused)',
@@ -78,11 +79,11 @@ describe('the page as an outline', () => {
         'text "Forgot it?"',
       ].join('\n'),
     )
-    expect(outline(signIn).truncated).toBe(false)
+    expect(outline(signIn, none).truncated).toBe(false)
   })
 
   it('finds a control by its words, whatever their case, for the use asked', () => {
-    const { controls } = outline(signIn)
+    const { controls } = outline(signIn, none)
     expect(Option.map(findControl(controls, 'sign in', 'click'), (found) => found.node)).toEqual(
       Option.some(6),
     )
@@ -92,7 +93,7 @@ describe('the page as an outline', () => {
   })
 
   it('refuses what cannot be used that way, what is disabled and what is not there', () => {
-    const { controls } = outline(signIn)
+    const { controls } = outline(signIn, none)
     expect(Option.isNone(findControl(controls, 'Sign in', 'type'))).toBe(true)
     expect(Option.isNone(findControl(controls, 'Continue', 'click'))).toBe(true)
     expect(Option.isNone(findControl(controls, 'Register', 'click'))).toBe(true)
@@ -118,7 +119,7 @@ describe('the page as an outline', () => {
         },
       ],
     })
-    expect(Option.isNone(findControl(outline(twice).controls, 'Delete', 'click'))).toBe(true)
+    expect(Option.isNone(findControl(outline(twice, none).controls, 'Delete', 'click'))).toBe(true)
   })
 
   it('cuts a long page at the limit and says so', () => {
@@ -133,8 +134,40 @@ describe('the page as an outline', () => {
         },
       ],
     })
-    const read = outline(long)
+    const read = outline(long, none)
     expect(read.truncated).toBe(true)
     expect(read.text).toHaveLength(OUTLINE_LIMIT)
+  })
+
+  it('never says what a password field holds, however the tree reports it', () => {
+    const secret = decode({
+      nodes: [
+        { nodeId: '1', role: text('RootWebArea'), childIds: ['2', '4'] },
+        {
+          nodeId: '2',
+          role: text('textbox'),
+          name: text('Password'),
+          value: text('hunter2'),
+          parentId: '1',
+          childIds: ['3'],
+          backendDOMNodeId: 9,
+        },
+        { nodeId: '3', role: text('StaticText'), name: text('hunter2'), parentId: '2' },
+        {
+          nodeId: '4',
+          role: text('button'),
+          name: text('Sign in'),
+          parentId: '1',
+          backendDOMNodeId: 10,
+        },
+      ],
+    })
+    const read = outline(secret, new Set([9]))
+    expect(read.text).toBe('textbox "Password" = "(hidden)"\nbutton "Sign in"')
+    expect(read.text).not.toContain('hunter2')
+    // The field can still be named and typed into.
+    expect(Option.isSome(findControl(read.controls, 'Password', 'type'))).toBe(true)
+    // An empty password field says the same, so the outline does not reveal whether one is set.
+    expect(outline(secret, new Set([9, 10])).text).toContain('button "Sign in" = "(hidden)"')
   })
 })

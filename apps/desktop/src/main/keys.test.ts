@@ -1,13 +1,12 @@
 import * as Option from 'effect/Option'
 import { describe, expect, it } from 'vitest'
 import { keySequence } from './keys.ts'
-import { InputSignal } from './touch.ts'
 
 const linux = { mac: false }
 const mac = { mac: true }
 
 describe('the keys Vivid may press on a page', () => {
-  it('Enter types a carriage return and is heard as Enter', () => {
+  it('Enter types a carriage return', () => {
     const sequence = Option.getOrThrow(keySequence('Enter', linux))
     expect(sequence.keyDown).toMatchObject({
       type: 'keyDown',
@@ -18,7 +17,6 @@ describe('the keys Vivid may press on a page', () => {
       modifiers: 0,
     })
     expect(sequence.keyUp).toMatchObject({ type: 'keyUp', key: 'Enter', code: 'Enter' })
-    expect(sequence.signal).toEqual(InputSignal.cases.Key.make({ key: 'Enter', code: 'Enter' }))
   })
 
   it('a key that types nothing is a raw key down with no text', () => {

@@ -17,7 +17,6 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Queue from 'effect/Queue'
-import * as Redacted from 'effect/Redacted'
 import * as Schedule from 'effect/Schedule'
 import * as Schema from 'effect/Schema'
 import type * as Scope from 'effect/Scope'
@@ -95,72 +94,79 @@ export const deviceServer = (
   answer: (answer) => client.AnswerDeviceRequest(answer).pipe(Effect.mapError(linkFailure)),
 })
 
-/** The `Cookie` header a browser would send for these cookies; nothing when there are none. */
-export function cookieHeader(
-  cookies: ReadonlyArray<{ readonly name: string; readonly value: string }>,
-): Option.Option<Redacted.Redacted> {
-  if (cookies.length === 0) return Option.none()
-  return Option.some(
-    Redacted.make(cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ')),
-  )
-}
-
 /** The live endpoint of a chosen server: the same origin, on the socket scheme. */
 export const liveAddress = (origin: string) => `${origin.replace(/^http/u, 'ws')}/api/live`
-
-/**
- * Node's WebSocket, which takes the upgrade request's headers in its second argument (undici's
- * `WebSocketInit`). A browser's cannot, which is why the web app relies on the cookie jar; the
- * main process has no cookie jar on its sockets, so it says who it is in the header.
- */
-const HeaderSocket = globalThis.WebSocket
 
 /**
  * Opens the live connection as the app's own signed-in session.
  *
  * The desktop app signs in through its web renderer, and the session is Better Auth's cookie in
- * the app's Chromium session (`persist:vivid`). The main process cannot open a socket through
- * that session, so it reads the cookies the session holds for the chosen server and sends them
- * on the upgrade, with the server's own origin, exactly as the renderer's socket does. It never
- * reads the pages partition (`persist:vivid-pages`): what a Person signs in to in a page is not
- * the app's identity. The cookie is held only for the life of one connection and is never logged.
+ * the app's Chromium session (`persist:vivid`). `socket` opens a WebSocket in that same session
+ * with its cookies on the upgrade (Electron's `WebSocket` with `session` and `useSessionCookies`,
+ * supplied by `main.ts`), so the main process never reads, holds or logs the cookie itself. It is
+ * never the pages partition (`persist:vivid-pages`): what a Person signs in to in a page is not
+ * the app's identity. Whether anyone is signed in is the server's answer to enrolling, not
+ * something guessed from the cookie jar.
  *
- * Nothing is opened when no server is chosen or the session holds no cookie for it.
+ * Nothing is opened when no server is chosen.
  */
 export const connectDevice = Effect.fn('DesktopDevice.connect')(function* (input: {
   readonly server: () => ServerSettings
-  /** The app session's cookies for one origin (`session.cookies.get({ url })`). */
-  readonly cookies: (
-    origin: string,
-  ) => Promise<ReadonlyArray<{ readonly name: string; readonly value: string }>>
+  /** Opens a WebSocket to this address as the app session, naming this origin. */
+  readonly socket: (address: string, origin: string) => Socket.WebSocketLike
   readonly identity: { readonly installation: InstallationId; readonly name: DeviceName }
 }) {
   const server = input.server()
   if (ServerSettings.guards.NoServer(server)) return Option.none<DeviceServer>()
   const { origin } = server
-  const cookie = yield* Effect.tryPromise({
-    try: () => input.cookies(origin),
-    catch: () => new LinkDown({}),
-  }).pipe(
-    Effect.map(cookieHeader),
-    Effect.catchTag('LinkDown', () => Effect.succeed(Option.none<Redacted.Redacted>())),
-  )
-  if (Option.isNone(cookie)) return Option.none<DeviceServer>()
-  const headers = { cookie: Redacted.value(cookie.value), origin }
   const client = yield* Layer.build(
     VividRpcClient.layerLive({ url: liveAddress(origin), onLink: () => undefined }).pipe(
       Layer.provide(
-        Layer.succeed(Socket.WebSocketConstructor)(
-          (address) => new HeaderSocket(address, { headers }),
-        ),
+        Layer.succeed(Socket.WebSocketConstructor)((address) => input.socket(address, origin)),
       ),
     ),
   )
   return Option.some(deviceServer(Context.get(client, VividRpcClient), input.identity))
 })
 
+/** What a change to one of the app session's cookies means for the link. */
+export type SessionChange =
+  /** The session itself is different: drop any link and start over as whoever is signed in now. */
+  | 'Restart'
+  /** Something else changed: look again if resting, and leave a listening link alone. */
+  | 'Wake'
+
+/**
+ * Decides what a cookie change means, and remembers what it has seen.
+ *
+ * The session is Better Auth's session token cookie, whose name ends in `session_token` whatever
+ * prefix the server gives it. When that cookie is removed or its value changes, the Person signed
+ * out or someone else signed in, and a link opened as the old session must not go on acting: the
+ * server ends it too, but the app does not wait to be told. Chromium reports an overwrite as a
+ * removal followed by the new cookie; the removal half is not a sign-out, so it is passed over
+ * and the new value decides. A token rewritten with the same value is a refresh, not a change.
+ */
+export function sessionChanges(known: Map<string, string>) {
+  return (change: {
+    readonly name: string
+    readonly value: string
+    readonly removed: boolean
+    readonly overwritten: boolean
+  }): SessionChange => {
+    if (!change.name.endsWith('session_token')) return 'Wake'
+    if (change.removed) {
+      if (change.overwritten) return 'Wake'
+      known.delete(change.name)
+      return 'Restart'
+    }
+    const same = known.get(change.name) === change.value
+    known.set(change.name, change.value)
+    return same ? 'Wake' : 'Restart'
+  }
+}
+
 export interface DeviceLinkDependencies {
-  /** One connection as the signed-in session, or nothing when there is no server or session. */
+  /** One connection as the signed-in session, or nothing when no server is chosen. */
   readonly connect: Effect.Effect<Option.Option<DeviceServer>, never, Scope.Scope>
   /** Carries out one action. Nothing means its deadline passed and there is no one to answer. */
   readonly execute: (request: DeviceRequest) => Effect.Effect<Option.Option<DeviceAnswer>>
@@ -186,6 +192,12 @@ export const reconnect = Schedule.min([
  * same schedule, and nothing sent while it was down is asked for again; the server does not
  * replay, and an action is authority to act once.
  *
+ * Consent ends action, at once. An action runs in a fiber that belongs to the listening itself:
+ * when the server ends the link (revoke, sign-out, a newer link), when the connection fails, or
+ * when the app restarts the link because the session changed, that fiber is interrupted, the
+ * executor's release steps run, and no further input is sent. The link never waits for an action
+ * to finish before noticing that it has lost the right to act.
+ *
  * The model is the server's (`apps/server/src/computers/device.ts`): the app dials out, a link
  * exists only while it is held open, and enrolling never grants anything.
  */
@@ -205,7 +217,11 @@ export const deviceLink = Effect.fn('DesktopDevice.makeLink')(function* (
       link = next
     }).pipe(Effect.andThen(Effect.fail(new LinkRetry({}))))
 
-  /** One action: carry it out, and answer if there is still someone to answer. */
+  /**
+   * One action: carry it out, and answer if there is still someone to answer. An answer the
+   * server will not take (too late, or the link changed) and one that could not be sent have the
+   * same consequence here, none: the listening stream is what says whether the link still stands.
+   */
   const handle = Effect.fn('DesktopDevice.handle')(function* (
     server: DeviceServer,
     device: DeviceId,
@@ -213,16 +229,30 @@ export const deviceLink = Effect.fn('DesktopDevice.makeLink')(function* (
   ) {
     const answer = yield* dependencies.execute(request)
     if (Option.isNone(answer)) return undefined
-    return yield* server.answer({ device, id: request.id, answer: answer.value })
+    return yield* server.answer({ device, id: request.id, answer: answer.value }).pipe(
+      Effect.catchTags({
+        LinkSignedOut: () => Effect.void,
+        LinkRefused: () => Effect.void,
+        LinkDown: () => Effect.void,
+      }),
+    )
   })
 
-  /** Listens until the server ends the link, then looks again to learn why it ended. */
+  /**
+   * Listens until the server ends the link, then looks again to learn why it ended. Each action
+   * is forked into the scope of the listening, so the stream is read while an action runs and
+   * the end of the stream, for any reason, interrupts the action in progress.
+   */
   const listen = Effect.fn('DesktopDevice.listen')(function* (
     server: DeviceServer,
     device: DeviceId,
   ) {
     link = DeviceLink.cases.Linked.make({ device })
-    yield* Stream.runForEach(server.watch(device), (request) => handle(server, device, request))
+    yield* Effect.scoped(
+      Stream.runForEach(server.watch(device), (request) =>
+        Effect.forkScoped(handle(server, device, request)),
+      ),
+    )
     // The server closes a link on revoke, on sign-out and when a newer link replaces it.
     // Enrolling again is how the app learns which; until then it is not listening.
     return yield* again(DeviceLink.cases.Waiting.make({ device }))
@@ -246,7 +276,7 @@ export const deviceLink = Effect.fn('DesktopDevice.makeLink')(function* (
   const settled = Effect.scoped(pass()).pipe(
     Effect.catchTags({
       LinkSignedOut: () => rest(DeviceLink.cases.SignedOut.make({})),
-      // Refused while listening or answering: the Device changed under the link. Look again.
+      // Refused while listening: the Device changed under the link. Look again.
       LinkRefused: () => Effect.fail(new LinkRetry({})),
       LinkDown: () => again(DeviceLink.cases.Unreachable.make({})),
     }),
@@ -268,11 +298,14 @@ export const deviceLink = Effect.fn('DesktopDevice.makeLink')(function* (
     run,
     /** What this computer is to Vivid, as last heard. */
     state: () => link,
-    /** Something may have changed (a sign-in, the Person's decision). Never drops a live link. */
+    /** Something may have changed (the Person's decision). Never drops a link that is listening. */
     wake: () => {
       if (!DeviceLink.guards.Linked(link)) Queue.offerUnsafe(wakes, undefined)
     },
-    /** The server or the session is different now: drop any link and start over. */
+    /**
+     * The server or the session is different now: drop any link, interrupting an action in
+     * progress, and start over.
+     */
     restart: () => {
       Queue.offerUnsafe(wakes, undefined)
     },

@@ -40,7 +40,6 @@ import {
   browserSnapshot,
   type PageDisposition,
 } from './pages.ts'
-import { InputSignal, type Touch } from './touch.ts'
 import {
   PagePresentation,
   PresentationChange,
@@ -74,8 +73,10 @@ export interface BrowserDependencies {
   readonly publish: (state: BrowserState) => void
   readonly downloadRefused: (event: PageDownloadRefused) => void
   readonly run: (program: Effect.Effect<void>) => void
-  /** Tells Vivid's announced presses from the Person's while Vivid acts on a page. */
-  readonly touch: Touch
+  /** The Person pressed Stop on a page Vivid is using. */
+  readonly stopVivid: (tab: Tab) => void
+  /** Whether Vivid may open this address from the Person's computer (`reach.ts`). */
+  readonly mayOpen: (address: string) => Effect.Effect<boolean>
 }
 
 /**
@@ -89,6 +90,10 @@ export class Browser {
   private presentation: PagePresentation = PagePresentation.cases.Hidden.make({ generation: 0 })
   private attached = Option.none<WebContentsView>()
   private forgetting = false
+  /** Pages loading an address Vivid asked for; every hop of that load is checked. */
+  private readonly guarded = new Set<Tab>()
+  /** Pages where a hop of Vivid's navigation was refused, until the executor asks. */
+  private readonly refusals = new Set<Tab>()
 
   constructor(private readonly dependencies: BrowserDependencies) {
     this.secureSession()
@@ -123,9 +128,45 @@ export class Browser {
     // Navigation includes subframes and server redirects; programmatic loads use this guard too.
     pagesSession.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
       const navigation = details.resourceType === 'mainFrame' || details.resourceType === 'subFrame'
-      callback({ cancel: navigation && !isPageAddress(details.url) })
+      if (navigation && !isPageAddress(details.url)) return callback({ cancel: true })
+      const tab =
+        details.resourceType === 'mainFrame'
+          ? this.vividNavigating(Option.fromUndefinedOr(details.webContentsId))
+          : Option.none()
+      if (Option.isNone(tab)) return callback({ cancel: false })
+      // Vivid's navigation: the first address and every redirect arrive here as a request for
+      // the main frame, and each is refused unless it leads to the public internet.
+      return this.dependencies.run(
+        this.dependencies.mayOpen(details.url).pipe(
+          Effect.map((allowed) => {
+            if (!allowed) this.refusals.add(tab.value)
+            callback({ cancel: !allowed })
+          }),
+        ),
+      )
     })
     pagesSession.on('will-download', this.refuseDownload)
+  }
+
+  /**
+   * The page this request belongs to, when Vivid is navigating it: it is loading an address Vivid
+   * asked for, or Vivid is acting on it now, so a link it clicked is checked like an address it
+   * opened. A page the Person is driving answers nothing here and is not checked.
+   */
+  private vividNavigating(contentsId: Option.Option<number>): Option.Option<Tab> {
+    const owner = [...this.views.entries()].find(
+      ([, view]) =>
+        !view.webContents.isDestroyed() && Option.contains(contentsId, view.webContents.id),
+    )
+    return Option.fromUndefinedOr(owner).pipe(
+      Option.map(([tab]) => tab),
+      Option.filter((tab) => {
+        // A load that starts while Vivid is acting stays checked until it stops, even if the
+        // action that started it has already been answered.
+        if (this.usedByVivid(tab)) this.guarded.add(tab)
+        return this.guarded.has(tab)
+      }),
+    )
   }
 
   /** Refuse before the next tick; attribution stays an opaque Tab, never a WebContents id. */
@@ -264,29 +305,11 @@ export class Browser {
   }
 
   /**
-   * Whether one key or pointer event may reach a page, and whose it is.
-   *
-   * Input Vivid sends through the debugger arrives here like any other. A press is judged against
-   * what Vivid announced (`touch.ts`): an announced press, and the moves and releases around it,
-   * reach the page Vivid is acting on even when that page is not the one in front, which the rule
-   * for the Person's own input would refuse. A press nobody announced on that page is the Person
-   * taking it back; judging it ends Vivid's action, and it reaches the page only if the Person
-   * could have made it there, that is, if the page is in front.
-   *
-   * The reference hears the person's presses from a preload in the guest
-   * (`preview/PickPreload.ts`, `reportHumanPointerInput`); these pages have no preload, so they
-   * are heard here. Whether Chromium reports debugger input on these two events with the same
-   * point and key names it was sent with has not been run against the pinned Electron: if it
-   * reports nothing, announcements simply expire; if it reports different values, Vivid's own
-   * press reads as the Person's and the action stops. Neither lets Vivid act unseen.
+   * Whether Vivid is acting on this page. Its debugger input must reach the page even when the
+   * page is not the one in front, which the rule for the Person's own input would refuse.
    */
-  private admits(tab: Tab, view: WebContentsView, press: Option.Option<InputSignal>): boolean {
-    const touch = this.dependencies.touch
-    const vivid = Option.match(press, {
-      onNone: () => touch.drives(tab),
-      onSome: (signal) => touch.judge(tab, signal, Date.now()) === 'Vivid',
-    })
-    return vivid || this.ownsInput(tab, view)
+  private usedByVivid(tab: Tab): boolean {
+    return UsedTab.guards.Some(this.state.using) && this.state.using.value === tab
   }
 
   /** The Browser as the renderer sees it, for the executor that acts in it. */
@@ -359,21 +382,11 @@ export class Browser {
       if (!isPageAddress(url)) event.preventDefault()
     })
     contents.on('will-attach-webview', (event) => event.preventDefault())
-    contents.on('before-input-event', (event, input) => {
-      const press =
-        input.type === 'keyDown' || input.type === 'rawKeyDown'
-          ? Option.some(InputSignal.cases.Key.make({ key: input.key, code: input.code }))
-          : Option.none()
-      if (!this.admits(tab, view, press)) event.preventDefault()
+    contents.on('before-input-event', (event) => {
+      if (!this.ownsInput(tab, view) && !this.usedByVivid(tab)) event.preventDefault()
     })
-    contents.on('before-mouse-event', (event, mouse) => {
-      const press =
-        mouse.type === 'mouseDown' && mouse.button !== undefined
-          ? Option.some(
-              InputSignal.cases.Pointer.make({ x: mouse.x, y: mouse.y, button: mouse.button }),
-            )
-          : Option.none()
-      if (!this.admits(tab, view, press)) event.preventDefault()
+    contents.on('before-mouse-event', (event) => {
+      if (!this.ownsInput(tab, view) && !this.usedByVivid(tab)) event.preventDefault()
     })
     contents.setWindowOpenHandler(({ url, disposition, postBody }) => {
       if (isPageAddress(url) && postBody === undefined && this.views.size < budgets.pages)
@@ -402,6 +415,10 @@ export class Browser {
     })
     contents.on('did-start-loading', sync)
     contents.on('did-stop-loading', sync)
+    // The load Vivid asked for is over; what the Person does on this page next is their own.
+    contents.on('did-stop-loading', () => {
+      if (!contents.isDestroyed() && !contents.isLoading()) this.guarded.delete(tab)
+    })
     contents.on('did-navigate', sync)
     contents.on('did-navigate-in-page', sync)
     contents.on('page-title-updated', sync)
@@ -425,6 +442,8 @@ export class Browser {
         )
     })
     contents.once('destroyed', () => {
+      this.guarded.delete(tab)
+      this.refusals.delete(tab)
       this.views.delete(tab)
       this.release(view)
       this.change(PageChange.cases.Closed.make({ tab }))
@@ -442,11 +461,15 @@ export class Browser {
     )
   }
 
-  /** Mint the handle in main and create a sandboxed, preload-free guest before publishing it. */
+  /**
+   * Mint the handle in main and create a sandboxed, preload-free guest before publishing it.
+   * `guard` marks the page before its first request leaves, when Vivid asked for it.
+   */
   private readonly create = Effect.fn('DesktopBrowser.create')(function* (
     this: Browser,
     input: string,
     opened: (page: Page) => PageChange,
+    guard: boolean,
   ) {
     const address = yield* resolveAddress(input)
     if (this.forgetting || this.dependencies.window.isDestroyed())
@@ -471,6 +494,7 @@ export class Browser {
       catch: () => new PageUnavailable({}),
     })
     this.views.set(tab, view)
+    if (guard) this.guarded.add(tab)
     this.observe(tab, view)
     this.change(
       opened(
@@ -492,7 +516,37 @@ export class Browser {
 
   /** New renderer pages append and select; admission is shared with duplicate/reopen/popup. */
   private open(address: string) {
-    return this.create(address, (page) => PageChange.cases.Opened.make({ page }))
+    return this.create(address, (page) => PageChange.cases.Opened.make({ page }), false)
+  }
+
+  /**
+   * Goes to an address for Vivid, in this page or in a new one in front, and answers with the
+   * page. The page is marked before the load starts, so the first request and every redirect of
+   * it are checked in `secureSession`; the Person's own `open` and `go` are not.
+   */
+  readonly visit = Effect.fn('DesktopBrowser.visit')(function* (
+    this: Browser,
+    tab: Option.Option<Tab>,
+    address: string,
+  ) {
+    if (Option.isNone(tab)) {
+      const opened = yield* this.create(
+        address,
+        (page) => PageChange.cases.Opened.make({ page }),
+        true,
+      )
+      return opened.tab
+    }
+    yield* this.getView(tab.value)
+    this.guarded.add(tab.value)
+    this.refusals.delete(tab.value)
+    yield* this.go(tab.value, address)
+    return tab.value
+  })
+
+  /** Whether a hop of Vivid's navigation was refused on this page. Asking clears it. */
+  refused(tab: Tab): boolean {
+    return this.refusals.delete(tab)
   }
 
   /** Popup URL recreation has an internal opener and explicit selection intent, without adoption. */
@@ -503,8 +557,11 @@ export class Browser {
     disposition: PageDisposition,
   ) {
     yield* this.getView(opener)
-    return yield* this.create(address, (page) =>
-      PageChange.cases.Popup.make({ page, opener, disposition }),
+    return yield* this.create(
+      address,
+      (page) => PageChange.cases.Popup.make({ page, opener, disposition }),
+      // A page Vivid's click opened is Vivid's navigation too.
+      this.usedByVivid(opener),
     )
   })
 
@@ -516,8 +573,10 @@ export class Browser {
     yield* this.getView(tab)
     const page = this.state.tabs.find((current) => current.tab === tab)
     if (page === undefined) return yield* new PageMissing({ tab })
-    return yield* this.create(page.address, (created) =>
-      PageChange.cases.Duplicated.make({ tab, duplicate: created.tab }),
+    return yield* this.create(
+      page.address,
+      (created) => PageChange.cases.Duplicated.make({ tab, duplicate: created.tab }),
+      false,
     )
   })
 
@@ -525,8 +584,10 @@ export class Browser {
   private readonly reopen = Effect.fn('DesktopBrowser.reopen')(function* (this: Browser) {
     const closed = this.state.closed.at(-1)
     if (closed === undefined) return yield* new PageReopenEmpty({})
-    return yield* this.create(closed.page.address, (page) =>
-      PageChange.cases.Reopened.make({ tab: page.tab }),
+    return yield* this.create(
+      closed.page.address,
+      (page) => PageChange.cases.Reopened.make({ tab: page.tab }),
+      false,
     )
   })
 
@@ -673,6 +734,7 @@ export class Browser {
         }),
       Reload: ({ tab }) => this.drive(tab, (view) => view.webContents.reload()),
       Stop: ({ tab }) => this.drive(tab, (view) => view.webContents.stop()),
+      StopVivid: ({ tab }) => this.drive(tab, () => this.dependencies.stopVivid(tab)),
     })
   })
 

@@ -12,7 +12,6 @@ import {
 } from 'electron'
 import { Effect, Schema } from 'effect'
 import { Browser } from '../src/main/browser.ts'
-import { Touch } from '../src/main/touch.ts'
 import { DeviceLink } from '../src/shared/device.ts'
 import { registerBridge, type BridgeRuntime } from '../src/main/bridge.ts'
 import { DesktopSettings } from '../src/main/settings.ts'
@@ -293,7 +292,8 @@ const proof = Effect.scoped(
     const browser = new Browser({
       window,
       session: guests,
-      touch: new Touch(),
+      stopVivid: () => {},
+      mayOpen: () => Effect.succeed(true),
       publish: (state) => {
         // Renderer IPC is asynchronous. Deliver fixture receipts after the native operation returns,
         // so a receipt cannot re-enter create/close while it still owns its Effect continuation.

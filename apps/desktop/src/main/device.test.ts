@@ -17,15 +17,14 @@ import type * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Queue from 'effect/Queue'
-import * as Redacted from 'effect/Redacted'
 import * as Stream from 'effect/Stream'
 import * as TestClock from 'effect/testing/TestClock'
 import { DeviceLink } from '../shared/device.ts'
 import {
   LinkDown,
   LinkSignedOut,
-  cookieHeader,
   liveAddress,
+  sessionChanges,
   deviceLink,
   type DeviceServer,
   type LinkFailure,
@@ -60,7 +59,8 @@ const failed = DeviceAnswer.cases.Failed.make({})
 const fixture = Effect.fn('fixture')(function* (options: {
   readonly enrolments: ReadonlyArray<Effect.Effect<Device, LinkFailure>>
   readonly signedIn?: () => boolean
-  readonly execute?: Option.Option<DeviceAnswer>
+  /** What carrying out an action does. By default it answers at once that the step failed. */
+  readonly execute?: Effect.Effect<Option.Option<DeviceAnswer>>
 }) {
   const heard = yield* Queue.unbounded<string>()
   const requests = yield* Queue.unbounded<DeviceRequest, LinkFailure | Cause.Done>()
@@ -87,29 +87,37 @@ const fixture = Effect.fn('fixture')(function* (options: {
   const link = yield* deviceLink({
     connect: Effect.sync(() => (signedIn() ? Option.some(server) : Option.none())),
     execute: () =>
-      Effect.sync(() => {
-        Queue.offerUnsafe(heard, 'execute')
-        return options.execute === undefined ? Option.some(failed) : options.execute
-      }),
+      Effect.sync(() => Queue.offerUnsafe(heard, 'execute')).pipe(
+        Effect.andThen(
+          options.execute === undefined ? Effect.succeed(Option.some(failed)) : options.execute,
+        ),
+      ),
   })
   yield* Effect.forkScoped(link.run)
   return { link, heard, requests, answers, next: Queue.take(heard) }
 })
 
 describe('this computer’s link to Vivid', () => {
-  it('sends the session’s cookies as a browser would, and nothing when there are none', () => {
-    expect(Option.isNone(cookieHeader([]))).toBe(true)
-    expect(
-      Option.map(
-        cookieHeader([
-          { name: 'vivid.session_token', value: 'abc' },
-          { name: 'vivid.session_data', value: 'def' },
-        ]),
-        Redacted.value,
-      ),
-    ).toEqual(Option.some('vivid.session_token=abc; vivid.session_data=def'))
+  it('listens on the chosen server’s own origin, on the socket scheme', () => {
     expect(liveAddress('https://vivid.example')).toBe('wss://vivid.example/api/live')
     expect(liveAddress('http://127.0.0.1:5178')).toBe('ws://127.0.0.1:5178/api/live')
+  })
+
+  it('a different session restarts the link; a refreshed one and other cookies do not', () => {
+    const changed = sessionChanges(new Map())
+    const token = { name: '__Secure-vivid.session_token', removed: false, overwritten: false }
+    // Signing in.
+    expect(changed({ ...token, value: 'ada' })).toBe('Restart')
+    // The same session written again: Chromium reports the overwrite, then the same value.
+    expect(changed({ ...token, value: 'ada', removed: true, overwritten: true })).toBe('Wake')
+    expect(changed({ ...token, value: 'ada' })).toBe('Wake')
+    expect(changed({ name: 'theme', value: 'dark', removed: false, overwritten: false })).toBe(
+      'Wake',
+    )
+    // Someone else signs in on the same app.
+    expect(changed({ ...token, value: 'grace' })).toBe('Restart')
+    // Signing out.
+    expect(changed({ ...token, value: 'grace', removed: true })).toBe('Restart')
   })
 
   it.effect('enrols, waits to be allowed, then listens and answers on the same connection', () =>
@@ -132,11 +140,13 @@ describe('this computer’s link to Vivid', () => {
     }),
   )
 
-  it.effect('an action whose deadline passed is not answered', () =>
+  it.effect('an action the executor gives no answer for is not answered', () =>
     Effect.gen(function* () {
+      // The executor answers nothing when an action's deadline has passed (`control.test.ts`
+      // proves when); the link's part is to send nothing in that case.
       const { next, requests, answers } = yield* fixture({
         enrolments: [Effect.succeed(allowed)],
-        execute: Option.none(),
+        execute: Effect.succeed(Option.none()),
       })
       expect(yield* next).toBe('enrol')
       expect(yield* next).toBe('watch')
@@ -146,6 +156,66 @@ describe('this computer’s link to Vivid', () => {
       expect(yield* next).toBe('execute')
       expect(answers).toEqual([])
     }),
+  )
+
+  /** An action that never finishes, and says on the queue when it was interrupted. */
+  const endless = (heard: Queue.Queue<string>) =>
+    Effect.never.pipe(
+      Effect.onInterrupt(() => Effect.sync(() => Queue.offerUnsafe(heard, 'released'))),
+    )
+
+  it.effect('the server ending the link interrupts the action in progress', () =>
+    Effect.gen(function* () {
+      const released = yield* Queue.unbounded<string>()
+      const { next, requests, answers } = yield* fixture({
+        enrolments: [Effect.succeed(allowed), Effect.succeed(revoked)],
+        execute: endless(released),
+      })
+      expect(yield* next).toBe('enrol')
+      expect(yield* next).toBe('watch')
+      yield* Queue.offer(requests, request)
+      expect(yield* next).toBe('execute')
+      // Revoke, sign-out and replacement all reach the app as the end of the stream.
+      yield* Queue.end(requests)
+      expect(yield* Queue.take(released)).toBe('released')
+      expect(answers).toEqual([])
+    }),
+  )
+
+  it.effect('a failed connection interrupts the action in progress', () =>
+    Effect.gen(function* () {
+      const released = yield* Queue.unbounded<string>()
+      const { link, next, requests } = yield* fixture({
+        enrolments: [Effect.succeed(allowed), Effect.fail(new LinkDown({}))],
+        execute: endless(released),
+      })
+      expect(yield* next).toBe('enrol')
+      expect(yield* next).toBe('watch')
+      yield* Queue.offer(requests, request)
+      expect(yield* next).toBe('execute')
+      yield* Queue.fail(requests, new LinkDown({}))
+      expect(yield* Queue.take(released)).toBe('released')
+      expect(link.state()).toEqual(DeviceLink.cases.Unreachable.make({}))
+    }),
+  )
+
+  it.effect(
+    'restarting the link, as a changed session does, interrupts the action in progress',
+    () =>
+      Effect.gen(function* () {
+        const released = yield* Queue.unbounded<string>()
+        const { link, next, requests } = yield* fixture({
+          enrolments: [Effect.succeed(allowed)],
+          execute: endless(released),
+        })
+        expect(yield* next).toBe('enrol')
+        expect(yield* next).toBe('watch')
+        yield* Queue.offer(requests, request)
+        expect(yield* next).toBe('execute')
+        link.restart()
+        expect(yield* Queue.take(released)).toBe('released')
+        expect(yield* next).toBe('enrol')
+      }),
   )
 
   it.effect('signed out, it rests: no retries until something changes', () =>

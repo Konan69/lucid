@@ -38,27 +38,53 @@ const command = (contents: WebContents, method: string, parameters: CommandParam
   })
 
 /**
- * Attaches the debugger to a page the first time Vivid acts on it, and leaves it attached until
- * the page closes.
+ * The pages whose debugger session is Vivid's own: attached here and fully initialised. A page
+ * leaves when its debugger detaches for any reason, and with the page itself when it closes.
+ */
+const owned = new WeakSet<WebContents>()
+
+/** Enables the domains the actions read. A session that cannot be initialised is not kept. */
+const initialise = (contents: WebContents) =>
+  Effect.all(
+    [command(contents, 'Runtime.enable', {}), command(contents, 'Accessibility.enable', {})],
+    { concurrency: 'unbounded', discard: true },
+  ).pipe(
+    Effect.onError(() =>
+      Effect.sync(() => {
+        if (!contents.isDestroyed() && contents.debugger.isAttached()) contents.debugger.detach()
+      }),
+    ),
+  )
+
+/**
+ * Makes sure Vivid's own debugger session is on the page, attaching it the first time Vivid acts
+ * there and leaving it attached until the page closes.
  *
- * Ported from the reference's `ensureControlSession` (`preview/Manager.ts`): attach at protocol
- * 1.3, then enable the domains the actions read. What Vivid changes: only `Runtime` and
- * `Accessibility` are enabled. The reference also enables `Network` and `Log` and listens to
- * debugger messages to keep console and network entries for its own tools; Vivid's answer has no
- * place for them, so nothing is collected. If something else already holds the debugger (the
- * page's developer tools), attaching throws and the step fails rather than fight for it.
+ * Ported from the reference's `ensureControlSession` (`preview/Manager.ts`): a session Vivid
+ * already owns is reused; a page whose developer tools are open is refused; otherwise attach at
+ * protocol 1.3 and enable the domains, and if enabling fails, detach, so the next action starts
+ * clean instead of finding an attachment that was never initialised. A debugger that is attached
+ * but is not Vivid's is refused too: Electron allows one client, and its session is not ours to
+ * use. The page's `detach` event (developer tools opened, the target crashed) ends ownership.
+ *
+ * What Vivid changes: only `Runtime` and `Accessibility` are enabled. The reference also enables
+ * `Network` and `Log` and keeps console and network entries for its own tools; Vivid's answer
+ * has no place for them, so nothing is collected.
  */
 const attach = Effect.fn('DesktopDriver.attach')(function* (contents: WebContents) {
   if (contents.isDestroyed()) return yield* new PageGone({})
-  if (contents.debugger.isAttached()) return undefined
+  if (owned.has(contents) && contents.debugger.isAttached()) return undefined
+  if (contents.isDevToolsOpened() || contents.debugger.isAttached())
+    return yield* new StepFailed({ step: 'debugger' })
   yield* Effect.try({
-    try: () => contents.debugger.attach(PROTOCOL),
+    try: () => {
+      contents.debugger.attach(PROTOCOL)
+      contents.debugger.once('detach', () => owned.delete(contents))
+    },
     catch: () => failure(contents, 'attach'),
   })
-  yield* Effect.all(
-    [command(contents, 'Runtime.enable', {}), command(contents, 'Accessibility.enable', {})],
-    { concurrency: 'unbounded', discard: true },
-  )
+  yield* initialise(contents)
+  owned.add(contents)
   return undefined
 })
 
@@ -133,8 +159,8 @@ const controlledPage = Effect.fn('DesktopDriver.page')(function* (browser: Brows
  *
  * The mechanism is the reference desktop's control session (`preview/Manager.ts`,
  * `withControlSession` and `ensureControlSession`): `webContents.debugger`, commands sent one at
- * a time. The session's other half, stopping when the person touches the page, is in `touch.ts`
- * and the Browser's input events.
+ * a time. The reference's other half, stopping when the person touches the page, is deliberately
+ * not ported (see `executor` in `control.ts`).
  */
 export const controlledBrowser = (
   // The Browser belongs to the app window and is gone while no window is open; an action that
@@ -156,4 +182,10 @@ export const controlledBrowser = (
       onNone: () => Effect.fail(new PageUnavailable({})),
       onSome: (open) => open.handle(request),
     }),
+  visit: (tab, address) =>
+    Option.match(browser(), {
+      onNone: () => Effect.fail(new PageUnavailable({})),
+      onSome: (open) => open.visit(tab, address),
+    }),
+  refused: (tab) => Option.exists(browser(), (open) => open.refused(tab)),
 })
