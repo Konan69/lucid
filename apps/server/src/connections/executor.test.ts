@@ -4,6 +4,11 @@ import * as ConfigProvider from 'effect/ConfigProvider'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Redacted from 'effect/Redacted'
+import * as Ref from 'effect/Ref'
+import { hostedExecutorFixture, hostedPrefix, hostedService } from './testing.ts'
+import { DecisionModel } from 'effect/unstable/ai'
+import { ScriptedAnswer } from '../decisions/testing.ts'
+import { ToolEffects, toolEffectsLayer } from './effects.ts'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import {
   Executor,
@@ -81,3 +86,73 @@ describe('Executor installation', () => {
     )
   }
 })
+
+/** The real inspect payload erases provenance before this HTTP adapter sees it.
+ * These two entries represent explicit false and absent upstream hints after host
+ * projection; both must retain the same current classification behaviour. This
+ * test records the limit, rather than inventing a declaration from a false value. */
+it.effect('cannot distinguish declared writes from host-defaulted writes', () =>
+  Effect.gen(function* () {
+    const hosted = yield* hostedExecutorFixture()
+    yield* Ref.update(hosted.replies, (replies) =>
+      new Map(replies).set(`GET ${hostedPrefix}/apps/app/tools`, {
+        status: 200,
+        body: {
+          profile: 'profile',
+          deployment: 'deployment',
+          profileRevision: 1,
+          items: ['declared_write', 'undeclared'].map((name) => ({
+            name,
+            description: 'Retrieve the existing record',
+            inputSchema: {},
+            readOnly: false,
+            annotations: { readOnlyHint: false },
+          })),
+        },
+      }),
+    )
+    const references = ExecutorReferences.cases.Public.make({
+      service: hostedService,
+      app: ExecutorAppId.make('app'),
+      profile: ExecutorProfileId.make('profile'),
+      owner: ExecutorOwnerId.make('owner'),
+    })
+    const tools = yield* Effect.flatMap(Executor, (executor) => executor.tools(references)).pipe(
+      Effect.provide(hosted.configured),
+    )
+    expect(tools.map((tool) => tool.effect)).toEqual(['write', 'write'])
+    const judged = yield* Effect.gen(function* () {
+      return yield* (yield* ToolEffects).classifyBatch({
+        serviceId: hostedService,
+        service: 'Records',
+        tools,
+      })
+    }).pipe(
+      Effect.provide(
+        toolEffectsLayer.pipe(
+          Layer.provide(
+            Layer.effect(
+              DecisionModel.DecisionModel,
+              DecisionModel.make({
+                decide: ({ decisions }) =>
+                  Effect.succeed({
+                    answers: Object.fromEntries(
+                      Object.keys(decisions).map((key) => [
+                        key,
+                        ScriptedAnswer.cases.Classify.make({
+                          label: 'read',
+                          probabilities: { read: 0.96, write: 0.04, destructive: 0 },
+                        }),
+                      ]),
+                    ),
+                    usage: { inputTokens: undefined, outputTokens: undefined },
+                  }),
+              }),
+            ),
+          ),
+        ),
+      ),
+    )
+    expect(judged.map((tool) => tool.effect)).toEqual(['read', 'read'])
+  }),
+)

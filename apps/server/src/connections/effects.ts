@@ -186,8 +186,12 @@ const warnUnavailable = Effect.fn('Connections.warnUnavailable')(function* (
 
 /** RequestResolver.ts makeGrouped collects concurrently requested cache misses in one
  * catalog; batchN bounds payloads. Cache.ts makeWith owns pending deduplication and
- * exit-dependent expiry across discovery, direct use and delayed use. Declared hints
- * bypass Jev, and the unconfigured model bypasses the cache entirely. */
+ * exit-dependent expiry across discovery, direct use and delayed use. Read and
+ * destructive effects bypass Jev. Executor's inspect payload collapses an explicit
+ * non-read declaration and undeclared behaviour into the same write effect: host
+ * protocolOperations defaults both to mutation, then inspect overwrites readOnly
+ * and annotations.readOnlyHint from that category. Vivid cannot distinguish them
+ * and currently judges both. The unconfigured model bypasses the cache entirely. */
 export const toolEffectsLayer = Layer.effect(
   ToolEffects,
   Effect.gen(function* () {

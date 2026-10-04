@@ -65,47 +65,50 @@ it.effect.each([
   }).pipe(Effect.provide(provider(() => Effect.succeed(answer(read, label))))),
 )
 
-it.effect('explicit hints bypass Jev; identical and concurrent writes share a cache entry', () => {
-  let calls = 0
-  const inputs: string[] = []
-  return Effect.gen(function* () {
-    const effects = yield* ToolEffects
-    for (const effect of ['read', 'destructive'] as const)
+it.effect(
+  'read/destructive effects bypass Jev; indistinguishable writes share a cache entry',
+  () => {
+    let calls = 0
+    const inputs: string[] = []
+    return Effect.gen(function* () {
+      const effects = yield* ToolEffects
+      for (const effect of ['read', 'destructive'] as const)
+        expect(
+          yield* effects.classify({
+            ...request,
+            tool: ExecutorTool.make({ ...request.tool, effect }),
+          }),
+        ).toBe(effect)
+      expect(calls).toBe(0)
       expect(
-        yield* effects.classify({
-          ...request,
-          tool: ExecutorTool.make({ ...request.tool, effect }),
+        yield* Effect.forEach([1, 2, 3], () => effects.classify(request), { concurrency: 3 }),
+      ).toEqual(['read', 'read', 'read'])
+      expect(yield* effects.classify(request)).toBe('read')
+      expect(calls).toBe(1)
+      yield* effects.classify({
+        ...request,
+        tool: ExecutorTool.make({ ...request.tool, description: 'Changed description' }),
+      })
+      expect(calls).toBe(2)
+      yield* effects.classify({ ...request, serviceId: ServiceId.make('other-service') })
+      expect(calls).toBe(3)
+      yield* effects.classify({
+        ...request,
+        tool: ExecutorTool.make({ ...request.tool, name: 'other_tool' }),
+      })
+      expect(calls).toBe(4)
+      expect(inputs.every((input) => !input.includes(request.serviceId))).toBe(true)
+    }).pipe(
+      Effect.provide(
+        provider((input) => {
+          calls += 1
+          inputs.push(JSON.stringify(input))
+          return Effect.succeed(answer(0.99, 'read'))
         }),
-      ).toBe(effect)
-    expect(calls).toBe(0)
-    expect(
-      yield* Effect.forEach([1, 2, 3], () => effects.classify(request), { concurrency: 3 }),
-    ).toEqual(['read', 'read', 'read'])
-    expect(yield* effects.classify(request)).toBe('read')
-    expect(calls).toBe(1)
-    yield* effects.classify({
-      ...request,
-      tool: ExecutorTool.make({ ...request.tool, description: 'Changed description' }),
-    })
-    expect(calls).toBe(2)
-    yield* effects.classify({ ...request, serviceId: ServiceId.make('other-service') })
-    expect(calls).toBe(3)
-    yield* effects.classify({
-      ...request,
-      tool: ExecutorTool.make({ ...request.tool, name: 'other_tool' }),
-    })
-    expect(calls).toBe(4)
-    expect(inputs.every((input) => !input.includes(request.serviceId))).toBe(true)
-  }).pipe(
-    Effect.provide(
-      provider((input) => {
-        calls += 1
-        inputs.push(JSON.stringify(input))
-        return Effect.succeed(answer(0.99, 'read'))
-      }),
-    ),
-  )
-})
+      ),
+    )
+  },
+)
 
 it.effect('failed or malformed decisions retain write', () =>
   Effect.gen(function* () {
