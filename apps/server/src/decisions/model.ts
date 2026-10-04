@@ -161,12 +161,17 @@ const ProviderReason = AiError.AiErrorReason.pipe(Schema.toTaggedUnion('_tag'))
 
 /** rc.116 AiError.reasonFromHttpStatus maps 429/5xx to RateLimit/InternalProvider.
  * ai-typesafe internal/errors.ts maps transport AND encode/URL failures to NetworkError;
- * its reason field distinguishes actual transport from caller-specific encoding and URLs. */
+ * its reason field distinguishes actual transport from caller-specific encoding and URLs.
+ * AuthenticationError kind InvalidKey (401) proves rejected credentials; 403 maps
+ * to InsufficientPermissions and can reflect this payload, so it remains local. */
 const classifyProviderFailure = (error: AiError.AiError) =>
   ProviderReason.matchOrElse(
     error.reason,
     {
-      AuthenticationError: () => FailureClassification.cases.Authentication.make({}),
+      AuthenticationError: (reason) =>
+        reason.kind === 'InvalidKey'
+          ? FailureClassification.cases.Authentication.make({})
+          : FailureClassification.cases.RequestSpecific.make({}),
       RateLimitError: () => FailureClassification.cases.Outage.make({}),
       InternalProviderError: () => FailureClassification.cases.Outage.make({}),
       NetworkError: (reason) =>

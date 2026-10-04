@@ -292,7 +292,7 @@ it.effect('requires calibrated timeouts and gives a recovery probe its own budge
 it.effect.each([
   { status: 400, next: 'Provider', requests: 2 },
   { status: 401, next: 'Backoff', requests: 1 },
-  { status: 403, next: 'Backoff', requests: 1 },
+  { status: 403, next: 'Provider', requests: 2 },
   { status: 503, next: 'Backoff', requests: 1 },
   { status: 429, next: 'Backoff', requests: 1 },
 ])('HTTP $status gives the next caller $next', ({ status, next, requests }) => {
@@ -306,7 +306,7 @@ it.effect.each([
   )
   return Effect.gen(function* () {
     expect((yield* Effect.flip(decide(definition, 'first'))).reason).toBe(
-      status === 401 || status === 403 ? 'Authentication' : 'Provider',
+      status === 401 ? 'Authentication' : 'Provider',
     )
     expect((yield* Effect.flip(decide(definition, 'second'))).reason).toBe(next)
     expect(calls).toBe(requests)
@@ -546,48 +546,44 @@ it.effect('a success between timeouts resets the evidence', () => {
 })
 
 /** A revoked key produces one actionable error per credential window, with no per-action
- * caller warning. Both forbidden and unauthorized HTTP statuses use the pinned AiError map. */
-it.effect.each([401, 403])(
-  'HTTP %s closes credentials for five minutes with one error',
-  (status) => {
-    let calls = 0
-    const lines: { readonly level: string; readonly message: string }[] = []
-    const transport = Layer.succeed(
-      HttpClient.HttpClient,
-      HttpClient.make((request) => {
-        calls += 1
-        return Effect.succeed(HttpClientResponse.fromWeb(request, new Response('{}', { status })))
-      }),
-    )
-    return Effect.gen(function* () {
-      expect((yield* Effect.flip(decide(definition, 'rejected'))).reason).toBe('Authentication')
-      for (let index = 0; index < 20; index += 1)
-        expect((yield* Effect.flip(decide(definition, 'gated'))).reason).toBe('Backoff')
-      yield* TestClock.adjust('4 minutes')
-      expect((yield* Effect.flip(decide(definition, 'still gated'))).reason).toBe('Backoff')
-      expect(calls).toBe(1)
-      const errors = lines.filter((line) => line.level === 'Error')
-      expect(errors).toHaveLength(1)
-      expect(errors.map((line) => line.message).join()).toContain(
-        'Decision authentication rejected',
-      )
-      expect(lines.filter((line) => line.level === 'Warn')).toHaveLength(0)
-      yield* TestClock.adjust('1 minute')
-      expect((yield* Effect.flip(decide(definition, 'new window'))).reason).toBe('Authentication')
-      expect(calls).toBe(2)
-      expect(lines.filter((line) => line.level === 'Error')).toHaveLength(2)
-    }).pipe(
-      Effect.provide(configuredGateway(transport)),
-      Effect.provide(
-        Logger.layer([
-          Logger.make(({ logLevel, message }) => {
-            lines.push({ level: logLevel, message: JSON.stringify(message) })
-          }),
-        ]),
-      ),
-    )
-  },
-)
+ * caller warning. Unauthorized maps to InvalidKey in the pinned AiError source;
+ * payload-specific forbidden responses have a separate caller-local test. */
+it.effect.each([401])('HTTP %s closes credentials for five minutes with one error', (status) => {
+  let calls = 0
+  const lines: { readonly level: string; readonly message: string }[] = []
+  const transport = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      calls += 1
+      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response('{}', { status })))
+    }),
+  )
+  return Effect.gen(function* () {
+    expect((yield* Effect.flip(decide(definition, 'rejected'))).reason).toBe('Authentication')
+    for (let index = 0; index < 20; index += 1)
+      expect((yield* Effect.flip(decide(definition, 'gated'))).reason).toBe('Backoff')
+    yield* TestClock.adjust('4 minutes')
+    expect((yield* Effect.flip(decide(definition, 'still gated'))).reason).toBe('Backoff')
+    expect(calls).toBe(1)
+    const errors = lines.filter((line) => line.level === 'Error')
+    expect(errors).toHaveLength(1)
+    expect(errors.map((line) => line.message).join()).toContain('Decision authentication rejected')
+    expect(lines.filter((line) => line.level === 'Warn')).toHaveLength(0)
+    yield* TestClock.adjust('1 minute')
+    expect((yield* Effect.flip(decide(definition, 'new window'))).reason).toBe('Authentication')
+    expect(calls).toBe(2)
+    expect(lines.filter((line) => line.level === 'Error')).toHaveLength(2)
+  }).pipe(
+    Effect.provide(configuredGateway(transport)),
+    Effect.provide(
+      Logger.layer([
+        Logger.make(({ logLevel, message }) => {
+          lines.push({ level: logLevel, message: JSON.stringify(message) })
+        }),
+      ]),
+    ),
+  )
+})
 
 /** Repeated exhausted discovery budgets cannot become evidence about all tenants.
  * Only the caller's deadline is crossed; a subsequent healthy request still runs. */
@@ -666,3 +662,33 @@ it.effect('a healthy probe outlives the initiating caller budget', () =>
     }).pipe(Effect.provide(configuredGateway(transport)))
   }),
 )
+
+/** A filter may reject one tool description with 403. It proves reachability,
+ * including during recovery; it cannot re-open a process credential window. */
+it.effect('a forbidden recovery payload releases the outage gate for other callers', () => {
+  let calls = 0
+  const statuses = [503, 403, 200]
+  const transport = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      const status = statuses[calls]
+      calls += 1
+      if (status === undefined) return Effect.die('Unexpected request')
+      const body =
+        status === 200
+          ? JSON.stringify({
+              model: 'jev-latest',
+              answers: { applies: { type: 'noul', noul: 0.7 } },
+            })
+          : '{}'
+      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body, { status })))
+    }),
+  )
+  return Effect.gen(function* () {
+    expect((yield* Effect.flip(decide(definition, 'outage'))).reason).toBe('Provider')
+    yield* TestClock.adjust('30 seconds')
+    expect((yield* Effect.flip(decide(definition, 'forbidden payload'))).reason).toBe('Provider')
+    expect((yield* decide(definition, 'different payload')).answers.applies.probability).toBe(0.7)
+    expect(calls).toBe(3)
+  }).pipe(Effect.provide(configuredGateway(transport)))
+})
