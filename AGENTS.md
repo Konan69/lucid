@@ -124,7 +124,7 @@ Typecheck scripts resolve `tsc` from the pinned native TypeScript preview. Keep 
 
 ## Infrastructure and collaboration boundary
 
-Infrastructure is local-first and nothing is deployed yet. Alchemy is the only source of truth for the local stack and any future deploy target; resources belong in `alchemy.run.ts`, not hand-written provider files. The infrastructure lane owns that file unless a task explicitly assigns it here.
+Infrastructure is local-first, and production runs on Railway (see `docs/19-infrastructure.md`, "Deploying to production"). Alchemy is the only source of truth for the local stack and the deploy target; resources belong in `alchemy.run.ts`, not hand-written provider files. The infrastructure lane owns that file unless a task explicitly assigns it here.
 
 Local PostgreSQL is `postgres://vivid:vivid@127.0.0.1:55433/vivid` provisioned by the Alchemy local stack (`pnpm infra:dev`, Docker `postgres:18-alpine`); there is no compose file. Worktrees live under `~/agency/vivid-lanes/<name>`, never `/tmp`.
 

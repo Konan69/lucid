@@ -167,6 +167,14 @@ const assertPackagePolicy = (packageDocument) => {
     /VIVID_DEPLOY_TARGET=production .*alchemy deploy --stage production/,
     'infra:deploy must deploy only the production target',
   )
+  // Alchemy loads `.env` unless told otherwise, and `.env` holds a developer's local values. A
+  // production deploy once shipped those (a model with no key, a missing Executor key), so the
+  // script names the production file and fails when it is absent.
+  assert.match(
+    packageDocument.scripts['infra:deploy'],
+    /--env-file \.env\.production\b/,
+    'infra:deploy must load production settings from .env.production',
+  )
   assert.equal(
     packageDocument.scripts['infra:preview'],
     undefined,

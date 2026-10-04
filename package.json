@@ -30,7 +30,7 @@
     "infra:dev": "VIVID_DEPLOY_TARGET=local ALCHEMY_TELEMETRY_DISABLED=1 alchemy dev --stage local",
     "infra:verify": "node scripts/infra-verify.mjs",
     "infra:destroy": "VIVID_DEPLOY_TARGET=local ALCHEMY_TELEMETRY_DISABLED=1 alchemy destroy --stage local --yes",
-    "infra:deploy": "VIVID_DEPLOY_TARGET=production ALCHEMY_TELEMETRY_DISABLED=1 alchemy deploy --stage production",
+    "infra:deploy": "VIVID_DEPLOY_TARGET=production ALCHEMY_TELEMETRY_DISABLED=1 alchemy deploy --stage production --env-file .env.production",
     "structure": "konsistent"
   },
   "devDependencies": {
