@@ -84,15 +84,19 @@ const rank = <A>(
     .map(({ item }) => item)
 }
 
-/** The account label and provider effect accompany every discoverable tool. */
+/** Mandatory metadata still loads after the optional deadline. Only classification is
+ * interrupted: unanswered tools keep Executor's effect for this call. rc.116 Cache.get
+ * removes interrupted entries and interrupts a lookup when its final waiter leaves, so
+ * cancellation creates neither an answer nor a one-minute failure entry. Completed tools
+ * retain their real cache receipts; shared writes are withheld before entering model context. */
 const projectTools = Effect.fn('Connections.projectTools')(function* (
   store: typeof ConnectionStore.Service,
   actor: Actor,
-  row: ConnectionRecord,
-  account: string,
+  { row, account }: { readonly row: ConnectionRecord; readonly account: string },
+  started: number,
 ) {
   const tools = yield* store.tools(actor, row)
-  const classified = yield* classifyTools(row, tools)
+  const classified = yield* classifyTools(row, tools, started)
   return classified.flatMap((tool) =>
     row.companyId !== null && tool.effect !== 'read'
       ? []
@@ -100,16 +104,32 @@ const projectTools = Effect.fn('Connections.projectTools')(function* (
   )
 })
 
-/** Discovery submits uncached metadata in one bounded resolver batch per Integration. */
+/** Per-tool timers preserve already-answered siblings when a catalog spans batches.
+ * All timers share findTools' deadline; concurrent misses still reach the grouped resolver.
+ * Deadline cancellation is optional-work exhaustion, not provider-outage evidence. */
 const classifyTools = Effect.fn('Connections.classifyTools')(function* (
   row: ConnectionRecord,
   tools: readonly (typeof ExecutorTool.Type)[],
+  started: number,
 ) {
-  return yield* (yield* ToolEffects).classifyBatch({
-    serviceId: row.service,
-    service: row.serviceName,
+  const remaining = FIND_TOOLS_BUDGET_MILLIS - ((yield* Clock.currentTimeMillis) - started)
+  if (remaining <= 0) return tools
+  const effects = yield* ToolEffects
+  return yield* Effect.forEach(
     tools,
-  })
+    Effect.fn('Connections.discoveryEffect')(function* (tool) {
+      const effect = yield* effects
+        .classify({ serviceId: row.service, service: row.serviceName, tool })
+        .pipe(
+          Effect.timeoutOrElse({
+            duration: Duration.millis(remaining),
+            orElse: () => Effect.succeed(tool.effect),
+          }),
+        )
+      return ExecutorTool.make({ ...tool, effect })
+    }),
+    { concurrency: 'unbounded' },
+  )
 })
 
 /** Execution and label resolution classify only the requested metadata. */
@@ -185,7 +205,7 @@ const orderTools = Effect.fn('Connections.orderTools')(function* <
 >(query: string, lexical: ReadonlyArray<A>, started: number) {
   if (lexical.length < 2 || !(yield* decisionConfigured)) return lexical
   const remaining = FIND_TOOLS_BUDGET_MILLIS - ((yield* Clock.currentTimeMillis) - started)
-  if (remaining <= 0) return lexical
+  if (remaining < RELEVANCE_MINIMUM_MILLIS) return lexical
   const budget = Duration.min(
     Duration.millis(remaining),
     Duration.fromInputUnsafe(RELEVANCE_BUDGET),
@@ -205,8 +225,13 @@ const orderTools = Effect.fn('Connections.orderTools')(function* <
 
 /** Gateway, jev-latest, 4 Oct 2026: effect/relevance warm medians total 1589.5ms. A shared
  * 2000ms deadline leaves 410.5ms typical headroom and caps sequential optional stages together;
- * relevance is skipped if classification and mandatory metadata reads use the whole budget. */
+ * every classification group and relevance share it, including queued Integrations.
+ * Mandatory store reads retain their normal baseline semantics. */
 const FIND_TOOLS_BUDGET_MILLIS = 2000
+/** Gateway twenty-question warm medians measured 650–820ms. Below 850ms, relevance
+ * lacks even typical headroom: skip it silently instead of manufacturing timeout evidence
+ * for the outage gate. This is optional ordering, never evidence about provider health. */
+const RELEVANCE_MINIMUM_MILLIS = 850
 
 /** Discovery removes shared writes before any tool enters model context. */
 export const findTools = Effect.fn('Connections.findTools')(function* (
@@ -214,11 +239,11 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
   request: FindToolsRequest,
 ) {
   const store = yield* ConnectionStore
-  const records = yield* store.records(actor)
   const started = yield* Clock.currentTimeMillis
+  const records = yield* store.records(actor)
   const groups = yield* Effect.forEach(
     namedAccounts(records).filter(({ row }) => row.status === 'ready'),
-    ({ row, account }) => projectTools(store, actor, row, account),
+    (named) => projectTools(store, actor, named, started),
     { concurrency: 4 },
   )
   const limit = request.limit === undefined ? 8 : request.limit
