@@ -1,7 +1,7 @@
+import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
 import * as NodeProcess from 'node:process'
 import * as NodeURL from 'node:url'
-import * as NodeWorkerThreads from 'node:worker_threads'
 import * as NodeServices from '@effect/platform-node/NodeServices'
 import { expect } from 'vitest'
 import { it } from '@effect/vitest'
@@ -19,16 +19,18 @@ import { extractText } from 'unpdf'
 import { AbortException, InvalidPDFException, PasswordException } from 'unpdf/pdfjs'
 import {
   EXTRACTION_DEADLINE,
+  EXTRACTION_HEAP_MB,
   ExtractionLimitExceeded,
   ExtractionUnavailable,
   ExtractionFaulted,
   PdfLocked,
   PdfUnreadable,
-  extractOn,
   extractPdf,
 } from './extraction.ts'
 import { MAX_LIBRARY_FILE_BYTES } from './ingest.ts'
+import { type Launch, processOptions } from './extraction/process.ts'
 import { Fixture } from './fixtures/mode.ts'
+import { GROW_HEAP_MB, nativeLaunch, extractWith, reportRemoved } from './fixtures/launch.ts'
 import { rejectionOf } from './extraction/rejection.ts'
 import { Pages } from './fixtures/process/pages.ts'
 
@@ -53,138 +55,124 @@ const assertFailure = (
     },
   })
 
-/** Fixture budget only: the post-error flag proves handler entry at 64 MB; policy stays 512 MB. */
-const GROW_HEAP_MB = 64
-const ATTEMPTS = Array.from({ length: 50 }, (_, attempt) => attempt)
-
-/** Each invocation observes only its own native thread; exit is a receipt, never elapsed time. */
-const observed = (input: typeof Fixture.Type) => {
-  const exited = Deferred.makeUnsafe<void>()
-  const spawned = Deferred.makeUnsafe<NodeWorkerThreads.Worker>()
-  const spawn = () => {
-    const options = Fixture.match(input, {
-      spin: () => ({ workerData: input }),
-      grow: ({ heapMb }) => ({
-        workerData: input,
-        resourceLimits: { maxOldGenerationSizeMb: heapMb },
-      }),
-      exit: () => ({ workerData: input }),
-      defect: () => ({ workerData: input }),
-      faulted: () => ({ workerData: input }),
-      absent: () => ({ workerData: input }),
-    })
-    const thread = new NodeWorkerThreads.Worker(
-      new URL('./fixtures/main.ts', import.meta.url),
-      options,
-    )
-    thread.once('exit', () => Deferred.doneUnsafe(exited, Effect.void))
-    Deferred.doneUnsafe(spawned, Effect.succeed(thread))
-    return thread
-  }
-  return { spawn, spawned, exited }
-}
+/** The real one-page PDF, read fresh so no test shares a buffer with another. */
+const readable = () => NodeFS.readFileSync(new URL('./fixtures/readable.pdf', import.meta.url))
 
 /**
- * Atomics is a receipt from inside the spin handler. The caller races it with fiber join so
- * early death fails visibly; notify releases a pending native waiter when that branch loses.
+ * E3: the deadline decides `time` while the process still blocks, and only then the process group
+ * is killed and its exit awaited. Handler entry is a receipt, never elapsed time.
+ *
+ * Changed on purpose: on worker threads this case ran 50 times. The stop is now one `SIGKILL` to
+ * a process group, delivered by the kernel whatever the JavaScript is doing. Each repetition would
+ * start one more process to observe that same single code path, so one case stays.
  */
-const entered = Effect.fn('ExtractionTest.entered')((flag: Int32Array) => {
-  const receipt = Atomics.waitAsync(flag, 0, 0)
-  if (!receipt.async) return Effect.void
-  return Effect.tryPromise({
-    try: () => receipt.value,
-    catch: () => new ExtractionUnavailable(),
-  }).pipe(
-    Effect.asVoid,
-    Effect.ensuring(
-      Effect.sync(() => {
-        Atomics.notify(flag, 0)
-      }),
-    ),
-  )
-})
-
-/** E3 repeats the exact deadline decision on 50 fresh blocked threads and verifies native exit. */
-it.effect.each(ATTEMPTS)(
-  'E3 decides time before stopping a spinning thread (attempt %$ of 50)',
-  () =>
-    Effect.gen(function* () {
-      const flag = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT))
-      const owned = observed(Fixture.cases.spin.make({ flag: flag.buffer }))
-      const fiber = yield* extractOn(
-        owned.spawn,
-        EXTRACTION_DEADLINE,
-      )(new Uint8Array()).pipe(Effect.forkScoped)
-      yield* Effect.raceFirst(entered(flag), Fiber.join(fiber))
-      expect(Atomics.load(flag, 0)).toBe(1)
-      yield* TestClock.adjust(EXTRACTION_DEADLINE)
-      assertFailure(yield* Fiber.await(fiber), new ExtractionLimitExceeded({ limit: 'time' }))
-      yield* Deferred.await(owned.exited)
-      expect((yield* Deferred.await(owned.spawned)).threadId).toBe(-1)
-    }),
-)
-
-/** E4 must come from Node's heap error; the TestClock deadline is never moved. */
-it.effect('E4 reports heap exhaustion and awaits actual thread exit', () =>
+it.effect('E3 decides time before it stops a spinning process', () =>
   Effect.gen(function* () {
-    const flag = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT))
-    const owned = observed(Fixture.cases.grow.make({ flag: flag.buffer, heapMb: GROW_HEAP_MB }))
-    const exit = yield* Effect.exit(extractOn(owned.spawn, EXTRACTION_DEADLINE)(new Uint8Array()))
-    assertFailure(exit, new ExtractionLimitExceeded({ limit: 'heap' }))
-    expect(Atomics.load(flag, 0)).toBe(1)
-    yield* Deferred.await(owned.exited)
-    expect((yield* Deferred.await(owned.spawned)).threadId).toBe(-1)
+    const owned = nativeLaunch(Fixture.cases.spin.make({}), EXTRACTION_HEAP_MB)
+    const fiber = yield* extractWith(owned.launch)(new Uint8Array()).pipe(Effect.forkScoped)
+    expect(yield* Effect.raceFirst(Deferred.await(owned.entered), Fiber.join(fiber))).toBe(true)
+    yield* TestClock.adjust(EXTRACTION_DEADLINE)
+    assertFailure(yield* Fiber.await(fiber), new ExtractionLimitExceeded({ limit: 'time' }))
+    expect(yield* Deferred.await(owned.ended)).toEqual({ code: null, signal: 'SIGKILL' })
+    expect(yield* reportRemoved(owned)).toBe(true)
   }),
 )
 
-/** Cancelling a caller must stop blocked JS and preserve interruption without advancing the deadline. */
-it.effect('awaits native thread exit when its caller is interrupted', () =>
+/** Cancelling a caller must stop blocked JavaScript and stay an interruption; no clock is moved. */
+it.effect('awaits native process exit when its caller is interrupted', () =>
   Effect.gen(function* () {
-    const flag = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT))
-    const owned = observed(Fixture.cases.spin.make({ flag: flag.buffer }))
-    const fiber = yield* extractOn(
-      owned.spawn,
-      EXTRACTION_DEADLINE,
-    )(new Uint8Array()).pipe(Effect.forkScoped)
-    yield* Effect.raceFirst(entered(flag), Fiber.join(fiber))
-    expect(Atomics.load(flag, 0)).toBe(1)
+    const owned = nativeLaunch(Fixture.cases.spin.make({}), EXTRACTION_HEAP_MB)
+    const fiber = yield* extractWith(owned.launch)(new Uint8Array()).pipe(Effect.forkScoped)
+    expect(yield* Effect.raceFirst(Deferred.await(owned.entered), Fiber.join(fiber))).toBe(true)
     yield* Fiber.interrupt(fiber)
     Exit.match(yield* Fiber.await(fiber), {
       onSuccess: () => expect.unreachable('Interrupted extraction unexpectedly succeeded'),
       onFailure: (cause) => expect(Cause.hasInterruptsOnly(cause)).toBe(true),
     })
-    yield* Deferred.await(owned.exited)
-    expect((yield* Deferred.await(owned.spawned)).threadId).toBe(-1)
+    expect(yield* Deferred.await(owned.ended)).toEqual({ code: null, signal: 'SIGKILL' })
+    expect(yield* reportRemoved(owned)).toBe(true)
+  }),
+)
+
+/**
+ * E4: a real V8 heap death inside the RPC handler is `heap`, from Node's own report and not from
+ * the signal. The deadline is never moved. The server process survives: the same test then extracts
+ * a real PDF through the production entry.
+ */
+it.effect('E4 reports heap exhaustion from native evidence and keeps extracting', () =>
+  Effect.gen(function* () {
+    const owned = nativeLaunch(Fixture.cases.grow.make({}), GROW_HEAP_MB)
+    const exit = yield* Effect.exit(extractWith(owned.launch)(new Uint8Array()))
+    assertFailure(exit, new ExtractionLimitExceeded({ limit: 'heap' }))
+    expect(yield* Deferred.await(owned.entered)).toBe(true)
+    expect(yield* Deferred.await(owned.ended)).toEqual({ code: null, signal: 'SIGABRT' })
+    expect(yield* reportRemoved(owned)).toBe(true)
+    expect(yield* extractPdf(readable())).toEqual(['Vivid extraction fixture'])
+  }),
+)
+
+/**
+ * The same signal without heap exhaustion is not `heap`: a bare abort inside the handler is
+ * retryable `ExtractionUnavailable`. The abort ended only that process; the next extraction runs.
+ */
+it.effect('reports an aborted process as unavailable and keeps extracting', () =>
+  Effect.gen(function* () {
+    const owned = nativeLaunch(Fixture.cases.abort.make({}), EXTRACTION_HEAP_MB)
+    const exit = yield* Effect.exit(extractWith(owned.launch)(new Uint8Array()))
+    assertFailure(exit, new ExtractionUnavailable())
+    expect(yield* Deferred.await(owned.entered)).toBe(true)
+    expect(yield* Deferred.await(owned.ended)).toEqual({ code: null, signal: 'SIGABRT' })
+    expect(yield* reportRemoved(owned)).toBe(true)
+    expect(yield* extractPdf(readable())).toEqual(['Vivid extraction fixture'])
   }),
 )
 
 /** E5 exercises process.exit inside an actual native RPC handler, rather than a mocked failure. */
-it.effect('E5 reports an unavailable thread that exits during its request', () =>
+it.effect('E5 reports an unavailable process that exits during its request', () =>
   Effect.gen(function* () {
-    const owned = observed(Fixture.cases.exit.make({}))
-    const exit = yield* Effect.exit(extractOn(owned.spawn, EXTRACTION_DEADLINE)(new Uint8Array()))
+    const owned = nativeLaunch(Fixture.cases.exit.make({}), EXTRACTION_HEAP_MB)
+    const exit = yield* Effect.exit(extractWith(owned.launch)(new Uint8Array()))
     assertFailure(exit, new ExtractionUnavailable())
-    yield* Deferred.await(owned.exited)
-    expect((yield* Deferred.await(owned.spawned)).threadId).toBe(-1)
+    expect(yield* Deferred.await(owned.entered)).toBe(true)
+    expect(yield* Deferred.await(owned.ended)).toEqual({ code: 1, signal: null })
   }),
 )
 
-/** E6 catches death before the SDK handshake without advancing time to disguise buffered work. */
+/**
+ * E6: the process dies while loading, before the worker handshake, so its request can only sit in
+ * the SDK buffer. The verdict comes from the native end; the deadline is never moved.
+ */
 it.effect('E6 reports load-time death without waiting for its deadline', () =>
   Effect.gen(function* () {
-    const owned = observed(Fixture.cases.absent.make({}))
-    const exit = yield* Effect.exit(extractOn(owned.spawn, EXTRACTION_DEADLINE)(new Uint8Array()))
+    const owned = nativeLaunch(Fixture.cases.absent.make({}), EXTRACTION_HEAP_MB)
+    const exit = yield* Effect.exit(extractWith(owned.launch)(new Uint8Array()))
     assertFailure(exit, new ExtractionUnavailable())
-    yield* Deferred.await(owned.exited)
-    expect((yield* Deferred.await(owned.spawned)).threadId).toBe(-1)
+    expect(yield* Deferred.await(owned.entered)).toBe(false)
+    expect(yield* Deferred.await(owned.ended)).toEqual({ code: 1, signal: null })
   }),
 )
 
-/** E7 starts the production .ts entry, its native RPC server, and unpdf on a real one-page PDF. */
+/**
+ * A process that cannot be started at all: the executable does not exist, so Node reports the
+ * failed spawn by an `error` event and no pid. The lifecycle answers with the typed failure, and
+ * the absorbed `error` event does not reach this test process as an uncaught exception.
+ */
+it.effect('reports a process that could not be started as unavailable', () =>
+  Effect.gen(function* () {
+    const launch: Launch = (reportDir) =>
+      NodeChildProcess.fork(new URL('./fixtures/main.ts', import.meta.url), [], {
+        ...processOptions({ heapMb: EXTRACTION_HEAP_MB, reportDir }),
+        execPath: NodeURL.fileURLToPath(new URL('./fixtures/absent-executable', import.meta.url)),
+      })
+    const exit = yield* Effect.exit(extractWith(launch)(new Uint8Array()))
+    assertFailure(exit, new ExtractionUnavailable())
+  }),
+)
+
+/** E7 starts the production .ts entry as a process, its native RPC server, and unpdf on a real PDF. */
 it.effect('E7 extracts a real PDF through the production entry', () =>
   Effect.gen(function* () {
-    const bytes = NodeFS.readFileSync(new URL('./fixtures/readable.pdf', import.meta.url))
-    expect(yield* extractPdf(bytes)).toEqual(['Vivid extraction fixture'])
+    expect(yield* extractPdf(readable())).toEqual(['Vivid extraction fixture'])
   }),
 )
 
@@ -235,7 +223,10 @@ it.effect.each([
   Effect.sync(() => expect(rejectionOf(cause)).toEqual(expected)),
 )
 
-/** A cap-sized upload crosses the real binary RPC seam without detaching its caller's backing store. */
+/**
+ * A cap-sized upload crosses the real binary RPC seam over process IPC, where Node serializes the
+ * bytes in chunks, and the caller's own bytes stay intact.
+ */
 it.effect('transfers an upload-sized PDF input while preserving the source bytes', () =>
   Effect.gen(function* () {
     const bytes = new Uint8Array(MAX_LIBRARY_FILE_BYTES)
@@ -252,8 +243,9 @@ it.effect('transfers an upload-sized PDF input while preserving the source bytes
 const decodePages = Schema.decodeUnknownEffect(Pages)
 
 /**
- * E8 uses the production tsx CLI argument shape without loader overrides. Scope owns its process
- * group; stdout EOF, natural exit 0, then decoded pages prove extraction and resource release.
+ * E8 uses the production tsx CLI argument shape without loader overrides, so the extraction process
+ * it forks inherits the loader from `execArgv`. Scope owns the CLI's process group; stdout EOF,
+ * natural exit 0, then decoded pages prove extraction and that no process or handle was left.
  */
 it.effect('E8 extracts a real PDF when started by the production tsx command', () =>
   Effect.gen(function* () {

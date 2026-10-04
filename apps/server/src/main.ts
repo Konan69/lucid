@@ -35,7 +35,7 @@ import { databaseLayer } from './database/client.ts'
 import { routerLayer } from './http/router.ts'
 import { staticRoutes } from './http/static.ts'
 import { inputStoreLayer } from './inputs/store.ts'
-import { extractPdf } from './library/extraction.ts'
+import { extractPdf, extractionAdmission } from './library/extraction.ts'
 import { ingestionBackoff } from './library/ingestion.ts'
 import { libraryIngestionLayer } from './library/worker.ts'
 import { libraryStoreLayer } from './library/store.ts'
@@ -93,6 +93,9 @@ const memoryLayer = Layer.unwrap(
 
 /** The process entry point only selects implementations and owns their scoped lifetime. */
 const serverProgram = Effect.fn('Server.launch')(function* () {
+  // Refuse before configuration and Layer acquisition: server misconfiguration must never spend
+  // a document's durable ingestion budget or accept uploads whose extraction cannot be bounded.
+  yield* extractionAdmission
   const config = yield* loadServerConfig
 
   // Each tier may use everything below it. `provideMerge` keeps the lower tiers available to the

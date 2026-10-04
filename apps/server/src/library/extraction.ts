@@ -1,175 +1,192 @@
-import * as NodeWorkerThreads from 'node:worker_threads'
-import * as NodeWorker from '@effect/platform-node/NodeWorker'
+import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem'
 import * as Deferred from 'effect/Deferred'
 import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
+import * as FileSystem from 'effect/FileSystem'
 import * as Option from 'effect/Option'
-import * as Schema from 'effect/Schema'
-import * as Rpc from 'effect/unstable/rpc/Rpc'
 import * as RpcClient from 'effect/unstable/rpc/RpcClient'
-import * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
-import * as Transferable from 'effect/unstable/workers/Transferable'
+import {
+  ExtractionLimitExceeded,
+  ExtractionRpcs,
+  ExtractionUnavailable,
+} from './extraction/contract.ts'
 
-/** Chosen policy, not a measured pdf.js budget; the deadline includes protocol acquisition. */
+/** The process adapter owns startup admission and its closed configuration failure vocabulary. */
+export {
+  ExtractionConfigurationError,
+  admission as extractionAdmission,
+} from './extraction/process.ts'
+import {
+  type Launch,
+  ProcessEnd,
+  type Running,
+  forkExtractor,
+  heapEvidence,
+  layer,
+  start,
+  stop,
+} from './extraction/process.ts'
+
+/** The server's names for the extraction vocabulary; the leaf module is their one declaration. */
+export {
+  ExtractionFaulted,
+  ExtractionLimitExceeded,
+  ExtractionRpcs,
+  ExtractionUnavailable,
+  PdfLocked,
+  PdfUnreadable,
+} from './extraction/contract.ts'
+
+/** Chosen policy, not a measured pdf.js budget; it includes spawn, loader and protocol handshake. */
 export const EXTRACTION_DEADLINE = Duration.seconds(60)
-/** Only V8 old-generation heap is capped; typed-array backing stores and native memory are not. */
+/**
+ * Enforced as `--max-old-space-size` on the extraction process. Only V8's old generation is capped;
+ * typed-array backing stores, native memory and so the process's RSS are not.
+ */
 export const EXTRACTION_HEAP_MB = 512
 
-/** Only pdf.js's InvalidPDFException proves invalid content (unpdf 1.8.1 pdfjs.mjs, wrapReason). */
-export class PdfUnreadable extends Schema.TaggedError<PdfUnreadable>()(
-  'PdfUnreadable',
-  {},
-  { title: 'Unreadable PDF' },
-) {}
-
-/** pdf.js PasswordException codes 1 and 2 require a password; provider details stay in the thread. */
-export class PdfLocked extends Schema.TaggedError<PdfLocked>()(
-  'PdfLocked',
-  {},
-  { title: 'Locked PDF' },
-) {}
-
-/** An unpdf rejection outside the two known content names remains retryable, without raw details. */
-export class ExtractionFaulted extends Schema.TaggedError<ExtractionFaulted>()(
-  'ExtractionFaulted',
-  {},
-  { title: 'PDF extraction faulted' },
-) {}
-
-/** The decision records which bounded resource ended extraction, independently of induced exit. */
-export class ExtractionLimitExceeded extends Schema.TaggedError<ExtractionLimitExceeded>()(
-  'ExtractionLimitExceeded',
-  { limit: Schema.Literals(['time', 'heap']) },
-  { title: 'PDF extraction limit exceeded' },
-) {}
-
-/** Startup, unexpected death, broken transport, or an unconfirmed stop remains retryable. */
-export class ExtractionUnavailable extends Schema.TaggedError<ExtractionUnavailable>()(
-  'ExtractionUnavailable',
-  {},
-  { title: 'PDF extraction unavailable' },
-) {}
-
-/** Transferable.ts:197-200 preserves binary data through the RPC JSON codec and transfers its buffer. */
-export const ExtractionRpcs = RpcGroup.make(
-  Rpc.make('ExtractPdf', {
-    payload: { bytes: Transferable.Uint8Array },
-    success: Schema.Array(Schema.String),
-    error: Schema.Union([PdfUnreadable, PdfLocked, ExtractionFaulted]),
-  }),
-)
-
-type ThreadEnd = ExtractionLimitExceeded | ExtractionUnavailable
-interface Running {
-  readonly thread: NodeWorkerThreads.Worker
-  readonly ended: Deferred.Deferred<never, ThreadEnd>
-}
-
-const HeapExhausted = Schema.Struct({ code: Schema.Literal('ERR_WORKER_OUT_OF_MEMORY') })
-const decodeHeapExhausted = Schema.decodeUnknownOption(HeapExhausted)
-
-/** Node v24.14.1 Worker[kOnExit] emits the heap error before exit; decode that native ingress once. */
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Native Worker error ingress is decoded immediately; mismatch intentionally carries no native details.
-const endFor = (cause: unknown): ThreadEnd =>
-  Option.isSome(decodeHeapExhausted(cause))
-    ? new ExtractionLimitExceeded({ limit: 'heap' })
-    : new ExtractionUnavailable()
+/** What the log may say about an end: the exit code or the signal name Node reported, nothing else. */
+const reported = (end: typeof ProcessEnd.Type) =>
+  ProcessEnd.match<Record<string, string | number>>(end, {
+    Exited: ({ code }) => ({ code }),
+    Signaled: ({ signal }) => ({ signal }),
+    Unreported: () => ({}),
+  })
 
 /**
- * Spawn and observe in one synchronous step, before NodeWorker.ts:50-102 registers SDK listeners.
- * Deferred.ts:1649 completes once: the first native reason survives the subsequent exit event.
+ * Turn a process end that this code did not cause into the extraction's failure.
+ *
+ * `heap` needs both facts: the process ended by `SIGABRT`, and its Node report names its pid and
+ * V8's heap-OOM handler (`heapEvidence`). A bare `SIGABRT`, any other signal, any exit code and an
+ * unreported end are `ExtractionUnavailable`, which the queue retries. The report is read only
+ * here, after the end, and none of it is logged: the log carries the code or signal and the tag.
  */
-const start = Effect.fn('LibraryExtraction.start')((spawn: () => NodeWorkerThreads.Worker) =>
-  Effect.try({
-    try: () => {
-      const thread = spawn()
-      const ended = Deferred.makeUnsafe<never, ThreadEnd>()
-      thread.once('error', (cause) => Deferred.doneUnsafe(ended, Effect.fail(endFor(cause))))
-      thread.once('exit', () =>
-        Deferred.doneUnsafe(ended, Effect.fail(new ExtractionUnavailable())),
-      )
-      return { thread, ended }
-    },
-    catch: () => new ExtractionUnavailable(),
-  }),
-)
+const classify = Effect.fn('LibraryExtraction.classify')(function* (
+  reportDir: string,
+  pid: number,
+  end: typeof ProcessEnd.Type,
+) {
+  const heap = yield* ProcessEnd.match<Effect.Effect<boolean, never, FileSystem.FileSystem>>(end, {
+    Exited: () => Effect.succeed(false),
+    Signaled: ({ signal }) =>
+      signal === 'SIGABRT' ? heapEvidence(reportDir, pid) : Effect.succeed(false),
+    Unreported: () => Effect.succeed(false),
+  })
+  yield* Effect.logWarning('Library extraction process ended').pipe(
+    Effect.annotateLogs({ ...reported(end), evidence: heap ? 'heap' : 'none' }),
+  )
+  return yield* Effect.fail(
+    heap ? new ExtractionLimitExceeded({ limit: 'heap' }) : new ExtractionUnavailable(),
+  )
+})
 
 /**
- * Node v24.14.1 Worker.prototype.terminate resolves only after exit, or immediately if exited.
- * Type rejection/throw at this native Promise edge as an unconfirmed stop. JavaScript termination
- * is observed; termination while blocked in native code remains unverified and may hold release.
+ * The call produced no answer. If the process is known to have ended, its end decides; otherwise
+ * the transport failed with the process still running, which is `ExtractionUnavailable`.
+ * `Deferred.poll` reads the level-triggered end without waiting (Deferred.ts:1415-1417).
  */
-const stop = Effect.fn('LibraryExtraction.stop')((thread: NodeWorkerThreads.Worker) =>
-  Effect.tryPromise({
-    try: () => thread.terminate(),
-    catch: () => new ExtractionUnavailable(),
-  }).pipe(Effect.asVoid),
-)
+const unanswered = Effect.fn('LibraryExtraction.unanswered')(function* (
+  { pid, ended }: Running,
+  reportDir: string,
+) {
+  const end = yield* Deferred.poll(ended)
+  return yield* Option.match(end, {
+    onNone: () => Effect.fail(new ExtractionUnavailable()),
+    onSome: Effect.flatMap((observed) => classify(reportDir, pid, observed)),
+  })
+})
 
 /**
- * Build into the caller's outer Scope. NodeWorker.layer (NodeWorker.ts:119-127) contains only
- * Layer.succeed values, so its local provision owns no finalizer. makeProtocolWorker requires
- * Scope, WorkerPlatform and Spawner (RpcClient.ts:1254-1272); its scope survives the verdict.
- * On SDK failure, the earlier native observer preserves heap/death (RpcClient.ts:1320-1335).
- * Race death too: Worker.ts:234-241 can buffer a request on a thread that died before readiness.
- * timeoutOrElse interrupts and awaits the losing call before returning (internal/effect.ts:
- * 1681-1690, 3806-3833, 3865-3880). Nothing here ends the thread or closes its owning SDK scope.
+ * Ask the process for the pages, on the official worker RPC: `RpcClient.makeProtocolWorker`
+ * (RpcClient.ts:1254-1420) over the process's Worker platform, with the SDK's own framing.
+ *
+ * The protocol is built into the caller's outer Scope. `layer(running)` holds two plain values, so
+ * providing it here owns no finalizer, and the SDK's fibers live until that outer scope closes,
+ * after `stop`.
+ *
+ * The answer is raced with the native end. The race is required: the SDK forks its worker run and
+ * retries a failed run after one second (RpcClient.ts:1337, 1343), and a request sent before
+ * readiness sits in the SDK buffer (Worker.ts:234-241). A process that dies there fails no call by
+ * itself. The end branch only signals "no answer"; so does a transport error. Both then go through
+ * `unanswered`, so there is one classification and one log line, taken after the race.
+ *
+ * The bytes are copied before the call. The SDK may hold the request until the handshake, and Node
+ * serializes at the later native `send`; the copy keeps the caller's buffer out of that window.
+ * Nothing here ends the process or closes the SDK scope.
  */
 const verdict = Effect.fn('LibraryExtraction.verdict')(function* (
-  { thread, ended }: Running,
+  running: Running,
+  reportDir: string,
   bytes: Uint8Array,
 ) {
   const protocol = yield* RpcClient.makeProtocolWorker({ size: 1 }).pipe(
-    Effect.provide(NodeWorker.layer(() => thread)),
+    Effect.provide(layer(running)),
     Effect.catchTag('WorkerError', () => Effect.fail(new ExtractionUnavailable())),
   )
   const client = yield* RpcClient.make(ExtractionRpcs).pipe(
     Effect.provideService(RpcClient.Protocol, protocol),
   )
-  // Transfer only an owned copy: database bytes may share a backing store and must remain readable.
-  const answered = client.ExtractPdf({ bytes: new Uint8Array(bytes) }).pipe(
-    Effect.catchTag('RpcClientError', () =>
-      Deferred.poll(ended).pipe(
-        Effect.flatMap(
-          Option.match({
-            onSome: (end) => end,
-            onNone: () => Effect.fail(new ExtractionUnavailable()),
-          }),
-        ),
-      ),
-    ),
-  )
-  return yield* Effect.raceFirst(answered, Deferred.await(ended))
+  const pages = yield* Effect.raceFirst(
+    Effect.asSome(client.ExtractPdf({ bytes: new Uint8Array(bytes) })),
+    Effect.as(Deferred.await(running.ended), Option.none()),
+  ).pipe(Effect.catchTag('RpcClientError', () => Effect.succeedNone))
+  return yield* Option.match(pages, {
+    onNone: () => unanswered(running, reportDir),
+    onSome: (text) => Effect.succeed(text),
+  })
 })
 
 /**
- * Decide, stop, close: acquireUseRelease runs typed release after use uninterruptibly
- * (Effect.ts:13186; internal/effect.ts:4346-4358), and scoped closes only after release
- * (internal/effect.ts:4073-4082). After native exit the SDK's close is already satisfied
- * (NodeWorker.ts:50-62); stop-induced death therefore cannot replace a time verdict.
+ * One extraction: report directory, process, decision, stop.
+ *
+ * Order, which the caller's `Effect.scoped` and `acquireUseRelease` fix (Effect.ts:13186-13190;
+ * internal/effect.ts:4073-4082, 4346-4358):
+ * 1. The report directory is made first in the scope, so it is removed last. A failure to make it
+ *    is `ExtractionUnavailable`. Its removal is the SDK's scoped release, which dies on a failed
+ *    removal (platform-node-shared rc.116 NodeFileSystem.ts:203-209). That defect is the SDK's;
+ *    this code adds none.
+ * 2. `start` forks and observes. A failed start releases nothing.
+ * 3. The decision is taken while the process is untouched: an answer, a typed content failure, the
+ *    end the process chose itself, or the deadline. `timeoutOrElse` interrupts the losing call and
+ *    waits for it before it returns `time` (internal/effect.ts:1681-1690, 3806-3833, 3865-3880).
+ * 4. `stop` then kills the group if it still runs and waits for the native exit. The end it causes
+ *    arrives after the decision and cannot replace a success, a `time` verdict or an interruption.
+ * 5. The scope closes: the SDK's fibers are interrupted, then the report directory is removed.
  */
-export const extractOn = (spawn: () => NodeWorkerThreads.Worker, deadline: Duration.Duration) =>
-  Effect.fn('LibraryExtraction.extract')(function* (bytes: Uint8Array) {
-    return yield* Effect.scoped(
-      Effect.acquireUseRelease(
-        start(spawn),
-        (running) =>
-          verdict(running, bytes).pipe(
-            Effect.timeoutOrElse({
-              duration: deadline,
-              orElse: () => Effect.fail(new ExtractionLimitExceeded({ limit: 'time' })),
-            }),
-          ),
-        (running) => stop(running.thread),
+const attempt = Effect.fn('LibraryExtraction.attempt')(function* (
+  launch: Launch,
+  deadline: Duration.Duration,
+  bytes: Uint8Array,
+) {
+  const fs = yield* FileSystem.FileSystem
+  const reportDir = yield* fs
+    .makeTempDirectoryScoped({ prefix: 'vivid-extraction-' })
+    .pipe(Effect.mapError(() => new ExtractionUnavailable()))
+  return yield* Effect.acquireUseRelease(
+    start(() => launch(reportDir)),
+    (running) =>
+      verdict(running, reportDir, bytes).pipe(
+        Effect.timeoutOrElse({
+          duration: deadline,
+          orElse: () => Effect.fail(new ExtractionLimitExceeded({ limit: 'time' })),
+        }),
       ),
-    )
-  })
+    (running) => stop(running),
+  )
+})
 
-/** One fresh thread per PDF; upload size and deadline also bound work, not total process memory. */
-const spawnExtractor = () =>
-  new NodeWorkerThreads.Worker(new URL('./extraction/main.ts', import.meta.url), {
-    resourceLimits: { maxOldGenerationSizeMb: EXTRACTION_HEAP_MB },
-  })
+/**
+ * The public lifecycle over any launcher, so fixtures run real processes through exactly the code
+ * production runs. It needs a `FileSystem` for the report directory and the report read.
+ */
+export const extractOn = (launch: Launch, deadline: Duration.Duration) =>
+  Effect.fn('LibraryExtraction.extract')((bytes: Uint8Array) =>
+    Effect.scoped(attempt(launch, deadline, bytes)),
+  )
 
-/** Production uses the same public lifecycle exercised by real native fixture threads. */
-export const extractPdf = extractOn(spawnExtractor, EXTRACTION_DEADLINE)
+/** One fresh process per PDF; upload size, deadline and old-generation cap bound the work, not RSS. */
+const extractByProcess = extractOn(forkExtractor(EXTRACTION_HEAP_MB), EXTRACTION_DEADLINE)
+
+/** Production extraction on the Node file system, so callers keep an Effect with no requirement. */
+export const extractPdf = (bytes: Uint8Array) =>
+  extractByProcess(bytes).pipe(Effect.provide(NodeFileSystem.layer))

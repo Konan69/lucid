@@ -30,7 +30,7 @@ export const takeIngestion = (
 
 /**
  * Adoption completes in Layer acquisition, so a typed database fault prevents request handling.
- * One scoped taker claims one row (rc.116 PQ:1598) and starts at most one extraction thread.
+ * One scoped taker claims one row (rc.116 PQ:1598) and starts at most one extraction process.
  * Supervision ports the SDK poller's tapCause/sandbox/retry sequence (PQ:1612-1616); it restarts
  * taking after native acknowledgement, while retry/backoff of an obligation remains SDK-owned.
  */

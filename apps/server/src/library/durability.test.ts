@@ -1,5 +1,4 @@
 import * as NodeFS from 'node:fs'
-import * as NodeWorkerThreads from 'node:worker_threads'
 import { layer as pgClientLayer, PgClient } from '@effect/sql-pg/PgClient'
 import { describe, expect, layer } from '@effect/vitest'
 import {
@@ -17,24 +16,26 @@ import {
   Stream,
 } from 'effect'
 import * as SqlClient from 'effect/unstable/sql/SqlClient'
+import { SqlError } from 'effect/unstable/sql/SqlError'
 import { DatabaseFailure, LibraryItemId, PersonId } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
 import { postgresCodecs } from '../database/codecs.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { workLayer } from '../database/work.ts'
+import { WORK_TABLE, workLayer } from '../database/work.ts'
 import { announce, CHANNEL, Changes, changesLayer, Topic } from '../live/changes.ts'
 import {
-  EXTRACTION_DEADLINE,
+  EXTRACTION_HEAP_MB,
+  ExtractionLimitExceeded,
   ExtractionFaulted,
   ExtractionUnavailable,
-  extractOn,
   extractPdf,
 } from './extraction.ts'
 import { fixture, pendingWork, storedWork } from './fixtures.ts'
 import { Fixture } from './fixtures/mode.ts'
+import { GROW_HEAP_MB, nativeLaunch, extractWith, reportRemoved } from './fixtures/launch.ts'
 import { digestBytes, ingestOwed } from './ingest.ts'
-import { ingestionOperations, libraryIngestion } from './ingestion.ts'
+import { INGESTION_QUEUE_NAME, ingestionOperations, libraryIngestion } from './ingestion.ts'
 import { LibraryStore, libraryStoreLayer } from './store.ts'
 import { takeIngestion } from './worker.ts'
 
@@ -58,8 +59,34 @@ class DeliveryRefused extends Schema.TaggedError<DeliveryRefused>()(
   { title: 'Library delivery test refused' },
 ) {}
 
+/** Preserve the original SQL failure when P12's infallible finalizer must fail the test as a defect. */
+class QueueCleanupFailed extends Schema.TaggedError<QueueCleanupFailed>()(
+  'QueueCleanupFailed',
+  { operation: Schema.Literal('LibraryDurability.P12.cleanup'), cause: SqlError },
+  { title: 'Library ingestion test queue cleanup failed' },
+) {}
+
 const decodeTopics = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String)))
 const pdfBytes = NodeFS.readFileSync(new URL('./fixtures/readable.pdf', import.meta.url))
+
+/** SQL receipt for ownership, independent of the queue's product-facing state projection. */
+const decodeClaims = Schema.decodeUnknownEffect(
+  Schema.Array(Schema.Struct({ held: Schema.Boolean })),
+)
+
+/**
+ * Read only this item's SDK claim. rc.116 PersistedQueue.complete clears both ownership columns
+ * (PersistedQueue.ts:1409-1417); completed state alone would not prove that release happened.
+ */
+const storedClaims = Effect.fn('LibraryDurability.storedClaims')(function* (id: LibraryItemId) {
+  const sql = yield* SqlClient.SqlClient
+  return yield* decodeClaims(
+    yield* sql`
+      SELECT (acquired_at IS NOT NULL OR acquired_by IS NOT NULL) AS held
+      FROM ${sql(WORK_TABLE)} WHERE queue_name = ${INGESTION_QUEUE_NAME} AND id = ${id}
+    `,
+  )
+})
 
 /** Receipt ordering proves absence without a sleep: a committed marker ends the channel prefix. */
 const announcedBefore = Effect.fn('LibraryDurability.announcedBefore')(function* (
@@ -95,38 +122,6 @@ const createItem = Effect.fn('LibraryDurability.createItem')(function* (
 const delivery = Effect.fn('LibraryDurability.delivery')(function* (extract: typeof extractPdf) {
   const queue = yield* libraryIngestion(Schedule.forever)
   return yield* takeIngestion(queue, ingestOwed(ingestionOperations(yield* Database), extract))
-})
-
-/** Every invocation records its own native exit, including cancellation of a blocked handler. */
-const observed = (input: typeof Fixture.Type) => {
-  const exited = Deferred.makeUnsafe<void>()
-  const spawned = Deferred.makeUnsafe<NodeWorkerThreads.Worker>()
-  const spawn = () => {
-    const thread = new NodeWorkerThreads.Worker(new URL('./fixtures/main.ts', import.meta.url), {
-      workerData: input,
-    })
-    thread.once('exit', () => Deferred.doneUnsafe(exited, Effect.void))
-    Deferred.doneUnsafe(spawned, Effect.succeed(thread))
-    return thread
-  }
-  return { spawn, exited, spawned }
-}
-
-/** Atomics acknowledges handler entry; racing the fiber makes an early thread failure visible. */
-const entered = Effect.fn('LibraryDurability.entered')((flag: Int32Array) => {
-  const receipt = Atomics.waitAsync(flag, 0, 0)
-  if (!receipt.async) return Effect.void
-  return Effect.tryPromise({
-    try: () => receipt.value,
-    catch: () => new ExtractionUnavailable(),
-  }).pipe(
-    Effect.asVoid,
-    Effect.ensuring(
-      Effect.sync(() => {
-        Atomics.notify(flag, 0)
-      }),
-    ),
-  )
 })
 
 /**
@@ -332,18 +327,19 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
       }),
     )
 
-    /** Q7: an exiting real extraction thread is infrastructure failure, not a failed file. */
+    /** Q7: an exiting real extraction process is infrastructure failure, not a failed file. */
     it.effect('Q7 retains an unavailable extraction obligation', () =>
       Effect.gen(function* () {
         expect(yield* pendingWork()).toEqual([])
         const { owner } = yield* fixture()
         const item = yield* createItem(owner.actor, pdfBytes, 'application/pdf')
-        const owned = observed(Fixture.cases.exit.make({}))
-        expect(
-          yield* delivery(extractOn(owned.spawn, EXTRACTION_DEADLINE)).pipe(Effect.flip),
-        ).toBeInstanceOf(ExtractionUnavailable)
-        expect(yield* Deferred.isDone(owned.spawned)).toBe(true)
-        yield* Deferred.await(owned.exited)
+        const owned = nativeLaunch(Fixture.cases.exit.make({}), EXTRACTION_HEAP_MB)
+        expect(yield* delivery(extractWith(owned.launch)).pipe(Effect.flip)).toBeInstanceOf(
+          ExtractionUnavailable,
+        )
+        expect(yield* Deferred.isDone(owned.reportDir)).toBe(true)
+        yield* Deferred.await(owned.ended)
+        expect(yield* reportRemoved(owned)).toBe(true)
         expect(yield* storedWork(item.document.id)).toEqual([{ state: 'pending', attempts: 1 }])
         expect(yield* (yield* LibraryStore).getItem(owner.actor, item.document.id)).toMatchObject({
           value: { status: 'processing' },
@@ -358,15 +354,16 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
         expect(yield* pendingWork()).toEqual([])
         const { owner } = yield* fixture()
         const item = yield* createItem(owner.actor, pdfBytes, 'application/pdf')
-        const owned = observed(Fixture.cases.defect.make({}))
-        const exit = yield* Effect.exit(delivery(extractOn(owned.spawn, EXTRACTION_DEADLINE)))
+        const owned = nativeLaunch(Fixture.cases.defect.make({}), EXTRACTION_HEAP_MB)
+        const exit = yield* Effect.exit(delivery(extractWith(owned.launch)))
         expect(Exit.isFailure(exit)).toBe(true)
         if (Exit.isFailure(exit)) {
           expect(Cause.hasDies(exit.cause)).toBe(true)
           expect(Cause.hasFails(exit.cause)).toBe(false)
         }
-        expect(yield* Deferred.isDone(owned.spawned)).toBe(true)
-        yield* Deferred.await(owned.exited)
+        expect(yield* Deferred.isDone(owned.reportDir)).toBe(true)
+        yield* Deferred.await(owned.ended)
+        expect(yield* reportRemoved(owned)).toBe(true)
         expect(yield* storedWork(item.document.id)).toEqual([{ state: 'pending', attempts: 1 }])
         expect(yield* (yield* LibraryStore).getItem(owner.actor, item.document.id)).toMatchObject({
           value: { status: 'processing' },
@@ -381,16 +378,16 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
         expect(yield* pendingWork()).toEqual([])
         const { owner } = yield* fixture()
         const item = yield* createItem(owner.actor, pdfBytes, 'application/pdf')
-        const flag = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT))
-        const owned = observed(Fixture.cases.spin.make({ flag: flag.buffer }))
-        const fiber = yield* delivery(extractOn(owned.spawn, EXTRACTION_DEADLINE)).pipe(
-          Effect.forkScoped,
-        )
-        yield* Effect.raceFirst(entered(flag), Fiber.join(fiber))
-        expect(Atomics.load(flag, 0)).toBe(1)
+        const owned = nativeLaunch(Fixture.cases.spin.make({}), EXTRACTION_HEAP_MB)
+        const fiber = yield* delivery(extractWith(owned.launch)).pipe(Effect.forkScoped)
+        expect(yield* Effect.raceFirst(Deferred.await(owned.entered), Fiber.join(fiber))).toBe(true)
         yield* Fiber.interrupt(fiber)
-        yield* Deferred.await(owned.exited)
-        expect((yield* Deferred.await(owned.spawned)).threadId).toBe(-1)
+        Exit.match(yield* Fiber.await(fiber), {
+          onSuccess: () => expect.unreachable('Cancelled delivery unexpectedly succeeded'),
+          onFailure: (cause) => expect(Cause.hasInterruptsOnly(cause)).toBe(true),
+        })
+        expect(yield* Deferred.await(owned.ended)).toEqual({ code: null, signal: 'SIGKILL' })
+        expect(yield* reportRemoved(owned)).toBe(true)
         expect(yield* storedWork(item.document.id)).toEqual([{ state: 'pending', attempts: 0 }])
         expect(yield* (yield* LibraryStore).getItem(owner.actor, item.document.id)).toMatchObject({
           value: { status: 'processing' },
@@ -406,6 +403,100 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
           value: { status: 'ready' },
         })
       }),
+    )
+
+    /**
+     * P12 (process-extraction-design-r2 §8): a real 64 MiB heap death goes through the production
+     * takeIngestion/ingestOwed consumer over the real persisted queue, not a simulated failure.
+     * The typed receipt precedes ingest.ts:88-91's product conversion. Node's native exit and the
+     * removed report directory prove release before the same queue consumes its next real PDF.
+     * SQL rows prove both acknowledgements and no held claims (rc.116 PQ:1409-1417,1739-1755).
+     * Existing VIVID_TEST_DATABASE_URL harness: per-file migrated clone plus per-case cleanup.
+     * Root supplies the labeled disposable instance and runs abort cases under its scoped core limit.
+     */
+    it.effect(
+      'P12 settles heap exhaustion and consumes the next real PDF without a held claim',
+      () =>
+        Effect.gen(function* () {
+          expect(yield* pendingWork()).toEqual([])
+          const { owner } = yield* fixture()
+          const sql = yield* SqlClient.SqlClient
+          /**
+           * Intentional cleanup write to the SDK-owned table, limited to this case's Person/items.
+           * Register before either offer; LIFO cleanup runs before fixture() removes its Person,
+           * keeping the subselect valid even after a failed assertion. rc.116 Effect.addFinalizer
+           * requires Effect<void, never, R>; a tagged defect retains the original SqlError and
+           * identifies the cleanup operation without adding credentials or connection settings.
+           */
+          yield* Effect.addFinalizer(() =>
+            sql`
+            DELETE FROM ${sql(WORK_TABLE)} WHERE queue_name = ${INGESTION_QUEUE_NAME}
+            AND id IN (SELECT id FROM vivid_library_documents WHERE person_id = ${owner.actor.person.id})
+          `.pipe(
+              Effect.asVoid,
+              Effect.catch((cause) =>
+                Effect.die(
+                  new QueueCleanupFailed({ operation: 'LibraryDurability.P12.cleanup', cause }),
+                ),
+              ),
+            ),
+          )
+          // A valid trailing PDF comment gives the heap item its own digest; otherwise createItem's
+          // real shelf deduplication would make the healthy upload the same already-failed item.
+          const heapBytes = new Uint8Array([
+            ...pdfBytes,
+            ...new TextEncoder().encode('\n% Heap fixture\n'),
+          ])
+          const failed = yield* createItem(owner.actor, heapBytes, 'application/pdf')
+          const healthy = yield* createItem(owner.actor, pdfBytes, 'application/pdf')
+          expect(healthy.document.id).not.toBe(failed.document.id)
+          const store = yield* LibraryStore
+          const queue = yield* libraryIngestion(Schedule.forever)
+          const operations = ingestionOperations(yield* Database)
+          const owned = nativeLaunch(Fixture.cases.grow.make({}), GROW_HEAP_MB)
+          const heapFailure = yield* Deferred.make<ExtractionLimitExceeded>()
+          // tapErrorTag preserves the native typed error for the production consumer to handle.
+          const extractHeap: typeof extractPdf = (bytes) =>
+            extractWith(owned.launch)(bytes).pipe(
+              Effect.tapErrorTag('ExtractionLimitExceeded', (failure) =>
+                Deferred.succeed(heapFailure, failure),
+              ),
+            )
+          yield* takeIngestion(queue, ingestOwed(operations, extractHeap))
+          // Check the receipt is present before awaiting: a missing heap classification fails here
+          // immediately rather than turning this behavioral proof into an unbounded receipt wait.
+          expect(yield* Deferred.isDone(heapFailure)).toBe(true)
+          expect(yield* Deferred.await(heapFailure)).toEqual(
+            new ExtractionLimitExceeded({ limit: 'heap' }),
+          )
+          expect(yield* Deferred.await(owned.entered)).toBe(true)
+          expect(yield* Deferred.await(owned.ended)).toEqual({ code: null, signal: 'SIGABRT' })
+          expect(yield* reportRemoved(owned)).toBe(true)
+          expect(yield* store.getItem(owner.actor, failed.document.id)).toMatchObject({
+            value: { status: 'failed', error: 'This PDF is too large to read', chunkCount: 0 },
+          })
+          expect(yield* storedWork(failed.document.id)).toEqual([
+            { state: 'completed', attempts: 1 },
+          ])
+          expect(yield* storedClaims(failed.document.id)).toEqual([{ held: false }])
+          expect(yield* storedWork(healthy.document.id)).toEqual([
+            { state: 'pending', attempts: 0 },
+          ])
+          yield* takeIngestion(queue, ingestOwed(operations, extractPdf))
+          expect(yield* store.getItem(owner.actor, healthy.document.id)).toMatchObject({
+            value: {
+              status: 'ready',
+              error: null,
+              chunkCount: 1,
+              preview: 'Vivid extraction fixture',
+            },
+          })
+          expect(yield* storedWork(healthy.document.id)).toEqual([
+            { state: 'completed', attempts: 1 },
+          ])
+          expect(yield* storedClaims(healthy.document.id)).toEqual([{ held: false }])
+          expect(yield* pendingWork()).toEqual([])
+        }),
     )
 
     /** Q10: attempt 9 settles exhaustion before reading even healthy bytes; notice is atomic. */
@@ -495,10 +586,10 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
           Topic.person(owner.actor.person.id),
         ])
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
-        const owned = observed(Fixture.cases.faulted.make({}))
-        yield* delivery(extractOn(owned.spawn, EXTRACTION_DEADLINE))
-        yield* Deferred.await(owned.exited)
-        expect((yield* Deferred.await(owned.spawned)).threadId).toBe(-1)
+        const owned = nativeLaunch(Fixture.cases.faulted.make({}), EXTRACTION_HEAP_MB)
+        yield* delivery(extractWith(owned.launch))
+        yield* Deferred.await(owned.ended)
+        expect(yield* reportRemoved(owned)).toBe(true)
         expect(yield* announcedBefore(notifications)).toEqual([
           [Topic.person(owner.actor.person.id)],
         ])
@@ -517,12 +608,12 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
         const { owner } = yield* fixture()
         const item = yield* createItem(owner.actor, pdfBytes, 'application/pdf')
         const notifications = yield* (yield* PgClient).listen(CHANNEL)
-        const owned = observed(Fixture.cases.faulted.make({}))
-        expect(
-          yield* delivery(extractOn(owned.spawn, EXTRACTION_DEADLINE)).pipe(Effect.flip),
-        ).toEqual(new ExtractionFaulted())
-        yield* Deferred.await(owned.exited)
-        expect((yield* Deferred.await(owned.spawned)).threadId).toBe(-1)
+        const owned = nativeLaunch(Fixture.cases.faulted.make({}), EXTRACTION_HEAP_MB)
+        expect(yield* delivery(extractWith(owned.launch)).pipe(Effect.flip)).toEqual(
+          new ExtractionFaulted(),
+        )
+        yield* Deferred.await(owned.ended)
+        expect(yield* reportRemoved(owned)).toBe(true)
         expect(yield* announcedBefore(notifications)).toEqual([])
         expect(yield* (yield* LibraryStore).getItem(owner.actor, item.document.id)).toMatchObject({
           value: { status: 'processing' },

@@ -1,6 +1,6 @@
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
-import { ExtractionFaulted, PdfLocked, PdfUnreadable } from '../extraction.ts'
+import { ExtractionFaulted, PdfLocked, PdfUnreadable } from './contract.ts'
 
 /** unpdf 1.8.1 pdfjs.mjs BaseException/wrapReason own name/code; only these names prove content rejection. */
 const ContentRejection = Schema.Union([
