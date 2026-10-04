@@ -598,10 +598,9 @@ const nothingOpen = () =>
  */
 const describe = Effect.fn('DesktopControl.describe')(function* (
   acting: Acting,
-  // The contract's `BrowseResult` has no field for a picture yet. The picture is taken, so a
-  // page that cannot be captured still fails the step, and it arrives here ready to be attached:
-  // when the field exists, it is set from this value in the `BrowseResult.make` below.
-  _picture: Option.Option<PagePicture>,
+  // The picture a `Screenshot` took. Only that action has one; the contract's `picture` key is
+  // absent for every other answer rather than present and empty.
+  picture: Option.Option<PagePicture>,
 ) {
   const current = showing(acting.browser.state())
   if (Option.isNone(current)) {
@@ -617,12 +616,17 @@ const describe = Effect.fn('DesktopControl.describe')(function* (
   const shown = state.tabs.find((tab) => tab.tab === page.tab)
   if (shown === undefined) return yield* new PageGone({})
   yield* Ref.set(acting.listed, Option.some(state.tabs.map((tab) => tab.tab)))
-  return BrowseResult.make({
+  const described = {
     address: shown.address,
     title: shown.title,
     outline: words.text,
     truncated: words.truncated,
     tabs: tabsOf(state, Option.some(shown.tab)),
+  }
+  return Option.match(picture, {
+    onNone: () => BrowseResult.make(described),
+    // The contract carries the PNG alone, as base64; its size stays on this computer.
+    onSome: (taken) => BrowseResult.make({ ...described, picture: taken.png }),
   })
 })
 

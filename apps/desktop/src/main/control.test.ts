@@ -238,6 +238,22 @@ describe('carrying out one action on this computer', () => {
     }),
   )
 
+  it.effect('a screenshot answers with the picture; no other action carries one', () =>
+    Effect.gen(function* () {
+      const control = yield* fixture({ tabs: [pageOf(first, 'Inbox')] }).control
+      const pictureOf = (answer: Option.Option<DeviceAnswer>) =>
+        Option.flatMap(answer, (given) =>
+          DeviceAnswer.guards.Done(given)
+            ? Option.some(Option.fromUndefinedOr(given.result.picture))
+            : Option.none(),
+        )
+      const shot = yield* control.execute(request(BrowserAction.cases.Screenshot.make({})))
+      expect(pictureOf(shot)).toEqual(Option.some(Option.some('cG5n')))
+      const read = yield* control.execute(request(BrowserAction.cases.Read.make({})))
+      expect(pictureOf(read)).toEqual(Option.some(Option.none()))
+    }),
+  )
+
   it.effect('what a password field holds is never in the answer', () =>
     Effect.gen(function* () {
       const page = fixture({

@@ -223,7 +223,8 @@ choosing another server ends the link.
 | The control was not found or is ambiguous, the page refused the text, a debugger command failed, the debugger is not Vivid's | `Failed`                                                     |
 | Its deadline passed before or during the action, or the link ended                                                           | no answer; the server has already closed it                  |
 
-`Screenshot` takes the picture, but `BrowseResult` has no field to carry it yet. Closing the last
+`Screenshot` answers with the picture (`BrowseResult.picture`, a base64 PNG at most 1280 pixels
+wide); no other action carries one. Closing the last
 page answers `Done` with an empty address and title and no tabs, because the contract has no
 "no page" form.
 
