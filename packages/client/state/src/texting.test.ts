@@ -6,10 +6,21 @@ import {
   ChannelStanding,
   ChannelUnavailable,
   NotFound,
+  type ChannelListResponse,
 } from '@vivid/contracts'
-import { Option, Schema } from 'effect'
+import { Option, Result, Schema } from 'effect'
+import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
+import * as Atom from 'effect/unstable/reactivity/Atom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { codeEnding, messageLink, channelWords, textingRefusal, typedAddress } from './texting.js'
+import type { LiveQuery, LiveResult } from './live.js'
+import {
+  codeEnding,
+  messageLink,
+  channelWords,
+  textingRefusal,
+  textingSettled,
+  typedAddress,
+} from './texting.js'
 
 const address = Schema.decodeSync(ChannelStanding.cases.Connected.fields.address)
 
@@ -117,5 +128,55 @@ describe('a code ending', () => {
     expect(vi.getTimerCount()).toBe(1)
     stop()
     expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+describe('what a connect or a disconnect came to', () => {
+  const before: ChannelListResponse = {
+    channels: [
+      { channel: 'iMessage', standing: ChannelStanding.cases.NotConnected.make({}) },
+      { channel: 'WhatsApp', standing: ChannelStanding.cases.Unavailable.make({}) },
+    ],
+  }
+
+  /** A live list that records what was laid over it and how each expectation was settled. */
+  const listed = () => {
+    const shown: Array<ChannelListResponse> = []
+    const settledAs: Array<boolean> = []
+    const channels: LiveQuery<ChannelListResponse> = {
+      atom: Atom.make<LiveResult<ChannelListResponse>>(AsyncResult.success(before)),
+      expect: (change) => {
+        shown.push(change(before))
+        return (accepted) => {
+          settledAs.push(accepted)
+        }
+      },
+    }
+    return { channels, shown, settledAs }
+  }
+
+  it('lays the answer over that channel only, as accepted, and says nothing', () => {
+    const { channels, shown, settledAs } = listed()
+    const standing = ChannelStanding.cases.Confirming.make({
+      address: address('+2348012345678'),
+      textTo: address('+14155550100'),
+      code: 'VIVID 4821',
+      expiresAt: 61_000,
+    })
+    const said = textingSettled(channels)(Result.succeed({ channel: 'iMessage', standing }))
+    expect(Option.isNone(said)).toBe(true)
+    expect(shown).toEqual([{ channels: [{ channel: 'iMessage', standing }, before.channels[1]] }])
+    expect(settledAs).toEqual([true])
+  })
+
+  it('says the refusal and leaves the list as it was', () => {
+    const { channels, shown } = listed()
+    const said = textingSettled(channels)(
+      Result.fail(new ChannelAddressTaken({ channel: 'iMessage' })),
+    )
+    expect(said).toEqual(
+      Option.some('That number is already connected to someone. Use a different number.'),
+    )
+    expect(shown).toEqual([])
   })
 })

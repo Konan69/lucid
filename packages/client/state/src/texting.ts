@@ -6,8 +6,8 @@ import {
   type ChannelLink,
   type ChannelListResponse,
 } from '@vivid/contracts'
-import { Effect, Option, Schema } from 'effect'
-import type { ProductFailure } from './live.js'
+import { Effect, Option, Result, Schema } from 'effect'
+import type { LiveQuery, ProductFailure } from './live.js'
 
 /**
  * Texting Vivid from a messaging app, as every client says and does it.
@@ -93,6 +93,34 @@ export const textingUnreached = 'Vivid could not be reached, so nothing was chan
  */
 export const textingRefusal = (failure: TextingFailure): string =>
   isChannelFailure(failure) ? SAID[failure._tag](failure.channel) : textingUnreached
+
+/**
+ * What a connect control is given to act with, so it can be drawn with none of this attached.
+ * Each answers with the one sentence to show when it was refused, and with nothing when it was not.
+ */
+export interface TextingActs {
+  /** Gives the Person's number to a channel, or asks for a new code for the same number. */
+  readonly connect: (channel: Channel, written: string) => Promise<Option.Option<string>>
+  /** Takes the Person's number off a channel. */
+  readonly disconnect: (channel: Channel) => Promise<Option.Option<string>>
+}
+
+/**
+ * What one connect or disconnect came to, for the client whose live list is `channels`.
+ *
+ * These calls are not a `change`: a channel's refusals are its own (`ChannelFailure`), and `change`
+ * only carries the product's general ones. So the call is run as a program and its answer is laid
+ * over the live list here. The server has already accepted it, so the expectation is settled the
+ * moment it is made: it holds the answer on screen until the watch sends its own next result.
+ */
+export const textingSettled =
+  (channels: LiveQuery<ChannelListResponse>) =>
+  (result: Result.Result<ChannelLink, TextingFailure>): Option.Option<string> => {
+    if (Result.isFailure(result)) return Option.some(textingRefusal(result.failure))
+    const link = result.success
+    channels.expect((current) => withLink(current, link))(true)
+    return Option.none()
+  }
 
 /** The app a channel's messages are written in, as the Person knows it on their phone. */
 export const MESSENGER = {

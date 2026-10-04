@@ -8,11 +8,12 @@ import {
   textingUnreached,
   thisReader,
   type Composer,
+  type TextingActs,
 } from '@vivid/state'
 import { Option } from 'effect'
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { live, LiveState, useLive } from '../../data/live'
-import { texting, type TextingActs } from '../../data/texting'
+import { texting } from '../../data/texting'
 import {
   AlertDialog,
   AlertDialogAction,
