@@ -17,6 +17,7 @@ import { approval, modelText } from './views.ts'
 export function integrations(response: FindIntegrationsResponse) {
   return {
     catalog: response.catalog,
+    omittedAccounts: response.omittedAccounts,
     integrations: response.integrations.map((entry) =>
       ConnectionMatch.match<typeof Schema.Json.Type>(entry, {
         Account: ({ name, account, connected, shared, state }) => ({

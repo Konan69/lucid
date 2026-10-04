@@ -282,6 +282,7 @@ export const ConnectionMatch = Schema.TaggedUnion({
 })
 export const FindIntegrationsResponse = Schema.Struct({
   integrations: Schema.Array(ConnectionMatch),
+  omittedAccounts: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
   catalog: Schema.Literals(['available', 'unavailable']),
 })
 export interface FindIntegrationsResponse extends Schema.Schema.Type<

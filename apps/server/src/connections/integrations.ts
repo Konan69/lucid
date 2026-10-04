@@ -13,7 +13,7 @@ import {
   type FindIntegrationsRequest,
   type TestIntegrationRequest,
 } from '@vivid/contracts'
-import { Effect, Option } from 'effect'
+import { Array as Arr, Effect, Option, Order } from 'effect'
 import { requireAdmin, type Actor } from '../auth/access.ts'
 import { ConnectionAddress, publicAddress } from './address.ts'
 import { ConnectionStore } from './store.ts'
@@ -28,19 +28,32 @@ function matches(query: string, name: string, description: string) {
   return words.length === 0 || words.some((word) => text.includes(word))
 }
 
-/** Up to 24 accessible accounts in stable creation order precede query-matched catalogue
- * suggestions (also capped at 24), even for unrelated queries or an offline catalogue.
- * Account names are assigned before the bound so discovery labels stay stable.
- * Provider slugs retain names such as Google for Gmail without exposing identifiers to the model.
- * Authorization stays explicit: a catalogue listing alone never promises a working sign-in. */
+/** Matching accessible accounts lead, then most recently created accounts fill the 24-account
+ * bound. Assign labels before sorting to keep discovery names stable. Report omissions so
+ * the model can narrow its query; catalogue suggestions remain independently bounded. */
 export const findIntegrations = Effect.fn('Connections.findIntegrations')(function* (
   actor: Actor,
   request: FindIntegrationsRequest,
 ) {
   const store = yield* ConnectionStore
   const records = yield* store.records(actor)
+  const named = namedAccounts(records).map((entry) => ({
+    row: entry.row,
+    account: entry.account,
+    matches: matches(request.query, entry.row.serviceName, entry.account),
+  }))
+  const ordered = Arr.sort(
+    named,
+    Order.combine(
+      Order.mapInput(Order.flip(Order.Boolean), (entry: (typeof named)[number]) => entry.matches),
+      Order.mapInput(
+        Order.flip(Order.Number),
+        (entry: (typeof named)[number]) => entry.row.createdAt,
+      ),
+    ),
+  )
   const accounts = yield* Effect.forEach(
-    namedAccounts(records).slice(0, 24),
+    ordered.slice(0, 24),
     Effect.fn('Connections.accountMatch')(function* ({ row, account }) {
       const state = yield* stateOf(row)
       return ConnectionMatch.cases.Account.make({
@@ -71,6 +84,7 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
         )
   return {
     integrations: [...accounts, ...services],
+    omittedAccounts: Math.max(0, records.length - accounts.length),
     catalog: Option.isSome(catalog) ? ('available' as const) : ('unavailable' as const),
   }
 })
@@ -115,7 +129,13 @@ const reuseAccount = Effect.fn('Connections.reuseAccount')(function* (
   existing: ReturnType<typeof namedAccounts>[number],
 ) {
   const state = yield* stateOf(existing.row)
-  return yield* ConnectionState.match(state, {
+  return yield* ConnectionState.match<
+    Effect.Effect<
+      AddIntegrationOutcome,
+      Effect.Error<ReturnType<typeof ConnectionStore.Service.resume>>,
+      ConnectionStore
+    >
+  >(state, {
     Ready: () =>
       Effect.succeed(
         AddIntegrationOutcome.cases.AlreadyConnected.make({ account: existing.account }),

@@ -243,37 +243,60 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           expect(yield* Ref.get(probe.begins)).toBe(before)
         }),
     )
-    it.effect('bounds accessible accounts at 24 before query-matched catalogue entries', () =>
-      Effect.gen(function* () {
-        const { ownerActor, personalActor, threadId } = yield* fixture()
-        const store = yield* ConnectionStore
-        for (let index = 0; index < 25; index++) {
-          yield* store.begin(ownerActor, {
-            service: serviceId,
-            label: `Account ${index}`,
-            shared: false,
-          })
-          yield* TestClock.adjust(1)
-        }
-        const response = yield* connectionHandlers.FindIntegrations({ query: 'Records' }).pipe(
-          Effect.provideService(
-            AuthContext,
-            AuthState.Vivid({
-              person: personalActor.person,
-              workspace: personalActor.workspace,
-              threadId,
-            }),
-          ),
-        )
-        const accounts = response.integrations.filter(ConnectionMatch.guards.Account)
-        expect(accounts.map((entry) => entry.account)).toEqual(
-          Array.from({ length: 24 }, (_, index) => `Account ${index}`),
-        )
-        expect(response.integrations).toHaveLength(25)
-        expect(response.integrations.slice(0, 24).every(ConnectionMatch.guards.Account)).toBe(true)
-        expect(response.integrations[24]).toMatchObject({ name: 'Records', connected: true })
-        expect(ConnectionMatch.guards.Catalog(response.integrations[24])).toBe(true)
-      }),
+    it.effect(
+      'bounds discovery, prioritizes matches and recent accounts, and reports omissions',
+      () =>
+        Effect.gen(function* () {
+          const { ownerActor, personalActor, threadId } = yield* fixture()
+          const store = yield* ConnectionStore
+          for (let index = 0; index < 25; index++) {
+            yield* store.begin(ownerActor, {
+              service: serviceId,
+              label: `Account ${index}`,
+              shared: false,
+            })
+            yield* TestClock.adjust(1)
+          }
+          const response = yield* connectionHandlers.FindIntegrations({ query: 'Records' }).pipe(
+            Effect.provideService(
+              AuthContext,
+              AuthState.Vivid({
+                person: personalActor.person,
+                workspace: personalActor.workspace,
+                threadId,
+              }),
+            ),
+          )
+          const accounts = response.integrations.filter(ConnectionMatch.guards.Account)
+          expect(accounts.map((entry) => entry.account)).toEqual(
+            Array.from({ length: 24 }, (_, index) => `Account ${24 - index}`),
+          )
+          expect(response.omittedAccounts).toBe(1)
+          const narrowed = yield* connectionHandlers.FindIntegrations({ query: '0' }).pipe(
+            Effect.provideService(
+              AuthContext,
+              AuthState.Vivid({
+                person: personalActor.person,
+                workspace: personalActor.workspace,
+                threadId,
+              }),
+            ),
+          )
+          const narrowedAccounts = narrowed.integrations.filter(ConnectionMatch.guards.Account)
+          expect(narrowedAccounts.slice(0, 3).map((entry) => entry.account)).toEqual([
+            'Account 20',
+            'Account 10',
+            'Account 0',
+          ])
+          expect(narrowedAccounts[3]).toMatchObject({ account: 'Account 24' })
+          expect(narrowed.omittedAccounts).toBe(1)
+          expect(response.integrations).toHaveLength(25)
+          expect(response.integrations.slice(0, 24).every(ConnectionMatch.guards.Account)).toBe(
+            true,
+          )
+          expect(response.integrations[24]).toMatchObject({ name: 'Records', connected: true })
+          expect(ConnectionMatch.guards.Catalog(response.integrations[24])).toBe(true)
+        }),
     )
 
     it.effect(

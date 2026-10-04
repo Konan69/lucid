@@ -34,6 +34,7 @@ describe('integration model views', () => {
   it('projects discovery and test receipts without identifiers or persisted failure diagnostics', () => {
     const view = integrations({
       catalog: 'available',
+      omittedAccounts: 3,
       integrations: [
         ConnectionMatch.cases.Account.make({
           name: 'Records',
@@ -51,6 +52,7 @@ describe('integration model views', () => {
       ],
     })
     expect(view).toMatchObject({
+      omittedAccounts: 3,
       integrations: [
         { account: 'Work', state: 'failed' },
         { name: 'Linear', connected: false },
