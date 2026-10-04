@@ -117,6 +117,8 @@ allowBuilds:
   core-js-pure: false
   msgpackr-extract: false
   protobufjs: false
+  # Its install step lays down the prebuilt Skia libraries the native mobile build links.
+  '@shopify/react-native-skia': true
 
 patchedDependencies:
   '@react-native-menu/menu@2.0.0': patches/@react-native-menu__menu@2.0.0.patch
