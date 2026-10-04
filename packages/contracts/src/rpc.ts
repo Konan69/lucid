@@ -59,6 +59,13 @@ import {
   RunCommandRequest,
 } from './computers.js'
 import {
+  Channel,
+  ChannelFailure,
+  ChannelLinkResponse,
+  ChannelListResponse,
+  ConnectChannelRequest,
+} from './channels.js'
+import {
   AddIntegrationRequest,
   AddIntegrationOutcome,
   FindIntegrationsRequest,
@@ -703,6 +710,26 @@ const Browse = Rpc.make('Browse', {
   success: BrowseOutcome,
   error: Schema.Union([RpcFailure, NoDeviceConnected]),
 })
+// ── Channels: texting Vivid from a messaging app ───────────────────────────
+/** Every channel and where it stands for the signed-in Person. */
+const WatchChannels = Rpc.make('WatchChannels', { ...live, success: ChannelListResponse })
+/**
+ * Enrols the Person's own number and starts confirming it. The channel is theirs only after the
+ * code arrives from that number; until then it stands as `Confirming`.
+ */
+const ConnectChannel = Rpc.make('ConnectChannel', {
+  ...call,
+  payload: ConnectChannelRequest,
+  success: ChannelLinkResponse,
+  error: Schema.Union([RpcFailure, ChannelFailure]),
+})
+/** Removes the Person's number from the channel, and its enrolment with the provider. */
+const DisconnectChannel = Rpc.make('DisconnectChannel', {
+  ...call,
+  payload: { channel: Channel },
+  success: ChannelLinkResponse,
+  error: Schema.Union([RpcFailure, ChannelFailure]),
+})
 // ── The Person's own computers ─────────────────────────────────────────────
 /** The desktop app naming itself after sign-in. The same installation always gets the same Device. */
 const EnrolDevice = Rpc.make('EnrolDevice', {
@@ -879,6 +906,9 @@ export const VividRpc = RpcGroup.make(
   HoldComputer,
   RunCommand,
   Browse,
+  WatchChannels,
+  ConnectChannel,
+  DisconnectChannel,
   EnrolDevice,
   ListDevices,
   AllowDevice,
