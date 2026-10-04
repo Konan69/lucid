@@ -49,7 +49,14 @@ import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../d
 import { silentChangesLayer } from '../live/changes.ts'
 import { silentLearningLayer } from '../memory/learn.ts'
 import { Notifier } from '../notifications/notifier.ts'
-import { Admission, Runtime, Settlement, runtimeLayer } from '../runtime/client.ts'
+import {
+  Admission,
+  AdmissionRefused,
+  AdmissionUncertain,
+  Runtime,
+  Settlement,
+  runtimeLayer,
+} from '../runtime/client.ts'
 import { submissionId } from '../runtime/identity.ts'
 import {
   Conversation,
@@ -154,7 +161,7 @@ type RuntimeInput = Parameters<Runtime['Service']['admit']>[0]
 const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
   const admitted = yield* Ref.make<ReadonlyArray<RuntimeInput>>([])
   const requests = yield* Ref.make<ReadonlyArray<RuntimeInput>>([])
-  const failure = yield* Ref.make(Option.none<RuntimeUnavailable>())
+  const failure = yield* Ref.make(Option.none<AdmissionRefused | AdmissionUncertain>())
   const reads = yield* Ref.make(0)
   const readHeaders = yield* Ref.make({
     'content-type': 'image/png',
@@ -391,20 +398,37 @@ describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
         }),
       ).pipe(Effect.provide(databaseLayer)),
   )
-  it.effect('failed Flue admission ends the Run with Delivery and does not block Ben', () =>
-    Effect.gen(function* () {
-      const test = yield* harness()
-      yield* Ref.set(test.failure, Option.some(RuntimeUnavailable.make({ message: 'Unavailable' })))
-      const rejected = yield* Effect.result(test.conversation.admit(said(test.threadId, test.ada)))
-      expect(Result.isFailure(rejected) && rejected.failure).toBeInstanceOf(RuntimeUnavailable)
-      const recorded = yield* (yield* RunStore).list(test.threadId)
-      expect(recorded.map((run) => run.state)).toEqual([
-        RunState.cases.Failed.make({ finishedAt: 0, reason: 'Delivery' }),
-      ])
-      yield* test.conversation.admit(said(test.threadId, test.ben))
-      expect(yield* Ref.get(test.admitted)).toHaveLength(1)
-    }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
-  )
+  // Both precise Runtime failures retain this slice's existing Conversation error and state assertions.
+  const admissionFailures = [
+    {
+      name: 'refused',
+      make: (threadId: ThreadId) => AdmissionRefused.make({ threadId, reason: 'Rejected' }),
+    },
+    {
+      name: 'uncertain',
+      make: (threadId: ThreadId) => AdmissionUncertain.make({ threadId, reason: 'Transport' }),
+    },
+  ]
+  for (const failure of admissionFailures) {
+    it.effect(
+      `${failure.name} Flue admission ends the Run with Delivery and does not block Ben`,
+      () =>
+        Effect.gen(function* () {
+          const test = yield* harness()
+          yield* Ref.set(test.failure, Option.some(failure.make(test.threadId)))
+          const rejected = yield* Effect.result(
+            test.conversation.admit(said(test.threadId, test.ada)),
+          )
+          expect(Result.isFailure(rejected) && rejected.failure).toBeInstanceOf(RuntimeUnavailable)
+          const recorded = yield* (yield* RunStore).list(test.threadId)
+          expect(recorded.map((run) => run.state)).toEqual([
+            RunState.cases.Failed.make({ finishedAt: 0, reason: 'Delivery' }),
+          ])
+          yield* test.conversation.admit(said(test.threadId, test.ben))
+          expect(yield* Ref.get(test.admitted)).toHaveLength(1)
+        }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
+    )
+  }
 
   it.effect('refuses Ben with Ada’s name, then admits him after Ada settles', () =>
     Effect.gen(function* () {

@@ -5,6 +5,7 @@ import * as Predicate from 'effect/Predicate'
 import {
   Conflict,
   NotFound,
+  RuntimeUnavailable,
   type Person,
   type PersonId,
   type RunId,
@@ -141,6 +142,18 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
 
 const threadMissing = () => Effect.fail(new NotFound({ message: 'Thread not found' }))
 
+/** The current Conversation wire contract maps precise admission errors until durable observation owns uncertainty. */
+const admitRuntime = Effect.fn('Conversation.admitRuntime')(
+  (runtime: Runtime['Service'], input: Parameters<Runtime['Service']['admit']>[0]) =>
+    runtime
+      .admit(input)
+      .pipe(
+        Effect.catchTag(['AdmissionRefused', 'AdmissionUncertain'], () =>
+          Effect.fail(RuntimeUnavailable.make({ message: 'Vivid could not be reached' })),
+        ),
+      ),
+)
+
 /** Producers keep durable receipts and retry on their own schedule; Busy never waits in-process. */
 const makeDeliver = (admit: ConversationService['admit'], runs: RunStore['Service']) =>
   Effect.fn('Conversation.deliver')(function* (delivery: SignalDelivery) {
@@ -247,7 +260,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
       if (!Predicate.isNumber(turn)) return turn
       const admission = yield* Effect.gen(function* () {
         const deliveryScope = yield* runs.scope({ threadId: thread.id, turn })
-        return yield* runtime.admit({
+        return yield* admitRuntime(runtime, {
           threadId: thread.id,
           message: flueMessage(thread.audience, from, delivery.message, turn),
           origin: { creator: creator.id, creatorName: creator.name },
