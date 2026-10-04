@@ -592,6 +592,11 @@ const knownFailureTag = Schema.Literals(Record.keys(failureModes))
 const isKnownFailureTag = Schema.is(knownFailureTag)
 const WireFailure = Schema.Struct({ _tag: Schema.NonEmptyString })
 const decodeFailure = Schema.decodeUnknownEffect(WireFailure)
+/** Only the validation failure carries safe field detail worth decoding. */
+const isInputInvalid = Match.type<typeof WireFailure.Type>().pipe(
+  Match.tag('InputInvalid', () => true),
+  Match.orElse(() => false),
+)
 /** Decode only InputInvalid detail. Other failure diagnostics may contain credentials and are
  * never projected. HostedTools.call imports this exact InputInvalid shape from the SDK.
  */
@@ -652,7 +657,7 @@ function responseReader(client: HttpClient.HttpClient) {
           )
         }
         const failure = yield* decodeFailure(body).pipe(Effect.mapError(invalid))
-        if (failure._tag === 'InputInvalid' && tool !== null) {
+        if (isInputInvalid(failure) && tool !== null) {
           const detail = yield* decodeInputInvalid(body).pipe(
             Effect.mapError(() => translateFailure('InputInvalid', tool)),
           )
@@ -1353,6 +1358,21 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
       }),
     )
   })
+  /** Refresh expired inspection entries in the owning scope while serving retained display facts. */
+  const refreshAvailability = Effect.fn('Executor.refreshAvailability')(function* (
+    entry: typeof ExecutorServiceEntry.Type,
+    current: HashMap.HashMap<ServiceId, ServiceAuthorization>,
+  ) {
+    const previous = HashMap.get(current, entry.id)
+    if (Option.isNone(previous)) return entry
+    if (!(yield* Cache.has(inspections, entry.id))) {
+      yield* readInspection(entry.id).pipe(
+        Effect.catch(() => Effect.void),
+        Effect.forkIn(scope),
+      )
+    }
+    return ExecutorServiceEntry.make({ ...entry, authorization: previous.value })
+  })
   return {
     /** Explicit management already owns an app; retain its public definition without another import. */
     inspectApp: Effect.fn('Executor.inspectApp')(function* (
@@ -1388,20 +1408,7 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
     catalog: Effect.fn('Executor.availableCatalog')(function* () {
       const entries = yield* catalog()
       const current = yield* Ref.get(facts)
-      return yield* Effect.forEach(
-        entries,
-        Effect.fn('Executor.refreshAvailability')(function* (entry) {
-          const previous = HashMap.get(current, entry.id)
-          if (Option.isNone(previous)) return entry
-          if (!(yield* Cache.has(inspections, entry.id))) {
-            yield* readInspection(entry.id).pipe(
-              Effect.catch(() => Effect.void),
-              Effect.forkIn(scope),
-            )
-          }
-          return ExecutorServiceEntry.make({ ...entry, authorization: previous.value })
-        }),
-      )
+      return yield* Effect.forEach(entries, (entry) => refreshAvailability(entry, current))
     }),
     /** Executor's refused sign-in is stronger evidence than its setup endpoint. Cache.set
      * starts a full ten-minute TTL and replaces pending entries; publication is serialized

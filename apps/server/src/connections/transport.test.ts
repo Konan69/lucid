@@ -82,6 +82,17 @@ const approvalRequiredReply = Schema.TaggedStruct('ToolApprovalRequired', {
   tool: Schema.String,
 })
 const profileConflictReply = Schema.TaggedStruct('ProfileConflict', {})
+/** Raw provider fixtures deliberately permit absent or malformed validation detail so the
+ * production decoder, rather than the fixture constructor, determines rejection behavior.
+ */
+const inputInvalidReply = Schema.TaggedStruct('InputInvalid', {
+  app: Schema.optionalKey(Schema.String),
+  deployment: Schema.optionalKey(Schema.String),
+  tool: Schema.optionalKey(Schema.String),
+  problems: Schema.optionalKey(Schema.Json),
+})
+const oauthClientUnavailableReply = Schema.TaggedStruct('OAuthClientUnavailable', {})
+const storageErrorReply = Schema.TaggedStruct('StorageError', {})
 
 /** Keep indexed fixture reads total after the test has asserted the expected request count. */
 function requestAt<T>(items: readonly T[], index: number): T {
@@ -145,18 +156,17 @@ describe('Executor hosted transport', () => {
         Effect.gen(function* () {
           yield* failRoute(remote, 'POST /apps/app/tools/call', {
             status: 422,
-            body: {
-              _tag: 'InputInvalid',
+            body: inputInvalidReply.make({
               app: 'internal-app',
               deployment: 'internal-deployment',
               tool: 'read',
               problems: ['Input did not match the tool schema'],
-            },
+            }),
           })
           const executor = yield* Executor
           const outcome = yield* executor.call({ references, tool: 'read', input: {} })
+          expect(ExecutorCallOutcome.guards.Rejected(outcome)).toBe(true)
           expect(outcome).toMatchObject({
-            _tag: 'Rejected',
             problems: ['Input did not match the tool schema'],
           })
           expect(JSON.stringify(outcome)).not.toMatch(
@@ -178,9 +188,9 @@ describe('Executor hosted transport', () => {
       Effect.gen(function* () {
         const executor = yield* Executor
         for (const body of [
-          { _tag: 'InputInvalid' },
-          { _tag: 'InputInvalid', problems: [42] },
-          { _tag: 'InputInvalid', problems: 'invalid' },
+          inputInvalidReply.make({}),
+          inputInvalidReply.make({ problems: [42] }),
+          inputInvalidReply.make({ problems: 'invalid' }),
         ]) {
           yield* failRoute(remote, 'POST /apps/app/tools/call', { status: 422, body })
           expect(yield* executor.call({ references, tool: 'read', input: {} })).toEqual(
@@ -201,22 +211,21 @@ describe('Executor hosted transport', () => {
         Effect.gen(function* () {
           yield* failRoute(remote, 'POST /apps/app/tools/call', {
             status: 422,
-            body: {
-              _tag: 'InputInvalid',
+            body: inputInvalidReply.make({
               problems: [
                 'owner: required',
                 'id: expected a string',
                 'selection app profile account',
               ],
-            },
+            }),
           })
           const outcome = yield* (yield* Executor).call({
             references: authorized,
             tool: 'read',
             input: {},
           })
+          expect(ExecutorCallOutcome.guards.Rejected(outcome)).toBe(true)
           expect(outcome).toMatchObject({
-            _tag: 'Rejected',
             problems: [
               'owner: required',
               'id: expected a string',
@@ -804,7 +813,7 @@ describe('Executor hosted transport', () => {
         yield* Ref.set(remote.accounts, signInRequirement)
         yield* failRoute(remote, 'POST /connections/authorization/oauth/start', {
           status: 409,
-          body: { _tag: 'OAuthClientUnavailable' },
+          body: oauthClientUnavailableReply.make({}),
         })
         const executor = yield* Executor
         expect(yield* executor.begin(begin).pipe(Effect.flip)).toHaveProperty(
@@ -853,7 +862,7 @@ describe('Executor hosted transport', () => {
         )
         yield* failRoute(remote, 'GET /providers/provider/oauth/oauth/setup', {
           status: 500,
-          body: { _tag: 'StorageError' },
+          body: storageErrorReply.make({}),
         })
         yield* TestClock.adjust('10 minutes')
         expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
@@ -923,7 +932,7 @@ describe('Executor hosted transport', () => {
         )
         yield* failRoute(remote, 'POST /connections/authorization/oauth/start', {
           status: 409,
-          body: { _tag: 'OAuthClientUnavailable' },
+          body: oauthClientUnavailableReply.make({}),
         })
         const pendingSignIn = yield* executor.begin(begin).pipe(Effect.flip, Effect.forkScoped)
         yield* Deferred.await(signInEntered)
