@@ -102,23 +102,64 @@ The runtime proposes; the server decides. Nothing consequential runs from model 
 2. `Access` rejects what that Person may not reach.
 3. The action is classified `read`, `write` or `destructive`. Executor supplies the classification
    for Connection tools from the source (HTTP method, MCP hint).
-4. Rules are applied. Company rules are required; a Person's own rules can only make behavior
-   stricter. Never beats Ask beats Allow. With no matching rule, a read is allowed and anything else
-   asks. If the rule check cannot run, ask.
-5. **Ask** creates an **Approval**: the exact action, a digest of it, the Connection it will use, an
+4. Hard rules are applied first. Company rules are required; a Person's own rules can only make
+   behavior stricter. A **Never** rule refuses the action, and it cannot be approved in the Thread.
+   A read with no rule against it runs.
+5. Everything else that touches the Person's own accounts or browser, or is destructive, goes to
+   **Review**. Undoable work on Vivid's own Computer runs without one. The reviewer is a separate
+   typed decision made by the server (`approvals/review.ts`, Effect `Decision` answered by Jev), not
+   the model doing the work, so Vivid never approves its own action. It is given the exact action
+   (tool, complete arguments, summary, Integration) and what the acting Person said in the turn
+   Vivid is working on, with their message before it as background only. Those words are read
+   from the conversation history and attributed by the server's own record of who started each
+   Run, never by a name or by what Vivid says was asked. A Routine contributes its instruction
+   without the outside payload; a Thread Vivid opened itself contributes nothing; an answer counts
+   only in a private Thread. The reviewer returns three measurements: how likely it is that the
+   Person **asked** for this (or it is a necessary step of what they asked), how likely the action
+   goes **beyond** the request (a recipient, account or amount they did not name), and its
+   **consequence**: contained, reaches other people or spends money, or cannot be undone. The
+   server decides from those (`approvals/policy.ts`):
+   - An action the Person asked for, and that stays inside what they asked, runs, including a
+     send, a payment or a delete. That is how "I told it to do this" becomes "it did it" without
+     the working model vouching for itself.
+   - An action Vivid chose on its own runs when it is contained, and asks when it reaches other
+     people, spends money or cannot be undone.
+   - An **ask first** rule always asks. An **allow automatically** rule lets an undoable action run
+     without a review; a destructive one is still reviewed. Neither bypasses a Never rule.
+   - The reviewer has ten seconds and one attempt. If it fails, times out, has no request to judge
+     against, or the arguments are too long to show whole, the action asks; it is never run
+     unreviewed and never silently dropped.
+6. **Ask** creates an **Approval**: the exact action, a digest of it, the Connection it will use, an
    expiry, and the Person who must decide. The turn ends. The Thread shows a card.
-6. The Person chooses **Allow once**, **Always allow** (which writes a rule) or **Deny**. The claim is
+7. The Person chooses **Allow once**, **Always allow** or **Deny**. Always allow adds the reviewer's
+   proposed rule to that Person's allow instructions (the newest twenty are kept). The claim is
    one conditional update, so two answers cannot both run the action. The server executes the stored
    action, not a new proposal, so the preview and the action cannot drift.
-7. The outcome returns to the Thread as a signal and Vivid continues. A write whose result is
+8. The outcome returns to the Thread as a signal and Vivid continues. A write whose result is
    uncertain is recorded as **outcome unknown** and is never retried silently.
-8. Every step writes an **AuditEntry**.
+9. Every allowed, blocked, approved and denied action writes an **AuditEntry**. The reviewer's
+   measurements are logged as numbers only; putting them in the AuditEntry is not built yet.
+
+The mechanism is Grok Bot's Auto-review (0.30 `source/host/extensions/auto-review/`,
+`source/packages/agent/smart-mode-classifier-context.ts`, and the approval card in
+`frontend/src-0.30/views/send-message-auto-review-approval-card.tsx`): an independent classifier call
+returning allow or block with a proposed allow rule, the same context limits, the same ten-second
+single attempt, and the same three answers. Two things differ. Grok Bot's classifier
+returns allow or block; Vivid's returns measurements and the server decides, so the thresholds and
+the precedence are code, not prompt. Grok Bot rejects the action when the classifier fails; Vivid
+asks, because a refused action the Person wanted is worse than a question. And Grok Bot's
+classifier runs on its vendor's backend, whose prompt and model are not in the shipped app; Vivid's
+decision wording is ours and is judged by the live evaluation `approvals/review.live.test.ts`. The
+proposed rule and **Always allow** from the reviewer are not built: the typed decision answers
+measurements, and Jev does not write text.
 
 An **Input request** uses the same suspension: a question with labelled options and a free answer,
 addressed to a Person, answered once, returned as a signal.
 
-Background work (a Routine with nobody present) may read. It may write only where a rule allows it;
-otherwise it asks and waits.
+Background work (a Routine with nobody present) goes through the same review. The Routine's own
+instruction is trusted context for the reviewer, so a Routine does what it was set up to do without
+asking. Nobody being present never grants anything: when the reviewer says ask, the Approval waits
+for the Person, and an Approval that expires unanswered is a refusal.
 
 The **Computer** is Vivid's own machine, and work on it is contained there: a command or a browser
 step is not an action in anyone's account. So with no matching rule it runs without asking. A
