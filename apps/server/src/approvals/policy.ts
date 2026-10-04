@@ -2,16 +2,6 @@ import { Schema } from 'effect'
 import type { ActionEffect } from '@vivid/contracts'
 
 /**
- * What an action does outside Vivid if it runs, as the reviewer classifies it.
- *
- * - `contained`: creates or edits something only the Person sees and can undo.
- * - `reaches`: reaches other people, speaks in the Person's name, or spends money.
- * - `irreversible`: deletes or changes something that cannot be restored.
- */
-export const Consequence = Schema.Literals(['contained', 'reaches', 'irreversible'] as const)
-export type Consequence = typeof Consequence.Type
-
-/**
  * The reviewer's answer about one proposed action. `Unreviewed` is the honest remainder: there
  * was no request to judge against, the arguments were too long to show whole, or the decision
  * provider failed or timed out. It is a state the policy below decides on, never a silent allow
@@ -23,7 +13,12 @@ export const Review = Schema.TaggedUnion({
     asked: Schema.Number,
     /** Probability, 0 to 1, that the action reaches someone or something the request did not name. */
     beyond: Schema.Number,
-    consequence: Consequence,
+    /**
+     * Probability, 0 to 1, that the action is contained: it creates or edits something only the
+     * Person sees and can undo. The probability is kept, not the chosen label, because the
+     * provider's label need not be its most probable one (Decision.ts `ClassifyAnswer`).
+     */
+    contained: Schema.Number,
   },
   Unreviewed: {},
 })
@@ -49,6 +44,13 @@ export const ASKED_THRESHOLD = 0.5
  */
 export const BEYOND_THRESHOLD = 0.5
 
+/**
+ * At or above this, an action Vivid chose on its own is contained and runs. Same live runs:
+ * a draft and a label on the Person's own mail scored 0.95 to 1.00; every send, payment and
+ * delete scored 0.00 to 0.12. 0.5 is the middle of that band.
+ */
+export const CONTAINED_THRESHOLD = 0.5
+
 export const ReviewOutcome = Schema.Literals(['Run', 'Ask'] as const)
 export type ReviewOutcome = typeof ReviewOutcome.Type
 
@@ -63,18 +65,22 @@ export type ReviewOutcome = typeof ReviewOutcome.Type
  * - An action Vivid chose on its own runs when it is contained, and asks when it reaches other
  *   people, spends money or cannot be undone. A `destructive` effect is the source's own fact
  *   (HTTP method, declared hint) and outranks a `contained` classification.
- * - Unreviewed asks. An earlier version let an unreviewed `write` run because the contract calls
- *   a write undoable, but the label does not prove that: a tool whose source declares nothing
- *   defaults to `write` (`connections/executor.ts`), and `connections/effects.ts` files a send
- *   or a post under `write`. With the provider down or unconfigured, an unasked email would have
- *   run with nobody looking. A question during an outage costs less than that.
+ * - Unreviewed: a `write` runs and a `destructive` action asks. DECIDED BY KONAN, 4 Oct 2026:
+ *   "an unreviewd always asked is bad"; decisions can be switched off (`VIVID_DECISIONS`,
+ *   `decisions/model.ts`) and Vivid must then still do what it is told without an Approval for
+ *   every write. The risk was stated to him and accepted: the `write` label does not prove an
+ *   action can be undone (a tool whose source declares nothing defaults to `write`, and
+ *   `connections/effects.ts` files a send under `write`), so with no review an unasked send on a
+ *   Person's own Integration runs. Do not change this back to "always ask" without his say-so.
+ *   Never rules still refuse, Ask rules still ask, and a personal Integration used in a shared
+ *   Thread still asks; those are decided in `gate.ts` before any review.
  */
 export const reviewOutcome = (effect: ActionEffect, review: Review): ReviewOutcome =>
   Review.match(review, {
-    Reviewed: ({ asked, beyond, consequence }) =>
+    Reviewed: ({ asked, beyond, contained }) =>
       (asked >= ASKED_THRESHOLD && beyond < BEYOND_THRESHOLD) ||
-      (effect !== 'destructive' && consequence === 'contained')
+      (effect !== 'destructive' && contained >= CONTAINED_THRESHOLD)
         ? 'Run'
         : 'Ask',
-    Unreviewed: () => 'Ask',
+    Unreviewed: () => (effect === 'destructive' ? 'Ask' : 'Run'),
   })

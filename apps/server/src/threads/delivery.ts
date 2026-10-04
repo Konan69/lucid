@@ -93,7 +93,7 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
     if (yield* presence.watching(thread.id, personId)) return
     // A Run can outlast its Person's place in the Thread. The notice quotes the title and the
     // reply, so it is only written for someone who may still read them.
-    const reach = canSee(thread, personId).pipe(Effect.provideService(Database, database))
+    const reach = canSee(thread.id, personId).pipe(Effect.provideService(Database, database))
     if (!(yield* reach)) return
     yield* notifier.notify({
       personId,
@@ -211,7 +211,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
       Acting: () => Effect.succeed(acting.name),
       Vivid: () => Effect.succeed('Vivid'),
       Decider: Effect.fn('Conversation.decider')(function* ({ personId }) {
-        if (!(yield* canSee(thread, personId).pipe(withDatabase))) return yield* threadMissing()
+        if (!(yield* canSee(thread.id, personId).pipe(withDatabase))) return yield* threadMissing()
         return (yield* personOf(personId)).name
       }),
     })
@@ -226,7 +226,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
       const found = yield* findThread(delivery.threadId).pipe(withDatabase)
       if (Option.isNone(found)) return yield* threadMissing()
       const thread = found.value
-      if (!(yield* canSee(thread, delivery.personId).pipe(withDatabase)))
+      if (!(yield* canSee(thread.id, delivery.personId).pipe(withDatabase)))
         return yield* threadMissing()
       const speaker = yield* personOf(delivery.personId)
       const from = yield* speakerName(delivery, thread, speaker)

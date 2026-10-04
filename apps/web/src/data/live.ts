@@ -15,7 +15,7 @@ import { VividRpcClient } from '@vivid/client-runtime'
 import { change, run } from './app'
 import { Route, router } from './route'
 import { engine } from './runtime'
-import { sayWith } from './said'
+import { said, sayWith } from './said'
 import { theme } from './theme'
 
 /**
@@ -138,9 +138,16 @@ engine.registry.subscribe(live.notifications.atom, (result) => {
   const fresh = result.value.notifications.filter(
     (notice) => notice.readAt === null && (previous === undefined || !previous.has(notice.id)),
   )
-  told.set(lastWhereabouts, new Set(result.value.notifications.map((notice) => notice.id)))
+  const current = new Set<string>(result.value.notifications.map((notice) => notice.id))
+  told.set(lastWhereabouts, current)
   if (previous === undefined) {
     return
+  }
+  // A notice that was here and is gone was removed or put out of the Person's reach (access to
+  // its Thread was taken away, or the Thread was deleted). Its sentence, if still showing, names
+  // that Thread and offers to open it, so it leaves with the notice.
+  for (const id of previous) {
+    if (!current.has(id)) said.withdraw(id)
   }
   const here = router.route()
   for (const notice of fresh) {

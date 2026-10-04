@@ -1,11 +1,21 @@
-import { Array as Arr, Effect, Schema } from 'effect'
-import { AiError, Decision } from 'effect/unstable/ai'
-import { decide } from '../decisions/model.ts'
+import { Effect, Schema } from 'effect'
+import { Decision } from 'effect/unstable/ai'
+import { decideWithin, DecisionUnavailable } from '../decisions/model.ts'
 
+/** A 0.3 score promotes plausible necessary steps; lower scores retain lexical order
+ * and remain discoverable. This is an ordering threshold, never an exclusion rule. */
 export const TOOL_RELEVANCE_THRESHOLD = 0.3
-export const TOOL_CANDIDATE_LIMIT = 60
-const RELEVANCE_BATCH_SIZE = 20
-const RELEVANCE_CONCURRENCY = 4
+/** Only the top twenty lexical candidates need optional semantic enrichment; the
+ * remaining candidates retain their existing order without extra provider calls.
+ * Calibration used 2066 input tokens for twenty questions versus 739 for five. */
+export const RELEVANCE_BATCH_SIZE = 20
+/** Live calibration (2026-10-04, one process): cold 20 questions 791ms/2066
+ * input tokens; warm 20 341ms/2066; warm five 331ms/739; repeated warm 20
+ * 347ms/2066. Repeat validation (cold20/warm20/warm5/warm20): 618/337/310/326ms,
+ * then 584/323/330/533ms, with the same token counts. A 1.2-second budget
+ * leaves warm-call headroom while bounding
+ * optional enrichment; outage or slow cold transport retains lexical order. */
+export const RELEVANCE_BUDGET = '1200 millis'
 
 interface Candidate {
   readonly serviceName: string
@@ -14,19 +24,11 @@ interface Candidate {
   readonly description: string
 }
 
-const Input = Schema.Array(
-  Schema.Struct({
-    request: Schema.String,
-    service: Schema.String,
-    account: Schema.String,
-    tool: Schema.String,
-    description: Schema.String,
-  }),
-)
+const Input = Schema.Struct({ request: Schema.String })
 
-/** One definition covers up to twenty positional candidates. rc.116
- * OpenRouterDecisionModel.make and TypeSafeDecisionModel.make collect every decision
- * into questions and send one createDecisions/systemOne call. Each question repeats its tool facts because Jev can confuse array positions; no Connection or Person identifiers enter the prompt. */
+/** rc.116 OpenRouterDecisionModel.make collects all questions into one request.
+ * Each question owns its tool facts, so input contains only the Person's request.
+ * Dynamic-key coverage is checked before any partial answer can influence ordering. */
 const scoreBatch = Effect.fn('Connections.scoreTools')(function* <A extends Candidate>(
   request: string,
   tools: readonly A[],
@@ -43,43 +45,31 @@ const scoreBatch = Effect.fn('Connections.scoreTools')(function* <A extends Cand
       }),
     ]),
   )
-  const input = tools.map((tool) => ({
-    request,
-    service: tool.serviceName,
-    account: tool.account,
-    tool: tool.name,
-    description: tool.description,
-  }))
-  const { answers } = yield* decide(Decision.make({ input: Input, decisions }), input)
-  // Dynamic keys stay checked even though DecisionModel validates coverage; missing scores fail the whole request.
-  return yield* Effect.forEach(tools, (tool, index) => {
+  const { answers, usage } = yield* decideWithin(
+    Decision.make({ input: Input, decisions }),
+    { request },
+    RELEVANCE_BUDGET,
+  )
+  const scores = yield* Effect.forEach(tools, (tool, index) => {
     const answer = answers[`tool_${index}`]
-    if (answer === undefined)
-      return Effect.fail(
-        AiError.make({
-          module: 'Vivid.Relevance',
-          method: 'scoreTools',
-          reason: new AiError.InvalidOutputError({ description: 'Missing tool relevance answer' }),
-        }),
-      )
+    if (answer === undefined) return Effect.fail(new DecisionUnavailable({ reason: 'Provider' }))
     return Effect.succeed({ tool, probability: answer.probability })
   })
+  return { scores, usage }
 })
 
-/** Batched relevance does not discard partial failures: the owning request uses its
- * complete lexical order if any batch fails, so discovery remains predictable. Stable
- * ties preserve provider order and 0.3 keeps plausible necessary steps discoverable. */
+/** Jev can promote candidates, never remove them. Stable score ties retain lexical
+ * order; unpromoted and unscored candidates follow in their original lexical order.
+ * Provider usage accompanies the result so live evaluations measure the actual request. */
 export const relevantTools = Effect.fn('Connections.relevantTools')(function* <A extends Candidate>(
   request: string,
   tools: readonly A[],
 ) {
-  const batches = yield* Effect.forEach(
-    Arr.chunksOf(tools, RELEVANCE_BATCH_SIZE),
-    (batch) => scoreBatch(request, batch),
-    { concurrency: RELEVANCE_CONCURRENCY },
-  )
-  return batches
-    .flat()
+  const { scores, usage } = yield* scoreBatch(request, tools.slice(0, RELEVANCE_BATCH_SIZE))
+  const promoted = scores
     .filter(({ probability }) => probability >= TOOL_RELEVANCE_THRESHOLD)
     .toSorted((left, right) => right.probability - left.probability)
+    .map(({ tool }) => tool)
+  const selected = new Set(promoted)
+  return { ordered: [...promoted, ...tools.filter((tool) => !selected.has(tool))], usage }
 })

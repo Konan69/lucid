@@ -37,7 +37,7 @@ const encodePayload = Schema.encodeSync(Schema.fromJsonString(PushPayload))
 const readable = Effect.fn('Push.readable')(function* (notice: typeof NoticeRow.Type) {
   if (notice.conversationId === null) return true
   const thread = yield* findThread(notice.conversationId)
-  return Option.isSome(thread) && (yield* canSee(thread.value, notice.personId))
+  return Option.isSome(thread) && (yield* canSee(thread.value.id, notice.personId))
 })
 
 interface DeliveryServices {

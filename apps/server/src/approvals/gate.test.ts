@@ -265,7 +265,7 @@ describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', (
       const observed = yield* Observation
       yield* Ref.set(
         observed.review,
-        Review.cases.Reviewed.make({ asked: 0.97, beyond: 0.1, consequence: 'reaches' }),
+        Review.cases.Reviewed.make({ asked: 0.97, beyond: 0.1, contained: 0.02 }),
       )
       const send = ProposedAction.make({ ...connectionAction, effect: 'destructive' })
       expect(yield* (yield* Gate).check(test.vivid, send, 'Ordinary')).toEqual(
@@ -283,17 +283,31 @@ describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', (
     }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
 
-  it.effect('an action that could not be reviewed asks, whatever its effect', () =>
+  it.effect('with no review a write runs and a destructive action asks; rules still bind', () =>
     Effect.gen(function* () {
       const test = yield* fixture()
       const gate = yield* Gate
       yield* Ref.set((yield* Observation).review, Review.cases.Unreviewed.make({}))
-      for (const effect of ['write', 'destructive'] as const) {
-        const action = ProposedAction.make({ ...connectionAction, effect })
-        expect(
-          GateDecision.guards.ApprovalRequired(yield* gate.check(test.vivid, action, 'Ordinary')),
-        ).toBe(true)
-      }
+      expect(yield* gate.check(test.vivid, connectionAction, 'Ordinary')).toEqual(
+        GateDecision.cases.Allowed.make({}),
+      )
+      const destructive = ProposedAction.make({ ...connectionAction, effect: 'destructive' })
+      expect(
+        GateDecision.guards.ApprovalRequired(
+          yield* gate.check(test.vivid, destructive, 'Ordinary'),
+        ),
+      ).toBe(true)
+      // Switching decisions off loosens the default only: an Ask rule is still honoured.
+      yield* (yield* RuleStore).create(test.personal, {
+        action: 'Ask before updating projects',
+        decision: 'Ask',
+        scope: RuleScope.cases.Personal.make({}),
+      })
+      expect(
+        GateDecision.guards.ApprovalRequired(
+          yield* gate.check(test.vivid, connectionAction, 'Ordinary'),
+        ),
+      ).toBe(true)
     }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
 
@@ -308,7 +322,7 @@ describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', (
       })
       yield* Ref.set(
         observed.review,
-        Review.cases.Reviewed.make({ asked: 1, beyond: 0.1, consequence: 'contained' }),
+        Review.cases.Reviewed.make({ asked: 1, beyond: 0.1, contained: 0.95 }),
       )
       expect(yield* (yield* Gate).check(test.vivid, connectionAction, 'Ordinary')).toEqual(
         GateDecision.cases.Blocked.make({ rule: 'Never update projects' }),

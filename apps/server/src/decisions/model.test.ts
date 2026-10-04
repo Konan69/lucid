@@ -1,8 +1,9 @@
+import * as TestClock from 'effect/testing/TestClock'
 import { expect, it } from '@effect/vitest'
-import { ConfigProvider, Effect, Layer, Logger, Predicate, Schema } from 'effect'
-import { Decision } from 'effect/unstable/ai'
+import { ConfigProvider, Effect, Fiber, Layer, Logger, Predicate, Schema } from 'effect'
+import { AiError, Decision, DecisionModel } from 'effect/unstable/ai'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
-import { decide, decisionModelLayer } from './model.ts'
+import { decide, decideWithin, DecisionUnavailable, decisionModelLayer } from './model.ts'
 
 const definition = Decision.make({
   input: Schema.String,
@@ -66,14 +67,19 @@ it.effect.each([
 it.effect('unconfigured startup warns once and every decision fails', () => {
   let warnings = 0
   const logger = Logger.make(({ message }) => {
-    expect(message).toEqual(['Decisions unconfigured: TYPESAFE_API_KEY or OPENROUTER_API_KEY'])
-    warnings += 1
+    if (
+      Array.isArray(message) &&
+      message[0] === 'Decisions unconfigured: TYPESAFE_API_KEY or OPENROUTER_API_KEY'
+    )
+      warnings += 1
   })
   return Effect.gen(function* () {
     const first = yield* Effect.flip(decide(definition, 'one'))
     const second = yield* Effect.flip(decide(definition, 'two'))
-    expect(first._tag).toBe('AiError')
-    expect(second._tag).toBe('AiError')
+    expect(first).toBeInstanceOf(DecisionUnavailable)
+    expect(second).toBeInstanceOf(DecisionUnavailable)
+    expect(first.reason).toBe('Unconfigured')
+    expect(second.reason).toBe('Unconfigured')
     expect(warnings).toBe(1)
   }).pipe(
     Effect.provide(
@@ -90,3 +96,48 @@ it.effect('unconfigured startup warns once and every decision fails', () => {
     Effect.provide(Logger.layer([logger])),
   )
 })
+
+/** Provider payloads stop at the decision boundary, including validation failures. */
+it.effect('provider failure exposes only a typed unavailable reason', () =>
+  Effect.gen(function* () {
+    const error = yield* Effect.flip(decide(definition, 'private input'))
+    expect(error).toBeInstanceOf(DecisionUnavailable)
+    expect(error.reason).toBe('Provider')
+    expect(JSON.stringify(error)).not.toContain('private')
+  }).pipe(
+    Effect.provide(
+      Layer.effect(
+        DecisionModel.DecisionModel,
+        DecisionModel.make({
+          decide: () =>
+            Effect.fail(
+              AiError.make({
+                module: 'Test',
+                method: 'decide',
+                reason: new AiError.InvalidOutputError({ description: 'private provider payload' }),
+              }),
+            ),
+        }),
+      ),
+    ),
+  ),
+)
+
+/** Controllable time proves both budgets without wall-clock sleeps. */
+it.effect.each(['10 seconds', '1200 millis'] as const)('bounds a stalled request at %s', (budget) =>
+  Effect.gen(function* () {
+    const pending = yield* (
+      budget === '10 seconds'
+        ? decide(definition, 'question')
+        : decideWithin(definition, 'question', budget)
+    ).pipe(Effect.forkChild)
+    yield* TestClock.adjust(budget)
+    const error = yield* Effect.flip(Fiber.join(pending))
+    expect(error).toBeInstanceOf(DecisionUnavailable)
+    expect(error.reason).toBe('TimedOut')
+  }).pipe(
+    Effect.provide(
+      Layer.effect(DecisionModel.DecisionModel, DecisionModel.make({ decide: () => Effect.never })),
+    ),
+  ),
+)

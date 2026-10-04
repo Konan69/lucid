@@ -99,8 +99,8 @@ const replayOne = Effect.fn('Signals.replayOne')(function* (
     })
   let ending: Signal
   if (
-    !(yield* canSee(thread.value, row.personId)) ||
-    (row.signal.deciderId !== null && !(yield* canSee(thread.value, row.signal.deciderId)))
+    !(yield* canSee(thread.value.id, row.personId)) ||
+    (row.signal.deciderId !== null && !(yield* canSee(thread.value.id, row.signal.deciderId)))
   )
     ending = stop()
   else {

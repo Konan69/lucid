@@ -143,13 +143,13 @@ export const reviewerLayer = Layer.effect(
           yield* Effect.logInfo('Action reviewed', {
             asked: answers.asked.probability,
             beyond: answers.beyond.probability,
-            consequence: answers.consequence.label,
+            contained: answers.consequence.probabilities.contained,
             effect: action.effect,
           })
           return Review.cases.Reviewed.make({
             asked: answers.asked.probability,
             beyond: answers.beyond.probability,
-            consequence: answers.consequence.label,
+            contained: answers.consequence.probabilities.contained,
           })
         },
         (effect) =>

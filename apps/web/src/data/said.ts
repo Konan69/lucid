@@ -57,6 +57,17 @@ export const said = {
     set(sayings.map((saying) => (saying.id === id ? { ...saying, leaving: true } : saying)))
     setTimeout(() => set(sayings.filter((saying) => saying.id !== id)), LEAVING_FOR_MS)
   },
+  /**
+   * Sends away the sentence a caller said under this key, when it is still showing. A sentence
+   * about something the Person can no longer see must not stay on screen: a notice names its
+   * Thread and offers to open it, and when access to that Thread is taken away the server stops
+   * sending the notice, so what was already said about it goes too.
+   */
+  withdraw: (key: string) => {
+    for (const saying of sayings) {
+      if (Option.isSome(saying.key) && saying.key.value === key) said.dismiss(saying.id)
+    }
+  },
 }
 
 /** Says one sentence, with somewhere to go from it; a caller key deduplicates the same event. */

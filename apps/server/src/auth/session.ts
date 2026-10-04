@@ -149,7 +149,7 @@ export const authenticateVivid = Effect.fn('Auth.authenticateVivid')(function* (
   const person = yield* findPerson(personId)
   if (Option.isNone(person))
     return yield* Effect.fail(new Forbidden({ message: 'Vivid has nobody to act for here' }))
-  if (!(yield* canSee(thread.value, person.value.id))) {
+  if (!(yield* canSee(thread.value.id, person.value.id))) {
     return yield* Effect.fail(new Forbidden({ message: 'Vivid has nobody to act for here' }))
   }
   const workspace = yield* workspaceIn(person.value.id, Option.fromNullOr(thread.value.companyId))
