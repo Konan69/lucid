@@ -1,7 +1,18 @@
-import { InvitationId, ThreadId, type Notification } from '@vivid/contracts'
+import { InvitationId, type Notification, type NotificationId } from '@vivid/contracts'
+import { Option } from 'effect'
 import { Bell, Check, Hand, Share2, UserPlus } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { change, live, LiveState, useLive } from '../data/live'
+import { change, live, LiveState, useLive, useLiveValue } from '../data/live'
+import {
+  everyNoticeRead,
+  noticeRows,
+  NoticeRow,
+  noticesRead,
+  noticeTrialNames,
+  noticeTrials,
+  type NoticeTrial,
+  type NoticeTrialName,
+} from '../data/notices'
 import { Route, router } from '../data/route'
 import { Button, IconButton } from '../ui/button'
 import { cn } from '../ui/cn'
@@ -11,6 +22,9 @@ import { PRESS } from './motion'
 
 const clock = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
 const monthDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
+
+/** Counts are written the way the Person's own locale writes them: "1,000", not "1000". */
+const count = new Intl.NumberFormat()
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
@@ -67,6 +81,9 @@ const QUIET = {
  */
 export function Notifications({ unread }: { unread: number }) {
   const [open, setOpen] = useState(false)
+  // Which worst-case list stands in for the live one. It is kept here, above the panel, so it
+  // outlasts closing and reopening the bell; a production build has no way to set it.
+  const [trial, setTrial] = useState<Option.Option<NoticeTrialName>>(Option.none())
   return (
     <Popover open={open} onOpenChange={setOpen}>
       {/* `relative` places the unread dot on the bell's own corner. */}
@@ -87,31 +104,113 @@ export function Notifications({ unread }: { unread: number }) {
         aria-label="Notifications"
         className="max-h-128 w-88 max-w-(--available-width)"
       >
-        <Panel onClose={() => setOpen(false)} />
+        <Panel onClose={() => setOpen(false)} trial={trial} />
+        {import.meta.env.DEV && <Trials trial={trial} onTry={setTrial} />}
       </PopoverContent>
     </Popover>
   )
 }
 
-/** The open panel: the count, the way to clear it, and the notices, newest first. */
-function Panel({ onClose }: { onClose: () => void }) {
-  const state = useLive(live.notifications)
-  const notices = LiveState.$is('Ready')(state) ? state.value.notifications : []
-  const unread = notices.filter((notice) => notice.readAt === null).length
-  // "3h" is counted from the moment the panel opened, read once: a render must not read the clock.
-  const [opened] = useState(() => Date.now())
+/**
+ * The switch between the live list and each worst-case one, in a development build only. It is
+ * inside the panel because a press anywhere outside closes the panel it is there to test, and it
+ * is plain on purpose: it is a tool beside the design, not part of it.
+ */
+function Trials({
+  trial,
+  onTry,
+}: {
+  trial: Option.Option<NoticeTrialName>
+  onTry: (next: Option.Option<NoticeTrialName>) => void
+}) {
+  return (
+    <footer className="flex shrink-0 flex-wrap gap-1 p-2 hairline-t" aria-label="Trial data">
+      <Button
+        size="xs"
+        variant="ghost"
+        aria-pressed={Option.isNone(trial)}
+        onClick={() => onTry(Option.none())}
+      >
+        Live
+      </Button>
+      {noticeTrialNames.map((name) => (
+        <Button
+          key={name}
+          size="xs"
+          variant="ghost"
+          aria-pressed={Option.contains(trial, name)}
+          onClick={() => onTry(Option.some(name))}
+        >
+          {name}
+        </Button>
+      ))}
+    </footer>
+  )
+}
 
-  /** Goes to what a notice is about, and marks it read on the way. */
-  function open(notice: Notification) {
-    void change((client) => client.ReadNotifications({ ids: [notice.id] }))
-    onClose()
+/** Shows these notices as read at once, sends that, and takes it back if the server refuses. */
+function read(ids: ReadonlyArray<NotificationId>) {
+  // Nothing unread is nothing to send; a request with no ids would also not mean "none".
+  if (ids.length === 0) return
+  const at = Date.now()
+  void change(
+    (client) => client.ReadNotifications({ ids }),
+    () => live.notifications.expect(noticesRead(ids, at)),
+  )
+}
+
+/** Marks every notice read, shown at once the same way. */
+function readAll() {
+  const at = Date.now()
+  void change(
+    (client) => client.ReadNotifications({}),
+    () => live.notifications.expect(everyNoticeRead(at)),
+  )
+}
+
+/**
+ * Goes to what a row is about and marks all of it read on the way. A Thread's row opens the
+ * Thread, where every one of its questions is answered, so one press reads every notice about
+ * it in one request. A notice about no Thread opens its invitation when it carries one.
+ */
+const visit = NoticeRow.$match({
+  Single: ({ notice }) => {
+    if (notice.readAt === null) read([notice.id])
     const invitation = INVITATION.exec(notice.body)
     if (invitation !== null && invitation[1] !== undefined) {
       router.go(Route.Invite({ id: InvitationId.make(invitation[1]) }))
-      return
     }
-    if (notice.threadId !== null) router.go(Route.Thread({ id: ThreadId.make(notice.threadId) }))
-  }
+  },
+  Grouped: ({ threadId, unread }) => {
+    read(unread)
+    router.go(Route.Thread({ id: threadId }))
+  },
+})
+
+/**
+ * The open panel: the count, the way to clear it, and a row for each place to go, newest first.
+ *
+ * A trial replaces both live lists at the point they are read, so a worst-case list is drawn by
+ * exactly the code the live one is. Its rows and "Mark all read" do nothing when pressed: its
+ * notices do not exist on the server, and a trial must never write.
+ */
+function Panel({ onClose, trial }: { onClose: () => void; trial: Option.Option<NoticeTrialName> }) {
+  const state = useLive(live.notifications)
+  const threads = useLiveValue(live.threads)
+  // "3h" is counted from the moment the panel opened, read once: a render must not read the clock.
+  const [opened] = useState(() => Date.now())
+  // The condition is on the build, so a production bundle drops the trials and their data.
+  const tried = import.meta.env.DEV
+    ? Option.map(trial, (name): NoticeTrial => noticeTrials[name](opened))
+    : Option.none<NoticeTrial>()
+  const shown = Option.getOrElse(tried, (): NoticeTrial => ({
+    notices: LiveState.$is('Ready')(state) ? state.value.notifications : [],
+    // Until the Thread list has answered, a row leads with its notice's own title.
+    threads: Option.match(threads, { onNone: () => [], onSome: (list) => list.threads }),
+  }))
+  const rows = noticeRows(shown.notices, shown.threads)
+  const unread = shown.notices.filter((notice) => notice.readAt === null).length
+  const trying = Option.isSome(tried)
 
   return (
     <>
@@ -119,65 +218,121 @@ function Panel({ onClose }: { onClose: () => void }) {
         <h2 className="text-label font-title text-ink">Notifications</h2>
         {unread > 0 && (
           <span className="rounded-full bg-primary px-1.5 text-meta font-title text-primary-foreground tabular-nums">
-            {unread}
+            {count.format(unread)}
           </span>
         )}
         <span className="flex-1" />
         {unread > 0 && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => void change((client) => client.ReadNotifications({}))}
-          >
+          <Button size="sm" variant="ghost" onClick={trying ? undefined : readAll}>
             Mark all read
           </Button>
         )}
       </header>
-      {notices.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="flex flex-col items-center gap-3 px-6 py-10 text-center">
           <Emblem hue="gray" size={36}>
             <Bell />
           </Emblem>
           <p className="max-w-56 text-label text-pretty text-ink-3" aria-live="polite">
-            {QUIET[state._tag]}
+            {trying ? QUIET.Ready : QUIET[state._tag]}
           </p>
         </div>
       ) : (
         <ul className="min-h-0 flex-1 overflow-y-auto p-1">
-          {notices.map((notice) => (
-            <li key={notice.id}>
-              <Notice notice={notice} now={opened} onOpen={() => open(notice)} />
-            </li>
-          ))}
+          {rows.map((row) => {
+            const face = faceOf(row)
+            return (
+              <li key={face.key}>
+                <Row
+                  face={face}
+                  now={opened}
+                  onOpen={() => {
+                    if (trying) return
+                    onClose()
+                    visit(row)
+                  }}
+                />
+              </li>
+            )
+          })}
         </ul>
       )}
     </>
   )
 }
 
+/** What a row says, whichever kind of row it is, so both are drawn on the same three edges. */
+interface Face {
+  /** Stable while notices arrive and are read: the Thread for a group, the notice for a single. */
+  readonly key: string
+  /** The Thread's title, or the notice's own when there is no Thread title to lead with. */
+  readonly heading: string
+  /** The notice the mark, the line and the time are taken from: the newest one. */
+  readonly notice: Notification
+  /**
+   * What the notice is, for someone who cannot see its mark, when the heading does not already
+   * say it: a row led by a Thread's title carries its kind only in the colour of an icon.
+   */
+  readonly spoken: Option.Option<string>
+  /** Whether the Thread is waiting on this Person now. */
+  readonly waiting: boolean
+  /** How many notices of the row are unread. */
+  readonly unread: number
+}
+
+const faceOf = NoticeRow.$match({
+  Single: ({ notice }): Face => ({
+    key: notice.id,
+    heading: notice.title,
+    notice,
+    spoken: Option.none(),
+    waiting: false,
+    unread: notice.readAt === null ? 1 : 0,
+  }),
+  Grouped: ({ threadId, title, newest, waiting, unread }): Face => ({
+    key: threadId,
+    heading: Option.getOrElse(title, () => newest.title),
+    notice: newest,
+    spoken: Option.map(title, () => newest.title),
+    waiting,
+    unread: unread.length,
+  }),
+})
+
 /**
- * One notice: its kind's mark, what happened, and how long ago. An unread one is said in the
- * title weight with the accent dot after its time; a read one steps back to the quieter ink, so
- * what is new is found without reading.
+ * One row: the newest notice's mark, where it leads (a Thread's title), and under it one line of
+ * what was last said, with what is unread at the trailing edge.
+ *
+ * The mark, the title and the time are on the same three edges in every row, so the time is
+ * alone at the end of the first line and nothing after it moves it: the unread dot and the count
+ * sit under it, at the end of the second line. That line is the one that gives way. A long title
+ * keeps its room beside "Yesterday, 11:42 PM", which a count on the first line took from it, and
+ * the count is never cut short. Both lines are one line each, so every row is the same height
+ * and a count that changes while the panel is open changes words, not layout.
+ *
+ * An unread row is said in the title weight; a read one steps back to the quieter ink, so what
+ * is new is found without reading. Several unread notices are one dot and "3 new", never three
+ * dots. Titles and bodies are other people's words in any script, so each is isolated with
+ * `bdi`: a right-to-left title reads correctly and still starts at the title edge.
  */
-function Notice({
-  notice,
+function Row({
+  face,
   now,
   onOpen,
 }: {
-  notice: Notification
+  face: Face
   /** The moment "3h ago" is counted from. */
   now: number
   onOpen: () => void
 }) {
-  const unread = notice.readAt === null
-  const kind = KIND[notice.kind]
+  const unread = face.unread > 0
+  const kind = KIND[face.notice.kind]
   return (
     <button
       type="button"
       onClick={onOpen}
       className={cn(
-        'flex w-full cursor-pointer gap-3 rounded-row p-2.5 text-left hover:bg-wash-hover',
+        'flex w-full cursor-pointer gap-3 rounded-row p-2.5 text-start hover:bg-wash-hover',
         PRESS,
       )}
     >
@@ -186,26 +341,38 @@ function Notice({
       </Emblem>
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
+          {/* The whole title is one press away in the Thread; until then a hover shows it. */}
           <span
+            title={face.heading}
             className={cn(
               'min-w-0 flex-1 truncate text-label',
               unread ? 'font-title text-ink' : 'text-ink-2',
             )}
           >
-            {notice.title}
+            <bdi>{face.heading}</bdi>
           </span>
           <time className="shrink-0 text-meta font-meta text-ink-3 tabular-nums">
-            {ago(notice.createdAt, now)}
+            {ago(face.notice.createdAt, now)}
           </time>
+        </span>
+        <span className="flex items-baseline gap-2 text-label text-ink-3">
+          {Option.isSome(face.spoken) && <span className="sr-only">{face.spoken.value}</span>}
+          {face.waiting && <span className="shrink-0 text-attention">Needs you</span>}
+          <span className="min-w-0 flex-1 truncate">
+            <bdi>{face.notice.body.replace(INVITATION, '')}</bdi>
+          </span>
+          {face.unread > 1 && (
+            <span className="shrink-0 text-meta font-meta text-ink-2 tabular-nums">
+              {count.format(face.unread)} new
+            </span>
+          )}
           {unread && (
             <i
+              role="img"
               aria-label="Unread"
               className="size-1.5 shrink-0 self-center rounded-full bg-primary"
             />
           )}
-        </span>
-        <span className="line-clamp-2 text-label text-pretty text-ink-3">
-          {notice.body.replace(INVITATION, '')}
         </span>
       </span>
     </button>
