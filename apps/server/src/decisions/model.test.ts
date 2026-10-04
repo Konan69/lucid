@@ -7,6 +7,7 @@ import {
   decide,
   decideWithin,
   decisionConfigured,
+  DECISION_OUTAGE_MINIMUM_MILLIS,
   DecisionUnavailable,
   decisionModelLayer,
   GATEWAY_URL,
@@ -254,9 +255,9 @@ it.effect('shares provider backoff and admits only one successful recovery probe
   }),
 )
 
-/** One short optional timeout cannot penalize every tenant. Two consecutive stalls open
- * admission; the recovery probe is capped at two seconds even for a ten-second caller. */
-it.effect('requires two timeouts and caps a failed recovery probe at two seconds', () => {
+/** One short optional timeout cannot penalize every tenant. Two calibrated stalls open
+ * admission; the recovery probe has its own 2500ms budget even for a short caller. */
+it.effect('requires calibrated timeouts and gives a recovery probe its own budget', () => {
   let requests = 0
   const transport = Layer.succeed(
     HttpClient.HttpClient,
@@ -267,15 +268,19 @@ it.effect('requires two timeouts and caps a failed recovery probe at two seconds
   )
   return Effect.gen(function* () {
     for (const attempt of [1, 2]) {
-      const pending = yield* decideWithin(definition, 'stall', '100 millis').pipe(Effect.forkChild)
-      yield* TestClock.adjust('100 millis')
+      const pending = yield* decideWithin(definition, 'stall', DECISION_OUTAGE_MINIMUM_MILLIS).pipe(
+        Effect.forkChild,
+      )
+      yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
       expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
       expect(requests).toBe(attempt)
     }
     expect((yield* Effect.flip(decide(definition, 'blocked'))).reason).toBe('Backoff')
     yield* TestClock.adjust('30 seconds')
-    const probe = yield* decide(definition, 'ten second caller').pipe(Effect.forkChild)
-    yield* TestClock.adjust('2 seconds')
+    const probe = yield* decideWithin(definition, 'short caller', '100 millis').pipe(
+      Effect.forkChild,
+    )
+    yield* TestClock.adjust('2500 millis')
     expect((yield* Effect.flip(Fiber.join(probe))).reason).toBe('TimedOut')
     expect(requests).toBe(3)
     expect((yield* Effect.flip(decide(definition, 'fresh window'))).reason).toBe('Backoff')
@@ -448,17 +453,19 @@ it.effect('concurrent timeouts do not open admission without a later attempt', (
     yield* Effect.gen(function* () {
       const burst = yield* Effect.forEach(
         [1, 2],
-        () => Effect.flip(decideWithin(definition, 'burst', '100 millis')),
+        () => Effect.flip(decideWithin(definition, 'burst', DECISION_OUTAGE_MINIMUM_MILLIS)),
         { concurrency: 'unbounded' },
       ).pipe(Effect.forkChild)
       yield* Deferred.await(started)
-      yield* TestClock.adjust('100 millis')
+      yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
       expect((yield* Fiber.join(burst)).map((error) => error.reason)).toEqual([
         'TimedOut',
         'TimedOut',
       ])
-      const later = yield* decideWithin(definition, 'later', '100 millis').pipe(Effect.forkChild)
-      yield* TestClock.adjust('100 millis')
+      const later = yield* decideWithin(definition, 'later', DECISION_OUTAGE_MINIMUM_MILLIS).pipe(
+        Effect.forkChild,
+      )
+      yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
       expect((yield* Effect.flip(Fiber.join(later))).reason).toBe('TimedOut')
       expect(calls).toBe(3)
       expect((yield* Effect.flip(decide(definition, 'gated'))).reason).toBe('Backoff')
@@ -490,10 +497,12 @@ it.effect('expired suspicion cannot corroborate a later isolated timeout', () =>
   return Effect.gen(function* () {
     for (const attempt of [1, 2]) {
       if (attempt === 2) yield* TestClock.adjust('30 seconds')
-      const pending = yield* decideWithin(definition, 'isolated stall', '100 millis').pipe(
-        Effect.forkChild,
-      )
-      yield* TestClock.adjust('100 millis')
+      const pending = yield* decideWithin(
+        definition,
+        'isolated stall',
+        DECISION_OUTAGE_MINIMUM_MILLIS,
+      ).pipe(Effect.forkChild)
+      yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
       expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
     }
     expect((yield* decide(definition, 'reachable')).answers.applies.probability).toBe(0.7)
@@ -525,8 +534,10 @@ it.effect('a success between timeouts resets the evidence', () => {
   return Effect.gen(function* () {
     for (const attempt of [1, 2]) {
       void attempt
-      const pending = yield* decideWithin(definition, 'stall', '100 millis').pipe(Effect.forkChild)
-      yield* TestClock.adjust('100 millis')
+      const pending = yield* decideWithin(definition, 'stall', DECISION_OUTAGE_MINIMUM_MILLIS).pipe(
+        Effect.forkChild,
+      )
+      yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
       expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
       expect((yield* decide(definition, 'success')).answers.applies.probability).toBe(0.7)
     }
@@ -576,4 +587,82 @@ it.effect.each([401, 403])(
       ),
     )
   },
+)
+
+/** Repeated exhausted discovery budgets cannot become evidence about all tenants.
+ * Only the caller's deadline is crossed; a subsequent healthy request still runs. */
+it.effect('short-budget timeouts do not corroborate process-wide outage', () => {
+  let calls = 0
+  const transport = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      calls += 1
+      if (calls <= 3) return Effect.never
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            JSON.stringify({
+              model: 'jev-latest',
+              answers: { applies: { type: 'noul', noul: 0.7 } },
+            }),
+          ),
+        ),
+      )
+    }),
+  )
+  return Effect.gen(function* () {
+    for (const attempt of [1, 2, 3]) {
+      const pending = yield* decideWithin(definition, 'short remainder', '850 millis').pipe(
+        Effect.forkChild,
+      )
+      yield* TestClock.adjust('850 millis')
+      expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
+      expect(calls).toBe(attempt)
+    }
+    expect((yield* decide(definition, 'healthy')).answers.applies.probability).toBe(0.7)
+    expect(calls).toBe(4)
+  }).pipe(Effect.provide(configuredGateway(transport)))
+})
+
+/** A recovery request admitted by a short-budget caller must have enough time to
+ * establish reachability; the caller's budget cannot cause perpetual backoff. */
+it.effect('a healthy probe outlives the initiating caller budget', () =>
+  Effect.gen(function* () {
+    let calls = 0
+    const started = yield* Deferred.make<void>()
+    const release = yield* Deferred.make<void>()
+    const transport = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make(
+        Effect.fn('Test.probeBudget')(function* (request) {
+          calls += 1
+          if (calls === 1)
+            return HttpClientResponse.fromWeb(request, new Response('{}', { status: 503 }))
+          yield* Deferred.succeed(started, undefined)
+          yield* Deferred.await(release)
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              JSON.stringify({
+                model: 'jev-latest',
+                answers: { applies: { type: 'noul', noul: 0.7 } },
+              }),
+            ),
+          )
+        }),
+      ),
+    )
+    yield* Effect.gen(function* () {
+      yield* Effect.flip(decide(definition, 'outage'))
+      yield* TestClock.adjust('30 seconds')
+      const pending = yield* decideWithin(definition, 'probe', '100 millis').pipe(Effect.forkChild)
+      yield* Deferred.await(started)
+      yield* TestClock.adjust('500 millis')
+      yield* Deferred.succeed(release, undefined)
+      expect((yield* Fiber.join(pending)).answers.applies.probability).toBe(0.7)
+      expect((yield* decide(definition, 'recovered')).answers.applies.probability).toBe(0.7)
+      expect(calls).toBe(3)
+    }).pipe(Effect.provide(configuredGateway(transport)))
+  }),
 )

@@ -222,10 +222,11 @@ const orderTools = Effect.fn('Connections.orderTools')(function* <
  * every classification group and relevance share it, including queued Integrations.
  * Mandatory store reads retain their normal baseline semantics. */
 const FIND_TOOLS_BUDGET_MILLIS = 2000
-/** Gateway twenty-question warm medians measured 650–820ms. Below 850ms, relevance
- * lacks even typical headroom: skip it silently instead of manufacturing timeout evidence
- * for the outage gate. This is optional ordering, never evidence about provider health. */
-const RELEVANCE_MINIMUM_MILLIS = 850
+/** Gateway, jev-latest, 4 Oct 2026: the earlier relevance warm maximum was
+ * 1389ms; round-five's first cohort measured 691ms. 1800ms retains 411ms (30%)
+ * above the larger observed maximum. Shorter remainders skip optional ordering
+ * silently; timeout evidence is separately calibrated by the decision gate. */
+const RELEVANCE_MINIMUM_MILLIS = 1800
 
 /** Discovery removes shared writes before any tool enters model context. */
 export const findTools = Effect.fn('Connections.findTools')(function* (

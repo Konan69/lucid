@@ -91,9 +91,15 @@ const nonEventReasons = new Set<DecisionUnavailable['reason']>([
  * records suspicion and only a later independently admitted timeout closes admission. Thus a single
  * 1.5-second optional request cannot impose a 30-second penalty on every tenant. */
 const DECISION_BACKOFF = '30 seconds'
-/** Recovery is optional work even for a ten-second trust-loop caller. Two seconds bounds
- * the sole probe; shorter caller budgets remain authoritative. */
-const RECOVERY_PROBE_BUDGET = '2 seconds'
+/** Gateway jev-latest, 4 Oct 2026, round-five twenty-question warm maximum:
+ * 1773ms (effects), versus 1389ms in the earlier relevance cohort. 2200ms adds
+ * 427ms (24%) above the larger observed sample. A shorter timeout is evidence
+ * only about that caller's optional-work budget, never process-wide health. */
+export const DECISION_OUTAGE_MINIMUM_MILLIS = 2200
+/** Recovery owns a 2500ms budget independently of the caller's remaining time.
+ * This leaves 727ms (41%) above the measured 1773ms warm maximum and exceeds
+ * the calibrated outage-evidence floor; a short discovery cannot starve recovery. */
+const RECOVERY_PROBE_BUDGET = '2500 millis'
 /** Suspicion is weak evidence from one bounded attempt. Thirty seconds matches the outage
  * window: an isolated slow call cannot poison a later, otherwise independent interaction. */
 const DECISION_SUSPICION_MILLIS = 30_000
@@ -123,6 +129,7 @@ const Outcome = Schema.TaggedUnion({
   Success: {},
   Outage: {},
   TimedOut: {},
+  CallerLocalTimeout: {},
   RequestFailure: {},
   AuthenticationFailure: {},
   Cancelled: {},
@@ -146,7 +153,7 @@ class AttemptUnavailable extends Schema.TaggedError<AttemptUnavailable>()(
 /** A timeout carries no HTTP classification: silence is weaker evidence than an outage. */
 class AttemptTimedOut extends Schema.TaggedError<AttemptTimedOut>()(
   'DecisionAttemptTimedOut',
-  {},
+  { budgetMillis: Schema.Number },
   { title: 'Decision attempt timed out' },
 ) {}
 
@@ -269,6 +276,7 @@ const settleNormal = (
     RequestFailure: () => [Option.none(), Availability.cases.Ready.make({})],
     AuthenticationFailure: () => authenticationSettlement(now),
     Cancelled: () => [Option.none(), current],
+    CallerLocalTimeout: () => [Option.none(), current],
   })
 }
 
@@ -290,6 +298,7 @@ const settleProbe = (outcome: typeof Outcome.Type, now: number): Settlement => {
     RequestFailure: () => closed,
     Outage: () => cooling,
     TimedOut: () => cooling,
+    CallerLocalTimeout: () => cooling,
     Cancelled: () => cooling,
     AuthenticationFailure: () => authenticationSettlement(now),
   })
@@ -323,7 +332,10 @@ const failedOutcome = (
 ): typeof Outcome.Type => {
   const error = Cause.findErrorOption(cause)
   if (Option.isNone(error)) return Outcome.cases.Cancelled.make({})
-  if (error.value instanceof AttemptTimedOut) return Outcome.cases.TimedOut.make({})
+  if (error.value instanceof AttemptTimedOut)
+    return error.value.budgetMillis < DECISION_OUTAGE_MINIMUM_MILLIS
+      ? Outcome.cases.CallerLocalTimeout.make({})
+      : Outcome.cases.TimedOut.make({})
   return FailureClassification.match(error.value.classification, {
     Outage: (): typeof Outcome.Type => Outcome.cases.Outage.make({}),
     RequestSpecific: (): typeof Outcome.Type => Outcome.cases.RequestFailure.make({}),
@@ -447,9 +459,11 @@ export const decisionModelLayer = Layer.unwrap(
  * decisions are off, not an event. A provider failure, an encoding failure and a defect inside
  * the provider call share the `Provider` reason; a defect is mapped here so that no caller's
  * cache or request can die on a library fault. rc.116 DecisionModel.decide preserves schema
- * encoding services in its context. Transport, HTTP 429/5xx and later independent timeouts open outage backoff; authentication
- * rejection opens its own five-minute window with one error. Suspect expires after thirty seconds; request-specific
- * failures never change other callers' admission. The shared gate rejects outage traffic immediately as
+ * encoding services in its context. Transport, HTTP 429/5xx and later independent
+ * timeouts with a calibrated budget open outage backoff; shorter timeouts remain
+ * caller-local. Authentication rejection opens a five-minute window with one error.
+ * Suspect expires after thirty seconds; request-specific failures never change
+ * other callers' admission. The shared gate rejects outage traffic immediately as
  * Backoff, silently, with one recovery probe after thirty seconds. Admission and settlement
  * are interruption-safe; only the provider attempt is interruptible. Latency and provider-reported
  * usage are logged for actual attempts, with one log on each backoff open/close transition.
@@ -481,6 +495,7 @@ export const decideWithin = <
           : yield* admit(state)
       if (Admission.guards.Backoff(admission))
         return yield* new DecisionUnavailable({ reason: 'Backoff' })
+      const attemptBudget = Admission.guards.Probe(admission) ? RECOVERY_PROBE_BUDGET : budget
       const start = yield* Clock.currentTimeMillis
       const exit = yield* Effect.exit(
         restore(
@@ -506,13 +521,13 @@ export const decideWithin = <
                   }),
             ),
             Effect.timeoutOrElse({
-              duration: Admission.guards.Probe(admission)
-                ? Duration.min(
-                    Duration.fromInputUnsafe(budget),
-                    Duration.fromInputUnsafe(RECOVERY_PROBE_BUDGET),
-                  )
-                : budget,
-              orElse: () => Effect.fail(new AttemptTimedOut({})),
+              duration: attemptBudget,
+              orElse: () =>
+                Effect.fail(
+                  new AttemptTimedOut({
+                    budgetMillis: Duration.toMillis(Duration.fromInputUnsafe(attemptBudget)),
+                  }),
+                ),
             }),
           ),
         ),
