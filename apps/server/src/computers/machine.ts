@@ -35,9 +35,6 @@ const lifecycleStates = {
 export const MachineState = Schema.TaggedUnion(lifecycleStates)
 export type MachineState = typeof MachineState.Type
 
-/** Docker's healthy machine facts are also the transport's Running state. */
-export type RunningMachine = typeof ComputerState.cases.Running.Type
-
 /** Missing provider configuration is distinct from a failed configured provider. */
 export class MachineUnavailable extends Schema.TaggedError<MachineUnavailable>()(
   'MachineUnavailable',
@@ -129,7 +126,7 @@ export class MachinePersistenceFailed extends Schema.TaggedError<MachinePersiste
   { title: 'MachinePersistenceFailed' },
 ) {}
 
-/** Unsupported local capabilities are explicit; the offline provider never imitates Boat results. */
+/** Unsupported provider capabilities are explicit; Boat uses its native viewer rather than RFB relay. */
 export class MachineCapabilityUnavailable extends Schema.TaggedError<MachineCapabilityUnavailable>()(
   'MachineCapabilityUnavailable',
   { capability: Schema.Literals(['relay', 'desktop', 'browser']) },

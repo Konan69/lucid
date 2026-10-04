@@ -1,30 +1,33 @@
-# Computer local provider
+# Boat Computer provider
 
-`Machine` owns Docker lifecycle, commands, browser steps and private screen authority. `computerStoreLayer` owns the Person's Computer and approvals; `computerHandlers` expose Vivid's calls. `computerScreenRoutes` accepts only the exact `/api/computer/screen/websockify` WebSocket upgrade, authenticates its session cookie and browser Origin, and proxies only that Person's running machine. Every plain HTTP request beneath `/api/computer/screen/` returns 404, including HTML and JavaScript assets. `Running.screenAddress` is that WebSocket path alone; provider hosts, ports and credentials never enter Running state.
+Boat is the only Computer provider. `Machine` owns its lifecycle, commands, browser input and
+native desktop actions. `computerStoreLayer` owns Person scope, takeover and approvals;
+`computerHandlers` exposes the shared RPC contract. No provider configured means `Unavailable`.
 
-Configure the server:
+Configure the local server with server-only credentials and a prepared template:
 
 ```dotenv
-VIVID_COMPUTER_PROVIDER=docker
-VIVID_COMPUTER_IMAGE=vivid-computer:test
+VIVID_COMPUTER_PROVIDER=boat
+VIVID_BOAT_TEMPLATE=vivid-computer-20261004
+VIVID_BOAT_SIZE=default
 ```
 
-Build with `docker build --tag vivid-computer:test infra/computer`. Docker must be available to the server. No provider configured means `Unavailable`.
+`VIVID_BOAT_API_KEY` is required and stays secret. `VIVID_BOAT_ORG` is optional: omit it for the
+key's personal wallet; set it to the paying organization when using an organization wallet.
+`VIVID_BOAT_LIFETIME_SECONDS` is optional and defaults to 3600; 0 disables automatic archive.
 
-Each Computer has its own bridge network with inter-container communication disabled, a durable home volume, and a loopback-only RFB WebSocket port. A random 256-bit credential rotates on every container start. It travels on stdin to a mode-0600 tmpfs file, stays redacted in provider memory, and is supplied only by the server proxy's Authorization header. Direct WebSocket upgrades without it are refused. The container has no HTTP static server or noVNC assets. Credentials never enter screen URLs or client responses. A server restart can recover provider authority from the container's tmpfs state. The Docker daemon and installation administrator remain trusted.
+Boat supplies the real desktop, Chrome and native input driver. Running state carries a short-lived,
+token-gated Viewer address; provider keys never enter client state or model context. Browser and
+desktop writes pass the same Gate and takeover checks. Uncertain commands are never retried.
+Durable bindings reconcile creation, archive and resume without creating replacement machines.
 
-The proxy presents the credential during its server-side WebSocket upgrade to websockify, before upgrading the browser connection. Websockify then connects to x11vnc on container loopback `127.0.0.1:5900`. That RFB endpoint is not published and offers only RFB None security: the browser completes the protocol handshake without a password or challenge. The app uses its own bundled noVNC client; no HTML or JavaScript from the Computer is proxied or executed on the app origin. The stream carries only RFB protocol data. Authentication protects the published WebSocket endpoint, not the Person's shell from its own desktop.
+`infra/computer/apps.json` is the sole release app set. `prepare.py` installs and verifies it once,
+configures the native Xfce launcher with browser, terminal and files pinned, and publishes a Boat
+named snapshot. New Computers restore that template; no first-use package install is performed.
+`GetComputerApps` probes the running machine's catalogue. Only observed plain app names enter
+response context; absent machines and failed probes make no installed-app claim.
 
-Shell source and browser step JSON travel on stdin, absent from host process argv and Docker exec metadata. A process spawn failure is definite; a transport failure or client deadline after spawn produces `MachineExecutionUnknown` and must not be retried automatically. In-container timeouts bound execution without stopping the desktop. Running facts are cached for actions, invalidated on failure or lifecycle change; plain `GetComputer` still reconciles with Docker.
-
-Browser keys permit navigation/editing keys, a printable character, Shift plus a printable character, Control plus A/C/V/F, and Control+Shift+V. Window/tab closing shortcuts are refused. Chromium’s [background keep-alive switch](https://chromium.googlesource.com/chromium/src/+/e570b3f73e37209ce84c2443f9e2e9976d172cba/chrome/browser/background/background_mode_manager.cc) preserves CDP when the last window closes; the driver then creates a page. Explicit stop still closes Chromium and flushes the profile. The driver retains the newest 50 screenshots.
-
-The namespace firewall blocks private, loopback, link-local and reserved IPv4 destinations, permits public IPv4, and drops IPv6. Only the internal desktop/CDP loopback ports and queries to Docker’s embedded DNS resolver are excepted. Public proxies/tunnels remain public destinations: this is address isolation, not application-level filtering.
-
-Accepted limits of this local provider:
-
-- The home volume has no quota.
-- The shell and browser share one uid, so a command can read the browser profile and in-container provider state.
-- Chromium runs without its own sandbox inside the container. The non-root user, read-only root, dropped capabilities, no-new-privileges, resource limits and network guard form the installation boundary.
-
-Tests opt in with `VIVID_TEST_DOCKER=1`. Store and authenticated screen tests additionally require `VIVID_TEST_DATABASE_URL=postgres://vivid:vivid@127.0.0.1:55440/vivid_test`. They clean up their exact container, network and home-volume names.
+Opt-in live proofs use `VIVID_TEST_BOAT_LIVE=1` and `VIVID_LIVE_THREAD_COMPUTER=1`, respectively.
+Database authority must come from `VIVID_TEST_DATABASE_URL` for an isolated disposable database.
+Fixture cleanup registers before creation and deletes only its captured provider id using Boat's
+exact-id confirmation header. Owner machines are never fixtures.

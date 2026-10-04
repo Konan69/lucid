@@ -2,6 +2,8 @@
 
 2026-10-03: The Boat implementation and real-service proof below supersede the earlier Grok Bot mapping; runtime placement, external state sync, egress through a Person’s device and takeover remain planned. Provider prices/specifications record the earlier research, not a fresh quote; current status is in [docs/14](14-product-feature-set-and-grok-bot-parity.md).
 
+2026-10-04: Boat is the only Computer provider; the local Docker desktop stand-in and its image are removed.
+
 ## Thesis
 
 From a public thread, 31 August 2026, answering the question of where an assistant's work should run:
@@ -205,14 +207,12 @@ worked on the real image. Vivid independently reads the exact field value afterw
 an unconfirmed replacement, without retrying input. Clearing may read back as the driver's
 null empty value. Driver delivery receipts alone never establish the intended result.
 
-Running state distinguishes `screen: Relay` (offline Docker) from `screen: Viewer` (Boat's
-short-lived token-gated streaming page). `GetComputer` issues fresh viewer authority. Clients
+Running state uses `screen: Viewer` (Boat's short-lived token-gated streaming page). `GetComputer` issues fresh viewer authority. Clients
 must refresh it before expiry and use a sandboxed frame. The API key remains server-only.
 Desktop actions use the same Gate and takeover recheck as browser actions: Look, Move, Scroll
 and Wait are reads; Click, Drag, Type and Press follow the existing write policy. The runtime's
 `use_desktop` returns real image content through Flue's public sandbox-tool API, alongside
-bounded human-readable metadata. Docker remains an offline stand-in and explicitly refuses
-desktop actions; it supports the expanded browser action vocabulary.
+bounded human-readable metadata. Boat supports browser and native desktop actions.
 
 Fake HTTP integration tests exercise durable allocation recovery, restart/resume, gated viewer
 issuance, native tools, response decoding, private input transport and uncertain-command handling.
