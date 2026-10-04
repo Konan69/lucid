@@ -66,8 +66,15 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
       const now = yield* Clock.currentTimeMillis
       if (now - row.requestedAt > 23 * 60 * 60_000)
         return yield* Effect.fail(new MachineCreationUnresolved({ key }))
-      const receipt = yield* api.createMachine(row.request, row.intent)
-      row = yield* saved.bind(key, row.intent, receipt.sandbox.id)
+      // An installation with a machine of its own binds to it; nothing is created or paid for.
+      const id = yield* Option.match(api.adopt, {
+        onSome: Effect.succeed,
+        onNone: () =>
+          api
+            .createMachine(row.request, row.intent)
+            .pipe(Effect.map((receipt) => receipt.sandbox.id)),
+      })
+      row = yield* saved.bind(key, row.intent, id)
     }
     const identity = yield* bound(key)
     let record = (yield* api.get(identity.id)).sandbox
