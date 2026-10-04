@@ -6,16 +6,19 @@ import { Schema } from 'effect'
  * A client catches such an error so the Person keeps a usable screen (`ui/Recover.tsx` on each
  * surface), which also means nobody else ever hears of it. This is the report it sends, so the
  * failure lands in the server's log, the one place that is read. It carries the error and where in
- * the tree it happened, never what the Person wrote or was shown: nothing here is taken from
- * a Thread.
+ * the tree it happened. It takes nothing from a Thread on purpose, but an error's own message is
+ * whatever the code that threw it wrote, so a report is treated as possibly holding what was on
+ * screen: it goes to the server's log and nowhere else.
  *
  * Every field is bounded, because the sender is a client that has just failed and the route takes
  * no session (a screen can break before anyone signs in). A client cuts each text to its limit
- * before sending (`cutFault`), so an honest report is never refused for its length.
+ * before sending (`cutFault`). The limits are counted in characters and the server caps the body
+ * in bytes, at several times what these limits come to, so an honest report is not refused for
+ * its size.
  */
 
 /** The longest stack or component trace kept; enough for the frames that matter. */
-export const FAULT_TRACE_LIMIT = 12_000
+export const FAULT_TRACE_LIMIT = 8000
 const FAULT_LINE_LIMIT = 2000
 const FAULT_BUILD_LIMIT = 300
 

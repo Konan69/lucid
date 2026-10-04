@@ -45,7 +45,11 @@ export class Recover extends Component<Props, State> {
    * is reported to the server's log as it is caught (`data/fault.ts`).
    */
   override componentDidCatch(error: Error, info: ErrorInfo) {
-    reportFault(error, info.componentStack === undefined ? null : info.componentStack)
+    // React's types promise an `Error`, but it hands over whatever was thrown, unchanged.
+    reportFault(
+      error instanceof Error ? error : new Error(String(error)),
+      info.componentStack === undefined ? null : info.componentStack,
+    )
   }
 
   readonly again = () => this.setState({ broken: false })
