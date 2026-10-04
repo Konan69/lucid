@@ -18,7 +18,8 @@ import { personRequest, type PersonRequest } from './request.ts'
 export const INPUT_CHARACTERS = 12_000
 
 /**
- * How long an action waits for its review. docs/22 gave the reviewer ten seconds, taken from Grok
+ * How long an action waits for its review, from the first read of the request to the answer.
+ * docs/22 gave the reviewer ten seconds, taken from Grok
  * Bot's Auto-review. Vivid's policy differs: an unreviewed write runs (`policy.ts`), so a slow
  * provider that still answers would hold every write on a Person's own Integration for up to ten
  * seconds where switching decisions off would run it at once. Three seconds is several times the
@@ -178,6 +179,10 @@ export const reviewerLayer = Layer.effect(
                 : Effect.logWarning('Action unreviewed', { reason: error.reason })
               ).pipe(Effect.as(Review.cases.Unreviewed.make({}))),
             ),
+            // One deadline for reading the request and asking: a slow history read must not
+            // add its own five seconds in front of the decision's budget.
+            Effect.timeoutOption(REVIEW_BUDGET),
+            Effect.map(Option.getOrElse(() => Review.cases.Unreviewed.make({}))),
           ),
       ),
     })

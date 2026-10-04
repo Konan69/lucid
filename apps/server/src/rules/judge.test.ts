@@ -162,12 +162,16 @@ it.effect('provider failure preserves known Company prohibitions in an uncertain
   )
 })
 
-it.effect('ten-second timeout asks without a retry', () => {
+it.effect('a stalled judgment is not judged at three seconds, without a retry', () => {
   let calls = 0
   return Effect.gen(function* () {
     const judge = yield* RuleJudge
     const pending = yield* Effect.result(judge.judge(action, [rule])).pipe(Effect.forkChild)
-    yield* TestClock.adjust('10 seconds')
+    // One millisecond short of the budget the judgment is still waiting; at the budget it fails.
+    yield* TestClock.adjust('2999 millis')
+    expect(calls).toBe(1)
+    expect(pending.pollUnsafe()).toBeUndefined()
+    yield* TestClock.adjust('1 millis')
     const result = yield* Fiber.join(pending)
     expect(result._tag).toBe('Failure')
     expect(calls).toBe(1)

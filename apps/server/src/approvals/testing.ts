@@ -12,6 +12,7 @@ import * as Ref from 'effect/Ref'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import * as Stream from 'effect/Stream'
+import { HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 import {
   ActionTarget,
   ConnectionId,
@@ -46,8 +47,8 @@ import { Changes, type Topic } from '../live/changes.ts'
 import { Notifier, type Notice } from '../notifications/notifier.ts'
 import { RuleJudge, RulesNotJudged } from '../rules/judge.ts'
 import { ruleStoreLayer } from '../rules/store.ts'
-import { Conversation, type Delivery } from '../threads/conversation.ts'
-import { threads } from '../threads/tables.ts'
+import { Conversation, StoredRunOrigin, type Delivery } from '../threads/conversation.ts'
+import { runs, threads } from '../threads/tables.ts'
 import { ActionOutcome, ActionRunner, gateLayer } from './gate.ts'
 import { approvalStoreLayer } from './store.ts'
 
@@ -354,3 +355,80 @@ export const commandAction = ProposedAction.make({
   target: ActionTarget.cases.Command.make({ command: 'ls' }),
 })
 export const JudgmentMode = Judgment
+
+// Run records and Flue history, for tests of what the reviewer is shown as the Person's request.
+
+const encodeOrigin = Schema.encodeSync(StoredRunOrigin)
+
+export interface RecordedRun {
+  readonly id: string
+  readonly personId: PersonId
+  readonly origin: StoredRunOrigin
+  readonly working: boolean
+}
+
+/** Run rows as admission leaves them: the record the reviewer's attribution rests on. */
+export const recordRuns = Effect.fn('TrustTest.recordRuns')(function* (
+  threadId: ThreadId,
+  recorded: ReadonlyArray<RecordedRun>,
+  after = 0,
+) {
+  const database = yield* Database
+  yield* database.run(
+    database.insert(runs).values(
+      recorded.map((run, index) => ({
+        id: testRunId(threadId, run.id),
+        threadId,
+        personId: run.personId,
+        turn: after + index + 1,
+        origin: encodeOrigin(run.origin),
+        state: run.working ? 'working' : 'completed',
+        startedAt: index + 1,
+        admittedAt: index + 1,
+      })),
+    ),
+  )
+})
+
+/** A test Run id, or the real derived id when the name is already one (an answer's Run). */
+export const testRunId = (threadId: ThreadId, name: string) =>
+  RunId.make(name.startsWith('sub_ik_') ? name : `${threadId}-${name}`)
+
+/** One finished text part, as Flue's history holds a message's words. */
+export const textPart = (value: string) => [{ type: 'text', text: value, state: 'done' }]
+
+/** A delivery as Flue's history projects it: a signal carries its tag, a private turn none. */
+export const delivery = (threadId: ThreadId, run: string, tagName: string | null, value: string) =>
+  tagName === null
+    ? {
+        role: 'user',
+        purpose: 'user',
+        submissionId: testRunId(threadId, run),
+        parts: textPart(value),
+      }
+    : {
+        role: 'user',
+        purpose: 'dispatch',
+        submissionId: testRunId(threadId, run),
+        signal: { tagName, attributes: { from: 'Somebody' } },
+        parts: textPart(value),
+      }
+
+export const history = (messages: ReadonlyArray<unknown>, settled: ReadonlyArray<string> = []) => ({
+  read: () =>
+    Effect.succeed(
+      HttpClientResponse.fromWeb(
+        HttpClientRequest.get('http://runtime.test/agents/vivid/thread?view=history'),
+        new Response(
+          JSON.stringify({
+            v: 1,
+            messages,
+            settlements: settled.map((id) => ({ submissionId: id, outcome: 'completed' })),
+          }),
+          {
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
+      ),
+    ),
+})
