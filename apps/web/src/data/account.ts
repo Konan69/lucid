@@ -236,11 +236,26 @@ export const signOutDevice = (device: SignedInDevice) =>
 /** Signs out everywhere except here. */
 export const signOutElsewhere = () => post('revoke-other-sessions', {})
 
+/** What Better Auth answers when a signed-in Person claims a waiting code: the code it bound. */
+const ClaimedCode = Schema.Struct({ user_code: Schema.String })
+
+/**
+ * Binds a waiting code to the Person signed in here. Better Auth 1.7.5 refuses to approve or deny
+ * a code no session has claimed (`DEVICE_CODE_NOT_CLAIMED`, `plugins/device-authorization/routes.mjs`):
+ * the claim is its proof that the Person deciding is the one who opened the code, so it comes
+ * first, in the same browser, and the decision follows. Before this the web sent the decision
+ * alone and every pairing was refused while the device waited out its code.
+ */
+const claimDevice = (userCode: string) =>
+  read(`device?user_code=${encodeURIComponent(userCode)}`, ClaimedCode)
+
 /** Lets a device that is waiting with this code sign in as the Person approving it. */
-export const approveDevice = (userCode: string) => post('device/approve', { userCode })
+export const approveDevice = (userCode: string) =>
+  Effect.andThen(claimDevice(userCode), post('device/approve', { userCode }))
 
 /** Tells a waiting device it will not be signed in. */
-export const denyDevice = (userCode: string) => post('device/deny', { userCode })
+export const denyDevice = (userCode: string) =>
+  Effect.andThen(claimDevice(userCode), post('device/deny', { userCode }))
 
 /**
  * The session lives in a cookie the live socket read when it opened, so a change of session means
