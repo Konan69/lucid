@@ -184,7 +184,17 @@ export const reviewerLayer = Layer.effect(
             // One deadline for reading the request and asking: a slow history read must not
             // add its own five seconds in front of the decision's budget.
             Effect.timeoutOption(REVIEW_BUDGET),
-            Effect.map(Option.getOrElse(() => Review.cases.Unreviewed.make({}))),
+            Effect.flatMap(
+              Option.match({
+                onSome: (review) => Effect.succeed(review),
+                // The deadline is a real event (history or the provider was slow), so it gets
+                // the same one line a failed decision does.
+                onNone: () =>
+                  Effect.logWarning('Action unreviewed', { reason: 'Deadline' }).pipe(
+                    Effect.as(Review.cases.Unreviewed.make({})),
+                  ),
+              }),
+            ),
           ),
       ),
     })
