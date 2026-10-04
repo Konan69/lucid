@@ -1,5 +1,6 @@
 import { expect, it } from '@effect/vitest'
 import { Effect, Fiber, Layer } from 'effect'
+import { unconfiguredDecisionLayer } from '../decisions/model.ts'
 import { ScriptedAnswer } from '../decisions/testing.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { AiError, DecisionModel } from 'effect/unstable/ai'
@@ -157,3 +158,41 @@ it.effect('ten-second classification timeout retains write', () => {
     ),
   )
 })
+
+/** A failed cache exit is a temporary backoff, not a day-long mutation judgment. */
+it.effect('failure retries after one minute and then retains the recovered answer', () => {
+  let calls = 0
+  return Effect.gen(function* () {
+    const effects = yield* ToolEffects
+    expect(yield* effects.classify(request)).toBe('write')
+    expect(yield* effects.classify(request)).toBe('write')
+    expect(calls).toBe(1)
+    yield* TestClock.adjust('1 minute')
+    expect(yield* effects.classify(request)).toBe('read')
+    expect(calls).toBe(2)
+    yield* TestClock.adjust('1 minute')
+    expect(yield* effects.classify(request)).toBe('read')
+    expect(calls).toBe(2)
+  }).pipe(
+    Effect.provide(
+      provider(() => {
+        calls += 1
+        if (calls > 1) return Effect.succeed(answer(0.99, 'read'))
+        return Effect.fail(
+          AiError.make({
+            module: 'Test',
+            method: 'decide',
+            reason: new AiError.InvalidOutputError({ description: 'Unavailable' }),
+          }),
+        )
+      }),
+    ),
+  )
+})
+
+/** The inert unconfigured model would stall if entered; no clock advance is needed. */
+it.effect('unconfigured classification immediately retains write', () =>
+  Effect.gen(function* () {
+    expect(yield* (yield* ToolEffects).classify(request)).toBe('write')
+  }).pipe(Effect.provide(toolEffectsLayer.pipe(Layer.provide(unconfiguredDecisionLayer)))),
+)
