@@ -1,5 +1,5 @@
 import { Radio as RadioPrimitive } from '@base-ui/react/radio'
-import { RadioGroup as RadioGroupPrimitive } from '@base-ui/react/radiogroup'
+import { RadioGroup as RadioGroupPrimitive } from '@base-ui/react/radio-group'
 import { cn } from '@/ui/cn'
 
 function RadioGroup({ className, ...props }: RadioGroupPrimitive.Props) {
