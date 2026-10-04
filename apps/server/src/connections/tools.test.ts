@@ -49,6 +49,45 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
       }),
     )
 
+    it.effect('keeps own-text matches ahead of identity noise and bounds a flooded service', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const store = yield* ConnectionStore
+        const probe = yield* ConnectionProbe
+        const previous = yield* Ref.get(probe.tools)
+        yield* Effect.addFinalizer(() => Ref.set(probe.tools, previous))
+        yield* store.begin(ownerActor, { service: serviceId, label: 'Work', shared: false })
+        yield* TestClock.adjust(1)
+        const target = yield* store.begin(ownerActor, {
+          service: serviceId,
+          label: 'Other',
+          shared: false,
+        })
+        yield* Ref.set(probe.tools, [
+          ...Array.from({ length: 59 }, (_, index) =>
+            ExecutorTool.make({
+              name: `operation_${index}`,
+              description: 'Generic operation',
+              effect: 'read',
+              input: {},
+            }),
+          ),
+          ExecutorTool.make({
+            name: 'search',
+            description: 'Search entries',
+            effect: 'read',
+            input: {},
+          }),
+        ])
+        const found = yield* findTools(ownerActor, { query: 'how does search work', limit: 2 })
+        expect(found.tools.map((tool) => tool.name)).toEqual(['search', 'search'])
+        expect(found.tools[1]).toMatchObject({ connectionId: target.connection.id })
+        const flood = yield* findTools(ownerActor, { query: 'Records search', limit: 25 })
+        expect(flood.tools).toHaveLength(25)
+        expect(flood.tools[0]).toMatchObject({ name: 'search' })
+      }),
+    )
+
     it.effect(
       'resolves a tool beyond the ranked discovery limit and a name with no query words',
       () =>

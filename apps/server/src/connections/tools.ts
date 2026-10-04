@@ -48,21 +48,29 @@ const isResourceMissing = Schema.is(ExecutorResourceMissing)
 /** Distinct query words prevent repeated tokens from inflating relevance. */
 const words = (value: string) => new Set(value.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])
 
-/** Score caller-selected metadata by distinct query words; ties preserve provider order.
- * A service/account name alone exposes its tools, since the model needs to learn its capabilities.
- * Tools matching additional words outrank tools matching only the service or account. */
+/** Tool capability words outrank identity words, so broad account labels cannot crowd a
+ * specific operation out of the bound. Stable ties retain provider order. */
 const rank = <A>(
   items: readonly A[],
   query: string,
   limit: number,
-  text: (item: A) => string,
+  texts: (item: A) => { readonly own: string; readonly identity: string },
 ): readonly A[] => {
   const queryWords = words(query)
+  const score = (text: string) => [...words(text)].filter((word) => queryWords.has(word)).length
   const scored = items.flatMap((item) => {
-    const score = [...words(text(item))].filter((word) => queryWords.has(word)).length
-    return score === 0 ? [] : [{ item, score }]
+    const text = texts(item)
+    const own = score(text.own)
+    const identity = score(text.identity)
+    return own + identity === 0 ? [] : [{ item, own, identity }]
   })
-  return Arr.sortWith(scored, (item) => item.score, Order.flip(Order.Number))
+  return Arr.sort(
+    scored,
+    Order.combine(
+      Order.mapInput(Order.flip(Order.Number), (entry: (typeof scored)[number]) => entry.own),
+      Order.mapInput(Order.flip(Order.Number), (entry: (typeof scored)[number]) => entry.identity),
+    ),
+  )
     .slice(0, limit)
     .map(({ item }) => item)
 }
@@ -127,7 +135,10 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     (service) => !records.some((row) => row.service === service.id && row.status === 'ready'),
   )
   const offered = yield* Effect.forEach(
-    rank(unconnected, request.query, 3, (service) => `${service.name} ${service.description}`),
+    rank(unconnected, request.query, 3, (service) => ({
+      own: `${service.name} ${service.description}`,
+      identity: '',
+    })),
     (service) => store.service(service.id),
     { concurrency: 3 },
   ).pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
@@ -142,7 +153,10 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
         groups.flat().filter(callableTool),
         request.query,
         Math.min(25, Math.floor(limit)),
-        (tool) => `${tool.name} ${tool.description} ${tool.serviceName} ${tool.account}`,
+        (tool) => ({
+          own: `${tool.name} ${tool.description}`,
+          identity: `${tool.serviceName} ${tool.account}`,
+        }),
       ),
       Effect.fn('Connections.discoveredTool')(function* (tool) {
         return DiscoveredTool.make({
