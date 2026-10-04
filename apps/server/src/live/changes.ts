@@ -1,6 +1,9 @@
 import { PgClient } from '@effect/sql-pg/PgClient'
+import { sql as drizzleSql } from 'drizzle-orm'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
+import * as Fiber from 'effect/Fiber'
+import * as Latch from 'effect/Latch'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as PubSub from 'effect/PubSub'
@@ -10,6 +13,7 @@ import type * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
 import type { CompanyId, PersonId, ThreadId } from '@vivid/contracts'
 import { companyOf, type Actor } from '../auth/access.ts'
+import type { Database } from '../database/client.ts'
 
 /**
  * What changed, coarsely: everything a Person owns, everything a Company holds, or one Thread.
@@ -61,8 +65,26 @@ export interface ChangesService {
  */
 export class Changes extends Context.Service<Changes, ChangesService>()('vivid/Changes') {}
 
-const CHANNEL = 'vivid_changes'
+export const CHANNEL = 'vivid_changes'
 const decodeTopics = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String)))
+
+/** The authoritative callback type keeps this capability restricted to a real Drizzle transaction. */
+type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
+
+/**
+ * Announce on the writing connection so PostgreSQL emits only at commit and rollback emits nothing.
+ * drizzle-orm/effect-postgres/session.js:24-29 reuses its SqlClient transaction; rc.116
+ * unstable/sql/SqlClient.ts:162-171 selects that connection from fiber context. PgClient.notify
+ * instead checks out another connection (PgClient.ts:256-263), so it cannot join this write.
+ * Driver failures stay typed and Database.transaction classifies them while rolling back the write.
+ */
+export const announce = Effect.fn('Changes.announce')(function* (
+  transaction: Transaction,
+  topics: ReadonlyArray<Topic>,
+) {
+  if (topics.length === 0) return
+  yield* transaction.execute(drizzleSql`select pg_notify(${CHANNEL}, ${JSON.stringify(topics)})`)
+})
 
 /** Whether a notification names any topic a subscriber asked for. */
 const touches = (wanted: ReadonlySet<string>) => (moved: ReadonlyArray<string>) =>
@@ -73,14 +95,19 @@ const EVERYTHING = '*'
 
 const notificationNotSent = () => Effect.logWarning('A change notification could not be sent')
 
+/** Scoped listener acquisition confirms its first LISTEN before exposing a subscribable bus. */
 const makeChanges = Effect.fn('Changes.make')(function* () {
   const sql = yield* PgClient
   const hub = yield* PubSub.unbounded<ReadonlyArray<string>>()
+  const ready = yield* Latch.make()
 
+  /** Invalid external payloads are ignored; valid topics still fan out through the real hub. */
   const forward = (payload: string) =>
     decodeTopics(payload).pipe(
       Effect.flatMap((topics) => PubSub.publish(hub, topics)),
-      Effect.catch(() => Effect.logWarning('Ignored a malformed change notification')),
+      Effect.catchTag('SchemaError', () =>
+        Effect.logWarning('Ignored a malformed change notification'),
+      ),
     )
 
   /**
@@ -91,6 +118,9 @@ const makeChanges = Effect.fn('Changes.make')(function* () {
   const listen = Effect.gen(function* () {
     const notifications = yield* sql.listen(CHANNEL)
     yield* PubSub.publish(hub, [EVERYTHING])
+    // PgConnection.ts:1833-1834 awaits LISTEN confirmation. Open after the reload broadcast so
+    // a new subscriber cannot mistake startup's EVERYTHING for its first committed announcement.
+    yield* ready.open
     yield* Stream.runForEach(Stream.fromQueue(notifications), (notification) =>
       forward(notification.payload),
     )
@@ -98,11 +128,17 @@ const makeChanges = Effect.fn('Changes.make')(function* () {
 
   // The listener is supervised for the life of the server: a dropped connection is logged and
   // re-opened, never left dead with every live query quietly going stale.
-  yield* listen.pipe(
-    Effect.catch(() => Effect.logWarning('The change listener lost its connection; reconnecting')),
+  const listener = yield* listen.pipe(
+    Effect.catchTag('SqlError', () =>
+      Effect.logWarning('The change listener lost its connection; reconnecting'),
+    ),
     Effect.repeat(Schedule.spaced('2 seconds')),
     Effect.forkScoped,
   )
+  // Propagate startup defects instead of awaiting a latch that a dead listener cannot open.
+  // rc.116 internal/effect.ts:860-866 removes only join's observer when the readiness race wins;
+  // the listener itself remains owned by this Layer's scope.
+  yield* Effect.raceFirst(ready.await, Fiber.join(listener))
 
   const publish = Effect.fn('Changes.publish')(function* (topics: ReadonlyArray<Topic>) {
     if (topics.length === 0) return
