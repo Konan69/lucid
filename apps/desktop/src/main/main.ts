@@ -45,7 +45,7 @@ import { DesktopSettings, settingsLayer } from './settings.ts'
 import { registerAppProxy } from './proxy.ts'
 import { secureSession } from './session.ts'
 import { isAllowedBridgeRequest } from './security.ts'
-import { ServerSettings } from '../shared/settings.ts'
+import { ServerAddress, ServerSettings } from '../shared/settings.ts'
 
 const PLACEMENT_FILE = 'window-placement.json'
 const INSTALLATION_FILE = 'installation.json'
