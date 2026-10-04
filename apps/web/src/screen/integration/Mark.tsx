@@ -31,6 +31,9 @@ const fileOf = (name: string) =>
     .replaceAll(/[^a-z0-9]+/gu, '-')
     .replaceAll(/^-|-$/gu, '')
 
+/** The one size asked of the icon service; see `artOf`. */
+const ICON_SIZE = 128
+
 /** How a service is drawn: a whole icon, a mark on a ground, or its initial on a colour. */
 type Art =
   | { readonly kind: 'icon'; readonly address: string }
@@ -43,13 +46,12 @@ type Art =
  * found by the service's whole name and by nothing less: "Zoom for Claude" is not Zoom, and gets
  * no logo it has not earned. A service with neither is drawn as its initial.
  */
-const artOf = (
-  service: { readonly name: string; readonly mark?: string | null },
-  size: number,
-): Art => {
+const artOf = (service: { readonly name: string; readonly mark?: string | null }): Art => {
   const sent = Option.fromNullishOr(service.mark)
-  // Twice the drawn size, so the icon stays sharp on a dense screen.
-  if (Option.isSome(sent)) return { kind: 'icon', address: `${sent.value}&sz=${size * 2}` }
+  // The icon service answers only at its own sizes and falls to the 16-pixel favicon for any
+  // other (asking for 88 returned 15x16 on production). 128 is the size it has that covers every
+  // tile here at twice its drawn size.
+  if (Option.isSome(sent)) return { kind: 'icon', address: `${sent.value}&sz=${ICON_SIZE}` }
   const file = fileOf(service.name)
   const icon = Option.fromUndefinedOr(ICONS[`./icons/${file}.svg`])
   if (Option.isSome(icon)) return { kind: 'icon', address: icon.value }
@@ -106,7 +108,7 @@ export function Mark({
   size?: number
   className?: string
 }) {
-  const art = artOf(service, size)
+  const art = artOf(service)
   // SAFETY: React forwards this validated CSS custom property to the element.
   const tileStyle = { '--mark-size': `${size}px` } as React.CSSProperties
   return (
