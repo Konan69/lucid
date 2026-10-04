@@ -8,6 +8,7 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
 } from 'react-native-reanimated'
+import { Option } from 'effect'
 import { commit } from '../data/haptics'
 import { useKeyboardShowing } from '../data/keyboard'
 import { MOBILE_TYPOGRAPHY } from '../data/typography'
@@ -15,6 +16,7 @@ import { ComposerEditor } from '../native/composer/Editor'
 import type { ComposerEditorHandle } from '../native/composer/types'
 import { useTheme } from '../theme'
 import { BorderBeam } from '../../vendor/beam'
+import { heldAfter, isOpen, type Held, type Measured } from './composer/expansion'
 import { GlassMaterial } from './Glass'
 import { Press, styles, TARGET } from './ui'
 
@@ -156,8 +158,9 @@ function Surface({
  *
  * It is the system's glass (`Surface`), and it has two shapes, as T3 Code mobile's composer does
  * (`ThreadComposer`): a capsule at rest, and a card while it is being written in. The reference
- * opens the card on focus. Here it is also open whenever what is written is longer than a line,
- * so words a suggestion filled in, or a draft kept from before, are never cut to one line.
+ * opens the card on focus. Here it is also open for a draft seen to need more than a line
+ * (`composer/expansion.ts`), so words a suggestion filled in, or a draft kept from before, are
+ * never cut to one line.
  *
  * The button is always there, as the reference's is: dimmed when there is nothing to send, the
  * way to send when there is, and while Vivid is working the way to stop, in the same place,
@@ -195,10 +198,29 @@ export function Composer({
   const [focused, setFocused] = useState(false)
   // What the editor says its text needs, inset included. One line is `RESTING`.
   const [needed, setNeeded] = useState(RESTING)
+  // The draft last seen to wrap. The card's width differs from the capsule's, so the shape is
+  // decided from this and not from the latest height (`composer/expansion.ts`).
+  const [held, setHeld] = useState<Held>(Option.none())
   const empty = value.trim().length === 0
   const idle = !working && (disabled || empty)
-  // A point of tolerance, so a rounding difference in one line's height does not open the card.
-  const open = focused || needed > RESTING + 1
+  const open = isOpen(focused, held, value)
+
+  /** The editor measured the draft in the shape now drawn. */
+  function measured(height: number) {
+    setNeeded(height)
+    // A point of tolerance, so a rounding difference in one line's height is not a wrap.
+    const report: Measured = {
+      text: value,
+      frame: open ? 'card' : 'capsule',
+      wrapped: height > RESTING + 1,
+    }
+    setHeld((now) => {
+      const next = heldAfter(now, report)
+      // The same text again is the same answer: keep the value React already has, so a repeated
+      // report (Android sends one for every layout) does not render again.
+      return Option.getOrNull(next) === Option.getOrNull(now) ? now : next
+    })
+  }
   const state = open ? OPENED : AT_REST
 
   function send() {
@@ -245,7 +267,7 @@ export function Composer({
               // At rest the one line does not scroll; in the card the text scrolls inside it.
               scrollEnabled={open}
               contentInsetVertical={INSET}
-              onContentHeightChange={setNeeded}
+              onContentHeightChange={measured}
               style={{
                 height: open ? Math.min(OPEN_TALLEST, Math.max(OPEN_SHORTEST, needed)) : RESTING,
               }}

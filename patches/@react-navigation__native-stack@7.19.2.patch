@@ -269,10 +269,41 @@ index aeb4939eccbc210d570f978dddbdb45205ad6e66..403c7af077c8aac0edd78a446c3f59ca
     * A React Element to display as the item.
     */
 diff --git a/src/views/useHeaderConfigProps.tsx b/src/views/useHeaderConfigProps.tsx
-index a7e3004318753aa0757b038da1e7fbc8663a7f02..c32d1cbf81cef484e8f367921e637dd9abfbb312 100644
+index a7e3004318753aa0757b038da1e7fbc8663a7f02..a0ab88193c28ef4256505b835bb87ba1ff2f2069 100644
 --- a/src/views/useHeaderConfigProps.tsx
 +++ b/src/views/useHeaderConfigProps.tsx
-@@ -398,6 +398,7 @@ export function useHeaderConfigProps({
+@@ -219,9 +219,13 @@ export function useHeaderConfigProps({
+   headerBack,
+   route,
+   title,
++  unstable_headerCenterItems: headerCenterItems,
+   unstable_headerInsets: headerInsets,
+   unstable_headerLeftItems: headerLeftItems,
+   unstable_headerRightItems: headerRightItems,
++  unstable_headerSubtitle: headerSubtitle,
++  unstable_headerToolbarItems: headerToolbarItems,
++  unstable_navigationItemStyle: navigationItemStyle,
+ }: Props): ScreenStackHeaderConfigProps {
+   const { direction } = useLocale();
+   const { colors, fonts, dark } = useTheme();
+@@ -386,6 +390,16 @@ export function useHeaderConfigProps({
+     rightItems = [...rightItems].reverse();
+   }
+ 
++  const centerItems = headerCenterItems?.({
++    tintColor,
++    canGoBack,
++  });
++
++  const toolbarItems = headerToolbarItems?.({
++    tintColor,
++    canGoBack,
++  });
++
+   const children = (
+     <>
+       {Platform.OS === 'ios' ? (
+@@ -398,6 +412,7 @@ export function useHeaderConfigProps({
                      // eslint-disable-next-line @eslint-react/no-array-index-key
                      key={index}
                      hidesSharedBackground={item.hidesSharedBackground}
@@ -280,7 +311,33 @@ index a7e3004318753aa0757b038da1e7fbc8663a7f02..c32d1cbf81cef484e8f367921e637dd9
                    >
                      {item.element}
                    </ScreenStackHeaderLeftView>
-@@ -472,6 +473,7 @@ export function useHeaderConfigProps({
+@@ -411,7 +426,24 @@ export function useHeaderConfigProps({
+               {headerLeftElement}
+             </ScreenStackHeaderLeftView>
+           ) : null}
+-          {headerTitleElement != null ? (
++          {centerItems ? (
++            centerItems.map((item, index) => {
++              if (item.type === 'custom') {
++                return (
++                  <ScreenStackHeaderCenterView
++                    // eslint-disable-next-line @eslint-react/no-array-index-key
++                    key={index}
++                    hidesSharedBackground={item.hidesSharedBackground}
++                    identifier={item.identifier}
++                  >
++                    {item.element}
++                  </ScreenStackHeaderCenterView>
++                );
++              }
++
++              return null;
++            })
++          ) : headerTitleElement != null ? (
+             <ScreenStackHeaderCenterView>
+               {headerTitleElement}
+             </ScreenStackHeaderCenterView>
+@@ -472,6 +504,7 @@ export function useHeaderConfigProps({
                  // eslint-disable-next-line @eslint-react/no-array-index-key
                  key={index}
                  hidesSharedBackground={item.hidesSharedBackground}
@@ -288,3 +345,25 @@ index a7e3004318753aa0757b038da1e7fbc8663a7f02..c32d1cbf81cef484e8f367921e637dd9
                >
                  {item.element}
                </ScreenStackHeaderRightView>
+@@ -523,6 +556,7 @@ export function useHeaderConfigProps({
+     largeTitleFontWeight,
+     largeTitleHideShadow: headerLargeTitleShadowVisible === false,
+     title: titleText,
++    subtitle: headerSubtitle,
+     titleColor,
+     titleFontFamily,
+     titleFontSize,
+@@ -540,6 +574,13 @@ export function useHeaderConfigProps({
+       headerInsets?.bottom !== undefined ? !headerInsets.bottom : undefined,
+     translucent: translucent === true,
+     children,
++    navigationItemStyle,
++    headerToolbarItems: processBarButtonItems(toolbarItems, colors, fonts),
++    headerCenterBarButtonItems: processBarButtonItems(
++      centerItems,
++      colors,
++      fonts
++    ),
+     headerLeftBarButtonItems: processBarButtonItems(leftItems, colors, fonts),
+     headerRightBarButtonItems: processBarButtonItems(rightItems, colors, fonts),
+     experimental_userInterfaceStyle: dark ? 'dark' : 'light',

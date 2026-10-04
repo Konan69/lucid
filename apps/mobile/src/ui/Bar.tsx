@@ -190,6 +190,7 @@ function useBar(
 export function Bar({ title, actions }: { title: string; actions: ReadonlyArray<BarAction> }) {
   useBar(JSON.stringify([title, shownOf(actions)]), actions, (press) => ({
     title,
+    ...PLAIN,
     ...endOptions({ present: NOBODY, actions }, press),
   }))
   return null
@@ -205,17 +206,29 @@ export interface Standing {
  * The line under the title, where each platform can say it.
  * - Glass (iOS 26): UIKit's own subtitle. It is the system's text, so it is in the system's ink;
  *   the state is in the words.
- * - Android: the title and the line as one element in the solid bar's title slot, which the stack
- *   lays out in the room the bar has, with the line in its state's ink.
- * - iOS without glass: the title alone, as the reference leaves it there. The state is still said
- *   on the screen itself.
+ * - Everywhere else (Android, and iOS without glass): the title and the line as one element in
+ *   the solid bar's title slot, with the line in its state's ink. The reference shows no line on
+ *   iOS without glass; Vivid does, because nothing else on a Thread says that Vivid is waiting
+ *   for the Person or that someone is typing.
+ *
+ * Both fields are always named. `setOptions` merges into what the route already has, so a field
+ * left out would keep whatever an earlier bar on the same route put there.
  */
-const standingOptions = (title: string, standing: Standing): NativeStackNavigationOptions => {
-  if (GLASS_SUPPORTED) return { unstable_headerSubtitle: standing.words }
-  if (Platform.OS === 'android')
-    return { headerTitle: () => <StandingTitle title={title} standing={standing} /> }
-  return {}
-}
+const standingOptions = (title: string, standing: Standing): NativeStackNavigationOptions =>
+  GLASS_SUPPORTED
+    ? { headerTitle: undefined, unstable_headerSubtitle: standing.words }
+    : {
+        headerTitle: () => <StandingTitle title={title} standing={standing} />,
+        unstable_headerSubtitle: undefined,
+      }
+
+/**
+ * What a plain bar says about the fields only a `StandingBar` fills: nothing, explicitly. One
+ * route can draw both (a Thread that turns out to be gone goes from its live bar to a plain one),
+ * and `setOptions` merges, so without this the plain bar would keep the other's title element or
+ * subtitle. The end of the bar needs no clearing: every bar sets it.
+ */
+const PLAIN = { headerTitle: undefined, unstable_headerSubtitle: undefined } as const
 
 /**
  * A bar whose title has a live line under it: a Thread saying that Vivid is working or waiting,
@@ -241,7 +254,7 @@ export function StandingBar({
   return null
 }
 
-/** Android's title element. The header role stays on the title's words. */
+/** The title element of a solid bar. The header role stays on the title's words. */
 function StandingTitle({ title, standing }: { title: string; standing: Standing }) {
   return (
     <View>

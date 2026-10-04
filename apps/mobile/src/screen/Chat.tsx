@@ -33,7 +33,7 @@ import { conversation, say, UNDELIVERED, UNTITLED } from '../data/threads'
 import { Composer } from '../ui/Composer'
 import { Bar, BarRoom, NO_ACTIONS, StandingBar, type BarAction } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
-import { AboveKeyboard } from '../ui/Keyboard'
+import { AboveKeyboardBelowBar } from '../ui/Keyboard'
 import {
   Button,
   EDGE,
@@ -394,7 +394,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
   )
 
   return (
-    <AboveKeyboard>
+    <AboveKeyboardBelowBar>
       <Top
         thread={thread}
         present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
@@ -437,7 +437,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
           onClose={() => setSharing(false)}
         />
       )}
-    </AboveKeyboard>
+    </AboveKeyboardBelowBar>
   )
 }
 
