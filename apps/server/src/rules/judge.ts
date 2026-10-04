@@ -6,7 +6,7 @@ import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import { Decision, DecisionModel } from 'effect/unstable/ai'
 import { ActionTarget, BrowseTarget, Rule, RuleScope, type ProposedAction } from '@vivid/contracts'
-import { decideWithin, isDecisionNonEvent } from '../decisions/model.ts'
+import { DECISION_QUESTION_LIMIT, decideWithin, isDecisionNonEvent } from '../decisions/model.ts'
 
 /** A failed judge cannot authorize an action; provider detail and private payloads stay behind this seam. */
 export class RulesNotJudged extends Schema.TaggedError<RulesNotJudged>()(
@@ -76,14 +76,10 @@ const shown = (action: ProposedAction) => ({
 })
 
 /**
- * How many rules are judged in one provider request. The gateway answered twenty questions and
- * rejected thirty-nine with HTTP 400 on 4 Oct 2026 (`connections/effects.ts`), and a rejected
- * request would leave every rule of a Person who has many of them unjudged on every action.
- */
-const RULE_BATCH = 20
-
-/**
- * Batches of one scope are all judged at once, so a scope of any size waits one `RULE_BUDGET`,
+ * Rules are judged `DECISION_QUESTION_LIMIT` to a request, the most the gateway accepts with
+ * headroom (`decisions/model.ts`); a rejected request would leave every rule of a Person who has
+ * many of them unjudged on every action. Batches of one scope are all judged at once, so a scope
+ * of any size waits one `RULE_BUDGET`,
  * not one per batch. Four in flight covers eighty rules; more than that is judged in a second
  * round rather than opening an unbounded number of provider requests for one action.
  */
@@ -98,7 +94,7 @@ const RULE_BATCH_CONCURRENCY = 4
 const RULE_BUDGET = '3 seconds'
 
 /**
- * Which of at most `RULE_BATCH` rules apply to one action, in one provider request. Positional
+ * Which of at most `DECISION_QUESTION_LIMIT` rules apply to one action, in one provider request. Positional
  * keys keep rule identifiers out of the prompt. Even validated dynamic keys are checked: a
  * missing answer fails the batch and can never erase a rule.
  */
@@ -146,7 +142,7 @@ export const ruleJudgeLayer = Layer.effect(
           // Batches are judged at once; one that fails makes the whole scope not judged, so a
           // rule is never dropped because its batch was the one that failed.
           const applicable = yield* Effect.forEach(
-            Arr.chunksOf(rules, RULE_BATCH),
+            Arr.chunksOf(rules, DECISION_QUESTION_LIMIT),
             (batch) => judgeBatch(judged, batch),
             { concurrency: RULE_BATCH_CONCURRENCY },
           ).pipe(Effect.provideService(DecisionModel.DecisionModel, model))
