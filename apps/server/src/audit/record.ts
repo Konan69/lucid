@@ -38,6 +38,27 @@ export const AuditAttribution = Schema.Struct({
 })
 export type AuditAttribution = typeof AuditAttribution.Type
 
+/** Preserve request attribution and reject Vivid without its responsible Thread before any write. */
+export const attributionOf = Effect.fn('Audit.attribution')(function* (actor: Actor) {
+  if (actor.by === 'vivid' && Option.isNone(actor.threadId))
+    return yield* Effect.fail(
+      new DatabaseFailure({ message: 'Vivid audit attribution needs a Thread' }),
+    )
+  return AuditAttribution.make({
+    personId: actor.person.id,
+    companyId: companyColumnOf(actor.workspace),
+    by: actor.by,
+    threadId: Option.getOrNull(actor.threadId),
+  })
+})
+
+/** Stored attribution defines the same audit audience for request and background transaction owners. */
+export const auditTopics = (attribution: AuditAttribution): ReadonlyArray<Topic> =>
+  [Topic.person(attribution.personId)].concat(
+    Option.toArray(Option.map(Option.fromNullishOr(attribution.companyId), Topic.company)),
+    Option.toArray(Option.map(Option.fromNullishOr(attribution.threadId), Topic.thread)),
+  )
+
 /** Writes metadata through the caller's database/transaction, without publishing before commit.
  * Background owners can record a stop using stored attribution, without manufacturing an Actor. */
 export const appendAudit = Effect.fn('Audit.append')(function* (
@@ -71,14 +92,10 @@ export const recordAudit = Effect.fn('Audit.recordStored')(function* (
 ) {
   const database = yield* Database
   const at = yield* Clock.currentTimeMillis
-  const topics = [Topic.person(attribution.personId)].concat(
-    Option.toArray(Option.map(Option.fromNullishOr(attribution.companyId), Topic.company)),
-    Option.toArray(Option.map(Option.fromNullishOr(attribution.threadId), Topic.thread)),
-  )
   return yield* database.transaction((tx) =>
     Effect.gen(function* () {
       yield* appendAudit(tx, attribution, event, at)
-      yield* announce(tx, topics)
+      yield* announce(tx, auditTopics(attribution))
     }),
   )
 })
@@ -91,22 +108,8 @@ export const auditLayer = Layer.effect(
     return Audit.of({
       /** A decision can carry its stored Thread even though it was made by a signed-in Person. */
       record: Effect.fn('Audit.record')(function* (actor, event) {
-        if (actor.by === 'vivid' && Option.isNone(actor.threadId))
-          return yield* Effect.fail(
-            new DatabaseFailure({ message: 'Vivid audit attribution needs a Thread' }),
-          )
-        return yield* Effect.provide(
-          recordAudit(
-            AuditAttribution.make({
-              personId: actor.person.id,
-              companyId: companyColumnOf(actor.workspace),
-              by: actor.by,
-              threadId: Option.getOrNull(actor.threadId),
-            }),
-            event,
-          ),
-          context,
-        )
+        const attribution = yield* attributionOf(actor)
+        return yield* Effect.provide(recordAudit(attribution, event), context)
       }),
     })
   }),

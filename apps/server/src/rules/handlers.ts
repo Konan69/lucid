@@ -2,7 +2,6 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import type { CreateRuleRequest, RuleId } from '@vivid/contracts'
 import { requireActor, requirePerson, type Actor } from '../auth/access.ts'
-import { changed } from '../live/changes.ts'
 import { live } from '../live/query.ts'
 import { RuleStore } from './store.ts'
 
@@ -27,17 +26,15 @@ export const ruleHandlers = {
     return yield* loadRules(yield* requireActor())
   }),
   WatchRules: () => live(loadRules),
-  /** Publishes only after the policy and audit record commit. */
+  /** The store commits policy, its audit entry and the notice in one transaction. */
   CreateRule: Effect.fn('Rpc.CreateRule')(function* (request: CreateRuleRequest) {
     const actor = yield* ruleActor()
     const rule = yield* (yield* RuleStore).create(actor, request)
-    yield* changed(actor)
     return { rule }
   }),
   /** Removal reuses the same authorization as creation. */
   DeleteRule: Effect.fn('Rpc.DeleteRule')(function* ({ id }: { readonly id: RuleId }) {
     const actor = yield* ruleActor()
     yield* (yield* RuleStore).remove(actor, id)
-    yield* changed(actor)
   }),
 }
