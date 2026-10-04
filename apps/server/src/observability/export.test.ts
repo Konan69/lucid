@@ -44,11 +44,10 @@ import {
   MOST_OUTSTANDING,
   MOST_TYPE_NAMES,
   observabilityLayer,
-  OMITTED,
   PAUSE_MILLIS,
 } from './export.ts'
 import { observeFailures } from './failure.ts'
-import { Message } from './messages.ts'
+import { Message, OMITTED } from './messages.ts'
 import { recordRefusal, Refusal } from './refusal.ts'
 
 /** The slice of OTLP/HTTP JSON these tests read; everything else in a post is left undecoded. */
@@ -1033,8 +1032,9 @@ const stalling = (closed: Queue.Queue<void>) =>
 it.effect('gives a refused export one attempt, keeps nothing of it, and reports the drop', () => {
   const stdout = capturing()
   return Effect.gen(function* () {
-    // A backend that answers at once, refuses, and asks to be tried again in a day. rc.116
-    // `OtlpExporter.ts` would wait that day with the batch in hand, once per batch. The refusal
+    // A backend that answers at once, refuses, and asks to be tried again in an hour. rc.116
+    // `OtlpExporter.ts` would wait that hour with the batch in hand, once per batch. The hour is
+    // short on purpose: the logs exporter wakes every second of the time that passes below. The refusal
     // has a body that never ends and that nothing reads (`stalling`).
     const closed = yield* Queue.unbounded<void>()
     const { arrivals, collect, flush, run } = yield* observed({
@@ -1042,7 +1042,7 @@ it.effect('gives a refused export one attempt, keeps nothing of it, and reports 
       answer: Effect.sync(() =>
         HttpServerResponse.stream(stalling(closed), {
           status: 429,
-          headers: { 'retry-after': '86400' },
+          headers: { 'retry-after': '3600' },
         }),
       ),
     })
@@ -1066,8 +1066,8 @@ it.effect('gives a refused export one attempt, keeps nothing of it, and reports 
       // The exporters accept data again a minute after a drop.
       yield* TestClock.adjust(PAUSE_MILLIS)
     }
-    // Long past the day the backend asked for, nothing was sent a second time.
-    yield* TestClock.adjust(Duration.days(2))
+    // Long past the hour the backend asked for, nothing was sent a second time.
+    yield* TestClock.adjust(Duration.hours(2))
     expect(yield* Queue.size(arrivals)).toBe(0)
     // Each post carried its own minute's span and no earlier one: a refused batch is not kept.
     const { batches, received } = yield* collect()
@@ -1343,31 +1343,223 @@ it.effect('still exports an ordinary failed span with its type, on the span and 
   }).pipe(Effect.provide(NodeHttpServer.layerTest)),
 )
 
-it.effect('drops a span or a line it cannot build, and leaves the work as it ended', () =>
+it.effect(
+  'leaves off an attribute or an annotation that is not a plain value, and exports the rest',
+  () =>
+    Effect.gen(function* () {
+      const { collect, flush, run } = yield* observed(plain)
+      // A value that throws when anything reads it, under a key the allowlist names.
+      const annotate = Effect.fn('Probe.annotated')(function* () {
+        yield* Effect.annotateCurrentSpan('vivid.boundary', revoked())
+        return 'done'
+      })
+      const log = Effect.fn('Probe.logged')(function* () {
+        yield* Effect.logInfo(Message.failure).pipe(
+          Effect.annotateLogs('vivid.boundary', revoked()),
+          // Effect's own loggers print the annotation; only the exporter's is under test.
+          Effect.provideService(Logger.CurrentLoggers, yield* exportersOnly()),
+        )
+        return 'done'
+      })
+      const exits = [yield* run(annotate()), yield* run(log())]
+      yield* flush
+      const { lines, spans } = yield* collect()
+
+      expect(exits).toEqual([Exit.succeed('done'), Exit.succeed('done')])
+      // The value is not a string, a number or a boolean, so it was never read; the span and the
+      // line it was on are exported without it.
+      expect(spanNamed(spans, 'Probe.annotated').map((span) => valuesOf(span.attributes))).toEqual([
+        {},
+      ])
+      expect(spanNamed(spans, 'Probe.logged')).toHaveLength(1)
+      expect(
+        lines
+          .filter((line) => line.body.stringValue === Message.failure)
+          .map((line) => valuesOf(line.attributes)),
+      ).toEqual([{}])
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+)
+
+/**
+ * `[0]` replaced thirty times by `[previous, previous]`: thirty-one arrays that rc.116
+ * `OtlpResource.unknownToAttributeValue` converts into two to the power of thirty leaves. Handed
+ * to that function, a test that uses it does not fail; it never ends.
+ */
+const doubling = () =>
+  Array.from({ length: 30 }).reduce<ReadonlyArray<unknown>>((previous) => [previous, previous], [0])
+
+it.effect('gives the exporter no object to walk, wherever one is attached', () =>
   Effect.gen(function* () {
     const { collect, flush, run } = yield* observed(plain)
-    // A value that throws when it is formatted, as a span attribute and as a log annotation.
-    const annotate = Effect.fn('Probe.annotated')(function* () {
-      yield* Effect.annotateCurrentSpan('vivid.probe', revoked())
+    const graph = doubling()
+    const caller = Tracer.externalSpan({
+      traceId: '0af7651916cd43dd8448eb211c80319c',
+      spanId: 'a2fb4a1d1a96d312',
+    })
+    // Under a key the allowlist names, so that only the value's kind keeps it out.
+    const attribute = Effect.fn('Probe.attribute')(function* () {
+      yield* Effect.annotateCurrentSpan('vivid.boundary', graph)
       return 'done'
     })
-    const log = Effect.fn('Probe.logged')(function* () {
+    const created = Effect.succeed('done').pipe(
+      Effect.withSpan('Probe.created', { attributes: { 'vivid.boundary': graph } }),
+    )
+    const event = Effect.fn('Probe.event')(function* () {
+      const span = yield* Effect.currentSpan
+      span.event(Message.refusal, 0n, { 'vivid.boundary': graph })
+      return 'done'
+    })
+    const linked = Effect.fn('Probe.linked')(() => Effect.succeed('done'))().pipe(
+      Effect.linkSpans(caller, { 'vivid.boundary': graph }),
+    )
+    const annotation = Effect.fn('Probe.annotation')(function* () {
       yield* Effect.logInfo(Message.failure).pipe(
-        Effect.annotateLogs('vivid.probe', revoked()),
-        // Effect's own loggers print the annotation; only the exporter's is under test.
+        Effect.annotateLogs('vivid.boundary', graph),
         Effect.provideService(Logger.CurrentLoggers, yield* exportersOnly()),
       )
       return 'done'
     })
-    const exits = [yield* run(annotate()), yield* run(log())]
+    const message = Effect.fn('Probe.message')(function* () {
+      yield* Effect.logInfo(graph).pipe(
+        Effect.provideService(Logger.CurrentLoggers, yield* exportersOnly()),
+      )
+      return 'done'
+    })
+    const neighbour = Effect.fn('Probe.neighbour')(function* () {
+      yield* recordRefusal(Refusal.cases.DeviceRefused.make({ reason: 'NotAllowed' }))
+      return 'done'
+    })
+    const exits = yield* Effect.forEach(
+      [attribute(), created, event(), linked, annotation(), message(), neighbour()],
+      run,
+    )
     yield* flush
     const { lines, spans } = yield* collect()
 
-    expect(exits).toEqual([Exit.succeed('done'), Exit.succeed('done')])
-    // What could not be built is absent, and the span beside it is exported as it was.
-    expect(spanNamed(spans, 'Probe.annotated')).toEqual([])
-    expect(spanNamed(spans, 'Probe.logged')).toHaveLength(1)
-    expect(lines.filter((line) => line.body.stringValue === Message.failure)).toEqual([])
+    expect(exits).toEqual(Array.from({ length: 7 }, () => Exit.succeed('done')))
+    // Each span is exported without the value, and the work beside them as it was.
+    const attributes = (name: string) =>
+      spanNamed(spans, name).map((span) => valuesOf(span.attributes))
+    expect(attributes('Probe.attribute')).toEqual([{}])
+    expect(attributes('Probe.created')).toEqual([{}])
+    expect(
+      spanNamed(spans, 'Probe.event').map((span) =>
+        span.events.map((entry) => [entry.name, valuesOf(entry.attributes)]),
+      ),
+    ).toEqual([[[Message.refusal, {}]]])
+    expect(spanNamed(spans, 'Probe.linked').map((span) => span.links)).toEqual([
+      [{ traceId: caller.traceId }],
+    ])
+    expect(spanNamed(spans, 'Probe.neighbour')).toHaveLength(1)
+    const bodies = (name: string) => {
+      const [span] = spanNamed(spans, name)
+      return lines
+        .filter((line) => span !== undefined && line.traceId === span.traceId)
+        .map((line) => [line.body.stringValue, Object.keys(valuesOf(line.attributes))])
+    }
+    expect(bodies('Probe.annotation')).toEqual([[Message.failure, []]])
+    // A message that is not one of the fixed ones is the placeholder, whatever it was.
+    expect(bodies('Probe.message')).toEqual([[OMITTED, []]])
+    expect(bodies('Probe.neighbour').map(([body]) => body)).toEqual([Message.refusal])
+  }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+)
+
+it.effect('drops a value too long to be an attribute without reading it', () =>
+  Effect.gen(function* () {
+    const { collect, flush, run } = yield* observed(plain)
+    // Ten megabytes under a key the allowlist names. Only its length is asked.
+    const long = 'x'.repeat(10 * 1024 * 1024)
+    const annotate = Effect.fn('Probe.long')(function* () {
+      yield* Effect.annotateCurrentSpan('vivid.boundary', long)
+      yield* Effect.annotateCurrentSpan(long, 'rpc')
+      yield* Effect.logInfo(Message.failure).pipe(
+        Effect.annotateLogs('vivid.boundary', long),
+        Effect.provideService(Logger.CurrentLoggers, yield* exportersOnly()),
+      )
+      return 'done'
+    })
+    const exit = yield* run(annotate())
+    yield* flush
+    const { lines, spans, text } = yield* collect()
+
+    expect(exit).toEqual(Exit.succeed('done'))
+    expect(spanNamed(spans, 'Probe.long').map((span) => valuesOf(span.attributes))).toEqual([{}])
+    expect(
+      lines
+        .filter((line) => line.body.stringValue === Message.failure)
+        .map((line) => valuesOf(line.attributes)),
+    ).toEqual([{}])
+    // Nothing of it was serialized: everything that left is a few kilobytes.
+    expect(text.length).toBeLessThan(64 * 1024)
+  }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+)
+
+/** A getter that throws as soon as it is read, with private text for a message. */
+const throwing = (): never => {
+  throw new Error(PRIVATE)
+}
+
+it.effect('makes a span from options or a parent that cannot be read, and changes no outcome', () =>
+  Effect.gen(function* () {
+    const { collect, flush, run } = yield* observed(plain)
+    // A parent whose trace id throws when read: rc.116 `SpanImpl` reads it for the child's own.
+    const parent = () =>
+      Object.defineProperty(
+        Tracer.externalSpan({
+          traceId: '0af7651916cd43dd8448eb211c80319c',
+          spanId: 'a2fb4a1d1a96d312',
+        }),
+        'traceId',
+        { get: throwing },
+      )
+    const child = Effect.fn('Probe.child')(function* () {
+      // What a client would send on as this request's trace: the span's own id, read here.
+      const span = yield* Effect.currentSpan
+      return [span.traceId.length, span.spanId.length, span.sampled] as const
+    })
+    const direct = Effect.fn('Probe.direct')(function* () {
+      const tracer = yield* Tracer.Tracer
+      const options = {
+        name: 'Probe.hostile',
+        parent: Option.none<Tracer.AnySpan>(),
+        annotations: Context.empty(),
+        links: [],
+        startTime: 0n,
+        kind: 'internal' as const,
+        root: true,
+        sampled: true,
+      }
+      // Options whose name throws, then options whose parent does.
+      const spans = [
+        tracer.span(Object.defineProperty({ ...options }, 'name', { get: throwing })),
+        tracer.span({ ...options, parent: Option.some(parent()) }),
+      ]
+      for (const span of spans) span.end(1n, Exit.succeed('done'))
+      return spans.map((span) => [span.traceId.length, span.spanId.length, span.sampled] as const)
+    })
+    const neighbour = Effect.fn('Probe.neighbour')(() => Effect.succeed('done'))
+    const exits = [
+      yield* run(child().pipe(Effect.withParentSpan(parent()))),
+      yield* run(direct()),
+      yield* run(neighbour()),
+    ]
+    yield* flush
+    const { spans, text } = yield* collect()
+
+    // Each span has ids of its own and is not sampled, so nothing under it is exported.
+    expect(exits).toEqual([
+      Exit.succeed([32, 16, false]),
+      Exit.succeed([
+        [32, 16, false],
+        [32, 16, false],
+      ]),
+      Exit.succeed('done'),
+    ])
+    expect(spanNamed(spans, 'Probe.child')).toEqual([])
+    expect(spanNamed(spans, 'Probe.hostile')).toEqual([])
+    expect(spanNamed(spans, 'Probe.direct')).toHaveLength(1)
+    expect(spanNamed(spans, 'Probe.neighbour')).toHaveLength(1)
+    expect(text).not.toContain(PRIVATE)
   }).pipe(Effect.provide(NodeHttpServer.layerTest)),
 )
 

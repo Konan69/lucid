@@ -22,6 +22,12 @@ export const Message = {
 } as const
 export type Message = (typeof Message)[keyof typeof Message]
 
+/**
+ * What stands in for a log body, a span name or an event name that is not on the allowlist. The
+ * record still goes, with its level, time and allowlisted attributes, so it is still counted.
+ */
+export const OMITTED = '[omitted]'
+
 const messages: ReadonlySet<string> = new Set(Object.values(Message))
 
 /** Whether `text` is, exactly, one of the fixed messages. */
