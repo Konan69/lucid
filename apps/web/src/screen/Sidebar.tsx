@@ -3,7 +3,6 @@ import { SwitchWorkspaceRequest, Workspace } from '@vivid/contracts'
 import { projects as projectsData } from '@vivid/state'
 import { Option, Result } from 'effect'
 import {
-  Bell,
   Building2,
   ChevronsUpDown,
   Library,
@@ -37,6 +36,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { settling } from '../ui/settle'
 import { sidebar } from '../data/sidebar'
 import { ScopeChip } from './project/Chip'
+import { Notifications } from './Notifications'
 import { FULL, HOVER, ROW, TOOL } from './sidebar/rows'
 import { CreateCompany } from './sidebar/Company'
 import { ProjectGroup } from './sidebar/Projects'
@@ -104,7 +104,6 @@ export function Sidebar({
   open,
   onHide,
   onSearch,
-  onNotifications,
   unread,
 }: {
   me: MeResponse
@@ -113,7 +112,6 @@ export function Sidebar({
   open: boolean
   onHide: () => void
   onSearch: () => void
-  onNotifications: () => void
   unread: number
 }) {
   const [creatingCompany, setCreatingCompany] = useState(false)
@@ -147,13 +145,7 @@ export function Sidebar({
           <IconButton label="Search (⌘K)" onClick={onSearch}>
             <Search className="size-4" />
           </IconButton>
-          {/* `relative` places the unread dot on the bell's own corner. */}
-          <IconButton label="Notifications" onClick={onNotifications} className="relative">
-            <Bell className="size-4" />
-            {unread > 0 && (
-              <i className="absolute top-1.5 right-1.5 size-2 rounded-full bg-primary ring-2 ring-surface-1" />
-            )}
-          </IconButton>
+          <Notifications unread={unread} />
         </div>
 
         <div className="px-2">

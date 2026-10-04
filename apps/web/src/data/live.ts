@@ -16,6 +16,7 @@ import { change, run } from './app'
 import { Route, router } from './route'
 import { engine } from './runtime'
 import { sayWith } from './said'
+import { theme } from './theme'
 
 /**
  * Every screen's data, live, as Effect Atoms.
@@ -108,6 +109,17 @@ engine.registry.subscribe(live.me.atom, (result) => {
   lastWhereabouts = now
   engine.reopen()
 })
+
+// The Person's theme is theirs on every device; when their settings arrive, this device follows.
+// It is adopted here and not while the shell renders: adopting it tells everything painted by
+// theme (the composer's beam) to redraw, and React refuses that from inside another render.
+engine.registry.subscribe(
+  live.settings.atom,
+  (result) => {
+    if (AsyncResult.isSuccess(result)) theme.set(result.value.theme)
+  },
+  { immediate: true },
+)
 
 // The latest notification window for each workspace is its baseline and deduplication set.
 const told = new Map<string, ReadonlySet<string>>()
