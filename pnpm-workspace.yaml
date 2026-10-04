@@ -11,6 +11,7 @@ packages:
   - 'packages/design/tokens'
   - 'packages/agent/runtime'
   - 'packages/agent/skills'
+  - 'packages/agent/durable'
 
 # pnpm 12 reads project settings here. Keep registry credentials only in an
 # untracked .npmrc when a private registry eventually requires them.
@@ -142,3 +143,7 @@ minimumReleaseAgeExclude:
   - effect@4.0.0-rc.116
   - turbo@2.11.2
   - '@earendil-works/pi-codemode@1.0.0'
+  - '@earendil-works/chord@1.0.2'
+  - '@earendil-works/pi-ai@1.0.2'
+  - '@earendil-works/pi-durable@1.0.2'
+  - '@earendil-works/pi-telemetry@1.0.2'
