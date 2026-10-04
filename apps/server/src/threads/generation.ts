@@ -6,11 +6,10 @@ import {
   ThreadTitleOutputInvalid,
 } from '@vivid/contracts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
-import { Changes } from '../live/changes.ts'
 import { readConversationHistory, textOf } from '../memory/history.ts'
 import { MemoryModel } from '../memory/model.ts'
 import { Runtime } from '../runtime/client.ts'
-import { audienceTopics, findThread, requireThread, type StoredThread } from './access.ts'
+import { findThread, requireThread, type StoredThread } from './access.ts'
 import { ThreadStore } from './store.ts'
 import {
   buildThreadTitlePrompt,
@@ -45,7 +44,7 @@ export interface ThreadTitlesService {
   ) => Effect.Effect<string, TitleFailure | DatabaseInfrastructureError | NotFound>
 }
 
-/** Thread naming owns generation policy, guarded writes and live publication; Flue and MemoryModel own I/O. */
+/** Thread naming owns generation policy. The store owns guarded writes and publication; Flue and MemoryModel own I/O. */
 export class ThreadTitles extends Context.Service<ThreadTitles, ThreadTitlesService>()(
   'vivid/ThreadTitles',
 ) {}
@@ -79,7 +78,6 @@ export const threadTitlesLayer = Layer.effect(
     const runtime = yield* Runtime
     const model = yield* MemoryModel
     const threads = yield* ThreadStore
-    const changes = yield* Changes
     const withDatabase = Effect.provideService(Database, database)
 
     /** History failures never fall back to a partial or invented conversation. */
@@ -114,11 +112,6 @@ export const threadTitlesLayer = Layer.effect(
       return sanitizeThreadTitle(result.title)
     })
 
-    /** Publish precisely the audience topics used by the existing Person rename path. */
-    const publish = Effect.fn('ThreadTitles.publish')(function* (thread: StoredThread) {
-      yield* changes.publish(audienceTopics(thread, yield* threads.participants(thread.id)))
-    })
-
     /** T3's warning-only first-turn behavior; a failure is isolated from the settled Run. */
     const afterRun = Effect.fn('ThreadTitles.afterRun')(
       function* (id: ThreadId) {
@@ -128,7 +121,7 @@ export const threadTitlesLayer = Layer.effect(
         if (!messages.some((message) => message.role === 'user')) return
         const title = yield* generate(id, formatThreadTitleContext(messages), Option.none())
         if (title === DEFAULT_THREAD_TITLE) return
-        if (yield* threads.generatedTitle(id, title, Option.none())) yield* publish(found.value)
+        yield* threads.generatedTitle(id, title, Option.none())
       },
       (effect, thread) =>
         effect.pipe(
@@ -152,8 +145,7 @@ export const threadTitlesLayer = Layer.effect(
       if (context.length === 0) return thread.title
       const title = yield* generate(thread.id, context, Option.some(thread.title))
       if (title !== DEFAULT_THREAD_TITLE && title !== thread.title) {
-        if (yield* threads.generatedTitle(thread.id, title, Option.some(thread.title)))
-          yield* publish(thread)
+        yield* threads.generatedTitle(thread.id, title, Option.some(thread.title))
       }
       // Return current truth after a superseded write, including deletion/access revocation as typed failure.
       return (yield* requireThread(thread.id, person).pipe(withDatabase)).title

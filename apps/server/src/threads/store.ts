@@ -1,10 +1,12 @@
 import { and, asc, desc, eq, exists, inArray, isNull, or, sql, type SQL } from 'drizzle-orm'
+import * as Array from 'effect/Array'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import {
+  AuditEvent,
   Conflict,
   DatabaseConstraintViolation,
   Forbidden,
@@ -21,17 +23,27 @@ import {
   type Thread,
   type ThreadId,
 } from '@vivid/contracts'
+import { appendAudit, AuditAttribution } from '../audit/record.ts'
+import { announce, Topic } from '../live/changes.ts'
 import { companyColumnOf, inWorkspace, type Actor } from '../auth/access.ts'
 import { membershipTable } from '../companies/tables.ts'
 import { Database, returned, type DatabaseInfrastructureError } from '../database/client.ts'
 import { projectTable } from '../projects/tables.ts'
-import { decodeThread, requireThread, type StoredAudience, type StoredThread } from './access.ts'
+import {
+  audienceTopics,
+  canSee,
+  decodeThread,
+  findThread,
+  type StoredAudience,
+  type StoredThread,
+} from './access.ts'
 import { threadParticipants, threadReads, threads } from './tables.ts'
 import { toWire } from './wire.ts'
 import type { TitleSource } from './title.ts'
 import { claimFirstThread, releaseFirstThread } from './first.ts'
 
 type DatabaseService = Database['Service']
+type Transaction = Parameters<Parameters<DatabaseService['transaction']>[0]>[0]
 type ThreadStoreError = DatabaseInfrastructureError
 type ThreadChangeError = ThreadStoreError | NotFound | Forbidden | InvalidRequest | Conflict
 
@@ -51,7 +63,7 @@ export const plainPreview = (markdown: string) =>
 export interface Shared {
   readonly thread: Thread
   readonly added: ReadonlyArray<PersonId>
-  readonly removed: ReadonlyArray<PersonId>
+  readonly companyId: CompanyId
 }
 
 export interface ThreadStoreService {
@@ -94,11 +106,8 @@ export interface ThreadStoreService {
     id: ThreadId,
     audience: ShareThreadRequest,
   ) => Effect.Effect<Shared, ThreadChangeError>
-  /** Deletes a Thread for its creator and returns what it was, for telling whoever could see it. */
-  readonly remove: (
-    personId: PersonId,
-    id: ThreadId,
-  ) => Effect.Effect<StoredThread, ThreadChangeError>
+  /** Deletes a Thread for its creator, announcing its audience in the same transaction. */
+  readonly remove: (personId: PersonId, id: ThreadId) => Effect.Effect<void, ThreadChangeError>
   readonly markRead: (personId: PersonId, id: ThreadId) => Effect.Effect<void, ThreadChangeError>
   /** Moves a Thread to the top of its list, with a new preview when there is something to show. */
   readonly touch: (
@@ -155,6 +164,11 @@ const makeView = (database: DatabaseService) =>
     return yield* returned(yield* toWire(database, [thread], personId), 'Thread')
   })
 
+/**
+ * The inserted row owns its private audience. Announce in the insert transaction so failed Flue
+ * admission cannot leave an unannounced Thread; an existing ownership receipt writes nothing.
+ * A Routine id is predictable, so its presence never proves which Person may receive the work.
+ */
 const makeEnsure = (database: DatabaseService) =>
   Effect.fn('ThreadStore.ensure')(function* (input: {
     readonly id: ThreadId
@@ -163,35 +177,68 @@ const makeEnsure = (database: DatabaseService) =>
     readonly personId: PersonId
     readonly companyId: CompanyId | null
   }) {
-    const now = yield* Clock.currentTimeMillis
-    yield* database.run(
-      database
-        .insert(threads)
-        .values({
-          id: input.id,
-          title: input.title,
-          titleSource: input.titleSource,
-          updatedAt: now,
-          personId: input.personId,
-          companyId: input.companyId,
-        })
-        .onConflictDoNothing({ target: threads.id }),
-    )
-    const rows = yield* database.run(
-      database.select().from(threads).where(eq(threads.id, input.id)).limit(1),
-    )
-    const stored = yield* decodeThread(yield* returned(rows, 'Thread'))
-    // The id is predictable (`routine-<id>`), so a row already being there proves
-    // nothing about whose it is. Only this Person's Thread in this workspace is handed back;
-    // sharing changes audience, not ownership. Never deliver a Routine into a Thread
-    // someone else created to receive it.
-    const theirs = stored.personId === input.personId && stored.companyId === input.companyId
-    return theirs
-      ? stored
-      : yield* Effect.fail(
-          new DatabaseConstraintViolation({ message: 'Database constraint was violated' }),
+    return yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis
+        const inserted = yield* tx
+          .insert(threads)
+          .values({
+            id: input.id,
+            title: input.title,
+            titleSource: input.titleSource,
+            updatedAt: now,
+            personId: input.personId,
+            companyId: input.companyId,
+          })
+          .onConflictDoNothing({ target: threads.id })
+          .returning()
+        const row = inserted[0]
+        if (row !== undefined) {
+          const stored = yield* decodeThread(row)
+          yield* announce(tx, audienceTopics(stored, []))
+          return stored
+        }
+        const rows = yield* database.run(
+          database.select().from(threads).where(eq(threads.id, input.id)).limit(1),
         )
+        const stored = yield* decodeThread(yield* returned(rows, 'Thread'))
+        // A predictable Routine id proves no ownership; sharing changes reach, never ownership.
+        const theirs = stored.personId === input.personId && stored.companyId === input.companyId
+        return theirs
+          ? stored
+          : yield* Effect.fail(
+              new DatabaseConstraintViolation({ message: 'Database constraint was violated' }),
+            )
+      }),
+    )
   })
+
+/**
+ * Lock before authorization so each read sees shares committed before the lock was granted.
+ * Effect rc.116 unstable/sql/SqlClient.ts:162-171,285-300 resolves each statement's connection
+ * from fiber context; Drizzle effect-postgres/session.js:14-29 installs it for the callback.
+ * Existing Database readers therefore join this transaction without casting tx to Database or
+ * replacing the transaction service with a captured context. Key share leaves touch unblocked.
+ */
+const lockThread = (database: DatabaseService) =>
+  Effect.fn('ThreadStore.lock')(function* (
+    tx: Transaction,
+    personId: PersonId,
+    id: ThreadId,
+    mode: 'update' | 'key share',
+  ) {
+    const rows = yield* tx.select().from(threads).where(eq(threads.id, id)).limit(1).for(mode)
+    const row = rows[0]
+    if (row === undefined) return yield* Effect.fail(new NotFound({ message: 'Thread not found' }))
+    const thread = yield* decodeThread(row)
+    if (!(yield* canSee(thread, personId).pipe(Effect.provideService(Database, database))))
+      return yield* Effect.fail(new NotFound({ message: 'Thread not found' }))
+    return thread
+  })
+
+/** Company Project counts include private filed Threads (projects/store.ts filedIn). */
+const filedTopics = (thread: StoredThread): ReadonlyArray<Topic> =>
+  thread.companyId !== null && thread.projectId !== null ? [Topic.company(thread.companyId)] : []
 
 /** A Project may hold a Thread only when both are in the same workspace. */
 const requireProject = Effect.fn('ThreadStore.requireProject')(function* (
@@ -215,18 +262,22 @@ const requireProject = Effect.fn('ThreadStore.requireProject')(function* (
     : projectId
 })
 
+/** Key share protects authorization against deletion; receipt and Person notice commit together. */
 const makeMarkRead = (database: DatabaseService) =>
   Effect.fn('ThreadStore.markRead')(function* (personId: PersonId, id: ThreadId) {
-    yield* requireThread(id, personId).pipe(Effect.provideService(Database, database))
-    const now = yield* Clock.currentTimeMillis
-    yield* database.run(
-      database
-        .insert(threadReads)
-        .values({ threadId: id, personId, readAt: now })
-        .onConflictDoUpdate({
-          target: [threadReads.threadId, threadReads.personId],
-          set: { readAt: now },
-        }),
+    yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        yield* lockThread(database)(tx, personId, id, 'key share')
+        const now = yield* Clock.currentTimeMillis
+        yield* tx
+          .insert(threadReads)
+          .values({ threadId: id, personId, readAt: now })
+          .onConflictDoUpdate({
+            target: [threadReads.threadId, threadReads.personId],
+            set: { readAt: now },
+          })
+        yield* announce(tx, [Topic.person(personId)])
+      }),
     )
   })
 
@@ -235,6 +286,13 @@ const idTaken = () => Effect.fail(new Conflict({ message: 'That Thread id is tak
 /** Ids the server mints for the Threads it opens itself. A client may not claim one. */
 const RESERVED = /^routine-/u
 
+/**
+ * Insert, Membership check, creator read receipt and notice commit together. The inserted row
+ * owns the audience; a refusal rolls it back, while a same-owner retry writes and announces nothing.
+ * Clients mint ids for optimistic creation, so retries must recheck current access before returning
+ * the existing metadata. An inaccessible id keeps the prior Conflict refusal and reveals no view.
+ * The wire view reads this transaction's insert and receipt before committing (announcements case1).
+ */
 const makeCreate = (database: DatabaseService) =>
   Effect.fn('ThreadStore.create')(function* (actor: Actor, request: CreateThreadRequest) {
     const companyId = companyColumnOf(actor.workspace)
@@ -242,83 +300,121 @@ const makeCreate = (database: DatabaseService) =>
     if (RESERVED.test(request.id)) {
       return yield* Effect.fail(new InvalidRequest({ message: 'That Thread id is reserved' }))
     }
-    if (request.projectId !== null) {
-      yield* requireProject(database, request.projectId, { companyId, personId })
-    }
-    const now = yield* Clock.currentTimeMillis
-    // The id is the client's so it can draw the Thread before the server answers. A retry of the
-    // same create is therefore expected and returns the Thread. Anything else under that id, even
-    // a Thread this Person can see, is a conflict: creating is not a way to open someone else's.
-    const inserted = yield* database.run(
-      database
-        .insert(threads)
-        .values({
-          id: request.id,
-          title: request.title,
-          titleSource: 'Seed',
-          updatedAt: now,
-          personId,
-          companyId,
-          projectId: request.projectId,
-        })
-        .onConflictDoNothing({ target: threads.id })
-        .returning({ id: threads.id }),
+    return yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        if (request.projectId !== null) {
+          yield* requireProject(database, request.projectId, { companyId, personId })
+        }
+        const now = yield* Clock.currentTimeMillis
+        const inserted = yield* tx
+          .insert(threads)
+          .values({
+            id: request.id,
+            title: request.title,
+            titleSource: 'Seed',
+            updatedAt: now,
+            personId,
+            companyId,
+            projectId: request.projectId,
+          })
+          .onConflictDoNothing({ target: threads.id })
+          .returning()
+        const row = inserted[0]
+        if (row === undefined) {
+          const existing = yield* findThread(request.id).pipe(
+            Effect.provideService(Database, database),
+          )
+          if (
+            Option.isNone(existing) ||
+            existing.value.personId !== personId ||
+            existing.value.companyId !== companyId
+          )
+            return yield* idTaken()
+          if (
+            !(yield* canSee(existing.value, personId).pipe(
+              Effect.provideService(Database, database),
+            ))
+          )
+            return yield* idTaken()
+          return yield* makeView(database)(existing.value, personId)
+        }
+        const stored = yield* decodeThread(row)
+        if (!(yield* canSee(stored, personId).pipe(Effect.provideService(Database, database))))
+          return yield* Effect.fail(
+            new Forbidden({ message: 'You are not a Member of this Company' }),
+          )
+        yield* tx.insert(threadReads).values({ threadId: stored.id, personId, readAt: now })
+        yield* announce(tx, Array.dedupe([...audienceTopics(stored, []), ...filedTopics(stored)]))
+        return yield* makeView(database)(stored, personId)
+      }),
     )
-    const stored = yield* requireThread(request.id, personId).pipe(
-      Effect.provideService(Database, database),
-      Effect.catchTag('NotFound', idTaken),
-    )
-    if (stored.personId !== personId || stored.companyId !== companyId) return yield* idTaken()
-    if (inserted.length > 0) yield* makeMarkRead(database)(personId, request.id)
-    return yield* makeView(database)(stored, personId)
   })
 
+/**
+ * Hold the Thread update lock through authorization and audience reads. The write and notice
+ * commit together; moves also name both Project count owners, including private Company Threads.
+ */
 const makePatch = (database: DatabaseService) =>
   Effect.fn('ThreadStore.patch')(function* (
     personId: PersonId,
     id: ThreadId,
     change: PatchThreadRequest,
   ) {
-    const thread = yield* requireThread(id, personId).pipe(
-      Effect.provideService(Database, database),
+    return yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        const thread = yield* lockThread(database)(tx, personId, id, 'update')
+        if (change.projectId !== undefined && change.projectId !== null) {
+          yield* requireProject(database, change.projectId, thread)
+        }
+        // Preserve unnamed fields so concurrent edits to different fields both survive.
+        const rows = yield* tx
+          .update(threads)
+          .set({
+            titleSource: change.title === undefined ? sql`${threads.titleSource}` : 'Person',
+            title: change.title === undefined ? sql`${threads.title}` : change.title,
+            archived: change.archived === undefined ? sql`${threads.archived}` : change.archived,
+            projectId:
+              change.projectId === undefined ? sql`${threads.projectId}` : change.projectId,
+          })
+          .where(eq(threads.id, id))
+          .returning()
+        const stored = yield* decodeThread(yield* returned(rows, 'Thread'))
+        const people = yield* makeParticipants(database)(id)
+        const counts =
+          change.projectId === undefined ? [] : [...filedTopics(thread), ...filedTopics(stored)]
+        yield* announce(tx, Array.dedupe([...audienceTopics(stored, people), ...counts]))
+        return yield* makeView(database)(stored, personId)
+      }),
     )
-    if (change.projectId !== undefined && change.projectId !== null) {
-      yield* requireProject(database, change.projectId, thread)
-    }
-    // Only the fields the caller named are written, so two People changing different things at
-    // the same moment (one renames, one archives) both keep their change.
-    const rows = yield* database.run(
-      database
-        .update(threads)
-        .set({
-          titleSource: change.title === undefined ? sql`${threads.titleSource}` : 'Person',
-          title: change.title === undefined ? sql`${threads.title}` : change.title,
-          archived: change.archived === undefined ? sql`${threads.archived}` : change.archived,
-          projectId: change.projectId === undefined ? sql`${threads.projectId}` : change.projectId,
-        })
-        .where(eq(threads.id, id))
-        .returning(),
-    )
-    const stored = yield* decodeThread(yield* returned(rows, 'Thread'))
-    return yield* makeView(database)(stored, personId)
   })
 
-/** T3 apps/server/src/orchestration/Layers/ProviderCommandReactor.ts#regenerateThreadTitle/canReplaceThreadTitle: conditional SQL closes the
- * read/write race with Person renames. None means automatic Seed-only; Some is explicit regeneration. */
+/**
+ * T3 apps/server/src/orchestration/Layers/ProviderCommandReactor.ts#regenerateThreadTitle/canReplaceThreadTitle:
+ * conditional SQL closes the rename race. None is automatic Seed-only; Some is explicit regeneration.
+ * UPDATE holds the Thread lock while its returned current audience and notice join the title commit,
+ * avoiding the generation caller's stale pre-model snapshot. A failed guard announces nothing.
+ */
 const makeGeneratedTitle = (database: DatabaseService): ThreadStoreService['generatedTitle'] =>
   Effect.fn('ThreadStore.generatedTitle')(function* (id, title, previous) {
-    const guard = Option.match(previous, {
-      onNone: () => eq(threads.titleSource, 'Seed'),
-      onSome: (before) => eq(threads.title, before),
-    })
-    const rows = yield* database.run(
-      database
-        .update(threads)
-        .set({ title, titleSource: 'Generated' })
-        .where(and(eq(threads.id, id), guard))
-        .returning({ id: threads.id }),
+    return yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        const guard = Option.match(previous, {
+          onNone: () => eq(threads.titleSource, 'Seed'),
+          onSome: (before) => eq(threads.title, before),
+        })
+        const rows = yield* tx
+          .update(threads)
+          .set({ title, titleSource: 'Generated' })
+          .where(and(eq(threads.id, id), guard))
+          .returning()
+        const row = rows[0]
+        if (row === undefined) return false
+        const thread = yield* decodeThread(row)
+        const people = yield* makeParticipants(database)(id)
+        yield* announce(tx, audienceTopics(thread, people))
+        return true
+      }),
     )
-    return rows.length > 0
   })
 
 const makeParticipants = (database: DatabaseService) =>
@@ -369,70 +465,114 @@ const sharingOf = (audience: ShareThreadRequest, creator: PersonId): Sharing => 
   return { stored: ShareThreadRequest.guards.Company(audience) ? 'company' : 'private', people: [] }
 }
 
+/** The audit words name the reach, never disclose the named People. */
+const audienceName = (audience: ShareThreadRequest) =>
+  ShareThreadRequest.match(audience, {
+    Private: () => 'only its creator',
+    People: () => 'named people',
+    Company: () => 'the whole Company',
+  })
+
+/** Every replacement participant carries the same locked Thread and share timestamp. */
+const participantRows = (id: ThreadId, people: ReadonlyArray<PersonId>, now: number) =>
+  people.map((personId) => ({ threadId: id, personId, addedAt: now }))
+
+/**
+ * Authorize and replace participants under the Thread update lock. Audit uses the locked Thread's
+ * Company, not the session workspace. Announce both old and new audiences so People losing access
+ * also reload; the Company topic refreshes its audit. Every refusal rolls back without a notice.
+ */
 const makeShare = (database: DatabaseService) =>
   Effect.fn('ThreadStore.share')(function* (
     personId: PersonId,
     id: ThreadId,
     audience: ShareThreadRequest,
   ) {
-    const provide = Effect.provideService(Database, database)
-    const thread = yield* requireThread(id, personId).pipe(provide)
-    if (thread.personId !== personId) {
-      return yield* Effect.fail(new Forbidden({ message: 'Only its creator can share a Thread' }))
-    }
-    if (thread.companyId === null) {
-      return yield* Effect.fail(
-        new InvalidRequest({ message: 'A Thread in your own space has nobody to be shared with' }),
-      )
-    }
-    // A Routine's own Thread is where Vivid reports to one Person. Sharing it would
-    // put that Person's Routine in front of other people and stop the server from opening it.
-    if (RESERVED.test(thread.id)) {
-      return yield* Effect.fail(
-        new InvalidRequest({
-          message: 'This thread belongs to a Routine and stays private',
-        }),
-      )
-    }
-    const sharing = sharingOf(audience, personId)
-    const people = yield* requireMembers(database, thread.companyId, sharing.people)
-    const now = yield* Clock.currentTimeMillis
-    const rows = people.map((person) => ({ threadId: id, personId: person, addedAt: now }))
-    // The Thread's row is locked for the whole replacement. Without it two shares racing could
-    // each clear the list and then each add their own People, leaving the union of both: reach
-    // nobody asked for.
-    const present = yield* database.transaction((tx) =>
+    return yield* database.transaction((tx) =>
       Effect.gen(function* () {
-        yield* tx.select({ id: threads.id }).from(threads).where(eq(threads.id, id)).for('update')
-        const listed = yield* tx
-          .select({ personId: threadParticipants.personId })
-          .from(threadParticipants)
-          .where(eq(threadParticipants.threadId, id))
+        const thread = yield* lockThread(database)(tx, personId, id, 'update')
+        if (thread.personId !== personId) {
+          return yield* Effect.fail(
+            new Forbidden({ message: 'Only its creator can share a Thread' }),
+          )
+        }
+        if (thread.companyId === null) {
+          return yield* Effect.fail(
+            new InvalidRequest({
+              message: 'A Thread in your own space has nobody to be shared with',
+            }),
+          )
+        }
+        // Routine reporting belongs to one Person even when its Thread id is predictable.
+        if (RESERVED.test(thread.id)) {
+          return yield* Effect.fail(
+            new InvalidRequest({ message: 'This thread belongs to a Routine and stays private' }),
+          )
+        }
+        const sharing = sharingOf(audience, personId)
+        const people = yield* requireMembers(database, thread.companyId, sharing.people)
+        const before = yield* makeParticipants(database)(id)
+        const now = yield* Clock.currentTimeMillis
         yield* tx.delete(threadParticipants).where(eq(threadParticipants.threadId, id))
-        if (rows.length > 0) yield* tx.insert(threadParticipants).values(rows)
-        yield* tx.update(threads).set({ audience: sharing.stored }).where(eq(threads.id, id))
-        return listed
+        if (people.length > 0)
+          yield* tx.insert(threadParticipants).values(participantRows(id, people, now))
+        const rows = yield* tx
+          .update(threads)
+          .set({ audience: sharing.stored })
+          .where(eq(threads.id, id))
+          .returning()
+        const after = yield* decodeThread(yield* returned(rows, 'Thread'))
+        yield* appendAudit(
+          tx,
+          AuditAttribution.make({
+            personId,
+            companyId: thread.companyId,
+            by: 'person',
+            threadId: null,
+          }),
+          AuditEvent.cases.ThreadShared.make({
+            title: thread.title,
+            audience: audienceName(audience),
+          }),
+          now,
+        )
+        yield* announce(
+          tx,
+          Array.dedupe([
+            ...audienceTopics(thread, before),
+            ...audienceTopics(after, people),
+            Topic.company(thread.companyId),
+          ]),
+        )
+        return {
+          thread: yield* makeView(database)(after, personId),
+          companyId: thread.companyId,
+          added: Array.difference(people, before),
+        }
       }),
     )
-    const before = present.map((row) => row.personId)
-    const after = yield* requireThread(id, personId).pipe(provide)
-    return {
-      thread: yield* makeView(database)(after, personId),
-      added: people.filter((person) => !before.includes(person)),
-      removed: before.filter((person) => !people.includes(person)),
-    }
   })
 
+/** Capture the deleted audience under the update lock; deletion and its notice commit together. */
 const makeRemove = (database: DatabaseService) =>
   Effect.fn('ThreadStore.remove')(function* (personId: PersonId, id: ThreadId) {
-    const thread = yield* requireThread(id, personId).pipe(
-      Effect.provideService(Database, database),
+    yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        const thread = yield* lockThread(database)(tx, personId, id, 'update')
+        if (thread.personId !== personId) {
+          return yield* Effect.fail(
+            new Forbidden({ message: 'Only its creator can delete a Thread' }),
+          )
+        }
+        const people = yield* makeParticipants(database)(id)
+        yield* tx.delete(threads).where(eq(threads.id, id))
+        yield* announce(
+          tx,
+          Array.dedupe([...audienceTopics(thread, people), ...filedTopics(thread)]),
+        )
+        return undefined
+      }),
     )
-    if (thread.personId !== personId) {
-      return yield* Effect.fail(new Forbidden({ message: 'Only its creator can delete a Thread' }))
-    }
-    yield* database.run(database.delete(threads).where(eq(threads.id, id)))
-    return thread
   })
 
 const makeTouch = (database: DatabaseService) =>

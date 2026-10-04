@@ -1,3 +1,4 @@
+import { PgClient } from '@effect/sql-pg/PgClient'
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, it } from '@effect/vitest'
 import { PersonId, RunState, ThreadId } from '@vivid/contracts'
@@ -26,7 +27,7 @@ import { HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { Changes, type Topic } from '../live/changes.ts'
+import { announce, CHANNEL, Changes, Topic } from '../live/changes.ts'
 import { ProviderMalformed } from '../memory/embeddings.ts'
 import { silentLearningLayer } from '../memory/learn.ts'
 import { Completion, MemoryModel } from '../memory/model.ts'
@@ -102,9 +103,6 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
       parts: [{ type: 'text', text: 'We can explore Florence.', state: 'done' }],
     },
   ])
-  const published = yield* Ref.make<
-    ReadonlyArray<{ title: string; source: string; topics: ReadonlyArray<Topic> }>
-  >([])
   const model = MemoryModel.of({
     complete: (input) =>
       Queue.offer(requests, input).pipe(
@@ -137,18 +135,7 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
       ),
   })
   const changes = Changes.of({
-    publish: (topics) =>
-      database.run(database.select().from(threads).where(eq(threads.id, threadId))).pipe(
-        Effect.flatMap(([row]) =>
-          row === undefined
-            ? Effect.void
-            : Ref.update(published, (events) => [
-                ...events,
-                { title: row.title, source: row.titleSource, topics },
-              ]),
-        ),
-        Effect.catch(() => Effect.sync(() => expect.fail('Publication fixture failed'))),
-      ),
+    publish: () => Effect.void,
     subscribe: () => Effect.succeed(Stream.never),
   })
   const services = Layer.mergeAll(
@@ -212,11 +199,21 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
     settlement,
     finished,
     messages,
-    published,
     finishedRuns,
     generatedWrites,
     modelFinished,
   }
+})
+
+const decodeTopics = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String)))
+
+/** A later committed unique topic proves a superseded generation emitted no SQL announcement. */
+const marker = Effect.fn('ThreadTitles.test.marker')(function* (
+  notifications: Effect.Success<ReturnType<PgClient['listen']>>,
+) {
+  const topic = Topic.person(PersonId.make(NodeCrypto.randomUUID()))
+  yield* (yield* Database).transaction((tx) => announce(tx, [topic]))
+  expect(yield* decodeTopics((yield* Queue.take(notifications)).payload)).toEqual([topic])
 })
 
 /** Exercise production observation, SQL source guards and publication with a deliberate model Layer. */
@@ -240,6 +237,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
         id: admitted.runId,
         state: RunState.cases.Completed.make({ finishedAt: 0 }),
       })
+      const notifications = yield* (yield* PgClient).listen(CHANNEL)
       yield* Deferred.succeed(
         test.completion,
         Completion.cases.Finished.make({ text: '{"title":"Plan an Italian holiday"}' }),
@@ -249,11 +247,9 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
         title: 'Plan an Italian holiday',
         titleSource: 'Generated',
       })
-      expect(yield* Ref.get(test.published)).toContainEqual({
-        title: 'Plan an Italian holiday',
-        source: 'Generated',
-        topics: [`t:${test.threadId}`, `p:${test.personId}`],
-      })
+      expect(new Set(yield* decodeTopics((yield* Queue.take(notifications)).payload))).toEqual(
+        new Set([Topic.thread(test.threadId), Topic.person(test.personId)]),
+      )
     }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
   )
 
@@ -483,13 +479,14 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
         .pipe(Effect.forkScoped)
       yield* Queue.take(test.requests)
       yield* test.store.patch(test.personId, test.threadId, { title: 'Keep this title' })
+      const notifications = yield* (yield* PgClient).listen(CHANNEL)
       yield* Deferred.succeed(
         test.completion,
         Completion.cases.Finished.make({ text: '{"title":"Explore Florence on holiday"}' }),
       )
       expect(yield* Fiber.join(fiber)).toBe('Keep this title')
       expect((yield* test.stored).titleSource).toBe('Person')
-      expect(yield* Ref.get(test.published)).toEqual([])
+      yield* marker(notifications)
     }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
   )
 
@@ -499,6 +496,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
       const fiber = yield* test.titles.afterRun(test.threadId).pipe(Effect.forkScoped)
       yield* Queue.take(test.requests)
       yield* test.store.patch(test.personId, test.threadId, { title: 'Person chose this' })
+      const notifications = yield* (yield* PgClient).listen(CHANNEL)
       yield* Deferred.succeed(
         test.completion,
         Completion.cases.Finished.make({ text: '{"title":"Explore Florence on holiday"}' }),
@@ -508,7 +506,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
         title: 'Person chose this',
         titleSource: 'Person',
       })
-      expect(yield* Ref.get(test.published)).toEqual([])
+      yield* marker(notifications)
     }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
   )
 
