@@ -937,6 +937,8 @@ function makeAuthorize(
       Key: () => methods.filter(([, method]) => AuthorizationMethod.guards.secrets(method)),
       None: () => [],
       SetupRequired: () => [],
+      // The catalogue gave no hint, so the installed app's own declared methods decide.
+      KnownAfterInstall: () => methods,
     })
     const chosen = matching[0]
     if (matching.length !== 1 || chosen === undefined)

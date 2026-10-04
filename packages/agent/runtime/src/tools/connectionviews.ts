@@ -37,6 +37,8 @@ export function integrations(response: FindIntegrationsResponse) {
             None: () => 'Ready to connect without sign-in.',
             SignIn: () => 'Ready to sign in.',
             Key: () => 'Ready to connect with a key in the secure dialog.',
+            KnownAfterInstall: () =>
+              'Ready to connect; the person signs in or enters a key in the secure dialog when they start.',
             SetupRequired: () =>
               `${modelText(name)} is not set up on this Vivid yet; whoever runs it needs to register a sign-in application for it. Do not offer a connect card.`,
           }),

@@ -51,6 +51,13 @@ export const ServiceAuthorization = Schema.TaggedUnion({
    * found by name, and it is not offered.
    */
   SetupRequired: {},
+  /**
+   * How the service is entered is not known until it is installed: Executor's hosted catalogue
+   * lists a service without saying whether it wants a sign-in, a key, or nothing. Beginning the
+   * Connection installs it, reads what it needs, and answers with the real next step. It is on
+   * offer, unlike `SetupRequired`.
+   */
+  KnownAfterInstall: {},
 })
 export type ServiceAuthorization = typeof ServiceAuthorization.Type
 
