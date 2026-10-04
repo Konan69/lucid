@@ -14,6 +14,7 @@ import {
 } from '@effect/platform-node'
 import { artifactStoreLayer } from './artifacts/store.ts'
 import { gateLayer } from './approvals/gate.ts'
+import { reviewerLayer } from './approvals/review.ts'
 import { actionRunnerLayer } from './approvals/runner.ts'
 import { approvalStoreLayer } from './approvals/store.ts'
 import { approvalSweeperLayer } from './approvals/sweeper.ts'
@@ -152,7 +153,7 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     Layer.provideMerge(actionRunnerLayer),
     Layer.provideMerge(accounts),
   )
-  const decisions = gateLayer.pipe(Layer.provideMerge(trust))
+  const decisions = gateLayer.pipe(Layer.provideMerge(reviewerLayer), Layer.provideMerge(trust))
   const work = Layer.mergeAll(routineStoreLayer, codeCallsLayer).pipe(Layer.provideMerge(decisions))
   const schedules = routineSchedulerServiceLayer.pipe(Layer.provideMerge(work))
   const background = Layer.mergeAll(

@@ -40,11 +40,13 @@ export interface GateService {
   /**
    * Decides whether Vivid may take `action` now, acting for `actor`.
    *
-   * The model never decides this. A `read` passes. A `write` or `destructive` action is weighed
-   * against the rules that bind the acting Person: `Never` beats `Ask` beats `Allow`, a Company's
-   * rules are binding on every Member, and a Person's own rules can only make things stricter.
-   * When no rule allows it, the answer is to ask. If the rules cannot be weighed (the check
-   * itself fails), the answer is also to ask.
+   * The working model never decides this. A `read` passes. A `write` or `destructive` action is
+   * weighed against the rules that bind the acting Person: `Never` beats `Ask` beats `Allow`, a
+   * Company's rules are binding on every Member, and a Person's own rules can only make things
+   * stricter. With no rule, the default is to run: only an action that uses something of the
+   * Person's own, or is `destructive`, goes to the `Reviewer`, and `policy.ts#reviewOutcome` asks
+   * only when the Person did not ask for it and it reaches other people or cannot be undone. If
+   * the rules cannot be weighed (the check itself fails), the answer is to ask.
    */
   readonly check: (
     actor: Actor,
@@ -93,6 +95,8 @@ import { RuleStore } from '../rules/store.ts'
 import { BindingJudgment, RuleJudge, judgeBinding } from '../rules/judge.ts'
 import { ApprovalStore } from './store.ts'
 import { auditAction } from './action.ts'
+import { reviewOutcome } from './policy.ts'
+import { Reviewer } from './review.ts'
 
 /** Record commands, consequential Connection allowance and use of the Person's own browser. */
 const allow = Effect.fn('Gate.allow')(function* (
@@ -113,6 +117,27 @@ const allow = Effect.fn('Gate.allow')(function* (
   return GateDecision.cases.Allowed.make({})
 })
 
+/** Raises the Approval the acting Person must answer; the turn ends until they do. */
+const ask = Effect.fn('Gate.ask')(function* (
+  approvals: ApprovalStore['Service'],
+  actor: Actor,
+  action: ProposedAction,
+) {
+  return GateDecision.cases.ApprovalRequired.make({
+    approval: yield* approvals.raise(actor, action),
+  })
+})
+
+/**
+ * Whether an action with no rule is worth a review. Work on Vivid's own Computer is contained
+ * there (docs/22), so an undoable step runs without a provider call; the Person's own accounts
+ * and browser, and anything `destructive`, are reviewed.
+ */
+const reviewable = (action: ProposedAction) =>
+  action.effect === 'destructive' ||
+  ActionTarget.guards.Connection(action.target) ||
+  (ActionTarget.guards.Browser(action.target) && BrowseTarget.guards.Person(action.target.target))
+
 /** Server policy owns precedence; the judge only supplies applicability and cannot authorize an action. */
 export const gateLayer = Layer.effect(
   Gate,
@@ -121,8 +146,9 @@ export const gateLayer = Layer.effect(
     const judge = yield* RuleJudge
     const approvals = yield* ApprovalStore
     const audit = yield* Audit
+    const reviewer = yield* Reviewer
     return Gate.of({
-      /** Ordinary reads pass; contained Computer work defaults to allowed, while uncertainty asks. */
+      /** Ordinary reads pass; rules come first; the rest runs unless the review says a Person is needed. */
       check: Effect.fn('Gate.check')(function* (actor, action, exposure) {
         if (action.effect === 'read' && exposure === 'Ordinary')
           return yield* allow(audit, actor, action)
@@ -140,22 +166,23 @@ export const gateLayer = Layer.effect(
           )
           return GateDecision.cases.Blocked.make({ rule: never.action })
         }
-        const asks = applicable.some((rule) => rule.decision === 'Ask')
-        const personal =
-          ActionTarget.guards.Connection(action.target) ||
-          (ActionTarget.guards.Browser(action.target) &&
-            BrowseTarget.guards.Person(action.target.target))
+        // An applicable Ask rule, rules that could not be weighed, and something personal
+        // entering a shared Thread always ask: none of these is a judgment about the request.
         if (
-          asks ||
+          applicable.some((rule) => rule.decision === 'Ask') ||
           BindingJudgment.guards.Uncertain(judged) ||
-          action.effect === 'destructive' ||
-          exposure === 'PersonalInShared' ||
-          (personal && applicable.length === 0)
-        ) {
-          return GateDecision.cases.ApprovalRequired.make({
-            approval: yield* approvals.raise(actor, action),
-          })
-        }
+          exposure === 'PersonalInShared'
+        )
+          return yield* ask(approvals, actor, action)
+        // An Allow rule is the Person's standing request for an undoable action. It does not
+        // settle a destructive one: applicability is a 0.5 match (`rules/judge.ts`), too loose
+        // to let "Allow updating projects" authorize deleting one, so that goes to the review.
+        if (action.effect !== 'destructive' && applicable.some((rule) => rule.decision === 'Allow'))
+          return yield* allow(audit, actor, action)
+        if (!reviewable(action)) return yield* allow(audit, actor, action)
+        const review = yield* reviewer.review(actor, action)
+        if (reviewOutcome(action.effect, review) === 'Ask')
+          return yield* ask(approvals, actor, action)
         return yield* allow(audit, actor, action)
       }),
     })
