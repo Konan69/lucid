@@ -165,11 +165,14 @@ describe('model views', () => {
         brief: `Review before signing. Legacy note: ${reference}.`,
         skills: [skill, skill],
         timezone: 'Africa/Lagos',
+        integrations: ['DeepWiki', `Mail ${reference}`],
         name: 'Vivid',
       }),
     )
     expect(context).not.toMatch(/MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|"id"/iu)
     expect(context).toContain('review-agreement-2')
+    // Connected services reach the model by name, with any identifier in a name removed.
+    expect(context).toContain('"integrations":["DeepWiki","Mail ')
     expect(json).toContain('admin@example.test')
     expect(views.tools({ tools: [tool], unconnected: [] }).tools[0]).toHaveProperty(
       'signature',
