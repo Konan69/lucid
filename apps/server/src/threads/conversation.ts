@@ -3,6 +3,7 @@ import type * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import {
   MessageAttachment,
+  Channel,
   SignalType,
   type Conflict,
   type LibraryFolderId,
@@ -24,6 +25,8 @@ import type { DatabaseInfrastructureError } from '../database/client.ts'
  */
 export const DeliveryMessage = Schema.TaggedUnion({
   Said: { body: Schema.String, attachments: Schema.optionalKey(Schema.Array(MessageAttachment)) },
+  /** A linked personal channel supplies a Person's text through server delivery, never an impersonated signal. */
+  ChannelText: { channel: Channel, body: Schema.String },
   FirstConversation: {},
   Signal: {
     type: SignalType,
@@ -77,6 +80,12 @@ export interface SignalDelivery extends Delivery {
     | typeof DeliveryMessage.cases.FirstConversation.Type
 }
 
+/** Channel transport enters the same admission policy with the linked Person as its actor. */
+export interface ChannelDelivery extends Delivery {
+  readonly message: typeof DeliveryMessage.cases.ChannelText.Type
+}
+export type ServerDelivery = SignalDelivery | ChannelDelivery
+
 /** Flue's receipt for a delivery, which the gateway hands back to the client that sent it. */
 export const Admitted = Schema.Struct({
   runId: RunId,
@@ -95,7 +104,7 @@ export interface ConversationService {
    * durable receipt and retry its original key on their own schedule.
    */
   readonly deliver: (
-    delivery: SignalDelivery,
+    delivery: ServerDelivery,
   ) => Effect.Effect<Run, Conflict | RuntimeUnavailable | NotFound | DatabaseInfrastructureError>
   /** Immediate admission: another Person's working Run returns a client-displayable Conflict. */
   readonly admit: (

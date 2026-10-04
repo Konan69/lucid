@@ -29,6 +29,7 @@ export const flueMessage = (
 ): RuntimeMessage => {
   const attribution = signalAttributes(message, speaker, turn)
   return DeliveryMessage.match(message, {
+    ChannelText: ({ body }): RuntimeMessage => ({ kind: 'user', body, attachments: [] }),
     Said: ({ body, attachments }): RuntimeMessage =>
       audience === 'private'
         ? { kind: 'user', body, attachments: attachments === undefined ? [] : attachments }

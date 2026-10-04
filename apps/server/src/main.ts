@@ -12,6 +12,12 @@ import {
   NodePath,
   NodeRuntime,
 } from '@effect/platform-node'
+import { photonLayer } from './channels/photon.ts'
+import { channelStoreLayer } from './channels/store.ts'
+import { channelLedgerLayer } from './channels/ledger.ts'
+import { channelReceiverLayer } from './channels/inbound.ts'
+import { channelRepliesLayer } from './channels/replies.ts'
+import { channelWorkerLayer } from './channels/worker.ts'
 import { artifactStoreLayer } from './artifacts/store.ts'
 import { gateLayer } from './approvals/gate.ts'
 import { reviewerLayer } from './approvals/review.ts'
@@ -117,6 +123,7 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
   const durable = Layer.mergeAll(workLayer, decisionModelLayer).pipe(Layer.provideMerge(data))
   const foundation = Layer.mergeAll(
     changesLayer,
+    photonLayer,
     runtimeLayer,
     companyStoreLayer,
     settingsStoreLayer,
@@ -148,7 +155,11 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
   ).pipe(Layer.provideMerge(delivery))
   const recorded = ruleStoreLayer.pipe(Layer.provideMerge(reach))
   const knowledge = Layer.mergeAll(memoryLayer, memoryModelLayer).pipe(Layer.provideMerge(recorded))
-  const named = threadTitlesLayer.pipe(Layer.provideMerge(knowledge))
+  const channels = Layer.mergeAll(channelStoreLayer, channelLedgerLayer).pipe(
+    Layer.provideMerge(knowledge),
+  )
+  const replying = channelRepliesLayer.pipe(Layer.provideMerge(channels))
+  const named = threadTitlesLayer.pipe(Layer.provideMerge(replying))
   const conversation = conversationLayer.pipe(Layer.provideMerge(named))
   const accounts = Layer.mergeAll(connectionStoreLayer, toolEffectsLayer, computerStoreLayer).pipe(
     Layer.provideMerge(conversation),
@@ -159,9 +170,11 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
   )
   const decisions = gateLayer.pipe(Layer.provideMerge(reviewerLayer), Layer.provideMerge(trust))
   const work = Layer.mergeAll(routineStoreLayer, codeCallsLayer).pipe(Layer.provideMerge(decisions))
-  const schedules = routineSchedulerServiceLayer.pipe(Layer.provideMerge(work))
+  const channelHandling = channelReceiverLayer.pipe(Layer.provideMerge(work))
+  const schedules = routineSchedulerServiceLayer.pipe(Layer.provideMerge(channelHandling))
   const background = Layer.mergeAll(
     routineSchedulerLayer,
+    channelWorkerLayer,
     approvalSweeperLayer,
     pushReceiptsLayer,
     libraryIngestionLayer(ingestionBackoff, extractPdf),

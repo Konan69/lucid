@@ -1,3 +1,4 @@
+import { silentChannelRepliesLayer } from '../channels/replies.ts'
 import { PgClient } from '@effect/sql-pg/PgClient'
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, it } from '@effect/vitest'
@@ -167,6 +168,7 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* (
   })
   const conversationContext = yield* Layer.build(
     conversationLayer.pipe(
+      Layer.provide(silentChannelRepliesLayer),
       Layer.provide(services),
       Layer.provide(Layer.succeed(ThreadTitles, observed)),
     ),

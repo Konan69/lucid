@@ -144,7 +144,7 @@ const refuseEnvelope = Effect.fn('Channels.refuseEnvelope')(() =>
 
 /**
  * Installed Spectrum 12.10.1 Space.send has no caller idempotency key. The iMessage
- * lifecycle.createClient enables autoIdempotency for one unary attempt's retries; a new send
+ * imessage/dist/index.js#createCloudClients enables autoIdempotency for one unary attempt's retries; a new send
  * after a crash gets a new key, so recovery must not resend.
  *
  * Diagnostics/telemetry are disabled to preserve Vivid's content logging policy. Original
@@ -180,8 +180,9 @@ const makePhoton = Effect.fn('Channels.makePhoton')(function* (config: PhotonCre
       ),
   )
   /**
-   * core/types/message.ts and imessage/message.ts (12.10.1) also expose groups, attachments,
-   * reactions, edits and controls. Ignore them before decoding; retain no stale Space on reconnect.
+   * imessage/dist/index.js#buildUnwrappedContentMessage (12.10.1) also exposes grouped attachments;
+   * core Message/Content also includes reactions, edits and controls. Ignore non-text before decoding.
+   * Retain no stale Space on reconnect.
    */
   const connect = Effect.fn('Channels.streamPhoton')(function* () {
     const application = yield* Effect.acquireRelease(connectPhoton(config), closePhoton)
