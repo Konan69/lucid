@@ -17,19 +17,29 @@ type Reported = 'open' | 'closed'
  * AI SDK assistant message; each turn becomes one AI SDK step.
  */
 export type RunState = {
-  /** Assistant messages seen in this run. Makes part ids unique across the steps of one message. */
+  /** Turns started in this run. */
   readonly turn: number
-  /** Blocks of the current assistant message already reported, by `contentIndex`. */
+  /**
+   * Model responses started in this run. A turn has more than one when Pi Durable retries a failed
+   * request, so part ids use this counter and never collide across attempts.
+   */
+  readonly response: number
+  /** Blocks of the current response already reported, by `contentIndex`. */
   readonly blocks: ReadonlyMap<number, Reported>
+  /**
+   * Error text of the newest response when it failed. Pi Durable retries a failed request, so a
+   * failure is reported only if the run ends with it still standing. Empty when there is none.
+   */
+  readonly failure: readonly string[]
 }
 
-export const initialRunState: RunState = { turn: 0, blocks: new Map() }
+export const initialRunState: RunState = { turn: 0, response: 0, blocks: new Map(), failure: [] }
 
 type Block = AssistantMessage['content'][number]
 type Step = { readonly state: RunState; readonly chunks: readonly UIMessageChunk[] }
 
 /** Part id of one block. AI SDK text and reasoning parts are matched across chunks by this id. */
-const partId = (state: RunState, contentIndex: number) => `${state.turn}:${contentIndex}`
+const partId = (state: RunState, contentIndex: number) => `${state.response}:${contentIndex}`
 
 /** Chunks that open a block. A tool call opens as a dynamic tool: the client holds no typed tool set. */
 function openBlock(state: RunState, contentIndex: number, block: Block): readonly UIMessageChunk[] {
@@ -65,22 +75,55 @@ function closeBlock(state: RunState, contentIndex: number, block: Block): readon
   }
 }
 
+/** The text a block holds now, as one delta. Empty text gives no chunk; a tool call has none. */
+function blockBody(state: RunState, contentIndex: number, block: Block): readonly UIMessageChunk[] {
+  const id = partId(state, contentIndex)
+  if (block.type === 'text' && block.text !== '') return [{ type: 'text-delta', id, delta: block.text }]
+  if (block.type === 'thinking' && block.thinking !== '') {
+    return [{ type: 'reasoning-delta', id, delta: block.thinking }]
+  }
+  return []
+}
+
 /** The whole content of a block that was never streamed, as one delta between its start and end. */
 function wholeBlock(state: RunState, contentIndex: number, block: Block): readonly UIMessageChunk[] {
-  const id = partId(state, contentIndex)
-  const body: readonly UIMessageChunk[] =
-    block.type === 'text'
-      ? [{ type: 'text-delta', id, delta: block.text }]
-      : block.type === 'thinking'
-        ? [{ type: 'reasoning-delta', id, delta: block.thinking }]
-        : []
-  return [...openBlock(state, contentIndex, block), ...body, ...closeBlock(state, contentIndex, block)]
+  return [
+    ...openBlock(state, contentIndex, block),
+    ...blockBody(state, contentIndex, block),
+    ...closeBlock(state, contentIndex, block),
+  ]
 }
 
 const mark = (state: RunState, contentIndex: number, reported: Reported): RunState => ({
-  turn: state.turn,
+  ...state,
   blocks: new Map(state.blocks).set(contentIndex, reported),
 })
+
+/** A new turn: one AI SDK step. */
+const startTurn = (state: RunState): Step => ({
+  state: { ...state, turn: state.turn + 1, blocks: new Map() },
+  chunks: [{ type: 'start-step' }],
+})
+
+/**
+ * A new model response begins with `partial` already in it. When the step already shows blocks of an
+ * earlier attempt, they are removed first: `reset-step` drops every part added since the step began.
+ */
+function startResponse(state: RunState, partial: AssistantMessage): Step {
+  const reset: readonly UIMessageChunk[] = state.blocks.size > 0 ? [{ type: 'reset-step' }] : []
+  const fresh: RunState = { ...state, response: state.response + 1, blocks: new Map(), failure: [] }
+  return partial.content.reduce<Step>(
+    (step, block, contentIndex) => ({
+      state: mark(step.state, contentIndex, 'open'),
+      chunks: [
+        ...step.chunks,
+        ...openBlock(step.state, contentIndex, block),
+        ...blockBody(step.state, contentIndex, block),
+      ],
+    }),
+    { state: fresh, chunks: reset },
+  )
+}
 
 /** Finish a block with its final value, opening it first when nothing was streamed. */
 function finishBlock(state: RunState, contentIndex: number, block: Block): Step {
@@ -94,12 +137,17 @@ function finishBlock(state: RunState, contentIndex: number, block: Block): Step 
 /** Apply one change to the in-flight assistant message. */
 function applyChange(state: RunState, change: MessageChange): Step {
   switch (change.type) {
+    // Pi Durable commits partials at most every 100 ms, so a block is often first seen with text
+    // already in it. A real provider showed this: dropping it cut the start off the answer.
     case 'text_start':
     case 'thinking_start':
     case 'toolcall_start':
       return {
         state: mark(state, change.contentIndex, 'open'),
-        chunks: openBlock(state, change.contentIndex, change.block),
+        chunks: [
+          ...openBlock(state, change.contentIndex, change.block),
+          ...blockBody(state, change.contentIndex, change.block),
+        ],
       }
     case 'text_delta':
       return {
@@ -165,15 +213,17 @@ function toolEnd(toolCallId: string, entry: EntryRecord | undefined): readonly U
   ]
 }
 
-/** The end of one assistant message: close its blocks, then report a failed or aborted response. */
+/**
+ * The end of one model response: close its blocks. A failed response is remembered, not reported,
+ * because Pi Durable may retry it; `run_end` reports it if nothing replaced it.
+ */
 function assistantEnd(state: RunState, message: AssistantMessage): Step {
   const finished = finishMessage(state, message)
-  const ending: readonly UIMessageChunk[] =
-    message.stopReason === 'error'
-      ? [{ type: 'error', errorText: message.errorMessage ?? 'The model request failed' }]
-      : message.stopReason === 'aborted'
-        ? [{ type: 'abort' }]
-        : []
+  if (message.stopReason === 'error') {
+    const failure = [message.errorMessage ?? 'The model request failed']
+    return { state: { ...finished.state, failure }, chunks: finished.chunks }
+  }
+  const ending: readonly UIMessageChunk[] = message.stopReason === 'aborted' ? [{ type: 'abort' }] : []
   return { state: finished.state, chunks: [...finished.chunks, ...ending] }
 }
 
@@ -189,9 +239,14 @@ export function translate(state: RunState, event: AgentEvent): Step {
     case 'run_start':
       return { state: initialRunState, chunks: [{ type: 'start', messageId: `run:${event.inputs.join('+')}` }] }
     case 'run_end':
-      return { state, chunks: [{ type: 'finish' }] }
+      return {
+        state,
+        chunks: [...state.failure.map((errorText) => ({ type: 'error' as const, errorText })), { type: 'finish' }],
+      }
     case 'turn_start':
-      return { state: { turn: state.turn + 1, blocks: new Map() }, chunks: [{ type: 'start-step' }] }
+      return startTurn(state)
+    case 'message_start':
+      return event.message.role === 'assistant' ? startResponse(state, event.message) : { state, chunks: [] }
     case 'turn_end':
       return { state, chunks: [{ type: 'finish-step' }] }
     case 'message_update':
@@ -211,7 +266,6 @@ export function translate(state: RunState, event: AgentEvent): Step {
     // No AI SDK counterpart. Listed, not defaulted, so a new Pi Durable event fails the typecheck
     // here and gets a decision.
     case 'snapshot':
-    case 'message_start':
     case 'tool_execution_start':
     case 'tool_execution_update':
     case 'inbox_update':
@@ -241,29 +295,18 @@ function runEntries(entries: readonly EntryRecord[]): readonly EntryRecord[] {
 function replayEntry(state: RunState, entry: EntryRecord): Step {
   const message = entry.model?.[0]
   if (message?.role === 'assistant') {
-    const opened: Step = { state: { turn: state.turn + 1, blocks: new Map() }, chunks: [{ type: 'start-step' }] }
-    return join(opened, assistantEnd(opened.state, message))
+    const turn = startTurn(state)
+    const response: RunState = { ...turn.state, response: turn.state.response + 1, failure: [] }
+    return join(turn, assistantEnd(response, message))
   }
   if (message?.role === 'toolResult') return { state, chunks: toolEnd(message.toolCallId, entry) }
   return { state, chunks: [] }
 }
 
-/** The partial assistant message of the generation in flight: each block opened with its text so far. */
+/** The partial response of the generation in flight: a turn, then each block with its text so far. */
 function replayPartial(state: RunState, message: AssistantMessage): Step {
-  const opened: Step = { state: { turn: state.turn + 1, blocks: new Map() }, chunks: [{ type: 'start-step' }] }
-  return message.content.reduce<Step>((step, block, contentIndex) => {
-    const id = partId(step.state, contentIndex)
-    const body: readonly UIMessageChunk[] =
-      block.type === 'text'
-        ? [{ type: 'text-delta', id, delta: block.text }]
-        : block.type === 'thinking'
-          ? [{ type: 'reasoning-delta', id, delta: block.thinking }]
-          : []
-    return {
-      state: mark(step.state, contentIndex, 'open'),
-      chunks: [...step.chunks, ...openBlock(step.state, contentIndex, block), ...body],
-    }
-  }, opened)
+  const turn = startTurn(state)
+  return join(turn, startResponse(turn.state, message))
 }
 
 /**
