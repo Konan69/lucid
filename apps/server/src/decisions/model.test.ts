@@ -804,3 +804,64 @@ it.effect('persistent 403 responses warn once per minute without closing admissi
     ),
   )
 })
+
+/** A caller's outer reviewer deadline can interrupt HTTP before the decision's
+ * own timer fires. Long observed silence must mark Suspect, so one later
+ * independently admitted stall opens the gate; brief cancellation must not. */
+it.effect.each([
+  { elapsed: 500, suspected: false },
+  { elapsed: 2199, suspected: false },
+  { elapsed: 2200, suspected: true },
+  { elapsed: 2300, suspected: true },
+])('interruption after $elapsed ms contributes suspicion: $suspected', ({ elapsed, suspected }) =>
+  Effect.gen(function* () {
+    let calls = 0
+    const started = yield* Deferred.make<void>()
+    const laterStarted = yield* Deferred.make<void>()
+    const transport = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        calls += 1
+        if (calls <= 2)
+          return Deferred.succeed(calls === 1 ? started : laterStarted, undefined).pipe(
+            Effect.andThen(Effect.never),
+          )
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              JSON.stringify({
+                model: 'jev-latest',
+                answers: { applies: { type: 'noul', noul: 0.7 } },
+              }),
+            ),
+          ),
+        )
+      }),
+    )
+    yield* Effect.gen(function* () {
+      const pending = yield* decide(definition, 'caller interrupted').pipe(Effect.forkChild)
+      yield* Deferred.await(started)
+      yield* TestClock.adjust(elapsed)
+      yield* Fiber.interrupt(pending)
+      expect(yield* decisionWouldAttempt).toBe(true)
+      const later = yield* decideWithin(
+        definition,
+        'independent stall',
+        DECISION_OUTAGE_MINIMUM_MILLIS,
+      ).pipe(Effect.forkChild)
+      yield* Deferred.await(laterStarted)
+      yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
+      expect((yield* Effect.flip(Fiber.join(later))).reason).toBe('TimedOut')
+      if (suspected) {
+        expect(yield* decisionWouldAttempt).toBe(false)
+        expect((yield* Effect.flip(decide(definition, 'gated'))).reason).toBe('Backoff')
+        expect(calls).toBe(2)
+      } else {
+        expect(yield* decisionWouldAttempt).toBe(true)
+        expect((yield* decide(definition, 'healthy')).answers.applies.probability).toBe(0.7)
+        expect(calls).toBe(3)
+      }
+    }).pipe(Effect.provide(configuredGateway(transport)))
+  }),
+)

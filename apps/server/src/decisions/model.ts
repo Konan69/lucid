@@ -298,7 +298,9 @@ const timeoutSettlement = (
 }
 
 /** Success and request-specific faults prove reachability and clear suspicion. Confirmed
- * transport/HTTP outages open immediately; only later independent timeouts corroborate. */
+ * transport/HTTP outages open immediately; only later independent stalls corroborate.
+ * Caller cancellation after the calibrated evidence floor has observed the same
+ * silence as a timeout. Short interruption remains local and cannot penalize tenants. */
 const settleNormal = (
   current: typeof Availability.Type,
   outcome: typeof Outcome.Type,
@@ -321,7 +323,10 @@ const settleNormal = (
     Success: () => [Option.none(), Availability.cases.Ready.make({})],
     RequestFailure: () => [Option.none(), Availability.cases.Ready.make({})],
     AuthenticationFailure: () => authenticationSettlement(now),
-    Cancelled: () => [Option.none(), current],
+    Cancelled: () =>
+      now - admission.startedAt >= DECISION_OUTAGE_MINIMUM_MILLIS
+        ? timeoutSettlement(current, admission, now)
+        : [Option.none(), current],
     CallerLocalTimeout: () => [Option.none(), current],
   })
 }
