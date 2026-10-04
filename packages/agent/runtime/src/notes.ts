@@ -1,6 +1,6 @@
 import * as NodePath from 'node:path'
 import { MemoryKind, type PersonId } from '@vivid/contracts'
-import { AgentFS } from 'agentfs-sdk'
+import type { AgentFS } from 'agentfs-sdk'
 import * as Arr from 'effect/Array'
 import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
@@ -125,12 +125,22 @@ const SAFE_PERSON = /^[A-Za-z0-9_-]{1,128}$/u
 /** One open filesystem per Person for the life of the process; opening costs 60 to 100 ms. */
 const open = new Map<string, Promise<AgentFS>>()
 
+/**
+ * AgentFS is loaded only when a Person's notes are first opened. It ships a native SQLite binary
+ * per platform; an installation that keeps no notes, or an image the binary does not support,
+ * must still start, so the package is never loaded when the module is.
+ */
+async function openStore(path: string) {
+  const { AgentFS: store } = await import('agentfs-sdk')
+  return store.open({ path })
+}
+
 /** Open, or reuse, the Person's filesystem. A failed open is forgotten so the next call tries again. */
 const opened = Effect.fn('Notes.open')(function* (directory: string, person: PersonId) {
   if (!SAFE_PERSON.test(person)) return yield* Effect.fail(NotesUnavailable.make({}))
   const path = NodePath.join(directory, `${person}.db`)
   const existing = open.get(path)
-  const pending = existing === undefined ? AgentFS.open({ path }) : existing
+  const pending = existing === undefined ? openStore(path) : existing
   open.set(path, pending)
   return yield* Effect.tryPromise({
     try: () => pending,
