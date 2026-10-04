@@ -1,6 +1,5 @@
 import { cutFault } from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
-import { send } from './app'
 
 /**
  * Telling the server that the app failed to draw, so the failure can be read in the server's log
@@ -22,15 +21,18 @@ export const reportFault = (thrown: Error, components: string | null): void => {
   const body = JSON.stringify(
     cutFault({ surface: 'web', thrown, components, build: navigator.userAgent }),
   )
-  void send(
-    Effect.tryPromise({
-      try: () =>
-        fetch('/api/faults', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body,
-        }),
-      catch: () => new FaultUnsent({}),
-    }).pipe(Effect.ignore),
-  )
+  const report = Effect.tryPromise({
+    try: () =>
+      fetch('/api/faults', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+    catch: () => new FaultUnsent({}),
+  }).pipe(Effect.ignore)
+  // The runtime boundary (`./app`) opens the app's socket when it is first loaded, so it is
+  // loaded here, when a fault is reported, and not when this module is: a component that only
+  // draws (`ui/Recover.tsx`, and so `ui/Markdown.tsx`) must not need a browser page to be imported.
+  // In the running app that module is already loaded, so this resolves at once.
+  void import('./app').then(({ send }) => send(report))
 }
