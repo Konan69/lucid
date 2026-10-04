@@ -1,5 +1,9 @@
+import * as Arr from 'effect/Array'
 import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
+import * as Predicate from 'effect/Predicate'
 import * as Schema from 'effect/Schema'
+import * as SchemaAST from 'effect/SchemaAST'
 import * as Struct from 'effect/Struct'
 import {
   ActionEffect,
@@ -72,25 +76,52 @@ const attributeKey = (field: string) => `vivid.refusal.${field}`
 const KIND = attributeKey('kind')
 
 /**
- * Every attribute a refusal can carry: its kind, and each field of each case. Read from the
- * vocabulary itself, so the export allowlist (`export.ts`) is extended by adding a case or a
- * field above and by nothing else.
+ * The words a field's schema admits, when the schema is a closed set of them: a literal, or a
+ * union of literals (`Schema.Literals`). Absent for any other schema, which is to say for any
+ * field whose value is not known in advance: `ServiceId` is a branded `Schema.String`, and a
+ * service can be one an Integration a Person imported gave its own name to.
  */
-export const refusalAttributeKeys: ReadonlyArray<string> = [
-  KIND,
-  ...new Set(
-    Object.values(Refusal.cases).flatMap((refusal) =>
-      Object.keys(refusal.fields)
-        .filter((field) => field !== '_tag')
-        .map(attributeKey),
+const membersOf = (ast: SchemaAST.AST): Option.Option<ReadonlyArray<string>> => {
+  if (SchemaAST.isLiteral(ast))
+    return Predicate.isString(ast.literal) ? Option.some([ast.literal]) : Option.none()
+  if (SchemaAST.isUnion(ast)) return Option.map(Option.all(ast.types.map(membersOf)), Arr.flatten)
+  return Option.none()
+}
+
+/** Each field of each case, under its attribute name, with the words its schema admits. */
+const refusalFields = Object.values(Refusal.cases).flatMap((refusal) =>
+  Object.entries(refusal.fields)
+    .filter(([field]) => field !== '_tag')
+    .map(([field, schema]) => ({ key: attributeKey(field), members: membersOf(schema.ast) })),
+)
+
+/**
+ * What of a refusal may be exported: each attribute, with the closed set its value must belong
+ * to. Read from the vocabulary itself, so the export allowlist (`export.ts`) is extended by adding
+ * a case or a field above and by nothing else.
+ *
+ * - The kind is one of the case names.
+ * - A field named in several cases (`reason`) takes the words of all of them.
+ * - A field that is an open string in any case is left out whole. It is still written on the
+ *   stdout line (`attributesOf`); it never leaves the process, because a value that only looks
+ *   like an identifier says nothing about where it came from.
+ */
+export const refusalExport: ReadonlyArray<readonly [key: string, members: ReadonlyArray<string>]> =
+  [
+    [KIND, Struct.keys(Refusal.cases)],
+    ...Object.entries(Arr.groupBy(refusalFields, ({ key }) => key)).flatMap(([key, fields]) =>
+      Option.all(fields.map(({ members }) => members)).pipe(
+        Option.map((members) => [key, Arr.dedupe(Arr.flatten(members))] as const),
+        Option.toArray,
+      ),
     ),
-  ),
-]
+  ]
 
 /**
  * A case's fields as attributes, each under `vivid.refusal.<field>`. Encoding through the schema
- * keeps this total over the vocabulary: a new case or field is exported without a second list to
- * extend, and every field is a string by construction of the cases above.
+ * keeps this total over the vocabulary: a new case or field is recorded without a second list to
+ * extend, and every field is a string by construction of the cases above. Which of them are
+ * exported is `refusalExport`'s decision.
  */
 const attributesOf = (refusal: Refusal) => {
   const { _tag, ...fields } = encodeRefusal(refusal)

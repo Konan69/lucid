@@ -1,11 +1,16 @@
+import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core/errors'
 import * as Arr from 'effect/Array'
 import * as Cause from 'effect/Cause'
 import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
+import * as PlatformError from 'effect/PlatformError'
 import * as Predicate from 'effect/Predicate'
 import * as Schema from 'effect/Schema'
-import { isCodeName, Message } from './messages.ts'
+import * as SchemaAST from 'effect/SchemaAST'
+import * as HttpClientError from 'effect/unstable/http/HttpClientError'
+import * as HttpServerError from 'effect/unstable/http/HttpServerError'
+import { Message } from './messages.ts'
 
 /**
  * Where a failure stopped being the caller's problem and became an answer: a product call, a plain
@@ -21,8 +26,10 @@ export const FailureKind = Schema.Literals(['expected', 'defect'])
 export type FailureKind = typeof FailureKind.Type
 
 /**
- * The attributes a failure is recorded under, on the span and on its log line. These are the
- * names the export allowlist is built from.
+ * The attributes a failure is recorded under, on the span and on its log line. The export
+ * allowlist (`export.ts`) names the ones that may leave and the set each value must belong to;
+ * `constraint` is not among them and is read on stdout only, because a constraint's name is a
+ * property of whatever was thrown and there is no set to check it against.
  *
  * The failure's message is deliberately not one of them. It is prose a provider, a driver or a
  * Person's input wrote, and no pattern can tell private prose from technical prose, so it is
@@ -54,13 +61,6 @@ const DEEPEST_CAUSE = 8
  * present and a missing type is countable instead of being an absent attribute.
  */
 const UNTYPED = '_OTHER'
-
-/**
- * Effect Drizzle's wrapper error. Its message is the whole SQL statement followed by every
- * parameter, and the parameters are a Person's content, so the wrapper's own message is never
- * quoted: the driver error underneath carries the code that says what went wrong.
- */
-const STATEMENT_WRAPPER = 'EffectDrizzleQueryError'
 
 /**
  * Removes credentials, address query strings and personal identifiers from the diagnostic text
@@ -104,12 +104,11 @@ export const redact = (value: string): string =>
  * error. `code`, `constraint` and `table` are the PostgreSQL driver's own field names.
  *
  * VCOS `apps/web/src/observability/cause.ts` `CapturedCauseDiagnostics`, without `detail` (a
- * constraint's detail quotes the offending row values) and without `stack`, `column` and `schema`,
- * which the summary below does not report.
+ * constraint's detail quotes the offending row values), without `stack`, `column` and `schema`,
+ * which the summary below does not report, and without `_tag` and `name`: a failure's type is
+ * taken from its class (`typeOf`), never from a property.
  */
 const Diagnostics = Schema.Struct({
-  _tag: Schema.optional(Schema.String),
-  name: Schema.optional(Schema.String),
   message: Schema.optional(Schema.String),
   cause: Schema.optional(Schema.Unknown),
   code: Schema.optional(Schema.String),
@@ -128,22 +127,125 @@ const bounded = (value: Option.Option<string>, longest: number): Option.Option<s
     Option.filter((text) => text.length > 0),
   )
 
-/**
- * The typed `_tag`, else the native error name (VCOS `exceptions.ts` `kindOf`), and only when it
- * has the shape of a code identifier. A `_tag` or `name` is whatever the thrower assigned: a
- * provider SDK can build one from a response, and `error.name = someText` is legal. One that is
- * not an identifier is no type at all, so it is absent here and reported as `_OTHER`; it is never
- * trimmed or cleaned into something exportable.
- */
-const typeOf = (record: Diagnostics): Option.Option<string> =>
-  Option.fromUndefinedOr(record._tag).pipe(
-    Option.orElse(() => Option.fromUndefinedOr(record.name)),
-    Option.filter(isCodeName),
-  )
+/** One link of a cause chain: the value itself, for its class, and the fields read from it. */
+interface Link {
+  readonly value: object
+  readonly record: Diagnostics
+}
 
-/** A record's own message, unless the record is the statement wrapper. VCOS `recordMessage`. */
-const messageOf = (record: Diagnostics): Option.Option<string> =>
-  Option.exists(typeOf(record), (type) => type === STATEMENT_WRAPPER)
+/**
+ * The tag a class made by `Schema.TaggedError` declares, read from the class and never from the
+ * instance.
+ *
+ * Every typed error Vivid declares is such a class, and so are the SQL errors
+ * (`effect/unstable/sql/SqlError`) and Effect Drizzle's (`drizzle-orm/effect-core/errors`). What
+ * identifies one, in rc.116 `Schema.ts` `makeClass`:
+ *
+ * - the class is itself a schema: `static readonly [TypeId] = TypeId`, which `Schema.isSchema`
+ *   tests;
+ * - its `static readonly fields` holds the struct's fields, where `Schema.TaggedError` puts
+ *   `_tag: Schema.tag(tagValue)`, a `Literal` whose AST carries the tag as written in code.
+ *
+ * A thrown value cannot forge this by carrying a property: `failure._tag` is not read at all, and
+ * the value must be an instance of the class its `constructor` names. `Schema.Error` and
+ * `Schema.Class` with a literal `_tag` field go through the same `makeClass` and are read the
+ * same way. The residual assumption is that such classes are written in code; nothing in Vivid
+ * builds one from data.
+ */
+const schemaTag = ({ value }: Link): Option.Option<string> => {
+  const made: unknown = value.constructor
+  if (!Predicate.isFunction(made) || !(value instanceof made)) return Option.none()
+  if (!Schema.isSchema(made) || !Predicate.hasProperty(made, 'fields')) return Option.none()
+  const { fields } = made
+  if (!Predicate.hasProperty(fields, '_tag') || !Schema.isSchema(fields._tag)) return Option.none()
+  const { ast } = fields._tag
+  return SchemaAST.isLiteral(ast) && Predicate.isString(ast.literal)
+    ? Option.some(ast.literal)
+    : Option.none()
+}
+
+/** A class, for `instanceof`, beside the fixed name its instances are reported under. */
+type Named = readonly [made: abstract new (...parameters: Array<never>) => object, name: string]
+
+/**
+ * Effect's own error classes that reach a boundary here without being `Schema.TaggedError`
+ * classes: rc.116 builds each with `Data.TaggedError(tag)`, which leaves nothing on the class to
+ * read the tag from, so the tag is written beside the class and chosen by `instanceof`.
+ *
+ * - `HttpServerError`: a request body or route the HTTP server could not serve (`http/faults.ts`,
+ *   `http/bytes.ts`).
+ * - `HttpClientError`: a call to the runtime or a provider that did not come back.
+ * - `SchemaError`: a payload that did not decode.
+ * - `PlatformError`: the file system under the Library and the update bundles.
+ * - `TimeoutError`, `NoSuchElementError`: `Effect.timeout` and an `Option` yielded empty.
+ */
+const EFFECT_ERRORS: ReadonlyArray<Named> = [
+  [HttpServerError.HttpServerError, 'HttpServerError'],
+  [HttpClientError.HttpClientError, 'HttpClientError'],
+  [Schema.SchemaError, 'SchemaError'],
+  [PlatformError.PlatformError, 'PlatformError'],
+  [Cause.TimeoutError, 'TimeoutError'],
+  [Cause.NoSuchElementError, 'NoSuchElementError'],
+]
+
+/**
+ * JavaScript's built-in error classes, the more specific before `Error`, which every one of them
+ * extends. The name is the class's, chosen by `instanceof`: `error.name` is a writable property
+ * and is never read.
+ */
+const NATIVE_ERRORS: ReadonlyArray<Named> = [
+  [AggregateError, 'AggregateError'],
+  [TypeError, 'TypeError'],
+  [RangeError, 'RangeError'],
+  [ReferenceError, 'ReferenceError'],
+  [SyntaxError, 'SyntaxError'],
+  [EvalError, 'EvalError'],
+  [URIError, 'URIError'],
+  [Error, 'Error'],
+]
+
+/**
+ * Every type name that is known without looking at a failure: the two lists above. The export
+ * allowlist admits `exception.type` only from this set, because the tracer writes that attribute
+ * from `error.name` (rc.116 `OtlpTracer.ts` `makeOtlpSpan`) and by then the class is gone.
+ */
+export const fixedTypeNames: ReadonlyArray<string> = [...EFFECT_ERRORS, ...NATIVE_ERRORS].map(
+  ([, name]) => name,
+)
+
+/** The name of the first listed class the link's value is an instance of. */
+const namedBy = (classes: ReadonlyArray<Named>, { value }: Link): Option.Option<string> =>
+  Arr.findFirst(classes, ([made]) => value instanceof made).pipe(Option.map(([, name]) => name))
+
+/** A type the code declared: a schema class's tag, else one of Effect's listed classes. */
+const declaredType = (link: Link): Option.Option<string> =>
+  Option.orElse(schemaTag(link), () => namedBy(EFFECT_ERRORS, link))
+
+/** A declared type, else the built-in error class the value is an instance of. */
+const thrownType = (link: Link): Option.Option<string> =>
+  Option.orElse(declaredType(link), () => namedBy(NATIVE_ERRORS, link))
+
+/**
+ * The type one failure is exported under. Lexical shape is not provenance: a `_tag` or a `name`
+ * is whatever the thrower assigned, and a provider SDK can build either from a response, so
+ * neither is ever read. A type is exported only when it comes from a class.
+ *
+ * - An expected failure is typed by what the code declared (`declaredType`).
+ * - A defect is typed the same way when it is such a class (a declared error that was turned
+ *   into a defect is still that error), and otherwise by its built-in error class.
+ * - Anything else is `_OTHER`, which also bounds how many distinct types the backend can be sent.
+ */
+const typeOf = (kind: FailureKind, link: Link): string =>
+  Option.getOrElse(kind === 'expected' ? declaredType(link) : thrownType(link), () => UNTYPED)
+
+/**
+ * A link's own message, unless the link is Effect Drizzle's wrapper error. That wrapper's message
+ * is the whole SQL statement followed by every parameter, and the parameters are a Person's
+ * content, so it is never quoted: the driver error underneath carries the code that says what
+ * went wrong. VCOS `recordMessage`.
+ */
+const messageOf = ({ value, record }: Link): Option.Option<string> =>
+  value instanceof EffectDrizzleQueryError
     ? Option.none()
     : bounded(Option.fromUndefinedOr(record.message), LONGEST_MESSAGE)
 
@@ -156,26 +258,26 @@ const messageOf = (record: Diagnostics): Option.Option<string> =>
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- A failure is unknown by Effect's contract (`Die.defect`, a foreign `cause`); this is where it is decoded.
 const chain = (failure: unknown) => {
   const seen = new WeakSet<object>()
-  const records: Array<Diagnostics> = []
+  const links: Array<Link> = []
   let current = failure
   for (let depth = 0; depth < DEEPEST_CAUSE; depth += 1) {
-    const link = Cause.isCause(current) ? Cause.squash(current) : current
-    const decoded = decodeDiagnostics(link)
-    if (Option.isNone(decoded) || !Predicate.isObject(link) || seen.has(link)) break
-    seen.add(link)
-    records.push(decoded.value)
+    const value = Cause.isCause(current) ? Cause.squash(current) : current
+    const decoded = decodeDiagnostics(value)
+    if (Option.isNone(decoded) || !Predicate.isObject(value) || seen.has(value)) break
+    seen.add(value)
+    links.push({ value, record: decoded.value })
     current = decoded.value.cause
   }
-  return { records, terminal: bounded(decodeText(current), LONGEST_MESSAGE) }
+  return { links, terminal: bounded(decodeText(current), LONGEST_MESSAGE) }
 }
 
 /** What is recorded about one failure. Every free-text string here has been through `redact`. */
 export interface FailureSummary {
-  /** The error's `_tag`, else its `name`, when identifier-shaped; else `_OTHER`. */
+  /** The failure's type as its class gives it (`typeOf`); `_OTHER` when no class does. */
   readonly type: string
   /** For the stdout line only; see `FailureAttribute`. */
   readonly message: Option.Option<string>
-  /** The type of the innermost cause, when there is a cause below the failure itself. */
+  /** The type of the innermost cause, when there is a cause below the failure and a class names it. */
   readonly rootType: Option.Option<string>
   /** PostgreSQL's SQLSTATE and the schema names it reported, from whichever link carries them. */
   readonly databaseCode: Option.Option<string>
@@ -184,31 +286,37 @@ export interface FailureSummary {
 }
 
 /**
- * Reduces one failure value to its exportable summary.
+ * Reduces one failure value to its summary.
  *
- * Ported from VCOS `apps/web/src/observability/exceptions.ts` `capturedExceptionSummary`: the type
- * prefers `_tag` over `name`, the message is the failure's own unless that is the statement
- * wrapper's, then the innermost cause's, then a terminal string. Vivid drops the reference's
- * organization and product identity (VCOS concepts with no counterpart on a failure here) and its
- * constraint `detail` and source frame.
+ * Ported from VCOS `apps/web/src/observability/exceptions.ts` `capturedExceptionSummary`: the
+ * message is the failure's own unless that is the statement wrapper's, then the innermost
+ * cause's, then a terminal string. Vivid drops the reference's organization and product identity
+ * (VCOS concepts with no counterpart on a failure here) and its constraint `detail` and source
+ * frame, and it types a failure by its class where the reference reads `_tag` and `name`
+ * (`typeOf`): those are properties of the thrown value, and this summary is exported.
  */
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- The typed error channel is generic and a defect is unknown; `chain` decodes it at once.
-export const summarize = (failure: unknown): FailureSummary => {
-  const { records, terminal } = chain(failure)
-  const outer = Option.fromUndefinedOr(records.at(0))
-  const inner = records.length > 1 ? Option.fromUndefinedOr(records.at(-1)) : Option.none()
+export const summarize = (kind: FailureKind, failure: unknown): FailureSummary => {
+  const { links, terminal } = chain(failure)
+  const outer = Option.fromUndefinedOr(links.at(0))
+  const inner = links.length > 1 ? Option.fromUndefinedOr(links.at(-1)) : Option.none()
   const field = (key: 'code' | 'constraint' | 'table') =>
     Option.firstSomeOf(
-      records.map((record) => bounded(Option.fromUndefinedOr(record[key]), LONGEST_DATABASE_NAME)),
+      links.map(({ record }) =>
+        bounded(Option.fromUndefinedOr(record[key]), LONGEST_DATABASE_NAME),
+      ),
     )
   return {
-    type: Option.getOrElse(Option.flatMap(outer, typeOf), () => UNTYPED),
+    type: Option.match(outer, {
+      onNone: () => UNTYPED,
+      onSome: (link) => typeOf(kind, link),
+    }),
     message: Option.firstSomeOf([
       Option.flatMap(outer, messageOf),
       Option.flatMap(inner, messageOf),
       terminal,
     ]),
-    rootType: Option.flatMap(inner, typeOf),
+    rootType: Option.flatMap(inner, thrownType),
     databaseCode: field('code'),
     databaseConstraint: field('constraint'),
     databaseTable: field('table'),
@@ -234,9 +342,9 @@ export const FailureOutcome = Data.taggedEnum<FailureOutcome>()
 export const failuresOf = <E>(cause: Cause.Cause<E>): ReadonlyArray<FailureOutcome> =>
   cause.reasons.flatMap((reason): ReadonlyArray<FailureOutcome> => {
     if (Cause.isDieReason(reason))
-      return [FailureOutcome.Defect({ summary: summarize(reason.defect) })]
+      return [FailureOutcome.Defect({ summary: summarize('defect', reason.defect) })]
     if (Cause.isFailReason(reason))
-      return [FailureOutcome.Expected({ summary: summarize(reason.error) })]
+      return [FailureOutcome.Expected({ summary: summarize('expected', reason.error) })]
     return []
   })
 
@@ -254,8 +362,9 @@ const kindOf: (failure: FailureOutcome) => FailureKind = FailureOutcome.$match({
 })
 
 /**
- * The exportable attributes of one failure. The first three are always present; the rest only
- * when the failure carries them, since an absent database code is different from an empty one.
+ * The attributes of one failure. The first three are always present; the rest only when the
+ * failure carries them, since an absent database code is different from an empty one. Which of
+ * them leave the process is the export allowlist's decision, not this function's.
  */
 const attributesOf = (boundary: Boundary, failure: FailureOutcome) => {
   const { summary } = failure
@@ -276,8 +385,7 @@ const attributesOf = (boundary: Boundary, failure: FailureOutcome) => {
 }
 
 /**
- * One log line for one failure: the exportable attributes, plus the message for whoever reads
- * stdout. An expected failure is a warning and a defect is an error, so the backend can alert on
+ * One log line for one failure: its attributes, plus the message for whoever reads stdout. An expected failure is a warning and a defect is an error, so the backend can alert on
  * defects without being paged for every refused sign-in.
  */
 const line = (boundary: Boundary, failure: FailureOutcome) => {
