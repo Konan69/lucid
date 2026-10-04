@@ -5,6 +5,7 @@ import { OpenFirstThreadResult, ThreadId, type PersonId } from '@vivid/contracts
 import { companyColumnOf, type Actor } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
 import { Database, returned } from '../database/client.ts'
+import { DEFAULT_THREAD_TITLE } from './title.ts'
 import { firstThreads, runs, threads } from './tables.ts'
 
 /**
@@ -44,7 +45,7 @@ export const claimFirstThread = Effect.fn('Threads.claimFirst')(function* (actor
         id: thread,
         // The existing empty-Thread convention is "New thread": web data/threads.openThread
         // and mobile data/threads.UNTITLED use it before Person words supply a derived title.
-        title: 'New thread',
+        title: DEFAULT_THREAD_TITLE,
         titleSource: 'Seed',
         personId,
         companyId: companyColumnOf(actor.workspace),

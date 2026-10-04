@@ -157,6 +157,8 @@ const openThread = Effect.fn('RoutineScheduler.openThread')(function* (
     .ensure({
       id: ThreadId.make(`routine-${record.routine.id}`),
       title: record.routine.name,
+      // Inherit the durable Routine name without attributing its authorship to a Person or the title model.
+      titleSource: 'Assigned',
       personId: record.personId,
       companyId: record.companyId,
     })
@@ -275,6 +277,8 @@ const sendIntegrationNotice = (services: SubmissionServices) =>
     const thread = yield* services.threads.ensure({
       id: ThreadId.make(`routine-${record.routine.id}`),
       title: record.routine.name,
+      // Inherit the durable Routine name without attributing its authorship to a Person or the title model.
+      titleSource: 'Assigned',
       personId: record.personId,
       companyId: record.companyId,
     })

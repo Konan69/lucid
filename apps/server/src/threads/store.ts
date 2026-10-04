@@ -28,6 +28,7 @@ import { projectTable } from '../projects/tables.ts'
 import { decodeThread, requireThread, type StoredAudience, type StoredThread } from './access.ts'
 import { threadParticipants, threadReads, threads } from './tables.ts'
 import { toWire } from './wire.ts'
+import type { TitleSource } from './title.ts'
 import { claimFirstThread, releaseFirstThread } from './first.ts'
 
 type DatabaseService = Database['Service']
@@ -70,11 +71,12 @@ export interface ThreadStoreService {
   ) => Effect.Effect<Thread, ThreadStoreError>
   /**
    * The private Thread with this id, owned by this Person in this workspace, created if it does not
-   * exist. For the Threads the server itself opens: a Routine's.
+   * exist. Callers state provenance: only placeholders and Person-message excerpts are Seed.
    */
   readonly ensure: (input: {
     readonly id: ThreadId
     readonly title: string
+    readonly titleSource: TitleSource
     readonly personId: PersonId
     readonly companyId: CompanyId | null
   }) => Effect.Effect<StoredThread, ThreadStoreError>
@@ -157,6 +159,7 @@ const makeEnsure = (database: DatabaseService) =>
   Effect.fn('ThreadStore.ensure')(function* (input: {
     readonly id: ThreadId
     readonly title: string
+    readonly titleSource: TitleSource
     readonly personId: PersonId
     readonly companyId: CompanyId | null
   }) {
@@ -167,7 +170,7 @@ const makeEnsure = (database: DatabaseService) =>
         .values({
           id: input.id,
           title: input.title,
-          titleSource: 'Seed',
+          titleSource: input.titleSource,
           updatedAt: now,
           personId: input.personId,
           companyId: input.companyId,

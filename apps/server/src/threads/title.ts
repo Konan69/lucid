@@ -1,25 +1,36 @@
-import { Array as Arr, Option, Schema } from 'effect'
+import { Array as Arr, Match, Option, Schema, String as Str } from 'effect'
 
-/** T3 apps/server/src/orchestration/Layers/ProviderCommandReactor.ts#canReplaceThreadTitle adapted to persisted provenance, protecting Person renames. */
-export const TitleSource = Schema.Literals(['Seed', 'Generated', 'Person'])
+/** Seed is a placeholder or first Person-message excerpt; Generated is the title model's output; Person is an explicit rename
+ * (or legacy protected name); Assigned is a durable server-supplied name inherited from a Routine or standing finding. */
+export const TitleSource = Schema.Literals(['Seed', 'Generated', 'Person', 'Assigned'])
 export type TitleSource = typeof TitleSource.Type
 
-/** T3 apps/server/src/orchestration/Layers/ProviderCommandReactor.ts#canReplaceThreadTitle: Vivid permits only Seed, independent of its wording. */
-export const canReplaceThreadTitle = (source: TitleSource): boolean => source === 'Seed'
+/** T3 apps/server/src/orchestration/Layers/ProviderCommandReactor.ts#canReplaceThreadTitle: only Seed permits automatic naming;
+ * every persisted provenance has an explicit policy, so adding a source requires a deliberate replacement decision. */
+export const canReplaceThreadTitle = Match.type<TitleSource>().pipe(
+  Match.when('Seed', () => true),
+  Match.when('Generated', () => false),
+  Match.when('Person', () => false),
+  Match.when('Assigned', () => false),
+  Match.exhaustive,
+)
+
+/** Shared placeholder for empty Threads and unusable model output; never persist it as Generated. */
+export const DEFAULT_THREAD_TITLE = 'New thread'
 
 const EARLIER = '[Earlier content truncated]\n\n'
 const FIRST = '\n[First user message truncated]'
 const BUDGET = 8000
 
-/** T3 apps/server/src/textGeneration/TextGenerationUtils.ts#sanitizeThreadTitle, preserving its first-line, quote and 50-character rules. */
+/** T3 apps/server/src/textGeneration/TextGenerationUtils.ts#sanitizeThreadTitle, preserving its first-line, quote and 50-character rules. Effect String.split returns a nonempty array, including empty input. */
 export function sanitizeThreadTitle(raw: string): string {
-  const first = raw.trim().split(/\r?\n/u)[0]
-  const normalized = (first === undefined ? '' : first)
+  const [first] = Str.split(raw.trim(), /\r?\n/u)
+  const normalized = first
     .trim()
     .replace(/^['"`]+|['"`]+$/gu, '')
     .trim()
     .replace(/\s+/gu, ' ')
-  if (normalized.length === 0) return 'New thread'
+  if (normalized.length === 0) return DEFAULT_THREAD_TITLE
   return normalized.length <= 50 ? normalized : `${normalized.slice(0, 47).trimEnd()}...`
 }
 
@@ -90,9 +101,9 @@ Editorial rules:
 
 /** T3 apps/server/src/textGeneration/TextGenerationPrompts.ts#regenerateThreadTitlePrompt: USER goals outweigh ASSISTANT findings;
  * coding lifecycle examples become ordinary planning and follow-ups for Vivid's personal assistance. */
-function regenerateThreadTitlePrompt(previousTitle: string): string {
+function regenerateThreadTitlePrompt(): string {
   return `${INITIAL}
-Regenerate the title for this existing Thread. The previous title was ${JSON.stringify(previousTitle)}.
+Regenerate the title for this existing Thread. The previous title is supplied as previousTitle in the user content.
 Read USER messages first to identify the latest explicit durable goal. The original subject remains until the Person clearly changes it.
 Use ASSISTANT messages only to resolve vague references and discovered subjects; a finding becomes the goal only when the Person adopts it.
 Preserve accurate scope words, especially when earlier content is truncated. Replace a generic or contradicted title.
@@ -104,20 +115,27 @@ Treat final follow-ups and Vivid completion summaries as weak evidence. Return a
 export const TitleOutput = Schema.Struct({ title: Schema.String })
 
 /** T3 apps/server/src/textGeneration/TextGenerationPrompts.ts#buildThreadTitlePrompt and preserveMessageEnd: cap initial text at 8,000,
- * preserve the end on regeneration with one truncation marker. Option makes the two inputs explicit. */
+ * preserve the end on regeneration with one truncation marker. Unlike T3's first-message-only path, Vivid names after Run settlement
+ * and may open with Vivid's words, so initial input remains a labelled transcript with Person-first weighting. Rules stay in system
+ * content; the transcript and prior title stay user data through MemoryModel, as in memory extraction. */
 export function buildThreadTitlePrompt(message: string, previousTitle: Option.Option<string>) {
   const outputSchema = TitleOutput
   if (Option.isNone(previousTitle)) {
     const contents =
       message.length <= BUDGET ? message : `${message.slice(0, BUDGET)}\n\n[truncated]`
-    return { prompt: `${INITIAL}\n\nUser message:\n${contents}`, outputSchema }
+    return {
+      prompt: `${INITIAL}\nUSER lines define the subject; ASSISTANT lines only resolve vague references.`,
+      content: { conversation: `Thread contents:\n${contents}`, previousTitle: null },
+      outputSchema,
+    }
   }
   const truncated = message.startsWith(EARLIER)
   const contents = truncated ? message.slice(EARLIER.length) : message
   const retained =
     truncated || contents.length > BUDGET ? `${EARLIER}${contents.slice(-BUDGET)}` : contents
   return {
-    prompt: `${regenerateThreadTitlePrompt(previousTitle.value)}\n\nThread contents:\n${retained}`,
+    prompt: regenerateThreadTitlePrompt(),
+    content: { conversation: `Thread contents:\n${retained}`, previousTitle: previousTitle.value },
     outputSchema,
   }
 }

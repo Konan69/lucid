@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Option } from 'effect'
-import {
-  buildThreadTitlePrompt,
-  canReplaceThreadTitle,
-  formatThreadTitleContext,
-  sanitizeThreadTitle,
-} from './title.ts'
+import { buildThreadTitlePrompt, formatThreadTitleContext, sanitizeThreadTitle } from './title.ts'
 
 describe('Thread titles', () => {
   it.each([
@@ -20,12 +15,6 @@ describe('Thread titles', () => {
     ['a'.repeat(50), 'a'.repeat(50)],
     ['a'.repeat(51), `${'a'.repeat(47)}...`],
   ])('sanitizes %j', (raw, expected) => expect(sanitizeThreadTitle(raw)).toBe(expected))
-
-  it('only replaces Seed titles regardless of the actual title words', () => {
-    expect(canReplaceThreadTitle('Seed')).toBe(true)
-    expect(canReplaceThreadTitle('Person')).toBe(false)
-    expect(canReplaceThreadTitle('Generated')).toBe(false)
-  })
 
   it('keeps chronological Person and Vivid text, omitting system and blank messages', () => {
     expect(
@@ -60,19 +49,28 @@ describe('Thread titles', () => {
     expect(formatThreadTitleContext([{ role: 'user', text }])).toBe(`USER:\n${text}`)
   })
 
-  it('caps initial input and preserves the end when regenerating, with one marker', () => {
+  it('bounds conversation data separately from system instructions and prior title', () => {
     const message = `${'old '.repeat(3000)}Latest goal`
-    expect(buildThreadTitlePrompt(message, Option.none()).prompt).toContain(
-      `${message.slice(0, 8000)}\n\n[truncated]`,
+    const initial = buildThreadTitlePrompt(message, Option.none())
+    expect(initial.content.conversation).toBe(
+      `Thread contents:\n${message.slice(0, 8000)}\n\n[truncated]`,
     )
-    const prompt = buildThreadTitlePrompt(message, Option.some('Old title')).prompt
-    expect(prompt).toContain(`The previous title was "Old title"`)
-    expect(prompt).toContain(`[Earlier content truncated]\n\n${message.slice(-8000)}`)
-    expect(prompt).toContain('meaningfully improved title')
+    expect(initial.prompt).not.toContain('Latest goal')
+    expect(initial.prompt).toContain(
+      'USER lines define the subject; ASSISTANT lines only resolve vague references.',
+    )
+    const regenerated = buildThreadTitlePrompt(message, Option.some('Old title'))
+    expect(regenerated.content).toEqual({
+      previousTitle: 'Old title',
+      conversation: `Thread contents:\n[Earlier content truncated]\n\n${message.slice(-8000)}`,
+    })
+    expect(regenerated.prompt).not.toContain('Old title')
+    expect(regenerated.prompt).not.toContain('Latest goal')
+    expect(regenerated.prompt).toContain('meaningfully improved title')
     const already = buildThreadTitlePrompt(
       `[Earlier content truncated]\n\n${message}`,
       Option.some('Old title'),
-    ).prompt
+    ).content.conversation
     expect(already.match(/\[Earlier content truncated\]/gu)).toHaveLength(1)
   })
 })

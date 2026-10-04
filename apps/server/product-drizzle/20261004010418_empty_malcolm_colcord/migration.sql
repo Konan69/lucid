@@ -1,0 +1,1 @@
+ALTER TYPE "vivid_thread_title_source" ADD VALUE 'Assigned';

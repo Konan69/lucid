@@ -7,7 +7,21 @@ import {
   ThreadTitleOutputInvalid,
 } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
-import { Deferred, Effect, Fiber, Layer, Option, Queue, Ref, Result, Schema, Stream } from 'effect'
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Logger,
+  Option,
+  Queue,
+  Ref,
+  Result,
+  Schema,
+  Stream,
+} from 'effect'
+import * as TestClock from 'effect/testing/TestClock'
 import { HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
@@ -22,10 +36,11 @@ import { submissionId } from '../runtime/identity.ts'
 import { findThread } from './access.ts'
 import { Conversation, DeliveryMessage, DeliverySpeaker, StoredRunOrigin } from './conversation.ts'
 import { conversationLayer } from './delivery.ts'
-import { ThreadTitles, threadTitlesLayer } from './generation.ts'
+import { ThreadTitles, threadTitlesLayer, TITLE_MODEL_TIMEOUT } from './generation.ts'
 import { Presence } from './presence.ts'
 import { RunStore, runStoreLayer } from './runs.ts'
 import { ThreadStore, threadStoreLayer } from './store.ts'
+import type { TitleSource } from './title.ts'
 import { threads } from './tables.ts'
 
 const databaseLayer = Layer.mergeAll(runStoreLayer, threadStoreLayer).pipe(
@@ -33,7 +48,10 @@ const databaseLayer = Layer.mergeAll(runStoreLayer, threadStoreLayer).pipe(
 )
 
 /** Own rows and cleanup before any write; external history, settlement and model are controllable typed seams. */
-const harness = Effect.fn('ThreadTitles.test.harness')(function* () {
+const harness = Effect.fn('ThreadTitles.test.harness')(function* (
+  title: string,
+  titleSource: TitleSource,
+) {
   const database = yield* Database
   const store = yield* ThreadStore
   const personId = PersonId.make(NodeCrypto.randomUUID())
@@ -52,11 +70,26 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* () {
       .insert(personTable)
       .values({ id: personId, name: 'Ada', email: `${personId}@example.test` }),
   )
-  yield* store.ensure({ id: threadId, title: 'Please plan a holiday', personId, companyId: null })
+  yield* store.ensure({ id: threadId, title, titleSource, personId, companyId: null })
   const settlement = yield* Deferred.make<Settlement>()
   const completion = yield* Deferred.make<Completion, ProviderMalformed>()
   const requests = yield* Queue.unbounded<Parameters<MemoryModel['Service']['complete']>[0]>()
   const finished = yield* Deferred.make<void>()
+  const finishedRuns = yield* Queue.unbounded<void>()
+  const generatedWrites = yield* Ref.make(0)
+  const modelFinished = yield* Deferred.make<void>()
+  // Observe accepted writes while retaining the real store's atomic SQL guard.
+  const observedStore = ThreadStore.of({
+    ...store,
+    generatedTitle: (id, next, previous) =>
+      store
+        .generatedTitle(id, next, previous)
+        .pipe(
+          Effect.tap((written) =>
+            written ? Ref.update(generatedWrites, (count) => count + 1) : Effect.void,
+          ),
+        ),
+  })
   const messages = yield* Ref.make<ReadonlyArray<Schema.Json>>([
     {
       role: 'user',
@@ -74,7 +107,10 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* () {
   >([])
   const model = MemoryModel.of({
     complete: (input) =>
-      Queue.offer(requests, input).pipe(Effect.andThen(Deferred.await(completion))),
+      Queue.offer(requests, input).pipe(
+        Effect.andThen(Deferred.await(completion)),
+        Effect.ensuring(Deferred.succeed(modelFinished, undefined)),
+      ),
   })
   const runtime = Runtime.of({
     admit: (input) =>
@@ -117,7 +153,7 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* () {
   })
   const services = Layer.mergeAll(
     Layer.succeed(Database, database),
-    Layer.succeed(ThreadStore, store),
+    Layer.succeed(ThreadStore, observedStore),
     Layer.succeed(RunStore, yield* RunStore),
     Layer.succeed(Runtime, runtime),
     Layer.succeed(MemoryModel, model),
@@ -132,7 +168,15 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* () {
   const observed = ThreadTitles.of({
     ...titles,
     afterRun: (id) =>
-      titles.afterRun(id).pipe(Effect.ensuring(Deferred.succeed(finished, undefined))),
+      titles
+        .afterRun(id)
+        .pipe(
+          Effect.ensuring(
+            Deferred.succeed(finished, undefined).pipe(
+              Effect.andThen(Queue.offer(finishedRuns, undefined)),
+            ),
+          ),
+        ),
   })
   const conversationContext = yield* Layer.build(
     conversationLayer.pipe(
@@ -147,14 +191,14 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* () {
     if (Option.isNone(found)) return yield* Effect.sync(() => expect.fail('Thread missing'))
     return found.value
   })()
-  const start = () =>
+  const start = (idempotencyKey: string) =>
     conversation.admit({
       threadId,
       personId,
       speaker: DeliverySpeaker.cases.Acting.make({}),
       message: DeliveryMessage.cases.Said.make({ body: 'Please plan a holiday', attachments: [] }),
       origin: StoredRunOrigin.cases.Message.make({}),
-      idempotencyKey: 'title',
+      idempotencyKey,
     })
   return {
     personId,
@@ -169,6 +213,9 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* () {
     finished,
     messages,
     published,
+    finishedRuns,
+    generatedWrites,
+    modelFinished,
   }
 })
 
@@ -176,14 +223,19 @@ const harness = Effect.fn('ThreadTitles.test.harness')(function* () {
 describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
   it.effect('settles a Run before a blocked title model, then replaces Seed and publishes', () =>
     Effect.gen(function* () {
-      const test = yield* harness()
-      const admitted = yield* test.start()
+      const test = yield* harness('Please plan a holiday', 'Seed')
+      const admitted = yield* test.start('title')
       yield* Deferred.succeed(
         test.settlement,
         Settlement.cases.Completed.make({ reply: 'Florence could work.' }),
       )
       const input = yield* Queue.take(test.requests)
-      expect(input.prompt).toContain('USER:\nPlease plan a holiday in Italy')
+      expect(input.content).toEqual({
+        conversation:
+          'Thread contents:\nUSER:\nPlease plan a holiday in Italy\n\nASSISTANT:\nWe can explore Florence.',
+        previousTitle: null,
+      })
+      expect(input.prompt).not.toContain('Please plan a holiday in Italy')
       expect((yield* (yield* RunStore).list(test.threadId))[0]).toMatchObject({
         id: admitted.runId,
         state: RunState.cases.Completed.make({ finishedAt: 0 }),
@@ -205,11 +257,144 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
     }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
   )
 
+  it.effect.each(['', '  ', '`"\'`', 'New thread'])(
+    'keeps Seed retryable after unusable model title %j',
+    (raw) =>
+      Effect.gen(function* () {
+        const test = yield* harness('Please plan a holiday', 'Seed')
+        yield* test.start('title')
+        yield* Deferred.succeed(test.settlement, Settlement.cases.Completed.make({ reply: 'Done' }))
+        yield* Queue.take(test.requests)
+        yield* Deferred.succeed(
+          test.completion,
+          Completion.cases.Finished.make({ text: JSON.stringify({ title: raw }) }),
+        )
+        yield* Deferred.await(test.finished)
+        expect(yield* test.stored).toMatchObject({
+          title: 'Please plan a holiday',
+          titleSource: 'Seed',
+        })
+        expect(yield* Ref.get(test.generatedWrites)).toBe(0)
+        // A subsequent settled Run can still try the provider because provenance stayed Seed.
+        yield* test.titles.afterRun(test.threadId)
+        expect(yield* Queue.size(test.requests)).toBe(1)
+      }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
+  )
+
+  it.effect.each([
+    ['Weekly holiday planning', 'Assigned'],
+    ['Calendar clash', 'Assigned'],
+  ] as const)('preserves durable name %s after a Person reply and settled Run', ([title, source]) =>
+    Effect.gen(function* () {
+      const test = yield* harness(title, source)
+      yield* test.start('reply')
+      yield* Deferred.succeed(test.settlement, Settlement.cases.Completed.make({ reply: 'Done' }))
+      yield* Deferred.await(test.finished)
+      expect(yield* test.stored).toMatchObject({ title, titleSource: source })
+      expect(yield* Queue.size(test.requests)).toBe(0)
+      expect(yield* Ref.get(test.generatedWrites)).toBe(0)
+    }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
+  )
+
+  it.effect('accepts one title write when two Runs settle together', () =>
+    Effect.gen(function* () {
+      const test = yield* harness('Please plan a holiday', 'Seed')
+      yield* test.start('first')
+      yield* test.start('second')
+      yield* Deferred.succeed(test.settlement, Settlement.cases.Completed.make({ reply: 'Done' }))
+      // Both observers reach the model before either may write, forcing the guarded SQL race.
+      yield* Queue.take(test.requests)
+      yield* Queue.take(test.requests)
+      yield* Deferred.succeed(
+        test.completion,
+        Completion.cases.Finished.make({ text: '{"title":"Plan an Italian holiday"}' }),
+      )
+      yield* Queue.take(test.finishedRuns)
+      yield* Queue.take(test.finishedRuns)
+      expect(yield* Ref.get(test.generatedWrites)).toBe(1)
+      expect(yield* test.stored).toMatchObject({
+        title: 'Plan an Italian holiday',
+        titleSource: 'Generated',
+      })
+      const runs = yield* (yield* RunStore).list(test.threadId)
+      expect(runs).toHaveLength(2)
+      expect(runs.every((run) => RunState.guards.Completed(run.state))).toBe(true)
+    }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
+  )
+
+  it.effect('bounds regeneration with a typed model timeout and interrupts the provider', () =>
+    Effect.gen(function* () {
+      const test = yield* harness('Please plan a holiday', 'Seed')
+      const fiber = yield* test.titles
+        .regenerate(yield* test.stored, test.personId)
+        .pipe(Effect.result, Effect.forkScoped)
+      yield* Queue.take(test.requests)
+      yield* TestClock.adjust(TITLE_MODEL_TIMEOUT)
+      yield* Deferred.await(test.modelFinished)
+      expect(yield* Fiber.join(fiber)).toEqual(
+        Result.fail(ThreadTitleModelUnavailable.make({ thread: test.threadId })),
+      )
+      expect(yield* test.stored).toMatchObject({
+        title: 'Please plan a holiday',
+        titleSource: 'Seed',
+      })
+    }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
+  )
+
+  it.effect(
+    'bounds background generation while leaving the settled Run complete and Seed retryable',
+    () =>
+      Effect.gen(function* () {
+        const test = yield* harness('Please plan a holiday', 'Seed')
+        yield* test.start('title')
+        yield* Deferred.succeed(test.settlement, Settlement.cases.Completed.make({ reply: 'Done' }))
+        yield* Queue.take(test.requests)
+        yield* TestClock.adjust(TITLE_MODEL_TIMEOUT)
+        yield* Deferred.await(test.modelFinished)
+        yield* Deferred.await(test.finished)
+        expect(yield* test.stored).toMatchObject({
+          title: 'Please plan a holiday',
+          titleSource: 'Seed',
+        })
+        expect(
+          (yield* (yield* RunStore).list(test.threadId)).every((run) =>
+            RunState.guards.Completed(run.state),
+          ),
+        ).toBe(true)
+        expect(yield* Ref.get(test.generatedWrites)).toBe(0)
+      }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
+  )
+
+  it.effect('logs a model defect with Thread context without failing the settled Run', () => {
+    const logs: unknown[] = []
+    const logger = Logger.make((event) => {
+      logs.push(event.message)
+    })
+    return Effect.gen(function* () {
+      const test = yield* harness('Please plan a holiday', 'Seed')
+      yield* test.start('title')
+      yield* Deferred.succeed(test.settlement, Settlement.cases.Completed.make({ reply: 'Done' }))
+      yield* Queue.take(test.requests)
+      yield* Deferred.failCause(test.completion, Cause.die(new Error('Title provider defect')))
+      yield* Deferred.await(test.finished)
+      expect(logs).toContainEqual([
+        'Thread title generation failed',
+        { thread: test.threadId, cause: expect.stringContaining('Title provider defect') },
+      ])
+      expect((yield* test.stored).titleSource).toBe('Seed')
+      expect(
+        (yield* (yield* RunStore).list(test.threadId)).every((run) =>
+          RunState.guards.Completed(run.state),
+        ),
+      ).toBe(true)
+    }).pipe(Effect.scoped, Effect.provide(databaseLayer), Effect.provide(Logger.layer([logger])))
+  })
+
   it.effect('leaves a Person title alone after a finished Run', () =>
     Effect.gen(function* () {
-      const test = yield* harness()
+      const test = yield* harness('Please plan a holiday', 'Seed')
       yield* test.store.patch(test.personId, test.threadId, { title: 'My holiday' })
-      yield* test.start()
+      yield* test.start('title')
       yield* Deferred.succeed(test.settlement, Settlement.cases.Completed.make({ reply: 'Done' }))
       yield* Deferred.await(test.finished)
       expect(yield* test.stored).toMatchObject({ title: 'My holiday', titleSource: 'Person' })
@@ -219,8 +404,8 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
 
   it.effect('keeps title and completed Run on model failure', () =>
     Effect.gen(function* () {
-      const test = yield* harness()
-      yield* test.start()
+      const test = yield* harness('Please plan a holiday', 'Seed')
+      yield* test.start('title')
       yield* Deferred.succeed(test.settlement, Settlement.cases.Completed.make({ reply: 'Done' }))
       yield* Queue.take(test.requests)
       yield* Deferred.fail(test.completion, ProviderMalformed.make({ operation: 'title' }))
@@ -237,31 +422,49 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
     }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
   )
 
-  it.effect('waits for a Person message in a server-opened Thread', () =>
+  it.effect('waits for Person words then keeps Vivid opening context as user data', () =>
     Effect.gen(function* () {
-      const test = yield* harness()
+      const test = yield* harness('Please plan a holiday', 'Seed')
       yield* Ref.set(test.messages, [
         {
           role: 'assistant',
           purpose: 'assistant',
-          parts: [{ type: 'text', text: 'Welcome', state: 'done' }],
+          parts: [{ type: 'text', text: 'Where should we plan your holiday?', state: 'done' }],
         },
       ])
       yield* test.titles.afterRun(test.threadId)
       expect(yield* Queue.size(test.requests)).toBe(0)
       expect((yield* test.stored).titleSource).toBe('Seed')
+      yield* Ref.update(test.messages, (messages) => [
+        ...messages,
+        { role: 'user', purpose: 'user', parts: [{ type: 'text', text: 'Italy', state: 'done' }] },
+      ])
+      yield* Deferred.succeed(
+        test.completion,
+        Completion.cases.Finished.make({ text: '{"title":"Plan an Italian holiday"}' }),
+      )
+      yield* test.titles.afterRun(test.threadId)
+      const request = yield* Queue.take(test.requests)
+      expect(request.content).toEqual({
+        conversation:
+          'Thread contents:\nASSISTANT:\nWhere should we plan your holiday?\n\nUSER:\nItaly',
+        previousTitle: null,
+      })
+      expect(request.prompt).not.toContain('Where should we plan your holiday?')
+      expect((yield* test.stored).titleSource).toBe('Generated')
     }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
   )
 
   it.effect('regenerates a Person title when explicitly asked', () =>
     Effect.gen(function* () {
-      const test = yield* harness()
+      const test = yield* harness('Please plan a holiday', 'Seed')
       yield* test.store.patch(test.personId, test.threadId, { title: 'My holiday' })
       const fiber = yield* test.titles
         .regenerate(yield* test.stored, test.personId)
         .pipe(Effect.forkScoped)
       const input = yield* Queue.take(test.requests)
-      expect(input.prompt).toContain('The previous title was "My holiday"')
+      expect(input.content).toMatchObject({ previousTitle: 'My holiday' })
+      expect(input.prompt).not.toContain('My holiday')
       expect(input.prompt).toContain('meaningfully improved title')
       yield* Deferred.succeed(
         test.completion,
@@ -274,7 +477,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
 
   it.effect('drops a regeneration superseded by a Person rename', () =>
     Effect.gen(function* () {
-      const test = yield* harness()
+      const test = yield* harness('Please plan a holiday', 'Seed')
       const fiber = yield* test.titles
         .regenerate(yield* test.stored, test.personId)
         .pipe(Effect.forkScoped)
@@ -292,7 +495,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
 
   it.effect('protects a Person rename while automatic generation is in flight', () =>
     Effect.gen(function* () {
-      const test = yield* harness()
+      const test = yield* harness('Please plan a holiday', 'Seed')
       const fiber = yield* test.titles.afterRun(test.threadId).pipe(Effect.forkScoped)
       yield* Queue.take(test.requests)
       yield* test.store.patch(test.personId, test.threadId, { title: 'Person chose this' })
@@ -311,7 +514,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
 
   it.effect('uses shared Person messages and omits scheduled signals and system text', () =>
     Effect.gen(function* () {
-      const test = yield* harness()
+      const test = yield* harness('Please plan a holiday', 'Seed')
       yield* Ref.set(test.messages, [
         {
           role: 'system',
@@ -328,8 +531,11 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
       ])
       const fiber = yield* test.titles.afterRun(test.threadId).pipe(Effect.forkScoped)
       const request = yield* Queue.take(test.requests)
-      expect(request.prompt).toContain('USER:\nPlan a holiday in Italy')
-      expect(request.prompt).not.toContain('Scheduled instructions')
+      expect(request.content).toEqual({
+        conversation: 'Thread contents:\nUSER:\nPlan a holiday in Italy',
+        previousTitle: null,
+      })
+      expect(JSON.stringify(request.content)).not.toContain('Scheduled instructions')
       yield* Deferred.succeed(
         test.completion,
         Completion.cases.Finished.make({ text: '{"title":"Plan an Italian holiday"}' }),
@@ -341,7 +547,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
 
   it.effect('returns typed model failure and keeps the title on regeneration', () =>
     Effect.gen(function* () {
-      const test = yield* harness()
+      const test = yield* harness('Please plan a holiday', 'Seed')
       yield* Deferred.fail(test.completion, ProviderMalformed.make({ operation: 'title' }))
       const result = yield* test.titles
         .regenerate(yield* test.stored, test.personId)
@@ -355,7 +561,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
 
   it.effect('returns typed history failure and automatic naming leaves Seed unchanged', () =>
     Effect.gen(function* () {
-      const test = yield* harness()
+      const test = yield* harness('Please plan a holiday', 'Seed')
       yield* Ref.set(test.messages, [{ role: 'invalid', parts: [] }])
       const result = yield* test.titles
         .regenerate(yield* test.stored, test.personId)
@@ -371,7 +577,7 @@ describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
 
   it.effect('rejects extra output keys without changing the title', () =>
     Effect.gen(function* () {
-      const test = yield* harness()
+      const test = yield* harness('Please plan a holiday', 'Seed')
       yield* Deferred.succeed(
         test.completion,
         Completion.cases.Finished.make({ text: '{"title":"Holiday","extra":true}' }),

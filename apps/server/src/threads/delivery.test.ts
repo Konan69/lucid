@@ -130,6 +130,7 @@ const fixture = Effect.fn('Delivery.test.fixture')(function* () {
       companyId,
       audience: 'company',
       title: 'Delivery test',
+      titleSource: 'Person',
       updatedAt: 0,
     }),
   )
@@ -370,7 +371,11 @@ describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
           )
           const child = created.find((thread) => thread.title === input.request.title)
           if (child === undefined) expect.fail('Expected private finding Thread')
-          expect(child).toMatchObject({ companyId: null, audience: 'private' })
+          expect(child).toMatchObject({
+            companyId: null,
+            audience: 'private',
+            titleSource: 'Assigned',
+          })
           const childRuns = yield* (yield* RunStore).list(child.id)
           expect(childRuns).toHaveLength(1)
           const childRun = childRuns[0]
@@ -541,6 +546,7 @@ describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
       const busyThread = yield* threadStore.ensure({
         id: ThreadId.make(`routine-${busy.id}`),
         title: 'Busy',
+        titleSource: 'Person',
         personId: test.ben,
         companyId: test.companyId,
       })

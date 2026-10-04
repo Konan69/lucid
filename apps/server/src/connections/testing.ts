@@ -308,6 +308,7 @@ export const fixture = Effect.fn('Connections.Test.fixture')(function* () {
     database.insert(threads).values({
       id: threadId,
       title: 'Connection test',
+      titleSource: 'Person',
       updatedAt: yield* Clock.currentTimeMillis,
       personId: owner.id,
       companyId: company.id,

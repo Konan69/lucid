@@ -96,6 +96,7 @@ const fixture = Effect.fn('Artifacts.test.fixture')(function* () {
     database.insert(threads).values({
       id: threadId,
       title: 'Documents',
+      titleSource: 'Person',
       personId: person.id,
       companyId,
       audience: 'private',

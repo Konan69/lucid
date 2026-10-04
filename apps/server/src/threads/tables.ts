@@ -14,7 +14,7 @@ import { companyColumn, epoch, personColumn, threadColumn } from '../database/ow
 import { TitleSource } from './title.ts'
 import { projectTable } from '../projects/tables.ts'
 
-/** Existing titles have no rename provenance; Person protects every legacy title. New writers explicitly use Seed. */
+/** The existing migration backfilled legacy titles as Person; every new writer must state provenance explicitly. */
 export const titleSource = pgEnum('vivid_thread_title_source', TitleSource.literals)
 
 /**
@@ -31,7 +31,7 @@ export const threads = pgTable(
   {
     id: threadColumn('id').primaryKey(),
     title: text('title').notNull(),
-    titleSource: titleSource('title_source').notNull().default('Person'),
+    titleSource: titleSource('title_source').notNull(),
     preview: text('preview').notNull().default(''),
     updatedAt: epoch('updated_at').notNull(),
     archived: boolean('archived').notNull().default(false),

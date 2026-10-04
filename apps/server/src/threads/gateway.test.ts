@@ -91,6 +91,7 @@ const fixture = Effect.fn('GatewayTest.fixture')(function* () {
       companyId,
       audience: 'company',
       title: 'Gateway test',
+      titleSource: 'Person',
       updatedAt: 0,
     }),
   )

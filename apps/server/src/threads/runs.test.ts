@@ -55,7 +55,9 @@ const fixture = Effect.fn('Run.test.fixture')(function* () {
       .values({ id: personId, name: 'Run test', email: `${personId}@example.test` }),
   )
   yield* database.run(
-    database.insert(threads).values({ id: threadId, personId, title: 'Run test', updatedAt: 0 }),
+    database
+      .insert(threads)
+      .values({ id: threadId, personId, title: 'Run test', titleSource: 'Person', updatedAt: 0 }),
   )
   return { personId, threadId }
 })

@@ -419,6 +419,7 @@ const obstruct = Effect.fn('Test.Routines.obstruct')(function* (id: RoutineId, a
   yield* (yield* ThreadStore).ensure({
     id: ThreadId.make(`routine-${id}`),
     title: 'Another Person’s Thread',
+    titleSource: 'Person',
     personId: actor.person.id,
     companyId: companyColumnOf(actor.workspace),
   })
@@ -865,6 +866,15 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         yield* TestClock.setTime(60_000)
         yield* Effect.all([scheduler.runDue(), scheduler.runDue()], { concurrency: 2 })
         expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
+        // The scheduler assigns the durable Routine name, protecting it from automatic naming.
+        expect(
+          yield* database.run(
+            database
+              .select()
+              .from(threads)
+              .where(eq(threads.id, ThreadId.make(`routine-${routine.id}`))),
+          ),
+        ).toMatchObject([{ title: 'Scheduled work', titleSource: 'Assigned' }])
         const stored = yield* store.list(owner)
         expect(stored[0]).toMatchObject({
           nextRunAt: 120_000,

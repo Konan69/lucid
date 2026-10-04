@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Schema } from 'effect'
+import { Cause, Context, Effect, Layer, Option, Schema } from 'effect'
 import type { NotFound, PersonId, ThreadId } from '@vivid/contracts'
 import {
   ThreadTitleHistoryUnavailable,
@@ -15,11 +15,15 @@ import { ThreadStore } from './store.ts'
 import {
   buildThreadTitlePrompt,
   canReplaceThreadTitle,
+  DEFAULT_THREAD_TITLE,
   formatThreadTitleContext,
   sanitizeThreadTitle,
   type TitleMessage,
   TitleOutput,
 } from './title.ts'
+
+/** Bound provider work independently of the history read for both background naming and the awaited RPC. */
+export const TITLE_MODEL_TIMEOUT = '30 seconds'
 
 type TitleFailure =
   | ThreadTitleHistoryUnavailable
@@ -97,8 +101,11 @@ export const threadTitlesLayer = Layer.effect(
       )
       const built = buildThreadTitlePrompt(message, previous)
       const completion = yield* model
-        .complete({ name: 'thread_title', prompt: built.prompt, content: {}, schema })
-        .pipe(Effect.mapError(() => ThreadTitleModelUnavailable.make({ thread })))
+        .complete({ name: 'thread_title', prompt: built.prompt, content: built.content, schema })
+        .pipe(
+          Effect.timeout(TITLE_MODEL_TIMEOUT),
+          Effect.mapError(() => ThreadTitleModelUnavailable.make({ thread })),
+        )
       const result = yield* decodeTitle(completion.text).pipe(
         Effect.mapError(() => ThreadTitleOutputInvalid.make({ thread })),
       )
@@ -118,12 +125,16 @@ export const threadTitlesLayer = Layer.effect(
         const messages = yield* contents(id)
         if (!messages.some((message) => message.role === 'user')) return
         const title = yield* generate(id, formatThreadTitleContext(messages), Option.none())
+        if (title === DEFAULT_THREAD_TITLE) return
         if (yield* threads.generatedTitle(id, title, Option.none())) yield* publish(found.value)
       },
       (effect, thread) =>
         effect.pipe(
-          Effect.catch((error) =>
-            Effect.logWarning('Thread title generation failed', { thread, tag: error._tag }),
+          Effect.catchCause((cause) =>
+            Effect.logWarning('Thread title generation failed', {
+              thread,
+              cause: Cause.pretty(cause),
+            }),
           ),
         ),
     )
@@ -138,7 +149,7 @@ export const threadTitlesLayer = Layer.effect(
       const context = formatThreadTitleContext(messages)
       if (context.length === 0) return thread.title
       const title = yield* generate(thread.id, context, Option.some(thread.title))
-      if (title !== 'New thread' && title !== thread.title) {
+      if (title !== DEFAULT_THREAD_TITLE && title !== thread.title) {
         if (yield* threads.generatedTitle(thread.id, title, Option.some(thread.title)))
           yield* publish(thread)
       }
