@@ -8,6 +8,7 @@ import type * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
 import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import * as RpcSerialization from 'effect/unstable/rpc/RpcSerialization'
 import * as Socket from 'effect/unstable/socket/Socket'
+import type { ThreadId } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
 
 export type VividRpcClientService = RpcClient.RpcClient<
@@ -80,4 +81,11 @@ export class VividRpcClient extends Context.Service<VividRpcClient, VividRpcClie
 /** Opens the signed-in Person's first Thread through the shared schema-derived transport. */
 export const openFirstThread = Effect.fn('VividRpcClient.openFirstThread')(function* () {
   return yield* (yield* VividRpcClient).OpenFirstThread()
+})
+
+/** Ask for a meaningfully improved title through the shared transport on every client surface. */
+export const regenerateThreadTitle = Effect.fn('VividRpcClient.regenerateThreadTitle')(function* (
+  thread: ThreadId,
+) {
+  return yield* (yield* VividRpcClient).RegenerateThreadTitle({ thread })
 })
