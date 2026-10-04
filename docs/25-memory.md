@@ -1,8 +1,8 @@
 # Memory: a filesystem per Person, and Helix as the knowledge base
 
 **Status:** direction, 4 October 2026. Documented at Konan's request after the design discussion of
-that day. Nothing in "The direction" is built yet, and the combination it relies on has not been
-run: see "Not verified". It replaces the memory part of [One product](22-one-product.md) as the
+that day. Nothing in "The direction" is built into the product yet. The combination it relies on
+was run as a proof the same day: see "Proof" and "Not verified". It replaces the memory part of [One product](22-one-product.md) as the
 target; "What exists today" describes what the code does until it lands.
 
 Evidence is the primary source of each reference system, read on 4 October 2026: the installed Flue
@@ -17,7 +17,7 @@ Code memory documentation. A claim marked **unverified** was read from source an
 1. **Memory is a filesystem.** Each Person has one small filesystem that Vivid manages itself. It is
    stored in one SQLite file per Person (AgentFS). It is attached through Flue's filesystem slot
    (`useSandbox`), so Vivid reads and edits it with ordinary file tools.
-2. **The layout is the Claude Code layout.** One index file is always in front of the model. Each
+2. **The layout is the Claude Code layout.** One index is always in front of the model. Each
    memory is one file with a small typed header, opened only when its index line looks relevant.
 3. **The knowledge base is Helix.** Durable facts and search live there. Vivid writes to it with a
    tool. It is a separate layer from memory and is more durable.
@@ -56,13 +56,14 @@ converges on files, or on a document shaped like one.
 Ported from Claude Code's file memory; Letta's memory filesystem uses the same shape.
 
 ```
-/memory/
-  MEMORY.md            index, always loaded: one line per memory
+/                      the memory folder is the filesystem root
   <name>.md            one memory per file
 ```
 
-- **`MEMORY.md`** has one line per memory: `- [Title](file.md) — one-line hook`, each under about
-  150 characters. It has no header. Claude Code loads the first 200 lines or 25 KB of it.
+- **The index** is one line per memory (file, type, description) and is always in front of the
+  model. Vivid's server derives it from the notes' headers on every response; the model does not
+  keep an index file (see "Proof"). Claude Code keeps a hand-written `MEMORY.md` of
+  `- [Title](file.md) — one-line hook` lines and loads its first 200 lines or 25 KB.
 - **A memory file** starts with a header and then holds the fact:
 
   ```markdown
@@ -142,7 +143,7 @@ What goes to memory and what goes to the knowledge base, and whether one feeds t
   finishes through an Approval continuation or after recovery; that is tracked in issue #16.
 
 The page is the always-on path the filesystem index will use. Its source changes from Helix records
-to `MEMORY.md`.
+to the index derived from the notes' headers.
 
 ## The references, side by side
 
@@ -159,25 +160,65 @@ Eve's shape (one bounded document, two tools) is the simpler alternative. It was
 no folders and no note bodies, a Person cannot open it as files, and it does not move onto the
 Computer.
 
+## Proof, run on 4 October 2026
+
+Run in an isolated folder against Flue 2.2.2 (the pinned version), just-bash 3.6.0 and agentfs-sdk
+0.6.4, with the product's gateway and default model (`explabs/glm-5.3-flash`). No production data.
+
+**What ran and passed**
+
+- **Files persist in one SQLite file, across processes and conversations.** Flue's `write`, `edit`,
+  `read` and `glob` tools and the shell wrote and changed notes; a new process with a different
+  conversation id read them back. Opening the database took 57 to 97 ms; reading the index took
+  2.8 ms; a tool call took 3 to 50 ms.
+- **A real model keeps and uses its memory this way.** Told two facts in one conversation, the model
+  wrote two note files with the header and a Why / How to apply body, and answered. In a new process
+  and a new conversation, asked a question that depended on both, it read both files and applied
+  them (18 to 21 s to teach, 13 s to answer, tool calls included).
+- **Overwriting and concurrent writes are sound.** Overwriting an empty, shorter or longer file, and
+  three writes at once for twenty rounds, left the right bytes every time.
+
+**What the run changed in the design**
+
+- **AgentFS's adapter lags just-bash 3.** Flue 2.2.2 needs just-bash `^3.0.1`, which calls
+  `realpath` and `utimes`; agentfs-sdk 0.6.4 has neither, and the first shell command crashed. Vivid
+  owns a small adapter that adds them: `realpath` resolves the path and requires it to exist;
+  `utimes` does nothing, because AgentFS sets its own modification time on write.
+- **Flue's `grep` tool does not work on any just-bash 3.x**, with or without AgentFS: it runs
+  `grep -rnH`, and just-bash's `grep` has no `-H`, so it reports "No matches found". Search goes
+  through the shell (`rg -n`, which works) or a tool of our own. Flue's `glob` tool passes its
+  pattern to `find -name`, so `*.md` works and `**/*.md` finds nothing.
+- **The memory folder is the filesystem root.** With the notes in `/memory/`, the model wrote its
+  index to `/MEMORY.md` and the notes to `/memory/`, so the index the next conversation read was
+  empty. With the folder as the root and relative paths, there is nowhere else to write.
+- **The index is derived, not kept by the model.** It is built from each note's header (file, type,
+  description) on every response: 5 ms for two notes. A hand-kept `MEMORY.md` can drift from the
+  files; a derived one cannot. This departs from Claude Code, where the model keeps the index.
+
 ## Not verified
 
-- **The combination has never been run.** Flue, just-bash and AgentFS were read, not executed
-  together; their versions may not fit. The first step is a proof: write a note, restart, read it
-  back, with the Computer's screenshot tool still working in the same slot.
+- The Computer's screenshot tool beside the file tools in the same Flue slot. The slot's `tools`
+  list was used for the file tools in the proof; the desktop tool was not in it.
+- Mounting the SQLite file as a folder on the Computer (`agentfs mount`).
+- Updating one note instead of writing a second about the same thing, and deleting a wrong one, with
+  a real model. One teach and one ask were run, once each.
+- Many notes: how the derived index and its size behave past a few hundred files.
+- The write-ahead log: a 4 KB database carried a 424 KB log after one run; closing and checkpointing
+  are not designed.
 - AgentFS is young (specification v0.4).
-- Whether every Person has a Computer today, and whether its files can be read while it is stopped.
 - How Grok Bot lays out and syncs its own memory files. Its source was not found during this
   research; [The Computer](04-computer.md) records that its persistence is state sync, not the
   machine.
 
 ## Open questions
 
-1. **Shared Threads.** Several People are in one. The proposal keeps today's rule: the Thread has
-   its own small folder, Company knowledge is visible, and no Person's private files appear there.
-2. **Seeding.** Whether sign-up and onboarding write the first notes (name, the onboarding answers,
-   time zone, Company).
-3. **Where the SQLite files sit while the loop runs on our server**, and how they are backed up and
+Vivid is being built for one Person's own use first. Sharing, and who sees what in a shared Thread,
+is out of scope for now; today's access rules stay as they are in code.
+
+1. **Seeding.** Whether sign-up and onboarding write the first notes (name, the onboarding answers,
+   time zone).
+2. **Where the SQLite file sits while the loop runs on our server**, and how it is backed up and
    synced to the Computer.
-4. **Memory and the knowledge base.** Which facts go where, and whether learning after a Run writes
+3. **Memory and the knowledge base.** Which facts go where, and whether learning after a Run writes
    files, Helix records, or both.
-5. **The Person's view.** A Settings surface for memory comes after the model side is right.
+4. **The Person's view.** A Settings surface for memory comes after the model side is right.
