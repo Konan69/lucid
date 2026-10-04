@@ -42,6 +42,6 @@
   {
     "file": "apps/server/src/channels/photon.ts",
     "classification": "third-party-adapter",
-    "symbols": ["connectPhoton", "closePhoton", "makePhoton"]
+    "symbols": ["openPhoton", "connectPhoton", "closePhoton", "makePhoton"]
   }
 ]

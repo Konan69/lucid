@@ -280,7 +280,12 @@ function Connected({
   const shared = connections.filter((item) => ConnectionOwnership.guards.Shared(item.ownership))
   return (
     <section>
-      <Heading title="Connected" count={connections.length} />
+      {/* The count is of accounts that work now. A sign-in that was started and never finished is
+          listed, so it can be finished or removed, but it is not counted as connected. */}
+      <Heading
+        title="Connected"
+        count={connections.filter((item) => ConnectionState.guards.Ready(item.state)).length}
+      />
       <ul className="grid gap-2.5 sm:grid-cols-2">
         {[...mine, ...shared].map((connection, place) => {
           const own = ConnectionOwnership.guards.Personal(connection.ownership)
@@ -370,7 +375,7 @@ function ConnectedTile({
         stagger(place),
       )}
     >
-      <Mark service={{ name: connection.serviceName }} size={44} />
+      <Mark service={{ name: connection.serviceName, mark: connection.mark }} size={44} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="truncate text-title font-title text-ink">{connection.serviceName}</span>

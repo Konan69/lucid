@@ -1,3 +1,4 @@
+import { silentChannelRepliesLayer } from '../channels/replies.ts'
 import { ThreadTitles } from './generation.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeBuffer from 'node:buffer'
@@ -209,7 +210,7 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
       return yield* Effect.sync(() => expect.fail('Run was not admitted'))
     return yield* Deferred.succeed(
       settlement,
-      Settlement.cases.Completed.make({ reply: 'Finished' }),
+      Settlement.cases.Completed.make({ reply: 'Finished', responseId: id }),
     )
   })
   return { runtime, admitted, requests, finish, failure, reads, readHeaders }
@@ -262,7 +263,9 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
       watching: Effect.fn('Delivery.test.watching')(() => Effect.succeed(true)),
     }),
   )
-  const context = yield* Layer.build(conversationLayer.pipe(Layer.provide(services)))
+  const context = yield* Layer.build(
+    conversationLayer.pipe(Layer.provide(silentChannelRepliesLayer), Layer.provide(services)),
+  )
   const conversation = yield* Conversation.pipe(Effect.provideContext(context))
   /** Completion is observed through the real conditional SQL settlement before another Person sends. */
   const finish = Effect.fn('Delivery.test.settle')(function* (id: RunId) {
@@ -770,6 +773,7 @@ describe.skipIf(!testDatabaseConfigured)('Pictures through the gateway', () => {
         const runtime = Runtime.of({ ...transport, settled: test.runtime.settled })
         const context = yield* Layer.build(
           conversationLayer.pipe(
+            Layer.provide(silentChannelRepliesLayer),
             Layer.provide(Layer.merge(test.services, Layer.succeed(Runtime, runtime))),
           ),
         )
@@ -1070,7 +1074,12 @@ describe.skipIf(!testDatabaseConfigured)('Pictures through the gateway', () => {
             idempotencyKey: 'immutable',
           }
           expect((yield* post(test, body)).status).toBe(202)
-          const context = yield* Layer.build(conversationLayer.pipe(Layer.provide(test.services)))
+          const context = yield* Layer.build(
+            conversationLayer.pipe(
+              Layer.provide(silentChannelRepliesLayer),
+              Layer.provide(test.services),
+            ),
+          )
           const conversation = yield* Conversation.pipe(Effect.provideContext(context))
           const response = yield* post(
             { ...test, conversation },

@@ -7,7 +7,7 @@ metadata:
     Shipped guidance keeps completion evidence and permission beside the steps.
 ---
 
-Clarify the meeting's purpose, required people, duration, date window and location or call format. Use `recall` for working hours and timezone preferences, but treat them as preferences rather than proof of availability. Ask with `ask_person` when a participant or timezone cannot be identified confidently. Interpret dates in the Person's timezone and show the resulting local times.
+Clarify the meeting's purpose, required people, duration, date window and location or call format. Use what you remember for working hours and timezone preferences, but treat them as preferences rather than proof of availability. Ask with `ask_person` when a participant or timezone cannot be identified confidently. Interpret dates in the Person's timezone and show the resulting local times.
 
 Discover calendar and availability tools with `find_tools`. If the integration is not connected, offer `connect`; propose only provisional choices until actual availability can be checked. Read the relevant calendars or free/busy results through `use_tool`. Check all required participants where access permits, existing commitments, travel buffers, working hours and daylight-saving changes. If someone else's calendar is inaccessible, state that limitation and ask how their availability should be confirmed.
 

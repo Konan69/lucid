@@ -52,7 +52,7 @@ import {
 } from './records.ts'
 import { connections } from './tables.ts'
 import { callbackHash, correlateSignIn } from './correlation.ts'
-import { catalogService, serviceLogo } from './logo.ts'
+import { catalogService, IMPORTED, serviceLogo } from './logo.ts'
 import { loadCuration } from './curation.ts'
 import { connectionAddressLayer, type ConnectionSource } from './address.ts'
 
@@ -438,7 +438,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     ) {
       if (request.shared) yield* requireAdmin(actor.workspace)
       const importedService = Service.make({
-        id: ServiceId.make(`url:${source.address}`),
+        id: ServiceId.make(`${IMPORTED}${source.address}`),
         name: request.name,
         description: '',
         mark: serviceLogo(source.address),

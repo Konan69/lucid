@@ -12,6 +12,17 @@ const LOGOS: Record<string, string> = import.meta.glob('./logos/*.svg', {
   import: 'default',
 })
 
+/**
+ * App icons, under `icons/`: artwork that is already a whole square with its own ground (the
+ * green Messages tile). They fill the tile to its corners; a logo from `logos/` is a mark with
+ * no ground and is drawn smaller, with room around it.
+ */
+const ICONS: Record<string, string> = import.meta.glob('./icons/*.svg', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+})
+
 /** A service's name as its logo file is named: "Google Calendar" is "google-calendar". */
 const fileOf = (name: string) =>
   name
@@ -20,12 +31,32 @@ const fileOf = (name: string) =>
     .replaceAll(/[^a-z0-9]+/gu, '-')
     .replaceAll(/^-|-$/gu, '')
 
+/** How a service is drawn: a whole icon, a mark on a ground, or its initial on a colour. */
+type Art =
+  | { readonly kind: 'icon'; readonly address: string }
+  | { readonly kind: 'logo'; readonly address: string }
+  | { readonly kind: 'initial' }
+
 /**
- * The logo for a service, when there is one. The catalog sends no artwork for any service yet
- * (`Service.mark` is always null), so a service is recognised by its whole name and by nothing
- * less: "Zoom for Claude" is not Zoom, and gets no logo it has not earned.
+ * The artwork for a service. The address the server sends wins: it is the icon of the site the
+ * Integration came from, which is the only artwork an added server has. Then the bundled files,
+ * found by the service's whole name and by nothing less: "Zoom for Claude" is not Zoom, and gets
+ * no logo it has not earned. A service with neither is drawn as its initial.
  */
-const logoOf = (name: string) => Option.fromUndefinedOr(LOGOS[`./logos/${fileOf(name)}.svg`])
+const artOf = (
+  service: { readonly name: string; readonly mark?: string | null },
+  size: number,
+): Art => {
+  const sent = Option.fromNullishOr(service.mark)
+  // Twice the drawn size, so the icon stays sharp on a dense screen.
+  if (Option.isSome(sent)) return { kind: 'icon', address: `${sent.value}&sz=${size * 2}` }
+  const file = fileOf(service.name)
+  const icon = Option.fromUndefinedOr(ICONS[`./icons/${file}.svg`])
+  if (Option.isSome(icon)) return { kind: 'icon', address: icon.value }
+  const logo = Option.fromUndefinedOr(LOGOS[`./logos/${file}.svg`])
+  if (Option.isSome(logo)) return { kind: 'logo', address: logo.value }
+  return { kind: 'initial' }
+}
 
 /** The fills a service without a logo may take: the saturated face colours, the grey left out. */
 const HUES = [
@@ -53,11 +84,13 @@ const hueOf = (name: string) => {
 }
 
 /**
- * A service's logo on a white rounded square, the way an app icon sits on a home screen and the
- * way the reference's tiles show one (`refs/grok-bot-screenshots/02-what-do-you-use-every-day.png`).
- * The square is white in both themes, because the logos are drawn for a white ground. A service
- * with no logo here gets its initial in white on a square of one of the face colours: true to its
- * name, never a made-up mark, and still a shape of colour beside the real logos in a grid.
+ * A service's artwork in a rounded square, the way an app icon sits on a home screen.
+ *
+ * Nothing is drawn around it. An earlier version put every logo on a white square with a ring,
+ * which read as a border around a border on a card that already has an edge. Now an icon fills
+ * the square to its corners; a mark with no ground of its own sits on white only where the page
+ * is dark (the marks are drawn for a light ground), and on nothing where the page is light; a
+ * service with no artwork gets its initial in white on one of the face colours.
  */
 export function Mark({
   service,
@@ -65,21 +98,15 @@ export function Mark({
   className,
 }: {
   /**
-   * `mark` is the address of the service's logo image when the server knows one (it sends
-   * `https://integrations.sh/logo/<domain>`, the same logo service Executor's own pages use). A
-   * caller that only has a name passes no mark and gets the bundled logo for that exact name.
+   * `mark` is the address of the service's icon when the server knows one (the icon of the site
+   * the Integration came from, without a size). A caller that only has a name passes no mark and
+   * gets the bundled artwork for that exact name.
    */
   service: { readonly name: string; readonly mark?: string | null }
   size?: number
   className?: string
 }) {
-  // The server's logo address wins: it is the service's own artwork at twice the drawn size, so it
-  // stays sharp on dense screens. The bundled logo covers callers that only know a name.
-  const sent = Option.map(
-    Option.fromNullishOr(service.mark),
-    (address) => `${address}?sz=${size * 2}`,
-  )
-  const logo = Option.orElse(sent, () => logoOf(service.name))
+  const art = artOf(service, size)
   // SAFETY: React forwards this validated CSS custom property to the element.
   const tileStyle = { '--mark-size': `${size}px` } as React.CSSProperties
   return (
@@ -88,18 +115,17 @@ export function Mark({
       style={tileStyle}
       className={cn(
         'inline-flex size-(--mark-size) shrink-0 items-center justify-center overflow-hidden rounded-control text-title font-title',
-        // A logo's white square needs the edge to be seen on a light page; a square of colour
-        // is its own edge.
-        Option.isSome(logo) ? 'bg-white edge' : cn('text-ink-on-color', hueOf(service.name)),
+        art.kind === 'logo' && 'dark:bg-white',
+        art.kind === 'initial' && cn('text-ink-on-color', hueOf(service.name)),
         className,
       )}
     >
-      {Option.isSome(logo) ? (
-        // The logo is drawn at 5/8 of the square, which leaves it the breathing room of an icon.
-        <img src={logo.value} alt="" className="size-5/8 object-contain" />
-      ) : (
-        service.name.trim().slice(0, 1).toLocaleUpperCase()
+      {art.kind === 'icon' && <img src={art.address} alt="" className="size-full object-cover" />}
+      {art.kind === 'logo' && (
+        // A mark is drawn at 3/4 of the square, which leaves it the breathing room of an icon.
+        <img src={art.address} alt="" className="size-3/4 object-contain" />
       )}
+      {art.kind === 'initial' && service.name.trim().slice(0, 1).toLocaleUpperCase()}
     </span>
   )
 }
