@@ -19,6 +19,7 @@ import {
   hostedExecutorFixture,
   hostedService,
 } from './testing.ts'
+import { ServerConfig } from '../config.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 
 const calendar = {
@@ -175,12 +176,31 @@ describe.skipIf(!testDatabaseConfigured)('catalogue Begin without auth hints', (
         },
         'EnterKey',
       ],
+      [
+        'mixed',
+        {
+          slot: {
+            provider: 'provider',
+            definition: {
+              auth: {
+                key: { type: 'secrets', fields: { properties: { token: {} } } },
+                oauth: { type: 'oauth2' },
+              },
+            },
+          },
+        },
+        'OpenSignIn',
+      ],
     ] as const) {
       test.effect(`installs ${name} and reaches ${expected}`, () =>
         Effect.gen(function* () {
           const { ownerActor } = yield* fixture()
           const host = yield* hostedExecutorFixture()
           yield* Ref.set(host.accounts, accounts)
+          yield* Ref.set(
+            host.redirectUri,
+            new URL('/api/connections/return', (yield* ServerConfig).PUBLIC_URL).href,
+          )
           yield* Effect.gen(function* () {
             const store = yield* ConnectionStore
             expect((yield* store.catalog())[0]).toHaveProperty(

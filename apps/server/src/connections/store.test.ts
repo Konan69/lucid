@@ -164,7 +164,11 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           for (const actor of [ownerActor, outsider]) {
             expect(
               yield* resumedStore
-                .callback(actor, begun.connection.id, Redacted.make('https://example.test/return'))
+                .callback(
+                  actor,
+                  begun.connection.id,
+                  Redacted.make(`https://example.test/return?state=${begun.connection.id}`),
+                )
                 .pipe(Effect.flip),
             ).toBeInstanceOf(NotFound)
           }
@@ -177,7 +181,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
             (yield* resumedStore.callback(
               personal,
               begun.connection.id,
-              Redacted.make('https://example.test/return'),
+              Redacted.make(`https://example.test/return?state=${begun.connection.id}`),
             ))._tag,
           ).toBe('Ready')
         }).pipe(
@@ -222,7 +226,11 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         )
         expect(
           (yield* store
-            .callback(admin, step.connection.id, Redacted.make('https://example.test/return'))
+            .callback(
+              admin,
+              step.connection.id,
+              Redacted.make(`https://example.test/return?state=${step.connection.id}`),
+            )
             .pipe(Effect.flip))._tag,
         ).toBe('Forbidden')
         expect(yield* Ref.get(probe.signIns)).toBe(before)
@@ -517,7 +525,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
               .callback(
                 memberActor,
                 step.connection.id,
-                Redacted.make('https://example.test/return'),
+                Redacted.make(`https://example.test/return?state=${step.connection.id}`),
               )
               .pipe(Effect.flip),
           ).toBeInstanceOf(NotFound)
@@ -525,7 +533,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           const ready = yield* store.callback(
             { ...personalActor, by: 'person' },
             step.connection.id,
-            Redacted.make('https://example.test/return'),
+            Redacted.make(`https://example.test/return?state=${step.connection.id}`),
           )
           expect(ConnectionState.guards.Ready(ready)).toBe(true)
           expect((yield* store.get(ownerActor, step.connection.id)).status).toBe('ready')
@@ -564,7 +572,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
             .callback(
               { ...personalActor, by: 'person' },
               step.connection.id,
-              Redacted.make('https://example.test/return'),
+              Redacted.make(`https://example.test/return?state=${step.connection.id}`),
             )
             .pipe(Effect.flip),
         ).toBeInstanceOf(Forbidden)
@@ -600,12 +608,12 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
             yield* recorded.callback(
               { ...personalActor, by: 'person' },
               shared.connection.id,
-              Redacted.make('https://example.test/return'),
+              Redacted.make(`https://example.test/return?state=${shared.connection.id}`),
             )
             yield* recorded.callback(
               ownerActor,
               personal.connection.id,
-              Redacted.make('https://example.test/return'),
+              Redacted.make(`https://example.test/return?state=${personal.connection.id}`),
             )
           }).pipe(
             Effect.provide(connectionStoreLayer.pipe(Layer.provide(auditLayer)), { local: true }),

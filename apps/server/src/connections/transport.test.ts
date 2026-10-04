@@ -446,7 +446,9 @@ describe('Executor hosted transport', () => {
         const step = yield* (yield* Executor).begin(begin)
         expect(ExecutorStep.guards.OpenSignIn(step)).toBe(true)
         if (ExecutorStep.guards.OpenSignIn(step))
-          expect(step.address).toBe('https://provider.example.test/sign-in')
+          expect(step.address).toBe(
+            'https://provider.example.test/sign-in?state=hosted-fixture-oauth-state-00000000',
+          )
         expect(step).not.toHaveProperty('url')
         const requests = yield* Ref.get(remote.requests)
         expect(

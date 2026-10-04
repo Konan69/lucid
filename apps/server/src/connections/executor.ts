@@ -67,6 +67,12 @@ export const ExecutorReferences = Schema.TaggedUnion({
     label: Schema.NonEmptyString,
   },
   SigningIn: { ...referenceFields, authorization: ExecutorAuthorizationId },
+  /** Vivid retains a one-way callback correlation only after Executor supplies its provider URL. */
+  OAuthSigningIn: {
+    ...referenceFields,
+    authorization: ExecutorAuthorizationId,
+    stateHash: Schema.NonEmptyString,
+  },
   /** Google has a registered fixed callback and must persist its exact protocol correlation. */
   GoogleSigningIn: {
     ...referenceFields,
@@ -85,10 +91,16 @@ export const ExecutorServiceEntry = Schema.Struct({
 })
 const SignInReferences = Schema.Union([
   ExecutorReferences.cases.SigningIn,
+  ExecutorReferences.cases.OAuthSigningIn,
   ExecutorReferences.cases.GoogleSigningIn,
 ])
-const isSigningIn = ExecutorReferences.isAnyOf(['SigningIn', 'GoogleSigningIn'])
-const isPending = ExecutorReferences.isAnyOf(['EnteringKey', 'SigningIn', 'GoogleSigningIn'])
+const isSigningIn = ExecutorReferences.isAnyOf(['SigningIn', 'OAuthSigningIn', 'GoogleSigningIn'])
+const isPending = ExecutorReferences.isAnyOf([
+  'EnteringKey',
+  'SigningIn',
+  'OAuthSigningIn',
+  'GoogleSigningIn',
+])
 
 export const ExecutorStep = Schema.TaggedUnion({
   OpenSignIn: { references: SignInReferences, address: Schema.String },
@@ -1599,6 +1611,7 @@ function makeRemove(http: ExecutorHttp) {
       Authorized: (value) => Effect.succeed(Option.some(value.account)),
       EnteringKey: resolveRemovalAccount,
       SigningIn: resolveRemovalAccount,
+      OAuthSigningIn: resolveRemovalAccount,
       GoogleSigningIn: resolveRemovalAccount,
     })
     yield* http.readRemoval(

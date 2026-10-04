@@ -1,5 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm'
-import { Clock, Context, Effect, Layer, Redacted, Schema, Option, Semaphore } from 'effect'
+import { Clock, Context, Effect, Layer, Redacted, Schema, Option, Semaphore, Match } from 'effect'
 import {
   AddIntegrationRequest,
   ServiceId,
@@ -11,6 +11,7 @@ import {
   ConnectionState,
   ConnectionStep,
   InvalidRequest,
+  NotFound,
   Service,
   ServiceCatalog,
   ServiceAuthorization,
@@ -39,7 +40,7 @@ import { executorFailure } from './errors.ts'
 import {
   encodeReferences,
   getRecord,
-  googleCallbackId,
+  callbackId,
   listRecords,
   publicConnection,
   recordChanged,
@@ -48,6 +49,7 @@ import {
   type ConnectionRecord,
 } from './records.ts'
 import { connections } from './tables.ts'
+import { callbackHash, correlateSignIn } from './correlation.ts'
 import { catalogService, serviceLogo } from './logo.ts'
 import { loadCuration } from './curation.ts'
 import { connectionAddressLayer, type ConnectionSource } from './address.ts'
@@ -151,8 +153,7 @@ const begin = Effect.fn('Connections.begin')(function* (
     label: request.label,
     owner,
     subject: actor.person.id,
-    returnAddress: new URL(`/api/connections/return/${encodeURIComponent(id)}`, config.PUBLIC_URL)
-      .href,
+    returnAddress: new URL('/api/connections/return', config.PUBLIC_URL).href,
   }).pipe(
     Effect.catchTag(
       'ExecutorSignInRequired',
@@ -162,6 +163,7 @@ const begin = Effect.fn('Connections.begin')(function* (
       }),
     ),
     Effect.mapError((error) => (isPublicAddressRequired(error) ? error : executorFailure(error))),
+    Effect.flatMap(correlateSignIn),
   )
   const now = yield* Clock.currentTimeMillis
   const status = ExecutorStep.guards.Done(step) ? 'ready' : 'needs-authorization'
@@ -248,10 +250,7 @@ const resume = Effect.fn('Connections.resume')(function* (actor: Actor, row: Con
       owner: row.references.owner,
       subject: actor.person.id,
       references: row.references,
-      returnAddress: new URL(
-        `/api/connections/return/${encodeURIComponent(row.id)}`,
-        config.PUBLIC_URL,
-      ).href,
+      returnAddress: new URL('/api/connections/return', config.PUBLIC_URL).href,
     })
     .pipe(
       Effect.mapError((error) => (isRetainedAuthorization(error) ? error : executorFailure(error))),
@@ -259,6 +258,7 @@ const resume = Effect.fn('Connections.resume')(function* (actor: Actor, row: Con
         ExecutorSignInRequired: (error) => retainAuthorization(actor, row, error),
         ExecutorAuthorizationUnavailable: (error) => retainAuthorization(actor, row, error),
       }),
+      Effect.flatMap(correlateSignIn),
     )
   const saved = yield* saveState(
     row,
@@ -469,34 +469,84 @@ const serializeResumes = () => {
   return withResume
 }
 
-/** Fixed callbacks and id-addressed callbacks share the same account completion authority. */
+/** Fixed callbacks verify pending correlation again under a Connection lock, preventing replay
+ * from dispatching another completion in this process. Executor also claims each OAuth attempt.
+ */
 const makeCallbacks = (
   input: Pick<Parameters<typeof makeManagement>[0], 'executor' | 'provide'>,
+  withCallback: ReturnType<typeof serializeResumes>,
 ) => {
   const { executor, provide } = input
-  /** Bind sign-in completion to its initiating Person across workspace switches. */
-  const callback = Effect.fn('Connections.callback')(function* (
-    actor: Actor,
-    id: ConnectionId,
-    callbackAddress: Redacted.Redacted,
-  ) {
-    const row = yield* provide(getRecord(actor, id, true))
-    const managing = yield* provide(rowActor(actor, row))
-    const references = yield* executor
-      .completeSignIn({ references: row.references, callbackAddress })
-      .pipe(Effect.mapError(executorFailure))
-    const connection = yield* provide(finish(managing, row, references))
-    return connection.state
-  })
-
+  /** Ownership, pending state, correlation, and fresh Company permission precede provider access. */
+  const callback = Effect.fn('Connections.callback')(
+    function* (actor: Actor, id: ConnectionId, callbackAddress: Redacted.Redacted) {
+      const row = yield* provide(getRecord(actor, id, true))
+      const hash = yield* callbackHash(callbackAddress)
+      if (
+        row.status !== 'needs-authorization' ||
+        !ExecutorReferences.guards.OAuthSigningIn(row.references) ||
+        row.references.stateHash !== hash
+      )
+        return yield* Effect.fail(new NotFound({ message: 'Integration sign-in not found' }))
+      const managing = yield* provide(rowActor(actor, row))
+      const references = yield* executor
+        .completeSignIn({ references: row.references, callbackAddress })
+        .pipe(Effect.mapError(executorFailure))
+      const connection = yield* provide(finish(managing, row, references))
+      return connection.state
+    },
+    (effect, _actor, id) => withCallback(effect, id),
+  )
   return {
-    googleCallbackId: Effect.fn('Connections.resolveGoogleReturn')(
-      (actor: Actor, state: Parameters<typeof googleCallbackId>[1]) =>
-        provide(googleCallbackId(actor, state)),
-    ),
+    callbackId: Effect.fn('Connections.resolveReturn')(function* (
+      actor: Actor,
+      address: Redacted.Redacted,
+    ) {
+      return yield* provide(callbackId(actor, yield* callbackHash(address)))
+    }),
     callback,
   }
 }
+
+/** Resume evaluates the saved status before provider access, preserving operator setup refusals. */
+const resumeExisting = Effect.fn('Connections.resumeExistingState')(function* (
+  input: Parameters<typeof makeManagement>[0],
+  actor: Actor,
+  id: ConnectionId,
+) {
+  const { executor, provide, get } = input
+  const row = yield* get(actor, id)
+  yield* mayManage(actor, row)
+  return yield* Match.value(row.status).pipe(
+    Match.when('ready', () =>
+      provide(publicConnection(actor, row)).pipe(
+        Effect.map((connection) => ConnectionStep.cases.Done.make({ connection })),
+      ),
+    ),
+    Match.when('failed', () =>
+      Effect.fail(
+        new InvalidRequest({ message: 'Remove this failed integration and connect again.' }),
+      ),
+    ),
+    Match.when(
+      'needs-authorization',
+      Effect.fn('Connections.resumePending')(function* () {
+        const service = (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).find(
+          (entry) => entry.id === row.service,
+        )
+        if (
+          service !== undefined &&
+          ServiceAuthorization.guards.SetupRequired(service.authorization)
+        )
+          return yield* Effect.fail(new InvalidRequest({ message: connectionSetupMessage }))
+        const managing = yield* provide(rowActor(actor, row))
+        const retained = yield* provide(retainResumer(managing, row))
+        return yield* provide(resume(managing, retained))
+      }),
+    ),
+    Match.exhaustive,
+  )
+})
 
 /** Management shares the Layer's authority and publishes every persisted state change. */
 const makeManagement = (input: {
@@ -523,33 +573,7 @@ const makeManagement = (input: {
   return {
     /** Resume has exactly removal's scoped lookup and admin check, before provider access. */
     resume: Effect.fn('Connections.resumeExisting')(
-      function* (actor: Actor, id: ConnectionId) {
-        const row = yield* get(actor, id)
-        yield* mayManage(actor, row)
-        switch (row.status) {
-          case 'ready':
-            return ConnectionStep.cases.Done.make({
-              connection: yield* provide(publicConnection(actor, row)),
-            })
-          case 'failed':
-            return yield* Effect.fail(
-              new InvalidRequest({ message: 'Remove this failed integration and connect again.' }),
-            )
-          case 'needs-authorization': {
-            const service = (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).find(
-              (entry) => entry.id === row.service,
-            )
-            if (
-              service !== undefined &&
-              ServiceAuthorization.guards.SetupRequired(service.authorization)
-            )
-              return yield* Effect.fail(new InvalidRequest({ message: connectionSetupMessage }))
-            const managing = yield* provide(rowActor(actor, row))
-            const retained = yield* provide(retainResumer(managing, row))
-            return yield* provide(resume(managing, retained))
-          }
-        }
-      },
+      (actor: Actor, id: ConnectionId) => resumeExisting(input, actor, id),
       (effect, _actor, id) => withResume(effect, id),
     ),
     /** Only a managing Person submits keys; the store retains identifiers alone. */
@@ -564,7 +588,7 @@ const makeManagement = (input: {
         .pipe(Effect.mapError(executorFailure))
       return yield* provide(finish(actor, row, references))
     }),
-    ...makeCallbacks(input),
+    ...makeCallbacks(input, withResume),
     /** Remove provider authority before deleting the scoped product record. */
     remove: Effect.fn('Connections.remove')(function* (actor: Actor, id: ConnectionId) {
       const row = yield* get(actor, id)
