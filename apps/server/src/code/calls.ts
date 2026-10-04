@@ -11,9 +11,15 @@ import {
 import { Context, Effect, Layer, Schema } from 'effect'
 import { CodeToolNames } from '@vivid/contracts/code'
 import type { Actor } from '../auth/access.ts'
+import { Gate } from '../approvals/gate.ts'
+import { Executor } from '../connections/executor.ts'
+import { ConnectionStore } from '../connections/store.ts'
 import { findTools, resolveTool, useTool } from '../connections/tools.ts'
-import { computerBrowse, computerRunCommand } from '../computers/store.ts'
+import { DeviceRegistry } from '../computers/device.ts'
+import { ComputerStore, computerBrowse, computerRunCommand } from '../computers/store.ts'
+import { Database } from '../database/client.ts'
 import { CodeAuthority, type CodeBoundary } from './authority.ts'
+import { PageReader } from './page.ts'
 import { readPage } from './pages.ts'
 import { CallOutcome, type Dispatch } from './process.ts'
 import type { WorkerMessage } from './protocol.ts'
@@ -181,7 +187,29 @@ export class CodeCalls extends Context.Service<CodeCalls, CodeCallsService>()('v
 export const codeCallsLayer = Layer.effect(
   CodeCalls,
   Effect.gen(function* () {
-    const context = yield* Effect.context<Effect.Services<ReturnType<typeof dispatch>>>()
+    // A derived capture silently absorbs new scoped dependencies. Pick only these authorities so
+    // future dispatch requirements fail typecheck and the Run's Scope and parent span stay local.
+    const context = Context.pick(
+      CodeAuthority,
+      Gate,
+      Executor,
+      ConnectionStore,
+      DeviceRegistry,
+      ComputerStore,
+      Database,
+      PageReader,
+    )(
+      yield* Effect.context<
+        | CodeAuthority
+        | Gate
+        | Executor
+        | ConnectionStore
+        | DeviceRegistry
+        | ComputerStore
+        | Database
+        | PageReader
+      >(),
+    )
     return CodeCalls.of({
       bind: (boundary) =>
         Effect.fn('Code.boundCall')((call) =>
