@@ -178,9 +178,9 @@ describe('connected tool execution', () => {
         expect(result).toEqual({
           output: {
             alreadyConnected: true,
-            account: 'Work Records',
+            // No account name here: a rewritten label would point at a name find_tools withholds.
             message:
-              'This integration is already connected. Use find_tools with query Work Records to discover its tools.',
+              'This integration is already connected. Call find_tools to discover its tools and account name.',
           },
           terminate: false,
         })
