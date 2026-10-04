@@ -2,7 +2,7 @@
 
 - Source: VCOS owner skill
 - Source type: `owner`
-- Path: `/home/kixey/work/VCOS/.agents/skills/tdd`
+- Path: the VCOS repository, `.agents/skills/tdd` (repository-relative)
 - Content-bearing commit: `7f38dca4730a480d4ab0481675c38f632a1d8922` (exact current owner bytes)
 - Merged at: `2026-09-19`
 

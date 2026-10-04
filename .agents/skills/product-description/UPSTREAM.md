@@ -2,7 +2,7 @@
 
 - Source: VCOS owner skill
 - Source type: `owner`
-- Path: `/home/kixey/work/VCOS/.agents/skills/product-description`
+- Path: the VCOS repository, `.agents/skills/product-description` (repository-relative)
 - Content-bearing commit: `11b030f9a765c1635bf8acda25a0a7249e9d481e` (exact current owner bytes)
 - Merged at: `2026-09-19`
 

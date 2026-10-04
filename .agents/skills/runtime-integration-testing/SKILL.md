@@ -1,230 +1,197 @@
 ---
 name: runtime-integration-testing
-description: Use when testing Vivid across real PostgreSQL, the Effect HTTP server, mounted Better Auth, Flue/Hono runtime, connectors, scheduler readiness, restart recovery, or model behavior where a pure unit test cannot prove the production contract.
+description: Use when testing Vivid across real PostgreSQL, the Effect RPC server and HTTP routes, mounted Better Auth, the Flue runtime boundary, Integrations transport, schedulers, restart recovery, or model behavior where a pure unit test cannot prove the production contract.
 ---
 
 # Runtime Integration Testing
 
 ## Core principle
 
-Test the smallest **real runtime seam** that contains the production failure. Do not replace PostgreSQL, the HTTP router, Better Auth sessions, Flue persistence, or connector transport with a mock and then claim the integration works.
+Test the smallest **real runtime seam** that contains the production failure. Do not replace PostgreSQL, the RPC server, Better Auth session lookup, Flue persistence, or Integration transport with a mock and then claim the integration works.
 
-Keep pure state-machine and domain tests fast. A test of an Effect combinator, a schema literal, or a mock's configured return value is not evidence that Vivid's runtime contract works.
+Keep pure state-machine and domain tests fast. A test of an Effect combinator, a schema literal, or a fake's configured return value is not evidence that Vivid's runtime contract works.
 
-## Non-negotiable database boundary
+**Use the seams that exist.** Everything below names a file on disk. Before adding a harness, factory, or `make…Target` helper, read those files; a second database bootstrap or server factory is almost always a duplicate. Where a capability is missing, this skill says so under "Missing capabilities" — do not paper over it with a sketch.
 
-- PostgreSQL 18 is the integration database.
-- Read its URL only from `VIVID_TEST_DATABASE_URL`. Never fall back to `DATABASE_URL`, a developer database, or a shared remote database.
-- Refuse to run when the URL is absent. Also reject a URL that is not explicitly identified as disposable by the owning test setup.
-- Apply migrations through the real Drizzle Kit migrate path. A test migration adapter must validate `VIVID_TEST_DATABASE_URL`, remove any inherited `DATABASE_URL`, and pass the validated test URL as `DATABASE_URL` only to the migration child (`pnpm db:migrate` or the owning package's `db:migrate`). The production migration runner reads `DATABASE_URL`; that bridge is an output-only adapter, never a second test input. Never use push.
-- Isolate **every test**, not merely each worker. Prefer a unique PostgreSQL schema/database per test and run migrations against its connection/search path. Transaction rollback is acceptable only when every operation—including Better Auth, Flue, and background work—shares that transaction.
-- Register schema/database drop or rollback **before the first write** with the test context or `beforeEach`/`afterEach`. Close pools, listeners, schedulers, and storage even after assertion failure.
+Re-verify against installed source when a pin moves. Verified here: Effect, `@effect/platform-node`, `@effect/sql-pg`, `@effect/vitest` `4.0.0-rc.116`; Vitest `5.0.1`; Better Auth `1.7.5`; Flue `2.2.2`; pi-ai `0.87.1`; Drizzle `1.0.0-rc.5-ab785fc`.
 
-The current `routine-store.test.ts` and `task-store.test.ts` use a real database but default `DATABASE_URL`, create durable rows, and do not close their pool. The current `runtime-db.ts` also creates a module-global pool, runs a programmatic migration plus compatibility SQL at import time, and checks `public`. A truthful harness must first extract an injected database/store factory and keep that import-time production bootstrap out of tests. Then require `VIVID_TEST_DATABASE_URL`, migrate the per-test isolation target once through Drizzle Kit, register teardown before inserts, and scope fixed idempotency IDs per test.
+## Database boundary (non-negotiable)
+
+- PostgreSQL is the integration database. Its URL is read only from `VIVID_TEST_DATABASE_URL`. Never fall back to `DATABASE_URL`, an app env file, the developer database on port 55433, or a remote database.
+- With the variable absent, database suites **skip**: `testDatabaseConfigured` (`apps/server/src/database/testdb.ts`) gates them with `describe.skipIf(!testDatabaseConfigured)`. Nothing substitutes another URL.
+- **Server project:** the supplied URL is used as an **administration connection only**. The template and the per-file clones are separate databases on that server; no server migration and no server fixture writes to the database the URL names. It must still be a disposable instance: the role needs `CREATE DATABASE`, and the harness creates and force-drops databases on that server.
+- **Runtime project:** there is no template and no clone, so this rule does not hold there. `desktopDatabase` in `packages/agent/runtime/src/tools/computer.test.ts` connects to the supplied database itself, registers `DROP SCHEMA IF EXISTS … CASCADE` as a finalizer, and only then creates a uniquely named schema (`desktop_test_<uuid>`) that Flue's tables live in through `search_path`. It writes inside the supplied database, in a schema it owns and removes. See "Runtime: Flue boundary".
+- Migrations run through the production path. `apps/server/tests/template.ts` (Vitest `globalSetup`) creates `vivid_test_<uuid>` from `template0` and runs `pnpm exec drizzle-kit migrate` for `drizzle.config.ts` then `product-drizzle.config.ts`, the same order as root `scripts/migrate.mjs`. Never use `push` or hand-written schema SQL.
+- **`DATABASE_URL` is an output of the test variable, never an input.** Production code reads `DATABASE_URL`, so three existing adapters derive it from `VIVID_TEST_DATABASE_URL`, each in one direction only:
+  - `tests/template.ts` sets it to the template's URL in the Drizzle Kit child's environment, and nowhere else.
+  - `packages/agent/runtime/vitest.config.ts` sets it in `test.env` for the runtime project's workers, because `src/db.ts` reads `DATABASE_URL` at import.
+  - `testConfigLayer` (`database/testdb.ts`) puts the file's clone into the `ServerConfig` value. This one is a context value, not process environment.
+
+  Do not add a fourth, and do not make any of them read `DATABASE_URL`. None is a fallback: when the test variable is absent the template setup returns early, `testConfigLayer` fails, and the runtime config adds nothing to the workers' environment.
+
+- Cleanup is defined before creation in both server files. `template.ts` returns a teardown that drops every `<template>_*` database it can still find (Vitest skips `afterAll` for wholly skipped files and failed collection) and then the template. `tests/setup.ts` registers `afterAll` before `CREATE DATABASE`.
+
+### What isolation you actually get
+
+This is **per-file database isolation plus per-case row cleanup**. It is not per-test isolation, and no doc or test comment may call it that.
+
+| Level                 | Mechanism                                                                                                                 | Owner                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Per Vitest invocation | One migrated, empty template database                                                                                     | `apps/server/tests/template.ts`            |
+| Per test **file**     | `CREATE DATABASE … TEMPLATE <template>`; `VIVID_TEST_DATABASE_URL` is rewritten to the clone before any store is imported | `apps/server/tests/setup.ts`               |
+| Per test **case**     | Rows the case inserts, removed by a finalizer registered before the first write                                           | the case's fixture (`Effect.addFinalizer`) |
+
+Consequences:
+
+- Cases in one file share one database. Global scans (scheduler claims, replay sweeps, pending-work queries) see every row the file has left behind, so each fixture uses fresh UUIDs and removes its rows, and a case that asserts on a global scan checks for older obligations first (`pendingWork` in `apps/server/src/library/fixtures.ts`).
+- A fixture's cleanup failure must fail the test, not log: see `cleanupFailed` in `apps/server/src/runtime/testing.ts`.
+- `layer(testLayer)` from `@effect/vitest` builds its Layer once per `describe` block. The SQL pool is shared by that block's cases and closed by the Layer scope before `afterAll` drops the clone.
+- The server project runs with `maxWorkers: 2` (`apps/server/vitest.config.ts`); files are parallel, cases inside a file are not isolated from each other.
+
+If a claim truly needs a database per case, that is a missing capability; state it, do not imply the current harness provides it.
+
+### The test database Layer
+
+`testDatabaseLayer` (`database/testdb.ts`) is the **production** `databaseLayer` from `database/client.ts`, provided with `testConfigLayer`. It is not a second adapter and not a hard-provided singleton: `databaseLayer` requires `ServerConfig`, and the test composition supplies a `ServerConfig` whose `DATABASE_URL` is the file's clone. A store that opens its own connection therefore still cannot reach developer data.
+
+`testDatabaseLayer` also pins the real `Clock` **inside the SQL adapter only**, so advancing `TestClock` cannot expire a real socket handshake or pool idle timer. Stores, schedulers, session expiry and persisted timestamps still read the test's clock. Do not move that provision outward.
+
+Compose the store under test over it, flat:
+
+```ts
+// apps/server/src/runtime/testing.ts
+export const productLayer = runStoreLayer.pipe(Layer.provideMerge(testDatabaseLayer))
+```
 
 ## Pick the seam first
 
-| Production claim or bug | Smallest truthful seam |
-| --- | --- |
-| SQL constraints, transaction atomicity, status-qualified updates, idempotency | Real PostgreSQL 18 through the actual store/Drizzle adapter |
-| Effect endpoint encoding, middleware, status mapping, or Layer composition | Real `HttpApi` app over HTTP with the test PostgreSQL `Database`/`PgClient` Layer |
-| Signup, signin, session lookup, or cookie flags | Real mounted `/api/auth/*` Better Auth handler and cookie jar |
-| Hono route validation/auth plus store behavior | Real runtime route map over HTTP with real PostgreSQL |
-| Flue dispatch/read recovery or conversation durability | Real Flue Postgres storage and the real route/scheduler boundary |
-| Scheduler admission or due-time behavior | Real scheduler logic with a controllable clock; never sleeps |
-| Provider orchestration shape | Deterministic fake provider registered only through Flue's `setProvider` seam |
-| Model quality or tool-choice behavior | Gated `.live.test.ts` using the vitest-evals pi-ai harness |
-| Connector request mapping, refresh, retries, replay | Real connector code with recorded/simulated HTTP only at the network edge |
-| Whole local deployment wiring | `pnpm infra:dev` (`alchemy dev`, local stage), then black-box HTTP checks |
-| Pure validation or state transition | Direct unit test; no runtime harness |
+| Production claim or bug                                                                 | Smallest truthful seam                                                                                | Example on disk                                                                   |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| SQL constraints, atomicity, status-qualified updates, idempotency                       | Real store Layer over `testDatabaseLayer`                                                             | `companies/store.test.ts`, `library/store.test.ts`                                |
+| Handler decode/authorize/encode over a real store                                       | The exported handler with a real `AuthContext` value                                                  | `memory/handlers.test.ts`, `connections/handlers.test.ts`                         |
+| RPC middleware, request scope, error encoding                                           | `RpcTest.makeClient` over the real `RpcServer` machinery                                              | `auth/middleware.test.ts`                                                         |
+| One HTTP route's status, headers, body                                                  | `HttpRouter.toHttpEffect(routes)` with `HttpServerRequest.fromWeb`                                    | `library/bytes.test.ts`, `connections/return.test.ts`, `threads/gateway.test.ts`  |
+| Node-level HTTP behavior a Fetch adapter hides (multipart limits, chunking, truncation) | `NodeHttpServer.layerTest` + `HttpRouter.serve(routes)`                                               | `http/upload.test.ts`                                                             |
+| Session lookup for a Person                                                             | Real Better Auth via the bearer plugin against a session row                                          | `auth/middleware.test.ts`, `library/fixtures.ts`                                  |
+| Scheduler admission, due time, expiry                                                   | The real store/scheduler with `TestClock`                                                             | `routines/store.test.ts`, `connections/transport.test.ts`                         |
+| Durable replay after a failure                                                          | Real PostgreSQL with explicit failure injection                                                       | `inputs/replay.test.ts`, `approvals/replay.test.ts`, `library/durability.test.ts` |
+| Server-to-runtime request shape                                                         | Real `runtimeLayer` with a substituted `HttpClient`                                                   | `runtime/client.test.ts`                                                          |
+| Integration transport: mapping, retries, cursors, caches                                | Real transport code against a local `NodeHttpServer.layer(…, { port: 0 })` standing in for the remote | `connections/transport.test.ts`                                                   |
+| Runtime tool behavior                                                                   | The tool against the generated `VividRpc` client with a controlled transport                          | `packages/agent/runtime/src/delivery.test.ts`, `src/tools/*.test.ts`              |
+| Signup, cookies, gateway, a real Run end to end                                         | The **running** stack on a disposable database                                                        | `runtime/chains.ts` + `*/thread.live.test.ts`                                     |
+| Model quality or tool choice                                                            | Gated `.live.test.ts`                                                                                 | `memory/*.live.test.ts`                                                           |
+| Pure validation or state transition                                                     | Direct unit test; no Layer                                                                            | `runtime/settlement.test.ts`                                                      |
 
-## Server: Effect HttpApi over HTTP
+## Server: Effect RPC and HTTP routes
 
-Build the same router contributions as `apps/server/src/main.ts`: the Better Auth catch-all, `/health`, and `apiLayer`. Provide a test `Database` backed by a PostgreSQL `PgClient`, provide test `ServerConfig`, start an ephemeral Node HTTP listener, and make real HTTP requests.
+There is no `HttpApi` in this repository. Product calls are `VividRpc` (`packages/contracts/src/rpc.ts`), served by `rpc/server.ts` as `RpcServer.layerHttp` twice: `/api/live` (WebSocket, JSON) and `/api/rpc` (HTTP, NDJSON). `http/router.ts` exports `routerLayer`, which merges those with plain HTTP routes: `/api/auth/*`, the closed `/api/auth/organization/*`, the conversation gateway, Library bytes, Integration returns, Routine webhooks, the Computer screen and `/health`. `main.ts` adds update and static routes and the background fibers.
 
-Do not import `main.ts` as a test harness: it launches `NodeRuntime.runMain` during module evaluation and hard-provides `databaseLayer`. Extract an app Layer factory that accepts the database and config Layers. Also refactor `authEffect`: it currently hard-provides `serverConfigLayer` and rereads ambient `DATABASE_URL`, so app extraction alone does not make authentication test-configurable. The test composition must inject database and auth construction from the same validated test config while preserving production `HttpApiBuilder.layer(api)`, middleware, and encoded tagged errors.
+- **Do not import `main.ts` in a test.** It calls `NodeRuntime.runMain` at module evaluation, reads the process `DATABASE_URL` through `loadServerConfig`, and starts schedulers.
+- **Test a route group, not a rebuilt app.** Each group is an exported Layer (`bytesRoutes`, `gatewayRoutes`, `connectionReturnRoutes`, …). Provide the stores it needs over `testDatabaseLayer`, plus `testConfigLayer`, and choose one of:
+  - `HttpRouter.toHttpEffect(routes)` — an in-memory handler; give it a request with `HttpServerRequest.fromWeb(new Request(…))`. Enough for status, headers and bodies.
+  - `NodeHttpServer.layerTest` — a real listener on an ephemeral port plus a Fetch-backed `HttpClient` already pointed at it. Use it when the claim depends on Node's HTTP parser. Build it with `Layer.build` inside the scoped fixture, then `HttpRouter.serve(routes, { disableLogger: true })` over it (`http/upload.test.ts`).
+- **RPC contract tests** use `RpcTest.makeClient(group)` (`effect/unstable/rpc/RpcTest`), which runs the real `RpcServer` request path without a socket. Provide the real `rpcAuthMiddlewareLayer`; do not replace it with a stub that injects `AuthContext`.
+- **Handler tests** call the exported handler and provide a real `AuthContext` built from fixture rows (`AuthState.Person`, …). That proves the handler and store, not authentication.
+- Change notices: provide `silentChangesLayer` (`live/changes.ts`) when the claim is not about announcements; use the real `changesLayer` when it is (`library/announcements.test.ts`, `live/changes.test.ts`).
+- `@effect/vitest` only: `it.effect`, `it.live`, `layer(…)`. Never start an Effect runtime by hand to run the program under test or an application Layer, and no `node:test` for app or package suites. The lint rule `vivid/no-manual-effect-runtime-in-tests` reports `Effect.runPromise`, `runSync` and `runFork` in Vitest files. One call site is exempt, by a rule-named `oxlint-disable-next-line` on that line: see "Promise callbacks owned by an SDK" below. Pass `{ excludeTestServices: true }` to `layer` when the cases must run on the real clock (Better Auth's Promise adapter cannot be cancelled mid-query; see the note in `library/bytes.test.ts`).
 
-Dependency truth matters:
+## Better Auth
 
-- The lock resolves every Effect, platform and sql package at `4.0.0-rc.116`, the same version the manifests pin through the workspace catalog.
-- Verified in the installed rc.116 declarations (`@effect/platform-node/NodeHttpServer`, `effect/unstable/http/HttpRouter`): `NodeHttpServer.layerTest` supplies an ephemeral real listener plus Fetch-backed client, and `HttpRouter.toWebHandler` returns a Fetch handler with `dispose`. Prefer `NodeHttpServer.layerTest` when the claim requires real HTTP; `toWebHandler` is useful only when an in-memory Fetch boundary is sufficient.
-- Recheck those declarations whenever the Effect pin moves; do not assume unchanged signatures.
-- `@effect/vitest` `4.0.0-rc.116` is a declared workspace dependency. Effect programs under test use its `it.effect`, `it.live` and shared `layer(...)`; do not build a manual Effect runtime in a test.
-- Ordinary Node test code may launch the real Layer and use standard HTTP. Keep raw Promises at this narrow test/framework adapter only.
+`auth/provider.ts` exports `authEffect`. It reads `ServerConfig` from context and opens Better Auth over `config.DATABASE_URL` with `migrate: false`, base path `/api/auth`, and the Company/Membership model map. Under `testConfigLayer` it therefore uses the file's clone and a test-only `AUTH_SECRET`. Migrations stay with Drizzle Kit.
 
-### Target server skeleton (requires the named extraction)
+Two different claims, two seams:
 
-```ts
-// apps/server/src/api.test.ts
-import assert from "node:assert/strict";
-import { test } from "node:test";
+1. **"This session is this Person."** Insert a Person and a session row, register their deletion first, and send `authorization: Bearer <token>`. The real bearer plugin and `auth/session.ts` resolve it. This is what the existing fixtures do. It proves session lookup and nothing about signup, sign-in or cookie flags. Never stub `authenticate`, `auth.api.getSession`, or the middleware.
+2. **"Signup or sign-in works and sets the right cookies."** POST to the mounted `/api/auth/sign-up/email` or `/api/auth/sign-in/email` and carry the returned cookies. Today this is proven only against the running stack (`runtime/chains.ts`), where the request must also carry an `origin` header equal to `PUBLIC_URL`, because `trustedOrigins` is `[PUBLIC_URL]`.
 
-// Proposed project seams: extract these from main.ts; they do not exist yet.
-import { makeTestTarget, startTestServer } from "./testserver.ts";
+Better Auth's organization routes are deliberately answered 404 (`closedRoute`); Companies and People are managed through `VividRpc` only.
 
-const databaseUrl = process.env.VIVID_TEST_DATABASE_URL;
-if (!databaseUrl) throw new Error("VIVID_TEST_DATABASE_URL is required");
+## Runtime: Flue boundary
 
-test("health is served by the composed router", async (context) => {
-  const target = makeTestTarget(databaseUrl); // chooses a unique schema; no I/O
-  context.after(async () => target.closeAndDrop()); // before migration/startup writes
-  const server = await startTestServer(target);
+Read `packages/agent/runtime/AGENTS.md` first. The runtime owns no product stores, schedulers or product routes; schedulers live in `apps/server` as scoped fibers driven by `Clock`.
 
-  const response = await fetch(new URL("/health", server.origin));
-  assert.equal(response.status, 200);
-});
-```
+- `src/app.ts` is a Hono app whose default export mounts `createAgentRouter(Vivid)` behind the runtime token. Importing it imports the agent definition and `providers/rehearsal.ts`.
+- `src/db.ts` is Flue's database composition root. It reads `DATABASE_URL` synchronously at import and creates a module-level `pg.Pool`. Flue owns its own schema migrations (`db:migrate` in that package is a no-op echo).
+- `packages/agent/runtime/vitest.config.ts` passes `VIVID_TEST_DATABASE_URL` to workers as `DATABASE_URL`, so while the test variable is set an import of `db.ts` reaches the supplied test URL. When it is unset the config adds nothing, and the workers keep whatever `DATABASE_URL` the invoking shell had: a runtime test must not import `db.ts`, and a database case is gated with `describe.skipIf(!testDatabaseConfigured)`. That project has **no** per-file clone: a runtime test that needs tables creates a uniquely named schema on the supplied URL and registers `DROP SCHEMA … CASCADE` first (`desktopDatabase` in `src/tools/computer.test.ts`).
+- **Promise callbacks owned by an SDK.** Flue's public `PostgresRunner` (`@flue/postgres`) declares `transaction` as a callback that must return a Promise. `desktopDatabase` implements it with one `Effect.runPromise` around an `Effect.acquireUseRelease` that takes a pool client, runs `BEGIN`, the SDK's callback and `COMMIT` (or `ROLLBACK`), and releases the client. That is a narrow adapter for a public Promise seam: it runs no program under test, builds no Layer and starts no application runtime; the case itself still runs under `it.live`. The exemption is the inline `oxlint-disable-next-line` naming `vivid/no-manual-effect-runtime-in-tests` and `vivid/no-runpromise-in-library` on that call. `scripts/effect-boundary-allowlist.json` has no entry for it, because the boundary audit skips `.test` files. A new bridge needs the same proof: a public SDK type that demands a Promise, and no Effect-native alternative. Otherwise use `it.effect`.
+- Runtime tools are tested against the generated client with a controlled transport: `RpcClient.makeNoSerialization(VividRpc, { onFromClient })`, then `rpc.write` an `Exit` for the captured request (`src/delivery.test.ts`). No server, no database.
+- The deterministic model is pi-ai's faux provider: `fauxProvider` from `@earendil-works/pi-ai/providers/faux`, registered with `setProvider` from `@flue/runtime` (`src/providers/rehearsal.ts`). Registration is global, happens at import, and only when `VIVID_MODEL` starts with `rehearsal/`. It is a product-rehearsal provider selected by environment, not a per-test fixture. Use `pnpm exec flue docs search <query>` before relying on any other Flue API.
+- The server's view of the runtime is the `Runtime` service (`apps/server/src/runtime/client.ts`). Test it with the real `runtimeLayer` and a substituted `HttpClient`.
 
-`startTestServer` is an explicitly deferred local adapter, not an installed Effect helper. Build it from the verified rc.116 `NodeHttpServer.layerTest` surface, inject the test database/config/auth layers.
+## Time
 
-## Better Auth: mount, do not stub
+Use `effect/testing/TestClock` (`TestClock.adjust`, `TestClock.setTime`) under `it.effect`, and wait on an observable receipt: a `Queue.take`, a `Deferred`, a `Stream.runHead` on the first matching state. Never sleep, never poll, never raise a timeout to make a test pass. `it.live` is for cases that need real time because a real socket or SDK promise is in play; it still waits on a receipt.
 
-Test through the mounted `* /api/auth/*` handler configured in `apps/server/src/main.ts` and `auth.ts`:
+## Durability and failure cases
 
-1. POST a unique email/password to the verified mounted route `/api/auth/sign-up/email`.
-2. Capture every `Set-Cookie` value in a cookie jar.
-3. POST `/api/auth/sign-in/email` when signup does not establish the desired session.
-4. Call `/api/me` with the real session cookie.
-5. Assert the database rows and public response, not Better Auth internals.
+Assert observable outcomes, not calls:
 
-Use a valid **test-only** `AUTH_SECRET`, a listener-derived test `PUBLIC_URL`, Vivid's `/api/auth` base path and schema map, and `migrate: false`. The route names are verified for the installed Better Auth 1.7.3 line; recheck the 1.7.5 target after lock convergence. Migrations remain owned by `apps/server/src/schema.ts` and Drizzle Kit. Never stub `auth.getSession` or manufacture a session cookie.
+- A crash between accepting work and recording its receipt: restart from the durable row and prove one effect.
+- A timeout, reset or 5xx after a write is **outcome unknown**: reconcile by stable id or idempotency key before retrying.
+- Duplicate requests produce one durable effect.
+- "Restart" in the current suites means building a fresh Layer over the same clone and reading what the first one left (`routines/store.test.ts`, `library/durability.test.ts`). It is not a new OS process; say "new Layer over the same database", not "process restart".
+- Tests do start real OS processes. `library/extraction.test.ts` (E8) launches the production `tsx` command for `library/fixtures/process/main.ts` through `ChildProcess.make`, and waits on stdout EOF and exit code 0. That proves one process's lifecycle and resource release. It does not prove recovery of owed work by a second process.
 
-## Runtime: Hono, Flue, scheduler, and provider
+## The running stack
 
-Use the real route map from `packages/agent/runtime/src/app.ts`, real `@flue/postgres` conversation storage, and PostgreSQL-backed stores. Current imports eagerly initialize `runtime-db.ts`, handwritten compatibility SQL, both schedulers, and the OpenRouter provider. Before isolated route tests are possible, split app construction from process startup, inject the already-migrated database/store, and disable the import-time `schemaReady`/scheduler path in the test composition. The test must not silently run a second migration mechanism or consult `public` while claiming per-test isolation.
+Some claims need every process: browser cookies, the conversation gateway, a real Run. `runtime/chains.ts` is the fixture for those. It works against an **already running** stack and refuses to write unless the stack's `DATABASE_URL` and `VIVID_TEST_DATABASE_URL` name the same host and database; it registers the Person's deletion before signup. The config is `apps/server/src/runtime/vitest.ts` (`pnpm exec vitest run --config src/runtime/vitest.ts` from `apps/server`), serial, each scenario gated by its own `VIVID_LIVE_THREAD_*` flag.
 
-The deterministic provider is the one legitimate fake for orchestration tests. Flue 2.0.3's verified seam is Pi AI's `fauxProvider(...)`, scripted with `faux.setResponses([fauxAssistantMessage([fauxText(...)])])`, then registered through `setProvider(faux.provider)`. Do not mock Flue, its Postgres conversation storage, `init`, `dispatch`, or `read`. There is no public provider unregister; isolate provider tests in their own process/file or replace the same provider ID deliberately, and set the test model to the faux provider's model before importing the Vivid definition.
+`pnpm infra:dev` is the developer stack: Alchemy local stage, PostgreSQL on port 55433 with a persistent volume. It is **not** disposable. Read from it; never point a test, fixture, migration or cleanup at it. A stack used for proofs must be started against a separate disposable database. Agents other than the primary never start servers.
 
-Scheduler tests must inject a controllable Effect `Clock` or an explicit scheduler clock port after both schedulers are refactored away from import-time initialization. Advance the clock and await an observable admission/result boundary. Never sleep or poll on arbitrary delays.
+## Integrations transport
 
-### Store skeleton improving current cleanup
+Fake only the remote network edge. `connections/transport.test.ts` runs the real transport against a local `NodeHttpServer` on port 0 that plays the remote, and drives cache expiry with `TestClock`. Cover refusal retention, cursor paging and repeated cursors, install races, and that results pass through unaltered. Recordings and assertions contain no credentials; Executor owns Integration credentials.
 
-```ts
-// packages/agent/runtime/src/routine-store.test.ts
-import assert from "node:assert/strict";
-import { test } from "node:test";
+## Live tests
 
-const databaseUrl = process.env.VIVID_TEST_DATABASE_URL;
-if (!databaseUrl) throw new Error("VIVID_TEST_DATABASE_URL is required");
+`*.live.test.ts` call a real model or provider. Vitest's `include` (`src/**/*.test.ts`) matches them, so the **only** gate is the `describe.skipIf` on an explicit flag in each file (`VIVID_LIVE_*`, `VIVID_TEST_BOAT_LIVE`, `VIVID_TEST_DOCKER`). Every new live file needs its own flag and credential check; a filename is not a gate. One file per behavioral claim; assert structured behavior, not prompt wording. A live test is never the only proof of persistence, authorization or idempotency.
 
-test("a completed run cannot be finalized twice", async (context) => {
-  const target = makeRuntimeTestTarget(databaseUrl); // unique schema; no I/O
-  context.after(async () => target.closeAndDrop()); // before migration/store writes
-  const harness = await makeRuntimeStoreHarness(target);
+`vitest-evals` is not a workspace dependency. Do not name its imports.
 
-  const routine = await harness.store.createRoutine({
-    name: `test-${crypto.randomUUID()}`,
-    prompt: "Prepare the brief",
-    cron: "0 9 * * *",
-    timezone: "Africa/Lagos",
-    libraryFolderId: null,
-  });
-  const run = await harness.store.startRoutineRun(routine.id);
-  assert.equal(await harness.store.finishRoutineRun(run.id, "first"), true);
-  assert.equal(await harness.store.finishRoutineRun(run.id, "duplicate"), false);
-});
-```
+## Commands
 
-`makeRuntimeTestTarget` and `makeRuntimeStoreHarness` are target project adapters, not current or third-party APIs. Target creation chooses a schema name without I/O so teardown can be registered first. Harness startup then validates the base test URL, creates and migrates that schema through the real Drizzle Kit child with only that target bridged to `DATABASE_URL`, injects the database into store factories, and owns the `pg.Pool`. Teardown ends the pool before dropping the schema. It must not import the current singleton `runtime-db.ts` bootstrap.
+All exist today. This skill's author did not run them while writing it.
 
-### Route/provider skeleton (API verification required)
+- `pnpm test` — `turbo run test`; passes `VIVID_TEST_DATABASE_URL` through.
+- `pnpm --filter @vivid/server test` — `vitest run` for the server project.
+- `pnpm --filter @vivid/agent-runtime test` — `vitest run` for the runtime project.
+- `pnpm exec vitest run --project @vivid/server <path>` from the root — one file.
+- `pnpm test:tooling` — `node --test` suites under `scripts/`.
 
-```ts
-// packages/agent/runtime/src/app.test.ts
-import assert from "node:assert/strict";
-import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
-import { setProvider } from "@flue/runtime";
-import { test } from "node:test";
+Database suites skip silently when `VIVID_TEST_DATABASE_URL` is unset; a green run without it has not proven persistence. Say which it was.
 
-const faux = fauxProvider({ provider: "vivid-test" });
-faux.setResponses([fauxAssistantMessage([fauxText("deterministic result")])]);
-setProvider(faux.provider);
+## Missing capabilities
 
-test("invalid routine input is rejected before persistence", async (context) => {
-  const target = makeRuntimeTestTarget(requireTestDatabaseUrl()); // no I/O
-  context.after(async () => target.closeAndDrop()); // before startup writes
-  const runtime = await startRuntimeHarness({
-    target,
-    model: `${faux.provider.id}/${faux.getModel().id}`,
-  });
+State these when they block a claim. Do not sketch a harness for them in a test file.
 
-  const response = await fetch(new URL("/api/routines", runtime.origin), {
-    method: "POST",
-    headers: runtime.authHeaders,
-    body: JSON.stringify({}),
-  });
-  assert.equal(response.status, 400);
-  assert.equal(await runtime.countRoutines(), 0);
-});
-```
+- **No in-process composed server.** Nothing exports the full Layer graph of `main.ts`, and no test builds `routerLayer` whole. A claim about the complete router, the WebSocket `/api/live` endpoint, or background fibers running together is proven only against the running stack.
+- **No in-process signup/cookie test.** Mounted `/api/auth/*` signup is exercised only by `runtime/chains.ts`.
+- **No per-case database.** See "What isolation you actually get".
+- **No runtime per-file clone, and no in-process Flue route test.** `src/app.ts` and `src/db.ts` initialize at import; there is no test that mounts the Hono app.
+- **No OS-process restart recovery proof for owed work.** No test stops a process that holds accepted work and shows a new process finishing it. Restart recovery is proven with a fresh Layer over the same database; the OS-process tests that exist prove launch and exit only (see "Durability and failure cases").
 
-This is a target shape, not a claim that `startRuntimeHarness` exists. The faux-provider calls are verified against installed pi-ai/Flue 2.0.3; recheck the target lock after convergence. The harness must mount the actual Hono app, use real stores and Flue Postgres, prevent import-time scheduler/database startup, and register the listener, pools, Flue storage, and scheduler jobs with the pre-registered target teardown. Because provider registration is global with no unregister, run this file without parallel provider-sharing tests.
-
-## Flue durability and failure cases
-
-Cover observable outcomes, not implementation calls:
-
-- Persist `submissionId` before treating local admission as complete.
-- Test the actual dangerous window: Flue accepts `dispatch`, then the process crashes before `attachRoutineSubmission` / `attachFollowUpSubmission`. Restart from the durable local run, dispatch again with the same idempotency key, assert Flue returns the deduplicated receipt, attach that `submissionId`, then `read` and finalize once.
-- Separately, crash after `submissionId` is attached but before result persistence; restart, `read(submissionId)`, and finish once.
-- Crash before durable Flue admission; restart must not invent a submission.
-- A timeout, network reset, or 5xx after a write can mean **outcome unknown**. Reconcile by stable id/idempotency key before retrying.
-- Duplicate task/follow-up/notification requests produce one durable effect.
-- Readiness is an awaited state with a cause, not a fixed delay. Verify unavailable → ready and unavailable → degraded/failed paths.
-- Restart tests must create a new process/runtime instance against the same disposable database, not call an in-memory reset method.
-
-## Live model evals
-
-Use `.live.test.ts` only for claims that depend on real model behavior. Gate them behind an explicit opt-in and credentials. The intended package is `vitest-evals` with its pi-ai harness, but it is not currently declared in workspace manifests or the lock. Inspect the refreshed local `vitest-evals` skill and add dependencies through an approved change before naming imports or APIs.
-
-A live eval should record model/version, token and cost usage, judge configuration, and retained runs. It must not be the only test for persistence, authorization, routing, or idempotency; those remain deterministic integration tests with the provider fake.
-
-## Connectors
-
-Keep fakes at the remote network edge only. Run the real connector request construction, Effect error mapping, persistence, and idempotency code against recorded or deterministic simulated HTTP responses.
-
-Cover:
-
-- access-token expiry, refresh, refresh-token rotation, and concurrent refresh;
-- 401 after refresh, 429/`Retry-After`, bounded 5xx retry, and network outcome-unknown;
-- stable action idempotency keys and replay after process restart;
-- redaction: recordings, snapshots, assertions, and logs contain no credentials;
-- malformed and forward-compatible provider payloads decoded once at ingress.
-
-Do not record live OAuth secrets. Build recordings from sanitized fixtures and assert that the authorization header is supplied at runtime.
-
-## Alchemy local stack
-
-`pnpm infra:dev` runs Alchemy v2 in the local stage, applies ordered migrations, starts the runtime and Effect server, and wires the web only to the runtime URL/token. Its PostgreSQL 18 container uses a named persistent volume; it is a developer stack, not the disposable `VIVID_TEST_DATABASE_URL` database. Use it for startup, health, migration-order, and runtime-to-web smoke checks. A browser-to-Effect-server auth path is not currently wired through the web and must not be claimed.
-
-Do not use Alchemy dev for destructive database checks, transaction races, scheduler time, crash points, or model quality. It is slower, owns persistent resources/long-lived processes, and does not provide precise fault injection. Never point these checks at a shared stage or remote AWS resources.
-
-## Naming and gating
-
-- `*.test.ts`: deterministic unit or integration tests, including real local PostgreSQL and deterministic provider tests.
-- `*.live.test.ts`: explicitly gated tests that call a live model or external provider.
-- Before adding these files, add an explicit server test command (none exists today) and split the runtime commands: its current `node --test src/*.test.ts` glob also matches `*.live.test.ts`. The default command must exclude live files; a separate opt-in command may include them.
-- `vitest-evals` live files need their own gated Vitest command after the dependency is approved; filename alone is not a gate.
-- A test requiring `VIVID_TEST_DATABASE_URL` should skip or fail with one clear message according to the owning package's documented test policy; it must never silently substitute another URL.
+Closing one of these is a design task for the owner of that boundary: extend the existing seam (`testdb.ts`, `tests/setup.ts`, `routerLayer`), do not add a parallel factory.
 
 ## Do not write these tests
 
-- A mock database test for a SQL constraint, transaction, or restart claim.
-- A stubbed Better Auth session test presented as authentication coverage.
-- A mock Flue conversation/store test presented as durability coverage.
+- A mock database for a SQL constraint, transaction or replay claim.
+- A stubbed session or injected `AuthContext` presented as authentication coverage.
+- A mocked Flue conversation store presented as durability coverage.
 - A test that only proves `Effect.retry`, a Schema literal, or a fake's return value.
-- A test that sleeps and hopes a scheduler, readiness state, or retry has advanced.
-- Parallel tests sharing fixed IDs, a schema, a global provider, or mutable module state.
-- A connector test that mocks the connector itself instead of remote HTTP.
-- A model eval used to prove deterministic authorization or persistence behavior.
-- A migration test that uses push or hand-written schema SQL.
+- A test that sleeps, polls, or needs a longer timeout.
+- Cases that share fixed ids, or assert on a global scan without accounting for the file's other rows.
+- A transport test that mocks the transport instead of the remote HTTP.
+- A model eval used to prove deterministic authorization or persistence.
+- A new `makeTest…` database or server factory beside `testdb.ts` and `tests/setup.ts`.
 
 ## Completion checklist
 
-- [ ] The selected seam is the smallest real boundary containing the failure.
-- [ ] `VIVID_TEST_DATABASE_URL` is required and cleanup is registered before the first write.
-- [ ] Real Drizzle Kit migrations ran against disposable PostgreSQL 18.
-- [ ] Pools, listeners, scheduler jobs, and storage are closed; provider globals are process-isolated or deliberately replaced.
-- [ ] No sleeps, default database URL, shared IDs, secrets, or unbounded retries remain.
-- [ ] The Effect pin and the declared test libraries are described as installed, not as remembered.
-- [ ] Restart and outcome-unknown behavior is covered when durability is claimed.
+- [ ] The seam is the smallest real boundary containing the failure, and it is one named above.
+- [ ] Only `VIVID_TEST_DATABASE_URL` is read as input; `DATABASE_URL` appears only as an output of the three existing adapters; nothing can reach port 55433 or a remote database.
+- [ ] Every fixture registers its row cleanup before its first write, and cleanup failure fails the test.
+- [ ] Isolation is described as per-file clone plus per-case cleanup, not per-test.
+- [ ] `testDatabaseLayer` is composed, not re-implemented; no production Layer was hard-provided.
+- [ ] No sleeps, polling, shared ids, secrets in output, or unbounded retries.
+- [ ] `@effect/vitest` runs every Effect program under test; any `Effect.runPromise` is a proven SDK Promise callback with its rule-named disable, not a runtime for the test.
+- [ ] Whether the database suites ran or skipped is reported.
+- [ ] Any claim that rests on a missing capability is reported as unproven.
