@@ -104,6 +104,13 @@ export const memoryHandlers = {
     },
     (effect) => effect.pipe(Effect.catch(memoryFailure)),
   ),
+  /** The runtime reads this before each response; it must never wait on a model. */
+  GetMemoryPage: Effect.fn('Rpc.GetMemoryPage')(
+    function* () {
+      return yield* (yield* MemoryAccess).page(yield* requireActor())
+    },
+    (effect) => effect.pipe(Effect.catch(memoryFailure)),
+  ),
   /** Cross-partition results are merged by hybrid score before applying the caller's result limit. */
   Recall: Effect.fn('Rpc.Recall')(
     function* (input: RecallRequest) {

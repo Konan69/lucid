@@ -51,6 +51,47 @@ export const MemoryBrief = Schema.Struct({
 }).annotate({ identifier: 'MemoryBrief', title: 'Memory brief' })
 export interface MemoryBrief extends Schema.Schema.Type<typeof MemoryBrief> {}
 
+/**
+ * Whose a fact on the page is. A Thread's title travels with it, never its identifier: in a
+ * private Thread the page also holds facts from the shared Threads this Person can see, and the
+ * model can only tell those apart by name.
+ */
+export const MemoryNoteScope = Schema.TaggedUnion({
+  Person: {},
+  Company: {},
+  Thread: { title: Schema.String },
+})
+export type MemoryNoteScope = typeof MemoryNoteScope.Type
+
+/**
+ * One line of the page: a remembered fact exactly as it is stored, with its kind and whose it is.
+ * No identifier or author travels with it; the page is read by the model.
+ */
+export const MemoryNote = Schema.Struct({
+  kind: MemoryKind,
+  content: Schema.String,
+  scope: MemoryNoteScope,
+}).annotate({ identifier: 'MemoryNote', title: 'Memory note' })
+export interface MemoryNote extends Schema.Schema.Type<typeof MemoryNote> {}
+
+/**
+ * What Vivid knows, placed in front of the model on every response. It is the stored facts
+ * themselves, newest first, not a summary of them: nothing is paraphrased and no model runs to
+ * build it, so a fact remembered in one response is on the page for the next.
+ *
+ * The page is bounded. `older` says that facts older than the ones shown exist; they stay stored
+ * and `recall` finds them. It is not a count: the store reads only its newest records, so the
+ * number left out is not known on this path and a number here would understate it. The design
+ * follows the writable memory block of Cloudflare's Agents Session (a bounded block rendered into
+ * the system prompt, developers.cloudflare.com/agents "Sessions": context blocks, `maxTokens`),
+ * with Vivid's stored memories as the block's content.
+ */
+export const MemoryPage = Schema.Struct({
+  notes: Schema.Array(MemoryNote),
+  older: Schema.Boolean,
+}).annotate({ identifier: 'MemoryPage', title: 'Memory page' })
+export interface MemoryPage extends Schema.Schema.Type<typeof MemoryPage> {}
+
 export const MemoryListResponse = Schema.Struct({
   memories: Schema.Array(Memory),
   brief: MemoryBrief,

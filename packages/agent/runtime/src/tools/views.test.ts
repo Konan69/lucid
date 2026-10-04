@@ -29,6 +29,9 @@ import {
   InputRequest,
   InputRequestState,
   ConnectionRequestMessage,
+  MemoryNote,
+  MemoryNoteScope,
+  MemoryPage,
 } from '@vivid/contracts'
 import { contextInstruction } from '../context.ts'
 import { SavedProcedures, VividContext } from './snapshots.ts'
@@ -162,7 +165,26 @@ describe('model views', () => {
     expect(json).not.toMatch(/MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/iu)
     const context = contextInstruction(
       VividContext.make({
-        brief: `Review before signing. Legacy note: ${reference}.`,
+        memory: MemoryPage.make({
+          notes: [
+            MemoryNote.make({
+              kind: 'preference',
+              content: `Review before signing.\nLegacy note: ${reference}.`,
+              scope: MemoryNoteScope.cases.Person.make({}),
+            }),
+            MemoryNote.make({
+              kind: 'decision',
+              content: 'Invoices go out on Fridays',
+              scope: MemoryNoteScope.cases.Company.make({}),
+            }),
+            MemoryNote.make({
+              kind: 'fact',
+              content: 'The launch moved to May',
+              scope: MemoryNoteScope.cases.Thread.make({ title: 'Launch\nplan' }),
+            }),
+          ],
+          older: true,
+        }),
         skills: [skill, skill],
         timezone: 'Africa/Lagos',
         integrations: ['DeepWiki', `Mail ${reference}`],
@@ -171,6 +193,12 @@ describe('model views', () => {
     )
     expect(context).not.toMatch(/MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|"id"/iu)
     expect(context).toContain('review-agreement-2')
+    // Facts reach the model as written, one per line, with an identifier inside one removed.
+    expect(context).toContain('- (preference) Review before signing. Legacy note: ')
+    expect(context).toContain('- (decision, whole company) Invoices go out on Fridays')
+    // A shared Thread is named by its title, folded to one line.
+    expect(context).toContain('- (fact, conversation "Launch plan") The launch moved to May')
+    expect(context).toContain('Older facts are not shown; call recall to look one up.')
     // Connected services reach the model by name, with any identifier in a name removed.
     expect(context).toContain('"integrations":["DeepWiki","Mail ')
     expect(json).toContain('admin@example.test')

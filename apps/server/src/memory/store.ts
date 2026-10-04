@@ -2,6 +2,7 @@ import * as NodeCrypto from 'node:crypto'
 import {
   Memory,
   MemoryBrief,
+  type MemoryPage,
   MemoryId,
   MemoryKind,
   MemoryScope,
@@ -16,6 +17,7 @@ import {
   type RememberRequest,
   type CorrectMemoryRequest,
 } from '@vivid/contracts'
+import { pageOf } from './page.ts'
 import {
   Array as Arr,
   Clock,
@@ -417,6 +419,8 @@ export type MemoryAccessFailure =
 export interface MemoryAccessService {
   readonly list: (actor: Actor) => Effect.Effect<ReadonlyArray<Memory>, MemoryAccessFailure>
   readonly brief: (actor: Actor) => Effect.Effect<MemoryBrief, MemoryAccessFailure>
+  /** The stored facts themselves for the model's context; a store read and nothing else. */
+  readonly page: (actor: Actor) => Effect.Effect<MemoryPage, MemoryAccessFailure>
   readonly recall: (
     actor: Actor,
     input: { readonly query: string; readonly limit: number },
@@ -656,11 +660,18 @@ interface AccessDependencies {
   readonly database: Database['Service']
 }
 
+/**
+ * The newest records one authorized read returns; Helix bounds each partition's list at the same
+ * number (`HelixMemory.list`). A read that comes back this long may have left older records
+ * behind, which is what the page reports as `older`.
+ */
+const LIST_LIMIT = 200
+
 /** Every policy program uses the captured database, while Actor remains a per-call value. */
 function accessReads(dependencies: AccessDependencies) {
   const { store, helix, database } = dependencies
   return {
-    /** Merge authorized partitions and return the 200 newest records across them. */
+    /** Merge authorized partitions and return the `LIST_LIMIT` newest records across them. */
     list: Effect.fn('MemoryAccess.list')(
       function* (actor: Actor) {
         const scopes = yield* readScopes(helix, actor)
@@ -669,7 +680,7 @@ function accessReads(dependencies: AccessDependencies) {
           pages.flat(),
           (memory) => memory.createdAt,
           Order.flip(Order.Number),
-        ).slice(0, 200)
+        ).slice(0, LIST_LIMIT)
       },
       (effect) => Effect.provideService(effect, Database, database),
     ),
@@ -880,6 +891,15 @@ const makeAccess = Effect.fn('MemoryAccess.make')(function* () {
       if (memories.length === 0) return MemoryBrief.make({ text: '', updatedAt: null })
       return yield* Cache.get(pages, { memories, person: summaryOf(actor.person) })
     }),
+    /**
+     * Built from the same authorized read as `list`, so a shared Thread's page holds only what
+     * that Thread may see. No model and no cache: the brief above pays a completion whenever a
+     * memory changes, and that wait used to sit in front of every reply.
+     */
+    page: Effect.fn('MemoryAccess.page')(function* (actor: Actor) {
+      const memories = yield* reads.list(actor)
+      return pageOf({ memories, truncated: memories.length >= LIST_LIMIT })
+    }),
     /** Candidate writes are evaluated individually so one rejected relation need not erase other useful notes. */
     learn: (actor, candidate) =>
       learnCandidate(dependencies, actor, candidate).pipe(
@@ -900,6 +920,7 @@ export const unavailableMemoryAccessLayer = Layer.succeed(
   MemoryAccess.of({
     list: Effect.fn('MemoryAccess.unconfigured.list')(() => unconfiguredMemory),
     brief: Effect.fn('MemoryAccess.unconfigured.brief')(() => unconfiguredMemory),
+    page: Effect.fn('MemoryAccess.unconfigured.page')(() => unconfiguredMemory),
     recall: Effect.fn('MemoryAccess.unconfigured.recall')(() => unconfiguredMemory),
     remember: Effect.fn('MemoryAccess.unconfigured.remember')(() => unconfiguredMemory),
     correct: Effect.fn('MemoryAccess.unconfigured.correct')(() => unconfiguredMemory),

@@ -123,6 +123,7 @@ import {
 import {
   CorrectMemoryRequest,
   MemoryBrief,
+  MemoryPage,
   MemoryListResponse,
   MemoryResponse,
   RecallRequest,
@@ -636,6 +637,8 @@ const ListMemory = Rpc.make('ListMemory', { ...call, success: MemoryListResponse
 const WatchMemory = Rpc.make('WatchMemory', { ...live, success: MemoryListResponse })
 /** The page Vivid reads when a Run starts. */
 const GetMemoryBrief = Rpc.make('GetMemoryBrief', { ...call, success: MemoryBrief })
+/** The facts themselves, bounded, for the model's context; no model runs to build it. */
+const GetMemoryPage = Rpc.make('GetMemoryPage', { ...call, success: MemoryPage })
 const Recall = Rpc.make('Recall', { ...call, payload: RecallRequest, success: RecallResponse })
 const Remember = Rpc.make('Remember', {
   ...call,
@@ -858,6 +861,7 @@ export const VividRpc = RpcGroup.make(
   ListMemory,
   WatchMemory,
   GetMemoryBrief,
+  GetMemoryPage,
   Recall,
   Remember,
   CorrectMemory,

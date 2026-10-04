@@ -1,26 +1,53 @@
 import { describe, expect, it } from '@effect/vitest'
-import { PersonId, ThreadId } from '@vivid/contracts'
+import { MemoryNote, MemoryNoteScope, MemoryPage, PersonId, ThreadId } from '@vivid/contracts'
 import { Effect, Option } from 'effect'
 import { contextSnapshots, VividContext } from './snapshots.ts'
 
 const ada = { threadId: ThreadId.make('shared'), personId: PersonId.make('ada') }
 const dami = { threadId: ada.threadId, personId: PersonId.make('dami') }
 const adaContext = VividContext.make({
-  brief: 'Ada’s facts',
+  memory: MemoryPage.make({
+    notes: [
+      MemoryNote.make({
+        kind: 'fact',
+        content: 'Ada’s facts',
+        scope: MemoryNoteScope.cases.Person.make({}),
+      }),
+    ],
+    older: false,
+  }),
   skills: [],
   timezone: 'Africa/Lagos',
   integrations: [],
   name: 'Vivid',
 })
 const damiContext = VividContext.make({
-  brief: 'Dami’s facts',
+  memory: MemoryPage.make({
+    notes: [
+      MemoryNote.make({
+        kind: 'fact',
+        content: 'Dami’s facts',
+        scope: MemoryNoteScope.cases.Person.make({}),
+      }),
+    ],
+    older: false,
+  }),
   skills: [],
   timezone: 'Europe/Paris',
   integrations: [],
   name: 'Juno',
 })
 const updatedContext = VividContext.make({
-  brief: 'Updated facts',
+  memory: MemoryPage.make({
+    notes: [
+      MemoryNote.make({
+        kind: 'fact',
+        content: 'Updated facts',
+        scope: MemoryNoteScope.cases.Person.make({}),
+      }),
+    ],
+    older: false,
+  }),
   skills: [],
   timezone: 'UTC',
   integrations: [],
