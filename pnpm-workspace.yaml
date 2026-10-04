@@ -78,6 +78,7 @@ catalog:
   expo-updates: 57.0.24
   hono: 4.13.8
   konsistent: 1.0.0-beta.9
+  kysely: 0.29.5
   lucide-react: 1.47.0
   lucide-react-native: 1.47.0
   pg: 8.23.0
