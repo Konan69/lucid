@@ -133,6 +133,8 @@ export const BrowseResult = Schema.Struct({
   address: Schema.String,
   title: Schema.String,
   outline: Schema.String,
+  /** Base64 PNG, carried as Flue image content only when a screenshot was requested. */
+  picture: Schema.optionalKey(Schema.String),
   truncated: Schema.Boolean,
   tabs: Schema.Array(BrowserTab),
 }).annotate({ identifier: 'BrowseResult', title: 'Browse result' })
@@ -323,6 +325,13 @@ export type CommandOutcome = typeof CommandOutcome.Type
 
 /** What came of a browser step, including uncertain dispatch. */
 export const BrowseOutcome = Schema.TaggedUnion({
+  NotConnected: {},
+  NotAllowed: {},
+  Busy: {},
+  Stopped: {},
+  PageGone: {},
+  Unsupported: {},
+  RunRequired: {},
   Completed: { result: BrowseResult },
   ApprovalRequired: { approvalId: ApprovalId, summary: Schema.String },
   Blocked: { rule: Schema.String },

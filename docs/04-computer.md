@@ -320,3 +320,8 @@ need their reference ports. Existing `pages.stop(tab)` stops loading only.
 Reference: browser `browser-service.mjs::ai/ec/tc/JA/Rs/wB/mJ/Dne/a7e`, main
 `executeCdpForBrowserUse/Yte/turnEnded`, and Windows `helper_transport.js::request/D/F/U`.
 The missing input-token receiver must be recovered before desktop control can ship.
+
+**4 October 2026 — stage 1 browser decision.** The desktop app executes Person-computer
+browser actions using T3 Code desktop’s mechanism: `webContents.debugger` CDP, expected-input
+matching, and human-control epochs that interrupt an action when the Person touches the page.
+The Codex token receiver was never recovered; that token blocker no longer gates stage 1.

@@ -18,6 +18,12 @@ import {
 } from 'effect'
 import {
   ActionTarget,
+  ApprovalDecision,
+  BrowseOutcome,
+  BrowseResult,
+  DeviceAnswer,
+  RunId,
+  type DeviceRequest,
   CommandOutcome,
   Company,
   CompanyId,
@@ -39,7 +45,14 @@ import {
   Workspace,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
-import { Gate, GateDecision, ActionOutcome, ActionOrigin } from '../approvals/gate.ts'
+import {
+  Gate,
+  GateDecision,
+  ActionOutcome,
+  ActionOrigin,
+  ActionRunner,
+  gateLayer as policyGateLayer,
+} from '../approvals/gate.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
@@ -61,7 +74,13 @@ import {
 } from './store.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { DeviceRegistry, deviceLayer } from './device.ts'
-import { computers } from './tables.ts'
+import { ApprovalStore, approvalStoreLayer } from '../approvals/store.ts'
+import { stores, fixture as trustFixture } from '../approvals/testing.ts'
+import { approvals } from '../approvals/tables.ts'
+import { StoredRunOrigin } from '../threads/conversation.ts'
+import { runs, threads } from '../threads/tables.ts'
+import * as Schema from 'effect/Schema'
+import { deviceRequests, computers } from './tables.ts'
 
 /** Test authority records actual seam calls and can lose machines or command receipts deliberately. */
 interface EvidenceService {
@@ -246,6 +265,96 @@ const testLayer = computerStoreLayer.pipe(
   Layer.provideMerge(deviceLayer),
   Layer.provideMerge(dependencies),
 )
+/** Real approval claim and Gate over a test Device, with the Computer runner used in production. */
+const browserRunnerLayer = Layer.effect(
+  ActionRunner,
+  Effect.gen(function* () {
+    const context = yield* Effect.context<ComputerStore | DeviceRegistry>()
+    return ActionRunner.of({
+      run: ({ person, action, origin }) => {
+        if (ActionTarget.guards.Connection(action.target))
+          return Effect.succeed(
+            ActionOutcome.cases.Failed.make({
+              reason: 'This test executes only Computer actions.',
+            }),
+          )
+        return computerRunner({ person, target: action.target, origin }).pipe(
+          Effect.provideContext(context),
+        )
+      },
+    })
+  }),
+)
+const browserApprovalsLayer = Layer.fresh(approvalStoreLayer).pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(stores, testLayer, browserRunnerLayer.pipe(Layer.provide(testLayer))),
+  ),
+)
+const personBrowserLayer = policyGateLayer.pipe(Layer.provideMerge(browserApprovalsLayer))
+
+/** One admitted Run and real subscribed Device; no cloud provider call is needed. */
+const encodeRunOrigin = Schema.encodeSync(StoredRunOrigin)
+const personalBrowser = Effect.fn('Computer.test.personalBrowser')(function* () {
+  const test = yield* trustFixture()
+  const registry = yield* DeviceRegistry
+  const database = yield* Database
+  const runId = RunId.make(NodeCrypto.randomUUID())
+  yield* database.run(
+    database.insert(runs).values({
+      id: runId,
+      threadId: test.personalId,
+      personId: test.personal.person.id,
+      turn: 1,
+      state: 'working',
+      origin: encodeRunOrigin(StoredRunOrigin.cases.Message.make({})),
+      startedAt: 0,
+      admittedAt: 0,
+    }),
+  )
+  const installation = InstallationId.make(NodeCrypto.randomUUID())
+  const device = yield* registry.enrol(test.personal.person.id, {
+    installation,
+    name: 'Personal browser',
+  })
+  const session = yield* watchAuth(test.personal.person)
+  const requests = yield* Queue.unbounded<DeviceRequest>()
+  /** Acquiring watch establishes presence before the producer can dispatch. */
+  const connect = Effect.fn('Computer.test.connect')(function* () {
+    yield* registry.allow(test.personal.person.id, device.id)
+    const ready = yield* Deferred.make<void>()
+    const fiber = yield* Effect.gen(function* () {
+      const stream = yield* registry.watch({
+        personId: test.personal.person.id,
+        sessionId: session.sessionId,
+        device: device.id,
+        installation,
+      })
+      yield* Deferred.succeed(ready, undefined)
+      yield* stream.pipe(Stream.runForEach((request) => Queue.offer(requests, request)))
+    }).pipe(Effect.scoped, Effect.forkScoped)
+    yield* Deferred.await(ready)
+    return fiber
+  })
+
+  const actor = {
+    ...test.vivid,
+    origin: ActionOrigin.cases.Run.make({ threadId: test.personalId, runId }),
+  }
+  return { test, registry, database, runId, device, session, requests, connect, actor }
+})
+const signedPage = BrowseResult.make({
+  address: 'https://example.test',
+  title: 'Signed-in page',
+  outline: 'Account',
+  truncated: false,
+  tabs: [],
+})
+const personalRead = {
+  target: BrowseTarget.cases.Person.make({}),
+  action: BrowserAction.cases.Read.make({}),
+  summary: 'Read my page',
+}
+
 const request = { command: 'echo hello', summary: 'Read a greeting', timeoutSeconds: 10 }
 
 /** A pending stored command is the same permission receipt for a cold or running Computer. */
@@ -353,6 +462,305 @@ const start = Effect.fn('Computer.test.start')(function* (person: Person) {
 })
 
 describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
+  it.effect(
+    'Person browsing reports access and connection failures without dispatch or cloud fallback',
+    () =>
+      Effect.gen(function* () {
+        const browser = yield* personalBrowser()
+        expect(
+          yield* computerHandlers.Browse(personalRead).pipe(
+            Effect.provideService(
+              AuthContext,
+              AuthState.Vivid({
+                person: browser.actor.person,
+                workspace: browser.actor.workspace,
+                threadId: browser.test.personalId,
+              }),
+            ),
+          ),
+        ).toEqual(BrowseOutcome.cases.NotAllowed.make({}))
+        yield* browser.registry.allow(browser.actor.person.id, browser.device.id)
+        expect(
+          yield* computerHandlers.Browse(personalRead).pipe(
+            Effect.provideService(
+              AuthContext,
+              AuthState.Vivid({
+                person: browser.actor.person,
+                workspace: browser.actor.workspace,
+                threadId: browser.test.personalId,
+              }),
+            ),
+          ),
+        ).toEqual(BrowseOutcome.cases.NotConnected.make({}))
+        expect(yield* Queue.size(browser.requests)).toBe(0)
+        expect(yield* Ref.get((yield* ProviderEvidence).calls)).toEqual([])
+      }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
+  )
+
+  it.effect(
+    'allowed Person reads dispatch once and return Done with transient screenshot bytes',
+    () =>
+      Effect.gen(function* () {
+        const browser = yield* personalBrowser()
+        yield* browser.connect()
+        const running = yield* computerHandlers
+          .Browse({ ...personalRead, action: BrowserAction.cases.Screenshot.make({}) })
+          .pipe(
+            Effect.provideService(
+              AuthContext,
+              AuthState.Vivid({
+                person: browser.actor.person,
+                workspace: browser.actor.workspace,
+                threadId: browser.test.personalId,
+              }),
+            ),
+            Effect.forkScoped,
+          )
+        const dispatched = yield* Queue.take(browser.requests)
+        const page = BrowseResult.make({ ...signedPage, picture: 'png-bytes' })
+        yield* browser.registry.answer(browser.actor.person.id, browser.session.sessionId, {
+          device: browser.device.id,
+          id: dispatched.id,
+          answer: DeviceAnswer.cases.Done.make({ result: page }),
+        })
+        expect(yield* Fiber.join(running)).toEqual(
+          BrowseOutcome.cases.Completed.make({ result: page }),
+        )
+        expect([dispatched.threadId, dispatched.runId]).toEqual([
+          browser.test.personalId,
+          browser.runId,
+        ])
+        const [ledger] = yield* browser.database.run(
+          browser.database
+            .select()
+            .from(deviceRequests)
+            .where(eq(deviceRequests.id, dispatched.id)),
+        )
+        if (ledger === undefined) expect.fail('Expected durable receipt')
+        expect(JSON.stringify(ledger)).not.toContain(page.outline)
+        expect(JSON.stringify(ledger)).not.toContain('png-bytes')
+        expect(yield* Queue.size(browser.requests)).toBe(0)
+        expect(yield* Ref.get((yield* ProviderEvidence).calls)).toEqual([])
+      }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
+  )
+
+  it.effect(
+    'Person writes wait for approval and dispatch exactly once from the stored proposing Run',
+    () =>
+      Effect.gen(function* () {
+        const browser = yield* personalBrowser()
+        yield* browser.connect()
+        const outcome = yield* computerHandlers
+          .Browse({ ...personalRead, action: BrowserAction.cases.Click.make({ target: 'Send' }) })
+          .pipe(
+            Effect.provideService(
+              AuthContext,
+              AuthState.Vivid({
+                person: browser.actor.person,
+                workspace: browser.actor.workspace,
+                threadId: browser.test.personalId,
+              }),
+            ),
+          )
+        if (!BrowseOutcome.guards.ApprovalRequired(outcome)) expect.fail('Expected approval')
+        expect(yield* Queue.size(browser.requests)).toBe(0)
+        const store = yield* ApprovalStore
+        const [approval] = yield* store.inThread(browser.test.personalId)
+        if (approval === undefined) expect.fail('Expected stored approval')
+        expect(approval.runId).toBe(browser.runId)
+        expect(approval.threadId).toBe(browser.test.personalId)
+        const [row] = yield* browser.database.run(
+          browser.database.select().from(approvals).where(eq(approvals.id, approval.id)),
+        )
+        if (row === undefined) expect.fail('Expected persisted Approval')
+        expect(row.runId).toBe(browser.runId)
+        // The proposing turn ends before the Person decides; a newer Run cannot replace it.
+        yield* browser.database.run(
+          browser.database
+            .update(runs)
+            .set({ state: 'completed', finishedAt: 1 })
+            .where(eq(runs.id, browser.runId)),
+        )
+        const decide = {
+          id: approval.id,
+          digest: approval.digest,
+          decision: ApprovalDecision.cases.AllowOnce.make({}),
+        }
+        const executing = yield* store.decide(browser.test.personal, decide).pipe(Effect.forkScoped)
+        const dispatched = yield* Queue.take(browser.requests)
+        expect(dispatched.runId).toBe(browser.runId)
+        yield* browser.registry.answer(browser.actor.person.id, browser.session.sessionId, {
+          device: browser.device.id,
+          id: dispatched.id,
+          answer: DeviceAnswer.cases.Done.make({ result: signedPage }),
+        })
+        expect((yield* Fiber.join(executing)).state._tag).toBe('Succeeded')
+        expect((yield* store.decide(browser.test.personal, decide).pipe(Effect.flip))._tag).toBe(
+          'Conflict',
+        )
+        expect(yield* Queue.size(browser.requests)).toBe(0)
+      }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
+  )
+
+  for (const reason of ['Stopped', 'PageGone', 'NotAllowed', 'Unsupported'] as const) {
+    it.effect(`Device refusal ${reason} remains a distinct model outcome`, () =>
+      Effect.gen(function* () {
+        const browser = yield* personalBrowser()
+        yield* browser.connect()
+        const running = yield* computerHandlers.Browse(personalRead).pipe(
+          Effect.provideService(
+            AuthContext,
+            AuthState.Vivid({
+              person: browser.actor.person,
+              workspace: browser.actor.workspace,
+              threadId: browser.test.personalId,
+            }),
+          ),
+          Effect.forkScoped,
+        )
+        const dispatched = yield* Queue.take(browser.requests)
+        yield* browser.registry.answer(browser.actor.person.id, browser.session.sessionId, {
+          device: browser.device.id,
+          id: dispatched.id,
+          answer: DeviceAnswer.cases.Refused.make({ reason }),
+        })
+        expect(yield* Fiber.join(running)).toEqual(BrowseOutcome.cases[reason].make({}))
+        expect(yield* Queue.size(browser.requests)).toBe(0)
+      }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
+    )
+  }
+
+  it.effect('a stopped proposing Run returns OutcomeUnknown without dispatch', () =>
+    Effect.gen(function* () {
+      const browser = yield* personalBrowser()
+      yield* browser.connect()
+      yield* browser.database.run(
+        browser.database
+          .update(runs)
+          .set({ state: 'stopped', finishedAt: 1 })
+          .where(eq(runs.id, browser.runId)),
+      )
+      expect(
+        yield* browser.registry.browse({
+          personId: browser.actor.person.id,
+          threadId: browser.test.personalId,
+          runId: browser.runId,
+          action: personalRead.action,
+        }),
+      ).toEqual(BrowseOutcome.cases.OutcomeUnknown.make({}))
+      expect(yield* Queue.size(browser.requests)).toBe(0)
+    }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
+  )
+
+  it.effect('a link dropping mid-action returns OutcomeUnknown and never replays', () =>
+    Effect.gen(function* () {
+      const browser = yield* personalBrowser()
+      const link = yield* browser.connect()
+      const running = yield* computerHandlers.Browse(personalRead).pipe(
+        Effect.provideService(
+          AuthContext,
+          AuthState.Vivid({
+            person: browser.actor.person,
+            workspace: browser.actor.workspace,
+            threadId: browser.test.personalId,
+          }),
+        ),
+        Effect.forkScoped,
+      )
+      const dispatched = yield* Queue.take(browser.requests)
+      yield* Fiber.interrupt(link)
+      expect(yield* Fiber.join(running)).toEqual(BrowseOutcome.cases.OutcomeUnknown.make({}))
+      yield* browser.connect()
+      expect(yield* Queue.size(browser.requests)).toBe(0)
+      const [receipt] = yield* browser.database.run(
+        browser.database.select().from(deviceRequests).where(eq(deviceRequests.id, dispatched.id)),
+      )
+      if (receipt === undefined) expect.fail('Expected persisted receipt')
+      expect(receipt.status).toBe('OutcomeUnknown')
+    }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
+  )
+
+  it.effect('approved non-Run Person actions fail explicitly without dispatch', () =>
+    Effect.gen(function* () {
+      const browser = yield* personalBrowser()
+      yield* browser.connect()
+      const approval = yield* (yield* ApprovalStore).raise(
+        browser.test.vivid,
+        ProposedAction.make({
+          summary: 'Click Send',
+          rationale: '',
+          effect: 'write',
+          target: ActionTarget.cases.Browser.make({
+            action: BrowserAction.cases.Click.make({ target: 'Send' }),
+            target: BrowseTarget.cases.Person.make({}),
+          }),
+        }),
+      )
+      const settled = yield* (yield* ApprovalStore).decide(browser.test.personal, {
+        id: approval.id,
+        digest: approval.digest,
+        decision: ApprovalDecision.cases.AllowOnce.make({}),
+      })
+      expect(settled.state._tag).toBe('Failed')
+      expect(yield* Queue.size(browser.requests)).toBe(0)
+    }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
+  )
+
+  it.effect(
+    'a cloud screenshot uses the existing desktop PNG and returns an outline under one permit',
+    () =>
+      Effect.gen(function* () {
+        const { first } = yield* fixture()
+        const result = yield* (yield* ComputerStore).browse(
+          first.id,
+          BrowserAction.cases.Screenshot.make({}),
+        )
+        expect(result.picture).toBe('test-picture')
+        expect(result.outline).toBeDefined()
+        expect(yield* Ref.get((yield* ProviderEvidence).calls)).toHaveLength(2)
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect(
+    'another Thread member cannot approve the Person’s computer or consume the pending Approval',
+    () =>
+      Effect.gen(function* () {
+        const browser = yield* personalBrowser()
+        const database = yield* Database
+        const store = yield* ApprovalStore
+        const origin = ActionOrigin.cases.Thread.make({ threadId: browser.test.companyId })
+        const approval = yield* store.raise(
+          { ...browser.test.companyVivid, origin },
+          ProposedAction.make({
+            summary: 'Click Send',
+            rationale: '',
+            effect: 'write',
+            target: ActionTarget.cases.Browser.make({
+              action: BrowserAction.cases.Click.make({ target: 'Send' }),
+              target: BrowseTarget.cases.Person.make({}),
+            }),
+          }),
+        )
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'company' })
+            .where(eq(threads.id, browser.test.companyId)),
+        )
+        const result = yield* store
+          .decide(browser.test.owner, {
+            id: approval.id,
+            digest: approval.digest,
+            decision: ApprovalDecision.cases.AllowOnce.make({}),
+          })
+          .pipe(Effect.flip)
+        expect(result._tag).toBe('InvalidRequest')
+        const [pending] = yield* store.inThread(browser.test.companyId)
+        if (pending === undefined) expect.fail('Expected pending Approval')
+        expect(pending.state._tag).toBe('Pending')
+      }).pipe(Effect.scoped, Effect.provide(personBrowserLayer)),
+  )
+
   it.effect(
     'inventory never starts an absent Computer and reports only a successful real probe',
     () =>
@@ -799,7 +1207,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
   )
 
   it.effect(
-    'the Person’s computer is never replaced by Vivid’s Computer and nothing is sent to it yet',
+    'the Person’s computer is never replaced by Vivid’s Computer and a non-Run proposal cannot dispatch',
     () =>
       Effect.gen(function* () {
         const { first } = yield* fixture()
@@ -809,9 +1217,9 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           action: BrowserAction.cases.Read.make({}),
           summary: 'Read my browser',
         }
-        expect(
-          (yield* computerHandlers.Browse(personRequest).pipe(asVivid(first), Effect.flip))._tag,
-        ).toBe('NoDeviceConnected')
+        expect((yield* computerHandlers.Browse(personRequest).pipe(asVivid(first)))._tag).toBe(
+          'NotConnected',
+        )
         // An allowed computer that is listening: acquiring the stream is what establishes presence.
         const registry = yield* DeviceRegistry
         const installation = InstallationId.make(NodeCrypto.randomUUID())
@@ -824,7 +1232,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           installation,
         })
         const response = yield* computerHandlers.Browse(personRequest).pipe(asVivid(first))
-        expect(response._tag).toBe('Unavailable')
+        expect(response._tag).toBe('RunRequired')
         expect(yield* Ref.get(evidence.calls)).toEqual([])
         expect(yield* Ref.get(evidence.actions)).toEqual([])
         expect(
@@ -838,7 +1246,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           }),
         ).toEqual(
           ActionOutcome.cases.Failed.make({
-            reason: 'The Person’s computer cannot be used for browsing yet.',
+            reason: 'The Person’s computer requires the Run that proposed this action.',
           }),
         )
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
