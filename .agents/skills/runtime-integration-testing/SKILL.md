@@ -18,16 +18,16 @@ Re-verify against installed source when a pin moves. Verified here: Effect, `@ef
 ## Database boundary (non-negotiable)
 
 - PostgreSQL is the integration database. Its URL is read only from `VIVID_TEST_DATABASE_URL`. Never fall back to `DATABASE_URL`, an app env file, the developer database on port 55433, or a remote database.
-- With the variable absent, database suites **skip**: `testDatabaseConfigured` (`apps/server/src/database/testdb.ts`) gates them with `describe.skipIf(!testDatabaseConfigured)`. Nothing substitutes another URL.
+- With the variable absent, database suites **skip**: `testDatabaseConfigured` (`apps/server/src/database/testdb.ts`) gates them with `describe.skipIf(!testDatabaseConfigured)`. Nothing substitutes another URL. The runtime project rejects a set-but-empty variable during worker setup rather than skipping.
 - **Server project:** the supplied URL is used as an **administration connection only**. The template and the per-file clones are separate databases on that server; no server migration and no server fixture writes to the database the URL names. It must still be a disposable instance: the role needs `CREATE DATABASE`, and the harness creates and force-drops databases on that server.
 - **Runtime project:** there is no template and no clone, so this rule does not hold there. `desktopDatabase` in `packages/agent/runtime/src/tools/computer.test.ts` connects to the supplied database itself, registers `DROP SCHEMA IF EXISTS … CASCADE` as a finalizer, and only then creates a uniquely named schema (`desktop_test_<uuid>`) that Flue's tables live in through `search_path`. It writes inside the supplied database, in a schema it owns and removes. See "Runtime: Flue boundary".
 - Migrations run through the production path. `apps/server/tests/template.ts` (Vitest `globalSetup`) creates `vivid_test_<uuid>` from `template0` and runs `pnpm exec drizzle-kit migrate` for `drizzle.config.ts` then `product-drizzle.config.ts`, the same order as root `scripts/migrate.mjs`. Never use `push` or hand-written schema SQL.
 - **`DATABASE_URL` is an output of the test variable, never an input.** Production code reads `DATABASE_URL`, so three existing adapters derive it from `VIVID_TEST_DATABASE_URL`, each in one direction only:
   - `tests/template.ts` sets it to the template's URL in the Drizzle Kit child's environment, and nowhere else.
-  - `packages/agent/runtime/vitest.config.ts` sets it in `test.env` for the runtime project's workers, because `src/db.ts` reads `DATABASE_URL` at import.
+  - `packages/agent/runtime/tests/setup.ts`, registered with Vitest `setupFiles`, derives it for each runtime worker before test imports, because `src/db.ts` reads `DATABASE_URL` at import. It removes inherited `DATABASE_URL` when the test variable is absent and refuses an empty test URL.
   - `testConfigLayer` (`database/testdb.ts`) puts the file's clone into the `ServerConfig` value. This one is a context value, not process environment.
 
-  Do not add a fourth, and do not make any of them read `DATABASE_URL`. None is a fallback: when the test variable is absent the template setup returns early, `testConfigLayer` fails, and the runtime config adds nothing to the workers' environment.
+  Do not add a fourth, and do not make any of them read `DATABASE_URL`. None is a fallback: when the test variable is absent the template setup returns early, `testConfigLayer` fails, and the runtime setup removes inherited `DATABASE_URL`, so importing `db.ts` fails at its config read.
 
 - Cleanup is defined before creation in both server files. `template.ts` returns a teardown that drops every `<template>_*` database it can still find (Vitest skips `afterAll` for wholly skipped files and failed collection) and then the template. `tests/setup.ts` registers `afterAll` before `CREATE DATABASE`.
 
@@ -112,7 +112,8 @@ Read `packages/agent/runtime/AGENTS.md` first. The runtime owns no product store
 
 - `src/app.ts` is a Hono app whose default export mounts `createAgentRouter(Vivid)` behind the runtime token. Importing it imports the agent definition and `providers/rehearsal.ts`.
 - `src/db.ts` is Flue's database composition root. It reads `DATABASE_URL` synchronously at import and creates a module-level `pg.Pool`. Flue owns its own schema migrations (`db:migrate` in that package is a no-op echo).
-- `packages/agent/runtime/vitest.config.ts` passes `VIVID_TEST_DATABASE_URL` to workers as `DATABASE_URL`, so while the test variable is set an import of `db.ts` reaches the supplied test URL. When it is unset the config adds nothing, and the workers keep whatever `DATABASE_URL` the invoking shell had: a runtime test must not import `db.ts`, and a database case is gated with `describe.skipIf(!testDatabaseConfigured)`. That project has **no** per-file clone: a runtime test that needs tables creates a uniquely named schema on the supplied URL and registers `DROP SCHEMA … CASCADE` first (`desktopDatabase` in `src/tools/computer.test.ts`).
+- `packages/agent/runtime/tests/setup.ts` is the sole runtime test-URL adapter. Vitest `setupFiles` runs it before importing each test: a supplied non-empty URL becomes `DATABASE_URL`; an absent test variable removes inherited `DATABASE_URL`; an empty test variable fails setup. An accidental unconfigured import of `db.ts` therefore fails before building a pool. Runtime tests must not import `db.ts`, except `src/db.test.ts`'s gated unconfigured-refusal proof. Database cases use `describe.skipIf(!testDatabaseConfigured)`. That project has **no** per-file clone: a runtime test that needs tables creates a uniquely named schema on the supplied URL and registers `DROP SCHEMA … CASCADE` first (`desktopDatabase` in `src/tools/computer.test.ts`).
+- **Scope of the setup guarantee:** runtime test modules under the current Node project only. Config evaluation, `globalSetup`, custom environment modules and other projects can still see the shell's environment; the setup does not validate disposability or prevent later test mutation.
 - **Promise callbacks owned by an SDK.** Flue's public `PostgresRunner` (`@flue/postgres`) declares `transaction` as a callback that must return a Promise. `desktopDatabase` implements it with one `Effect.runPromise` around an `Effect.acquireUseRelease` that takes a pool client, runs `BEGIN`, the SDK's callback and `COMMIT` (or `ROLLBACK`), and releases the client. That is a narrow adapter for a public Promise seam: it runs no program under test, builds no Layer and starts no application runtime; the case itself still runs under `it.live`. The exemption is the inline `oxlint-disable-next-line` naming `vivid/no-manual-effect-runtime-in-tests` and `vivid/no-runpromise-in-library` on that call. `scripts/effect-boundary-allowlist.json` has no entry for it, because the boundary audit skips `.test` files. A new bridge needs the same proof: a public SDK type that demands a Promise, and no Effect-native alternative. Otherwise use `it.effect`.
 - Runtime tools are tested against the generated client with a controlled transport: `RpcClient.makeNoSerialization(VividRpc, { onFromClient })`, then `rpc.write` an `Exit` for the captured request (`src/delivery.test.ts`). No server, no database.
 - The deterministic model is pi-ai's faux provider: `fauxProvider` from `@earendil-works/pi-ai/providers/faux`, registered with `setProvider` from `@flue/runtime` (`src/providers/rehearsal.ts`). Registration is global, happens at import, and only when `VIVID_MODEL` starts with `rehearsal/`. It is a product-rehearsal provider selected by environment, not a per-test fixture. Use `pnpm exec flue docs search <query>` before relying on any other Flue API.
@@ -131,6 +132,16 @@ Assert observable outcomes, not calls:
 - Duplicate requests produce one durable effect.
 - "Restart" in the current suites means building a fresh Layer over the same clone and reading what the first one left (`routines/store.test.ts`, `library/durability.test.ts`). It is not a new OS process; say "new Layer over the same database", not "process restart".
 - Tests do start real OS processes. `library/extraction.test.ts` (E8) launches the production `tsx` command for `library/fixtures/process/main.ts` through `ChildProcess.make`, and waits on stdout EOF and exit code 0. That proves one process's lifecycle and resource release. It does not prove recovery of owed work by a second process.
+
+On Linux, inspect `/proc/sys/kernel/core_pattern` before deliberate abort or heap-exhaustion cases.
+A pipe collector ignores a zero `RLIMIT_CORE` and can hold a dying process while collecting its
+memory. [Linux 6.6 `do_coredump`](https://github.com/torvalds/linux/blob/v6.6/fs/coredump.c#L559)
+skips that collector when the limit is exactly one byte. Run only the owned test command under
+`prlimit --core=1:1 -- pnpm …` on such a host; never change the global core pattern or another
+process's limits. This was needed for `library/extraction/process.test.ts` on the local WSL host:
+the four native lifecycle cases passed without changing their timeout. It disables kernel core
+collection for that command, not Node's private diagnostic report. It does not establish the
+production deployment's core-dump policy.
 
 ## The running stack
 

@@ -15,6 +15,7 @@ schema-derived `VividRpcClient`.
 - `src/context.ts` — what Vivid is told at the start of a response: the Person's memory brief, the
   skills it can use, their time zone.
 - `src/db.ts` — Flue's PostgreSQL conversation and runtime storage adapter.
+- `tests/setup.ts` — Vitest worker database authority: only the explicit test URL reaches runtime tests; unconfigured workers have no `DATABASE_URL`.
 - `src/providers/` — model-provider registration and adapter setup.
 - `src/tools/` — model tools. Each is a thin, typed call to `VividRpc` through `asActing`; they do
   not own server stores, schedulers, credentials, or product routes, and they never decide whether
