@@ -72,6 +72,10 @@ export type ReviewOutcome = typeof ReviewOutcome.Type
  *   action can be undone (a tool whose source declares nothing defaults to `write`, and
  *   `connections/effects.ts` files a send under `write`), so with no review an unasked send on a
  *   Person's own Integration runs. Do not change this back to "always ask" without his say-so.
+ *   The Person's own signed-in browser follows the same table as their own Integrations.
+ *   DECIDED BY KONAN, 4 Oct 2026: "I don't need approval for writing my browser". A write there
+ *   is reviewed when decisions are on and runs when no review was made; a destructive action,
+ *   a Never or Ask rule, and a personal target in a shared Thread still ask or refuse.
  *   Rules and a personal Integration used in a shared Thread are decided in `gate.ts` before
  *   any review. With decisions switched off no rule can be judged, so a Person who has a Never
  *   or Ask rule is asked about every action that is not a read, and a Never rule asks where it
