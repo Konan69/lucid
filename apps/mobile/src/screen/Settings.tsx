@@ -1,7 +1,9 @@
 import {
   PatchSettingsRequest,
   Settings as SettingsRecord,
+  ChannelStanding,
   Workspace,
+  type ChannelLink,
   type Theme,
   mayChangeAppearance,
 } from '@vivid/contracts'
@@ -146,6 +148,16 @@ function VividRow({ workspace, onCustomise }: { workspace: Workspace; onCustomis
 }
 
 /**
+ * One app's part of the "Text Vivid" row. A connected app says the number to text, because that is
+ * what the Person came for and it saves opening the screen to read it; any other standing is said
+ * in its usual word.
+ */
+const standingOf = ({ channel, standing }: ChannelLink) =>
+  ChannelStanding.guards.Connected(standing)
+    ? `${channel}: text ${standing.textTo}`
+    : `${channel}: ${channelWords(standing).toLowerCase()}`
+
+/**
  * The way to texting Vivid from a messages app. The row says where each app stands, read from
  * the same live list the screen behind it draws, so "connected" is seen without opening it. Before
  * that list has answered it says what the screen is for instead of guessing a standing.
@@ -155,8 +167,7 @@ function TextVivid({ onOpen }: { onOpen: () => void }) {
   const channels = useLiveValue(data.live.channels)
   const standings = Option.match(channels, {
     onNone: () => [],
-    onSome: (value) =>
-      value.channels.map((link) => `${link.channel}: ${channelWords(link.standing).toLowerCase()}`),
+    onSome: (value) => value.channels.map(standingOf),
   })
   return (
     <Section title="Text Vivid">

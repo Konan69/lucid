@@ -4,6 +4,7 @@ import {
   codeEnding,
   connectChannel,
   disconnectChannel,
+  FIRST_TEXT,
   makeWhen,
   MESSENGER,
   messageLink,
@@ -390,8 +391,13 @@ function Figure({ name, value, spent }: { name: string; value: string; spent: bo
 }
 
 /**
- * A connected channel: the number to text, the Person's own number, and since when. Disconnecting
- * stops Vivid answering that phone, so the system asks before it is done.
+ * A connected channel. What a Person does with one is text Vivid, and this is usually the very
+ * phone that does it: the filled button opens the messaging app on a first message (`FIRST_TEXT`)
+ * to Vivid's number, so the first text is one press and "Send". The number is shown large above
+ * it with its copy (the same `Figure` the code is shown in), for a Person who texts from another
+ * phone, and for when the app would not open. Their own number and since when are said in the
+ * head. Disconnecting stops Vivid answering that phone, so it is last, in the danger colour, and
+ * the system asks before it is done.
  */
 function Connected({
   channel,
@@ -424,13 +430,18 @@ function Connected({
         words={`${channelWords(standing)} · ${since}`}
         dot={<Dot tone="status-success" />}
       >
-        Text Vivid at {standing.textTo} from {standing.address}.
+        Vivid answers texts from {standing.address}.
       </Head>
+      <Figure name="Vivid’s number" value={standing.textTo} spent={false} />
       <Button
-        kind="plain"
+        kind="primary"
         label={`Open ${MESSENGER[channel]}`}
         onPress={() =>
-          open(channel, messageLink(channel, COMPOSER, standing.textTo, Option.none()), onUnopened)
+          open(
+            channel,
+            messageLink(channel, COMPOSER, standing.textTo, Option.some(FIRST_TEXT)),
+            onUnopened,
+          )
         }
       />
       <Button
