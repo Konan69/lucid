@@ -15,7 +15,6 @@ import * as HttpClient from 'effect/unstable/http/HttpClient'
 import type { HttpClientError } from 'effect/unstable/http/HttpClientError'
 import type { HttpClientResponse } from 'effect/unstable/http/HttpClientResponse'
 import * as OtlpExporter from 'effect/unstable/observability/OtlpExporter'
-import * as OtlpLogger from 'effect/unstable/observability/OtlpLogger'
 import type { AnyValue, KeyValue, Resource } from 'effect/unstable/observability/OtlpResource'
 import * as OtlpSerialization from 'effect/unstable/observability/OtlpSerialization'
 import * as OtlpTracer from 'effect/unstable/observability/OtlpTracer'
@@ -23,18 +22,19 @@ import { ObservabilityConfiguration } from '../config.ts'
 import * as productSchema from '../database/product.ts'
 import * as identitySchema from '../database/schema.ts'
 import { Boundary, FailureAttribute, FailureKind, fixedTypeNames, UNTYPED } from './failure.ts'
-import { guardedLogger, guardedTracer } from './guard.ts'
-import { isCodeName, isMessage, Message } from './messages.ts'
+import {
+  type ExportedLine,
+  exportingLogger,
+  guardedTracer,
+  isSpanId,
+  isTraceId,
+  type Keys,
+} from './guard.ts'
+import { isCodeName, isMessage, Message, OMITTED } from './messages.ts'
 import { refusalExport } from './refusal.ts'
 
 /** The name every span and log line of this process is filed under. */
 const SERVICE = 'vivid-server'
-
-/**
- * What stands in for a log body, a span name or an event name that is not on the allowlist. The
- * record still goes, with its level, time and allowlisted attributes, so it is still counted.
- */
-export const OMITTED = '[omitted]'
 
 /** One of the two signals exported, as the last segment of its OTLP path. */
 const Signals = ['traces', 'logs'] as const
@@ -251,20 +251,6 @@ type Logs = Parameters<OtlpSerialization.OtlpSerialization['Service']['logs']>[0
 type ExportedSpan = Traces['resourceSpans'][number]['scopeSpans'][number]['spans'][number]
 type ExportedEvent = ExportedSpan['events'][number]
 type ExportedLink = ExportedSpan['links'][number]
-type ExportedLine = NonNullable<
-  Logs['resourceLogs'][number]['scopeLogs'][number]['logRecords']
->[number]
-
-const TRACE_ID = /^[0-9a-f]{32}$/i
-const SPAN_ID = /^[0-9a-f]{16}$/i
-const ZERO = /^0+$/
-
-/**
- * Whether `id` is a span id: 16 hexadecimal digits that are not all zero. OpenTelemetry defines
- * the all-zero span id as invalid, and so does B3; it is what a caller sends when it has no id, so
- * it names no span and is treated like any other text that is not an id.
- */
-const isSpanId = (id: string) => SPAN_ID.test(id) && !ZERO.test(id)
 
 /**
  * A trace id as OTLP carries it: 32 hexadecimal digits, not all zero.
@@ -276,13 +262,12 @@ const isSpanId = (id: string) => SPAN_ID.test(id) && !ZERO.test(id)
  * and has no exportable form.
  *
  * Neither is an id of zeros in either length: OpenTelemetry defines the all-zero trace id as
- * invalid, and the widening would otherwise make one out of `b3: 0000000000000000-…`.
+ * invalid, and the widening would otherwise make one out of `b3: 0000000000000000-…`. The shapes
+ * themselves are `guard.ts`'s (`isTraceId`, `isSpanId`), which checks the same ids before a span
+ * is made from them.
  */
-const traceIdOf = (id: string): Option.Option<string> => {
-  if (ZERO.test(id)) return Option.none()
-  if (TRACE_ID.test(id)) return Option.some(id)
-  return SPAN_ID.test(id) ? Option.some(`${'0'.repeat(16)}${id}`) : Option.none()
-}
+const traceIdOf = (id: string): Option.Option<string> =>
+  isTraceId(id) ? Option.some(id.padStart(32, '0')) : Option.none()
 
 /**
  * A span name that is a code identifier (an `Effect.fn` name, `RpcServer.<tag>`) or the fixed
@@ -487,24 +472,55 @@ const resourceOf = (
  * JSON on the traces and logs paths. Metrics are not installed (its OTLP endpoint has no metrics
  * path); nothing about a metric is on the allowlist, so that encoder exports none.
  *
- * The rules are made when the layer is built, not when the module loads, because they hold the
- * sets of values admitted so far (`rulesOf`). Both signals are serialized by the one layer, so a
+ * The rules are made when `observabilityLayer` is built, not when the module loads, because they
+ * hold the sets of values admitted so far (`rulesOf`). Both signals are serialized by the one layer, so a
  * type name admitted on a span is the same name on its log line, and the bound is on the two
  * together. A batch that is serialized and then dropped has still taken its places.
  */
-const allowlistSerializationLayer = (
-  environment: Option.Option<string>,
-  commit: Option.Option<string>,
-) =>
-  Layer.sync(OtlpSerialization.OtlpSerialization, () => {
-    const rules = rulesOf()
-    const allowlist: Allowlist = { rules, resource: resourceOf(rules, environment, commit) }
-    return {
-      traces: (data) => HttpBody.jsonUnsafe(allowTraces(allowlist)(data)),
-      logs: (data) => HttpBody.jsonUnsafe(allowLogs(allowlist)(data)),
-      metrics: () => HttpBody.jsonUnsafe({ resourceMetrics: [] }),
-    }
+const allowlistSerializationLayer = (allowlist: Allowlist) =>
+  Layer.sync(OtlpSerialization.OtlpSerialization, () => ({
+    traces: (data) => HttpBody.jsonUnsafe(allowTraces(allowlist)(data)),
+    logs: (data) => HttpBody.jsonUnsafe(allowLogs(allowlist)(data)),
+    metrics: () => HttpBody.jsonUnsafe({ resourceMetrics: [] }),
+  }))
+
+/** What one exporter is built from: where it posts, and with which credentials. */
+interface Destination {
+  readonly url: string
+  readonly headers: Record<string, string>
+}
+
+/**
+ * The logger that exports: `guard.ts` `exportingLogger` builds each record, and rc.116's batch
+ * exporter posts them.
+ *
+ * A port of rc.116 `OtlpLogger.ts` `make` without its `makeLogRecord`, which cannot be kept from
+ * walking whatever was logged (`exportingLogger` says why). The label, the one-second interval,
+ * the batch of 1,000 and the three-second shutdown flush are that function's own defaults. The
+ * resource it would read from the environment is not built: `allowLogs` puts Vivid's in at
+ * serialization whatever a batch names, and the scope likewise.
+ */
+const exportedLogs = Effect.fnUntraced(function* ({ url, headers }: Destination, keys: Keys) {
+  const serialization = yield* OtlpSerialization.OtlpSerialization
+  const clock = yield* Clock.Clock
+  const exporter = yield* OtlpExporter.make({
+    label: 'OtlpLogger',
+    url,
+    headers,
+    exportInterval: Duration.seconds(1),
+    maxBatchSize: 1000,
+    body: (lines: Array<ExportedLine>) => [
+      serialization.logs({
+        resourceLogs: [{ scopeLogs: [{ scope: { name: SERVICE }, logRecords: lines }] }],
+      }),
+      Effect.void,
+    ],
+    shutdownTimeout: Duration.seconds(3),
   })
+  return exportingLogger(keys, clock, (line) => {
+    exporter.push(line)
+  })
+})
 
 /** How long one export may take, from sending the request to the end of the answer's body. */
 export const LONGEST_EXPORT = Duration.seconds(10)
@@ -731,18 +747,19 @@ const endpoint = (base: URL, signal: Signal) => `${base.href.replace(/\/+$/, '')
  *   span and log attributes.
  * - `mergeWithExisting` keeps the default logger, so stdout shows every line in full, including
  *   the text the allowlist keeps from the backend.
- * - The exporters are given the service name only so that they can be built (without one, rc.116
+ * - The tracer is given the service name only so that it can be built (without one, rc.116
  *   `OtlpResource.fromConfig` requires `OTEL_SERVICE_NAME`); the resource and scope that are
  *   actually posted are the ones `allowlistSerializationLayer` puts in.
  * - Each exporter posts through its own bounded client (`boundedClient`), because each pauses on
  *   its own, and both clients count against one cap on outstanding requests. `Layer.unwrap` is
  *   what makes that one count: it is created once, when the Layer is built, and handed to both.
  * - One serialization layer is provided to both, so they share one allowlist and its bounds.
- * - The tracer and the logger are the exporter's own, each installed behind a guard
- *   (`guard.ts`), so that nothing either does while it records can throw into the program it
- *   records. That is why the two are built with `make` and installed here, the way rc.116
- *   `OtlpTracer.layer` and `OtlpLogger.layer` install them (`Layer.effect(Tracer.Tracer)`,
- *   `Logger.layer`, each with `OtlpExporter.layerFlusher` merged in), with the guard between.
+ * - The tracer is the exporter's own behind a guard, and the logger is Vivid's over the exporter's
+ *   batch poster (`guard.ts`, `exportedLogs`), so that nothing either does while it records can
+ *   throw into the program it records or be made to walk what the program gave it. Both are given
+ *   the allowlist's keys, and forward only those. They are installed the way rc.116
+ *   `OtlpTracer.layer` and `OtlpLogger.layer` install theirs (`Layer.effect(Tracer.Tracer)`,
+ *   `Logger.layer`, each with `OtlpExporter.layerFlusher` merged in).
  *
  * The exporter batches on a timer and flushes when the Layer's scope closes, bounded by its own
  * shutdown timeout (rc.116 `OtlpExporter.ts` `make`); `Flusher` in the output drains it on demand.
@@ -755,31 +772,35 @@ export const observabilityLayer = (configuration: ObservabilityConfiguration) =>
     Enabled: ({ url, headers, environment, commit }) =>
       Layer.unwrap(
         Effect.gen(function* () {
-          const resource = { serviceName: SERVICE }
           const credentials = Redacted.value(headers)
           const outstanding = yield* Ref.make(0)
+          const rules = rulesOf()
+          const keys: Keys = new Set(rules.keys())
           const posting = (signal: Signal) =>
             Layer.effect(HttpClient.HttpClient, boundedClient(signal, outstanding))
           const tracer = OtlpTracer.make({
             url: endpoint(url, 'traces'),
-            resource,
+            resource: { serviceName: SERVICE },
             headers: credentials,
           })
-          const logger = OtlpLogger.make({
-            url: endpoint(url, 'logs'),
-            resource,
-            headers: credentials,
-          })
+          const logger = exportedLogs({ url: endpoint(url, 'logs'), headers: credentials }, keys)
           return Layer.mergeAll(
-            Layer.effect(Tracer.Tracer, Effect.map(tracer, guardedTracer)).pipe(
-              Layer.provideMerge(OtlpExporter.layerFlusher),
-              Layer.provide(posting('traces')),
-            ),
-            Logger.layer([Effect.map(logger, guardedLogger)], { mergeWithExisting: true }).pipe(
+            Layer.effect(
+              Tracer.Tracer,
+              Effect.map(tracer, (inner) => guardedTracer(inner, keys)),
+            ).pipe(Layer.provideMerge(OtlpExporter.layerFlusher), Layer.provide(posting('traces'))),
+            Logger.layer([logger], { mergeWithExisting: true }).pipe(
               Layer.provideMerge(OtlpExporter.layerFlusher),
               Layer.provide(posting('logs')),
             ),
-          ).pipe(Layer.provide(allowlistSerializationLayer(environment, commit)))
+          ).pipe(
+            Layer.provide(
+              allowlistSerializationLayer({
+                rules,
+                resource: resourceOf(rules, environment, commit),
+              }),
+            ),
+          )
         }),
       ),
   })
