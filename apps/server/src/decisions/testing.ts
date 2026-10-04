@@ -1,7 +1,7 @@
 import * as NodeProcess from 'node:process'
 import { NodeHttpClient } from '@effect/platform-node'
 import { DECISION_MODEL, gatewayDecisionLayer } from './model.ts'
-import { Config, Effect, Layer, Schema } from 'effect'
+import { Config, Effect, Layer, Logger, Schema } from 'effect'
 
 /** Live judgments require explicit consent and the gateway key; normal suites never spend
  * credentials. They ask the real provider whatever `VIVID_DECISIONS` says, because the claim
@@ -278,3 +278,24 @@ export const ScriptedAnswer = Schema.TaggedUnion({
   Probability: { probability: Schema.Number },
   Classify: { label: Schema.String, probabilities: Schema.Record(Schema.String, Schema.Number) },
 })
+
+/** Keep the gateway's actual per-tool score receipts, alongside visible calibration logs.
+ * A conservative write from timeout/backoff has no receipt and cannot satisfy a live claim. */
+export const effectScoreLogLayer = (lines: string[]) =>
+  Logger.layer([
+    Logger.consoleLogFmt,
+    Logger.make(({ message }) => {
+      lines.push(JSON.stringify(message))
+    }),
+  ])
+
+/** Each fixture must have its own score, not merely a successful neighbouring request.
+ * JSON.stringify escapes the identity exactly as the structured logger does. */
+export const effectScoreCount = (lines: readonly string[], tool: string) =>
+  lines.filter(
+    (line) => line.includes('Tool effect score') && line.includes(`"tool":${JSON.stringify(tool)}`),
+  ).length
+
+/** Round-four held-out read cohorts recovered 15/18 on both paths; fourteen leaves one
+ * read of variation without weakening the 0.95 Approval-removal threshold. */
+export const LIVE_READ_RECOVERY_FLOOR = 14

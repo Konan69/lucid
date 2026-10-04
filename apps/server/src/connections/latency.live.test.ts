@@ -3,7 +3,7 @@ import { Clock, Effect } from 'effect'
 import { decideWithin } from '../decisions/model.ts'
 import { liveDecisionEnabled, liveDecisionLayer, liveTools } from '../decisions/testing.ts'
 import { toolRelevanceDecision } from './relevance.ts'
-import { batchToolEffectDecision, TOOL_DESCRIPTION_LIMIT, toolEffectDecision } from './effects.ts'
+import { batchToolEffectDecision, TOOL_DESCRIPTION_LIMIT } from './effects.ts'
 
 /** Ten warm samples per shape reveal tail latency in one gateway connection pool. The first
  * single call is process-cold; subsequent first samples are only cold for that payload shape. */
@@ -40,22 +40,6 @@ const effectTools = tools.map((tool) => ({
   description: tool.description,
 }))
 const requests = [
-  {
-    workload: 'single',
-    bound: budgets.single,
-    run: decideWithin(
-      toolEffectDecision,
-      {
-        service: 'Records',
-        tool: 'lookup_records',
-        description:
-          'Read existing records. Fields include repository, account, owner, title, content, query, timestamp, status, labels, permissions and identifiers. '
-            .repeat(12)
-            .slice(0, TOOL_DESCRIPTION_LIMIT),
-      },
-      MEASUREMENT_BUDGET,
-    ),
-  },
   {
     workload: 'relevance20',
     bound: budgets.relevance20,

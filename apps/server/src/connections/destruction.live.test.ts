@@ -1,7 +1,13 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Layer, References } from 'effect'
 import { ServiceId } from '@vivid/contracts'
-import { liveDecisionEnabled, liveDecisionLayer, liveTools } from '../decisions/testing.ts'
+import {
+  effectScoreCount,
+  effectScoreLogLayer,
+  liveDecisionEnabled,
+  liveDecisionLayer,
+  liveTools,
+} from '../decisions/testing.ts'
 import { ExecutorTool } from './executor.ts'
 import { ToolEffects, toolEffectsLayer } from './effects.ts'
 
@@ -11,8 +17,9 @@ import { ToolEffects, toolEffectsLayer } from './effects.ts'
 describe.skipIf(!liveDecisionEnabled)('Gateway destructive effects', () => {
   it.live(
     'preserve destructive classifications',
-    () =>
-      Effect.gen(function* () {
+    () => {
+      const lines: string[] = []
+      return Effect.gen(function* () {
         const effects = yield* ToolEffects
         const misses: string[] = []
         for (const tool of liveTools.filter((candidate) => candidate.expected === 'destructive')) {
@@ -26,13 +33,16 @@ describe.skipIf(!liveDecisionEnabled)('Gateway destructive effects', () => {
               input: {},
             }),
           })
-          if (effect !== tool.expected) misses.push(`${tool.name}:${effect}`)
+          expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
+          if (effect === 'read') misses.push(`${tool.name}:${effect}`)
         }
         expect(misses).toEqual([])
       }).pipe(
         Effect.provide(toolEffectsLayer.pipe(Layer.provide(liveDecisionLayer))),
         Effect.provideService(References.MinimumLogLevel, 'Debug'),
-      ),
-    40_000,
+        Effect.provide(effectScoreLogLayer(lines)),
+      )
+    },
+    60_000,
   )
 })

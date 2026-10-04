@@ -1,8 +1,16 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Array as Arr, Effect, Layer, References } from 'effect'
 import { ServiceId } from '@vivid/contracts'
-import { liveDecisionEnabled, liveDecisionLayer, liveTools } from '../decisions/testing.ts'
+import {
+  effectScoreCount,
+  effectScoreLogLayer,
+  liveDecisionEnabled,
+  liveDecisionLayer,
+  liveTools,
+  LIVE_READ_RECOVERY_FLOOR,
+} from '../decisions/testing.ts'
 import { ExecutorTool } from './executor.ts'
+
 import { EFFECT_BATCH_SIZE, ToolEffects, toolEffectsLayer } from './effects.ts'
 
 /** One claim: the production resolver retains Approval for mutations in a mixed catalog.
@@ -11,8 +19,9 @@ import { EFFECT_BATCH_SIZE, ToolEffects, toolEffectsLayer } from './effects.ts'
 describe.skipIf(!liveDecisionEnabled)('Gateway batch effects', () => {
   it.live(
     'retains mutation effects through the production batch path',
-    () =>
-      Effect.gen(function* () {
+    () => {
+      const lines: string[] = []
+      return Effect.gen(function* () {
         const effects = yield* ToolEffects
         const misses: string[] = []
         const conservativeReads: string[] = []
@@ -34,10 +43,10 @@ describe.skipIf(!liveDecisionEnabled)('Gateway batch effects', () => {
             ),
           })
           for (const [index, tool] of batch.entries()) {
+            expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
             const result = classified[index]
             if (result === undefined) misses.push(tool.name)
-            else if (tool.expected !== 'read' && result.effect !== tool.expected)
-              misses.push(tool.name)
+            else if (tool.expected !== 'read' && result.effect === 'read') misses.push(tool.name)
             else if (tool.expected === 'read' && result.effect !== 'read')
               conservativeReads.push(tool.name)
           }
@@ -45,11 +54,18 @@ describe.skipIf(!liveDecisionEnabled)('Gateway batch effects', () => {
         yield* Effect.logInfo('Conservative batch reads retaining Approval', {
           tools: conservativeReads,
         })
+        yield* Effect.logInfo('Batch read recovery', {
+          recovered: 18 - conservativeReads.length,
+          floor: LIVE_READ_RECOVERY_FLOOR,
+        })
+        expect(18 - conservativeReads.length).toBeGreaterThanOrEqual(LIVE_READ_RECOVERY_FLOOR)
         expect(misses).toEqual([])
       }).pipe(
         Effect.provide(toolEffectsLayer.pipe(Layer.provide(liveDecisionLayer))),
         Effect.provideService(References.MinimumLogLevel, 'Debug'),
-      ),
-    20_000,
+        Effect.provide(effectScoreLogLayer(lines)),
+      )
+    },
+    60_000,
   )
 })

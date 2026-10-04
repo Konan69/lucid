@@ -1,7 +1,7 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { Clock, Deferred, Effect, Fiber, Layer, Predicate, Ref, Schema } from 'effect'
 import { ScriptedAnswer } from '../decisions/testing.ts'
-import { AiError, DecisionModel } from 'effect/unstable/ai'
+import { DecisionModel } from 'effect/unstable/ai'
 import { RELEVANCE_BUDGET } from './relevance.ts'
 import { toolEffectsLayer } from './effects.ts'
 import * as TestClock from 'effect/testing/TestClock'
@@ -11,9 +11,6 @@ import { ExecutorTool } from './executor.ts'
 import { ConnectionStore } from './store.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
 import { connectionRunner, findTools, resolveTool, useTool } from './tools.ts'
-
-/** Scripted provider state is an actual JSON ingress, decoded once with a shared codec. */
-const decodeEffectInput = Schema.decodeUnknownEffect(Schema.Struct({ tool: Schema.String }))
 
 /** Discovery uses real scoped records; suffixes must remain stable across ranking queries and ownership. */
 describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
@@ -585,26 +582,19 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         const modelLayer = Layer.effect(
           DecisionModel.DecisionModel,
           DecisionModel.make({
-            decide: Effect.fn('Test.requestedEffect')(function* ({ state }) {
-              const input = yield* decodeEffectInput(state).pipe(
-                Effect.mapError(() =>
-                  AiError.make({
-                    module: 'Test',
-                    method: 'decide',
-                    reason: new AiError.InvalidUserInputError({ description: 'Invalid fixture' }),
-                  }),
-                ),
-              )
-              names.push(input.tool)
-              return {
+            decide: Effect.fn('Test.requestedEffect')(({ decisions }) => {
+              const questions = Object.values(decisions)
+              expect(questions).toHaveLength(1)
+              for (const question of questions) names.push(question.instructions)
+              return Effect.succeed({
                 answers: {
-                  effect: ScriptedAnswer.cases.Classify.make({
+                  tool_0: ScriptedAnswer.cases.Classify.make({
                     label: 'read',
                     probabilities: { read: 0.99, write: 0.01, destructive: 0 },
                   }),
                 },
                 usage: { inputTokens: undefined, outputTokens: undefined },
-              }
+              })
             }),
           }),
         )
@@ -627,7 +617,9 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               input: {},
             }),
           })
-          expect(names).toEqual(['lookup_0', 'lookup_1', 'lookup_2'])
+          expect(names).toHaveLength(3)
+          for (const [index, question] of names.entries())
+            expect(question).toContain(`"tool":"lookup_${index}"`)
         }).pipe(Effect.provide(Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer)))))
       }),
     )

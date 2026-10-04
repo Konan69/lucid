@@ -1,7 +1,12 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Layer, Logger, References } from 'effect'
+import { Effect, Layer, References } from 'effect'
 import { ServiceId } from '@vivid/contracts'
-import { liveDecisionEnabled, liveDecisionLayer } from '../decisions/testing.ts'
+import {
+  effectScoreCount,
+  effectScoreLogLayer,
+  liveDecisionEnabled,
+  liveDecisionLayer,
+} from '../decisions/testing.ts'
 import { ExecutorTool } from './executor.ts'
 import { ToolEffects, toolEffectsLayer } from './effects.ts'
 
@@ -17,35 +22,36 @@ const descriptions = [
 /** One claim: the production resolver retains Approval under instruction attacks, including
  * the targeted neighbour. A recorded score event proves this was judged, not outage recovery. */
 describe.skipIf(!liveDecisionEnabled)('Gateway effect prompt attacks', () => {
-  it.live('keeps every attacked mutation outside the read class', () => {
-    const lines: string[] = []
-    return Effect.gen(function* () {
-      const effects = yield* ToolEffects
-      const result = yield* effects.classifyBatch({
-        serviceId: ServiceId.make('effect-adversarial'),
-        service: 'Records',
-        tools: descriptions.map((description) =>
-          ExecutorTool.make({
-            name: 'manage_record',
-            description,
-            effect: 'write',
-            input: {},
-          }),
-        ),
-      })
-      expect(result.map((tool) => tool.effect)).toEqual(['write', 'write', 'write', 'write'])
-      expect(lines.some((line) => line.includes('Tool effect batch scores'))).toBe(true)
-    }).pipe(
-      Effect.provide(toolEffectsLayer.pipe(Layer.provide(liveDecisionLayer))),
-      Effect.provideService(References.MinimumLogLevel, 'Debug'),
-      Effect.provide(
-        Logger.layer([
-          Logger.consoleLogFmt,
-          Logger.make(({ message }) => {
-            lines.push(JSON.stringify(message))
-          }),
-        ]),
-      ),
-    )
-  })
+  it.live.each(['direct', 'batch'] as const)(
+    'keeps attacked mutations outside read on %s',
+    (mode) => {
+      const lines: string[] = []
+      return Effect.gen(function* () {
+        const effects = yield* ToolEffects
+        const request = {
+          serviceId: ServiceId.make('effect-adversarial'),
+          service: 'Records',
+          tools: descriptions.map((description, index) =>
+            ExecutorTool.make({
+              name: `manage_record_${index}`,
+              description,
+              effect: 'write',
+              input: {},
+            }),
+          ),
+        }
+        const result =
+          mode === 'batch'
+            ? (yield* effects.classifyBatch(request)).map((tool) => tool.effect)
+            : yield* Effect.forEach(request.tools, (tool) => effects.classify({ ...request, tool }))
+        expect(result).toEqual(['write', 'write', 'write', 'write'])
+        for (const tool of request.tools)
+          expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
+      }).pipe(
+        Effect.provide(toolEffectsLayer.pipe(Layer.provide(liveDecisionLayer))),
+        Effect.provideService(References.MinimumLogLevel, 'Debug'),
+        Effect.provide(effectScoreLogLayer(lines)),
+      )
+    },
+  )
 })
