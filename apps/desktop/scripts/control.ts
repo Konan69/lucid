@@ -24,7 +24,7 @@ import { PagesRequest, ShowingTab, UsedTab, type Tab } from '../src/shared/pages
 /**
  * The real executor, inside real Electron, against real pages. Nothing here is scripted: every
  * assertion is on what the page, the Browser or the network actually did. Run by
- * `src/main/driver.test.ts` under `xvfb-run`, in a disposable profile.
+ * `src/main/driver.live.test.ts` under `xvfb-run`, in a disposable profile.
  *
  * It needs the public internet: `https://example.com` for the pages, and
  * `https://httpbin.org/redirect-to` for a public address that redirects to this computer.
