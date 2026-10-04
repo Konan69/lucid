@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, exists, inArray, isNull, or, sql, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm'
 import * as Array from 'effect/Array'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
@@ -14,7 +14,6 @@ import {
   NotFound,
   type OpenFirstThreadResult,
   ShareThreadRequest,
-  Workspace,
   type CompanyId,
   type CreateThreadRequest,
   type PatchThreadRequest,
@@ -34,6 +33,7 @@ import {
   canSee,
   decodeThread,
   findThread,
+  reachedBy,
   type StoredAudience,
   type StoredThread,
 } from './access.ts'
@@ -129,21 +129,11 @@ export class ThreadStore extends Context.Service<ThreadStore, ThreadStoreService
 ) {}
 
 /**
- * The SQL form of `canSee` for a whole list. It must say exactly what `threads/access.ts` says for
- * one Thread: in a personal space only the creator's own; in a Company, shared with everyone,
- * created by the Person, or shared with them by name.
+ * Workspace limits navigation; current Membership and audience limit reach even for a stale Actor.
+ * Rows are decoded next, so reachedBy retains the creator's DatabaseFailure for corrupt audiences.
  */
-const visibleTo = (actor: Actor): SQL => {
-  const me = actor.person.id
-  const scope = inWorkspace(threads, actor)
-  if (!Workspace.guards.Company(actor.workspace)) return scope
-  const participates = exists(
-    sql`(select 1 from ${threadParticipants} where ${threadParticipants.threadId} = ${threads.id} and ${threadParticipants.personId} = ${me})`,
-  )
-  const reach = or(eq(threads.audience, 'company'), eq(threads.personId, me), participates)
-  // `and` only returns undefined for an empty list, which this is not.
-  return and(scope, reach) ?? scope
-}
+const visibleTo = (actor: Actor): SQL =>
+  sql`(${inWorkspace(threads, actor)} and ${reachedBy(actor.person.id)})`
 
 const makeList = (database: DatabaseService) =>
   Effect.fn('ThreadStore.list')(function* (actor: Actor) {
@@ -218,7 +208,8 @@ const makeEnsure = (database: DatabaseService) =>
  * Effect rc.116 unstable/sql/SqlClient.ts:162-171,285-300 resolves each statement's connection
  * from fiber context; Drizzle effect-postgres/session.js:14-29 installs it for the callback.
  * Existing Database readers therefore join this transaction without casting tx to Database or
- * replacing the transaction service with a captured context. Key share leaves touch unblocked.
+ * replacing the transaction service with a captured context. Key share leaves touch unblocked:
+ * it stops deletion and key changes only; today's sharing writers wait because they take FOR UPDATE.
  */
 const lockThread = (database: DatabaseService) =>
   Effect.fn('ThreadStore.lock')(function* (
@@ -231,7 +222,7 @@ const lockThread = (database: DatabaseService) =>
     const row = rows[0]
     if (row === undefined) return yield* Effect.fail(new NotFound({ message: 'Thread not found' }))
     const thread = yield* decodeThread(row)
-    if (!(yield* canSee(thread, personId).pipe(Effect.provideService(Database, database))))
+    if (!(yield* canSee(thread.id, personId).pipe(Effect.provideService(Database, database))))
       return yield* Effect.fail(new NotFound({ message: 'Thread not found' }))
     return thread
   })
@@ -331,7 +322,7 @@ const makeCreate = (database: DatabaseService) =>
           )
             return yield* idTaken()
           if (
-            !(yield* canSee(existing.value, personId).pipe(
+            !(yield* canSee(existing.value.id, personId).pipe(
               Effect.provideService(Database, database),
             ))
           )
@@ -339,7 +330,7 @@ const makeCreate = (database: DatabaseService) =>
           return yield* makeView(database)(existing.value, personId)
         }
         const stored = yield* decodeThread(row)
-        if (!(yield* canSee(stored, personId).pipe(Effect.provideService(Database, database))))
+        if (!(yield* canSee(stored.id, personId).pipe(Effect.provideService(Database, database))))
           return yield* Effect.fail(
             new Forbidden({ message: 'You are not a Member of this Company' }),
           )

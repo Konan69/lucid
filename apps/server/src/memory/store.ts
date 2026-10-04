@@ -492,7 +492,7 @@ const visibleThreadScopes = Effect.fn('MemoryAccess.visibleThreads')(function* (
     if (!key.startsWith('thread:')) continue
     const thread = yield* findThread(ThreadId.make(key.slice('thread:'.length)))
     if (Option.isNone(thread) || thread.value.audience === 'private') continue
-    if (inMemoryWorkspace(actor, thread.value) && (yield* canSee(thread.value, actor.person.id)))
+    if (inMemoryWorkspace(actor, thread.value) && (yield* canSee(thread.value.id, actor.person.id)))
       visible.push(key)
   }
   return visible
@@ -624,7 +624,7 @@ const mayWriteRecord = Effect.fn('MemoryAccess.mayWriteRecord')(function* (
         return (
           Option.isSome(thread) &&
           inMemoryWorkspace(actor, thread.value) &&
-          (yield* canSee(thread.value, actor.person.id))
+          (yield* canSee(thread.value.id, actor.person.id))
         )
       }),
   })

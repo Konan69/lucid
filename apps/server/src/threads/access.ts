@@ -1,4 +1,5 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, exists, inArray, isNull, sql, type SQL } from 'drizzle-orm'
+import type { PgColumn } from 'drizzle-orm/pg-core'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
@@ -47,8 +48,18 @@ export const findThread = Effect.fn('Threads.find')(function* (id: ThreadIdType)
   return row === undefined ? Option.none<StoredThread>() : Option.some(yield* decodeThread(row))
 })
 
+/** Only the named audience widens reach through participants; leftover rows never grant access. */
+const beside = (personId: PersonId) =>
+  ({
+    private: sql`false`,
+    people: exists(
+      sql`(select 1 from ${threadParticipants} where ${threadParticipants.threadId} = ${threads.id} and ${threadParticipants.personId} = ${personId})`,
+    ),
+    company: sql`true`,
+  }) satisfies { readonly [A in StoredAudience]: SQL }
+
 /**
- * Whether a Person may read a Thread and send into it.
+ * The reach rule over the Thread row in scope, for readers that decode the row afterwards.
  *
  * A personal-space Thread is its creator's alone. A Company Thread needs a current Membership in
  * that Company first, and then one of: the Thread is shared with the whole Company, the Person
@@ -57,35 +68,46 @@ export const findThread = Effect.fn('Threads.find')(function* (id: ThreadIdType)
  *
  * The Membership is read here, against the Thread's own Company, and not taken from the caller's
  * active workspace: a link opened from another workspace is judged by the same rule.
+ * Keep creator reach on an invalid audience so ThreadStore.list still reports DatabaseFailure at
+ * decode. StoredAudience.literals (rc.116 Schema.ts#Literals) drives every SQL comparison; beside's
+ * exhaustive record forces any new audience to state its rule. Column chunks preserve Membership's
+ * camelCase column names (Drizzle sql/sql.js#SQL.collectSQL).
  */
-export const canSee = Effect.fn('Threads.canSee')(function* (
-  thread: StoredThread,
-  personId: PersonId,
-) {
-  if (thread.companyId === null) return thread.personId === personId
+export const reachedBy = (personId: PersonId): SQL => {
+  const member = exists(
+    sql`(select 1 from ${membershipTable} where ${membershipTable.companyId} = ${threads.companyId} and ${membershipTable.userId} = ${personId})`,
+  )
+  const additions = beside(personId)
+  const audiences = StoredAudience.literals.map(
+    (audience) => sql`(${eq(threads.audience, audience)} and ${additions[audience]})`,
+  )
+  return sql`((${isNull(threads.companyId)} and ${eq(threads.personId, personId)}) or (${member} and (${eq(threads.personId, personId)} or (${sql.join(audiences, sql` or `)}))))`
+}
+
+/**
+ * Fail closed when a reader never decodes the Thread row: corruption must not leak its notices.
+ * Once audience is a database enum, remove this vocabulary guard and reachedBy's separate export.
+ */
+export const readableBy = (personId: PersonId): SQL =>
+  sql`(${inArray(threads.audience, StoredAudience.literals)} and ${reachedBy(personId)})`
+
+/** A nullable Thread reference grants nothing when absent, deleted, corrupt or outside current reach. */
+export const readableThread = (thread: PgColumn, personId: PersonId): SQL =>
+  exists(
+    sql`(select 1 from ${threads} where ${threads.id} = ${thread} and ${readableBy(personId)})`,
+  )
+
+/** Whether requireThread would admit this Person now; absent and corrupt rows both return false. */
+export const canSee = Effect.fn('Threads.canSee')(function* (id: ThreadIdType, personId: PersonId) {
   const database = yield* Database
-  const memberships = yield* database.run(
+  const rows = yield* database.run(
     database
-      .select({ id: membershipTable.id })
-      .from(membershipTable)
-      .where(
-        and(eq(membershipTable.companyId, thread.companyId), eq(membershipTable.userId, personId)),
-      )
+      .select({ value: sql<number>`1` })
+      .from(threads)
+      .where(and(eq(threads.id, id), readableBy(personId)))
       .limit(1),
   )
-  if (memberships.length === 0) return false
-  if (thread.audience === 'company' || thread.personId === personId) return true
-  if (thread.audience === 'private') return false
-  const participants = yield* database.run(
-    database
-      .select({ personId: threadParticipants.personId })
-      .from(threadParticipants)
-      .where(
-        and(eq(threadParticipants.threadId, thread.id), eq(threadParticipants.personId, personId)),
-      )
-      .limit(1),
-  )
-  return participants.length > 0
+  return rows.length > 0
 })
 
 /**
@@ -97,7 +119,7 @@ export const requireThread = Effect.fn('Threads.require')(function* (
   personId: PersonId,
 ) {
   const thread = yield* findThread(id)
-  if (Option.isNone(thread) || !(yield* canSee(thread.value, personId))) {
+  if (Option.isNone(thread) || !(yield* canSee(id, personId))) {
     return yield* Effect.fail(new NotFound({ message: 'Thread not found' }))
   }
   return thread.value
