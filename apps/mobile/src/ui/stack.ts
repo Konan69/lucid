@@ -9,9 +9,12 @@ import { GLASS_SUPPORTED } from './Glass'
  * pop, sheet or modal; nothing here is animated from JavaScript.
  *
  * Ported from T3 Code mobile `src/Stack.tsx` (`GLASS_HEADER_OPTIONS`, `SOLID_HEADER_OPTIONS`,
- * the sheet variants, and the `simple_push` note beside its root navigator). Two things differ:
- * - `unstable_navigationItemStyle: 'editor'` is left out. The pinned
- *   `@react-navigation/native-stack` has no such option.
+ * the sheet variants, and the `simple_push` note beside its root navigator) and
+ * `src/native/scrollEdgeEffects.ts` (`nativeHeaderScrollEdgeEffects`). Two things differ:
+ * - `unstable_navigationItemStyle: 'editor'` is left out. The reference gets it from its patches
+ *   to `@react-navigation/native-stack` and to the Objective-C of `react-native-screens`
+ *   (`RNSScreenStackHeaderConfig.mm`); Vivid's pinned, unpatched packages have no such option, and
+ *   a native change cannot reach an installed app over the air.
  * - The title's weight is carried by `HEADER_TITLE`, in Vivid's type scale.
  */
 
@@ -19,8 +22,25 @@ import { GLASS_SUPPORTED } from './Glass'
 const HEADER_TITLE = { fontSize: 18, fontWeight: '800' } as const
 
 /**
- * A transparent bar over a screen whose own content scrolls under it. Where the system has no
- * glass the bar is solid and the content is laid out below it instead of under it.
+ * What the system draws where content meets an edge of the screen (iOS 26 and later). Under the
+ * bar it is UIKit's own choice, which is the fade that keeps a title readable over rows scrolling
+ * beneath it; the other three edges have no bar and get nothing.
+ *
+ * The reference's `nativeHeaderScrollEdgeEffects`. It answers `automatic` for the top on every
+ * platform and version (its note: forcing `soft` made the bar read as a local overlay instead of
+ * sampling the content edge to edge), so the value is written out here instead of computed.
+ */
+const SCROLL_EDGES = {
+  top: 'automatic',
+  bottom: 'hidden',
+  left: 'hidden',
+  right: 'hidden',
+} as const
+
+/**
+ * A transparent bar over a screen whose own content scrolls under it: the system's navigation
+ * bar, so on iOS 26 the way back and every bar item are its own liquid-glass buttons. Where the
+ * system has no glass the bar is solid and the content is laid out below it instead of under it.
  */
 export const GLASS_HEADER = {
   headerShown: true,
@@ -31,6 +51,7 @@ export const GLASS_HEADER = {
   headerTitleStyle: HEADER_TITLE,
   headerTransparent: GLASS_SUPPORTED,
   headerStyle: GLASS_SUPPORTED ? { backgroundColor: 'transparent' } : undefined,
+  scrollEdgeEffects: GLASS_SUPPORTED ? SCROLL_EDGES : undefined,
 } satisfies NativeStackNavigationOptions
 
 /** An opaque bar, for a screen whose content scrolls inside itself and gives glass nothing to sample. */

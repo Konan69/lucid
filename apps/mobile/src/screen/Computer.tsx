@@ -8,9 +8,9 @@ import { standingOf } from '../data/computer'
 import { commit } from '../data/haptics'
 import { LiveState, useLive, useLiveData, type LiveData } from '../data/live'
 import { useTheme } from '../theme'
-import { Header, Screen } from '../ui/Header'
+import { NO_ACTIONS, StandingBar } from '../ui/Bar'
+import { Screen } from '../ui/Screen'
 import { Button, Dot, EDGE, Face, Label, Notice, radius, styles } from '../ui/ui'
-import { useGo } from '../workspace'
 
 /**
  * Turning the computer on. The screen shows it starting at once, and puts it back with the reason
@@ -67,20 +67,25 @@ const hold = (data: LiveData, held: boolean) =>
  */
 export function Computer() {
   const data = useLiveData()
-  const go = useGo()
   const state = useLive(data.live.computer)
   const computer = LiveState.$is('Ready')(state) ? Option.some(state.value.computer) : Option.none()
   return (
     <Screen>
-      <Header
+      <StandingBar
         title="Vivid’s computer"
-        subtitle={Option.match(computer, {
-          onNone: () => 'Looking for your computer…',
-          onSome: (value) => standingOf(value).glass,
-        })}
-        onBack={go.goBack}
+        standing={{
+          words: Option.match(computer, {
+            onNone: () => 'Looking for your computer…',
+            onSome: (value) => standingOf(value).glass,
+          }),
+          tone: 'ink-3',
+        }}
+        mood={Option.none()}
+        present={[]}
+        actions={NO_ACTIONS}
       />
       <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={[styles.page, styles.column, { flexGrow: 1, paddingTop: 12 }]}
       >
         {page(state)}
