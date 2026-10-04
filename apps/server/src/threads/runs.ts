@@ -99,8 +99,11 @@ export const actingRun = Effect.fn('RunStore.actingRun')(function* (
   return run.id
 })
 
-/** How many of a Person's newest Runs in a Thread the reviewer looks back over (`requestRuns`). */
-const REQUEST_RUNS = 20
+/**
+ * How many of a Person's newest Runs in a Thread the reviewer looks back over (`requestRuns`).
+ * Exported so the reader can tell a complete turn from one this window cut off.
+ */
+export const REQUEST_RUNS = 20
 
 /** One admitted Run acting for a Person: whether it is the turn in progress, and why it started. */
 export interface RequestRun {
