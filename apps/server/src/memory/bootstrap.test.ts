@@ -1,7 +1,6 @@
 import { NodeHttpClient } from '@effect/platform-node'
-import { it } from '@effect/vitest'
-import { ConfigProvider, Effect } from 'effect'
-import { TestClock } from 'effect/testing'
+import { layer } from '@effect/vitest'
+import { ConfigProvider, Effect, Layer } from 'effect'
 import { describe, expect } from 'vitest'
 import { HelixMemory, helixMemoryLayer, MemoryPartition, MemoryScopeKey } from './helix.js'
 
@@ -11,35 +10,34 @@ const configuration = ConfigProvider.layerAdd(
   { asPrimary: true },
 )
 
-/** The layer must create its lookup index before checking it, and repeated acquisition must keep empty reads valid. */
-const emptyReads = Effect.fn('MemoryTest.bootstrap')(
-  function* () {
-    const helix = yield* HelixMemory
-    const partition = MemoryPartition.make('p-bootstrap-read-only')
-    expect(yield* helix.scopes(partition)).toEqual([])
-    expect(yield* helix.list({ partition, scopes: [MemoryScopeKey.make('company')] })).toEqual([])
-  },
-  (effect) => effect.pipe(Effect.provide(helixMemoryLayer)),
+const adapters = helixMemoryLayer.pipe(
+  Layer.provideMerge(NodeHttpClient.layerUndici),
+  Layer.provide(configuration),
 )
 
-/**
- * The first acquisition on empty Helix storage waits until every index build has succeeded
- * (`readyIndexes`); that is a real signal, not a sleep, and on a new database it takes longer than
- * the default per-test limit. Later acquisitions find the indexes active.
- */
-const COLD_INDEX_BUILD = { timeout: 60_000 }
+/** The layer must create its lookup index before checking it, and repeated acquisition must keep empty reads valid. */
+const emptyReads = Effect.fn('MemoryTest.bootstrap')(function* () {
+  const helix = yield* HelixMemory
+  const partition = MemoryPartition.make('p-bootstrap-read-only')
+  expect(yield* helix.scopes(partition)).toEqual([])
+  expect(yield* helix.list({ partition, scopes: [MemoryScopeKey.make('company')] })).toEqual([])
+})
+
+/** Suite acquisition waits for all thirteen real index-build success signals on empty storage; assertion limits stay unchanged. */
+const INDEX_ACQUISITION_LIMIT = 60_000
 
 /** Run this on a freshly started, in-memory instance to prove first boot without fixtures, embeddings, or credentials. */
-describe.skipIf(url === undefined)('Helix bootstrap', COLD_INDEX_BUILD, () => {
-  it.effect('acquires and re-acquires indexed reads before any record exists', () =>
-    Effect.gen(function* () {
-      yield* emptyReads()
-      yield* emptyReads()
-    }).pipe(
-      Effect.provide(NodeHttpClient.layerUndici),
-      Effect.provide(configuration),
-      // Acquisition waits on real index builds through a Schedule; a controlled clock never advances it.
-      TestClock.withLive,
-    ),
+describe.skipIf(url === undefined)('Helix bootstrap', () => {
+  layer(adapters, { timeout: INDEX_ACQUISITION_LIMIT, excludeTestServices: true })(
+    'indexed storage',
+    (it) => {
+      it.effect('acquires and re-acquires indexed reads before any record exists', () =>
+        Effect.gen(function* () {
+          yield* emptyReads()
+          // The setup proved first acquisition; a separate acquisition must preserve empty indexed reads.
+          yield* emptyReads().pipe(Effect.provide(adapters, { local: true }))
+        }),
+      )
+    },
   )
 })
