@@ -258,6 +258,9 @@ the screen union belongs to its own lane. Flue placement and external state sync
 The browser and desktop now share Boat’s shipped guest. Running Vivid’s Flue runtime inside that
 guest remains a separate step. The intended shape follows.
 
+2026-10-04: the runtime that moves into the guest is Pi Durable, not Flue. The decision, the
+comparison and the migration are in [The runtime moves to the Computer](25-runtime-on-computer.md).
+
 The Computer is not a harness the agent calls out to. It is the machine the agent already lives on
 — `CONTEXT.md`: "the persistent private machine Vivid operates: filesystem, processes, browser
 identity, and desktop. Its ordinary POSIX disk is live truth." A harness hands the agent fragments

@@ -2,6 +2,8 @@
 
 2026-10-03: Historical runtime research; PostgreSQL and Flue 2.2.2/pi 0.87.1 supersede the Node/SQLite plan, models use the Experiential Labs gateway without Vivid-owned retries, and current boundaries live in [docs/14](14-product-feature-set-and-grok-bot-parity.md) and the server/runtime READMEs.
 
+2026-10-04: The Flue selection below is superseded. Pi Durable on the Person's Computer replaces Flue; see [The runtime moves to the Computer](25-runtime-on-computer.md). Flue still runs until that branch lands.
+
 Status: Flue Node selected, 2 September 2026. Cloud and executor adapters remain replaceable.
 
 ## The answer
