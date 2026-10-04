@@ -1291,11 +1291,8 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
     }
   })
   const inspections = yield* Cache.makeWith(
-    Effect.fn('Executor.inspectAuthorization')(function* (input: {
-      readonly service: ServiceId
-      readonly returnAddress: string
-    }) {
-      const entry = (yield* catalog()).find((candidate) => candidate.id === input.service)
+    Effect.fn('Executor.inspectAuthorization')(function* (service: ServiceId) {
+      const entry = (yield* catalog()).find((candidate) => candidate.id === service)
       if (entry === undefined)
         return yield* Effect.fail(
           ExecutorRejected.make({
@@ -1305,7 +1302,7 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
           }),
         )
       if (ServiceAuthorization.guards.None(entry.authorization)) return entry.authorization
-      const definition = HashMap.get(yield* Ref.get(definitions), input.service)
+      const definition = HashMap.get(yield* Ref.get(definitions), service)
       if (Option.isNone(definition)) return entry.authorization
       const authorization = yield* permits.withPermits(1)(
         inspect(definition.value).pipe(
@@ -1313,15 +1310,15 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
           Effect.catchTag('TimeoutError', () =>
             Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
           ),
-          Effect.tap((value) => record(input.service, value, Option.none())),
+          Effect.tap((value) => record(service, value, Option.none())),
           Effect.catch(
             Effect.fn('Executor.unavailableSetup')(function* (error) {
               if (isSetupRequired(error)) {
                 const unavailable = ServiceAuthorization.cases.SetupRequired.make({})
-                yield* record(input.service, unavailable, Option.none())
+                yield* record(service, unavailable, Option.none())
                 return unavailable
               }
-              yield* record(input.service, entry.authorization, Option.some(error._tag))
+              yield* record(service, entry.authorization, Option.some(error._tag))
               return yield* Effect.fail(error)
             }),
           ),
@@ -1342,16 +1339,9 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
     ) {
       const requirement = yield* accountRequirement(app)
       yield* Ref.update(definitions, (current) => HashMap.set(current, input.service, requirement))
-      yield* Cache.invalidate(inspections, {
-        service: input.service,
-        returnAddress: input.returnAddress,
-      })
+      yield* Cache.invalidate(inspections, input.service)
       const entry = (yield* catalog()).find((candidate) => candidate.id === input.service)
-      if (entry !== undefined)
-        return yield* Cache.get(inspections, {
-          service: input.service,
-          returnAddress: input.returnAddress,
-        })
+      if (entry !== undefined) return yield* Cache.get(inspections, input.service)
       const authorization = yield* inspect(requirement).pipe(
         Effect.timeout('5 seconds'),
         Effect.catchTag('TimeoutError', () =>
@@ -1363,23 +1353,37 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
     }),
     authorization: Effect.fn('Executor.authorization')(
       (input: { readonly service: ServiceId; readonly returnAddress: string }) =>
-        Cache.get(inspections, input),
+        Cache.get(inspections, input.service),
     ),
+    /** Retained facts are a display snapshot, not permanent setup policy. Revisit known
+     * definitions through the existing ten-minute inspection cache on normal catalogue reads.
+     * The setup endpoint does not depend on callback URL, so ServiceId is its canonical key.
+     * Failed inspections retain zero TTL and propagate, so the next read can recover.
+     */
     catalog: Effect.fn('Executor.availableCatalog')(function* () {
       const entries = yield* catalog()
       const current = yield* Ref.get(facts)
-      return entries.map((entry) =>
-        HashMap.get(current, entry.id).pipe(
-          Option.match({
-            onNone: () => entry,
-            onSome: (authorization) => ExecutorServiceEntry.make({ ...entry, authorization }),
-          }),
-        ),
+      const known = yield* Ref.get(definitions)
+      return yield* Effect.forEach(
+        entries,
+        Effect.fn('Executor.refreshAvailability')(function* (entry) {
+          const previous = HashMap.get(current, entry.id)
+          if (Option.isNone(previous)) return entry
+          if (!HashMap.has(known, entry.id))
+            return ExecutorServiceEntry.make({ ...entry, authorization: previous.value })
+          const authorization = yield* Cache.get(inspections, entry.id)
+          return ExecutorServiceEntry.make({ ...entry, authorization })
+        }),
+        { concurrency: 4 },
       )
     }),
-    recordSetupRequired: Effect.fn('Executor.recordSetupRequired')((service: ServiceId) =>
-      record(service, ServiceAuthorization.cases.SetupRequired.make({}), Option.none()),
-    ),
+    /** A failed sign-in supersedes a cached positive answer. The next normal read must inspect
+     * the provider again instead of restoring that stale answer over the explicit failure.
+     */
+    recordSetupRequired: Effect.fn('Executor.recordSetupRequired')(function* (service: ServiceId) {
+      yield* Cache.invalidate(inspections, service)
+      yield* record(service, ServiceAuthorization.cases.SetupRequired.make({}), Option.none())
+    }),
   }
 })
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { ConnectionId, InvalidRequest, ServiceId } from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer, Redacted, Ref, Schema, Deferred, Fiber } from 'effect'
+import * as TestClock from 'effect/testing/TestClock'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import {
   Executor,
@@ -726,6 +727,76 @@ describe('Executor hosted transport', () => {
         ).toMatchObject({ body: { method: 'oauth' } })
       }),
     ),
+  )
+
+  it.effect('refreshes setup-required catalogue facts after the existing inspection TTL', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        yield* Ref.set(remote.accounts, signInRequirement)
+        yield* failRoute(remote, 'GET /providers/provider/oauth/oauth/setup', {
+          status: 200,
+          body: { mode: 'client-required' },
+        })
+        const executor = yield* Executor
+        expect(yield* executor.begin(begin).pipe(Effect.flip)).toBeInstanceOf(ExecutorSetupRequired)
+        expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        const reads = (yield* Ref.get(remote.requests)).filter((request) =>
+          request.path.endsWith('/oauth/oauth/setup'),
+        ).length
+        yield* Ref.set(remote.replies, new Map())
+        yield* TestClock.adjust('9 minutes')
+        expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        expect(
+          yield* executor.authorization({
+            service: hostedService,
+            returnAddress: 'https://other.example.test/return',
+          }),
+        ).toHaveProperty('_tag', 'SetupRequired')
+        expect(
+          (yield* Ref.get(remote.requests)).filter((request) =>
+            request.path.endsWith('/oauth/oauth/setup'),
+          ),
+        ).toHaveLength(reads)
+        yield* TestClock.adjust('1 minute')
+        expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+        expect(
+          (yield* Ref.get(remote.requests)).filter((request) =>
+            request.path.endsWith('/oauth/oauth/setup'),
+          ),
+        ).toHaveLength(reads + 1)
+        expect((yield* executor.begin(begin))._tag).toBe('OpenSignIn')
+      }),
+    ),
+  )
+
+  it.effect(
+    'invalidates a positive setup inspection when sign-in reports missing OAuth setup',
+    () =>
+      scenario((remote) =>
+        Effect.gen(function* () {
+          yield* Ref.set(remote.accounts, signInRequirement)
+          yield* failRoute(remote, 'POST /connections/authorization/oauth/start', {
+            status: 409,
+            body: { _tag: 'OAuthClientUnavailable' },
+          })
+          const executor = yield* Executor
+          expect(yield* executor.begin(begin).pipe(Effect.flip)).toHaveProperty(
+            '_tag',
+            'ExecutorSignInRequired',
+          )
+          yield* failRoute(remote, 'GET /providers/provider/oauth/oauth/setup', {
+            status: 200,
+            body: { mode: 'client-required' },
+          })
+          expect((yield* executor.catalog())[0]).toHaveProperty(
+            'authorization._tag',
+            'SetupRequired',
+          )
+          yield* Ref.set(remote.replies, new Map())
+          yield* TestClock.adjust('10 minutes')
+          expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+        }),
+      ),
   )
 
   it.effect('inspects OAuth setup and starts with the matching deployment redirect', () =>
