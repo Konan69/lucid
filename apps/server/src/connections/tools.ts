@@ -32,7 +32,7 @@ import {
 import { callableTool, discoveredTool } from '../code/signatures.ts'
 import { executorFailure } from './errors.ts'
 import { ConnectionStore } from './store.ts'
-import { relevantTools, TOOL_CANDIDATE_LIMIT } from './relevance.ts'
+import { relevantTools } from './relevance.ts'
 import { ToolEffects } from './effects.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
 
@@ -180,19 +180,19 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     own: `${tool.name} ${tool.description}`,
     identity: `${tool.serviceName} ${tool.account}`,
   }))
-  // Zero lexical overlap must still get a semantic judgment when capacity permits.
-  const candidates =
-    available.length > TOOL_CANDIDATE_LIMIT
-      ? Arr.dedupe([...lexical, ...available]).slice(0, TOOL_CANDIDATE_LIMIT)
-      : available
-  const ordered = yield* relevantTools(request.query, candidates).pipe(
-    Effect.map((scores) => scores.map(({ tool }) => tool)),
-    Effect.catch(() =>
-      Effect.logWarning('Tool relevance unavailable; using lexical discovery').pipe(
-        Effect.as(lexical),
-      ),
-    ),
-  )
+  // No lexical candidate means no useful semantic request or provider delay.
+  const ordered =
+    lexical.length === 0
+      ? lexical
+      : yield* relevantTools(request.query, lexical).pipe(
+          Effect.map(({ ordered }) => ordered),
+          Effect.catch((error) =>
+            Effect.logWarning('Tool relevance unavailable', {
+              tag: error._tag,
+              reason: error.reason,
+            }).pipe(Effect.as(lexical)),
+          ),
+        )
   return {
     tools: yield* Effect.forEach(
       ordered.slice(0, Math.min(25, Math.floor(limit))),

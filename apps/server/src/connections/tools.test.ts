@@ -1,7 +1,8 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { Effect, Layer, Predicate, Ref, Schema } from 'effect'
+import { Deferred, Effect, Fiber, Layer, Predicate, Ref, Schema } from 'effect'
 import { ScriptedAnswer } from '../decisions/testing.ts'
 import { AiError, DecisionModel } from 'effect/unstable/ai'
+import { RELEVANCE_BUDGET } from './relevance.ts'
 import { toolEffectsLayer } from './effects.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { ActionTarget, ConnectionStep } from '@vivid/contracts'
@@ -10,10 +11,6 @@ import { ExecutorTool } from './executor.ts'
 import { ConnectionStore } from './store.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
 import { connectionRunner, findTools, resolveTool, useTool } from './tools.ts'
-
-const decodeInputs = Schema.decodeUnknownEffect(
-  Schema.Array(Schema.Struct({ tool: Schema.String })),
-)
 
 /** Discovery uses real scoped records; suffixes must remain stable across ranking queries and ownership. */
 describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
@@ -213,9 +210,8 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
       }),
     )
 
-    /** Public discovery proves batching, threshold edges, semantic matches without
-     * lexical overlap, and descending order against real scoped Connection records. */
-    it.effect('scores 45 tools in three provider calls with threshold edges', () =>
+    /** Only the lexical top twenty reach Jev; lower-scored candidates stay visible. */
+    it.effect('scores only twenty lexical candidates and retains below-threshold tools', () =>
       Effect.gen(function* () {
         const { ownerActor } = yield* fixture()
         const probe = yield* ConnectionProbe
@@ -239,37 +235,96 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         })
         const sizes: number[] = []
         const model = yield* DecisionModel.make({
-          decide: Effect.fn('Test.relevance')(function* ({ state, decisions }) {
+          decide: ({ state, decisions }) => {
+            expect(state).toEqual({ request: 'record' })
             sizes.push(Object.keys(decisions).length)
-            const inputs = yield* decodeInputs(state).pipe(
-              Effect.mapError(() =>
-                AiError.make({
-                  module: 'Test',
-                  method: 'decide',
-                  reason: new AiError.InvalidUserInputError({ description: 'Invalid fixture' }),
-                }),
+            return Effect.succeed({
+              answers: Object.fromEntries(
+                Object.keys(decisions).map((key, index) => [
+                  key,
+                  ScriptedAnswer.cases.Probability.make({ probability: index === 19 ? 0.9 : 0.1 }),
+                ]),
               ),
-            )
-            const answers: Record<string, DecisionModel.ProviderAnswer> = Object.fromEntries(
-              inputs.map((input, index) => [
-                `tool_${index}`,
-                ScriptedAnswer.cases.Probability.make({
-                  probability: Number(input.tool.replace('operation_', '')) / 100,
-                }),
-              ]),
-            )
-            return { answers, usage: { inputTokens: undefined, outputTokens: undefined } }
-          }),
+              usage: { inputTokens: undefined, outputTokens: undefined },
+            })
+          },
         })
-        const result = yield* findTools(ownerActor, {
-          query: 'semantically relevant without overlap',
-          limit: 25,
-        }).pipe(Effect.provideService(DecisionModel.DecisionModel, model))
-        expect(sizes.toSorted((left, right) => right - left)).toEqual([20, 20, 5])
-        expect(result.tools.map((tool) => tool.name)).toEqual(
-          Array.from({ length: 15 }, (_, index) => `operation_${44 - index}`),
+        const result = yield* findTools(ownerActor, { query: 'record', limit: 25 }).pipe(
+          Effect.provideService(DecisionModel.DecisionModel, model),
         )
+        expect(sizes).toEqual([20])
+        expect(result.tools.map((tool) => tool.name)).toEqual([
+          'operation_19',
+          ...Array.from({ length: 19 }, (_, index) => `operation_${index}`),
+          ...Array.from({ length: 5 }, (_, index) => `operation_${index + 20}`),
+        ])
       }),
+    )
+
+    /** Low scores cannot hide lexical candidates; time exhaustion cannot reorder them. */
+    it.effect.each(['below', 'timeout'] as const)(
+      'preserves lexical order on %s relevance',
+      (mode) =>
+        Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
+          const probe = yield* ConnectionProbe
+          const previous = yield* Ref.get(probe.tools)
+          yield* Effect.addFinalizer(() => Ref.set(probe.tools, previous))
+          yield* Ref.set(probe.tools, [
+            ExecutorTool.make({
+              name: 'list_records',
+              description: 'List records',
+              effect: 'read',
+              input: {},
+            }),
+            ExecutorTool.make({
+              name: 'search_records',
+              description: 'Search records',
+              effect: 'read',
+              input: {},
+            }),
+            ExecutorTool.make({
+              name: 'get_record',
+              description: 'Get one record',
+              effect: 'read',
+              input: {},
+            }),
+          ])
+          yield* (yield* ConnectionStore).begin(ownerActor, {
+            service: serviceId,
+            label: 'Work',
+            shared: false,
+          })
+          const started = yield* Deferred.make<void>()
+          const model = yield* DecisionModel.make({
+            decide: ({ decisions }) => {
+              if (mode === 'timeout')
+                return Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
+              return Effect.succeed({
+                answers: Object.fromEntries(
+                  Object.keys(decisions).map((key) => [
+                    key,
+                    ScriptedAnswer.cases.Probability.make({ probability: 0.1 }),
+                  ]),
+                ),
+                usage: { inputTokens: undefined, outputTokens: undefined },
+              })
+            },
+          })
+          const pending = yield* findTools(ownerActor, { query: 'search records', limit: 25 }).pipe(
+            Effect.provideService(DecisionModel.DecisionModel, model),
+            Effect.forkChild,
+          )
+          if (mode === 'timeout') {
+            yield* Deferred.await(started)
+            yield* TestClock.adjust(RELEVANCE_BUDGET)
+          }
+          expect((yield* Fiber.join(pending)).tools.map((tool) => tool.name)).toEqual([
+            'search_records',
+            'list_records',
+            'get_record',
+          ])
+        }),
     )
 
     /** Discovery and use must agree after an undeclared read is recovered from Executor's
