@@ -8,9 +8,9 @@ import {
   textingUnreached,
   thisReader,
   type Composer,
-  type TextingActs,
 } from '@vivid/state'
 import { Option } from 'effect'
+import type { TextingActs } from '../../data/texting'
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import {
   AlertDialog,

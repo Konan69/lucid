@@ -1,9 +1,9 @@
 import { ChannelStanding, type ChannelLink } from '@vivid/contracts'
-import type { TextingActs } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import type { TextingActs } from '../../data/texting'
 import { TextingChannels } from './Channel'
 
 const address = Schema.decodeSync(ChannelStanding.cases.Connected.fields.address)

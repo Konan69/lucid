@@ -95,17 +95,6 @@ export const textingRefusal = (failure: TextingFailure): string =>
   isChannelFailure(failure) ? SAID[failure._tag](failure.channel) : textingUnreached
 
 /**
- * What a connect control is given to act with, so it can be drawn with none of this attached.
- * Each answers with the one sentence to show when it was refused, and with nothing when it was not.
- */
-export interface TextingActs {
-  /** Gives the Person's number to a channel, or asks for a new code for the same number. */
-  readonly connect: (channel: Channel, written: string) => Promise<Option.Option<string>>
-  /** Takes the Person's number off a channel. */
-  readonly disconnect: (channel: Channel) => Promise<Option.Option<string>>
-}
-
-/**
  * What one connect or disconnect came to, for the client whose live list is `channels`.
  *
  * These calls are not a `change`: a channel's refusals are its own (`ChannelFailure`), and `change`

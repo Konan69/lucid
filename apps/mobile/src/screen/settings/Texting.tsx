@@ -11,7 +11,6 @@ import {
   textingUnreached,
   thisReader,
   type Composer,
-  type TextingActs,
 } from '@vivid/state'
 import { Option } from 'effect'
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
@@ -51,6 +50,21 @@ const COMPOSER: Composer = Platform.OS === 'ios' ? 'apple' : 'standard'
 const markOf = (channel: Channel) => channel.toLowerCase()
 
 type Standing<Tag extends ChannelStanding['_tag']> = Extract<ChannelStanding, { _tag: Tag }>
+
+/**
+ * What a connect control is given to act with, so it can be drawn with none of this attached.
+ * Each answers with the one sentence to show when it was refused, and with nothing when it was not.
+ *
+ * It is declared here and not beside the shared programs (`@vivid/state`), because a Promise is
+ * what an event handler awaits: that is this app's boundary, and the shared package only describes
+ * work as Effects.
+ */
+export interface TextingActs {
+  /** Gives the Person's number to a channel, or asks for a new code for the same number. */
+  readonly connect: (channel: Channel, written: string) => Promise<Option.Option<string>>
+  /** Takes the Person's number off a channel. */
+  readonly disconnect: (channel: Channel) => Promise<Option.Option<string>>
+}
 
 /** The shared programs, run on this session's socket, each answer laid over its live list. */
 const actsOf = (data: LiveData): TextingActs => {
