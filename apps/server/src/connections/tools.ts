@@ -32,6 +32,7 @@ import {
 import { callableTool, discoveredTool } from '../code/signatures.ts'
 import { executorFailure } from './errors.ts'
 import { ConnectionStore } from './store.ts'
+import { decisionConfigured } from '../decisions/model.ts'
 import { relevantTools } from './relevance.ts'
 import { ToolEffects } from './effects.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
@@ -180,9 +181,10 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     own: `${tool.name} ${tool.description}`,
     identity: `${tool.serviceName} ${tool.account}`,
   }))
-  // No lexical candidate means no useful semantic request or provider delay.
+  // No lexical candidate, or decisions switched off, means no semantic request and no delay:
+  // the lexical order is the answer, not a degraded one worth a warning.
   const ordered =
-    lexical.length === 0
+    lexical.length === 0 || !(yield* decisionConfigured)
       ? lexical
       : yield* relevantTools(request.query, lexical).pipe(
           Effect.map((ranking) => ranking.ordered),

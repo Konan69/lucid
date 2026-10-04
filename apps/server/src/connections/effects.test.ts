@@ -141,12 +141,12 @@ it.effect('cached classification expires after 24 hours', () => {
 })
 
 /** A stalled provider keeps Approval without attempting another request. */
-it.effect('ten-second classification timeout retains write', () => {
+it.effect('a stalled classification keeps write after two seconds', () => {
   let calls = 0
   return Effect.gen(function* () {
     const effects = yield* ToolEffects
     const pending = yield* effects.classify(request).pipe(Effect.forkChild)
-    yield* TestClock.adjust('10 seconds')
+    yield* TestClock.adjust('2 seconds')
     expect(yield* Fiber.join(pending)).toBe('write')
     expect(calls).toBe(1)
   }).pipe(

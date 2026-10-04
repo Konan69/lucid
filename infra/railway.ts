@@ -133,11 +133,10 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     }),
   })
 
-  /** Only the configured provider's key is sent; the server reads these two names itself. */
+  /** Sent only when the deploy sets it; otherwise the server keeps its default (off). */
   const decisionAccess = Option.match(environment.decisions, {
     onNone: () => ({}),
-    onSome: ({ provider, key }) =>
-      provider === 'TypeSafe' ? { TYPESAFE_API_KEY: key } : { OPENROUTER_API_KEY: key },
+    onSome: (value) => ({ VIVID_DECISIONS: value }),
   })
 
   /** Flue keeps its durable state in PostgreSQL, so the runtime needs no volume of its own. */
