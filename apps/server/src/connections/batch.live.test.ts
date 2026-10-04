@@ -14,7 +14,8 @@ import { ExecutorTool } from './executor.ts'
 import { ToolEffects, toolEffectsLayer } from './effects.ts'
 
 /** One claim: the production resolver retains Approval for mutations in a mixed catalog.
- * Catalogs keep their actual service identity, as production requires. This exercises batching, the actual deadline, validation, threshold and cache together;
+ * Catalogs keep their actual service identity, as production requires. This exercises
+ * batching, the actual deadline, validation, threshold and cache together;
  * attacks are a separate claim in effectsadversarial.live.test.ts. */
 describe.skipIf(!liveDecisionEnabled)('Gateway batch effects', () => {
   it.live(

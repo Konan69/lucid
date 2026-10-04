@@ -586,7 +586,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               Effect.succeed([
                 ExecutorTool.make({
                   name: `lookup_${row.label}`,
-                  description: 'Lookup records',
+                  description: 'Lookup existing records',
                   effect: 'write',
                   input: {},
                 }),
