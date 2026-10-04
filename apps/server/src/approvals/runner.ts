@@ -4,6 +4,7 @@ import { ActionTarget } from '@vivid/contracts'
 import { Database } from '../database/client.ts'
 import { ComputerStore, computerRunner } from '../computers/store.ts'
 import { Executor } from '../connections/executor.ts'
+import { ToolEffects } from '../connections/effects.ts'
 import { ConnectionStore } from '../connections/store.ts'
 import { connectionRunner } from '../connections/tools.ts'
 import { ActionRunner } from './gate.ts'
@@ -19,7 +20,9 @@ import { ActionRunner } from './gate.ts'
 export const actionRunnerLayer = Layer.effect(
   ActionRunner,
   Effect.gen(function* () {
-    const services = yield* Effect.context<Database | ConnectionStore | Executor | ComputerStore>()
+    const services = yield* Effect.context<
+      Database | ConnectionStore | Executor | ComputerStore | ToolEffects
+    >()
     return ActionRunner.of({
       run: ({ person, workspace, action }) => {
         const target = action.target

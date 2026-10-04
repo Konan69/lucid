@@ -1,5 +1,5 @@
 import { expect, it } from '@effect/vitest'
-import { ConfigProvider, Effect, Layer, Logger, Schema } from 'effect'
+import { ConfigProvider, Effect, Layer, Logger, Predicate, Schema } from 'effect'
 import { Decision } from 'effect/unstable/ai'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 import { decide, decisionModelLayer } from './model.ts'
@@ -34,7 +34,8 @@ it.effect.each([
     HttpClient.make((request) => {
       expect(request.url).toContain(provider)
       const body = request.body
-      if (body._tag === 'Uint8Array') expect(new TextDecoder().decode(body.body)).toContain(model)
+      if (Predicate.isTagged(body, 'Uint8Array'))
+        expect(new TextDecoder().decode(body.body)).toContain(model)
       const payload =
         provider === 'typesafe'
           ? { model, answers: { applies: { type: 'noul', noul: 0.7 } } }

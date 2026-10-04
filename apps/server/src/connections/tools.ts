@@ -32,6 +32,7 @@ import {
 import { callableTool, discoveredTool } from '../code/signatures.ts'
 import { executorFailure } from './errors.ts'
 import { ConnectionStore } from './store.ts'
+import { relevantTools, TOOL_CANDIDATE_LIMIT } from './relevance.ts'
 import { ToolEffects } from './effects.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
 
@@ -169,17 +170,27 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     return yield* Effect.fail(
       new InvalidRequest({ message: 'Tool limit must be a positive number.' }),
     )
+  const available = groups.flat().filter(callableTool)
+  const lexical = rank(available, request.query, available.length, (tool) => ({
+    own: `${tool.name} ${tool.description}`,
+    identity: `${tool.serviceName} ${tool.account}`,
+  }))
+  // Zero lexical overlap must still get a semantic judgment when capacity permits.
+  const candidates =
+    available.length > TOOL_CANDIDATE_LIMIT
+      ? Arr.dedupe([...lexical, ...available]).slice(0, TOOL_CANDIDATE_LIMIT)
+      : available
+  const ordered = yield* relevantTools(request.query, candidates).pipe(
+    Effect.map((scores) => scores.map(({ tool }) => tool)),
+    Effect.catch(() =>
+      Effect.logWarning('Tool relevance unavailable; using lexical discovery').pipe(
+        Effect.as(lexical),
+      ),
+    ),
+  )
   return {
     tools: yield* Effect.forEach(
-      rank(
-        groups.flat().filter(callableTool),
-        request.query,
-        Math.min(25, Math.floor(limit)),
-        (tool) => ({
-          own: `${tool.name} ${tool.description}`,
-          identity: `${tool.serviceName} ${tool.account}`,
-        }),
-      ),
+      ordered.slice(0, Math.min(25, Math.floor(limit))),
       Effect.fn('Connections.discoveredTool')(function* (tool) {
         return DiscoveredTool.make({
           connectionId: tool.connectionId,

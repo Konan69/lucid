@@ -13,7 +13,7 @@ const Configuration = Schema.TaggedUnion({
 
 /** Config decodes secrets once. TypeSafe takes precedence; an absent override uses the
  * selected provider's model name, not an alias borrowed from the other provider. */
-const configuration = Effect.gen(function* () {
+const configuration = Effect.fn('Decisions.configuration')(function* () {
   const typesafe = yield* Config.option(
     Config.schema(Schema.Redacted(Schema.NonEmptyString), 'TYPESAFE_API_KEY'),
   )
@@ -32,7 +32,7 @@ const configuration = Effect.gen(function* () {
       model: Option.getOrElse(model, () => 'typesafe/jev-1.13'),
     })
   return Configuration.cases.Unconfigured.make({})
-})
+})()
 
 /** An unavailable provider is a typed AiError, never an empty successful judgment.
  * DecisionModel.ts make requires AiError; its InvalidRequestError represents missing authority. */

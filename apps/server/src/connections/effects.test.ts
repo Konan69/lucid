@@ -1,5 +1,7 @@
 import { expect, it } from '@effect/vitest'
-import { Effect, Layer } from 'effect'
+import { Effect, Fiber, Layer } from 'effect'
+import { ScriptedAnswer } from '../decisions/testing.ts'
+import * as TestClock from 'effect/testing/TestClock'
 import { AiError, DecisionModel } from 'effect/unstable/ai'
 import { ServiceId } from '@vivid/contracts'
 import { ExecutorTool } from './executor.ts'
@@ -31,7 +33,10 @@ const provider = (
 const answer = (read: number, label: string) =>
   ({
     answers: {
-      effect: { _tag: 'Classify', label, probabilities: { read, write: 1 - read, destructive: 0 } },
+      effect: ScriptedAnswer.cases.Classify.make({
+        label,
+        probabilities: { read, write: 1 - read, destructive: 0 },
+      }),
     },
     usage: { inputTokens: undefined, outputTokens: undefined },
   }) satisfies DecisionModel.ProviderResponse
@@ -110,3 +115,45 @@ it.effect('missing distributions retain write', () =>
     expect(yield* (yield* ToolEffects).classify(request)).toBe('write')
   }).pipe(Effect.provide(provider(() => Effect.succeed(answer(2, 'read'))))),
 )
+
+/** The approval-removing answer expires after 24 hours; refreshing rechecks metadata
+ * against the provider without sleeping or depending on wall-clock scheduling. */
+it.effect('cached classification expires after 24 hours', () => {
+  let calls = 0
+  return Effect.gen(function* () {
+    const effects = yield* ToolEffects
+    expect(yield* effects.classify(request)).toBe('read')
+    yield* TestClock.adjust('23 hours')
+    expect(yield* effects.classify(request)).toBe('read')
+    expect(calls).toBe(1)
+    yield* TestClock.adjust('1 hour')
+    expect(yield* effects.classify(request)).toBe('read')
+    expect(calls).toBe(2)
+  }).pipe(
+    Effect.provide(
+      provider(() => {
+        calls += 1
+        return Effect.succeed(answer(0.99, 'read'))
+      }),
+    ),
+  )
+})
+
+/** A stalled provider keeps Approval without attempting another request. */
+it.effect('ten-second classification timeout retains write', () => {
+  let calls = 0
+  return Effect.gen(function* () {
+    const effects = yield* ToolEffects
+    const pending = yield* effects.classify(request).pipe(Effect.forkChild)
+    yield* TestClock.adjust('10 seconds')
+    expect(yield* Fiber.join(pending)).toBe('write')
+    expect(calls).toBe(1)
+  }).pipe(
+    Effect.provide(
+      provider(() => {
+        calls += 1
+        return Effect.never
+      }),
+    ),
+  )
+})

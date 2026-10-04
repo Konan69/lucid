@@ -1,5 +1,6 @@
 import { expect, it } from '@effect/vitest'
 import { Effect, Fiber, Layer } from 'effect'
+import { ScriptedAnswer } from '../decisions/testing.ts'
 import { AiError, DecisionModel } from 'effect/unstable/ai'
 import * as TestClock from 'effect/testing/TestClock'
 import {
@@ -54,7 +55,10 @@ const scripted = (
 const probabilities = (values: readonly number[]) =>
   ({
     answers: Object.fromEntries(
-      values.map((probability, index) => [`rule_${index}`, { _tag: 'Probability', probability }]),
+      values.map((probability, index) => [
+        `rule_${index}`,
+        ScriptedAnswer.cases.Probability.make({ probability }),
+      ]),
     ),
     usage: { inputTokens: undefined, outputTokens: undefined },
   }) satisfies DecisionModel.ProviderResponse

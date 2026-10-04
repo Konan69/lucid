@@ -16,7 +16,7 @@ const Input = Schema.Struct({
   description: Schema.String,
 })
 
-/** Adapt the System One trial's classification mechanism. Effect rc.116 Decision.ts
+/** Adapt `jevtry/try.ts` ToolEffect's System One classification mechanism. Effect rc.116 Decision.ts
  * classify preserves typed labels; DecisionModel.ts make validates full distributions. */
 export const toolEffectDecision = Decision.make({
   input: Input,

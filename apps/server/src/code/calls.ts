@@ -9,6 +9,8 @@ import {
   ToolOutcome,
 } from '@vivid/contracts'
 import { Context, Effect, Layer, Schema } from 'effect'
+import { DecisionModel } from 'effect/unstable/ai'
+import { ToolEffects } from '../connections/effects.ts'
 import { CodeToolNames } from '@vivid/contracts/code'
 import type { Actor } from '../auth/access.ts'
 import { Gate } from '../approvals/gate.ts'
@@ -194,6 +196,8 @@ export const codeCallsLayer = Layer.effect(
       Gate,
       Executor,
       ConnectionStore,
+      ToolEffects,
+      DecisionModel.DecisionModel,
       DeviceRegistry,
       ComputerStore,
       Database,
@@ -204,6 +208,8 @@ export const codeCallsLayer = Layer.effect(
         | Gate
         | Executor
         | ConnectionStore
+        | ToolEffects
+        | DecisionModel.DecisionModel
         | DeviceRegistry
         | ComputerStore
         | Database

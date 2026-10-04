@@ -59,9 +59,13 @@ export const ruleJudgeLayer = Layer.effect(
             effect: action.effect,
             target: action.target._tag,
           }).pipe(Effect.provideService(DecisionModel.DecisionModel, model))
-          return rules.filter(
-            (_, index) => answers[`rule_${index}`].probability >= RULE_APPLICABILITY_THRESHOLD,
-          )
+          // Even validated dynamic keys are checked explicitly; a missing answer can never erase a rule.
+          return yield* Effect.filter(rules, (_rule: Rule, index: number) => {
+            const answer = answers[`rule_${index}`]
+            return answer === undefined
+              ? Effect.fail(new RulesNotJudged({}))
+              : Effect.succeed(answer.probability >= RULE_APPLICABILITY_THRESHOLD)
+          })
         },
         (effect) =>
           effect.pipe(
