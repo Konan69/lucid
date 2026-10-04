@@ -52,11 +52,20 @@ function ago(at: number, now: number): string {
  * for an invitation. A new kind of notice fails to compile here.
  */
 const KIND = {
-  finished: { hue: 'green', icon: <Check /> },
-  'needs-you': { hue: 'orange', icon: <Hand /> },
-  shared: { hue: 'blue', icon: <Share2 /> },
-  invited: { hue: 'violet', icon: <UserPlus /> },
-} as const satisfies Record<Notification['kind'], { hue: Hue; icon: ReactNode }>
+  finished: { hue: 'green', icon: <Check />, name: 'Vivid finished' },
+  'needs-you': { hue: 'orange', icon: <Hand />, name: 'Vivid needs you' },
+  shared: { hue: 'blue', icon: <Share2 />, name: 'A Thread was shared with you' },
+  invited: { hue: 'violet', icon: <UserPlus />, name: 'You were invited' },
+} as const satisfies Record<Notification['kind'], { hue: Hue; icon: ReactNode; name: string }>
+
+/**
+ * What a notice is called when it leads its row. The server writes a title for every notice, but
+ * the contract allows an empty one, and a row with a mark, a time and no words was found by
+ * looking at the worst-case list: it could not be read or told apart. A notice without a title
+ * is called by its kind, which it always has.
+ */
+const named = (notice: Notification): string =>
+  notice.title.trim().length === 0 ? KIND[notice.kind].name : notice.title
 
 /** An invitation notice carries its id at the end of its body; the rest is the sentence. */
 const INVITATION = /\s*invitation:(\S+)$/u
@@ -283,7 +292,7 @@ interface Face {
 const faceOf = NoticeRow.$match({
   Single: ({ notice }): Face => ({
     key: notice.id,
-    heading: notice.title,
+    heading: named(notice),
     notice,
     spoken: Option.none(),
     waiting: false,
@@ -291,7 +300,7 @@ const faceOf = NoticeRow.$match({
   }),
   Grouped: ({ threadId, title, newest, waiting, unread }): Face => ({
     key: threadId,
-    heading: Option.getOrElse(title, () => newest.title),
+    heading: Option.getOrElse(title, () => named(newest)),
     notice: newest,
     spoken: Option.map(title, () => newest.title),
     waiting,
