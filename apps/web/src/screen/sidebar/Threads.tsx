@@ -17,25 +17,41 @@ import { run } from '../../data/app'
 import { change, live } from '../../data/live'
 import { Route, router } from '../../data/route'
 import { orSay } from '../../data/said'
-import { Faces } from '../../ui/Avatar'
-import { Button } from '../../ui/Button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../../ui/alert-dialog'
+import { Faces } from '../../ui/Person'
 import { cn } from '../../ui/cn'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '../../ui/context-menu'
 import { Count } from '../../ui/Count'
-import { Dialog, DialogActions } from '../../ui/Dialog'
-import { ContextMenu, MenuDivider, MenuItem, type MenuPoint } from '../../ui/Menu'
+import { useSurface } from '../../ui/Layer'
 import { byKeyboard, leave } from '../../ui/motion'
 import { StatusLabel } from '../../ui/Status'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { MoveThread } from '../project/Move'
 import { CAPTION, FULL, HOVER, ROW } from './rows'
 
 /**
  * What the Person is in the middle of doing to a Thread from the list. It is one thing at a time,
- * so the menu, the title being edited, the Project being chosen and the question before deleting
- * can never be open together.
+ * so the title being edited, the Project being chosen and the question before deleting can never
+ * be open together. The menu that leads to them is not here: each row owns its own, and it has
+ * closed by the time any of these begins.
  */
 type Doing = Data.TaggedEnum<{
   Nothing: {}
-  Choosing: { readonly thread: Thread; readonly at: MenuPoint }
   Renaming: { readonly id: ThreadId }
   Moving: { readonly thread: Thread }
   Deleting: { readonly thread: Thread }
@@ -174,6 +190,7 @@ export function Threads({
         renaming={Doing.$is('Renaming')(doing) && doing.id === thread.id}
         retitling={waiting.has(thread.id)}
         onDo={setDoing}
+        onRetitle={retitle}
       />
     </li>
   )
@@ -229,9 +246,6 @@ export function Threads({
           )}
         </section>
       )}
-      {Doing.$is('Choosing')(doing) && (
-        <ThreadMenu thread={doing.thread} at={doing.at} onDo={setDoing} onRetitle={retitle} />
-      )}
       {Doing.$is('Moving')(doing) && <MoveThread thread={doing.thread} onClose={nothing} />}
       {Doing.$is('Deleting')(doing) && <DeleteThread thread={doing.thread} onClose={nothing} />}
     </>
@@ -249,6 +263,8 @@ interface RowProps {
   /** Whether Vivid has been asked for a better title and has not answered yet. */
   readonly retitling: boolean
   readonly onDo: (doing: Doing) => void
+  /** Asks Vivid for a better title. The row shows that it was asked. */
+  readonly onRetitle: (id: ThreadId) => void
 }
 
 /** Fades what a row shows at rest while its action is under the pointer or has the keyboard. */
@@ -258,24 +274,27 @@ const AT_REST =
 /**
  * One Thread in the list. The row is a button that opens the Thread; what else can be done to it
  * sits beside that button, not inside it, so there is never a button within a button.
+ *
+ * The whole row asks for its menu: a right-click, the keyboard's menu key or a long press opens
+ * it where it was asked for. The menu is drawn over the page, not inside the list, so the mask
+ * that fades the list's edges cannot cut it, and its choices exist only while it is open.
  */
 function ThreadRow(props: RowProps) {
-  const { thread, variant, renaming, onDo } = props
+  const { thread, variant, renaming, onDo, onRetitle } = props
   return (
-    <div
-      className="group/thread relative"
-      onContextMenu={(event) => {
-        event.preventDefault()
-        onDo(Doing.Choosing({ thread, at: { x: event.clientX, y: event.clientY } }))
-      }}
-    >
-      {variant === 'card' ? <CardFace {...props} /> : <LineFace {...props} />}
-      {renaming ? (
-        <RenameField thread={thread} variant={variant} onClose={() => onDo(Doing.Nothing())} />
-      ) : (
-        <DoneAction thread={thread} />
-      )}
-    </div>
+    <ContextMenu>
+      <ContextMenuTrigger render={<div className="group/thread relative" />}>
+        {variant === 'card' ? <CardFace {...props} /> : <LineFace {...props} />}
+        {renaming ? (
+          <RenameField thread={thread} variant={variant} onClose={() => onDo(Doing.Nothing())} />
+        ) : (
+          <DoneAction thread={thread} />
+        )}
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ThreadActions thread={thread} onDo={onDo} onRetitle={onRetitle} />
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 
@@ -326,7 +345,7 @@ function LineFace({ thread, active, now, retitling, onDo }: RowProps) {
       className={cn(ROW, FULL, active ? 'bg-wash-selected' : HOVER)}
     >
       <span className="inline-flex size-5.5 shrink-0 items-center justify-center">
-        <i className={cn('size-1.5 rounded-full', unread ? 'bg-accent' : 'bg-line-4')} />
+        <i className={cn('size-1.5 rounded-full', unread ? 'bg-primary' : 'bg-line-4')} />
       </span>
       <span
         aria-busy={retitling}
@@ -366,23 +385,29 @@ function Audience({ thread }: { thread: Thread }) {
 function DoneAction({ thread }: { thread: Thread }) {
   const label = thread.archived ? 'Move back to threads' : 'Mark as done'
   return (
-    <button
-      data-row-action
-      aria-label={`${label}: ${thread.title}`}
-      title={label}
-      onClick={(event) => {
-        const done = () => patchThread(thread.id, { archived: !thread.archived })
-        const row = event.currentTarget.closest('[data-moves]')
-        // The row fades out under the pointer first, then the list closes over it: taken away
-        // in the same frame, the row below would be under the pointer before the eye had let go
-        // of this one. From the keyboard it is done at once.
-        if (row === null || byKeyboard(event)) done()
-        else void leave(row, 'exit').then(done)
-      }}
-      className="pointer-events-none absolute top-1.5 right-1.5 z-10 inline-flex size-6 cursor-pointer items-center justify-center rounded-control text-ink-3 opacity-0 transition-opacity duration-(--dur-fast) group-focus-within/thread:pointer-events-auto group-focus-within/thread:opacity-100 group-hover/thread:pointer-events-auto group-hover/thread:opacity-100 hover:bg-wash-hover hover:text-ink active:scale-96"
-    >
-      {thread.archived ? <Undo2 className="size-3.5" /> : <Check className="size-3.5" />}
-    </button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            data-row-action
+            aria-label={`${label}: ${thread.title}`}
+            onClick={(event) => {
+              const done = () => patchThread(thread.id, { archived: !thread.archived })
+              const row = event.currentTarget.closest('[data-moves]')
+              // The row fades out under the pointer first, then the list closes over it: taken
+              // away in the same frame, the row below would be under the pointer before the eye
+              // had let go of this one. From the keyboard it is done at once.
+              if (row === null || byKeyboard(event)) done()
+              else void leave(row, 'exit').then(done)
+            }}
+            className="pointer-events-none absolute top-1.5 right-1.5 z-10 inline-flex size-6 cursor-pointer items-center justify-center rounded-control text-ink-3 opacity-0 transition-opacity duration-(--dur-fast) group-focus-within/thread:pointer-events-auto group-focus-within/thread:opacity-100 group-hover/thread:pointer-events-auto group-hover/thread:opacity-100 hover:bg-wash-hover hover:text-ink active:scale-96"
+          />
+        }
+      >
+        {thread.archived ? <Undo2 className="size-3.5" /> : <Check className="size-3.5" />}
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -427,106 +452,94 @@ function RenameField({
         if (event.key === 'Escape') finish(null)
       }}
       className={cn(
-        'absolute rounded-xs bg-surface-3 px-1 text-ink edge outline-none edge-accent',
+        'absolute rounded-xs bg-surface-3 px-1 text-ink edge outline-none edge-primary',
         FIELD_PLACE[variant],
       )}
     />
   )
 }
 
-/** Everything that can be done to a Thread from the list, where the Person asked for it. */
-function ThreadMenu({
+/**
+ * Everything that can be done to a Thread from the list, as the choices of its row's menu. The
+ * menu closes itself when one is chosen, so each choice only does its thing.
+ */
+function ThreadActions({
   thread,
-  at,
   onDo,
   onRetitle,
 }: {
   thread: Thread
-  at: MenuPoint
   onDo: (doing: Doing) => void
-  /** Asks Vivid for a better title. The menu closes at once; the row shows that it was asked. */
   onRetitle: (id: ThreadId) => void
 }) {
   return (
-    <ContextMenu at={at} onClose={() => onDo(Doing.Nothing())}>
-      <MenuItem
-        icon={<Pencil className="size-3.5" />}
-        onSelect={() => onDo(Doing.Renaming({ id: thread.id }))}
-      >
+    <>
+      <ContextMenuItem onClick={() => onDo(Doing.Renaming({ id: thread.id }))}>
+        <Pencil className="size-3.5" />
         Rename
-      </MenuItem>
-      <MenuItem
-        icon={<RefreshCw className="size-3.5" />}
-        onSelect={() => {
-          onRetitle(thread.id)
-          onDo(Doing.Nothing())
-        }}
-      >
+      </ContextMenuItem>
+      <ContextMenuItem onClick={() => onRetitle(thread.id)}>
+        <RefreshCw className="size-3.5" />
         Regenerate title
-      </MenuItem>
-      <MenuItem
-        icon={thread.archived ? <Undo2 className="size-3.5" /> : <Check className="size-3.5" />}
-        onSelect={() => {
-          patchThread(thread.id, { archived: !thread.archived })
-          onDo(Doing.Nothing())
-        }}
-      >
+      </ContextMenuItem>
+      <ContextMenuItem onClick={() => patchThread(thread.id, { archived: !thread.archived })}>
+        {thread.archived ? <Undo2 className="size-3.5" /> : <Check className="size-3.5" />}
         {thread.archived ? 'Move back to threads' : 'Mark as done'}
-      </MenuItem>
-      <MenuItem
-        icon={<FolderInput className="size-3.5" />}
-        onSelect={() => onDo(Doing.Moving({ thread }))}
-      >
+      </ContextMenuItem>
+      <ContextMenuItem onClick={() => onDo(Doing.Moving({ thread }))}>
+        <FolderInput className="size-3.5" />
         Move to a project…
-      </MenuItem>
-      <MenuDivider />
-      <MenuItem
-        tone="danger"
-        icon={<Trash2 className="size-3.5" />}
-        onSelect={() => onDo(Doing.Deleting({ thread }))}
-      >
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem variant="destructive" onClick={() => onDo(Doing.Deleting({ thread }))}>
+        <Trash2 className="size-3.5" />
         Delete…
-      </MenuItem>
-    </ContextMenu>
+      </ContextMenuItem>
+    </>
   )
 }
 
-/** Deleting is the one thing here that cannot be taken back, so it is the one thing that asks. */
+/**
+ * Deleting is the one thing here that cannot be taken back, so it is the one thing that asks, and
+ * it asks as an alert: a click outside it does not answer for the Person.
+ */
 function DeleteThread({ thread, onClose }: { thread: Thread; onClose: () => void }) {
   return (
-    <Dialog
-      title="Delete this thread?"
-      description={`“${thread.title}” and everything in it will be gone for everyone who can see it. This cannot be undone.`}
-      onClose={onClose}
-    >
-      <DialogActions>
-        <Button variant="ghost" onClick={onClose}>
-          Keep it
-        </Button>
-        <Button
-          variant="danger"
-          onClick={() => {
-            onClose()
-            // Only the Thread on screen has to be left; deleting another one from the list must
-            // not take the Person away from what they are reading.
-            const here = router.route()
-            if (Route.$is('Thread')(here) && here.id === thread.id) router.replace(Route.New())
-            void orSay(
-              change(
-                (client) => client.DeleteThread({ id: thread.id }),
-                () =>
-                  live.threads.expect((current) => ({
-                    threads: current.threads.filter((candidate) => candidate.id !== thread.id),
-                  })),
-              ),
-              `“${thread.title}” could not be deleted, so it is back in the list.`,
-            )
-          }}
-        >
-          Delete thread
-        </Button>
-      </DialogActions>
-    </Dialog>
+    <AlertDialog {...useSurface(onClose)}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this thread?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {`“${thread.title}” and everything in it will be gone for everyone who can see it. This cannot be undone.`}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel variant="ghost">Keep it</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={() => {
+              onClose()
+              // Only the Thread on screen has to be left; deleting another one from the list must
+              // not take the Person away from what they are reading.
+              const here = router.route()
+              if (Route.$is('Thread')(here) && here.id === thread.id) router.replace(Route.New())
+              void orSay(
+                change(
+                  (client) => client.DeleteThread({ id: thread.id }),
+                  () =>
+                    live.threads.expect((current) => ({
+                      threads: current.threads.filter((candidate) => candidate.id !== thread.id),
+                    })),
+                ),
+                `“${thread.title}” could not be deleted, so it is back in the list.`,
+              )
+            }}
+          >
+            Delete thread
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 

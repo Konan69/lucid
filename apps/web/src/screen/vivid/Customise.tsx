@@ -13,10 +13,12 @@ import { X } from 'lucide-react'
 import { useId, useRef, useState, type FormEvent, type RefObject } from 'react'
 import { live, useLiveValue } from '../../data/live'
 import { faceColorOf, saveAppearance, useAppearance } from '../../data/vivid'
-import { IconButton } from '../../ui/Button'
+import { IconButton } from '../../ui/button'
 import { cn } from '../../ui/cn'
 import { Face, FACE_COLOR_CLASS, type FaceColor, type FaceMood } from '../../ui/Face'
-import { holdFocus, keepFocusInside, Layer } from '../../ui/Layer'
+import { Dialog, DialogClose, DialogContent, DialogTitle } from '../../ui/dialog'
+import { useSurface } from '../../ui/Layer'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 
 /** Every look there is to choose, in the order they are shown: the theme's own colour first. */
 const LOOKS: ReadonlyArray<Look> = [
@@ -113,36 +115,24 @@ export function Customise({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Layer>
-      <div
-        role="presentation"
-        className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center overscroll-contain bg-scrim p-4 backdrop-blur-scrim"
-        onMouseDown={(event) => {
-          if (event.target === event.currentTarget) onClose()
-        }}
-        onKeyDown={(event) => {
-          // The sheet is opened from surfaces that close on Escape themselves (the card around
-          // Vivid, Settings). React carries a portal's events to them; this key is the sheet's.
-          event.stopPropagation()
-          if (event.key === 'Escape') onClose()
-          keepFocusInside(event)
-        }}
-      >
+    // Its owners draw the sheet only while it is wanted, so it is open from its first render and
+    // tells them once it has left. It is opened from surfaces that are dialogs themselves
+    // (Settings) or close on Escape (the card around Vivid); the dialog takes that key for itself.
+    <Dialog {...useSurface(onClose)}>
+      {/* The sheet's own close control is drawn below, over the preview's pane. On a narrow
+          window the whole sheet scrolls here; wide, it is a fixed height and only the choices do. */}
+      <DialogContent showCloseButton={false} flush className="sm:max-w-3xl">
+        {/* The two panes have their own fills and reach the sheet's edge (`flush`). */}
         <form
-          ref={holdFocus}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Customise Vivid"
-          tabIndex={-1}
           noValidate
           onSubmit={(event) => void save(event)}
-          className="relative grid max-h-full w-full max-w-3xl animate-rise-in grid-cols-1 overflow-y-auto rounded-dialog bg-surface-2 lift-lg outline-none sm:h-120 sm:grid-cols-5 sm:overflow-hidden"
+          className="relative grid grid-cols-1 bg-surface-2 sm:h-120 sm:grid-cols-5"
         >
           {/* The choices. Below the preview on a narrow window, where the preview must stay in
               view while a colour is picked. */}
           <div className="order-2 flex min-h-0 min-w-0 flex-col gap-5 p-6 sm:order-1 sm:col-span-3 sm:overflow-y-auto">
             <div>
-              <h2 className="text-dialog font-title text-ink">Customise Vivid</h2>
+              <DialogTitle>Customise Vivid</DialogTitle>
               <p className="mt-1 text-label text-pretty text-ink-3">
                 {Option.match(Option.flatMap(me, companyOf), {
                   onNone: () => 'A name, a colour and a shape, shown wherever Vivid is.',
@@ -187,13 +177,13 @@ export function Customise({ onClose }: { onClose: () => void }) {
           </div>
 
           <div className="absolute top-3 right-3">
-            <IconButton type="button" label="Close" onClick={onClose}>
+            <DialogClose render={<IconButton label="Close" />}>
               <X className="size-4" />
-            </IconButton>
+            </DialogClose>
           </div>
         </form>
-      </div>
-    </Layer>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -203,11 +193,12 @@ const CHOICE =
 
 /** The chosen one sits on a raised fill with the accent edge; the rest take an edge on hover. */
 const chosenOr = (active: boolean) =>
-  active ? 'bg-surface-3 edge edge-accent' : 'hover:bg-surface-3 hover:edge'
+  active ? 'bg-surface-3 edge edge-primary' : 'hover:bg-surface-3 hover:edge'
 
 /**
  * The colours, as plain dots (Grok Bot's row). Each is a toggle (`aria-pressed`) reached with Tab;
- * resting the pointer or the keyboard on one tries it in the preview without choosing it.
+ * resting the pointer or the keyboard on one tries it in the preview without choosing it, and
+ * names it in a tooltip, because a dot says nothing of its own.
  */
 function Colours({
   chosen,
@@ -230,22 +221,31 @@ function Colours({
         {LOOKS.map((option) => {
           const color = faceColorOf(option)
           return (
-            <button
-              key={color}
-              type="button"
-              aria-label={lookName(option)}
-              aria-pressed={color === faceColorOf(chosen)}
-              title={lookName(option)}
-              disabled={disabled}
-              onPointerEnter={() => onTry(Option.some(option))}
-              onPointerLeave={() => onTry(Option.none())}
-              onFocus={() => onTry(Option.some(option))}
-              onBlur={() => onTry(Option.none())}
-              onClick={() => onChoose(option)}
-              className={cn(CHOICE, 'size-9 rounded-full', chosenOr(color === faceColorOf(chosen)))}
-            >
-              <span className={cn('size-6 rounded-full', FACE_COLOR_CLASS[color])} />
-            </button>
+            <Tooltip key={color}>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={lookName(option)}
+                    aria-pressed={color === faceColorOf(chosen)}
+                    disabled={disabled}
+                    onPointerEnter={() => onTry(Option.some(option))}
+                    onPointerLeave={() => onTry(Option.none())}
+                    onFocus={() => onTry(Option.some(option))}
+                    onBlur={() => onTry(Option.none())}
+                    onClick={() => onChoose(option)}
+                    className={cn(
+                      CHOICE,
+                      'size-9 rounded-full',
+                      chosenOr(color === faceColorOf(chosen)),
+                    )}
+                  />
+                }
+              >
+                <span className={cn('size-6 rounded-full', FACE_COLOR_CLASS[color])} />
+              </TooltipTrigger>
+              <TooltipContent>{lookName(option)}</TooltipContent>
+            </Tooltip>
           )
         })}
       </div>
@@ -275,24 +275,29 @@ function Outlines({
       </h3>
       <div role="group" aria-labelledby={headingId} className="-mx-1 grid grid-cols-4 gap-1">
         {FaceOutline.literals.map((option) => (
-          <button
-            key={option}
-            type="button"
-            aria-label={outlineName(option)}
-            aria-pressed={option === chosen}
-            title={outlineName(option)}
-            disabled={disabled}
-            onPointerEnter={() => onTry(Option.some(option))}
-            onPointerLeave={() => onTry(Option.none())}
-            onFocus={() => onTry(Option.some(option))}
-            onBlur={() => onTry(Option.none())}
-            onClick={() => onChoose(option)}
-            className={cn(CHOICE, 'h-20 rounded-card', chosenOr(option === chosen))}
-          >
-            <span className="pointer-events-none">
-              <Face color={color} outline={option} size={48} label="" />
-            </span>
-          </button>
+          <Tooltip key={option}>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={outlineName(option)}
+                  aria-pressed={option === chosen}
+                  disabled={disabled}
+                  onPointerEnter={() => onTry(Option.some(option))}
+                  onPointerLeave={() => onTry(Option.none())}
+                  onFocus={() => onTry(Option.some(option))}
+                  onBlur={() => onTry(Option.none())}
+                  onClick={() => onChoose(option)}
+                  className={cn(CHOICE, 'h-20 rounded-card', chosenOr(option === chosen))}
+                />
+              }
+            >
+              <span className="pointer-events-none">
+                <Face color={color} outline={option} size={48} label="" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{outlineName(option)}</TooltipContent>
+          </Tooltip>
         ))}
       </div>
     </section>
@@ -340,7 +345,7 @@ function NameField({
         aria-invalid={Option.isSome(invalidBy)}
         aria-describedby={Option.getOrUndefined(invalidBy)}
         onChange={(event) => onChange(event.currentTarget.value)}
-        className="h-14 w-full rounded-control bg-well px-3 text-center font-display text-section font-strong text-ink edge outline-none edge-field placeholder:text-ink-3 focus-visible:edge-accent disabled:opacity-60"
+        className="h-14 w-full rounded-control bg-well px-3 text-center font-display text-section font-strong text-ink edge outline-none edge-field placeholder:text-ink-3 focus-visible:edge-primary disabled:opacity-60"
       />
     </div>
   )
@@ -406,7 +411,7 @@ function Finish({
       <button
         type="submit"
         disabled={disabled}
-        className="flex h-10 w-full cursor-pointer items-center justify-center rounded-full bg-accent text-title font-title text-ink-on-accent transition-press duration-(--dur-fast) outline-none hover:bg-accent-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface-3 active:enabled:scale-96 disabled:cursor-not-allowed disabled:opacity-60"
+        className="flex h-10 w-full cursor-pointer items-center justify-center rounded-full bg-primary text-title font-title text-primary-foreground transition-press duration-(--dur-fast) outline-none hover:bg-primary-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface-3 active:enabled:scale-96 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {saving ? 'Saving…' : 'Save'}
       </button>

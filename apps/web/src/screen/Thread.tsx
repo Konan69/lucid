@@ -12,10 +12,11 @@ import { change, LiveState, presentIn, seenThread, typingIn, useLive } from '../
 import { Route, router } from '../data/route'
 import { orSay } from '../data/said'
 import { FirstWords, firstWords } from '../data/threads'
-import { Button } from '../ui/Button'
+import { Button } from '../ui/button'
 import { Alive, ranBadly } from '../ui/Alive'
 import { Face } from '../ui/Face'
 import { arriving } from '../ui/settle'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import type { Picture } from './thread/Attach'
 import { Composer } from './thread/Composer'
 import { isBlank, Message, Said, textOf, type ThreadContext } from './thread/Message'
@@ -72,7 +73,9 @@ function Gone() {
       <p className="max-w-sm text-label text-ink-3">
         It may have been deleted, or it is in a space you are not working in right now.
       </p>
-      <Button onClick={() => router.go(Route.New())}>Start a new thread</Button>
+      <Button variant="outline" onClick={() => router.go(Route.New())}>
+        Start a new thread
+      </Button>
     </section>
   )
 }
@@ -520,21 +523,33 @@ function Messages({
         </ol>
       </div>
       {away && (
-        <button
-          aria-label="Jump to the latest message"
-          title="Jump to latest"
-          // Pressing it must not take the keyboard out of the composer mid-sentence.
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            if (scroller.current !== null) {
-              // A Person who asked for less motion gets there at once; CSS cannot reach this.
-              scroller.current.scrollTo({ top: 0, behavior: STILL.matches ? 'auto' : 'smooth' })
+        // A floating glass disc, not the standard icon button, so it keeps its own classes and
+        // takes the tooltip that says what it does.
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label="Jump to the latest message"
+                // Pressing it must not take the keyboard out of the composer mid-sentence.
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  if (scroller.current !== null) {
+                    // A Person who asked for less motion gets there at once; CSS cannot reach this.
+                    scroller.current.scrollTo({
+                      top: 0,
+                      behavior: STILL.matches ? 'auto' : 'smooth',
+                    })
+                  }
+                }}
+                className="absolute bottom-3 left-1/2 z-10 inline-flex size-8 -translate-x-1/2 cursor-pointer items-center justify-center rounded-full text-ink-2 lift glass transition-pop duration-(--dur-base) ease-out hover:text-ink active:scale-96 starting:translate-y-1 starting:opacity-0"
+              />
             }
-          }}
-          className="absolute bottom-3 left-1/2 z-10 inline-flex size-8 -translate-x-1/2 cursor-pointer items-center justify-center rounded-full text-ink-2 lift glass transition-pop duration-(--dur-base) ease-out hover:text-ink active:scale-96 starting:translate-y-1 starting:opacity-0"
-        >
-          <ArrowDown className="size-4" />
-        </button>
+          >
+            <ArrowDown className="size-4" />
+          </TooltipTrigger>
+          <TooltipContent>Jump to latest</TooltipContent>
+        </Tooltip>
       )}
     </div>
   )

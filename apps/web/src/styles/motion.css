@@ -64,6 +64,12 @@
   @starting-style {
     opacity: 0;
   }
+  /* Base UI marks what it is closing with `data-ending-style` and keeps it in the document until
+     this transition ends, so a backdrop leaves with its dialog instead of vanishing under it. */
+  &[data-ending-style] {
+    opacity: 0;
+    transition-duration: var(--dur-exit);
+  }
 }
 
 /* A menu or a popover: out of the corner nearest what opened it (the caller sets the origin). It
@@ -76,6 +82,12 @@
     opacity: 0;
     scale: 0.97;
   }
+  /* It leaves the way it came, faster (`data-ending-style` is Base UI's mark on a closing popup). */
+  &[data-ending-style] {
+    opacity: 0;
+    scale: 0.97;
+    transition-duration: var(--dur-pop-exit);
+  }
 }
 
 /* A dialog: from the middle, since nothing on the page opened onto it. Slower than a menu: it
@@ -87,6 +99,12 @@
   @starting-style {
     opacity: 0;
     scale: 0.96;
+  }
+  &[data-ending-style] {
+    opacity: 0;
+    scale: 0.96;
+    transition-duration: var(--dur-exit);
+    transition-timing-function: var(--ease-out);
   }
 }
 

@@ -25,8 +25,8 @@ import { router } from '../../data/route'
 import { engine } from '../../data/runtime'
 import { orSay } from '../../data/said'
 import { theme } from '../../data/theme'
-import { Button } from '../../ui/Button'
-import { Card } from '../../ui/Card'
+import { Button } from '../../ui/button'
+import { Card } from '../../ui/card'
 import { cn } from '../../ui/cn'
 import { Began, begin, follow } from '../integration/begin'
 import { EnterKey, type Keying } from '../integration/Key'
@@ -269,7 +269,7 @@ export function ApprovalCard({ approval, me }: { approval: Approval; me: PersonI
         strength={0.6}
         theme={shown}
       >
-        <Card className="p-4">
+        <Card className="block p-4">
           <div className="flex items-center gap-2 text-meta text-approve">
             <ShieldQuestion className="size-3.5" />
             <span className="flex-1">
@@ -301,13 +301,13 @@ export function ApprovalCard({ approval, me }: { approval: Approval; me: PersonI
             )}
             {pending && mine && (
               <>
-                <Button
-                  variant="primary"
-                  onClick={() => void decide(ApprovalDecision.cases.AllowOnce.make({}))}
-                >
+                <Button onClick={() => void decide(ApprovalDecision.cases.AllowOnce.make({}))}>
                   Allow once
                 </Button>
-                <Button onClick={() => void decide(ApprovalDecision.cases.AlwaysAllow.make({}))}>
+                <Button
+                  variant="outline"
+                  onClick={() => void decide(ApprovalDecision.cases.AlwaysAllow.make({}))}
+                >
                   Always allow
                 </Button>
                 <Button
@@ -504,7 +504,7 @@ export function ConnectionCard({
         strength={0.6}
         theme={shown}
       >
-        <Card className="flex flex-wrap items-center gap-3 p-4">
+        <Card className="flex-row flex-wrap items-center gap-3 p-4">
           <Mark service={{ name: request.serviceName }} size={40} />
           <div className="min-w-48 flex-1">
             <h3 className="text-title font-title text-ink">
@@ -569,7 +569,7 @@ function ConnectionAction({
     // Reached when the service was connected somewhere else (Settings, another device), where no
     // press here was listening for it.
     return (
-      <Button variant="primary" size="sm" onClick={onCarryOn}>
+      <Button size="sm" onClick={onCarryOn}>
         Carry on
       </Button>
     )
@@ -584,7 +584,11 @@ function ConnectionAction({
   }
   if (pressed === 'refused') {
     return (
-      <Button size="sm" onClick={() => router.openSettings(Option.some('connections'))}>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => router.openSettings(Option.some('connections'))}
+      >
         Open Integrations
       </Button>
     )
@@ -592,7 +596,6 @@ function ConnectionAction({
   return (
     <Button
       size="sm"
-      variant="primary"
       aria-label={`Connect ${name}`}
       disabled={pressed === 'starting'}
       onClick={onConnect}

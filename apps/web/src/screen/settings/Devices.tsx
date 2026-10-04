@@ -9,7 +9,7 @@ import {
   type SignedInDevice,
 } from '../../data/account'
 import { run } from '../../data/app'
-import { Button } from '../../ui/Button'
+import { Button } from '../../ui/button'
 import { Empty, Refusal, Row, Section } from './Parts'
 
 /**
@@ -70,6 +70,8 @@ function Pairing({
             void onPair()
           }}
         >
+          {/* A bare field, not `Input`: a code is read in the fixed-width face and shown in
+              capitals however it is typed, and `Input` owns its typography. */}
           <input
             value={code}
             onChange={(event) => {
@@ -81,7 +83,7 @@ function Pairing({
             spellCheck={false}
             className="h-8 w-36 rounded-control bg-well px-3 font-mono text-label text-ink uppercase ring-line outline-none placeholder:text-ink-4 focus-visible:ring-2 focus-visible:ring-ring"
           />
-          <Button type="submit" variant="primary" size="sm" disabled={code.trim().length < 4}>
+          <Button type="submit" size="sm" disabled={code.trim().length < 4}>
             Sign it in
           </Button>
         </form>
@@ -183,7 +185,7 @@ function DeviceList({
       ))}
       {elsewhere.length > 1 && (
         <div className="flex justify-end px-4 py-2.5">
-          <Button size="sm" variant="danger" onClick={onSignOutElsewhere}>
+          <Button size="sm" variant="destructive" onClick={onSignOutElsewhere}>
             Sign out everywhere else
           </Button>
         </div>

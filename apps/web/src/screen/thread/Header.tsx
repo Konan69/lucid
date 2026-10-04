@@ -8,11 +8,12 @@ import {
 import { standingWords } from '@vivid/state'
 import { Option } from 'effect'
 import { ChevronDown, ListTree, Lock, MonitorSmartphone, Share2, Users } from 'lucide-react'
-import { Faces } from '../../ui/Avatar'
-import { Button, IconButton } from '../../ui/Button'
+import { Faces } from '../../ui/Person'
+import { Button, IconButton } from '../../ui/button'
 import { useAppearance } from '../../data/vivid'
 import { cn } from '../../ui/cn'
 import { Face, type FaceMood } from '../../ui/Face'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { BAR } from '../bar'
 
 /**
@@ -100,20 +101,24 @@ export function Header({
       </h1>
       {others.length > 0 && <Faces people={others.map((seen) => seen.person)} size={20} />}
       {Option.isSome(thread) && inCompany && (
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={!mine}
-          title={mine ? 'Choose who can see this thread' : 'Only its creator can change this'}
-          icon={<AudienceIcon audience={thread.value.audience} />}
-          onClick={onShare}
-        >
-          {ThreadAudience.match(thread.value.audience, {
-            Private: () => 'Share',
-            People: ({ participants }) => `${participants.length + 1} people`,
-            Company: () => 'Everyone',
-          })}
-        </Button>
+        // The tooltip's trigger is a span around the button, not the button: a disabled button
+        // answers no pointer in some browsers, and "Only its creator can change this" is the
+        // sentence a Person who cannot press it needs to read.
+        <Tooltip>
+          <TooltipTrigger render={<span className="inline-flex" />}>
+            <Button variant="ghost" size="sm" disabled={!mine} onClick={onShare}>
+              <AudienceIcon audience={thread.value.audience} />
+              {ThreadAudience.match(thread.value.audience, {
+                Private: () => 'Share',
+                People: ({ participants }) => `${participants.length + 1} people`,
+                Company: () => 'Everyone',
+              })}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {mine ? 'Choose who can see this thread' : 'Only its creator can change this'}
+          </TooltipContent>
+        </Tooltip>
       )}
       <IconButton
         label="Around Vivid"

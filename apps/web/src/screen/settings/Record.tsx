@@ -1,6 +1,6 @@
 import { AuditEvent, type AuditEntry } from '@vivid/contracts'
 import { live, LiveState, useLive } from '../../data/live'
-import { Avatar } from '../../ui/Avatar'
+import { PersonAvatar } from '../../ui/Person'
 import { Awaiting, Empty, Section } from './Parts'
 
 const when = new Intl.DateTimeFormat(undefined, {
@@ -68,7 +68,7 @@ export function Record() {
 function Line({ entry }: { entry: AuditEntry }) {
   return (
     <div className="flex min-h-12 items-center gap-3 px-4 py-2">
-      <Avatar name={entry.actor.name} image={entry.actor.image} size={22} />
+      <PersonAvatar name={entry.actor.name} image={entry.actor.image} size={22} />
       <div className="min-w-0 flex-1">
         <div className="text-label text-ink">{auditSentence(entry.event)}</div>
         <div className="text-meta font-meta text-ink-3">

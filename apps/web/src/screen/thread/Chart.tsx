@@ -25,7 +25,7 @@ export function Chart({ chart }: { chart: ChartKind }) {
 
 /** Up to six series, each with its own colour, in the order they were given. */
 const FILL = [
-  'fill-accent',
+  'fill-primary',
   'fill-face-cyan',
   'fill-face-orange',
   'fill-face-green',
@@ -33,7 +33,7 @@ const FILL = [
   'fill-face-yellow',
 ] as const
 const STROKE = [
-  'stroke-accent',
+  'stroke-primary',
   'stroke-face-cyan',
   'stroke-face-orange',
   'stroke-face-green',
@@ -41,7 +41,7 @@ const STROKE = [
   'stroke-face-yellow',
 ] as const
 const SWATCH = [
-  'bg-accent',
+  'bg-primary',
   'bg-face-cyan',
   'bg-face-orange',
   'bg-face-green',
@@ -157,7 +157,7 @@ function Lines({
       {area && (
         <polygon
           points={`${x(0)},${y(0)} ${series.values.map((value, index) => `${x(index)},${y(value)}`).join(' ')} ${x(series.values.length - 1)},${y(0)}`}
-          className="fill-accent/10"
+          className="fill-primary/10"
         />
       )}
       <polyline

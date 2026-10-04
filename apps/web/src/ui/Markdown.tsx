@@ -88,8 +88,8 @@ const MARKDOWN_COMPONENTS: Components = {
       }}
       className={
         href && href.startsWith('/api/library/source')
-          ? 'inline-flex rounded-full bg-accent-soft px-2 py-0.5 text-label font-title text-accent-ink no-underline ring-line'
-          : 'text-accent-ink underline underline-offset-2'
+          ? 'inline-flex rounded-full bg-primary-soft px-2 py-0.5 text-label font-title text-primary-ink no-underline ring-line'
+          : 'text-primary-ink underline underline-offset-2'
       }
     >
       {children}

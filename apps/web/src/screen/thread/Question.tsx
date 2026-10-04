@@ -1,9 +1,10 @@
 import { Data, Option } from 'effect'
 import { Check } from 'lucide-react'
 import { useState, type KeyboardEvent, type TransitionEvent } from 'react'
-import { Button } from '../../ui/Button'
-import { Card } from '../../ui/Card'
+import { Button } from '../../ui/button'
+import { Card } from '../../ui/card'
 import { cn } from '../../ui/cn'
+import { Input } from '../../ui/input'
 
 /** One answer on offer: what it is called, and what picking it means in a line. */
 export interface Choice {
@@ -28,7 +29,7 @@ export const Asked = Data.taggedEnum<Asked>()
 
 /* A question is read as a short column, like the reference's card: rows as wide as a whole
    Thread would leave each label alone at one end of a long empty line. */
-const CARD = 'w-full max-w-xl p-4'
+const CARD = 'block w-full max-w-xl p-4'
 
 /** The letter on each row's keycap, by its place. The contract allows six options. */
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -215,14 +216,17 @@ function OwnAnswer({ onOwn }: { onOwn: Option.Option<(answer: string) => void> }
             if (said.length > 0) Option.map(onOwn, (send) => send(said))
           }}
         >
-          <input
+          {/* It has no visible label (the placeholder and the question above say what it is), so
+              it is a bare `Input` with its name for a screen reader, not a `Field`. */}
+          <Input
+            compact
             value={own}
             onChange={(event) => setOwn(event.currentTarget.value)}
             aria-label="Your own answer"
             placeholder="Type your own answer"
-            className="h-9 min-w-0 flex-1 rounded-control bg-well px-3 text-label text-ink ring-line outline-none placeholder:text-ink-4 focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex-1"
           />
-          <Button type="submit" variant="primary" disabled={own.trim().length === 0}>
+          <Button type="submit" disabled={own.trim().length === 0}>
             Answer
           </Button>
         </form>

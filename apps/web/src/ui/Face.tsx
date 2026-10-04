@@ -20,7 +20,7 @@ export type { FaceMood }
 
 /** The fill of each face colour, for the face and for anything that shows a colour as a swatch. */
 export const FACE_COLOR_CLASS = {
-  accent: 'bg-accent',
+  accent: 'bg-primary',
   brown: 'bg-face-brown',
   red: 'bg-face-red',
   orange: 'bg-face-orange',

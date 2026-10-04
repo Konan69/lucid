@@ -8,13 +8,23 @@ import {
 } from '@vivid/contracts'
 import { Result } from 'effect'
 import { Building2, UserPlus } from 'lucide-react'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { change, live, LiveState, useLive } from '../../data/live'
 import { Route, router } from '../../data/route'
-import { Avatar } from '../../ui/Avatar'
-import { Button } from '../../ui/Button'
+import { PersonAvatar } from '../../ui/Person'
+import { Button } from '../../ui/button'
 import { Copy } from '../../ui/Copy'
-import { Dialog, DialogActions, DialogField } from '../../ui/Dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../ui/dialog'
+import { Field, FieldError, FieldGroup, FieldLabel } from '../../ui/field'
+import { Input } from '../../ui/input'
+import { useSurface } from '../../ui/Layer'
 import { Segmented } from '../../ui/Segmented'
 import { CreateCompany } from '../sidebar/Company'
 import { Awaiting, Empty, Refusal, Row, Section } from './Parts'
@@ -63,7 +73,9 @@ function NoCompany() {
           You are working in your own space. A company gives the people you work with shared
           threads, a shared Library and shared rules. Everything you have here stays yours.
         </p>
-        <Button onClick={() => setCreating(true)}>Create a company</Button>
+        <Button variant="outline" onClick={() => setCreating(true)}>
+          Create a company
+        </Button>
       </div>
       {creating && <CreateCompany onClose={() => setCreating(false)} />}
     </Section>
@@ -99,12 +111,8 @@ function CompanyPeople({
         detail="Members see shared threads, the company library and shared connections."
         action={
           admin ? (
-            <Button
-              size="sm"
-              variant="primary"
-              icon={<UserPlus className="size-3.5" />}
-              onClick={() => setInviting(true)}
-            >
+            <Button size="sm" onClick={() => setInviting(true)}>
+              <UserPlus className="size-3.5" />
               Invite
             </Button>
           ) : undefined
@@ -157,6 +165,7 @@ function CompanyPeople({
         <Section title="Leave">
           <Row label={`Leave ${company}`} detail="You keep everything in your own space.">
             <Button
+              variant="outline"
               onClick={() =>
                 void attempt(
                   (client) => client.LeaveCompany(),
@@ -194,7 +203,7 @@ function MemberRow({
   const role = member.role
   return (
     <div className="flex min-h-14 items-center gap-3 px-4 py-2.5">
-      <Avatar name={member.person.name} image={member.person.image} size={28} />
+      <PersonAvatar name={member.person.name} image={member.person.image} size={28} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-label text-ink">
           {member.person.name}
@@ -238,6 +247,11 @@ function Invite({ company, onClose }: { company: string; onClose: () => void }) 
   const [role, setRole] = useState<'admin' | 'member'>('member')
   const [sent, setSent] = useState<Invitation | null>(null)
   const [refusal, setRefusal] = useState<string | null>(null)
+  const field = useId()
+  // One surface for both steps: the form and the link it makes are the same dialog, so the link
+  // replaces the form in place instead of one dialog leaving and another arriving. Sent away
+  // (Escape, a click outside, the close button) it plays out before `onClose` is told.
+  const surface = useSurface(onClose)
 
   async function invite() {
     const result = await change((client) => client.InviteMember({ email: email.trim(), role }))
@@ -250,69 +264,82 @@ function Invite({ company, onClose }: { company: string; onClose: () => void }) 
 
   if (sent !== null) {
     return (
-      <Dialog
-        title="Send them this link"
-        description={`It lets ${sent.email} join ${company}. It works once and runs out in a week.`}
-        width="md"
-        onClose={onClose}
-      >
-        <div className="flex items-center gap-2 rounded-control bg-well px-3 py-2">
-          <code className="min-w-0 flex-1 truncate font-mono text-label text-ink-2">
-            {invitationLink(sent)}
-          </code>
-          <Copy name="invitation link" read={() => invitationLink(sent)} />
-        </div>
-        <DialogActions>
-          <Button variant="primary" onClick={onClose}>
-            Done
-          </Button>
-        </DialogActions>
+      <Dialog {...surface}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Send them this link</DialogTitle>
+            <DialogDescription>
+              {`It lets ${sent.email} join ${company}. It works once and runs out in a week.`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2 rounded-control bg-well px-3 py-2">
+            <code className="min-w-0 flex-1 truncate font-mono text-label text-ink-2">
+              {invitationLink(sent)}
+            </code>
+            <Copy name="invitation link" read={() => invitationLink(sent)} />
+          </div>
+          <DialogFooter>
+            <Button onClick={onClose}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
       </Dialog>
     )
   }
 
   return (
-    <Dialog
-      title={`Invite someone to ${company}`}
-      description="They join with their own account. Their private threads and notes stay theirs."
-      width="md"
-      onClose={onClose}
-    >
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          void invite()
-        }}
-      >
-        <DialogField
-          label="Their email"
-          value={email}
-          onChange={setEmail}
-          placeholder="name@company.com"
-        />
-        <div className="mt-3 flex items-center gap-3">
-          <span className="text-label text-ink-2">Role</span>
-          <Segmented label="Role" value={role} options={ROLES} onChange={setRole} />
-          <span className="text-label text-ink-3">
-            {role === 'admin'
-              ? 'Can invite people and set company rules.'
-              : 'Works with what admins set up.'}
-          </span>
-        </div>
-        {refusal !== null && (
-          <p role="alert" className="mt-3 text-label text-danger">
-            {refusal}
-          </p>
-        )}
-        <DialogActions>
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" disabled={!email.includes('@')}>
-            Create invitation
-          </Button>
-        </DialogActions>
-      </form>
+    <Dialog {...surface}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{`Invite someone to ${company}`}</DialogTitle>
+          <DialogDescription>
+            They join with their own account. Their private threads and notes stay theirs.
+          </DialogDescription>
+        </DialogHeader>
+        {/* `contents`: the fields and the actions take the dialog's own gap, and the submit button
+            stays inside the form so Enter in the field makes the invitation. */}
+        <form
+          className="contents"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void invite()
+          }}
+        >
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor={field}>Their email</FieldLabel>
+              <Input
+                id={field}
+                required
+                // A dialog exists to take this one answer; the cursor belongs in it.
+                // oxlint-disable-next-line jsx-a11y/no-autofocus
+                autoFocus
+                maxLength={120}
+                value={email}
+                onChange={(event) => setEmail(event.currentTarget.value)}
+                placeholder="name@company.com"
+              />
+            </Field>
+            <div className="flex items-center gap-3">
+              <span className="text-label text-ink-2">Role</span>
+              <Segmented label="Role" value={role} options={ROLES} onChange={setRole} />
+              <span className="text-label text-ink-3">
+                {role === 'admin'
+                  ? 'Can invite people and set company rules.'
+                  : 'Works with what admins set up.'}
+              </span>
+            </div>
+            {refusal !== null && <FieldError>{refusal}</FieldError>}
+          </FieldGroup>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!email.includes('@')}>
+              Create invitation
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
     </Dialog>
   )
 }

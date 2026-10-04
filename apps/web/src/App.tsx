@@ -19,6 +19,7 @@ import { Palette } from './screen/Palette'
 import { Sidebar } from './screen/Sidebar'
 import { Thread } from './screen/Thread'
 import { Welcome } from './screen/Welcome'
+import { IconButton } from './ui/button'
 import { Face } from './ui/Face'
 import { Sayings } from './ui/Sayings'
 
@@ -227,14 +228,15 @@ function Shell({ me }: { me: MeResponse }) {
           className="fixed inset-0 z-30 animate-fade-in cursor-default bg-scrim md:hidden"
         />
       ) : (
-        <button
-          aria-label="Show sidebar"
-          title="Show sidebar (⌘B)"
+        // The way back to a hidden sidebar, in the corner its own "Hide sidebar (⌘B)" button
+        // stood in. Its label names the shortcut too, as that one does, and is what the tooltip says.
+        <IconButton
+          label="Show sidebar (⌘B)"
           onClick={sidebar.show}
-          className="absolute top-2 left-2 z-30 inline-flex size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"
+          className="absolute top-2 left-2 z-30"
         >
           <PanelLeft className="size-4" />
-        </button>
+        </IconButton>
       )}
       <main className="relative flex min-w-0 flex-1">
         <Suspense fallback={<Splash />}>

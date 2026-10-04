@@ -1,6 +1,6 @@
 {
   "$schema": "https://ui.shadcn.com/schema.json",
-  "style": "new-york",
+  "style": "base-mira",
   "rsc": false,
   "tsx": true,
   "tailwind": {
@@ -11,11 +11,18 @@
     "prefix": ""
   },
   "iconLibrary": "lucide",
+  "rtl": false,
+  "menuColor": "default",
+  "menuAccent": "subtle",
   "aliases": {
     "components": "@/ui",
     "utils": "@/ui/cn",
     "ui": "@/ui",
-    "lib": "@/",
-    "hooks": "@/"
+    "lib": "@/data",
+    "hooks": "@/ui"
+  },
+  "registries": {
+    "@coss": "https://coss.com/ui/r/{name}.json",
+    "@spell": "https://spell.sh/r/{name}.json"
   }
 }

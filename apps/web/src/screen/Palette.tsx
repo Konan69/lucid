@@ -9,7 +9,8 @@ import { findings, findQuery, live, useLiveValue } from '../data/live'
 import { Route, router } from '../data/route'
 import { sidebar } from '../data/sidebar'
 import { cn } from '../ui/cn'
-import { holdFocus, keepFocusInside } from '../ui/Layer'
+import { Dialog, DialogContent, DialogTitle } from '../ui/dialog'
+import { useSurface } from '../ui/Layer'
 import { Emblem } from './Emblem'
 import { PlaceMark } from './Place'
 
@@ -258,93 +259,91 @@ export function Palette({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    // No arrival animation, on purpose: this opens from the keyboard many times a day, and
-    // anything between the keystroke and the field being ready reads as lag.
-    <div
-      role="presentation"
-      className="fixed inset-0 z-50 flex items-start justify-center bg-scrim px-4 pt-24 backdrop-blur-scrim"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) close()
-      }}
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') close()
-        keepFocusInside(event)
-      }}
-    >
-      <div
-        ref={holdFocus}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Search and actions"
-        tabIndex={-1}
-        className="w-full max-w-xl overflow-hidden rounded-dialog bg-surface-3 lift-lg outline-none"
+    // The app draws the palette only while it is wanted, so it is open from its first render.
+    // Sent away (Escape, a click outside) it leaves and then forgets what was typed; choosing a
+    // result closes it at once, because where that leads is what the Person wants next.
+    <Dialog {...useSurface(close)}>
+      {/* A fixed distance from the top and not centred: the list under the field grows and
+          shrinks with every key, and a centred panel would move the field as it did. It has no
+          close control: Escape is in its foot. The field has the keyboard from the first frame,
+          so what is typed is never lost to the panel's arrival. */}
+      <DialogContent
+        showCloseButton={false}
+        flush
+        instant
+        className="top-24 translate-y-0 overflow-hidden sm:max-w-xl"
       >
-        <label className="flex h-12 items-center gap-2.5 px-4 hairline-b">
-          <Search className="size-4 text-ink-3" />
-          <input
-            // The palette is opened to type in; nothing else on it can take focus first.
-            // oxlint-disable-next-line jsx-a11y/no-autofocus
-            autoFocus
-            value={typed}
-            maxLength={200}
-            aria-label="Search, or type what you want to do"
-            onChange={(event) => {
-              const next = event.currentTarget.value
-              setTyped(next)
-              // Actions are found here; only a search goes to the server.
-              setQuery(next.startsWith('>') ? '' : next)
-            }}
-            // The arrows and Enter belong to the field: a result that has the keyboard through
-            // Tab is activated by its own Enter, not by whichever one the arrows last marked.
-            onKeyDown={(event) => {
-              if (event.key === 'ArrowDown') {
-                event.preventDefault()
-                const next = Math.min(index + 1, Math.max(items.length - 1, 0))
-                const nextItem = items[next]
-                setSelectedKey(nextItem === undefined ? '' : nextItem.key)
-              }
-              if (event.key === 'ArrowUp') {
-                event.preventDefault()
-                const next = Math.max(index - 1, 0)
-                const nextItem = items[next]
-                setSelectedKey(nextItem === undefined ? '' : nextItem.key)
-              }
-              if (event.key === 'Enter') choose(index)
-            }}
-            placeholder="Search, or type what you want to do"
-            className="min-w-0 flex-1 bg-transparent text-body text-ink outline-none placeholder:text-ink-3"
-          />
-        </label>
-        <div className="max-h-112 overflow-y-auto p-1">
-          {items.length === 0 && (
-            <p className="px-3 py-6 text-center text-label text-ink-3" aria-live="polite">
-              {nothingSaid(answer)}
-            </p>
-          )}
-          {groups.map((group) => (
-            <section key={group.heading} aria-label={group.heading}>
-              <h3 className="px-3 pt-2 pb-1 text-meta font-meta text-ink-3">{group.heading}</h3>
-              <ul>
-                {group.items.map((item) => {
-                  const active = selected !== undefined && item.key === selected.key
-                  return (
-                    <Row
-                      key={item.key}
-                      item={item}
-                      active={active}
-                      activeRef={active ? keepActiveVisible : undefined}
-                      onHover={() => setSelectedKey(item.key)}
-                      onChoose={() => choose(items.indexOf(item))}
-                    />
-                  )
-                })}
-              </ul>
-            </section>
-          ))}
+        <DialogTitle className="sr-only">Search and actions</DialogTitle>
+        {/* The field, the list and the foot run edge to edge (`flush`), and the panel is there at
+            once (`instant`): it is opened from the keyboard many times a day. */}
+        <div>
+          <label className="flex h-12 items-center gap-2.5 px-4 hairline-b">
+            <Search className="size-4 text-ink-3" />
+            <input
+              // The palette is opened to type in; nothing else on it can take focus first.
+              // oxlint-disable-next-line jsx-a11y/no-autofocus
+              autoFocus
+              value={typed}
+              maxLength={200}
+              aria-label="Search, or type what you want to do"
+              onChange={(event) => {
+                const next = event.currentTarget.value
+                setTyped(next)
+                // Actions are found here; only a search goes to the server.
+                setQuery(next.startsWith('>') ? '' : next)
+              }}
+              // The arrows and Enter belong to the field: a result that has the keyboard through
+              // Tab is activated by its own Enter, not by whichever one the arrows last marked.
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault()
+                  const next = Math.min(index + 1, Math.max(items.length - 1, 0))
+                  const nextItem = items[next]
+                  setSelectedKey(nextItem === undefined ? '' : nextItem.key)
+                }
+                if (event.key === 'ArrowUp') {
+                  event.preventDefault()
+                  const next = Math.max(index - 1, 0)
+                  const nextItem = items[next]
+                  setSelectedKey(nextItem === undefined ? '' : nextItem.key)
+                }
+                if (event.key === 'Enter') choose(index)
+              }}
+              placeholder="Search, or type what you want to do"
+              className="min-w-0 flex-1 bg-transparent text-body text-ink outline-none placeholder:text-ink-3"
+            />
+          </label>
+          <div className="max-h-112 overflow-y-auto p-1">
+            {items.length === 0 && (
+              <p className="px-3 py-6 text-center text-label text-ink-3" aria-live="polite">
+                {nothingSaid(answer)}
+              </p>
+            )}
+            {groups.map((group) => (
+              <section key={group.heading} aria-label={group.heading}>
+                <h3 className="px-3 pt-2 pb-1 text-meta font-meta text-ink-3">{group.heading}</h3>
+                <ul>
+                  {group.items.map((item) => {
+                    const active = selected !== undefined && item.key === selected.key
+                    return (
+                      <Row
+                        key={item.key}
+                        item={item}
+                        active={active}
+                        activeRef={active ? keepActiveVisible : undefined}
+                        onHover={() => setSelectedKey(item.key)}
+                        onChoose={() => choose(items.indexOf(item))}
+                      />
+                    )
+                  })}
+                </ul>
+              </section>
+            ))}
+          </div>
+          <Foot />
         </div>
-        <Foot />
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 

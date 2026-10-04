@@ -3,8 +3,8 @@ import { Effect, Result } from 'effect'
 import { use, useState } from 'react'
 import { change } from '../data/live'
 import { Route, router } from '../data/route'
-import { Avatar } from '../ui/Avatar'
-import { Button } from '../ui/Button'
+import { PersonAvatar } from '../ui/Person'
+import { Button } from '../ui/button'
 import { Face } from '../ui/Face'
 
 const previews = new Map<InvitationId, Promise<InvitationPreview | null>>()
@@ -81,13 +81,15 @@ export function Invite({ id }: { id: InvitationId }) {
           <p className="max-w-sm text-body text-ink-3">
             It may have been withdrawn. Ask whoever invited you for a new link.
           </p>
-          <Button onClick={() => router.go(Route.New())}>Go to Vivid</Button>
+          <Button variant="outline" onClick={() => router.go(Route.New())}>
+            Go to Vivid
+          </Button>
         </>
       ) : (
         <>
           <h1 className="text-page font-title text-ink">Join {preview.company.name}</h1>
           <p className="flex items-center gap-2 text-body text-ink-3">
-            <Avatar name={preview.invitedBy.name} image={preview.invitedBy.image} size={20} />
+            <PersonAvatar name={preview.invitedBy.name} image={preview.invitedBy.image} size={20} />
             {preview.invitedBy.name} invited you as {article(preview.role)}.
           </p>
           <Boundaries company={preview.company.name} />
@@ -96,9 +98,7 @@ export function Invite({ id }: { id: InvitationId }) {
               <Button variant="ghost" onClick={() => router.go(Route.New())}>
                 Not now
               </Button>
-              <Button variant="primary" onClick={() => void join()}>
-                Join {preview.company.name}
-              </Button>
+              <Button onClick={() => void join()}>Join {preview.company.name}</Button>
             </div>
           ) : (
             <p className="text-label text-attention">This invitation is no longer open.</p>

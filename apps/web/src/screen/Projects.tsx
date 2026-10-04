@@ -6,12 +6,12 @@ import { useState, type ReactNode } from 'react'
 import { live, LiveState, useLive } from '../data/live'
 import { Route, router } from '../data/route'
 import { scope } from '../data/scope'
-import { Avatar } from '../ui/Avatar'
-import { Button } from '../ui/Button'
+import { PersonAvatar } from '../ui/Person'
+import { Button } from '../ui/button'
 import { cn } from '../ui/cn'
 import { Live } from '../ui/Live'
-import { Notice } from '../ui/Notice'
-import { Skeleton } from '../ui/Skeleton'
+import { Alert } from '../ui/alert'
+import { SkeletonList } from '../ui/skeleton'
 import { StatusLabel } from '../ui/Status'
 import { BAR } from './bar'
 import { CreateProject } from './project/Create'
@@ -50,12 +50,12 @@ export function Projects({
   return LiveState.$match(state, {
     Loading: () => (
       <Pane bar={<Crumb onClick={shelf}>Projects</Crumb>}>
-        <Skeleton of="row" count={4} />
+        <SkeletonList of="row" count={4} />
       </Pane>
     ),
     Failed: ({ failure }) => (
       <Pane bar={<Crumb onClick={shelf}>Projects</Crumb>}>
-        <Notice>{failure.message}</Notice>
+        <Alert variant="destructive">{failure.message}</Alert>
       </Pane>
     ),
     Ready: ({ value }) =>
@@ -87,7 +87,7 @@ function Pane({ bar, children }: { bar: ReactNode; children: ReactNode }) {
       <header className={BAR}>
         <nav className="flex min-w-0 flex-1 items-center gap-1 text-title">{bar}</nav>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
+      <div className="min-h-0 flex-1 scroll-fade-y overflow-y-auto">
         <div className="mx-auto w-full max-w-180 px-5 pt-4 pb-12 sm:px-8">{children}</div>
       </div>
     </section>
@@ -136,7 +136,8 @@ function Shelf({
         <p className="min-w-0 flex-1 text-label font-meta text-pretty text-ink-3">
           A project keeps the threads about one piece of work together.
         </p>
-        <Button icon={<Plus className="size-3.5" />} onClick={() => setCreating(true)}>
+        <Button variant="outline" onClick={() => setCreating(true)}>
+          <Plus className="size-3.5" />
           New project
         </Button>
       </div>
@@ -236,20 +237,19 @@ function ProjectPage({
           </p>
         </div>
         <Button
-          variant="primary"
-          icon={<SquarePen className="size-3.5" />}
           onClick={() => {
             // The first screen files what is written there in the scoped Project.
             scope.enter(project.id)
             router.go(Route.New())
           }}
         >
+          <SquarePen className="size-3.5" />
           New thread
         </Button>
       </header>
 
       <Part title="Threads">
-        <Live state={threads} loading={<Skeleton of="row" count={3} />}>
+        <Live state={threads} loading={<SkeletonList of="row" count={3} />}>
           {(list) => (
             <ProjectThreads project={project} list={list.threads} onOpenThread={onOpenThread} />
           )}
@@ -275,14 +275,12 @@ function ProjectPage({
       {project.companyId !== null && <People threads={mine} project={project} />}
 
       {/* The quiet way to split this work up, last on the page: most Projects never need it. */}
-      <button
-        type="button"
-        onClick={() => setCreating(true)}
-        className="mt-6 flex h-8 cursor-pointer items-center gap-2 rounded-row px-1 text-label text-ink-3 transition-colors duration-(--dur-fast) hover:text-ink"
-      >
-        <Plus className="size-4" strokeWidth={1.6} />
+      {/* The negative margin takes back the button's own padding less the page's 4px inset, so
+          its mark stands on the same left line as the lists above it. */}
+      <Button variant="ghost" onClick={() => setCreating(true)} className="mt-6 -ml-2">
+        <Plus strokeWidth={1.6} />
         New project inside this one
-      </button>
+      </Button>
 
       {creating && (
         <CreateProject
@@ -419,7 +417,7 @@ function People({ project, threads }: { project: Project; threads: ReadonlyArray
             key={person.id}
             className="flex h-8 items-center gap-2 rounded-full bg-surface-2 pr-3 pl-1 edge"
           >
-            <Avatar name={person.name} image={person.image} size={24} />
+            <PersonAvatar name={person.name} image={person.image} size={24} />
             <span className="text-label text-ink-2">{person.name}</span>
           </li>
         ))}

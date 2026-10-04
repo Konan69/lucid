@@ -1,4 +1,5 @@
 import { Shown as ShownKind } from '@vivid/contracts'
+import { Array as Arr, Option } from 'effect'
 import { DRAFT_WORDS as DRAFT, formReply, siteOf as site, togglePicked } from '@vivid/state'
 import {
   Check,
@@ -12,11 +13,22 @@ import {
   Minus,
   Plus,
 } from 'lucide-react'
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useId, useState, type FormEvent, type ReactNode } from 'react'
 import { pages } from '../../data/pages'
-import { Button } from '../../ui/Button'
+import { Button } from '../../ui/button'
 import { cn } from '../../ui/cn'
 import { Copy } from '../../ui/Copy'
+import { Field, FieldLabel } from '../../ui/field'
+import { Input } from '../../ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../../ui/select'
+import { Textarea } from '../../ui/textarea'
 import { Chart } from './Chart'
 
 /**
@@ -241,14 +253,14 @@ function OptionsShown({
                 onClick={() => pick(option.label)}
                 className={cn(
                   'flex min-h-10 w-full cursor-pointer items-center gap-3 rounded-control px-3 py-2 text-left transition-press duration-(--dur-fast) active:scale-98 disabled:cursor-default active:disabled:scale-100',
-                  on ? 'bg-accent-soft' : 'bg-surface-2 hover:enabled:bg-wash-pressed',
+                  on ? 'bg-primary-soft' : 'bg-surface-2 hover:enabled:bg-wash-pressed',
                 )}
               >
                 {ask.many && (
                   <span
                     className={cn(
                       'inline-flex size-4 shrink-0 items-center justify-center rounded-xs',
-                      on ? 'bg-accent text-ink-on-accent' : 'ring-1 ring-line-4',
+                      on ? 'bg-primary text-primary-foreground' : 'ring-1 ring-line-4',
                     )}
                   >
                     {on && <Check className="size-3" strokeWidth={3} />}
@@ -269,7 +281,6 @@ function OptionsShown({
       </ul>
       {ask.many && live && (
         <Button
-          variant="primary"
           size="sm"
           className="mt-3"
           disabled={picked.length === 0}
@@ -294,7 +305,7 @@ function ComparisonShown({ comparison }: { comparison: Kind<'Comparison'> }) {
             key={item.name}
             className={cn(
               'flex w-60 shrink-0 snap-start flex-col gap-2 rounded-control p-3',
-              item.name === picked ? 'bg-accent-soft' : 'bg-surface-2',
+              item.name === picked ? 'bg-primary-soft' : 'bg-surface-2',
             )}
           >
             <span className="flex items-center gap-2">
@@ -302,7 +313,7 @@ function ComparisonShown({ comparison }: { comparison: Kind<'Comparison'> }) {
                 {item.name}
               </span>
               {item.name === picked && (
-                <span className="shrink-0 rounded-full bg-accent px-2 py-0.5 text-meta font-title text-ink-on-accent">
+                <span className="shrink-0 rounded-full bg-primary px-2 py-0.5 text-meta font-title text-primary-foreground">
                   Vivid’s pick
                 </span>
               )}
@@ -380,7 +391,7 @@ function LinksShown({ list }: { list: Kind<'Links'> }) {
                   <span className="mt-0.5 block text-label text-ink-2">{link.note}</span>
                 )}
               </span>
-              <ExternalLink className="mt-1 size-3.5 shrink-0 text-ink-4 group-hover/link:text-accent-ink group-focus-visible/link:text-accent-ink" />
+              <ExternalLink className="mt-1 size-3.5 shrink-0 text-ink-4 group-hover/link:text-primary-ink group-focus-visible/link:text-primary-ink" />
             </a>
           </li>
         ))}
@@ -453,7 +464,7 @@ function DraftShown({
       </p>
       <div className="mt-3 flex items-center gap-2">
         {live && (
-          <Button variant="primary" size="sm" onClick={() => onSay(`${words.send}.`)}>
+          <Button size="sm" onClick={() => onSay(`${words.send}.`)}>
             {words.send}
           </Button>
         )}
@@ -498,9 +509,6 @@ function ScheduleShown({ schedule }: { schedule: Kind<'Schedule'> }) {
   )
 }
 
-const FIELD =
-  'w-full rounded-control bg-well px-3 py-2 text-label text-ink outline-none placeholder:text-ink-4 focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60'
-
 /**
  * A few details Vivid needs, asked for at once. What is filled in is said back as lines of
  * "label: value", so the answer in the Thread is readable on its own. It is not for secrets: a
@@ -532,13 +540,10 @@ function FormShown({
     <Frame title={form.title}>
       <form onSubmit={submit} className="mt-1 flex flex-col gap-3">
         {form.fields.map((field) => (
-          <label key={field.label} className="flex flex-col gap-1.5">
-            <span className="text-meta font-title text-ink-2">{field.label}</span>
-            <Field field={field} disabled={!live} />
-          </label>
+          <Asked key={field.label} field={field} disabled={!live} />
         ))}
         {live && (
-          <Button type="submit" variant="primary" size="sm" className="self-start">
+          <Button type="submit" size="sm" className="self-start">
             {form.submit}
           </Button>
         )}
@@ -547,38 +552,79 @@ function FormShown({
   )
 }
 
-/** One field of a form, as the control its kind calls for. Its name is its label. */
-function Field({ field, disabled }: { field: Kind<'Form'>['fields'][number]; disabled: boolean }) {
+/**
+ * One field of a form: its label, tied by id to the control its kind calls for. The control's
+ * `name` is the field's label, which is the key `FormShown` reads the answer back by.
+ */
+function Asked({ field, disabled }: { field: Kind<'Form'>['fields'][number]; disabled: boolean }) {
+  const id = useId()
+  return (
+    <Field>
+      <FieldLabel htmlFor={id}>{field.label}</FieldLabel>
+      <Control id={id} field={field} disabled={disabled} />
+    </Field>
+  )
+}
+
+/** The control one field's kind calls for. */
+function Control({
+  id,
+  field,
+  disabled,
+}: {
+  id: string
+  field: Kind<'Form'>['fields'][number]
+  disabled: boolean
+}) {
   switch (field.kind) {
     case 'long text':
       return (
-        <textarea
+        <Textarea
+          id={id}
           name={field.label}
           rows={3}
           disabled={disabled}
           placeholder={field.example}
-          className={cn(FIELD, 'resize-y')}
         />
       )
     case 'choice':
       return (
-        <select name={field.label} disabled={disabled} className={cn(FIELD, 'cursor-pointer')}>
-          {field.choices.map((choice) => (
-            <option key={choice}>{choice}</option>
-          ))}
-        </select>
+        // Not the browser's own select, so `name` goes on the root: Base UI keeps a hidden input
+        // of that name, and `FormData` carries the choice as before. It starts on the first
+        // choice, as the browser's select did, so a field left alone still answers; a field Vivid
+        // gave no choices has nothing to start on and answers nothing.
+        <Select
+          name={field.label}
+          disabled={disabled}
+          defaultValue={Option.getOrNull(Arr.head(field.choices))}
+          // The choices are their own labels; `items` is what has the trigger show the chosen one.
+          items={field.choices.map((choice) => ({ value: choice, label: choice }))}
+        >
+          <SelectTrigger id={id} className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {field.choices.map((choice) => (
+                <SelectItem key={choice} value={choice}>
+                  {choice}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
       )
     // These kinds are also the names of the browser's own input types.
     case 'text':
     case 'number':
     case 'date':
       return (
-        <input
+        <Input
+          id={id}
           name={field.label}
           type={field.kind}
           disabled={disabled}
           placeholder={field.example}
-          className={FIELD}
         />
       )
   }

@@ -1,6 +1,6 @@
 import { Check, Copy as CopyIcon } from 'lucide-react'
 import { useState } from 'react'
-import { Button } from './Button'
+import { Button } from './button'
 
 /** What the button says for each thing that can have happened to the last click. */
 const LABEL = {
@@ -20,10 +20,10 @@ export function Copy({ name, read }: { name: string; read: () => string }) {
   const [state, setState] = useState<keyof typeof LABEL>('idle')
   return (
     <Button
+      variant="outline"
       type="button"
       size="sm"
       aria-label={`${LABEL[state]}: ${name}`}
-      icon={state === 'copied' ? <Check className="size-3.5" /> : <CopyIcon className="size-3.5" />}
       onClick={() => {
         // Over plain http from another machine the browser has no clipboard at all, and reaching
         // for it throws before there is a promise to refuse.
@@ -37,6 +37,7 @@ export function Copy({ name, read }: { name: string; read: () => string }) {
         )
       }}
     >
+      {state === 'copied' ? <Check className="size-3.5" /> : <CopyIcon className="size-3.5" />}
       {LABEL[state]}
     </Button>
   )

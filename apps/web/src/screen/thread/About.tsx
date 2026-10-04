@@ -15,11 +15,11 @@ import { pages } from '../../data/pages'
 import { router } from '../../data/route'
 import { engine } from '../../data/runtime'
 import { mayCustomise, useAppearance } from '../../data/vivid'
-import { Button } from '../../ui/Button'
+import { Button } from '../../ui/button'
 import { cn } from '../../ui/cn'
 import { Face, type FaceMood } from '../../ui/Face'
 import { holdFocus } from '../../ui/Layer'
-import { Skeleton } from '../../ui/Skeleton'
+import { SkeletonList } from '../../ui/skeleton'
 import { auditSentence } from '../settings/Record'
 import { Customise } from '../vivid/Customise'
 
@@ -77,7 +77,11 @@ export function About({
         aria-label={name}
         tabIndex={-1}
         onKeyDown={(event) => {
-          if (event.key === 'Escape') onClose()
+          // Only a key pressed in the card itself. The Customise sheet is opened from here and
+          // drawn at the end of the document, but React carries its keys up to this card: its
+          // Escape closes the sheet, and must not take the card away with it.
+          const inside = event.target instanceof Node && event.currentTarget.contains(event.target)
+          if (inside && event.key === 'Escape') onClose()
         }}
         onScroll={(event) => setCompact(event.currentTarget.scrollTop > COMPACT_AFTER_PX)}
         className="absolute around-card z-20 origin-top-right overflow-y-auto rounded-panel lift-lg glass transition-pop duration-(--dur-fast) ease-out outline-none starting:scale-97 starting:opacity-0"
@@ -186,7 +190,7 @@ function Around({
 function Hosted({ onOpen }: { onOpen: () => void }) {
   const computer = useLive(live.computer)
   return LiveState.$match(computer, {
-    Loading: () => <Skeleton of="row" count={1} />,
+    Loading: () => <SkeletonList of="row" count={1} />,
     Failed: () => (
       <Refused onRetry={() => engine.registry.refresh(live.computer.atom)}>
         Vivid’s computer can’t be reached right now.
@@ -210,7 +214,7 @@ function Integrations({ onOpen }: { onOpen: () => void }) {
   const listed = LiveState.$is('Ready')(state) ? state.value.connections.slice(0, LISTED) : []
   return (
     <>
-      {LiveState.$is('Loading')(state) && <Skeleton of="row" count={1} />}
+      {LiveState.$is('Loading')(state) && <SkeletonList of="row" count={1} />}
       {LiveState.$is('Failed')(state) && (
         <Refused onRetry={() => engine.registry.refresh(live.connections.atom)}>
           Your Integrations can’t be reached right now.
@@ -243,7 +247,7 @@ function Activity({ thread, onSeeAll }: { thread: ThreadId; onSeeAll: () => void
   const [opened] = useState(() => Date.now())
   const [count, setCount] = useState(LISTED)
   return LiveState.$match(state, {
-    Loading: () => <Skeleton of="row" count={1} />,
+    Loading: () => <SkeletonList of="row" count={1} />,
     Failed: () => (
       <Refused onRetry={() => engine.registry.refresh(live.audit.atom)}>
         The record can’t be reached right now.

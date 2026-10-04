@@ -4,8 +4,9 @@ import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import { draft } from '../../data/drafts'
 import { writing } from '../../data/life'
 import { theme } from '../../data/theme'
-import { IconButton } from '../../ui/Button'
+import { IconButton } from '../../ui/button'
 import { cn } from '../../ui/cn'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { attachable, Attached, useAttachments, type Picture } from './Attach'
 
 /**
@@ -171,8 +172,8 @@ function SendOrStop({
       className={cn(
         // With nothing to send it is a quiet disc, not a faded accent: an accent at 40%
         // reads as a broken button, a neutral one reads as "write something first".
-        'relative inline-flex size-9 motion-press cursor-pointer items-center justify-center rounded-full text-ink-on-accent disabled:cursor-not-allowed disabled:bg-wash-pressed disabled:text-ink-4',
-        working ? 'bg-ink text-surface-0 hover:bg-ink-2' : 'bg-accent hover:bg-accent-hover',
+        'relative inline-flex size-9 motion-press cursor-pointer items-center justify-center rounded-full text-primary-foreground disabled:cursor-not-allowed disabled:bg-wash-pressed disabled:text-ink-4',
+        working ? 'bg-ink text-surface-0 hover:bg-ink-2' : 'bg-primary hover:bg-primary-hover',
       )}
     >
       <Square data-shown={working} className="absolute size-3.5 motion-swap fill-current" />
@@ -181,7 +182,13 @@ function SendOrStop({
   )
 }
 
-/** The paperclip: picks documents to attach. The same file can be picked again once taken off. */
+/**
+ * The paperclip: picks documents to attach. The same file can be picked again once taken off.
+ *
+ * It is a label around the browser's own file input, which is what opens the file picker, so it
+ * cannot be an `IconButton`; the label is the tooltip's trigger. Focus lands on the input inside
+ * it and is heard by the label, so the tooltip shows from the keyboard as well.
+ */
 function Pick({
   accept,
   onPick,
@@ -190,23 +197,27 @@ function Pick({
   onPick: (files: ReadonlyArray<File>) => void
 }) {
   return (
-    <label
-      title="Attach a file"
-      className="inline-flex size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) focus-within:bg-wash-hover hover:bg-wash-hover hover:text-ink"
-    >
-      <Paperclip className="size-4" />
-      <span className="sr-only">Attach a file</span>
-      <input
-        type="file"
-        multiple
-        accept={accept}
-        className="sr-only"
-        onChange={(event) => {
-          const picked = event.currentTarget.files
-          if (picked !== null) onPick(Array.from(picked))
-          event.currentTarget.value = ''
-        }}
-      />
-    </label>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <label className="inline-flex size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) focus-within:bg-wash-hover hover:bg-wash-hover hover:text-ink" />
+        }
+      >
+        <Paperclip className="size-4" />
+        <span className="sr-only">Attach a file</span>
+        <input
+          type="file"
+          multiple
+          accept={accept}
+          className="sr-only"
+          onChange={(event) => {
+            const picked = event.currentTarget.files
+            if (picked !== null) onPick(Array.from(picked))
+            event.currentTarget.value = ''
+          }}
+        />
+      </TooltipTrigger>
+      <TooltipContent>Attach a file</TooltipContent>
+    </Tooltip>
   )
 }

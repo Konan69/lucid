@@ -16,19 +16,38 @@ import {
   Repeat2,
   Webhook,
 } from 'lucide-react'
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useId, useState, type FormEvent, type ReactNode } from 'react'
 import { change, live, LiveState, useLive, useLiveValue } from '../data/live'
 import { routines as routinesData } from '@vivid/state'
 import type { ProductFailure } from '../data/runtime'
-import { Button, IconButton } from '../ui/Button'
+import { Button, IconButton } from '../ui/button'
 import { cn } from '../ui/cn'
 import { Copy } from '../ui/Copy'
-import { Dialog, DialogActions } from '../ui/Dialog'
-import { Field, Input, Select, Textarea } from '../ui/Field'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../ui/dialog'
+import { Field, FieldLabel } from '../ui/field'
+import { Input } from '../ui/input'
+import { useSurface } from '../ui/Layer'
 import { Live } from '../ui/Live'
-import { Notice } from '../ui/Notice'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../ui/select'
+import { Textarea } from '../ui/textarea'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
+import { Alert } from '../ui/alert'
 import { Segmented } from '../ui/Segmented'
-import { Skeleton } from '../ui/Skeleton'
+import { SkeletonList } from '../ui/skeleton'
 import { BAR } from './bar'
 import { Emblem, type Hue } from './Emblem'
 import { Mark } from './integration/Mark'
@@ -119,9 +138,9 @@ export function Routines({
         )}
         <h1 className="min-w-0 flex-1 truncate text-title font-title text-ink">{title}</h1>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
+      <div className="min-h-0 flex-1 scroll-fade-y overflow-y-auto">
         <div className="mx-auto flex w-full max-w-230 flex-col gap-3 px-5 pt-1 pb-10 sm:px-8">
-          {Option.isSome(refused) && <Notice>{refused.value}</Notice>}
+          {Option.isSome(refused) && <Alert variant="destructive">{refused.value}</Alert>}
           <RoutinesBody
             view={shown}
             routines={routines}
@@ -229,7 +248,7 @@ function RoutinesOverview({
   // not read the clock, and a list left open past midnight is corrected by its next opening.
   const [opened] = useState(() => Date.now())
   return (
-    <Live state={state} loading={<Skeleton of="row" count={3} />}>
+    <Live state={state} loading={<SkeletonList of="row" count={3} />}>
       {({ routines }) =>
         routines.length === 0 ? (
           <NoRoutines onCreate={onCreate} />
@@ -239,7 +258,8 @@ function RoutinesOverview({
               <p className="flex-1 text-label text-ink-3 tabular-nums">
                 {routines.filter((routine) => routine.enabled).length} of {routines.length} on
               </p>
-              <Button size="sm" icon={<Plus className="size-3.5" />} onClick={blank}>
+              <Button variant="outline" size="sm" onClick={blank}>
+                <Plus className="size-3.5" />
                 New routine
               </Button>
             </div>
@@ -278,12 +298,8 @@ function NoRoutines({ onCreate }: { onCreate: (start: RoutineFields) => void }) 
         Write an instruction once and Vivid follows it on a schedule, or each time something calls
         it.
       </p>
-      <Button
-        className="mt-5"
-        variant="primary"
-        icon={<Plus className="size-3.5" />}
-        onClick={() => onCreate(routinesData.emptyFields())}
-      >
+      <Button className="mt-5" onClick={() => onCreate(routinesData.emptyFields())}>
+        <Plus className="size-3.5" />
         New routine
       </Button>
       <p className="mt-10 mb-2.5 self-start px-0.5 text-label font-title text-ink">
@@ -303,7 +319,7 @@ function NoRoutines({ onCreate }: { onCreate: (start: RoutineFields) => void }) 
                 })
               }
               className={cn(
-                'flex size-full cursor-pointer flex-col gap-2.5 rounded-card bg-surface-3 p-3.5 text-left edge outline-none hover:bg-surface-2 focus-visible:edge-accent',
+                'flex size-full cursor-pointer flex-col gap-2.5 rounded-card bg-surface-3 p-3.5 text-left edge outline-none hover:bg-surface-2 focus-visible:edge-primary',
                 PRESS,
                 ENTER,
                 stagger(place),
@@ -424,7 +440,7 @@ function RoutineRow({
       type="button"
       onClick={onOpen}
       className={cn(
-        'flex w-full cursor-pointer items-center gap-3 rounded-card bg-surface-3 p-3 text-left edge outline-none hover:bg-surface-2 focus-visible:edge-accent',
+        'flex w-full cursor-pointer items-center gap-3 rounded-card bg-surface-3 p-3 text-left edge outline-none hover:bg-surface-2 focus-visible:edge-primary',
         PRESS,
         ENTER,
         stagger(place),
@@ -475,10 +491,14 @@ function RoutineFieldset({
   onChange: (fields: routinesData.RoutineFields) => void
 }) {
   const fixed = routinesData.fixedStart(fields)
+  // One id for the fieldset; each field adds its own word, so a label finds its control.
+  const id = useId()
   return (
     <>
-      <Field label="Name">
+      <Field>
+        <FieldLabel htmlFor={`${id}-name`}>Name</FieldLabel>
         <Input
+          id={`${id}-name`}
           autoFocus={focusName}
           required
           maxLength={120}
@@ -487,8 +507,10 @@ function RoutineFieldset({
           placeholder="Daily Project brief"
         />
       </Field>
-      <Field label="Instruction">
+      <Field>
+        <FieldLabel htmlFor={`${id}-instruction`}>Instruction</FieldLabel>
         <Textarea
+          id={`${id}-instruction`}
           required
           maxLength={4000}
           rows={5}
@@ -562,25 +584,47 @@ function ScheduleFields({
   onChange: (fields: routinesData.RoutineFields) => void
 }) {
   const preset = routinesData.SCHEDULE_PRESETS.some((candidate) => candidate.cron === fields.cron)
+  // One id for the fields; each adds its own word, so a label finds its control.
+  const id = useId()
+  // The named schedules, as the select reads them: the trigger's words come from this list.
+  const named = routinesData.SCHEDULE_PRESETS.map((option) => ({
+    value: option.cron,
+    label: option.label,
+  }))
+  // A schedule written by hand has no name; it is listed so the select can show it.
+  const schedules = preset ? named : [...named, { value: fields.cron, label: 'Its own schedule' }]
   return (
     <>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="When">
+        <Field>
+          <FieldLabel htmlFor={`${id}-when`}>When</FieldLabel>
           <Select
+            items={schedules}
             value={fields.cron}
-            onChange={(event) => onChange({ ...fields, cron: event.currentTarget.value })}
+            onValueChange={(cron) => {
+              // Base UI hands `null` when a selection is cleared; nothing here clears one.
+              if (cron === null) return
+              onChange({ ...fields, cron })
+            }}
           >
-            {routinesData.SCHEDULE_PRESETS.map((option) => (
-              <option key={option.cron} value={option.cron}>
-                {option.label}
-              </option>
-            ))}
-            {/* A schedule written by hand has no name; it is listed so the select can show it. */}
-            {!preset && <option value={fields.cron}>Its own schedule</option>}
+            <SelectTrigger id={`${id}-when`} className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {schedules.map((schedule) => (
+                  <SelectItem key={schedule.value} value={schedule.value}>
+                    {schedule.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
           </Select>
         </Field>
-        <Field label="Time zone">
+        <Field>
+          <FieldLabel htmlFor={`${id}-zone`}>Time zone</FieldLabel>
           <Input
+            id={`${id}-zone`}
             required
             value={Option.getOrElse(fields.timezone, () => zone)}
             onChange={(event) =>
@@ -589,8 +633,13 @@ function ScheduleFields({
           />
         </Field>
       </div>
-      <Field label="Cron expression" hint="for a schedule not listed above">
+      <Field>
+        <FieldLabel htmlFor={`${id}-cron`}>
+          Cron expression{' '}
+          <span className="font-meta text-ink-3">for a schedule not listed above</span>
+        </FieldLabel>
         <Input
+          id={`${id}-cron`}
           required
           value={fields.cron}
           onChange={(event) => onChange({ ...fields, cron: event.currentTarget.value })}
@@ -644,11 +693,7 @@ function NewRoutine({
         <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
-        <Button
-          type="submit"
-          variant="primary"
-          disabled={saving || !routinesData.fieldsComplete(fields, zone)}
-        >
+        <Button type="submit" disabled={saving || !routinesData.fieldsComplete(fields, zone)}>
           {saving ? 'Creating' : 'Create routine'}
         </Button>
       </div>
@@ -719,7 +764,7 @@ function RoutineDetail({
           <Button type="button" variant="ghost" onClick={onBack}>
             Back
           </Button>
-          <Button type="submit" variant="primary" disabled={!savable}>
+          <Button type="submit" disabled={!savable}>
             Save changes
           </Button>
         </div>
@@ -776,18 +821,12 @@ function RoutineControls({
   return (
     <div className="mb-5 border-b border-line-1 pb-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Button
-          icon={routine.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
-          onClick={() => void toggle()}
-        >
+        <Button variant="outline" onClick={() => void toggle()}>
+          {routine.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
           {routine.enabled ? 'Pause' : 'Resume'}
         </Button>
-        <Button
-          variant="primary"
-          disabled={starting || running}
-          icon={retry ? <RotateCcw className="size-3.5" /> : <Play className="size-3.5" />}
-          onClick={() => void run()}
-        >
+        <Button disabled={starting || running} onClick={() => void run()}>
+          {retry ? <RotateCcw className="size-3.5" /> : <Play className="size-3.5" />}
           {starting || running ? 'Running' : 'Run now'}
         </Button>
         {RoutineTrigger.guards.Webhook(routine.trigger) && (
@@ -838,32 +877,59 @@ function WebhookAddress({
 
   return (
     <>
-      <Button disabled={asking} icon={<Link2 className="size-3.5" />} onClick={() => void ask()}>
+      <Button variant="outline" disabled={asking} onClick={() => void ask()}>
+        <Link2 className="size-3.5" />
         Get address
       </Button>
       {Option.isSome(issued) && (
-        <Dialog
-          title={`Address for ${routine.name}`}
-          description="Send a POST request to the address, with the key as a bearer token in the Authorization header."
-          width="md"
+        <IssuedAddress
+          name={routine.name}
+          webhook={issued.value}
           onClose={() => setIssued(Option.none())}
-        >
-          <div className="flex flex-col gap-3">
-            <Copyable label="Address" name="the address" read={() => issued.value.address} />
-            <Copyable label="Key" name="the key" read={() => Redacted.value(issued.value.key)} />
-            <p className="text-label text-ink-2">
-              The key is shown only now. Copy it before you close this. Getting the address again
-              replaces the key.
-            </p>
-          </div>
-          <DialogActions>
-            <Button variant="primary" onClick={() => setIssued(Option.none())}>
-              Done
-            </Button>
-          </DialogActions>
-        </Dialog>
+        />
       )}
     </>
+  )
+}
+
+/**
+ * The address and key just issued, shown once. It is its own component so the dialog is open from
+ * its first render and plays out when sent away (`useSurface`); only then is the key dropped, by
+ * `onClose`, so the words do not vanish from a dialog that is still leaving.
+ */
+function IssuedAddress({
+  name,
+  webhook,
+  onClose,
+}: {
+  name: string
+  webhook: RoutineWebhook
+  onClose: () => void
+}) {
+  const surface = useSurface(onClose)
+  return (
+    <Dialog {...surface}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{`Address for ${name}`}</DialogTitle>
+          <DialogDescription>
+            Send a POST request to the address, with the key as a bearer token in the Authorization
+            header.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
+          <Copyable label="Address" name="the address" read={() => webhook.address} />
+          <Copyable label="Key" name="the key" read={() => Redacted.value(webhook.key)} />
+          <p className="text-label text-ink-2">
+            The key is shown only now. Copy it before you close this. Getting the address again
+            replaces the key.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button onClick={onClose}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -944,19 +1010,26 @@ function OccurrenceRow({
     )
   }
   return (
-    <button
-      type="button"
-      title="Open Thread"
-      onClick={() => onOpenConversation(thread.value)}
-      className="group/run w-full cursor-pointer rounded-row bg-surface-2 px-3 py-2.5 text-left edge transition-surface duration-(--dur-fast) hover:bg-wash-hover"
-    >
-      <OccurrenceSummary
-        occurrence={occurrence}
-        trailing={
-          <ChevronRight className="size-3.5 text-ink-4 transition-transform duration-(--dur-fast) group-hover/run:translate-x-0.5" />
+    // The row shows what happened, not where a press leads; the tooltip says it opens the Thread.
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            onClick={() => onOpenConversation(thread.value)}
+            className="group/run w-full cursor-pointer rounded-row bg-surface-2 px-3 py-2.5 text-left edge transition-surface duration-(--dur-fast) hover:bg-wash-hover"
+          />
         }
-      />
-    </button>
+      >
+        <OccurrenceSummary
+          occurrence={occurrence}
+          trailing={
+            <ChevronRight className="size-3.5 text-ink-4 transition-transform duration-(--dur-fast) group-hover/run:translate-x-0.5" />
+          }
+        />
+      </TooltipTrigger>
+      <TooltipContent>Open Thread</TooltipContent>
+    </Tooltip>
   )
 }
 

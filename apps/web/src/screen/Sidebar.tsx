@@ -5,7 +5,6 @@ import { Option, Result } from 'effect'
 import {
   Bell,
   Building2,
-  Check,
   ChevronsUpDown,
   Library,
   PanelLeft,
@@ -16,13 +15,25 @@ import {
   SquarePen,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
+import { IconButton } from '../ui/button'
 import { change, live, useLiveValue } from '../data/live'
 import { Route, router } from '../data/route'
 import { useScope } from '../data/scope'
-import { Avatar } from '../ui/Avatar'
+import { PersonAvatar } from '../ui/Person'
 import { cn } from '../ui/cn'
 import { Alive } from '../ui/Alive'
-import { Menu, MenuDivider, MenuItem, MenuLabel } from '../ui/Menu'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '../ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { settling } from '../ui/settle'
 import { sidebar } from '../data/sidebar'
 import { ScopeChip } from './project/Chip'
@@ -40,31 +51,40 @@ import { Threads, ThreadSkeleton } from './sidebar/Threads'
  */
 function Edge() {
   return (
-    <div
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="Resize the sidebar"
-      title="Drag to resize. Double-click to reset."
-      tabIndex={0}
-      onPointerDown={(event) => {
-        event.currentTarget.setPointerCapture(event.pointerId)
-        document.documentElement.dataset.resizing = 'sidebar'
-      }}
-      onPointerMove={(event) => {
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) sidebar.widen(event.clientX)
-      }}
-      onPointerUp={(event) => {
-        event.currentTarget.releasePointerCapture(event.pointerId)
-        delete document.documentElement.dataset.resizing
-        sidebar.keepWidth()
-      }}
-      onDoubleClick={sidebar.usualWidth}
-      onKeyDown={(event) => {
-        if (event.key === 'ArrowLeft') sidebar.nudge(-16)
-        if (event.key === 'ArrowRight') sidebar.nudge(16)
-      }}
-      className="absolute inset-y-0 right-0 z-10 hidden w-1.5 cursor-col-resize transition-colors duration-(--dur-fast) outline-none hover:bg-wash-pressed focus-visible:bg-accent-soft md:block"
-    />
+    // What the edge does is said in a tooltip, on hover and on focus: a native `title` is never
+    // shown to the keyboard, which can move this edge too.
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize the sidebar"
+            tabIndex={0}
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId)
+              document.documentElement.dataset.resizing = 'sidebar'
+            }}
+            onPointerMove={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId))
+                sidebar.widen(event.clientX)
+            }}
+            onPointerUp={(event) => {
+              event.currentTarget.releasePointerCapture(event.pointerId)
+              delete document.documentElement.dataset.resizing
+              sidebar.keepWidth()
+            }}
+            onDoubleClick={sidebar.usualWidth}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowLeft') sidebar.nudge(-16)
+              if (event.key === 'ArrowRight') sidebar.nudge(16)
+            }}
+            className="absolute inset-y-0 right-0 z-10 hidden w-1.5 cursor-col-resize transition-colors duration-(--dur-fast) outline-none hover:bg-wash-pressed focus-visible:bg-primary-soft md:block"
+          />
+        }
+      />
+      <TooltipContent side="right">Drag to resize. Double-click to reset.</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -110,8 +130,7 @@ export function Sidebar({
       // Narrow: a drawer over the page that slides by its own width. Wide: a column beside the
       // page that gives up its width. One element, so its contents and their state are the same
       // sidebar either way. Shown, it has no translation at all (`none`, not zero): any other
-      // value makes the aside the box that `fixed` things inside it are placed in, and the layer
-      // under an open menu, which a click anywhere else closes, would cover only the sidebar.
+      // value makes the aside the box that anything `fixed` inside it is placed in.
       className={cn(
         'fixed inset-y-0 left-0 z-40 flex h-full w-(--sidebar-w) shrink-0 flex-col overflow-hidden bg-surface-1 transition-pop duration-(--dur-base) ease-out in-data-resizing:transition-none md:relative md:z-auto md:translate-none md:transition-width',
         open ? 'translate-none hairline-r' : '-translate-x-full md:w-0',
@@ -121,19 +140,20 @@ export function Sidebar({
       {/* The inner column keeps its full width while the aside narrows, so nothing reflows. */}
       <div className="flex h-full w-(--sidebar-w) shrink-0 flex-col">
         <div className="flex h-(--topbar-h) shrink-0 items-center px-2">
-          <RailButton label="Hide sidebar (⌘B)" onClick={onHide}>
+          <IconButton label="Hide sidebar (⌘B)" onClick={onHide}>
             <PanelLeft className="size-4" />
-          </RailButton>
+          </IconButton>
           <span className="flex-1" />
-          <RailButton label="Search (⌘K)" onClick={onSearch}>
+          <IconButton label="Search (⌘K)" onClick={onSearch}>
             <Search className="size-4" />
-          </RailButton>
-          <RailButton label="Notifications" onClick={onNotifications}>
+          </IconButton>
+          {/* `relative` places the unread dot on the bell's own corner. */}
+          <IconButton label="Notifications" onClick={onNotifications} className="relative">
             <Bell className="size-4" />
             {unread > 0 && (
-              <i className="absolute top-1.5 right-1.5 size-2 rounded-full bg-accent ring-2 ring-surface-1" />
+              <i className="absolute top-1.5 right-1.5 size-2 rounded-full bg-primary ring-2 ring-surface-1" />
             )}
-          </RailButton>
+          </IconButton>
         </div>
 
         <div className="px-2">
@@ -167,7 +187,7 @@ export function Sidebar({
             a row with a new place glides to it and the rows under a gap close up. */}
         <nav
           ref={settling}
-          className="mt-2 min-h-0 flex-1 scrollbar-hidden overflow-y-auto scroll-fade-y px-2 pb-2"
+          className="mt-2 min-h-0 flex-1 scroll-fade-y scrollbar-hidden overflow-y-auto px-2 pb-2"
         >
           <Work route={route} scoped={scoped} />
         </nav>
@@ -177,7 +197,7 @@ export function Sidebar({
           onClick={() => router.openSettings(Option.some('general'))}
           className={cn(ROW, FULL, HOVER, 'm-2 mt-0 w-auto')}
         >
-          <Avatar name={me.person.name} image={me.person.image ?? null} size={22} />
+          <PersonAvatar name={me.person.name} image={me.person.image ?? null} size={22} />
           <span className="min-w-0 flex-1 truncate text-label text-ink-2 group-hover/row:text-ink">
             {me.person.name}
           </span>
@@ -223,26 +243,8 @@ function Work({ route, scoped }: { route: Route; scoped: Option.Option<Project> 
   )
 }
 
-function RailButton({
-  label,
-  onClick,
-  children,
-}: {
-  label: string
-  onClick: () => void
-  children: ReactNode
-}) {
-  return (
-    <button
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      className="relative inline-flex size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"
-    >
-      {children}
-    </button>
-  )
-}
+/** The switcher's entry for the Person's own space, beside one entry for each Company. */
+const PERSONAL = 'personal'
 
 /**
  * Where the Person is working, and the way to somewhere else. Their own space is always first.
@@ -262,16 +264,18 @@ function WorkspaceSwitcher({
   scoped: Option.Option<Project>
   onCreateCompany: () => void
 }) {
-  const [open, setOpen] = useState(false)
   const here = Workspace.match(me.workspace, {
     Personal: () => 'Vivid',
     Company: ({ company }) => company.name,
   })
-  const inCompany = Workspace.guards.Company(me.workspace)
-  const activeCompany = Workspace.guards.Company(me.workspace) ? me.workspace.company.id : null
+  // Which entry of the menu the Person is in. A Company's id is prefixed so that no Company can
+  // ever be mistaken for the Person's own space.
+  const at = Workspace.match(me.workspace, {
+    Personal: () => PERSONAL,
+    Company: ({ company }) => `company:${company.id}`,
+  })
 
   async function enter(to: 'personal' | CompanyMembership) {
-    setOpen(false)
     const switched = await change((client) =>
       client.SwitchWorkspace({
         to:
@@ -287,71 +291,74 @@ function WorkspaceSwitcher({
   }
 
   return (
-    <div className="relative flex items-center gap-1">
-      <button
-        onClick={() => setOpen(true)}
-        className={cn(ROW, FULL, HOVER, 'w-auto min-w-0 flex-1')}
-        aria-haspopup="menu"
-      >
-        <span className="relative inline-flex size-5.5 items-center justify-center">
-          <Alive size={20} state={working ? 'thinking' : 'idle'} />
-        </span>
-        {/* Where the Person is, in the face Vivid speaks in: the one line of the rail with a voice. */}
-        <span className="min-w-0 flex-1 truncate font-display text-dialog font-strong text-ink">
-          {here}
-        </span>
-        <ChevronsUpDown className="size-3.5 shrink-0 text-ink-4 group-hover/row:text-ink-2" />
-      </button>
-      {Option.isSome(scoped) && <ScopeChip key={scoped.value.id} project={scoped.value} />}
-      <Menu open={open} onClose={() => setOpen(false)} className="w-60">
-        <MenuLabel>Your space</MenuLabel>
-        <MenuItem
-          icon={<Avatar name={me.person.name} image={me.person.image ?? null} size={16} />}
-          hint={inCompany ? undefined : <Check className="size-3.5 text-ink-2" />}
-          selected={!inCompany}
-          onSelect={() => void enter('personal')}
+    <div className="flex items-center gap-1">
+      {/* The menu owns whether it is open: nothing else here reads it, and it hangs under the
+          row that opened it, at that row's left edge. */}
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={<button className={cn(ROW, FULL, HOVER, 'w-auto min-w-0 flex-1')} />}
         >
-          {me.person.name}
-        </MenuItem>
-        {me.companies.length > 0 && <MenuLabel>Companies</MenuLabel>}
-        {me.companies.map((membership) => (
-          <MenuItem
-            key={membership.company.id}
-            icon={<Building2 className="size-4" strokeWidth={1.6} />}
-            hint={
-              membership.company.id === activeCompany ? (
-                <Check className="size-3.5 text-ink-2" />
-              ) : undefined
-            }
-            selected={membership.company.id === activeCompany}
-            onSelect={() => void enter(membership)}
-          >
-            {membership.company.name}
-          </MenuItem>
-        ))}
-        <MenuDivider />
-        {/* The one place a Company is offered outside a Thread and Settings. It is two lines so
-            it can say what a Company gives before it is asked for. */}
-        <button
-          type="button"
-          role="menuitem"
-          onClick={() => {
-            setOpen(false)
-            onCreateCompany()
-          }}
-          className="flex w-full cursor-pointer items-start gap-2.5 rounded-row px-2.5 py-2 text-left transition-colors duration-(--dur-fast) outline-none select-none hover:bg-wash-hover focus-visible:bg-wash-hover"
-        >
-          <span className="mt-px inline-flex size-4 shrink-0 items-center justify-center text-ink-2">
-            <Plus className="size-4" />
+          <span className="relative inline-flex size-5.5 items-center justify-center">
+            <Alive size={20} state={working ? 'thinking' : 'idle'} />
           </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-label text-ink">Create a company</span>
-            <span className="mt-0.5 block text-meta font-meta text-pretty text-ink-3">
-              Shared threads, a shared Library and shared rules for the people you work with.
+          {/* Where the Person is, in the face Vivid speaks in: the one line of the rail with a voice. */}
+          <span className="min-w-0 flex-1 truncate font-display text-dialog font-strong text-ink">
+            {here}
+          </span>
+          <ChevronsUpDown className="size-3.5 shrink-0 text-ink-4 group-hover/row:text-ink-2" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className="w-60">
+          {/* One choice among every space, so the spaces are radio items and the tick is theirs.
+              `value` is where the server says the Person is and nothing here writes it: the tick
+              moves when the switch has landed, and a refused switch leaves it where it was. A
+              radio item keeps its menu open by default; choosing a space is leaving for it, so
+              these close it. */}
+          <DropdownMenuRadioGroup value={at}>
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Your space</DropdownMenuLabel>
+              <DropdownMenuRadioItem
+                value={PERSONAL}
+                closeOnClick
+                onClick={() => void enter('personal')}
+              >
+                <PersonAvatar name={me.person.name} image={me.person.image ?? null} size={16} />
+                <span className="min-w-0 flex-1 truncate">{me.person.name}</span>
+              </DropdownMenuRadioItem>
+            </DropdownMenuGroup>
+            {me.companies.length > 0 && (
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Companies</DropdownMenuLabel>
+                {me.companies.map((membership) => (
+                  <DropdownMenuRadioItem
+                    key={membership.company.id}
+                    value={`company:${membership.company.id}`}
+                    closeOnClick
+                    onClick={() => void enter(membership)}
+                  >
+                    <Building2 strokeWidth={1.6} />
+                    <span className="min-w-0 flex-1 truncate">{membership.company.name}</span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuGroup>
+            )}
+          </DropdownMenuRadioGroup>
+          <DropdownMenuSeparator />
+          {/* The one place a Company is offered outside a Thread and Settings. It is two lines so
+              it can say what a Company gives before it is asked for; the mark sits on the first. */}
+          <DropdownMenuItem className="items-start" onClick={onCreateCompany}>
+            <span className="mt-px inline-flex size-4 shrink-0 items-center justify-center text-ink-2">
+              <Plus />
             </span>
-          </span>
-        </button>
-      </Menu>
+            <span className="min-w-0 flex-1">
+              <span className="block text-label text-ink">Create a company</span>
+              <span className="mt-0.5 block text-meta font-meta text-pretty text-ink-3">
+                Shared threads, a shared Library and shared rules for the people you work with.
+              </span>
+            </span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {Option.isSome(scoped) && <ScopeChip key={scoped.value.id} project={scoped.value} />}
     </div>
   )
 }

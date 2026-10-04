@@ -3,7 +3,7 @@ import { Bell, Check, Hand, Share2, UserPlus } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { change, live, LiveState, useLive } from '../data/live'
 import { Route, router } from '../data/route'
-import { Button } from '../ui/Button'
+import { Button } from '../ui/button'
 import { cn } from '../ui/cn'
 import { holdFocus } from '../ui/Layer'
 import { Emblem, type Hue } from './Emblem'
@@ -102,7 +102,7 @@ export function Notifications({ onClose }: { onClose: () => void }) {
         <header className="flex h-11 shrink-0 items-center gap-2 px-3 hairline-b">
           <h2 className="text-label font-title text-ink">Notifications</h2>
           {unread > 0 && (
-            <span className="rounded-full bg-accent px-1.5 text-meta font-title text-ink-on-accent tabular-nums">
+            <span className="rounded-full bg-primary px-1.5 text-meta font-title text-primary-foreground tabular-nums">
               {unread}
             </span>
           )}
@@ -185,7 +185,7 @@ function Notice({
           {unread && (
             <i
               aria-label="Unread"
-              className="size-1.5 shrink-0 self-center rounded-full bg-accent"
+              className="size-1.5 shrink-0 self-center rounded-full bg-primary"
             />
           )}
         </span>

@@ -10,11 +10,12 @@ import { makeFullWhen, makeWhen, speakerOfTurn, thisReader } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { AlarmClock, Check, Copy as CopyIcon, Repeat2 } from 'lucide-react'
 import { useState } from 'react'
-import { Avatar } from '../../ui/Avatar'
+import { PersonAvatar } from '../../ui/Person'
 import { cn } from '../../ui/cn'
 import { Alive } from '../../ui/Alive'
 import { Face } from '../../ui/Face'
 import { Markdown } from '../../ui/Markdown'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import {
   ApprovalCard,
   approvalById,
@@ -136,7 +137,7 @@ export function Said({
             'max-w-bubble rounded-composer rounded-br-sm px-4 py-2.5 text-body',
             unsent
               ? 'text-ink-2 outline-1 -outline-offset-1 outline-line-4 outline-dashed'
-              : 'bg-accent text-ink-on-accent selection:bg-ink-on-accent/30',
+              : 'bg-primary text-primary-foreground selection:bg-primary-foreground/30',
           )}
         >
           {pictures.length > 0 && (
@@ -147,7 +148,7 @@ export function Said({
                   href={picture.url}
                   target="_blank"
                   rel="noreferrer"
-                  className="block cursor-pointer rounded-control focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className="block cursor-pointer rounded-control focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                 >
                   <img
                     src={picture.url}
@@ -165,7 +166,7 @@ export function Said({
   }
   return (
     <div className="flex gap-3">
-      {from !== undefined && <Avatar name={from.name} size={24} className="mt-1" />}
+      {from !== undefined && <PersonAvatar name={from.name} size={24} className="mt-1" />}
       <div className="min-w-0">
         {from !== undefined && (
           <span className="mb-1 block text-meta font-title text-ink-3">{from.name}</span>
@@ -179,7 +180,7 @@ export function Said({
                   href={picture.url}
                   target="_blank"
                   rel="noreferrer"
-                  className="block cursor-pointer rounded-control focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className="block cursor-pointer rounded-control focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                 >
                   <img
                     src={picture.url}
@@ -354,35 +355,46 @@ const simpleWords = (text: string, tools: ReadonlyArray<ToolPart>) =>
  * Copies a reply's words in one press. It is always there, quietly, beside the time: a control
  * that only appears on hover does not exist on a touch screen, and one more thing appearing under
  * the pointer is one more thing moving while reading.
+ *
+ * It stays its own small button and not an `IconButton`: it turns the danger ink when the copy
+ * is refused. What it says is a tooltip, which stays up through the press (`closeOnClick` off),
+ * so "Copied" or why it could not copy is read where the Person just pressed.
  */
 function CopyWords({ read }: { read: () => string }) {
   const [state, setState] = useState<keyof typeof COPY>('idle')
   return (
-    <button
-      type="button"
-      aria-label={COPY[state]}
-      title={COPY[state]}
-      onClick={() => {
-        // Over plain http from another machine the browser has no clipboard at all.
-        if (!('clipboard' in navigator)) {
-          setState('refused')
-          return
+    <Tooltip>
+      <TooltipTrigger
+        closeOnClick={false}
+        render={
+          <button
+            type="button"
+            aria-label={COPY[state]}
+            onClick={() => {
+              // Over plain http from another machine the browser has no clipboard at all.
+              if (!('clipboard' in navigator)) {
+                setState('refused')
+                return
+              }
+              void navigator.clipboard.writeText(read()).then(
+                () => setState('copied'),
+                () => setState('refused'),
+              )
+            }}
+            // Back to rest when the pointer or the keyboard leaves, so "Copied" is about this press.
+            onBlur={() => setState('idle')}
+            onMouseLeave={() => setState('idle')}
+            className={cn(
+              'inline-flex size-6 cursor-pointer items-center justify-center rounded-control transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink active:scale-96',
+              state === 'refused' ? 'text-danger' : 'text-ink-3',
+            )}
+          />
         }
-        void navigator.clipboard.writeText(read()).then(
-          () => setState('copied'),
-          () => setState('refused'),
-        )
-      }}
-      // Back to rest when the pointer or the keyboard leaves, so "Copied" is about this press.
-      onBlur={() => setState('idle')}
-      onMouseLeave={() => setState('idle')}
-      className={cn(
-        'inline-flex size-6 cursor-pointer items-center justify-center rounded-control transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink active:scale-96',
-        state === 'refused' ? 'text-danger' : 'text-ink-3',
-      )}
-    >
-      {state === 'copied' ? <Check className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-    </button>
+      >
+        {state === 'copied' ? <Check className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+      </TooltipTrigger>
+      <TooltipContent>{COPY[state]}</TooltipContent>
+    </Tooltip>
   )
 }
 

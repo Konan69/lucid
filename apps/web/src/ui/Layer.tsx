@@ -1,4 +1,4 @@
-import type { KeyboardEvent, ReactNode } from 'react'
+import { useState, type KeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 /**
@@ -57,6 +57,47 @@ export function holdFocus(surface: HTMLElement | null) {
   return () => {
     changed(-1)
     if (before instanceof HTMLElement && before.isConnected) before.focus()
+  }
+}
+
+/**
+ * Counts a surface that Base UI floats (a dialog, a menu, a popover, a select) for as long as it
+ * is in the document. Base UI takes the keyboard and gives it back itself, so unlike `holdFocus`
+ * this only counts; see `floatingSurfaces` for who is listening.
+ */
+export function countSurface(surface: HTMLElement | null) {
+  if (surface === null) return undefined
+  changed(1)
+  return () => {
+    changed(-1)
+  }
+}
+
+/**
+ * For a floating surface whose owner draws it only while it is wanted (`{renaming && <Rename />}`).
+ *
+ * Base UI plays a surface out when `open` turns false, and it cannot do that for one that has
+ * already left the document. So the surface is open from its first render, closes itself when it
+ * is sent away (Escape, a click outside, its close button), and its owner is told only once it
+ * has finished leaving. Spread the result on the root: `<Dialog {...useSurface(onClose)}>`.
+ * A button that completes the task calls `onClose` itself, at once: the result is what the Person
+ * wants next, not the dialog's exit.
+ */
+export function useSurface(onClose: () => void) {
+  const [open, setOpen] = useState(true)
+  // What had the keyboard when the surface was drawn. Base UI gives focus back to a surface's
+  // trigger, and a surface that is drawn already open has none, so it is given back here.
+  const [before] = useState(() => document.activeElement)
+  return {
+    open,
+    onOpenChange: (next: boolean) => {
+      setOpen(next)
+    },
+    onOpenChangeComplete: (next: boolean) => {
+      if (next) return
+      onClose()
+      if (before instanceof HTMLElement && before.isConnected) before.focus()
+    },
   }
 }
 

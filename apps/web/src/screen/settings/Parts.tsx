@@ -1,6 +1,6 @@
 import { LiveState } from '@vivid/state'
 import type { ReactNode } from 'react'
-import { Notice } from '../../ui/Notice'
+import { Alert } from '../../ui/alert'
 
 /** A titled group of settings in a raised panel. */
 export function Section({
@@ -79,7 +79,7 @@ export function Refusal({ message }: { message: string | null }) {
 export function Awaiting<Value>({ state }: { state: LiveState<Value> }) {
   return LiveState.$match(state, {
     Ready: () => null,
-    Failed: ({ failure }) => <Notice>{failure.message}</Notice>,
+    Failed: ({ failure }) => <Alert variant="destructive">{failure.message}</Alert>,
     Loading: () => (
       <div aria-hidden className="mb-6">
         <div className="mb-2 flex flex-col gap-1.5 p-1">

@@ -2,7 +2,7 @@ import { Workspace, type MeResponse } from '@vivid/contracts'
 import { Option } from 'effect'
 import { X } from 'lucide-react'
 import { router, type SettingsSection } from '../data/route'
-import { IconButton } from '../ui/Button'
+import { IconButton } from '../ui/button'
 import { cn } from '../ui/cn'
 import { PlaceMark, type Place } from './Place'
 import { PRESS } from './motion'
@@ -13,7 +13,8 @@ import { Memory } from './settings/Memory'
 import { People } from './settings/People'
 import { Record } from './settings/Record'
 import { Rules } from './settings/Rules'
-import { holdFocus, keepFocusInside } from '../ui/Layer'
+import { Dialog, DialogClose, DialogContent, DialogTitle } from '../ui/dialog'
+import { useSurface } from '../ui/Layer'
 
 interface Entry {
   readonly id: SettingsSection
@@ -64,55 +65,54 @@ export function Settings({
     Company: ({ company }) => company.name,
   })
   return (
-    <div
-      role="presentation"
-      // Narrow: Settings is the whole screen, the way a phone shows it. Wide: a panel over the page.
-      className="fixed inset-0 z-40 flex animate-fade-in items-center justify-center bg-scrim backdrop-blur-scrim sm:p-4"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) close()
-      }}
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') close()
-        keepFocusInside(event)
-      }}
-    >
-      <div
-        ref={holdFocus}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Settings"
-        tabIndex={-1}
-        // Wide: sections down the left, the chosen one beside them. Narrow: there is no room for
-        // a column, so the sections become one scrolling strip above the content. It is as large
-        // as a desktop window allows (1024 by 760), because Integrations is a grid of tiles and
-        // a short panel showed one row of them; a smaller window still clamps it to itself.
-        className="flex size-full max-w-5xl animate-rise-in flex-col overflow-hidden bg-surface-1 outline-none sm:max-h-190 sm:flex-row sm:rounded-dialog sm:lift-lg"
+    // The app draws Settings only while a section is in the address, so it is open from its first
+    // render; sent away (Escape, a click outside, its close button) it leaves, and only then is
+    // the section taken out of the address.
+    <Dialog {...useSurface(close)}>
+      <DialogContent
+        showCloseButton={false}
+        // Narrow: Settings is the whole screen, the way a phone shows it. Wide: a panel over the
+        // page, 16 clear of the window on every side, with sections down the left and the chosen
+        // one beside them. Narrow, there is no room for a column, so the sections become one
+        // scrolling strip above the content. It is as large as a desktop window allows (1024 by
+        // 760), because Integrations is a grid of tiles and a short panel showed one row of them;
+        // a smaller window still clamps it to itself. It is placed by its edges and not from its
+        // centre, so the box between them is what the two limits clamp, and its one row is as
+        // tall as it is, so the sections scroll inside it.
+        flush
+        className="inset-0 m-auto size-auto max-h-none max-w-none translate-none grid-rows-1 overflow-hidden sm:inset-4 sm:max-h-190 sm:max-w-5xl"
       >
-        {/* The strip fades at its far edge and ends in spare room, so a section cut off there
+        {/* The panel's own name. What is on screen is the open section's title, in the header. */}
+        <DialogTitle className="sr-only">Settings</DialogTitle>
+        {/* Settings fills its panel to the edge (`flush`): the column of sections and the pane
+            each have their own fill. */}
+        <div className="flex min-h-0 flex-col overflow-hidden sm:flex-row">
+          {/* The strip fades at its far edge and ends in spare room, so a section cut off there
             reads as "there is more this way" and the last one can still be scrolled clear. */}
-        <nav className="flex shrink-0 scrollbar-hidden gap-0.5 overflow-x-auto bg-surface-1 scroll-fade-end p-2 pr-10 hairline-b sm:w-52 sm:flex-col sm:overflow-x-visible sm:scroll-fade-none sm:pr-2 sm:hairline-r">
-          <Group label="You" entries={YOURS} current={section} />
-          <Group label={place} entries={SHARED} current={section} />
-        </nav>
-        <div className="flex min-w-0 flex-1 flex-col bg-surface-0">
-          <header className="flex h-(--topbar-h) shrink-0 items-center px-5">
-            <h2 className="flex-1 text-title font-title text-ink">{TITLE[section]}</h2>
-            <IconButton label="Close" onClick={close}>
-              <X className="size-4" />
-            </IconButton>
-          </header>
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6">
-            {section === 'general' && <General me={me} />}
-            {section === 'devices' && <Devices initialCode={deviceCode} />}
-            {section === 'people' && <People me={me} />}
-            {section === 'connections' && <Connections me={me} />}
-            {section === 'rules' && <Rules me={me} />}
-            {section === 'memory' && <Memory />}
-            {section === 'record' && <Record />}
+          <nav className="flex shrink-0 scrollbar-hidden gap-0.5 overflow-x-auto bg-surface-1 scroll-fade-end p-2 pr-10 hairline-b sm:w-52 sm:flex-col sm:overflow-x-visible sm:scroll-fade-none sm:pr-2 sm:hairline-r">
+            <Group label="You" entries={YOURS} current={section} />
+            <Group label={place} entries={SHARED} current={section} />
+          </nav>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-surface-0">
+            <header className="flex h-(--topbar-h) shrink-0 items-center px-5">
+              <h2 className="flex-1 text-title font-title text-ink">{TITLE[section]}</h2>
+              <DialogClose render={<IconButton label="Close" />}>
+                <X className="size-4" />
+              </DialogClose>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6">
+              {section === 'general' && <General me={me} />}
+              {section === 'devices' && <Devices initialCode={deviceCode} />}
+              {section === 'people' && <People me={me} />}
+              {section === 'connections' && <Connections me={me} />}
+              {section === 'rules' && <Rules me={me} />}
+              {section === 'memory' && <Memory />}
+              {section === 'record' && <Record />}
+            </div>
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 

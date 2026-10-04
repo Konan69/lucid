@@ -1,4 +1,4 @@
-import { Button } from '../ui/Button'
+import { Button } from '../ui/button'
 import { Face } from '../ui/Face'
 import { useAgain } from '../ui/Recover'
 
@@ -17,10 +17,10 @@ export function Broken() {
         Something went wrong while drawing it. Your threads and what you were writing are safe.
       </p>
       <div className="mt-1 flex gap-2">
-        <Button onClick={again}>Try again</Button>
-        <Button variant="primary" onClick={() => location.reload()}>
-          Reload Vivid
+        <Button variant="outline" onClick={again}>
+          Try again
         </Button>
+        <Button onClick={() => location.reload()}>Reload Vivid</Button>
       </div>
     </main>
   )

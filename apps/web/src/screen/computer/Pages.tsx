@@ -13,11 +13,25 @@ import {
 } from 'lucide-react'
 import { useCallback, useState, type KeyboardEvent } from 'react'
 import { pages, type Front } from '../../data/pages'
-import { Button, IconButton } from '../../ui/Button'
+import { Button, IconButton } from '../../ui/button'
 import { cn } from '../../ui/cn'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '../../ui/context-menu'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '../../ui/dropdown-menu'
 import { Face } from '../../ui/Face'
 import { floatingSurfaces } from '../../ui/Layer'
-import { ContextMenu, MenuDivider, MenuItem, type MenuPoint } from '../../ui/Menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 
 /**
  * One tab: 32 high, about 236 wide when there is room and shrinking to 90 before the strip
@@ -52,6 +66,9 @@ function neighbour(key: string, at: number, last: number) {
  * it costs nothing.
  */
 function steer(event: KeyboardEvent<HTMLDivElement>) {
+  // Only a key pressed in the strip itself. A tab's menu is drawn at the end of the document,
+  // but React carries its keys up to the strip, and Home and End there move within the menu.
+  if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
   event.preventDefault()
   const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'))
@@ -229,44 +246,46 @@ function PageTab({
   onDrop: () => void
   onDragEnd: () => void
 }) {
-  const [menu, setMenu] = useState<Option.Option<MenuPoint>>(Option.none())
   return (
-    <>
-      <span
-        role="presentation"
-        draggable
-        className={cn(TAB, active ? SELECTED : RESTING, dragging && 'opacity-50')}
-        onDragStart={(event) => {
-          event.dataTransfer.effectAllowed = 'move'
-          onDragStart()
-        }}
-        onDragOver={(event) => {
-          event.preventDefault()
-          event.dataTransfer.dropEffect = 'move'
-          onDragOver()
-        }}
-        onDrop={(event) => {
-          event.preventDefault()
-          onDrop()
-        }}
-        onDragEnd={onDragEnd}
-        // The middle button would start the browser's auto-scroll before the click arrived.
-        onMouseDown={(event) => {
-          if (event.button === 1) event.preventDefault()
-        }}
-        onAuxClick={(event) => {
-          if (event.button === 1) pages.close(page.tab)
-        }}
-        onContextMenu={(event) => {
-          event.preventDefault()
-          setMenu(Option.some({ x: event.clientX, y: event.clientY }))
-        }}
+    // The tab asks for its menu (a right click, the menu key, a long press) and the menu is drawn
+    // over the page, beside the tab in React's tree and not inside it: nothing done in the menu
+    // reaches the tab's own drag, click or middle-click handling.
+    <ContextMenu>
+      <ContextMenuTrigger
+        render={
+          <span
+            role="presentation"
+            draggable
+            className={cn(TAB, active ? SELECTED : RESTING, dragging && 'opacity-50')}
+            onDragStart={(event) => {
+              event.dataTransfer.effectAllowed = 'move'
+              onDragStart()
+            }}
+            onDragOver={(event) => {
+              event.preventDefault()
+              event.dataTransfer.dropEffect = 'move'
+              onDragOver()
+            }}
+            onDrop={(event) => {
+              event.preventDefault()
+              onDrop()
+            }}
+            onDragEnd={onDragEnd}
+            // The middle button would start the browser's auto-scroll before the click arrived.
+            onMouseDown={(event) => {
+              if (event.button === 1) event.preventDefault()
+            }}
+            onAuxClick={(event) => {
+              if (event.button === 1) pages.close(page.tab)
+            }}
+          />
+        }
       >
         {Option.isSome(landing) && (
           <i
             aria-hidden
             className={cn(
-              'absolute inset-y-1 w-0.5 rounded-full bg-accent',
+              'absolute inset-y-1 w-0.5 rounded-full bg-primary',
               landing.value === 'before' ? '-left-1' : '-right-1',
             )}
           />
@@ -289,47 +308,47 @@ function PageTab({
           visible={active}
           onClose={() => pages.close(page.tab)}
         />
-      </span>
-      {/* Beside the tab, not inside it: events from a portalled menu bubble through React's tree,
-        and a right click on its backdrop would otherwise reach the tab and open it again. */}
-      {Option.isSome(menu) && (
-        <ContextMenu at={menu.value} onClose={() => setMenu(Option.none())}>
-          <PageActions page={page} onClose={() => setMenu(Option.none())} />
-        </ContextMenu>
-      )}
-    </>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <PageActions page={page} parts={IN_CONTEXT} />
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 
-/** The actions a page has, in the menu a right click and the toolbar's overflow both open. */
-function PageActions({ page, onClose }: { page: Page; onClose: () => void }) {
+/* The two menus a page's actions are drawn in. Each has its own item and separator, so the
+   actions are written once and told which pair to draw themselves with. */
+const IN_CONTEXT = { Item: ContextMenuItem, Separator: ContextMenuSeparator }
+const IN_DROPDOWN = { Item: DropdownMenuItem, Separator: DropdownMenuSeparator }
+
+/**
+ * The actions a page has, in the menu a right click and the toolbar's overflow both open. They
+ * exist only while a menu is open, so the order of the pages is read as it is at that moment.
+ * The menu closes itself when one is chosen, so the page it acts on is in front of nothing.
+ */
+function PageActions({
+  page,
+  parts: { Item, Separator },
+}: {
+  page: Page
+  parts: typeof IN_CONTEXT | typeof IN_DROPDOWN
+}) {
   const open = pages.current().tabs
   const position = open.findIndex((candidate) => candidate.tab === page.tab)
-  // Every choice closes the menu first, so the page it acts on is in front of nothing.
-  const then = (act: () => void) => () => {
-    onClose()
-    act()
-  }
   return (
     <>
-      <MenuItem onSelect={then(() => pages.reload(page.tab))}>Reload</MenuItem>
-      <MenuItem onSelect={then(() => void navigator.clipboard.writeText(page.address))}>
-        Copy address
-      </MenuItem>
-      <MenuItem onSelect={then(() => pages.duplicate(page.tab))}>Duplicate</MenuItem>
-      <MenuDivider />
-      {position > 0 && (
-        <MenuItem onSelect={then(() => pages.reorder(page.tab, position - 1))}>Move left</MenuItem>
-      )}
+      <Item onClick={() => pages.reload(page.tab)}>Reload</Item>
+      <Item onClick={() => void navigator.clipboard.writeText(page.address)}>Copy address</Item>
+      <Item onClick={() => pages.duplicate(page.tab)}>Duplicate</Item>
+      <Separator />
+      {position > 0 && <Item onClick={() => pages.reorder(page.tab, position - 1)}>Move left</Item>}
       {position < open.length - 1 && (
-        <MenuItem onSelect={then(() => pages.reorder(page.tab, position + 1))}>Move right</MenuItem>
+        <Item onClick={() => pages.reorder(page.tab, position + 1)}>Move right</Item>
       )}
-      <MenuItem onSelect={then(pages.reopen)}>Reopen closed page</MenuItem>
-      <MenuDivider />
-      <MenuItem onSelect={then(() => pages.close(page.tab))}>Close</MenuItem>
-      {open.length > 1 && (
-        <MenuItem onSelect={then(() => pages.closeOthers(page.tab))}>Close the others</MenuItem>
-      )}
+      <Item onClick={() => pages.reopen()}>Reopen closed page</Item>
+      <Separator />
+      <Item onClick={() => pages.close(page.tab)}>Close</Item>
+      {open.length > 1 && <Item onClick={() => pages.closeOthers(page.tab)}>Close the others</Item>}
     </>
   )
 }
@@ -347,15 +366,22 @@ function NavButton({
   children: React.ReactNode
 }) {
   return (
-    <button
-      aria-label={label}
-      title={label}
-      disabled={disabled}
-      onClick={onClick}
-      className="inline-flex size-7 cursor-pointer items-center justify-center rounded-full text-ink-2 transition-press duration-(--dur-fast) hover:bg-wash-hover hover:text-ink active:enabled:scale-96 disabled:cursor-not-allowed disabled:text-ink-4"
-    >
-      {children}
-    </button>
+    // Named in a tooltip, which the keyboard gets too; a native `title` is the pointer's alone.
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            aria-label={label}
+            disabled={disabled}
+            onClick={onClick}
+            className="inline-flex size-7 cursor-pointer items-center justify-center rounded-full text-ink-2 transition-press duration-(--dur-fast) hover:bg-wash-hover hover:text-ink active:enabled:scale-96 disabled:cursor-not-allowed disabled:text-ink-4"
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -364,7 +390,6 @@ function NavButton({
  * actions. A page-to-Thread action is not here because there is no such action yet.
  */
 export function PageToolbar({ page }: { page: Option.Option<Page> }) {
-  const [menu, setMenu] = useState<Option.Option<MenuPoint>>(Option.none())
   const loading = Option.exists(page, (shown) => shown.loading)
   return (
     <>
@@ -405,25 +430,17 @@ export function PageToolbar({ page }: { page: Option.Option<Page> }) {
         page={page}
       />
       {Option.isSome(page) && (
-        <IconButton
-          label="Page actions"
-          active={Option.isSome(menu)}
-          aria-haspopup="menu"
-          aria-expanded={Option.isSome(menu)}
-          onClick={(event) => {
-            // Drawn at the end of the document, under the button: the page is a native view that
-            // would sit over a menu drawn inside the panel.
-            const box = event.currentTarget.getBoundingClientRect()
-            setMenu(Option.some({ x: box.right, y: box.bottom + 4 }))
-          }}
-        >
-          <MoreHorizontal className="size-4" />
-        </IconButton>
-      )}
-      {Option.isSome(page) && Option.isSome(menu) && (
-        <ContextMenu at={menu.value} onClose={() => setMenu(Option.none())}>
-          <PageActions page={page.value} onClose={() => setMenu(Option.none())} />
-        </ContextMenu>
+        // The menu is drawn at the end of the document, under the button: the page is a native
+        // view that would sit over a menu drawn inside the panel. While it is open the button
+        // holds its fill, which the menu's own `aria-expanded` on it draws.
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<IconButton label="Page actions" />}>
+            <MoreHorizontal className="size-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <PageActions page={page.value} parts={IN_DROPDOWN} />
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
     </>
   )
@@ -523,7 +540,11 @@ export function PageView({ page }: { page: Option.Option<Page> }) {
       <Blank
         title="This page did not load"
         detail={page.value.failed.value}
-        action={<Button onClick={() => pages.reload(page.value.tab)}>Try again</Button>}
+        action={
+          <Button variant="outline" onClick={() => pages.reload(page.value.tab)}>
+            Try again
+          </Button>
+        }
       />
     )
   }

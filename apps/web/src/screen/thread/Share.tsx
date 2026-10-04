@@ -9,10 +9,18 @@ import { Option, Result } from 'effect'
 import { Building2, Check, Lock, Users } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { change, live, useLiveValue } from '../../data/live'
-import { Avatar } from '../../ui/Avatar'
-import { Button } from '../../ui/Button'
+import { PersonAvatar } from '../../ui/Person'
+import { Button } from '../../ui/button'
 import { cn } from '../../ui/cn'
-import { Dialog, DialogActions } from '../../ui/Dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../ui/dialog'
+import { useSurface } from '../../ui/Layer'
 
 type Reach = 'private' | 'people' | 'company'
 
@@ -47,6 +55,8 @@ export function Share({
       : [],
   )
   const [refusal, setRefusal] = useState<string | null>(null)
+  // Sent away (Escape, a click outside, the close button) it plays out before `onClose` is told.
+  const surface = useSurface(onClose)
   const others = Option.match(people, {
     onNone: (): ReadonlyArray<Member> => [],
     onSome: (value) => value.members.filter((member) => member.person.id !== me),
@@ -68,55 +78,58 @@ export function Share({
     )
 
   return (
-    <Dialog
-      title="Share this thread"
-      description="People you share with can read it and write in it. Vivid answers each person as themselves."
-      width="md"
-      onClose={onClose}
-    >
-      <div className="flex flex-col gap-1.5">
-        <Choice
-          icon={<Lock className="size-4" />}
-          title="Only me"
-          detail="Nobody else can see this thread."
-          selected={reach === 'private'}
-          onSelect={() => setReach('private')}
-        />
-        <Choice
-          icon={<Users className="size-4" />}
-          title="People I choose"
-          detail="Pick who else is in this thread."
-          selected={reach === 'people'}
-          onSelect={() => setReach('people')}
-        />
-        {reach === 'people' && (
-          <PeoplePicker company={company} members={others} chosen={chosen} onToggle={toggle} />
-        )}
-        <Choice
-          icon={<Building2 className="size-4" />}
-          title={`Everyone in ${company}`}
-          detail="Every member can find and join this thread."
-          selected={reach === 'company'}
-          onSelect={() => setReach('company')}
-        />
-      </div>
-      {refusal !== null && (
-        <p role="alert" className="mt-3 text-label text-danger">
-          {refusal}
-        </p>
-      )}
-      <DialogActions>
-        <Button variant="ghost" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button
-          variant="primary"
-          disabled={reach === 'people' && chosen.length === 0}
-          onClick={() => void save()}
-        >
-          Save
-        </Button>
-      </DialogActions>
+    <Dialog {...surface}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Share this thread</DialogTitle>
+          <DialogDescription>
+            People you share with can read it and write in it. Vivid answers each person as
+            themselves.
+          </DialogDescription>
+        </DialogHeader>
+        {/* One body: a refusal is said close under the choices it is about. */}
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Choice
+              icon={<Lock className="size-4" />}
+              title="Only me"
+              detail="Nobody else can see this thread."
+              selected={reach === 'private'}
+              onSelect={() => setReach('private')}
+            />
+            <Choice
+              icon={<Users className="size-4" />}
+              title="People I choose"
+              detail="Pick who else is in this thread."
+              selected={reach === 'people'}
+              onSelect={() => setReach('people')}
+            />
+            {reach === 'people' && (
+              <PeoplePicker company={company} members={others} chosen={chosen} onToggle={toggle} />
+            )}
+            <Choice
+              icon={<Building2 className="size-4" />}
+              title={`Everyone in ${company}`}
+              detail="Every member can find and join this thread."
+              selected={reach === 'company'}
+              onSelect={() => setReach('company')}
+            />
+          </div>
+          {refusal !== null && (
+            <p role="alert" className="text-label text-danger">
+              {refusal}
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={reach === 'people' && chosen.length === 0} onClick={() => void save()}>
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
     </Dialog>
   )
 }
@@ -160,14 +173,14 @@ function PeoplePicker({
               onClick={() => onToggle(member.person.id)}
               className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-row px-2 text-left transition-colors duration-(--dur-fast) hover:bg-wash-hover"
             >
-              <Avatar name={member.person.name} image={member.person.image} size={20} />
+              <PersonAvatar name={member.person.name} image={member.person.image} size={20} />
               <span className="min-w-0 flex-1 truncate text-label text-ink">
                 {member.person.name}
               </span>
               <span
                 className={cn(
                   'inline-flex size-4 items-center justify-center rounded-xs ring-line',
-                  picked && 'bg-accent text-ink-on-accent',
+                  picked && 'bg-primary text-primary-foreground',
                 )}
               >
                 {picked && <Check className="size-3" strokeWidth={2.5} />}
@@ -202,11 +215,11 @@ function Choice({
       className={cn(
         'flex w-full cursor-pointer items-center gap-3 rounded-control px-3 py-2.5 text-left transition-surface duration-(--dur-fast)',
         selected
-          ? 'bg-accent-soft ring-1 ring-accent'
+          ? 'bg-primary-soft ring-1 ring-primary'
           : 'bg-surface-2 ring-line hover:bg-wash-hover',
       )}
     >
-      <span className={cn('shrink-0', selected ? 'text-accent-ink' : 'text-ink-3')}>{icon}</span>
+      <span className={cn('shrink-0', selected ? 'text-primary-ink' : 'text-ink-3')}>{icon}</span>
       <span className="min-w-0 flex-1">
         <span className="block text-label font-title text-ink">{title}</span>
         <span className="block text-label text-ink-3">{detail}</span>
