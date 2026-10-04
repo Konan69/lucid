@@ -11,7 +11,9 @@ export const TOOL_RELEVANCE_THRESHOLD = 0.3
 export const RELEVANCE_BATCH_SIZE = 20
 /** Live calibration (2026-10-04, one process): cold 20 questions 791ms/2066
  * input tokens; warm 20 341ms/2066; warm five 331ms/739; repeated warm 20
- * 347ms/2066. A 1.2-second budget leaves warm-call headroom while bounding
+ * 347ms/2066. Repeat validation (cold20/warm20/warm5/warm20): 618/337/310/326ms,
+ * then 584/323/330/533ms, with the same token counts. A 1.2-second budget
+ * leaves warm-call headroom while bounding
  * optional enrichment; outage or slow cold transport retains lexical order. */
 export const RELEVANCE_BUDGET = '1200 millis'
 

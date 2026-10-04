@@ -12,7 +12,8 @@ import { ExecutorTool } from './executor.ts'
 /** Removing an Approval requires near-certainty, rather than merely the top label.
  * Live Jev calibration (36 tools, 2026-10-04): 18 reads had read probability
  * 0.98–1; 12 writes 0–0.01; six destructive tools 0. All labels matched, no
- * threshold misses. The empty 0.01–0.98 band supports retaining 0.95. */
+ * threshold misses. A repeat run measured reads 0.95–1, writes and destructive
+ * tools 0, again no misses. The empty 0.01–0.95 band supports retaining 0.95. */
 export const READ_PROBABILITY_THRESHOLD = 0.95
 /** Bound process memory while retaining several large provider catalogs. */
 const EFFECT_CACHE_CAPACITY = 4096
@@ -107,6 +108,16 @@ const effectOf = (
   return answer.label === 'destructive' ? 'destructive' : 'write'
 }
 
+/** Direct use keeps the original single-tool prompt and ten-second trust-loop budget. */
+const judgeEffect = Effect.fn('Connections.judgeEffect')(function* (key: CacheKey) {
+  const { answers } = yield* decide(toolEffectDecision, {
+    service: key.service,
+    tool: key.tool,
+    description: key.description,
+  })
+  return effectOf(answers.effect)
+})
+
 /** Positional questions keep each tool's facts beside its criteria. rc.116
  * DecisionModel.make validates coverage; a missing dynamic key still fails explicitly.
  * Discovery uses a single two-second attempt, with no failure converted to an answer. */
@@ -151,26 +162,21 @@ export const toolEffectsLayer = Layer.effect(
           discovery: request.discovery,
         }),
       resolver: Effect.fn('Connections.resolveEffects')(function* (entries, group) {
+        // Each direct call owns its failure; one provider error must not poison neighboring keys.
+        if (!group.discovery) {
+          yield* Effect.forEach(
+            entries,
+            (entry) => Request.completeEffect(entry, judgeEffect(entry.request.key)),
+            { concurrency: 'unbounded', discard: true },
+          ).pipe(Effect.provideService(DecisionModel.DecisionModel, model))
+          return
+        }
         const keys = entries.map(({ request }) => request.key)
-        const operation = group.discovery
-          ? classifyQuestions(keys)
-          : Effect.forEach(
-              keys,
-              Effect.fn('Connections.judgeEffect')(function* (key) {
-                const { answers } = yield* decide(toolEffectDecision, {
-                  service: key.service,
-                  tool: key.tool,
-                  description: key.description,
-                })
-                return effectOf(answers.effect)
-              }),
-              { concurrency: 'unbounded' },
-            )
         const exit = yield* Effect.exit(
-          operation.pipe(Effect.provideService(DecisionModel.DecisionModel, model)),
+          classifyQuestions(keys).pipe(Effect.provideService(DecisionModel.DecisionModel, model)),
         )
         for (const [index, entry] of entries.entries()) {
-          if (Exit.isFailure(exit)) yield* Request.complete(entry, exit)
+          if (Exit.isFailure(exit)) yield* Request.failCause(entry, exit.cause)
           else {
             const effect = exit.value[index]
             yield* Request.complete(

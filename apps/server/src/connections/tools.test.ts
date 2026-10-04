@@ -12,6 +12,9 @@ import { ConnectionStore } from './store.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
 import { connectionRunner, findTools, resolveTool, useTool } from './tools.ts'
 
+/** Scripted provider state is an actual JSON ingress, decoded once with a shared codec. */
+const decodeEffectInput = Schema.decodeUnknownEffect(Schema.Struct({ tool: Schema.String }))
+
 /** Discovery uses real scoped records; suffixes must remain stable across ranking queries and ownership. */
 describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
   layer(connectionTestLayer)((it) => {
@@ -422,9 +425,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           DecisionModel.DecisionModel,
           DecisionModel.make({
             decide: Effect.fn('Test.requestedEffect')(function* ({ state }) {
-              const input = yield* Schema.decodeUnknownEffect(
-                Schema.Struct({ tool: Schema.String }),
-              )(state).pipe(
+              const input = yield* decodeEffectInput(state).pipe(
                 Effect.mapError(() =>
                   AiError.make({
                     module: 'Test',

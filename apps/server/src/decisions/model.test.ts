@@ -67,7 +67,10 @@ it.effect.each([
 it.effect('unconfigured startup warns once and every decision fails', () => {
   let warnings = 0
   const logger = Logger.make(({ message }) => {
-    if (message[0] === 'Decisions unconfigured: TYPESAFE_API_KEY or OPENROUTER_API_KEY')
+    if (
+      Array.isArray(message) &&
+      message[0] === 'Decisions unconfigured: TYPESAFE_API_KEY or OPENROUTER_API_KEY'
+    )
       warnings += 1
   })
   return Effect.gen(function* () {
@@ -121,7 +124,7 @@ it.effect('provider failure exposes only a typed unavailable reason', () =>
 )
 
 /** Controllable time proves both budgets without wall-clock sleeps. */
-it.effect.each(['10 seconds', '1200 millis'])('bounds a stalled request at %s', (budget) =>
+it.effect.each(['10 seconds', '1200 millis'] as const)('bounds a stalled request at %s', (budget) =>
   Effect.gen(function* () {
     const pending = yield* (
       budget === '10 seconds'

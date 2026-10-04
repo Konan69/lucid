@@ -185,7 +185,7 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     lexical.length === 0
       ? lexical
       : yield* relevantTools(request.query, lexical).pipe(
-          Effect.map(({ ordered }) => ordered),
+          Effect.map((ranking) => ranking.ordered),
           Effect.catch((error) =>
             Effect.logWarning('Tool relevance unavailable', {
               tag: error._tag,

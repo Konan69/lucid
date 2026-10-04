@@ -10,6 +10,7 @@ export const DECISION_TIMEOUT = '10 seconds'
 export class DecisionUnavailable extends Schema.TaggedError<DecisionUnavailable>()(
   'DecisionUnavailable',
   { reason: Schema.Literals(['Unconfigured', 'TimedOut', 'Provider']) },
+  { title: 'Decision unavailable' },
 ) {}
 
 const Configuration = Schema.TaggedUnion({
@@ -101,7 +102,8 @@ export const decideWithin = <
 > =>
   Effect.gen(function* () {
     const start = yield* Clock.currentTimeMillis
-    const operation = Effect.gen(function* () {
+    // Separate provider failure mapping from the final latency/usage accounting.
+    const operation = Effect.fn('Decisions.attempt')(function* () {
       if (!(yield* decisionConfigured))
         return yield* Effect.fail(new DecisionUnavailable({ reason: 'Unconfigured' }))
       return yield* DecisionModel.decide(definition, { input }).pipe(
@@ -111,10 +113,15 @@ export const decideWithin = <
           orElse: () => Effect.fail(new DecisionUnavailable({ reason: 'TimedOut' })),
         }),
       )
-    })
+    })()
     const exit = yield* Effect.exit(operation)
     const latency = (yield* Clock.currentTimeMillis) - start
-    if (Exit.isSuccess(exit)) yield* Effect.logInfo('Decision', { latency, ...exit.value.usage })
+    if (Exit.isSuccess(exit))
+      yield* Effect.logInfo('Decision', {
+        latency,
+        inputTokens: exit.value.usage.inputTokens,
+        outputTokens: exit.value.usage.outputTokens,
+      })
     else yield* Effect.logInfo('Decision', { latency })
     return yield* exit
   }).pipe(Effect.withSpan('Decisions.decide'))

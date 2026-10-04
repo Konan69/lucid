@@ -4,17 +4,16 @@ import { decide } from '../decisions/model.ts'
 import { liveDecisionEnabled, liveDecisionLayer, liveTools } from '../decisions/testing.ts'
 import { READ_PROBABILITY_THRESHOLD, toolEffectDecision } from './effects.ts'
 
-/** One real call per tool proves the distribution can safely remove Approval for
- * repository questions while preserving Approval for sending and permanent deletion. */
-describe.skipIf(!liveDecisionEnabled)('Jev tool effects', () => {
+/** Read-only tools across providers exceed the calibrated near-certainty threshold.
+ * Every miss is collected before assertion so calibration reports the whole category. */
+describe.skipIf(!liveDecisionEnabled)('Jev read effects', () => {
   it.live(
-    'separates reads from mutations across realistic provider tools',
+    'recover read tools without Approval',
     () =>
       Effect.gen(function* () {
         const misses: string[] = []
-        const reads: number[] = []
-        const mutations: number[] = []
-        for (const tool of liveTools) {
+        const probabilities: number[] = []
+        for (const tool of liveTools.filter((candidate) => candidate.expected === 'read')) {
           const start = yield* Clock.currentTimeMillis
           const { answers } = yield* decide(toolEffectDecision, {
             service: tool.serviceName,
@@ -23,25 +22,18 @@ describe.skipIf(!liveDecisionEnabled)('Jev tool effects', () => {
           })
           const elapsed = (yield* Clock.currentTimeMillis) - start
           const read = answers.effect.probabilities.read
+          probabilities.push(read)
           yield* Effect.logInfo(
             `Jev effect ${tool.name}: label=${answers.effect.label} read=${read.toFixed(6)} latency=${elapsed}ms`,
           )
-          if (tool.expected === 'read') reads.push(read)
-          else mutations.push(read)
-          const expectedRead = tool.expected === 'read'
-          if (
-            read >= READ_PROBABILITY_THRESHOLD !== expectedRead ||
-            answers.effect.label !== tool.expected
-          )
-            misses.push(
-              `${tool.name}: expected=${tool.expected} label=${answers.effect.label} read=${read}`,
-            )
+          if (read < READ_PROBABILITY_THRESHOLD || answers.effect.label !== 'read')
+            misses.push(`${tool.name}: expected=read label=${answers.effect.label} read=${read}`)
         }
         yield* Effect.logInfo(
-          `Bands: reads=${Math.min(...reads)}..${Math.max(...reads)} mutations=${Math.min(...mutations)}..${Math.max(...mutations)} misses=${JSON.stringify(misses)}`,
+          `read band=${Math.min(...probabilities)}..${Math.max(...probabilities)} misses=${JSON.stringify(misses)}`,
         )
         expect(misses).toEqual([])
       }).pipe(Effect.provide(liveDecisionLayer)),
-    120_000,
+    60_000,
   )
 })

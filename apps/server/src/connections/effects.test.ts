@@ -313,3 +313,37 @@ it.effect('stalled discovery returns writes in two seconds then retries after ba
     ),
   )
 })
+
+/** Concurrent direct requests are independent decisions even inside one resolver group. */
+it.effect('one direct lookup failure does not discard a neighboring successful answer', () => {
+  let calls = 0
+  return Effect.gen(function* () {
+    const effects = yield* ToolEffects
+    const results = yield* Effect.all(
+      [
+        effects.classify(request),
+        effects.classify({
+          ...request,
+          tool: ExecutorTool.make({ ...request.tool, name: 'other_read' }),
+        }),
+      ],
+      { concurrency: 'unbounded' },
+    )
+    expect(results).toEqual(['write', 'read'])
+    expect(calls).toBe(2)
+  }).pipe(
+    Effect.provide(
+      provider(() => {
+        calls += 1
+        if (calls > 1) return Effect.succeed(answer(0.99, 'read'))
+        return Effect.fail(
+          AiError.make({
+            module: 'Test',
+            method: 'decide',
+            reason: new AiError.InvalidOutputError({ description: 'Unavailable' }),
+          }),
+        )
+      }),
+    ),
+  )
+})
