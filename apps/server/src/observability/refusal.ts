@@ -1,13 +1,23 @@
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
-import { ActionEffect, DeviceRefusal, ReadPageRefusal, ServiceId } from '@vivid/contracts'
+import * as Struct from 'effect/Struct'
+import {
+  ActionEffect,
+  ActionTarget,
+  CodeCallKind,
+  DeviceRefusal,
+  ReadPageRefusal,
+  ServiceId,
+} from '@vivid/contracts'
+import { Message } from './messages.ts'
 
 /**
  * Which kind of thing an action would have been done to: the tags of `ActionTarget` in
- * `@vivid/contracts`. Only the tag is carried; the target's own fields (an account label, a
- * command line, a tool's input) are a Person's content and stay out of telemetry.
+ * `@vivid/contracts`, read from its `cases` so a target added there is a kind here without a
+ * second list. Only the tag is carried; the target's own fields (an account label, a command
+ * line, a tool's input) are a Person's content and stay out of telemetry.
  */
-const ActionTargetKind = Schema.Literals(['Connection', 'Command', 'Browser', 'Desktop'])
+const ActionTargetKind = Schema.Literals(Struct.keys(ActionTarget.cases))
 
 /**
  * Every way Vivid declines to do something, as one closed vocabulary.
@@ -43,9 +53,7 @@ export const Refusal = Schema.TaggedUnion({
   /** The Integration must be authorized again (`ToolOutcome.ConnectionNotReady`). */
   IntegrationNotReady: { service: ServiceId },
   /** A call from Vivid's code was answered with a refusal the program can read (`end: 'refused'`). */
-  CallRefused: {
-    call: Schema.Literals(['find_tools', 'use_tool', 'run_command', 'browse', 'read_page']),
-  },
+  CallRefused: { call: CodeCallKind },
   /** A public page could not be read (`ReadPageOutcome.Refused`). */
   PageRefused: { reason: ReadPageRefusal },
   /** The Person's own computer declined an action (`DeviceReceipt.Refused`). */
@@ -55,10 +63,29 @@ export const Refusal = Schema.TaggedUnion({
 })
 export type Refusal = typeof Refusal.Type
 
-/** The name of the span event and the body of the log line for every refusal. */
-const REFUSAL_EVENT = 'vivid.refusal'
-
 const encodeRefusal = Schema.encodeSync(Refusal)
+
+/** The attribute a case's field is written under. */
+const attributeKey = (field: string) => `vivid.refusal.${field}`
+
+/** The attribute naming which case a refusal is. */
+const KIND = attributeKey('kind')
+
+/**
+ * Every attribute a refusal can carry: its kind, and each field of each case. Read from the
+ * vocabulary itself, so the export allowlist (`export.ts`) is extended by adding a case or a
+ * field above and by nothing else.
+ */
+export const refusalAttributeKeys: ReadonlyArray<string> = [
+  KIND,
+  ...new Set(
+    Object.values(Refusal.cases).flatMap((refusal) =>
+      Object.keys(refusal.fields)
+        .filter((field) => field !== '_tag')
+        .map(attributeKey),
+    ),
+  ),
+]
 
 /**
  * A case's fields as attributes, each under `vivid.refusal.<field>`. Encoding through the schema
@@ -68,17 +95,17 @@ const encodeRefusal = Schema.encodeSync(Refusal)
 const attributesOf = (refusal: Refusal) => {
   const { _tag, ...fields } = encodeRefusal(refusal)
   return {
-    'vivid.refusal.kind': _tag,
+    [KIND]: _tag,
     ...Object.fromEntries(
-      Object.entries(fields).map(([key, value]) => [`vivid.refusal.${key}`, value]),
+      Object.entries(fields).map(([field, value]) => [attributeKey(field), value]),
     ),
   }
 }
 
 /**
- * Records one refusal: one info log line named `vivid.refusal` carrying the case's fields. It
- * cannot fail and returns nothing, so a producer calls it beside the value it returns without
- * changing that value.
+ * Records one refusal: one info log line with the fixed message `vivid.refusal` carrying the
+ * case's fields. It cannot fail and returns nothing, so a producer calls it beside the value it
+ * returns without changing that value.
  *
  * The span event comes from the same line. Effect's default `tracerLogger` (rc.116
  * `internal/effect.ts`) turns every log written under a span into an event on that span, named by
@@ -89,5 +116,5 @@ const attributesOf = (refusal: Refusal) => {
  * its own would receive the event in place of the producer's.
  */
 export const recordRefusal = Effect.fnUntraced(function* (refusal: Refusal) {
-  yield* Effect.annotateLogs(Effect.logInfo(REFUSAL_EVENT), attributesOf(refusal))
+  yield* Effect.annotateLogs(Effect.logInfo(Message.refusal), attributesOf(refusal))
 })

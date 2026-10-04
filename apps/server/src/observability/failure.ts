@@ -1,21 +1,49 @@
+import * as Arr from 'effect/Array'
 import * as Cause from 'effect/Cause'
 import * as Data from 'effect/Data'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Predicate from 'effect/Predicate'
 import * as Schema from 'effect/Schema'
+import { isCodeName, Message } from './messages.ts'
 
 /**
  * Where a failure stopped being the caller's problem and became an answer: a product call, a plain
  * HTTP route, a scheduled pass, or a call to the runtime. The set is closed so that a count by
- * boundary in the telemetry backend never grows a misspelt bucket.
+ * boundary in the telemetry backend never grows a misspelt bucket, and it is a schema so the
+ * export allowlist (`export.ts`) admits exactly these values.
  */
-export type Boundary = 'rpc' | 'http' | 'schedule' | 'runtime'
+export const Boundary = Schema.Literals(['rpc', 'http', 'schedule', 'runtime'])
+export type Boundary = typeof Boundary.Type
+
+/** Whether the code declared the failure (`expected`) or did not (`defect`). */
+export const FailureKind = Schema.Literals(['expected', 'defect'])
+export type FailureKind = typeof FailureKind.Type
+
+/**
+ * The attributes a failure is recorded under, on the span and on its log line. These are the
+ * names the export allowlist is built from.
+ *
+ * The failure's message is deliberately not one of them. It is prose a provider, a driver or a
+ * Person's input wrote, and no pattern can tell private prose from technical prose, so it is
+ * written to the stdout line only (`MESSAGE_ANNOTATION`) and never leaves the process.
+ */
+export const FailureAttribute = {
+  type: 'error.type',
+  kind: 'vivid.failure.kind',
+  boundary: 'vivid.boundary',
+  root: 'vivid.failure.root',
+  databaseCode: 'db.response.status_code',
+  constraint: 'vivid.failure.constraint',
+  table: 'db.collection.name',
+} as const
+
+/** The log annotation holding the failure's message; read on stdout, absent from the allowlist. */
+const MESSAGE_ANNOTATION = 'vivid.failure.message'
 
 /** Longest text one diagnostic string may carry; `redactBrowserText` in the reference bounds at the same length. */
 const LONGEST_TEXT = 2_048
 const LONGEST_MESSAGE = 1_000
-const LONGEST_TYPE = 160
 const LONGEST_DATABASE_NAME = 200
 /** How far the `cause` chain is followed; a foreign chain can be cyclic or arbitrarily long. */
 const DEEPEST_CAUSE = 8
@@ -35,17 +63,18 @@ const UNTYPED = '_OTHER'
 const STATEMENT_WRAPPER = 'EffectDrizzleQueryError'
 
 /**
- * Removes credentials, address query strings and personal identifiers from diagnostic text, and
- * bounds it.
+ * Removes credentials, address query strings and personal identifiers from the diagnostic text
+ * written to stdout, and bounds it. It is not what keeps text out of the export: that is the
+ * allowlist in `export.ts`, which drops every message whatever it contains.
  *
  * Ported from VCOS `apps/web/src/shared/privacy.ts` `redactBrowserText`, with two changes for
- * Vivid. A Drizzle statement (`Failed query: … params: …`) is replaced whole, because here the
- * text also reaches the backend inside stack traces and rendered causes, where the reference's
- * per-record look-through cannot reach it. And any `…key=` assignment is treated as a credential,
- * because the export header itself is one (`sentry_key=`).
+ * Vivid. A Drizzle statement (`Failed query: … params: …`) is replaced whole, because a statement
+ * can sit inside a wrapped message where the reference's per-record look-through cannot reach
+ * it. And any `…key=` assignment is treated as a credential, because the export header itself is
+ * one (`sentry_key=`).
  *
- * This is defence in depth, as in the reference: prose can still hold private data, so messages on
- * typed errors must stay technical.
+ * This is defence in depth for the server's own log, as in the reference: prose can still hold
+ * private data, so messages on typed errors must stay technical.
  */
 export const redact = (value: string): string =>
   value
@@ -99,10 +128,17 @@ const bounded = (value: Option.Option<string>, longest: number): Option.Option<s
     Option.filter((text) => text.length > 0),
   )
 
-/** The typed `_tag`, else the native error name. VCOS `exceptions.ts` `kindOf`. */
+/**
+ * The typed `_tag`, else the native error name (VCOS `exceptions.ts` `kindOf`), and only when it
+ * has the shape of a code identifier. A `_tag` or `name` is whatever the thrower assigned: a
+ * provider SDK can build one from a response, and `error.name = someText` is legal. One that is
+ * not an identifier is no type at all, so it is absent here and reported as `_OTHER`; it is never
+ * trimmed or cleaned into something exportable.
+ */
 const typeOf = (record: Diagnostics): Option.Option<string> =>
-  Option.orElse(bounded(Option.fromUndefinedOr(record._tag), LONGEST_TYPE), () =>
-    bounded(Option.fromUndefinedOr(record.name), LONGEST_TYPE),
+  Option.fromUndefinedOr(record._tag).pipe(
+    Option.orElse(() => Option.fromUndefinedOr(record.name)),
+    Option.filter(isCodeName),
   )
 
 /** A record's own message, unless the record is the statement wrapper. VCOS `recordMessage`. */
@@ -133,10 +169,11 @@ const chain = (failure: unknown) => {
   return { records, terminal: bounded(decodeText(current), LONGEST_MESSAGE) }
 }
 
-/** What is exported about one failure. Every string here has been through `redact`. */
+/** What is recorded about one failure. Every free-text string here has been through `redact`. */
 export interface FailureSummary {
-  /** The error's `_tag`, else its `name`, else `_OTHER`. */
+  /** The error's `_tag`, else its `name`, when identifier-shaped; else `_OTHER`. */
   readonly type: string
+  /** For the stdout line only; see `FailureAttribute`. */
   readonly message: Option.Option<string>
   /** The type of the innermost cause, when there is a cause below the failure itself. */
   readonly rootType: Option.Option<string>
@@ -179,46 +216,59 @@ export const summarize = (failure: unknown): FailureSummary => {
 }
 
 /**
- * How an effect ended when it did not succeed. `Expected` is a typed failure the code declared;
- * `Defect` is one it did not. `Interrupted` is not a failure at all (a client went away, the
- * server is stopping) and nothing is recorded for it.
+ * One reason an effect did not succeed. `Expected` is a typed failure the code declared; `Defect`
+ * is one it did not. An interruption is not a failure at all (a client went away, the server is
+ * stopping), so it has no case and nothing is recorded for it.
  */
 export type FailureOutcome = Data.TaggedEnum<{
   Expected: { readonly summary: FailureSummary }
   Defect: { readonly summary: FailureSummary }
-  Interrupted: {}
 }>
 export const FailureOutcome = Data.taggedEnum<FailureOutcome>()
 
 /**
- * Classifies a `Cause`. A defect outranks a typed failure in the same cause: it is the one that
- * needs a person to look, and `RpcServer` treats a cause with any `Die` as fatal for the same
- * reason. A cause with neither holds only interruptions.
+ * Every failure in a `Cause`, in the order the cause holds them. A cause is a list of reasons:
+ * concurrent work, a failing finalizer or a failure during recovery each add one, and each is a
+ * separate thing that went wrong, so each is reported. Interruptions are left out.
  */
-export const failureOf = <E>(cause: Cause.Cause<E>): FailureOutcome => {
-  const die = cause.reasons.find(Cause.isDieReason)
-  if (die !== undefined) return FailureOutcome.Defect({ summary: summarize(die.defect) })
-  const fail = cause.reasons.find(Cause.isFailReason)
-  if (fail !== undefined) return FailureOutcome.Expected({ summary: summarize(fail.error) })
-  return FailureOutcome.Interrupted()
-}
+export const failuresOf = <E>(cause: Cause.Cause<E>): ReadonlyArray<FailureOutcome> =>
+  cause.reasons.flatMap((reason): ReadonlyArray<FailureOutcome> => {
+    if (Cause.isDieReason(reason))
+      return [FailureOutcome.Defect({ summary: summarize(reason.defect) })]
+    if (Cause.isFailReason(reason))
+      return [FailureOutcome.Expected({ summary: summarize(reason.error) })]
+    return []
+  })
 
 /**
- * The exported attributes of one failure. The first three are always present; the rest only when
- * the failure carries them, since an absent database code is different from an empty one.
+ * The one failure a span is classified by. A defect outranks a typed failure in the same cause:
+ * it is the one that needs a person to look, and `RpcServer` treats a cause with any `Die` as
+ * fatal for the same reason. Absent when the cause holds only interruptions.
  */
-const attributesOf = (boundary: Boundary, kind: 'expected' | 'defect', summary: FailureSummary) => {
+export const primaryOf = (failures: ReadonlyArray<FailureOutcome>): Option.Option<FailureOutcome> =>
+  Option.orElse(Arr.findFirst(failures, FailureOutcome.$is('Defect')), () => Arr.head(failures))
+
+const kindOf: (failure: FailureOutcome) => FailureKind = FailureOutcome.$match({
+  Expected: (): FailureKind => 'expected',
+  Defect: (): FailureKind => 'defect',
+})
+
+/**
+ * The exportable attributes of one failure. The first three are always present; the rest only
+ * when the failure carries them, since an absent database code is different from an empty one.
+ */
+const attributesOf = (boundary: Boundary, failure: FailureOutcome) => {
+  const { summary } = failure
   const present = [
-    ['vivid.failure.message', summary.message],
-    ['vivid.failure.root', summary.rootType],
-    ['db.response.status_code', summary.databaseCode],
-    ['vivid.failure.constraint', summary.databaseConstraint],
-    ['db.collection.name', summary.databaseTable],
+    [FailureAttribute.root, summary.rootType],
+    [FailureAttribute.databaseCode, summary.databaseCode],
+    [FailureAttribute.constraint, summary.databaseConstraint],
+    [FailureAttribute.table, summary.databaseTable],
   ] as const
   return {
-    'error.type': summary.type,
-    'vivid.failure.kind': kind,
-    'vivid.boundary': boundary,
+    [FailureAttribute.type]: summary.type,
+    [FailureAttribute.kind]: kindOf(failure),
+    [FailureAttribute.boundary]: boundary,
     ...Object.fromEntries(
       present.flatMap(([key, value]) => (Option.isSome(value) ? [[key, value.value]] : [])),
     ),
@@ -226,20 +276,39 @@ const attributesOf = (boundary: Boundary, kind: 'expected' | 'defect', summary: 
 }
 
 /**
- * Writes one failure onto the current span and as one log line with the same attributes. An
- * expected failure is a warning and a defect is an error, so the backend can alert on defects
- * without being paged for every refused sign-in.
+ * One log line for one failure: the exportable attributes, plus the message for whoever reads
+ * stdout. An expected failure is a warning and a defect is an error, so the backend can alert on
+ * defects without being paged for every refused sign-in.
  */
-const record = (boundary: Boundary, kind: 'expected' | 'defect', summary: FailureSummary) => {
-  const attributes = attributesOf(boundary, kind, summary)
-  const line =
-    kind === 'defect'
-      ? Effect.logError('Defect reached a boundary')
-      : Effect.logWarning('Failure reached a boundary')
-  return Effect.annotateCurrentSpan(attributes).pipe(
-    Effect.andThen(Effect.annotateLogs(line, attributes)),
+const line = (boundary: Boundary, failure: FailureOutcome) => {
+  const attributes = attributesOf(boundary, failure)
+  return Effect.annotateLogs(
+    FailureOutcome.$match(failure, {
+      Expected: () => Effect.logWarning(Message.failure),
+      Defect: () => Effect.logError(Message.defect),
+    }),
+    Option.match(failure.summary.message, {
+      onNone: () => attributes,
+      onSome: (message) => ({ ...attributes, [MESSAGE_ANNOTATION]: message }),
+    }),
   )
 }
+
+/**
+ * Records the failures of one cause: the primary one as the current span's classification, and
+ * every one as a log line. A span has one `error.type`, so it takes the primary; the lines are
+ * where a second, concurrent or finalizer failure is still counted. It is untraced on purpose: a
+ * span of its own would take the classification in place of the boundary's.
+ */
+const record = Effect.fnUntraced(function* (
+  boundary: Boundary,
+  failures: ReadonlyArray<FailureOutcome>,
+) {
+  const primary = primaryOf(failures)
+  if (Option.isSome(primary))
+    yield* Effect.annotateCurrentSpan(attributesOf(boundary, primary.value))
+  yield* Effect.forEach(failures, (failure) => line(boundary, failure), { discard: true })
+})
 
 /**
  * Records every failure that passes through `effect`, and changes nothing about it: the result,
@@ -250,7 +319,7 @@ const record = (boundary: Boundary, kind: 'expected' | 'defect', summary: Failur
  * annotated is the one current where this runs: the span of a named `Effect.fn` when passed as
  * one of its trailing transforms (rc.116 `internal/effect.ts` `makeFn` applies those inside the
  * span), otherwise the enclosing one, such as the HTTP request's. Where no span is current only
- * the log line is written.
+ * the log lines are written.
  *
  * VCOS decides per failure whether to report it (`apps/web/src/server/app/failure.ts`
  * `shouldCaptureServerFnFailure`); Vivid reports every one and marks it `expected` or `defect`,
@@ -259,10 +328,4 @@ const record = (boundary: Boundary, kind: 'expected' | 'defect', summary: Failur
 export const observeFailures =
   (boundary: Boundary) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-    Effect.tapCause(effect, (cause) =>
-      FailureOutcome.$match(failureOf(cause), {
-        Expected: ({ summary }) => record(boundary, 'expected', summary),
-        Defect: ({ summary }) => record(boundary, 'defect', summary),
-        Interrupted: () => Effect.void,
-      }),
-    )
+    Effect.tapCause(effect, (cause) => record(boundary, failuresOf(cause)))

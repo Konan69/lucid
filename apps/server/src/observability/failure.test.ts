@@ -1,12 +1,21 @@
 import { expect, it } from '@effect/vitest'
 import { Cause, Option, Schema } from 'effect'
-import { failureOf, FailureOutcome, redact, summarize } from './failure.ts'
+import { failuresOf, FailureOutcome, primaryOf, redact, summarize } from './failure.ts'
 
 class StoreUnavailable extends Schema.TaggedError<StoreUnavailable>()(
   'StoreUnavailable',
   { message: Schema.String, cause: Schema.Unknown },
   { title: 'Store unavailable' },
 ) {}
+
+/** A foreign SDK's error, whose tag is whatever the SDK assigned. */
+class Foreign extends Error {
+  readonly _tag: string
+  constructor(tag: string, cause: unknown) {
+    super('foreign failure', { cause })
+    this._tag = tag
+  }
+}
 
 /** Shaped like Effect Drizzle's wrapper: the statement and its parameters are the message. */
 const statementFailure = (cause: unknown) =>
@@ -54,13 +63,42 @@ it('bounds a cyclic cause chain and names an untyped failure', () => {
   })
 })
 
-it('ranks a defect over a typed failure and sets interruption apart', () => {
+it('lists every failure in a cause, ranks a defect first, and sets interruption apart', () => {
   const typed = Cause.fail(new StoreUnavailable({ message: 'down', cause: undefined }))
-  expect(FailureOutcome.$is('Expected')(failureOf(typed))).toBe(true)
-  const both = Cause.combine(typed, Cause.die(new RangeError('out of range')))
-  const outcome = failureOf(both)
-  expect(FailureOutcome.$is('Defect')(outcome) ? outcome.summary.type : '').toBe('RangeError')
-  expect(failureOf(Cause.interrupt(1))).toEqual(FailureOutcome.Interrupted())
+  expect(failuresOf(typed).map((failure) => failure._tag)).toEqual(['Expected'])
+  const all = failuresOf(
+    Cause.combine(
+      Cause.combine(typed, Cause.interrupt(1)),
+      Cause.combine(Cause.die(new RangeError('out of range')), Cause.fail('the disk is full')),
+    ),
+  )
+  expect(all.map((failure) => [failure._tag, failure.summary.type])).toEqual([
+    ['Expected', 'StoreUnavailable'],
+    ['Defect', 'RangeError'],
+    ['Expected', '_OTHER'],
+  ])
+  const primary = primaryOf(all)
+  expect(Option.isSome(primary) ? primary.value.summary.type : '').toBe('RangeError')
+  expect(Option.map(primaryOf(failuresOf(typed)), FailureOutcome.$is('Expected'))).toEqual(
+    Option.some(true),
+  )
+  expect(failuresOf(Cause.interrupt(1))).toEqual([])
+  expect(primaryOf([])).toEqual(Option.none())
+})
+
+it('names a failure by its tag or name only when that is an identifier', () => {
+  expect(summarize(new Foreign('Http.Faults.ReportsOverBudget', undefined)).type).toBe(
+    'Http.Faults.ReportsOverBudget',
+  )
+  // A tag or a name is whatever the thrower assigned; text is not a type and is not cleaned up.
+  expect(summarize(new Foreign('tenant 42: Ada Lovelace', undefined)).type).toBe('_OTHER')
+  expect(summarize(new Foreign('https://example.com/a?token=abc', undefined)).type).toBe('_OTHER')
+  expect(
+    summarize(Object.assign(new Error('x'), { name: `Failed for ${'x'.repeat(200)}` })).type,
+  ).toBe('_OTHER')
+  expect(summarize({ name: 'T'.repeat(121) }).type).toBe('_OTHER')
+  const nested = summarize(new Foreign('Outer', { name: 'dami@example.com' }))
+  expect(nested.rootType).toEqual(Option.none())
 })
 
 it('strips address queries, tokens and email addresses from diagnostic text', () => {
