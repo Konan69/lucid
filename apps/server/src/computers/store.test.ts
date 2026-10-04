@@ -30,6 +30,7 @@ import {
   DesktopAction,
   DesktopOutcome,
   ComputerState,
+  ComputerInventory,
   Person,
   PersonId,
   ProposedAction,
@@ -64,6 +65,11 @@ import { computers } from './tables.ts'
 
 /** Test authority records actual seam calls and can lose machines or command receipts deliberately. */
 interface EvidenceService {
+  readonly commandResult: Ref.Ref<{
+    readonly exitCode: number
+    readonly output: string
+    readonly truncated: boolean
+  }>
   readonly states: Ref.Ref<ReadonlyMap<MachineKey, ComputerState>>
   readonly started: Queue.Queue<MachineKey>
   readonly stopped: Queue.Queue<MachineKey>
@@ -87,6 +93,7 @@ const evidenceLayer = Layer.effect(
   ProviderEvidence,
   Effect.gen(function* () {
     return ProviderEvidence.of({
+      commandResult: yield* Ref.make({ exitCode: 0, output: 'hello', truncated: false }),
       started: yield* Queue.unbounded<MachineKey>(),
       stopped: yield* Queue.unbounded<MachineKey>(),
       ensures: yield* Ref.make<ReadonlyArray<MachineKey>>([]),
@@ -150,7 +157,7 @@ const providerLayer = Layer.effect(
       if (Option.isSome(wait)) yield* Deferred.await(wait.value)
       if (yield* Ref.get(evidence.lost))
         return yield* Effect.fail(new MachineExecutionUnknown({ key }))
-      return { exitCode: 0, output: 'hello', truncated: false }
+      return yield* Ref.get(evidence.commandResult)
     })
     const browse = Effect.fn('Computer.test.browse')(function* ({
       key,
@@ -346,6 +353,79 @@ const start = Effect.fn('Computer.test.start')(function* (person: Person) {
 })
 
 describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
+  it.effect(
+    'inventory never starts an absent Computer and reports only a successful real probe',
+    () =>
+      Effect.gen(function* () {
+        const { first } = yield* fixture()
+        const evidence = yield* ProviderEvidence
+        const absent = yield* computerHandlers.GetComputerApps().pipe(asPerson(first))
+        expect(ComputerInventory.guards.Unavailable(absent)).toBe(true)
+        expect(yield* Ref.get(evidence.ensures)).toEqual([])
+        yield* start(first)
+        const installed = ComputerInventory.cases.Installed.make({
+          apps: [{ name: 'GIMP', purpose: 'Edit raster images' }],
+        })
+        yield* Ref.set(evidence.commandResult, {
+          exitCode: 0,
+          output: JSON.stringify(installed),
+          truncated: false,
+        })
+        expect(yield* computerHandlers.GetComputerApps().pipe(asVivid(first))).toEqual(installed)
+        yield* (yield* ComputerStore).hold(first.id, true)
+        expect(
+          ComputerInventory.guards.Unavailable(
+            yield* computerHandlers.GetComputerApps().pipe(asPerson(first)),
+          ),
+        ).toBe(true)
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect(
+    'inventory does not renew the idle deadline and a passive probe cannot wake a stopped Computer',
+    () =>
+      Effect.gen(function* () {
+        const { first } = yield* fixture()
+        const evidence = yield* ProviderEvidence
+        yield* start(first)
+        yield* TestClock.adjust('19 minutes')
+        yield* Ref.set(evidence.commandResult, {
+          exitCode: 0,
+          output: '{"_tag":"Installed","apps":[]}',
+          truncated: false,
+        })
+        yield* computerHandlers.GetComputerApps().pipe(asPerson(first))
+        yield* TestClock.adjust('1 minute')
+        expect(yield* Queue.take(evidence.stopped)).toBe(computerMachineKey(first.id))
+        const store = yield* ComputerStore
+        const stopped = yield* store
+          .probe(first.id, { command: 'true', timeoutSeconds: 10 })
+          .pipe(Effect.result)
+        expect(Result.isFailure(stopped)).toBe(true)
+        expect(yield* Ref.get(evidence.ensures)).toHaveLength(1)
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  for (const receipt of [
+    { exitCode: 1, output: 'missing catalogue', truncated: false },
+    { exitCode: 0, output: '{"_tag":"Installed","apps":[{"name":"GIMP"}]}', truncated: false },
+    { exitCode: 0, output: '{"_tag":"Installed","apps":[]}', truncated: true },
+  ]) {
+    it.effect(`inventory withholds names for an unverified probe: ${receipt.output}`, () =>
+      Effect.gen(function* () {
+        const { first } = yield* fixture()
+        yield* start(first)
+        const evidence = yield* ProviderEvidence
+        yield* Ref.set(evidence.commandResult, receipt)
+        expect(
+          ComputerInventory.guards.Unavailable(
+            yield* computerHandlers.GetComputerApps().pipe(asPerson(first)),
+          ),
+        ).toBe(true)
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    )
+  }
+
   it.effect(
     'wakes once for concurrent permitted actions, waits for startup and resumes the same Computer',
     () =>

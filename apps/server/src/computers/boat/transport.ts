@@ -35,6 +35,7 @@ const configuration = Effect.fn('Machine.boat.configuration')(
   function* () {
     const key = yield* Config.Redacted('VIVID_BOAT_API_KEY')
     const org = yield* Config.option(Config.NonEmptyString('VIVID_BOAT_ORG'))
+    const template = yield* Config.schema(Protocol.TemplateName, 'VIVID_BOAT_TEMPLATE')
     const size = yield* Config.Literals(['small', 'default', 'large'], 'VIVID_BOAT_SIZE').pipe(
       Config.withDefault('default'),
     )
@@ -50,6 +51,7 @@ const configuration = Effect.fn('Machine.boat.configuration')(
       ttlSeconds: lifetime === 0 ? null : lifetime,
       noEnv: true,
       snapshots: true,
+      from: template,
     } as const
     const create = Option.match(org, {
       onNone: () => Protocol.CreateRequest.make(machine),

@@ -343,6 +343,11 @@ export interface ComputerStoreService {
     person: PersonId,
     input: { readonly command: string; readonly timeoutSeconds: number },
   ) => Effect.Effect<CommandResult, StoreError | MachineFailure | ReadinessFailure>
+  /** Passive observations neither wake a Computer nor extend its inactivity deadline. */
+  readonly probe: (
+    person: PersonId,
+    input: { readonly command: string; readonly timeoutSeconds: number },
+  ) => Effect.Effect<CommandResult, StoreError | MachineFailure | ReadinessFailure>
   readonly desktop: (
     person: PersonId,
     action: DesktopAction,
@@ -762,6 +767,22 @@ export const computerStoreLayer = Layer.effect(
           state.machine.exec({ key, command: input.command, timeoutSeconds: input.timeoutSeconds }),
         ),
     )
+    /** Hold the same permit as takeover and idle stop, but do not prepare or record activity.
+     * Context reads must never start a machine or indefinitely postpone its idle shutdown. */
+    const probe = Effect.fn('ComputerStore.probe')(
+      function* (
+        person: PersonId,
+        input: { readonly command: string; readonly timeoutSeconds: number },
+      ) {
+        const key = yield* requireReady(state, person)
+        return yield* state.machine.exec({
+          key,
+          command: input.command,
+          timeoutSeconds: input.timeoutSeconds,
+        })
+      },
+      (effect, person) => state.lock(person).withPermit(effect),
+    )
     const browse = Effect.fn('ComputerStore.browse')((person: PersonId, action: BrowserAction) =>
       execute(person, (key) => state.machine.browse({ key, action })),
     )
@@ -800,6 +821,7 @@ export const computerStoreLayer = Layer.effect(
       access,
       screen,
       exec,
+      probe,
       browse,
       desktop,
     })

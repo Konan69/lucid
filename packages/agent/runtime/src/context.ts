@@ -1,7 +1,12 @@
 import { useInstruction, useResponseFinish, useResponseStart } from '@flue/runtime'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
-import { ConnectionState, DEFAULT_APPEARANCE, type VividName } from '@vivid/contracts'
+import {
+  ComputerInventory,
+  ConnectionState,
+  DEFAULT_APPEARANCE,
+  type VividName,
+} from '@vivid/contracts'
 import { asActing, type Acting } from './client.ts'
 import * as views from './tools/views.ts'
 import { boundOutput } from './tools/result.ts'
@@ -13,10 +18,24 @@ const emptyContext = VividContext.make({
   brief: '',
   skills: [],
   timezone: '',
+  apps: [],
   integrations: [],
   name: DEFAULT_APPEARANCE.name,
 })
 const snapshots = contextSnapshots()
+
+/** Runtime context names only observed installations. A failed read contributes no app claim;
+ * provider identifiers, package paths and capability descriptions never enter the model prompt. */
+const loadApps = Effect.fn('Context.loadApps')(
+  function* (acting: Option.Option<Acting>) {
+    const inventory = yield* asActing(acting, (client) => client.GetComputerApps())
+    return ComputerInventory.match(inventory, {
+      Unavailable: () => [],
+      Installed: ({ apps }) => apps.map((app) => app.name),
+    })
+  },
+  Effect.catch(() => Effect.succeed([])),
+)
 
 /** Memory is optional context; declared RPC and transport failures must not prevent a response. */
 const loadBrief = Effect.fn('Context.loadBrief')(
@@ -103,6 +122,7 @@ export const loadContext = Effect.fn('Context.load')(function* (acting: Option.O
         timezone: loadTimezone(acting),
         integrations: loadIntegrations(acting),
         name: loadName(acting),
+        apps: loadApps(acting),
       },
       { concurrency: 5 },
     ),
@@ -122,6 +142,7 @@ export function contextInstruction(context: VividContext) {
     brief: views.modelText(context.brief),
     skills: views.skills(context.skills),
     timezone: context.timezone,
+    apps: context.apps.map(views.modelText),
     integrations: context.integrations.map(views.modelText),
   })
   return `Context for this response (saved facts may be stale; confirm current facts before acting):\n${JSON.stringify(output)}`

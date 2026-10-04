@@ -5,6 +5,7 @@ import {
   MachineCapabilityUnavailable,
   MachineInputInvalid,
   MachineResponseInvalid,
+  MachineOperationFailed,
   type MachineKey,
 } from './machine.ts'
 import { bindings } from './boat/bindings.ts'
@@ -45,7 +46,21 @@ export const boatMachineLayer = Layer.effect(
       return current.native
     })
     return Machine.of({
-      ensure,
+      /** The prepared payload opens the native launcher once per desktop session. This is
+       * presentation setup only; expensive installation happened before template capture. */
+      ensure: Effect.fn('Machine.boat.ensure')(function* (key) {
+        const state = yield* ensure(key)
+        const identity = yield* running(key)
+        const receipt = yield* api.command(
+          identity.id,
+          key,
+          '/opt/vivid/python/bin/python3 /opt/vivid/computer/desktop.py start',
+          30,
+        )
+        if (receipt.exitCode !== 0 || receipt.timedOut)
+          return yield* Effect.fail(new MachineOperationFailed({ operation: 'desktop-launcher' }))
+        return state
+      }),
       status,
       inspect,
       stop,

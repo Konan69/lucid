@@ -135,6 +135,7 @@ import {
   ReadNotificationsRequest,
 } from './notifications.js'
 import { CreateProjectRequest, Project, ProjectListResponse } from './projects.js'
+import { ComputerInventory } from './applications.js'
 import {
   CreateRoutineRequest,
   CreateOnceRoutineRequest,
@@ -681,6 +682,7 @@ const DeleteSkill = Rpc.make('DeleteSkill', {
 
 // ── The Computer ───────────────────────────────────────────────────────────
 const GetComputer = Rpc.make('GetComputer', { ...call, success: ComputerResponse })
+const GetComputerApps = Rpc.make('GetComputerApps', { ...call, success: ComputerInventory })
 const WatchComputer = Rpc.make('WatchComputer', { ...live, success: ComputerResponse })
 const StartComputer = Rpc.make('StartComputer', { ...call, success: ComputerResponse })
 const StopComputer = Rpc.make('StopComputer', { ...call, success: ComputerResponse })
@@ -870,6 +872,7 @@ export const VividRpc = RpcGroup.make(
   PatchSkill,
   DeleteSkill,
   GetComputer,
+  GetComputerApps,
   WatchComputer,
   StartComputer,
   StopComputer,

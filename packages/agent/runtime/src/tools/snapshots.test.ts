@@ -9,6 +9,7 @@ const adaContext = VividContext.make({
   brief: 'Ada’s facts',
   skills: [],
   timezone: 'Africa/Lagos',
+  apps: [],
   integrations: [],
   name: 'Vivid',
 })
@@ -16,6 +17,7 @@ const damiContext = VividContext.make({
   brief: 'Dami’s facts',
   skills: [],
   timezone: 'Europe/Paris',
+  apps: [],
   integrations: [],
   name: 'Juno',
 })
@@ -23,6 +25,7 @@ const updatedContext = VividContext.make({
   brief: 'Updated facts',
   skills: [],
   timezone: 'UTC',
+  apps: [],
   integrations: [],
   name: 'Vivid',
 })

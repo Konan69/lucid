@@ -26,6 +26,8 @@ export const VividContext = Schema.Struct({
   brief: Schema.String,
   skills: Schema.Array(ContextSkill),
   timezone: Schema.String,
+  /** Names observed on this Computer; an empty list means no current installation proof. */
+  apps: Schema.Array(Schema.String),
   /**
    * The services this Person has connected and that are ready to use, by the name people know
    * them ("Gmail"). Names only: accounts and tools are still resolved through find_tools. Without

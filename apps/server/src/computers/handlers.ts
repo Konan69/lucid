@@ -17,6 +17,7 @@ import { changed } from '../live/changes.ts'
 import { live, sessionEnded } from '../live/query.ts'
 import { DeviceRegistry } from './device.ts'
 import { ComputerStore, computerRunCommand, computerBrowse, computerDesktop } from './store.ts'
+import { computerInventory } from './inventory.ts'
 export { computerRunner } from './store.ts'
 
 /** A plain and live read share the same Computer loader and wire envelope. */
@@ -33,6 +34,11 @@ const one = (device: Device) => DeviceResponse.make({ device })
  * a Person to act on, and Vivid's tools get the same owner from the identity they act with.
  */
 export const computerHandlers = {
+  /** Metadata uses the same authenticated owner as every other Computer operation. */
+  GetComputerApps: Effect.fn('Rpc.GetComputerApps')(function* () {
+    const auth = yield* requireActor()
+    return yield* computerInventory(auth.person.id)
+  }),
   EnrolDevice: Effect.fn('Rpc.EnrolDevice')(function* (request: EnrolDeviceRequest) {
     const auth = yield* requirePerson()
     const device = yield* (yield* DeviceRegistry).enrol(auth.person.id, request)

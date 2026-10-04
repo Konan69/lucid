@@ -1,0 +1,31 @@
+#!/bin/bash
+set -euo pipefail
+# All costly work happens at Boat template preparation, never on a Person's first use.
+computer_started=$SECONDS
+computer_root=$(cd -- "$(dirname -- "$0")" && pwd)
+# A prior receipt cannot claim completion while a repair installation is still running.
+rm -f "$computer_root/measurement.json"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+mapfile -t computer_packages < <(python3 "$computer_root/catalogue.py" packages)
+apt-get install -y --no-install-recommends "${computer_packages[@]}"
+python3 -m venv /opt/vivid/python
+mapfile -t computer_python < <(python3 "$computer_root/catalogue.py" python)
+/opt/vivid/python/bin/pip install --no-cache-dir "${computer_python[@]}"
+python3 "$computer_root/archives.py"
+# Shells and procedures get the same Python, without modifying Debian's managed interpreter.
+ln -sfn /opt/vivid/python/bin/python3 /usr/local/bin/python3
+printf '%s\n' 'export PATH=/opt/vivid/python/bin:$PATH' > /etc/profile.d/vivid.sh
+/opt/vivid/python/bin/python3 "$computer_root/catalogue.py" verify
+apt-get clean
+rm -rf /var/lib/apt/lists/*
+python3 - "$computer_root" "$((SECONDS-computer_started))" <<'VIVID_MEASURE'
+import json, pathlib, subprocess, sys
+root=pathlib.Path(sys.argv[1])
+packages=subprocess.check_output(['dpkg-query','-W','-f=${Installed-Size}\n'],text=True)
+archive_bytes=int(subprocess.check_output(['du','-sb',str(root)],text=True).split()[0])
+python_bytes=int(subprocess.check_output(['du','-sb','/opt/vivid/python'],text=True).split()[0])
+(root/'measurement.json').write_text(json.dumps({'installSeconds':int(sys.argv[2]),
+ 'systemPackageBytes':sum(int(p) for p in packages.splitlines() if p)*1024,
+ 'portableApplicationBytes':archive_bytes,'pythonBytes':python_bytes}))
+VIVID_MEASURE

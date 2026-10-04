@@ -38,6 +38,7 @@ import { computerDefinitions } from './computer.ts'
 import { connectionTools } from './connections.ts'
 import { libraryTools } from './library.ts'
 import { memoryTools } from './memory.ts'
+import { projectTools } from './projects.ts'
 import { routineTools } from './routines.ts'
 import { skillTools } from './skills.ts'
 import type { RunTool } from './scope.ts'
@@ -165,12 +166,14 @@ describe('model views', () => {
         brief: `Review before signing. Legacy note: ${reference}.`,
         skills: [skill, skill],
         timezone: 'Africa/Lagos',
+        apps: ['GIMP', 'LibreOffice Calc'],
         integrations: ['DeepWiki', `Mail ${reference}`],
         name: 'Vivid',
       }),
     )
     expect(context).not.toMatch(/MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|"id"/iu)
     expect(context).toContain('review-agreement-2')
+    expect(context).toContain('"apps":["GIMP","LibreOffice Calc"]')
     // Connected services reach the model by name, with any identifier in a name removed.
     expect(context).toContain('"integrations":["DeepWiki","Mail ')
     expect(json).toContain('admin@example.test')
@@ -300,6 +303,7 @@ it('has no identifier key or UUID validator in any model tool input', () => {
     libraryTools,
     memoryTools,
     routineTools,
+    projectTools,
     skillTools,
   ]
   for (const factory of groups)

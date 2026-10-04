@@ -386,6 +386,8 @@ const create = Effect.fn('BoatTest.create')(function* (
   expect(body.ttlSeconds).toBe(3600)
   expect(body.noEnv).toBe(true)
   expect(body.snapshots).toBe(true)
+  // Provisioning must restore the configured release, including replay after configuration changes.
+  expect(body.from).toBe('vivid-computer-protocol-test')
   expect(body.org).toBe(Option.getOrUndefined(yield* Ref.get(evidence.org)))
   const intent = request.headers['idempotency-key']
   expect(intent === undefined).toBe(false)
@@ -547,9 +549,13 @@ const configured = (settings: Readonly<Record<string, string>>) =>
 const testLayer = configured({
   VIVID_BOAT_API_KEY: 'protocol-test-key',
   VIVID_BOAT_ORG: 'personal',
+  VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
 })
 /** An account that belongs to no organization: there is only the key. */
-const accountLayer = configured({ VIVID_BOAT_API_KEY: 'protocol-test-key' })
+const accountLayer = configured({
+  VIVID_BOAT_API_KEY: 'protocol-test-key',
+  VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
+})
 
 /** Register cleanup before provisioning; only this fixture's private binding is removed. */
 const fixture = Effect.fn('BoatTest.fixture')(function* () {
@@ -833,6 +839,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
                   ConfigProvider.fromUnknown({
                     VIVID_BOAT_SIZE: 'large',
                     VIVID_BOAT_LIFETIME_SECONDS: '7200',
+                    VIVID_BOAT_TEMPLATE: 'vivid-computer-new-release',
                   }),
                   { asPrimary: true },
                 ),
