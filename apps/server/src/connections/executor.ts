@@ -9,6 +9,7 @@ import {
 import * as Config from 'effect/Config'
 import * as Arr from 'effect/Array'
 import * as Cache from 'effect/Cache'
+import * as Clock from 'effect/Clock'
 import * as Exit from 'effect/Exit'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
@@ -28,7 +29,7 @@ import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import type * as HttpBody from 'effect/unstable/http/HttpBody'
 
-import { toolMessage, validationProblems } from './message.ts'
+import { toolRejectionMessage, validationProblems } from './message.ts'
 import { retainCatalog } from './catalog.ts'
 import { ConnectionSource } from './address.ts'
 import { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
@@ -743,7 +744,7 @@ function classifyTool(tool: typeof WireTool.Type) {
 /** A completed semantic error is actionable, not a successful tool value. */
 function completedCall(value: Schema.Json) {
   if (isToolError(value))
-    return ExecutorCallOutcome.cases.Rejected.make({ message: toolMessage(value) })
+    return ExecutorCallOutcome.cases.Rejected.make({ message: toolRejectionMessage })
   return ExecutorCallOutcome.cases.Completed.make({ value })
 }
 
@@ -1288,8 +1289,75 @@ function makeAvailabilityRecorder(
   })
 }
 
-/** Inspection is read-only and bounded. Only explicit setup answers enter the retained facts;
- * transient failures fail the lookup with zero TTL and leave the last known availability intact.
+/** Thirty seconds bounds repeated outage traffic while allowing prompt recovery after a 5s timeout. */
+const INSPECTION_FAILURE_TTL = '30 seconds'
+const REFUSAL_TTL_MILLIS = 10 * 60 * 1000
+const SetupRefusal = Schema.Struct({
+  authorization: ServiceAuthorization.cases.SetupRequired,
+  expiresAtMillis: Schema.Finite,
+})
+
+/** Refusals are stronger evidence than inspection and own their expiry independently. rc.116
+ * Cache.get's observer (effect/src/Cache.ts:626-638) owns lookup completion, and checkCapacity
+ * evicts entries regardless of their TTL. Neither may modify these refusal-only facts.
+ * Read/record run under the publication permit, including expiry removal.
+ * Expiry invalidates ordinary inspection so the next read re-inspects the provider.
+ */
+const makeSetupRefusals = Effect.fn('Executor.setupRefusals')(function* (
+  inspections: Cache.Cache<ServiceId, ServiceAuthorization, ExecutorFailure>,
+) {
+  const refusals = yield* Ref.make(HashMap.empty<ServiceId, typeof SetupRefusal.Type>())
+  return {
+    read: Effect.fn('Executor.readSetupRefusal')(function* (service: ServiceId) {
+      const now = yield* Clock.currentTimeMillis
+      const refusal = yield* Ref.get(refusals).pipe(
+        Effect.map((current) => HashMap.get(current, service)),
+      )
+      if (Option.isNone(refusal)) return Option.none<ServiceAuthorization>()
+      if (now < refusal.value.expiresAtMillis) return Option.some(refusal.value.authorization)
+      yield* Ref.update(refusals, (current) => HashMap.remove(current, service))
+      yield* Cache.invalidate(inspections, service)
+      return Option.none<ServiceAuthorization>()
+    }),
+    record: Effect.fn('Executor.retainSetupRefusal')(function* (service: ServiceId) {
+      const refusal = SetupRefusal.make({
+        authorization: ServiceAuthorization.cases.SetupRequired.make({}),
+        expiresAtMillis: (yield* Clock.currentTimeMillis) + REFUSAL_TTL_MILLIS,
+      })
+      yield* Ref.update(refusals, (current) => HashMap.set(current, service, refusal))
+      return refusal.authorization
+    }),
+  }
+})
+
+/** Refusal reads and publication share the writer's permit. Both successful and failed older
+ * lookups must yield to a retained refusal before publishing or returning their result.
+ */
+function makeInspectionReader(input: {
+  readonly inspections: Cache.Cache<ServiceId, ServiceAuthorization, ExecutorFailure>
+  readonly refusals: Effect.Success<ReturnType<typeof makeSetupRefusals>>
+  readonly publication: Semaphore.Semaphore
+  readonly record: ReturnType<typeof makeAvailabilityRecorder>
+}) {
+  return Effect.fn('Executor.readInspection')(function* (service: ServiceId) {
+    const retained = yield* input.publication.withPermit(input.refusals.read(service))
+    if (Option.isSome(retained)) return retained.value
+    const loaded = yield* Cache.get(input.inspections, service).pipe(Effect.result)
+    return yield* input.publication.withPermit(
+      Effect.gen(function* () {
+        const refusal = yield* input.refusals.read(service)
+        if (Option.isSome(refusal)) return refusal.value
+        const authorization = yield* Effect.fromResult(loaded)
+        yield* input.record(service, authorization, Option.none())
+        return authorization
+      }),
+    )
+  })
+}
+
+/** Inspection is read-only and bounded. Transient failures retain their failed lookup briefly
+ * and leave the last known display fact intact. Capacity eviction affects only ordinary
+ * inspection facts: they are re-inspected on the next read, without discarding refusals.
  */
 const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
   http: ExecutorHttp,
@@ -1340,29 +1408,19 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
     }),
     {
       capacity: 1000,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? '10 minutes' : 0),
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? '10 minutes' : INSPECTION_FAILURE_TTL),
     },
   )
-  /** Cache.set replaces the mapped entry in rc.116; an old lookup only completes its own
-   * entry. Publish the currently mapped success, never that old lookup's returned value.
-   * The publication permit orders this snapshot with sign-in refusal recording.
-   */
-  const readInspection = Effect.fn('Executor.readInspection')(function* (service: ServiceId) {
-    const loaded = yield* Cache.get(inspections, service)
-    return yield* publication.withPermit(
-      Effect.gen(function* () {
-        const current = yield* Cache.getSuccess(inspections, service)
-        if (Option.isNone(current)) return loaded
-        yield* record(service, current.value, Option.none())
-        return current.value
-      }),
-    )
-  })
+  const refusals = yield* makeSetupRefusals(inspections)
+  const readInspection = makeInspectionReader({ inspections, refusals, publication, record })
   /** Refresh expired inspection entries in the owning scope while serving retained display facts. */
   const refreshAvailability = Effect.fn('Executor.refreshAvailability')(function* (
     entry: typeof ExecutorServiceEntry.Type,
     current: HashMap.HashMap<ServiceId, ServiceAuthorization>,
   ) {
+    const refusal = yield* publication.withPermit(refusals.read(entry.id))
+    if (Option.isSome(refusal))
+      return ExecutorServiceEntry.make({ ...entry, authorization: refusal.value })
     const previous = HashMap.get(current, entry.id)
     if (Option.isNone(previous)) return entry
     if (!(yield* Cache.has(inspections, entry.id))) {
@@ -1387,16 +1445,26 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
       // A pre-definition read can cache only catalogue metadata. Replace it once the actual
       // requirement arrives; subsequent Begin calls must preserve a refused sign-in's TTL.
       if (!alreadyKnown) yield* Cache.invalidate(inspections, input.service)
+      // Custom MCP imports and their renewals have a service identity outside the catalogue.
+      // They inspect the saved app directly, but share refusal ordering with catalogue entries.
       const entry = (yield* catalog()).find((candidate) => candidate.id === input.service)
       if (entry !== undefined) return yield* readInspection(input.service)
-      const authorization = yield* inspect(requirement).pipe(
+      const retained = yield* publication.withPermit(refusals.read(input.service))
+      if (Option.isSome(retained)) return retained.value
+      const inspected = yield* inspect(requirement).pipe(
         Effect.timeout('5 seconds'),
         Effect.catchTag('TimeoutError', () =>
           Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
         ),
       )
-      yield* record(input.service, authorization, Option.none())
-      return authorization
+      return yield* publication.withPermit(
+        Effect.gen(function* () {
+          const refusal = yield* refusals.read(input.service)
+          if (Option.isSome(refusal)) return refusal.value
+          yield* record(input.service, inspected, Option.none())
+          return inspected
+        }),
+      )
     }),
     authorization: Effect.fn('Executor.authorization')((input: { readonly service: ServiceId }) =>
       readInspection(input.service),
@@ -1410,15 +1478,11 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
       const current = yield* Ref.get(facts)
       return yield* Effect.forEach(entries, (entry) => refreshAvailability(entry, current))
     }),
-    /** Executor's refused sign-in is stronger evidence than its setup endpoint. Cache.set
-     * starts a full ten-minute TTL and replaces pending entries; publication is serialized
-     * so an older inspection cannot publish SignIn over this retained refusal.
-     */
+    /** Retain refused sign-in for ten minutes, independent of inspection completion or eviction. */
     recordSetupRequired: Effect.fn('Executor.recordSetupRequired')(function* (service: ServiceId) {
       yield* publication.withPermit(
         Effect.gen(function* () {
-          const unavailable = ServiceAuthorization.cases.SetupRequired.make({})
-          yield* Cache.set(inspections, service, unavailable)
+          const unavailable = yield* refusals.record(service)
           yield* record(service, unavailable, Option.none())
         }),
       )

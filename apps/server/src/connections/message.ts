@@ -1,11 +1,8 @@
-import type { Schema } from 'effect'
-
 /** Arbitrary tool errors may echo credentials. Only schema-promised safe validation summaries
  * are projected; semantic tool errors retain a constant refusal for both model call paths.
  */
-export function toolMessage(_value: typeof Schema.Json.Type) {
-  return 'The integration rejected the tool request; sensitive diagnostics were removed.'
-}
+export const toolRejectionMessage =
+  'The integration rejected the tool request; sensitive diagnostics were removed.'
 
 /** Ten summaries of at most 400 characters keep a malformed upstream response from consuming
  * the model context while leaving normal field paths readable. These are output limits only.
