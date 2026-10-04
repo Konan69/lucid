@@ -39,7 +39,7 @@ import {
   Workspace,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
-import { Gate, GateDecision, ActionOutcome } from '../approvals/gate.ts'
+import { Gate, GateDecision, ActionOutcome, ActionOrigin } from '../approvals/gate.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
@@ -769,6 +769,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         )
         expect(
           yield* computerRunner({
+            origin: ActionOrigin.cases.Person.make({}),
             person: first,
             target: ActionTarget.cases.Command.make({ command: request.command }),
           }),
@@ -828,6 +829,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         expect(yield* Ref.get(evidence.actions)).toEqual([])
         expect(
           yield* computerRunner({
+            origin: ActionOrigin.cases.Person.make({}),
             person: first,
             target: ActionTarget.cases.Browser.make({
               action: personRequest.action,
@@ -890,6 +892,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         yield* Ref.set(evidence.lost, true)
         expect(
           (yield* computerRunner({
+            origin: ActionOrigin.cases.Person.make({}),
             person: first,
             target: ActionTarget.cases.Command.make({ command: request.command }),
           }))._tag,

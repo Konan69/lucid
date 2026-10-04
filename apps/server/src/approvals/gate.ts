@@ -3,11 +3,15 @@ import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import {
   Approval,
-  type NotFound,
+  RunId,
+  ThreadId,
+  NotFound,
   type Person,
   type ProposedAction,
   type Workspace,
 } from '@vivid/contracts'
+import * as Option from 'effect/Option'
+import { actingRun } from '../threads/runs.ts'
 import type { Actor } from '../auth/access.ts'
 import type { DatabaseInfrastructureError } from '../database/client.ts'
 
@@ -36,6 +40,35 @@ export type GateDecision = typeof GateDecision.Type
 export const GateExposure = Schema.Literals(['Ordinary', 'PersonalInShared'] as const)
 export type GateExposure = typeof GateExposure.Type
 
+/** Authority is frozen when proposed. Thread proposals have no Run; Person calls are direct. */
+export const ActionOrigin = Schema.TaggedUnion({
+  Run: { threadId: ThreadId, runId: RunId },
+  Thread: { threadId: ThreadId },
+  Person: {},
+})
+export type ActionOrigin = typeof ActionOrigin.Type
+
+/** Runtime RPC carries Thread authority; resolve its exact acting Run before proposing an action. */
+export const actionOrigin = Effect.fn('Gate.origin')(function* (actor: Actor) {
+  if (actor.by === 'person') return ActionOrigin.cases.Person.make({})
+  if (Option.isNone(actor.threadId))
+    return yield* new NotFound({ message: 'Action needs a Vivid Thread' })
+  const threadId = actor.threadId.value
+  return yield* actingRun(threadId, actor.person.id).pipe(
+    Effect.map((runId) => ActionOrigin.cases.Run.make({ threadId, runId })),
+    Effect.catchTag('NoActingRun', ({ reason }) =>
+      reason === 'NoWorkingRun'
+        ? Effect.succeed(ActionOrigin.cases.Thread.make({ threadId }))
+        : Effect.fail(new NotFound({ message: 'Action needs an unambiguous acting Run' })),
+    ),
+  )
+})
+
+/** The proposal authority is a required value, not ambient context or an optional argument. */
+export interface ProposalActor extends Actor {
+  readonly origin: ActionOrigin
+}
+
 export interface GateService {
   /**
    * Decides whether Vivid may take `action` now, acting for `actor`.
@@ -50,7 +83,7 @@ export interface GateService {
    * asks. If a rule that could forbid the action could not be weighed, the answer is to ask.
    */
   readonly check: (
-    actor: Actor,
+    actor: ProposalActor,
     action: ProposedAction,
     exposure: GateExposure,
   ) => Effect.Effect<GateDecision, NotFound | DatabaseInfrastructureError>
@@ -78,6 +111,7 @@ export interface ActionRunnerService {
     readonly person: Person
     readonly workspace: Workspace
     readonly action: ProposedAction
+    readonly origin: ActionOrigin
   }) => Effect.Effect<ActionOutcome>
 }
 
@@ -121,7 +155,7 @@ const allow = Effect.fn('Gate.allow')(function* (
 /** Raises the Approval the acting Person must answer; the turn ends until they do. */
 const ask = Effect.fn('Gate.ask')(function* (
   approvals: ApprovalStore['Service'],
-  actor: Actor,
+  actor: ProposalActor,
   action: ProposedAction,
 ) {
   return GateDecision.cases.ApprovalRequired.make({

@@ -36,7 +36,7 @@ import {
 } from '@vivid/contracts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
 import { type Actor } from '../auth/access.ts'
-import { Gate, GateDecision, ActionOutcome } from '../approvals/gate.ts'
+import { Gate, GateDecision, ActionOutcome, ActionOrigin, actionOrigin } from '../approvals/gate.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import {
   Machine,
@@ -880,7 +880,11 @@ export const computerRunCommand = Effect.fn('Computer.runCommand')(function* (
     effect: 'write',
     target: ActionTarget.cases.Command.make({ command: request.command }),
   })
-  const decision = yield* gate.check(actor, action, 'Ordinary')
+  const decision = yield* gate.check(
+    { ...actor, origin: yield* actionOrigin(actor) },
+    action,
+    'Ordinary',
+  )
   return yield* GateDecision.match(decision, {
     Blocked: Effect.fn('Computer.command.blocked')(
       ({ rule }: typeof GateDecision.cases.Blocked.Type): Effect.Effect<CommandOutcome> =>
@@ -938,7 +942,11 @@ export const computerBrowse = Effect.fn('Computer.browse')(function* (
     effect: browserEffect(request.action),
     target: ActionTarget.cases.Browser.make({ action: request.action, target: request.target }),
   })
-  const decision = yield* gate.check(actor, action, 'Ordinary')
+  const decision = yield* gate.check(
+    { ...actor, origin: yield* actionOrigin(actor) },
+    action,
+    'Ordinary',
+  )
   return yield* GateDecision.match(decision, {
     Blocked: ({ rule }) => Effect.succeed(BrowseOutcome.cases.Blocked.make({ rule })),
     ApprovalRequired: ({ approval }) =>
@@ -991,7 +999,11 @@ export const computerDesktop = Effect.fn('Computer.desktop')(function* (
     effect: desktopEffect(request.action),
     target: ActionTarget.cases.Desktop.make({ action: request.action }),
   })
-  const decision = yield* gate.check(actor, action, 'Ordinary')
+  const decision = yield* gate.check(
+    { ...actor, origin: yield* actionOrigin(actor) },
+    action,
+    'Ordinary',
+  )
   return yield* GateDecision.match(decision, {
     Blocked: ({ rule }) => Effect.succeed(DesktopOutcome.cases.Blocked.make({ rule })),
     ApprovalRequired: ({ approval }) =>
@@ -1026,6 +1038,7 @@ type ComputerTarget =
 export const computerRunner = Effect.fn('Computer.runner')(function* (input: {
   readonly person: Person
   readonly target: ComputerTarget
+  readonly origin: ActionOrigin
 }) {
   const store = yield* ComputerStore
   const result = yield* ActionTarget.match<Effect.Effect<ActionOutcome, ExecutionFailure>>(
