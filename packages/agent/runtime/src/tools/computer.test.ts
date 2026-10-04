@@ -14,13 +14,23 @@ import * as NodeBuffer from 'node:buffer'
 import * as NodeZlib from 'node:zlib'
 import { validateToolArguments } from '@earendil-works/pi-ai'
 import { describe, expect, it } from '@effect/vitest'
-import { DesktopAction, DesktopOutcome, PersonId, ThreadId, ApprovalId } from '@vivid/contracts'
+import {
+  BrowseTarget,
+  BrowserAction,
+  BrowseOutcome,
+  BrowseResult,
+  DesktopAction,
+  DesktopOutcome,
+  PersonId,
+  ThreadId,
+  ApprovalId,
+} from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
-import { Effect, Exit, Layer, Option, Predicate, Queue } from 'effect'
+import { Effect, Exit, Layer, Option, Predicate, Queue, Schema } from 'effect'
 import * as RpcClient from 'effect/unstable/rpc/RpcClient'
 import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/unstable/rpc/RpcMessage'
-import { desktopModelTool, desktopToolFactory } from './computer.ts'
+import { browseModelTool, desktopModelTool, desktopToolFactory } from './computer.ts'
 import { Scope, toolRunner } from './scope.ts'
 import { disposableStorage } from '../../tests/schema.ts'
 
@@ -64,7 +74,13 @@ const fixture = Effect.fn('DesktopToolsTest.fixture')(function* () {
     }),
   )
   const runTool = toolRunner(scope)
-  return { requests, rpc, tool: desktopModelTool(runTool), factory: desktopToolFactory(runTool) }
+  return {
+    requests,
+    rpc,
+    browser: browseModelTool(runTool),
+    tool: desktopModelTool(runTool),
+    factory: desktopToolFactory(runTool),
+  }
 })
 
 /** RPC SDK exit envelopes lack constructors in rc.116. This helper is the transport adapter. */
@@ -86,6 +102,165 @@ const reply = Effect.fn('DesktopToolsTest.reply')(function* (
     requestId: request.id,
     exit: Exit.succeed(outcome),
   })
+})
+
+/** Real RPC receipts prove target selection and every model outcome without replacing the client. */
+const browserReply = Effect.fn('BrowserToolsTest.reply')(function* (
+  transport: Effect.Success<ReturnType<typeof fixture>>,
+  outcome: BrowseOutcome,
+  target: BrowseTarget,
+) {
+  const request = yield* Queue.take(transport.requests)
+  if (!Predicate.isTagged(request, 'Request')) expect.fail('Expected a generated RPC request')
+  expect(request.tag).toBe('Browse')
+  expect(request.payload).toEqual({
+    target,
+    action: BrowserAction.cases.Screenshot.make({}),
+    summary: 'Look at my page',
+  })
+  yield* transport.rpc.write({
+    // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK exit envelopes have no constructor in rc.116.
+    _tag: 'Exit',
+    clientId: 0,
+    requestId: request.id,
+    exit: Exit.succeed(outcome),
+  })
+})
+const browserPage = BrowseResult.make({
+  address: 'https://example.test',
+  title: 'My page',
+  outline: 'Account',
+  truncated: false,
+  tabs: [],
+})
+
+describe('browser model target and image result', () => {
+  it.effect('rejects unknown computers and overlong controls before any RPC dispatch', () =>
+    Effect.gen(function* () {
+      const transport = yield* fixture()
+      const invalid: Schema.JsonObject[] = [
+        { computer: 'other', action: { kind: 'read' }, summary: 'Read the page' },
+        { action: { kind: 'click', target: 'x'.repeat(4001) }, summary: 'Click the control' },
+        { action: { kind: 'press', key: 'x'.repeat(201) }, summary: 'Press the key' },
+      ]
+      for (const input of invalid) {
+        expect(() =>
+          validateToolArguments(transport.browser, {
+            type: 'toolCall',
+            id: 'invalid-browse',
+            name: 'browse',
+            arguments: input,
+          }),
+        ).toThrow('Validation failed')
+        const result = yield* Effect.promise(() =>
+          transport.browser.execute('invalid-browse', input, new AbortController().signal),
+        )
+        expect(JSON.stringify(result.content)).toContain('The browser request is invalid.')
+      }
+      expect(yield* Queue.size(transport.requests)).toBe(0)
+    }).pipe(Effect.scoped),
+  )
+
+  for (const choice of [undefined, 'vivid', 'person'] as const) {
+    it.effect(
+      `selects ${choice === undefined ? 'Vivid by default' : choice} only from the computer word`,
+      () =>
+        Effect.gen(function* () {
+          const transport = yield* fixture()
+          const input: Schema.JsonObject =
+            choice === undefined
+              ? { action: { kind: 'screenshot' }, summary: 'Look at my page' }
+              : { action: { kind: 'screenshot' }, summary: 'Look at my page', computer: choice }
+          expect(
+            validateToolArguments(transport.browser, {
+              type: 'toolCall',
+              id: 'browse-call',
+              name: 'browse',
+              arguments: input,
+            }),
+          ).toEqual(input)
+          const call = Effect.promise(() =>
+            transport.browser.execute('browse-call', input, new AbortController().signal),
+          )
+          const response = browserReply(
+            transport,
+            BrowseOutcome.cases.Completed.make({ result: browserPage }),
+            choice === 'person'
+              ? BrowseTarget.cases.Person.make({})
+              : BrowseTarget.cases.Vivid.make({}),
+          )
+          const [result] = yield* Effect.all([call, response], { concurrency: 2 })
+          expect(result.content.every((block) => block.type === 'text')).toBe(true)
+          expect(JSON.stringify(result.details)).toContain('The browser action completed.')
+        }).pipe(Effect.scoped),
+    )
+  }
+  it.effect('keeps the full screenshot in Flue image content and out of bounded text', () =>
+    Effect.gen(function* () {
+      const transport = yield* fixture()
+      const picture = largePicture()
+      const call = Effect.promise(() =>
+        transport.browser.execute(
+          'browse-call',
+          { action: { kind: 'screenshot' }, summary: 'Look at my page', computer: 'person' },
+          new AbortController().signal,
+        ),
+      )
+      const response = browserReply(
+        transport,
+        BrowseOutcome.cases.Completed.make({
+          result: BrowseResult.make({ ...browserPage, picture }),
+        }),
+        BrowseTarget.cases.Person.make({}),
+      )
+      const [result] = yield* Effect.all([call, response], { concurrency: 2 })
+      expect(result.content).toContainEqual({ type: 'image', mimeType: 'image/png', data: picture })
+      expect(JSON.stringify(result.details)).not.toContain(picture)
+    }).pipe(Effect.scoped),
+  )
+  for (const outcome of [
+    BrowseOutcome.cases.NotConnected.make({}),
+    BrowseOutcome.cases.NotAllowed.make({}),
+    BrowseOutcome.cases.Busy.make({}),
+    BrowseOutcome.cases.Stopped.make({}),
+    BrowseOutcome.cases.PageGone.make({}),
+    BrowseOutcome.cases.Unsupported.make({}),
+    BrowseOutcome.cases.RunRequired.make({}),
+    BrowseOutcome.cases.OutcomeUnknown.make({}),
+    BrowseOutcome.cases.Unavailable.make({
+      reason: 'The Person’s computer could not complete this action.',
+    }),
+    BrowseOutcome.cases.Blocked.make({ rule: 'Never submit' }),
+    BrowseOutcome.cases.ApprovalRequired.make({
+      approvalId: ApprovalId.make('fixture-approval'),
+      summary: 'Click Send',
+    }),
+  ]) {
+    it.effect(`renders ${outcome._tag} as readable text`, () =>
+      Effect.gen(function* () {
+        const transport = yield* fixture()
+        const call = Effect.promise(() =>
+          transport.browser.execute(
+            'browse-call',
+            { action: { kind: 'screenshot' }, summary: 'Look at my page', computer: 'person' },
+            new AbortController().signal,
+          ),
+        )
+        const [result] = yield* Effect.all(
+          [call, browserReply(transport, outcome, BrowseTarget.cases.Person.make({}))],
+          { concurrency: 2 },
+        )
+        expect(result.content.every((block) => block.type === 'text')).toBe(true)
+        const [text] = result.content
+        if (text === undefined || text.type !== 'text') expect.fail('Expected readable outcome')
+        expect(text.text).toContain('message')
+        if (BrowseOutcome.guards.Stopped(outcome)) {
+          expect(text.text).toContain('do not retry by yourself')
+          expect(result.terminate).toBe(true)
+        }
+      }).pipe(Effect.scoped),
+    )
+  }
 })
 
 describe('desktop model image result', () => {
