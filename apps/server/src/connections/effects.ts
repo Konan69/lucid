@@ -58,6 +58,88 @@ export const TOOL_DESCRIPTION_LIMIT = 500
  * This is an evidence floor, not a safety claim: even a longer noun phrase must
  * satisfy the read rule. Trim first so whitespace cannot manufacture eligibility. */
 export const TOOL_DESCRIPTION_MINIMUM = 15
+/** Three whitespace-separated tokens containing Unicode letters reject punctuation,
+ * one opaque identifier and two-word labels. The calibration's shortest description
+ * has five words; this floor excludes real but terse descriptions such as "Fetch customer".
+ * Word count establishes content, not read safety; the operation statement is
+ * checked separately. */
+const DESCRIPTION_WORD_MINIMUM = 3
+/** A description must state an operation, rather than let a retrieval name decide.
+ * Gateway noun-phrase measurements, 4 Oct 2026: get_customer read=0.97–0.98
+ * and list_invoices=0.99–1 despite no operation statement. Recognize an imperative
+ * or an "it/this tool/this operation" clause at a sentence boundary, optionally
+ * qualified by "permanently". This lexical grammar is eligibility, never proof of
+ * safety. It excludes noun phrases, non-English descriptions, unfamiliar verbs
+ * and prose that only implies an operation; those retain Executor's own effect.
+ * The vocabulary covers operations, including mutations, rather than read labels. */
+const DESCRIPTION_OPERATIONS = [
+  'answer',
+  'ask',
+  'calculate',
+  'change',
+  'compute',
+  'create',
+  'delete',
+  'drop',
+  'execute',
+  'export',
+  'fetch',
+  'find',
+  'generate',
+  'get',
+  'inspect',
+  'issue',
+  'list',
+  'lookup',
+  'manage',
+  'mark',
+  'post',
+  'process',
+  'purge',
+  'read',
+  'refund',
+  'remove',
+  'replace',
+  'reserve',
+  'retrieve',
+  'return',
+  'revoke',
+  'rotate',
+  'run',
+  'search',
+  'send',
+  'submit',
+  'sync',
+  'update',
+  'view',
+]
+const descriptionOperation = new RegExp(
+  '(?:^|[.!?]\\s+)(?:(?:it|this tool|this operation)\\s+)?' +
+    `(?:permanently\\s+)?(?:${DESCRIPTION_OPERATIONS.join('|')})(?:s|es)?\\b`,
+  'iu',
+)
+
+/** Executor packages/apps/src/implementation/host.ts:366–367 inspect substitutes
+ * `${readOnly ? "Query" : "Mutate"} ${name}` when operation.description is absent.
+ * Its contracts/operations.ts:29 adds queries./mutations. only to the hosted name;
+ * executor.ts loadTools preserves that prefix. Such generated identity text is no
+ * source description, even if its name contains enough spaces to pass the word floor.
+ * Unprefixed protocol names use the mutation form too, so that exact substitute
+ * never becomes evidence of a read. No cache lookup is allocated for this metadata. */
+const hasDescriptionEvidence = (tool: typeof ExecutorTool.Type): boolean => {
+  const description = tool.description.trim()
+  let substitute = `Mutate ${tool.name}`
+  if (tool.name.startsWith('queries.')) substitute = `Query ${tool.name.slice('queries.'.length)}`
+  if (tool.name.startsWith('mutations.'))
+    substitute = `Mutate ${tool.name.slice('mutations.'.length)}`
+  return (
+    tool.description !== substitute &&
+    description.length >= TOOL_DESCRIPTION_MINIMUM &&
+    description.split(/\s+/u).filter((word) => /\p{L}/u.test(word)).length >=
+      DESCRIPTION_WORD_MINIMUM &&
+    descriptionOperation.test(description)
+  )
+}
 /** The measured calibration catalog's longest tool name is 21 characters. One hundred
  * leaves more than four times that room while bounding identity payloads independently.
  * Longer metadata keeps Executor's effect: no truncated evidence may remove an Approval. */
@@ -257,7 +339,7 @@ export const toolEffectsLayer = Layer.effect(
         tool.effect !== 'write' ||
         !configured ||
         tool.description.length > TOOL_DESCRIPTION_LIMIT ||
-        tool.description.trim().length < TOOL_DESCRIPTION_MINIMUM ||
+        !hasDescriptionEvidence(tool) ||
         tool.name.length > TOOL_NAME_LIMIT ||
         service.length > TOOL_NAME_LIMIT
       )

@@ -87,7 +87,10 @@ it.effect(
       expect(calls).toBe(1)
       yield* effects.classify({
         ...request,
-        tool: ExecutorTool.make({ ...request.tool, description: 'Changed description' }),
+        tool: ExecutorTool.make({
+          ...request.tool,
+          description: 'Retrieve changed tool description',
+        }),
       })
       expect(calls).toBe(2)
       yield* effects.classify({ ...request, serviceId: ServiceId.make('other-service') })
@@ -566,9 +569,19 @@ it.effect.each(['direct', 'batch'] as const)('terse descriptions bypass Jev in %
   return Effect.gen(function* () {
     const effects = yield* ToolEffects
     const tools = ['get_or_create_customer', 'checkout', 'deleteUser'].flatMap((name) =>
-      ['', '   ', 'Customer', 'x'.repeat(TOOL_DESCRIPTION_MINIMUM - 1)].map((description) =>
-        ExecutorTool.make({ ...request.tool, name, description }),
-      ),
+      [
+        '',
+        '   ',
+        'Customer',
+        'x'.repeat(TOOL_DESCRIPTION_MINIMUM - 1),
+        '.'.repeat(30),
+        '... ... ...',
+        'Fetch customer',
+        'Customer record entry.',
+        'Upload URL record entry.',
+        'Access token record entry.',
+        'Archived items record entry.',
+      ].map((description) => ExecutorTool.make({ ...request.tool, name, description })),
     )
     for (const tool of tools.flatMap((candidate) => [candidate, candidate])) {
       if (mode === 'direct') expect(yield* effects.classify({ ...request, tool })).toBe('write')
@@ -653,3 +666,42 @@ it.effect('Layer shutdown interrupts abandoned lookup work', () =>
     yield* Deferred.await(stopped)
   }),
 )
+
+/** Hosted names keep category prefixes but generated descriptions do not. Replacing
+ * identity-only metadata admits the same tool immediately, without a cached judgment. */
+it.effect.each(['direct', 'batch'] as const)('Executor substitutes bypass Jev in %s', (mode) => {
+  let calls = 0
+  return Effect.gen(function* () {
+    const effects = yield* ToolEffects
+    const candidates = [
+      { name: 'get_customer', description: 'Mutate get_customer' },
+      { name: 'mutations.get_customer', description: 'Mutate get_customer' },
+      { name: 'queries.get_customer', description: 'Query get_customer' },
+      { name: 'mutations.get customer record', description: 'Mutate get customer record' },
+    ]
+    for (const candidate of candidates) {
+      const tool = ExecutorTool.make({ ...request.tool, ...candidate })
+      for (const repeat of [1, 2]) {
+        void repeat
+        const result =
+          mode === 'direct'
+            ? [yield* effects.classify({ ...request, tool })]
+            : (yield* effects.classifyBatch({ ...request, tools: [tool] })).map(
+                (entry) => entry.effect,
+              )
+        expect(result).toEqual(['write'])
+      }
+    }
+    expect(calls).toBe(0)
+    const tool = ExecutorTool.make({ ...request.tool, name: 'mutations.get_customer' })
+    expect(yield* effects.classify({ ...request, tool })).toBe('read')
+    expect(calls).toBe(1)
+  }).pipe(
+    Effect.provide(
+      provider(() => {
+        calls += 1
+        return Effect.succeed(answer(0.99, 'read'))
+      }),
+    ),
+  )
+})

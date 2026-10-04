@@ -1,7 +1,7 @@
 import * as NodeProcess from 'node:process'
 import { NodeHttpClient } from '@effect/platform-node'
 import { DECISION_MODEL, gatewayDecisionLayer } from './model.ts'
-import { Config, Effect, Layer, Logger, Schema } from 'effect'
+import { Array as Arr, Config, Effect, Layer, Logger, Schema } from 'effect'
 
 /** Live judgments require explicit consent and the gateway key; normal suites never spend
  * credentials. They ask the real provider whatever `VIVID_DECISIONS` says, because the claim
@@ -299,3 +299,19 @@ export const effectScoreCount = (lines: readonly string[], tool: string) =>
 /** Round-four calibration read cohorts recovered 15/18 on both paths; fourteen leaves one
  * read of variation without weakening the 0.95 Approval-removal threshold. */
 export const LIVE_READ_RECOVERY_FLOOR = 14
+
+const decodeEffectScore = Schema.decodeUnknownResult(
+  Schema.fromJsonString(
+    Schema.Tuple([
+      Schema.Literal('Tool effect score'),
+      Schema.Struct({ tool: Schema.String, read: Schema.Number }),
+    ]),
+  ),
+)
+
+/** Decode structured debug receipts once at their log boundary. Missing scores stay
+ * absent, so tests cannot mistake a conservative timeout result for a measured score. */
+export const effectScores = (lines: readonly string[], tool: string) =>
+  Arr.filterMap(lines, (line) => decodeEffectScore(line))
+    .filter(([, receipt]) => receipt.tool === tool)
+    .map(([, receipt]) => receipt.read)
