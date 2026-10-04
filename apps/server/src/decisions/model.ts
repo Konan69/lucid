@@ -1,4 +1,16 @@
-import { Clock, Config, Duration, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect'
+import {
+  Cause,
+  Clock,
+  Config,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Redacted,
+  Ref,
+  Schema,
+} from 'effect'
 import { AiError, Decision, DecisionModel } from 'effect/unstable/ai'
 import { TypeSafeClient, TypeSafeDecisionModel } from '@effect/ai-typesafe'
 
@@ -20,12 +32,13 @@ export const DECISION_MODEL = 'jev-latest'
 /**
  * Why a decision was not made. `Disabled` is a deliberate switch (`VIVID_DECISIONS=off`) and
  * `Unconfigured` a missing key: different facts, so different reasons. Callers treat every reason
- * alike, as "do what you would do without a decision"; the reason exists for logs and operators.
+ * alike, as "do what you would do without a decision"; `Backoff` means another caller already
+ * observed a provider outage or holds the sole recovery probe; the reason exists for logs and operators.
  * It never carries provider payloads or supplied inputs.
  */
 export class DecisionUnavailable extends Schema.TaggedError<DecisionUnavailable>()(
   'DecisionUnavailable',
-  { reason: Schema.Literals(['Disabled', 'Unconfigured', 'TimedOut', 'Provider']) },
+  { reason: Schema.Literals(['Disabled', 'Unconfigured', 'TimedOut', 'Provider', 'Backoff']) },
   { title: 'Decision unavailable' },
 ) {}
 
@@ -46,6 +59,82 @@ export const decisionConfigured = Effect.map(
   DecisionModel.DecisionModel,
   (model) => !absent.has(model),
 )
+
+/** Thirty seconds suppress repeated full caller budgets during an outage while allowing quick
+ * recovery. This is shorter than the tool-effect failure cache's minute: a fresh tool or relevance
+ * call can discover recovery first. Only the configured provider Layer owns this process state. */
+const DECISION_BACKOFF = '30 seconds'
+
+const Availability = Schema.TaggedUnion({
+  Ready: {},
+  Cooling: { retryAt: Schema.Number },
+  Probing: {},
+})
+const Admission = Schema.TaggedUnion({ Normal: {}, Probe: {}, Backoff: {} })
+const Outcome = Schema.TaggedUnion({ Success: {}, Failure: {}, Cancelled: {} })
+
+/** Captured models keep the same gate across service Layers and direct callers. Disabled and
+ * unconfigured models never enter this registry; supplied independent models retain their policy. */
+const availability = new WeakMap<DecisionModel.DecisionModel, Ref.Ref<typeof Availability.Type>>()
+
+/** Atomic admission allows exactly one recovery probe after cooling, even across concurrent callers.
+ * Ready calls remain concurrent; backoff never queues work or starts a provider request. */
+const admit = Effect.fn('Decisions.admit')(function* (state: Ref.Ref<typeof Availability.Type>) {
+  const now = yield* Clock.currentTimeMillis
+  return yield* Ref.modify(
+    state,
+    (current): readonly [typeof Admission.Type, typeof Availability.Type] =>
+      Availability.match(current, {
+        Ready: (): readonly [typeof Admission.Type, typeof Availability.Type] => [
+          Admission.cases.Normal.make({}),
+          current,
+        ],
+        Cooling: ({ retryAt }): readonly [typeof Admission.Type, typeof Availability.Type] =>
+          now < retryAt
+            ? [Admission.cases.Backoff.make({}), current]
+            : [Admission.cases.Probe.make({}), Availability.cases.Probing.make({})],
+        Probing: (): readonly [typeof Admission.Type, typeof Availability.Type] => [
+          Admission.cases.Backoff.make({}),
+          current,
+        ],
+      }),
+  )
+})
+
+/** Older in-flight successes cannot close a newly opened gate; only its recovery probe can.
+ * Older failures cannot extend cooling or replace an active probe. Cancellation of a probe
+ * starts another cooling window so interruption cannot leave the gate probing forever. */
+const settle = Effect.fn('Decisions.settle')(function* (
+  state: Ref.Ref<typeof Availability.Type>,
+  admission: typeof Admission.Type,
+  outcome: typeof Outcome.Type,
+) {
+  const retryAt =
+    (yield* Clock.currentTimeMillis) + Duration.toMillis(Duration.fromInputUnsafe(DECISION_BACKOFF))
+  const event = yield* Ref.modify(
+    state,
+    (current): readonly [Option.Option<string>, typeof Availability.Type] => {
+      if (
+        Admission.guards.Normal(admission) &&
+        Outcome.guards.Failure(outcome) &&
+        Availability.guards.Ready(current)
+      )
+        return [Option.some('opened'), Availability.cases.Cooling.make({ retryAt })]
+      if (!Admission.guards.Probe(admission) || !Availability.guards.Probing(current))
+        return [Option.none(), current]
+      return Outcome.match(outcome, {
+        Success: (): readonly [Option.Option<string>, typeof Availability.Type] => [
+          Option.some('closed'),
+          Availability.cases.Ready.make({}),
+        ],
+        Failure: () => [Option.none(), Availability.cases.Cooling.make({ retryAt })],
+        Cancelled: () => [Option.none(), Availability.cases.Cooling.make({ retryAt })],
+      })
+    },
+  )
+  if (Option.isSome(event))
+    yield* Effect.logInfo('Decision availability backoff', { state: event.value })
+})
 
 const Configuration = Schema.TaggedUnion({
   Disabled: {},
@@ -118,9 +207,15 @@ export const gatewayDecisionLayer = (options: {
   readonly key: Redacted.Redacted
   readonly model: string
 }) =>
-  TypeSafeDecisionModel.layer({ model: options.model }).pipe(
-    Layer.provide(TypeSafeClient.layer({ apiKey: options.key, apiUrl: GATEWAY_URL })),
-  )
+  Layer.effect(
+    DecisionModel.DecisionModel,
+    Effect.gen(function* () {
+      const model = yield* TypeSafeDecisionModel.make({ model: options.model })
+      const state = yield* Ref.make<typeof Availability.Type>(Availability.cases.Ready.make({}))
+      availability.set(model, state)
+      return model
+    }),
+  ).pipe(Layer.provide(TypeSafeClient.layer({ apiKey: options.key, apiUrl: GATEWAY_URL })))
 
 /**
  * The one place the switch is read and the provider chosen. The state is announced once here,
@@ -144,7 +239,10 @@ export const decisionModelLayer = Layer.unwrap(
  * decisions are off, not an event. A provider failure, an encoding failure and a defect inside
  * the provider call share the `Provider` reason; a defect is mapped here so that no caller's
  * cache or request can die on a library fault. rc.116 DecisionModel.decide preserves schema
- * encoding services in its context. Only latency and provider-reported usage are logged.
+ * encoding services in its context. The shared gate rejects outage traffic immediately as
+ * Backoff, silently, with one recovery probe after thirty seconds. Admission and settlement
+ * are interruption-safe; only the provider attempt is interruptible. Latency and provider-reported
+ * usage are logged for actual attempts, with one log on each backoff open/close transition.
  */
 export const decideWithin = <
   Input extends Schema.Constraint,
@@ -158,30 +256,55 @@ export const decideWithin = <
   DecisionUnavailable,
   DecisionModel.DecisionModel | Input['EncodingServices']
 > =>
-  Effect.gen(function* () {
-    const reason = absent.get(yield* DecisionModel.DecisionModel)
-    if (reason !== undefined) return yield* new DecisionUnavailable({ reason })
-    const start = yield* Clock.currentTimeMillis
-    const exit = yield* Effect.exit(
-      DecisionModel.decide(definition, { input }).pipe(
-        Effect.catchDefect(() => Effect.fail(new DecisionUnavailable({ reason: 'Provider' }))),
-        Effect.mapError(() => new DecisionUnavailable({ reason: 'Provider' })),
-        Effect.timeoutOrElse({
-          duration: budget,
-          orElse: () => Effect.fail(new DecisionUnavailable({ reason: 'TimedOut' })),
-        }),
-      ),
-    )
-    const latency = (yield* Clock.currentTimeMillis) - start
-    if (Exit.isSuccess(exit))
-      yield* Effect.logInfo('Decision', {
-        latency,
-        inputTokens: exit.value.usage.inputTokens,
-        outputTokens: exit.value.usage.outputTokens,
-      })
-    else yield* Effect.logInfo('Decision', { latency })
-    return yield* exit
-  }).pipe(Effect.withSpan('Decisions.decide'))
+  Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const model = yield* DecisionModel.DecisionModel
+      const reason = absent.get(model)
+      if (reason !== undefined) return yield* new DecisionUnavailable({ reason })
+      const state = availability.get(model)
+      const admission = state === undefined ? Admission.cases.Normal.make({}) : yield* admit(state)
+      if (Admission.guards.Backoff(admission))
+        return yield* new DecisionUnavailable({ reason: 'Backoff' })
+      const start = yield* Clock.currentTimeMillis
+      const exit = yield* Effect.exit(
+        restore(
+          DecisionModel.decide(definition, { input }).pipe(
+            // Loud, because a defect is a fault in the provider adapter or in a definition, not an
+            // outage; typed, because a caller's cache or request must not die on it.
+            Effect.catchDefect(() =>
+              Effect.logError('Decision defect').pipe(
+                Effect.andThen(Effect.fail(new DecisionUnavailable({ reason: 'Provider' }))),
+              ),
+            ),
+            Effect.mapError(() => new DecisionUnavailable({ reason: 'Provider' })),
+            Effect.timeoutOrElse({
+              duration: budget,
+              orElse: () => Effect.fail(new DecisionUnavailable({ reason: 'TimedOut' })),
+            }),
+          ),
+        ),
+      )
+      if (state !== undefined) {
+        const outcome = Exit.match(exit, {
+          onSuccess: () => Outcome.cases.Success.make({}),
+          onFailure: (cause) =>
+            Option.isSome(Cause.findErrorOption(cause))
+              ? Outcome.cases.Failure.make({})
+              : Outcome.cases.Cancelled.make({}),
+        })
+        yield* settle(state, admission, outcome)
+      }
+      const latency = (yield* Clock.currentTimeMillis) - start
+      if (Exit.isSuccess(exit))
+        yield* Effect.logInfo('Decision', {
+          latency,
+          inputTokens: exit.value.usage.inputTokens,
+          outputTokens: exit.value.usage.outputTokens,
+        })
+      else yield* Effect.logInfo('Decision', { latency })
+      return yield* exit
+    }),
+  ).pipe(Effect.withSpan('Decisions.decide'))
 
 /** The trust-loop default keeps the existing two-argument interface stable. */
 export const decide = <

@@ -189,10 +189,12 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
       : yield* relevantTools(request.query, lexical).pipe(
           Effect.map((ranking) => ranking.ordered),
           Effect.catch((error) =>
-            Effect.logWarning('Tool relevance unavailable', {
-              tag: error._tag,
-              reason: error.reason,
-            }).pipe(Effect.as(lexical)),
+            error.reason === 'Backoff'
+              ? Effect.succeed(lexical)
+              : Effect.logWarning('Tool relevance unavailable', {
+                  tag: error._tag,
+                  reason: error.reason,
+                }).pipe(Effect.as(lexical)),
           ),
         )
   return {

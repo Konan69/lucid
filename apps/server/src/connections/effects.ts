@@ -222,10 +222,12 @@ export const toolEffectsLayer = Layer.effect(
         const discovery = yield* discoveryClassification
         return yield* Effect.request(new Classification({ key, discovery }), resolver).pipe(
           Effect.tapError((error) =>
-            Effect.logWarning('Tool effect unavailable', {
-              tag: error._tag,
-              reason: error.reason,
-            }),
+            error.reason === 'Backoff'
+              ? Effect.void
+              : Effect.logWarning('Tool effect unavailable', {
+                  tag: error._tag,
+                  reason: error.reason,
+                }),
           ),
         )
       }),
