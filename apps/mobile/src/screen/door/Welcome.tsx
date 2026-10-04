@@ -6,6 +6,7 @@ import { forgetAtom, forgettingAtom } from '../../data/held'
 import { Forgetting } from '../../data/session'
 import { Button, Face, GUTTER, Label, Notice } from '../../ui/ui'
 import { Quiet, useDoorGo, useEntrance } from './Frame'
+import { GoogleButton } from './Google'
 
 /**
  * Said when this phone signed out and its store would not drop the saved sign-in (`makeCustody`).
@@ -33,8 +34,8 @@ function Unforgotten() {
 }
 
 /**
- * The first thing a Person sees: Vivid, one line of what it is, and the way in. Vivid is present
- * here, so its face is; nothing else is on the screen to choose between.
+ * The first thing a Person sees: Vivid, one line of what it is, and the two ways in: their email,
+ * or Google. Vivid is present here, so its face is; nothing else is on the screen.
  *
  * When a session was ended elsewhere, the one sentence that says so is here (`useEntrance`), so
  * a Person who is put back at the door knows why.
@@ -70,6 +71,7 @@ export function Welcome() {
         {Option.isSome(ended) && <Notice message={ended.value} />}
         <Unforgotten />
         <Button kind="primary" label="Log in" onPress={() => go.navigate('Email')} />
+        <GoogleButton onPress={() => go.navigate('Google')} />
         {__DEV__ && (
           <Quiet label="Developer: change address" onPress={() => go.navigate('Address')} />
         )}

@@ -35,7 +35,7 @@ const ENDINGS = {
 } as const satisfies Record<Ending, { title: string; detail: string; again: string }>
 
 /** The code in large type, or the outline of one, the same size, while it has not arrived. */
-function Spelled({ code }: { code: Option.Option<string> }) {
+export function Spelled({ code }: { code: Option.Option<string> }) {
   const { colors: c } = useTheme()
   if (Option.isNone(code)) {
     return (

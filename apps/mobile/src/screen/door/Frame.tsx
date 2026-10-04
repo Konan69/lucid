@@ -19,6 +19,7 @@ import { GUTTER, Label, Press, TARGET } from '../../ui/ui'
  * - `Email`, then `Password`: signing in. The email travels to the next step.
  * - `Create`: a new account, asking only a name and a password for that email.
  * - `Code`: signing in with a code entered on a device that is already signed in.
+ * - `Google`: signing in with Google, in the browser, which then lets this phone in.
  * - `Address`: where this phone's Vivid is. Development builds only.
  */
 export type DoorRoutes = {
@@ -27,6 +28,7 @@ export type DoorRoutes = {
   Password: { email: string }
   Create: { email: string }
   Code: undefined
+  Google: undefined
   Address: undefined
 }
 
