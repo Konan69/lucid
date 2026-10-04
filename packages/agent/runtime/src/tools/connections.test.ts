@@ -171,16 +171,19 @@ describe('connected tool execution', () => {
           clientId: 0,
           requestId: request.id,
           exit: Exit.succeed(
-            AddIntegrationOutcome.cases.AlreadyConnected.make({ account: 'Work Records' }),
+            AddIntegrationOutcome.cases.AlreadyConnected.make({
+              account: 'Work Records',
+              name: 'Records',
+            }),
           ),
         })
         const result = yield* Fiber.join(call)
         expect(result).toEqual({
           output: {
             alreadyConnected: true,
-            // No account name here: a rewritten label would point at a name find_tools withholds.
+            // Service names identify the Integration; find_tools supplies usable account labels.
             message:
-              'This integration is already connected. Call find_tools to discover its tools and account name.',
+              'Records is already connected. Call find_tools to discover its tools and the account names you may use.',
           },
           terminate: false,
         })

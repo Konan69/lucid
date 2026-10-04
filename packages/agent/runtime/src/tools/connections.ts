@@ -143,7 +143,7 @@ function integrationTools(runTool: RunTool) {
     defineTool({
       name: 'find_integrations',
       description:
-        'List up to 24 accessible integration accounts first, whatever the query, then up to 24 catalogue matches, with connected status and whether this Vivid is set up to connect them.',
+        'List up to 24 accessible integration accounts: query matches first, then newest first within each group. omittedAccounts counts accessible accounts left out; narrow the query to surface them. Then list up to 24 catalogue matches, with connected status and whether this Vivid is set up to connect them.',
       input: v.object({ query: v.pipe(v.string(), v.maxLength(200)) }),
       /** Access is rechecked by the server for the injected acting Person. */
       run({ data, signal }) {

@@ -316,9 +316,10 @@ export const ConnectionAddressRefusal = Schema.Literals([
 /** Existing authorization steps remain the single source of truth for client card payloads. */
 export const AddIntegrationOutcome = Schema.TaggedUnion({
   Added: { account: Schema.String },
-  AlreadyConnected: { account: Schema.String },
+  AlreadyConnected: { account: Schema.String, name: Schema.String },
   PendingAuthorization: { account: Schema.String, step: ConnectionStep },
-  Failed: { account: Schema.String },
+  AwaitingInitiator: { name: Schema.String },
+  Failed: { account: Schema.String, name: Schema.String },
   NeedsSignIn: { step: ConnectionStep.cases.OpenSignIn },
   NeedsKey: { step: ConnectionStep.cases.EnterKey },
   NotAnIntegration: { reason: ConnectionAddressRefusal },

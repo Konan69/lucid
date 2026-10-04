@@ -15,7 +15,7 @@ import {
 } from '@vivid/contracts'
 import { Array as Arr, Effect, Option, Order } from 'effect'
 import { requireAdmin, type Actor } from '../auth/access.ts'
-import { ConnectionAddress, publicAddress } from './address.ts'
+import { ConnectionAddress, type ConnectionAddressInvalid, publicAddress } from './address.ts'
 import { ConnectionStore } from './store.ts'
 import { namedAccounts, useTool } from './tools.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
@@ -89,13 +89,29 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
   }
 })
 
-/** URL serialization canonicalizes scheme/host case and default ports. Remove only the
- * trailing path slash; paths, query parameters and schemes remain distinct server identity. */
+/** Match address.ts publicAddress/readMcp and Executor imports: URL serialization folds scheme,
+ * host case and default ports; a terminal DNS dot names the same host. Preserve the exact path
+ * (including its trailing slash), query and scheme because inspection dispatches that URL and
+ * imports persist it. Redirect equivalence is checked separately after inspection. */
 function serverAddress(value: string) {
   return Option.map(Option.fromNullishOr(publicAddress(value)), (address) => {
-    return `${address.origin}${address.pathname.replace(/\/$/u, '')}${address.search}`
+    address.hostname = address.hostname.replace(/\.$/u, '')
+    return address.href
   })
 }
+
+/** Legacy duplicates must not hide a usable account. Ready leads pending authorization, then
+ * Failed; newest creation wins within each state. Label assignment precedes this one ordering. */
+const accountPreference = Order.combine(
+  Order.mapInput(Order.Number, (entry: ReturnType<typeof namedAccounts>[number]) => {
+    const priority = { ready: 0, 'needs-authorization': 1, failed: 2 }
+    return priority[entry.row.status]
+  }),
+  Order.mapInput(
+    Order.flip(Order.Number),
+    (entry: ReturnType<typeof namedAccounts>[number]) => entry.row.createdAt,
+  ),
+)
 
 /** Accessible personal and Company accounts are different ownership scopes. Labels are
  * chosen by the Person and never establish server identity. Catalogue ids lack an address. */
@@ -111,7 +127,7 @@ function existingAccount(
   })
   return Option.flatMap(serverAddress(requestedAddress), (address) =>
     Option.fromNullishOr(
-      namedAccounts(records).find(({ row }) => {
+      Arr.sort(namedAccounts(records), accountPreference).find(({ row }) => {
         const sameOwner = request.shared
           ? Option.contains(companyId, row.companyId)
           : row.companyId === null && row.personId === actor.person.id
@@ -138,100 +154,113 @@ const reuseAccount = Effect.fn('Connections.reuseAccount')(function* (
   >(state, {
     Ready: () =>
       Effect.succeed(
-        AddIntegrationOutcome.cases.AlreadyConnected.make({ account: existing.account }),
+        AddIntegrationOutcome.cases.AlreadyConnected.make({
+          account: existing.account,
+          name: existing.row.serviceName,
+        }),
       ),
     Failed: () =>
-      Effect.succeed(AddIntegrationOutcome.cases.Failed.make({ account: existing.account })),
-    /**
-     * A sign-in that cannot be restarted (the provider is no longer set up, or another attempt
-     * won the row) is this existing account's failure. It must not fall through to the outer
-     * `InvalidRequest` mapping, which describes a new address and would call an account the
-     * Person already has an "unsupported integration".
-     */
+      Effect.succeed(
+        AddIntegrationOutcome.cases.Failed.make({
+          account: existing.account,
+          name: existing.row.serviceName,
+        }),
+      ),
+    // A Run may reissue only its acting Person's grant. Company visibility is not permission
+    // to transfer someone else's pending sign-in through the Person-only resume operation.
     NeedsAuthorization: () =>
       Effect.gen(function* () {
+        if (existing.row.personId !== actor.person.id)
+          return AddIntegrationOutcome.cases.AwaitingInitiator.make({
+            name: existing.row.serviceName,
+          })
         const step = yield* (yield* ConnectionStore).resume(actor, existing.row.id)
         return AddIntegrationOutcome.cases.PendingAuthorization.make({
           account: existing.account,
           step,
         })
-      }).pipe(
-        Effect.catchTag('InvalidRequest', () =>
-          Effect.succeed(AddIntegrationOutcome.cases.Failed.make({ account: existing.account })),
-        ),
-      ),
+      }),
   })
 })
 
-/** A Run reuses the requested ownership before importing an address.
- * Only the Person-only completion endpoint accepts secrets for a new Integration. */
-export const addIntegration = Effect.fn('Connections.addIntegration')(
-  function* (actor: Actor, request: AddIntegrationRequest) {
-    if (request.shared) yield* requireAdmin(actor.workspace)
-    const store = yield* ConnectionStore
-    const records = yield* store.records(actor)
-    const existing = existingAccount(records, actor, request, request.address)
-    if (Option.isSome(existing)) return yield* reuseAccount(actor, existing.value)
-    const source = yield* (yield* ConnectionAddress).inspect(request.address)
-    // inspectAddress follows redirects; imports persist source.address, never the supplied alias.
-    const resolved = existingAccount(records, actor, request, source.address)
-    if (Option.isSome(resolved)) return yield* reuseAccount(actor, resolved.value)
-    const step = yield* store.add(actor, request, source)
-    const selected = Option.fromNullishOr(
-      namedAccounts(yield* store.records(actor)).find(
-        (entry) => entry.row.id === step.connection.id,
-      ),
-    )
-    if (Option.isNone(selected))
-      return yield* Effect.fail(
-        new NotFound({ message: 'Integration not found after registration' }),
-      )
-    return ConnectionStep.match<AddIntegrationOutcome>(step, {
-      Done: () => AddIntegrationOutcome.cases.Added.make({ account: selected.value.account }),
-      OpenSignIn: (value) => AddIntegrationOutcome.cases.NeedsSignIn.make({ step: value }),
-      EnterKey: (value) => AddIntegrationOutcome.cases.NeedsKey.make({ step: value }),
-    })
-  },
-  (effect) =>
-    effect.pipe(
-      Effect.catchTags({
-        ExecutorImportQueryUnsupported: () =>
-          Effect.succeed(
-            AddIntegrationOutcome.cases.NotAnIntegration.make({
-              reason: mcpQueryUnsupportedMessage,
-            }),
-          ),
-        ExecutorSourceUnsupported: () =>
-          Effect.succeed(
-            AddIntegrationOutcome.cases.NotAnIntegration.make({
-              reason: openApiUnsupportedMessage,
-            }),
-          ),
-        ExecutorPublicAddressRequired: () =>
-          Effect.succeed(
-            AddIntegrationOutcome.cases.Unreachable.make({
-              reason: 'this Vivid is not set up to add a server by address yet',
-            }),
-          ),
-        ConnectionAddressInvalid: ({ reason }) =>
-          Effect.succeed(AddIntegrationOutcome.cases.NotAnIntegration.make({ reason })),
-        ConnectionAddressUnreachable: () =>
-          Effect.succeed(
-            AddIntegrationOutcome.cases.Unreachable.make({ reason: 'could not be reached' }),
-          ),
-        ServiceUnavailable: () =>
-          Effect.succeed(
-            AddIntegrationOutcome.cases.Unreachable.make({ reason: 'could not be reached' }),
-          ),
-        InvalidRequest: () =>
-          Effect.succeed(
-            AddIntegrationOutcome.cases.NotAnIntegration.make({
-              reason: 'unsupported integration authorization or specification',
-            }),
-          ),
+/** Only inspection and new registration classify import failures. In particular, resume's
+ * InvalidRequest retains its original domain meaning instead of becoming an unsupported URL. */
+const inspectionFailures = {
+  ExecutorImportQueryUnsupported: () =>
+    Effect.succeed(
+      AddIntegrationOutcome.cases.NotAnIntegration.make({ reason: mcpQueryUnsupportedMessage }),
+    ),
+  ExecutorSourceUnsupported: () =>
+    Effect.succeed(
+      AddIntegrationOutcome.cases.NotAnIntegration.make({ reason: openApiUnsupportedMessage }),
+    ),
+  ConnectionAddressInvalid: ({ reason }: ConnectionAddressInvalid) =>
+    Effect.succeed(AddIntegrationOutcome.cases.NotAnIntegration.make({ reason })),
+  ConnectionAddressUnreachable: () =>
+    Effect.succeed(
+      AddIntegrationOutcome.cases.Unreachable.make({ reason: 'could not be reached' }),
+    ),
+}
+
+/** Registration refusals describe a new import, never a failure resuming an existing grant. */
+const registrationFailures = {
+  ExecutorPublicAddressRequired: () =>
+    Effect.succeed(
+      AddIntegrationOutcome.cases.Unreachable.make({
+        reason: 'this Vivid is not set up to add a server by address yet',
       }),
     ),
-)
+  ServiceUnavailable: () =>
+    Effect.succeed(
+      AddIntegrationOutcome.cases.Unreachable.make({ reason: 'could not be reached' }),
+    ),
+  InvalidRequest: () =>
+    Effect.succeed(
+      AddIntegrationOutcome.cases.NotAnIntegration.make({
+        reason: 'unsupported integration authorization or specification',
+      }),
+    ),
+}
+
+/** A Run reuses the requested ownership before importing an address.
+ * Only the Person-only completion endpoint accepts secrets for a new Integration. */
+export const addIntegration = Effect.fn('Connections.addIntegration')(function* (
+  actor: Actor,
+  request: AddIntegrationRequest,
+) {
+  if (request.shared) yield* requireAdmin(actor.workspace)
+  const store = yield* ConnectionStore
+  const records = yield* store.records(actor)
+  const existing = existingAccount(records, actor, request, request.address)
+  if (Option.isSome(existing)) return yield* reuseAccount(actor, existing.value)
+  const source = yield* (yield* ConnectionAddress)
+    .inspect(request.address)
+    .pipe(Effect.catchTags(inspectionFailures))
+  if (
+    AddIntegrationOutcome.guards.NotAnIntegration(source) ||
+    AddIntegrationOutcome.guards.Unreachable(source)
+  )
+    return source
+  // inspectAddress follows redirects; imports persist source.address, never the supplied alias.
+  const resolved = existingAccount(records, actor, request, source.address)
+  if (Option.isSome(resolved)) return yield* reuseAccount(actor, resolved.value)
+  const step = yield* store.add(actor, request, source).pipe(Effect.catchTags(registrationFailures))
+  if (
+    AddIntegrationOutcome.guards.NotAnIntegration(step) ||
+    AddIntegrationOutcome.guards.Unreachable(step)
+  )
+    return step
+  const selected = Option.fromNullishOr(
+    namedAccounts(yield* store.records(actor)).find((entry) => entry.row.id === step.connection.id),
+  )
+  if (Option.isNone(selected))
+    return yield* Effect.fail(new NotFound({ message: 'Integration not found after registration' }))
+  return ConnectionStep.match<AddIntegrationOutcome>(step, {
+    Done: () => AddIntegrationOutcome.cases.Added.make({ account: selected.value.account }),
+    OpenSignIn: (value) => AddIntegrationOutcome.cases.NeedsSignIn.make({ step: value }),
+    EnterKey: (value) => AddIntegrationOutcome.cases.NeedsKey.make({ step: value }),
+  })
+})
 
 /** Testing never returns provider data, which can include private records or echoed credentials.
  * Every dispatch goes through the ordinary Gate, including personal reads in shared Threads.
