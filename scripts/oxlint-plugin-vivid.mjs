@@ -1,3 +1,5 @@
+import * as NodeEvents from 'node:events'
+
 const effectTerminalOperations = new Set([
   'runCallback',
   'runFork',
@@ -547,12 +549,46 @@ const noManualEffectRuntimeInTests = {
   },
 }
 
-// One predictable namespace per built-in keeps receiver calls intact and Node dependencies obvious.
+// Native ESM exports snapshot values; inherited event methods and live process state need default.
+const processObjectMembers = new Set([
+  ...Object.getOwnPropertyNames(NodeEvents.EventEmitter.prototype).filter(
+    (name) =>
+      name !== 'constructor' && typeof NodeEvents.EventEmitter.prototype[name] === 'function',
+  ),
+  'ppid',
+  'exitCode',
+  'connected',
+  'channel',
+  'title',
+  'debugPort',
+])
+
+/** Follow the actual import binding so a same-named parameter never inherits this restriction. */
+const reportProcessNamespaceAccess = (context, declaration) => {
+  for (const variable of context.sourceCode.getDeclaredVariables(declaration)) {
+    for (const reference of variable.references) {
+      const identifier = reference.identifier
+      const access = identifier.parent
+      if (
+        access?.type === 'MemberExpression' &&
+        access.object === identifier &&
+        processObjectMembers.has(propertyName(access))
+      ) {
+        context.report({
+          node: access,
+          message: `Use the default NodeProcess import for ${propertyName(access)}; the native ESM namespace lacks inherited event methods and snapshots live process state.`,
+        })
+      }
+    }
+  }
+}
+
+// Keep built-ins obvious; node:process additionally needs its real object for methods/live state.
 const namespaceNodeImports = {
   meta: {
     type: 'problem',
     docs: {
-      description: 'Require canonical namespace imports for Node.js built-in modules.',
+      description: 'Require canonical Node imports and the process object for methods/live state.',
     },
     schema: [],
   },
@@ -561,14 +597,28 @@ const namespaceNodeImports = {
       ImportDeclaration(node) {
         if (!isStringLiteral(node.source) || !node.source.value.startsWith('node:')) return
         const expectedAlias = expectedNodeNamespace(node.source.value)
+        // Node's ESM namespace contains named exports only. The default is the process instance,
+        // whose inherited once/on/off methods are absent from that namespace (Node v24.14.1
+        // doc/api/esm.md, Built-in modules). Forcing a namespace breaks native child entry points.
+        const processObject =
+          node.source.value === 'node:process' &&
+          node.specifiers.length === 1 &&
+          node.specifiers[0]?.type === 'ImportDefaultSpecifier' &&
+          node.specifiers[0].local.name === expectedAlias
+        if (processObject) return
         const namespaceImport =
           node.specifiers.length === 1 && node.specifiers[0]?.type === 'ImportNamespaceSpecifier'
             ? node.specifiers[0]
             : undefined
+        if (namespaceImport !== undefined && node.source.value === 'node:process')
+          reportProcessNamespaceAccess(context, node)
         if (namespaceImport?.local?.name === expectedAlias) return
         context.report({
           node,
-          message: `Import ${node.source.value} as a namespace named ${expectedAlias}.`,
+          message:
+            node.source.value === 'node:process'
+              ? `Import node:process as ${expectedAlias}; use its default object for event methods and live state.`
+              : `Import ${node.source.value} as a namespace named ${expectedAlias}.`,
         })
       },
     }
