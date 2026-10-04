@@ -20,7 +20,7 @@ import { Effect, Exit, Fiber, Layer, Option, Predicate, Queue } from 'effect'
 import * as RpcClient from 'effect/unstable/rpc/RpcClient'
 import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/unstable/rpc/RpcMessage'
-import { connectionTools } from './connections.ts'
+import { connectionTools, decodeToolInput } from './connections.ts'
 import { Scope, toolRunner } from './scope.ts'
 
 /** Keep the generated RPC client intact; the controllable transport is the only test boundary. */
@@ -310,5 +310,26 @@ describe('connected tool execution', () => {
         })
         expect(JSON.stringify(result.output)).not.toContain('MARK-')
       }).pipe(Effect.scoped),
+  )
+})
+
+describe('tool input from the model', () => {
+  it.effect('reads JSON text that holds an object or array as that value', () =>
+    Effect.gen(function* () {
+      expect(yield* decodeToolInput('{"repoName": "facebook/react"}')).toEqual({
+        repoName: 'facebook/react',
+      })
+      expect(yield* decodeToolInput('[1, "two"]')).toEqual([1, 'two'])
+    }),
+  )
+
+  it.effect('keeps an object, and text that is not a JSON object, exactly as sent', () =>
+    Effect.gen(function* () {
+      expect(yield* decodeToolInput({ repoName: 'facebook/react' })).toEqual({
+        repoName: 'facebook/react',
+      })
+      expect(yield* decodeToolInput('facebook/react')).toBe('facebook/react')
+      expect(yield* decodeToolInput('42')).toBe('42')
+    }),
   )
 })
