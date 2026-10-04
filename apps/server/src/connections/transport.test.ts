@@ -780,6 +780,13 @@ describe('Executor hosted transport', () => {
           ),
         ).toHaveLength(reads)
         yield* TestClock.adjust('1 minute')
+        expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        expect(
+          yield* executor.authorization({
+            service: hostedService,
+            returnAddress: hostedReturnAddress,
+          }),
+        ).toHaveProperty('_tag', 'SignIn')
         expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
         expect(
           (yield* Ref.get(remote.requests)).filter((request) =>
@@ -791,34 +798,151 @@ describe('Executor hosted transport', () => {
     ),
   )
 
-  it.effect(
-    'invalidates a positive setup inspection when sign-in reports missing OAuth setup',
-    () =>
-      scenario((remote) =>
-        Effect.gen(function* () {
-          yield* Ref.set(remote.accounts, signInRequirement)
-          yield* failRoute(remote, 'POST /connections/authorization/oauth/start', {
-            status: 409,
-            body: { _tag: 'OAuthClientUnavailable' },
-          })
-          const executor = yield* Executor
-          expect(yield* executor.begin(begin).pipe(Effect.flip)).toHaveProperty(
-            '_tag',
-            'ExecutorSignInRequired',
-          )
-          yield* failRoute(remote, 'GET /providers/provider/oauth/oauth/setup', {
-            status: 200,
-            body: { mode: 'client-required' },
-          })
-          expect((yield* executor.catalog())[0]).toHaveProperty(
-            'authorization._tag',
-            'SetupRequired',
-          )
-          yield* Ref.set(remote.replies, new Map())
-          yield* TestClock.adjust('10 minutes')
-          expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
-        }),
-      ),
+  it.effect('retains refused sign-in for ten minutes despite positive setup, then refreshes', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        yield* Ref.set(remote.accounts, signInRequirement)
+        yield* failRoute(remote, 'POST /connections/authorization/oauth/start', {
+          status: 409,
+          body: { _tag: 'OAuthClientUnavailable' },
+        })
+        const executor = yield* Executor
+        expect(yield* executor.begin(begin).pipe(Effect.flip)).toHaveProperty(
+          '_tag',
+          'ExecutorSignInRequired',
+        )
+        expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        yield* Ref.set(remote.replies, new Map())
+        yield* TestClock.adjust('9 minutes')
+        expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        expect(
+          yield* executor.authorization({
+            service: hostedService,
+            returnAddress: hostedReturnAddress,
+          }),
+        ).toHaveProperty('_tag', 'SetupRequired')
+        yield* TestClock.adjust('1 minute')
+        expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        expect(
+          yield* executor.authorization({
+            service: hostedService,
+            returnAddress: hostedReturnAddress,
+          }),
+        ).toHaveProperty('_tag', 'SignIn')
+        expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+      }),
+    ),
+  )
+
+  it.effect('serves retained catalogue facts while an expired setup read blocks or fails', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        yield* Ref.set(remote.accounts, signInRequirement)
+        const executor = yield* Executor
+        yield* executor.begin(begin)
+        const entered = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        yield* Ref.set(
+          remote.intercept,
+          Effect.fn('SetupTest.block')(function* (request) {
+            if (request.path.endsWith('/oauth/oauth/setup')) {
+              yield* Deferred.succeed(entered, undefined)
+              yield* Deferred.await(release)
+            }
+          }),
+        )
+        yield* failRoute(remote, 'GET /providers/provider/oauth/oauth/setup', {
+          status: 500,
+          body: { _tag: 'StorageError' },
+        })
+        yield* TestClock.adjust('10 minutes')
+        expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+        yield* Deferred.await(entered)
+        expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+        yield* Deferred.succeed(release, undefined)
+        yield* executor
+          .authorization({ service: hostedService, returnAddress: hostedReturnAddress })
+          .pipe(Effect.flip)
+        expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+      }),
+    ),
+  )
+
+  it.effect('inspects actual setup after authorization cached only catalogue metadata', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        yield* Ref.set(remote.accounts, signInRequirement)
+        const executor = yield* Executor
+        yield* executor.authorization({
+          service: hostedService,
+          returnAddress: hostedReturnAddress,
+        })
+        yield* failRoute(remote, 'GET /providers/provider/oauth/oauth/setup', {
+          status: 200,
+          body: { mode: 'client-required' },
+        })
+        expect(yield* executor.begin(begin).pipe(Effect.flip)).toHaveProperty(
+          '_tag',
+          'ExecutorSetupRequired',
+        )
+        expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+      }),
+    ),
+  )
+
+  it.effect('does not publish an in-flight positive inspection over a sign-in refusal', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        yield* Ref.set(remote.accounts, signInRequirement)
+        const executor = yield* Executor
+        yield* executor.begin(begin)
+        yield* TestClock.adjust('9 minutes')
+        const signInEntered = yield* Deferred.make<void>()
+        const signInRelease = yield* Deferred.make<void>()
+        const setupEntered = yield* Deferred.make<void>()
+        const setupRelease = yield* Deferred.make<void>()
+        yield* Effect.addFinalizer(() =>
+          Effect.all([
+            Deferred.succeed(signInRelease, undefined),
+            Deferred.succeed(setupRelease, undefined),
+          ]),
+        )
+        const blockSetup = yield* Ref.make(false)
+        yield* Ref.set(
+          remote.intercept,
+          Effect.fn('SetupTest.race')(function* (request) {
+            if (request.path.endsWith('/oauth/start')) {
+              yield* Deferred.succeed(signInEntered, undefined)
+              yield* Deferred.await(signInRelease)
+            }
+            if (request.path.endsWith('/oauth/oauth/setup') && (yield* Ref.get(blockSetup))) {
+              yield* Deferred.succeed(setupEntered, undefined)
+              yield* Deferred.await(setupRelease)
+            }
+          }),
+        )
+        yield* failRoute(remote, 'POST /connections/authorization/oauth/start', {
+          status: 409,
+          body: { _tag: 'OAuthClientUnavailable' },
+        })
+        const pendingSignIn = yield* executor.begin(begin).pipe(Effect.flip, Effect.forkScoped)
+        yield* Deferred.await(signInEntered)
+        yield* Ref.set(blockSetup, true)
+        yield* TestClock.adjust('1 minute')
+        expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+        yield* Deferred.await(setupEntered)
+        const pendingInspection = yield* executor
+          .authorization({ service: hostedService, returnAddress: hostedReturnAddress })
+          .pipe(Effect.forkScoped({ startImmediately: true }))
+        // Immediate startup reaches the pending cache entry before the refusal replaces it.
+        yield* Deferred.succeed(signInRelease, undefined)
+        expect(yield* Fiber.join(pendingSignIn)).toHaveProperty('_tag', 'ExecutorSignInRequired')
+        expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        yield* Deferred.succeed(setupRelease, undefined)
+        expect(yield* Fiber.join(pendingInspection)).toHaveProperty('_tag', 'SetupRequired')
+        expect((yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+      }),
+    ),
   )
 
   it.effect('inspects OAuth setup and starts with the matching deployment redirect', () =>
@@ -858,6 +982,10 @@ describe('Executor hosted transport', () => {
           yield* Ref.set(remote.redirectUri, 'https://executor.example.test/private-callback')
           const error = yield* (yield* Executor).begin(begin).pipe(Effect.flip)
           expect(error).toBeInstanceOf(ExecutorSetupRequired)
+          expect((yield* (yield* Executor).catalog())[0]).toHaveProperty(
+            'authorization._tag',
+            'SetupRequired',
+          )
           expect(JSON.stringify(executorFailure(error))).not.toMatch(/https?:|private-callback/u)
           expect(
             (yield* Ref.get(remote.requests))
