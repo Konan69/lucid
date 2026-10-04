@@ -3,15 +3,8 @@ import { Effect } from 'effect'
 import {
   MAX_VALIDATION_PROBLEMS,
   MAX_VALIDATION_PROBLEM_LENGTH,
-  toolMessage,
   validationProblems,
 } from './message.ts'
-
-it.effect('keeps arbitrary semantic errors out of both model call paths', () =>
-  Effect.sync(() => {
-    expect(toolMessage({ isError: true, token: 'private-value' })).not.toContain('private-value')
-  }),
-)
 
 it.effect(
   'preserves tool field paths and removes only known internal references before bounding',

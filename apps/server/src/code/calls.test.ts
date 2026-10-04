@@ -13,7 +13,7 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
-import { Deferred, Effect, Fiber, Layer, Ref, Result, Option } from 'effect'
+import { Deferred, Effect, Fiber, Layer, Ref, Result, Option, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import type { Actor } from '../auth/access.ts'
 import { membershipTable } from '../companies/tables.ts'
@@ -39,6 +39,8 @@ import { codeHandlers } from './handlers.ts'
 import { publicPageLayer } from './page.ts'
 import { CallOutcome, codeProcessLayer } from './process.ts'
 import { WorkerMessage } from './protocol.ts'
+
+const isRepositoryInput = Schema.is(Schema.Struct({ repoName: Schema.String }))
 
 const missingHost = programHost(Option.fromUndefinedOr(NodeProcess.env.XDG_RUNTIME_DIR))
 if (Option.isSome(missingHost)) console.warn(`Skipping supervised programs: ${missingHost.value}`)
@@ -165,7 +167,7 @@ describe.skipIf(!testDatabaseConfigured || Option.isSome(missingHost))(
                 ...executor,
                 call: Effect.fn('Test.validation')(({ input }) =>
                   Effect.succeed(
-                    typeof input === 'object' && input !== null && 'repoName' in input
+                    isRepositoryInput(input)
                       ? ExecutorCallOutcome.cases.Completed.make({ value: { corrected: true } })
                       : ExecutorCallOutcome.cases.Rejected.make({
                           message: 'Correct the input',
