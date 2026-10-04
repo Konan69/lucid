@@ -224,7 +224,9 @@ function NotConnected({
 }) {
   const [written, setWritten] = useState('')
   const busy = asking !== 'nothing'
-  const ready = !busy && written.trim().length > 0
+  // Not held back while the field is empty: a primary button that looks switched off reads as
+  // "this does not work". An empty number is answered like any other that cannot be reached.
+  const ready = !busy
   return (
     <>
       <Head channel={channel} words={words}>
