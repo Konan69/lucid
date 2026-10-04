@@ -1,7 +1,6 @@
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import {
-  AuditEvent,
   Conflict,
   MeResponse,
   SwitchWorkspaceRequest,
@@ -13,7 +12,6 @@ import {
   type InviteMembershipRequest,
   type MembershipId,
 } from '@vivid/contracts'
-import { Audit } from '../audit/record.ts'
 import {
   requireActor,
   requireAdmin,
@@ -22,7 +20,6 @@ import {
   type Actor,
 } from '../auth/access.ts'
 import { sessionWorkspace } from '../auth/session.ts'
-import { Changes, Topic, topicsOf } from '../live/changes.ts'
 import { live } from '../live/query.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { CompanyStore } from './store.ts'
@@ -57,13 +54,12 @@ const meAfter = Effect.fn('Companies.meAfter')(function* (
   return yield* me({ person: auth.person, workspace })
 })
 
-/** Moves the session and tells every open screen of this Person to follow it. */
+/** The store commits the session movement with its notice before this response reloads it. */
 const enter = Effect.fn('Companies.enter')(function* (
   auth: Effect.Success<ReturnType<typeof requirePerson>>,
   companyId: Option.Option<CompanyId>,
 ) {
   yield* (yield* CompanyStore).enter(auth.person.id, auth.sessionId, companyId)
-  yield* (yield* Changes).publish([Topic.person(auth.person.id)])
   return yield* meAfter(auth)
 })
 
@@ -100,16 +96,12 @@ export const companyHandlers = {
     return yield* people(yield* requireActor())
   }),
   WatchPeople: () => live(people),
+  /** The store commits its audit and notice before the external invitation notification. */
   InviteMember: Effect.fn('Rpc.InviteMember')(function* (request: InviteMembershipRequest) {
     const auth = yield* requirePerson()
-    const actor = yield* requireActor()
     const { company } = yield* requireAdmin(auth.workspace)
     const store = yield* CompanyStore
     const invitation = yield* store.invite(auth.person.id, company.id, request)
-    yield* (yield* Audit).record(
-      actor,
-      AuditEvent.cases.MemberInvited.make({ email: invitation.email, role: invitation.role }),
-    )
     // Someone who already has an account is told where they will see it: in their own space.
     const invited = yield* store.personByEmail(invitation.email)
     if (Option.isSome(invited)) {
@@ -122,9 +114,9 @@ export const companyHandlers = {
         threadId: null,
       })
     }
-    yield* (yield* Changes).publish(topicsOf(auth))
     return invitation
   }),
+  /** The store owns revocation and its Company notice as one transaction. */
   RevokeInvitation: Effect.fn('Rpc.RevokeInvitation')(function* ({
     id,
   }: {
@@ -133,7 +125,6 @@ export const companyHandlers = {
     const auth = yield* requirePerson()
     const { company } = yield* requireAdmin(auth.workspace)
     yield* (yield* CompanyStore).revoke(company.id, id)
-    yield* (yield* Changes).publish(topicsOf(auth))
   }),
   PreviewInvitation: Effect.fn('Rpc.PreviewInvitation')(function* ({
     id,
@@ -143,57 +134,37 @@ export const companyHandlers = {
     yield* requirePerson()
     return yield* (yield* CompanyStore).preview(id)
   }),
+  /** Join commits with audit and notice before a separate transaction moves the session. */
   AcceptInvitation: Effect.fn('Rpc.AcceptInvitation')(function* (request: AcceptMembershipRequest) {
     const auth = yield* requirePerson()
     const store = yield* CompanyStore
-    const joined = yield* store.accept(auth.person.id, request.invitationId)
-    const response = yield* enter(auth, Option.some(joined.companyId))
-    const actor = yield* requireActor()
-    yield* (yield* Audit).record(
-      { ...actor, workspace: response.workspace },
-      AuditEvent.cases.MemberJoined.make({
-        name: auth.person.name,
-        role: joined.member.role,
-      }),
-    )
-    yield* (yield* Changes).publish([Topic.company(joined.companyId)])
-    return response
+    const joined = yield* store.accept(auth.person, request.invitationId)
+    return yield* enter(auth, Option.some(joined.companyId))
   }),
+  /** Authorize here; the store locks and reads the Member audience before changing it. */
   ChangeRole: Effect.fn('Rpc.ChangeRole')(function* (request: ChangeRoleRequest) {
     const auth = yield* requirePerson()
-    const actor = yield* requireActor()
     const { company } = yield* requireAdmin(auth.workspace)
-    const member = yield* (yield* CompanyStore).changeRole(
+    return yield* (yield* CompanyStore).changeRole(
+      auth.person.id,
       company.id,
       request.membershipId,
       request.role,
     )
-    yield* (yield* Audit).record(
-      actor,
-      AuditEvent.cases.RoleChanged.make({ name: member.person.name, role: member.role }),
-    )
-    yield* (yield* Changes).publish([...topicsOf(auth), Topic.person(member.person.id)])
-    return member
   }),
+  /** Authorize here; the store captures the removed Person under lock before deleting. */
   RemoveMember: Effect.fn('Rpc.RemoveMember')(function* ({
     membershipId,
   }: {
     readonly membershipId: MembershipId
   }) {
     const auth = yield* requirePerson()
-    const actor = yield* requireActor()
     const { company } = yield* requireAdmin(auth.workspace)
-    const member = yield* (yield* CompanyStore).remove(company.id, membershipId)
-    yield* (yield* Audit).record(
-      actor,
-      AuditEvent.cases.MemberRemoved.make({ name: member.person.name }),
-    )
-    // Their own topic is what moves their open screens back to their personal space.
-    yield* (yield* Changes).publish([...topicsOf(auth), Topic.person(member.person.id)])
+    yield* (yield* CompanyStore).remove(auth.person.id, company.id, membershipId)
   }),
+  /** The store rechecks the selected Membership under lock and announces the departing Person. */
   LeaveCompany: Effect.fn('Rpc.LeaveCompany')(function* () {
     const auth = yield* requirePerson()
-    const actor = yield* requireActor()
     const { company } = yield* requireCompany(auth.workspace)
     const store = yield* CompanyStore
     const members = yield* store.members(company.id)
@@ -201,12 +172,7 @@ export const companyHandlers = {
     if (mine === undefined) {
       return yield* Effect.fail(new Conflict({ message: 'You are not a Member of this Company' }))
     }
-    yield* store.remove(company.id, mine.membershipId)
-    yield* (yield* Audit).record(
-      actor,
-      AuditEvent.cases.MemberRemoved.make({ name: auth.person.name }),
-    )
-    yield* (yield* Changes).publish([Topic.company(company.id), Topic.person(auth.person.id)])
+    yield* store.remove(auth.person.id, company.id, mine.membershipId)
     return yield* meAfter(auth)
   }),
 }

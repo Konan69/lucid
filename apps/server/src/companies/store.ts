@@ -6,6 +6,7 @@ import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import {
+  AuditEvent,
   Company,
   CompanyId,
   CompanyMembership,
@@ -20,11 +21,13 @@ import {
   MembershipId,
   NotFound,
   PersonId,
+  PersonSummary,
   Role,
   type InviteMembershipRequest,
-  type PersonSummary,
   type SessionId,
 } from '@vivid/contracts'
+import { appendAudit, AuditAttribution } from '../audit/record.ts'
+import { announce, Topic } from '../live/changes.ts'
 import { loadSummaries } from '../auth/access.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import {
@@ -36,6 +39,7 @@ import {
 import { companyTable, invitationTable, membershipTable } from './tables.ts'
 
 type DatabaseService = Database['Service']
+type Transaction = Parameters<Parameters<DatabaseService['transaction']>[0]>[0]
 type CompanyStoreError = DatabaseInfrastructureError | Conflict | Forbidden | NotFound
 
 const INVITATION_LASTS_MS = 7 * 24 * 60 * 60 * 1000
@@ -43,7 +47,6 @@ const INVITATION_LASTS_MS = 7 * 24 * 60 * 60 * 1000
 const decodeCompany = decodeStored(Company, 'Company')
 const decodeMembership = decodeStored(CompanyMembership, 'Membership')
 const decodeMember = decodeStored(Member, 'Member')
-const decodeInvitation = decodeStored(Invitation, 'invitation')
 const decodePreview = decodeStored(InvitationPreview, 'invitation')
 
 /** A Membership row with the ids branded, for the checks that follow a lookup. */
@@ -54,6 +57,17 @@ const StoredMembership = Schema.Struct({
   role: Role,
 })
 const decodeStoredMembership = decodeStored(StoredMembership, 'Membership')
+
+/** Transaction row owners are decoded at ingress, independent of the session's workspace. */
+const decodePersonId = decodeStored(PersonId, 'Person id')
+const decodeSessionOwner = decodeStored(Schema.Struct({ personId: PersonId }), 'session owner')
+const decodeOwnedMember = decodeStored(
+  Schema.Struct({ companyId: CompanyId, member: Member }),
+  'Member',
+)
+const StoredMailbox = Schema.Struct({ email: Schema.String, verified: Schema.Boolean })
+const decodeMailbox = decodeStored(StoredMailbox, 'mailbox')
+const decodeSummary = decodeStored(PersonSummary, 'Person')
 
 /** An invitation row as stored. `status` is what was written; expiry is judged when it is read. */
 const StoredInvitation = Schema.Struct({
@@ -106,19 +120,21 @@ export interface CompanyStoreService {
   /**
    * Turns an invitation into a Membership for the Person it was sent to: the one whose stored
    * address is the invited one and is verified. The right address not yet verified is
-   * `MailboxUnconfirmed`; any other address, or an invitation that is not open, is `Forbidden`.
+   * `MailboxUnconfirmed`; a different address or closed offer is `Forbidden`. A used offer is `Conflict`.
    */
   readonly accept: (
-    personId: PersonId,
+    person: Pick<PersonSummary, 'id' | 'name'>,
     id: InvitationId,
   ) => Effect.Effect<MemberChange, CompanyStoreError | MailboxUnconfirmed>
   readonly changeRole: (
+    by: PersonId,
     companyId: CompanyId,
     membershipId: MembershipId,
     role: 'admin' | 'member',
   ) => Effect.Effect<Member, CompanyStoreError>
   /** Removes a Member. Used by an admin for someone else and by a Person for themselves. */
   readonly remove: (
+    by: PersonId,
     companyId: CompanyId,
     membershipId: MembershipId,
   ) => Effect.Effect<Member, CompanyStoreError>
@@ -171,38 +187,47 @@ const makeMemberships = (database: DatabaseService) =>
     )
   })
 
+/**
+ * Company and ownership commit with the creator's notice, so no successful creation is invisible.
+ * Decode the returned Company before live/changes.ts announce; no caller workspace supplies topics.
+ */
 const makeCreate = (database: DatabaseService) =>
   Effect.fn('CompanyStore.create')(function* (personId: PersonId, name: string) {
-    const companyId = crypto.randomUUID()
-    const rows = yield* database.transaction((tx) =>
+    return yield* database.transaction((tx) =>
       Effect.gen(function* () {
         const inserted = yield* tx
           .insert(companyTable)
-          .values({ id: companyId, name: name.trim(), slug: slugFor(name) })
+          .values({ id: crypto.randomUUID(), name: name.trim(), slug: slugFor(name) })
           .returning()
-        yield* tx
-          .insert(membershipTable)
-          .values({ id: crypto.randomUUID(), companyId, userId: personId, role: 'owner' })
-        return inserted
+        const row = yield* returned(inserted, 'Company')
+        const company = yield* decodeCompany({ id: row.id, name: row.name, slug: row.slug })
+        yield* tx.insert(membershipTable).values({
+          id: crypto.randomUUID(),
+          companyId: company.id,
+          userId: personId,
+          role: 'owner',
+        })
+        yield* announce(tx, [Topic.person(personId)])
+        return company
       }),
     )
-    const row = yield* returned(rows, 'Company')
-    return yield* decodeCompany({ id: row.id, name: row.name, slug: row.slug })
   })
 
-/** One Membership by Company and Person, when it exists. */
+/**
+ * Hold the Membership's share lock through the session update, preventing removal between the
+ * permission read and write. Decode database input here; the caller never supplies stored standing.
+ */
 const membershipOf = Effect.fn('CompanyStore.membershipOf')(function* (
-  database: DatabaseService,
+  tx: Transaction,
   companyId: CompanyId,
   personId: PersonId,
 ) {
-  const rows = yield* database.run(
-    database
-      .select()
-      .from(membershipTable)
-      .where(and(eq(membershipTable.companyId, companyId), eq(membershipTable.userId, personId)))
-      .limit(1),
-  )
+  const rows = yield* tx
+    .select()
+    .from(membershipTable)
+    .where(and(eq(membershipTable.companyId, companyId), eq(membershipTable.userId, personId)))
+    .limit(1)
+    .for('share')
   const row = rows[0]
   if (row === undefined) return Option.none()
   return Option.some(
@@ -215,38 +240,50 @@ const membershipOf = Effect.fn('CompanyStore.membershipOf')(function* (
   )
 })
 
+/**
+ * Membership authorization and session movement share one transaction. live/changes.ts announce
+ * follows the update on its connection, so every committed move wakes this Person's open screens.
+ */
 const makeEnter = (database: DatabaseService) =>
   Effect.fn('CompanyStore.enter')(function* (
     personId: PersonId,
     sessionId: SessionId,
     companyId: Option.Option<CompanyId>,
   ) {
-    // Not a Member and no such Company are the same answer: nothing confirms a Company exists.
-    const allowed = Option.isNone(companyId)
-      ? true
-      : Option.isSome(yield* membershipOf(database, companyId.value, personId))
-    if (!allowed) return yield* Effect.fail(new NotFound({ message: 'Company not found' }))
-    return yield* database
-      .run(
-        database
+    yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        // Missing Membership and missing Company have the same answer; do not confirm its existence.
+        if (
+          Option.isSome(companyId) &&
+          Option.isNone(yield* membershipOf(tx, companyId.value, personId))
+        ) {
+          return yield* Effect.fail(new NotFound({ message: 'Company not found' }))
+        }
+        const rows = yield* tx
           .update(sessionTable)
           .set({ activeCompanyId: Option.getOrNull(companyId) })
-          .where(and(eq(sessionTable.id, sessionId), eq(sessionTable.userId, personId))),
-      )
-      .pipe(Effect.asVoid)
+          .where(and(eq(sessionTable.id, sessionId), eq(sessionTable.userId, personId)))
+          .returning({ personId: sessionTable.userId })
+        // A missing session changes nothing, so there is nobody to announce a movement for.
+        if (rows.length === 0) return undefined
+        const row = yield* returned(rows, 'session')
+        const owner = yield* decodeSessionOwner(row)
+        return yield* announce(tx, [Topic.person(owner.personId)])
+      }),
+    )
   })
 
-const toMember = (
+/** Project joined columns once before the Member decoder at the database boundary. */
+const memberFields = (
   row: typeof membershipTable.$inferSelect,
   person: { readonly name: string; readonly image: string | null; readonly email: string },
-) =>
-  decodeMember({
-    membershipId: row.id,
-    person: { id: row.userId, name: person.name, image: person.image },
-    email: person.email,
-    role: row.role,
-    joinedAt: row.createdAt.getTime(),
-  })
+) => ({
+  membershipId: row.id,
+  person: { id: row.userId, name: person.name, image: person.image },
+  email: person.email,
+  role: row.role,
+  joinedAt: row.createdAt.getTime(),
+})
 
 const makeMembers = (database: DatabaseService) =>
   Effect.fn('CompanyStore.members')(function* (companyId: CompanyId) {
@@ -258,7 +295,9 @@ const makeMembers = (database: DatabaseService) =>
         .where(eq(membershipTable.companyId, companyId))
         .orderBy(asc(membershipTable.createdAt)),
     )
-    return yield* Effect.forEach(rows, (row) => toMember(row.membership, row.person))
+    return yield* Effect.forEach(rows, (row) =>
+      decodeMember(memberFields(row.membership, row.person)),
+    )
   })
 
 /** The inviter as other People see them, who must exist: the reference cascades. */
@@ -302,7 +341,7 @@ const toInvitation = Effect.fn('CompanyStore.toInvitation')(function* (
   summaries: ReadonlyMap<PersonId, PersonSummary>,
   now: number,
 ) {
-  return yield* decodeInvitation({
+  return Invitation.make({
     id: row.id,
     email: row.email,
     role: row.role,
@@ -325,25 +364,41 @@ const makePersonByEmail = (database: DatabaseService) =>
     return row === undefined ? Option.none<PersonId>() : Option.some(PersonId.make(row.id))
   })
 
+/**
+ * Replacement, insertion, and audit commit together before live/changes.ts announce. Decision
+ * reads use this transaction and its locks; the inserted row supplies the Company audience.
+ */
 const makeInvite = (database: DatabaseService) =>
   Effect.fn('CompanyStore.invite')(function* (
     inviter: PersonId,
     companyId: CompanyId,
     request: InviteMembershipRequest,
   ) {
-    const email = normalized(request.email)
-    const existing = yield* makePersonByEmail(database)(email)
-    if (Option.isSome(existing)) {
-      const membership = yield* membershipOf(database, companyId, existing.value)
-      if (Option.isSome(membership)) {
-        return yield* Effect.fail(new Conflict({ message: 'That Person is already a Member' }))
-      }
-    }
-    const now = yield* Clock.currentTimeMillis
-    // One open invitation per address: inviting again replaces the earlier offer, so an old link
-    // with a role nobody intends any more cannot still be accepted.
-    const rows = yield* database.transaction((tx) =>
+    return yield* database.transaction((tx) =>
       Effect.gen(function* () {
+        const email = normalized(request.email)
+        const existing = yield* tx
+          .select({ id: personTable.id })
+          .from(personTable)
+          .where(eq(personTable.email, email))
+          .limit(1)
+          .for('share')
+        const person = existing[0]
+        if (person !== undefined) {
+          const personId = yield* decodePersonId(person.id)
+          if (Option.isSome(yield* membershipOf(tx, companyId, personId))) {
+            return yield* Effect.fail(new Conflict({ message: 'That Person is already a Member' }))
+          }
+        }
+        const summaries = yield* tx
+          .select({ id: personTable.id, name: personTable.name, image: personTable.image })
+          .from(personTable)
+          .where(eq(personTable.id, inviter))
+          .limit(1)
+          .for('share')
+        const summary = yield* decodeSummary(yield* returned(summaries, 'inviter'))
+        const now = yield* Clock.currentTimeMillis
+        // Replace the old offer first; the pending unique index refuses an offer if a competing insert wins.
         yield* tx
           .update(invitationTable)
           .set({ status: 'revoked' })
@@ -354,7 +409,7 @@ const makeInvite = (database: DatabaseService) =>
               eq(invitationTable.status, 'pending'),
             ),
           )
-        return yield* tx
+        const rows = yield* tx
           .insert(invitationTable)
           .values({
             id: crypto.randomUUID(),
@@ -366,33 +421,57 @@ const makeInvite = (database: DatabaseService) =>
             inviterId: inviter,
           })
           .returning()
+        const stored = yield* storedInvitation(yield* returned(rows, 'invitation'))
+        yield* appendAudit(
+          tx,
+          AuditAttribution.make({
+            personId: inviter,
+            companyId: stored.companyId,
+            by: 'person',
+            threadId: null,
+          }),
+          AuditEvent.cases.MemberInvited.make({ email: stored.email, role: stored.role }),
+          now,
+        )
+        yield* announce(tx, [Topic.company(stored.companyId)])
+        return Invitation.make({
+          id: stored.id,
+          email: stored.email,
+          role: stored.role,
+          status: standing(stored, now),
+          invitedBy: summary,
+          expiresAt: stored.expiresAt,
+        })
       }),
     )
-    const stored = yield* storedInvitation(yield* returned(rows, 'invitation'))
-    const summaries = yield* loadSummaries([inviter]).pipe(
-      Effect.provideService(Database, database),
-    )
-    return yield* toInvitation(stored, summaries, now)
   })
 
+/**
+ * A missing pending offer fails inside the transaction. The changed row owns the audience and
+ * live/changes.ts announce is last, preventing a committed revocation without a Company refresh.
+ */
 const makeRevoke = (database: DatabaseService) =>
   Effect.fn('CompanyStore.revoke')(function* (companyId: CompanyId, id: InvitationId) {
-    const rows = yield* database.run(
-      database
-        .update(invitationTable)
-        .set({ status: 'revoked' })
-        .where(
-          and(
-            eq(invitationTable.id, id),
-            eq(invitationTable.companyId, companyId),
-            eq(invitationTable.status, 'pending'),
-          ),
-        )
-        .returning({ id: invitationTable.id }),
+    yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        const rows = yield* tx
+          .update(invitationTable)
+          .set({ status: 'revoked' })
+          .where(
+            and(
+              eq(invitationTable.id, id),
+              eq(invitationTable.companyId, companyId),
+              eq(invitationTable.status, 'pending'),
+            ),
+          )
+          .returning()
+        const row = rows[0]
+        if (row === undefined)
+          return yield* Effect.fail(new NotFound({ message: 'Invitation not found' }))
+        const invitation = yield* storedInvitation(row)
+        return yield* announce(tx, [Topic.company(invitation.companyId)])
+      }),
     )
-    return rows.length === 0
-      ? yield* Effect.fail(new NotFound({ message: 'Invitation not found' }))
-      : undefined
   })
 
 /** One invitation with its Company, by id. */
@@ -431,109 +510,154 @@ const makePreview = (database: DatabaseService) =>
     })
   })
 
-/** One Member of a Company by their Membership id, or the refusal that it is not there. */
+/**
+ * Read the Membership with its Person and lock the Membership before deciding or deleting. Its
+ * Company, role and Person audience remain authoritative through the write. Lock only Membership
+ * to avoid upgrading the mailbox share lock during acceptance. No helper casts a transaction into Database.
+ */
 const memberById = Effect.fn('CompanyStore.memberById')(function* (
-  database: DatabaseService,
+  tx: Transaction,
   companyId: CompanyId,
   membershipId: MembershipId,
 ) {
-  const rows = yield* database.run(
-    database
-      .select({ membership: membershipTable, person: personTable })
-      .from(membershipTable)
-      .innerJoin(personTable, eq(membershipTable.userId, personTable.id))
-      .where(and(eq(membershipTable.id, membershipId), eq(membershipTable.companyId, companyId)))
-      .limit(1),
-  )
+  const rows = yield* tx
+    .select({ membership: membershipTable, person: personTable })
+    .from(membershipTable)
+    .innerJoin(personTable, eq(membershipTable.userId, personTable.id))
+    .where(and(eq(membershipTable.id, membershipId), eq(membershipTable.companyId, companyId)))
+    .limit(1)
+    .for('update', { of: membershipTable })
   const row = rows[0]
   if (row === undefined) return yield* Effect.fail(new NotFound({ message: 'Member not found' }))
-  return yield* toMember(row.membership, row.person)
+  return yield* decodeOwnedMember({
+    companyId: row.membership.companyId,
+    member: memberFields(row.membership, row.person),
+  })
 })
 
 /**
- * The address a Person holds and whether they have shown the mailbox is theirs, as their row says
- * now. Read here and never taken from the caller: Better Auth 1.7.5 `api/routes/sign-up.mjs`
- * creates a password account with `emailVerified: false` and signs it in at once, so a session
- * proves someone typed an address, not that they receive its mail.
+ * Read the mailbox under a share lock, never from supplied Person data. Better Auth 1.7.5
+ * api/routes/sign-up.mjs signs in an unverified password account immediately; that session proves
+ * somebody typed the address, not mailbox ownership. Hold the flag and address through acceptance.
  */
 const mailboxOf = Effect.fn('CompanyStore.mailboxOf')(function* (
-  database: DatabaseService,
+  tx: Transaction,
   personId: PersonId,
 ) {
-  const rows = yield* database.run(
-    database
-      .select({ email: personTable.email, verified: personTable.emailVerified })
-      .from(personTable)
-      .where(eq(personTable.id, personId))
-      .limit(1),
-  )
+  const rows = yield* tx
+    .select({ email: personTable.email, verified: personTable.emailVerified })
+    .from(personTable)
+    .where(eq(personTable.id, personId))
+    .limit(1)
+    .for('share')
   const row = rows[0]
-  return row === undefined ? yield* Effect.fail(new NotFound({ message: 'Person not found' })) : row
+  if (row === undefined) return yield* Effect.fail(new NotFound({ message: 'Person not found' }))
+  return yield* decodeMailbox(row)
 })
 
+/**
+ * Match the current stored mailbox before exposing a claim conflict. An unverified matching
+ * account gets its own typed refusal, as Better Auth's organization plugin also requires mailbox
+ * verification (plugins/organization/routes/crud-invites.mjs requireEmailVerificationOnInvitation).
+ */
+const requireMailbox = Effect.fn('CompanyStore.requireMailbox')(function* (
+  invitation: StoredInvitation,
+  mailbox: typeof StoredMailbox.Type,
+  personId: PersonId,
+  now: number,
+) {
+  const status = standing(invitation, now)
+  if (
+    invitation.email !== normalized(mailbox.email) ||
+    status === 'expired' ||
+    status === 'revoked'
+  ) {
+    return yield* Effect.fail(
+      new Forbidden({ message: 'This invitation is not open for your account' }),
+    )
+  }
+  if (!mailbox.verified)
+    return yield* Effect.fail(
+      new MailboxUnconfirmed({
+        personId,
+        invitationId: invitation.id,
+        message: 'This email address has not been confirmed as yours',
+      }),
+    )
+  return undefined
+})
+
+/**
+ * Lock the offer, check the current mailbox, claim and insert before auditing. An existing Member
+ * fails inside the transaction, keeping the invitation pending. The explicit Person supplies the
+ * audit name without inventing an Actor; the locked offer supplies the Company and role. Announce
+ * last through live/changes.ts announce so every failure rolls back the claim, Membership and audit.
+ */
 const makeAccept = (database: DatabaseService) =>
-  Effect.fn('CompanyStore.accept')(function* (personId: PersonId, id: InvitationId) {
-    const { invitation } = yield* invitationById(database, id)
-    const mailbox = yield* mailboxOf(database, personId)
-    const now = yield* Clock.currentTimeMillis
-    // An invitation is for the address it was sent to. Someone else holding the link learns only
-    // what the preview already told them.
-    if (standing(invitation, now) !== 'pending' || invitation.email !== normalized(mailbox.email)) {
-      return yield* Effect.fail(
-        new Forbidden({ message: 'This invitation is not open for your account' }),
-      )
-    }
-    // The link alone is not the mailbox. Whoever holds it could otherwise register the invited
-    // address before its owner does and take the role. A Google sign-in stores the address as
-    // verified (`oauth2/link-account.mjs`), so that path is open; a password account stays
-    // refused until its address is verified. Better Auth's own organization plugin refuses the
-    // same case with FORBIDDEN (`plugins/organization/routes/crud-invites.mjs`,
-    // `requireEmailVerificationOnInvitation`). Vivid gives it its own tag: this check runs only
-    // after the address matched, so the caller learns nothing the preview did not show, and a
-    // client can say truthfully why joining was refused instead of blaming the address.
-    if (!mailbox.verified) {
-      return yield* Effect.fail(
-        new MailboxUnconfirmed({
-          personId,
-          invitationId: id,
-          message: 'This email address has not been confirmed as yours',
-        }),
-      )
-    }
-    const membershipId = crypto.randomUUID()
-    // The claim and the Membership are one transaction, and the claim is conditional: of two
-    // accepts racing on one invitation, one creates the Membership and the other gets a conflict.
-    yield* database.transaction((tx) =>
+  Effect.fn('CompanyStore.accept')(function* (
+    person: Pick<PersonSummary, 'id' | 'name'>,
+    id: InvitationId,
+  ) {
+    return yield* database.transaction((tx) =>
       Effect.gen(function* () {
+        const rows = yield* tx
+          .select()
+          .from(invitationTable)
+          .where(eq(invitationTable.id, id))
+          .limit(1)
+          .for('update')
+        const row = rows[0]
+        if (row === undefined)
+          return yield* Effect.fail(new NotFound({ message: 'Invitation not found' }))
+        const invitation = yield* storedInvitation(row)
+        const mailbox = yield* mailboxOf(tx, person.id)
+        const now = yield* Clock.currentTimeMillis
+        yield* requireMailbox(invitation, mailbox, person.id, now)
         const claimed = yield* tx
           .update(invitationTable)
           .set({ status: 'accepted' })
-          .where(and(eq(invitationTable.id, id), eq(invitationTable.status, 'pending')))
+          .where(and(eq(invitationTable.id, invitation.id), eq(invitationTable.status, 'pending')))
           .returning({ id: invitationTable.id })
-        if (claimed.length === 0) {
+        if (claimed.length === 0)
           return yield* Effect.fail(new Conflict({ message: 'This invitation was already used' }))
-        }
-        return yield* tx
+        const inserted = yield* tx
           .insert(membershipTable)
           .values({
-            id: membershipId,
+            id: crypto.randomUUID(),
             companyId: invitation.companyId,
-            userId: personId,
+            userId: person.id,
             role: invitation.role,
           })
           .onConflictDoNothing()
+          .returning()
+        const membership = inserted[0]
+        if (membership === undefined)
+          return yield* Effect.fail(new Conflict({ message: 'You are already a Member' }))
+        const stored = yield* decodeStoredMembership({
+          id: membership.id,
+          companyId: membership.companyId,
+          personId: membership.userId,
+          role: membership.role,
+        })
+        const current = yield* memberById(tx, stored.companyId, stored.id)
+        yield* appendAudit(
+          tx,
+          AuditAttribution.make({
+            personId: person.id,
+            companyId: current.companyId,
+            by: 'person',
+            threadId: null,
+          }),
+          AuditEvent.cases.MemberJoined.make({ name: person.name, role: current.member.role }),
+          now,
+        )
+        yield* announce(tx, [
+          Topic.company(current.companyId),
+          Topic.person(current.member.person.id),
+        ])
+        return current
       }),
     )
-    const member = yield* memberById(
-      database,
-      invitation.companyId,
-      MembershipId.make(membershipId),
-    ).pipe(
-      Effect.catchTag('NotFound', () =>
-        Effect.fail(new Conflict({ message: 'You are already a Member' })),
-      ),
-    )
-    return { member, companyId: invitation.companyId }
   })
 
 /** The owner's standing is not something an admin can change or remove. */
@@ -542,39 +666,89 @@ const refuseOwner = (member: Member) =>
     ? Effect.fail(new Forbidden({ message: "A Company's owner cannot be changed here" }))
     : Effect.succeed(member)
 
+/**
+ * Read role, Person and audience under the Membership lock before changing it. Audit and
+ * live/changes.ts announce join the update so a committed role never leaves either watch stale.
+ */
 const makeChangeRole = (database: DatabaseService) =>
   Effect.fn('CompanyStore.changeRole')(function* (
+    by: PersonId,
     companyId: CompanyId,
     membershipId: MembershipId,
     role: 'admin' | 'member',
   ) {
-    yield* refuseOwner(yield* memberById(database, companyId, membershipId))
-    yield* database.run(
-      database.update(membershipTable).set({ role }).where(eq(membershipTable.id, membershipId)),
+    return yield* database.transaction((tx) =>
+      Effect.gen(function* () {
+        const current = yield* memberById(tx, companyId, membershipId)
+        yield* refuseOwner(current.member)
+        yield* tx
+          .update(membershipTable)
+          .set({ role })
+          .where(eq(membershipTable.id, current.member.membershipId))
+        const member = Member.make({
+          membershipId: current.member.membershipId,
+          person: current.member.person,
+          email: current.member.email,
+          role,
+          joinedAt: current.member.joinedAt,
+        })
+        yield* appendAudit(
+          tx,
+          AuditAttribution.make({
+            personId: by,
+            companyId: current.companyId,
+            by: 'person',
+            threadId: null,
+          }),
+          AuditEvent.cases.RoleChanged.make({ name: member.person.name, role: member.role }),
+          yield* Clock.currentTimeMillis,
+        )
+        yield* announce(tx, [Topic.company(current.companyId), Topic.person(member.person.id)])
+        return member
+      }),
     )
-    return yield* memberById(database, companyId, membershipId)
   })
 
+/**
+ * Capture the removed Person and Company under the Membership lock before deleting. Their
+ * sessions leave with them, then audit and live/changes.ts announce commit on this connection;
+ * the departed Person's topic is necessary to move their open screens back to personal space.
+ */
 const makeRemove = (database: DatabaseService) =>
-  Effect.fn('CompanyStore.remove')(function* (companyId: CompanyId, membershipId: MembershipId) {
-    const member = yield* refuseOwner(yield* memberById(database, companyId, membershipId))
-    // Their sessions leave the Company with them. `workspaceIn` would refuse it anyway on the next
-    // call; clearing it keeps what the session says true.
-    yield* database.transaction((tx) =>
+  Effect.fn('CompanyStore.remove')(function* (
+    by: PersonId,
+    companyId: CompanyId,
+    membershipId: MembershipId,
+  ) {
+    return yield* database.transaction((tx) =>
       Effect.gen(function* () {
-        yield* tx.delete(membershipTable).where(eq(membershipTable.id, membershipId))
+        const current = yield* memberById(tx, companyId, membershipId)
+        const member = yield* refuseOwner(current.member)
+        yield* tx.delete(membershipTable).where(eq(membershipTable.id, member.membershipId))
         yield* tx
           .update(sessionTable)
           .set({ activeCompanyId: null })
           .where(
             and(
               eq(sessionTable.userId, member.person.id),
-              eq(sessionTable.activeCompanyId, companyId),
+              eq(sessionTable.activeCompanyId, current.companyId),
             ),
           )
+        yield* appendAudit(
+          tx,
+          AuditAttribution.make({
+            personId: by,
+            companyId: current.companyId,
+            by: 'person',
+            threadId: null,
+          }),
+          AuditEvent.cases.MemberRemoved.make({ name: member.person.name }),
+          yield* Clock.currentTimeMillis,
+        )
+        yield* announce(tx, [Topic.company(current.companyId), Topic.person(member.person.id)])
+        return member
       }),
     )
-    return member
   })
 
 export const companyStoreLayer = Layer.effect(
