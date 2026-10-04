@@ -115,7 +115,11 @@ describe('outcome mapping', () => {
       })
       expect(
         toolOutcome(ToolOutcome.cases.Rejected.make({ message: 'Recipient is invalid' })).output,
-      ).toEqual({ ok: false, message: 'The service rejected the action: Recipient is invalid.' })
+      ).toEqual({
+        ok: false,
+        message: 'The service rejected the action: Recipient is invalid.',
+        problems: [],
+      })
       expect(toolOutcome(ToolOutcome.cases.OutcomeUnknown.make({})).output).toEqual({
         ok: false,
         message: 'The action may or may not have happened; do not retry without asking the person.',

@@ -218,7 +218,8 @@ export const runConnection = Effect.fn('Connections.run')(function* (
     >
   >(outcome, {
     Completed: ({ value }) => Effect.succeed(ToolOutcome.cases.Completed.make({ output: value })),
-    Rejected: ({ message }) => Effect.succeed(ToolOutcome.cases.Rejected.make({ message })),
+    Rejected: ({ message, problems }) =>
+      Effect.succeed(ToolOutcome.cases.Rejected.make({ message, problems })),
     OutcomeUnknown: () => Effect.succeed(ToolOutcome.cases.OutcomeUnknown.make({})),
     NotReady: () => markNotReady(actor, row),
   })

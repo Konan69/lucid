@@ -311,6 +311,74 @@ describe('connected tool execution', () => {
         expect(JSON.stringify(result.output)).not.toContain('MARK-')
       }).pipe(Effect.scoped),
   )
+  it.effect('returns validation detail through use_tool so the model can correct its input', () =>
+    Effect.gen(function* () {
+      const { requests, rpc, tools } = yield* fixture()
+      const [, use] = tools
+      const call = yield* Effect.promise(() =>
+        Promise.resolve(
+          use.run({
+            data: {
+              account: 'Mail',
+              tool: 'get_message',
+              input: { id: 'provider-message' },
+              summary: 'Read mail',
+              rationale: 'Answer the question',
+            },
+            signal: new AbortController().signal,
+            toolCallId: 'MARK-call',
+            log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
+          }),
+        ),
+      ).pipe(Effect.forkScoped)
+      const resolve = yield* Queue.take(requests)
+      if (!Predicate.isTagged(resolve, 'Request')) expect.fail('Expected an RPC request')
+      expect(resolve.tag).toBe('ResolveTool')
+      expect(resolve.payload).toEqual({ account: 'Mail', tool: 'get_message' })
+      const tool = ConnectionTool.make({
+        connectionId: ConnectionId.make('MARK-connection'),
+        account: 'Mail',
+        name: 'get_message',
+        description: 'Read mail',
+        effect: 'read',
+        input: {},
+      })
+      yield* rpc.write({
+        // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK protocol envelopes have no constructor in rc.116.
+        _tag: 'Exit',
+        clientId: 0,
+        requestId: resolve.id,
+        exit: Exit.succeed(tool),
+      })
+      const execute = yield* Queue.take(requests)
+      if (!Predicate.isTagged(execute, 'Request')) expect.fail('Expected an RPC request')
+      expect(execute.tag).toBe('UseTool')
+      expect(execute.payload).toMatchObject({
+        connectionId: tool.connectionId,
+        tool: tool.name,
+        input: { id: 'provider-message' },
+      })
+      const problems = ['repoName: expected a string', 'question: required']
+      yield* rpc.write({
+        // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK protocol envelopes have no constructor in rc.116.
+        _tag: 'Exit',
+        clientId: 0,
+        requestId: execute.id,
+        exit: Exit.succeed(
+          ToolOutcome.cases.Rejected.make({ message: 'Correct the input and retry', problems }),
+        ),
+      })
+      const result = yield* Fiber.join(call)
+      if (!Predicate.isObject(result) || !('output' in result)) expect.fail('Expected tool output')
+      expect(result.output).toMatchObject({
+        ok: false,
+        problems,
+        message: 'The service rejected the action: Correct the input and retry.',
+      })
+      expect(result).not.toHaveProperty('terminate', true)
+      expect(JSON.stringify(result.output)).not.toContain('MARK-')
+    }).pipe(Effect.scoped),
+  )
 })
 
 describe('tool input from the model', () => {

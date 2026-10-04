@@ -1,6 +1,6 @@
 import { expect, it } from '@effect/vitest'
 import { Effect, type Schema } from 'effect'
-import { toolMessage } from './message.ts'
+import { toolMessage, validationProblem } from './message.ts'
 
 /** Diagnostics can nest headers in JSON or quote them in prose; neither representation leaks. */
 it.effect('discards credential-bearing diagnostics and bounds ordinary explanations', () =>
@@ -47,5 +47,28 @@ it.effect('redacts unnamed keys, JWT segments and header echoes before truncatio
     expect(toolMessage(prefix + opaque)).toBe((prefix + '[REDACTED]').slice(0, 400))
     expect(toolMessage('a'.repeat(24))).toBe('[REDACTED]')
     expect(toolMessage('a'.repeat(23))).toBe('a'.repeat(23))
+  }),
+)
+
+/** Invalid input should remain correctable without exposing credentials or internal selections. */
+it.effect('filters sensitive validation summaries while preserving field guidance', () =>
+  Effect.sync(() => {
+    const identity = { app: 'app-private', deployment: 'deployment-private' }
+    expect(validationProblem('repoName: expected a string', identity)).toBe(
+      'repoName: expected a string',
+    )
+    for (const problem of [
+      'token: private-value',
+      'account: short-private',
+      'profile id: short-private',
+      'unknown app-private',
+      'unknown deployment-private',
+      'selection 37e21f26-63ed-4075-aad1-0118929da0ac',
+      'opaque ' + 'x'.repeat(32),
+    ]) {
+      expect(validationProblem(problem, identity)).not.toMatch(
+        /private-value|short-private|app-private|deployment-private|37e21f26|x{32}/,
+      )
+    }
   }),
 )

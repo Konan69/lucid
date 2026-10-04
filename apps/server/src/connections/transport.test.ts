@@ -137,6 +137,73 @@ const failRoute = Effect.fn('Executor.TransportTest.failRoute')(function* (
 })
 
 describe('Executor hosted transport', () => {
+  it.effect(
+    'retains validation problems, removes sensitive detail, and permits a corrected retry',
+    () =>
+      scenario((remote) =>
+        Effect.gen(function* () {
+          yield* failRoute(remote, 'POST /apps/app/tools/call', {
+            status: 422,
+            body: {
+              _tag: 'InputInvalid',
+              app: 'internal-app',
+              deployment: 'internal-deployment',
+              tool: 'read',
+              problems: [
+                'repoName: expected a string',
+                'question: required',
+                'Authorization: Bearer private-value',
+                'account id: short-private',
+                'Invalid internal-app selection',
+              ],
+            },
+          })
+          const executor = yield* Executor
+          const outcome = yield* executor.call({ references, tool: 'read', input: {} })
+          expect(outcome).toMatchObject({
+            _tag: 'Rejected',
+            problems: [
+              'repoName: expected a string',
+              'question: required',
+              'The integration rejected the tool request; sensitive diagnostics were removed.',
+              'A validation diagnostic containing internal identity was removed.',
+              'A validation diagnostic containing internal identity was removed.',
+            ],
+          })
+          expect(JSON.stringify(outcome)).not.toMatch(
+            /private-value|short-private|internal-app|internal-deployment/,
+          )
+          yield* Ref.set(remote.replies, new Map())
+          const retry = yield* executor.call({
+            references,
+            tool: 'read',
+            input: { repoName: 'facebook/react' },
+          })
+          expect(retry._tag).toBe('Completed')
+        }),
+      ),
+  )
+
+  it.effect('rejects malformed validation problems instead of trusting untyped diagnostics', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        yield* failRoute(remote, 'POST /apps/app/tools/call', {
+          status: 422,
+          body: {
+            _tag: 'InputInvalid',
+            app: 'app',
+            deployment: 'deployment',
+            tool: 'read',
+            problems: [42],
+          },
+        })
+        expect(yield* (yield* Executor).call({ references, tool: 'read', input: {} })).toEqual(
+          ExecutorCallOutcome.cases.OutcomeUnknown.make({}),
+        )
+      }),
+    ),
+  )
+
   it.effect('installs one shared app, reuses it, and deduplicates profiles by ConnectionId', () =>
     scenario((remote) =>
       Effect.gen(function* () {

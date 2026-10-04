@@ -66,10 +66,11 @@ export function toolOutcome(outcome: ToolOutcome): ToolResult {
         ),
       },
     }),
-    Rejected: ({ message }) => ({
+    Rejected: ({ message, problems }) => ({
       output: {
         ok: false,
         message: views.modelText(`The service rejected the action: ${message}.`),
+        problems: problems.map(views.modelText),
       },
     }),
     OutcomeUnknown: outcomeUnknown,
