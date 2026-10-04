@@ -1091,11 +1091,11 @@ type ComputerTarget =
   | typeof ActionTarget.cases.Browser.Type
   | typeof ActionTarget.cases.Desktop.Type
 
-/** Approval receipts preserve takeover and uncertainty; only Done is success. */
+/** Approval receipts preserve takeover and uncertainty without persisting private page contents. */
 const approvedBrowse = (outcome: BrowseOutcome): ActionOutcome =>
   BrowseOutcome.match<ActionOutcome>(outcome, {
-    Completed: ({ result }) =>
-      ActionOutcome.cases.Succeeded.make({ result: result.outline.slice(0, 4000) }),
+    Completed: () =>
+      ActionOutcome.cases.Succeeded.make({ result: 'The browser action completed.' }),
     OutcomeUnknown: () => ActionOutcome.cases.Unknown.make({}),
     Stopped: () =>
       ActionOutcome.cases.Failed.make({

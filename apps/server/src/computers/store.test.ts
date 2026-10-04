@@ -594,7 +594,13 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           id: dispatched.id,
           answer: DeviceAnswer.cases.Done.make({ result: signedPage }),
         })
-        expect((yield* Fiber.join(executing)).state._tag).toBe('Succeeded')
+        const completed = yield* Fiber.join(executing)
+        if (!ApprovalState.guards.Succeeded(completed.state)) expect.fail('Expected success')
+        expect(completed.state.result).toBe('The browser action completed.')
+        const [receipt] = yield* browser.database.run(
+          browser.database.select().from(approvals).where(eq(approvals.id, approval.id)),
+        )
+        expect(JSON.stringify(receipt)).not.toContain(signedPage.outline)
         expect((yield* store.decide(browser.test.personal, decide).pipe(Effect.flip))._tag).toBe(
           'Conflict',
         )
