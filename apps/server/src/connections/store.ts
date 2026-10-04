@@ -129,6 +129,19 @@ const finish = Effect.fn('Connections.finish')(function* (
   return yield* publicConnection(actor, saved)
 })
 
+/** A failed Begin owns no product row. Release its exact provider resources while retaining the
+ * original failure; only a cleanup tag can enter diagnostics, never provider or callback data.
+ */
+const discardBegin = Effect.fn('Connections.discardBegin')(
+  (executor: ExecutorService, references: ExecutorReferences) =>
+    executor.remove(references).pipe(
+      Effect.tapError((failure) =>
+        Effect.logError('Integration Begin compensation failed', failure._tag),
+      ),
+      Effect.ignore,
+    ),
+)
+
 /** Allocate the storage owner separately from the connecting Person's execution attribution. */
 const begin = Effect.fn('Connections.begin')(function* (
   actor: Actor,
@@ -158,12 +171,14 @@ const begin = Effect.fn('Connections.begin')(function* (
     Effect.catchTag(
       'ExecutorSignInRequired',
       Effect.fn('Connections.cancelSignIn')(function* (error) {
-        yield* executor.remove(error.references)
+        yield* discardBegin(executor, error.references)
         return yield* Effect.fail(error)
       }),
     ),
     Effect.mapError((error) => (isPublicAddressRequired(error) ? error : executorFailure(error))),
-    Effect.flatMap(correlateSignIn),
+    Effect.flatMap((next) =>
+      correlateSignIn(next).pipe(Effect.tapError(() => discardBegin(executor, next.references))),
+    ),
   )
   const now = yield* Clock.currentTimeMillis
   const status = ExecutorStep.guards.Done(step) ? 'ready' : 'needs-authorization'

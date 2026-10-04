@@ -1393,6 +1393,8 @@ function makeBegin(
 
 /** HostedProfiles.create uses ConnectionId as its idempotency key. Each Connection holds its
  * own account selection on shared code; membership supplies owner and subject on the host.
+ * Scope registers rollback before authorization. Any later failure releases only this profile;
+ * cleanup failure is logged by tag and never replaces the original failure or deletes shared code.
  */
 function makeConfigure(
   http: ExecutorHttp,
@@ -1405,13 +1407,31 @@ function makeConfigure(
     app: typeof WireApp.Type,
     entry: typeof ExecutorServiceEntry.Type,
   ) {
-    const profile = yield* http.readProfile(
-      post(`/apps/${query(app.id)}/profiles`, {
-        name: input.label,
-        accounts: {},
-        idempotencyKey: input.connectionId,
-      }),
-      null,
+    const profile = yield* Effect.acquireRelease(
+      http.readProfile(
+        post(`/apps/${query(app.id)}/profiles`, {
+          name: input.label,
+          accounts: {},
+          idempotencyKey: input.connectionId,
+        }),
+        null,
+      ),
+      (created, exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.void
+          : http
+              .readRemoval(
+                Effect.succeed(
+                  HttpClientRequest.delete(`/apps/${query(app.id)}/profiles/${query(created.id)}`),
+                ),
+                null,
+              )
+              .pipe(
+                Effect.tapError((failure) =>
+                  Effect.logError('Integration profile compensation failed', failure._tag),
+                ),
+                Effect.ignore,
+              ),
     )
     const references = ExecutorReferences.cases.Public.make({
       service: input.service,
@@ -1426,7 +1446,7 @@ function makeConfigure(
       return ExecutorStep.cases.Done.make({ references })
     }
     return yield* authorize(input, app, references, entry.authorization)
-  })
+  }, Effect.scoped)
 }
 
 /** HostedApps.importCustom accepts the existing checked URL source contract. The organization

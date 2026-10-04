@@ -703,7 +703,8 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           Effect.provideService(Executor, blocked),
           Effect.flip,
         )
-        expect(failure._tag).toBe('ServiceUnavailable')
+        expect(failure._tag).toBe('InvalidRequest')
+        expect(failure.message).toBe('Sign-in could not start.')
         expect((yield* store.list(ownerActor)).connections).toEqual([])
         yield* Ref.set(probe.step, 'Done')
       }),

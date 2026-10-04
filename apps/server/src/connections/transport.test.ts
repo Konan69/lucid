@@ -478,8 +478,35 @@ describe('Executor hosted transport', () => {
           expect(error).toBeInstanceOf(ExecutorSetupRequired)
           expect(JSON.stringify(executorFailure(error))).not.toMatch(/https?:|private-callback/u)
           expect(
-            (yield* Ref.get(remote.requests)).some((request) => request.path.startsWith('DELETE')),
-          ).toBe(false)
+            (yield* Ref.get(remote.requests))
+              .filter((request) => request.path.startsWith('DELETE'))
+              .map((request) => request.path),
+          ).toEqual([`DELETE ${hostedPrefix}/apps/app/profiles/profile-connection`])
+        }),
+      ),
+  )
+
+  it.effect(
+    'cleans up a profile after a lost authorization create and preserves that failure if cleanup fails',
+    () =>
+      scenario((remote) =>
+        Effect.gen(function* () {
+          yield* Ref.set(remote.accounts, keyRequirement)
+          yield* failRoute(remote, 'POST /apps/app/connections', {
+            status: 502,
+            body: Schema.TaggedStruct('StorageError', {}).make({}),
+          })
+          yield* failRoute(remote, 'DELETE /apps/app/profiles/profile-connection', {
+            status: 409,
+            body: profileConflictReply.make({}),
+          })
+          const failure = yield* (yield* Executor).begin(begin).pipe(Effect.flip)
+          expect(failure._tag).toBe('ExecutorExecutionUncertain')
+          expect(
+            (yield* Ref.get(remote.requests))
+              .filter((request) => request.path.startsWith('DELETE'))
+              .map((request) => request.path),
+          ).toEqual([`DELETE ${hostedPrefix}/apps/app/profiles/profile-connection`])
         }),
       ),
   )
