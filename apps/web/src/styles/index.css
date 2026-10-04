@@ -146,6 +146,13 @@ html[data-theme='light'] {
 @utility screen-fit {
   width: min(100cqw, calc((100cqh - var(--screen-dock-h)) * var(--screen-w) / var(--screen-h)));
 }
+/* A provider's viewer inside a picture: laid out 1280 wide and as tall as its holder is at that
+   width, then scaled to the holder (`--desk-fit`, written by `fitDesk` in computer/Picture.tsx). */
+@utility picture-desk {
+  width: 1280px;
+  height: calc(100% / var(--desk-fit, 1));
+  scale: var(--desk-fit, 1);
+}
 @utility screen-glass {
   aspect-ratio: var(--screen-w) / var(--screen-h);
 }

@@ -52,6 +52,26 @@ export function Resting() {
   )
 }
 
+/** The width, in CSS pixels, a provider's viewer page is laid out at inside a picture. */
+const DESK_WIDTH = 1280
+
+/**
+ * Keeps a provider's viewer page a picture of a screen and not a small web page. The page is laid
+ * out at a desk's width (`DESK_WIDTH`) and scaled down to its holder, so its own controls and
+ * words shrink with the desktop; loaded at the holder's 268 px they were as large as the screen
+ * they sit on. The scale is the holder's width over the desk's, kept current by an observer that
+ * lives exactly as long as the holder (React calls the returned cleanup). It writes one custom
+ * property and nothing is rendered again for it.
+ */
+const fitDesk = (holder: HTMLElement | null) => {
+  if (holder === null) return undefined
+  const fit = () => holder.style.setProperty('--desk-fit', String(holder.clientWidth / DESK_WIDTH))
+  const watching = new ResizeObserver(fit)
+  watching.observe(holder)
+  fit()
+  return () => watching.disconnect()
+}
+
 /**
  * The live screen of a running machine, watch-only, filling whatever holds it. It is the one
  * watching picture in the app: the small one in the Thread and the one in the card around Vivid
@@ -74,8 +94,10 @@ export function Picture({
 }) {
   return ComputerScreen.match(screen, {
     Viewer: (viewer) => (
-      <span className="pointer-events-none absolute inset-0">
-        <Viewer address={viewer.address} expiresAt={viewer.expiresAt} control={false} />
+      <span ref={fitDesk} className="pointer-events-none absolute inset-0 overflow-hidden">
+        <span className="absolute top-0 left-0 block picture-desk origin-top-left">
+          <Viewer address={viewer.address} expiresAt={viewer.expiresAt} control={false} />
+        </span>
       </span>
     ),
     Relay: (relay) => <Relayed address={relay.address} onResolution={onResolution} />,
