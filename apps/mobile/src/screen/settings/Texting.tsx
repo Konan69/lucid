@@ -5,12 +5,10 @@ import {
   connectChannel,
   disconnectChannel,
   FIRST_TEXT,
-  makeWhen,
   MESSENGER,
   messageLink,
   textingSettled,
   textingUnreached,
-  thisReader,
   type Composer,
 } from '@vivid/state'
 import { Option } from 'effect'
@@ -20,6 +18,7 @@ import { useNow } from '../../data/foreground'
 import { confirm, warn } from '../../data/haptics'
 import { useLive, useLiveData, type LiveData } from '../../data/live'
 import { MOBILE_TYPOGRAPHY } from '../../data/typography'
+import { when } from '../../data/when'
 import { Copy } from '../../ui/Copy'
 import { Header, Screen } from '../../ui/Header'
 import { Section } from '../../ui/List'
@@ -38,8 +37,6 @@ import {
   styles,
 } from '../../ui/ui'
 import { useGo } from '../../workspace'
-
-const when = makeWhen(thisReader())
 
 /**
  * Which form of `sms:` link this phone's messaging app reads: Apple's Messages takes the body
