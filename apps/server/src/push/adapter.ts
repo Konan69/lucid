@@ -59,7 +59,8 @@ const acceptedStatus = (status: number) => {
 
 /**
  * Uses web-push 3.6.7's public generateRequestDetails for RFC 8291 encryption/VAPID, and Effect
- * HttpClient for cancellable I/O. No mutable SDK singleton, raw Promise or credential logging.
+ * HttpClient.withScope for cancellable I/O: the operation Scope releases status-only replies.
+ * No mutable SDK singleton, raw Promise or credential logging.
  */
 const sendBrowser = Effect.fn('PushAdapter.browser')(function* (
   destination: typeof PushDestination.cases.Browser.Type,
@@ -80,7 +81,8 @@ const sendBrowser = Effect.fn('PushAdapter.browser')(function* (
     catch: () => new PushRejected({}),
   })
   if (details.body === null) return yield* new PushRejected({})
-  const client = yield* HttpClient.HttpClient
+  // The exchange Scope owns this response and aborts whatever the caller leaves unread.
+  const client = HttpClient.withScope(yield* HttpClient.HttpClient)
   const response = yield* client
     .execute(
       HttpClientRequest.post(details.endpoint).pipe(
@@ -98,7 +100,8 @@ const sendPhone = Effect.fn('PushAdapter.phone')(function* (
   destination: typeof PushDestination.cases.Phone.Type,
   payload: PushPayload,
 ) {
-  const client = yield* HttpClient.HttpClient
+  // The exchange Scope owns this response and aborts whatever the caller leaves unread.
+  const client = HttpClient.withScope(yield* HttpClient.HttpClient)
   const request = yield* HttpClientRequest.schemaBodyJson(ExpoMessage)(
     HttpClientRequest.post('https://exp.host/--/api/v2/push/send'),
     {
@@ -128,7 +131,8 @@ const sendPhone = Effect.fn('PushAdapter.phone')(function* (
 
 /** Expo can accept a ticket before APNs/FCM says a token is gone; receipt inspection is read-only. */
 const inspectReceipt = Effect.fn('PushAdapter.receipt')(function* (ticket: string) {
-  const client = yield* HttpClient.HttpClient
+  // The exchange Scope owns this response and aborts whatever the caller leaves unread.
+  const client = HttpClient.withScope(yield* HttpClient.HttpClient)
   const request = yield* HttpClientRequest.schemaBodyJson(ReceiptRequest)(
     HttpClientRequest.post('https://exp.host/--/api/v2/push/getReceipts'),
     { ids: [ticket] },
@@ -151,11 +155,15 @@ const inspectReceipt = Effect.fn('PushAdapter.receipt')(function* (ticket: strin
   )
 })
 
-/** One ten-second deadline includes encryption, the HTTP exchange and payload decoding. */
+/** Each exchange Scope owns the scoped client response; the ten-second deadline includes decoding. */
 export const pushAdapterLayer = Layer.effect(
   PushAdapter,
   Effect.gen(function* () {
-    const services = yield* Effect.context<HttpClient.HttpClient | PushConfig>()
+    // Keep stable authorities without shadowing the caller's Scope, Clock or request span.
+    const services = Context.pick(
+      HttpClient.HttpClient,
+      PushConfig,
+    )(yield* Effect.context<HttpClient.HttpClient | PushConfig>())
     return PushAdapter.of({
       send: Effect.fn('PushAdapter.send')(
         function* (destination, payload) {
@@ -164,21 +172,21 @@ export const pushAdapterLayer = Layer.effect(
             return yield* sendBrowser(destination, payload)
           return yield* sendPhone(destination, payload)
         },
+        Effect.scoped,
         Effect.provideContext(services),
         Effect.timeoutOrElse({
           duration: '10 seconds',
           orElse: () => Effect.fail(new PushUncertain({})),
         }),
-        Effect.scoped,
       ),
       receipt: Effect.fn('PushAdapter.inspect')((ticket) =>
         inspectReceipt(ticket).pipe(
+          Effect.scoped,
           Effect.provideContext(services),
           Effect.timeoutOrElse({
             duration: '10 seconds',
             orElse: () => Effect.fail(new PushUncertain({})),
           }),
-          Effect.scoped,
         ),
       ),
     })

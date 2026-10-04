@@ -1,5 +1,5 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { Deferred, Effect, Redacted, Ref, Layer, Fiber, Option } from 'effect'
+import { Context, Deferred, Effect, Redacted, Ref, Layer, Fiber, Option, Tracer } from 'effect'
 import {
   AuditEvent,
   ConnectionStep,
@@ -33,6 +33,45 @@ import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './test
 
 describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
   layer(connectionTestLayer)((it) => {
+    /** Build the real store in an ended construction span, then read under a fresh caller.
+     * Tracer.NativeSpan records actual Effect.fn parenting without replacing store or SQL work.
+     */
+    it.effect('parents store operations to the caller after the construction span ends', () =>
+      Effect.gen(function* () {
+        const spans: Tracer.NativeSpan[] = []
+        const tracer = Tracer.make({
+          span(options) {
+            const span = new Tracer.NativeSpan(options)
+            spans.push(span)
+            return span
+          },
+        })
+        yield* Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
+          // rc.116 Layer.ts:3891 gives this construction its own memo map; the harness already
+          // built this same store, whose reuse would skip construction under the recording tracer.
+          const services = yield* Layer.build(Layer.fresh(connectionStoreLayer)).pipe(
+            Effect.withSpan('Connections.Test.construction'),
+          )
+          const construction = spans.find((span) => span.name === 'Connections.makeStore')
+          if (construction === undefined) return expect.fail('Store construction span is missing')
+          expect(construction.status._tag).toBe('Ended')
+          const store = Context.get(services, ConnectionStore)
+          expect(
+            yield* store.records(ownerActor).pipe(Effect.withSpan('Connections.Test.caller')),
+          ).toEqual([])
+          const caller = spans.find((span) => span.name === 'Connections.Test.caller')
+          const operation = spans.find((span) => span.name === 'Connections.listRecords')
+          if (caller === undefined || operation === undefined)
+            return expect.fail('Caller or operation span is missing')
+          expect(Option.map(operation.parent, (parent) => parent.spanId)).toEqual(
+            Option.some(caller.spanId),
+          )
+          return undefined
+        }).pipe(Effect.provide(Layer.succeed(Tracer.Tracer, tracer)))
+      }),
+    )
+
     it.effect('revokes provider resources when the real product insert is rejected', () =>
       Effect.gen(function* () {
         const { ownerActor } = yield* fixture()

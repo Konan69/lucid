@@ -628,6 +628,8 @@ function translateFailure(tag: typeof knownFailureTag.Type, tool: string | null)
  * installed: an accepted write or resume may have committed before the response was lost.
  */
 function responseReader(client: HttpClient.HttpClient) {
+  // The request Scope below releases each response, including the unread 401 body.
+  const scoped = HttpClient.withScope(client)
   return <A, I>(schema: Schema.Codec<A, I>) => {
     const decode = Schema.decodeUnknownEffect(schema)
     return Effect.fn('Executor.request')(
@@ -639,7 +641,7 @@ function responseReader(client: HttpClient.HttpClient) {
         const prepared = yield* request.pipe(
           Effect.mapError(() => ExecutorResponseInvalid.make(context)),
         )
-        const response = yield* client
+        const response = yield* scoped
           .execute(prepared)
           .pipe(Effect.mapError(() => ExecutorTransportFailure.make(context)))
         if (response.status === 401) {

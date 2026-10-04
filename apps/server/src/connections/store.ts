@@ -22,6 +22,7 @@ import { workspaceIn } from '../auth/session.ts'
 import { Audit } from '../audit/record.ts'
 import { ServerConfig } from '../config.ts'
 import { Database, returned } from '../database/client.ts'
+import { Changes } from '../live/changes.ts'
 import {
   Executor,
   ExecutorOwnerId,
@@ -326,15 +327,16 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const executor: ExecutorService = yield* Executor
   const database = yield* Database
   const returnAddress = (yield* ServerConfig).PUBLIC_URL.href
-  const dependencies = yield* Effect.context<
-    Executor | Database | Audit | ServerConfig | import('../live/changes.ts').Changes
-  >()
+  // Retain only authorities; the caller owns its span, Scope and Clock after construction ends.
+  const dependencies = Context.pick(
+    Executor,
+    Database,
+    Audit,
+    ServerConfig,
+    Changes,
+  )(yield* Effect.context<Executor | Database | Audit | ServerConfig | Changes>())
   const provide = <A, E>(
-    effect: Effect.Effect<
-      A,
-      E,
-      Executor | Database | Audit | ServerConfig | import('../live/changes.ts').Changes
-    >,
+    effect: Effect.Effect<A, E, Executor | Database | Audit | ServerConfig | Changes>,
   ) => effect.pipe(Effect.provide(dependencies))
   const catalogServices = Effect.fn('Connections.catalog')(function* () {
     return (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).map(catalogService)
@@ -568,11 +570,7 @@ const makeManagement = (input: {
   readonly executor: ExecutorService
   readonly database: typeof Database.Service
   readonly provide: <A, E>(
-    effect: Effect.Effect<
-      A,
-      E,
-      Executor | Database | Audit | ServerConfig | import('../live/changes.ts').Changes
-    >,
+    effect: Effect.Effect<A, E, Executor | Database | Audit | ServerConfig | Changes>,
   ) => Effect.Effect<A, E>
   readonly get: (
     actor: Actor,
