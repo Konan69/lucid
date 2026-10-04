@@ -19,6 +19,8 @@
 
 No overengineering means no speculative abstraction, indirection, or plumbing you do not yet need — it does **not** mean skimping on rigor. Always model the domain first: strong types, Effect `Schema` contracts, branded identifiers, and tagged variants are the baseline, never the “complex” option. “Simplest” means the simplest design that keeps the model honest, not the fewest keystrokes. Do not cite simplicity to avoid a schema, precise failure, or exhaustive state model.
 
+Most of this repository is greenfield. When a model, contract, table, module or name is wrong for the task, change it at its source and update every caller; do not work around it, wrap it, or keep a compatibility path for a shape nothing outside this repository depends on. The exceptions are the ones that hold data or binaries we cannot rewrite: a deployed database changes only through a generated migration, and a change to the phone app's native side needs a new app version and a new binary.
+
 Product feel matters. Keep Vivid fast, snappy, and local-first. Prefer caching, preloading, optimistic updates, and reuse of warm UI/runtime state so people rarely see avoidable loading states.
 
 Minimal correct code wins. Solve the actual problem with the fewest concepts, indirections, and lines that preserve an honest model. Consolidate before adding. Delete wrappers that only rename a standard combinator or preserve obsolete architecture. Concise is not terse: precise types and explanatory comments still apply.
