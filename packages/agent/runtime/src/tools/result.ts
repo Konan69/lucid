@@ -15,6 +15,7 @@ import type * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
 import { modelText } from './views.ts'
 import type { NameMissing, NameAmbiguous } from './names.ts'
 import type { NobodyToActFor } from '../client.ts'
+import type { NoteMissing, NotesUnavailable } from '../notes.ts'
 
 export interface ToolResult {
   readonly output: Schema.Json
@@ -27,6 +28,8 @@ export type ToolFailure =
   | NameAmbiguous
   | RpcFailure
   | NobodyToActFor
+  | NoteMissing
+  | NotesUnavailable
   | RpcClientError.RpcClientError
   | Config.ConfigError
 
@@ -153,6 +156,14 @@ export const settle = Effect.fn('Tools.settle')(function* (
         failure('Vivid cannot reach its server right now; try again in a moment.'),
       ConfigError: () => failure('Vivid cannot reach its server right now; try again in a moment.'),
       NobodyToActFor: () => failure('There is no person behind this message to act for.'),
+      NoteMissing: ({ file }) =>
+        failure(
+          `You have no note called ${file}; use a file name from the list of what you remember.`,
+        ),
+      NotesUnavailable: () =>
+        failure(
+          'Your notes cannot be read or changed right now; say so, and do not claim it is saved.',
+        ),
       NotFound: () => failure('It does not exist or the person cannot see it.'),
       Forbidden: () => failure('The person is not allowed to do that here.'),
       Unauthenticated: () => failure('The person needs to sign in before Vivid can do that.'),

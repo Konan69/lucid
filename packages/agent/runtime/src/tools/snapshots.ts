@@ -1,7 +1,8 @@
-import { MemoryPage, SkillSummary, VividName, type PersonId, type ThreadId } from '@vivid/contracts'
+import { SkillSummary, VividName, type PersonId, type ThreadId } from '@vivid/contracts'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import type { Acting } from '../client.ts'
+import { NoteIndex } from '../notes.ts'
 
 /** Creation time is internal naming evidence; instructions remain out of the context catalog. */
 export const ContextSkill = SkillSummary
@@ -22,13 +23,23 @@ export const SavedProcedures = Schema.TaggedUnion({
 })
 export type SavedProcedures = typeof SavedProcedures.Type
 
+/**
+ * What Vivid remembers, as one response sees it.
+ *
+ * - `Off`: this installation keeps no notes, or nobody is behind the message.
+ * - `Notes`: the index of the acting Person's notes, which may be empty.
+ * - `Unavailable`: the notes exist but could not be read. This is told to the model as such; it
+ *   is never shown as an empty index, which would read as "you know nothing about this Person".
+ */
+export const Remembered = Schema.TaggedUnion({
+  Off: {},
+  Notes: { index: NoteIndex },
+  Unavailable: {},
+})
+export type Remembered = typeof Remembered.Type
+
 export const VividContext = Schema.Struct({
-  /**
-   * What Vivid knows that this Person may see here: the stored facts themselves, newest first,
-   * with a count of older ones that did not fit. It replaced a model-written summary, which
-   * paraphrased the facts and made each reply wait for a completion whenever a memory changed.
-   */
-  memory: MemoryPage,
+  memory: Remembered,
   skills: Schema.Array(ContextSkill),
   timezone: Schema.String,
   /**

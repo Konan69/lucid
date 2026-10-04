@@ -29,12 +29,10 @@ import {
   InputRequest,
   InputRequestState,
   ConnectionRequestMessage,
-  MemoryNote,
-  MemoryNoteScope,
-  MemoryPage,
 } from '@vivid/contracts'
 import { contextInstruction } from '../context.ts'
-import { SavedProcedures, VividContext } from './snapshots.ts'
+import { NoteFile, NoteIndex, NoteLine } from '../notes.ts'
+import { Remembered, SavedProcedures, VividContext } from './snapshots.ts'
 import * as views from './views.ts'
 import { askTools } from './ask.ts'
 import { computerDefinitions } from './computer.ts'
@@ -165,25 +163,22 @@ describe('model views', () => {
     expect(json).not.toMatch(/MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/iu)
     const context = contextInstruction(
       VividContext.make({
-        memory: MemoryPage.make({
-          notes: [
-            MemoryNote.make({
-              kind: 'preference',
-              content: `Review before signing.\nLegacy note: ${reference}.`,
-              scope: MemoryNoteScope.cases.Person.make({}),
-            }),
-            MemoryNote.make({
-              kind: 'decision',
-              content: 'Invoices go out on Fridays',
-              scope: MemoryNoteScope.cases.Company.make({}),
-            }),
-            MemoryNote.make({
-              kind: 'fact',
-              content: 'The launch moved to May',
-              scope: MemoryNoteScope.cases.Thread.make({ title: 'Launch\nplan' }),
-            }),
-          ],
-          older: true,
+        memory: Remembered.cases.Notes.make({
+          index: NoteIndex.make({
+            lines: [
+              NoteLine.make({
+                file: NoteFile.make('review-before-signing.md'),
+                kind: 'preference',
+                description: `Review before signing.\nLegacy note: ${reference}.`,
+              }),
+              NoteLine.make({
+                file: NoteFile.make('invoices-on-fridays.md'),
+                kind: 'decision',
+                description: 'Invoices go out on Fridays',
+              }),
+            ],
+            more: true,
+          }),
         }),
         skills: [skill, skill],
         timezone: 'Africa/Lagos',
@@ -195,12 +190,26 @@ describe('model views', () => {
     )
     expect(context).not.toMatch(/MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|"id"/iu)
     expect(context).toContain('review-agreement-2')
-    // Facts reach the model as written, one per line, with an identifier inside one removed.
-    expect(context).toContain('- (preference) Review before signing. Legacy note: ')
-    expect(context).toContain('- (decision, whole company) Invoices go out on Fridays')
-    // A shared Thread is named by its title, folded to one line.
-    expect(context).toContain('- (fact, conversation "Launch plan") The launch moved to May')
-    expect(context).toContain('Older facts are not shown; call recall to look one up.')
+    // Each note is one line: its file name, kind and description, with an identifier removed and
+    // a line break inside a description folded so it cannot start a line of its own.
+    expect(context).toContain(
+      '- review-before-signing.md (preference): Review before signing. Legacy note: ',
+    )
+    expect(context).toContain('- invoices-on-fridays.md (decision): Invoices go out on Fridays')
+    expect(context).toContain('Older notes are not listed here.')
+    // A failed read is told to the model as such, never as an empty memory.
+    const unread = contextInstruction(
+      VividContext.make({
+        memory: Remembered.cases.Unavailable.make({}),
+        skills: [],
+        timezone: 'UTC',
+        asOf: Option.none(),
+        integrations: [],
+        name: 'Vivid',
+      }),
+    )
+    expect(unread).toContain('Your notes could not be read for this response.')
+    expect(unread).not.toContain('What you remember')
     // The clock is the last thing in the context: the Person's local hour, and the same instant in UTC.
     expect(
       context.endsWith(

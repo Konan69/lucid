@@ -1,21 +1,22 @@
 import { describe, expect, it } from '@effect/vitest'
-import { MemoryNote, MemoryNoteScope, MemoryPage, PersonId, ThreadId } from '@vivid/contracts'
+import { PersonId, ThreadId } from '@vivid/contracts'
 import { Effect, Option } from 'effect'
-import { contextSnapshots, VividContext } from './snapshots.ts'
+import { NoteFile, NoteIndex, NoteLine } from '../notes.ts'
+import { contextSnapshots, Remembered, VividContext } from './snapshots.ts'
+
+/** A context whose memory is one note with this description; the snapshots only carry it. */
+const remembers = (description: string) =>
+  Remembered.cases.Notes.make({
+    index: NoteIndex.make({
+      lines: [NoteLine.make({ file: NoteFile.make('a-fact.md'), kind: 'fact', description })],
+      more: false,
+    }),
+  })
 
 const ada = { threadId: ThreadId.make('shared'), personId: PersonId.make('ada') }
 const dami = { threadId: ada.threadId, personId: PersonId.make('dami') }
 const adaContext = VividContext.make({
-  memory: MemoryPage.make({
-    notes: [
-      MemoryNote.make({
-        kind: 'fact',
-        content: 'Ada’s facts',
-        scope: MemoryNoteScope.cases.Person.make({}),
-      }),
-    ],
-    older: false,
-  }),
+  memory: remembers('Ada’s facts'),
   skills: [],
   timezone: 'Africa/Lagos',
   asOf: Option.none(),
@@ -23,16 +24,7 @@ const adaContext = VividContext.make({
   name: 'Vivid',
 })
 const damiContext = VividContext.make({
-  memory: MemoryPage.make({
-    notes: [
-      MemoryNote.make({
-        kind: 'fact',
-        content: 'Dami’s facts',
-        scope: MemoryNoteScope.cases.Person.make({}),
-      }),
-    ],
-    older: false,
-  }),
+  memory: remembers('Dami’s facts'),
   skills: [],
   timezone: 'Europe/Paris',
   asOf: Option.none(),
@@ -40,16 +32,7 @@ const damiContext = VividContext.make({
   name: 'Juno',
 })
 const updatedContext = VividContext.make({
-  memory: MemoryPage.make({
-    notes: [
-      MemoryNote.make({
-        kind: 'fact',
-        content: 'Updated facts',
-        scope: MemoryNoteScope.cases.Person.make({}),
-      }),
-    ],
-    older: false,
-  }),
+  memory: remembers('Updated facts'),
   skills: [],
   timezone: 'UTC',
   asOf: Option.none(),
