@@ -1,16 +1,32 @@
-import { Predicate, type Schema } from 'effect'
+import type { Schema } from 'effect'
 
-/** Tool servers can echo credentials inside arbitrary nested diagnostics. Discard the entire
- * diagnostic when it mentions a credential/header name, so fragmented or quoted values cannot
- * survive partial redaction. Opaque token-shaped runs are removed before the 400-character cut.
+/** Arbitrary tool errors may echo credentials. Only schema-promised safe validation summaries
+ * are projected; semantic tool errors retain a constant refusal for both model call paths.
  */
-export function toolMessage(value: typeof Schema.Json.Type) {
-  const text = Predicate.isString(value) ? value : JSON.stringify(value)
-  if (
-    /\b(?:authorization|bearer|api[-_]?key|token|cookie|secret|password|credential|key)\b/i.test(
-      text,
+export function toolMessage(_value: typeof Schema.Json.Type) {
+  return 'The integration rejected the tool request; sensitive diagnostics were removed.'
+}
+
+/** Ten summaries of at most 400 characters keep a malformed upstream response from consuming
+ * the model context while leaving normal field paths readable. These are output limits only.
+ */
+export const MAX_VALIDATION_PROBLEMS = 10
+export const MAX_VALIDATION_PROBLEM_LENGTH = 400
+
+/** SDK implementation/tools.ts runtimeFailure currently emits only the constant "Input did not
+ * match the tool schema"; contracts/tools.ts InputInvalid permits richer safe strings later.
+ * Tool field names were supplied by the model and need no keyword/length heuristics. Remove
+ * only exact known internal reference values, before bounding so no partial reference survives.
+ */
+export function validationProblems(
+  problems: readonly string[],
+  internalReferences: readonly string[],
+) {
+  return problems.slice(0, MAX_VALIDATION_PROBLEMS).map((problem) => {
+    const safe = internalReferences.reduce(
+      (text, reference) => text.replaceAll(reference, '[REDACTED]'),
+      problem,
     )
-  )
-    return 'The integration rejected the tool request; sensitive diagnostics were removed.'
-  return text.replace(/[A-Za-z0-9_-]{24,}/g, '[REDACTED]').slice(0, 400)
+    return safe.slice(0, MAX_VALIDATION_PROBLEM_LENGTH)
+  })
 }

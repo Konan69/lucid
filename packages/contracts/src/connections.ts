@@ -1,4 +1,4 @@
-import { Schema } from 'effect'
+import { Effect, Schema } from 'effect'
 import { ActionEffect } from './approvals.js'
 import { ApprovalId, ConnectionId, PersonSummary, ServiceId } from './identity.js'
 
@@ -225,7 +225,11 @@ export const ToolOutcome = Schema.TaggedUnion({
   /** The Connection is not ready and must be authorized again. */
   ConnectionNotReady: { service: ServiceId, serviceName: Schema.String },
   /** The service answered with an error Vivid can read and correct. */
-  Rejected: { message: Schema.String },
+  Rejected: {
+    message: Schema.String,
+    /** Empty means no validation detail was supplied; provider identities never enter this list. */
+    problems: Schema.Array(Schema.String).pipe(Schema.withConstructorDefault(Effect.succeed([]))),
+  },
   /** The request was sent and no answer came back. It may or may not have happened. */
   OutcomeUnknown: {},
 })

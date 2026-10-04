@@ -1,6 +1,8 @@
+import { Radio } from '@base-ui/react/radio'
 import type { MouseEvent, ReactNode } from 'react'
 import { cn } from './cn'
 import { byKeyboard, slide } from './motion'
+import { RadioGroup } from './radiogroup'
 
 /**
  * Plays the raised mark from the option that was chosen to the one just clicked. Each option
@@ -9,7 +11,7 @@ import { byKeyboard, slide } from './motion'
  * has drawn the change, and the travel is a transform, so nothing is laid out while it moves.
  * From the keyboard the choice simply changes.
  */
-function cross(event: MouseEvent<HTMLButtonElement>) {
+function cross(event: MouseEvent<HTMLElement>) {
   if (byKeyboard(event)) return
   const group = event.currentTarget.parentElement
   const from = group === null ? null : group.querySelector('[aria-checked="true"] [data-mark]')
@@ -20,9 +22,11 @@ function cross(event: MouseEvent<HTMLButtonElement>) {
 
 /**
  * A choice between a few things that are all visible at once: which shelf, which trigger, grid or
- * list. It is a radio group to assistive tech, since exactly one option is always chosen. The
- * chosen option is raised, and the raised mark slides to whichever is chosen next (T3 Code
- * mobile's `SegmentedControl`, 200 ms); the others answer to hover and to the keyboard focus ring.
+ * list. Exactly one option is always chosen, so it is shadcn's `RadioGroup` (Base UI's radio
+ * group: one tab stop, the arrow keys move the choice) with each radio drawn as a segment instead
+ * of a dot. The chosen option is raised, and the raised mark slides to whichever is chosen next
+ * (T3 Code mobile's `SegmentedControl`, 200 ms); the others answer to hover and to the keyboard
+ * focus ring.
  */
 export function Segmented<Value extends string>({
   label,
@@ -41,25 +45,21 @@ export function Segmented<Value extends string>({
   onChange: (value: Value) => void
 }) {
   return (
-    <div
-      role="radiogroup"
+    <RadioGroup
       aria-label={label}
-      className="inline-flex items-center rounded-control bg-surface-2 p-0.5"
+      value={value}
+      onValueChange={onChange}
+      className="inline-flex w-auto items-center gap-0 rounded-control bg-surface-2 p-0.5"
     >
       {options.map((option) => (
-        <button
+        <Radio.Root
           key={option.value}
-          type="button"
-          role="radio"
-          aria-checked={option.value === value}
+          value={option.value}
           aria-label={option.name}
-          onClick={(event) => {
-            cross(event)
-            onChange(option.value)
-          }}
+          onClick={cross}
           className={cn(
             'relative inline-flex h-7 min-w-7 cursor-pointer items-center justify-center gap-1.5 rounded-row px-2 text-label transition-colors duration-(--dur-fast)',
-            option.value === value ? 'text-ink' : 'text-ink-3 hover:bg-wash-hover hover:text-ink',
+            option.value === value ? 'text-ink' : 'text-ink-3 hover:bg-accent hover:text-ink',
           )}
         >
           {/* The raised mark. Every option has one so the next can be played in from this one;
@@ -73,8 +73,8 @@ export function Segmented<Value extends string>({
             )}
           />
           <span className="relative inline-flex items-center gap-1.5">{option.label}</span>
-        </button>
+        </Radio.Root>
       ))}
-    </div>
+    </RadioGroup>
   )
 }

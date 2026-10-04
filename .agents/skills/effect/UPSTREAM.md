@@ -10,8 +10,9 @@
 
 - Vivid routing and product/runtime guidance in `SKILL.md` and `references/VIVID.md`.
 - Vivid branding and standard-library guidance in `references/STANDARD_LIBRARY.md`.
+- Official-module discovery for durable work, waits, fanout, workers and persisted state in `references/CAPABILITIES.md`, with its routing lines in `SKILL.md`. Owner-written; upstream has no counterpart.
 - `Schema.TaggedError`, which agrees with current upstream and the project-pinned API.
 
 ## Refresh changes and conflicts
 
-Merged upstream scheduling metadata/`setInputType` corrections and precise `Stream.paginate` element/termination semantics. Version wording now states the truthful installed rc.112 baseline and rc.116 manifest target. Owner Vivid guidance won wherever generic upstream integration wording would replace repository-specific boundaries.
+Merged upstream scheduling metadata/`setInputType` corrections and precise `Stream.paginate` element/termination semantics. Version facts are looked up, never recorded here: `AGENTS.md` owns the pin and the installed package source is the reference. Owner Vivid guidance won wherever generic upstream integration wording would replace repository-specific boundaries.

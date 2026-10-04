@@ -17,9 +17,13 @@ export const LIBRARY_FILE_TYPES = ['application/pdf', 'text/markdown', 'text/pla
 export const digestBytes = (bytes: Uint8Array) =>
   NodeCrypto.createHash('sha256').update(bytes).digest('hex')
 
-/** Normalize whitespace once so previews and indexed chunks use the same extracted text. */
+/**
+ * Strip NUL before normalizing whitespace because PostgreSQL text cannot store it. Empty content
+ * still follows the existing unreadable-item failure; previews and chunks share this boundary.
+ */
 const normalizeText = (text: string) =>
   text
+    .replaceAll('\u0000', '')
     .replace(/\r\n?/gu, '\n')
     .replace(/[ \t]+/gu, ' ')
     .replace(/\n{3,}/gu, '\n\n')

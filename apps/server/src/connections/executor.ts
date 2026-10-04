@@ -28,7 +28,7 @@ import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import type * as HttpBody from 'effect/unstable/http/HttpBody'
 
-import { toolMessage } from './message.ts'
+import { toolMessage, validationProblems } from './message.ts'
 import { retainCatalog } from './catalog.ts'
 import { ConnectionSource } from './address.ts'
 import { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
@@ -135,7 +135,10 @@ export const ExecutorTool = Schema.Struct({
 })
 export const ExecutorCallOutcome = Schema.TaggedUnion({
   Completed: { value: Schema.Json },
-  Rejected: { message: Schema.String },
+  Rejected: {
+    message: Schema.String,
+    problems: Schema.Array(Schema.String).pipe(Schema.withConstructorDefault(Effect.succeed([]))),
+  },
   NotReady: {},
   OutcomeUnknown: {},
 })
@@ -180,6 +183,17 @@ export class ExecutorRejected extends Schema.TaggedError<ExecutorRejected>()(
   { ...errorContext, message: Schema.String },
   { title: 'Connection request rejected' },
 ) {}
+/** HostedTools.call (apps/hosted/server/src/contracts/tools.ts) returns SDK InputInvalid
+ * (packages/sdk/src/contracts/tools.ts): problems is an array of safe validation summaries.
+ * Keep that failure distinct from policy/transport refusal so input can be corrected and retried.
+ * Foreign identities are intentionally excluded; summaries are filtered against call references before projection.
+ */
+export class ExecutorInputInvalid extends Schema.TaggedError<ExecutorInputInvalid>()(
+  'ExecutorInputInvalid',
+  { ...errorContext, problems: Schema.Array(Schema.String) },
+  { title: 'Integration tool input invalid' },
+) {}
+
 /** Missing installation OAuth setup is distinct from a refused sign-in or invalid input. */
 export class ExecutorSetupRequired extends Schema.TaggedError<ExecutorSetupRequired>()(
   'ExecutorSetupRequired',
@@ -249,6 +263,7 @@ export type ExecutorFailure =
   | ExecutorAccessDenied
   | ExecutorNotReady
   | ExecutorRejected
+  | ExecutorInputInvalid
   | ExecutorSetupRequired
   | ExecutorConflict
   | ExecutorAppNameTaken
@@ -577,6 +592,14 @@ const knownFailureTag = Schema.Literals(Record.keys(failureModes))
 const isKnownFailureTag = Schema.is(knownFailureTag)
 const WireFailure = Schema.Struct({ _tag: Schema.NonEmptyString })
 const decodeFailure = Schema.decodeUnknownEffect(WireFailure)
+/** Decode only InputInvalid detail. Other failure diagnostics may contain credentials and are
+ * never projected. HostedTools.call imports this exact InputInvalid shape from the SDK.
+ */
+const WireInputInvalid = Schema.Struct({
+  _tag: Schema.Literal('InputInvalid'),
+  problems: Schema.Array(Schema.String),
+})
+const decodeInputInvalid = Schema.decodeUnknownEffect(WireInputInvalid)
 
 /** Remote tags determine recovery; arbitrary messages and credential-bearing diagnostics are dropped. */
 function translateFailure(tag: typeof knownFailureTag.Type, tool: string | null) {
@@ -629,6 +652,17 @@ function responseReader(client: HttpClient.HttpClient) {
           )
         }
         const failure = yield* decodeFailure(body).pipe(Effect.mapError(invalid))
+        if (failure._tag === 'InputInvalid' && tool !== null) {
+          const detail = yield* decodeInputInvalid(body).pipe(
+            Effect.mapError(() => translateFailure('InputInvalid', tool)),
+          )
+          return yield* Effect.fail(
+            ExecutorInputInvalid.make({
+              ...context,
+              problems: detail.problems,
+            }),
+          )
+        }
         if (!isKnownFailureTag(failure._tag)) {
           if (response.status >= 500)
             return yield* Effect.fail(ExecutorExecutionUncertain.make(context))
@@ -1219,23 +1253,15 @@ function accountRequirement(app: typeof WireApp.Type) {
   return Effect.succeed(requirement)
 }
 
-/** Inspection is read-only and bounded. Only explicit setup answers enter the retained facts;
- * transient failures fail the lookup with zero TTL and leave the last known availability intact.
- */
-const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
-  http: ExecutorHttp,
-  catalog: ExecutorService['catalog'],
+/** Retain successful display facts and report only transitions into inspection failure. */
+function makeAvailabilityRecorder(
+  facts: Ref.Ref<HashMap.HashMap<ServiceId, ServiceAuthorization>>,
+  failures: Ref.Ref<HashMap.HashMap<ServiceId, string>>,
 ) {
-  const inspect = makeInspectSetup(http)
-  const permits = yield* Semaphore.make(4)
-  const facts = yield* Ref.make(HashMap.empty<ServiceId, ServiceAuthorization>())
-  const failures = yield* Ref.make(HashMap.empty<ServiceId, string>())
-  // Definitions enter only through explicit Begin/Resume; there is no catalog-detail endpoint.
-  const definitions = yield* Ref.make(HashMap.empty<ServiceId, typeof Requirement.Type>())
   /** Publish each completed inspection separately so a slow service never delays its peers.
    * Log only the integration identity and typed failure tag, once on entering failed availability.
    */
-  const record = Effect.fn('Executor.recordAvailability')(function* (
+  return Effect.fn('Executor.recordAvailability')(function* (
     service: ServiceId,
     authorization: ServiceAuthorization,
     failure: Option.Option<string>,
@@ -1255,12 +1281,27 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
       )
     }
   })
+}
+
+/** Inspection is read-only and bounded. Only explicit setup answers enter the retained facts;
+ * transient failures fail the lookup with zero TTL and leave the last known availability intact.
+ */
+const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
+  http: ExecutorHttp,
+  catalog: ExecutorService['catalog'],
+) {
+  const inspect = makeInspectSetup(http)
+  const scope = yield* Effect.scope
+  const publication = yield* Semaphore.make(1)
+  const permits = yield* Semaphore.make(4)
+  const facts = yield* Ref.make(HashMap.empty<ServiceId, ServiceAuthorization>())
+  const failures = yield* Ref.make(HashMap.empty<ServiceId, string>())
+  // Definitions enter only through explicit Begin/Resume; there is no catalog-detail endpoint.
+  const definitions = yield* Ref.make(HashMap.empty<ServiceId, typeof Requirement.Type>())
+  const record = makeAvailabilityRecorder(facts, failures)
   const inspections = yield* Cache.makeWith(
-    Effect.fn('Executor.inspectAuthorization')(function* (input: {
-      readonly service: ServiceId
-      readonly returnAddress: string
-    }) {
-      const entry = (yield* catalog()).find((candidate) => candidate.id === input.service)
+    Effect.fn('Executor.inspectAuthorization')(function* (service: ServiceId) {
+      const entry = (yield* catalog()).find((candidate) => candidate.id === service)
       if (entry === undefined)
         return yield* Effect.fail(
           ExecutorRejected.make({
@@ -1270,7 +1311,7 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
           }),
         )
       if (ServiceAuthorization.guards.None(entry.authorization)) return entry.authorization
-      const definition = HashMap.get(yield* Ref.get(definitions), input.service)
+      const definition = HashMap.get(yield* Ref.get(definitions), service)
       if (Option.isNone(definition)) return entry.authorization
       const authorization = yield* permits.withPermits(1)(
         inspect(definition.value).pipe(
@@ -1278,15 +1319,13 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
           Effect.catchTag('TimeoutError', () =>
             Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
           ),
-          Effect.tap((value) => record(input.service, value, Option.none())),
           Effect.catch(
             Effect.fn('Executor.unavailableSetup')(function* (error) {
               if (isSetupRequired(error)) {
                 const unavailable = ServiceAuthorization.cases.SetupRequired.make({})
-                yield* record(input.service, unavailable, Option.none())
                 return unavailable
               }
-              yield* record(input.service, entry.authorization, Option.some(error._tag))
+              yield* record(service, entry.authorization, Option.some(error._tag))
               return yield* Effect.fail(error)
             }),
           ),
@@ -1299,6 +1338,21 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
       timeToLive: (exit) => (Exit.isSuccess(exit) ? '10 minutes' : 0),
     },
   )
+  /** Cache.set replaces the mapped entry in rc.116; an old lookup only completes its own
+   * entry. Publish the currently mapped success, never that old lookup's returned value.
+   * The publication permit orders this snapshot with sign-in refusal recording.
+   */
+  const readInspection = Effect.fn('Executor.readInspection')(function* (service: ServiceId) {
+    const loaded = yield* Cache.get(inspections, service)
+    return yield* publication.withPermit(
+      Effect.gen(function* () {
+        const current = yield* Cache.getSuccess(inspections, service)
+        if (Option.isNone(current)) return loaded
+        yield* record(service, current.value, Option.none())
+        return current.value
+      }),
+    )
+  })
   return {
     /** Explicit management already owns an app; retain its public definition without another import. */
     inspectApp: Effect.fn('Executor.inspectApp')(function* (
@@ -1306,17 +1360,15 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
       app: typeof WireApp.Type,
     ) {
       const requirement = yield* accountRequirement(app)
-      yield* Ref.update(definitions, (current) => HashMap.set(current, input.service, requirement))
-      yield* Cache.invalidate(inspections, {
-        service: input.service,
-        returnAddress: input.returnAddress,
-      })
+      const alreadyKnown = yield* Ref.modify(definitions, (current) => [
+        HashMap.has(current, input.service),
+        HashMap.set(current, input.service, requirement),
+      ])
+      // A pre-definition read can cache only catalogue metadata. Replace it once the actual
+      // requirement arrives; subsequent Begin calls must preserve a refused sign-in's TTL.
+      if (!alreadyKnown) yield* Cache.invalidate(inspections, input.service)
       const entry = (yield* catalog()).find((candidate) => candidate.id === input.service)
-      if (entry !== undefined)
-        return yield* Cache.get(inspections, {
-          service: input.service,
-          returnAddress: input.returnAddress,
-        })
+      if (entry !== undefined) return yield* readInspection(input.service)
       const authorization = yield* inspect(requirement).pipe(
         Effect.timeout('5 seconds'),
         Effect.catchTag('TimeoutError', () =>
@@ -1326,25 +1378,44 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
       yield* record(input.service, authorization, Option.none())
       return authorization
     }),
-    authorization: Effect.fn('Executor.authorization')(
-      (input: { readonly service: ServiceId; readonly returnAddress: string }) =>
-        Cache.get(inspections, input),
+    authorization: Effect.fn('Executor.authorization')((input: { readonly service: ServiceId }) =>
+      readInspection(input.service),
     ),
+    /** Display reads use retained facts immediately. Cache.has also sees pending entries;
+     * expired/missing inspections start in the owning layer scope without blocking the list.
+     * Inspection failures are logged by the lookup and retain the last successful display fact.
+     */
     catalog: Effect.fn('Executor.availableCatalog')(function* () {
       const entries = yield* catalog()
       const current = yield* Ref.get(facts)
-      return entries.map((entry) =>
-        HashMap.get(current, entry.id).pipe(
-          Option.match({
-            onNone: () => entry,
-            onSome: (authorization) => ExecutorServiceEntry.make({ ...entry, authorization }),
-          }),
-        ),
+      return yield* Effect.forEach(
+        entries,
+        Effect.fn('Executor.refreshAvailability')(function* (entry) {
+          const previous = HashMap.get(current, entry.id)
+          if (Option.isNone(previous)) return entry
+          if (!(yield* Cache.has(inspections, entry.id))) {
+            yield* readInspection(entry.id).pipe(
+              Effect.catch(() => Effect.void),
+              Effect.forkIn(scope),
+            )
+          }
+          return ExecutorServiceEntry.make({ ...entry, authorization: previous.value })
+        }),
       )
     }),
-    recordSetupRequired: Effect.fn('Executor.recordSetupRequired')((service: ServiceId) =>
-      record(service, ServiceAuthorization.cases.SetupRequired.make({}), Option.none()),
-    ),
+    /** Executor's refused sign-in is stronger evidence than its setup endpoint. Cache.set
+     * starts a full ten-minute TTL and replaces pending entries; publication is serialized
+     * so an older inspection cannot publish SignIn over this retained refusal.
+     */
+    recordSetupRequired: Effect.fn('Executor.recordSetupRequired')(function* (service: ServiceId) {
+      yield* publication.withPermit(
+        Effect.gen(function* () {
+          const unavailable = ServiceAuthorization.cases.SetupRequired.make({})
+          yield* Cache.set(inspections, service, unavailable)
+          yield* record(service, unavailable, Option.none())
+        }),
+      )
+    }),
   }
 })
 
@@ -1787,6 +1858,26 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
         )
         .pipe(
           Effect.map(completedCall),
+          Effect.catchTag('ExecutorInputInvalid', ({ problems }) =>
+            Effect.succeed(
+              ExecutorCallOutcome.cases.Rejected.make({
+                message: 'Input did not match the tool schema. Correct its input and retry.',
+                problems: validationProblems(problems, [
+                  references.app,
+                  catalog.deployment,
+                  references.profile,
+                  ...ExecutorReferences.match(references, {
+                    Public: () => [],
+                    Authorized: ({ account }) => [account],
+                    EnteringKey: () => [],
+                    SigningIn: () => [],
+                    OAuthSigningIn: () => [],
+                    GoogleSigningIn: () => [],
+                  }),
+                ]),
+              }),
+            ),
+          ),
           Effect.catchTags({
             ExecutorTransportFailure: () =>
               Effect.succeed(ExecutorCallOutcome.cases.OutcomeUnknown.make({})),

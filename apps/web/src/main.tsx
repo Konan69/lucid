@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import { Broken } from './screen/Broken'
 import { Recover } from './ui/Recover'
+import { TooltipProvider } from './ui/tooltip'
 import { engine } from './data/runtime'
 // The two typefaces ship with the app, so Vivid looks the same on every system.
 import '@fontsource-variable/geist'
@@ -19,7 +20,10 @@ createRoot(root).render(
     <RegistryContext.Provider value={engine.registry}>
       {/* The last line of defence: whatever fails to draw, there is still a screen with a way on. */}
       <Recover from="app" fallback={<Broken />}>
-        <App />
+        {/* One provider for every tooltip, so the second one a pointer reaches opens at once. */}
+        <TooltipProvider>
+          <App />
+        </TooltipProvider>
       </Recover>
     </RegistryContext.Provider>
   </StrictMode>,

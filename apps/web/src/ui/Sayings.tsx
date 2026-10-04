@@ -30,7 +30,7 @@ export function Sayings() {
                 // Read once more here: the handler is only reached when there is an action.
                 Option.map(saying.action, (action) => action.go())
               }}
-              className="shrink-0 cursor-pointer rounded-control px-2 py-1 font-title text-accent-ink transition-colors duration-(--dur-fast) hover:bg-wash-hover"
+              className="shrink-0 cursor-pointer rounded-control px-2 py-1 font-title text-primary-ink transition-colors duration-(--dur-fast) hover:bg-wash-hover"
             >
               {saying.action.value.label}
             </button>

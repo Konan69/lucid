@@ -150,6 +150,48 @@ describe.skipIf(!testDatabaseConfigured || Option.isSome(missingHost))(
       )
 
       it.effect(
+        'returns validation problems to a program and accepts its corrected next call',
+        () =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const test = yield* fixture()
+              yield* (yield* ConnectionStore).begin(test.personal, {
+                service: serviceId,
+                label: 'Records',
+                shared: false,
+              })
+              const executor = yield* Executor
+              const provider = Executor.of({
+                ...executor,
+                call: Effect.fn('Test.validation')(({ input }) =>
+                  Effect.succeed(
+                    typeof input === 'object' && input !== null && 'repoName' in input
+                      ? ExecutorCallOutcome.cases.Completed.make({ value: { corrected: true } })
+                      : ExecutorCallOutcome.cases.Rejected.make({
+                          message: 'Correct the input',
+                          problems: ['repoName: required'],
+                        }),
+                  ),
+                ),
+              })
+              const outcome = yield* run(
+                test.personal,
+                test.personalId,
+                `const first=await ${use('read')}; const next=await tools.use_tool({account:"Records",tool:"read",input:{repoName:"facebook/react"},summary:"Read",rationale:"Answer"}); return {first,next};`,
+              ).pipe(
+                Effect.provide(codeCallsLayer, { local: true }),
+                Effect.provideService(Executor, provider),
+              )
+              expect(outcome).toHaveProperty('result', {
+                first: { ok: false, reason: 'Correct the input', problems: ['repoName: required'] },
+                next: { ok: true, output: { corrected: true } },
+              })
+              expect(outcome.calls.map((call) => call.end)).toEqual(['refused', 'completed'])
+            }),
+          ).pipe(Effect.provide(testLayer)),
+      )
+
+      it.effect(
         'keeps colliding personal account names scoped and rejects forged ownership fields',
         () =>
           Effect.scoped(

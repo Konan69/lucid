@@ -15,7 +15,7 @@ import { Building2, Search, Unplug } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { change, live, LiveState, services, serviceSearch, useLive } from '../../data/live'
 import { orSay } from '../../data/said'
-import { Button, IconButton } from '../../ui/Button'
+import { Button, IconButton } from '../../ui/button'
 import { cn } from '../../ui/cn'
 import { Segmented } from '../../ui/Segmented'
 import { Began, begin, follow } from '../integration/begin'
@@ -199,7 +199,7 @@ export function Connections({ me }: { me: MeResponse }) {
  */
 function Find({ query, onQuery }: { query: string; onQuery: (query: string) => void }) {
   return (
-    <label className="flex h-11 cursor-text items-center gap-2.5 rounded-full bg-surface-3 px-4 edge edge-field focus-within:edge-accent">
+    <label className="flex h-11 cursor-text items-center gap-2.5 rounded-full bg-surface-3 px-4 edge edge-field focus-within:edge-primary">
       <Search aria-hidden className="size-4 shrink-0 text-ink-3" />
       <input
         value={query}
@@ -411,7 +411,7 @@ function ConnectedActions({
   }
   return (
     <div className="flex shrink-0 items-center gap-1">
-      <Button size="sm" onClick={onResume}>
+      <Button variant="outline" size="sm" onClick={onResume}>
         Reconnect
       </Button>
       <IconButton label={`Disconnect ${connection.serviceName}`} onClick={onDisconnect}>
@@ -579,7 +579,7 @@ function ServiceTile({
       aria-label={connected ? `${service.name}, connected` : `Connect ${service.name}`}
       className={cn(
         TILE,
-        'cursor-pointer outline-none hover:bg-surface-2 focus-visible:edge-accent disabled:cursor-default',
+        'cursor-pointer outline-none hover:bg-surface-2 focus-visible:edge-primary disabled:cursor-default',
         PRESS,
         arriving,
       )}

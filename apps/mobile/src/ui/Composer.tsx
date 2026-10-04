@@ -8,6 +8,7 @@ import { MOBILE_TYPOGRAPHY } from '../data/typography'
 import { ComposerEditor } from '../native/composer/Editor'
 import type { ComposerEditorHandle } from '../native/composer/types'
 import { useTheme } from '../theme'
+import { BorderBeam } from '../../vendor/beam'
 import Animated from 'react-native-reanimated'
 import { Glass } from './Glass'
 import { APPEAR, LEAVE, MORPH } from './motion/morph'
@@ -21,6 +22,9 @@ const LINE = MOBILE_TYPOGRAPHY.reading.lineHeight
 const INSET = 5
 const SHORTEST = LINE + INSET * 2
 const TALLEST = LINE * 6 + INSET * 2
+
+/** The pill's corner, shared by the glass and the beam that travels its edge. */
+const RADIUS = 23
 
 /**
  * Where a Person writes to Vivid: on the first screen to start a Thread, and in a Thread to
@@ -62,7 +66,7 @@ export function Composer({
   onSend: () => void
   onStop: () => void
 }) {
-  const { colors: c } = useTheme()
+  const { colors: c, dark } = useTheme()
   const insets = useSafeAreaInsets()
   const keyboard = useKeyboardShowing()
   const [height, setHeight] = useState(SHORTEST)
@@ -87,71 +91,85 @@ export function Composer({
         paddingBottom: keyboard ? 8 : Math.max(insets.bottom, 12),
       }}
     >
-      {/* The round button inside is 34 points with 6 around it: 23 is concentric with it. */}
-      <Glass radius={23} style={styles.column}>
-        <Animated.View
-          layout={MORPH}
-          style={{
-            flexDirection: 'row',
-            alignItems: 'flex-end',
-            paddingLeft: 18,
-            paddingRight: 6,
-            paddingVertical: 6,
-            backgroundColor: c['composer-surface'],
-          }}
-        >
-          <ComposerEditor
-            ref={ref}
-            value={value}
-            placeholder={placeholder}
-            multiline
-            onChangeText={onChange}
-            onSubmit={send}
-            contentInsetVertical={INSET}
-            onContentHeightChange={(next) => setHeight(Math.min(TALLEST, Math.max(SHORTEST, next)))}
-            style={{ flex: 1, height }}
-            textStyle={MOBILE_TYPOGRAPHY.reading}
-          />
-          {offered && (
-            <Animated.View entering={APPEAR} exiting={LEAVE}>
-              <Press
-                accessibilityRole="button"
-                accessibilityLabel={working ? 'Stop Vivid' : 'Send'}
-                accessibilityState={{ disabled: idle }}
-                disabled={idle}
-                // The drawn circle is 34 points; the slop makes what a thumb hits the full 44.
-                hitSlop={(TARGET - 34) / 2}
-                onPress={send}
-                style={{
-                  width: 34,
-                  height: 34,
-                  borderRadius: 17,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: working ? c['status-danger'] : c.primary,
-                  opacity: idle ? 0.4 : 1,
-                }}
-              >
-                {working ? (
-                  <Square
-                    pointerEvents="none"
-                    size={13}
-                    color={c['ink-on-color']}
-                    fill={c['ink-on-color']}
-                  />
-                ) : (
-                  <ArrowUp
-                    pointerEvents="none"
-                    size={19}
-                    strokeWidth={2.2}
-                    color={c['primary-foreground']}
-                  />
-                )}
-              </Press>
-            </Animated.View>
-          )}
-        </Animated.View>
-      </Glass>
+      {/* While Vivid is working, a beam travels the pill's edge: the same one, with the same
+          colours and strength, as the web composer (`apps/web/src/screen/thread/Composer.tsx`).
+          It is drawn only then; at rest nothing repaints. */}
+      <BorderBeam
+        active={working}
+        colorVariant="ocean"
+        strength={0.7}
+        theme={dark ? 'dark' : 'light'}
+        borderRadius={RADIUS}
+        style={styles.column}
+      >
+        {/* The round button inside is 34 points with 6 around it: 23 is concentric with it. */}
+        <Glass radius={RADIUS} style={styles.column}>
+          <Animated.View
+            layout={MORPH}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'flex-end',
+              paddingLeft: 18,
+              paddingRight: 6,
+              paddingVertical: 6,
+              backgroundColor: c['composer-surface'],
+            }}
+          >
+            <ComposerEditor
+              ref={ref}
+              value={value}
+              placeholder={placeholder}
+              multiline
+              onChangeText={onChange}
+              onSubmit={send}
+              contentInsetVertical={INSET}
+              onContentHeightChange={(next) =>
+                setHeight(Math.min(TALLEST, Math.max(SHORTEST, next)))
+              }
+              style={{ flex: 1, height }}
+              textStyle={MOBILE_TYPOGRAPHY.reading}
+            />
+            {offered && (
+              <Animated.View entering={APPEAR} exiting={LEAVE}>
+                <Press
+                  accessibilityRole="button"
+                  accessibilityLabel={working ? 'Stop Vivid' : 'Send'}
+                  accessibilityState={{ disabled: idle }}
+                  disabled={idle}
+                  // The drawn circle is 34 points; the slop makes what a thumb hits the full 44.
+                  hitSlop={(TARGET - 34) / 2}
+                  onPress={send}
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 17,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: working ? c['status-danger'] : c.primary,
+                    opacity: idle ? 0.4 : 1,
+                  }}
+                >
+                  {working ? (
+                    <Square
+                      pointerEvents="none"
+                      size={13}
+                      color={c['ink-on-color']}
+                      fill={c['ink-on-color']}
+                    />
+                  ) : (
+                    <ArrowUp
+                      pointerEvents="none"
+                      size={19}
+                      strokeWidth={2.2}
+                      color={c['primary-foreground']}
+                    />
+                  )}
+                </Press>
+              </Animated.View>
+            )}
+          </Animated.View>
+        </Glass>
+      </BorderBeam>
     </View>
   )
 }

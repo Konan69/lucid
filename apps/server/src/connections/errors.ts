@@ -21,6 +21,8 @@ export const executorFailure = Match.type<ExecutorFailure>().pipe(
       }),
     ServiceUnavailable: (error) => error,
     ExecutorSetupRequired: () => new InvalidRequest({ message: connectionSetupMessage }),
+    ExecutorInputInvalid: () =>
+      new InvalidRequest({ message: 'Tool input did not match its schema.' }),
     ExecutorRejected: ({ message }) => new InvalidRequest({ message }),
     ExecutorAppNameTaken: () =>
       new Conflict({ message: 'The Integration installation changed; retry connecting.' }),

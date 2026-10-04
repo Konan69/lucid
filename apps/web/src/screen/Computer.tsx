@@ -7,7 +7,7 @@ import { change, live, LiveState, useLive } from '../data/live'
 import { pages } from '../data/pages'
 import { split } from '../data/split'
 import { orSay } from '../data/said'
-import { Button, IconButton } from '../ui/Button'
+import { Button, IconButton } from '../ui/button'
 import { cn } from '../ui/cn'
 import { Face } from '../ui/Face'
 import { PageTabs, PageToolbar, PageView } from './computer/Pages'
@@ -180,17 +180,18 @@ function Keyboard({ computer }: { computer: ComputerRecord }) {
   return (
     <Button
       size="sm"
-      variant={computer.heldByPerson ? 'primary' : 'control'}
-      icon={<Hand className="size-3.5" />}
+      variant={computer.heldByPerson ? 'default' : 'outline'}
       onClick={() => hold(!computer.heldByPerson)}
     >
+      <Hand className="size-3.5" />
       {computer.heldByPerson ? 'Hand back' : 'Take over'}
     </Button>
   )
 }
 
 const TURN_ON = (
-  <Button variant="primary" icon={<MonitorPlay className="size-3.5" />} onClick={start}>
+  <Button onClick={start}>
+    <MonitorPlay className="size-3.5" />
     Turn it on
   </Button>
 )
@@ -252,7 +253,11 @@ function Screen({ computer }: { computer: ComputerRecord }) {
       <Note
         title="It did not start"
         detail={state.reason}
-        action={<Button onClick={start}>Try again</Button>}
+        action={
+          <Button variant="outline" onClick={start}>
+            Try again
+          </Button>
+        }
       />
     ),
     Absent: resting,
@@ -364,7 +369,11 @@ function Display({ address, control }: { address: string; control: boolean }) {
       <Note
         title="Can’t see the screen"
         detail="The computer is still running. Its screen did not reach this window."
-        action={<Button onClick={() => hear('asked')}>Look again</Button>}
+        action={
+          <Button variant="outline" onClick={() => hear('asked')}>
+            Look again
+          </Button>
+        }
       />
     )
   }

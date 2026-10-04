@@ -1,9 +1,19 @@
 import { Result } from 'effect'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { change } from '../../data/live'
 import { Route, router } from '../../data/route'
-import { Button } from '../../ui/Button'
-import { Dialog, DialogActions, DialogField } from '../../ui/Dialog'
+import { Button } from '../../ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../ui/dialog'
+import { Field, FieldError, FieldLabel } from '../../ui/field'
+import { Input } from '../../ui/input'
+import { useSurface } from '../../ui/Layer'
 
 /**
  * Creates a Company: a name, and that is all. It is opened from the workspace switcher and from
@@ -15,6 +25,9 @@ export function CreateCompany({ onClose }: { onClose: () => void }) {
   const [refusal, setRefusal] = useState<string | null>(null)
   // One Company per press: a second Enter while the first is on its way must not make a second.
   const [creating, setCreating] = useState(false)
+  const field = useId()
+  // Sent away (Escape, a click outside, the close button) it plays out before `onClose` is told.
+  const surface = useSurface(onClose)
 
   async function create() {
     if (creating) return
@@ -30,38 +43,50 @@ export function CreateCompany({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Dialog
-      title="Create a company"
-      description="Shared threads, a shared Library and shared rules for the people you work with. Your own threads, notes and integrations stay yours."
-      onClose={onClose}
-    >
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          void create()
-        }}
-      >
-        <DialogField
-          label="Company name"
-          value={name}
-          onChange={setName}
-          placeholder="Acme"
-          maxLength={80}
-        />
-        {refusal !== null && (
-          <p role="alert" className="mt-2 text-label text-danger">
-            {refusal}
-          </p>
-        )}
-        <DialogActions>
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" disabled={creating || name.trim().length === 0}>
-            {creating ? 'Creating…' : 'Create company'}
-          </Button>
-        </DialogActions>
-      </form>
+    <Dialog {...surface}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Create a company</DialogTitle>
+          <DialogDescription>
+            Shared threads, a shared Library and shared rules for the people you work with. Your own
+            threads, notes and integrations stay yours.
+          </DialogDescription>
+        </DialogHeader>
+        {/* `contents`: the field and the actions take the dialog's own gap, and the submit button
+            stays inside the form so Enter in the field creates the Company. */}
+        <form
+          className="contents"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void create()
+          }}
+        >
+          <Field>
+            <FieldLabel htmlFor={field}>Company name</FieldLabel>
+            <Input
+              id={field}
+              required
+              // A dialog exists to take this one answer; the cursor belongs in it.
+              // oxlint-disable-next-line jsx-a11y/no-autofocus
+              autoFocus
+              maxLength={80}
+              value={name}
+              onChange={(event) => setName(event.currentTarget.value)}
+              placeholder="Acme"
+            />
+            {/* Under the field it is about, with what was typed still there. */}
+            {refusal !== null && <FieldError>{refusal}</FieldError>}
+          </Field>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={creating || name.trim().length === 0}>
+              {creating ? 'Creating…' : 'Create company'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
     </Dialog>
   )
 }

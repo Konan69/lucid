@@ -1,8 +1,18 @@
 @import 'tailwindcss';
 @import '@vivid/tokens/tokens.css';
 @import 'shadow-plugin';
+/* shadcn. `shadcn/tailwind.css` declares the state variants its components are written with
+   (`data-open:`, `data-closed:`, `data-checked:`, …) and `tw-animate-css` the `animate-in` family
+   a registry component may arrive with. Vivid's own components move with `./motion.css`. */
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
 /* The motion vocabulary: every named entrance, exit and press. See `ui/motion.ts`. */
 @import './motion.css';
+
+/* `dark:` for a component that arrives from a registry with dark-only classes. Vivid's tokens
+   change with the theme themselves, so nothing written here needs it. Dark is every theme that is
+   not light, as in the tokens. */
+@custom-variant dark (&:where(html:not([data-theme='light']) *));
 
 /* Workspace measurements the classes below share. The Computer's width is set by `data/split.ts`
    as it is dragged, and its bounds live there too; these are only the fixed ones. */
@@ -102,6 +112,13 @@
   button:disabled {
     cursor: not-allowed;
   }
+  /* A `border` with no colour beside it takes the layer edge, not the text colour. shadcn's
+     components are written that way. */
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+  }
   ::selection {
     background: var(--accent-soft);
   }
@@ -176,8 +193,12 @@
   --edge-color: var(--line-4);
 }
 /* The edge of the thing that has focus, or is chosen. */
-@utility edge-accent {
+@utility edge-primary {
   --edge-color: var(--accent);
+}
+/* The edge of a field whose answer was refused. */
+@utility edge-danger {
+  --edge-color: var(--status-danger);
 }
 
 /* ── Glass: for what floats over live content ─────────────── */

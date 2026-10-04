@@ -2,6 +2,21 @@
 
 The root Oxlint config applies design rules only to `apps/web/src/**/*.tsx`. React Native does not share this Tailwind surface. `apps/web/components.json` points component discovery at `apps/web/src/ui` and theme discovery at `apps/web/src/styles/index.css`; that entry imports `packages/design/tokens/src/tokens.css`.
 
+## The components are shadcn's
+
+`apps/web/src/ui` holds shadcn components written by the shadcn CLI (`base-mira` style on Base UI, `apps/web/components.json`), under the CLI's own lowercase file names so `pnpm dlx shadcn@latest add <name>` (run from `apps/web`) can add or refresh one. Vivid's compositions of them sit beside them in PascalCase files (`Segmented.tsx`, `Person.tsx`, `Face.tsx`).
+
+A component the CLI writes is then drawn as Vivid's, in the file, once:
+
+- it imports `cn` from `@/ui/cn` (the CLI writes `from "cn"`; Vivid's is configured with the theme's own class names),
+- type is Vivid's scale (`text-label`, `text-title`), radii are `rounded-row|control|card|dialog`,
+- a layer is `edge`, a floating layer `lift` or `lift-lg` with `glass`; no `shadow-*` plus `ring-*` pairs,
+- what floats moves with `motion-pop` or `motion-dialog` (which carry the exit Base UI waits for), never `animate-in`,
+- no `dark:` classes: the tokens change with the theme,
+- a popup takes `ref={countSurface}` so the desktop app knows something floats over the page.
+
+shadcn's colour names are theme entries derived from Vivid's roles (`packages/design/tokens/src/tokens.css`), so an unedited registry component is already on Vivid's layers. `primary` is the brand colour. `accent` is shadcn's word for the fill under the pointer; it is not the brand colour.
+
 ## Ownership
 
 `@shadcn/lint@0.1.1` owns component usage, semantic colors, arbitrary values, inline styles, unknown classes, and static class readability. `oxlint-tailwindcss@1.12.0` owns non-overlapping Tailwind correctness and canonical syntax. The Tailwind plugin's unknown-class, hardcoded-color, arbitrary-value, and theme-token checks stay disabled because the shadcn rules already report those policies with Vivid-specific guidance.
@@ -20,7 +35,7 @@ This is the first draft for UI-owner review. The executable source is the single
 ^Card$                                        allow: layout, spacing
 
 # Small visual primitives own their treatment; callers place them.
-^(Avatar|Face|StatusLabel|StatusDot|ServiceMarks)$ allow: layout
+^(Avatar|PersonAvatar|Face|StatusLabel|StatusDot|ServiceMarks)$ allow: layout
 
 # All other discovered design-system components.
 default                                      allow: layout

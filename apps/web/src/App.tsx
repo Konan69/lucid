@@ -10,15 +10,14 @@ import { panel } from './data/panel'
 import { Route, router } from './data/route'
 import { engine, link } from './data/runtime'
 import { sidebar } from './data/sidebar'
-import { theme } from './data/theme'
 import { startThread } from './data/threads'
 import { First } from './screen/First'
 import { Invite } from './screen/Invite'
-import { Notifications } from './screen/Notifications'
 import { Palette } from './screen/Palette'
 import { Sidebar } from './screen/Sidebar'
 import { Thread } from './screen/Thread'
 import { Welcome } from './screen/Welcome'
+import { IconButton } from './ui/button'
 import { Face } from './ui/Face'
 import { Sayings } from './ui/Sayings'
 
@@ -46,7 +45,7 @@ if ('requestIdleCallback' in globalThis) requestIdleCallback(warm)
 else setTimeout(warm, 2000)
 
 /** What floats over the app. One at a time, because each takes the keyboard. */
-type Overlay = 'none' | 'palette' | 'notifications'
+type Overlay = 'none' | 'palette'
 
 const overlayListeners = new Set<() => void>()
 let overlay: Overlay = 'none'
@@ -203,9 +202,6 @@ function Shell({ me }: { me: MeResponse }) {
   const floating = useSyncExternalStore(subscribeOverlay, () => overlay)
   const beside = useSyncExternalStore(panel.subscribe, panel.isOpen)
   const notices = useLiveValue(live.notifications)
-  const settings = useLiveValue(live.settings)
-  // The Person's theme is theirs on every device; when their settings arrive, this device follows.
-  if (Option.isSome(settings)) theme.set(settings.value.theme)
 
   return (
     <div className="group/shell relative flex size-full" data-rail={sidebarOpen ? 'open' : 'shut'}>
@@ -215,7 +211,6 @@ function Shell({ me }: { me: MeResponse }) {
         open={sidebarOpen}
         onHide={sidebar.toggle}
         onSearch={() => setOverlay('palette')}
-        onNotifications={() => setOverlay('notifications')}
         unread={Option.match(notices, { onNone: () => 0, onSome: (value) => value.unreadCount })}
       />
       {sidebarOpen ? (
@@ -227,14 +222,15 @@ function Shell({ me }: { me: MeResponse }) {
           className="fixed inset-0 z-30 animate-fade-in cursor-default bg-scrim md:hidden"
         />
       ) : (
-        <button
-          aria-label="Show sidebar"
-          title="Show sidebar (⌘B)"
+        // The way back to a hidden sidebar, in the corner its own "Hide sidebar (⌘B)" button
+        // stood in. Its label names the shortcut too, as that one does, and is what the tooltip says.
+        <IconButton
+          label="Show sidebar (⌘B)"
           onClick={sidebar.show}
-          className="absolute top-2 left-2 z-30 inline-flex size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"
+          className="absolute top-2 left-2 z-30"
         >
           <PanelLeft className="size-4" />
-        </button>
+        </IconButton>
       )}
       <main className="relative flex min-w-0 flex-1">
         <Suspense fallback={<Splash />}>
@@ -270,7 +266,6 @@ function Shell({ me }: { me: MeResponse }) {
         </Suspense>
       )}
       {floating === 'palette' && <Palette onClose={() => setOverlay('none')} />}
-      {floating === 'notifications' && <Notifications onClose={() => setOverlay('none')} />}
     </div>
   )
 }

@@ -1,10 +1,20 @@
 import type { Project, ProjectId } from '@vivid/contracts'
 import { projects as projectsData } from '@vivid/state'
 import { Result } from 'effect'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { change, live } from '../../data/live'
-import { Button } from '../../ui/Button'
-import { Dialog, DialogActions, DialogField } from '../../ui/Dialog'
+import { Button } from '../../ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../ui/dialog'
+import { Field, FieldError, FieldLabel } from '../../ui/field'
+import { Input } from '../../ui/input'
+import { useSurface } from '../../ui/Layer'
 
 /**
  * Makes a Project: a name, and nothing else. `inside` is the Project it will sit in, or nothing
@@ -27,6 +37,9 @@ export function CreateProject({
   const [refused, setRefused] = useState(false)
   // One Project per press: a second Enter while the first is on its way must not make a second.
   const [creating, setCreating] = useState(false)
+  const field = useId()
+  // Sent away (Escape, a click outside, the close button) it plays out before `onClose` is told.
+  const surface = useSurface(onClose)
 
   async function create() {
     if (creating) return
@@ -46,38 +59,53 @@ export function CreateProject({
   }
 
   return (
-    <Dialog
-      title="New project"
-      description="A project keeps the threads about one piece of work together."
-      onClose={onClose}
-    >
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          void create()
-        }}
-      >
-        <DialogField
-          label="Name"
-          value={name}
-          onChange={setName}
-          placeholder="Office move"
-          maxLength={80}
-        />
-        {refused && (
-          <p role="alert" className="mt-2 text-label text-danger">
-            Unable to create the project. Check your connection and try again.
-          </p>
-        )}
-        <DialogActions>
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" disabled={creating || name.trim().length === 0}>
-            Create project
-          </Button>
-        </DialogActions>
-      </form>
+    <Dialog {...surface}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New project</DialogTitle>
+          <DialogDescription>
+            A project keeps the threads about one piece of work together.
+          </DialogDescription>
+        </DialogHeader>
+        {/* `contents`: the field and the actions take the dialog's own gap, and the submit button
+            stays inside the form so Enter in the field makes the Project. */}
+        <form
+          className="contents"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void create()
+          }}
+        >
+          <Field>
+            <FieldLabel htmlFor={field}>Name</FieldLabel>
+            <Input
+              id={field}
+              required
+              // A dialog exists to take this one answer; the cursor belongs in it.
+              // oxlint-disable-next-line jsx-a11y/no-autofocus
+              autoFocus
+              maxLength={80}
+              value={name}
+              onChange={(event) => setName(event.currentTarget.value)}
+              placeholder="Office move"
+            />
+            {/* Under the field it is about, with what was typed still there. */}
+            {refused && (
+              <FieldError>
+                Unable to create the project. Check your connection and try again.
+              </FieldError>
+            )}
+          </Field>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={creating || name.trim().length === 0}>
+              Create project
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
     </Dialog>
   )
 }

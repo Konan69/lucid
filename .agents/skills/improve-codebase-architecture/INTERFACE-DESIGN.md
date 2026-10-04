@@ -27,7 +27,7 @@ Adopt a different design constraint for each:
 - Design 3: "Optimise for the most common caller — make the default case trivial."
 - Design 4 (if applicable): "Design around ports & adapters for cross-seam dependencies."
 
-Use both [LANGUAGE.md](LANGUAGE.md) vocabulary and CONTEXT.md vocabulary so each design names things consistently with the architecture language and the project's domain language.
+Use both [LANGUAGE.md](LANGUAGE.md) vocabulary and the Product language in `AGENTS.md` so each design names things consistently with the architecture language and the project's domain language.
 
 Each design outputs:
 

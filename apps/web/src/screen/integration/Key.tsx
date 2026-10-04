@@ -1,9 +1,19 @@
 import type { ConnectionId } from '@vivid/contracts'
 import { Redacted, Result } from 'effect'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { change } from '../../data/live'
-import { Button } from '../../ui/Button'
-import { Dialog, DialogActions } from '../../ui/Dialog'
+import { Button } from '../../ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../ui/dialog'
+import { Field, FieldError, FieldGroup, FieldLabel } from '../../ui/field'
+import { Input } from '../../ui/input'
+import { useSurface } from '../../ui/Layer'
 
 /** An integration that is waiting for its key: which one, what to call it, and what it asks for. */
 export interface Keying {
@@ -19,6 +29,10 @@ export interface Keying {
  */
 export function EnterKey({ keying, onClose }: { keying: Keying; onClose: () => void }) {
   const [refusal, setRefusal] = useState<string | null>(null)
+  // One id for the form; each field's own name is added to it, so a label finds its input.
+  const ids = useId()
+  // Sent away (Escape, a click outside, the close button) it plays out before `onClose` is told.
+  const surface = useSurface(onClose)
 
   async function submit(form: HTMLFormElement) {
     // Each field is read from its own input, by the name the service gave it: an input's value is
@@ -39,45 +53,47 @@ export function EnterKey({ keying, onClose }: { keying: Keying; onClose: () => v
   }
 
   return (
-    <Dialog
-      title={`Connect ${keying.name}`}
-      description="This goes straight to the integration and is never shown to Vivid or kept in a thread."
-      width="md"
-      onClose={onClose}
-    >
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          void submit(event.currentTarget)
-        }}
-        className="flex flex-col gap-3"
-      >
-        {keying.fields.map((field) => (
-          <label key={field.name} className="flex flex-col gap-1.5">
-            <span className="text-label text-ink-2">{field.label}</span>
-            <input
-              required
-              name={field.name}
-              type="password"
-              autoComplete="off"
-              className="h-9 rounded-control bg-well px-3 font-mono text-label text-ink ring-line outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </label>
-        ))}
-        {refusal !== null && (
-          <p role="alert" className="text-label text-danger">
-            {refusal}
-          </p>
-        )}
-        <DialogActions>
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary">
-            Connect
-          </Button>
-        </DialogActions>
-      </form>
+    <Dialog {...surface}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{`Connect ${keying.name}`}</DialogTitle>
+          <DialogDescription>
+            This goes straight to the integration and is never shown to Vivid or kept in a thread.
+          </DialogDescription>
+        </DialogHeader>
+        {/* `contents`: the fields and the actions take the dialog's own gap, and the submit button
+            stays inside the form whose inputs `submit` reads. */}
+        <form
+          className="contents"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void submit(event.currentTarget)
+          }}
+        >
+          <FieldGroup>
+            {keying.fields.map((field) => (
+              <Field key={field.name}>
+                <FieldLabel htmlFor={`${ids}-${field.name}`}>{field.label}</FieldLabel>
+                <Input
+                  mono
+                  id={`${ids}-${field.name}`}
+                  required
+                  name={field.name}
+                  type="password"
+                  autoComplete="off"
+                />
+              </Field>
+            ))}
+            {refusal !== null && <FieldError>{refusal}</FieldError>}
+          </FieldGroup>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit">Connect</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
     </Dialog>
   )
 }

@@ -9,6 +9,7 @@
     "**/.alchemy/**",
     "**/.alchemy.*/**",
     "**/.expo/**",
+    "apps/mobile/vendor/**",
     "**/.output/**",
     "**/.turbo/**",
     "**/build/**",

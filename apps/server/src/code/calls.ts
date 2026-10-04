@@ -76,12 +76,8 @@ const connection = Effect.fn('Code.useConnection')(function* (actor: Actor, inpu
     OutcomeUnknown: () => CallOutcome.cases.Unknown.make({ summary: request.summary }),
     ConnectionNotReady: () =>
       returned({ ok: false, reason: 'The account needs connecting.' }, request.summary, 'refused'),
-    Rejected: () =>
-      returned(
-        { ok: false, reason: 'The service rejected the action.' },
-        request.summary,
-        'refused',
-      ),
+    Rejected: ({ message, problems }) =>
+      returned({ ok: false, reason: message, problems }, request.summary, 'refused'),
   })
 })
 

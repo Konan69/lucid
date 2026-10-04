@@ -4,7 +4,8 @@ import { Hand, Monitor } from 'lucide-react'
 import { useReducer, useSyncExternalStore } from 'react'
 import { live, useLiveValue } from '../../data/live'
 import { panel } from '../../data/panel'
-import { Button } from '../../ui/Button'
+import { Button } from '../../ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { Glass, hold, Viewer, type Heard } from '../Computer'
 
 /** Whether the small picture has a frame on it yet; until it has, the wallpaper says "connecting". */
@@ -32,16 +33,23 @@ export function Peek() {
   if (!running && !ComputerState.guards.Starting(computer.state)) return null
   return (
     <div className="mt-2.5 flex w-full max-w-md animate-fade-in items-center gap-3 rounded-card bg-surface-3 p-2 pr-3 edge">
-      <button
-        type="button"
-        onClick={panel.show}
-        aria-label="Open Vivid’s computer beside the thread"
-        title="Open beside the thread"
-        // 6px inside an 8px pad on a card radius: the picture's corners follow the card's.
-        className="relative aspect-16/10 w-32 shrink-0 cursor-pointer overflow-hidden rounded-control picture-edge transition-press duration-(--dur-fast) desktop-wallpaper hover:brightness-105 focus-visible:ring-2 focus-visible:ring-ring active:scale-96"
-      >
-        {beside ? <Resting /> : <Picture computer={computer} />}
-      </button>
+      {/* The picture is the button; what pressing it does is said in a tooltip over it. */}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              onClick={panel.show}
+              aria-label="Open Vivid’s computer beside the thread"
+              // 6px inside an 8px pad on a card radius: the picture's corners follow the card's.
+              className="relative aspect-16/10 w-32 shrink-0 cursor-pointer overflow-hidden rounded-control picture-edge transition-press duration-(--dur-fast) desktop-wallpaper hover:brightness-105 focus-visible:ring-2 focus-visible:ring-ring active:scale-96"
+            />
+          }
+        >
+          {beside ? <Resting /> : <Picture computer={computer} />}
+        </TooltipTrigger>
+        <TooltipContent>Open beside the thread</TooltipContent>
+      </Tooltip>
       <div className="min-w-0 flex-1">
         <p className="truncate text-label font-title text-ink">Vivid’s computer</p>
         <p className="truncate text-meta font-meta text-ink-3" aria-live="polite">
@@ -51,10 +59,10 @@ export function Peek() {
       {running && (
         <Button
           size="sm"
-          variant={computer.heldByPerson ? 'primary' : 'control'}
-          icon={<Hand className="size-3.5" />}
+          variant={computer.heldByPerson ? 'default' : 'outline'}
           onClick={() => hold(!computer.heldByPerson)}
         >
+          <Hand className="size-3.5" />
           {computer.heldByPerson ? 'Hand back' : 'Take over'}
         </Button>
       )}

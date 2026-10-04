@@ -16,7 +16,19 @@ import * as connectionViews from './connectionviews.ts'
 import { INTEGRATIONS } from './integrations.ts'
 import { warnFailure } from './result.ts'
 
-const decodeInput = Schema.decodeUnknownEffect(Schema.Json)
+/**
+ * A tool's arguments are a JSON object. Some models write that object as JSON text instead, and
+ * Executor then refuses the call ("input: Expected object") however correct the text is. Text that
+ * holds a JSON object or array is read as that value here, at the model's ingress; any other value,
+ * including other text, is kept exactly as it was sent.
+ */
+const ToolInput = Schema.Union([
+  Schema.fromJsonString(
+    Schema.Union([Schema.Record(Schema.String, Schema.Json), Schema.Array(Schema.Json)]),
+  ),
+  Schema.Json,
+])
+export const decodeToolInput = Schema.decodeUnknownEffect(ToolInput)
 
 /** Discovery and execution recheck access through the same attributed RPC client. */
 export function connectionTools(runTool: RunTool) {
@@ -99,7 +111,7 @@ function useTool(runTool: RunTool) {
       return runTool(
         Effect.gen(function* () {
           const { client } = yield* Scope
-          const input = yield* decodeInput(data.input).pipe(
+          const input = yield* decodeToolInput(data.input).pipe(
             Effect.mapError(() => new InvalidRequest({ message: 'Tool input must be JSON.' })),
           )
           const match = yield* client.ResolveTool({ account: data.account, tool: data.tool })

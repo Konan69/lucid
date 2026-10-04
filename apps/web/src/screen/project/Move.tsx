@@ -5,7 +5,14 @@ import { Check, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { change, live, useLiveValue } from '../../data/live'
 import { orSay } from '../../data/said'
-import { Dialog } from '../../ui/Dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '../../ui/dialog'
+import { useSurface } from '../../ui/Layer'
 import { CreateProject } from './Create'
 import { Mark } from './Mark'
 
@@ -41,6 +48,9 @@ const CHOICE =
  */
 export function MoveThread({ thread, onClose }: { thread: Thread; onClose: () => void }) {
   const [creating, setCreating] = useState(false)
+  // Sent away (Escape, a click outside, the close button) it plays out before `onClose` is told.
+  // A choice calls `onClose` itself: the Thread in its new place is what the Person wants next.
+  const surface = useSurface(onClose)
   const list = useLiveValue(live.projects)
   const all = Option.match(list, {
     onNone: (): ReadonlyArray<projectsData.Project> => [],
@@ -56,40 +66,49 @@ export function MoveThread({ thread, onClose }: { thread: Thread; onClose: () =>
   }
 
   return (
-    <Dialog title="Move to a project" description={thread.title} onClose={onClose}>
-      <ul className="-mx-2.5 flex max-h-72 flex-col gap-px overflow-y-auto">
-        {all.map((project) => (
-          <li key={project.id}>
-            <button
-              type="button"
-              aria-current={project.id === thread.projectId ? 'true' : undefined}
-              onClick={() => move(project.id)}
-              className={CHOICE}
-            >
-              <span className="inline-flex size-5.5 shrink-0 items-center justify-center">
-                <Mark id={project.id} />
-              </span>
-              <span className="min-w-0 flex-1 truncate">{project.name}</span>
-              {project.id === thread.projectId && <Check className="size-3.5 text-ink-2" />}
-            </button>
-          </li>
-        ))}
-        <li>
-          <button type="button" onClick={() => setCreating(true)} className={CHOICE}>
-            <span className="inline-flex size-5.5 shrink-0 items-center justify-center">
-              <Plus className="size-4" strokeWidth={1.6} />
-            </span>
-            <span className="min-w-0 flex-1 truncate">New project</span>
-          </button>
-        </li>
-      </ul>
-      {thread.projectId !== null && (
-        <div className="-mx-2.5 mt-2 border-t border-line-1 pt-2">
-          <button type="button" onClick={() => move(null)} className={CHOICE}>
-            <span className="min-w-0 flex-1 truncate pl-8">Remove from its project</span>
-          </button>
+    <Dialog {...surface}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Move to a project</DialogTitle>
+          <DialogDescription>{thread.title}</DialogDescription>
+        </DialogHeader>
+        {/* One body: the way out of a Project sits close under the list, not a dialog gap away. */}
+        <div>
+          <ul className="-mx-2.5 flex max-h-72 flex-col gap-px overflow-y-auto">
+            {all.map((project) => (
+              <li key={project.id}>
+                <button
+                  type="button"
+                  aria-current={project.id === thread.projectId ? 'true' : undefined}
+                  onClick={() => move(project.id)}
+                  className={CHOICE}
+                >
+                  <span className="inline-flex size-5.5 shrink-0 items-center justify-center">
+                    <Mark id={project.id} />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                  {project.id === thread.projectId && <Check className="size-3.5 text-ink-2" />}
+                </button>
+              </li>
+            ))}
+            <li>
+              <button type="button" onClick={() => setCreating(true)} className={CHOICE}>
+                <span className="inline-flex size-5.5 shrink-0 items-center justify-center">
+                  <Plus className="size-4" strokeWidth={1.6} />
+                </span>
+                <span className="min-w-0 flex-1 truncate">New project</span>
+              </button>
+            </li>
+          </ul>
+          {thread.projectId !== null && (
+            <div className="-mx-2.5 mt-2 border-t border-line-1 pt-2">
+              <button type="button" onClick={() => move(null)} className={CHOICE}>
+                <span className="min-w-0 flex-1 truncate pl-8">Remove from its project</span>
+              </button>
+            </div>
+          )}
         </div>
-      )}
+      </DialogContent>
     </Dialog>
   )
 }

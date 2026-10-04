@@ -9,7 +9,8 @@ import { Result } from 'effect'
 import { useState } from 'react'
 import { change, live, LiveState, useLive } from '../../data/live'
 import { orSay } from '../../data/said'
-import { Button } from '../../ui/Button'
+import { Button } from '../../ui/button'
+import { Input } from '../../ui/input'
 import { Segmented } from '../../ui/Segmented'
 import { Awaiting, Empty, Refusal, Section } from './Parts'
 
@@ -131,15 +132,16 @@ function NewRule({
         })
       }}
     >
-      <input
+      <Input
+        compact
         value={action}
         onChange={(event) => setAction(event.currentTarget.value)}
         placeholder={placeholder}
         maxLength={200}
-        className="h-8 min-w-48 flex-1 rounded-control bg-well px-3 text-label text-ink ring-line outline-none placeholder:text-ink-4 focus-visible:ring-2 focus-visible:ring-ring"
+        className="min-w-48 flex-1"
       />
       <Segmented label="Decision" value={decision} options={DECISIONS} onChange={setDecision} />
-      <Button type="submit" size="sm" variant="primary" disabled={action.trim().length === 0}>
+      <Button type="submit" size="sm" disabled={action.trim().length === 0}>
         Add rule
       </Button>
     </form>

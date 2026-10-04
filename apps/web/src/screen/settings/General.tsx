@@ -7,10 +7,18 @@ import { change, live, LiveState, useLive } from '../../data/live'
 import { run } from '../../data/app'
 import { theme } from '../../data/theme'
 import { mayCustomise, useAppearance } from '../../data/vivid'
-import { Avatar } from '../../ui/Avatar'
-import { Button } from '../../ui/Button'
+import { PersonAvatar } from '../../ui/Person'
+import { Button } from '../../ui/button'
 import { Face } from '../../ui/Face'
 import { Segmented } from '../../ui/Segmented'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../../ui/select'
 import { Customise } from '../vivid/Customise'
 import { Awaiting, Refusal, Row, Section } from './Parts'
 
@@ -47,16 +55,13 @@ export function General({ me }: { me: MeResponse }) {
     <>
       <Section title="You">
         <div className="flex items-center gap-3 px-4 py-3">
-          <Avatar name={me.person.name} image={me.person.image ?? null} size={40} />
+          <PersonAvatar name={me.person.name} image={me.person.image ?? null} size={40} />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-title font-title text-ink">{me.person.name}</span>
             <span className="block truncate text-label text-ink-3">{me.person.email}</span>
           </span>
-          <Button
-            variant="ghost"
-            icon={<LogOut className="size-3.5" />}
-            onClick={() => void leave()}
-          >
+          <Button variant="ghost" onClick={() => void leave()}>
+            <LogOut className="size-3.5" />
             Sign out
           </Button>
         </div>
@@ -97,7 +102,7 @@ function VividSection({ me }: { me: MeResponse }) {
           </span>
         </span>
         {editable && (
-          <Button aria-haspopup="dialog" onClick={() => setCustomising(true)}>
+          <Button variant="outline" aria-haspopup="dialog" onClick={() => setCustomising(true)}>
             Customise
           </Button>
         )}
@@ -136,7 +141,11 @@ function Preferences({ settings }: { settings: Settings }) {
   }
   // The platform's list leaves out UTC, and a zone saved elsewhere may be one this browser does
   // not list; the Person's own zone is always an option, or the select would show a different one.
-  const zones = ZONES.includes(settings.timezone) ? ZONES : [settings.timezone, ...ZONES]
+  // Each zone with the words it is shown in: the platform writes "New_York". The list is what
+  // lets the closed select show those words and not the raw value.
+  const zones = (ZONES.includes(settings.timezone) ? ZONES : [settings.timezone, ...ZONES]).map(
+    (zone) => ({ value: zone, label: zone.replaceAll('_', ' ') }),
+  )
   return (
     <>
       <Refusal
@@ -157,20 +166,28 @@ function Preferences({ settings }: { settings: Settings }) {
           />
         </Row>
         <Row label="Time zone" detail="Routines and reminders like “tomorrow at 9” use this.">
-          <select
+          <Select
             value={settings.timezone}
-            aria-label="Time zone"
-            onChange={(event) =>
-              void save(new PatchSettingsRequest({ timezone: event.currentTarget.value }))
-            }
-            className="h-8 max-w-56 cursor-pointer rounded-control bg-surface-3 px-2 text-label text-ink ring-line outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            items={zones}
+            // A select can be emptied in principle; this one always holds a zone, so only a
+            // zone is ever saved.
+            onValueChange={(zone) => {
+              if (zone !== null) void save(new PatchSettingsRequest({ timezone: zone }))
+            }}
           >
-            {zones.map((zone) => (
-              <option key={zone} value={zone}>
-                {zone.replaceAll('_', ' ')}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger size="sm" aria-label="Time zone" className="max-w-56">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {zones.map((zone) => (
+                  <SelectItem key={zone.value} value={zone.value}>
+                    {zone.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </Row>
         <Row label="Notifications" detail="Tell me when something finishes or needs me.">
           <Segmented

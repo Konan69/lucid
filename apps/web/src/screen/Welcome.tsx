@@ -1,10 +1,12 @@
 import { Result } from 'effect'
 import { Check } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useId, useState, type FormEvent } from 'react'
 import { createAccount, reload, signIn } from '../data/account'
 import { run } from '../data/app'
-import { Button } from '../ui/Button'
+import { Button } from '../ui/button'
 import { Face } from '../ui/Face'
+import { Field, FieldDescription, FieldLabel } from '../ui/field'
+import { Input } from '../ui/input'
 
 type Mode = 'create' | 'enter'
 
@@ -80,7 +82,7 @@ export function Welcome({ returnTo }: { returnTo: string }) {
           <ul className="mt-8 hidden flex-col gap-3 md:flex">
             {PROMISES.map((promise) => (
               <li key={promise} className="flex items-start gap-3 text-body text-ink-2">
-                <Check className="mt-1 size-4 shrink-0 text-accent-ink" strokeWidth={2.25} />
+                <Check className="mt-1 size-4 shrink-0 text-primary-ink" strokeWidth={2.25} />
                 {promise}
               </li>
             ))}
@@ -95,7 +97,7 @@ export function Welcome({ returnTo }: { returnTo: string }) {
             className="flex flex-col gap-3 rounded-panel bg-surface-3 p-6 edge"
           >
             {mode === 'create' && (
-              <Field
+              <Entry
                 label="Your name"
                 value={name}
                 onChange={setName}
@@ -103,7 +105,7 @@ export function Welcome({ returnTo }: { returnTo: string }) {
                 autoFocus
               />
             )}
-            <Field
+            <Entry
               label="Email"
               type="email"
               value={email}
@@ -111,7 +113,7 @@ export function Welcome({ returnTo }: { returnTo: string }) {
               autoComplete="email"
               autoFocus={mode === 'enter'}
             />
-            <Field
+            <Entry
               label="Password"
               type="password"
               value={password}
@@ -124,28 +126,35 @@ export function Welcome({ returnTo }: { returnTo: string }) {
                 {refusal}
               </p>
             )}
-            <Button type="submit" variant="primary" disabled={busy} className="mt-1 w-full">
+            <Button type="submit" disabled={busy} className="mt-1 w-full">
               {busy ? 'One moment…' : copy.action}
             </Button>
           </form>
 
-          <button
-            type="button"
+          {/* The other way in, said quietly under the form: a ghost button, centred. */}
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => {
               setMode(mode === 'create' ? 'enter' : 'create')
               setRefusal(null)
             }}
-            className="mx-auto mt-4 block cursor-pointer rounded-control px-2 py-1 text-label text-ink-3 transition-colors duration-(--dur-fast) hover:text-ink"
+            className="mx-auto mt-4 flex w-fit"
           >
             {copy.other}
-          </button>
+          </Button>
         </div>
       </div>
     </main>
   )
 }
 
-function Field({
+/**
+ * One line of the form: its label, the field, and a hint under it when it has one. The label is
+ * tied to the field by id, and the hint is the field's description, so a screen reader says
+ * "At least 8 characters." with the password field and not as loose text after it.
+ */
+function Entry({
   label,
   value,
   onChange,
@@ -162,22 +171,25 @@ function Field({
   autoFocus?: boolean
   hint?: string
 }) {
+  const id = useId()
+  const hintId = useId()
   return (
-    <label className="flex flex-col gap-1.5">
-      <span className="text-label text-ink-2">{label}</span>
-      <input
+    <Field>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Input
+        id={id}
         required
         type={type}
         value={value}
         minLength={type === 'password' ? 8 : undefined}
         autoComplete={autoComplete}
+        aria-describedby={hint === undefined ? undefined : hintId}
         // The form is the whole screen; focusing its first field is what the Person came to do.
         // oxlint-disable-next-line jsx-a11y/no-autofocus
         autoFocus={autoFocus}
         onChange={(event) => onChange(event.target.value)}
-        className="h-9 rounded-control bg-well px-3 text-body text-ink ring-line transition-surface duration-(--dur-fast) outline-none placeholder:text-ink-4 focus-visible:ring-2 focus-visible:ring-ring"
       />
-      {hint !== undefined && <span className="text-meta font-meta text-ink-3">{hint}</span>}
-    </label>
+      {hint !== undefined && <FieldDescription id={hintId}>{hint}</FieldDescription>}
+    </Field>
   )
 }

@@ -1,7 +1,7 @@
 ---
 name: effect
 description: |
-  Opinionated guide for building, reviewing, fixing, and refactoring production TypeScript applications with Effect v4. Use when implementing or improving Effect workflows, services, layers, schemas, configuration, schedules, caches, streams, HTTP clients, or tests.
+  Opinionated guide for building, reviewing, fixing, and refactoring production TypeScript applications with Effect v4. Use when implementing or improving Effect workflows, services, layers, schemas, configuration, schedules, caches, streams, HTTP clients, or tests, or when a design needs durable work, waits, fanout, workers, or persisted state and an official module may already supply it.
 license: MIT
 compatibility: Requires Effect v4. Examples are reviewed against the version documented in this repository.
 ---
@@ -12,7 +12,7 @@ Use current Effect v4 APIs and the production defaults in this skill. Establishe
 
 ## Upstream And Project Policy
 
-This skill uses [`kitlangton/skills`](https://github.com/kitlangton/skills) commit `30dee8607214c893dd89f6eee65c669ef3dce8c9` as its API and style baseline. The upstream files remain the primary general Effect guidance. `references/VIVID.md` adds only repository integration constraints, while `references/STANDARD_LIBRARY.md` preserves project-tested discovery guidance that upstream does not cover.
+This skill uses [`kitlangton/skills`](https://github.com/kitlangton/skills) commit `30dee8607214c893dd89f6eee65c669ef3dce8c9` as its API and style baseline. The upstream files remain the primary general Effect guidance. Three owner references sit beside them: `references/VIVID.md` adds only repository integration constraints, `references/STANDARD_LIBRARY.md` preserves project-tested discovery guidance that upstream does not cover, and `references/CAPABILITIES.md` routes durable and cross-process needs to the official module to inspect.
 
 When guidance conflicts, follow the nearest `AGENTS.md`, then the project-pinned Effect package, then this skill. Do not copy old local patterns over newer upstream APIs.
 
@@ -22,7 +22,7 @@ Check these before guessing:
 
 - the nearest `AGENTS.md` and any project-local Effect practices doc
 - the project-pinned `effect` package source and version
-- current upstream Effect source when the installed package does not answer the question
+- the latest official release, then unreleased `main`, of canonical `Effect-TS/effect` when the installed package does not answer the question; label which one each fact came from, and keep the installed import paths
 
 ## Branch Chooser
 
@@ -38,6 +38,7 @@ Read only the branch references that match the task.
 - Streams, event sources, async iterables, queues/pubsubs, pagination, backpressure, or stream consumers: read `references/STREAMS.md`.
 - Outgoing HTTP calls, Effect HttpClient, status handling, or HTTP rate limiting: read `references/HTTP_CLIENTS.md`.
 - Effect tests, time, sleeps, concurrency synchronization, or fakes: read `references/TESTING.md`.
+- Architecture or a new module for durable jobs, crash replay, workflows, durable waits, realtime fanout, RPC, CPU workers, offline or persistent preferences, or transactional local state: read `references/CAPABILITIES.md` before proposing or writing custom code.
 
 If a task spans several branches, read all matching files before editing.
 
@@ -71,9 +72,9 @@ If a task spans several branches, read all matching files before editing.
 - Public or non-trivial internal service method: `Effect.fn("Domain.operation")`.
 - Runtime configuration: `Config` recipes read in layers; override with `ConfigProvider` in tests.
 - Event source: `Stream` consumed with `Stream.runForEach(...)` and forked with `Effect.forkScoped` in the owning layer.
-- Queue-backed event source: `Queue` for the producer boundary, `Stream.fromQueue(...)` for consumers.
-- Broadcast event source: `PubSub` / `Stream.fromPubSub(...)` or `SubscriptionRef` for latest-value state.
-- Polling worker: `runPass().pipe(Effect.repeat(Schedule.spaced(...)))`, with typed pass failures handled before repeat.
+- Queue-backed event source: `Queue` for the producer boundary, `Stream.fromQueue(...)` for consumers. In-memory `Queue` is right when losing the items on restart is acceptable; when the work is owed, read `references/CAPABILITIES.md`.
+- Broadcast event source: `PubSub` / `Stream.fromPubSub(...)` or `SubscriptionRef` for latest-value state. Both are process-local; when subscribers in another process or after a reconnect must not miss a change, read `references/CAPABILITIES.md`.
+- Polling worker: `runPass().pipe(Effect.repeat(Schedule.spaced(...)))`, with typed pass failures handled before repeat. When each pass claims owed rows (jobs, outbox, leases), read `references/CAPABILITIES.md` first.
 - Retry transient operation: `Effect.retry(...)` / `Effect.retryOrElse(...)` with a bounded `Schedule`.
 - Keyed lookup cache with TTL and concurrent-lookup dedupe: prefer `Cache.make(...)` / exit-aware `Cache.makeWith(...)` when their lifecycle and eviction model fit.
 - Memoize a single effect result: `Effect.cached(...)` / `Effect.cachedWithTTL(...)`.
@@ -104,3 +105,4 @@ If a task spans several branches, read all matching files before editing.
 - Do not hide required application authority, credentials, persistence, transports, or external services behind `Context.Reference` defaults.
 - Do not add arbitrary `Effect.sleep(...)` to tests when a deterministic synchronization primitive is available.
 - Do not hand-roll Map/TTL/prune caches or in-flight dedupe when `effect/Cache` fits.
+- Do not hand-roll a job table, outbox poller, wait store, worker protocol, or preference store, and do not adopt or reject an official module by its name, before the fit check in `references/CAPABILITIES.md`.

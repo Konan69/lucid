@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { split } from '../../data/split'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 
 /** Pixels the divider moves for one arrow key. */
 const STEP = 10
@@ -13,47 +14,57 @@ const STEP = 10
  *
  * The hit area is ten pixels wide and the line is one, so it is easy to catch and still reads as a
  * hairline.
+ *
+ * How it is used is said in a tooltip, on the Thread's side of the line so it does not cover the
+ * Computer. It goes away at the press, so nothing follows the edge while it is dragged.
  */
 export function Edge() {
   const width = useSyncExternalStore(split.subscribe, split.width)
   const widest = useSyncExternalStore(split.subscribe, split.widest)
   return (
-    <div
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="Resize the Computer"
-      aria-valuemin={split.narrowest()}
-      aria-valuemax={widest}
-      aria-valuenow={width}
-      title="Drag to resize. Double-click to reset."
-      tabIndex={0}
-      onPointerDown={(event) => {
-        event.preventDefault()
-        event.currentTarget.setPointerCapture(event.pointerId)
-        document.documentElement.dataset.resizing = 'computer'
-      }}
-      onPointerMove={(event) => {
-        if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
-        const workspace = event.currentTarget.parentElement
-        // The Computer is the right-hand column: its width is the distance from the pointer to the
-        // right edge of the column's container.
-        if (workspace !== null) split.widen(workspace.getBoundingClientRect().right - event.clientX)
-      }}
-      onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
-      onLostPointerCapture={() => {
-        delete document.documentElement.dataset.resizing
-        split.keep()
-      }}
-      onDoubleClick={split.reset}
-      onKeyDown={(event) => {
-        if (event.key === 'ArrowLeft') split.nudge(STEP)
-        else if (event.key === 'ArrowRight') split.nudge(-STEP)
-        else if (event.key === 'Home') split.edge('minimum')
-        else if (event.key === 'End') split.edge('maximum')
-        else return
-        event.preventDefault()
-      }}
-      className="computer-edge absolute inset-y-0 -left-1.25 z-10 w-2.5 cursor-col-resize touch-none transition-colors duration-(--dur-fast) outline-none hover:bg-wash-pressed focus-visible:bg-accent-soft"
-    />
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize the Computer"
+            aria-valuemin={split.narrowest()}
+            aria-valuemax={widest}
+            aria-valuenow={width}
+            tabIndex={0}
+            onPointerDown={(event) => {
+              event.preventDefault()
+              event.currentTarget.setPointerCapture(event.pointerId)
+              document.documentElement.dataset.resizing = 'computer'
+            }}
+            onPointerMove={(event) => {
+              if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+              const workspace = event.currentTarget.parentElement
+              // The Computer is the right-hand column: its width is the distance from the pointer to the
+              // right edge of the column's container.
+              if (workspace !== null)
+                split.widen(workspace.getBoundingClientRect().right - event.clientX)
+            }}
+            onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
+            onLostPointerCapture={() => {
+              delete document.documentElement.dataset.resizing
+              split.keep()
+            }}
+            onDoubleClick={split.reset}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowLeft') split.nudge(STEP)
+              else if (event.key === 'ArrowRight') split.nudge(-STEP)
+              else if (event.key === 'Home') split.edge('minimum')
+              else if (event.key === 'End') split.edge('maximum')
+              else return
+              event.preventDefault()
+            }}
+            className="computer-edge absolute inset-y-0 -left-1.25 z-10 w-2.5 cursor-col-resize touch-none transition-colors duration-(--dur-fast) outline-none hover:bg-wash-pressed focus-visible:bg-primary-soft"
+          />
+        }
+      />
+      <TooltipContent side="left">Drag to resize. Double-click to reset.</TooltipContent>
+    </Tooltip>
   )
 }

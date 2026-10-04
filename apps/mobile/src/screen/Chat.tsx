@@ -46,6 +46,7 @@ import {
 } from '../ui/ui'
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
+import { ThinkingOrb } from '../../vendor/orb'
 import { useGo, useMe, type Routes } from '../workspace'
 import { Message } from './chat/Message'
 import { Share } from './chat/Share'
@@ -627,6 +628,8 @@ function Tail({
   ended: Option.Option<Ended>
   trouble: Option.Option<Trouble>
 }) {
+  // The orb is drawn in Vivid's theme, which a Person can set against the system's.
+  const { dark } = useTheme()
   return (
     <View style={{ gap: 12 }}>
       {working && (
@@ -635,6 +638,14 @@ function Tail({
           style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
         >
           <Face size={24} mood="thinking" />
+          {/* The same orb the web shows beside "Thinking…" (`apps/web/src/screen/Thread.tsx`).
+              The words name it, so a screen reader is not told twice. */}
+          <ThinkingOrb
+            state="breathing"
+            size={20}
+            theme={dark ? 'dark' : 'light'}
+            accessibilityLabel=""
+          />
           <Label tone="ink-2">Thinking…</Label>
         </View>
       )}

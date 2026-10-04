@@ -3,7 +3,8 @@ import { Result } from 'effect'
 import { useState } from 'react'
 import { change, live, LiveState, useLive } from '../../data/live'
 import { orSay } from '../../data/said'
-import { Button } from '../../ui/Button'
+import { Button } from '../../ui/button'
+import { Input } from '../../ui/input'
 import { Awaiting, Empty, Section } from './Parts'
 
 const WHERE = (memory: MemoryRecord) =>
@@ -83,7 +84,8 @@ function MemoryRow({ memory }: { memory: MemoryRecord }) {
           void correct(draft.trim())
         }}
       >
-        <input
+        <Input
+          compact
           // Editing was just asked for; the cursor belongs in the sentence being corrected.
           // oxlint-disable-next-line jsx-a11y/no-autofocus
           autoFocus
@@ -92,9 +94,9 @@ function MemoryRow({ memory }: { memory: MemoryRecord }) {
           aria-label="What Vivid should know instead"
           aria-invalid={refused}
           onChange={(event) => setDraft(event.currentTarget.value)}
-          className="h-8 min-w-0 flex-1 rounded-control bg-well px-3 text-label text-ink ring-line outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex-1"
         />
-        <Button type="submit" size="sm" variant="primary">
+        <Button type="submit" size="sm">
           {refused ? 'Try again' : 'Save'}
         </Button>
         <Button type="button" size="sm" variant="ghost" onClick={() => setDraft(null)}>

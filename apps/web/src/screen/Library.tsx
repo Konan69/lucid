@@ -29,19 +29,37 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import { useRef, useState, type DragEvent, type FormEvent, type ReactNode } from 'react'
+import { useId, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from 'react'
 import * as libraryData from '../data/library'
 import { change, live, LiveState, useLive } from '../data/live'
 import { run } from '../data/app'
 import { engine } from '../data/runtime'
-import { Button, IconButton } from '../ui/Button'
+import { Button, IconButton } from '../ui/button'
 import { cn } from '../ui/cn'
-import { Dialog, DialogActions, DialogField } from '../ui/Dialog'
-import { Field, Select } from '../ui/Field'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../ui/dialog'
+import { Field, FieldLabel } from '../ui/field'
+import { Input } from '../ui/input'
+import { useSurface } from '../ui/Layer'
 import { Live } from '../ui/Live'
-import { Notice } from '../ui/Notice'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../ui/select'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
+import { Alert } from '../ui/alert'
 import { Segmented } from '../ui/Segmented'
-import { Skeleton } from '../ui/Skeleton'
+import { SkeletonList } from '../ui/skeleton'
 import { BAR } from './bar'
 import { Emblem, type Hue } from './Emblem'
 import { ENTER, PRESS, stagger } from './motion'
@@ -378,12 +396,12 @@ export function Library({ onAsk }: { onAsk: (document: LibraryDocument) => void 
   return LiveState.$match(me, {
     Loading: () => (
       <LibraryPane>
-        <Skeleton of="card" count={4} />
+        <SkeletonList of="card" count={4} />
       </LibraryPane>
     ),
     Failed: ({ failure }) => (
       <LibraryPane>
-        <Notice>{failure.message}</Notice>
+        <Alert variant="destructive">{failure.message}</Alert>
       </LibraryPane>
     ),
     Ready: ({ value }) => <LibraryBrowser workspace={value.workspace} onAsk={onAsk} />,
@@ -429,9 +447,11 @@ function LibraryBrowser({
       className="relative flex h-full min-w-0 flex-1 flex-col bg-surface-0"
     >
       <LibraryHeader browser={browser} browsing={browsing} onUpload={uploading.sendAll} />
-      <div className="min-h-0 flex-1 overflow-y-auto scroll-fade-y">
+      <div className="min-h-0 flex-1 scroll-fade-y overflow-y-auto">
         <div className="mx-auto flex w-full max-w-230 flex-col gap-3 px-5 pt-2 pb-10 sm:px-8">
-          {Option.isSome(browser.refused) && <Notice>{browser.refused.value}</Notice>}
+          {Option.isSome(browser.refused) && (
+            <Alert variant="destructive">{browser.refused.value}</Alert>
+          )}
           <Uploads rows={browser.uploads} onDismiss={uploading.dismiss} />
           <LibraryBody
             browser={browser}
@@ -442,9 +462,9 @@ function LibraryBrowser({
         </div>
       </div>
       {browser.dragging && (
-        <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-card border-2 border-dashed border-accent bg-surface-0 text-center">
+        <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-card border-2 border-dashed border-primary bg-surface-0 text-center">
           <div>
-            <Upload className="mx-auto size-7 text-accent-ink" />
+            <Upload className="mx-auto size-7 text-primary-ink" />
             <p className="mt-2 text-title font-title text-ink">Drop files into {place}</p>
             <p className="mt-1 text-meta font-meta text-ink-3">
               PDF, Markdown or text, up to 10 MB each
@@ -668,7 +688,7 @@ function ShelfLevel({
           />
         </form>
       )}
-      <Live state={contents} loading={<Skeleton of="card" count={4} />}>
+      <Live state={contents} loading={<SkeletonList of="card" count={4} />}>
         {(list) => {
           const level = libraryData.inFolder(list, folderId)
           if (level.folders.length === 0 && level.documents.length === 0) {
@@ -736,6 +756,9 @@ const PICKER_LOOK = {
  * A control that opens the browser's file picker. It is a label around the real file input, so
  * the browser opens the picker itself: no ref, no scripted click. The input is hidden from sight
  * but not from the keyboard, and the label shows where focus is.
+ *
+ * Drawn as an icon alone it names itself in a tooltip, under the pointer or when the input inside
+ * takes focus. Drawn as a button it already says the words, so it has none.
  */
 function FilePicker({
   label,
@@ -748,9 +771,8 @@ function FilePicker({
   onFiles: (files: ReadonlyArray<File>) => void
   children: ReactNode
 }) {
-  return (
+  const picker = (
     <label
-      title={label}
       className={cn(
         'inline-flex cursor-pointer items-center rounded-control transition-colors duration-(--dur-fast) hover:bg-wash-hover has-focus-visible:bg-wash-hover',
         PICKER_LOOK[look],
@@ -771,6 +793,13 @@ function FilePicker({
       />
       {children}
     </label>
+  )
+  if (look === 'button') return picker
+  return (
+    <Tooltip>
+      <TooltipTrigger render={picker} />
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -877,7 +906,7 @@ function Level({
                 type="button"
                 onClick={() => onOpenFolder(folder)}
                 className={cn(
-                  'flex w-full cursor-pointer items-center gap-2.5 rounded-card bg-surface-3 px-3 py-2.5 text-left edge outline-none hover:bg-surface-2 focus-visible:edge-accent',
+                  'flex w-full cursor-pointer items-center gap-2.5 rounded-card bg-surface-3 px-3 py-2.5 text-left edge outline-none hover:bg-surface-2 focus-visible:edge-primary',
                   PRESS,
                   ENTER,
                   stagger(place),
@@ -978,7 +1007,7 @@ function ItemTile({
       type="button"
       onClick={onOpen}
       className={cn(
-        'flex w-full cursor-pointer flex-col overflow-hidden rounded-card bg-surface-3 p-2 text-left edge outline-none hover:bg-surface-2 focus-visible:edge-accent',
+        'flex w-full cursor-pointer flex-col overflow-hidden rounded-card bg-surface-3 p-2 text-left edge outline-none hover:bg-surface-2 focus-visible:edge-primary',
         PRESS,
         ENTER,
         stagger(place),
@@ -1050,16 +1079,24 @@ function ItemDetail({
         <IconButton label="Move file" onClick={onMove}>
           <FileInput className="size-4" />
         </IconButton>
-        <a
-          href={`/api/library/${encodeURIComponent(item.id)}/content`}
-          target="_blank"
-          rel="noreferrer"
-          aria-label="Open the original file"
-          title="Open the original file"
-          className="inline-flex size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"
-        >
-          <ExternalLink className="size-4" />
-        </a>
+        {/* A link, not a button: the browser opens the file in a new tab. It names itself the way
+            the icon buttons beside it do. */}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <a
+                href={`/api/library/${encodeURIComponent(item.id)}/content`}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Open the original file"
+                className="inline-flex size-8 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink"
+              />
+            }
+          >
+            <ExternalLink className="size-4" />
+          </TooltipTrigger>
+          <TooltipContent>Open the original file</TooltipContent>
+        </Tooltip>
         <IconButton label="Delete file" onClick={onDelete}>
           <Trash2 className="size-4" />
         </IconButton>
@@ -1075,7 +1112,8 @@ function ItemDetail({
       </div>
       {item.status === 'ready' && (
         <div className="mt-4">
-          <Button variant="primary" icon={<MessageSquareText className="size-4" />} onClick={onAsk}>
+          <Button onClick={onAsk}>
+            <MessageSquareText className="size-4" />
             Ask Vivid about this
           </Button>
         </div>
@@ -1193,7 +1231,7 @@ function UploadBar({ percent, failed }: { percent: number; failed: boolean }) {
     <i
       className={cn(
         'block h-full w-(--upload-progress) rounded-full transition-width',
-        failed ? 'bg-danger' : 'bg-accent',
+        failed ? 'bg-danger' : 'bg-primary',
       )}
       style={barStyle}
     />
@@ -1311,32 +1349,61 @@ function NameDialog({
 }) {
   const [name, setName] = useState(initial)
   const { pending, refused, submit } = useSubmission()
+  const field = useId()
+  // Sent away (Escape, a click outside, the close button) it plays out before `onClose` is told.
+  const surface = useSurface(onClose)
   return (
-    <Dialog title={title} description={description} onClose={onClose}>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          void submit(() => onSubmit(name.trim()))
-        }}
-        className="flex flex-col gap-3"
-      >
-        <DialogField label="Name" value={name} onChange={setName} maxLength={limit} />
-        {Option.isSome(refused) && <Notice>{refused.value}</Notice>}
-        <DialogActions>
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" disabled={pending || name.trim() === ''}>
-            {action}
-          </Button>
-        </DialogActions>
-      </form>
+    <Dialog {...surface}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        {/* `contents`: the field and the actions take the dialog's own gap, and the submit button
+            stays inside the form so Enter in the field sends the name. */}
+        <form
+          className="contents"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void submit(() => onSubmit(name.trim()))
+          }}
+        >
+          <div className="flex flex-col gap-3">
+            <Field>
+              <FieldLabel htmlFor={field}>Name</FieldLabel>
+              <Input
+                id={field}
+                required
+                // A dialog exists to take this one answer; the cursor belongs in it.
+                // oxlint-disable-next-line jsx-a11y/no-autofocus
+                autoFocus
+                maxLength={limit}
+                value={name}
+                onChange={(event) => setName(event.currentTarget.value)}
+              />
+            </Field>
+            {Option.isSome(refused) && <Alert variant="destructive">{refused.value}</Alert>}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={pending || name.trim() === ''}>
+              {action}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
     </Dialog>
   )
 }
 
-/** The select value for the top of the shelf; no folder id is the empty string. */
-const TOP = ''
+/**
+ * The select value for the top of the shelf, which has no folder id. It cannot be the empty
+ * string: Base UI's Select reads an empty value as nothing chosen and would draw the trigger as a
+ * placeholder (`select/store.js`, `hasSelectedValue`).
+ */
+const TOP = 'top'
 
 /** A dialog that asks where on its shelf something should go. */
 function MoveDialog({
@@ -1356,42 +1423,78 @@ function MoveDialog({
 }) {
   const [destination, setDestination] = useState(initial)
   const { pending, refused, submit } = useSubmission()
+  const field = useId()
+  // Sent away (Escape, a click outside, the close button) it plays out before `onClose` is told.
+  const surface = useSurface(onClose)
+  // Every place it can go, the top of the shelf first. The select reads the trigger's words from
+  // this list, and a choice is looked up in it, so the value and where it leads cannot disagree.
+  const places: ReadonlyArray<{ value: string; label: string; folderId: LibraryFolderId | null }> =
+    [
+      { value: TOP, label: 'The top of the shelf', folderId: null },
+      ...destinations.map((folder) => ({
+        value: folder.id,
+        label: folder.name,
+        folderId: folder.id,
+      })),
+    ]
   return (
-    <Dialog title={title} description={description} onClose={onClose}>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          void submit(() => onSubmit(destination))
-        }}
-        className="flex flex-col gap-3"
-      >
-        <Field label="Move to">
-          <Select
-            autoFocus
-            value={destination === null ? TOP : destination}
-            onChange={(event) => {
-              const chosen = destinations.find((each) => each.id === event.currentTarget.value)
-              setDestination(chosen === undefined ? null : chosen.id)
-            }}
-          >
-            <option value={TOP}>The top of the shelf</option>
-            {destinations.map((folder) => (
-              <option key={folder.id} value={folder.id}>
-                {folder.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        {Option.isSome(refused) && <Notice>{refused.value}</Notice>}
-        <DialogActions>
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" disabled={pending || destination === initial}>
-            Move
-          </Button>
-        </DialogActions>
-      </form>
+    <Dialog {...surface}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        {/* `contents`: the field and the actions take the dialog's own gap, and the submit button
+            stays inside the form. */}
+        <form
+          className="contents"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void submit(() => onSubmit(destination))
+          }}
+        >
+          <div className="flex flex-col gap-3">
+            <Field>
+              <FieldLabel htmlFor={field}>Move to</FieldLabel>
+              {/* The trigger is the first control in the dialog, so Base UI puts the keyboard on
+                  it as the dialog opens; the native select asked for that with `autoFocus`. */}
+              <Select
+                items={places}
+                value={destination === null ? TOP : destination}
+                onValueChange={(value) => {
+                  // Base UI hands `null` when a selection is cleared; nothing here clears one.
+                  if (value === null) return
+                  const chosen = places.find((place) => place.value === value)
+                  if (chosen === undefined) return
+                  setDestination(chosen.folderId)
+                }}
+              >
+                <SelectTrigger id={field} className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {places.map((place) => (
+                      <SelectItem key={place.value} value={place.value}>
+                        {place.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+            {Option.isSome(refused) && <Alert variant="destructive">{refused.value}</Alert>}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={pending || destination === initial}>
+              Move
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
     </Dialog>
   )
 }

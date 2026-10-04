@@ -48,6 +48,38 @@ const upload = Effect.fn('LibraryTest.upload')(function* (
 
 describe.skipIf(!testDatabaseConfigured)('Library shelves', () => {
   layer(testLayer)((it) => {
+    /** NUL-separated letters must reach PostgreSQL as readable, searchable text, not a driver failure. */
+    it.effect('indexes NUL-separated text through public ingestion and search', () =>
+      Effect.gen(function* () {
+        const { owner } = yield* fixture()
+        const item = yield* upload(owner.actor, 'Mine', 'h\u0000e\u0000l\u0000l\u0000o world')
+        const person = asPerson(owner)
+        expect((yield* person.get(item.document.id)).document).toMatchObject({
+          status: 'ready',
+          error: null,
+          chunkCount: 1,
+        })
+        expect((yield* person.search('hello')).results).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ documentId: item.document.id, text: 'hello world' }),
+          ]),
+        )
+      }),
+    )
+
+    /** Removing NUL-only content must persist the existing content failure without a SQL error. */
+    it.effect('records NUL-only text as an expected unreadable item', () =>
+      Effect.gen(function* () {
+        const { owner } = yield* fixture()
+        const item = yield* upload(owner.actor, 'Mine', '\u0000\u0000\u0000')
+        expect((yield* asPerson(owner).get(item.document.id)).document).toMatchObject({
+          status: 'failed',
+          error: 'No readable text was found in this document',
+          chunkCount: 0,
+        })
+      }),
+    )
+
     it.effect(
       'Mine follows its Person and is invisible by list, id, bytes, search and deletion to another Person',
       () =>

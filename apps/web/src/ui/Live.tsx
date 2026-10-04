@@ -1,6 +1,6 @@
 import { LiveState } from '@vivid/state'
 import type { ReactNode } from 'react'
-import { Notice } from './Notice'
+import { Alert } from './alert'
 
 /**
  * Draws one live query, keeping its three states apart so no screen can blur them:
@@ -22,7 +22,7 @@ export function Live<Value>({
 }) {
   return LiveState.$match(state, {
     Loading: () => loading,
-    Failed: ({ failure }) => <Notice>{failure.message}</Notice>,
+    Failed: ({ failure }) => <Alert variant="destructive">{failure.message}</Alert>,
     Ready: ({ value }) => children(value),
   })
 }
