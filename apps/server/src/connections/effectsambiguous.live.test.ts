@@ -4,11 +4,13 @@ import { ServiceId } from '@vivid/contracts'
 import {
   effectScores,
   effectScoreLogLayer,
+  LIVE_METADATA_BUDGET,
+  LIVE_METADATA_COHORT_BUDGET_MILLIS,
   liveDecisionEnabled,
   liveDecisionLayer,
 } from '../decisions/testing.ts'
 import { ExecutorTool } from './executor.ts'
-import { READ_PROBABILITY_THRESHOLD, ToolEffects, toolEffectsLayer } from './effects.ts'
+import { READ_PROBABILITY_THRESHOLD, ToolEffects, toolEffectsTestLayer } from './effects.ts'
 
 /** Noun phrases passed the original word/length floors. Three gateway passes
  * scored get_customer=0.97–0.98 and list_invoices=0.99–1 from names alone.
@@ -125,11 +127,13 @@ describe.skipIf(!liveDecisionEnabled)('Gateway effectsambiguous', () => {
           }
         }
       }).pipe(
-        Effect.provide(toolEffectsLayer.pipe(Layer.provide(liveDecisionLayer))),
+        Effect.provide(
+          toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
+        ),
         Effect.provideService(References.MinimumLogLevel, 'Debug'),
         Effect.provide(effectScoreLogLayer(lines)),
       )
     },
-    60_000,
+    LIVE_METADATA_COHORT_BUDGET_MILLIS,
   )
 })

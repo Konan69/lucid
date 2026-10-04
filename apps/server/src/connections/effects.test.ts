@@ -18,6 +18,7 @@ import {
   TOOL_NAME_LIMIT,
   ToolEffects,
   toolEffectsLayer,
+  toolEffectsTestLayer,
 } from './effects.ts'
 
 const request = {
@@ -705,3 +706,31 @@ it.effect.each(['direct', 'batch'] as const)('Executor substitutes bypass Jev in
     ),
   )
 })
+
+/** Calibration waits through the measured 2092ms tail using an explicit test
+ * Layer. The production timeout test above still proves its unchanged 1800ms cap. */
+it.effect('the calibration budget measures an outlier without changing production', () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>()
+    const release = yield* Deferred.make<void>()
+    const modelLayer = Layer.effect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({
+        decide: () =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as(answer(0.99, 'read')),
+          ),
+      }),
+    )
+    yield* Effect.gen(function* () {
+      const effects = yield* ToolEffects
+      const pending = yield* effects.classify(request).pipe(Effect.forkChild)
+      yield* Deferred.await(started)
+      yield* TestClock.adjust('2092 millis')
+      yield* Deferred.succeed(release, undefined)
+      expect(yield* Fiber.join(pending)).toBe('read')
+      expect(yield* effects.classify(request)).toBe('read')
+    }).pipe(Effect.provide(toolEffectsTestLayer('10 seconds').pipe(Layer.provide(modelLayer))))
+  }),
+)

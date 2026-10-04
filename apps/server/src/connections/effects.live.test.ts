@@ -4,17 +4,19 @@ import { ServiceId } from '@vivid/contracts'
 import {
   effectScoreCount,
   effectScoreLogLayer,
+  LIVE_METADATA_BUDGET,
+  LIVE_METADATA_COHORT_BUDGET_MILLIS,
   liveDecisionEnabled,
   liveDecisionLayer,
   liveTools,
   LIVE_READ_RECOVERY_FLOOR,
 } from '../decisions/testing.ts'
 import { ExecutorTool } from './executor.ts'
-import { ToolEffects, toolEffectsLayer } from './effects.ts'
+import { ToolEffects, toolEffectsTestLayer } from './effects.ts'
 
-/** One claim: the production direct path recovers reads above a calibrated floor. This uses
- * ToolEffects' actual metadata eligibility, deadline, cache and threshold; debug scores
- * are from that attempt, not an independently repeated ten-second calibration request. */
+/** The public direct path recovers reads above a calibrated floor. Only its measurement
+ * budget differs from production: eligibility, prompt, cache and threshold are unchanged.
+ * Each receipt belongs to the actual attempt rather than conservative timeout recovery. */
 describe.skipIf(!liveDecisionEnabled)('Gateway read effects', () => {
   it.live(
     'recover read tools without Approval',
@@ -45,11 +47,13 @@ describe.skipIf(!liveDecisionEnabled)('Gateway read effects', () => {
         })
         expect(recovered).toBeGreaterThanOrEqual(LIVE_READ_RECOVERY_FLOOR)
       }).pipe(
-        Effect.provide(toolEffectsLayer.pipe(Layer.provide(liveDecisionLayer))),
+        Effect.provide(
+          toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
+        ),
         Effect.provideService(References.MinimumLogLevel, 'Debug'),
         Effect.provide(effectScoreLogLayer(lines)),
       )
     },
-    60_000,
+    LIVE_METADATA_COHORT_BUDGET_MILLIS,
   )
 })

@@ -4,6 +4,8 @@ import { ServiceId } from '@vivid/contracts'
 import {
   effectScoreCount,
   effectScoreLogLayer,
+  LIVE_METADATA_BUDGET,
+  LIVE_METADATA_COHORT_BUDGET_MILLIS,
   liveDecisionEnabled,
   liveDecisionLayer,
   liveTools,
@@ -11,11 +13,11 @@ import {
 } from '../decisions/testing.ts'
 import { DECISION_QUESTION_LIMIT } from '../decisions/model.ts'
 import { ExecutorTool } from './executor.ts'
-import { ToolEffects, toolEffectsLayer } from './effects.ts'
+import { ToolEffects, toolEffectsTestLayer } from './effects.ts'
 
 /** One claim: the production resolver retains Approval for mutations in a mixed catalog.
  * Catalogs keep their actual service identity, as production requires. This exercises
- * batching, the actual deadline, validation, threshold and cache together;
+ * batching, validation, threshold and cache together under a measurement budget;
  * attacks are a separate claim in effectsadversarial.live.test.ts. */
 describe.skipIf(!liveDecisionEnabled)('Gateway batch effects', () => {
   it.live(
@@ -62,11 +64,13 @@ describe.skipIf(!liveDecisionEnabled)('Gateway batch effects', () => {
         expect(18 - conservativeReads.length).toBeGreaterThanOrEqual(LIVE_READ_RECOVERY_FLOOR)
         expect(misses).toEqual([])
       }).pipe(
-        Effect.provide(toolEffectsLayer.pipe(Layer.provide(liveDecisionLayer))),
+        Effect.provide(
+          toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
+        ),
         Effect.provideService(References.MinimumLogLevel, 'Debug'),
         Effect.provide(effectScoreLogLayer(lines)),
       )
     },
-    60_000,
+    LIVE_METADATA_COHORT_BUDGET_MILLIS,
   )
 })

@@ -1,16 +1,18 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Clock, Effect } from 'effect'
 import { DECISION_QUESTION_LIMIT, decideWithin } from '../decisions/model.ts'
-import { liveDecisionEnabled, liveDecisionLayer, liveTools } from '../decisions/testing.ts'
+import {
+  LIVE_METADATA_BUDGET,
+  liveDecisionEnabled,
+  liveDecisionLayer,
+  liveTools,
+} from '../decisions/testing.ts'
 import { toolRelevanceDecision } from './relevance.ts'
 import { batchToolEffectDecision, TOOL_DESCRIPTION_LIMIT } from './effects.ts'
 
 /** Ten warm samples per shape reveal tail latency in one gateway connection pool. The first
  * relevance call is process-cold; the first effects call is cold only for that payload shape. */
 const WARM_SAMPLES = 10
-/** A generous measurement budget reveals slow samples instead of censoring them at the
- * optional production deadline. The asserted warm bound is calibrated separately below. */
-const MEASUREMENT_BUDGET = '10 seconds'
 /** Gateway, jev-latest, 4 Oct 2026, final three cohorts: relevance first=1037/935/999ms,
  * warm min/median/max=604/665/850, 637/688.5/1026, 640/727/1389ms; effects first=
  * 663/661/777ms, warm=619/650.5/795, 683/766.5/1103, 689/745.5/1422ms.
@@ -49,12 +51,12 @@ const requests = [
     run: decideWithin(
       toolRelevanceDecision(tools),
       { request: 'Use DeepWiki to explain how Layer works in Effect-TS/effect' },
-      MEASUREMENT_BUDGET,
+      LIVE_METADATA_BUDGET,
     ),
   },
   {
     workload: 'effects20',
-    run: decideWithin(batchToolEffectDecision(effectTools), {}, MEASUREMENT_BUDGET),
+    run: decideWithin(batchToolEffectDecision(effectTools), {}, LIVE_METADATA_BUDGET),
   },
 ]
 

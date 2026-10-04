@@ -3,6 +3,7 @@ import {
   Cause,
   Context,
   Data,
+  Duration,
   Effect,
   Exit,
   Fiber,
@@ -243,13 +244,14 @@ ${delimitedToolData(tool)}`,
  * exactly the no-Jev baseline, rather than caching a partially trusted judgment for a day. */
 const classifyQuestions = Effect.fn('Connections.classifyQuestions')(function* (
   keys: readonly CacheKey[],
+  budget: Duration.Input,
 ) {
   const tools = keys.map((key) => ({
     service: key.service,
     tool: key.tool,
     description: key.description,
   }))
-  const { answers } = yield* decideWithin(batchToolEffectDecision(tools), {}, EFFECT_BATCH_BUDGET)
+  const { answers } = yield* decideWithin(batchToolEffectDecision(tools), {}, budget)
   return yield* Effect.forEach(keys, (key, index) => {
     const answer = answers[`tool_${index}`]
     if (answer === undefined) return Effect.fail(new DecisionUnavailable({ reason: 'Provider' }))
@@ -280,106 +282,115 @@ const warnUnavailable = Effect.fn('Connections.warnUnavailable')(function* (
  * protocolOperations defaults both to mutation, then inspect overwrites readOnly
  * and annotations.readOnlyHint from that category. Vivid cannot distinguish them
  * and currently judges both. The unconfigured model bypasses the cache entirely. */
-export const toolEffectsLayer = Layer.effect(
-  ToolEffects,
-  Effect.gen(function* () {
-    const scope = yield* Effect.scope
-    const model = yield* DecisionModel.DecisionModel
-    const configured = yield* decisionConfigured
-    const resolver = RequestResolver.makeGrouped<Classification, ClassificationGroup>({
-      key: ({ request }) =>
-        new ClassificationGroup({
-          serviceId: request.key.serviceId,
-          service: request.key.service,
+const toolEffectsLayerWithin = (budget: Duration.Input) =>
+  Layer.effect(
+    ToolEffects,
+    Effect.gen(function* () {
+      const scope = yield* Effect.scope
+      const model = yield* DecisionModel.DecisionModel
+      const configured = yield* decisionConfigured
+      const resolver = RequestResolver.makeGrouped<Classification, ClassificationGroup>({
+        key: ({ request }) =>
+          new ClassificationGroup({
+            serviceId: request.key.serviceId,
+            service: request.key.service,
+          }),
+        resolver: Effect.fn('Connections.resolveEffects')(function* (entries) {
+          const keys = entries.map(({ request }) => request.key)
+          // rc.116 internal/request.ts runBatch executes on a runtime fiber, so
+          // caller cancellation alone cannot own its lifetime once dispatch starts.
+          // Fork the provider attempt explicitly in this Layer as well as its cache
+          // waiters: shutdown interrupts actual I/O, not just pending cache entries.
+          const attempt = yield* classifyQuestions(keys, budget).pipe(
+            Effect.provideService(DecisionModel.DecisionModel, model),
+            Effect.tapError(warnUnavailable),
+            Effect.forkIn(scope),
+          )
+          const exit = yield* Effect.exit(Fiber.join(attempt))
+          for (const [index, entry] of entries.entries()) {
+            if (Exit.isFailure(exit)) yield* Request.failCause(entry, exit.cause)
+            else {
+              const effect = exit.value[index]
+              yield* Request.complete(
+                entry,
+                effect === undefined
+                  ? Exit.fail(new DecisionUnavailable({ reason: 'Provider' }))
+                  : Exit.succeed(effect),
+              )
+            }
+          }
         }),
-      resolver: Effect.fn('Connections.resolveEffects')(function* (entries) {
-        const keys = entries.map(({ request }) => request.key)
-        // rc.116 internal/request.ts runBatch executes on a runtime fiber, so
-        // caller cancellation alone cannot own its lifetime once dispatch starts.
-        // Fork the provider attempt explicitly in this Layer as well as its cache
-        // waiters: shutdown interrupts actual I/O, not just pending cache entries.
-        const attempt = yield* classifyQuestions(keys).pipe(
-          Effect.provideService(DecisionModel.DecisionModel, model),
-          Effect.tapError(warnUnavailable),
+      }).pipe(RequestResolver.batchN(DECISION_QUESTION_LIMIT))
+      const cache = yield* Cache.makeWith(
+        Effect.fn('Connections.lookupEffect')(function* (key: CacheKey) {
+          return yield* Effect.request(new Classification({ key }), resolver)
+        }),
+        {
+          capacity: EFFECT_CACHE_CAPACITY,
+          timeToLive: (exit) => {
+            if (Exit.isSuccess(exit)) return EFFECT_CACHE_TTL
+            const error = Cause.findErrorOption(exit.cause)
+            return Option.exists(error, isDecisionNonEvent) ? '0 millis' : EFFECT_FAILURE_TTL
+          },
+        },
+      )
+      /** Direct and discovery callers share one question, Layer budget and cache identity. */
+      const classify = Effect.fn('Connections.toolEffect')(function* ({
+        serviceId,
+        service,
+        tool,
+      }: EffectRequest) {
+        if (
+          tool.effect !== 'write' ||
+          !configured ||
+          tool.description.length > TOOL_DESCRIPTION_LIMIT ||
+          !hasDescriptionEvidence(tool) ||
+          tool.name.length > TOOL_NAME_LIMIT ||
+          service.length > TOOL_NAME_LIMIT
+        )
+          return tool.effect
+        const key = new CacheKey({
+          serviceId,
+          service,
+          tool: tool.name,
+          description: tool.description,
+        })
+        // rc.116 Cache.EntryImpl.await interrupts a pending lookup when its last
+        // waiter leaves. A Layer-owned waiter survives discovery cancellation so
+        // the bounded provider result can fill the cache. Scope shutdown still
+        // interrupts it; failed cache exits never become successful answers.
+        const pending = yield* Cache.get(cache, key).pipe(
+          Effect.catch(() => Effect.succeed<typeof ExecutorTool.Type.effect>('write')),
           Effect.forkIn(scope),
         )
-        const exit = yield* Effect.exit(Fiber.join(attempt))
-        for (const [index, entry] of entries.entries()) {
-          if (Exit.isFailure(exit)) yield* Request.failCause(entry, exit.cause)
-          else {
-            const effect = exit.value[index]
-            yield* Request.complete(
-              entry,
-              effect === undefined
-                ? Exit.fail(new DecisionUnavailable({ reason: 'Provider' }))
-                : Exit.succeed(effect),
-            )
-          }
-        }
-      }),
-    }).pipe(RequestResolver.batchN(DECISION_QUESTION_LIMIT))
-    const cache = yield* Cache.makeWith(
-      Effect.fn('Connections.lookupEffect')(function* (key: CacheKey) {
-        return yield* Effect.request(new Classification({ key }), resolver)
-      }),
-      {
-        capacity: EFFECT_CACHE_CAPACITY,
-        timeToLive: (exit) => {
-          if (Exit.isSuccess(exit)) return EFFECT_CACHE_TTL
-          const error = Cause.findErrorOption(exit.cause)
-          return Option.exists(error, isDecisionNonEvent) ? '0 millis' : EFFECT_FAILURE_TTL
-        },
-      },
-    )
-    /** Direct and discovery callers share one question, budget and cache identity. */
-    const classify = Effect.fn('Connections.toolEffect')(function* ({
-      serviceId,
-      service,
-      tool,
-    }: EffectRequest) {
-      if (
-        tool.effect !== 'write' ||
-        !configured ||
-        tool.description.length > TOOL_DESCRIPTION_LIMIT ||
-        !hasDescriptionEvidence(tool) ||
-        tool.name.length > TOOL_NAME_LIMIT ||
-        service.length > TOOL_NAME_LIMIT
-      )
-        return tool.effect
-      const key = new CacheKey({
-        serviceId,
-        service,
-        tool: tool.name,
-        description: tool.description,
+        return yield* Fiber.join(pending)
       })
-      // rc.116 Cache.EntryImpl.await interrupts a pending lookup when its last
-      // waiter leaves. A Layer-owned waiter survives discovery cancellation so
-      // the bounded provider result can fill the cache. Scope shutdown still
-      // interrupts it; failed cache exits never become successful answers.
-      const pending = yield* Cache.get(cache, key).pipe(
-        Effect.catch(() => Effect.succeed<typeof ExecutorTool.Type.effect>('write')),
-        Effect.forkIn(scope),
-      )
-      return yield* Fiber.join(pending)
-    })
-    return ToolEffects.of({
-      classify,
-      /** Concurrent misses reach one resolver batch; successful exits fill the same cache.
-       * Failed exits retain only the brief outage backoff, never a successful write answer. */
-      classifyBatch: Effect.fn('Connections.toolEffects')(function* ({
-        serviceId,
-        service,
-        tools,
-      }) {
-        return yield* Effect.forEach(
+      return ToolEffects.of({
+        classify,
+        /** Concurrent misses reach one resolver batch; successful exits fill the same cache.
+         * Failed exits retain only the brief outage backoff, never a successful write answer. */
+        classifyBatch: Effect.fn('Connections.toolEffects')(function* ({
+          serviceId,
+          service,
           tools,
-          Effect.fn('Connections.projectEffect')(function* (tool) {
-            const effect = yield* classify({ serviceId, service, tool })
-            return ExecutorTool.make({ ...tool, effect })
-          }),
-          { concurrency: 'unbounded' },
-        )
-      }),
-    })
-  }),
-)
+        }) {
+          return yield* Effect.forEach(
+            tools,
+            Effect.fn('Connections.projectEffect')(function* (tool) {
+              const effect = yield* classify({ serviceId, service, tool })
+              return ExecutorTool.make({ ...tool, effect })
+            }),
+            { concurrency: 'unbounded' },
+          )
+        }),
+      })
+    }),
+  )
+
+/** Production optional work retains its measured 1800ms bound. */
+export const toolEffectsLayer = toolEffectsLayerWithin(EFFECT_BATCH_BUDGET)
+
+/** Test-only budget seam: live calibration must measure the slow gateway tail,
+ * not mistake an unanswered write for safety. Eligibility, question, threshold,
+ * resolver and cache are identical; production never calls this constructor. */
+export const toolEffectsTestLayer = (budget: Duration.Input) => toolEffectsLayerWithin(budget)

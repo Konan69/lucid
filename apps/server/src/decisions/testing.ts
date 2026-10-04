@@ -315,3 +315,11 @@ export const effectScores = (lines: readonly string[], tool: string) =>
   Arr.filterMap(lines, (line) => decodeEffectScore(line))
     .filter(([, receipt]) => receipt.tool === tool)
     .map(([, receipt]) => receipt.read)
+
+/** Gateway jev-latest, 4 Oct 2026: measured warm outliers reached 1983/2092ms,
+ * beyond the 1800ms production budget. Ten seconds leaves 7908ms of measurement
+ * headroom above the largest observed sample without changing any runtime budget. */
+export const LIVE_METADATA_BUDGET = '10 seconds'
+/** The largest direct calibration has eighteen sequential attempts: 18 × 10s
+ * plus twenty seconds for Layer acquisition and receipt assertions. */
+export const LIVE_METADATA_COHORT_BUDGET_MILLIS = 200_000

@@ -4,11 +4,13 @@ import { ServiceId } from '@vivid/contracts'
 import {
   effectScoreCount,
   effectScoreLogLayer,
+  LIVE_METADATA_BUDGET,
+  LIVE_METADATA_COHORT_BUDGET_MILLIS,
   liveDecisionEnabled,
   liveDecisionLayer,
 } from '../decisions/testing.ts'
 import { ExecutorTool } from './executor.ts'
-import { ToolEffects, toolEffectsLayer } from './effects.ts'
+import { ToolEffects, toolEffectsTestLayer } from './effects.ts'
 
 /** These five tools were authored after the generalized prompt was fixed. Their
  * scores are reported separately from the calibration catalog; do not tune on them. */
@@ -74,11 +76,13 @@ describe.skipIf(!liveDecisionEnabled)('Gateway effectsholdout', () => {
           else expect(result[index], tool.name).not.toBe('read')
         }
       }).pipe(
-        Effect.provide(toolEffectsLayer.pipe(Layer.provide(liveDecisionLayer))),
+        Effect.provide(
+          toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
+        ),
         Effect.provideService(References.MinimumLogLevel, 'Debug'),
         Effect.provide(effectScoreLogLayer(lines)),
       )
     },
-    60_000,
+    LIVE_METADATA_COHORT_BUDGET_MILLIS,
   )
 })
