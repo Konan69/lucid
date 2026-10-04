@@ -9,7 +9,7 @@ metadata:
 
 Read the whole supplied conversation before writing. If it is in an external account, discover its read tool with `find_tools`; if the integration is not connected, offer `connect` or work from text the Person supplies. Check the sender, recipients, latest unanswered request and any referenced attachment. Ask for missing material rather than pretending to have read it.
 
-Use `recall` for tone and relationship preferences and `search_library` for facts the reply needs. Verify prices, deadlines and promises from current evidence. Identify what the Person can commit to and what still needs their decision. Use `ask_person` for a material missing answer; avoid interrupting for details that can be left visibly unresolved in a draft.
+Use what you remember for tone and relationship preferences and `search_library` for facts the reply needs. Verify prices, deadlines and promises from current evidence. Identify what the Person can commit to and what still needs their decision. Use `ask_person` for a material missing answer; avoid interrupting for details that can be left visibly unresolved in a draft.
 
 Write a concise reply that answers the actual request, puts the next step plainly and uses the Person's preferred tone. Distinguish confirmed facts from proposed commitments. Do not invent availability, agreement, an attachment or a prior conversation. Include the intended recipients and subject with the draft so review covers the whole action. If a service supports saving drafts, saving there is still an external write and follows its permission check.
 

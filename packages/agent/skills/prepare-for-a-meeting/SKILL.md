@@ -9,7 +9,7 @@ metadata:
 
 Identify the meeting by title, date and participants. Discover the calendar read with `find_tools`, and offer `connect` if the needed integration is not connected. If the Person supplies an invitation instead, work from it and state what cannot be verified. Read the current event to check its purpose, time, timezone, attendees and linked material; an old memory does not establish the latest agenda.
 
-Use `search_library` for relevant internal documents and `recall` for prior decisions and relationship context. Discover connected mail or work tools for the specific related conversations. If those integrations are missing, offer them and explain the narrower preparation available now. Use `read_page` for public sources and follow original references. Keep private information within the Thread's permitted audience.
+Use `search_library` for relevant internal documents and what you remember for prior decisions and relationship context. Discover connected mail or work tools for the specific related conversations. If those integrations are missing, offer them and explain the narrower preparation available now. Use `read_page` for public sources and follow original references. Keep private information within the Thread's permitted audience.
 
 Build a brief around the meeting's intended outcome: what has happened, decisions already made, open questions, the Person's role and a proposed agenda. Distinguish known facts from guesses about other participants. Include links for statements that affect a decision and flag conflicting or stale material. Use `ask_person` for the one missing objective that would materially change the preparation.
 
