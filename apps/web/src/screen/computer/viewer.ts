@@ -9,8 +9,12 @@ interface ScreenSize {
 /** A whole number of pixels greater than zero, read from a viewer address. */
 const pixels = (value: string | null) =>
   Option.filter(
-    Option.map(Option.fromNullishOr(value), Number),
-    (count) => Number.isInteger(count) && count > 0,
+    // Digits only: `Number` would also read "1e3", " 12 " and "0x10" as sizes.
+    Option.map(
+      Option.filter(Option.fromNullishOr(value), (written) => /^\d+$/u.test(written)),
+      Number,
+    ),
+    (count) => Number.isSafeInteger(count) && count > 0,
   )
 
 /**

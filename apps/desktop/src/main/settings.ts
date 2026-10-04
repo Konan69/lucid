@@ -53,7 +53,6 @@ const unchosen = (home: Option.Option<ServerAddress>): ServerSettings =>
 /** Keep every damaged file beside its original, without overwriting an earlier recovery copy. */
 const preserveDamagedSettings = Effect.fn('DesktopSettings.preserveDamaged')(function* (
   path: string,
-  home: Option.Option<ServerAddress>,
 ) {
   yield* Effect.try({
     try: () => {
@@ -68,31 +67,26 @@ const preserveDamagedSettings = Effect.fn('DesktopSettings.preserveDamaged')(fun
       Effect.sync(() => console.error('desktop: settings could not be moved; original retained')),
     ),
   )
-  return unchosen(home)
+  // A damaged file means a choice was made here once and cannot be read. Sending that
+  // installation to the shipped address would silently replace the server someone picked, so it
+  // starts at the chooser and the Person says where.
+  return ServerSettings.cases.NoServer.make({})
 })
 
 /**
- * Decode disk ingress once; missing, damaged, and unreadable settings all start where an
- * installation with no choice starts (`unchosen`).
+ * Decode disk ingress once. Missing settings start where an installation with no choice starts
+ * (`unchosen`); damaged and unreadable ones start at the chooser.
  */
 export const readServerSettings = Effect.fn('DesktopSettings.read')(function* (
   path: string,
   home: Option.Option<ServerAddress>,
 ) {
-  const text = yield* Effect.try({
+  return yield* Effect.try({
     try: () => NodeFS.readFileSync(path, 'utf8'),
     catch: (cause) =>
       Option.isSome(missingFile(cause)) ? new SettingsMissing({}) : new SettingsReadFailed({}),
   }).pipe(
-    Effect.map(Option.some),
-    Effect.catchTags({
-      SettingsMissing: () => Effect.succeed(Option.none<string>()),
-      SettingsReadFailed: () =>
-        preserveDamagedSettings(path, home).pipe(Effect.as(Option.none<string>())),
-    }),
-  )
-  if (Option.isNone(text)) return unchosen(home)
-  return yield* decodeSettings(text.value).pipe(
+    Effect.flatMap(decodeSettings),
     Effect.map((stored) =>
       stored.version === 1
         ? ServerSettings.cases.Server.make({
@@ -100,7 +94,11 @@ export const readServerSettings = Effect.fn('DesktopSettings.read')(function* (
           })
         : stored.server,
     ),
-    Effect.catchTag('SchemaError', () => preserveDamagedSettings(path, home)),
+    Effect.catchTags({
+      SettingsMissing: () => Effect.succeed(unchosen(home)),
+      SettingsReadFailed: () => preserveDamagedSettings(path),
+      SchemaError: () => preserveDamagedSettings(path),
+    }),
   )
 })
 

@@ -31,6 +31,9 @@ describe('desktop server settings', () => {
         yield* settings.forget
       }).pipe(Effect.provide(settingsLayer(path, home)))
       expect(yield* readServerSettings(path, home)).toEqual(ServerSettings.cases.NoServer.make({}))
+      // A file that cannot be decoded was a choice once: it is not replaced by the shipped address.
+      NodeFS.writeFileSync(path, '{ not settings')
+      expect(yield* readServerSettings(path, home)).toEqual(ServerSettings.cases.NoServer.make({}))
     }),
   )
 

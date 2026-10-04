@@ -245,22 +245,30 @@ const ShippedManifest = Schema.fromJsonString(
 )
 const decodeShippedManifest = Schema.decodeUnknownOption(ShippedManifest)
 
+/** The packaged manifest could not be read; the build then has no home of its own. */
+class ManifestUnreadable extends Schema.TaggedError<ManifestUnreadable>()(
+  'ManifestUnreadable',
+  {},
+  { title: 'Desktop manifest could not be read' },
+) {}
+
 /**
  * The Vivid address this build ships with, when it ships with one. Packaging writes it into the
  * app's own `package.json` as `vividHome` (`electron-builder.yml`, `extraMetadata`), which keeps
  * the address out of the source and out of the web bundle. Development has no packaged manifest
- * and starts at the chooser. A manifest that cannot be read, or an address that is not a valid
- * server origin, is no home: the chooser is the honest start then, not a guessed address.
+ * and starts at the chooser. A manifest that cannot be read (absent, not a file, no permission),
+ * or an address that is not a valid server origin, is no home: the chooser is the honest start
+ * then, not a guessed address, and never a startup that dies before its first window.
  */
-function shippedHome(): Option.Option<ServerAddress> {
-  if (!app.isPackaged) return Option.none()
+const shippedHome = Effect.fn('DesktopMain.shippedHome')(function* () {
+  if (!app.isPackaged) return Option.none<ServerAddress>()
   const manifest = NodePath.join(app.getAppPath(), 'package.json')
-  if (!NodeFS.existsSync(manifest)) return Option.none()
-  return Option.flatMap(
-    decodeShippedManifest(NodeFS.readFileSync(manifest, 'utf8')),
-    (decoded) => decoded.vividHome,
-  )
-}
+  const text = yield* Effect.try({
+    try: () => NodeFS.readFileSync(manifest, 'utf8'),
+    catch: () => new ManifestUnreadable({}),
+  }).pipe(Effect.option)
+  return Option.flatMap(Option.flatMap(text, decodeShippedManifest), (decoded) => decoded.vividHome)
+})
 
 /**
  * Finish startup after Electron is ready: decode configuration and disk state, construct one window,
@@ -427,10 +435,11 @@ if (!hasSingleInstanceLock) {
     try: () => app.whenReady(),
     catch: () => new DesktopRuntimeInvalid({ field: 'readiness' }),
   }).pipe(
-    Effect.flatMap(() =>
+    Effect.flatMap(shippedHome),
+    Effect.flatMap((home) =>
       boot().pipe(
         Effect.provide(
-          settingsLayer(NodePath.join(app.getPath('userData'), 'settings.json'), shippedHome()),
+          settingsLayer(NodePath.join(app.getPath('userData'), 'settings.json'), home),
         ),
       ),
     ),

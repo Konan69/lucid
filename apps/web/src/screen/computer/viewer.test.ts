@@ -17,6 +17,9 @@ describe('a provider viewer address', () => {
       Option.none(),
     )
     expect(viewerResolution('not an address')).toEqual(Option.none())
+    expect(
+      viewerResolution('https://desktop.example/stream.html?width=1e3&height=9007199254740993'),
+    ).toEqual(Option.none())
   })
 
   it('is loaded dark, with its permission and the rest of it untouched', () => {

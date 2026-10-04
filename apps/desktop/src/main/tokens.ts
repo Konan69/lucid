@@ -10,7 +10,11 @@ const HexColor = Schema.String.check(
 )
 const RgbTriplet = Schema.String.check(
   Schema.makeFilter((value) =>
-    /^\d{1,3} \d{1,3} \d{1,3}$/u.test(value) ? true : 'Expected an RGB triplet',
+    // Each channel is a byte: a larger number would become a malformed hexadecimal colour.
+    /^\d{1,3} \d{1,3} \d{1,3}$/u.test(value) &&
+    value.split(' ').every((channel) => Number(channel) <= 255)
+      ? true
+      : 'Expected an RGB triplet of 0 to 255',
   ),
 )
 
