@@ -78,10 +78,13 @@ export const decisionConfigured = Effect.map(
   (model) => !absent.has(model),
 )
 
-/** Deliberate absence and an already-observed outage are non-events. Callers must not
- * emit a warning per invocation for these states; the Layer and gate announce transitions. */
+/** Deliberate absence, an observed outage and adapter-observed permission failures
+ * need no duplicate caller warning. Permission errors keep the existing public
+ * Provider reason; their identity records that this adapter already announced them. */
 export const isDecisionNonEvent = (error: DecisionUnavailable): boolean =>
-  nonEventReasons.has(error.reason)
+  nonEventReasons.has(error.reason) || observedPermissionFailures.has(error)
+
+const observedPermissionFailures = new WeakSet<DecisionUnavailable>()
 
 const nonEventReasons = new Set<DecisionUnavailable['reason']>([
   'Disabled',
@@ -90,9 +93,9 @@ const nonEventReasons = new Set<DecisionUnavailable['reason']>([
   'Authentication',
 ])
 
-/** Thirty seconds suppresses outage traffic. A timeout alone is weak evidence: the first
- * records suspicion and only a later independently admitted timeout closes admission. Thus a single
- * 1.5-second optional request cannot impose a 30-second penalty on every tenant. */
+/** Thirty seconds suppresses outage traffic. One timeout records suspicion;
+ * only a later independently admitted calibrated stall closes admission. A
+ * single 1800ms optional timeout cannot penalize every tenant for thirty seconds. */
 const DECISION_BACKOFF = '30 seconds'
 /** Gateway jev-latest, 4 Oct 2026, round-five twenty-question warm maximum:
  * 1773ms (effects), versus 1389ms in the earlier relevance cohort. 2200ms adds
@@ -111,6 +114,10 @@ const DECISION_SUSPICION_MILLIS = 30_000
  * one error per window announces the actionable fault without warning on every action.
  * A rebuilt gateway Layer with repaired configuration starts ready immediately. */
 const DECISION_AUTHENTICATION_BACKOFF_MILLIS = 300_000
+/** A 403 may be payload-specific, so requests remain admitted. One warning per
+ * minute coalesces repeated rejection without suppressing a later healthy call;
+ * this matches the metadata failure-cache interval while bounding log volume. */
+const DECISION_PERMISSION_WARNING_INTERVAL_MILLIS = 60_000
 
 /** A process-local mark survives schema construction without relying on object identity or
  * millisecond uniqueness. It is never persisted or sent to the gateway. */
@@ -141,6 +148,7 @@ const Transition = Schema.TaggedUnion({ Opened: {}, Closed: {}, AuthenticationRe
 const FailureClassification = Schema.TaggedUnion({
   Outage: {},
   RequestSpecific: {},
+  Permission: {},
   Authentication: {},
 })
 
@@ -166,7 +174,8 @@ const ProviderReason = AiError.AiErrorReason.pipe(Schema.toTaggedUnion('_tag'))
  * ai-typesafe internal/errors.ts maps transport AND encode/URL failures to NetworkError;
  * its reason field distinguishes actual transport from caller-specific encoding and URLs.
  * AuthenticationError kind InvalidKey (401) proves rejected credentials; 403 maps
- * to InsufficientPermissions and can reflect this payload, so it remains local. */
+ * to InsufficientPermissions and can reflect this payload: it remains local,
+ * with adapter-owned warnings throttled independently of request admission. */
 const classifyProviderFailure = (error: AiError.AiError) =>
   ProviderReason.matchOrElse(
     error.reason,
@@ -174,7 +183,7 @@ const classifyProviderFailure = (error: AiError.AiError) =>
       AuthenticationError: (reason) =>
         reason.kind === 'InvalidKey'
           ? FailureClassification.cases.Authentication.make({})
-          : FailureClassification.cases.RequestSpecific.make({}),
+          : FailureClassification.cases.Permission.make({}),
       RateLimitError: () => FailureClassification.cases.Outage.make({}),
       InternalProviderError: () => FailureClassification.cases.Outage.make({}),
       NetworkError: (reason) =>
@@ -191,6 +200,7 @@ const classifyProviderFailure = (error: AiError.AiError) =>
 interface ModelAvailability {
   readonly state: Ref.Ref<typeof Availability.Type>
   readonly scope: Scope.Scope
+  readonly permissionWarningAfter: Ref.Ref<number>
 }
 const availability = new WeakMap<DecisionModel.DecisionModel, ModelAvailability>()
 
@@ -375,6 +385,7 @@ const failedOutcome = (
   return FailureClassification.match(error.value.classification, {
     Outage: (): typeof Outcome.Type => Outcome.cases.Outage.make({}),
     RequestSpecific: (): typeof Outcome.Type => Outcome.cases.RequestFailure.make({}),
+    Permission: (): typeof Outcome.Type => Outcome.cases.RequestFailure.make({}),
     Authentication: (): typeof Outcome.Type => Outcome.cases.AuthenticationFailure.make({}),
   })
 }
@@ -389,6 +400,7 @@ const unavailableReason = (
     Authentication: () => 'Authentication',
     Outage: () => 'Provider',
     RequestSpecific: () => 'Provider',
+    Permission: () => 'Provider',
   })
 }
 
@@ -469,7 +481,8 @@ export const gatewayDecisionLayer = (options: {
       const model = yield* TypeSafeDecisionModel.make({ model: options.model })
       const state = yield* Ref.make<typeof Availability.Type>(Availability.cases.Ready.make({}))
       const scope = yield* Effect.scope
-      availability.set(model, { state, scope })
+      const permissionWarningAfter = yield* Ref.make(0)
+      availability.set(model, { state, scope, permissionWarningAfter })
       return model
     }),
   ).pipe(Layer.provide(TypeSafeClient.layer({ apiKey: options.key, apiUrl: GATEWAY_URL })))
@@ -528,12 +541,38 @@ const attemptDecision = <
     }),
   )
 
+/** The gateway announces payload-specific permission rejection once per interval,
+ * while leaving admission open. Custom supplied models have no shared adapter
+ * lifecycle; their permission failures are announced at their attempt boundary. */
+const warnPermission = Effect.fn('Decisions.warnPermission')(function* (
+  shared: Option.Option<ModelAvailability>,
+) {
+  if (Option.isNone(shared)) return yield* Effect.logWarning('Decision permission rejected')
+  const now = yield* Clock.currentTimeMillis
+  const announce = yield* Ref.modify(shared.value.permissionWarningAfter, (next) =>
+    now >= next ? [true, now + DECISION_PERMISSION_WARNING_INTERVAL_MILLIS] : [false, next],
+  )
+  if (announce) yield* Effect.logWarning('Decision permission rejected')
+})
+
+/** Preserve the public error vocabulary and signature. Identity marks only the
+ * permission failures this adapter owns, so caller recovery cannot log them again. */
+const publicUnavailable = (error: AttemptUnavailable | AttemptTimedOut) => {
+  const unavailable = new DecisionUnavailable({ reason: unavailableReason(error) })
+  if (
+    error instanceof AttemptUnavailable &&
+    FailureClassification.guards.Permission(error.classification)
+  )
+    observedPermissionFailures.add(unavailable)
+  return unavailable
+}
+
 /** Settlement and its receipt cannot be cancelled after the provider exits. rc.116
  * forkIn owns a probe in the Layer scope; the same attempt settlement handles its
  * independent timeout or Layer shutdown even when its initiating caller has left. */
 const completeAttempt = <A extends { readonly usage: DecisionModel.DecisionUsage }, R>(
   attempt: Effect.Effect<A, AttemptUnavailable | AttemptTimedOut, R>,
-  state: Option.Option<Ref.Ref<typeof Availability.Type>>,
+  state: Option.Option<ModelAvailability>,
   admission: typeof Admission.Type,
 ): Effect.Effect<A, DecisionUnavailable, R> =>
   Effect.uninterruptibleMask((restore) =>
@@ -545,7 +584,7 @@ const completeAttempt = <A extends { readonly usage: DecisionModel.DecisionUsage
           onSuccess: () => Outcome.cases.Success.make({}),
           onFailure: failedOutcome,
         })
-        yield* settle(state.value, admission, outcome)
+        yield* settle(state.value.state, admission, outcome)
       }
       const latency = (yield* Clock.currentTimeMillis) - start
       if (Exit.isSuccess(exit))
@@ -554,10 +593,17 @@ const completeAttempt = <A extends { readonly usage: DecisionModel.DecisionUsage
           inputTokens: exit.value.usage.inputTokens,
           outputTokens: exit.value.usage.outputTokens,
         })
-      else yield* Effect.logInfo('Decision', { latency })
-      return yield* exit.pipe(
-        Effect.mapError((error) => new DecisionUnavailable({ reason: unavailableReason(error) })),
-      )
+      else {
+        yield* Effect.logInfo('Decision', { latency })
+        const error = Cause.findErrorOption(exit.cause)
+        if (
+          Option.isSome(error) &&
+          error.value instanceof AttemptUnavailable &&
+          FailureClassification.guards.Permission(error.value.classification)
+        )
+          yield* warnPermission(state)
+      }
+      return yield* exit.pipe(Effect.mapError(publicUnavailable))
     }),
   )
 
@@ -596,7 +642,7 @@ export const decideWithin = <
           : yield* admit(shared.state)
       if (Admission.guards.Backoff(admission))
         return yield* new DecisionUnavailable({ reason: 'Backoff' })
-      const state = shared === undefined ? Option.none() : Option.some(shared.state)
+      const state = Option.fromUndefinedOr(shared)
       if (Admission.guards.Probe(admission) && shared !== undefined) {
         const probe = yield* completeAttempt(
           attemptDecision(definition, input, RECOVERY_PROBE_BUDGET),

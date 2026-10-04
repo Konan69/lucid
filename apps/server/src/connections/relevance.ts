@@ -11,7 +11,9 @@ export const TOOL_RELEVANCE_THRESHOLD = 0.3
 /** Experiential Labs gateway, jev-latest, 4 Oct 2026, one process and ten warm calls:
  * twenty questions at 500 characters took first=828ms, warm min/median/max=662/818/1304ms;
  * input/output tokens=5024/374 on every call. 1800ms gives 496ms (38%) above the warm
- * maximum. findTools further caps this request at its remaining two-second discovery budget. */
+ * maximum. findTools caps its wait at the remaining two-second optional-work
+ * budget after mandatory catalog reads. A Layer-owned recovery probe may outlive
+ * that wait, with its own 2500ms bound; it cannot extend discovery latency. */
 export const RELEVANCE_BUDGET = '1800 millis'
 
 interface Candidate {

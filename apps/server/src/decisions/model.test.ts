@@ -7,6 +7,7 @@ import {
   decide,
   decideWithin,
   decisionConfigured,
+  isDecisionNonEvent,
   decisionWouldAttempt,
   DECISION_OUTAGE_MINIMUM_MILLIS,
   DecisionUnavailable,
@@ -759,3 +760,47 @@ it.effect('Layer shutdown interrupts a detached recovery probe', () =>
     expect(calls).toBe(2)
   }),
 )
+
+/** A gateway rejecting every payload must not flood caller warnings, but a 403
+ * cannot suppress another payload's attempt. Clock controls the log interval. */
+it.effect('persistent 403 responses warn once per minute without closing admission', () => {
+  let calls = 0
+  const warnings: string[] = []
+  const transport = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      calls += 1
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(request, new Response('{}', { status: 403 })),
+      )
+    }),
+  )
+  return Effect.gen(function* () {
+    for (const attempt of [1, 2, 3]) {
+      void attempt
+      const error = yield* Effect.flip(decide(definition, 'forbidden'))
+      expect(error.reason).toBe('Provider')
+      expect(isDecisionNonEvent(error)).toBe(true)
+      expect(yield* decisionWouldAttempt).toBe(true)
+    }
+    expect(calls).toBe(3)
+    expect(warnings).toHaveLength(1)
+    yield* TestClock.adjust('59 seconds')
+    yield* Effect.flip(decide(definition, 'same interval'))
+    expect(warnings).toHaveLength(1)
+    yield* TestClock.adjust('1 second')
+    yield* Effect.flip(decide(definition, 'next interval'))
+    expect(warnings).toHaveLength(2)
+    expect(warnings.every((line) => line.includes('Decision permission rejected'))).toBe(true)
+    expect(calls).toBe(5)
+  }).pipe(
+    Effect.provide(configuredGateway(transport)),
+    Effect.provide(
+      Logger.layer([
+        Logger.make(({ logLevel, message }) => {
+          if (logLevel === 'Warn') warnings.push(JSON.stringify(message))
+        }),
+      ]),
+    ),
+  )
+})
