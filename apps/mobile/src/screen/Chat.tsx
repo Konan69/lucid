@@ -8,7 +8,6 @@ import {
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
-import type { FaceMood } from '@vivid/marks'
 import { draftPlace, standingWords, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
@@ -133,14 +132,14 @@ function Gone() {
 
 /**
  * How Vivid is doing in a Thread, beside the words for it (`standingWords`, shared with the web):
- * the look on its face, and the ink the line under the title is said in.
+ * the ink the line under the title is said in, where the bar is the app's to colour.
  */
-const STANDING = {
-  Working: { mood: 'thinking', tone: 'status-working' },
-  NeedsYou: { mood: 'neutral', tone: 'status-attention' },
-  Unread: { mood: 'happy', tone: 'ink-3' },
-  Quiet: { mood: 'neutral', tone: 'ink-3' },
-} as const satisfies Record<Thread['attention'], { mood: FaceMood; tone: Tone }>
+const STANDING_TONE = {
+  Working: 'status-working',
+  NeedsYou: 'status-attention',
+  Unread: 'ink-3',
+  Quiet: 'ink-3',
+} as const satisfies Record<Thread['attention'], Tone>
 
 /** Who can see a Thread, in a sentence, for whoever cannot see the mark that says so. */
 const audienceWords = (thread: Thread): string =>
@@ -151,9 +150,9 @@ const audienceWords = (thread: Thread): string =>
   })
 
 /**
- * The top of a Thread, said to the system's bar (`ui/Bar.tsx`); nothing is drawn here. Vivid is
- * in it, not just named by it: its face, the Thread's title, and a line saying how it is doing
- * right now (here, working, waiting for the Person). While someone else is writing, the line says
+ * The top of a Thread, said to the system's bar (`ui/Bar.tsx`); nothing is drawn here: the
+ * Thread's title, and under it a line saying how Vivid is doing right now (here, working,
+ * waiting for the Person). While someone else is writing, the line says
  * that instead, because it is the thing about to change the Thread. Beside the title: who else
  * is looking. In the bar's own buttons: who the Thread is shared with, and the way to Vivid's
  * computer.
@@ -177,7 +176,6 @@ function Top({
   const attention: Thread['attention'] = working
     ? 'Working'
     : Option.match(thread, { onNone: () => 'Quiet', onSome: (value) => value.attention })
-  const standing = STANDING[attention]
   const someoneTyping = typing.length > 0
   const computer: BarAction = {
     symbol: 'desktopcomputer',
@@ -208,9 +206,8 @@ function Top({
         words: someoneTyping
           ? `${typing.map((seen) => seen.person.name).join(', ')} typing…`
           : standingWords[attention],
-        tone: someoneTyping ? 'ink-3' : standing.tone,
+        tone: someoneTyping ? 'ink-3' : STANDING_TONE[attention],
       }}
-      mood={Option.some(standing.mood)}
       present={others.map((seen) => seen.person)}
       actions={Option.match(sharing, {
         onNone: () => [computer],

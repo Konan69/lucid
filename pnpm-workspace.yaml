@@ -124,7 +124,9 @@ allowBuilds:
 
 patchedDependencies:
   '@react-native-menu/menu@2.0.0': patches/@react-native-menu__menu@2.0.0.patch
+  '@react-navigation/native-stack@7.19.2': patches/@react-navigation__native-stack@7.19.2.patch
   react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
+  react-native-screens@4.26.2: patches/react-native-screens@4.26.2.patch
 minimumReleaseAgeExclude:
   - '@cloudflare/workers-types@5.20260919.1'
   - '@effect/platform-node-shared@4.0.0-rc.116'

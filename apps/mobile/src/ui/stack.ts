@@ -10,12 +10,15 @@ import { GLASS_SUPPORTED } from './Glass'
  *
  * Ported from T3 Code mobile `src/Stack.tsx` (`GLASS_HEADER_OPTIONS`, `SOLID_HEADER_OPTIONS`,
  * the sheet variants, and the `simple_push` note beside its root navigator) and
- * `src/native/scrollEdgeEffects.ts` (`nativeHeaderScrollEdgeEffects`). Two things differ:
- * - `unstable_navigationItemStyle: 'editor'` is left out. The reference gets it from its patches
- *   to `@react-navigation/native-stack` and to the Objective-C of `react-native-screens`
- *   (`RNSScreenStackHeaderConfig.mm`); Vivid's pinned, unpatched packages have no such option, and
- *   a native change cannot reach an installed app over the air.
- * - The title's weight is carried by `HEADER_TITLE`, in Vivid's type scale.
+ * `src/native/scrollEdgeEffects.ts` (`nativeHeaderScrollEdgeEffects`). The title's weight is
+ * carried by `HEADER_TITLE`, in Vivid's type scale.
+ *
+ * `unstable_navigationItemStyle`, like the bar's subtitle and an item's `glassEffect`, exists
+ * only through the reference's two patches, which Vivid carries too (`patches/` at the repository
+ * root): one to `@react-navigation/native-stack`, ported to the pinned 7.19.2, and one to
+ * `react-native-screens` 4.26.2, which changes its Objective-C. So these options need a binary
+ * built with the patch: app version 0.2.0 and later, which is also the runtime version an
+ * over-the-air update is published for.
  */
 
 /** The bar's title: 18 points and heavy, as the reference sets it. */
@@ -52,6 +55,9 @@ export const GLASS_HEADER = {
   headerTransparent: GLASS_SUPPORTED,
   headerStyle: GLASS_SUPPORTED ? { backgroundColor: 'transparent' } : undefined,
   scrollEdgeEffects: GLASS_SUPPORTED ? SCROLL_EDGES : undefined,
+  // UIKit's editor layout: the title stands at the leading edge, beside the way back, and the
+  // centre is left free. The reference sets it only where the bar is glass.
+  unstable_navigationItemStyle: GLASS_SUPPORTED ? 'editor' : undefined,
 } satisfies NativeStackNavigationOptions
 
 /** An opaque bar, for a screen whose content scrolls inside itself and gives glass nothing to sample. */
@@ -63,6 +69,7 @@ export const SOLID_HEADER = {
   headerShadowVisible: false,
   headerTitleStyle: HEADER_TITLE,
   headerTransparent: false,
+  unstable_navigationItemStyle: Platform.OS === 'ios' ? 'editor' : undefined,
 } satisfies NativeStackNavigationOptions
 
 /**

@@ -1,5 +1,4 @@
 import type { PersonSummary } from '@vivid/contracts'
-import type { FaceMood } from '@vivid/marks'
 import { useNavigation, type ParamListBase } from '@react-navigation/native'
 import {
   useAnimatedHeaderHeight,
@@ -8,13 +7,12 @@ import {
   type NativeStackNavigationOptions,
   type NativeStackNavigationProp,
 } from '@react-navigation/native-stack'
-import { Option } from 'effect'
 import type { LucideIcon } from 'lucide-react-native'
 import { useLayoutEffect, useRef } from 'react'
-import { Animated, Platform, useWindowDimensions, View } from 'react-native'
+import { Animated, Platform, View } from 'react-native'
 import { Faces } from './Avatar'
 import { GLASS_SUPPORTED } from './Glass'
-import { Face, IconButton, Label, TARGET, type Tone } from './ui'
+import { IconButton, Label, type Tone } from './ui'
 
 /**
  * What a screen puts in the system's navigation bar: its title and at most a couple of actions.
@@ -38,15 +36,24 @@ import { Face, IconButton, Label, TARGET, type Tone } from './ui'
  *   options and is never stale.
  * - Actions are `unstable_headerRightItems` on iOS. That option is iOS-only, so Android gets the
  *   same actions as `headerRight` on its solid bar.
+ * - Each item is set as the reference's `withNativeGlassHeaderItem` sets it
+ *   (`src/features/layout/native-glass-header-items.ts`): `variant: 'plain'`,
+ *   `sharesBackground: true`, `hidesSharedBackground: false`, and `glassEffect: false`. Its
+ *   note: a bar button already gets the system's glass, and `glassEffect` makes
+ *   react-native-screens draw a custom button, which shows as a second thin capsule.
+ * - The line under a title is `unstable_headerSubtitle`, UIKit's own subtitle, set only where
+ *   the bar is glass, as the reference does (`ThreadRouteScreen.tsx`).
+ *
+ * `unstable_headerSubtitle` and `glassEffect` exist through the two patches described in
+ * `ui/stack.ts`, so they need a binary built with them (app version 0.2.0 and later).
  *
  * What differs, and why:
  * - The reference compares options by walking any object and reading function source. Here the
  *   input is a small typed model, so the signature is that model's own data.
- * - The reference's `unstable_headerSubtitle`, `unstable_headerToolbarItems`,
- *   `unstable_headerCenterItems` and `unstable_navigationItemStyle` come from its patches to the
- *   native side of `react-native-screens`. Vivid's pinned packages are unpatched and a native
- *   change cannot ship over the air, so none of them is used. A line under the title is drawn by
- *   `StandingBar` in the bar's own title slot (`headerTitle`), which the unpatched stack has.
+ * - The reference's bottom toolbar (`unstable_headerToolbarItems`) is not used: no Vivid screen
+ *   has actions that belong at the foot of the screen.
+ * - The reference draws its own bar on Android, with the subtitle in it. Vivid keeps the
+ *   platform's solid bar there and puts the title and its line in the bar's title slot.
  */
 
 /** The names of the system's symbols, as the installed stack types a bar button's icon. */
@@ -85,15 +92,35 @@ const barItems = (actions: ReadonlyArray<BarAction>, press: PressAt): NativeStac
     icon: { type: 'sfSymbol', name: action.symbol },
     disabled: action.disabled,
     variant: 'plain',
-    // Each action on its own round of glass, not several in one capsule.
-    sharesBackground: false,
+    glassEffect: false,
+    sharesBackground: true,
+    hidesSharedBackground: false,
     onPress: () => press(place),
   }))
 
-/** Android: the same actions drawn by the app, at the end of the solid bar. */
-function BarButtons({ actions, press }: { actions: ReadonlyArray<BarAction>; press: PressAt }) {
+/** Who else is looking, as an item of its own before the actions: faces on no glass of their own. */
+const presentItem = (present: ReadonlyArray<PersonSummary>): NativeStackHeaderItem[] =>
+  present.length === 0
+    ? []
+    : [
+        {
+          type: 'custom',
+          element: <Faces people={present} size={20} />,
+          hidesSharedBackground: true,
+        },
+      ]
+
+/** What stands at the end of a bar: who else is here, then what can be done. */
+interface BarEnd {
+  readonly present: ReadonlyArray<PersonSummary>
+  readonly actions: ReadonlyArray<BarAction>
+}
+
+/** Android: the same faces and actions drawn by the app, at the end of the solid bar. */
+function BarButtons({ present, actions, press }: BarEnd & { press: PressAt }) {
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+      {present.length > 0 && <Faces people={present} size={20} />}
       {actions.map((action, place) => (
         <IconButton
           key={action.label}
@@ -107,17 +134,24 @@ function BarButtons({ actions, press }: { actions: ReadonlyArray<BarAction>; pre
   )
 }
 
-/** The options that put a list of actions at the end of the bar, on either platform. */
-const actionOptions = (
-  actions: ReadonlyArray<BarAction>,
-  press: PressAt,
-): NativeStackNavigationOptions =>
+/** The options that put faces and actions at the end of the bar, on either platform. */
+const endOptions = (end: BarEnd, press: PressAt): NativeStackNavigationOptions =>
   Platform.OS === 'ios'
-    ? { unstable_headerRightItems: () => barItems(actions, press) }
+    ? {
+        unstable_headerRightItems: () => [
+          ...presentItem(end.present),
+          ...barItems(end.actions, press),
+        ],
+      }
     : {
         headerRight:
-          actions.length === 0 ? undefined : () => <BarButtons actions={actions} press={press} />,
+          end.present.length + end.actions.length === 0
+            ? undefined
+            : () => <BarButtons {...end} press={press} />,
       }
+
+/** Nobody else is here. One value, for the same reason as `NO_ACTIONS`. */
+const NOBODY: ReadonlyArray<PersonSummary> = []
 
 /** What of an action decides how the bar looks. Its handler does not; `useBar` keeps that fresh. */
 const shownOf = (actions: ReadonlyArray<BarAction>) =>
@@ -156,7 +190,7 @@ function useBar(
 export function Bar({ title, actions }: { title: string; actions: ReadonlyArray<BarAction> }) {
   useBar(JSON.stringify([title, shownOf(actions)]), actions, (press) => ({
     title,
-    ...actionOptions(actions, press),
+    ...endOptions({ present: NOBODY, actions }, press),
   }))
   return null
 }
@@ -167,90 +201,58 @@ export interface Standing {
   readonly tone: Tone
 }
 
-interface StandingProps {
-  readonly title: string
-  readonly standing: Standing
-  /** Vivid's face before the title, on the screens where Vivid is at work. */
-  readonly mood: Option.Option<FaceMood>
-  /** Who else is looking, after the title. */
-  readonly present: ReadonlyArray<PersonSummary>
+/**
+ * The line under the title, where each platform can say it.
+ * - Glass (iOS 26): UIKit's own subtitle. It is the system's text, so it is in the system's ink;
+ *   the state is in the words.
+ * - Android: the title and the line as one element in the solid bar's title slot, which the stack
+ *   lays out in the room the bar has, with the line in its state's ink.
+ * - iOS without glass: the title alone, as the reference leaves it there. The state is still said
+ *   on the screen itself.
+ */
+const standingOptions = (title: string, standing: Standing): NativeStackNavigationOptions => {
+  if (GLASS_SUPPORTED) return { unstable_headerSubtitle: standing.words }
+  if (Platform.OS === 'android')
+    return { headerTitle: () => <StandingTitle title={title} standing={standing} /> }
+  return {}
 }
 
 /**
  * A bar whose title has a live line under it: a Thread saying that Vivid is working or waiting,
- * the Computer saying how it is. The title, the line, Vivid's face and who else is here are one
- * element in the bar's title slot; the way back and the actions stay the system's.
+ * the Computer saying how it is. `present` is who else is looking at the same thing.
  *
- * The reference says this line with `unstable_headerSubtitle`, which needs its native patch
- * (see the note at the top of this file). `headerTitle` as an element is what the unpatched
- * stack offers; the cost, by its own documentation, is that the system does not animate a custom
- * title during a push.
+ * Vivid's face is not in this bar. The reference has no slot for a picture beside the title of a
+ * screen that also has the system's way back (its centre items replace the title, its left items
+ * replace or follow the back button), and a Thread already shows Vivid's face at work where its
+ * words are. So the bar says the state in words and the conversation shows the face.
  */
 export function StandingBar({
+  title,
+  standing,
+  present,
   actions,
-  ...shown
-}: StandingProps & { actions: ReadonlyArray<BarAction> }) {
-  const mood = Option.getOrUndefined(shown.mood)
-  const people = shown.present.map((person) => [person.id, person.name, person.image])
-  useBar(
-    JSON.stringify([shown.title, shown.standing, mood, people, shownOf(actions)]),
-    actions,
-    (press) => ({
-      // The words too, for the system: the back menu of the next screen names this one by them.
-      title: shown.title,
-      headerTitle: () => <StandingTitle {...shown} actions={actions.length} />,
-      ...actionOptions(actions, press),
-    }),
-  )
+}: BarEnd & { title: string; standing: Standing }) {
+  const people = present.map((person) => [person.id, person.name, person.image])
+  useBar(JSON.stringify([title, standing, people, shownOf(actions)]), actions, (press) => ({
+    title,
+    ...standingOptions(title, standing),
+    ...endOptions({ present, actions }, press),
+  }))
   return null
 }
 
-/**
- * The room the bar's own controls take, which the title must leave them. UIKit centres a title
- * view and does not shrink one, so a long Thread title is given a width to truncate in: the
- * screen, less the way back and less each action. These are the bar's usual metrics (a 44-point
- * control, 16 from the edge, 8 between), not values read from the system.
- */
-const BACK_ROOM = 16 + TARGET + 8
-const actionsRoom = (count: number) => (count === 0 ? 16 : 16 + count * (TARGET + 8))
-
-/** The title element `StandingBar` puts in the bar. The header role stays on the title's words. */
-function StandingTitle({
-  title,
-  standing,
-  mood,
-  present,
-  actions,
-}: StandingProps & { actions: number }) {
-  const { width } = useWindowDimensions()
+/** Android's title element. The header role stays on the title's words. */
+function StandingTitle({ title, standing }: { title: string; standing: Standing }) {
   return (
-    <View
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-        maxWidth: width - BACK_ROOM - actionsRoom(actions),
-      }}
-    >
-      {Option.isSome(mood) && <Face size={28} mood={mood.value} />}
-      <View style={{ flexShrink: 1, minWidth: 0 }}>
-        {/* 17 points, as the reference sets a Thread's title over glass
-            (`ThreadRouteScreen.tsx`, `headerTitleStyle`). */}
-        <Label accessibilityRole="header" numberOfLines={1} size="heading" style={{ fontSize: 17 }}>
-          {title}
-        </Label>
-        {/* Said again to a screen reader when it changes: it is where a Thread says that Vivid
-            has started working, or is now waiting for the Person. */}
-        <Label
-          accessibilityLiveRegion="polite"
-          numberOfLines={1}
-          size="caption"
-          tone={standing.tone}
-        >
-          {standing.words}
-        </Label>
-      </View>
-      {present.length > 0 && <Faces people={present} size={20} />}
+    <View>
+      <Label accessibilityRole="header" numberOfLines={1} size="heading">
+        {title}
+      </Label>
+      {/* Said again to a screen reader when it changes: it is where a Thread says that Vivid
+          has started working, or is now waiting for the Person. */}
+      <Label accessibilityLiveRegion="polite" numberOfLines={1} size="caption" tone={standing.tone}>
+        {standing.words}
+      </Label>
     </View>
   )
 }

@@ -80,7 +80,6 @@ export function Computer() {
           }),
           tone: 'ink-3',
         }}
-        mood={Option.none()}
         present={[]}
         actions={NO_ACTIONS}
       />
