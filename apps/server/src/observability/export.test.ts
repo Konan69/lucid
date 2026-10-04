@@ -9,6 +9,7 @@ import {
   Context,
   Duration,
   Effect,
+  Exit,
   Fiber,
   Layer,
   Logger,
@@ -989,7 +990,11 @@ it.effect('bounds what a backend that never answers can hold, and reports each p
     expect(yield* Queue.size(arrivals)).toBe(0)
     const reports = () => stdout.lines.filter((line) => line.includes(Message.dropped))
     // One report for each signal, written by the drop that paused it, and it says so.
-    expect(reports().map(reported)).toEqual([paused('traces', 1), paused('logs', 1)])
+    // The two exporters run on their own fibers, so which report is written first is not promised.
+    expect(reports()).toHaveLength(2)
+    expect(new Set(reports().map(reported))).toEqual(
+      new Set([paused('traces', 1), paused('logs', 1)]),
+    )
 
     // The held posts time out and are dropped too. They fall inside the pauses already
     // reported, so there is no new report; the backend was never sent more than the cap.
@@ -1187,6 +1192,208 @@ interface Declared {
   readonly cause: unknown
 }
 
+/** A handler whose every trap throws, for a `Proxy` that cannot be read in any way. */
+const refusing: ProxyHandler<object> = new Proxy(
+  {},
+  {
+    get: () => () => {
+      throw new Error(PRIVATE)
+    },
+  },
+)
+
+/** A `Proxy` after `revoke`: every operation on it, `typeof` aside, is a `TypeError`. */
+const revoked = (): object => {
+  const { proxy, revoke } = Proxy.revocable({}, {})
+  revoke()
+  return proxy
+}
+
+/**
+ * The loggers installed where this runs, without the two Effect installs by default: the
+ * exporter's, alone. Those two read what is logged themselves, with or without export.
+ */
+const exportersOnly = Effect.fn('Test.exportersOnly')(function* () {
+  const loggers = yield* Logger.CurrentLoggers
+  return new Set(
+    [...loggers].filter(
+      (logger) => logger !== Logger.defaultLogger && logger !== Logger.tracerLogger,
+    ),
+  )
+})
+
+/**
+ * Values that run their own code, or never end, when something reads them as an error: what a
+ * provider SDK, a driver or a bug can throw. Each is made fresh, with private text where a
+ * message goes.
+ */
+const hostile: ReadonlyArray<readonly [label: string, make: () => object]> = [
+  [
+    'an Error whose name throws',
+    () =>
+      Object.defineProperty(new Error(PRIVATE), 'name', {
+        get: () => {
+          throw new Error(PRIVATE)
+        },
+      }),
+  ],
+  [
+    'an Error that is its own cause',
+    () => {
+      const error = new Error(PRIVATE)
+      error.cause = error
+      return error
+    },
+  ],
+  [
+    'an Error in a cycle of two causes',
+    () => {
+      const first = new Error(PRIVATE)
+      first.cause = new Error(PRIVATE, { cause: first })
+      return first
+    },
+  ],
+  ['a Proxy whose traps throw', () => new Proxy({}, refusing)],
+  ['a revoked Proxy', revoked],
+]
+
+/** Each hostile value, once as a typed failure and once as a defect. */
+const hostileCases = hostile.flatMap(([label, make]) =>
+  (['Fail', 'Die'] as const).map((kind) => ({ label, kind, value: make() })),
+)
+type HostileCase = (typeof hostileCases)[number]
+
+/**
+ * What a caller was handed for one hostile case, in a form that can be compared without reading
+ * the value: how many reasons the cause has, and whether the one reason is of the kind that was
+ * raised and holds the very object that was raised. `expect` is never given the value itself,
+ * because printing it would run its code.
+ */
+const outcomeOf = <A>({ kind, label, value }: HostileCase, exit: Exit.Exit<A, unknown>) => {
+  const reasons = Exit.isFailure(exit) ? exit.cause.reasons : []
+  const [reason] = reasons
+  const same =
+    reason !== undefined &&
+    ((kind === 'Fail' && Cause.isFailReason(reason) && Object.is(reason.error, value)) ||
+      (kind === 'Die' && Cause.isDieReason(reason) && Object.is(reason.defect, value)))
+  return { label, kind, reasons: reasons.length, same }
+}
+
+const unchanged = ({ kind, label }: HostileCase) => ({ label, kind, reasons: 1, same: true })
+
+it.effect('ends a span whose failure cannot be read, and hands the caller that failure only', () =>
+  Effect.gen(function* () {
+    const { collect, flush, run } = yield* observed(plain)
+    const raise = Effect.fn('Probe.hostile')(function* ({ kind, value }: HostileCase) {
+      return yield* kind === 'Fail' ? Effect.fail(value) : Effect.die(value)
+    }, observeFailures('rpc'))
+    // The same failure through a span that no recorder reads it under: only the tracer does.
+    const bare = Effect.fn('Probe.bare')(function* ({ kind, value }: HostileCase) {
+      return yield* kind === 'Fail' ? Effect.fail(value) : Effect.die(value)
+    })
+
+    const outcomes = yield* Effect.forEach(hostileCases, (entry) =>
+      Effect.all([run(raise(entry)), run(bare(entry))]).pipe(
+        Effect.map((exits) => exits.map((exit) => outcomeOf(entry, exit))),
+      ),
+    )
+    yield* flush
+    const { spans, text } = yield* collect()
+
+    // Ending the span added nothing to the cause: one reason, of the kind raised, the same object.
+    expect(outcomes).toEqual(hostileCases.map((entry) => [unchanged(entry), unchanged(entry)]))
+    // Every span was still exported, as failed, with the type its class gives and no text. A
+    // defect that is an `Error` is named so; nothing names a typed failure of no declared class.
+    const types = (name: string) =>
+      spanNamed(spans, name).map((span) => [
+        span.status,
+        span.events
+          .filter((event) => event.name === 'exception')
+          .map((event) => valuesOf(event.attributes)),
+      ])
+    const error = [{ code: 2 }, [{ 'exception.type': 'Error' }]]
+    const other = [{ code: 2 }, [{}]]
+    const expected = [other, error, other, error, other, error, other, other, other, other]
+    expect(types('Probe.hostile')).toEqual(expected)
+    expect(types('Probe.bare')).toEqual(expected)
+    expect(
+      spanNamed(spans, 'Probe.hostile').map((span) => valuesOf(span.attributes)['error.type']),
+    ).toEqual(expected.map((entry) => (entry === error ? 'Error' : '_OTHER')))
+    expect(text).not.toContain(PRIVATE)
+  }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+)
+
+it.effect('still exports an ordinary failed span with its type, on the span and its event', () =>
+  Effect.gen(function* () {
+    const crash = Effect.fn('Probe.crash')(function* () {
+      return yield* Effect.die(new TypeError('cannot read the thing'))
+    }, observeFailures('rpc'))
+    const { spans } = yield* exported(crash())
+
+    const [span] = spanNamed(spans, 'Probe.crash')
+    expect(span === undefined ? {} : valuesOf(span.attributes)['error.type']).toBe('TypeError')
+    expect(span === undefined ? {} : span.status).toEqual({ code: 2 })
+    expect(
+      span === undefined
+        ? []
+        : span.events
+            .filter((event) => event.name === 'exception')
+            .map((event) => valuesOf(event.attributes)),
+    ).toEqual([{ 'exception.type': 'TypeError' }])
+  }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+)
+
+it.effect('drops a span or a line it cannot build, and leaves the work as it ended', () =>
+  Effect.gen(function* () {
+    const { collect, flush, run } = yield* observed(plain)
+    // A value that throws when it is formatted, as a span attribute and as a log annotation.
+    const annotate = Effect.fn('Probe.annotated')(function* () {
+      yield* Effect.annotateCurrentSpan('vivid.probe', revoked())
+      return 'done'
+    })
+    const log = Effect.fn('Probe.logged')(function* () {
+      yield* Effect.logInfo(Message.failure).pipe(
+        Effect.annotateLogs('vivid.probe', revoked()),
+        // Effect's own loggers print the annotation; only the exporter's is under test.
+        Effect.provideService(Logger.CurrentLoggers, yield* exportersOnly()),
+      )
+      return 'done'
+    })
+    const exits = [yield* run(annotate()), yield* run(log())]
+    yield* flush
+    const { lines, spans } = yield* collect()
+
+    expect(exits).toEqual([Exit.succeed('done'), Exit.succeed('done')])
+    // What could not be built is absent, and the span beside it is exported as it was.
+    expect(spanNamed(spans, 'Probe.annotated')).toEqual([])
+    expect(spanNamed(spans, 'Probe.logged')).toHaveLength(1)
+    expect(lines.filter((line) => line.body.stringValue === Message.failure)).toEqual([])
+  }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+)
+
+it.effect('exports a line logged with a cause that cannot be read, and the log call succeeds', () =>
+  Effect.gen(function* () {
+    const { collect, flush, run } = yield* observed(plain)
+    const log = Effect.fn('Probe.logged')(function* ({ kind, value }: HostileCase) {
+      // Effect's own loggers render a logged cause themselves, with or without export, so they
+      // are left out: what is under test is what the exporter's logger adds.
+      yield* Effect.logError(
+        Message.defect,
+        kind === 'Fail' ? Cause.fail(value) : Cause.die(value),
+      ).pipe(Effect.provideService(Logger.CurrentLoggers, yield* exportersOnly()))
+      return 'done'
+    })
+    const exits = yield* Effect.forEach(hostileCases, (entry) => run(log(entry)))
+    yield* flush
+    const { lines, text } = yield* collect()
+
+    expect(exits).toEqual(hostileCases.map(() => Exit.succeed('done')))
+    const logged = lines.filter((line) => line.body.stringValue === Message.defect)
+    expect(logged.map((line) => valuesOf(line.attributes))).toEqual(hostileCases.map(() => ({})))
+    expect(text).not.toContain(PRIVATE)
+  }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+)
+
 /**
  * A failure of a class declared with `Schema.TaggedError` under a tag that is given, not written:
  * what a dependency building error classes from text it was handed would do, and what the cap
@@ -1204,31 +1411,64 @@ const failureLines = (
     return 'vivid.boundary' in values ? [values] : []
   })
 
-it.effect('names at most 256 failure types in one process, and `_OTHER` after that', () =>
+it.effect('names at most 256 failure types in one process, spans and lines together', () =>
   Effect.gen(function* () {
-    const failing = (failure: Declared) =>
+    const { collect, flush, run } = yield* observed(plain)
+    // Recorded with no span of the exporter's current: the type is on a log line and no span.
+    const logged = (failure: Declared | Foreign) =>
       Effect.exit(Effect.fail(failure).pipe(observeFailures('rpc')))
+    // Recorded with no logger installed: the type is on a span and no log line.
+    const traced = Effect.fn('Probe.traced')(function* (failure: Declared | Foreign) {
+      return yield* Effect.fail(failure)
+    }, observeFailures('rpc'))
+    const tracedOnly = (failure: Declared | Foreign) =>
+      Effect.exit(traced(failure)).pipe(Effect.provideService(Logger.CurrentLoggers, new Set()))
     const tags = Array.from({ length: MOST_TYPE_NAMES }, (_, index) => `Bulk${index}`)
-    const { lines } = yield* exported(
+
+    // `_OTHER` first, on both signals, and then one name for every place: the even ones on spans
+    // only, the odd ones on lines only. Were `_OTHER` to take a place, the last name would not
+    // fit. The flush serializes both signals, in whichever order, with every place then taken.
+    yield* run(
       Effect.gen(function* () {
-        // Every place is taken, in order, by a failure's own type.
-        yield* Effect.forEach(tags, (tag) => failing(declared(tag, undefined)))
-        // A name that arrives after that, as a type and as a root; then admitted names again.
-        yield* failing(declared('Late', undefined))
-        yield* failing(declared('Bulk0', declared('Later', undefined)))
-        yield* failing(declared('Bulk1', declared('Bulk0', undefined)))
+        yield* tracedOnly(new Foreign('unnamed'))
+        yield* logged(new Foreign('unnamed'))
+        yield* Effect.forEach(tags, (tag, index) =>
+          index % 2 === 0 ? tracedOnly(declared(tag, undefined)) : logged(declared(tag, undefined)),
+        )
       }),
     )
+    yield* flush
+    // A name that arrives after that, on a span and on a line. Half the admitted names came from
+    // each signal, so a signal with a budget of its own would still have room for these. Then
+    // admitted names again, each on the signal that did not admit it, and as a root.
+    yield* run(
+      Effect.gen(function* () {
+        yield* tracedOnly(declared('Late', undefined))
+        yield* tracedOnly(declared('Bulk1', undefined))
+        yield* logged(declared('Later', undefined))
+        yield* logged(declared('Bulk0', declared('Latest', undefined)))
+        yield* logged(declared('Bulk2', declared('Bulk1', undefined)))
+      }),
+    )
+    yield* flush
+    const { lines, spans } = yield* collect()
 
-    const types = failureLines(lines).map((values) => [
+    const onSpans = spanNamed(spans, 'Probe.traced').map(
+      (span) => valuesOf(span.attributes)['error.type'],
+    )
+    const onLines = failureLines(lines).map((values) => [
       values['error.type'],
       values['vivid.failure.root'],
     ])
-    expect(types.slice(0, MOST_TYPE_NAMES)).toEqual(tags.map((tag) => [tag, undefined]))
-    expect(types.slice(MOST_TYPE_NAMES)).toEqual([
+    const even = tags.filter((_, index) => index % 2 === 0)
+    const odd = tags.filter((_, index) => index % 2 === 1)
+    expect(onSpans).toEqual(['_OTHER', ...even, '_OTHER', 'Bulk1'])
+    expect(onLines).toEqual([
+      ['_OTHER', undefined],
+      ...odd.map((tag) => [tag, undefined]),
       ['_OTHER', undefined],
       ['Bulk0', '_OTHER'],
-      ['Bulk1', 'Bulk0'],
+      ['Bulk2', 'Bulk1'],
     ])
   }).pipe(Effect.provide(NodeHttpServer.layerTest)),
 )
