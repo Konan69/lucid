@@ -1,11 +1,13 @@
 import { ChannelStanding, type Channel, type ChannelLink } from '@vivid/contracts'
 import {
   codeEnding,
+  composerOf,
   makeWhen,
   MESSENGER,
   messageLink,
   channelWords,
   textingUnreached,
+  textLink,
   thisReader,
   type Composer,
 } from '@vivid/state'
@@ -322,8 +324,16 @@ function Figure({ name, value, spent }: { name: string; value: string; spent: bo
 }
 
 /**
- * A connected channel: the number to text, the Person's own number, and since when. Disconnecting
- * stops Vivid answering that phone, so it is asked for twice.
+ * A connected channel. What a Person does with one is text Vivid, so the number to text is the
+ * large thing (the same `Figure` the code is shown in, with its copy button) and the filled button
+ * under it opens their messaging app on a first message to that number. Their own number and
+ * since when are said quietly; disconnecting stops Vivid answering that phone, so it stands apart
+ * on the last line, in the danger colour, and is asked for twice.
+ *
+ * The button is only there when this device can be expected to open the link (`textLink`). A
+ * Windows or Linux desktop has nothing that takes an `sms:` link, and a button that does nothing
+ * when pressed is worse than none: there the number and its copy are the whole of it, and one
+ * sentence says to text it from the phone.
  */
 function Connected({
   channel,
@@ -338,38 +348,47 @@ function Connected({
 }) {
   const [confirming, setConfirming] = useState(false)
   const [opened] = useState(() => Date.now())
+  const link = textLink(channel, composerOf(navigator.userAgent), standing.textTo)
   return (
     <>
-      <Line
-        channel={channel}
-        detail={
-          <>
-            <span className="flex items-center gap-1.5">
+      <div className="flex flex-col gap-3 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <Mark service={{ name: channel }} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-label text-ink">{channel}</div>
+            <div className="flex items-center gap-1.5 text-label text-ink-3">
               <i aria-hidden className="size-1.5 shrink-0 rounded-full bg-success" />
               {channelWords(standing)} · {when(standing.since, opened)}
-            </span>
-            <span className="block wrap-break-word">
-              Text Vivid at <span className="text-ink tabular-nums">{standing.textTo}</span> from{' '}
-              <span className="tabular-nums">{standing.address}</span>.
-            </span>
-          </>
-        }
-      >
-        <a
-          href={messageLink(channel, composer(), standing.textTo, Option.none())}
-          className={buttonVariants({ size: 'sm', variant: 'outline' })}
-        >
-          Open {MESSENGER[channel]}
-        </a>
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={asking !== 'nothing'}
-          onClick={() => setConfirming(true)}
-        >
-          {asking === 'disconnecting' ? 'Disconnecting…' : 'Disconnect'}
-        </Button>
-      </Line>
+            </div>
+          </div>
+        </div>
+        <dl className="rounded-control bg-well">
+          <Figure name="Vivid’s number" value={standing.textTo} spent={false} />
+        </dl>
+        {Option.isSome(link) && (
+          <div>
+            <a href={link.value} className={buttonVariants({ size: 'sm' })}>
+              Open {MESSENGER[channel]}
+            </a>
+          </div>
+        )}
+        {/* The quiet end of the group: whose phone this is, and the way out, kept away from the
+            button above so the two are never pressed for each other. */}
+        <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
+          <p className="min-w-48 flex-1 text-label text-pretty wrap-anywhere text-ink-3">
+            {Option.isNone(link) && 'Text this number from your phone. '}
+            Vivid answers texts from <span className="tabular-nums">{standing.address}</span>.
+          </p>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={asking !== 'nothing'}
+            onClick={() => setConfirming(true)}
+          >
+            {asking === 'disconnecting' ? 'Disconnecting…' : 'Disconnect'}
+          </Button>
+        </div>
+      </div>
       {confirming && (
         <Disconnect
           channel={channel}
