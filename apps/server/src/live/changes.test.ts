@@ -3,7 +3,7 @@ import { describe, expect, layer } from '@effect/vitest'
 import { makeWithDefaults as makeDrizzle } from 'drizzle-orm/effect-postgres'
 import { Clock, Config, Effect, Layer, Option, Queue, Schema, Stream } from 'effect'
 import * as SqlClient from 'effect/unstable/sql/SqlClient'
-import { PersonId } from '@vivid/contracts'
+import { DatabaseFailure, PersonId } from '@vivid/contracts'
 import { Database } from '../database/client.ts'
 import { postgresCodecs } from '../database/codecs.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
@@ -26,8 +26,81 @@ const singleConnectionLayer = Layer.unwrap(
   ),
 ).pipe(Layer.provide(Layer.succeed(Clock.Clock, Clock.Clock.defaultValue())))
 
+/** A later committed marker bounds observation without waiting for the absence of a notice. */
+const announcedBefore = Effect.fn('ChangesTest.announcedBefore')(function* (
+  notifications: Effect.Success<ReturnType<PgClient['Service']['listen']>>,
+  marker: string,
+) {
+  const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String)))
+  const batches = yield* Stream.fromQueue(notifications).pipe(
+    Stream.takeWhile((notification) => notification.payload !== marker),
+    Stream.mapEffect((notification) => decode(notification.payload)),
+    Stream.runCollect,
+  )
+  return batches
+})
+
 describe.skipIf(!testDatabaseConfigured)('Transactional changes', () => {
   layer(testDatabaseLayer)((it) => {
+    /** Wide audiences must reach PostgreSQL in bounded payloads, retaining every affected owner. */
+    it.effect('announces every owner when an audience exceeds one PostgreSQL payload', () =>
+      Effect.gen(function* () {
+        const database = yield* Database
+        const notifications = yield* (yield* PgClient).listen(CHANNEL)
+        const topics = Array.from({ length: 400 }, () =>
+          Topic.person(PersonId.make(crypto.randomUUID())),
+        )
+        const markerTopic = Topic.person(PersonId.make(crypto.randomUUID()))
+        const marker = [markerTopic]
+        yield* database.transaction((transaction) => announce(transaction, topics))
+        yield* database.transaction((transaction) => announce(transaction, marker))
+        const batches = yield* announcedBefore(notifications, JSON.stringify(marker))
+        expect(batches.map((batch) => batch.length)).toEqual([195, 195, 10])
+        expect(batches.flat()).toEqual(topics)
+      }).pipe(Effect.scoped),
+    )
+
+    /** Branded identifiers are strings, so the budget must count encoded UTF-8 bytes and JSON escapes. */
+    it.effect('splits by UTF-8 payload bytes rather than topic count or character count', () =>
+      Effect.gen(function* () {
+        const database = yield* Database
+        const notifications = yield* (yield* PgClient).listen(CHANNEL)
+        const topics = [0, 1, 2].map((index) =>
+          Topic.person(PersonId.make(`${'😀'.repeat(1_200)}"${index}`)),
+        )
+        const marker = [Topic.person(PersonId.make(crypto.randomUUID()))]
+        yield* database.transaction((transaction) => announce(transaction, topics))
+        yield* database.transaction((transaction) => announce(transaction, marker))
+        expect((yield* announcedBefore(notifications, JSON.stringify(marker))).flat()).toEqual(
+          topics,
+        )
+      }).pipe(Effect.scoped),
+    )
+
+    /**
+     * One unrepresentable owner refuses the whole audience. The pre-check also prevents chop
+     * from hanging on that owner; a distinct committed marker exposes any earlier notice.
+     */
+    it.effect(
+      'refuses an audience with an unrepresentable owner and announces nothing from it',
+      () =>
+        Effect.gen(function* () {
+          const database = yield* Database
+          const notifications = yield* (yield* PgClient).listen(CHANNEL)
+          const earlierTopic = Topic.person(PersonId.make(crypto.randomUUID()))
+          const markerTopic = Topic.person(PersonId.make(crypto.randomUUID()))
+          const marker = [markerTopic]
+          const failure = yield* database
+            .transaction((transaction) =>
+              announce(transaction, [earlierTopic, Topic.person(PersonId.make('x'.repeat(8_000)))]),
+            )
+            .pipe(Effect.flip)
+          expect(failure).toBeInstanceOf(DatabaseFailure)
+          yield* database.transaction((transaction) => announce(transaction, marker))
+          expect((yield* Queue.take(notifications)).payload).toBe(JSON.stringify(marker))
+        }).pipe(Effect.scoped),
+    )
+
     /** An ordered committed marker proves rollback emitted nothing without waiting for absence. */
     it.effect('emits only the committed announcement to a PostgreSQL listener', () =>
       Effect.gen(function* () {

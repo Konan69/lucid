@@ -1,5 +1,7 @@
+import * as NodeBuffer from 'node:buffer'
 import { PgClient } from '@effect/sql-pg/PgClient'
 import { sql as drizzleSql } from 'drizzle-orm'
+import * as Array from 'effect/Array'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
@@ -11,7 +13,7 @@ import * as Schedule from 'effect/Schedule'
 import * as Schema from 'effect/Schema'
 import type * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
-import type { CompanyId, PersonId, ThreadId } from '@vivid/contracts'
+import { DatabaseFailure, type CompanyId, type PersonId, type ThreadId } from '@vivid/contracts'
 import { companyOf, type Actor } from '../auth/access.ts'
 import type { Database } from '../database/client.ts'
 
@@ -71,6 +73,39 @@ const decodeTopics = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Arr
 /** The authoritative callback type keeps this capability restricted to a real Drizzle transaction. */
 type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
 
+/** PostgreSQL 18 NOTIFY requires each UTF-8 payload to be strictly shorter than 8000 bytes. */
+const NOTIFICATION_BYTES = 8_000
+
+/**
+ * Partition the encoded audience by bytes, not count: branded identifiers do not constrain length
+ * or Unicode. Validate each owner's complete representation before issuing any statement. The
+ * two brackets and inter-topic commas belong to this wire budget; no owner may be truncated.
+ * Each first owner fits, so every chop step consumes a prefix and makes progress.
+ * rc.116 Array.chop and splitWhere consume bounded prefixes without rebuilding a grouping loop.
+ * Source: https://www.postgresql.org/docs/18/sql-notify.html (payload and transaction ordering).
+ */
+const notificationPayloads = Effect.fn('Changes.payloads')(function* (
+  topics: ReadonlyArray<Topic>,
+) {
+  const encoded = yield* Effect.forEach(topics, (topic) => {
+    const bytes = NodeBuffer.Buffer.byteLength(JSON.stringify(topic), 'utf8')
+    return bytes + 2 >= NOTIFICATION_BYTES
+      ? Effect.fail(
+          new DatabaseFailure({ message: 'Change notification exceeds its payload limit' }),
+        )
+      : Effect.succeed({ topic, bytes })
+  })
+  return Array.chop(encoded, (remaining) => {
+    // Starting at one accounts for both brackets after adding the first entry's delimiter byte.
+    let bytes = 1
+    const [batch, rest] = Array.splitWhere(remaining, (entry) => {
+      bytes += entry.bytes + 1
+      return bytes >= NOTIFICATION_BYTES
+    })
+    return [JSON.stringify(batch.map((entry) => entry.topic)), rest]
+  })
+})
+
 /**
  * Announce on the writing connection so PostgreSQL emits only at commit and rollback emits nothing.
  * drizzle-orm/effect-postgres/session.js:24-29 reuses its SqlClient transaction; rc.116
@@ -82,8 +117,10 @@ export const announce = Effect.fn('Changes.announce')(function* (
   transaction: Transaction,
   topics: ReadonlyArray<Topic>,
 ) {
-  if (topics.length === 0) return
-  yield* transaction.execute(drizzleSql`select pg_notify(${CHANNEL}, ${JSON.stringify(topics)})`)
+  const payloads = yield* notificationPayloads(topics)
+  yield* Effect.forEach(payloads, (payload) =>
+    transaction.execute(drizzleSql`select pg_notify(${CHANNEL}, ${payload})`),
+  )
 })
 
 /** Whether a notification names any topic a subscriber asked for. */
