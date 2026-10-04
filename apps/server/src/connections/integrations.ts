@@ -16,7 +16,7 @@ import {
 import { Array as Arr, Effect, Option, Order } from 'effect'
 import { requireAdmin, type Actor } from '../auth/access.ts'
 import { ConnectionAddress, type ConnectionAddressInvalid, publicAddress } from './address.ts'
-import { ConnectionStore } from './store.ts'
+import { ConnectionStore, ToolDiscovery } from './store.ts'
 import { namedAccounts, useTool } from './tools.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
 import { testInput } from './probe.ts'
@@ -295,7 +295,11 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
       Ready: () => Option.none(),
     })
     if (Option.isSome(refusal)) return refusal.value
-    const tools = yield* store.tools(actor, row)
+    const discovery = yield* store.tools(actor, row)
+    const tools = ToolDiscovery.match(discovery, {
+      Ready: ({ tools: catalog }) => catalog,
+      Failed: () => [],
+    })
     const visible = tools.filter((tool) => row.companyId === null || tool.effect === 'read')
     const names = visible.map((tool) => tool.name)
     // Read-only is Executor/provider metadata, not a behavioral proof. An empty optional-input

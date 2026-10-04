@@ -25,6 +25,7 @@ import { Database, returned } from '../database/client.ts'
 import { Changes } from '../live/changes.ts'
 import {
   Executor,
+  ExecutorTool,
   ExecutorOwnerId,
   ExecutorReferences,
   ExecutorResourceMissing,
@@ -300,23 +301,30 @@ const resume = Effect.fn('Connections.resume')(function* (actor: Actor, row: Con
   })
 })
 
+/** Empty ready catalogs and newly failed Integrations have different admission meanings.
+ * Discovery returns the transition it persisted; callers never guess it from a second read. */
+export const ToolDiscovery = Schema.TaggedUnion({
+  Ready: { tools: Schema.Array(ExecutorTool) },
+  Failed: { reason: Schema.String },
+})
+
 /** Permanently missing resources fail the persisted Connection and disappear from discovery. */
 const loadTools = Effect.fn('Connections.tools')(function* (actor: Actor, row: ConnectionRecord) {
   const executor = yield* Executor
   return yield* executor.tools(row.references).pipe(
+    Effect.map((tools) => ToolDiscovery.cases.Ready.make({ tools })),
     Effect.mapError((error) => (isResourceMissing(error) ? error : executorFailure(error))),
     Effect.catchTag(
       'ExecutorResourceMissing',
       Effect.fn('Connections.failDiscovery')(function* ({ resource }) {
+        const reason = resourceReason(resource)
         const saved = yield* saveState(
           row,
-          ConnectionState.cases.Failed.make({
-            reason: resourceReason(resource),
-          }),
+          ConnectionState.cases.Failed.make({ reason }),
           row.references,
         )
         yield* recordChanged(actor, saved)
-        return []
+        return ToolDiscovery.cases.Failed.make({ reason })
       }),
     ),
   )
