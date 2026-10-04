@@ -286,7 +286,17 @@ const thirty = (now: number): NoticeTrial => {
 /** A trial with every notice read, or every notice unread, at `at`. */
 const withRead = (trial: NoticeTrial, readAt: number | null): NoticeTrial => ({
   threads: trial.threads,
-  notices: trial.notices.map((notice) => ({ ...notice, readAt })),
+  // Named field by field: a notice is a schema value, and spreading it would copy its data
+  // without what the schema makes of it.
+  notices: trial.notices.map((notice): Notification => ({
+    id: notice.id,
+    kind: notice.kind,
+    title: notice.title,
+    body: notice.body,
+    threadId: notice.threadId,
+    createdAt: notice.createdAt,
+    readAt,
+  })),
 })
 
 /**

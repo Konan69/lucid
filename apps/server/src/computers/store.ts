@@ -720,7 +720,15 @@ const browserReceipt = Effect.fn('ComputerStore.browserReceipt')(function* (
   const picture = yield* decodeBrowserPicture(view.picture).pipe(
     Effect.mapError(() => new MachineResponseInvalid({ operation: 'browser screenshot' })),
   )
-  return BrowseResult.make({ ...result, picture })
+  // Built field by field: `result` is a schema value, and a spread would drop its prototype.
+  return BrowseResult.make({
+    address: result.address,
+    title: result.title,
+    outline: result.outline,
+    truncated: result.truncated,
+    tabs: result.tabs,
+    picture,
+  })
 })
 
 /** Capture provider and database dependencies once; callers need only the Computer authority. */
