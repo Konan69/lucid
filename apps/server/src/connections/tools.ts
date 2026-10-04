@@ -169,6 +169,28 @@ const offeredServices = Effect.fn('Connections.offeredServices')(function* (
   ).pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
 })
 
+/**
+ * The lexical candidates in the order discovery returns them. Zero or one candidate has nothing
+ * to order, and switched-off decisions return at once; neither is a degraded answer worth a
+ * warning. It never fails: when relevance cannot be judged the lexical order stands.
+ */
+const orderTools = Effect.fn('Connections.orderTools')(function* <
+  A extends Parameters<typeof relevantTools>[1][number],
+>(query: string, lexical: ReadonlyArray<A>) {
+  if (lexical.length < 2 || !(yield* decisionConfigured)) return lexical
+  return yield* relevantTools(query, lexical).pipe(
+    Effect.map((result) => result.ordered),
+    Effect.catch((error) =>
+      error.reason === 'Backoff'
+        ? Effect.succeed(lexical)
+        : Effect.logWarning('Tool relevance unavailable', {
+            tag: error._tag,
+            reason: error.reason,
+          }).pipe(Effect.as(lexical)),
+    ),
+  )
+})
+
 /** Discovery removes shared writes before any tool enters model context. */
 export const findTools = Effect.fn('Connections.findTools')(function* (
   actor: Actor,
@@ -191,24 +213,8 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     own: `${tool.name} ${tool.description}`,
     identity: `${tool.serviceName} ${tool.account}`,
   }))
-  // Zero or one lexical candidate has nothing to order. Switched-off decisions also
-  // return immediately; neither state is a degraded answer worth a warning.
-  const ranking = Effect.gen(function* () {
-    if (lexical.length < 2 || !(yield* decisionConfigured)) return lexical
-    return yield* relevantTools(request.query, lexical).pipe(
-      Effect.map((result) => result.ordered),
-      Effect.catch((error) =>
-        error.reason === 'Backoff'
-          ? Effect.succeed(lexical)
-          : Effect.logWarning('Tool relevance unavailable', {
-              tag: error._tag,
-              reason: error.reason,
-            }).pipe(Effect.as(lexical)),
-      ),
-    )
-  })
   const [ordered, offered] = yield* Effect.all(
-    [ranking, offeredServices(store, records, request.query)],
+    [orderTools(request.query, lexical), offeredServices(store, records, request.query)],
     { concurrency: 2 },
   )
   const limited = ordered.slice(0, Math.min(25, Math.floor(limit)))
