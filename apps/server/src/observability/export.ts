@@ -3,15 +3,18 @@ import * as Clock from 'effect/Clock'
 import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Logger from 'effect/Logger'
 import * as Option from 'effect/Option'
 import * as Predicate from 'effect/Predicate'
 import * as Redacted from 'effect/Redacted'
 import * as Ref from 'effect/Ref'
 import * as Stream from 'effect/Stream'
+import * as Tracer from 'effect/Tracer'
 import * as HttpBody from 'effect/unstable/http/HttpBody'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import type { HttpClientError } from 'effect/unstable/http/HttpClientError'
 import type { HttpClientResponse } from 'effect/unstable/http/HttpClientResponse'
+import * as OtlpExporter from 'effect/unstable/observability/OtlpExporter'
 import * as OtlpLogger from 'effect/unstable/observability/OtlpLogger'
 import type { AnyValue, KeyValue, Resource } from 'effect/unstable/observability/OtlpResource'
 import * as OtlpSerialization from 'effect/unstable/observability/OtlpSerialization'
@@ -20,6 +23,7 @@ import { ObservabilityConfiguration } from '../config.ts'
 import * as productSchema from '../database/product.ts'
 import * as identitySchema from '../database/schema.ts'
 import { Boundary, FailureAttribute, FailureKind, fixedTypeNames, UNTYPED } from './failure.ts'
+import { guardedLogger, guardedTracer } from './guard.ts'
 import { isCodeName, isMessage, Message } from './messages.ts'
 import { refusalExport } from './refusal.ts'
 
@@ -211,6 +215,7 @@ const rulesOf = (): Rules => {
     [PAUSED_SECONDS, integer(0, Number.MAX_SAFE_INTEGER)],
     // The tracer's own event for a failed span (rc.116 `OtlpTracer.ts` `makeOtlpSpan`) takes its
     // type from `error.name`, a string by the time it is here, so only a fixed name is let through.
+    // Since `guard.ts` that name is the stand-in's, the type `failure.ts` took from the class.
     ['exception.type', oneOf(fixedTypeNames)],
     ['service.name', oneOf([SERVICE])],
     ['service.version', commitHash],
@@ -733,6 +738,11 @@ const endpoint = (base: URL, signal: Signal) => `${base.href.replace(/\/+$/, '')
  *   its own, and both clients count against one cap on outstanding requests. `Layer.unwrap` is
  *   what makes that one count: it is created once, when the Layer is built, and handed to both.
  * - One serialization layer is provided to both, so they share one allowlist and its bounds.
+ * - The tracer and the logger are the exporter's own, each installed behind a guard
+ *   (`guard.ts`), so that nothing either does while it records can throw into the program it
+ *   records. That is why the two are built with `make` and installed here, the way rc.116
+ *   `OtlpTracer.layer` and `OtlpLogger.layer` install them (`Layer.effect(Tracer.Tracer)`,
+ *   `Logger.layer`, each with `OtlpExporter.layerFlusher` merged in), with the guard between.
  *
  * The exporter batches on a timer and flushes when the Layer's scope closes, bounded by its own
  * shutdown timeout (rc.116 `OtlpExporter.ts` `make`); `Flusher` in the output drains it on demand.
@@ -750,18 +760,25 @@ export const observabilityLayer = (configuration: ObservabilityConfiguration) =>
           const outstanding = yield* Ref.make(0)
           const posting = (signal: Signal) =>
             Layer.effect(HttpClient.HttpClient, boundedClient(signal, outstanding))
+          const tracer = OtlpTracer.make({
+            url: endpoint(url, 'traces'),
+            resource,
+            headers: credentials,
+          })
+          const logger = OtlpLogger.make({
+            url: endpoint(url, 'logs'),
+            resource,
+            headers: credentials,
+          })
           return Layer.mergeAll(
-            OtlpTracer.layer({
-              url: endpoint(url, 'traces'),
-              resource,
-              headers: credentials,
-            }).pipe(Layer.provide(posting('traces'))),
-            OtlpLogger.layer({
-              url: endpoint(url, 'logs'),
-              resource,
-              headers: credentials,
-              mergeWithExisting: true,
-            }).pipe(Layer.provide(posting('logs'))),
+            Layer.effect(Tracer.Tracer, Effect.map(tracer, guardedTracer)).pipe(
+              Layer.provideMerge(OtlpExporter.layerFlusher),
+              Layer.provide(posting('traces')),
+            ),
+            Logger.layer([Effect.map(logger, guardedLogger)], { mergeWithExisting: true }).pipe(
+              Layer.provideMerge(OtlpExporter.layerFlusher),
+              Layer.provide(posting('logs')),
+            ),
           ).pipe(Layer.provide(allowlistSerializationLayer(environment, commit)))
         }),
       ),
