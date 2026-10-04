@@ -17,6 +17,11 @@ import { TypeSafeClient, TypeSafeDecisionModel } from '@effect/ai-typesafe'
 /** docs/22, “The trust loop”: the reviewer has ten seconds and one attempt. */
 export const DECISION_TIMEOUT = '10 seconds'
 
+/** The most questions accepted in a calibrated gateway request with headroom: twenty
+ * succeeded and thirty-nine were rejected with HTTP 400 on 4 Oct 2026. This is the tested
+ * payload ceiling, not an inferred provider maximum; effects, relevance and rules share it. */
+export const DECISION_QUESTION_LIMIT = 20
+
 /**
  * Vivid's model gateway, Experiential Labs. It serves TypeSafe's System One endpoint
  * (`POST /systemone`) for the Jev decision model under the same key as every other model
@@ -175,7 +180,7 @@ const admit = Effect.fn('Decisions.admit')(function* (state: Ref.Ref<typeof Avai
   return yield* Ref.modify(
     state,
     (current): readonly [typeof Admission.Type, typeof Availability.Type] =>
-      Availability.match(current, {
+      Availability.match<readonly [typeof Admission.Type, typeof Availability.Type]>(current, {
         Ready: () => [normal, current],
         Suspect: (mark) =>
           now >= mark.expiresAt

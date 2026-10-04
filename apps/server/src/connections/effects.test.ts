@@ -1,6 +1,10 @@
 import { expect, it } from '@effect/vitest'
 import { Deferred, Effect, Fiber, Layer, Logger, Redacted } from 'effect'
-import { unconfiguredDecisionLayer, gatewayDecisionLayer } from '../decisions/model.ts'
+import {
+  DECISION_QUESTION_LIMIT,
+  unconfiguredDecisionLayer,
+  gatewayDecisionLayer,
+} from '../decisions/model.ts'
 import { ScriptedAnswer } from '../decisions/testing.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
@@ -9,7 +13,6 @@ import { ServiceId } from '@vivid/contracts'
 import { ExecutorTool } from './executor.ts'
 import {
   EFFECT_BATCH_BUDGET,
-  EFFECT_BATCH_SIZE,
   TOOL_DESCRIPTION_LIMIT,
   TOOL_NAME_LIMIT,
   ToolEffects,
@@ -212,18 +215,18 @@ it.effect('cold discovery batches bounded misses and reuses them during executio
   const sizes: number[] = []
   return Effect.gen(function* () {
     const effects = yield* ToolEffects
-    const tools = Array.from({ length: EFFECT_BATCH_SIZE + 1 }, (_, index) =>
+    const tools = Array.from({ length: DECISION_QUESTION_LIMIT + 1 }, (_, index) =>
       ExecutorTool.make({ ...request.tool, name: `get_record_${index}` }),
     )
     const batch = { serviceId: request.serviceId, service: request.service, tools }
     const classified = yield* effects.classifyBatch(batch)
     expect(classified.every((tool) => tool.effect === 'read')).toBe(true)
-    expect(sizes).toEqual([EFFECT_BATCH_SIZE, 1])
+    expect(sizes).toEqual([DECISION_QUESTION_LIMIT, 1])
     expect(yield* effects.classify(request)).toBe('read')
-    expect(sizes).toEqual([EFFECT_BATCH_SIZE, 1, 1])
+    expect(sizes).toEqual([DECISION_QUESTION_LIMIT, 1, 1])
     yield* effects.classifyBatch(batch)
     for (const tool of tools) expect(yield* effects.classify({ ...request, tool })).toBe('read')
-    expect(sizes).toEqual([EFFECT_BATCH_SIZE, 1, 1])
+    expect(sizes).toEqual([DECISION_QUESTION_LIMIT, 1, 1])
   }).pipe(
     Effect.provide(
       provider(({ decisions }) => {
@@ -511,7 +514,7 @@ it.effect('logs one warning per failed batch, not one per tool', () => {
   const lines: string[] = []
   return Effect.gen(function* () {
     const effects = yield* ToolEffects
-    const tools = Array.from({ length: EFFECT_BATCH_SIZE }, (_, index) =>
+    const tools = Array.from({ length: DECISION_QUESTION_LIMIT }, (_, index) =>
       ExecutorTool.make({ ...request.tool, name: `lookup_${index}` }),
     )
     const batch = { ...request, tools }

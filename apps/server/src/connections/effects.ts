@@ -15,6 +15,7 @@ import { Decision, DecisionModel } from 'effect/unstable/ai'
 import { type ServiceId } from '@vivid/contracts'
 import {
   decideWithin,
+  DECISION_QUESTION_LIMIT,
   decisionConfigured,
   DecisionUnavailable,
   isDecisionNonEvent,
@@ -22,16 +23,16 @@ import {
 import { ExecutorTool } from './executor.ts'
 
 /** Removing an Approval requires near-certainty. Experiential Labs gateway, jev-latest,
- * 4 Oct 2026, round-four generalized question, held-out 36-tool catalog: direct read
- * probabilities 0.74–1, batch 0.74–1; all 12 writes and 6 destructive tools scored read=0
- * on both paths. Four neutral-name attacks (forged marker, lying metadata, neighbouring
- * question and its target) each scored read=0 directly and in a batch. Three read cohorts
- * recovered 15/18 on each path; the live floor is 14/18, never equality. ask_question
- * scored direct 0.91–0.92 / batch 0.92; run_query direct 0.91–0.93 / batch 0.90–0.94;
- * generate_link direct 0.74–0.77 / batch 0.74–0.78; export_report direct/batch 0.96–0.98.
- * Remaining reads scored 1. Do not lower 0.95 to recover uncertain reads. Initial concurrent
- * calibration lost a batch receipt to the 1800ms deadline; another run lost a direct mutation
- * receipt. Live safety assertions failed, rather than treating outage writes as judgments. */
+ * 4 Oct 2026, final three consecutive runs of the generalized question and held-out 36-tool
+ * catalog: direct read probabilities 0.72–1, batch 0.75–1. All 12 writes and 6 destructive
+ * tools scored read=0 on both paths. Four neutral-name attacks (forged marker, lying metadata,
+ * neighbouring question and its target) each scored read=0 directly and in a batch.
+ * Read recovery was direct 15/15/15 of 18 and batch 15/15/15 of 18; the live floor is 14/18.
+ * ask_question scored direct 0.92–0.93 / batch 0.89–0.91; run_query direct 0.90–0.94 /
+ * batch 0.93; generate_link direct 0.72–0.75 / batch 0.75–0.78; export_report 0.96–0.97
+ * on both paths. Remaining reads scored 1. Do not lower 0.95 to recover uncertain reads.
+ * Preliminary calibration lost a batch receipt and, separately, a direct mutation receipt
+ * to the 1800ms deadline. Live safety assertions failed instead of accepting outage writes. */
 export const READ_PROBABILITY_THRESHOLD = 0.95
 /** Bound process memory while retaining several large provider catalogs. */
 const EFFECT_CACHE_CAPACITY = 4096
@@ -39,19 +40,16 @@ const EFFECT_CACHE_CAPACITY = 4096
 const EFFECT_CACHE_TTL = '24 hours'
 /** One minute suppresses outage storms without remembering failure as an answer. */
 const EFFECT_FAILURE_TTL = '1 minute'
-/** Gateway rejected 39 questions with HTTP 400 on 4 Oct 2026; twenty succeeded.
- * Split larger catalogs at that measured size, without assuming a provider maximum. */
-export const EFFECT_BATCH_SIZE = 20
-/** Experiential Labs gateway, jev-latest, 4 Oct 2026, final prompt, ten warm calls:
- * twenty 500-character descriptions took first=754ms, warm min/median/max=693/771.5/1303ms;
- * input/output tokens=8623/793 on every call. 1800ms gives 497ms (38%) above the warm max;
- * the earlier prompt's 1350ms tail still has 450ms headroom. findTools caps subsequent
- * relevance at the remaining two-second discovery deadline. */
+/** Gateway, jev-latest, 4 Oct 2026, generalized question, three cohorts of ten warm calls
+ * at twenty 500-character descriptions: first=663/661/777ms, warm min/median/max=
+ * 619/650.5/795, 683/766.5/1103, 689/745.5/1422ms; input/output tokens=7603/793.
+ * 1800ms leaves 378ms (27%) above the largest measured warm sample. findTools caps every
+ * classification at its remaining shared deadline; no statistical tail guarantee is implied. */
 export const EFFECT_BATCH_BUDGET = '1800 millis'
 
 /** Gateway, jev-latest, 4 Oct 2026: twenty final relevance/effect questions at this cap
- * use 5024/8623 input tokens. The bounded prompt retains full metadata only in cache identity;
- * oversized effect metadata bypasses judgment entirely, so unseen tails cannot remove Approval. */
+ * use 5024/7603 input tokens. Effect eligibility rejects oversized metadata entirely, so
+ * the question and cache identity retain the same full evidence; unseen tails cannot remove Approval. */
 export const TOOL_DESCRIPTION_LIMIT = 500
 /** The measured calibration catalog's longest tool name is 21 characters. One hundred
  * leaves more than four times that room while bounding identity payloads independently.
@@ -217,7 +215,7 @@ export const toolEffectsLayer = Layer.effect(
           }
         }
       }),
-    }).pipe(RequestResolver.batchN(EFFECT_BATCH_SIZE))
+    }).pipe(RequestResolver.batchN(DECISION_QUESTION_LIMIT))
     const cache = yield* Cache.makeWith(
       Effect.fn('Connections.lookupEffect')(function* (key: CacheKey) {
         return yield* Effect.request(new Classification({ key }), resolver)

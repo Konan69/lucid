@@ -261,11 +261,12 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     { concurrency: 2 },
   )
   const limited = ordered.slice(0, Math.min(25, Math.floor(limit)))
-  // Promotion cannot evict the first lexical result when the caller's limit is full.
-  // Reserve the last slot only when needed, so promoted tools retain their lead.
+  // One slot belongs to the promoted winner. With larger limits, reserve the final slot
+  // for the strongest lexical match only when semantic promotion would otherwise evict it.
   const selected = Option.match(Arr.head(lexical), {
     onNone: () => limited,
-    onSome: (first) => (limited.includes(first) ? limited : [...limited.slice(0, -1), first]),
+    onSome: (first) =>
+      limited.length === 1 || limited.includes(first) ? limited : [...limited.slice(0, -1), first],
   })
   return {
     tools: yield* Effect.forEach(

@@ -263,55 +263,58 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
       }),
     )
 
-    /** A caller's eight-result limit must not let eight semantic promotions displace the best
-     * lexical match. The real public discovery seam applies the limit after optional ranking. */
-    it.effect('retains the first lexical result when eight promotions fill the caller limit', () =>
-      Effect.gen(function* () {
-        const { ownerActor } = yield* fixture()
-        const probe = yield* ConnectionProbe
-        const previous = yield* Ref.get(probe.tools)
-        yield* Effect.addFinalizer(() => Ref.set(probe.tools, previous))
-        yield* Ref.set(probe.tools, [
-          ExecutorTool.make({
-            name: 'needle',
-            description: 'Read needle records',
-            effect: 'read',
-            input: {},
-          }),
-          ...Array.from({ length: 8 }, (_, index) =>
+    /** One-result discovery keeps Jev's winner; larger bounds protect the lexical first in
+     * the final slot. Both choices are observable through the real public discovery seam. */
+    it.effect.each([1, 8])(
+      'keeps the promoted winner and applies the lexical safeguard at limit %s',
+      (limit) =>
+        Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
+          const probe = yield* ConnectionProbe
+          const previous = yield* Ref.get(probe.tools)
+          yield* Effect.addFinalizer(() => Ref.set(probe.tools, previous))
+          yield* Ref.set(probe.tools, [
             ExecutorTool.make({
-              name: `lookup_${index}`,
+              name: 'needle',
               description: 'Read needle records',
               effect: 'read',
               input: {},
             }),
-          ),
-        ])
-        yield* (yield* ConnectionStore).begin(ownerActor, {
-          service: serviceId,
-          label: 'Work',
-          shared: false,
-        })
-        const model = yield* DecisionModel.make({
-          decide: ({ decisions }) =>
-            Effect.succeed({
-              answers: Object.fromEntries(
-                Object.keys(decisions).map((key, index) => [
-                  key,
-                  ScriptedAnswer.cases.Probability.make({ probability: index === 0 ? 0.1 : 0.9 }),
-                ]),
-              ),
-              usage: { inputTokens: undefined, outputTokens: undefined },
-            }),
-        })
-        const result = yield* findTools(ownerActor, { query: 'needle', limit: 8 }).pipe(
-          Effect.provideService(DecisionModel.DecisionModel, model),
-        )
-        expect(result.tools.map((tool) => tool.name)).toEqual([
-          ...Array.from({ length: 7 }, (_, index) => `lookup_${index}`),
-          'needle',
-        ])
-      }),
+            ...Array.from({ length: 8 }, (_, index) =>
+              ExecutorTool.make({
+                name: `lookup_${index}`,
+                description: 'Read needle records',
+                effect: 'read',
+                input: {},
+              }),
+            ),
+          ])
+          yield* (yield* ConnectionStore).begin(ownerActor, {
+            service: serviceId,
+            label: 'Work',
+            shared: false,
+          })
+          const model = yield* DecisionModel.make({
+            decide: ({ decisions }) =>
+              Effect.succeed({
+                answers: Object.fromEntries(
+                  Object.keys(decisions).map((key, index) => [
+                    key,
+                    ScriptedAnswer.cases.Probability.make({ probability: index === 0 ? 0.1 : 0.9 }),
+                  ]),
+                ),
+                usage: { inputTokens: undefined, outputTokens: undefined },
+              }),
+          })
+          const result = yield* findTools(ownerActor, { query: 'needle', limit }).pipe(
+            Effect.provideService(DecisionModel.DecisionModel, model),
+          )
+          expect(result.tools.map((tool) => tool.name)).toEqual(
+            limit === 1
+              ? ['lookup_0']
+              : [...Array.from({ length: 7 }, (_, index) => `lookup_${index}`), 'needle'],
+          )
+        }),
     )
 
     /** A sole lexical result has no relative position to enrich. A stalled supplied model

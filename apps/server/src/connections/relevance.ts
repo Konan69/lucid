@@ -1,6 +1,6 @@
 import { Duration, Effect, Schema } from 'effect'
 import { Decision, DecisionModel } from 'effect/unstable/ai'
-import { decideWithin, DecisionUnavailable } from '../decisions/model.ts'
+import { decideWithin, DECISION_QUESTION_LIMIT, DecisionUnavailable } from '../decisions/model.ts'
 import { TOOL_DESCRIPTION_LIMIT, TOOL_NAME_LIMIT, delimitedToolData } from './effects.ts'
 
 /** A 0.3 score promotes plausible necessary steps; lower scores retain lexical order
@@ -8,8 +8,6 @@ import { TOOL_DESCRIPTION_LIMIT, TOOL_NAME_LIMIT, delimitedToolData } from './ef
  * self-promotion scored 0.02 versus 0.89 for the honest necessary tool. This threshold affects
  * ordering only; neither candidate is excluded. */
 export const TOOL_RELEVANCE_THRESHOLD = 0.3
-/** Gateway rejected 39 questions with HTTP 400; twenty is the tested payload size. */
-export const RELEVANCE_BATCH_SIZE = 20
 /** Experiential Labs gateway, jev-latest, 4 Oct 2026, one process and ten warm calls:
  * twenty questions at 500 characters took first=828ms, warm min/median/max=662/818/1304ms;
  * input/output tokens=5024/374 on every call. 1800ms gives 496ms (38%) above the warm
@@ -85,7 +83,11 @@ export const relevantToolsWithin = Effect.fn('Connections.relevantToolsWithin')(
       ordered: tools,
       usage: new DecisionModel.DecisionUsage({ inputTokens: undefined, outputTokens: undefined }),
     }
-  const { scores, usage } = yield* scoreBatch(request, tools.slice(0, RELEVANCE_BATCH_SIZE), budget)
+  const { scores, usage } = yield* scoreBatch(
+    request,
+    tools.slice(0, DECISION_QUESTION_LIMIT),
+    budget,
+  )
   const promoted = scores
     .filter(({ probability }) => probability >= TOOL_RELEVANCE_THRESHOLD)
     .toSorted((left, right) => right.probability - left.probability)

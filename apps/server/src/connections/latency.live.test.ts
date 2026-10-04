@@ -1,19 +1,23 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Clock, Effect } from 'effect'
-import { decideWithin } from '../decisions/model.ts'
+import { DECISION_QUESTION_LIMIT, decideWithin } from '../decisions/model.ts'
 import { liveDecisionEnabled, liveDecisionLayer, liveTools } from '../decisions/testing.ts'
 import { toolRelevanceDecision } from './relevance.ts'
 import { batchToolEffectDecision, TOOL_DESCRIPTION_LIMIT } from './effects.ts'
 
 /** Ten warm samples per shape reveal tail latency in one gateway connection pool. The first
- * single call is process-cold; subsequent first samples are only cold for that payload shape. */
+ * relevance call is process-cold; the first effects call is cold only for that payload shape. */
 const WARM_SAMPLES = 10
 /** A generous measurement budget reveals slow samples instead of censoring them at the
  * optional production deadline. The asserted warm bound is calibrated separately below. */
 const MEASUREMENT_BUDGET = '10 seconds'
-/** These generous measurement calls must still fit the production per-shape budgets,
- * chosen from observed warm maxima 1551/1304/1350ms with 449/496/450ms headroom. */
-const budgets = { single: 2000, relevance20: 1800, effects20: 1800 }
+/** Gateway, jev-latest, 4 Oct 2026, final three cohorts: relevance first=1037/935/999ms,
+ * warm min/median/max=604/665/850, 637/688.5/1026, 640/727/1389ms; effects first=
+ * 663/661/777ms, warm=619/650.5/795, 683/766.5/1103, 689/745.5/1422ms.
+ * Twenty 500-character questions used relevance input/output=5024/374 tokens, effects=
+ * 7603/793. Production's 1800ms budgets leave 411/378ms above these observed maxima,
+ * not a promise about arbitrary future samples. Record distributions without asserting a
+ * statistical tail with zero remaining margin; production deadlines have TestClock proofs. */
 
 /** Report the whole measured distribution without substituting missing token usage. */
 const statistics = (samples: readonly number[]) => {
@@ -25,7 +29,7 @@ const statistics = (samples: readonly number[]) => {
 }
 
 /** Each shape exercises the same definition and bounded metadata used by production. */
-const tools = liveTools.slice(0, 20).map((tool) => ({
+const tools = liveTools.slice(0, DECISION_QUESTION_LIMIT).map((tool) => ({
   serviceName: tool.serviceName,
   account: tool.account,
   name: tool.name,
@@ -42,7 +46,6 @@ const effectTools = tools.map((tool) => ({
 const requests = [
   {
     workload: 'relevance20',
-    bound: budgets.relevance20,
     run: decideWithin(
       toolRelevanceDecision(tools),
       { request: 'Use DeepWiki to explain how Layer works in Effect-TS/effect' },
@@ -51,20 +54,18 @@ const requests = [
   },
   {
     workload: 'effects20',
-    bound: budgets.effects20,
     run: decideWithin(batchToolEffectDecision(effectTools), {}, MEASUREMENT_BUDGET),
   },
 ]
 
-/** One claim: sustained warm metadata decisions fit the calibrated optional-work bound.
- * Cold samples and token counts explain its limits; no latency assertion relies on a sleep. */
+/** One claim: real warm gateway attempts return complete usage receipts at the description cap.
+ * Cold samples, warm distributions and token counts calibrate optional-work budgets; no latency assertion relies on a sleep. */
 describe.skipIf(!liveDecisionEnabled)('Gateway warm latency', () => {
   it.live(
-    'sustains bounded warm metadata judgments at the production description cap',
+    'measures warm metadata judgments at the production description cap',
     () =>
       Effect.gen(function* () {
         const receipts: {
-          readonly withinBudget: boolean
           readonly inputCount: number
           readonly outputCount: number
         }[] = []
@@ -92,13 +93,11 @@ describe.skipIf(!liveDecisionEnabled)('Gateway warm latency', () => {
           receipts.push({
             inputCount: inputTokens.length,
             outputCount: outputTokens.length,
-            withinBudget: latencies.slice(1).every((latency) => latency < request.bound),
           })
         }
         for (const receipt of receipts) {
           expect(receipt.inputCount).toBe(WARM_SAMPLES + 1)
           expect(receipt.outputCount).toBe(WARM_SAMPLES + 1)
-          expect(receipt.withinBudget).toBe(true)
         }
       }).pipe(Effect.provide(liveDecisionLayer)),
     120_000,

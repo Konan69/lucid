@@ -9,9 +9,9 @@ import {
   liveTools,
   LIVE_READ_RECOVERY_FLOOR,
 } from '../decisions/testing.ts'
+import { DECISION_QUESTION_LIMIT } from '../decisions/model.ts'
 import { ExecutorTool } from './executor.ts'
-
-import { EFFECT_BATCH_SIZE, ToolEffects, toolEffectsLayer } from './effects.ts'
+import { ToolEffects, toolEffectsLayer } from './effects.ts'
 
 /** One claim: the production resolver retains Approval for mutations in a mixed catalog.
  * Catalogs keep their actual service identity, as production requires. This exercises batching, the actual deadline, validation, threshold and cache together;
@@ -27,7 +27,7 @@ describe.skipIf(!liveDecisionEnabled)('Gateway batch effects', () => {
         const conservativeReads: string[] = []
         const catalogs = Object.entries(Arr.groupBy(liveTools, (tool) => tool.serviceName)).flatMap(
           ([service, catalog]) =>
-            Arr.chunksOf(catalog, EFFECT_BATCH_SIZE).map((batch) => ({ service, batch })),
+            Arr.chunksOf(catalog, DECISION_QUESTION_LIMIT).map((batch) => ({ service, batch })),
         )
         for (const { service, batch } of catalogs) {
           const classified = yield* effects.classifyBatch({
