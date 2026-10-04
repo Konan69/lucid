@@ -51,6 +51,13 @@ const MESSAGE_ANNOTATION = 'vivid.failure.message'
 
 /** Longest text one diagnostic string may carry; `redactBrowserText` in the reference bounds at the same length. */
 const LONGEST_TEXT = 2_048
+/**
+ * How much of a text `redact` reads: twice what it keeps. Nothing past this is looked at, so what
+ * `redact` costs does not depend on how long a failure's message is.
+ */
+export const LONGEST_SCAN = LONGEST_TEXT * 2
+/** Longest path kept of an address. A path is where a webhook's token sits, so it is not kept whole. */
+const LONGEST_PATH = 200
 const LONGEST_MESSAGE = 1_000
 const LONGEST_DATABASE_NAME = 200
 /** How far the `cause` chain is followed; a foreign chain can be cyclic or arbitrarily long. */
@@ -64,45 +71,121 @@ const DEEPEST_CAUSE = 8
 export const UNTYPED = '_OTHER'
 
 /**
+ * What stands for removed text: `label` when the removed text is at least that long, and one `*`
+ * when it is shorter. Removed text is never empty (every pattern below takes at least one
+ * character of it), so the mark is never longer than what it replaces.
+ */
+const mark = (label: string, removed: string) => (removed.length < label.length ? '*' : label)
+
+const SECRET = '[REDACTED]'
+
+/** Keeps what introduces a credential (`Bearer `, `token=`) and marks the credential itself. */
+const credential = (_matched: string, introduction: string, secret: string) =>
+  `${introduction}${mark(SECRET, secret)}`
+
+/**
+ * An address without its sign-in, query and fragment, built only from pieces of the text that was
+ * matched: the scheme, the host as written, and the opening of the path. Nothing is parsed or
+ * re-encoded. `URL#toString` percent-encodes, which turned 4,096 characters of non-ASCII path into
+ * about 36,700 and handed that to the patterns after it.
+ *
+ * A path that holds an `@` means the sign-in was not where the pattern looked for it (a password
+ * with a `/` in it ends the authority early), so nothing of that address is kept.
+ */
+const address = (_matched: string, scheme: string, host: string, path: string) =>
+  path.includes('@') ? '[URL]' : `${scheme}${host}${path.slice(0, LONGEST_PATH)}`
+
+/** One pass of `redact`: what to find, and what stands in its place. */
+type Redaction = readonly [
+  pattern: RegExp,
+  replace: (matched: string, ...groups: Array<string>) => string,
+]
+
+/**
+ * The passes of `redact`, in the order they run. Each is written so that its time is linear in the
+ * text, by one of three constructions, and `failure.test.ts` checks the first of them on the
+ * sources:
+ *
+ * - No group that repeats without bound: every `(...)` is followed by nothing, `?`, or `{m,n}`.
+ * - A repetition without bound is of one character class and is followed by something that class
+ *   excludes (or by nothing), so where it stops is decided once and backing off finds nothing new.
+ *   Where a failed attempt could be started again inside the same run of characters (the token
+ *   patterns), a lookbehind forbids a start there, so a run is read a fixed number of times.
+ * - Everything else is counted: an address's local part is at most 64 characters and a label of
+ *   its domain at most 63 (RFC 5321), a key's name is read 40 characters back, a gap is at most 8
+ *   spaces. An attempt from one position then costs a fixed amount.
+ *
+ * Each also leaves the text no longer than it found it: a replacement is a piece of what was
+ * matched, or a mark no longer than it (`mark`), or a fixed text no longer than the shortest
+ * match.
+ *
+ * A credential that the cut (`LONGEST_SCAN`) left unfinished is removed to the end of the text:
+ * a quoted value whose closing quote is beyond the cut, a statement whose `params:` line is, a
+ * token whose later segments are. Before, none of these matched and its opening was written out.
+ */
+const redactions: ReadonlyArray<Redaction> = [
+  // A Drizzle statement to the end of its `params:` line, or to the end of the text when that
+  // line is not in it. The shortest match is `Failed query:`, 13 characters, as is what replaces it.
+  [/Failed query:(?:[\s\S]*?\nparams:[^\n]*|[\s\S]*$)/g, () => '[SQL omitted]'],
+  // scheme, optional sign-in up to the last `@` of the authority, host, path, then query and
+  // fragment. Every part after the scheme may be empty, so an attempt never fails once begun.
+  [
+    /(https?:\/\/)(?:[^\s"'<>\\/?#]*@)?([^\s"'<>\\/?#@]*)((?:\/[^\s"'<>\\?#]*)?)[^\s"'<>\\]*/gi,
+    address,
+  ],
+  [/(\bBearer\s{1,8})([^\s,"'<>]+)/gi, credential],
+  // A JSON Web Token: three segments, or the opening of one that runs to the end of the text.
+  [
+    /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|(?:\.[A-Za-z0-9_-]*)?$)/g,
+    (matched) => mark(SECRET, matched),
+  ],
+  [/(?<![A-Za-z0-9])(?:sk[-_]|gh[pousr]_)[A-Za-z0-9_-]+/g, (matched) => mark(SECRET, matched)],
+  // `name = value`, the value quoted or bare. A quote still open at the end of the text closes there.
+  [
+    /((?:authorization|cookie|password|passwd|secret|token|[a-z0-9_-]{0,40}key)\s{0,8}[=:]\s{0,8})("[^"]*(?:"|$)|'[^']*(?:'|$)|[^\s,;&"']+)/gi,
+    credential,
+  ],
+  [
+    /[A-Z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Z0-9-]{1,63}(?:\.[A-Z0-9-]{1,63}){1,8}/gi,
+    (matched) => mark('[EMAIL REDACTED]', matched),
+  ],
+]
+
+/** The patterns `redact` runs, for the test that checks how each is built. */
+export const redactionPatterns: ReadonlyArray<RegExp> = redactions.map(([pattern]) => pattern)
+
+/**
  * Removes credentials, address query strings and personal identifiers from the diagnostic text
  * written to stdout, and bounds it. It is not what keeps text out of the export: that is the
  * allowlist in `export.ts`, which drops every message whatever it contains.
  *
- * Ported from VCOS `apps/web/src/shared/privacy.ts` `redactBrowserText`, with two changes for
+ * Ported from VCOS `apps/web/src/shared/privacy.ts` `redactBrowserText`, with these changes for
  * Vivid. A Drizzle statement (`Failed query: … params: …`) is replaced whole, because a statement
  * can sit inside a wrapped message where the reference's per-record look-through cannot reach
- * it. And any `…key=` assignment is treated as a credential, because the export header itself is
- * one (`sentry_key=`).
+ * it. Any `…key=` assignment is treated as a credential, because the export header itself is
+ * one (`sentry_key=`). And every pattern is rewritten to be linear and to shorten or keep the
+ * text's length (`redactions`): the reference's address pattern takes time that grows with the
+ * square of a text with no `@` in it, and its address rewrite re-encodes.
+ *
+ * The cost, in the worst case: the text is cut to `LONGEST_SCAN` (4,096) characters before
+ * anything reads it, each of the seven passes is linear in what it is given, and no pass hands the
+ * next one more than it was given. So the whole is at most seven linear passes over 4,096
+ * characters, whatever the length of the failure's message; the largest constant is the address
+ * pass, about 130 steps from each position (64 forward and 64 back). Measured once on a development
+ * machine, the costliest text found (4,096 characters an address's local part accepts, with no
+ * `@`) took 1.5 ms; the text that took 0.8 s before (a non-ASCII address) takes 0.03 ms.
  *
  * This is defence in depth for the server's own log, as in the reference: prose can still hold
  * private data, so messages on typed errors must stay technical.
  */
 export const redact = (value: string): string =>
-  value
-    // Cut before any pattern runs. Some of these patterns take time that grows with the square of
-    // the text when nothing in it matches (the address pattern on a megabyte with no `@` in it),
-    // and a failure's message can be that long: a statement with its parameters, a provider's
-    // echoed prompt. Recording a failure must never be what stalls the server. Twice the kept
-    // length is read, so a credential that the cut would split lies wholly beyond what is kept.
-    .slice(0, LONGEST_TEXT * 2)
-    .replace(/Failed query:[\s\S]*?\nparams:[^\n]*/g, 'Failed query: [statement omitted]')
-    .replace(/https?:\/\/[^\s"'<>\\]+/gi, (candidate) => {
-      if (!URL.canParse(candidate)) return '[URL omitted]'
-      const url = new URL(candidate)
-      url.username = ''
-      url.password = ''
-      url.search = ''
-      url.hash = ''
-      return url.toString()
-    })
-    .replace(/\bBearer\s+[^\s,"'<>]+/gi, 'Bearer [REDACTED]')
-    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]')
-    .replace(/\b(?:sk[-_]|gh[pousr]_)[A-Za-z0-9_-]+\b/g, '[REDACTED]')
-    .replace(
-      /((?:authorization|cookie|password|passwd|secret|token|[a-z0-9_-]*key)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&"']+)/gi,
-      '$1[REDACTED]',
+  redactions
+    .reduce(
+      (text, [pattern, replace]) => text.replace(pattern, replace),
+      // Cut before any pattern runs: a failure's message can be a statement with its parameters or
+      // a provider's echoed prompt, and recording a failure must never be what stalls the server.
+      value.slice(0, LONGEST_SCAN),
     )
-    .replace(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)+/gi, '[EMAIL REDACTED]')
     .slice(0, LONGEST_TEXT)
 
 /**
