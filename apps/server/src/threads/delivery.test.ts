@@ -402,11 +402,13 @@ describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
   const admissionFailures = [
     {
       name: 'refused',
-      make: (threadId: ThreadId) => AdmissionRefused.make({ threadId, reason: 'Rejected' }),
+      make: (threadId: ThreadId, runId: RunId) =>
+        AdmissionRefused.make({ threadId, runId, reason: 'Rejected' }),
     },
     {
       name: 'uncertain',
-      make: (threadId: ThreadId) => AdmissionUncertain.make({ threadId, reason: 'Transport' }),
+      make: (threadId: ThreadId, runId: RunId) =>
+        AdmissionUncertain.make({ threadId, runId, reason: 'Transport' }),
     },
   ]
   for (const failure of admissionFailures) {
@@ -415,10 +417,11 @@ describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
       () =>
         Effect.gen(function* () {
           const test = yield* harness()
-          yield* Ref.set(test.failure, Option.some(failure.make(test.threadId)))
-          const rejected = yield* Effect.result(
-            test.conversation.admit(said(test.threadId, test.ada)),
-          )
+          // The error names the Run its request would have started, as the real client's does.
+          const message = said(test.threadId, test.ada)
+          const runId = submissionId(test.threadId, message.idempotencyKey)
+          yield* Ref.set(test.failure, Option.some(failure.make(test.threadId, runId)))
+          const rejected = yield* Effect.result(test.conversation.admit(message))
           expect(Result.isFailure(rejected) && rejected.failure).toBeInstanceOf(RuntimeUnavailable)
           const recorded = yield* (yield* RunStore).list(test.threadId)
           expect(recorded.map((run) => run.state)).toEqual([

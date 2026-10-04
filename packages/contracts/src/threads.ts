@@ -315,6 +315,21 @@ export const ThreadOrigin = Schema.Struct({
 })
 export interface ThreadOrigin extends Schema.Schema.Type<typeof ThreadOrigin> {}
 
+/**
+ * The one JSON body the server posts to the runtime to admit a Run, and the one the runtime
+ * decodes: the Run request plus the Thread's `initialData`. Both sides use this schema, so a body
+ * the server can encode is a body the runtime accepts.
+ *
+ * `turn` counts a Thread's Runs from one. The check lives here so the server refuses a turn the
+ * runtime would reject before anything is sent, instead of learning it from a 400.
+ */
+export const RuntimeAdmissionBody = Schema.Struct({
+  ...RuntimeRunRequest.fields,
+  turn: RuntimeRunRequest.fields.turn.check(Schema.isInt(), Schema.isGreaterThan(0)),
+  initialData: ThreadOrigin,
+})
+export interface RuntimeAdmissionBody extends Schema.Schema.Type<typeof RuntimeAdmissionBody> {}
+
 /** Everything waiting on the signed-in Person across the Threads they can see. */
 export const Inbox = Schema.Struct({
   approvals: Schema.Array(Approval),

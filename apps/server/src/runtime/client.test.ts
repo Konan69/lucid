@@ -5,13 +5,7 @@ import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientError from 'effect/unstable/http/HttpClientError'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
-import {
-  LibraryFolderId,
-  PersonId,
-  RuntimeRunRequest,
-  ThreadId,
-  ThreadOrigin,
-} from '@vivid/contracts'
+import { LibraryFolderId, PersonId, RunId, RuntimeAdmissionBody, ThreadId } from '@vivid/contracts'
 import { testConfigLayer, testDatabaseConfigured } from '../database/testdb.ts'
 import {
   AdmissionRefused,
@@ -21,11 +15,9 @@ import {
   type RuntimeMessage,
 } from './client.ts'
 
-const Incoming = Schema.fromJsonString(
-  Schema.Struct({ ...RuntimeRunRequest.fields, initialData: ThreadOrigin }),
-)
-const decodeIncoming = Schema.decodeUnknownEffect(Incoming)
-const submission = 'sub_ik_6582cbafc27e51d07440c6dbaad55c0c'
+const decodeIncoming = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimeAdmissionBody))
+/** Flue's keyed id for `MARK-thread` and `event-1`: the Run every error below must name. */
+const submission = RunId.make('sub_ik_6582cbafc27e51d07440c6dbaad55c0c')
 
 const admissionInput: Parameters<Runtime['Service']['admit']>[0] = {
   threadId: ThreadId.make('MARK-thread'),
@@ -45,15 +37,19 @@ const receiptBody = JSON.stringify({
 })
 
 /** Keep the caller scope open after admission, so abort assertions prove the method owns its response. */
-const admitWith = Effect.fn('Runtime.test.admitWith')(function* (http: HttpClient.HttpClient) {
+const admitInputWith = Effect.fn('Runtime.test.admitInputWith')(function* (
+  http: HttpClient.HttpClient,
+  input: Parameters<Runtime['Service']['admit']>[0],
+) {
   const context = yield* Layer.build(
     runtimeLayer.pipe(
       Layer.provide(Layer.merge(testConfigLayer, Layer.succeed(HttpClient.HttpClient, http))),
     ),
   )
   const runtime = yield* Runtime.pipe(Effect.provideContext(context))
-  return yield* runtime.admit(admissionInput).pipe(Effect.result)
+  return yield* runtime.admit(input).pipe(Effect.result)
 })
+const admitWith = (http: HttpClient.HttpClient) => admitInputWith(http, admissionInput)
 
 /** Classification is observed through the real Runtime Layer; only the remote HTTP transport varies. */
 describe.skipIf(!testDatabaseConfigured)('Runtime admission classification', () => {
@@ -91,6 +87,7 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission classification', () 
             _tag: tag,
             reason,
             threadId: admissionInput.threadId,
+            runId: submission,
           })
           expect(yield* Deferred.isDone(cancelled)).toBe(true)
         }).pipe(Effect.scoped),
@@ -115,6 +112,7 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission classification', () 
           _tag: failure.tag,
           reason: failure.expected,
           threadId: admissionInput.threadId,
+          runId: submission,
         })
       }).pipe(Effect.scoped),
     )
@@ -132,6 +130,113 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission classification', () 
         AdmissionRefused.make({
           reason: 'Address',
           threadId: admissionInput.threadId,
+          runId: submission,
+        }),
+      )
+    }).pipe(Effect.scoped),
+  )
+
+  // A turn the shared contract rejects never becomes a request: a typed refusal, not a defect.
+  for (const turn of [0, 1.5]) {
+    it.effect(`refuses turn ${turn} at encoding without reaching the transport`, () =>
+      Effect.gen(function* () {
+        const dispatched = yield* Deferred.make<void>()
+        const http = HttpClient.make((request) =>
+          Effect.sync(() => {
+            Deferred.doneUnsafe(dispatched, Exit.void)
+            return HttpClientResponse.fromWeb(request, new Response(receiptBody, { status: 202 }))
+          }),
+        )
+        const result = yield* admitInputWith(http, { ...admissionInput, turn })
+        if (Result.isSuccess(result)) expect.fail('Unencodable request was admitted')
+        expect(result.failure).toEqual(
+          AdmissionRefused.make({
+            reason: 'Encoding',
+            threadId: admissionInput.threadId,
+            runId: submission,
+          }),
+        )
+        expect(yield* Deferred.isDone(dispatched)).toBe(false)
+      }).pipe(Effect.scoped),
+    )
+  }
+})
+
+/** A 409 is never a refusal. Only Flue's named conflict is `Conflict`; every other 409 is `Status`. */
+describe.skipIf(!testDatabaseConfigured)('Runtime admission conflict', () => {
+  const conflicts = [
+    {
+      name: 'Flue submission_conflict',
+      // The envelope Flue 2.2.2's SubmissionConflictError serializes.
+      body: JSON.stringify({
+        error: {
+          type: 'submission_conflict',
+          message: 'This idempotency key already names a different submission.',
+          meta: { submissionId: submission },
+        },
+      }),
+      reason: 'Conflict',
+    },
+    {
+      name: 'another error type',
+      body: JSON.stringify({ error: { type: 'agent_busy', message: 'Busy.' } }),
+      reason: 'Status',
+    },
+    { name: 'an error without a type', body: JSON.stringify({ error: {} }), reason: 'Status' },
+    { name: 'a non-string type', body: JSON.stringify({ error: { type: 409 } }), reason: 'Status' },
+    { name: 'malformed JSON', body: '{', reason: 'Status' },
+    { name: 'an empty body', body: '', reason: 'Status' },
+  ] as const
+  for (const conflict of conflicts) {
+    it.effect(`classifies a 409 with ${conflict.name} as ${conflict.reason} and releases it`, () =>
+      Effect.gen(function* () {
+        const cancelled = yield* Deferred.make<void>()
+        const http = HttpClient.make((request, _url, signal) =>
+          Effect.sync(() => {
+            signal.addEventListener('abort', () => Deferred.doneUnsafe(cancelled, Exit.void), {
+              once: true,
+            })
+            return HttpClientResponse.fromWeb(request, new Response(conflict.body, { status: 409 }))
+          }),
+        )
+        const result = yield* admitWith(http)
+        if (Result.isSuccess(result)) expect.fail('Conflicting request was admitted')
+        expect(result.failure).toEqual(
+          AdmissionUncertain.make({
+            reason: conflict.reason,
+            threadId: admissionInput.threadId,
+            runId: submission,
+          }),
+        )
+        expect(yield* Deferred.isDone(cancelled)).toBe(true)
+      }).pipe(Effect.scoped),
+    )
+  }
+
+  it.effect('classifies a 409 whose body cannot be read as Status', () =>
+    Effect.gen(function* () {
+      const http = HttpClient.make((request) =>
+        Effect.sync(() =>
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.error(new Error('Connection lost during the conflict body'))
+                },
+              }),
+              { status: 409 },
+            ),
+          ),
+        ),
+      )
+      const result = yield* admitWith(http)
+      if (Result.isSuccess(result)) expect.fail('Unreadable conflict was admitted')
+      expect(result.failure).toEqual(
+        AdmissionUncertain.make({
+          reason: 'Status',
+          threadId: admissionInput.threadId,
+          runId: submission,
         }),
       )
     }).pipe(Effect.scoped),
@@ -201,6 +306,7 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission receipts', () => {
             AdmissionUncertain.make({
               reason: 'Receipt',
               threadId: admissionInput.threadId,
+              runId: submission,
             }),
           )
           expect(yield* Deferred.isDone(cancelled)).toBe(true)
@@ -231,6 +337,7 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission receipts', () => {
         AdmissionUncertain.make({
           reason: 'Receipt',
           threadId: admissionInput.threadId,
+          runId: submission,
         }),
       )
     }).pipe(Effect.scoped),
@@ -275,6 +382,7 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission deadline', () => {
           AdmissionUncertain.make({
             reason: 'TimedOut',
             threadId: admissionInput.threadId,
+            runId: submission,
           }),
         )
         expect(yield* Deferred.isDone(cancelled)).toBe(true)
@@ -412,6 +520,7 @@ describe.skipIf(!testDatabaseConfigured)('Runtime delivery wire boundary', () =>
               AdmissionUncertain.make({
                 reason: 'Receipt',
                 threadId: ThreadId.make('MARK-thread'),
+                runId: submission,
               }),
             )
         }
