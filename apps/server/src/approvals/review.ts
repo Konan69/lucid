@@ -2,7 +2,7 @@ import { Context, Effect, Layer, Option, Schema } from 'effect'
 import { Decision, DecisionModel } from 'effect/unstable/ai'
 import { ActionTarget, BrowseTarget, type ProposedAction } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
-import { decide, decisionConfigured } from '../decisions/model.ts'
+import { decide, decisionConfigured, isDecisionNonEvent } from '../decisions/model.ts'
 import { Runtime } from '../runtime/client.ts'
 import { Database } from '../database/client.ts'
 import { Review } from './policy.ts'
@@ -158,10 +158,13 @@ export const reviewerLayer = Layer.effect(
         },
         (effect) =>
           effect.pipe(
+            // A failed decision is worth one line. Decisions switched off, or already known to
+            // be down, are states the Decision Layer announces itself, not one event per action.
             Effect.catch((error) =>
-              Effect.logWarning('Action unreviewed', { tag: error._tag }).pipe(
-                Effect.as(Review.cases.Unreviewed.make({})),
-              ),
+              (isDecisionNonEvent(error)
+                ? Effect.void
+                : Effect.logWarning('Action unreviewed', { reason: error.reason })
+              ).pipe(Effect.as(Review.cases.Unreviewed.make({}))),
             ),
           ),
       ),
