@@ -33,6 +33,9 @@ const discoveryClassification = Context.Reference('vivid/DiscoveryClassification
  * descriptions at 2292/3844/7704 input tokens and 493/667/682ms warm. Five hundred characters
  * retain useful semantics while halving the largest tested payload. Cache identity stays full. */
 export const TOOL_DESCRIPTION_LIMIT = 500
+/** One hundred characters bounds identity fields independently of descriptions. Longer
+ * metadata keeps Executor's effect: no truncated evidence may remove an Approval. */
+export const TOOL_NAME_LIMIT = 100
 
 const Input = Schema.Struct({
   service: Schema.String,
@@ -242,7 +245,14 @@ export const toolEffectsLayer = Layer.effect(
       service,
       tool,
     }: EffectRequest) {
-      if (tool.effect !== 'write' || !configured) return tool.effect
+      if (
+        tool.effect !== 'write' ||
+        !configured ||
+        tool.description.length > TOOL_DESCRIPTION_LIMIT ||
+        tool.name.length > TOOL_NAME_LIMIT ||
+        service.length > TOOL_NAME_LIMIT
+      )
+        return tool.effect
       const key = new CacheKey({
         serviceId,
         service,
