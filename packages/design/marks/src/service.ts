@@ -5,7 +5,16 @@ import type { MarkFigure } from './figure.js'
  * reads at a glance. These are the providers behind a Connection; the identifiers match the
  * `ConnectionId` the server reports, which is how a Connection row finds its mark.
  */
-export const SERVICE_MARK_IDS = ['gmail', 'calendar', 'drive', 'maps', 'browser', 'notes'] as const
+export const SERVICE_MARK_IDS = [
+  'gmail',
+  'calendar',
+  'drive',
+  'maps',
+  'browser',
+  'notes',
+  'imessage',
+  'whatsapp',
+] as const
 
 export type ServiceMarkId = (typeof SERVICE_MARK_IDS)[number]
 
@@ -134,6 +143,35 @@ export const SERVICE_MARKS = {
         d: 'M12 5.5a4.5 4.5 0 0 1 2.5 8.2v1.8h-5v-1.8A4.5 4.5 0 0 1 12 5.5Z',
       },
       { kind: 'rect', x: 10.4, y: 16.6, width: 3.2, height: 1.6, radius: 0.8, fill: '#fff' },
+    ],
+  },
+  // The two messaging apps a Person can text Vivid from. They are not behind a Connection (their
+  // identifiers are the `Channel` in lower case, not a `ConnectionId`), but they are drawn the
+  // same way for the same reason: the app is recognised by its mark before its name is read.
+  imessage: {
+    label: 'iMessage',
+    figures: [
+      { kind: 'rect', x: 0, y: 0, width: 24, height: 24, radius: 5, fill: '#34C759' },
+      {
+        kind: 'path',
+        fill: '#fff',
+        opacity: 1,
+        d: 'M12 5.5c4.1 0 7.5 2.7 7.5 6s-3.4 6-7.5 6c-.8 0-1.6-.1-2.3-.3-.9.8-2.1 1.3-3.5 1.4.7-.7 1.2-1.5 1.3-2.4-1.9-1.100-3-2.800-3-4.700 0-3.300 3.400-6 7.500-6Z',
+      },
+    ],
+  },
+  whatsapp: {
+    label: 'WhatsApp',
+    figures: [
+      { kind: 'rect', x: 0, y: 0, width: 24, height: 24, radius: 5, fill: '#25D366' },
+      { kind: 'path', fill: '#fff', opacity: 1, d: 'm5.400 18.600 1.300-4.200 2.900 2.900z' },
+      { kind: 'ring', cx: 12, cy: 12, r: 6, fill: '#25D366', stroke: '#fff', strokeWidth: 1.5 },
+      {
+        kind: 'path',
+        fill: '#fff',
+        opacity: 1,
+        d: 'M10 9.200c.3-.3.8-.3 1 .1l.5 1c.1.3 0 .6-.2.8l-.3.3c.5.9 1.200 1.600 2.100 2.100l.3-.3c.2-.2.5-.3.8-.2l1 .5c.4.2.4.7.1 1-.6.7-1.500.9-2.300.6-1.900-.7-3.400-2.200-4.100-4.100-.2-.7 0-1.300.6-1.800Z',
+      },
     ],
   },
 } satisfies Record<ServiceMarkId, ServiceMark>
