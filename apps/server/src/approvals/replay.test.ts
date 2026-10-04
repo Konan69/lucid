@@ -3,6 +3,8 @@ import { ApprovalDecision, Conflict, DatabaseFailure, RuntimeUnavailable } from 
 import { eq } from 'drizzle-orm'
 import { Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Queue, Ref, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
+import { Message } from '../observability/messages.ts'
+import { refusalLogs } from '../observability/testlogger.ts'
 import { Database, returned } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { DeliverySpeaker } from '../threads/conversation.ts'
@@ -25,7 +27,13 @@ describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
   ]) {
     it.effect(`replay retains debt and logs only unexpected ${failure._tag} once`, () => {
       const logged: string[] = []
-      const logger = Logger.make(({ message }) => logged.push(JSON.stringify(message)))
+      const refusals = refusalLogs()
+      // Every line at every level counts, so a new diagnostic on replay still fails this test.
+      // Only the refusal receipt is left out: it is asserted on its own below.
+      const logger = Logger.make(({ message }) => {
+        const line = JSON.stringify(message)
+        if (!line.includes(Message.refusal)) logged.push(line)
+      })
       return Effect.gen(function* () {
         const test = yield* fixture()
         const store = yield* ApprovalStore
@@ -53,7 +61,14 @@ describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
           (yield* returned(deliveries, 'Delivery')).idempotencyKey,
         ])
         expect(logged).toHaveLength(isDatabaseFailure(failure) ? 1 : 0)
-      }).pipe(Effect.scoped, Effect.provide(trustTestLayer), Effect.provide(Logger.layer([logger])))
+        expect(refusals.recorded()).toHaveLength(1)
+        expect(refusals.recorded()[0]).toContain('vivid.refusal.kind=ApprovalDenied')
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(trustTestLayer),
+        Effect.provide(refusals.layer),
+        Effect.provide(Logger.layer([logger])),
+      )
     })
   }
 

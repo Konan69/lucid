@@ -12,6 +12,7 @@ import {
 } from '@vivid/contracts'
 import * as Option from 'effect/Option'
 import * as Match from 'effect/Match'
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { actingRun } from '../threads/runs.ts'
 import type { Actor } from '../auth/access.ts'
 import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
@@ -218,6 +219,10 @@ export const gateLayer = Layer.effect(
               ...auditAction(action),
               rule: never.action,
             }),
+          )
+          // The Gate decides Never; outward Blocked outcomes only carry this same decision.
+          yield* recordRefusal(
+            Refusal.cases.ActionBlocked.make({ effect: action.effect, target: action.target._tag }),
           )
           return GateDecision.cases.Blocked.make({ rule: never.action })
         }

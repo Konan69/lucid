@@ -32,6 +32,7 @@ import {
   type DeviceRequest,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
+import { refusalLogs } from '../observability/testlogger.ts'
 import { authEffect, localAuthRuntimeLayer } from '../auth/provider.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { Database, decodeStored } from '../database/client.ts'
@@ -209,6 +210,49 @@ const failureOf = <E extends { readonly _tag: string }>(exit: Exit.Exit<void, E>
 
 /** Real PostgreSQL holds the Devices, Runs and ledger; the desktop app is the handlers' caller. */
 describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
+  /** Only the accepted ledger answer decides Refused; repeats and outward Browse values do not. */
+  it.effect('records a device refusal once after accepting the answer and rejects replay', () => {
+    const logs = refusalLogs()
+    return Effect.gen(function* () {
+      const ada = yield* somebody(farFuture)
+      const { device, installation } = yield* enrolled(ada, 'Laptop')
+      yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
+      const link = yield* listen(ada, device, installation)
+      const { threadId, runId } = yield* working(ada.person, ada.person)
+      const running = yield* (yield* DeviceRegistry)
+        .browse({
+          personId: ada.person.id,
+          threadId,
+          runId,
+          action: read,
+          authority: BrowseAuthority.cases.Acting.make({}),
+        })
+        .pipe(Effect.forkScoped)
+      const request = yield* Queue.take(link.requests)
+      const answer = {
+        device: device.id,
+        id: request.id,
+        answer: DeviceAnswer.cases.Refused.make({ reason: 'NotAllowed' }),
+      }
+      yield* computerHandlers.AnswerDeviceRequest(answer).pipe(as(ada))
+      expect(yield* Fiber.join(running)).toEqual(BrowseOutcome.cases.AddressRefused.make({}))
+      expect(
+        (yield* computerHandlers.AnswerDeviceRequest(answer).pipe(as(ada), Effect.flip))._tag,
+      ).toBe('Forbidden')
+      const database = yield* Database
+      const [row] = yield* database.run(
+        database.select().from(deviceRequests).where(eq(deviceRequests.id, request.id)),
+      )
+      expect(row).toMatchObject({
+        receipt: encodeReceipt(DeviceReceipt.cases.Refused.make({ reason: 'NotAllowed' })),
+      })
+      const recorded = logs.recorded()
+      expect(recorded).toHaveLength(1)
+      expect(recorded[0]).toContain('vivid.refusal.kind=DeviceRefused')
+      expect(recorded[0]).toContain('vivid.refusal.reason=NotAllowed')
+    }).pipe(Effect.scoped, Effect.provide(testLayer), Effect.provide(logs.layer))
+  })
+
   it.effect('enrolling is repeatable per Person and installation, and grants nothing', () =>
     Effect.gen(function* () {
       const ada = yield* somebody(farFuture)
