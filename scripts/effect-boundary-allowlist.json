@@ -25,6 +25,11 @@
     "symbols": ["runTool"]
   },
   {
+    "file": "packages/agent/runtime/src/notes.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["openStore", "opened", "attempt", "noteIndex"]
+  },
+  {
     "file": "apps/server/src/code/worker.ts",
     "classification": "third-party-adapter",
     "symbols": ["invokeTool"]
