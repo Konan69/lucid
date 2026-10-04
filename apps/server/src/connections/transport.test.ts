@@ -592,6 +592,33 @@ describe('Executor hosted transport', () => {
     ),
   )
 
+  for (const pending of [key, signingIn]) {
+    it.effect(`removes the saved reconnect account while ${pending._tag}`, () =>
+      scenario((remote) =>
+        Effect.gen(function* () {
+          yield* failRoute(remote, 'GET /connections/authorization', {
+            status: 200,
+            body: {
+              id: 'authorization',
+              reconnectAccount: { id: 'account' },
+              target: null,
+              state: { status: 'pending' },
+            },
+          })
+          yield* (yield* Executor).remove(pending)
+          expect(
+            (yield* Ref.get(remote.requests))
+              .filter((request) => request.path.startsWith('DELETE'))
+              .map((request) => request.path),
+          ).toEqual([
+            `DELETE ${hostedPrefix}/apps/app/profiles/profile`,
+            `DELETE ${hostedPrefix}/accounts/account`,
+          ])
+        }),
+      ),
+    )
+  }
+
   it.effect('lets pending requests expire and deletes only their profile', () =>
     scenario((remote) =>
       Effect.gen(function* () {

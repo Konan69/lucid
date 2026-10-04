@@ -1626,8 +1626,9 @@ function makeRemove(http: ExecutorHttp) {
   })
 }
 
-/** HostedAccounts has no cancellation route. Read the saved request to release a completed
- * account; pending requests expire and a removed target profile cannot be completed afterward.
+/** HostedAccounts reconnect keeps the saved account on reconnectAccount until completion.
+ * Remove must revoke that exact account even while a replacement key/sign-in is pending.
+ * New pending requests have no account; they expire after their target profile is removed.
  */
 function makeResolveRemovalAccount(http: ExecutorHttp) {
   return Effect.fn('Executor.removalAccount')(function* (
@@ -1635,11 +1636,15 @@ function makeResolveRemovalAccount(http: ExecutorHttp) {
   ) {
     const path = `/connections/${query(references.authorization)}`
     const connection = yield* http.readConnection(Effect.succeed(HttpClientRequest.get(path)), null)
+    const reconnect = Option.map(
+      Option.fromNullOr(connection.reconnectAccount),
+      (account) => account.id,
+    )
     return WireConnection.fields.state.match(connection.state, {
       completed: ({ account }) => Option.some(account.id),
-      pending: () => Option.none(),
-      cancelled: () => Option.none(),
-      expired: () => Option.none(),
+      pending: () => reconnect,
+      cancelled: () => reconnect,
+      expired: () => reconnect,
     })
   })
 }
