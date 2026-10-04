@@ -84,6 +84,8 @@ export const machineFailureReason = (failure: MachineFailure): string =>
         'The Computer creation receipt needs reconciliation; another machine will not be created.',
       MachineRequestRejected: () => 'The Computer provider refused the operation.',
       MachinePersistenceFailed: () => 'The Computer provider binding could not be saved or read.',
+      MachineHeld: () =>
+        'Vivid’s computer on this installation is already in use by another account.',
       MachineCapabilityUnavailable: ({ capability }) =>
         `The configured Computer provider does not support ${capability}.`,
       MachineNotRunning: () => 'The Computer is no longer running.',
@@ -898,6 +900,7 @@ const executionRefusals = <A>(
     MachineCreationUnresolved: handle,
     MachineRequestRejected: handle,
     MachinePersistenceFailed: handle,
+    MachineHeld: handle,
     MachineCapabilityUnavailable: handle,
     ComputerHeld: handle,
     ComputerProviderUnavailable: handle,

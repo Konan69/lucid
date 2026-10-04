@@ -61,7 +61,7 @@ const configuration = Effect.fn('Machine.boat.configuration')(
     // that machine instead of a new one. Boat's trial account refuses to create machines once
     // its free hours are used, while it still resumes one that exists (seen 4 October 2026:
     // create answered `trial_compute_limit_reached`, resume of the prepared machine answered
-    // 202). This is for one Person: every Person on the installation would share the machine.
+    // 202). This is for one Person: the first owner keeps the machine; other accounts are refused.
     const adopt = yield* Config.option(Config.schema(Protocol.ProviderId, 'VIVID_BOAT_MACHINE'))
     return { key, org, create, adopt }
   },

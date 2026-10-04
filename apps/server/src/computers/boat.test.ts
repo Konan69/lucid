@@ -26,6 +26,8 @@ import { ComputerActionRefused, ComputerToolRefused } from './boat/refusal.ts'
 import { driver } from './boat/driver.ts'
 import { transport } from './boat/transport.ts'
 import { guestCommand } from './boat/guest.ts'
+import { bindings } from './boat/bindings.ts'
+import { machineFailureReason } from './store.ts'
 
 // Deliberate PNG fixture, not a claim that the guest was exercised.
 const png =
@@ -535,14 +537,15 @@ const serverLayer = Layer.effect(
     Layer.mergeAll(NodeHttpServer.layer(NodeHttp.createServer, { port: 0 }), FetchHttpClient.layer),
   ),
 )
-/** The provider against the fake Boat, configured the way one deployment would configure it. */
+/** The fake deployment owns every Boat setting, including absent adoption; inherited live
+ * configuration must not turn create tests into adoption. TestDatabaseLayer owns SQL authority separately. */
 const configured = (settings: Readonly<Record<string, string>>) =>
   boatMachineLayer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
         testDatabaseLayer,
         serverLayer,
-        ConfigProvider.layerAdd(ConfigProvider.fromUnknown(settings), { asPrimary: true }),
+        ConfigProvider.layer(ConfigProvider.fromUnknown(settings)),
       ),
     ),
   )
@@ -550,6 +553,13 @@ const testLayer = configured({
   VIVID_BOAT_API_KEY: 'protocol-test-key',
   VIVID_BOAT_ORG: 'personal',
   VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
+})
+/** One installation already owns this machine; adopting it must never call paid creation. */
+const adoptedLayer = configured({
+  VIVID_BOAT_API_KEY: 'protocol-test-key',
+  VIVID_BOAT_ORG: 'personal',
+  VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
+  VIVID_BOAT_MACHINE: id,
 })
 /** An account that belongs to no organization: there is only the key. */
 const accountLayer = configured({
@@ -570,6 +580,83 @@ const fixture = Effect.fn('BoatTest.fixture')(function* () {
 })
 
 describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => {
+  it.effect(
+    'adopts the configured machine for one Person and cleanly refuses another account',
+    () =>
+      Effect.gen(function* () {
+        const first = yield* fixture()
+        const second = yield* fixture()
+        const machine = yield* Machine
+        const saved = yield* bindings()
+        const evidence = yield* Evidence
+        expect((yield* machine.ensure(first))._tag).toBe('Running')
+        expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: id }))
+        const failure = yield* machine.ensure(second).pipe(Effect.flip)
+        expect(failure._tag).toBe('MachineHeld')
+        expect(machineFailureReason(failure)).toBe(
+          'Vivid’s computer on this installation is already in use by another account.',
+        )
+        expect(JSON.stringify(failure)).not.toContain(first)
+        expect(JSON.stringify(failure)).not.toContain(second)
+        expect(yield* saved.load(second)).toEqual(Option.none())
+        expect((yield* machine.inspect(second))._tag).toBe('Absent')
+        expect((yield* machine.ensure(first))._tag).toBe('Running')
+        expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: id }))
+        expect(yield* Ref.get(evidence.created)).toBe(0)
+        expect(yield* Ref.get(evidence.intents)).toEqual([])
+      }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+  )
+
+  it.effect(
+    'cleans a held adoption’s stale unbound intent instead of treating it as a paid create',
+    () =>
+      Effect.gen(function* () {
+        const first = yield* fixture()
+        const second = yield* fixture()
+        const machine = yield* Machine
+        const saved = yield* bindings()
+        const api = yield* transport()
+        const database = yield* Database
+        yield* machine.ensure(first)
+        yield* saved.intend(second, api.create)
+        yield* database.run(
+          database
+            .update(machineBindings)
+            .set({ requestedAt: -24 * 60 * 60_000 })
+            .where(eq(machineBindings.key, second)),
+        )
+        expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+        expect(yield* saved.load(second)).toEqual(Option.none())
+        expect((yield* machine.ensure(first))._tag).toBe('Running')
+        expect(yield* Ref.get((yield* Evidence).created)).toBe(0)
+      }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+  )
+
+  it.effect('maps a real provider-id collision and abandons only the matching unbound intent', () =>
+    Effect.gen(function* () {
+      const first = yield* fixture()
+      const second = yield* fixture()
+      const saved = yield* bindings()
+      const api = yield* transport()
+      const owner = yield* saved.intend(first, api.create)
+      const waiting = yield* saved.intend(second, api.create)
+      yield* saved.bind(first, owner.intent, Protocol.ProviderId.make(id))
+      expect(
+        (yield* saved.bind(second, waiting.intent, Protocol.ProviderId.make(id)).pipe(Effect.flip))
+          ._tag,
+      ).toBe('MachineHeld')
+      yield* saved.abandon(first, owner.intent)
+      yield* saved.abandon(second, owner.intent)
+      expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: id }))
+      expect(yield* saved.load(second)).toEqual(Option.some(waiting))
+      yield* saved.abandon(second, waiting.intent)
+      expect(yield* saved.load(second)).toEqual(Option.none())
+      expect(yield* saved.holder(Protocol.ProviderId.make(id))).toMatchObject(
+        Option.some({ key: first }),
+      )
+    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+  )
+
   it.effect(
     'proves the sole tab during native-title lag but refuses ambiguous selection among tabs',
     () =>
