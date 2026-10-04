@@ -27,17 +27,12 @@ export interface InfrastructureEnvironment {
    */
   readonly executor: Option.Option<ExecutorAccess>
   /**
-   * The key for Jev, the decision model behind rule matching, tool effect, tool selection and
-   * the approval review (`apps/server/src/decisions/model.ts`). Without it the server still runs:
-   * every decision takes its conservative answer, so Vivid asks more and ranks by words.
+   * Whether Jev makes Vivid's small judgements (`VIVID_DECISIONS` in
+   * `apps/server/src/decisions/model.ts`). Absent means the server's own default, which is off.
+   * It needs no key of its own: decisions go through the model gateway with `EXPLABS_API_KEY`.
    */
-  readonly decisions: Option.Option<DecisionAccess>
+  readonly decisions: Option.Option<string>
 }
-
-/** Which provider carries Jev. The server prefers TypeSafe when both keys are set. */
-export type DecisionAccess =
-  | { readonly provider: 'TypeSafe'; readonly key: Redacted.Redacted }
-  | { readonly provider: 'OpenRouter'; readonly key: Redacted.Redacted }
 
 export interface ExecutorAccess {
   readonly key: Redacted.Redacted
@@ -103,12 +98,7 @@ export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnviro
       (key, organization): ExecutorAccess => ({ key, organization }),
     )
 
-    const typeSafeKey = yield* optionalSecret('TYPESAFE_API_KEY')
-    const openRouterKey = yield* optionalSecret('OPENROUTER_API_KEY')
-    const decisions = Option.orElse(
-      Option.map(typeSafeKey, (key): DecisionAccess => ({ provider: 'TypeSafe', key })),
-      () => Option.map(openRouterKey, (key): DecisionAccess => ({ provider: 'OpenRouter', key })),
-    )
+    const decisions = yield* optionalString('VIVID_DECISIONS')
 
     return {
       authSecret,
