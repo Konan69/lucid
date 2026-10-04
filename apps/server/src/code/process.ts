@@ -13,6 +13,8 @@ import {
 } from '@vivid/contracts'
 import {
   Cause,
+  Predicate,
+  Result,
   Config,
   Context,
   Deferred,
@@ -25,6 +27,7 @@ import {
   Semaphore,
 } from 'effect'
 import { CodeTiming } from '@vivid/contracts/code'
+import { isCodeName } from '../observability/messages.ts'
 import { boundedLogs, encodedPrefix } from './logs.ts'
 import { budgets, bytes } from './budgets.ts'
 import { prepareWorker } from './source.ts'
@@ -242,6 +245,30 @@ function boundedFailure(failure: CodeFailure, calls: readonly CodeCall[], printe
   })
 }
 
+/**
+ * Inspect only the first sixteen Effect-owned reasons. Fail tags must be own data properties and
+ * code names (at most 120 characters); messages, inherited accessors and every Die payload stay
+ * unread. Result.try contains a revoked Proxy's descriptor trap, like the observability guard.
+ */
+function supervisionTags<E>(cause: Cause.Cause<E>) {
+  return cause.reasons
+    .slice(0, 16)
+    .flatMap((reason) => {
+      if (!Cause.isFailReason(reason)) return []
+      return Result.getOrElse(
+        Result.try(() => {
+          if (!Predicate.isObject(reason.error)) return []
+          const descriptor = Object.getOwnPropertyDescriptor(reason.error, '_tag')
+          if (descriptor === undefined || !Object.hasOwn(descriptor, 'value')) return []
+          const tag: unknown = descriptor.value
+          return Predicate.isString(tag) && isCodeName(tag) ? [tag] : []
+        }),
+        () => [],
+      )
+    })
+    .join(',')
+}
+
 /** Parent state is never supplied by the worker. Pending consequential calls are uncertain on loss. */
 export class Execution {
   readonly calls: CodeCall[] = []
@@ -295,9 +322,10 @@ export class Execution {
   supervise<E, R>(program: Effect.Effect<CodeOutcome, E, R>) {
     return program.pipe(
       Effect.catchCause((cause) =>
-        // Only Effect-owned reason kinds are read. Never give a logger the foreign failure:
+        // Only reason kinds and bounded Fail tags are read. Never give a logger the foreign failure:
         // rc.116 Cause.pretty runs getters and recursively follows circular causes (guard.ts).
         Effect.annotateLogs(Effect.logError('Program supervision failed'), {
+          'vivid.supervision.failures': supervisionTags(cause),
           'vivid.supervision.failed': Cause.hasFails(cause),
           'vivid.supervision.defected': Cause.hasDies(cause),
           'vivid.supervision.interrupted': Cause.hasInterrupts(cause),

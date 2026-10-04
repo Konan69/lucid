@@ -3,12 +3,12 @@ import { ConfigProvider, Context, Layer, Logger } from 'effect'
 import { programHost } from './host.ts'
 import { describe, expect, it as standalone, layer } from '@effect/vitest'
 import { ApprovalId, CodeCall, CodeFailure, CodeOutcome, ThreadId } from '@vivid/contracts'
-import { Deferred, Effect, Exit, Fiber, Ref, Option, type Schema } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Ref, Option, Schema, Cause } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { CallOutcome, CodeProcess, codeProcessLayer, Execution, type Dispatch } from './process.ts'
 import { discoveredTool } from './signatures.ts'
 import { CodeTiming } from '@vivid/contracts/code'
-import { WorkerMessage } from './protocol.ts'
+import { PipeFailure, WorkerMessage } from './protocol.ts'
 import { budgets } from './budgets.ts'
 
 const missingHost = programHost(Option.fromUndefinedOr(NodeProcess.env.XDG_RUNTIME_DIR))
@@ -913,6 +913,45 @@ standalone.effect('supervision contains hostile causes and logs only bounded typ
       expect(message).toContain('Program supervision failed')
       expect(message).not.toContain(secret)
       expect(message.length).toBeLessThan(400)
+    }
+  }).pipe(Effect.provide(Logger.layer([logger])))
+})
+
+/** Safe diagnostics identify typed failures without rendering their payload or defect tags. */
+standalone.effect('supervision logs typed Fail tags with bounded count and length', () => {
+  const messages: string[] = []
+  const logger = Logger.make((entry) => messages.push(Logger.formatSimple.log(entry)))
+  return Effect.gen(function* () {
+    const state = new Execution()
+    yield* state.supervise(Effect.fail(new PipeFailure({ reason: 'closed' })))
+    expect(messages[0]).toContain('vivid.supervision.failures=CodePipeFailure')
+    const reasons = Array.from({ length: 40 }, (_, index) =>
+      Cause.makeFailReason(Schema.TaggedStruct(`Typed${index}`, {}).make({})),
+    )
+    yield* state.supervise(Effect.failCause(Cause.fromReasons(reasons)))
+    expect(messages[1]).toContain('Typed15')
+    expect(messages[1]).not.toContain('Typed16')
+    const longest = Array.from({ length: 16 }, (_, index) =>
+      Cause.makeFailReason(Schema.TaggedStruct(`T${index}`.padEnd(120, 'X'), {}).make({})),
+    )
+    yield* state.supervise(Effect.failCause(Cause.fromReasons(longest)))
+    expect(messages[2]).toContain('T15'.padEnd(120, 'X'))
+    const oversized = Schema.TaggedStruct('X'.repeat(121), {}).make({})
+    yield* state.supervise(Effect.fail(oversized))
+    expect(messages[3]).not.toContain('X'.repeat(121))
+    const hostile = Object.defineProperty(new Error('Private message'), '_tag', {
+      get: () => {
+        throw new Error('Private tag getter')
+      },
+    })
+    yield* state.supervise(Effect.fail(hostile))
+    const revoked = Proxy.revocable({}, {})
+    revoked.revoke()
+    yield* state.supervise(Effect.fail(revoked.proxy))
+    yield* state.supervise(Effect.die(Schema.TaggedStruct('PrivateDefectTag', {}).make({})))
+    for (const message of messages) {
+      expect(message).not.toContain('Private')
+      expect(message.length).toBeLessThan(2200)
     }
   }).pipe(Effect.provide(Logger.layer([logger])))
 })
