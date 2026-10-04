@@ -2,22 +2,18 @@ import type { MeResponse } from '@vivid/contracts'
 import { Option } from 'effect'
 import { Check, X } from 'lucide-react'
 import { useState, useSyncExternalStore } from 'react'
-import { flushSync } from 'react-dom'
 import { onboarding } from '../../data/onboarding'
 import { finished, useProgress, type Step, type StepKind } from '../../data/progress'
-import { Route, router } from '../../data/route'
-import { sidebar } from '../../data/sidebar'
+import { router } from '../../data/route'
 import { useAppearance } from '../../data/vivid'
 import { cn } from '../../ui/cn'
 import { Menu, MenuDivider, MenuItem } from '../../ui/Menu'
-import { messageField } from '../thread/field'
 import { Customise } from '../vivid/Customise'
 
 /** What each step is called. Vivid's name is the Person's to choose, so the title is told it. */
 const TITLE = {
   connect: () => 'Connect what you use most',
   name: (vivid) => `Name ${vivid}`,
-  say: () => 'Say one thing you’re waiting on or want done',
 } satisfies Record<StepKind, (vivid: string) => string>
 
 /**
@@ -27,8 +23,8 @@ const TITLE = {
  * It used to be a card of rows in the conversation, and that was too much on a first screen: the
  * conversation is for Vivid and the Person, and setup is a thing to glance at. The pattern is the
  * reference assistant's (Grok Bot keeps one small "Connect apps" pill at the foot of its sidebar
- * and nothing about setup in the conversation). Vivid's holds three steps instead of one, so it
- * is a ring with a count and opens a short list.
+ * and nothing about setup in the conversation). Vivid's holds more than one step, so it is a ring
+ * with a count and opens a short list.
  *
  * It is raised (its own fill, an edge and the floating shadow) because it is not a place in the
  * rail like the rows above it: it sits over the rail, and it leaves. The steps grow out of it,
@@ -54,12 +50,6 @@ export function Started({ me }: { me: MeResponse }) {
       setOpen(false)
       setCustomising(true)
     },
-    say: () => {
-      // The menu hands the keyboard back to this control as it closes. It is closed first, and
-      // for real, so the message box is given the keyboard after that and keeps it.
-      flushSync(() => setOpen(false))
-      write()
-    },
   } satisfies Record<StepKind, () => void>
 
   return (
@@ -82,19 +72,6 @@ export function Started({ me }: { me: MeResponse }) {
       {customising && <Customise onClose={() => setCustomising(false)} />}
     </>
   )
-}
-
-/**
- * Puts the keyboard in the message box, which is where the last step is done. A screen without
- * one (Routines, the Library) is left for a new Thread first, drawn at once so its message box
- * is there to be found. On a narrow window the sidebar is a drawer over that box, so it is put
- * away.
- */
-function write() {
-  if (messageField() === null) flushSync(() => router.go(Route.New()))
-  sidebar.tuck()
-  const field = messageField()
-  if (field !== null) field.focus()
 }
 
 /** The floating piece itself and the steps that open over it, for a list that is not over. */

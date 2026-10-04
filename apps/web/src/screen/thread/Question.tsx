@@ -1,6 +1,6 @@
 import { Data, Option } from 'effect'
 import { Check } from 'lucide-react'
-import { useState, type KeyboardEvent } from 'react'
+import { useState, type KeyboardEvent, type TransitionEvent } from 'react'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { cn } from '../../ui/cn'
@@ -36,8 +36,9 @@ const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 /**
  * A question from Vivid, and the ways to answer it. Every question a Person answers by pressing
  * goes through this one piece, a real Input request in a Thread (`InputCard`). It is presentational:
- * it is told the title, the choices and where the question stands, and owns nothing but the
- * words being typed, so the phone app can mirror it from the same description.
+ * it is told the title, the choices and where the question stands, and owns nothing but whether
+ * it is still closing (the words being typed are `OwnAnswer`'s), so the phone app can mirror it
+ * from the same description.
  *
  * The design follows the reference assistant's question card (Grok Bot's first conversation,
  * measured from screenshots): the title in title weight on a raised card; the rows in one
@@ -47,6 +48,13 @@ const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
  * its far end. Vivid's differs in two places. A row may carry a second, smaller line, because
  * the contract lets each option say what picking it means. And there is no dismiss mark at the
  * top right: the reference has one, but no request here can be dismissed by the Person yet.
+ *
+ * An answered card holds only what it shows. The rows that were not chosen, and the answer
+ * field, are folded where they stand and then taken out of the document (`folding`). They used
+ * to stay for good, invisible and `inert`, so the page still held every row with "(chosen)" on
+ * one: anything that reads the document rather than the picture (a text snapshot, a copy, a
+ * find-in-page) saw a card that had never closed. A card that is first drawn already answered,
+ * which is every answered question after a reload, never draws them at all.
  *
  * From the keyboard, with focus inside the card: a letter picks its row, the arrows move between
  * rows, Enter picks the one in focus. Letters typed into the answer field are left alone.
@@ -67,7 +75,9 @@ export function Question({
   allowsOwn: boolean
   asked: Asked
 }) {
-  const [own, setOwn] = useState('')
+  // Whether what an answer folds away is still in the document. It is only while the card that
+  // was open on screen closes: a card born answered has nothing to fold.
+  const [folding, setFolding] = useState(Asked.$is('Open')(asked))
   const head = (
     <>
       {Option.isSome(status) && (
@@ -88,71 +98,136 @@ export function Question({
     )
   }
   const open = Asked.$is('Open')(asked)
+  // What is not part of the answer is drawn while the question is open and while it folds.
+  const rest = open || folding
   const answer = Asked.$is('Answered')(asked) ? Option.some(asked.answer) : Option.none()
-  // An answer that is none of the rows was written by hand, and is shown as a row of its own.
-  const written = Option.filter(answer, (said) => choices.every((choice) => choice.label !== said))
 
   return (
     <Card
       className={CARD}
       onKeyDown={Asked.$is('Open')(asked) ? (event) => steer(event, choices, asked) : undefined}
+      onTransitionEnd={(event) => {
+        if (foldEnded(event)) setFolding(false)
+      }}
     >
       {head}
-      {(choices.length > 0 || Option.isSome(written)) && (
-        // The list clips its rows to its corners, so a row's focus ring is drawn inside its edge.
-        <ul className="mt-3 overflow-hidden rounded-control edge">
-          {choices.map((choice, index) => (
-            <Row
-              key={choice.label}
-              letter={LETTERS.charAt(index)}
-              choice={choice}
-              standing={standingOf(answer, choice)}
-              divided={index > 0 && open}
-              onPress={() => {
-                if (Asked.$is('Open')(asked)) asked.onChoose(choice)
-              }}
-            />
-          ))}
-          {Option.isSome(written) && (
-            <li className="flex min-h-14 items-center gap-3 px-3 py-2 motion-fade">
-              <span className="min-w-0 flex-1 text-body text-pretty wrap-anywhere text-ink-3">
-                {written.value}
-              </span>
-              <Check aria-hidden className="size-4 shrink-0 text-ink-3" />
-            </li>
-          )}
-        </ul>
-      )}
-      {allowsOwn && (
-        // The negative margin gives back the room the field's focus ring needs inside a thing
-        // that clips: the fold hides overflow, and the ring is drawn 2px outside the field.
-        <div className="-mx-0.5 -mb-0.5 motion-fold" data-folded={open ? undefined : ''}>
-          <form
-            inert={!open}
-            className="flex gap-2 px-0.5 pt-2.5 pb-0.5"
-            onSubmit={(event) => {
-              event.preventDefault()
-              const said = own.trim()
-              if (said.length > 0 && Asked.$is('Open')(asked)) asked.onOwn(said)
-            }}
-          >
-            <input
-              value={own}
-              onChange={(event) => setOwn(event.currentTarget.value)}
-              aria-label="Your own answer"
-              placeholder="Type your own answer"
-              className="h-9 min-w-0 flex-1 rounded-control bg-well px-3 text-label text-ink ring-line outline-none placeholder:text-ink-4 focus-visible:ring-2 focus-visible:ring-ring"
-            />
-            <Button type="submit" variant="primary" disabled={own.trim().length === 0}>
-              Answer
-            </Button>
-          </form>
-        </div>
+      <Answers
+        choices={choices}
+        answer={answer}
+        rest={rest}
+        onChoose={Asked.$is('Open')(asked) ? Option.some(asked.onChoose) : Option.none()}
+      />
+      {allowsOwn && rest && (
+        <OwnAnswer onOwn={Asked.$is('Open')(asked) ? Option.some(asked.onOwn) : Option.none()} />
       )}
       {Asked.$is('Answered')(asked) && Option.isSome(asked.note) && (
         <p className="mt-2 text-meta font-meta text-ink-3">{asked.note.value}</p>
       )}
     </Card>
+  )
+}
+
+/**
+ * Whether a transition that just ended was a fold closing. The card hears every transition
+ * inside it (a row's hover wash, the check fading in); only one that ended on a thing marked
+ * `data-folded` means what was folded has finished going. Where nothing transitions (motion
+ * turned off for a keyboard change) no end is heard, and the folded things stay as they were
+ * before this was added: invisible, squeezed to nothing and `inert`.
+ */
+const foldEnded = (event: TransitionEvent<HTMLElement>) =>
+  event.target instanceof HTMLElement && event.target.dataset['folded'] !== undefined
+
+/**
+ * The rows of a question in their one bordered container: every choice while it is open, and
+ * once it is answered only the one chosen, or the Person's own words as a row when they wrote
+ * the answer themselves. `rest` says whether the rows that were not chosen are still drawn (they
+ * are while the question is open and while they fold); `onChoose` is there only while a row can
+ * still be pressed. Nothing is drawn for a question with no choices and no written answer.
+ */
+function Answers({
+  choices,
+  answer,
+  rest,
+  onChoose,
+}: {
+  choices: ReadonlyArray<Choice>
+  answer: Option.Option<string>
+  rest: boolean
+  onChoose: Option.Option<(choice: Choice) => void>
+}) {
+  // An answer that is none of the rows was written by hand, and is shown as a row of its own.
+  const written = Option.filter(answer, (said) => choices.every((choice) => choice.label !== said))
+  if (choices.length === 0 && Option.isNone(written)) return null
+  return (
+    // The list clips its rows to its corners, so a row's focus ring is drawn inside its edge.
+    <ul className="mt-3 overflow-hidden rounded-control edge">
+      {choices.map((choice, index) => {
+        const standing = standingOf(answer, choice)
+        return standing === 'folded' && !rest ? null : (
+          <Row
+            key={choice.label}
+            letter={LETTERS.charAt(index)}
+            choice={choice}
+            standing={standing}
+            divided={index > 0 && Option.isSome(onChoose)}
+            onPress={() => Option.map(onChoose, (choose) => choose(choice))}
+          />
+        )
+      })}
+      {Option.isSome(written) && (
+        <li className="flex min-h-14 items-center gap-3 px-3 py-2 motion-fade">
+          <span className="min-w-0 flex-1 text-body text-pretty wrap-anywhere text-ink-3">
+            {written.value}
+          </span>
+          <Check aria-hidden className="size-4 shrink-0 text-ink-3" />
+        </li>
+      )}
+    </ul>
+  )
+}
+
+/**
+ * The field for words of the Person's own, under the rows. It owns the words being typed and
+ * nothing else. `onOwn` is where they go while the question is open; once it is answered there is
+ * nowhere for them to go, and the field folds away with the rows that were not chosen.
+ */
+function OwnAnswer({ onOwn }: { onOwn: Option.Option<(answer: string) => void> }) {
+  const [own, setOwn] = useState('')
+  const open = Option.isSome(onOwn)
+  return (
+    // The negative margin gives back the room the field's focus ring needs inside a thing that
+    // clips: the fold hides overflow, and the ring is drawn 2px outside the field. It is given
+    // up once folded, so the card ends exactly as tall as one drawn answered.
+    <div
+      className="-mx-0.5 -mb-0.5 motion-fold data-folded:mb-0"
+      data-folded={open ? undefined : ''}
+      inert={!open}
+    >
+      {/* The fold squeezes this box, which has no padding of its own. The form's padding was on
+          the squeezed box before, and padding cannot be squeezed: the card kept 10px of it
+          under the answer. */}
+      <div>
+        <form
+          className="flex gap-2 px-0.5 pt-2.5 pb-0.5"
+          onSubmit={(event) => {
+            event.preventDefault()
+            const said = own.trim()
+            if (said.length > 0) Option.map(onOwn, (send) => send(said))
+          }}
+        >
+          <input
+            value={own}
+            onChange={(event) => setOwn(event.currentTarget.value)}
+            aria-label="Your own answer"
+            placeholder="Type your own answer"
+            className="h-9 min-w-0 flex-1 rounded-control bg-well px-3 text-label text-ink ring-line outline-none placeholder:text-ink-4 focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <Button type="submit" variant="primary" disabled={own.trim().length === 0}>
+            Answer
+          </Button>
+        </form>
+      </div>
+    </div>
   )
 }
 
@@ -169,6 +244,7 @@ const standingOf = (answer: Option.Option<string>, choice: Choice): Standing =>
  * One answer: its keycap, its label, and a smaller line under it when it has one. It is the same
  * button whether the question is open or answered, so the rows that were not chosen fold away
  * from where they stood and the chosen one never moves or redraws; it only stops being pressable.
+ * `Question` takes a folded row out of the document once its fold has ended.
  */
 function Row({
   letter,
