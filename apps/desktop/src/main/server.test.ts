@@ -1,4 +1,5 @@
 import * as NodeHttp from 'node:http'
+import { DeviceLink } from '../shared/device.ts'
 import * as NodeFS from 'node:fs'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
@@ -63,6 +64,9 @@ const directory = Effect.acquireRelease(
   (path) => Effect.sync(() => NodeFS.rmSync(path, { recursive: true, force: true })),
 )
 
+/** These tests are about the server choice; this computer is simply not linked in them. */
+const unlinked = { state: () => DeviceLink.cases.SignedOut.make({}), wake: () => {} }
+
 describe('desktop server selection', () => {
   /** A native allocation refusal survives IPC encoding as a renderer-readable domain receipt. */
   it.effect('returns the native page limit through the public bridge', () =>
@@ -74,6 +78,7 @@ describe('desktop server selection', () => {
         const handlers: BridgeHandlers = {
           settings,
           getAppVersion: () => '1.0.0',
+          device: unlinked,
           openExternal: () => Effect.void,
           pages: () => Effect.fail(reason),
           onServerChanged: () => {},
@@ -106,6 +111,7 @@ describe('desktop server selection', () => {
           pages: () => Effect.fail(new PageUnavailable({})),
           settings,
           getAppVersion: () => '1.0.0',
+          device: unlinked,
           openExternal: () => Effect.sync(() => changes.push('external')),
           onServerChanged: (state) => changes.push(state._tag),
         }
@@ -159,6 +165,7 @@ describe('desktop server selection', () => {
         const handlers: BridgeHandlers = {
           settings,
           getAppVersion: () => '1.0.0',
+          device: unlinked,
           openExternal: () => Effect.void,
           pages: () => Effect.fail(new PageUnavailable({})),
           onServerChanged: (state) => changes.push(state._tag),

@@ -84,7 +84,8 @@ export function isAllowedBridgeRequest(
 ): boolean {
   if (isTrustedDocument(url, ServerSettings.cases.NoServer.make({}), chooser)) return true
   return (
-    BridgeRequest.isAnyOf(['GetAppVersion', 'Pages'])(request) &&
-    isTrustedDocument(url, server, chooser)
+    BridgeRequest.isAnyOf(['GetAppVersion', 'Pages', 'GetDeviceLink', 'RefreshDeviceLink'])(
+      request,
+    ) && isTrustedDocument(url, server, chooser)
   )
 }

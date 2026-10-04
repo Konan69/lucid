@@ -548,8 +548,25 @@ export function PageView({ page }: { page: Option.Option<Page> }) {
       />
     )
   }
-  // Keyed by the page, so another page gets its own element and its own first report.
-  return <div key={page.value.tab} ref={place} className="min-h-0 flex-1" />
+  return (
+    <>
+      {pages.usedByVivid(pages.current(), page.value) && (
+        // A standing line, not a toast: it is there for exactly as long as an action is running
+        // on this page, and the page below it moves down to make room, so nothing of the page is
+        // covered. Stop is the only way the Person interrupts Vivid; using the page does not.
+        <div className="flex shrink-0 items-center gap-3 py-1.5 pr-2 pl-3 hairline-b">
+          <p role="status" className="min-w-0 flex-1 truncate text-label text-ink-2">
+            Vivid is using this page.
+          </p>
+          <Button size="sm" variant="outline" onClick={() => pages.stopVivid(page.value.tab)}>
+            Stop
+          </Button>
+        </div>
+      )}
+      {/* Keyed by the page, so another page gets its own element and its own first report. */}
+      <div key={page.value.tab} ref={place} className="min-h-0 flex-1" />
+    </>
+  )
 }
 
 /**

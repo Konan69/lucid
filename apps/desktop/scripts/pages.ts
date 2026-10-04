@@ -12,6 +12,7 @@ import {
 } from 'electron'
 import { Effect, Schema } from 'effect'
 import { Browser } from '../src/main/browser.ts'
+import { DeviceLink } from '../src/shared/device.ts'
 import { registerBridge, type BridgeRuntime } from '../src/main/bridge.ts'
 import { DesktopSettings } from '../src/main/settings.ts'
 import { ServerSettings, SettingsSaveFailed } from '../src/shared/settings.ts'
@@ -291,6 +292,8 @@ const proof = Effect.scoped(
     const browser = new Browser({
       window,
       session: guests,
+      stopVivid: () => {},
+      mayOpen: () => Effect.succeed(true),
       publish: (state) => {
         // Renderer IPC is asynchronous. Deliver fixture receipts after the native operation returns,
         // so a receipt cannot re-enter create/close while it still owns its Effect continuation.
@@ -308,6 +311,7 @@ const proof = Effect.scoped(
       handlers: {
         pages: (request) => browser.handle(request),
         getAppVersion: () => 'test',
+        device: { state: () => DeviceLink.cases.SignedOut.make({}), wake: () => {} },
         settings,
         onServerChanged: () => {},
         openExternal: () => Effect.void,

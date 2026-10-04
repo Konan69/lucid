@@ -1,5 +1,6 @@
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
+import { DeviceLink, type VividDeviceBridge } from './device.ts'
 import { ServerAddress, ServerSettings, ServerChoice } from './settings.ts'
 import {
   BrowserState,
@@ -68,6 +69,10 @@ export const BridgeRequest = Schema.TaggedUnion({
   ForgetServer: {},
   OpenExternal: { url: ExternalUrl },
   Pages: { request: PagesRequest },
+  /** What this computer is to Vivid, as the app last heard it. */
+  GetDeviceLink: {},
+  /** The Person changed this computer's access: ask the server again now. */
+  RefreshDeviceLink: {},
 })
 export type BridgeRequest = typeof BridgeRequest.Type
 
@@ -81,6 +86,7 @@ export const BridgeResponse = Schema.TaggedUnion({
   SettingsSaveFailed: {},
   ExternalOpenFailed: {},
   Pages: { value: PagesResponse },
+  DeviceLink: { value: DeviceLink },
 })
 export type BridgeResponse = typeof BridgeResponse.Type
 
@@ -141,6 +147,7 @@ export const encodeBridgeEvent = (event: BridgeEvent) => encodeEvent(event)
 /** The local chooser and web shell import this type without Electron or filesystem authority. */
 export interface VividDesktopBridge {
   readonly pages: VividPagesBridge
+  readonly device: VividDeviceBridge
   readonly server: {
     readonly get: () => Promise<ServerSettings>
     readonly choose: (origin: string) => Promise<ServerChoice>
@@ -151,10 +158,12 @@ export interface VividDesktopBridge {
 }
 
 export { ServerSettings, ServerChoice } from './settings.ts'
+export { DeviceLink, type VividDeviceBridge } from './device.ts'
 export {
   BrowserState,
   Page,
   ShowingTab,
+  UsedTab,
   PageLoadFailure,
   PageFavicon,
   Tab,
@@ -175,4 +184,4 @@ export {
 } from './pages.ts'
 
 /** Selected app documents get page authority; chooser-only server settings remain separate. */
-export type VividAppBridge = Pick<VividDesktopBridge, 'getAppVersion' | 'pages'>
+export type VividAppBridge = Pick<VividDesktopBridge, 'getAppVersion' | 'pages' | 'device'>

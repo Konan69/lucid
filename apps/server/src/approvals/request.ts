@@ -4,13 +4,13 @@ import { answeredRuns } from '../inputs/answers.ts'
 import { readConversationHistory, textOf } from '../memory/history.ts'
 import type { RuntimeService } from '../runtime/client.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
-import { requestRuns, type RequestRun } from '../threads/runs.ts'
+import { REQUEST_RUNS, requestRuns, type RequestRun } from '../threads/runs.ts'
 
 /**
  * The most text of the turn in progress the reviewer is given. The request is never cut: a cut
  * can remove the condition on it ("only after legal approves"), wherever in the message it sits,
- * and what is left would read as an unconditional request. A longer turn is not reviewed at all
- * and the gate asks. 16,000 characters with the 12,000 allowed for arguments (`review.ts`) stays
+ * and what is left would read as an unconditional request. A longer turn is not reviewed at
+ * all, and `policy.ts` decides what an unreviewed action does. 16,000 characters with the 12,000 allowed for arguments (`review.ts`) stays
  * under the 48,000-byte request bound VCOS settled on for Jev
  * (`apps/web/src/agent/execute/routing/jev.ts` `MAX_REQUEST_BYTES`).
  */
@@ -125,7 +125,7 @@ const split = (said: ReadonlyArray<Said>): Option.Option<PersonRequest> => {
  *
  * `None` means there is no request to judge against: no Thread, nothing the Person said in the
  * turn in progress, more than can be shown whole, or the read failed or passed five seconds. It
- * never fails; the gate then asks.
+ * never fails; the action is then unreviewed (`policy.ts`).
  */
 export const personRequest = Effect.fn('Review.personRequest')(
   function* (runtime: Pick<RuntimeService, 'read'>, actor: Actor) {
@@ -133,6 +133,10 @@ export const personRequest = Effect.fn('Review.personRequest')(
     const threadId = actor.threadId.value
     const runs = yield* requestRuns(threadId, actor.person.id)
     if (!runs.some((run) => run.working)) return Option.none<PersonRequest>()
+    // A full window whose oldest Run is still working may have cut the turn's first messages
+    // off, and a condition set there with them. An incomplete request is not a request.
+    if (runs.length === REQUEST_RUNS && Option.exists(Arr.head(runs), (run) => run.working))
+      return Option.none<PersonRequest>()
     const answered = yield* answeredRuns(threadId, actor.person.id)
     const history = yield* readConversationHistory(runtime, threadId)
     return split(saidBy(history, runs, answered))

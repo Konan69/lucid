@@ -38,8 +38,10 @@ import { Database, decodeStored } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Changes, changesLayer } from '../live/changes.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
+import { actingRun } from '../threads/runs.ts'
+import { actionOrigin } from '../approvals/gate.ts'
 import { runs, threads } from '../threads/tables.ts'
-import { DeviceRegistry, deviceLayer } from './device.ts'
+import { BrowseAuthority, DeviceRegistry, deviceLayer } from './device.ts'
 import { computerHandlers } from './handlers.ts'
 import { DeviceReceipt, DeviceSubscriptionId } from './receipt.ts'
 import { deviceRequests, devices } from './tables.ts'
@@ -326,7 +328,9 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           .browse({
             personId: ada.person.id,
             threadId,
+            runId,
             action: BrowserAction.cases.Type.make({ target: 'Password', text: typed }),
+            authority: BrowseAuthority.cases.Acting.make({}),
           })
           .pipe(Effect.forkScoped)
         const request = yield* Queue.take(fresh.requests)
@@ -374,7 +378,13 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
       // Tola's message started the Run; Ada is only present in the Thread.
       const shared = yield* working(ada.person, tola.person)
       const refused = yield* registry
-        .browse({ personId: ada.person.id, threadId: shared.threadId, action: read })
+        .browse({
+          personId: ada.person.id,
+          threadId: shared.threadId,
+          runId: shared.runId,
+          action: read,
+          authority: BrowseAuthority.cases.Acting.make({}),
+        })
         .pipe(Effect.flip)
       expect(reasonOf(refused)).toBe('ActsForAnotherPerson')
       // No Run at all, and a turn that was reserved but never accepted, are refused the same way.
@@ -385,11 +395,17 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
       expect(
         reasonOf(
           yield* registry
-            .browse({ personId: ada.person.id, threadId: idle.threadId, action: read })
+            .browse({
+              personId: ada.person.id,
+              threadId: idle.threadId,
+              runId: idle.runId,
+              action: read,
+              authority: BrowseAuthority.cases.Acting.make({}),
+            })
             .pipe(Effect.flip),
         ),
       ).toBe('NoWorkingRun')
-      // Two working Runs: which one asked cannot be told, so neither is picked.
+      // Actor-derived origin refuses ambiguity; an explicitly absent Run refuses absence.
       const busy = yield* working(ada.person, ada.person)
       yield* database.run(
         database.insert(runs).values({
@@ -403,13 +419,38 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           admittedAt: 0,
         }),
       )
+      expect(reasonOf(yield* actingRun(busy.threadId, ada.person.id).pipe(Effect.flip))).toBe(
+        'SeveralWorkingRuns',
+      )
+      expect(
+        (yield* actionOrigin({
+          person: ada.person,
+          workspace: Workspace.cases.Personal.make({}),
+          by: 'vivid',
+          threadId: Option.some(busy.threadId),
+        }).pipe(Effect.flip))._tag,
+      ).toBe('NotFound')
+      expect(
+        (yield* actionOrigin({
+          person: ada.person,
+          workspace: Workspace.cases.Personal.make({}),
+          by: 'vivid',
+          threadId: Option.some(shared.threadId),
+        }).pipe(Effect.flip))._tag,
+      ).toBe('NotFound')
       expect(
         reasonOf(
           yield* registry
-            .browse({ personId: ada.person.id, threadId: busy.threadId, action: read })
+            .browse({
+              personId: ada.person.id,
+              threadId: busy.threadId,
+              runId: RunId.make(NodeCrypto.randomUUID()),
+              action: read,
+              authority: BrowseAuthority.cases.Acting.make({}),
+            })
             .pipe(Effect.flip),
         ),
-      ).toBe('SeveralWorkingRuns')
+      ).toBe('NoWorkingRun')
       expect(yield* Queue.size(link.requests)).toBe(0)
       expect(
         yield* database.run(
@@ -428,9 +469,15 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         const { device, installation } = yield* enrolled(who, 'Computer')
         yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(who))
         const link = yield* listen(who, device, installation)
-        const { threadId } = yield* working(who.person, who.person)
+        const { threadId, runId } = yield* working(who.person, who.person)
         const running = yield* registry
-          .browse({ personId: who.person.id, threadId, action: read })
+          .browse({
+            personId: who.person.id,
+            threadId,
+            runId,
+            action: read,
+            authority: BrowseAuthority.cases.Acting.make({}),
+          })
           .pipe(Effect.forkScoped)
         return { device, running, request: yield* Queue.take(link.requests) }
       })
@@ -464,9 +511,15 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
       const { device, installation } = yield* enrolled(ada, 'Laptop')
       yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
       const link = yield* listen(ada, device, installation)
-      const { threadId } = yield* working(ada.person, ada.person)
+      const { threadId, runId } = yield* working(ada.person, ada.person)
       const running = yield* (yield* DeviceRegistry)
-        .browse({ personId: ada.person.id, threadId, action: read })
+        .browse({
+          personId: ada.person.id,
+          threadId,
+          runId,
+          action: read,
+          authority: BrowseAuthority.cases.Acting.make({}),
+        })
         .pipe(Effect.forkScoped)
       const request = yield* Queue.take(link.requests)
       yield* TestClock.adjust('30 seconds')

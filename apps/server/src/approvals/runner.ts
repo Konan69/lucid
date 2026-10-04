@@ -2,6 +2,7 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import { ActionTarget } from '@vivid/contracts'
 import { Database } from '../database/client.ts'
+import { DeviceRegistry } from '../computers/device.ts'
 import { ComputerStore, computerRunner } from '../computers/store.ts'
 import { Executor } from '../connections/executor.ts'
 import { ToolEffects } from '../connections/effects.ts'
@@ -21,14 +22,14 @@ export const actionRunnerLayer = Layer.effect(
   ActionRunner,
   Effect.gen(function* () {
     const services = yield* Effect.context<
-      Database | ConnectionStore | Executor | ComputerStore | ToolEffects
+      Database | ConnectionStore | Executor | ComputerStore | ToolEffects | DeviceRegistry
     >()
     return ActionRunner.of({
-      run: ({ person, workspace, action }) => {
+      run: ({ person, workspace, action, origin }) => {
         const target = action.target
         return ActionTarget.guards.Connection(target)
           ? Effect.provideContext(connectionRunner({ person, workspace, target }), services)
-          : Effect.provideContext(computerRunner({ person, target }), services)
+          : Effect.provideContext(computerRunner({ person, target, origin }), services)
       },
     })
   }),

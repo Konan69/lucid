@@ -54,6 +54,7 @@ import {
   unavailableMemoryAccessLayer,
 } from './memory/store.ts'
 import { notifierLayer } from './notifications/notifier.ts'
+import { observabilityLayer } from './observability/export.ts'
 import { notificationStoreLayer } from './notifications/store.ts'
 import { projectStoreLayer } from './projects/store.ts'
 import { pushConfigLayer } from './push/config.ts'
@@ -120,11 +121,14 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
 
   // Each tier may use everything below it. `provideMerge` keeps the lower tiers available to the
   // ones above, so the order here is the dependency order and nothing else.
+  // Telemetry sits in the lowest tier so the tracer and the export logger are in the context
+  // every tier above is built and run with. Its own HTTP client is provided to it directly.
   const platform = Layer.mergeAll(
     Layer.succeed(ServerConfig, config),
     NodeHttpClient.layerUndici,
     NodeFileSystem.layer,
     NodePath.layer,
+    observabilityLayer(config.OBSERVABILITY).pipe(Layer.provide(NodeHttpClient.layerUndici)),
   )
   const data = databaseLayer.pipe(Layer.provideMerge(platform))
   const durable = Layer.mergeAll(workLayer, decisionModelLayer).pipe(Layer.provideMerge(data))

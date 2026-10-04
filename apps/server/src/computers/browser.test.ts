@@ -1,8 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
-import { BrowserAction, ComputerState } from '@vivid/contracts'
+import { ComputerState } from '@vivid/contracts'
 import { Effect } from 'effect'
-import { browserArguments, decodeBrowserOutput } from './browser.js'
-import { commandInvocation } from './docker.js'
+import { validateAddress, validateKey } from './browser.js'
 import { Machine, MachineKey, unavailableMachineLayer } from './machine.js'
 
 describe('Computer boundary', () => {
@@ -15,33 +14,9 @@ describe('Computer boundary', () => {
         'http://10.0.0.1',
         'http://localhost',
       ]) {
-        const failure = yield* Effect.flip(
-          browserArguments(BrowserAction.cases.Open.make({ address })),
-        )
+        const failure = yield* Effect.flip(validateAddress(address))
         expect(failure._tag).toBe('BrowserAddressRefused')
       }
-    }),
-  )
-
-  it.effect('keeps shell source and typed credentials out of executable argv', () =>
-    Effect.gen(function* () {
-      const command = "printf '%s' 'command-secret-marker'"
-      const invocation = commandInvocation({
-        key: MachineKey.make('argv-proof'),
-        command,
-        timeoutSeconds: 10,
-      })
-      expect(invocation.args).toContain('-i')
-      expect(invocation.args).toContain('-s')
-      expect(invocation.args.join(' ')).not.toContain(command)
-      expect(invocation.args.join(' ')).not.toContain('command-secret-marker')
-      expect(invocation.input).toBe(`${command}\n`)
-      const step = yield* browserArguments(
-        BrowserAction.cases.Type.make({ target: 'element-reference', text: 'typed-secret-marker' }),
-      )
-      expect(step.args.join(' ')).not.toContain('typed-secret-marker')
-      expect(step.args.join(' ')).not.toContain('element-reference')
-      expect(step.input).toContain('typed-secret-marker')
     }),
   )
 
@@ -56,9 +31,7 @@ describe('Computer boundary', () => {
         'F12',
         'Enter+Control',
       ]) {
-        const failure = yield* Effect.flip(
-          browserArguments(BrowserAction.cases.Press.make({ key })),
-        )
+        const failure = yield* Effect.flip(validateKey(key))
         expect(failure._tag).toBe('MachineInputInvalid')
       }
       for (const key of [
@@ -87,27 +60,12 @@ describe('Computer boundary', () => {
         'Control+F',
         'Control+Shift+V',
       ]) {
-        yield* browserArguments(BrowserAction.cases.Press.make({ key }))
+        yield* validateKey(key)
       }
     }),
   )
 
-  it.effect(
-    'rejects clipped or malformed driver output rather than fabricating a readable page',
-    () =>
-      Effect.gen(function* () {
-        const clipped = yield* Effect.flip(
-          decodeBrowserOutput({ exitCode: 0, output: '{', truncated: true }),
-        )
-        expect(clipped._tag).toBe('MachineResponseInvalid')
-        const malformed = yield* Effect.flip(
-          decodeBrowserOutput({ exitCode: 0, output: '{"title":42}', truncated: false }),
-        )
-        expect(malformed._tag).toBe('MachineResponseInvalid')
-      }),
-  )
-
-  it.effect('disabled installations answer Unavailable without trying Docker', () =>
+  it.effect('disabled installations answer Unavailable without contacting Boat', () =>
     Effect.gen(function* () {
       const machine = yield* Machine
       const key = MachineKey.make('unconfigured')

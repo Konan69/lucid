@@ -1,41 +1,52 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Clock, Effect } from 'effect'
-import { decide } from '../decisions/model.ts'
-import { liveDecisionEnabled, liveDecisionLayer, liveTools } from '../decisions/testing.ts'
-import { READ_PROBABILITY_THRESHOLD, toolEffectDecision } from './effects.ts'
+import { Effect, Layer, References } from 'effect'
+import { ServiceId } from '@vivid/contracts'
+import {
+  effectScoreCount,
+  effectScoreLogLayer,
+  LIVE_METADATA_BUDGET,
+  LIVE_METADATA_COHORT_BUDGET_MILLIS,
+  liveDecisionEnabled,
+  liveDecisionLayer,
+  liveTools,
+} from '../decisions/testing.ts'
+import { ExecutorTool } from './executor.ts'
+import { ToolEffects, toolEffectsTestLayer } from './effects.ts'
 
-/** Permanent removal and revocation keep their distinct destructive classification.
- * Every miss is collected before assertion so calibration reports the whole category. */
-describe.skipIf(!liveDecisionEnabled)('Jev destructive effects', () => {
+/** Destructive semantics must never remove Approval. Jev retains Executor's write
+ * when the source did not declare destructive; only the source owns that upgrade.
+ * Each debug receipt proves a real judgment rather than conservative outage recovery. */
+describe.skipIf(!liveDecisionEnabled)('Gateway destructive effects', () => {
   it.live(
-    'preserve destructive effect judgments',
-    () =>
-      Effect.gen(function* () {
+    'never recover a destructive operation as read',
+    () => {
+      const lines: string[] = []
+      return Effect.gen(function* () {
+        const effects = yield* ToolEffects
         const misses: string[] = []
-        const probabilities: number[] = []
         for (const tool of liveTools.filter((candidate) => candidate.expected === 'destructive')) {
-          const start = yield* Clock.currentTimeMillis
-          const { answers } = yield* decide(toolEffectDecision, {
+          const effect = yield* effects.classify({
+            serviceId: ServiceId.make(`effect-${tool.serviceName}`),
             service: tool.serviceName,
-            tool: tool.name,
-            description: tool.description,
+            tool: ExecutorTool.make({
+              name: tool.name,
+              description: tool.description,
+              effect: 'write',
+              input: {},
+            }),
           })
-          const elapsed = (yield* Clock.currentTimeMillis) - start
-          const read = answers.effect.probabilities.read
-          probabilities.push(read)
-          yield* Effect.logInfo(
-            `Jev effect ${tool.name}: label=${answers.effect.label} read=${read.toFixed(6)} latency=${elapsed}ms`,
-          )
-          if (read >= READ_PROBABILITY_THRESHOLD || answers.effect.label !== 'destructive')
-            misses.push(
-              `${tool.name}: expected=destructive label=${answers.effect.label} read=${read}`,
-            )
+          expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
+          if (effect !== 'write') misses.push(`${tool.name}:${effect}`)
         }
-        yield* Effect.logInfo(
-          `destructive band=${Math.min(...probabilities)}..${Math.max(...probabilities)} misses=${JSON.stringify(misses)}`,
-        )
         expect(misses).toEqual([])
-      }).pipe(Effect.provide(liveDecisionLayer)),
-    60_000,
+      }).pipe(
+        Effect.provide(
+          toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
+        ),
+        Effect.provideService(References.MinimumLogLevel, 'Debug'),
+        Effect.provide(effectScoreLogLayer(lines)),
+      )
+    },
+    LIVE_METADATA_COHORT_BUDGET_MILLIS,
   )
 })

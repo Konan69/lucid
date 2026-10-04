@@ -2,7 +2,7 @@ import { Context, Effect, Layer, Option, Schema } from 'effect'
 import { Decision, DecisionModel } from 'effect/unstable/ai'
 import { ActionTarget, BrowseTarget, type ProposedAction } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
-import { decide, decisionConfigured } from '../decisions/model.ts'
+import { decideWithin, decisionWouldAttempt, isDecisionNonEvent } from '../decisions/model.ts'
 import { Runtime } from '../runtime/client.ts'
 import { Database } from '../database/client.ts'
 import { Review } from './policy.ts'
@@ -11,11 +11,22 @@ import { personRequest, type PersonRequest } from './request.ts'
 /**
  * The most text of an action's arguments the reviewer is given. Arguments are never cut: a cut
  * could hide a recipient that follows a long body while the action still runs with it. Longer
- * arguments are not reviewed at all, and the gate asks. VCOS bounds a whole Jev request at 48,000
+ * arguments are not reviewed at all; `policy.ts` decides what an unreviewed action does. VCOS bounds a whole Jev request at 48,000
  * bytes (`apps/web/src/agent/execute/routing/jev.ts` `MAX_REQUEST_BYTES`); 12,000 characters
  * leaves room for the request and both questions under that bound.
  */
 export const INPUT_CHARACTERS = 12_000
+
+/**
+ * How long an action waits for its review, from the first read of the request to the answer.
+ * docs/22 gave the reviewer ten seconds, taken from Grok
+ * Bot's Auto-review. Vivid's policy differs: an unreviewed write runs (`policy.ts`), so a slow
+ * provider that still answers would hold every write on a Person's own Integration for up to ten
+ * seconds where switching decisions off would run it at once. Three seconds is several times the
+ * 490 to 810 ms measured per review through the gateway on 4 Oct 2026 (one first call took
+ * 1,716 ms); past it the action is unreviewed.
+ */
+export const REVIEW_BUDGET = '3 seconds'
 
 /**
  * What the reviewer reads. Names and descriptions only: no identifier, credential or Connection
@@ -112,7 +123,7 @@ export interface ReviewerService {
   /**
    * Measures whether the acting Person asked for `action` and what it would do. It never fails
    * and never decides: every ending is a `Review`, and `Unreviewed` covers a request that could
-   * not be read, arguments too long to show whole, and a provider that failed or passed its ten seconds (`decisions/model.ts`).
+   * not be read, arguments too long to show whole, and a provider that failed or passed `REVIEW_BUDGET` (`decisions/model.ts`).
    */
   readonly review: (actor: Actor, action: ProposedAction) => Effect.Effect<Review>
 }
@@ -124,15 +135,17 @@ export const reviewerLayer = Layer.effect(
   Reviewer,
   Effect.gen(function* () {
     const model = yield* DecisionModel.DecisionModel
-    const configured = yield* decisionConfigured
     const runtime = yield* Runtime
     const database = yield* Database
     return Reviewer.of({
       review: Effect.fn('Reviewer.review')(
         function* (actor, action) {
-          // Switched off or unconfigured is the normal state, not an event: no history read,
-          // no provider call and no log line.
-          if (!configured) return Review.cases.Unreviewed.make({})
+          // Switched off, unconfigured or known to be down are states, not events: no history
+          // read, no provider call and no log line.
+          const attempt = yield* decisionWouldAttempt.pipe(
+            Effect.provideService(DecisionModel.DecisionModel, model),
+          )
+          if (!attempt) return Review.cases.Unreviewed.make({})
           // Arguments too long to show whole are not judged on a part of them.
           if (shown(action).input.length > INPUT_CHARACTERS) return Review.cases.Unreviewed.make({})
           const said = yield* personRequest(runtime, actor).pipe(
@@ -140,9 +153,11 @@ export const reviewerLayer = Layer.effect(
           )
           // Without the Person's words `asked` would be judged from Vivid's own account alone.
           if (Option.isNone(said)) return Review.cases.Unreviewed.make({})
-          const { answers } = yield* decide(ActionReview, reviewInput(said.value, action)).pipe(
-            Effect.provideService(DecisionModel.DecisionModel, model),
-          )
+          const { answers } = yield* decideWithin(
+            ActionReview,
+            reviewInput(said.value, action),
+            REVIEW_BUDGET,
+          ).pipe(Effect.provideService(DecisionModel.DecisionModel, model))
           // Numbers only: the action, the request and provider detail never reach the log.
           yield* Effect.logInfo('Action reviewed', {
             asked: answers.asked.probability,
@@ -158,10 +173,27 @@ export const reviewerLayer = Layer.effect(
         },
         (effect) =>
           effect.pipe(
+            // A failed decision is worth one line. Decisions switched off, or already known to
+            // be down, are states the Decision Layer announces itself, not one event per action.
             Effect.catch((error) =>
-              Effect.logWarning('Action unreviewed', { tag: error._tag }).pipe(
-                Effect.as(Review.cases.Unreviewed.make({})),
-              ),
+              (isDecisionNonEvent(error)
+                ? Effect.void
+                : Effect.logWarning('Action unreviewed', { reason: error.reason })
+              ).pipe(Effect.as(Review.cases.Unreviewed.make({}))),
+            ),
+            // One deadline for reading the request and asking: a slow history read must not
+            // add its own five seconds in front of the decision's budget.
+            Effect.timeoutOption(REVIEW_BUDGET),
+            Effect.flatMap(
+              Option.match({
+                onSome: (review) => Effect.succeed(review),
+                // The deadline is a real event (history or the provider was slow), so it gets
+                // the same one line a failed decision does.
+                onNone: () =>
+                  Effect.logWarning('Action unreviewed', { reason: 'Deadline' }).pipe(
+                    Effect.as(Review.cases.Unreviewed.make({})),
+                  ),
+              }),
             ),
           ),
       ),

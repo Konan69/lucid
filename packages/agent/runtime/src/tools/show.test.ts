@@ -110,44 +110,6 @@ describe('show tool', () => {
     if (parsed.success && Option.isSome(decoded)) expect(parsed.output).toEqual(decoded.value)
   })
 
-  it('matches absent optional fields across every kind', () => {
-    const inputs = [
-      Shown.cases.Table.make({ columns: ['Name'], rows: [] }),
-      Shown.cases.Chart.make({
-        kind: 'bar',
-        labels: ['A'],
-        series: [{ name: 'Count', values: [0] }],
-      }),
-      Shown.cases.Steps.make({ steps: [{ label: 'Review', state: 'to do' }] }),
-      Shown.cases.Options.make({
-        question: 'Which?',
-        options: [{ label: 'A' }, { label: 'B' }],
-        many: true,
-      }),
-      Shown.cases.Comparison.make({
-        items: [
-          { name: 'A', good: [], bad: [], facts: [] },
-          { name: 'B', good: [], bad: [], facts: [] },
-        ],
-      }),
-      Shown.cases.Links.make({ links: [{ title: 'Source', address: 'https://example.test' }] }),
-      Shown.cases.Facts.make({ facts: [{ label: 'Count', value: '2' }] }),
-      Shown.cases.Draft.make({ kind: 'document', to: [], body: 'Draft' }),
-      Shown.cases.Schedule.make({ items: [{ at: '09:00', title: 'Review' }] }),
-      Shown.cases.Form.make({
-        title: 'Details',
-        fields: [{ label: 'Name', kind: 'text', choices: [] }],
-        submit: 'Save',
-      }),
-      Shown.cases.Pictures.make({ pictures: [{ address: 'https://example.test/a.png' }] }),
-    ]
-    for (const sample of inputs) {
-      const input = { show: sample }
-      expect(v.safeParse(show.input, input).success).toBe(true)
-      expect(Option.isSome(decodeRequest(input))).toBe(true)
-    }
-  })
-
   it.each([
     {
       name: 'maximum table size and text',

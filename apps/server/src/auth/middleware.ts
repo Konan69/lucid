@@ -8,6 +8,7 @@ import { AuthContext, AuthState, runtimeHeaders } from '@vivid/contracts/auth'
 import { RpcAuthMiddleware } from '@vivid/contracts/rpc'
 import { ServerConfig } from '../config.ts'
 import { Database } from '../database/client.ts'
+import { observeFailures } from '../observability/failure.ts'
 import { authenticate, authenticateVivid } from './session.ts'
 
 /**
@@ -38,10 +39,15 @@ export const rpcAuthMiddlewareLayer = Layer.effect(
       if (headers.authorization === runtimeAuthorization) return yield* runtimeIdentity(headers)
       return yield* authenticate(new globalThis.Headers(Object.entries(headers)))
     })
+    // Every product call carries this middleware (`VividRpc.middleware` in the contract), and
+    // rc.116 `RpcServer.ts` runs it inside the call's `RpcServer.<tag>` span, around the handler
+    // and before the exit is encoded for the client. So this is the one place that sees every
+    // call's failure once, sign-in refusals included, with the call's own span current.
     return (effect, options) =>
       identify(options.headers).pipe(
         Effect.provideContext(services),
         Effect.flatMap((auth) => Effect.provideService(effect, AuthContext, auth)),
+        observeFailures('rpc'),
       )
   }),
 )

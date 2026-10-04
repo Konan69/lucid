@@ -31,6 +31,12 @@ fixes and remote verification described below.
 `pnpm infra:deploy --yes` needs `RAILWAY_API_TOKEN` for the personal Railway account, and is run
 from a clean checkout of `main` so half-edited files never ship.
 
+It reads its settings from `.env.production` in that checkout, never from `.env`. `.env` is a
+developer's local file; a deploy that read it once sent production a model with no key and no
+Executor key. `.env.production` is ignored by Git and holds the production values of the names in
+`.env.example`; the deploy stops if the file is missing. A variable left out of the file is not
+removed from a Railway service that already has it; delete it there with `railway variable delete`.
+
 Known gap, Alchemy `2.0.0-beta.79`: the Railway provider waits about fifty seconds for a deployment
 (`alchemy/src/Railway/ServiceProvider.ts`, ten tries five seconds apart), and an image build takes
 about three minutes. The command therefore reports `ServiceDeployPending` and exits non-zero while
@@ -123,6 +129,25 @@ protocol itself; no Expo service is involved. A deploy is therefore also the pub
 app with the same runtime version (`version` in `apps/mobile/app.json`) downloads the new
 JavaScript at its next launch. A change to native code needs a new `version` and a new binary.
 Without `VIVID_MOBILE_UPDATES` the routes do not exist.
+
+The server exports traces and logs over OpenTelemetry when `VIVID_OTLP_URL` and
+`VIVID_OTLP_HEADERS` are both set, and exports nothing when neither is; one without the other
+stops the launch. `VIVID_OTLP_URL` is the OTLP/HTTP base address (the server appends `/v1/traces`
+and `/v1/logs`; metrics are not exported), and `VIVID_OTLP_HEADERS` is the backend's credential as
+comma-separated `name=value` pairs, held as a secret. Every failure that reaches a boundary is
+exported with `error.type` (the error's tag), `vivid.failure.kind` (`expected` or `defect`) and
+`vivid.boundary` (`rpc`, `http`, `schedule` or `runtime`); every refusal is a `vivid.refusal`
+event with `vivid.refusal.kind`. Only attributes on an allowlist leave the process, never message
+text, and stdout logging is unchanged. An export gets one attempt. When one fails (a reset, a
+`503`, a timeout), that signal is not exported for the next 60 seconds: what it recorded just
+before the failure and during that minute never reaches the backend and is not sent later. This
+is accepted, because the product must not depend on the backend. The server's stdout log on the
+host keeps every line, and each gap is marked there by a `Telemetry batches dropped` line that
+names the signal (`vivid.export.signal`) and the pause (`vivid.export.paused_seconds=60`). The
+resource is `vivid-server`, with `VIVID_ENVIRONMENT` and `VIVID_COMMIT` when they
+are set; on Railway they are filled from `RAILWAY_ENVIRONMENT_NAME` and `RAILWAY_GIT_COMMIT_SHA`,
+and an empty value counts as unset. The code is
+`apps/server/src/observability/`.
 
 Supply the server with `DATABASE_URL`, `AUTH_SECRET`, `VIVID_RUNTIME_URL`,
 `VIVID_RUNTIME_TOKEN`, and the externally reachable `PUBLIC_URL`. Supply the runtime with

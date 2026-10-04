@@ -15,11 +15,6 @@
     "symbols": ["runResult", "requireRuntimeToken", "get:/health", "prepareContext"]
   },
   {
-    "file": "packages/client/state/src/resource.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["<module>", "refresh"]
-  },
-  {
     "file": "apps/server/src/runtime/client.ts",
     "classification": "third-party-adapter",
     "symbols": ["makeRuntime"]
@@ -38,5 +33,10 @@
     "file": "apps/server/src/auth/dialect.ts",
     "classification": "third-party-adapter",
     "symbols": ["attempt", "settle", "owned"]
+  },
+  {
+    "file": "apps/server/src/channels/photon.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["connectPhoton", "closePhoton", "makePhoton"]
   }
 ]

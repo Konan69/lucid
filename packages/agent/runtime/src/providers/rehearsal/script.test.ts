@@ -1,13 +1,14 @@
 import { describe, expect, it } from '@effect/vitest'
 import type { AssistantMessage, Context, ToolCall, ToolResultMessage } from '@earendil-works/pi-ai'
 import { CodeFailure, DesktopAction, Shown, UseDesktopRequest } from '@vivid/contracts'
+import { validateToolArguments } from '@earendil-works/pi-ai'
 import * as NodeChildProcess from 'node:child_process'
 import { Option, Schema } from 'effect'
 import * as v from 'valibot'
 import { askTools } from '../../tools/ask.ts'
 import { documentTools } from '../../tools/documents.ts'
 import { codeTools } from '../../tools/code.ts'
-import { computerDefinitions } from '../../tools/computer.ts'
+import { commandDefinition, desktopToolFactory } from '../../tools/computer.ts'
 import { connectionTools } from '../../tools/connections.ts'
 import { memoryTools } from '../../tools/memory.ts'
 import { routineTools } from '../../tools/routines.ts'
@@ -22,13 +23,14 @@ const tools = [
   ...askTools(unavailable),
   ...codeTools(unavailable),
   ...documentTools(unavailable),
-  ...computerDefinitions(unavailable),
+  commandDefinition(unavailable),
   ...connectionTools(unavailable),
   ...memoryTools(unavailable),
   ...routineTools(unavailable),
   ...showTools(),
 ]
 const decodeShown = Schema.decodeUnknownSync(Shown)
+const nativeTools = desktopToolFactory(unavailable).tools()
 const decodeDesktop = Schema.decodeUnknownSync(UseDesktopRequest)
 const timestamp = Date.parse('2026-10-03T14:00:00Z')
 
@@ -109,8 +111,11 @@ describe('Rehearsal scenes', () => {
       expect(first.stopReason).toBe('toolUse')
       expect(script(start)).toEqual(first)
       for (const call of calls) {
-        if (call.name === 'use_desktop') {
-          expect(decodeDesktop(call.arguments).action).toEqual(DesktopAction.cases.Look.make({}))
+        const native = nativeTools.find((candidate) => candidate.name === call.name)
+        if (native !== undefined) {
+          expect(validateToolArguments(native, call)).toEqual(call.arguments)
+          if (call.name === 'use_desktop')
+            expect(decodeDesktop(call.arguments).action).toEqual(DesktopAction.cases.Look.make({}))
           continue
         }
         const tool = tools.find((candidate) => candidate.name === call.name)

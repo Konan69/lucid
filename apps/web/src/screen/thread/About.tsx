@@ -31,8 +31,9 @@ const COMPACT_AFTER_PX = 56
  * on, the Integrations it has, and what it has lately done here. Each row goes to where that thing
  * is managed, so this is a map and not a second Settings.
  *
- * It opens from three places in the Thread (the bar's list button, the face and title at the left
- * of the bar, and Vivid at the top of the conversation) and is the same card from each.
+ * This is the card in a Thread. It opens from three places there (the bar's list button, the face
+ * and title at the left of the bar, and Vivid at the top of the conversation) and is the same card
+ * from each. Home opens the same card without a Thread: see `AboutHome`.
  *
  * It is not a menu and not a dialog: it does not take over the page. Where there is room beside a
  * readable column it stays open while the Person works and the conversation steps aside (see
@@ -53,6 +54,116 @@ export function About({
   onClose: () => void
   onOpenComputer: () => void
 }) {
+  // The Computer is beside the Thread: the card steps away and the panel comes to the front.
+  const openComputer = () => {
+    onClose()
+    pages.toComputer()
+    onOpenComputer()
+  }
+  return (
+    <>
+      {/* Only where the card floats. Where it sits beside the conversation, clicking the
+          conversation must not close it. */}
+      <Scrim className="around-scrim" onClose={onClose} />
+      <Frame
+        className="absolute around-card z-20 origin-top-right"
+        mood={mood}
+        standing={standing}
+        onClose={onClose}
+      >
+        <Computers onClose={onClose}>
+          <Hosted>{(computer) => <Row {...hostedEntry(computer)} onClick={openComputer} />}</Hosted>
+        </Computers>
+        <Connected onClose={onClose} />
+        <section aria-labelledby="around-activity">
+          <Heading id="around-activity">Recent activity</Heading>
+          <Activity thread={thread} onSeeAll={() => toSettings(onClose, 'record')} />
+        </section>
+      </Frame>
+    </>
+  )
+}
+
+/**
+ * The same card on Home, where there is no Thread. It opens from the chip at the leading edge of
+ * Home's bar, so it hangs under that chip and grows from it (`origin-top-left`), not from the
+ * trailing corner a Thread's card uses.
+ *
+ * What a Thread's card has and this one does not, because each is about one Thread:
+ * - "Recent activity" lists what Vivid did from that Thread. With no Thread there is no such list,
+ *   so the section is absent, not empty.
+ * - Vivid's computer is shown with its live state but is not a button. The Computer opens beside
+ *   a Thread (`App.tsx` draws it only on a Thread's route), so from Home it has nowhere to go and
+ *   must not look as if it did.
+ *
+ * It always floats: Home has no conversation to move aside, so a press anywhere else closes it at
+ * every width. The layer under the bar is what places it; it ends 12 above the foot of the page,
+ * and the card scrolls inside that when the window is short.
+ */
+export function AboutHome({
+  mood,
+  standing,
+  onClose,
+}: {
+  mood: FaceMood
+  /** How Vivid is doing across this Person's Threads, in the standing line's words. */
+  standing: string
+  onClose: () => void
+}) {
+  return (
+    <>
+      {/* At every width, unlike a Thread's (`around-scrim` shows it only where the card floats). */}
+      <Scrim className="block" onClose={onClose} />
+      {/* The layer's leading inset is the bar's (`BAR`), less the 4 the chip's fill reaches past
+          its face, so the card's edge is the chip's edge with the sidebar open or put away. */}
+      <div className="pointer-events-none absolute inset-x-0 top-(--topbar-h) bottom-0 z-20 flex items-start px-3 pt-1 pb-3 group-data-[rail=shut]/shell:pl-11">
+        <Frame
+          className="pointer-events-auto max-h-full w-(--around-w) max-w-full origin-top-left"
+          mood={mood}
+          standing={standing}
+          onClose={onClose}
+        >
+          <Computers onClose={onClose}>
+            <Hosted>{(computer) => <Fact {...hostedEntry(computer)} />}</Hosted>
+          </Computers>
+          <Connected onClose={onClose} />
+        </Frame>
+      </div>
+    </>
+  )
+}
+
+/** The layer that closes a floating card on a press anywhere else. It is not a tab stop. */
+function Scrim({ className, onClose }: { className: string; onClose: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label="Close"
+      tabIndex={-1}
+      onClick={onClose}
+      className={cn('absolute inset-0 z-10 cursor-default', className)}
+    />
+  )
+}
+
+/**
+ * The card itself: Vivid's identity, then whatever sections its place has. `className` is only
+ * where it sits and which corner it grows from; everything it looks like is here, so the Thread's
+ * card and Home's cannot drift apart.
+ */
+function Frame({
+  className,
+  mood,
+  standing,
+  onClose,
+  children,
+}: {
+  className: string
+  mood: FaceMood
+  standing: string
+  onClose: () => void
+  children: ReactNode
+}) {
   // Past the identity, a compact bar rides the top of the scrolling card.
   const [compact, setCompact] = useState(false)
   // Vivid's own name here, live: the Person's choice, or their Company's.
@@ -62,15 +173,6 @@ export function About({
   const [customising, setCustomising] = useState(false)
   return (
     <>
-      {/* Only where the card floats. Where it sits beside the conversation, clicking the
-          conversation must not close it. */}
-      <button
-        type="button"
-        aria-label="Close"
-        tabIndex={-1}
-        onClick={onClose}
-        className="absolute inset-0 z-10 around-scrim cursor-default"
-      />
       <aside
         ref={holdFocus}
         role="dialog"
@@ -84,7 +186,10 @@ export function About({
           if (inside && event.key === 'Escape') onClose()
         }}
         onScroll={(event) => setCompact(event.currentTarget.scrollTop > COMPACT_AFTER_PX)}
-        className="absolute around-card z-20 origin-top-right overflow-y-auto rounded-panel lift-lg glass transition-pop duration-(--dur-fast) ease-out outline-none starting:scale-97 starting:opacity-0"
+        className={cn(
+          'overflow-y-auto rounded-panel lift-lg glass transition-pop duration-(--dur-fast) ease-out outline-none starting:scale-97 starting:opacity-0',
+          className,
+        )}
       >
         {/* Zero height, so riding the top costs the content below it nothing and the card never
             shifts as the bar comes and goes. */}
@@ -116,15 +221,9 @@ export function About({
             </Button>
           )}
         </div>
-        <Around
-          thread={thread}
-          onOpenComputer={() => {
-            onClose()
-            pages.toComputer()
-            onOpenComputer()
-          }}
-          onClose={onClose}
-        />
+        {/* The sections are mounted only while the card is open, so nothing is watched for a
+            closed one. */}
+        <div className="space-y-6 px-4 pb-4">{children}</div>
       </aside>
       {customising && <Customise onClose={() => setCustomising(false)} />}
     </>
@@ -148,46 +247,47 @@ const when = makeWhen(thisReader())
 /** How many Integrations the card lists before the rest are left to Settings. */
 const LISTED = 4
 
-/** The sections, mounted only while the card is open so nothing is watched for a closed one. */
-function Around({
-  thread,
-  onOpenComputer,
-  onClose,
-}: {
-  thread: ThreadId
-  onOpenComputer: () => void
-  onClose: () => void
-}) {
-  const settings = (section: 'connections' | 'devices' | 'record') => {
-    onClose()
-    router.openSettings(Option.some(section))
-  }
+/** Leaves the card for the part of Settings where a thing around Vivid is managed. */
+const toSettings = (onClose: () => void, section: 'connections' | 'devices' | 'record') => {
+  onClose()
+  router.openSettings(Option.some(section))
+}
+
+/**
+ * The computers Vivid can work on: its own (`children`, drawn by the card's place because only a
+ * Thread can open it), then the Person's.
+ */
+function Computers({ onClose, children }: { onClose: () => void; children: ReactNode }) {
   return (
-    <div className="space-y-6 px-4 pb-4">
-      <section aria-labelledby="around-computers">
-        <Heading id="around-computers">Computers</Heading>
-        <Hosted onOpen={onOpenComputer} />
-        <Row
-          icon={<Laptop className="size-4" />}
-          title="Your computer"
-          detail="Not connected"
-          onClick={() => settings('devices')}
-        />
-      </section>
-      <section aria-labelledby="around-integrations">
-        <Heading id="around-integrations">Integrations</Heading>
-        <Integrations onOpen={() => settings('connections')} />
-      </section>
-      <section aria-labelledby="around-activity">
-        <Heading id="around-activity">Recent activity</Heading>
-        <Activity thread={thread} onSeeAll={() => settings('record')} />
-      </section>
-    </div>
+    <section aria-labelledby="around-computers">
+      <Heading id="around-computers">Computers</Heading>
+      {children}
+      <Row
+        icon={<Laptop className="size-4" />}
+        title="Your computer"
+        detail="Not connected"
+        onClick={() => toSettings(onClose, 'devices')}
+      />
+    </section>
   )
 }
 
-/** Vivid's computer with its true state; a live query, so it is as current as the panel itself. */
-function Hosted({ onOpen }: { onOpen: () => void }) {
+/** The Integrations section: what Vivid has, and the way to Settings for more. */
+function Connected({ onClose }: { onClose: () => void }) {
+  return (
+    <section aria-labelledby="around-integrations">
+      <Heading id="around-integrations">Integrations</Heading>
+      <Integrations onOpen={() => toSettings(onClose, 'connections')} />
+    </section>
+  )
+}
+
+/**
+ * Vivid's computer with its true state; a live query, so it is as current as the panel itself.
+ * How the computer is drawn once it is known is the caller's: a row that opens it in a Thread, a
+ * plain line on Home.
+ */
+function Hosted({ children }: { children: (computer: Computer) => ReactNode }) {
   const computer = useLive(live.computer)
   return LiveState.$match(computer, {
     Loading: () => <SkeletonList of="row" count={1} />,
@@ -196,17 +296,17 @@ function Hosted({ onOpen }: { onOpen: () => void }) {
         Vivid’s computer can’t be reached right now.
       </Refused>
     ),
-    Ready: ({ value }) => (
-      <Row
-        icon={<Monitor className="size-4" />}
-        title="Vivid’s computer"
-        detail={computerStanding(value.computer)}
-        lit={ComputerState.guards.Running(value.computer.state)}
-        onClick={onOpen}
-      />
-    ),
+    Ready: ({ value }) => children(value.computer),
   })
 }
+
+/** What the card says of Vivid's computer, wherever it is drawn. */
+const hostedEntry = (computer: Computer) => ({
+  icon: <Monitor className="size-4" />,
+  title: 'Vivid’s computer',
+  detail: computerStanding(computer),
+  lit: ComputerState.guards.Running(computer.state),
+})
 
 /** The Integrations Vivid has, then the way to add one. Failure is not an empty list. */
 function Integrations({ onOpen }: { onOpen: () => void }) {
@@ -338,29 +438,19 @@ function Refused({ children, onRetry }: { children: ReactNode; onRetry: () => vo
   )
 }
 
-/**
- * One thing around Vivid: an icon (with a green dot while it is on or connected), what it is and
- * where it stands, and a chevron because it goes somewhere. The hover fill reaches 8 beyond the
- * text on each side so the text keeps the heading's edge.
- */
-function Row({
-  icon,
-  title,
-  detail,
-  lit = false,
-  onClick,
-}: {
-  icon: ReactNode
-  title: string
-  detail: string
-  lit?: boolean
-  onClick: () => void
-}) {
+/** What a line of the card says: an icon, what the thing is, and where it stands. */
+interface Entry {
+  readonly icon: ReactNode
+  readonly title: string
+  readonly detail: string
+  /** A green dot on the icon while the thing is on or connected. */
+  readonly lit?: boolean
+}
+
+/** The icon and the two lines of text that a `Row` and a `Fact` share. */
+function EntryBody({ icon, title, detail, lit = false }: Entry) {
   return (
-    <button
-      onClick={onClick}
-      className="group/row -mx-2 flex min-h-11 cursor-pointer items-center gap-2.5 rounded-row px-2 py-1 text-left transition-press duration-(--dur-fast) outline-none hover:bg-wash-hover focus-visible:bg-wash-hover active:scale-98"
-    >
+    <>
       <span className="relative inline-flex size-5 shrink-0 items-center justify-center text-ink-2">
         {icon}
         {lit && (
@@ -374,7 +464,34 @@ function Row({
         <span className="block truncate text-title font-title text-ink">{title}</span>
         <span className="block truncate text-label font-meta text-ink-3">{detail}</span>
       </span>
+    </>
+  )
+}
+
+/**
+ * One thing around Vivid that goes somewhere: its entry, and a chevron because it does. The hover
+ * fill reaches 8 beyond the text on each side so the text keeps the heading's edge.
+ */
+function Row({ onClick, ...entry }: Entry & { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="group/row -mx-2 flex min-h-11 cursor-pointer items-center gap-2.5 rounded-row px-2 py-1 text-left transition-press duration-(--dur-fast) outline-none hover:bg-wash-hover focus-visible:bg-wash-hover active:scale-98"
+    >
+      <EntryBody {...entry} />
       <ChevronRight className="size-4 shrink-0 text-ink-4 transition-colors duration-(--dur-fast) group-hover/row:text-ink-3" />
     </button>
+  )
+}
+
+/**
+ * One thing around Vivid that goes nowhere from here: the same entry on the same edges as a `Row`,
+ * with no chevron, no fill and no pointer, so it does not read as something to press.
+ */
+function Fact(entry: Entry) {
+  return (
+    <div className="flex min-h-11 items-center gap-2.5 py-1">
+      <EntryBody {...entry} />
+    </div>
   )
 }

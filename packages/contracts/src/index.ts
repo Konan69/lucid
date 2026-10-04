@@ -1,4 +1,5 @@
 export * from './appearance.js'
+export * from './applications.js'
 export * from './approvals.js'
 export * from './audit.js'
 export * from './code.js'
@@ -37,3 +38,5 @@ export {
   Unauthenticated,
 } from './failures.js'
 export * from './identity.js'
+
+export * from './channels.js'

@@ -1,12 +1,19 @@
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as NodeProcess from 'node:process'
+import * as NodeOS from 'node:os'
+import { DeviceName } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
-import { app, protocol, screen, session, type BrowserWindow, type Session } from 'electron'
+import { app, net, protocol, screen, session, type BrowserWindow, type Session } from 'electron'
 import { registerBridge } from './bridge.ts'
 import { Browser } from './browser.ts'
+import { executor } from './control.ts'
+import { connectDevice, deviceLink, sessionChanges } from './device.ts'
+import { controlledBrowser } from './driver.ts'
+import { installationIdentity } from './installation.ts'
+import { vividMayOpen } from './reach.ts'
 import {
   parseVividUrl,
   VIVID_PROTOCOL,
@@ -32,7 +39,7 @@ import {
   encodeBridgeEvent,
   type DesktopPlatform,
 } from '../shared/bridge.ts'
-import { PageUnavailable } from '../shared/pages.ts'
+import { PageUnavailable, type Tab } from '../shared/pages.ts'
 import { DesktopSettings, settingsLayer } from './settings.ts'
 import { registerAppProxy } from './proxy.ts'
 import { secureSession } from './session.ts'
@@ -40,6 +47,9 @@ import { isAllowedBridgeRequest } from './security.ts'
 import { ServerSettings } from '../shared/settings.ts'
 
 const PLACEMENT_FILE = 'window-placement.json'
+const INSTALLATION_FILE = 'installation.json'
+/** The host name as the Person's list of computers shows it, cut to what the contract allows. */
+const deviceName = Schema.decodeUnknownOption(DeviceName)
 // The workspace package name is scoped; native application identity and userData must use Vivid.
 app.setName('Vivid')
 const knownPlatform = Schema.decodeUnknownOption(
@@ -134,10 +144,16 @@ function runNonFatal(program: Effect.Effect<void, object>, message: string): voi
 }
 
 /** Page events target only their owning app window; guests never receive a bridge event channel. */
-function createBrowser(window: BrowserWindow, pagesSession: Session): Browser {
+function createBrowser(
+  window: BrowserWindow,
+  pagesSession: Session,
+  stopVivid: (tab: Tab) => void,
+): Browser {
   return new Browser({
     window,
     session: pagesSession,
+    stopVivid,
+    mayOpen: vividMayOpen,
     run: (program) => {
       void Effect.runPromise(program)
     },
@@ -157,6 +173,71 @@ function createBrowser(window: BrowserWindow, pagesSession: Session): Browser {
     },
   })
 }
+
+/**
+ * Vivid using this computer. The executor acts in whichever Browser the open window has; the
+ * link enrols this installation, listens while the Person allows it, and hands each action to
+ * the executor. The installation identity is read here and goes nowhere else in the app. A
+ * computer whose identity cannot be kept, or that has no host name, is not linked at all.
+ */
+const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (input: {
+  readonly session: Session
+  readonly server: () => ServerSettings
+  readonly browser: () => Option.Option<Browser>
+}) {
+  const control = yield* executor({
+    browser: controlledBrowser(input.browser),
+    mac: platform === 'darwin',
+    mayOpen: vividMayOpen,
+    using: (tab) => {
+      Option.map(input.browser(), (available) => available.used(tab))
+    },
+  })
+  const identity = Option.all({
+    installation: yield* installationIdentity(
+      NodePath.join(app.getPath('userData'), INSTALLATION_FILE),
+    ).pipe(Effect.option),
+    name: deviceName(NodeOS.hostname().slice(0, 100)),
+  })
+  if (Option.isNone(identity)) console.error('desktop: this computer cannot be linked to Vivid')
+  const computer = yield* deviceLink({
+    connect: Option.match(identity, {
+      onNone: () => Effect.succeed(Option.none()),
+      onSome: (known) =>
+        connectDevice({
+          server: input.server,
+          // Electron's own WebSocket, in the app's session and with its cookies on the upgrade
+          // (electron.d.ts, `WebSocketOptions.session` and `useSessionCookies`). Never the pages
+          // partition. The main process does not read the cookie. The class lives on `net` at
+          // run time: Electron 44.4.3 does not export `WebSocket` from `electron` itself, though
+          // its declarations say so (`scripts/control.ts` proves both).
+          socket: (address, origin) =>
+            new net.WebSocket(address, {
+              session: input.session,
+              useSessionCookies: true,
+              origin,
+            }),
+          identity: known,
+        }),
+    }),
+    execute: control.execute,
+  })
+  // Signing in or out changes the app session's cookies. A different session ends a link opened
+  // as the old one at once, action in progress included; anything else is a cue to look again.
+  const changed = sessionChanges(new Map())
+  input.session.cookies.on('changed', (_event, cookie, cause, removed) => {
+    const change = changed({
+      name: cookie.name,
+      value: cookie.value,
+      removed,
+      overwritten: cause === 'overwrite',
+    })
+    if (change === 'Restart') computer.restart()
+    else computer.wake()
+  })
+  Effect.runFork(computer.run)
+  return { computer, control }
+})
 
 /**
  * Finish startup after Electron is ready: decode configuration and disk state, construct one window,
@@ -203,10 +284,18 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
   let browser = Option.none<Browser>()
   const pagesSession = session.fromPartition('persist:vivid-pages')
 
+  const { computer, control } = yield* linkThisComputer({
+    session: desktopSession,
+    server: () => serverSettings,
+    browser: () => browser,
+  })
+
   /** A different server, or none: every page closes and the window loads what that means. */
   const serverChanged = (value: ServerSettings): void => {
     Option.map(browser, (available) => available.reset())
     serverSettings = value
+    // A link belongs to one server: drop it and start over on the new one, or on none.
+    computer.restart()
     // Complete invoke before replacing the document that owns its pending Promise.
     setImmediate(() =>
       Option.map(mainWindow, (window) =>
@@ -232,6 +321,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
           onSome: (available) => available.handle(request),
         }),
       getAppVersion: () => information.appVersion,
+      device: computer,
       settings,
       openExternal: openExternalUrl,
       onServerChanged: serverChanged,
@@ -269,7 +359,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
       },
     })
     mainWindow = Option.some(window)
-    browser = Option.some(createBrowser(window, pagesSession))
+    browser = Option.some(createBrowser(window, pagesSession, control.stop))
     window.on('closed', () => {
       mainWindow = Option.none()
       browser = Option.none()

@@ -32,6 +32,17 @@ export interface InfrastructureEnvironment {
    * It needs no key of its own: decisions go through the model gateway with `EXPLABS_API_KEY`.
    */
   readonly decisions: Option.Option<string>
+  /**
+   * Where the server exports traces and logs (`apps/server/src/observability/export.ts`). Without
+   * it the server runs exactly as before and exports nothing.
+   */
+  readonly observability: Option.Option<ObservabilityAccess>
+}
+
+/** The OTLP/HTTP base address and the `name=value` headers that authenticate an export. */
+export interface ObservabilityAccess {
+  readonly url: string
+  readonly headers: Redacted.Redacted
 }
 
 export interface ExecutorAccess {
@@ -100,6 +111,22 @@ export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnviro
 
     const decisions = yield* optionalString('VIVID_DECISIONS')
 
+    const otlpUrl = yield* optionalString('VIVID_OTLP_URL')
+    const otlpHeaders = yield* optionalSecret('VIVID_OTLP_HEADERS')
+    if (Option.isSome(otlpUrl) !== Option.isSome(otlpHeaders)) {
+      return yield* Effect.fail(
+        new InfrastructureEnvironmentError({
+          variable: 'VIVID_OTLP_URL, VIVID_OTLP_HEADERS',
+          message: 'Telemetry export must provide both variables or neither',
+        }),
+      )
+    }
+    const observability = Option.zipWith(
+      otlpUrl,
+      otlpHeaders,
+      (url, headers): ObservabilityAccess => ({ url, headers }),
+    )
+
     return {
       authSecret,
       runtimeToken,
@@ -110,6 +137,7 @@ export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnviro
       googleRedirectUri,
       executor,
       decisions,
+      observability,
     } satisfies InfrastructureEnvironment
   },
 )()

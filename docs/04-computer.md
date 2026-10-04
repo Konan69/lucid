@@ -2,6 +2,8 @@
 
 2026-10-03: The Boat implementation and real-service proof below supersede the earlier Grok Bot mapping; runtime placement, external state sync, egress through a Person’s device and takeover remain planned. Provider prices/specifications record the earlier research, not a fresh quote; current status is in [docs/14](14-product-feature-set-and-grok-bot-parity.md).
 
+2026-10-04: Boat is the only Computer provider; the local Docker desktop stand-in and its image are removed.
+
 ## Thesis
 
 From a public thread, 31 August 2026, answering the question of where an assistant's work should run:
@@ -205,14 +207,12 @@ worked on the real image. Vivid independently reads the exact field value afterw
 an unconfirmed replacement, without retrying input. Clearing may read back as the driver's
 null empty value. Driver delivery receipts alone never establish the intended result.
 
-Running state distinguishes `screen: Relay` (offline Docker) from `screen: Viewer` (Boat's
-short-lived token-gated streaming page). `GetComputer` issues fresh viewer authority. Clients
+Running state uses `screen: Viewer` (Boat's short-lived token-gated streaming page). `GetComputer` issues fresh viewer authority. Clients
 must refresh it before expiry and use a sandboxed frame. The API key remains server-only.
 Desktop actions use the same Gate and takeover recheck as browser actions: Look, Move, Scroll
 and Wait are reads; Click, Drag, Type and Press follow the existing write policy. The runtime's
 `use_desktop` returns real image content through Flue's public sandbox-tool API, alongside
-bounded human-readable metadata. Docker remains an offline stand-in and explicitly refuses
-desktop actions; it supports the expanded browser action vocabulary.
+bounded human-readable metadata. Boat supports browser and native desktop actions.
 
 Fake HTTP integration tests exercise durable allocation recovery, restart/resume, gated viewer
 issuance, native tools, response decoding, private input transport and uncertain-command handling.
@@ -320,3 +320,35 @@ need their reference ports. Existing `pages.stop(tab)` stops loading only.
 Reference: browser `browser-service.mjs::ai/ec/tc/JA/Rs/wB/mJ/Dne/a7e`, main
 `executeCdpForBrowserUse/Yte/turnEnded`, and Windows `helper_transport.js::request/D/F/U`.
 The missing input-token receiver must be recovered before desktop control can ship.
+
+**4 October 2026 — stage 1 browser decision.** The desktop app executes Person-computer
+browser actions using T3 Code desktop’s mechanism: `webContents.debugger` CDP. T3’s
+expected-input matching and human-control epochs were deliberately NOT ported: the owner decided
+the same day that touching the page does not interrupt Vivid; only the explicit Stop does.
+The Codex token receiver was never recovered; that token blocker no longer gates stage 1.
+
+### Permission for the Person’s browser
+
+**4 October 2026 — owner decision: “I don't need approval for writing my browser”.** Click,
+Type, Press and CloseTab on the Person’s computer follow the same table as a write through the
+Person’s own Integration: with no review a write runs; with review, the Person asked for it or
+it is contained runs, and unasked and reaching other people asks. A destructive action, an Ask
+rule, a Never rule and anything personal in a Thread others can see still ask or refuse. The
+risk, stated plainly: Vivid acts as the Person on every site they are signed in to, without
+asking. What stops it is a rule, the Stop on the page, and removing the computer in Settings.
+Earlier the same day these writes always asked; that rule is gone and must not be put back by
+a later review without the owner. Only the Person whose computer it is may decide an Approval
+for an action on it.
+
+Personal browser reads and screenshots ask before their contents enter a shared Thread. Private
+Threads keep reads unasked. Open, OpenTab, Back and Forward remain reads by explicit policy; a
+credentialed GET can still have side effects. The desktop refuses private-network addresses and
+the Person retains an explicit Stop.
+
+A pending Approval is deduplicated by its original workspace, Thread and action digest, retaining
+the first proposing Run. A Run sending its own action must still be Working. An action the
+Person approved is sent for that exact Run when it is Working or Completed, because raising an
+Approval ends the Run's turn; a stopped or failed Run sends nothing, and that is reported as
+not sent. Only a sent action without a known result is OutcomeUnknown.
+Page metadata carries an optional branded PNG attachment, omitted when genuinely absent.
+Each encoded PNG is capped at 8 MiB before device-answer and history retention.

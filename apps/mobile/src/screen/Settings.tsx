@@ -5,6 +5,7 @@ import {
   type Theme,
   mayChangeAppearance,
 } from '@vivid/contracts'
+import { channelWords } from '@vivid/state'
 import { Data, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { Linking, ScrollView, Switch, View } from 'react-native'
@@ -94,6 +95,7 @@ export function Settings() {
           />
         </Section>
         <VividRow workspace={me.workspace} onCustomise={() => setOver(Over.Customise())} />
+        <TextVivid onOpen={() => go.navigate('Texting')} />
         <Live state={settings} loading={<Skeleton rows={3} />}>
           {(value) => <Preferences settings={value} onZone={() => setOver(Over.Zone())} />}
         </Live>
@@ -138,6 +140,35 @@ function VividRow({ workspace, onCustomise }: { workspace: Workspace; onCustomis
         }
         wrap
         onPress={editable ? onCustomise : undefined}
+      />
+    </Section>
+  )
+}
+
+/**
+ * The way to texting Vivid from a messages app. The row says where each app stands, read from
+ * the same live list the screen behind it draws, so "connected" is seen without opening it. Before
+ * that list has answered it says what the screen is for instead of guessing a standing.
+ */
+function TextVivid({ onOpen }: { onOpen: () => void }) {
+  const data = useLiveData()
+  const channels = useLiveValue(data.live.channels)
+  const standings = Option.match(channels, {
+    onNone: () => [],
+    onSome: (value) =>
+      value.channels.map((link) => `${link.channel}: ${channelWords(link.standing).toLowerCase()}`),
+  })
+  return (
+    <Section title="Text Vivid">
+      <Row
+        title="iMessage and WhatsApp"
+        detail={
+          standings.length === 0
+            ? 'Connect your number, then text Vivid from your phone.'
+            : standings.join(' · ')
+        }
+        wrap
+        onPress={onOpen}
       />
     </Section>
   )

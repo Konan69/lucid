@@ -39,7 +39,6 @@ import {
 import { Count } from '../../ui/Count'
 import { useSurface } from '../../ui/Layer'
 import { byKeyboard, leave } from '../../ui/motion'
-import { StatusLabel } from '../../ui/Status'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { MoveThread } from '../project/Move'
 import { CAPTION, FULL, HOVER, ROW } from './rows'
@@ -177,11 +176,7 @@ export function Threads({
   const row = (thread: Thread, variant: Variant) => (
     // `data-moves` names the row for the list's `settling` (see `Sidebar`): when the Thread
     // changes place, even into another part of the list, the row glides there.
-    <li
-      key={thread.id}
-      data-moves={thread.id}
-      className={variant === 'card' ? 'py-0.5' : undefined}
-    >
+    <li key={thread.id} data-moves={thread.id}>
       <ThreadRow
         thread={thread}
         variant={variant}
@@ -204,13 +199,13 @@ export function Threads({
       {needsYou.length > 0 && (
         <section>
           <Caption label="Needs you" count={needsYou.length} />
-          <ul className="flex flex-col">{needsYou.map((thread) => row(thread, 'card'))}</ul>
+          <ul className="flex flex-col gap-px">{needsYou.map((thread) => row(thread, 'card'))}</ul>
         </section>
       )}
       {working.length > 0 && (
         <section>
           <Caption label="Working" count={working.length} />
-          <ul className="flex flex-col">{working.map((thread) => row(thread, 'card'))}</ul>
+          <ul className="flex flex-col gap-px">{working.map((thread) => row(thread, 'card'))}</ul>
         </section>
       )}
       {BANDS.map((name) => {
@@ -300,35 +295,47 @@ function ThreadRow(props: RowProps) {
 
 const openThread = (thread: Thread) => router.go(Route.Thread({ id: thread.id }))
 
-/** A Thread that needs someone or is being worked on: who is in it, its state, its last line. */
-function CardFace({ thread, active, retitling, onDo }: RowProps) {
+/**
+ * A Thread that needs someone or is being worked on. It is the same row as every other Thread,
+ * with one more line under the title: the last thing said in it.
+ *
+ * It used to be a bordered card with its own left edge, a "Needs you" badge and an empty first
+ * line. Under a caption that already says "Needs you", the badge said it twice, and the card's
+ * words started 12px to the left of the titles in the rows below it, so the list read as two
+ * unrelated lists stacked. Now the mark, the title and the time sit on the same three edges in
+ * every row; what sets these apart is the colour of the mark, the weight of the title and the
+ * second line.
+ */
+function CardFace({ thread, active, now, retitling, onDo }: RowProps) {
+  const needsYou = thread.attention === 'NeedsYou'
   return (
     <button
       onClick={() => openThread(thread)}
       onDoubleClick={() => onDo(Doing.Renaming({ id: thread.id }))}
       aria-current={active ? 'page' : undefined}
-      className={cn(
-        'relative block h-(--card-row-h) w-full cursor-pointer rounded-card px-2.5 py-2 text-left edge transition-surface duration-(--dur-fast) select-none focus-visible:-outline-offset-2',
-        // On the sidebar a card at rest is an outline; the chosen one is the raised fill. A resting
-        // fill would be the sidebar's own colour, and a hover wash over nothing is still visible.
-        active ? 'bg-surface-3' : 'hover:bg-wash-hover',
-      )}
+      className={cn(ROW, 'items-start py-1.5', active ? 'bg-wash-selected' : HOVER)}
     >
-      <span className="flex h-5 items-center gap-1.5">
-        <Audience thread={thread} />
-        <span className="flex-1" />
-        <span className={AT_REST}>
-          <StatusLabel status={thread.attention === 'NeedsYou' ? 'attention' : 'working'} />
+      <span className="inline-flex size-5.5 shrink-0 items-center justify-center">
+        <i
+          aria-label={needsYou ? 'Needs you' : 'Working'}
+          role="img"
+          className={cn('size-1.5 rounded-full', needsYou ? 'bg-attention' : 'bg-working')}
+        />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex h-5.5 items-center gap-2.5">
+          <span
+            aria-busy={retitling}
+            className={cn('min-w-0 flex-1 truncate text-label font-strong text-ink', IN_FLUX)}
+          >
+            {thread.title}
+          </span>
+          <Audience thread={thread} />
+          <time className={cn('shrink-0 text-meta font-meta text-ink-3 tabular-nums', AT_REST)}>
+            {relativeTime(thread.updatedAt, now)}
+          </time>
         </span>
-      </span>
-      <span
-        aria-busy={retitling}
-        className={cn('mt-0.5 block truncate text-title text-ink', IN_FLUX)}
-      >
-        {thread.title}
-      </span>
-      <span className="mt-0.5 block truncate text-label font-meta text-ink-3">
-        {thread.preview}
+        <span className="block truncate text-meta font-meta text-ink-3">{thread.preview}</span>
       </span>
     </button>
   )
@@ -413,7 +420,7 @@ function DoneAction({ thread }: { thread: Thread }) {
 
 /** Where the title sits in each kind of row, so the field lands exactly on the words it edits. */
 const FIELD_PLACE = {
-  card: 'top-7 right-1.5 left-1.5 h-6 text-title',
+  card: 'top-1.5 right-1.5 left-9.5 h-5.5 text-label',
   line: 'inset-y-1.5 right-1.5 left-9.5 text-label',
 } satisfies Record<Variant, string>
 

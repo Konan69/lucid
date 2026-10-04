@@ -35,10 +35,11 @@ import { NoteFile, NoteIndex, NoteLine } from '../notes.ts'
 import { Remembered, SavedProcedures, VividContext } from './snapshots.ts'
 import * as views from './views.ts'
 import { askTools } from './ask.ts'
-import { computerDefinitions } from './computer.ts'
+import { commandDefinition, desktopToolFactory } from './computer.ts'
 import { connectionTools } from './connections.ts'
 import { libraryTools } from './library.ts'
 import { memoryTools } from './memory.ts'
+import { projectTools } from './projects.ts'
 import { routineTools } from './routines.ts'
 import { skillTools } from './skills.ts'
 import type { RunTool } from './scope.ts'
@@ -184,6 +185,7 @@ describe('model views', () => {
         timezone: 'Africa/Lagos',
         // 16:00 UTC is 17:00 in Lagos (UTC+1, no daylight saving).
         asOf: Option.some(Date.UTC(2026, 9, 4, 16, 0)),
+        apps: ['GIMP', 'LibreOffice Calc'],
         integrations: ['DeepWiki', `Mail ${reference}`],
         name: 'Vivid',
       }),
@@ -204,6 +206,7 @@ describe('model views', () => {
         skills: [],
         timezone: 'UTC',
         asOf: Option.none(),
+        apps: [],
         integrations: [],
         name: 'Vivid',
       }),
@@ -216,6 +219,7 @@ describe('model views', () => {
         'Current local date and time (Africa/Lagos, locked to the hour): Sunday, 4 October 2026 at 17:00. UTC instant: 2026-10-04T16:00Z. This is the start of the current hour; the minutes are not known. Use it as the clock for today, tomorrow, deadlines and anything relative to now.',
       ),
     ).toBe(true)
+    expect(context).toContain('"apps":["GIMP","LibreOffice Calc"]')
     // Connected services reach the model by name, with any identifier in a name removed.
     expect(context).toContain('"integrations":["DeepWiki","Mail ')
     expect(json).toContain('admin@example.test')
@@ -317,8 +321,9 @@ function inspectSchema(value: Schema.Json) {
   }
   if (!isRecord(value)) return
   expect(value.type).not.toBe('uuid')
-  if (value.entries !== undefined && isRecord(value.entries)) {
-    for (const field of Object.keys(value.entries)) expect(field).not.toMatch(/^(?:id)$|Id$/u)
+  const fields = value.entries === undefined ? value.properties : value.entries
+  if (fields !== undefined && isRecord(fields)) {
+    for (const field of Object.keys(fields)) expect(field).not.toMatch(/^(?:id)$|Id$/u)
   }
   for (const entry of Object.values(value)) inspectSchema(entry)
 }
@@ -340,13 +345,16 @@ function isRecord(value: Schema.Json): value is Schema.JsonObject {
 it('has no identifier key or UUID validator in any model tool input', () => {
   const groups = [
     askTools,
-    computerDefinitions,
     connectionTools,
     libraryTools,
     memoryTools,
     routineTools,
+    projectTools,
     skillTools,
   ]
+  inspectSchema(schemaDocument(JSON.stringify(commandDefinition(inspectionOnly).input)))
+  for (const native of desktopToolFactory(inspectionOnly).tools())
+    inspectSchema(schemaDocument(JSON.stringify(native.parameters)))
   for (const factory of groups)
     for (const definition of factory(inspectionOnly))
       inspectSchema(schemaDocument(JSON.stringify(definition.input)))

@@ -6,6 +6,7 @@ The server owns all product logic and persistence. Clients use `VividRpc` (`/api
 
 - `main.ts`: compose Layers and launch only.
 - `config.ts`: Effect Config; secrets stay `Redacted`.
+- `observability/`: an infrastructure adapter. `export.ts` installs the OTLP trace and log exporters, `failure.ts` records a failure at the boundary that answers it (`observeFailures`), and `refusal.ts` is the one vocabulary and recorder for refusals (`recordRefusal`).
 - `database/`, `auth/`, `http/`, `rpc/`, `runtime/`, `live/`: thin infrastructure adapters. `auth/access.ts` turns a call into an `Actor` and supplies the ownership conditions every query uses; `live/` is the change bus and the live-query helper every `Watch…` handler is built from.
 - Domain directories (`companies/`, `projects/`, `settings/`, `threads/`, `routines/`, `library/`, `connections/`, `notifications/`, `approvals/`, `inputs/`, `rules/`, `audit/`, `memory/`, `skills/`, `computers/`, `search/`) own `tables.ts`, `store.ts`, `handlers.ts`, and behavior tests.
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
+import { eq } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Ref from 'effect/Ref'
@@ -6,13 +7,123 @@ import * as Result from 'effect/Result'
 import { Conflict, InputRequestState, NotFound } from '@vivid/contracts'
 import { fixture, Observation, trustTestLayer } from '../approvals/testing.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
+import { membershipTable } from '../companies/tables.ts'
+import { Database } from '../database/client.ts'
+import { threads } from '../threads/tables.ts'
 import { InputStore } from './store.ts'
+import { inputRequests } from './tables.ts'
 
 const question = {
   question: 'Which day works?',
   options: [{ label: 'Monday', detail: 'Start the week' }],
   allowsOwnAnswer: true,
 }
+
+/** I1-I3 preserve waiting rows while testing current reach independently of cached workspace roles. */
+describe.skipIf(!testDatabaseConfigured)('Input inbox Thread privacy', () => {
+  it.effect(
+    'I1 making a Company Thread private hides its addressed question even from an owner',
+    () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const elsewhere = yield* fixture()
+        const database = yield* Database
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'company' })
+            .where(eq(threads.id, test.companyId)),
+        )
+        const store = yield* InputStore
+        const request = yield* store.ask(
+          { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
+          question,
+        )
+        expect(yield* store.inbox(test.owner)).toEqual([request])
+        expect(yield* store.inbox(test.other)).toEqual([])
+        expect(yield* store.inbox(test.member)).toEqual([])
+        expect(yield* store.inbox({ ...test.owner, workspace: elsewhere.owner.workspace })).toEqual(
+          [],
+        )
+        const before = yield* database.run(
+          database.select().from(inputRequests).where(eq(inputRequests.id, request.id)),
+        )
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'private' })
+            .where(eq(threads.id, test.companyId)),
+        )
+        expect(yield* store.inbox(test.owner)).toEqual([])
+        expect(
+          yield* database.run(
+            database.select().from(inputRequests).where(eq(inputRequests.id, request.id)),
+          ),
+        ).toEqual(before)
+      }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
+  it.effect(
+    'I2 re-sharing restores the same waiting question with its options and timestamps',
+    () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const database = yield* Database
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'company' })
+            .where(eq(threads.id, test.companyId)),
+        )
+        const store = yield* InputStore
+        const request = yield* store.ask(
+          { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
+          question,
+        )
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'private' })
+            .where(eq(threads.id, test.companyId)),
+        )
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'company' })
+            .where(eq(threads.id, test.companyId)),
+        )
+        expect(yield* store.inbox(test.owner)).toEqual([request])
+      }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
+  it.effect('I3 Membership removal hides a question from the same stale Company Actor', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const database = yield* Database
+      yield* database.run(
+        database.update(threads).set({ audience: 'company' }).where(eq(threads.id, test.companyId)),
+      )
+      const store = yield* InputStore
+      const request = yield* store.ask(
+        { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
+        question,
+      )
+      expect(yield* store.inbox(test.owner)).toEqual([request])
+      const before = yield* database.run(
+        database.select().from(inputRequests).where(eq(inputRequests.id, request.id)),
+      )
+      yield* database.run(
+        database.delete(membershipTable).where(eq(membershipTable.userId, test.owner.person.id)),
+      )
+      expect(yield* store.inbox(test.owner)).toEqual([])
+      expect(
+        yield* database.run(
+          database.select().from(inputRequests).where(eq(inputRequests.id, request.id)),
+        ),
+      ).toEqual(before)
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+})
 
 /** Questions use the same once-only persistence boundary as Approvals, with Thread-scoped tenancy. */
 describe.skipIf(!testDatabaseConfigured)('Input request answers', () => {

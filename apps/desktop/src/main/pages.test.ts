@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Page, Tab, ShowingTab, PageLoadFailure, PageFavicon } from '../shared/pages.ts'
+import { Page, Tab, ShowingTab, UsedTab, PageLoadFailure, PageFavicon } from '../shared/pages.ts'
 import {
   PageChange,
   emptyBrowserState,
@@ -282,5 +282,18 @@ describe('Browser state transitions', () => {
     expect(navigated.tabs[0]).toHaveProperty('favicon', PageFavicon.cases.None.make({}))
     const closed = reducePages(changed, PageChange.cases.Closed.make({ tab: first }))
     expect(reducePages(closed, PageChange.cases.Favicon.make({ tab: first, favicon }))).toBe(closed)
+  })
+
+  it('says which page Vivid is using, and stops saying it when that page closes', () => {
+    const opened = open(open(emptyBrowserState, first), second)
+    const using = UsedTab.cases.Some.make({ value: first })
+    const used = reducePages(opened, PageChange.cases.Used.make({ using }))
+    expect(browserSnapshot(used).using).toEqual(using)
+    // Saying the same thing again is not a change, so the renderer is not woken for it.
+    expect(reducePages(used, PageChange.cases.Used.make({ using }))).toBe(used)
+    const other = reducePages(used, PageChange.cases.Closed.make({ tab: second }))
+    expect(other.using).toEqual(using)
+    const closed = reducePages(used, PageChange.cases.Closed.make({ tab: first }))
+    expect(closed.using).toEqual(UsedTab.cases.None.make({}))
   })
 })

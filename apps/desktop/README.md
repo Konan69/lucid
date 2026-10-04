@@ -51,11 +51,12 @@ owner. The shell uses the same saved origin and staged assets in development and
 
 Import bridge types from `@vivid/desktop/bridge` (`src/shared/bridge.ts`). The chooser receives
 `window.vivid` with `VividDesktopBridge`; selected-server documents receive `VividAppBridge`,
-containing `getAppVersion()` and `pages`:
+containing `getAppVersion()`, `pages` and `device`:
 
 ```ts
 interface VividDesktopBridge {
   readonly pages: VividPagesBridge
+  readonly device: VividDeviceBridge
   server: {
     get(): Promise<{ _tag: 'NoServer' } | { _tag: 'Server'; origin: string }>
     choose(
@@ -79,7 +80,7 @@ The app renderer receives this exact surface on `window.vivid`. Import `Tab`, `P
 The renderer owns the panel, tab row, address input, and sign-out integration.
 
 ```ts
-type VividAppBridge = Pick<VividDesktopBridge, 'getAppVersion' | 'pages'>
+type VividAppBridge = Pick<VividDesktopBridge, 'getAppVersion' | 'pages' | 'device'>
 
 interface VividPagesBridge {
   readonly open: (input: PageInput) => Promise<Tab>
@@ -119,7 +120,9 @@ revives a revoked lease. Send a fresh `place()` after switching selection or dis
 Renderer layout/scroll and modal/menu coverage detection remain the renderer's responsibility.
 
 `watch()` hydrates the current state asynchronously and replays cached state synchronously when
-available. It then delivers whole snapshots: `{ revision, tabs, showing }`. `tabs` is ordered;
+available. It then delivers whole snapshots: `{ revision, tabs, showing, using }`. `using` is
+`PageOption<Tab>`: the page Vivid is acting on for the length of one action (see "Vivid using
+this computer"); the renderer says so on that page. `tabs` is ordered;
 each page has `{ tab, address, title, favicon, loading, canGoBack, canGoForward, failed }`. `showing` is
 `PageOption<Tab>`; `failed` and `favicon` are `PageOption<string>`: clone-safe schema-backed `None`/`Some`
 objects with an own `_tag` property. Use `ShowingTab` and `PageLoadFailure` guards/match helpers
@@ -166,6 +169,108 @@ The server supports device authorization and the web Settings → Devices page a
 but the desktop renderer does not currently request or exchange its own device code. That is
 implemented by mobile. Adding a desktop code flow would require renderer work.
 
+## Vivid using this computer
+
+Stage 1: the browser only. Once a Person is signed in, the app enrols this installation as one
+of their computers (`EnrolDevice`, with the machine's host name), and waits. Enrolling grants
+nothing. When the Person allows it (Settings → Devices → Your computers, on any surface), the app
+holds `WatchDeviceRequests` open on the live socket and carries out each `BrowserAction` Vivid
+sends, in the app's own Browser, answering on the same connection. Revoking, signing out or
+choosing another server ends the link.
+
+- **Identity** (`main/installation.ts`): a random `InstallationId` in `installation.json` under
+  Electron's user data directory, made once. It never leaves the main process; the renderer is
+  told only the `DeviceId` it enrolled as (`window.vivid.device.get()`).
+- **The link** (`main/device.ts`): the main process opens its own socket to `/api/live` with
+  Electron's `net.WebSocket` in the app session (`persist:vivid`), which sends that session's
+  cookies on the upgrade; the main process never reads the cookie, and never uses
+  `persist:vivid-pages`. (Electron 44.4.3 does not export `WebSocket` from `electron` itself,
+  whatever its type declarations say.) While waiting to be allowed, or when the server cannot be
+  reached, it tries again after 1 s, doubling to at most 30 s. Signed out or revoked, it rests
+  until the session changes, the server changes, or the renderer calls
+  `window.vivid.device.refresh()`. Nothing is replayed.
+- **Consent ends action.** An action runs inside the listening: when the server ends the link
+  (revoke, sign-out, a newer link), when the connection fails, or when the session token cookie
+  changes, the action in progress is interrupted at once, held keys and the mouse button are
+  released, and nothing further is sent.
+- **The executor** (`main/control.ts`, `main/driver.ts`): one action at a time, through
+  Chromium's debugger on the page (`webContents.debugger`), ported from the reference desktop's
+  control session. A control is named by its accessible name, exactly one match or the step
+  fails. An action past its `expiresAt` is not started, and input is never sent twice. The
+  debugger session must be Vivid's own: a page with developer tools open, or with another
+  debugger attached, is not acted on.
+- **Stop**: while an action runs on a page, the renderer shows "Vivid is using this page." and a
+  Stop button (`window.vivid.pages.stopVivid(tab)`). Stop ends that action at once and it is
+  answered `Refused: Stopped`. The Person using the page does not stop Vivid: the reference's
+  human-control epochs and expected-input matching are deliberately not ported (owner's
+  decision, 4 October 2026). Pages have no bridge, so a website cannot press Stop.
+- **Where Vivid may go** (`main/reach.ts`): a navigation Vivid starts is allowed only to the
+  public internet. Loopback, private, link-local, carrier-grade NAT and IPv6 unique-local and
+  link-local addresses are refused, for the first address (resolved first; every resolved
+  address must be public) and for every redirect of that load. The Person's own typing in the
+  address bar is unchanged. Not closed: Chromium resolves the name again when it connects, so a
+  name that answers public here and private a moment later (DNS rebinding) gets through; and
+  only main-frame requests are checked, not frames inside a page.
+- **Passwords**: what an `input type=password` in the main document holds is never in an
+  answer; the outline says "(hidden)". Fields inside frames or shadow roots are not found by
+  that query and rely on Chromium's own masking.
+
+| Action ends as                                                                                                               | Answer                                                       |
+| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Carried out                                                                                                                  | `Done` with the page in front: address, title, outline, tabs |
+| The Person pressed Stop                                                                                                      | `Refused: Stopped`                                           |
+| No page is open, or the page closed                                                                                          | `Refused: PageGone`                                          |
+| A local or private address (first hop, resolved name or redirect), a non-web address, or words that are not an address       | `Refused: NotAllowed`                                        |
+| A key outside the ones Vivid may press                                                                                       | `Refused: Unsupported`                                       |
+| The control was not found or is ambiguous, the page refused the text, a debugger command failed, the debugger is not Vivid's | `Failed`                                                     |
+| Its deadline passed before or during the action, or the link ended                                                           | no answer; the server has already closed it                  |
+
+`Screenshot` answers with the picture (`BrowseResult.picture`, a base64 PNG at most 1280 pixels
+wide); no other action carries one. Closing the last page answers `Done` with an empty address
+and title and no tabs, because the contract has no "no page" form.
+
+What running it against real pages changed (each is stated beside its code):
+
+- A page has a size (1280 by 800) and is on the window, hidden, from the moment it opens.
+  Without a size nothing in it can be clicked or captured; without the window Chromium delivers
+  no pointer input.
+- A click turns focus emulation on, waits for the page to confirm it, and checks that the page
+  saw the button go down. A page that is not drawn takes clicks this way.
+- A key is pressed only on a page drawn on the window. Keys to an undrawn page arrived, were
+  dropped, or arrived after the answer; none of that can be reported honestly. The renderer
+  brings the page Vivid is using forward, the executor waits up to 3 s for it, and otherwise
+  the step fails with nothing sent. No `Page.bringToFront`: the key after it was dropped.
+- A press the page never saw is `Failed`, after half a second's grace, never a second press.
+- After any action the executor waits for a navigation the page asked for
+  (`Page.frameRequestedNavigation`) until the page is neither leaving nor loading.
+- A hop stopped by the rule every page obeys (no loopback) is reported to Vivid as
+  `NotAllowed`, not answered as the old page.
+
+### The proof
+
+`scripts/control.ts` runs the real executor inside real Electron against real pages, under
+`xvfb-run`, in a disposable profile; `src/main/driver.test.ts` runs it:
+
+```sh
+pnpm --filter @vivid/desktop exec vitest run src/main/driver.test.ts
+```
+
+It needs the public internet (`https://example.com`, and `https://httpbin.org/redirect-to` for a
+public address that redirects to this computer). It proves: Open, Read, Click by name with a
+real navigation, Back, Type with read-back, Press, a hidden password value, Screenshot of a
+page that is not drawn and of one that is, Stop (including in the middle of a click, with
+nothing left held), the refusals (loopback, private, and public redirects to each), and that
+`net.WebSocket` in a session sends that session's cookie.
+
+Not proved:
+
+- The link against a real server. It needs a signed-in session; only its transport is proved.
+- The refusal of a page with developer tools open. The pages session admits only web addresses,
+  so developer tools never open on a page and the case cannot be reached.
+- That the renderer brings the page forward when Vivid starts using it, and the Stop button:
+  the proof has no renderer.
+- DNS rebinding is not closed (see "Where Vivid may go").
+
 ## Security
 
 The window enables context isolation, sandbox and web security, and disables Node integration
@@ -175,8 +280,8 @@ blocked, including WebSocket upgrades. Same-origin redirects remain usable. Fore
 and popup destinations open in the system browser only for HTTP(S); other schemes are refused.
 Only the main frame may invoke the schema-decoded bridge. Main checks its document URL for every
 request: the bundled chooser alone can choose or forget a server, read settings, or invoke
-external browsing. Selected-server documents can read the app version and drive the isolated
-Browser through validated page requests. No page guest has preload or bridge access.
+external browsing. Selected-server documents can read the app version, drive the isolated
+Browser through validated page requests, and read or refresh this computer's link. No page guest has preload or bridge access.
 
 Each page uses its own main-owned `WebContentsView` in `persist:vivid-pages`, with sandbox,
 context isolation, web security and no Node integration. Only HTTP(S) page and frame navigation
@@ -187,22 +292,6 @@ Notifications and sanitized clipboard writes are allowed only for the selected a
 Media, clipboard reads and every other permission are denied, including on the chooser.
 
 ## Verify
-
-### The Person's own browser: blocked port
-
-The server has target/device contracts and a PostgreSQL request/receipt channel, tested with a
-fake device. The desktop is not connected to that channel yet. No control driver or `on: 'yours'`
-runtime option ships. `packages/contracts/src/browsers.ts` reserves separate access requests with
-offered scopes, control state and Run Stop for the future surfaces; no frontend was changed.
-
-The recovered browser service injects an expected target token with CDP input, but its enforcement
-receiver and attribution of Person input are missing from the decompile. The exploratory native
-proof opened/read a retained page, then refused its own CDP click as Stopped. Its guessed matcher
-and driver were removed rather than substitute behaviour for the reference. Existing page Stop
-still means stop loading. Recover the native token receiver before adding control or advertising it.
-
-Reference: `browser-service.mjs::ai/ec/tc`, locator fill/press-sequentially handlers and
-`app/.vite/build/main-DpnWwRdP.js::executeCdpForBrowserUse/sendDebuggerCommand`.
 
 ### Existing desktop checks
 

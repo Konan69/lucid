@@ -59,6 +59,13 @@ import {
   RunCommandRequest,
 } from './computers.js'
 import {
+  Channel,
+  ChannelFailure,
+  ChannelLinkResponse,
+  ChannelListResponse,
+  ConnectChannelRequest,
+} from './channels.js'
+import {
   AddIntegrationRequest,
   AddIntegrationOutcome,
   FindIntegrationsRequest,
@@ -135,6 +142,7 @@ import {
   ReadNotificationsRequest,
 } from './notifications.js'
 import { CreateProjectRequest, Project, ProjectListResponse } from './projects.js'
+import { ComputerInventory } from './applications.js'
 import {
   CreateRoutineRequest,
   CreateOnceRoutineRequest,
@@ -681,6 +689,7 @@ const DeleteSkill = Rpc.make('DeleteSkill', {
 
 // ── The Computer ───────────────────────────────────────────────────────────
 const GetComputer = Rpc.make('GetComputer', { ...call, success: ComputerResponse })
+const GetComputerApps = Rpc.make('GetComputerApps', { ...call, success: ComputerInventory })
 const WatchComputer = Rpc.make('WatchComputer', { ...live, success: ComputerResponse })
 const StartComputer = Rpc.make('StartComputer', { ...call, success: ComputerResponse })
 const StopComputer = Rpc.make('StopComputer', { ...call, success: ComputerResponse })
@@ -700,6 +709,26 @@ const Browse = Rpc.make('Browse', {
   payload: BrowseRequest,
   success: BrowseOutcome,
   error: Schema.Union([RpcFailure, NoDeviceConnected]),
+})
+// ── Channels: texting Vivid from a messaging app ───────────────────────────
+/** Every channel and where it stands for the signed-in Person. */
+const WatchChannels = Rpc.make('WatchChannels', { ...live, success: ChannelListResponse })
+/**
+ * Enrols the Person's own number and starts confirming it. The channel is theirs only after the
+ * code arrives from that number; until then it stands as `Confirming`.
+ */
+const ConnectChannel = Rpc.make('ConnectChannel', {
+  ...call,
+  payload: ConnectChannelRequest,
+  success: ChannelLinkResponse,
+  error: Schema.Union([RpcFailure, ChannelFailure]),
+})
+/** Removes the Person's number from the channel, and its enrolment with the provider. */
+const DisconnectChannel = Rpc.make('DisconnectChannel', {
+  ...call,
+  payload: { channel: Channel },
+  success: ChannelLinkResponse,
+  error: Schema.Union([RpcFailure, ChannelFailure]),
 })
 // ── The Person's own computers ─────────────────────────────────────────────
 /** The desktop app naming itself after sign-in. The same installation always gets the same Device. */
@@ -870,12 +899,16 @@ export const VividRpc = RpcGroup.make(
   PatchSkill,
   DeleteSkill,
   GetComputer,
+  GetComputerApps,
   WatchComputer,
   StartComputer,
   StopComputer,
   HoldComputer,
   RunCommand,
   Browse,
+  WatchChannels,
+  ConnectChannel,
+  DisconnectChannel,
   EnrolDevice,
   ListDevices,
   AllowDevice,

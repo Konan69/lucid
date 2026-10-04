@@ -28,6 +28,7 @@ import { Project, Projects } from './screen/Projects'
 import { Routines } from './screen/Routines'
 import { Settings } from './screen/Settings'
 import { Memory } from './screen/settings/Memory'
+import { Texting } from './screen/settings/Texting'
 import { People } from './screen/settings/People'
 import { ThemeProvider, useTheme } from './theme'
 import { Recover } from './ui/Recover'
@@ -234,6 +235,7 @@ function Shell() {
         <Stack.Screen name="Settings" component={Settings} />
         <Stack.Screen name="People" component={People} />
         <Stack.Screen name="Memory" component={Memory} />
+        <Stack.Screen name="Texting" component={Texting} />
       </Stack.Navigator>
     </NavigationContainer>
   )

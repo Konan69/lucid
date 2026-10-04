@@ -20,6 +20,7 @@ import {
   Tab,
   PageAddressRefused,
   ShowingTab,
+  UsedTab,
   PageLoadFailure,
   PageFavicon,
 } from './pages.ts'
@@ -137,6 +138,7 @@ describe('desktop bridge ingress', () => {
       const state = BrowserState.make({
         revision: 8,
         showing: ShowingTab.cases.Some.make({ value: tab }),
+        using: UsedTab.cases.None.make({}),
         tabs: [
           Page.make({
             tab,

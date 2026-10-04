@@ -19,8 +19,8 @@ import { memoryTools } from '../../../../../packages/agent/runtime/src/tools/mem
 import { skillTools } from '../../../../../packages/agent/runtime/src/tools/skills.ts'
 import { routineTools } from '../../../../../packages/agent/runtime/src/tools/routines.ts'
 import {
-  computerDefinitions,
-  desktopModelTool,
+  commandDefinition,
+  desktopToolFactory,
 } from '../../../../../packages/agent/runtime/src/tools/computer.ts'
 import { documentTools } from '../../../../../packages/agent/runtime/src/tools/documents.ts'
 import { showTools } from '../../../../../packages/agent/runtime/src/tools/show.ts'
@@ -44,8 +44,8 @@ const registered = new Set(
     ...memoryTools(runner),
     ...skillTools(runner),
     ...routineTools(runner),
-    ...computerDefinitions(runner),
-    desktopModelTool(runner),
+    commandDefinition(runner),
+    ...desktopToolFactory(runner).tools(),
     ...codeTools(runner),
     ...documentTools(runner),
     ...showTools(),

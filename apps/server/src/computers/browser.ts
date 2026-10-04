@@ -1,16 +1,8 @@
-import { BrowseResult, BrowserAction } from '@vivid/contracts'
-import { Effect, Schema } from 'effect'
+import { Effect } from 'effect'
 import * as NodeURL from 'node:url'
-import {
-  BrowserAddressRefused,
-  BrowserStepFailed,
-  MachineInputInvalid,
-  MachineResponseInvalid,
-} from './machine.js'
+import { BrowserAddressRefused, MachineInputInvalid } from './machine.js'
 
-const decodeBrowseResult = Schema.decodeUnknownEffect(Schema.fromJsonString(BrowseResult))
-
-/** Reject non-web navigation and local literals; namespace firewall handles DNS and redirects. */
+/** Reject non-web navigation and local literals; provider network policy handles DNS and redirects. */
 export const validateAddress = Effect.fn('Machine.browser.address')(function* (address: string) {
   const url = yield* Effect.try({
     try: () => new NodeURL.URL(address),
@@ -38,43 +30,4 @@ export const validateKey = Effect.fn('Machine.browser.key')(function* (key: stri
   ) {
     yield* Effect.fail(new MachineInputInvalid())
   }
-})
-
-/** The private JSON step travels on stdin; argv contains only the fixed driver path. */
-export const browserArguments = Effect.fn('Machine.browser.arguments')(function* (
-  action: BrowserAction,
-) {
-  if (BrowserAction.guards.Open(action)) yield* validateAddress(action.address)
-  if (BrowserAction.guards.OpenTab(action)) yield* validateAddress(action.address)
-  if (BrowserAction.guards.Press(action)) yield* validateKey(action.key)
-  const step = BrowserAction.match(action, {
-    Open: ({ address }) => ({ step: 'open', address }),
-    Read: () => ({ step: 'read' }),
-    Click: ({ target }) => ({ step: 'click', target }),
-    Type: ({ target, text }) => ({ step: 'type', target, text }),
-    Press: ({ key }) => ({ step: 'press', key }),
-    Screenshot: () => ({ step: 'screenshot' }),
-    Scroll: ({ direction, notches }) => ({ step: 'scroll', direction, notches }),
-    Back: () => ({ step: 'back' }),
-    Forward: () => ({ step: 'forward' }),
-    Wait: ({ seconds }) => ({ step: 'wait', seconds }),
-    OpenTab: ({ address }) => ({ step: 'openTab', address }),
-    ShowTab: ({ tab }) => ({ step: 'showTab', tab }),
-    CloseTab: ({ tab }) => ({ step: 'closeTab', tab }),
-  })
-  return { args: ['node', '/opt/vivid/browser.mjs'], input: JSON.stringify(step) }
-})
-
-/** Decode at the driver ingress; clipped JSON and failed steps cannot masquerade as page state. */
-export const decodeBrowserOutput = Effect.fn('Machine.browser.decode')(function* (result: {
-  readonly output: string
-  readonly exitCode: number
-  readonly truncated: boolean
-}) {
-  if (result.exitCode !== 0) return yield* Effect.fail(new BrowserStepFailed())
-  if (result.truncated)
-    return yield* Effect.fail(new MachineResponseInvalid({ operation: 'browse' }))
-  return yield* decodeBrowseResult(result.output).pipe(
-    Effect.mapError(() => new MachineResponseInvalid({ operation: 'browse' })),
-  )
 })

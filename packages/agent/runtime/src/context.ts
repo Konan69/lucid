@@ -2,7 +2,12 @@ import { useInstruction, useResponseFinish, useResponseStart } from '@flue/runti
 import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
-import { ConnectionState, DEFAULT_APPEARANCE, type VividName } from '@vivid/contracts'
+import {
+  ComputerInventory,
+  ConnectionState,
+  DEFAULT_APPEARANCE,
+  type VividName,
+} from '@vivid/contracts'
 import { asActing, type Acting } from './client.ts'
 import * as views from './tools/views.ts'
 import { boundOutput } from './tools/result.ts'
@@ -16,6 +21,7 @@ const emptyContext = VividContext.make({
   skills: [],
   timezone: '',
   asOf: Option.none(),
+  apps: [],
   integrations: [],
   name: DEFAULT_APPEARANCE.name,
 })
@@ -41,6 +47,19 @@ const loadMemory = Effect.fn('Context.loadMemory')(function* (acting: Option.Opt
     }),
   )
 })
+
+/** Runtime context names only observed installations. A failed read contributes no app claim;
+ * provider identifiers, package paths and capability descriptions never enter the model prompt. */
+const loadApps = Effect.fn('Context.loadApps')(
+  function* (acting: Option.Option<Acting>) {
+    const inventory = yield* asActing(acting, (client) => client.GetComputerApps())
+    return ComputerInventory.match(inventory, {
+      Unavailable: () => [],
+      Installed: ({ apps }) => apps.map((app) => app.name),
+    })
+  },
+  Effect.catch(() => Effect.succeed([])),
+)
 
 /** Summaries supply immutable creation order without transporting every procedure's instructions. */
 const loadSkills = Effect.fn('Context.loadSkills')(
@@ -133,8 +152,9 @@ export const loadContext = Effect.fn('Context.load')(function* (acting: Option.O
         asOf: readClock(),
         integrations: loadIntegrations(acting),
         name: loadName(acting),
+        apps: loadApps(acting),
       },
-      { concurrency: 6 },
+      { concurrency: 7 },
     ),
   )
   if (Option.isSome(acting)) snapshots.prepare(acting.value, context)
@@ -151,6 +171,7 @@ export function contextInstruction(context: VividContext) {
   const output = boundOutput({
     skills: views.skills(context.skills),
     timezone: context.timezone,
+    apps: context.apps.map(views.modelText),
     integrations: context.integrations.map(views.modelText),
   })
   return `Context for this response (saved facts may be stale; confirm current facts before acting):\n${JSON.stringify(output)}${remembered(context.memory)}${clock(context)}`

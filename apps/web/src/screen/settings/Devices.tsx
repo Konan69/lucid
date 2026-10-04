@@ -10,6 +10,7 @@ import {
 } from '../../data/account'
 import { run } from '../../data/app'
 import { Button } from '../../ui/button'
+import { YourComputers } from './Computers'
 import { Empty, Refusal, Row, Section } from './Parts'
 
 /**
@@ -29,6 +30,7 @@ export function Devices({ initialCode }: { initialCode: string }) {
 
   return (
     <>
+      <YourComputers />
       <SignedIn />
       <Pairing
         code={code}

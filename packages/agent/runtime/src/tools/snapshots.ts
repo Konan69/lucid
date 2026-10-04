@@ -42,6 +42,8 @@ export const VividContext = Schema.Struct({
   memory: Remembered,
   skills: Schema.Array(ContextSkill),
   timezone: Schema.String,
+  /** Names observed on this Computer; an empty list means no current installation proof. */
+  apps: Schema.Array(Schema.String),
   /**
    * The start of the hour in which this response's context was read, in epoch milliseconds. It is
    * read once and frozen with the rest of the context, so every model turn of one response sees

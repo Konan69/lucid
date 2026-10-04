@@ -1,4 +1,4 @@
-import { Array as Arr, Effect, Option, Order, Schema } from 'effect'
+import { Array as Arr, Clock, Duration, Effect, Option, Order, Schema } from 'effect'
 import {
   ActionTarget,
   ConnectionRequestMessage,
@@ -32,8 +32,8 @@ import {
 import { callableTool, discoveredTool } from '../code/signatures.ts'
 import { executorFailure } from './errors.ts'
 import { ConnectionStore } from './store.ts'
-import { decisionConfigured } from '../decisions/model.ts'
-import { relevantTools } from './relevance.ts'
+import { decisionConfigured, isDecisionNonEvent } from '../decisions/model.ts'
+import { relevantTools, relevantToolsWithin, RELEVANCE_BUDGET } from './relevance.ts'
 import { ToolEffects } from './effects.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
 
@@ -78,15 +78,22 @@ const rank = <A>(
     .map(({ item }) => item)
 }
 
-/** The account label and provider effect accompany every discoverable tool. */
+/** All mandatory catalog reads finish before the shared optional-work clock starts.
+ * Projection keeps Executor's effect when classification exceeds that deadline;
+ * shared writes are withheld before tools enter model context. */
 const projectTools = Effect.fn('Connections.projectTools')(function* (
-  store: typeof ConnectionStore.Service,
-  actor: Actor,
-  row: ConnectionRecord,
-  account: string,
+  {
+    row,
+    account,
+    tools,
+  }: {
+    readonly row: ConnectionRecord
+    readonly account: string
+    readonly tools: readonly (typeof ExecutorTool.Type)[]
+  },
+  started: number,
 ) {
-  const tools = yield* store.tools(actor, row)
-  const classified = yield* classifyTools(row, tools)
+  const classified = yield* classifyTools(row, tools, started)
   return classified.flatMap((tool) =>
     row.companyId !== null && tool.effect !== 'read'
       ? []
@@ -94,16 +101,35 @@ const projectTools = Effect.fn('Connections.projectTools')(function* (
   )
 })
 
-/** Discovery submits uncached metadata in one bounded resolver batch per Integration. */
+/** Per-tool timers preserve already-answered siblings when a catalog spans batches.
+ * All timers share findTools' deadline; concurrent misses still reach the grouped resolver.
+ * Deadline cancellation stops only this caller's wait. ToolEffects keeps bounded
+ * lookup work in its Layer scope so later discovery can reuse the completed answer.
+ * If that lookup later fails or the Layer closes, its failed exit lives for one
+ * minute; deliberate absence and shared backoff exits have zero TTL. */
 const classifyTools = Effect.fn('Connections.classifyTools')(function* (
   row: ConnectionRecord,
   tools: readonly (typeof ExecutorTool.Type)[],
+  started: number,
 ) {
-  return yield* (yield* ToolEffects).classifyBatch({
-    serviceId: row.service,
-    service: row.serviceName,
+  const remaining = FIND_TOOLS_BUDGET_MILLIS - ((yield* Clock.currentTimeMillis) - started)
+  if (remaining <= 0) return tools
+  const effects = yield* ToolEffects
+  return yield* Effect.forEach(
     tools,
-  })
+    Effect.fn('Connections.discoveryEffect')(function* (tool) {
+      const effect = yield* effects
+        .classify({ serviceId: row.service, service: row.serviceName, tool })
+        .pipe(
+          Effect.timeoutOrElse({
+            duration: Duration.millis(remaining),
+            orElse: () => Effect.succeed(tool.effect),
+          }),
+        )
+      return ExecutorTool.make({ ...tool, effect })
+    }),
+    { concurrency: 'unbounded' },
+  )
 })
 
 /** Execution and label resolution classify only the requested metadata. */
@@ -145,6 +171,69 @@ export function namedAccounts(records: readonly ConnectionRecord[]) {
   })
 }
 
+/** Catalog reads only enrich Integration offers and do not depend on semantic ranking.
+ * Keeping this branch separate lets both optional reads overlap while retaining the existing
+ * ServiceUnavailable baseline and ready-Integration exclusion. */
+const offeredServices = Effect.fn('Connections.offeredServices')(function* (
+  store: typeof ConnectionStore.Service,
+  records: readonly ConnectionRecord[],
+  query: string,
+) {
+  const services = yield* store
+    .catalog()
+    .pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
+  const unconnected = services.filter(
+    (service) => !records.some((row) => row.service === service.id && row.status === 'ready'),
+  )
+  return yield* Effect.forEach(
+    rank(unconnected, query, 3, (service) => ({
+      own: `${service.name} ${service.description}`,
+      identity: '',
+    })),
+    (service) => store.service(service.id),
+    { concurrency: 3 },
+  ).pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
+})
+
+/**
+ * The lexical candidates in the order discovery returns them. Zero or one candidate has nothing
+ * to order, and switched-off decisions return at once; neither is a degraded answer worth a
+ * warning. It never fails: when relevance cannot be judged the lexical order stands.
+ */
+const orderTools = Effect.fn('Connections.orderTools')(function* <
+  A extends Parameters<typeof relevantTools>[1][number],
+>(query: string, lexical: ReadonlyArray<A>, started: number) {
+  if (lexical.length < 2 || !(yield* decisionConfigured)) return lexical
+  const remaining = FIND_TOOLS_BUDGET_MILLIS - ((yield* Clock.currentTimeMillis) - started)
+  if (remaining < RELEVANCE_MINIMUM_MILLIS) return lexical
+  const budget = Duration.min(
+    Duration.millis(remaining),
+    Duration.fromInputUnsafe(RELEVANCE_BUDGET),
+  )
+  return yield* relevantToolsWithin(query, lexical, budget).pipe(
+    Effect.map((result) => result.ordered),
+    Effect.catch((error) =>
+      isDecisionNonEvent(error)
+        ? Effect.succeed(lexical)
+        : Effect.logWarning('Tool relevance unavailable', {
+            tag: error._tag,
+            reason: error.reason,
+          }).pipe(Effect.as(lexical)),
+    ),
+  )
+})
+
+/** Gateway, jev-latest, 4 Oct 2026: effect/relevance warm medians total 1589.5ms. A shared
+ * 2000ms deadline leaves 410.5ms typical headroom and caps sequential optional stages together;
+ * every classification group and relevance share it, including queued Integrations.
+ * Mandatory store reads retain their normal baseline semantics. */
+const FIND_TOOLS_BUDGET_MILLIS = 2000
+/** Gateway, jev-latest, 4 Oct 2026: the earlier relevance warm maximum was
+ * 1389ms; round-five's first cohort measured 691ms. 1800ms retains 411ms (30%)
+ * above the larger observed maximum. Shorter remainders skip optional ordering
+ * silently; timeout evidence is separately calibrated by the decision gate. */
+const RELEVANCE_MINIMUM_MILLIS = 1800
+
 /** Discovery removes shared writes before any tool enters model context. */
 export const findTools = Effect.fn('Connections.findTools')(function* (
   actor: Actor,
@@ -152,25 +241,18 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
 ) {
   const store = yield* ConnectionStore
   const records = yield* store.records(actor)
-  const groups = yield* Effect.forEach(
+  const catalogs = yield* Effect.forEach(
     namedAccounts(records).filter(({ row }) => row.status === 'ready'),
-    ({ row, account }) => projectTools(store, actor, row, account),
+    Effect.fn('Connections.loadDiscoveryTools')(function* (named) {
+      const tools = yield* store.tools(actor, named.row)
+      return { ...named, tools }
+    }),
     { concurrency: 4 },
   )
-  const services = yield* store
-    .catalog()
-    .pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
-  const unconnected = services.filter(
-    (service) => !records.some((row) => row.service === service.id && row.status === 'ready'),
-  )
-  const offered = yield* Effect.forEach(
-    rank(unconnected, request.query, 3, (service) => ({
-      own: `${service.name} ${service.description}`,
-      identity: '',
-    })),
-    (service) => store.service(service.id),
-    { concurrency: 3 },
-  ).pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
+  const started = yield* Clock.currentTimeMillis
+  const groups = yield* Effect.forEach(catalogs, (catalog) => projectTools(catalog, started), {
+    concurrency: 4,
+  })
   const limit = request.limit === undefined ? 8 : request.limit
   if (!Number.isFinite(limit) || limit < 1)
     return yield* Effect.fail(
@@ -181,23 +263,21 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     own: `${tool.name} ${tool.description}`,
     identity: `${tool.serviceName} ${tool.account}`,
   }))
-  // No lexical candidate, or decisions switched off, means no semantic request and no delay:
-  // the lexical order is the answer, not a degraded one worth a warning.
-  const ordered =
-    lexical.length === 0 || !(yield* decisionConfigured)
-      ? lexical
-      : yield* relevantTools(request.query, lexical).pipe(
-          Effect.map((ranking) => ranking.ordered),
-          Effect.catch((error) =>
-            Effect.logWarning('Tool relevance unavailable', {
-              tag: error._tag,
-              reason: error.reason,
-            }).pipe(Effect.as(lexical)),
-          ),
-        )
+  const [ordered, offered] = yield* Effect.all(
+    [orderTools(request.query, lexical, started), offeredServices(store, records, request.query)],
+    { concurrency: 2 },
+  )
+  const limited = ordered.slice(0, Math.min(25, Math.floor(limit)))
+  // One slot belongs to the promoted winner. With larger limits, reserve the final slot
+  // for the strongest lexical match only when semantic promotion would otherwise evict it.
+  const selected = Option.match(Arr.head(lexical), {
+    onNone: () => limited,
+    onSome: (first) =>
+      limited.length === 1 || limited.includes(first) ? limited : [...limited.slice(0, -1), first],
+  })
   return {
     tools: yield* Effect.forEach(
-      ordered.slice(0, Math.min(25, Math.floor(limit))),
+      selected,
       Effect.fn('Connections.discoveredTool')(function* (tool) {
         return DiscoveredTool.make({
           connectionId: tool.connectionId,

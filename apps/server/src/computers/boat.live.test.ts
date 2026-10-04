@@ -171,6 +171,16 @@ describe.skipIf(!enabled)('Boat native guest live proof', () => {
         const key = MachineKey.make(NodeCrypto.randomUUID())
         yield* cleanup(key)
         yield* measured('create', machine.ensure(key))
+        // A template is usable only when portable archives survive restore, not just preparation.
+        const installed = yield* measured(
+          'verify-restored-apps',
+          machine.exec({
+            key,
+            command: '/opt/vivid/python/bin/python3 /opt/vivid/computer/catalogue.py verify',
+            timeoutSeconds: 60,
+          }),
+        )
+        expect(installed.exitCode).toBe(0)
         const saved = yield* bindings()
         const original = yield* saved.load(key)
         if (Option.isNone(original) || original.value.providerId === null)

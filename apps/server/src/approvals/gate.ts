@@ -3,13 +3,18 @@ import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import {
   Approval,
-  type NotFound,
+  RunId,
+  ThreadId,
+  NotFound,
   type Person,
   type ProposedAction,
   type Workspace,
 } from '@vivid/contracts'
+import * as Option from 'effect/Option'
+import * as Match from 'effect/Match'
+import { actingRun } from '../threads/runs.ts'
 import type { Actor } from '../auth/access.ts'
-import type { DatabaseInfrastructureError } from '../database/client.ts'
+import { Database, type DatabaseInfrastructureError } from '../database/client.ts'
 
 /**
  * What the server decided about one thing Vivid wants to do.
@@ -29,12 +34,46 @@ export type GateDecision = typeof GateDecision.Type
 
 /**
  * Whether the action would bring something of the acting Person's own into a Thread other people
- * can read. `PersonalInShared` is a personal Connection used in a shared Thread: Vivid asks first
+ * can read. `PersonalInShared` is a personal Connection or computer used in a shared Thread: Vivid asks first
  * even for a read, because the answer lands where others see it (docs/22, "Shared work asks
  * first"). Everything else is `Ordinary`.
  */
 export const GateExposure = Schema.Literals(['Ordinary', 'PersonalInShared'] as const)
 export type GateExposure = typeof GateExposure.Type
+
+/** Derived from the authenticated Actor. RuntimeThread is a runtime RPC outside an admitted
+ * working turn (legacy cloud and Connection callers); it never grants Person-device authority.
+ * Run names the admitted turn acting for that Person. Human calls do not propose actions. */
+export const ActionOrigin = Schema.TaggedUnion({
+  Run: { threadId: ThreadId, runId: RunId },
+  RuntimeThread: { threadId: ThreadId },
+})
+export type ActionOrigin = typeof ActionOrigin.Type
+
+/** Runtime RPC carries Thread authority; resolve its exact acting Run before proposing an action. */
+export const actionOrigin = Effect.fn('Gate.origin')(function* (actor: Actor) {
+  if (actor.by === 'person') return yield* new NotFound({ message: 'Action needs a Vivid Thread' })
+  if (Option.isNone(actor.threadId))
+    return yield* new NotFound({ message: 'Action needs a Vivid Thread' })
+  const threadId = actor.threadId.value
+  return yield* actingRun(threadId, actor.person.id).pipe(
+    Effect.map((runId) => ActionOrigin.cases.Run.make({ threadId, runId })),
+    Effect.catchTag('NoActingRun', ({ reason }) =>
+      Match.value(reason).pipe(
+        Match.when('NoWorkingRun', () =>
+          Effect.succeed(ActionOrigin.cases.RuntimeThread.make({ threadId })),
+        ),
+        Match.when('SeveralWorkingRuns', () =>
+          Effect.fail(new NotFound({ message: 'This work cannot safely act right now' })),
+        ),
+        Match.when('ActsForAnotherPerson', () =>
+          Effect.fail(new NotFound({ message: 'Action is acting for another Person' })),
+        ),
+        Match.exhaustive,
+      ),
+    ),
+  )
+})
 
 export interface GateService {
   /**
@@ -43,7 +82,8 @@ export interface GateService {
    * The working model never decides this. A `read` passes. A `write` or `destructive` action is
    * weighed against the rules that bind the acting Person: `Never` beats `Ask` beats `Allow`, a
    * Company's rules are binding on every Member, and a Person's own rules can only make things
-   * stricter. With no rule, the default is to run: only an action that uses something of the
+   * stricter. With no rule, the default is to run, and that includes a write on the Person's
+   * own browser (owner decision, 4 October 2026; see the ask group below): only an action that uses something of the
    * Person's own, or is `destructive`, goes to the `Reviewer`, and `policy.ts#reviewOutcome` asks
    * only when the Person did not ask for it and it reaches other people or cannot be undone. With
    * no review (decisions switched off or unavailable) a `write` runs and a `destructive` action
@@ -71,14 +111,15 @@ export interface ActionRunnerService {
   /**
    * Performs one stored action for the Person who approved it. It is called exactly once per
    * Approval, after the Approval has been claimed, with the action as it was stored when proposed
-   * and never with anything the model says afterwards. It does not fail: every ending is an
-   * `ActionOutcome`.
+   * and never with anything the model says afterwards. Machine endings are ActionOutcome values;
+   * infrastructure failures retain their typed error for the handler.
    */
   readonly run: (input: {
     readonly person: Person
     readonly workspace: Workspace
     readonly action: ProposedAction
-  }) => Effect.Effect<ActionOutcome>
+    readonly origin: ActionOrigin
+  }) => Effect.Effect<ActionOutcome, DatabaseInfrastructureError>
 }
 
 /**
@@ -98,6 +139,15 @@ import { ApprovalStore } from './store.ts'
 import { auditAction } from './action.ts'
 import { reviewOutcome } from './policy.ts'
 import { Reviewer } from './review.ts'
+
+/** Whether the action is on the Person's own computer: only that Person may decide an Approval for it. */
+export const usesPersonalBrowser = (action: ProposedAction) =>
+  ActionTarget.match(action.target, {
+    Browser: ({ target }) => BrowseTarget.match(target, { Person: () => true, Vivid: () => false }),
+    Command: () => false,
+    Desktop: () => false,
+    Connection: () => false,
+  })
 
 /** Record commands, consequential Connection allowance and use of the Person's own browser. */
 const allow = Effect.fn('Gate.allow')(function* (
@@ -148,9 +198,13 @@ export const gateLayer = Layer.effect(
     const approvals = yield* ApprovalStore
     const audit = yield* Audit
     const reviewer = yield* Reviewer
+    const database = yield* Database
     return Gate.of({
       /** Ordinary reads pass; rules come first; the rest runs unless the review says a Person is needed. */
       check: Effect.fn('Gate.check')(function* (actor, action, exposure) {
+        // All callers previously resolved origin before Gate.check. Keep that authority check
+        // here when removing the duplicated proposal field, including actions allowed immediately.
+        yield* actionOrigin(actor).pipe(Effect.provideService(Database, database))
         if (action.effect === 'read' && exposure === 'Ordinary')
           return yield* allow(audit, actor, action)
         const binding = yield* rules.list(actor)
@@ -169,6 +223,15 @@ export const gateLayer = Layer.effect(
         }
         // An applicable Ask rule, rules that could not be weighed, and something personal
         // entering a shared Thread always ask: none of these is a judgment about the request.
+        //
+        // A write on the Person's own signed-in browser is deliberately NOT in this group. It
+        // was, for a few hours on 4 October 2026, after a review found such writes could run
+        // unasked; the owner then decided, the same day: "I don't need approval for writing my
+        // browser". It follows the same table as a write through the Person's own Integration
+        // (`reviewOutcome` in `policy.ts`, where the decision and its risk are recorded): Vivid
+        // acts as the Person on every site they are signed in to. What still stops it is here
+        // and below: a Never rule, an Ask rule, a shared Thread, a destructive effect, and the
+        // Stop on the page itself.
         if (
           applicable.some((rule) => rule.decision === 'Ask') ||
           BindingJudgment.guards.Uncertain(judged) ||

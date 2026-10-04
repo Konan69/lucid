@@ -1,14 +1,13 @@
 import type { Project, ProjectId, Thread } from '@vivid/contracts'
 import { projects as projectsData } from '@vivid/state'
 import { Option } from 'effect'
-import { ChevronRight, Plus } from 'lucide-react'
-import { useState, useSyncExternalStore } from 'react'
+import { ChevronRight } from 'lucide-react'
+import { useSyncExternalStore } from 'react'
 import { kept } from '../../data/kept'
 import { Route, router } from '../../data/route'
 import { scope } from '../../data/scope'
 import { cn } from '../../ui/cn'
 import { Count } from '../../ui/Count'
-import { CreateProject } from '../project/Create'
 import { Mark } from '../project/Mark'
 import { CAPTION, FULL, HOVER, ROW } from './rows'
 
@@ -65,7 +64,6 @@ export function ProjectGroup({
   /** The Project whose page is on screen: its row carries the fill, as any open row does. */
   open: Option.Option<ProjectId>
 }) {
-  const [creating, setCreating] = useState(false)
   const isFolded = useSyncExternalStore(fold.subscribe, fold.isFolded)
   const top = projectsData.projectsIn(projects, null)
   const shown = top.slice(0, SHOWN)
@@ -93,7 +91,7 @@ export function ProjectGroup({
           </button>
         </h3>
       )}
-      {(!isFolded || top.length === 0) && (
+      {top.length > 0 && !isFolded && (
         <ul className="flex flex-col gap-px">
           {shown.map((project) => (
             <li key={project.id}>
@@ -117,25 +115,7 @@ export function ProjectGroup({
               </button>
             </li>
           )}
-          <li>
-            <button
-              onClick={() => setCreating(true)}
-              className={cn(ROW, FULL, HOVER, 'text-ink-3 hover:text-ink')}
-            >
-              <span className="inline-flex size-5.5 shrink-0 items-center justify-center">
-                <Plus className="size-4" strokeWidth={1.6} />
-              </span>
-              <span className="min-w-0 flex-1 truncate text-label">New project</span>
-            </button>
-          </li>
         </ul>
-      )}
-      {creating && (
-        <CreateProject
-          inside={null}
-          onMade={(project) => openProject(project.id)}
-          onClose={() => setCreating(false)}
-        />
       )}
     </section>
   )

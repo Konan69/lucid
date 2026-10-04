@@ -13,6 +13,7 @@ import { Memory } from './settings/Memory'
 import { People } from './settings/People'
 import { Record } from './settings/Record'
 import { Rules } from './settings/Rules'
+import { Texting } from './settings/Texting'
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '../ui/dialog'
 import { useSurface } from '../ui/Layer'
 
@@ -26,6 +27,7 @@ interface Entry {
 const YOURS: ReadonlyArray<Entry> = [
   { id: 'general', label: 'General', place: 'general' },
   { id: 'memory', label: 'What Vivid knows', place: 'memory' },
+  { id: 'texting', label: 'Text Vivid', place: 'texting' },
   { id: 'devices', label: 'Devices', place: 'devices' },
 ]
 const SHARED: ReadonlyArray<Entry> = [
@@ -42,6 +44,7 @@ const TITLE = {
   connections: 'Integrations',
   rules: 'Rules',
   memory: 'What Vivid knows',
+  texting: 'Text Vivid',
   record: 'Record',
 } satisfies Record<SettingsSection, string>
 
@@ -107,6 +110,7 @@ export function Settings({
               {section === 'connections' && <Connections me={me} />}
               {section === 'rules' && <Rules me={me} />}
               {section === 'memory' && <Memory />}
+              {section === 'texting' && <Texting />}
               {section === 'record' && <Record />}
             </div>
           </div>
