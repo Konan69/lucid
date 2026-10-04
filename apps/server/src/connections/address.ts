@@ -12,7 +12,7 @@ import { publicAddress as publicIp } from '../code/address.ts'
 import { PageReader, publicPageLayer } from '../code/page.ts'
 import { ReadPageOutcome } from '@vivid/contracts'
 import { ConnectionAddressRefusal } from '@vivid/contracts'
-import { ExecutorSourceUnsupported } from './source.ts'
+import { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
 
 /** Invalid addresses never carry their supplied value, which might contain a pasted credential. */
 export class ConnectionAddressInvalid extends Schema.TaggedError<ConnectionAddressInvalid>()(
@@ -72,7 +72,10 @@ interface ConnectionAddressService {
     address: string,
   ) => Effect.Effect<
     ConnectionSource,
-    ConnectionAddressInvalid | ConnectionAddressUnreachable | ExecutorSourceUnsupported
+    | ConnectionAddressInvalid
+    | ConnectionAddressUnreachable
+    | ExecutorSourceUnsupported
+    | ExecutorImportQueryUnsupported
   >
 }
 /** Public endpoint inspection owns outbound network authority independently of Executor credentials. */
@@ -91,6 +94,15 @@ const Initialized = Schema.Struct({
 })
 const decodeInitialized = Schema.decodeUnknownOption(Schema.fromJsonString(Initialized))
 
+/** Match packages/catalog/src/contracts/imports.ts ImportUrl: query-bearing MCP endpoints
+ * cannot be installed. Keep the exact accepted URL; do not silently strip meaningful parameters. */
+const mcpSource = Effect.fn('Connections.mcpSource')(
+  (address: URL, authorization: 'auto' | 'apiKey') =>
+    address.search.length > 0
+      ? Effect.fail(new ExecutorImportQueryUnsupported({}))
+      : Effect.succeed(ConnectionSource.cases.Mcp.make({ address: address.href, authorization })),
+)
+
 /** OAuth metadata selects discovery; a plain Bearer challenge selects a masked token field. */
 const mcpAuthorization = Effect.fn('Connections.mcpAuthorization')(function* (
   address: URL,
@@ -103,10 +115,7 @@ const mcpAuthorization = Effect.fn('Connections.mcpAuthorization')(function* (
         reason: 'unsupported integration authorization or specification',
       }),
     )
-  return ConnectionSource.cases.Mcp.make({
-    address: address.href,
-    authorization: challenge.includes('resource_metadata') ? 'auto' : 'apiKey',
-  })
+  return yield* mcpSource(address, challenge.includes('resource_metadata') ? 'auto' : 'apiKey')
 })
 
 /** Preserve POST only across 307/308 redirects, rechecking every destination before dispatch. */
@@ -165,7 +174,7 @@ const probeMcp = Effect.fn('Connections.probeMcp')(function* (
     return yield* Effect.fail(
       ConnectionAddressInvalid.make({ reason: 'not an MCP server or OpenAPI specification' }),
     )
-  return ConnectionSource.cases.Mcp.make({ address: address.href, authorization: 'auto' })
+  return yield* mcpSource(address, 'auto')
 })
 
 /** One bounded public redirect chain is shared by initial URLs and discovered specification links. */

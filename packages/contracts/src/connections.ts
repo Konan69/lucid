@@ -292,12 +292,16 @@ export const AddIntegrationRequest = Schema.Struct({
 })
 export interface AddIntegrationRequest extends Schema.Schema.Type<typeof AddIntegrationRequest> {}
 
+export const mcpQueryUnsupportedMessage =
+  'An MCP server address cannot include query parameters. Use its base endpoint address.'
+
 export const openApiUnsupportedMessage =
   'An OpenAPI document cannot be added as an Integration yet. You can add an MCP server.'
 
 /** Failure reasons are precise and credential-free; documentation must publish a specification link. */
 export const ConnectionAddressRefusal = Schema.Literals([
   openApiUnsupportedMessage,
+  mcpQueryUnsupportedMessage,
   'not a public web address',
   'documentation page has no OpenAPI specification link',
   'not an MCP server or OpenAPI specification',

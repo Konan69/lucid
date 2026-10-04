@@ -31,8 +31,8 @@ import type * as HttpBody from 'effect/unstable/http/HttpBody'
 import { toolMessage } from './message.ts'
 import { retainCatalog } from './catalog.ts'
 import { ConnectionSource } from './address.ts'
-import { ExecutorSourceUnsupported } from './source.ts'
-export { ExecutorSourceUnsupported } from './source.ts'
+import { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
+export { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
 import {
   encodeGoogleClient,
   googleApp,
@@ -241,6 +241,7 @@ export class ExecutorApprovalUnsupported extends Schema.TaggedError<ExecutorAppr
 
 export type ExecutorFailure =
   | ExecutorSourceUnsupported
+  | ExecutorImportQueryUnsupported
   | ExecutorPublicAddressRequired
   | ServiceUnavailable
   | ExecutorTransportFailure
@@ -634,7 +635,10 @@ function responseReader(client: HttpClient.HttpClient) {
           return yield* Effect.fail(
             ExecutorRejected.make({
               ...context,
-              message: 'The integration refused this request before running the tool.',
+              message:
+                tool === null
+                  ? 'The Integration management request was refused.'
+                  : 'The Integration refused this request before running the tool.',
             }),
           )
         }
@@ -705,7 +709,7 @@ function completedCall(value: Schema.Json) {
 }
 
 /** Hosted paths keep app/profile opaque and explicit; the authenticated organization is prefixed
- * once at client acquisition (apps/hosted/server/src/contracts/profiles.ts HostedProfiles HostedProfiles).
+ * once at client acquisition (apps/hosted/server/src/contracts/profiles.ts HostedProfiles).
  */
 const target = (references: ExecutorReferences) =>
   `/apps/${encodeURIComponent(references.app)}/profiles/${encodeURIComponent(references.profile)}`
@@ -920,6 +924,24 @@ function makeSignIn(
   })
 }
 
+/** Hosted AccountConnection.target is authoritative for a pending flow. A changed profile/app
+ * cannot be followed or removed through this Connection. Untargeted reconnects are legitimate
+ * only when their saved reconnectAccount supplies the original account identity.
+ */
+const validateConnectionTarget = Effect.fn('Executor.validateConnectionTarget')((
+  connection: typeof WireConnection.Type,
+  references: ExecutorReferences,
+) => {
+  const selection = connection.target
+  if (selection === null)
+    return connection.reconnectAccount === null
+      ? Effect.fail(ExecutorResponseInvalid.make({ service: 'connections', tool: null }))
+      : Effect.void
+  return selection.profile === references.profile && selection.app === references.app
+    ? Effect.void
+    : Effect.fail(ExecutorResponseInvalid.make({ service: 'connections', tool: null }))
+})
+
 /** Native targeted requests atomically select the saved account into the exact profile. */
 function makeAuthorize(
   http: ExecutorHttp,
@@ -973,17 +995,19 @@ function makeAuthorize(
     // apps/hosted/server/src/contracts/accounts.ts.
     const connection = isPending(references)
       ? { id: references.authorization }
-      : yield* http.readConnection(
-          ExecutorReferences.guards.Authorized(references)
-            ? Effect.succeed(
-                HttpClientRequest.post(`/accounts/${query(references.account)}/connections`),
-              )
-            : post(`/apps/${query(references.app)}/connections`, {
-                requirement,
-                profile: references.profile,
-              }),
-          null,
-        )
+      : yield* http
+          .readConnection(
+            ExecutorReferences.guards.Authorized(references)
+              ? Effect.succeed(
+                  HttpClientRequest.post(`/accounts/${query(references.account)}/connections`),
+                )
+              : post(`/apps/${query(references.app)}/connections`, {
+                  requirement,
+                  profile: references.profile,
+                }),
+            null,
+          )
+          .pipe(Effect.tap((created) => validateConnectionTarget(created, references)))
     return yield* AuthorizationMethod.match(method, {
       secrets: ({ fields }) => {
         const pending = ExecutorReferences.cases.EnteringKey.make({
@@ -1019,6 +1043,7 @@ function makeStatus(http: ExecutorHttp) {
           Effect.succeed(HttpClientRequest.get(`/connections/${query(references.authorization)}`)),
           null,
         )
+        yield* validateConnectionTarget(connection, references)
         const state = connection.state
         if (WireConnection.fields.state.guards.pending(state))
           return ExecutorStatus.cases.NeedsAuthorization.make({ references })
@@ -1501,6 +1526,16 @@ function makeAdd(
   ) {
     if (ConnectionSource.guards.OpenApi(input.source))
       return yield* Effect.fail(new ExecutorSourceUnsupported({ source: 'OpenApi' }))
+    const address = URL.parse(input.source.address)
+    if (address === null)
+      return yield* Effect.fail(
+        ExecutorRejected.make({
+          service: 'connections',
+          tool: null,
+          message: 'Enter a valid MCP server address.',
+        }),
+      )
+    if (address.search.length > 0) return yield* Effect.fail(new ExecutorImportQueryUnsupported({}))
     const app = yield* install(input.service, (name) => {
       // Executor resolves the inspected URL again; production requires public-only egress.
       const source = WireImportSource.make({ name, url: input.source.address })
@@ -1543,6 +1578,7 @@ function makeReauthorize(
         Effect.succeed(HttpClientRequest.get(`/connections/${query(references.authorization)}`)),
         null,
       )
+      yield* validateConnectionTarget(pending, references)
       if (WireConnection.fields.state.guards.completed(pending.state)) {
         references = ExecutorReferences.cases.Authorized.make({
           ...referenceIdentity(references),
@@ -1697,6 +1733,7 @@ function makeResolveRemovalAccount(http: ExecutorHttp) {
   ) {
     const path = `/connections/${query(references.authorization)}`
     const connection = yield* http.readConnection(Effect.succeed(HttpClientRequest.get(path)), null)
+    yield* validateConnectionTarget(connection, references)
     const reconnect = Option.map(
       Option.fromNullOr(connection.reconnectAccount),
       (account) => account.id,

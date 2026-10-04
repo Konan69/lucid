@@ -346,6 +346,73 @@ describe('Executor hosted transport', () => {
     ),
   )
 
+  it.effect('refuses query-bearing import URLs before HTTP with actionable copy', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        const source = ConnectionSource.cases.Mcp.make({
+          address: 'https://example.test/mcp?token=private-value',
+          authorization: 'auto',
+        })
+        const failure = yield* (yield* Executor).add({ ...begin, source }).pipe(Effect.flip)
+        expect(failure._tag).toBe('ExecutorImportQueryUnsupported')
+        expect(executorFailure(failure)).toHaveProperty(
+          'message',
+          'An MCP server address cannot include query parameters. Use its base endpoint address.',
+        )
+        expect(JSON.stringify(failure)).not.toContain('private-value')
+        expect(yield* Ref.get(remote.requests)).toEqual([])
+      }),
+    ),
+  )
+
+  it.effect('does not describe an unknown import refusal as a tool dispatch', () =>
+    scenario((remote) =>
+      Effect.gen(function* () {
+        yield* failRoute(remote, 'POST /apps/import', {
+          status: 422,
+          body: Schema.TaggedStruct('FutureImportFailure', {}).make({}),
+        })
+        const source = ConnectionSource.cases.Mcp.make({
+          address: 'https://example.test/mcp',
+          authorization: 'auto',
+        })
+        const failure = yield* (yield* Executor).add({ ...begin, source }).pipe(Effect.flip)
+        expect(executorFailure(failure)).toHaveProperty(
+          'message',
+          'The Integration management request was refused.',
+        )
+      }),
+    ),
+  )
+
+  for (const operation of ['status', 'reauthorize', 'remove'] as const) {
+    it.effect(`refuses a mismatching pending profile during ${operation} without mutation`, () =>
+      scenario((remote) =>
+        Effect.gen(function* () {
+          yield* failRoute(remote, 'GET /connections/authorization', {
+            status: 200,
+            body: {
+              id: 'authorization',
+              reconnectAccount: null,
+              target: { app: 'app', profile: 'foreign-profile' },
+              state: { status: 'pending' },
+            },
+          })
+          const executor = yield* Executor
+          const action =
+            operation === 'reauthorize'
+              ? executor.reauthorize({ ...begin, references: key })
+              : executor[operation](key)
+          const failure = yield* action.pipe(Effect.flip)
+          expect(failure).toBeInstanceOf(ExecutorResponseInvalid)
+          expect(
+            (yield* Ref.get(remote.requests)).every((request) => request.path.startsWith('GET')),
+          ).toBe(true)
+        }),
+      ),
+    )
+  }
+
   it.effect('reads every cursor page and pins the snapshot for invocation', () =>
     scenario((remote) =>
       Effect.gen(function* () {

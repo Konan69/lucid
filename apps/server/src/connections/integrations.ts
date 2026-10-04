@@ -1,6 +1,7 @@
 import {
   AddIntegrationOutcome,
   openApiUnsupportedMessage,
+  mcpQueryUnsupportedMessage,
   ConnectionMatch,
   ConnectionState,
   ConnectionStep,
@@ -96,6 +97,12 @@ export const addIntegration = Effect.fn('Connections.addIntegration')(
   (effect) =>
     effect.pipe(
       Effect.catchTags({
+        ExecutorImportQueryUnsupported: () =>
+          Effect.succeed(
+            AddIntegrationOutcome.cases.NotAnIntegration.make({
+              reason: mcpQueryUnsupportedMessage,
+            }),
+          ),
         ExecutorSourceUnsupported: () =>
           Effect.succeed(
             AddIntegrationOutcome.cases.NotAnIntegration.make({
