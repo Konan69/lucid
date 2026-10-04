@@ -96,12 +96,13 @@ const decodeInitialized = Schema.decodeUnknownOption(Schema.fromJsonString(Initi
 
 /** Match packages/catalog/src/contracts/imports.ts ImportUrl: query-bearing MCP endpoints
  * cannot be installed. Keep the exact accepted URL; do not silently strip meaningful parameters. */
-const mcpSource = Effect.fn('Connections.mcpSource')(
-  (address: URL, authorization: 'auto' | 'apiKey') =>
-    address.search.length > 0
-      ? Effect.fail(new ExecutorImportQueryUnsupported({}))
-      : Effect.succeed(ConnectionSource.cases.Mcp.make({ address: address.href, authorization })),
-)
+const mcpSource = Effect.fn('Connections.mcpSource')(function* (
+  address: URL,
+  authorization: 'auto' | 'apiKey',
+) {
+  if (address.search.length > 0) return yield* Effect.fail(new ExecutorImportQueryUnsupported({}))
+  return ConnectionSource.cases.Mcp.make({ address: address.href, authorization })
+})
 
 /** OAuth metadata selects discovery; a plain Bearer challenge selects a masked token field. */
 const mcpAuthorization = Effect.fn('Connections.mcpAuthorization')(function* (

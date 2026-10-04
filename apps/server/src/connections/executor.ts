@@ -231,7 +231,7 @@ export function resourceReason(resource: ExecutorResourceMissing['resource']) {
   return `The saved ${resource.toLowerCase()} no longer exists.`
 }
 /** Hosted approval responses have no resumable request; Vivid must refuse without inventing one.
- * Resume has no tool in its public input, so its unavailable tool context is explicitly null.
+ * Management failures have no tool context; neither path invents a resumable request.
  */
 export class ExecutorApprovalUnsupported extends Schema.TaggedError<ExecutorApprovalUnsupported>()(
   'ExecutorApprovalUnsupported',
@@ -928,18 +928,18 @@ function makeSignIn(
  * cannot be followed or removed through this Connection. Untargeted reconnects are legitimate
  * only when their saved reconnectAccount supplies the original account identity.
  */
-const validateConnectionTarget = Effect.fn('Executor.validateConnectionTarget')((
+const validateConnectionTarget = Effect.fn('Executor.validateConnectionTarget')(function* (
   connection: typeof WireConnection.Type,
   references: ExecutorReferences,
-) => {
+) {
   const selection = connection.target
-  if (selection === null)
-    return connection.reconnectAccount === null
-      ? Effect.fail(ExecutorResponseInvalid.make({ service: 'connections', tool: null }))
-      : Effect.void
-  return selection.profile === references.profile && selection.app === references.app
-    ? Effect.void
-    : Effect.fail(ExecutorResponseInvalid.make({ service: 'connections', tool: null }))
+  if (selection === null) {
+    if (connection.reconnectAccount === null)
+      yield* Effect.fail(ExecutorResponseInvalid.make({ service: 'connections', tool: null }))
+    return
+  }
+  if (selection.profile !== references.profile || selection.app !== references.app)
+    yield* Effect.fail(ExecutorResponseInvalid.make({ service: 'connections', tool: null }))
 })
 
 /** Native targeted requests atomically select the saved account into the exact profile. */
