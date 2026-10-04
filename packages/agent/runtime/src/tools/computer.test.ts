@@ -9,8 +9,6 @@ import {
 } from '@earendil-works/pi-ai'
 import { init, useModel, useSandbox } from '@flue/runtime'
 import { start } from '@flue/runtime/node'
-import { postgres, type PostgresRunner } from '@flue/postgres'
-import { Pool } from 'pg'
 import { testDatabaseConfigured } from '../../../../../apps/server/src/database/testdb.ts'
 import * as NodeBuffer from 'node:buffer'
 import * as NodeZlib from 'node:zlib'
@@ -18,12 +16,13 @@ import { validateToolArguments } from '@earendil-works/pi-ai'
 import { describe, expect, it } from '@effect/vitest'
 import { DesktopAction, DesktopOutcome, PersonId, ThreadId, ApprovalId } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
-import { Config, Redacted, Effect, Exit, Layer, Option, Predicate, Queue } from 'effect'
+import { Effect, Exit, Layer, Option, Predicate, Queue } from 'effect'
 import * as RpcClient from 'effect/unstable/rpc/RpcClient'
 import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/unstable/rpc/RpcMessage'
 import { desktopModelTool, desktopToolFactory } from './computer.ts'
 import { Scope, toolRunner } from './scope.ts'
+import { disposableStorage } from '../../tests/schema.ts'
 
 /** Valid PNG with a large ancillary text chunk proves image bytes bypass the text budget. */
 const largePicture = () => {
@@ -187,47 +186,6 @@ describe('desktop model image result', () => {
   )
 })
 
-/** This Flue adapter owns only a unique schema on the explicitly supplied disposable URL.
- * Cleanup is registered before schema creation; the app/runtime schemas are untouched. */
-const desktopDatabase = Effect.fn('DesktopToolsTest.database')(function* () {
-  const url = yield* Config.Redacted('VIVID_TEST_DATABASE_URL')
-  const namespace = `desktop_test_${NodeCrypto.randomUUID().replaceAll('-', '')}`
-  const pool = new Pool({
-    connectionString: Redacted.value(url),
-    options: `-c search_path=${namespace}`,
-  })
-  yield* Effect.addFinalizer(() =>
-    Effect.tryPromise(() => pool.query(`DROP SCHEMA IF EXISTS ${namespace} CASCADE`)).pipe(
-      Effect.ensuring(Effect.promise(() => pool.end())),
-      Effect.catch(() => Effect.sync(() => expect.fail('Desktop Flue fixture cleanup failed'))),
-    ),
-  )
-  yield* Effect.tryPromise(() => pool.query(`CREATE SCHEMA ${namespace}`))
-  const runner: PostgresRunner = {
-    query: async (query, params) => (await pool.query(query, params)).rows,
-    /** Flue's public transaction callback is Promise-based; Effect owns acquisition and release. */
-    transaction: (use) =>
-      // oxlint-disable-next-line vivid/no-manual-effect-runtime-in-tests, vivid/no-runpromise-in-library -- Public Flue PostgresRunner callback requires a Promise; no application runtime is started here.
-      Effect.runPromise(
-        Effect.acquireUseRelease(
-          Effect.tryPromise(() => pool.connect()),
-          (client) =>
-            Effect.gen(function* () {
-              yield* Effect.tryPromise(() => client.query('BEGIN'))
-              const result = yield* Effect.tryPromise(() =>
-                use({ query: async (query, params) => (await client.query(query, params)).rows }),
-              ).pipe(Effect.tapError(() => Effect.promise(() => client.query('ROLLBACK'))))
-              yield* Effect.tryPromise(() => client.query('COMMIT'))
-              return result
-            }),
-          (client) => Effect.sync(() => client.release()),
-        ),
-      ),
-    close: () => undefined,
-  }
-  return postgres(runner)
-})
-
 /** Build a public pi stream with a tool call or a final answer; no credentials or HTTP are involved. */
 function modelReply(model: Model<Api>, request: boolean) {
   const message: AssistantMessage = {
@@ -298,7 +256,7 @@ describe.skipIf(!testDatabaseConfigured)('Flue desktop picture to model', () => 
     () =>
       Effect.gen(function* () {
         const transport = yield* fixture()
-        const db = yield* desktopDatabase()
+        const { storage: db } = yield* disposableStorage
         const picture = largePicture()
         const builtIn = openrouterProvider()
         const model = builtIn.getModels().find((candidate) => candidate.input.includes('image'))
@@ -340,7 +298,7 @@ describe.skipIf(!testDatabaseConfigured)('Flue desktop picture to model', () => 
         DesktopImageTest.durability = { maxAttempts: 1 }
         yield* Effect.acquireRelease(
           Effect.tryPromise(() => start({ agents: [DesktopImageTest], providers: [provider], db })),
-          (runtime) => Effect.promise(() => runtime[Symbol.asyncDispose]()),
+          (runtime) => Effect.promise(() => runtime.stop()),
         )
         const handle = init(DesktopImageTest, { id: NodeCrypto.randomUUID() })
         const receipt = yield* Effect.tryPromise(() => handle.dispatch('Look at the desktop'))

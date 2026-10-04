@@ -1,6 +1,10 @@
+import { flue } from '@flue/vite'
 import { defineProject } from 'vitest/config'
 
 const project = {
+  // Match the skills test project's public Flue Markdown packaging plugin. The production app
+  // imports the real catalog, while server bootstrap and runtime state stay outside this fixture.
+  plugins: flue().filter((plugin) => plugin.name === 'flue-markdown-imports'),
   test: {
     name: '@vivid/agent-runtime',
     environment: 'node',

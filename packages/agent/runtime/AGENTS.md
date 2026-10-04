@@ -14,8 +14,11 @@ schema-derived `VividRpcClient`.
   makes every call as that Person (`asActing`).
 - `src/context.ts` — what Vivid is told at the start of a response: the Person's memory brief, the
   skills it can use, their time zone.
-- `src/db.ts` — Flue's PostgreSQL conversation and runtime storage adapter.
-- `tests/setup.ts` — Vitest worker database authority: only the explicit test URL reaches runtime tests; unconfigured workers have no `DATABASE_URL`.
+- `src/db.ts` — Flue's database composition root: configuration and pool construction.
+- `src/storage.ts` — pure `flueStorage(pool)`, the production PostgreSQL runner; Flue owns pool close.
+- `tests/schema.ts` — a disposable schema on explicit test authority, with a separate surviving cleanup connection.
+- `tests/routes.ts` — production Hono/Flue route fixture using public start/stop and a controlled faux provider.
+- `tests/setup.ts` — Vitest worker authority, settled before any import because Effect copies the environment once: only the explicit test URL reaches runtime tests and unconfigured workers have no `DATABASE_URL`; no inherited `VIVID_SERVER_URL`; a worker-owned `VIVID_RUNTIME_TOKEN`.
 - `src/providers/` — model-provider registration and adapter setup.
 - `src/tools/` — model tools. Each is a thin, typed call to `VividRpc` through `asActing`; they do
   not own server stores, schedulers, credentials, or product routes, and they never decide whether

@@ -1,6 +1,6 @@
 [
   {
-    "file": "packages/agent/runtime/src/db.ts",
+    "file": "packages/agent/runtime/src/storage.ts",
     "classification": "legacy-runtime-boundary",
     "symbols": ["query", "transaction"]
   },

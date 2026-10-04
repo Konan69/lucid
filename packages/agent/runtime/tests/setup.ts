@@ -1,3 +1,4 @@
+import * as NodeCrypto from 'node:crypto'
 import * as NodeProcess from 'node:process'
 
 /**
@@ -15,3 +16,20 @@ if (supplied === undefined) {
 } else {
   NodeProcess.env.DATABASE_URL = supplied
 }
+
+/**
+ * Runtime authority is settled here for the same reason, and cannot be settled later. Effect
+ * rc.116 `ConfigProvider.fromEnv` copies `process.env` once (src/ConfigProvider.ts, fromEnv), and
+ * the `ConfigProvider` reference caches that default for the process (src/Context.ts,
+ * getDefaultValue). `src/providers/rehearsal.ts` reads `Config` while a test module is imported,
+ * so the copy exists before any case runs. `src/app.ts` and `src/client.ts` then read it through
+ * their own `Effect.runPromise`, which a provider Layer around a test does not reach. A case that
+ * changes `process.env` afterwards changes nothing those programs can see.
+ *
+ * No inherited product server: `client.ts` reads `VIVID_SERVER_URL` before it builds a client, so
+ * with it absent every context read fails at configuration and no request leaves the worker.
+ * No inherited credential: the worker's token is its own, and fixtures read it back through
+ * `Config`, the path the application uses, so the two cannot disagree.
+ */
+delete NodeProcess.env.VIVID_SERVER_URL
+NodeProcess.env.VIVID_RUNTIME_TOKEN = NodeCrypto.randomUUID()
