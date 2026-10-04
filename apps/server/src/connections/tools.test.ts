@@ -353,6 +353,72 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
       }),
     )
 
+    /** Catalog I/O is mandatory OFF work. Its latency must not consume Jev's
+     * shared allowance or prevent relevance when effect hints need no judgment. */
+    it.effect('slow mandatory reads leave the full optional relevance budget', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const store = yield* ConnectionStore
+        yield* store.begin(ownerActor, { service: serviceId, label: 'Work', shared: false })
+        const recordsStarted = yield* Deferred.make<void>()
+        const releaseRecords = yield* Deferred.make<void>()
+        const toolsStarted = yield* Deferred.make<void>()
+        const releaseTools = yield* Deferred.make<void>()
+        const scriptedStore = ConnectionStore.of({
+          ...store,
+          records: Effect.fn('Test.slowRecords')(function* (actor) {
+            yield* Deferred.succeed(recordsStarted, undefined)
+            yield* Deferred.await(releaseRecords)
+            return yield* store.records(actor)
+          }),
+          tools: Effect.fn('Test.slowCatalog')(function* () {
+            yield* Deferred.succeed(toolsStarted, undefined)
+            yield* Deferred.await(releaseTools)
+            return ['list_records', 'search_records'].map((name) =>
+              ExecutorTool.make({
+                name,
+                description: 'Read existing records',
+                effect: 'read',
+                input: {},
+              }),
+            )
+          }),
+        })
+        let calls = 0
+        const model = yield* DecisionModel.make({
+          decide: ({ decisions }) => {
+            calls += 1
+            return Effect.succeed({
+              answers: Object.fromEntries(
+                Object.keys(decisions).map((key, index) => [
+                  key,
+                  ScriptedAnswer.cases.Probability.make({ probability: index === 1 ? 0.9 : 0.1 }),
+                ]),
+              ),
+              usage: { inputTokens: undefined, outputTokens: undefined },
+            })
+          },
+        })
+        const started = yield* Clock.currentTimeMillis
+        const pending = yield* findTools(ownerActor, { query: 'records', limit: 1 }).pipe(
+          Effect.provideService(ConnectionStore, scriptedStore),
+          Effect.provideService(DecisionModel.DecisionModel, model),
+          Effect.forkChild,
+        )
+        yield* Deferred.await(recordsStarted)
+        yield* TestClock.adjust('2300 millis')
+        yield* Deferred.succeed(releaseRecords, undefined)
+        yield* Deferred.await(toolsStarted)
+        yield* TestClock.adjust('2700 millis')
+        yield* Deferred.succeed(releaseTools, undefined)
+        expect((yield* Fiber.join(pending)).tools.map((tool) => tool.name)).toEqual([
+          'search_records',
+        ])
+        expect(calls).toBe(1)
+        expect((yield* Clock.currentTimeMillis) - started).toBe(5000)
+      }),
+    )
+
     /** Low scores cannot hide lexical candidates; time exhaustion cannot reorder them. */
     it.effect.each(['below', 'timeout'] as const)(
       'preserves lexical order on %s relevance',

@@ -78,18 +78,21 @@ const rank = <A>(
     .map(({ item }) => item)
 }
 
-/** Mandatory metadata still loads after the optional deadline. Only classification is
- * interrupted: unanswered tools keep Executor's effect for this call. rc.116 Cache.get
- * removes interrupted entries and interrupts a lookup when its final waiter leaves, so
- * cancellation creates neither an answer nor a one-minute failure entry. Completed tools
- * retain their real cache receipts; shared writes are withheld before entering model context. */
+/** All mandatory catalog reads finish before the shared optional-work clock starts.
+ * Projection keeps Executor's effect when classification exceeds that deadline;
+ * shared writes are withheld before tools enter model context. */
 const projectTools = Effect.fn('Connections.projectTools')(function* (
-  store: typeof ConnectionStore.Service,
-  actor: Actor,
-  { row, account }: { readonly row: ConnectionRecord; readonly account: string },
+  {
+    row,
+    account,
+    tools,
+  }: {
+    readonly row: ConnectionRecord
+    readonly account: string
+    readonly tools: readonly (typeof ExecutorTool.Type)[]
+  },
   started: number,
 ) {
-  const tools = yield* store.tools(actor, row)
   const classified = yield* classifyTools(row, tools, started)
   return classified.flatMap((tool) =>
     row.companyId !== null && tool.effect !== 'read'
@@ -235,13 +238,19 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
   request: FindToolsRequest,
 ) {
   const store = yield* ConnectionStore
-  const started = yield* Clock.currentTimeMillis
   const records = yield* store.records(actor)
-  const groups = yield* Effect.forEach(
+  const catalogs = yield* Effect.forEach(
     namedAccounts(records).filter(({ row }) => row.status === 'ready'),
-    (named) => projectTools(store, actor, named, started),
+    Effect.fn('Connections.loadDiscoveryTools')(function* (named) {
+      const tools = yield* store.tools(actor, named.row)
+      return { ...named, tools }
+    }),
     { concurrency: 4 },
   )
+  const started = yield* Clock.currentTimeMillis
+  const groups = yield* Effect.forEach(catalogs, (catalog) => projectTools(catalog, started), {
+    concurrency: 4,
+  })
   const limit = request.limit === undefined ? 8 : request.limit
   if (!Number.isFinite(limit) || limit < 1)
     return yield* Effect.fail(
