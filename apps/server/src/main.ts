@@ -60,6 +60,7 @@ import { pushLayer, pushReceiptsLayer } from './push/delivery.ts'
 import { pushTargetsLayer } from './push/targets.ts'
 import { routineSchedulerLayer, routineSchedulerServiceLayer } from './routines/scheduler.ts'
 import { routineStoreLayer } from './routines/store.ts'
+import { decisionModelLayer } from './decisions/model.ts'
 import { ruleJudgeLayer } from './rules/judge.ts'
 import { ruleStoreLayer } from './rules/store.ts'
 import { runtimeLayer } from './runtime/client.ts'
@@ -107,7 +108,7 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     NodePath.layer,
   )
   const data = databaseLayer.pipe(Layer.provideMerge(platform))
-  const durable = workLayer.pipe(Layer.provideMerge(data))
+  const durable = Layer.mergeAll(workLayer, decisionModelLayer).pipe(Layer.provideMerge(data))
   const foundation = Layer.mergeAll(
     changesLayer,
     runtimeLayer,
